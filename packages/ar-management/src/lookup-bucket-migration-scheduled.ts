@@ -13,6 +13,10 @@ const MAX_VERIFICATION_ATTEMPTS = 3;
 const MAX_PAGES_PER_INVOCATION = 8;
 const PLAN_INTERVAL_MINUTES = 10;
 
+export function isLookupScaleOutObservationDue(timestampSeconds: number): boolean {
+  return Math.floor(timestampSeconds / 60) % PLAN_INTERVAL_MINUTES === 0;
+}
+
 export interface LookupBucketMigrationScheduledResult {
   status: 'idle' | 'progressed' | 'waiting_grace' | 'completed' | 'blocked';
   operationId: string | null;
@@ -52,7 +56,10 @@ function control(
         | 'blockLookupBucketMigration'
       >
     > &
-      Pick<ControlServiceBinding, 'planNextLookupBucketMigration'>)
+      Pick<
+        ControlServiceBinding,
+        'planNextLookupBucketMigration' | 'reconcileLookupScaleOut' | 'releaseLookupBucketMigration'
+      >)
   | null {
   const value = env.CONTROL;
   if (!value || typeof value.claimNextLookupBucketMigration !== 'function') return null;
@@ -74,7 +81,22 @@ function control(
       | 'blockLookupBucketMigration'
     >
   > &
-    Pick<ControlServiceBinding, 'planNextLookupBucketMigration'>;
+    Pick<
+      ControlServiceBinding,
+      'planNextLookupBucketMigration' | 'reconcileLookupScaleOut' | 'releaseLookupBucketMigration'
+    >;
+}
+
+async function releaseLease(
+  rpc: Pick<ControlServiceBinding, 'releaseLookupBucketMigration'>,
+  view: ControlLookupBucketMigrationView,
+  ownerId: string
+): Promise<void> {
+  await rpc.releaseLookupBucketMigration?.({
+    operationId: view.operationId,
+    ownerId,
+    fencingToken: view.fencingToken,
+  });
 }
 
 function fixedErrorCode(error: unknown): string {
@@ -103,27 +125,58 @@ function validateView(view: ControlLookupBucketMigrationView): void {
 
 export async function processNextLookupBucketMigration(
   env: Env,
-  options: { ownerId?: string; now?: () => number } = {}
+  options: { ownerId?: string; now?: () => number; observationDue?: boolean } = {}
 ): Promise<LookupBucketMigrationScheduledResult> {
   const ownerId = options.ownerId ?? `management-migration:${crypto.randomUUID()}`;
   if (!SAFE_ID.test(ownerId)) throw new Error('lookup_bucket_migration_owner_invalid');
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
   const rpc = control(env);
   if (!rpc) return { status: 'idle', operationId: null, state: null, processedRows: 0 };
+  const observedAt = now();
+  const observationDue = options.observationDue ?? isLookupScaleOutObservationDue(observedAt);
+  let snapshot: Awaited<ReturnType<typeof collectLookupBucketLoadSnapshot>> | null = null;
+  let capacityState: LookupBucketMigrationScheduledResult | null = null;
+  if (
+    observationDue &&
+    (typeof rpc.reconcileLookupScaleOut === 'function' ||
+      typeof rpc.planNextLookupBucketMigration === 'function')
+  ) {
+    snapshot = await collectLookupBucketLoadSnapshot(env, ownerId, observedAt);
+    if (typeof rpc.reconcileLookupScaleOut === 'function') {
+      const forecasts = await rpc.reconcileLookupScaleOut(snapshot);
+      const blocked = forecasts.find((forecast) => forecast.status === 'blocked');
+      if (blocked) {
+        capacityState = {
+          status: 'blocked',
+          operationId: blocked.requestedOperationId,
+          state: blocked.lastErrorCode ?? 'lookup_scale_out_blocked',
+          processedRows: 0,
+        };
+      } else {
+        const provisioning = forecasts.find((forecast) => forecast.status === 'provisioning');
+        if (provisioning) {
+          capacityState = {
+            status: 'progressed',
+            operationId: provisioning.requestedOperationId,
+            state: provisioning.requestedOperationId
+              ? 'lookup_capacity_provisioning'
+              : 'lookup_capacity_pending',
+            processedRows: 0,
+          };
+        }
+      }
+    }
+  }
   const view = await rpc.claimNextLookupBucketMigration({ ownerId });
   if (!view) {
-    if (typeof rpc.planNextLookupBucketMigration !== 'function') {
+    if (capacityState) return capacityState;
+    if (!snapshot || typeof rpc.planNextLookupBucketMigration !== 'function') {
       return { status: 'idle', operationId: null, state: null, processedRows: 0 };
     }
-    const observedAt = now();
-    if (Math.floor(observedAt / 60) % PLAN_INTERVAL_MINUTES !== 0) {
-      return { status: 'idle', operationId: null, state: null, processedRows: 0 };
-    }
-    const planned = await rpc.planNextLookupBucketMigration(
-      await collectLookupBucketLoadSnapshot(env, ownerId, observedAt)
-    );
+    const planned = await rpc.planNextLookupBucketMigration(snapshot);
     if (!planned) return { status: 'idle', operationId: null, state: null, processedRows: 0 };
     validateView(planned);
+    await releaseLease(rpc, planned, ownerId);
     return {
       status: 'progressed',
       operationId: planned.operationId,
@@ -145,6 +198,7 @@ export async function processNextLookupBucketMigration(
         targetRowCount: null,
         verificationDigest: null,
       });
+      await releaseLease(rpc, advanced, ownerId);
       return {
         status: 'progressed',
         operationId: view.operationId,
@@ -178,6 +232,7 @@ export async function processNextLookupBucketMigration(
         targetRowCount: null,
         verificationDigest: null,
       });
+      await releaseLease(rpc, advanced, ownerId);
       return {
         status: 'progressed',
         operationId: view.operationId,
@@ -211,6 +266,7 @@ export async function processNextLookupBucketMigration(
         targetRowCount: verified.targetRowCount,
         verificationDigest: verified.verificationDigest,
       });
+      await releaseLease(rpc, advanced, ownerId);
       return {
         status: 'progressed',
         operationId: view.operationId,
@@ -224,6 +280,7 @@ export async function processNextLookupBucketMigration(
         ownerId,
         fencingToken: view.fencingToken,
       });
+      await releaseLease(rpc, advanced, ownerId);
       return {
         status: 'progressed',
         operationId: view.operationId,
@@ -233,6 +290,7 @@ export async function processNextLookupBucketMigration(
     }
     if (view.state === 'grace') {
       if (view.graceExpiresAt === null || now() < view.graceExpiresAt) {
+        await releaseLease(rpc, view, ownerId);
         return {
           status: 'waiting_grace',
           operationId: view.operationId,
@@ -278,6 +336,7 @@ export async function processNextLookupBucketMigration(
         targetRowCount: null,
         verificationDigest: null,
       });
+      await releaseLease(rpc, advanced, ownerId);
       return {
         status: 'progressed',
         operationId: view.operationId,

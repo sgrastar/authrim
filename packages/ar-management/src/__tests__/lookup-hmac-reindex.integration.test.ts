@@ -73,6 +73,8 @@ class PreparedStatement {
 function d1(database: DatabaseSync): D1Database {
   const session = {
     prepare: (sql: string) => new PreparedStatement(database.prepare(sql)),
+    batch: async (statements: BoundStatement[]) =>
+      Promise.all(statements.map((item) => item.run())),
     getBookmark: () => 'test-bookmark',
   } as unknown as D1DatabaseSession;
   return {
@@ -134,6 +136,12 @@ describe('Lookup HMAC reindex processor', () => {
       readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_pre_1_0_lookup_baseline.sql'), 'utf8')
         .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
         .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
+    );
+    lookup.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/lookup/002_lookup_scale_out_publication_metrics.sql'),
+        'utf8'
+      )
     );
     publication = {
       operationId: 'account-create-operation-1',
@@ -324,6 +332,14 @@ describe('Lookup HMAC reindex processor', () => {
         )
         .get(index.virtualBucket, 2, index.digest)
     ).toEqual({ tenant_id: 'tenant-a', account_id: 'account:user-a', lifecycle_state: 'active' });
+    expect(
+      lookup
+        .prepare(
+          `SELECT SUM(successful_route_publication_count) AS count
+             FROM lookup_bucket_counters`
+        )
+        .get()
+    ).toEqual({ count: 1 });
   });
 
   it('reindexes passkey and anonymous credential routes from the authoritative users shard', async () => {

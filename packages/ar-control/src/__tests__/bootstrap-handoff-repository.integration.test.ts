@@ -228,7 +228,7 @@ describe('D1BootstrapHandoffRepository', () => {
     ]);
   });
 
-  it('projects platform Lookup and tenant-exclusive bootstrap ownership metadata', async () => {
+  it('projects platform Lookup and shared-pool bootstrap ownership metadata', async () => {
     const manifestDigest = 'b'.repeat(64);
     const checksum = '5'.repeat(64);
     const lookupSpec = JSON.stringify({
@@ -244,8 +244,7 @@ describe('D1BootstrapHandoffRepository', () => {
       bootstrap: true,
       bootstrap_role: 'tenant_core/default',
       data_role: 'tenant_core/default',
-      allocation_scope: 'tenant_exclusive',
-      owner_tenant_id: 'default',
+      allocation_scope: 'shared_pool',
       migration_stream_id: 'd1-core',
       release_id: 'release-v1',
       manifest_digest: manifestDigest,
@@ -287,7 +286,7 @@ describe('D1BootstrapHandoffRepository', () => {
          ('lookup-resource', 'test', 'd1', 'lookup-default', 'platform', NULL,
           'authrim-test-lookup', '${'6'.repeat(64)}', 'present', 'ready', 'inventory-op',
           'lookup-observed', '${lookupSpec.replaceAll("'", "''")}', 1, 1),
-         ('tenant-resource', 'test', 'd1', 'tenant-default', 'tenant', 'default',
+         ('tenant-resource', 'test', 'd1', 'tenant-default', 'platform', NULL,
           'authrim-test-tenant-default', '${'7'.repeat(64)}', 'present', 'ready',
           'bootstrap-op', 'tenant-observed', '${tenantSpec.replaceAll("'", "''")}', 1, 1);
        INSERT INTO control_observed_resources (
@@ -307,7 +306,7 @@ describe('D1BootstrapHandoffRepository', () => {
          environment_id, tenant_id, isolation_policy, policy_generation, policy_state,
          source_operation_id, idempotency_key, activated_at, created_at, updated_at
        ) VALUES (
-         'test', 'default', 'tenant_exclusive', 1, 'active', 'bootstrap-op',
+         'test', 'default', 'shared_pool', 1, 'active', 'bootstrap-op',
          'bootstrap:placement:default:v1', 1, 1, 1
        );
        INSERT INTO control_tenant_shards (
@@ -318,7 +317,7 @@ describe('D1BootstrapHandoffRepository', () => {
        ) VALUES (
          'tenant-shard', 'test', 'tenant_core/default', 'builtin:residency:default', 'default',
          1, 'tenant-default', 'TDB_DEFAULT_BOOTSTRAP_CORE', 'tenant-resource',
-         'disabled', 'disabled', 'active', 'tenant_exclusive', 'default', 1, 1
+         'disabled', 'disabled', 'active', 'shared_pool', NULL, 1, 1
        );
        INSERT INTO control_shard_capacity (
          shard_id, target_account_count, allocated_account_count, health_status,
@@ -357,14 +356,14 @@ describe('D1BootstrapHandoffRepository', () => {
     });
     expect(resources.find((resource) => resource.role === 'tenant_core/default')).toMatchObject({
       providerDatabaseId: 'tenant-db-id',
-      desiredResourceScope: 'tenant',
-      desiredTenantId: 'default',
-      allocationScope: 'tenant_exclusive',
-      ownerTenantId: 'default',
+      desiredResourceScope: 'platform',
+      desiredTenantId: null,
+      allocationScope: 'shared_pool',
+      ownerTenantId: null,
       assignmentCount: 1,
       assignmentTenantId: 'default',
       assignmentState: 'active',
-      placementIsolationPolicy: 'tenant_exclusive',
+      placementIsolationPolicy: 'shared_pool',
       placementPolicyState: 'active',
       shardStatus: 'active',
       capacityHealthStatus: 'healthy',

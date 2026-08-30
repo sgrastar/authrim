@@ -253,6 +253,10 @@ const adminSaml = {
 	admin_saml_detail_delete: '削除',
 	admin_saml_detail_provider_status: 'Provider状態',
 	admin_saml_detail_provider_status_desc: 'このSAML providerを有効化または無効化します。',
+	admin_saml_detail_provider_status_mapping_required:
+		'このproviderを有効化する前にField Mapping Setを選択して保存してください。',
+	admin_saml_detail_mapping_pending:
+		'このproviderは無効状態で登録されています。以下で適切なField Mapping Setを選択し、providerを有効化して保存してください。',
 	admin_saml_detail_basic_information: '基本情報',
 	admin_saml_detail_name_required: '名前 *',
 	admin_saml_detail_name_required_error: '名前は必須です',
@@ -311,6 +315,9 @@ const adminSaml = {
 		'Legacyは古いSPとの互換性が必要な場合だけ使う緩和設定です。',
 	admin_saml_detail_identity_mapping_policy: 'Field Mapping Set',
 	admin_saml_detail_identity_mapping_policy_default: '選択してください',
+	admin_saml_detail_identity_mapping_policy_required: '有効なField Mapping Setを選択してください。',
+	admin_saml_detail_identity_mapping_policy_no_compatible:
+		'利用可能な有効なField Mapping Setがありません。',
 	admin_saml_detail_identity_mapping_policy_hint:
 		'Inbound/Outbound SAML属性変換に使うactiveなField Mapping Setを選択します。',
 	admin_saml_detail_identity_mapping_policy_link: 'Field Mapping Set設定を開く',
@@ -391,6 +398,8 @@ const adminSaml = {
 	admin_saml_new_signature_via: 'via {profile}',
 	admin_saml_new_create_providers: 'Providersを作成',
 	admin_saml_new_create_providers_desc: 'このaggregateからentityを選択します',
+	admin_saml_new_aggregate_mapping_after_create:
+		'選択したIdPとSPは無効なproviderとして登録されます。登録後に各providerの詳細画面で適切なField Mapping Setを選択し、providerを有効化してください。',
 	admin_saml_new_federation_trust_profile: 'Federation Trust Profile',
 	admin_saml_new_federation_trust_profile_desc: 'このaggregateのtrust anchorを登録します',
 	admin_saml_new_profile_name_required: 'Profile Name *',
@@ -419,6 +428,10 @@ const adminSaml = {
 	admin_saml_new_load_more: 'さらに読み込む',
 	admin_saml_new_batch_progress:
 		'処理済み {processed} / {total} · 成功 {succeeded} · 失敗 {failed}',
+	admin_saml_new_batch_mapping_next:
+		'登録が完了しました。各providerを有効化する前にField Mapping Setを設定してください。',
+	admin_saml_new_configure_created_provider: '{name} を設定',
+	admin_saml_new_provider_import_failed: '{entityId} を登録できませんでした: {error}',
 	admin_saml_new_choose_provider_type: 'Provider種別を選択',
 	admin_saml_new_choose_provider_type_hint:
 		'単一のSAML counterpartyにはIdPまたはSPを、aggregateメタデータのtrust anchorにはFederationを選択します。',

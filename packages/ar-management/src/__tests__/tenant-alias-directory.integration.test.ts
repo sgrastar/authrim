@@ -120,6 +120,15 @@ function database(): DatabaseSync {
       ON lookup_tenant_aliases(virtual_bucket, alias_kind, alias_sha256_digest)
       WHERE lifecycle_state <> 'disabled'
         AND alias_kind IN ('tenant_code', 'tenant_slug', 'invitation_token', 'custom_domain');
+    CREATE TABLE lookup_bucket_counters (
+      virtual_bucket INTEGER PRIMARY KEY,
+      successful_route_publication_count INTEGER NOT NULL DEFAULT 0,
+      publication_counter_updated_at INTEGER NOT NULL DEFAULT 0
+    );
+    WITH RECURSIVE bucket(value) AS (
+      SELECT 0 UNION ALL SELECT value + 1 FROM bucket WHERE value < 4095
+    )
+    INSERT INTO lookup_bucket_counters(virtual_bucket) SELECT value FROM bucket;
   `);
   return result;
 }
@@ -241,6 +250,14 @@ describe('tenant alias directory', () => {
         )
         .get()
     ).toEqual({ count: 3 });
+    expect(
+      lookup
+        .prepare(
+          `SELECT SUM(successful_route_publication_count) AS count
+             FROM lookup_bucket_counters`
+        )
+        .get()
+    ).toEqual({ count: 3 });
   });
 
   it('does not activate an alias that has not been prepared', async () => {
@@ -250,6 +267,36 @@ describe('tenant alias directory', () => {
     expect(lookup.prepare(`SELECT COUNT(*) AS count FROM lookup_tenant_aliases`).get()).toEqual({
       count: 0,
     });
+  });
+
+  it('does not activate an alias whose publication counter row is missing', async () => {
+    const env = await environment();
+    await prepareTenantAliasDirectory(env, input);
+    const target = lookup
+      .prepare(
+        `SELECT virtual_bucket, alias_kind, alias_sha256_digest
+           FROM lookup_tenant_aliases ORDER BY alias_kind LIMIT 1`
+      )
+      .get() as {
+      virtual_bucket: number;
+      alias_kind: string;
+      alias_sha256_digest: string;
+    };
+    lookup
+      .prepare(`DELETE FROM lookup_bucket_counters WHERE virtual_bucket = ?`)
+      .run(target.virtual_bucket);
+
+    await expect(activateTenantAliasDirectory(env, input)).rejects.toThrow(
+      'tenant_alias_publication_counter_missing'
+    );
+    expect(
+      lookup
+        .prepare(
+          `SELECT lifecycle_state FROM lookup_tenant_aliases
+            WHERE virtual_bucket = ? AND alias_kind = ? AND alias_sha256_digest = ?`
+        )
+        .get(target.virtual_bucket, target.alias_kind, target.alias_sha256_digest)
+    ).toEqual({ lifecycle_state: 'pending' });
   });
 
   it('rejects a second live owner without changing the first tenant', async () => {

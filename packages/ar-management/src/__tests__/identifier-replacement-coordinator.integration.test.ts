@@ -121,6 +121,12 @@ describe('IdentifierReplacementCoordinator', () => {
           .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
           .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
       );
+      database.exec(
+        readFileSync(
+          resolve(REPO_ROOT, 'migrations/lookup/002_lookup_scale_out_publication_metrics.sql'),
+          'utf8'
+        )
+      );
     }
     pii
       .prepare(
@@ -259,6 +265,14 @@ describe('IdentifierReplacementCoordinator', () => {
       accountId: 'account-a',
       initiatingSessionRef: 'session-a',
     });
+    expect(
+      newLookup
+        .prepare(
+          `SELECT SUM(successful_route_publication_count) AS count
+             FROM lookup_bucket_counters`
+        )
+        .get()
+    ).toEqual({ count: 2 });
 
     await coordinator().resume({
       operationId: 'replacement-1',
@@ -266,6 +280,31 @@ describe('IdentifierReplacementCoordinator', () => {
       accountId: 'account-a',
     });
     expect(revokeCredentials).toHaveBeenCalledTimes(1);
+    expect(
+      newLookup
+        .prepare(
+          `SELECT SUM(successful_route_publication_count) AS count
+             FROM lookup_bucket_counters`
+        )
+        .get()
+    ).toEqual({ count: 2 });
+  });
+
+  it('does not disable the old route when the new bucket publication counter is missing', async () => {
+    newLookup.prepare(`DELETE FROM lookup_bucket_counters WHERE virtual_bucket = 12`).run();
+
+    await expect(
+      coordinator().resume({
+        operationId: 'replacement-1',
+        tenantId: 'tenant-a',
+        accountId: 'account-a',
+      })
+    ).rejects.toThrow('identifier_replacement_publication_counter_missing');
+    expect(
+      oldLookup
+        .prepare(`SELECT DISTINCT lifecycle_state FROM lookup_identifiers ORDER BY lifecycle_state`)
+        .all()
+    ).toEqual([{ lifecycle_state: 'active' }]);
   });
 
   it('replaces a SCIM userName external subject and skips the email notification', async () => {

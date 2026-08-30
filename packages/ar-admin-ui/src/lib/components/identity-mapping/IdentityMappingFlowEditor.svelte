@@ -4088,7 +4088,9 @@
 
 			<div class="health-strip">
 				<span><strong>{$LL.admin_identity_mapping_flow_snapshot()}</strong> {sample.snapshot}</span>
-				<span class="status-ok">{sample.status}</span>
+				<span class="status-ok"
+					><strong>{$LL.admin_identity_mapping_flow_profile_status()}</strong> {sample.status}</span
+				>
 				<span class="status-warn">{sample.reviewGates}</span>
 			</div>
 

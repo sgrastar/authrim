@@ -270,6 +270,19 @@ async function readJsonReport(envName) {
   return JSON.parse(await fs.readFile(reportPath, 'utf8'));
 }
 
+function assertCoverageStatsReport(report) {
+  if (
+    !report ||
+    typeof report !== 'object' ||
+    !Array.isArray(report.packages) ||
+    !report.totals ||
+    typeof report.totals !== 'object'
+  ) {
+    throw new Error('Package coverage stats report is invalid');
+  }
+  return report;
+}
+
 function unreportedSuite() {
   return {
     reported: false,
@@ -286,10 +299,18 @@ async function collectRepositorySuiteStats() {
   const integrationReport = await readJsonReport('AUTHRIM_INTEGRATION_REPORT');
   const oauthReport = await readJsonReport('AUTHRIM_OAUTH_OIDC_REPORT');
   const matricesReport = await readJsonReport('AUTHRIM_SECURITY_MATRICES_REPORT');
+  const scaleOutPhase1Report = await readJsonReport('AUTHRIM_SCALE_OUT_PHASE1_REPORT');
+  const controlPlaneReport = await readJsonReport('AUTHRIM_CONTROL_PLANE_REPORT');
   const integration = integrationReport
     ? summarizeVitestReport(integrationReport)
     : unreportedSuite();
   const oauth = oauthReport ? summarizeAuthrimReport(oauthReport) : unreportedSuite();
+  const scaleOutPhase1 = scaleOutPhase1Report
+    ? summarizeVitestReport(scaleOutPhase1Report)
+    : unreportedSuite();
+  const controlPlane = controlPlaneReport
+    ? summarizeVitestReport(controlPlaneReport)
+    : unreportedSuite();
 
   const definitions = [
     {
@@ -298,6 +319,20 @@ async function collectRepositorySuiteStats() {
       purpose: 'Cross-package protocol, tenant, and runtime flows',
       evidence: '308-row constrained 3-wise tenant matrix + lifecycle flows',
       result: integration,
+    },
+    {
+      name: 'Tenant D1 control plane',
+      readmePath: 'scripts/control-plane/control-plane-traceability.json',
+      purpose: 'Runtime routing, capacity, recovery, and release gates',
+      evidence: 'Traceability-backed local control-plane contracts',
+      result: controlPlane,
+    },
+    {
+      name: 'Scale-out Phase 1 correctness',
+      readmePath: 'test/scale-out-correctness-phase1/PLAN.md',
+      purpose: 'Predictive provisioning, retry, idempotency, and evidence integrity',
+      evidence: 'Deterministic shared-pool and tenant-exclusive harness contracts',
+      result: scaleOutPhase1,
     },
     {
       name: 'OAuth/OIDC regressions',
@@ -479,7 +514,19 @@ async function upsertPullRequestComment(body) {
 }
 
 async function main() {
-  const stats = await collectPackageStats(process.cwd());
+  const statsOutputPath = process.env.AUTHRIM_COVERAGE_STATS_OUTPUT?.trim();
+  const collectedStats = statsOutputPath ? await collectPackageStats(process.cwd()) : null;
+  if (statsOutputPath && collectedStats) {
+    await fs.mkdir(path.dirname(statsOutputPath), { recursive: true });
+    await fs.writeFile(statsOutputPath, `${JSON.stringify(collectedStats)}\n`);
+    console.log(`Package coverage stats written to ${statsOutputPath}`);
+    return;
+  }
+
+  const statsReport = await readJsonReport('AUTHRIM_COVERAGE_STATS_REPORT');
+  const stats = statsReport
+    ? assertCoverageStatsReport(statsReport)
+    : await collectPackageStats(process.cwd());
   const repositorySuites = await collectRepositorySuiteStats();
   const body = buildComment({ ...stats, repositorySuites });
 

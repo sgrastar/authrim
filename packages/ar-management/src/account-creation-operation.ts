@@ -28,6 +28,7 @@ export interface AccountCreationOperation {
   accountId: string;
   status: AccountCreationOperationStatus;
   publication: AccountDirectoryPublication | null;
+  lastErrorCode?: string | null;
 }
 
 interface AccountCreationOperationRow {
@@ -41,6 +42,7 @@ interface AccountCreationOperationRow {
   account_id: string;
   status: string;
   publication_json: string | null;
+  last_error_code?: string | null;
 }
 
 export interface AcquireAccountCreationOperationInput {
@@ -163,6 +165,7 @@ async function parseRow(row: AccountCreationOperationRow): Promise<AccountCreati
     accountId,
     status: row.status,
     publication,
+    lastErrorCode: row.last_error_code ?? null,
   };
 }
 
@@ -176,7 +179,7 @@ export class AccountCreationOperationRepository {
     return this.adapter.queryOne<AccountCreationOperationRow>(
       `SELECT operation_id, tenant_id, actor_id, idempotency_key,
               allocation_idempotency_key, request_hash, user_id, account_id,
-              status, publication_json
+              status, publication_json, last_error_code
          FROM account_creation_operations
         WHERE operation_id = ? AND tenant_id = ?`,
       [operationId, tenantId],
@@ -337,7 +340,7 @@ export class AccountCreationOperationRepository {
     const row = await this.adapter.queryOne<AccountCreationOperationRow>(
       `SELECT operation_id, tenant_id, actor_id, idempotency_key,
               allocation_idempotency_key, request_hash, user_id, account_id,
-              status, publication_json
+              status, publication_json, last_error_code
          FROM account_creation_operations
         WHERE tenant_id = ? AND account_id = ?`,
       [tenantId, accountId]
@@ -394,7 +397,7 @@ export class AccountCreationOperationRepository {
     const row = await this.adapter.queryOne<AccountCreationOperationRow>(
       `SELECT operation_id, tenant_id, actor_id, idempotency_key,
                 allocation_idempotency_key, request_hash, user_id, account_id,
-                status, publication_json
+                status, publication_json, last_error_code
            FROM account_creation_operations
           WHERE tenant_id = ? AND actor_id = ? AND idempotency_key = ?`,
       [tenantId, actorId, input.idempotencyKey],
@@ -432,7 +435,7 @@ export class AccountCreationOperationRepository {
     const serialized = JSON.stringify(publication);
     await this.adapter.execute(
       `UPDATE account_creation_operations
-          SET publication_json = ?, updated_at = ?
+          SET publication_json = ?, last_error_code = NULL, updated_at = ?
         WHERE operation_id = ? AND tenant_id = ? AND publication_json IS NULL
           AND status = 'preparing'`,
       [serialized, now, operation.operationId, operation.tenantId]
@@ -441,6 +444,31 @@ export class AccountCreationOperationRepository {
     if (!row || row.publication_json !== serialized) {
       throw new Error('account_creation_operation_publication_conflict');
     }
+    return parseRow(row);
+  }
+
+  async recordPreparationFailure(
+    operation: AccountCreationOperation,
+    errorCode: string,
+    now: number
+  ): Promise<AccountCreationOperation> {
+    if (
+      operation.status !== 'preparing' ||
+      !/^[a-z0-9][a-z0-9_:-]{0,127}$/u.test(errorCode) ||
+      !Number.isSafeInteger(now) ||
+      now < 1
+    ) {
+      throw new Error('account_creation_operation_preparation_failure_invalid');
+    }
+    await this.adapter.execute(
+      `UPDATE account_creation_operations
+          SET last_error_code = ?, updated_at = ?
+        WHERE operation_id = ? AND tenant_id = ?
+          AND status = 'preparing' AND publication_json IS NULL`,
+      [errorCode, now, operation.operationId, operation.tenantId]
+    );
+    const row = await this.findRow(operation.tenantId, operation.operationId);
+    if (!row) throw new Error('account_creation_operation_preparation_failure_record_failed');
     return parseRow(row);
   }
 

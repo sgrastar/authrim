@@ -31,7 +31,7 @@ const en: Translations = {
 
   // Main menu
   'menu.prompt': 'What would you like to do?',
-  'menu.quick': 'Quick Setup (5 minutes)',
+  'menu.quick': 'Quick Setup',
   'menu.quickDesc': 'Deploy Authrim with minimal configuration',
   'menu.custom': 'Custom Setup',
   'menu.customDesc': 'Configure all options step by step',
@@ -103,6 +103,8 @@ const en: Translations = {
   'prereq.notLoggedIn': 'Not logged in to Cloudflare',
   'prereq.loginHint': 'Run the following command to authenticate:',
   'prereq.loggedInAs': 'Connected to Cloudflare ({{email}})',
+  'prereq.authenticated': 'Connected to Cloudflare',
+  'prereq.checkFailed': 'Failed to check wrangler',
   'prereq.accountId': 'Account ID: {{accountId}}',
 
   // Environment
@@ -182,6 +184,12 @@ const en: Translations = {
   'domain.zoneCheckSkipped': 'Zone check skipped, continuing with setup...',
   'domain.continueWithoutZone': 'Continue without zone verification?',
   'domain.configureBinding': 'Configure custom domain binding for Workers',
+  'domain.configureBindingDesc':
+    'Assign the base domain directly to the router Worker so Cloudflare manages its DNS and TLS certificate. Tenant subdomains continue to use wildcard routing.',
+  'domain.customHostnamesDesc': 'Automate tenant vanity domains with Cloudflare Custom Hostnames.',
+  'domain.customHostnamesPrivacy':
+    'The token is kept only in a local secret file and uploaded as a Worker secret; it is not saved in D1, KV, or setup config.',
+  'domain.customHostnamesPrompt': 'Enable Cloudflare Custom Hostnames automation?',
   'domain.action.retryCheck': 'Recheck',
   'domain.action.reloadPage': 'Reload Page',
   'domain.action.openCloudflareDashboard': 'Open Cloudflare Dashboard',
@@ -225,6 +233,12 @@ const en: Translations = {
   'domain.apiDomain': 'API / Issuer domain (e.g., auth.example.com)',
   'domain.loginUiDomain': 'Login UI domain (Enter to skip)',
   'domain.adminUiDomain': 'Admin UI domain (Enter to skip)',
+  'domain.baseDomainDepthError':
+    'Base Domain must be the parent domain used by tenant URLs. "{{hostname}}" has too many labels before the registered domain.',
+  'domain.uiDomainDepthError':
+    '{{label}} domain "{{hostname}}" is too deep for the standard tenant domain model.',
+  'domain.suggestedHost': 'Suggested host: {{hostname}}',
+  'domain.uiRequiresOwnRoute': '{{label}} custom domain requires its own Worker route.',
   'domain.enterDomains': 'Enter custom domains (leave empty to use Cloudflare defaults)',
   'domain.singleTenantNote': 'In single-tenant mode, Issuer URL = API domain',
   'domain.usingWorkersDev': '(using Cloudflare workers.dev domain)',
@@ -273,6 +287,7 @@ const en: Translations = {
   'keys.generated': 'Keys generated ({{path}})',
   'keys.existing': 'Keys already exist for environment "{{env}}"',
   'keys.existingWarning': 'Existing keys will be overwritten.',
+  'keys.replaced': 'Existing keys were replaced after environment availability was confirmed.',
   'keys.error': 'Failed to generate keys',
   'keys.regeneratePrompt': 'Regenerate keys?',
   'keys.regenerateWarning': 'This will invalidate all existing tokens!',
@@ -323,6 +338,15 @@ const en: Translations = {
   'config.shards': 'shards',
   'config.sec': 'sec',
   'config.automatic': 'Automatic',
+  'config.d1Routing': 'D1 Routing:',
+  'config.placement': 'Placement:',
+  'config.provisioning': 'Provisioning:',
+  'config.uiEnvNoApi': 'ui.env will be created after an API URL is configured.',
+  'config.wranglerConfigsSaved': 'Saved {{count}} wrangler.toml master configurations',
+  'config.wranglerConfigsPartial': 'Some wrangler configurations could not be saved',
+  'config.wranglerConfigsSyncing': 'Syncing wrangler configurations to packages...',
+  'config.wranglerConfigsSynced': 'Synced wrangler configurations to {{count}} components',
+  'config.wranglerConfigsSyncFailed': 'Failed to sync wrangler configurations',
 
   // Deploy
   'deploy.prompt': 'Start setup with this configuration?',
@@ -353,6 +377,8 @@ const en: Translations = {
   'deploy.wranglerKeep': '📝 Keep manual changes (deploy as-is)',
   'deploy.wranglerBackup': '💾 Backup and overwrite with master',
   'deploy.wranglerOverwrite': '⚠️  Overwrite with master (lose changes)',
+  'deploy.initialProvisioningFailed':
+    'Cloudflare provisioning did not complete. No environment lock was created; run init again to resume safely.',
 
   // Email provider
   'email.title': 'Email Provider',
@@ -409,15 +435,25 @@ const en: Translations = {
   // Cloudflare API Token
   'cf.apiTokenPrompt': 'Enter Cloudflare API Token',
   'cf.apiTokenValidation': 'Please enter a valid API Token',
-
-  // OIDC Profile
-  'profile.prompt': 'Select OIDC profile',
-  'profile.basicOp': 'Basic OP (Standard OIDC Provider)',
-  'profile.basicOpDesc': 'Standard OIDC features',
-  'profile.fapiRw': 'FAPI Read-Write (Financial Grade)',
-  'profile.fapiRwDesc': 'FAPI 1.0 Read-Write Security Profile compliant',
-  'profile.fapi2Security': 'FAPI 2.0 Security Profile',
-  'profile.fapi2SecurityDesc': 'FAPI 2.0 Security Profile compliant (highest security)',
+  'cf.apiTokenCreationMethod': 'How do you want to create the API token?',
+  'cf.apiTokenCreateFromLink': 'Create from a preconfigured link (recommended)',
+  'cf.apiTokenCreateFromLinkDesc':
+    'Open Cloudflare with the required permission and zone already selected',
+  'cf.apiTokenCreateManually': 'Create manually',
+  'cf.apiTokenCreateManuallyDesc':
+    'Review the required permission and configure the token yourself',
+  'cf.apiTokenTemplateUrl': 'Cloudflare token creation URL:',
+  'cf.apiTokenTemplateOpenPrompt': 'Press Enter to open Cloudflare in your browser',
+  'cf.apiTokenTemplateOpened': 'Opened the Cloudflare token creation page',
+  'cf.apiTokenTemplateOpenFailed': 'The browser could not be opened. Open the URL below manually.',
+  'cf.apiTokenManualTitle': 'Create a user API token with the following settings:',
+  'cf.apiTokenManualType': 'Use an API Token, not the Global API Key.',
+  'cf.apiTokenManualPermission': 'Permission: Zone > SSL and Certificates > Edit',
+  'cf.apiTokenManualResource': 'Zone resource: Include > Specific zone > {{zone}}',
+  'cf.apiTokenManualLeastPrivilege': 'Do not add unrelated permissions or zones.',
+  'cf.apiTokenSecretOnce':
+    'The token secret is shown only once. Copy it before leaving Cloudflare.',
+  'cf.apiTokenSelectedZone': 'the zone used by this environment',
 
   // Tenant configuration
   'tenant.title': 'Tenant Mode',
@@ -435,6 +471,19 @@ const en: Translations = {
   'tenant.defaultTenantPrompt': 'Default tenant name (identifier)',
   'tenant.defaultTenantValidation': 'Only lowercase alphanumeric and hyphens allowed',
   'tenant.displayNamePrompt': 'Default tenant display name',
+  'tenant.domainSetupHint': 'Leave empty to use workers.dev in single-tenant mode.',
+  'tenant.customDomainExamples': 'With a custom domain:',
+  'tenant.nakedDomainExample': 'https://example.com (issuer without a tenant subdomain)',
+  'tenant.subdomainExample': 'https://acme.example.com (issuer with a tenant subdomain)',
+  'tenant.idRules':
+    'Tenant IDs must be 1–63 characters, start with a lowercase letter, and contain only lowercase letters, numbers, and hyphens.',
+  'tenant.randomIdHint':
+    'A random tenant ID avoids exposing customer or business names in the issuer URL.',
+  'tenant.randomIdPrompt': 'Generate a random tenant ID? ({{id}})',
+  'tenant.initialDisplayName': 'Initial Tenant',
+  'tenant.nakedDomainPrompt': 'Use the base domain as the issuer for the primary tenant?',
+  'tenant.primaryTenantPrompt':
+    'Primary tenant ID for the base domain (leave empty to use the initial tenant)',
   'tenant.singleTenantTitle': 'Single-tenant URL Configuration',
   'tenant.singleTenantNote1': 'In single-tenant mode:',
   'tenant.singleTenantNote2': 'Issuer URL = API custom domain (or workers.dev fallback)',
@@ -519,6 +568,18 @@ const en: Translations = {
   'complete.urls': 'URLs:',
   'complete.configLocation': 'Configuration:',
   'complete.keysLocation': 'Keys:',
+  'complete.createdResources': 'Created Resources:',
+  'complete.generatedFiles': 'Generated Files:',
+  'complete.automaticStep1': '1. Apply schemas and deploy the complete release:',
+  'complete.automaticStep2':
+    '2. When prompted, create and enter a one-time Cloudflare bootstrap token.',
+  'complete.automaticStep2Detail':
+    'Setup registers split child tokens directly on Control and revokes the bootstrap token.',
+  'complete.manualStep1': '1. Apply schemas and deploy with the current Wrangler OAuth login:',
+  'complete.manualStep2':
+    '2. Use Setup to execute pending provisioning operations requested from Admin.',
+  'complete.manualStep2Detail':
+    'Automatic provisioning is OFF; no Cloudflare API token is stored on Control.',
 
   // Resource provisioning
   'resource.provisioning': 'Provisioning {{resource}}...',
@@ -576,6 +637,8 @@ const en: Translations = {
   // Common
   'common.yes': 'Yes',
   'common.no': 'No',
+  'common.example': 'Example',
+  'common.comingSoon': 'coming soon',
   'common.continue': 'Continue',
   'common.cancel': 'Cancel',
   'common.skip': 'Skip',
@@ -632,6 +695,8 @@ const en: Translations = {
   'delete.r2Buckets': 'R2 Buckets',
   'delete.pages': 'Pages projects',
   'delete.partialSuccess': 'Selected resources deleted; remaining environment state was preserved',
+  'delete.inventoryUnavailable':
+    'Deletion did not start because Cloudflare resource inventory could not be verified',
 
   // Info command
   'info.title': 'Environment Information',

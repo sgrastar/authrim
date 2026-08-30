@@ -151,6 +151,7 @@ export interface ControlCapacityProvisioningTargetPreview {
   dataRole: 'tenant_core/default' | 'tenant_core/users' | 'tenant_pii' | 'lookup';
   residencyPolicyId: string;
   residencyPartition: string;
+  lookupCapacityDomainId: string | null;
   logicalShardId: string;
   databaseName: string;
   bindingRef: string;
@@ -184,6 +185,126 @@ export interface ControlProvisioningAuthorityStatus {
   capabilityState: 'disabled' | 'pending' | 'ready' | 'blocked';
   automaticExecutionAvailable: boolean;
   activeExecutor: 'control' | 'setup_operator';
+}
+
+export interface ControlStorageTopologyPolicy {
+  maxConcurrentProvisioning: number;
+  maxReadySpares: number;
+  maxD1Resources: number;
+  dailyD1CreateBudget: number;
+  dailyD1CreateUsed: number;
+  dailyD1CreateRemaining: number;
+  targetAccountCount: number;
+}
+
+export interface ControlStorageTopologySummary {
+  providerInventoryAvailable: boolean;
+  providerD1Count: number | null;
+  controlManagedD1Count: number;
+  tenantShardCount: number;
+  lookupShardCount: number;
+  activeTenantShardCount: number;
+  readySpareCount: number;
+  provisioningD1Count: number;
+  failedD1Count: number;
+  accountCount: number;
+  inFlightOperationCount: number;
+  blockedOperationCount: number;
+}
+
+export interface ControlStorageTopologyTenant {
+  tenantId: string;
+  isolationPolicy: ControlTenantIsolationPolicy;
+  policyState: ControlTenantPlacementPolicy['state'];
+  accountCount: number;
+  assignedShardCount: number;
+}
+
+export interface ControlStorageTopologyTenantShard {
+  shardId: string;
+  desiredResourceId: string;
+  databaseName: string;
+  providerDatabaseId: string | null;
+  dataRole: ControlTenantShardDataRole;
+  allocationScope: ControlTenantShardAllocationScope;
+  ownerTenantId: string | null;
+  residencyPartition: string;
+  status:
+    | 'requested'
+    | 'provisioning'
+    | 'ready'
+    | 'active'
+    | 'degraded'
+    | 'failed'
+    | 'retired'
+    | 'deleting'
+    | 'deleted';
+  healthStatus: 'unknown' | 'healthy' | 'warning' | 'degraded' | 'unavailable' | null;
+  allocationStatus: 'eligible' | 'draining' | 'full' | 'blocked' | null;
+  targetAccountCount: number | null;
+  allocatedAccountCount: number | null;
+  observedAccountCount: number | null;
+  storageBytes: number | null;
+  activeAssignmentCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ControlStorageTopologyLookupShard {
+  lookupShardId: string;
+  desiredResourceId: string;
+  databaseName: string;
+  providerDatabaseId: string | null;
+  residencyPartition: string;
+  status: 'requested' | 'provisioning' | 'ready' | 'active' | 'draining' | 'retired' | 'failed';
+  capacityWeight: number;
+  activeBucketCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ControlStorageTopologyOperation {
+  operationId: string;
+  tenantId: string | null;
+  dataRole: ControlTenantShardDataRole | 'lookup';
+  databaseName: string;
+  providerDatabaseId: string | null;
+  provisioningState:
+    | 'requested'
+    | 'creating'
+    | 'ready'
+    | 'active'
+    | 'degraded'
+    | 'failed'
+    | 'deleting'
+    | 'deleted';
+  status: ControlOperationStatus;
+  attemptCount: number;
+  lastErrorCode: string | null;
+  decidedAt: number;
+  createStartedAt: number | null;
+  readyAt: number | null;
+  updatedAt: number;
+}
+
+export interface ControlStorageTopologyProviderDatabase {
+  databaseId: string;
+  databaseName: string;
+  createdAt: string | null;
+  fileSizeBytes: number | null;
+  managedByControl: boolean;
+}
+
+export interface ControlStorageTopology {
+  environmentId: string;
+  generatedAt: number;
+  policy: ControlStorageTopologyPolicy;
+  summary: ControlStorageTopologySummary;
+  tenants: readonly ControlStorageTopologyTenant[];
+  tenantShards: readonly ControlStorageTopologyTenantShard[];
+  lookupShards: readonly ControlStorageTopologyLookupShard[];
+  operations: readonly ControlStorageTopologyOperation[];
+  providerDatabases: readonly ControlStorageTopologyProviderDatabase[];
 }
 
 export type ControlTenantShardDataRole = 'tenant_core/default' | 'tenant_core/users' | 'tenant_pii';
@@ -827,6 +948,10 @@ export interface ControlAccountRouteAllocationResult {
   targets: ControlAccountRouteAllocationTarget[];
 }
 
+export type ControlAccountRouteAllocationAttempt =
+  | { state: 'allocated'; allocation: ControlAccountRouteAllocationResult }
+  | { state: 'capacity_unavailable' };
+
 export interface ControlAccountDirectorySourceShard {
   shardId: string;
   bindingRef: string;
@@ -923,6 +1048,8 @@ export interface ControlLookupBucketLoadObservation {
   assignmentGeneration: number;
   activeIdentifierCount: number;
   activeAliasCount: number;
+  successfulRoutePublicationCount: number;
+  publicationCounterUpdatedAt: number;
   counterUpdatedAt: number;
 }
 
@@ -930,6 +1057,28 @@ export interface ControlLookupBucketLoadSnapshotRequest {
   ownerId: string;
   observedAt: number;
   buckets: ControlLookupBucketLoadObservation[];
+}
+
+export interface ControlLookupScaleOutForecastView {
+  lookupCapacityDomainId: string;
+  residencyPolicyId: string;
+  residencyPartition: string;
+  status: 'warming' | 'stable' | 'provisioning' | 'blocked';
+  observedAt: number;
+  observedActiveRouteCount: number;
+  observedSuccessfulPublicationCount: number;
+  sampleIntervalSeconds: number;
+  sampleRateMicrorowsPerSecond: number;
+  ewmaRateMicrorowsPerSecond: number;
+  forecastHorizonSeconds: number;
+  forecastNewRouteCount: number;
+  projectedActiveRouteCount: number;
+  usableCapacityRouteCount: number;
+  capacityUnitCount: number;
+  additionalUnitsRequired: number;
+  decisionGeneration: number;
+  requestedOperationId: string | null;
+  lastErrorCode: string | null;
 }
 
 export interface ControlLookupRetentionPolicyProjectionRequest {
@@ -1270,6 +1419,7 @@ export interface ControlServiceBinding {
     request: ControlReleaseRolloutRetryTargetRequest
   ): Promise<ControlReleaseRolloutStatus>;
   getProvisioningAuthorityStatus?(): Promise<ControlProvisioningAuthorityStatus>;
+  getStorageTopology?(): Promise<ControlStorageTopology>;
   previewCapacityProvisioning(
     request: ControlCapacityProfileRequest
   ): Promise<ControlCapacityProvisioningPreview>;
@@ -1422,6 +1572,13 @@ export interface ControlServiceBinding {
   allocateAccountRoute(
     request: ControlAccountRouteAllocationRequest
   ): Promise<ControlAccountRouteAllocationResult>;
+  tryAllocateAccountRoute?(
+    request: ControlAccountRouteAllocationRequest
+  ): Promise<ControlAccountRouteAllocationAttempt>;
+  commitAccountRoute?(
+    request: ControlAccountRouteAllocationRequest
+  ): Promise<ControlAccountRouteAllocationResult>;
+  releaseAccountRoute?(request: ControlAccountRouteAllocationRequest): Promise<void>;
   listAccountDirectorySourceShards(input: {
     afterShardId: string | null;
     limit: number;
@@ -1443,6 +1600,9 @@ export interface ControlServiceBinding {
   checkpointLookupBucketMigration?(
     input: ControlLookupBucketMigrationCheckpointRequest
   ): Promise<ControlLookupBucketMigrationView>;
+  releaseLookupBucketMigration?(
+    input: ControlLookupBucketMigrationCutoverRequest
+  ): Promise<ControlLookupBucketMigrationView>;
   cutoverLookupBucketMigration?(
     input: ControlLookupBucketMigrationCutoverRequest
   ): Promise<ControlLookupBucketMigrationView>;
@@ -1455,6 +1615,9 @@ export interface ControlServiceBinding {
   planNextLookupBucketMigration?(
     input: ControlLookupBucketLoadSnapshotRequest
   ): Promise<ControlLookupBucketMigrationView | null>;
+  reconcileLookupScaleOut?(
+    input: ControlLookupBucketLoadSnapshotRequest
+  ): Promise<ControlLookupScaleOutForecastView[]>;
   applyLookupRetentionPolicyProjection?(
     input: ControlLookupRetentionPolicyProjectionRequest
   ): Promise<ControlLookupRetentionPolicyProjectionView>;

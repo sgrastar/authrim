@@ -764,6 +764,52 @@ INSERT INTO oauth_clients (
   );
 
   it(
+    'materializes the configured initial tenant placement exactly once',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) {
+        return;
+      }
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-initial-tenant-placement-'));
+      const dbPath = join(tempDir, 'test.db');
+      const sharedConfig = createDefaultConfig('mt');
+      sharedConfig.tenant.placementPolicy = 'shared_pool';
+
+      try {
+        runMigrationFiles(sqlite3Path, dbPath, activeCoreMigrationFiles());
+        runSqlite(sqlite3Path, dbPath, buildInitialTenantBootstrapSql(sharedConfig));
+
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            "SELECT isolation_policy FROM tenants WHERE id = 'default';"
+          )
+        ).toBe('shared_pool');
+
+        const exclusiveConfig = createDefaultConfig('mt');
+        exclusiveConfig.tenant.placementPolicy = 'tenant_exclusive';
+        runSqlite(sqlite3Path, dbPath, buildInitialTenantBootstrapSql(exclusiveConfig));
+
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            "SELECT isolation_policy FROM tenants WHERE id = 'default';"
+          )
+        ).toBe('tenant_exclusive');
+        expect(() =>
+          runSqlite(sqlite3Path, dbPath, buildInitialTenantBootstrapSql(sharedConfig))
+        ).toThrow();
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
+  it(
     'keeps seeded no-consent Flows assigned after initial tenant rename',
     () => {
       const sqlite3Path = findSqlite3();

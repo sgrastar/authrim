@@ -635,6 +635,31 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('returns a retryable 503 when the Admin Management binding is rolling out', async () => {
+        mockEnv.OP_MANAGEMENT.fetch.mockRejectedValueOnce(
+          new Error('service binding temporarily unavailable')
+        );
+
+        const response = await app.fetch(
+          new Request('https://example.com/api/admin/users', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Origin: 'https://example.com',
+            },
+            body: '{}',
+          }),
+          { ...mockEnv, ALLOWED_ORIGINS: 'https://example.com' }
+        );
+
+        expect(response.status).toBe(503);
+        expect(response.headers.get('Cache-Control')).toBe('no-store');
+        expect(response.headers.get('Retry-After')).toBe('5');
+        await expect(response.json()).resolves.toMatchObject({
+          error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
+        });
+      });
+
       it('routes only the diagnostic log ingest endpoint to OP_MANAGEMENT', async () => {
         const ingestResponse = await app.fetch(
           new Request('https://example.com/api/v1/diagnostic-logs/ingest', {

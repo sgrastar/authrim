@@ -57,6 +57,7 @@
 	let lifecycleResult = $state('');
 	let lifecycleJobs = $state<TenantLifecycleJob[]>([]);
 	let lifecycleJobsLoading = $state(false);
+	let lifecycleJobsLoaded = false;
 	let lifecycleRetryingId = $state<string | null>(null);
 	let lifecyclePollTimer: ReturnType<typeof setInterval> | null = null;
 	let provisioningOperation = $state<TenantProvisioningOperation | null>(null);
@@ -159,6 +160,8 @@
 		if (!silent) lifecycleJobsLoading = true;
 		try {
 			lifecycleJobs = await adminTenantsAPI.lifecycleJobs(tenantId);
+			lifecycleJobsLoaded = true;
+			lifecycleError = '';
 		} catch (err) {
 			if (!silent) {
 				lifecycleError =
@@ -177,6 +180,9 @@
 			provisioningOperationError = '';
 			if (operation.status === 'succeeded') {
 				await loadTenant();
+				if (tenant?.lifecycle_state !== 'provisioning' && !lifecycleJobsLoaded) {
+					await loadLifecycleJobs();
+				}
 				if (!provisioningResourcesLoaded) {
 					provisioningResourcesLoaded = true;
 					await Promise.all([loadSettings(), loadVanityDomains()]);
@@ -259,7 +265,9 @@
 
 	onMount(async () => {
 		await loadTenant();
-		await loadLifecycleJobs();
+		if (tenant?.lifecycle_state !== 'provisioning') {
+			await loadLifecycleJobs();
+		}
 		if (tenant?.lifecycle_state === 'provisioning') {
 			await loadProvisioningOperation();
 			provisioningPollTimer = setInterval(async () => {

@@ -364,7 +364,35 @@ export class LookupBucketMigrationWorker {
             after: rowKey(table, rows[rows.length - 1]),
           };
     if (next.table === 'done') {
-      await this.reconcileCounter(this.target, view.virtualBucket, 'migration-copy');
+      const publicationCounter = await this.source
+        .withSession('first-primary')
+        .prepare(
+          `SELECT successful_route_publication_count, publication_counter_updated_at
+             FROM lookup_bucket_counters WHERE virtual_bucket = ?`
+        )
+        .bind(view.virtualBucket)
+        .first<{
+          successful_route_publication_count: number | string;
+          publication_counter_updated_at: number | string;
+        }>();
+      const successfulRoutePublicationCount = Number(
+        publicationCounter?.successful_route_publication_count
+      );
+      const publicationCounterUpdatedAt = Number(
+        publicationCounter?.publication_counter_updated_at
+      );
+      if (
+        !Number.isSafeInteger(successfulRoutePublicationCount) ||
+        successfulRoutePublicationCount < 0 ||
+        !Number.isSafeInteger(publicationCounterUpdatedAt) ||
+        publicationCounterUpdatedAt < 0
+      ) {
+        throw new Error('lookup_bucket_migration_counter_invalid');
+      }
+      await this.reconcileCounter(this.target, view.virtualBucket, 'migration-copy', {
+        successfulRoutePublicationCount,
+        publicationCounterUpdatedAt,
+      });
     }
     return {
       cursor: JSON.stringify(next),
@@ -479,30 +507,58 @@ export class LookupBucketMigrationWorker {
   private async reconcileCounter(
     database: D1Database,
     virtualBucket: number,
-    cursor: string
+    cursor: string,
+    publicationCounter?: {
+      successfulRoutePublicationCount: number;
+      publicationCounterUpdatedAt: number;
+    }
   ): Promise<void> {
     const now = this.now();
     await database
       .prepare(
         `INSERT INTO lookup_bucket_counters (
            virtual_bucket, estimated_active_identifier_count, estimated_active_alias_count,
-           exact_count_checked_at, reconciliation_cursor, reconciliation_error_code, updated_at
+           exact_count_checked_at, reconciliation_cursor, reconciliation_error_code, updated_at,
+           successful_route_publication_count, publication_counter_updated_at
          )
          SELECT ?,
                 (SELECT COUNT(*) FROM lookup_identifiers
                   WHERE virtual_bucket = ? AND lifecycle_state = 'active'),
                 (SELECT COUNT(*) FROM lookup_tenant_aliases
                   WHERE virtual_bucket = ? AND lifecycle_state = 'active'),
-                ?, ?, NULL, ?
+                ?, ?, NULL, ?,
+                COALESCE(?, (SELECT successful_route_publication_count
+                               FROM lookup_bucket_counters WHERE virtual_bucket = ?), 0),
+                COALESCE(?, (SELECT publication_counter_updated_at
+                               FROM lookup_bucket_counters WHERE virtual_bucket = ?), 0)
          ON CONFLICT(virtual_bucket) DO UPDATE SET
            estimated_active_identifier_count = excluded.estimated_active_identifier_count,
            estimated_active_alias_count = excluded.estimated_active_alias_count,
            exact_count_checked_at = excluded.exact_count_checked_at,
            reconciliation_cursor = excluded.reconciliation_cursor,
            reconciliation_error_code = NULL,
-           updated_at = excluded.updated_at`
+           updated_at = excluded.updated_at,
+           successful_route_publication_count = MAX(
+             lookup_bucket_counters.successful_route_publication_count,
+             excluded.successful_route_publication_count
+           ),
+           publication_counter_updated_at = MAX(
+             lookup_bucket_counters.publication_counter_updated_at,
+             excluded.publication_counter_updated_at
+           )`
       )
-      .bind(virtualBucket, virtualBucket, virtualBucket, now, cursor, now)
+      .bind(
+        virtualBucket,
+        virtualBucket,
+        virtualBucket,
+        now,
+        cursor,
+        now,
+        publicationCounter?.successfulRoutePublicationCount ?? null,
+        virtualBucket,
+        publicationCounter?.publicationCounterUpdatedAt ?? null,
+        virtualBucket
+      )
       .run();
   }
 

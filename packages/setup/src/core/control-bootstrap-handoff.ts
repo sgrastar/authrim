@@ -339,6 +339,8 @@ function resourceSql(
     data_role: plan.role,
     residency_policy_id: 'builtin:residency:default',
     residency_partition: 'default',
+    lookup_capacity_domain_id:
+      plan.role === 'lookup' ? 'lookup:builtin:residency:default:default' : undefined,
     read_replication_mode: 'disabled',
     allocation_scope: plan.role === 'lookup' ? undefined : placementPolicy,
     owner_tenant_id: plan.role === 'lookup' || !tenantExclusive ? undefined : tenantId,

@@ -8,7 +8,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execa } from 'execa';
 import {
@@ -54,6 +54,41 @@ function createWorkerPackage(rootDir: string, component: string, version: string
       version,
     })
   );
+}
+
+function createManagedWorkerPackage(
+  rootDir: string,
+  component: string,
+  version: string,
+  databaseId = '11111111-1111-4111-8111-111111111111'
+): void {
+  createWorkerPackage(rootDir, component, version);
+  writeFileSync(
+    join(rootDir, 'packages', component, 'wrangler.toml'),
+    [
+      'main = "src/index.ts"',
+      'compatibility_date = "2026-08-30"',
+      '',
+      '[build]',
+      'command = "node ../../scripts/guard-managed-worker-deploy.mjs"',
+      '',
+      '[env.test]',
+      `name = "test-${component}"`,
+      '',
+      '[[env.test.d1_databases]]',
+      'binding = "DB"',
+      'database_name = "test-core"',
+      `database_id = "${databaseId}"`,
+      '',
+    ].join('\n')
+  );
+}
+
+function consumeManagedDeployTicket(options: { env?: Record<string, string> } | undefined): void {
+  const ticketPath = options?.env?.AUTHRIM_MANAGED_DEPLOY_TICKET;
+  if (ticketPath) {
+    writeFileSync(join(dirname(ticketPath), 'consumed'), 'used', { mode: 0o600 });
+  }
 }
 
 function createUiPackage(rootDir: string, component: string): void {
@@ -453,6 +488,197 @@ describe('deployWorker', () => {
     expect(result.success).toBe(true);
     expect(vi.mocked(execa)).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries traffic promotion while an uploaded Worker version becomes visible', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-26T00:00:00.000Z'));
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    const versionId = '22222222-2222-4222-8222-222222222222';
+    const sleep = vi.fn(async () => undefined);
+    let uploadAttempts = 0;
+    let promotionAttempts = 0;
+
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('versions') && commandArgs.includes('upload')) {
+        uploadAttempts++;
+        writeFileSync(
+          join(String(options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY), 'wrangler-output.ndjson'),
+          `${JSON.stringify({ type: 'version-upload', version_id: versionId })}\n`
+        );
+      } else if (commandArgs.includes('versions') && commandArgs.includes('deploy')) {
+        promotionAttempts++;
+        if (promotionAttempts === 1) {
+          throw commandError(
+            'The requested Worker version could not be found, please check the ID [code: 100146]'
+          );
+        }
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'staged',
+      existingComponents: ['ar-auth'],
+      maxRetries: 3,
+      retryDelayMs: 2,
+      random: () => 0.5,
+      sleep,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ success: true, cloudflareVersionId: versionId })
+    );
+    expect(uploadAttempts).toBe(1);
+    expect(promotionAttempts).toBe(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it('verifies an uploaded version D1 binding contract before staged promotion', async () => {
+    const rootDir = createTempRoot();
+    const databaseId = '11111111-1111-4111-8111-111111111111';
+    createManagedWorkerPackage(rootDir, 'ar-auth', '1.0.0', databaseId);
+    const versionId = '22222222-2222-4222-8222-222222222222';
+    const commands: string[][] = [];
+
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      const commandArgs = [...(args ?? [])];
+      commands.push(commandArgs);
+      if (commandArgs.includes('upload')) {
+        consumeManagedDeployTicket(options);
+        writeFileSync(
+          join(String(options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY), 'wrangler-output.ndjson'),
+          `${JSON.stringify({ type: 'version-upload', version_id: versionId })}\n`
+        );
+      } else if (commandArgs.includes('view')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify({
+            resources: { bindings: [{ name: 'DB', type: 'd1', id: databaseId }] },
+          }),
+        };
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'staged',
+      existingComponents: ['ar-auth'],
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ success: true, cloudflareVersionId: versionId })
+    );
+    const viewIndex = commands.findIndex((args) => args.includes('view'));
+    const promoteIndex = commands.findIndex(
+      (args) => args.includes('versions') && args.includes('deploy')
+    );
+    expect(viewIndex).toBeGreaterThan(-1);
+    expect(promoteIndex).toBeGreaterThan(viewIndex);
+  });
+
+  it.each([
+    { label: 'missing', bindings: [], mismatch: 'DB' },
+    {
+      label: 'wrong database ID',
+      bindings: [{ name: 'DB', type: 'd1', id: '99999999-9999-4999-8999-999999999999' }],
+      mismatch: 'DB',
+    },
+    {
+      label: 'unexpected extra',
+      bindings: [
+        { name: 'DB', type: 'd1', id: '11111111-1111-4111-8111-111111111111' },
+        { name: 'EXTRA_DB', type: 'd1', id: '88888888-8888-4888-8888-888888888888' },
+      ],
+      mismatch: 'EXTRA_DB',
+    },
+  ])('blocks staged promotion for a $label D1 binding', async ({ bindings, mismatch }) => {
+    const rootDir = createTempRoot();
+    createManagedWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    const versionId = '22222222-2222-4222-8222-222222222222';
+
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('upload')) {
+        consumeManagedDeployTicket(options);
+        writeFileSync(
+          join(String(options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY), 'wrangler-output.ndjson'),
+          `${JSON.stringify({ type: 'version-upload', version_id: versionId })}\n`
+        );
+      } else if (commandArgs.includes('view')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify({ resources: { bindings } }),
+        };
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'staged',
+      existingComponents: ['ar-auth'],
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        error: `worker_version_d1_binding_mismatch:${mismatch}`,
+      })
+    );
+    expect(result.trafficCommitted).toBeUndefined();
+    expect(
+      vi
+        .mocked(execa)
+        .mock.calls.some(
+          ([, args]) => (args ?? []).includes('versions') && (args ?? []).includes('deploy')
+        )
+    ).toBe(false);
+  });
+
+  it('reports direct deployment binding mismatch as already traffic-committed', async () => {
+    const rootDir = createTempRoot();
+    createManagedWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    const versionId = '33333333-3333-4333-8333-333333333333';
+
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deploy') && !commandArgs.includes('versions')) {
+        consumeManagedDeployTicket(options);
+        writeFileSync(
+          join(String(options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY), 'wrangler-output.ndjson'),
+          `${JSON.stringify({ type: 'deploy', version_id: versionId })}\n`
+        );
+      } else if (commandArgs.includes('view')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify({ resources: { bindings: [] } }),
+        };
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        trafficCommitted: true,
+        cloudflareVersionId: versionId,
+        error: 'worker_version_d1_binding_mismatch:DB',
+      })
+    );
   });
 
   it('does not retry deterministic Cloudflare 400 failures', async () => {
@@ -1248,6 +1474,9 @@ describe('deployAll', () => {
           required: true,
           coordinator: fakeDeploymentLeaseCoordinator(leaseCalls),
         },
+        beforeWorkerMutations: async () => {
+          leaseCalls.push('refresh-generated-bindings');
+        },
       },
       ['ar-lib-core']
     );
@@ -1256,6 +1485,7 @@ describe('deployAll', () => {
     expect(commandCalls.filter((command) => command.includes('deployments list'))).toHaveLength(2);
     expect(commandCalls.some((command) => command.includes('wrangler deploy'))).toBe(true);
     expect(leaseCalls).toEqual([
+      'refresh-generated-bindings',
       'acquire:test-ar-lib-core:version-source',
       'renew:test-ar-lib-core:1',
       'start:test-ar-lib-core:deployment-source',
@@ -1263,6 +1493,83 @@ describe('deployAll', () => {
       'release:test-ar-lib-core:2',
       'complete:true:',
     ]);
+  });
+
+  it('refreshes package configuration before choosing the deployment strategy and baseline', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-lib-core', '1.0.0');
+    const commandCalls: string[] = [];
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      commandCalls.push(args.join(' '));
+      if (args.includes('deployments') && args.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'deployment-source',
+              versions: [{ version_id: 'version-source', percentage: 100 }],
+            },
+          ]),
+        };
+      }
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'staged',
+        existingComponents: ['ar-lib-core'],
+        deploymentLease: {
+          controlDatabaseId: '11111111-1111-1111-1111-111111111111',
+          environmentId: 'test',
+          actorId: 'setup:test',
+          required: true,
+          coordinator: fakeDeploymentLeaseCoordinator([]),
+        },
+        beforeWorkerMutations: async () => {
+          writeFileSync(
+            join(rootDir, 'packages', 'ar-lib-core', 'wrangler.toml'),
+            'name = "test-ar-lib-core"\n\n[[migrations]]\ntag = "v1"\nnew_sqlite_classes = ["SessionStore"]\n'
+          );
+        },
+      },
+      ['ar-lib-core']
+    );
+
+    expect(summary.failedCount).toBe(0);
+    expect(commandCalls.some((command) => command.includes('wrangler deploy'))).toBe(true);
+    expect(commandCalls.some((command) => command.includes('versions upload'))).toBe(false);
+  });
+
+  it('fails closed when a managed environment package config drifts from its generated master', async () => {
+    const rootDir = createTempRoot();
+    createManagedWorkerPackage(rootDir, 'ar-lib-core', '1.0.0');
+    const masterDir = join(rootDir, '.authrim', 'test', 'wrangler');
+    mkdirSync(masterDir, { recursive: true });
+    writeFileSync(join(rootDir, '.authrim', 'test', 'config.json'), '{}');
+    writeFileSync(
+      join(masterDir, 'ar-lib-core.toml'),
+      readFileSync(join(rootDir, 'packages', 'ar-lib-core', 'wrangler.toml'), 'utf8').replace(
+        'test-ar-lib-core',
+        'test-ar-lib-core-generated'
+      )
+    );
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        existingComponents: [],
+      },
+      ['ar-lib-core']
+    );
+
+    expect(summary.failedCount).toBe(1);
+    expect(summary.results[0].error).toContain('managed_worker_deploy_config_mismatch');
+    expect(execa).not.toHaveBeenCalled();
   });
 
   it('leases an absent Worker during a non-bootstrap deployment', async () => {
@@ -1584,7 +1891,7 @@ describe('deployAll', () => {
     );
   });
 
-  it('bootstraps Control until every runtime smoke target exists, then restores bindings', async () => {
+  it('bootstraps Control on an initial deployment, then restores bindings', async () => {
     const rootDir = createTempRoot();
     const selected = [...CORE_WORKER_COMPONENTS];
     for (const component of selected) {
@@ -1614,7 +1921,7 @@ describe('deployAll', () => {
         rootDir,
         deploymentStrategy: 'direct',
         concurrency: 2,
-        existingComponents: ['ar-control'],
+        existingComponents: [],
         automaticProvisioning: false,
         secrets: {
           RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
@@ -1631,6 +1938,81 @@ describe('deployAll', () => {
       { component: 'ar-control', config: 'wrangler.toml' },
     ]);
     expect(mutations.every(({ config }) => config !== undefined)).toBe(true);
+  });
+
+  it('never replaces an existing Control deployment with the bootstrap config', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-control', '1.0.0');
+    const controlDirectory = join(rootDir, 'packages', 'ar-control');
+    const controlBootstrapPath = join(controlDirectory, 'wrangler.bootstrap.toml');
+    writeFileSync(
+      join(controlDirectory, 'wrangler.toml'),
+      'name = "test-ar-control"\n\n[[services]]\nbinding = "SMOKE_AR_AUTH"\nservice = "test-ar-auth"\n'
+    );
+    writeFileSync(controlBootstrapPath, 'name = "test-ar-control"\n');
+
+    const configs: Array<string | undefined> = [];
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const configIndex = (args ?? []).indexOf('--config');
+      configs.push(configIndex >= 0 ? args?.[configIndex + 1] : undefined);
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        existingComponents: ['ar-control'],
+        automaticProvisioning: false,
+        secrets: {
+          RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-key',
+          SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+        },
+      },
+      ['ar-control']
+    );
+
+    expect(summary.failedCount).toBe(0);
+    expect(configs).toEqual(['wrangler.toml']);
+    expect(configs).not.toContain(controlBootstrapPath);
+  });
+
+  it('fails safe to the full Control config when the existing inventory is unknown', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-control', '1.0.0');
+    const controlDirectory = join(rootDir, 'packages', 'ar-control');
+    writeFileSync(
+      join(controlDirectory, 'wrangler.toml'),
+      'name = "test-ar-control"\n\n[[services]]\nbinding = "SMOKE_AR_AUTH"\nservice = "test-ar-auth"\n'
+    );
+    writeFileSync(join(controlDirectory, 'wrangler.bootstrap.toml'), 'name = "test-ar-control"\n');
+
+    const configs: Array<string | undefined> = [];
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const configIndex = (args ?? []).indexOf('--config');
+      configs.push(configIndex >= 0 ? args?.[configIndex + 1] : undefined);
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        automaticProvisioning: false,
+        secrets: {
+          RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-key',
+          SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+        },
+      },
+      ['ar-control']
+    );
+
+    expect(summary.failedCount).toBe(0);
+    expect(configs).toEqual(['wrangler.toml']);
   });
 
   it('waits for the VC service-binding target before deploying management', async () => {

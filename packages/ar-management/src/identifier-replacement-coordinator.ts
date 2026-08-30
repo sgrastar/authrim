@@ -554,7 +554,39 @@ export class IdentifierReplacementCoordinator {
     const lookupAccountId = directoryAccountId(operation.account_id);
     for (const pair of pairs) {
       const nextLookup = primary(await this.dependencies.lookupForBucket(pair.next.virtual_bucket));
+      const publicationCounter = await nextLookup
+        .prepare(`SELECT 1 AS present FROM lookup_bucket_counters WHERE virtual_bucket = ?`)
+        .bind(pair.next.virtual_bucket)
+        .first<{ present: number }>();
+      if (publicationCounter?.present !== 1) {
+        throw new Error('identifier_replacement_publication_counter_missing');
+      }
       await nextLookup.batch([
+        nextLookup
+          .prepare(
+            `UPDATE lookup_bucket_counters
+                SET successful_route_publication_count = successful_route_publication_count + 1,
+                    publication_counter_updated_at = MAX(publication_counter_updated_at, ?)
+              WHERE virtual_bucket = ?
+                AND EXISTS (
+                  SELECT 1 FROM lookup_identifiers
+                   WHERE virtual_bucket = ? AND index_kind = '${indexKind}'
+                     AND normalization_version = ? AND hmac_key_generation = ?
+                     AND identifier_blind_digest = ? AND tenant_id = ? AND account_id = ?
+                     AND tenant_lifecycle_state = 'active' AND runtime_route_status = 'active'
+                     AND lifecycle_state = 'pending'
+                )`
+          )
+          .bind(
+            now,
+            pair.next.virtual_bucket,
+            pair.next.virtual_bucket,
+            pair.next.normalization_version,
+            pair.next.hmac_key_generation,
+            pair.next.blind_digest,
+            operation.tenant_id,
+            lookupAccountId
+          ),
         nextLookup
           .prepare(
             `UPDATE lookup_identifiers
@@ -563,7 +595,11 @@ export class IdentifierReplacementCoordinator {
                 AND normalization_version = ? AND hmac_key_generation = ?
                 AND identifier_blind_digest = ? AND tenant_id = ? AND account_id = ?
                 AND tenant_lifecycle_state = 'active' AND runtime_route_status = 'active'
-                AND lifecycle_state IN ('pending', 'active')`
+                AND lifecycle_state IN ('pending', 'active')
+                AND EXISTS (
+                  SELECT 1 FROM lookup_bucket_counters counter
+                   WHERE counter.virtual_bucket = lookup_identifiers.virtual_bucket
+                )`
           )
           .bind(
             now,

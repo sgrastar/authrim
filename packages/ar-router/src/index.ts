@@ -1632,7 +1632,23 @@ app.all('/api/admin/*', async (c) => {
   }
 
   // Route all other admin endpoints to OP_MANAGEMENT
-  return c.env.OP_MANAGEMENT.fetch(request);
+  try {
+    return await c.env.OP_MANAGEMENT.fetch(request);
+  } catch {
+    log.warn('Admin Management service binding is temporarily unavailable', {
+      path: c.req.path,
+      method: c.req.method,
+    });
+    c.header('Cache-Control', 'no-store');
+    c.header('Retry-After', '5');
+    return c.json(
+      {
+        error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
+        error_description: 'Admin Management is temporarily unavailable during rollout',
+      },
+      503
+    );
+  }
 });
 
 app.all('/api/approval-artifacts/*', async (c) => {

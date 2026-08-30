@@ -129,13 +129,22 @@ paths:
         '409':
           $ref: '#/components/responses/ScimError'
         '503':
-          $ref: '#/components/responses/ScimError'
+          description: Account capacity or a newly deployed runtime database binding is unavailable.
+          headers:
+            Retry-After:
+              description: Minimum suggested delay before retrying the same request, in seconds.
+              schema: { type: integer, minimum: 1, example: 1 }
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/ScimError'
       description: >-
         Creates the account through the tenant directory publication workflow. Idempotency-Key is
         optional for SCIM client compatibility; when omitted, Authrim derives a stable key from the
         authenticated provisioning token and canonical request body. Returns 202 with an operation
         Location when directory publication continues asynchronously. userName is unique within the
-        tenant using case-insensitive comparison; externalId is not unique.
+        tenant using case-insensitive comparison; externalId is not unique. Capacity provisioning
+        and runtime binding propagation return retryable 503 responses.
       security:
         - scimBearer: []
   /scim/v2/Operations/{id}:
@@ -344,7 +353,8 @@ paths:
       description: >-
         Executes supported SCIM operations and returns each operation's status in the bulk response.
         A user DELETE operation returns an operation-level 409 error while the account has an active
-        legal hold.
+        legal hold. A user POST operation returns an operation-level 503 while account capacity or a
+        newly deployed runtime database binding is temporarily unavailable.
       requestBody:
         $ref: '#/components/requestBodies/ScimBulkRequest'
       responses:

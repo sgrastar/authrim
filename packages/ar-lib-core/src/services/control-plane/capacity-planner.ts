@@ -11,6 +11,7 @@ export interface ControlCapacityUnitResource {
   dataRole: ControlCapacityDataRole;
   residencyPolicyId: string;
   residencyPartition: string;
+  lookupCapacityDomainId?: string;
   workerScripts: readonly string[];
   d1Count: number;
 }
@@ -66,6 +67,8 @@ function validateResource(resource: ControlCapacityUnitResource): void {
   if (
     !SAFE_ID.test(resource.residencyPolicyId) ||
     !SAFE_ID.test(resource.residencyPartition) ||
+    (resource.lookupCapacityDomainId !== undefined &&
+      !SAFE_ID.test(resource.lookupCapacityDomainId)) ||
     !['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'].includes(
       resource.dataRole
     )

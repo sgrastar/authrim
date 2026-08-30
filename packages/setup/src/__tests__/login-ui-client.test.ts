@@ -87,6 +87,49 @@ describe('ensureLoginUiClient', () => {
     expect(progress.some((message) => message.includes('Retrying in'))).toBe(true);
   });
 
+  it('retries while the runtime lookup registry is propagating', async () => {
+    const progress: string[] = [];
+
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))
+      .mockResolvedValueOnce(
+        textResponse(
+          JSON.stringify({
+            error: 'server_error',
+            details: 'lookup_registry_snapshot_unavailable',
+          }),
+          500
+        )
+      )
+      .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          client: {
+            client_id: 'client-after-registry-publication',
+            client_name: 'Login UI',
+          },
+        })
+      );
+
+    const result = await ensureLoginUiClient({
+      apiBaseUrl: 'https://auth.example.test',
+      loginUiUrl: 'https://auth.example.test',
+      keysDir: tempDir,
+      adminBearerToken,
+      onProgress: (message) => progress.push(message),
+      retryDelayMs: 1,
+      maxRetries: 2,
+    });
+
+    expect(result).toEqual({
+      success: true,
+      clientId: 'client-after-registry-publication',
+      alreadyExists: false,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(progress.some((message) => message.includes('runtime lookup registry'))).toBe(true);
+  });
+
   it('sends X-Tenant-Id for tenant-scoped admin APIs', async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ clients: [], pagination: { total: 0 } }))

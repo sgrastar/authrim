@@ -47,11 +47,15 @@ export interface ProvisioningAuthorityRow {
 export interface ResidencyPartitionRow {
   residency_policy_id: string;
   residency_partition: string;
+  lookup_capacity_domain_id: string;
   jurisdiction: 'eu' | 'fedramp' | null;
   location_hint: 'wnam' | 'enam' | 'weur' | 'eeur' | 'apac' | 'oc' | null;
 }
 
-export interface TenantActiveResidencyRow extends ResidencyPartitionRow {
+export interface TenantActiveResidencyRow extends Omit<
+  ResidencyPartitionRow,
+  'lookup_capacity_domain_id'
+> {
   policy_generation: number;
 }
 
@@ -156,6 +160,7 @@ interface PendingPlanRow {
   data_role: ProvisionedD1DataRole;
   residency_policy_id: string;
   residency_partition: string;
+  lookup_capacity_domain_id: string | null;
   logical_shard_id: string;
   deterministic_name: string;
   binding_ref: string;
@@ -170,10 +175,13 @@ interface PendingPlanRow {
 
 interface LowWatermarkRow {
   environment_id: string;
+  tenant_id: string;
   data_role: TenantShardDataRole;
   residency_policy_id: string;
   residency_partition: string;
-  supply_count: number;
+  allocation_scope: ControlTenantShardAllocationScope;
+  owner_tenant_id: string | null;
+  active_supply_count: number;
 }
 
 interface ActiveMigrationReleaseRow {
@@ -337,6 +345,14 @@ export interface ControlRepository {
     allocationScope: ControlTenantShardAllocationScope;
     ownerTenantId: string | null;
   }): Promise<ControlOperationView | null>;
+  getActiveTenantShardSupplyCount(input: {
+    environmentId: string;
+    dataRole: TenantShardDataRole;
+    residencyPolicyId: string;
+    residencyPartition: string;
+    allocationScope: ControlTenantShardAllocationScope;
+    ownerTenantId: string | null;
+  }): Promise<number>;
   listPendingShardPlans(limit: number): Promise<TenantShardPlan[]>;
   listPendingMigrationPlans(limit: number): Promise<PendingMigrationPlan[]>;
   listLowWatermarkRequests(limit: number, environmentId?: string): Promise<LowWatermarkRequest[]>;
@@ -477,6 +493,7 @@ function planFromPendingRow(row: PendingPlanRow): TenantShardPlan {
     dataRole: row.data_role,
     residencyPolicyId: row.residency_policy_id,
     residencyPartition: row.residency_partition,
+    lookupCapacityDomainId: row.lookup_capacity_domain_id,
     logicalShardId: row.logical_shard_id,
     databaseName: row.deterministic_name,
     bindingRef: row.binding_ref,
@@ -733,7 +750,12 @@ export class D1ControlRepository implements ControlRepository {
   ): Promise<ResidencyPartitionRow | null> {
     return this.db
       .prepare(
-        `SELECT residency_policy_id, residency_partition, jurisdiction, location_hint
+        `SELECT residency_policy_id, residency_partition,
+                COALESCE(
+                  lookup_capacity_domain_id,
+                  'lookup:' || residency_policy_id || ':' || residency_partition
+                ) AS lookup_capacity_domain_id,
+                jurisdiction, location_hint
            FROM control_residency_partitions
           WHERE environment_id = ?
             AND residency_policy_id = ?
@@ -1557,6 +1579,7 @@ export class D1ControlRepository implements ControlRepository {
             data_role: plan.dataRole,
             residency_policy_id: plan.residencyPolicyId,
             residency_partition: plan.residencyPartition,
+            lookup_capacity_domain_id: plan.lookupCapacityDomainId ?? undefined,
             jurisdiction: plan.jurisdiction,
             location_hint: plan.locationHint,
             read_replication_mode: plan.readReplicationMode,
@@ -3368,8 +3391,9 @@ export class D1ControlRepository implements ControlRepository {
                  AND assigned_shard.status = 'active'
                  AND assigned_capacity.health_status = 'healthy'
                  AND assigned_capacity.allocation_status = 'eligible'
-                 AND assigned_capacity.allocated_account_count
-                       < assigned_capacity.target_account_count
+                 AND (assigned_capacity.target_account_count -
+                      assigned_capacity.allocated_account_count) * 5 >=
+                     assigned_capacity.target_account_count
             )`
       )
       .bind(
@@ -3458,7 +3482,7 @@ export class D1ControlRepository implements ControlRepository {
             AND ((? = 'shared_pool' AND shard.owner_tenant_id IS NULL) OR
                  (? = 'tenant_exclusive' AND shard.owner_tenant_id = ?))
             AND shard.status IN ('requested', 'provisioning', 'ready')
-            AND operation.status IN ('queued', 'running', 'waiting_retry')
+            AND operation.status IN ('queued', 'running', 'waiting_retry', 'blocked')
           ORDER BY operation.created_at, operation.operation_id
           LIMIT 1`
       )
@@ -3474,6 +3498,39 @@ export class D1ControlRepository implements ControlRepository {
       )
       .first<OperationRow>();
     return row ? operationView(row) : null;
+  }
+
+  async getActiveTenantShardSupplyCount(input: {
+    environmentId: string;
+    dataRole: TenantShardDataRole;
+    residencyPolicyId: string;
+    residencyPartition: string;
+    allocationScope: ControlTenantShardAllocationScope;
+    ownerTenantId: string | null;
+  }): Promise<number> {
+    const row = await this.db
+      .prepare(
+        `SELECT COUNT(*) AS active_supply_count
+           FROM control_tenant_shards shard
+          WHERE shard.environment_id = ? AND shard.data_role = ?
+            AND shard.residency_policy_id = ? AND shard.residency_partition = ?
+            AND shard.allocation_scope = ?
+            AND ((? = 'shared_pool' AND shard.owner_tenant_id IS NULL) OR
+                 (? = 'tenant_exclusive' AND shard.owner_tenant_id = ?))
+            AND shard.status = 'active'`
+      )
+      .bind(
+        input.environmentId,
+        input.dataRole,
+        input.residencyPolicyId,
+        input.residencyPartition,
+        input.allocationScope,
+        input.allocationScope,
+        input.allocationScope,
+        input.ownerTenantId
+      )
+      .first<{ active_supply_count: number }>();
+    return row?.active_supply_count ?? 0;
   }
 
   private async getOperationByIdempotency(
@@ -3500,7 +3557,7 @@ export class D1ControlRepository implements ControlRepository {
            SELECT s.d1_desired_resource_id, s.shard_id, s.data_role,
                   s.residency_policy_id, s.residency_partition, s.binding_ref,
                   s.jurisdiction, s.location_hint, s.read_replication_mode,
-                  s.allocation_scope, s.owner_tenant_id
+                  s.allocation_scope, s.owner_tenant_id, NULL AS lookup_capacity_domain_id
              FROM control_tenant_shards s
            UNION ALL
            SELECT l.d1_desired_resource_id, l.lookup_shard_id, 'lookup',
@@ -3509,7 +3566,8 @@ export class D1ControlRepository implements ControlRepository {
                   json_extract(d.desired_spec_json, '$.jurisdiction'),
                   json_extract(d.desired_spec_json, '$.location_hint'),
                   COALESCE(json_extract(d.desired_spec_json, '$.read_replication_mode'), 'disabled'),
-                  'shared_pool', NULL
+                  'shared_pool', NULL,
+                  json_extract(d.desired_spec_json, '$.lookup_capacity_domain_id')
              FROM control_lookup_physical_shards l
              JOIN control_desired_resources d
                ON d.desired_resource_id = l.d1_desired_resource_id
@@ -3520,7 +3578,7 @@ export class D1ControlRepository implements ControlRepository {
                 d.ownership_fingerprint, s.shard_id, s.data_role, s.residency_policy_id,
                 s.residency_partition, s.binding_ref, s.jurisdiction, s.location_hint,
                 s.read_replication_mode, s.allocation_scope, s.owner_tenant_id,
-                e.environment_name
+                s.lookup_capacity_domain_id, e.environment_name
            FROM control_operations o
            JOIN control_desired_resources d ON d.origin_operation_id = o.operation_id
            JOIN shard_inventory s ON s.d1_desired_resource_id = d.desired_resource_id
@@ -3597,49 +3655,92 @@ export class D1ControlRepository implements ControlRepository {
     const result = await this.db
       .prepare(
         `WITH roles(data_role) AS (
-           SELECT 'tenant_core/default' UNION ALL
            SELECT 'tenant_core/users' UNION ALL
            SELECT 'tenant_pii'
-         ), shard_state AS (
-           SELECT s.environment_id, s.data_role, s.residency_policy_id, s.residency_partition,
-                  SUM(CASE WHEN s.status IN ('requested', 'provisioning', 'ready') THEN 1 ELSE 0 END)
-                    AS supply_count,
-                  MAX(CASE
-                    WHEN s.status IN ('ready', 'active')
-                     AND c.health_status = 'healthy'
-                     AND c.allocation_status = 'eligible'
-                     AND (c.target_account_count - c.allocated_account_count) * 5 >= c.target_account_count
-                    THEN 1 ELSE 0 END) AS has_healthy_capacity
-           FROM control_tenant_shards s
-             LEFT JOIN control_shard_capacity c ON c.shard_id = s.shard_id
-            WHERE s.allocation_scope = 'shared_pool' AND s.owner_tenant_id IS NULL
-            GROUP BY environment_id, data_role, residency_policy_id, residency_partition
          )
-         SELECT p.environment_id, roles.data_role, p.residency_policy_id, p.residency_partition,
-                COALESCE(s.supply_count, 0) AS supply_count
+         SELECT p.environment_id, placement.tenant_id, roles.data_role,
+                p.residency_policy_id, p.residency_partition,
+                placement.isolation_policy AS allocation_scope,
+                CASE WHEN placement.isolation_policy = 'tenant_exclusive'
+                     THEN placement.tenant_id ELSE NULL END AS owner_tenant_id,
+                (SELECT COUNT(*)
+                   FROM control_tenant_shards inventory
+                  WHERE inventory.environment_id = p.environment_id
+                    AND inventory.data_role = roles.data_role
+                    AND inventory.residency_policy_id = p.residency_policy_id
+                    AND inventory.residency_partition = p.residency_partition
+                    AND inventory.allocation_scope = placement.isolation_policy
+                    AND ((placement.isolation_policy = 'shared_pool'
+                          AND inventory.owner_tenant_id IS NULL) OR
+                         (placement.isolation_policy = 'tenant_exclusive'
+                          AND inventory.owner_tenant_id = placement.tenant_id))
+                    AND inventory.status = 'active') AS active_supply_count
            FROM control_residency_partitions p
-           JOIN control_environment_resource_policies policy ON policy.environment_id = p.environment_id
+           JOIN control_tenant_placement_policies placement
+             ON placement.environment_id = p.environment_id
+            AND placement.policy_state = 'active'
+           JOIN control_environment_resource_policies policy
+             ON policy.environment_id = p.environment_id
            CROSS JOIN roles
-           LEFT JOIN shard_state s
-             ON s.environment_id = p.environment_id
-            AND s.data_role = roles.data_role
-            AND s.residency_policy_id = p.residency_policy_id
-            AND s.residency_partition = p.residency_partition
           WHERE p.status = 'active'
             AND (? IS NULL OR p.environment_id = ?)
-            AND COALESCE(s.has_healthy_capacity, 0) = 0
-            AND COALESCE(s.supply_count, 0) < policy.max_ready_spares
-          ORDER BY p.environment_id, p.residency_partition, roles.data_role
+            AND policy.max_ready_spares > 0
+            AND NOT EXISTS (
+              SELECT 1
+                FROM control_tenant_shard_assignments assignment
+                JOIN control_tenant_shards shard
+                  ON shard.environment_id = assignment.environment_id
+                 AND shard.shard_id = assignment.shard_id
+                JOIN control_shard_capacity capacity ON capacity.shard_id = shard.shard_id
+               WHERE assignment.environment_id = p.environment_id
+                 AND assignment.tenant_id = placement.tenant_id
+                 AND assignment.data_role = roles.data_role
+                 AND assignment.residency_policy_id = p.residency_policy_id
+                 AND assignment.residency_partition = p.residency_partition
+                 AND assignment.assignment_state = 'active'
+                 AND shard.data_role = assignment.data_role
+                 AND shard.residency_policy_id = assignment.residency_policy_id
+                 AND shard.residency_partition = assignment.residency_partition
+                 AND shard.allocation_scope = placement.isolation_policy
+                 AND ((placement.isolation_policy = 'shared_pool'
+                       AND shard.owner_tenant_id IS NULL) OR
+                      (placement.isolation_policy = 'tenant_exclusive'
+                       AND shard.owner_tenant_id = placement.tenant_id))
+                 AND shard.status = 'active'
+                 AND capacity.health_status = 'healthy'
+                 AND capacity.allocation_status = 'eligible'
+                 AND (capacity.target_account_count - capacity.allocated_account_count) * 5 >=
+                     capacity.target_account_count
+            )
+            AND NOT EXISTS (
+              SELECT 1
+                FROM control_tenant_shards pending
+               WHERE pending.environment_id = p.environment_id
+                 AND pending.data_role = roles.data_role
+                 AND pending.residency_policy_id = p.residency_policy_id
+                 AND pending.residency_partition = p.residency_partition
+                 AND pending.allocation_scope = placement.isolation_policy
+                 AND ((placement.isolation_policy = 'shared_pool'
+                       AND pending.owner_tenant_id IS NULL) OR
+                      (placement.isolation_policy = 'tenant_exclusive'
+                       AND pending.owner_tenant_id = placement.tenant_id))
+                 AND pending.status IN ('requested', 'provisioning', 'ready')
+            )
+          ORDER BY p.environment_id, placement.tenant_id, p.residency_partition,
+                   roles.data_role
           LIMIT ?`
       )
       .bind(environmentId ?? null, environmentId ?? null, limit)
       .all<LowWatermarkRow>();
     return result.results.map((row) => ({
       environmentId: row.environment_id,
+      tenantId: row.tenant_id,
       dataRole: row.data_role,
       residencyPolicyId: row.residency_policy_id,
       residencyPartition: row.residency_partition,
-      supplyCount: row.supply_count,
+      allocationScope: row.allocation_scope,
+      ownerTenantId: row.owner_tenant_id,
+      activeSupplyCount: row.active_supply_count,
     }));
   }
 
@@ -3765,34 +3866,108 @@ export class D1ControlRepository implements ControlRepository {
     if (scope === 'shared_pool') {
       const lookupRows = await this.db
         .prepare(
-          `SELECT partition.residency_policy_id, partition.residency_partition,
-                  SUM(CASE WHEN shard.status = 'active' THEN 1 ELSE 0 END) AS ready_units,
-                  SUM(CASE WHEN shard.status IN ('requested', 'provisioning', 'ready')
-                           THEN 1 ELSE 0 END) AS in_flight_units
-             FROM control_residency_partitions partition
-             LEFT JOIN control_lookup_physical_shards shard
-               ON shard.environment_id = partition.environment_id
-              AND shard.residency_partition = partition.residency_partition
-            WHERE partition.environment_id = ? AND partition.status = 'active'
-            GROUP BY partition.residency_policy_id, partition.residency_partition
-            ORDER BY partition.residency_partition`
+          `WITH domain_members AS (
+             SELECT partition.environment_id, partition.residency_policy_id,
+                    partition.residency_partition, partition.jurisdiction,
+                    partition.location_hint,
+                    COALESCE(
+                      partition.lookup_capacity_domain_id,
+                      'lookup:' || partition.residency_policy_id || ':' ||
+                        partition.residency_partition
+                    ) AS lookup_capacity_domain_id
+               FROM control_residency_partitions partition
+              WHERE partition.environment_id = ? AND partition.status = 'active'
+           ), domains AS (
+             SELECT environment_id, lookup_capacity_domain_id,
+                    MIN(residency_policy_id) AS residency_policy_id,
+                    MIN(residency_partition) AS residency_partition,
+                    COUNT(DISTINCT residency_partition) AS partition_count,
+                    COUNT(DISTINCT COALESCE(jurisdiction, '')) AS jurisdiction_count,
+                    COUNT(DISTINCT COALESCE(location_hint, '')) AS location_count
+               FROM domain_members
+              GROUP BY environment_id, lookup_capacity_domain_id
+           ), raw_shard_state AS (
+             SELECT shard.environment_id,
+                    COALESCE(
+                      json_extract(desired.desired_spec_json, '$.lookup_capacity_domain_id'),
+                      residency.lookup_capacity_domain_id,
+                      'lookup:' || residency.residency_policy_id || ':' ||
+                        residency.residency_partition
+                    ) AS lookup_capacity_domain_id,
+                    COALESCE(
+                      residency.lookup_capacity_domain_id,
+                      'lookup:' || residency.residency_policy_id || ':' ||
+                        residency.residency_partition
+                    ) AS residency_lookup_capacity_domain_id,
+                    shard.status
+               FROM control_lookup_physical_shards shard
+               JOIN control_desired_resources desired
+                 ON desired.environment_id = shard.environment_id
+                AND desired.desired_resource_id = shard.d1_desired_resource_id
+               JOIN control_residency_partitions residency
+                 ON residency.environment_id = shard.environment_id
+                AND residency.residency_policy_id =
+                    json_extract(desired.desired_spec_json, '$.residency_policy_id')
+                AND residency.residency_partition = shard.residency_partition
+                AND residency.status = 'active'
+              WHERE shard.environment_id = ?
+           ), shard_state AS (
+             SELECT environment_id, lookup_capacity_domain_id,
+                    SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS ready_units,
+                    SUM(CASE WHEN status IN ('requested', 'provisioning', 'ready')
+                             THEN 1 ELSE 0 END) AS in_flight_units
+               FROM raw_shard_state
+              GROUP BY environment_id, lookup_capacity_domain_id
+           ), shard_diagnostics AS (
+             SELECT COUNT(*) AS invalid_shard_count
+               FROM raw_shard_state shard
+              WHERE shard.lookup_capacity_domain_id <> shard.residency_lookup_capacity_domain_id
+                 OR NOT EXISTS (
+                   SELECT 1 FROM domains domain
+                    WHERE domain.environment_id = shard.environment_id
+                      AND domain.lookup_capacity_domain_id = shard.lookup_capacity_domain_id
+                 )
+           )
+           SELECT domain.residency_policy_id, domain.residency_partition,
+                  domain.lookup_capacity_domain_id, domain.partition_count,
+                  domain.jurisdiction_count, domain.location_count,
+                  COALESCE(shard.ready_units, 0) AS ready_units,
+                  COALESCE(shard.in_flight_units, 0) AS in_flight_units,
+                  diagnostics.invalid_shard_count
+             FROM domains domain
+             CROSS JOIN shard_diagnostics diagnostics
+             LEFT JOIN shard_state shard
+               ON shard.environment_id = domain.environment_id
+              AND shard.lookup_capacity_domain_id = domain.lookup_capacity_domain_id
+            ORDER BY domain.lookup_capacity_domain_id`
         )
-        .bind(environmentId)
+        .bind(environmentId, environmentId)
         .all<{
           residency_policy_id: string;
           residency_partition: string;
+          lookup_capacity_domain_id: string;
+          partition_count: number;
+          jurisdiction_count: number;
+          location_count: number;
           ready_units: number;
           in_flight_units: number;
+          invalid_shard_count: number;
         }>();
       const lookupWorkers = workers.get('lookup') ?? [];
       if (lookupWorkers.length === 0) {
         throw new Error('control_capacity_worker_inventory_missing');
       }
       for (const row of lookupRows.results) {
+        if (row.invalid_shard_count !== 0) {
+          throw new Error('control_lookup_capacity_domain_drift');
+        }
+        if (row.partition_count !== 1 || row.jurisdiction_count !== 1 || row.location_count !== 1) {
+          throw new Error('control_lookup_capacity_domain_incompatible');
+        }
         const existing = row.ready_units + row.in_flight_units;
         const minimumRequiredUnits = existing > 0 ? 1 : 1;
         targets.push({
-          unitKey: `${row.residency_policy_id}:${row.residency_partition}:lookup`,
+          unitKey: row.lookup_capacity_domain_id,
           priority: 40,
           readyUnits: row.ready_units,
           inFlightUnits: row.in_flight_units,
@@ -3805,6 +3980,7 @@ export class D1ControlRepository implements ControlRepository {
               dataRole: 'lookup',
               residencyPolicyId: row.residency_policy_id,
               residencyPartition: row.residency_partition,
+              lookupCapacityDomainId: row.lookup_capacity_domain_id,
               workerScripts: lookupWorkers,
               d1Count: 1,
             },
@@ -3827,9 +4003,10 @@ export class D1ControlRepository implements ControlRepository {
     now: number
   ): Promise<ProvisioningLease | null> {
     const leaseExpiresAt = now + 5 * 60;
-    const started = await this.db
-      .prepare(
-        `UPDATE control_operations AS candidate
+    const [started] = await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE control_operations AS candidate
             SET status = 'running', attempt_count = attempt_count + 1,
                 next_attempt_at = NULL, last_error_code = NULL,
                 lock_owner = ?, lock_expires_at = ?, fencing_token = fencing_token + 1,
@@ -3850,9 +4027,52 @@ export class D1ControlRepository implements ControlRepository {
                 FROM control_environment_resource_policies policy
                WHERE policy.environment_id = candidate.environment_id
             ), 0)`
-      )
-      .bind(ownerId, leaseExpiresAt, now, now, operationId, now)
-      .run();
+        )
+        .bind(ownerId, leaseExpiresAt, now, now, operationId, now),
+      this.db
+        .prepare(
+          `UPDATE control_operation_steps
+              SET status = 'running', attempt_count = attempt_count + 1,
+                  started_at = COALESCE(started_at, ?), updated_at = ?
+            WHERE operation_id = ? AND step_key = 'create_d1' AND EXISTS (
+              SELECT 1 FROM control_operations
+               WHERE operation_id = ? AND lock_owner = ? AND status = 'running'
+            )`
+        )
+        .bind(now, now, operationId, operationId, ownerId),
+      this.db
+        .prepare(
+          `UPDATE control_desired_resources
+              SET provisioning_state = 'creating', create_started_at = COALESCE(create_started_at, ?), updated_at = ?
+            WHERE origin_operation_id = ? AND EXISTS (
+              SELECT 1 FROM control_operations
+               WHERE operation_id = ? AND lock_owner = ? AND status = 'running'
+            )`
+        )
+        .bind(now, now, operationId, operationId, ownerId),
+      this.db
+        .prepare(
+          `UPDATE control_tenant_shards SET status = 'provisioning', updated_at = ?
+            WHERE d1_desired_resource_id IN (
+              SELECT desired_resource_id FROM control_desired_resources WHERE origin_operation_id = ?
+            ) AND EXISTS (
+              SELECT 1 FROM control_operations
+               WHERE operation_id = ? AND lock_owner = ? AND status = 'running'
+            )`
+        )
+        .bind(now, operationId, operationId, ownerId),
+      this.db
+        .prepare(
+          `UPDATE control_lookup_physical_shards SET status = 'provisioning', updated_at = ?
+            WHERE d1_desired_resource_id IN (
+              SELECT desired_resource_id FROM control_desired_resources WHERE origin_operation_id = ?
+            ) AND EXISTS (
+              SELECT 1 FROM control_operations
+               WHERE operation_id = ? AND lock_owner = ? AND status = 'running'
+            )`
+        )
+        .bind(now, operationId, operationId, ownerId),
+    ]);
     if ((started.meta.changes ?? 0) === 0) return null;
 
     const row = await this.db
@@ -3866,52 +4086,6 @@ export class D1ControlRepository implements ControlRepository {
       .bind(operationId, ownerId)
       .first<OperationRow>();
     if (!row) return null;
-
-    await this.db.batch([
-      this.db
-        .prepare(
-          `UPDATE control_operation_steps
-              SET status = 'running', attempt_count = attempt_count + 1,
-                  started_at = COALESCE(started_at, ?), updated_at = ?
-            WHERE operation_id = ? AND step_key = 'create_d1' AND EXISTS (
-              SELECT 1 FROM control_operations
-               WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
-            )`
-        )
-        .bind(now, now, operationId, operationId, ownerId, row.fencing_token),
-      this.db
-        .prepare(
-          `UPDATE control_desired_resources
-              SET provisioning_state = 'creating', create_started_at = COALESCE(create_started_at, ?), updated_at = ?
-            WHERE origin_operation_id = ? AND EXISTS (
-              SELECT 1 FROM control_operations
-               WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
-            )`
-        )
-        .bind(now, now, operationId, operationId, ownerId, row.fencing_token),
-      this.db
-        .prepare(
-          `UPDATE control_tenant_shards SET status = 'provisioning', updated_at = ?
-            WHERE d1_desired_resource_id IN (
-              SELECT desired_resource_id FROM control_desired_resources WHERE origin_operation_id = ?
-            ) AND EXISTS (
-              SELECT 1 FROM control_operations
-               WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
-            )`
-        )
-        .bind(now, operationId, operationId, ownerId, row.fencing_token),
-      this.db
-        .prepare(
-          `UPDATE control_lookup_physical_shards SET status = 'provisioning', updated_at = ?
-            WHERE d1_desired_resource_id IN (
-              SELECT desired_resource_id FROM control_desired_resources WHERE origin_operation_id = ?
-            ) AND EXISTS (
-              SELECT 1 FROM control_operations
-               WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
-            )`
-        )
-        .bind(now, operationId, operationId, ownerId, row.fencing_token),
-    ]);
     return { operation: operationView(row), ownerId, fencingToken: row.fencing_token };
   }
 

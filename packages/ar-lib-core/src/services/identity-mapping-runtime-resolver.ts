@@ -272,7 +272,7 @@ function uniqueDestinationProfileIds(edges: EdgeRow[]): string[] {
     const profileId = readString(targetRef.profileId) ?? readString(targetRef.profile_id);
     const side = readString(targetRef.side);
     if (profileId && (!side || side === 'destination')) {
-      profileIds.add(profileId);
+      profileIds.add(normalizeDestinationProfileReference(profileId));
     }
   }
   return [...profileIds];

@@ -48,11 +48,14 @@ type WorkerBindingStateRepository = Pick<
   D1WorkerBindingRepository,
   | 'ensurePendingTargets'
   | 'listDueTargets'
+  | 'acquireReconcilerLease'
+  | 'releaseReconcilerLease'
   | 'acquireDeploymentLease'
   | 'leaseIsCurrent'
   | 'releaseDeploymentLease'
   | 'recordAlreadySatisfied'
   | 'recordPatchStarted'
+  | 'rearmPatchIntent'
   | 'recordPatchResult'
   | 'recordSmokeProgress'
   | 'adoptSupersedingSmokeDeployment'
@@ -67,6 +70,7 @@ type WorkerBindingStateRepository = Pick<
 const STABILIZATION_SECONDS = 30;
 const RETRY_SECONDS = 15;
 const WORKER_DEPLOYMENT_LEASE_SECONDS = 15 * 60;
+const RECONCILER_LEASE_SECONDS = 5 * 60;
 const MAX_PARALLEL_WORKER_RECONCILIATIONS = 5;
 const CORE_SMOKE_BINDINGS: Readonly<Record<string, keyof ControlEnv>> = {
   'ar-lib-core': 'SMOKE_AR_LIB_CORE',
@@ -116,6 +120,13 @@ function classifyError(error: unknown): { code: string; permanent: boolean } {
   }
   const code = error instanceof Error ? error.message : '';
   if (code === 'control_worker_smoke_service_binding_missing') {
+    return { code, permanent: false };
+  }
+  if (
+    code === 'control_worker_active_deployment_missing' ||
+    code === 'control_worker_deployment_lease_lost' ||
+    code === 'control_worker_source_version_changed'
+  ) {
     return { code, permanent: false };
   }
   if (
@@ -226,32 +237,59 @@ export class WorkerBindingReconciler {
       deferred: 0,
       blocked: handedOffOperations.size,
     };
+    const ownerId = crypto.randomUUID();
+    const environmentIds = [...new Set(targets.map((target) => target.environmentId))];
+    const acquiredEnvironmentIds = new Set<string>();
+    for (const environmentId of environmentIds) {
+      if (
+        await this.repository.acquireReconcilerLease({
+          environmentId,
+          ownerId,
+          now: startedAt,
+          ttlSeconds: RECONCILER_LEASE_SECONDS,
+        })
+      ) {
+        acquiredEnvironmentIds.add(environmentId);
+      }
+    }
+    const leasedTargets = targets.filter((target) =>
+      acquiredEnvironmentIds.has(target.environmentId)
+    );
+    result.deferred += targets.length - leasedTargets.length;
     const targetsByWorker = new Map<string, WorkerBindingTarget[]>();
-    for (const target of targets) {
+    for (const target of leasedTargets) {
       const workerTargets = targetsByWorker.get(target.workerScriptName) ?? [];
       workerTargets.push(target);
       targetsByWorker.set(target.workerScriptName, workerTargets);
     }
-    const workerGroups = [...targetsByWorker.values()];
-    for (
-      let offset = 0;
-      offset < workerGroups.length;
-      offset += MAX_PARALLEL_WORKER_RECONCILIATIONS
-    ) {
-      const outcomes = await Promise.all(
-        workerGroups
-          .slice(offset, offset + MAX_PARALLEL_WORKER_RECONCILIATIONS)
-          .map(async (workerTargets) => {
-            const workerOutcomes: Array<'succeeded' | 'deferred' | 'blocked'> = [];
-            // A Worker deployment lease protects one script at a time. Keep targets for the same
-            // Worker ordered while allowing unrelated Workers to make progress concurrently.
-            for (const target of workerTargets) {
-              workerOutcomes.push(await this.reconcileTarget(target));
-            }
-            return workerOutcomes;
-          })
+    try {
+      const workerGroups = [...targetsByWorker.values()];
+      for (
+        let offset = 0;
+        offset < workerGroups.length;
+        offset += MAX_PARALLEL_WORKER_RECONCILIATIONS
+      ) {
+        const outcomes = await Promise.all(
+          workerGroups
+            .slice(offset, offset + MAX_PARALLEL_WORKER_RECONCILIATIONS)
+            .map(async (workerTargets) => {
+              const workerOutcomes: Array<'succeeded' | 'deferred' | 'blocked'> = [];
+              // A Worker deployment lease protects one script at a time. Keep targets for the same
+              // Worker ordered while allowing unrelated Workers to make progress concurrently.
+              for (const target of workerTargets) {
+                workerOutcomes.push(await this.reconcileTarget(target));
+              }
+              return workerOutcomes;
+            })
+        );
+        for (const outcome of outcomes.flat()) result[outcome] += 1;
+      }
+    } finally {
+      await Promise.all(
+        [...acquiredEnvironmentIds].map((environmentId) =>
+          this.repository.releaseReconcilerLease({ environmentId, ownerId })
+        )
       );
-      for (const outcome of outcomes.flat()) result[outcome] += 1;
     }
     return result;
   }

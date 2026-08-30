@@ -29,6 +29,7 @@ const {
   attemptAccountRemovals,
   eraseAccountPii,
   produceNotificationDelivery,
+  resolveCustomClaimRuntimeSources,
 } = vi.hoisted(() => ({
   mockPostgresAdapterFactory: vi.fn(),
   canonicalRuntimeUsers: new Map<string, any>(),
@@ -62,6 +63,7 @@ const {
   attemptAccountRemovals: vi.fn(),
   eraseAccountPii: vi.fn(),
   produceNotificationDelivery: vi.fn(),
+  resolveCustomClaimRuntimeSources: vi.fn(),
 }));
 
 vi.mock('../account-directory-producer', () => ({
@@ -189,17 +191,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           }
         : null
     ),
-    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
-      storageProfile: {
-        id: env.DEFAULT_AUDIT_PROFILE_ID ?? 'builtin:audit:standard',
-        kind: 'storage',
-        label: 'Standard D1 Split',
-        slices: {},
-      },
-      schemaDb: env.DB,
-      nonPiiDb: env.DB,
-      piiDb: env.DB_PII ?? null,
-    })),
+    resolveCustomClaimRuntimeSourcesFromEnv: resolveCustomClaimRuntimeSources,
     resolveCustomClaimRuntimeSourcesFromHono: vi.fn(
       async (c: { get(key: string): unknown; env: Partial<Env> }) => {
         const account = c.get('accountDataContext') as
@@ -757,13 +749,14 @@ function createMockContext(options: {
   const defaultTenantMetadata = options.tenantMetadataContext ?? {
     tenantId: options.tenantId ?? 'default',
     coreDb: mockDB,
-    route: {
-      allocationScope:
-        runtimeStorageProfileId === 'builtin:storage:tenant-d1'
-          ? 'tenant_exclusive'
-          : 'shared_pool',
-      source: mockDB,
-    },
+    ...(runtimeStorageProfileId === 'builtin:storage:tenant-d1'
+      ? {
+          route: {
+            allocationScope: 'tenant_exclusive',
+            source: mockDB,
+          },
+        }
+      : {}),
   };
 
   // Store context values (simulating Hono's context store)
@@ -922,6 +915,17 @@ describe('Admin API Handlers', () => {
     resolveOtpAccountCoreDataContextByIdentifier.mockReset();
     resolveAccountDataContextByIdentifier.mockReset();
     resolveAccountDataContext.mockReset();
+    resolveCustomClaimRuntimeSources.mockImplementation(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: env.DEFAULT_AUDIT_PROFILE_ID ?? 'builtin:audit:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    }));
     produceNotificationDelivery.mockReset().mockResolvedValue({
       reference: {
         tenantId: 'default',
@@ -1033,6 +1037,50 @@ describe('Admin API Handlers', () => {
       });
       expect(resolveAccountDataContextByIdentifier).not.toHaveBeenCalled();
       expect(c.get('accountDataContext')).toBeUndefined();
+      expect(storeChallengeRpc).toHaveBeenCalledOnce();
+    });
+
+    it('uses Lookup routing for shared-pool storage', async () => {
+      const storeChallengeRpc = vi.fn().mockResolvedValue(undefined);
+      const c = createMockContext({
+        method: 'POST',
+        body: { email: 'shared@example.com', create_user: false },
+        tenantMetadataContext: {
+          tenantId: 'default',
+          route: { allocationScope: 'shared_pool' },
+        },
+        envOverrides: {
+          OTP_HMAC_SECRET: 'test-only-otp-hmac-secret',
+          CHALLENGE_STORE: {
+            idFromName: vi.fn(() => ({ toString: () => 'challenge-shard' })),
+            get: vi.fn(() => ({ storeChallengeRpc })),
+          } as unknown as Env['CHALLENGE_STORE'],
+        },
+      });
+      resolveOtpAccountCoreDataContextByIdentifier.mockImplementationOnce(async (context) => ({
+        tenantId: 'default',
+        accountId: 'account-shared',
+        legacyUserId: 'user-shared',
+        coreDb: context.env.DB,
+        user: {
+          id: 'user-shared',
+          email: 'shared@example.com',
+          name: 'Shared User',
+          active: 1,
+          email_verified: 0,
+          account_type: 'end_user',
+          created_at: '2023-11-14T22:13:20.000Z',
+        },
+      }));
+
+      const response = await adminTestEmailCodeHandler(c);
+
+      expect(response.status).toBe(201);
+      expect(resolveOtpAccountCoreDataContextByIdentifier).toHaveBeenCalledWith(c, {
+        indexKind: 'email_exact',
+        identifier: 'shared@example.com',
+        trustedEmail: 'shared@example.com',
+      });
       expect(storeChallengeRpc).toHaveBeenCalledOnce();
     });
 
@@ -1683,7 +1731,7 @@ describe('Admin API Handlers', () => {
       expect(JSON.stringify(body)).not.toContain('coreBindingRef');
     });
 
-    it('uses exact routed search from server-owned tenant metadata without runtime sources', async () => {
+    it('uses exact routed search for shared-pool metadata without runtime sources', async () => {
       const userId = 'user-metadata-route';
       const createdAt = Date.UTC(2026, 6, 10, 10, 40, 0);
       canonicalRuntimeUsers.set(userId, {
@@ -1720,8 +1768,11 @@ describe('Admin API Handlers', () => {
           dbPII: pii,
           tenantMetadataContext: {
             tenantId: 'default',
-            storageProfileId: 'builtin:storage:tenant-d1',
             coreDb: core,
+            route: {
+              allocationScope: 'shared_pool',
+              source: core,
+            },
           },
         })
       );
@@ -1736,6 +1787,36 @@ describe('Admin API Handlers', () => {
         identifier: 'metadata-route@example.com',
       });
       expect(listCrossShardAccounts).not.toHaveBeenCalled();
+    });
+
+    it('returns retryable 503 while a scale-out route is waiting for registry publication', async () => {
+      findExactCrossShardAccounts.mockRejectedValue(
+        new Error('lookup_route_binding_generation_stale')
+      );
+      const core = createMockDB({ allResults: [] });
+      const c = createMockContext({
+        query: { search: 'scaleout@example.com' },
+        db: core,
+        dbPII: core,
+        tenantMetadataContext: {
+          tenantId: 'default',
+          coreDb: core,
+          route: {
+            allocationScope: 'shared_pool',
+            source: core,
+          },
+        },
+      });
+      const response = await adminUsersListHandler(c);
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get('Retry-After') ?? c._responseHeaders.get('Retry-After')).toBe(
+        '5'
+      );
+      await expect(response.json()).resolves.toEqual({
+        error: 'temporarily_unavailable',
+        error_description: 'The tenant runtime route is refreshing; retry shortly',
+      });
     });
 
     it('returns 400 for malformed pagination instead of reaching a database', async () => {
@@ -2598,6 +2679,66 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('allocates elastic D1 targets before the new account has a resolved PII route', async () => {
+      const mockDB = createMockDB({
+        runResult: { success: true },
+        firstResult: {
+          id: 'account:elastic-user-id',
+          legacy_user_id: 'elastic-user-id',
+          tenant_id: 'default',
+          lifecycle_state: 'active',
+          email_verified: 0,
+          phone_number_verified: 0,
+          account_type: 'end_user',
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        },
+      });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      const bootstrapPii = createMockDB({
+        runResult: { success: true },
+        firstResult: {
+          account_id: 'account:elastic-user-id',
+          email: 'elastic-user@example.com',
+        },
+      });
+      resolveAccountCreationTargets.mockResolvedValueOnce({
+        tenantCoreUsers: mockDB,
+        tenantPii: bootstrapPii,
+        residencyPartition: 'default',
+      });
+      resolveCustomClaimRuntimeSources.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:audit:standard',
+          kind: 'storage',
+          label: 'Standard D1 Split',
+          slices: {},
+        },
+        schemaDb: mockDB,
+        nonPiiDb: null,
+        piiDb: null,
+      });
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-elastic-user' },
+        body: { email: 'elastic-user@example.com' },
+        db: mockDB,
+        dbPII: bootstrapPii,
+        envOverrides: {
+          CONTROL: {} as Env['CONTROL'],
+        },
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(executeDurableAccountCreation).toHaveBeenCalledOnce();
+      expect(resolveAccountCreationTargets).toHaveBeenCalledOnce();
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ user: expect.anything() }),
+        201
+      );
+    });
+
     it('should create a canonical runtime user when runtime cutover is enabled', async () => {
       const mockDB = createMockDB({
         runResult: { success: true },
@@ -2761,6 +2902,108 @@ describe('Admin API Handlers', () => {
         },
         503
       );
+      expect(c._responseHeaders.get('Retry-After')).toBe('10');
+    });
+
+    it('should report runtime binding propagation as retryable after allocation succeeds', async () => {
+      const mockDB = createMockDB({ runResult: { success: true } });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      resolveAccountCreationTargets.mockRejectedValueOnce(
+        new Error('account_directory_write_binding_unavailable')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-binding-propagating' },
+        body: { email: 'binding-propagating@example.com' },
+        db: mockDB,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'runtime_binding_propagating',
+          error_description: 'Runtime database binding is propagating; retry shortly',
+        },
+        503
+      );
+      expect(c._responseHeaders.get('Retry-After')).toBe('1');
+    });
+
+    it('should report lookup registry generation propagation as retryable', async () => {
+      const mockDB = createMockDB({ runResult: { success: true } });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      executeDurableAccountCreation.mockRejectedValueOnce(
+        new Error('lookup_registry_generation_mismatch')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-lookup-registry-propagating' },
+        body: { email: 'lookup-registry-propagating@example.com' },
+        db: mockDB,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'snapshot_generation_propagating',
+          error_description: 'Runtime lookup registry generation is propagating; retry shortly',
+        },
+        503
+      );
+      expect(c._responseHeaders.get('Retry-After')).toBe('1');
+    });
+
+    it('should report a rejected Control allocation RPC as a retryable rollout state', async () => {
+      const mockDB = createMockDB({ runResult: { success: true } });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      executeDurableAccountCreation.mockRejectedValueOnce(
+        new Error('control_account_allocation_rpc_unavailable')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-control-rpc-unavailable' },
+        body: { email: 'control-rpc@example.com' },
+        db: mockDB,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
+          error_description: 'Control plane is temporarily unavailable during rollout',
+        },
+        503
+      );
+      expect(c._responseHeaders.get('Retry-After')).toBe('5');
+    });
+
+    it('should keep an invalid Control allocation response as a server error', async () => {
+      const mockDB = createMockDB({ runResult: { success: true } });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      executeDurableAccountCreation.mockRejectedValueOnce(
+        new Error('account_directory_capacity_response_invalid')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-invalid-capacity-response' },
+        body: { email: 'invalid-capacity-response@example.com' },
+        db: mockDB,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'server_error',
+          error_description: 'Failed to create user',
+          details: 'account_directory_capacity_response_invalid',
+        },
+        500
+      );
+      expect(c._responseHeaders.get('Retry-After')).toBeUndefined();
     });
   });
 

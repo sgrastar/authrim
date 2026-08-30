@@ -3,7 +3,11 @@ import type { AuthrimConfig } from './config.js';
 import type { AuthrimLock } from './lock.js';
 import { saveLockFile } from './lock.js';
 import type { WorkerComponent } from './naming.js';
-import { saveMasterWranglerConfigs, syncWranglerConfigs } from './wrangler-sync.js';
+import {
+  checkWranglerStatus,
+  saveMasterWranglerConfigs,
+  syncWranglerConfigs,
+} from './wrangler-sync.js';
 import {
   compileControlWorkerInventoryFromArtifacts,
   registerControlWorkerInventory,
@@ -110,6 +114,20 @@ export async function refreshWorkerDeploymentArtifacts(input: {
   });
   if (!synced.success) {
     throw new Error(`wrangler_config_sync_failed:${synced.errors.join(',')}`);
+  }
+  const statuses = await checkWranglerStatus({
+    baseDir: input.baseDir,
+    env: input.env,
+    packagesDir: join(input.baseDir, 'packages'),
+    components: input.components,
+  });
+  const mismatches = statuses.filter(
+    (status) => !status.masterExists || !status.deployExists || !status.inSync
+  );
+  if (mismatches.length > 0) {
+    throw new Error(
+      `wrangler_config_post_sync_mismatch:${mismatches.map((status) => status.component).join(',')}`
+    );
   }
   return {
     lock,

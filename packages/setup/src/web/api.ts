@@ -25,8 +25,10 @@ import {
   provisionResources,
   provisionR2Buckets,
   buildR2BucketProvisioningStatus,
+  confirmEnvironmentObservedForDeletion,
   detectEnvironments,
   deleteEnvironment,
+  EnvironmentInventoryUnavailableError,
   getWorkersSubdomain,
   checkAdminSetupStatus,
   generateAndStoreSetupToken,
@@ -42,8 +44,8 @@ import {
   seedRuntimeProfiles,
   getWorkerDeployments,
   listR2Buckets,
-  hasControlManagedResourcesForEnvironment,
   type CloudflareAuth,
+  type EnvironmentInfo,
   findMigrationsRoot,
   getAccountId,
   getCloudflareApiToken,
@@ -1809,25 +1811,26 @@ export function createApiRoutes(): Hono {
           env: envName,
           operation: 'web-key-generation',
         });
-        const targetProductVersion = operationLock.lock
-          ? await getRootProductVersion(baseDir)
-          : undefined;
         const decision = evaluateEnvironmentOperation({
-          operation: 'config_mutation',
+          // This endpoint is part of initial provisioning. Treating it as a generic config
+          // mutation allowed an existing environment's key material to be overwritten before
+          // /provision rejected the same environment.
+          operation: 'provision',
           lock: operationLock.lock,
-          targetVersion: targetProductVersion,
         });
         if (!decision.allowed) {
           return c.json(
             {
               success: false,
-              error: environmentOperationBlockMessage(decision, targetProductVersion),
-              requiredCommand: `authrim-setup update --env ${envName}`,
+              error: environmentOperationBlockMessage(decision),
+              errorCode: decision.reason,
+              requiredAction: 'finish_environment_deletion_or_choose_another_name',
             },
             409
           );
         }
 
+        const replacedExistingKeys = keysExistForEnvironment(baseDir, envName, keysBaseDir);
         addProgress('Generating cryptographic keys...');
         const secrets = generateAllSecrets(keyId);
 
@@ -1844,6 +1847,7 @@ export function createApiRoutes(): Hono {
           keyId: secrets.keyPair.keyId,
           publicKeyJwk: secrets.keyPair.publicKeyJwk,
           keysPath: externalKeysDir,
+          replacedExistingKeys,
         });
       } catch (error) {
         state.error = sanitizeError(error);
@@ -2681,6 +2685,8 @@ export function createApiRoutes(): Hono {
             {
               success: false,
               error: environmentOperationBlockMessage(provisionDecision),
+              errorCode: provisionDecision.reason,
+              requiredAction: 'finish_environment_deletion_or_choose_another_name',
             },
             409
           );
@@ -5101,9 +5107,52 @@ export function createApiRoutes(): Hono {
       };
       addLocalProgress('Scanning Cloudflare account for Authrim environments...');
 
-      const environments = await detectEnvironments(addLocalProgress);
+      const detectedEnvironments = await detectEnvironments(addLocalProgress);
       const baseDir = findAuthrimBaseDir(process.cwd());
       const targetVersion = await getRootProductVersion(baseDir);
+      const environmentsByName = new Map<string, EnvironmentInfo>(
+        detectedEnvironments.map((environment) => [environment.env, environment])
+      );
+
+      // Cloudflare inventory and local release state are complementary. A final deletion retry can
+      // leave no remote resources while lock.json still records an environment that must either be
+      // cleaned up or resumed. Keep that environment visible instead of letting the setup wizard
+      // proceed until /provision rejects it after key generation.
+      for (const localEnv of listEnvironments(baseDir)) {
+        const { lock } = await loadLockFileAuto(baseDir, localEnv);
+        const environment = environmentsByName.get(localEnv) ?? {
+          env: localEnv,
+          workers: [],
+          d1: [],
+          kv: [],
+          queues: [],
+          r2: [],
+          pages: [],
+        };
+        if (lock) {
+          const mergeByName = <T extends { name: string }>(current: T[], additions: T[]): T[] =>
+            Array.from(
+              new Map(
+                [...current, ...additions].map((resource) => [resource.name, resource])
+              ).values()
+            );
+          environment.workers = mergeByName(
+            environment.workers,
+            Object.values(lock.workers ?? {}).map((resource) => ({ name: resource.name }))
+          );
+          environment.d1 = mergeByName(environment.d1, Object.values(lock.d1));
+          environment.kv = mergeByName(
+            environment.kv,
+            Object.values(lock.kv).map((resource) => ({ name: resource.name, id: resource.id }))
+          );
+          environment.queues = mergeByName(environment.queues, Object.values(lock.queues ?? {}));
+          environment.r2 = mergeByName(environment.r2, Object.values(lock.r2 ?? {}));
+        }
+        environmentsByName.set(localEnv, environment);
+      }
+      const environments = Array.from(environmentsByName.values()).sort((left, right) =>
+        left.env.localeCompare(right.env)
+      );
       const environmentsWithRelease = await Promise.all(
         environments.map(async (environment) => {
           try {
@@ -5594,9 +5643,6 @@ export function createApiRoutes(): Hono {
             400
           );
         }
-        const deletesEntireEnvironment =
-          deleteWorkers && deleteD1 && deleteKV && deleteQueues && deleteR2 && deletePages;
-
         state.status = 'provisioning'; // Reuse provisioning status
         state.error = null;
         state.deployResults = [];
@@ -5613,18 +5659,14 @@ export function createApiRoutes(): Hono {
         });
         let environmentObservedRemotely = Boolean(operationLock.lock);
         if (!environmentObservedRemotely) {
-          try {
-            environmentObservedRemotely = (await detectEnvironments()).some(
-              (candidate) => candidate.env === env
-            );
-            if (!environmentObservedRemotely) {
-              environmentObservedRemotely = await hasControlManagedResourcesForEnvironment(env);
-            }
-          } catch {
-            // Without a local lock, only allow deletion recovery when remote resources can be
-            // confirmed. Authentication or inventory failures must not bypass this guard.
-            environmentObservedRemotely = false;
-          }
+          environmentObservedRemotely = await confirmEnvironmentObservedForDeletion(env, {
+            deleteWorkers,
+            deleteD1,
+            deleteKV,
+            deleteQueues,
+            deleteR2,
+            deletePages,
+          });
         }
         const deleteDecision = evaluateEnvironmentOperation({
           operation: 'delete',
@@ -5652,6 +5694,9 @@ export function createApiRoutes(): Hono {
           deleteQueues,
           deleteR2,
           deletePages,
+          knownWorkerNames: operationLock.lock
+            ? Object.values(operationLock.lock.workers ?? {}).map((entry) => entry.name)
+            : [],
           knownD1Names: operationLock.lock
             ? Object.values(operationLock.lock.d1).map((entry) => entry.name)
             : [],
@@ -5678,7 +5723,8 @@ export function createApiRoutes(): Hono {
           );
         }
 
-        if (result.success && deletesEntireEnvironment) {
+        const environmentEmpty = result.environmentEmpty === true;
+        if (result.success && environmentEmpty) {
           const cleanupResult = await cleanupLocalEnvironmentArtifacts({
             baseDir,
             env,
@@ -5715,6 +5761,7 @@ export function createApiRoutes(): Hono {
             success: result.success,
             error: state.error,
             completion: result.completion,
+            environmentDeleted: result.success && environmentEmpty,
             deleted: result.deleted,
             manualR2: result.manualR2,
             errors: result.errors,
@@ -5727,8 +5774,21 @@ export function createApiRoutes(): Hono {
       } catch (error) {
         state.status = 'error';
         state.error = sanitizeError(error);
+        addProgress(`❌ ${state.error}`);
         await flushProgressLog();
-        return c.json({ success: false, error: sanitizeError(error), logPath: state.logPath }, 500);
+        const inventoryUnavailable = error instanceof EnvironmentInventoryUnavailableError;
+        return c.json(
+          {
+            success: false,
+            error: state.error,
+            errors: [state.error],
+            errorCode: inventoryUnavailable ? error.code : undefined,
+            progress: state.progress,
+            operationProgress: state.operationProgress,
+            logPath: state.logPath,
+          },
+          inventoryUnavailable ? 503 : 500
+        );
       } finally {
         await operationLock?.release();
       }

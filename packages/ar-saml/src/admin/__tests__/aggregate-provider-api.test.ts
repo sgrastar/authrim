@@ -104,6 +104,24 @@ const aggregateXml = `<?xml version="1.0" encoding="UTF-8"?>
   </md:EntityDescriptor>
 </md:EntitiesDescriptor>`;
 
+const mixedAggregateXml = aggregateXml.replace(
+  '</md:EntitiesDescriptor>',
+  `<md:EntityDescriptor entityID="https://idp.example.test/idp">
+    <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+      <md:KeyDescriptor use="signing">
+        <ds:KeyInfo><ds:X509Data><ds:X509Certificate>${expiredCertificate.replace(
+          /-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\s/g,
+          ''
+        )}</ds:X509Certificate></ds:X509Data></ds:KeyInfo>
+      </md:KeyDescriptor>
+      <md:SingleSignOnService
+        Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+        Location="https://idp.example.test/sso" />
+    </md:IDPSSODescriptor>
+  </md:EntityDescriptor>
+</md:EntitiesDescriptor>`
+);
+
 interface StoredBatch {
   batchId: string;
   tenantId: string;
@@ -497,6 +515,161 @@ describe('SAML aggregate provider API', () => {
     );
   });
 
+  it('registers a provider disabled when its Field Mapping Set will be configured later', async () => {
+    const coreAdapter = createMockAdapter();
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleCreateProvider(
+      createContext({
+        body: {
+          name: 'Draft SP',
+          providerType: 'saml_sp',
+          enabled: false,
+          config: {
+            entityId: 'https://sp.example.test/sp',
+            acsUrl: 'https://sp.example.test/acs',
+            signResponses: true,
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ enabled: false });
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO identity_providers'),
+      expect.arrayContaining([0])
+    );
+  });
+
+  it('registers a disabled provider with a mapping that must be repaired before enablement', async () => {
+    const coreAdapter = createMockAdapter();
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleCreateProvider(
+      createContext({
+        body: {
+          name: 'Repairable SP',
+          providerType: 'saml_sp',
+          enabled: false,
+          config: {
+            entityId: 'https://sp.example.test/sp',
+            acsUrl: 'https://sp.example.test/acs',
+            signResponses: true,
+            identityMapping: {
+              fieldMappingSetId: 'mapping-set-pending-repair',
+              fieldMappingVersionId: 'mapping-version-pending-repair',
+            },
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      enabled: false,
+      config: {
+        identityMapping: {
+          fieldMappingSetId: 'mapping-set-pending-repair',
+          fieldMappingVersionId: 'mapping-version-pending-repair',
+        },
+      },
+    });
+  });
+
+  it('rejects enabling a provider until its Field Mapping Set is configured', async () => {
+    const coreAdapter = createMockAdapter();
+    coreAdapter.queryOne.mockResolvedValue({
+      id: 'draft-sp',
+      name: 'Draft SP',
+      provider_type: 'saml_sp',
+      enabled: 0,
+      config_json: JSON.stringify({
+        entityId: 'https://sp.example.test/sp',
+        acsUrl: 'https://sp.example.test/acs',
+        signResponses: true,
+      }),
+    });
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleUpdateProvider(
+      createContext({ params: { id: 'draft-sp' }, body: { enabled: true } })
+    );
+
+    expect(response.status).toBe(400);
+    expect(coreAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('allows an invalidly mapped provider to be disabled for emergency containment', async () => {
+    const coreAdapter = createMockAdapter();
+    coreAdapter.queryOne.mockResolvedValue({
+      id: 'broken-sp',
+      name: 'Broken SP',
+      provider_type: 'saml_sp',
+      enabled: 1,
+      config_json: JSON.stringify({
+        entityId: 'https://sp.example.test/sp',
+        acsUrl: 'https://sp.example.test/acs',
+        signResponses: true,
+        identityMapping: {
+          fieldMappingSetId: 'deleted-mapping-set',
+          fieldMappingVersionId: 'deleted-mapping-version',
+          sourceProfileId: 'directory-subject',
+          attributeDescriptors: { mail: { name: 'mail' } },
+        },
+      }),
+    });
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleUpdateProvider(
+      createContext({ params: { id: 'broken-sp' }, body: { enabled: false } })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      enabled: false,
+      config: {
+        identityMapping: {
+          fieldMappingSetId: 'deleted-mapping-set',
+          fieldMappingVersionId: 'deleted-mapping-version',
+          sourceProfileId: 'directory-subject',
+          attributeDescriptors: { mail: { name: 'mail' } },
+        },
+      },
+    });
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE identity_providers'),
+      expect.arrayContaining([expect.stringContaining('deleted-mapping-version'), 0])
+    );
+  });
+
+  it('revalidates a pending Mapping Set before a disabled provider can be enabled again', async () => {
+    const coreAdapter = createMockAdapter();
+    coreAdapter.queryOne.mockResolvedValue({
+      id: 'repairable-sp',
+      name: 'Repairable SP',
+      provider_type: 'saml_sp',
+      enabled: 0,
+      config_json: JSON.stringify({
+        entityId: 'https://sp.example.test/sp',
+        acsUrl: 'https://sp.example.test/acs',
+        signResponses: true,
+        identityMapping: {
+          fieldMappingSetId: 'mapping-set-pending-repair',
+          fieldMappingVersionId: 'mapping-version-pending-repair',
+        },
+      }),
+    });
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleUpdateProvider(
+      createContext({ params: { id: 'repairable-sp' }, body: { enabled: true } })
+    );
+
+    expect(response.status).toBe(400);
+    expect(coreAdapter.execute).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid SAML IdP JIT linking policy values on create', async () => {
     const coreAdapter = createMockAdapter();
     mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
@@ -741,6 +914,47 @@ describe('SAML aggregate provider API', () => {
     expect(response.status).toBe(400);
     expect(waitUntil).toHaveLength(0);
     expect(mocks.resolveAuthCorePersistenceAdapterFromEnv).not.toHaveBeenCalled();
+  });
+
+  it('registers mixed IdP and SP aggregate entities disabled for per-provider mapping setup', async () => {
+    const previewId = 'preview-mixed-draft';
+    const waitUntil: Array<Promise<unknown>> = [];
+    const coreAdapter = createMockAdapter();
+    mocks.resolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue(coreAdapter);
+    const response = await handleStartAggregateBatchCreate(
+      createContext({
+        params: { previewId },
+        body: {
+          entityIds: ['https://sp.example.test/sp', 'https://idp.example.test/idp'],
+          enabled: false,
+        },
+        env: {
+          DEFAULT_TENANT_ID: 'tenant-a',
+          SAML_AGGREGATE_METADATA_STORE: createAggregateStoreNamespace({
+            previewId,
+            preview: {
+              tenantId: 'tenant-a',
+              metadataXml: mixedAggregateXml,
+              entities: [
+                { entityId: 'https://sp.example.test/sp', role: 'saml_sp' },
+                { entityId: 'https://idp.example.test/idp', role: 'saml_idp' },
+              ],
+              verification: { status: 'skipped', policy: 'disabled' },
+            },
+          }) as never,
+        },
+        waitUntil,
+      })
+    );
+
+    expect(response.status).toBe(202);
+    expect(waitUntil).toHaveLength(1);
+    await Promise.all(waitUntil);
+    const inserts = coreAdapter.execute.mock.calls.filter(([sql]) =>
+      String(sql).includes('INSERT INTO identity_providers')
+    );
+    expect(inserts).toHaveLength(2);
+    expect(inserts.every(([, params]) => Array.isArray(params) && params[5] === 0)).toBe(true);
   });
 
   it('does not expose aggregate preview entities across tenants', async () => {

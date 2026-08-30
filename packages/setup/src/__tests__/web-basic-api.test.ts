@@ -3,13 +3,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
+import { EnvironmentInventoryUnavailableError } from '../core/cloudflare.js';
 import { acquireEnvironmentOperationLock } from '../core/lock.js';
 import { createApiRoutes, generateSessionToken, getSessionToken } from '../web/api.js';
 
 const cloudflareMocks = vi.hoisted(() => ({
+  confirmEnvironmentObservedForDeletion: vi.fn(),
   detectEnvironments: vi.fn(),
   deleteEnvironment: vi.fn(),
-  hasControlManagedResourcesForEnvironment: vi.fn(),
 }));
 const runReleaseUpdateCliMock = vi.hoisted(() => vi.fn());
 const completeInitialSetupMock = vi.hoisted(() => vi.fn());
@@ -18,10 +19,9 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../core/cloudflare.js')>();
   return {
     ...actual,
+    confirmEnvironmentObservedForDeletion: cloudflareMocks.confirmEnvironmentObservedForDeletion,
     detectEnvironments: cloudflareMocks.detectEnvironments,
     deleteEnvironment: cloudflareMocks.deleteEnvironment,
-    hasControlManagedResourcesForEnvironment:
-      cloudflareMocks.hasControlManagedResourcesForEnvironment,
   };
 });
 
@@ -88,14 +88,15 @@ async function writeDeployedLock(
 describe('setup web basic API contracts', () => {
   beforeEach(async () => {
     cloudflareMocks.detectEnvironments.mockReset().mockResolvedValue([]);
+    cloudflareMocks.confirmEnvironmentObservedForDeletion.mockReset().mockResolvedValue(true);
     cloudflareMocks.deleteEnvironment.mockReset().mockResolvedValue({
       success: true,
       completion: 'complete',
+      environmentEmpty: true,
       deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
       manualR2: [],
       errors: [],
     });
-    cloudflareMocks.hasControlManagedResourcesForEnvironment.mockReset().mockResolvedValue(false);
     runReleaseUpdateCliMock.mockReset();
     completeInitialSetupMock.mockReset().mockResolvedValue({
       success: false,
@@ -180,6 +181,27 @@ describe('setup web basic API contracts', () => {
             targetVersion: '0.5.0',
             canUpdate: true,
           },
+        },
+      ],
+    });
+  });
+
+  it('lists a locally preserved environment even when Cloudflare inventory is empty', async () => {
+    await writeDeployedLock('retry-env', {
+      workers: { 'ar-auth': { name: 'retry-env-ar-auth' } },
+    });
+    cloudflareMocks.detectEnvironments.mockResolvedValue([]);
+
+    const response = await createApiRoutes().request('/environments');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      environments: [
+        {
+          env: 'retry-env',
+          workers: [{ name: 'retry-env-ar-auth' }],
+          release: { currentVersion: '0.4.0' },
         },
       ],
     });
@@ -323,6 +345,7 @@ describe('setup web basic API contracts', () => {
   });
 
   it('rejects deletion when the environment has no lock file', async () => {
+    cloudflareMocks.confirmEnvironmentObservedForDeletion.mockResolvedValueOnce(false);
     const token = generateSessionToken();
     const app = createApiRoutes();
     const response = await app.request(
@@ -380,6 +403,10 @@ describe('setup web basic API contracts', () => {
       queues: {
         AUDIT_QUEUE: { id: 'queue-id', name: 'prod-audit-queue' },
       },
+      workers: {
+        'ar-auth': { name: 'prod-ar-auth' },
+        'ar-management': { name: 'prod-ar-management' },
+      },
     });
     const token = generateSessionToken();
     const app = createApiRoutes();
@@ -393,10 +420,67 @@ describe('setup web basic API contracts', () => {
     expect(cloudflareMocks.deleteEnvironment).toHaveBeenCalledWith(
       expect.objectContaining({
         env,
+        knownWorkerNames: ['prod-ar-auth', 'prod-ar-management'],
         knownD1Names: ['prod-authrim-control-db', 'prod-authrim-tenant-default-bootstrap-db'],
         knownQueueNames: ['prod-audit-queue'],
       })
     );
+  });
+
+  it('returns a retryable inventory error without deleting or cleaning local state', async () => {
+    const env = 'prod';
+    await writeDeployedLock(env, {
+      workers: { 'ar-auth': { name: 'prod-ar-auth' } },
+    });
+    cloudflareMocks.deleteEnvironment.mockRejectedValueOnce(
+      new EnvironmentInventoryUnavailableError(
+        'Workers',
+        new Error('Cloudflare API returned HTTP 503')
+      )
+    );
+
+    const app = createApiRoutes();
+    const response = await app.request(
+      `/environments/${env}/delete`,
+      post(`/environments/${env}/delete`, {}, generateSessionToken())
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      errorCode: 'environment_inventory_unavailable',
+      error: expect.stringContaining('No resources were deleted'),
+      errors: [expect.stringContaining('No resources were deleted')],
+      progress: expect.arrayContaining([expect.stringContaining('No resources were deleted')]),
+      operationProgress: { operation: 'delete', current: 0, total: 0 },
+    });
+    await expect(readFile(join(root, '.authrim', env, 'lock.json'), 'utf-8')).resolves.toContain(
+      'prod-ar-auth'
+    );
+  });
+
+  it('returns the retryable inventory error when no local lock exists', async () => {
+    const env = 'prod';
+    cloudflareMocks.confirmEnvironmentObservedForDeletion.mockRejectedValueOnce(
+      new EnvironmentInventoryUnavailableError(
+        'Workers',
+        new Error('Cloudflare API returned HTTP 503')
+      )
+    );
+
+    const app = createApiRoutes();
+    const response = await app.request(
+      `/environments/${env}/delete`,
+      post(`/environments/${env}/delete`, {}, generateSessionToken())
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      errorCode: 'environment_inventory_unavailable',
+      errors: [expect.stringContaining('No resources were deleted')],
+    });
+    expect(cloudflareMocks.deleteEnvironment).not.toHaveBeenCalled();
   });
 
   it('publishes structured resource progress while deleting an environment', async () => {
@@ -417,6 +501,7 @@ describe('setup web basic API contracts', () => {
         return {
           success: true,
           completion: 'complete',
+          environmentEmpty: true,
           deleted: {
             workers: ['prod-ar-auth'],
             d1: ['prod-authrim-core-db'],
@@ -460,6 +545,7 @@ describe('setup web basic API contracts', () => {
     cloudflareMocks.deleteEnvironment.mockResolvedValueOnce({
       success: true,
       completion: 'manual_action_required',
+      environmentEmpty: false,
       deleted: {
         workers: ['prod-ar-auth'],
         d1: [],
@@ -511,6 +597,7 @@ describe('setup web basic API contracts', () => {
       success: false,
       error: 'Failed to delete Worker: prod-ar-auth',
       completion: 'failed',
+      environmentEmpty: false,
       deleted: {
         workers: ['prod-ar-auth'],
         d1: [],
@@ -559,6 +646,7 @@ describe('setup web basic API contracts', () => {
     cloudflareMocks.deleteEnvironment.mockResolvedValueOnce({
       success: true,
       completion: 'complete',
+      environmentEmpty: false,
       deleted: {
         workers: ['prod-ar-auth'],
         d1: [],
@@ -589,6 +677,7 @@ describe('setup web basic API contracts', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       success: true,
+      environmentDeleted: false,
       progress: expect.arrayContaining([
         'Local environment state preserved for resource types not selected',
       ]),
@@ -604,6 +693,55 @@ describe('setup web basic API contracts', () => {
       workers: { 'ar-token': { name: 'prod-ar-token' } },
     });
     expect(persistedLock.workers).not.toHaveProperty('ar-auth');
+  });
+
+  it('removes local state when a partial retry deletes the final remaining resources', async () => {
+    const env = 'prod';
+    await writeDeployedLock(env, {
+      workers: { 'ar-auth': { name: 'prod-ar-auth' } },
+    });
+    cloudflareMocks.deleteEnvironment.mockResolvedValueOnce({
+      success: true,
+      completion: 'complete',
+      environmentEmpty: true,
+      deleted: {
+        workers: ['prod-ar-auth'],
+        d1: [],
+        kv: [],
+        queues: [],
+        r2: [],
+        pages: [],
+      },
+      manualR2: [],
+      errors: [],
+    });
+
+    const response = await createApiRoutes().request(
+      `/environments/${env}/delete`,
+      post(
+        `/environments/${env}/delete`,
+        {
+          deleteWorkers: true,
+          deleteD1: false,
+          deleteKV: false,
+          deleteQueues: false,
+          deleteR2: false,
+          deletePages: false,
+        },
+        generateSessionToken()
+      )
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      environmentDeleted: true,
+    });
+    await expect(readFile(join(root, '.authrim', env, 'lock.json'), 'utf-8')).rejects.toMatchObject(
+      {
+        code: 'ENOENT',
+      }
+    );
   });
 
   it.each([
@@ -704,6 +842,7 @@ describe('setup web basic API contracts', () => {
       success: true,
       config: {
         environment: { prefix: 'staging' },
+        profile: 'basic-op',
         components: { saml: true, async: true, vc: true, bridge: true, policy: true },
         urls: {
           api: { custom: 'https://api.example.com' },
@@ -1174,10 +1313,45 @@ describe('setup web basic API contracts', () => {
       keyId: 'setup-key-1',
       publicKeyJwk: { kid: 'setup-key-1' },
       keysPath: expect.stringContaining('.authrim-keys/prod'),
+      replacedExistingKeys: false,
     });
     await expect((await app.request('/keys/check/prod')).json()).resolves.toMatchObject({
       exists: true,
       env: 'prod',
+    });
+
+    const regenerated = await app.request(
+      '/keys/generate',
+      post('/keys/generate', { env: 'prod', keyId: 'setup-key-2' }, token)
+    );
+    expect(regenerated.status).toBe(200);
+    await expect(regenerated.json()).resolves.toMatchObject({
+      success: true,
+      keyId: 'setup-key-2',
+      replacedExistingKeys: true,
+    });
+  });
+
+  it('rejects initial key generation before overwriting an existing environment', async () => {
+    const token = generateSessionToken();
+    await writeDeployedLock('prod');
+    const app = createApiRoutes();
+
+    const response = await app.request(
+      '/keys/generate',
+      post('/keys/generate', { env: 'prod', keyId: 'replacement-key' }, token)
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      errorCode: 'environment_already_exists',
+      requiredAction: 'finish_environment_deletion_or_choose_another_name',
+    });
+    await expect(
+      readFile(join(root, '.authrim-keys', 'prod', 'metadata.json'), 'utf-8')
+    ).rejects.toMatchObject({
+      code: 'ENOENT',
     });
   });
 

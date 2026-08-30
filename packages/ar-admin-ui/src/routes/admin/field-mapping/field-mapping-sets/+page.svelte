@@ -110,10 +110,7 @@
 		versions: IdentityMappingFieldMappingVersionSummary[]
 	): IdentityMappingFieldMappingVersionSummary | null {
 		return (
-			versions.find(
-				(version) =>
-					version.lifecycleState === 'active' || version.latestSnapshot?.lifecycleState === 'active'
-			) ??
+			versions.find((version) => version.lifecycleState === 'active') ??
 			versions.find((version) => version.lifecycleState === 'published') ??
 			versions.find((version) => version.lifecycleState === 'draft') ??
 			versions[0] ??

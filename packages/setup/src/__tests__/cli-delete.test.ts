@@ -12,9 +12,9 @@ type MockSpinner = {
 const mocks = vi.hoisted(() => ({
   isWranglerInstalled: vi.fn(),
   checkAuth: vi.fn(),
+  confirmEnvironmentObservedForDeletion: vi.fn(),
   detectEnvironments: vi.fn(),
   deleteEnvironment: vi.fn(),
-  hasControlManagedResourcesForEnvironment: vi.fn(),
   cleanupLocalEnvironmentArtifacts: vi.fn(),
   findAuthrimBaseDir: vi.fn(),
   acquireEnvironmentOperationForEnvironment: vi.fn(),
@@ -44,9 +44,9 @@ vi.mock('ora', () => ({
 vi.mock('../core/cloudflare.js', () => ({
   isWranglerInstalled: mocks.isWranglerInstalled,
   checkAuth: mocks.checkAuth,
+  confirmEnvironmentObservedForDeletion: mocks.confirmEnvironmentObservedForDeletion,
   detectEnvironments: mocks.detectEnvironments,
   deleteEnvironment: mocks.deleteEnvironment,
-  hasControlManagedResourcesForEnvironment: mocks.hasControlManagedResourcesForEnvironment,
 }));
 
 vi.mock('../core/environment-cleanup.js', () => ({
@@ -81,7 +81,7 @@ describe('CLI environment deletion', () => {
     mocks.detectEnvironments.mockResolvedValue([
       { env: 'test', workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
     ]);
-    mocks.hasControlManagedResourcesForEnvironment.mockResolvedValue(false);
+    mocks.confirmEnvironmentObservedForDeletion.mockResolvedValue(true);
     mocks.findAuthrimBaseDir.mockReturnValue('/workspace');
     mocks.acquireEnvironmentOperationForEnvironment.mockResolvedValue({
       lock: null,
@@ -95,6 +95,7 @@ describe('CLI environment deletion', () => {
     mocks.deleteEnvironment.mockResolvedValue({
       success: true,
       completion: 'manual_action_required',
+      environmentEmpty: false,
       deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
       manualR2: [
         {
@@ -120,7 +121,7 @@ describe('CLI environment deletion', () => {
       expect(log.mock.calls.flat().join('\n')).toContain(
         'Complete the R2 actions above to finish cleanup.'
       );
-      expect(mocks.cleanupLocalEnvironmentArtifacts).toHaveBeenCalledOnce();
+      expect(mocks.cleanupLocalEnvironmentArtifacts).not.toHaveBeenCalled();
       expect(mocks.release).toHaveBeenCalledOnce();
     } finally {
       log.mockRestore();
@@ -132,6 +133,7 @@ describe('CLI environment deletion', () => {
     mocks.deleteEnvironment.mockResolvedValue({
       success: true,
       completion: 'complete',
+      environmentEmpty: true,
       deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
       manualR2: [],
       errors: [],
@@ -164,10 +166,57 @@ describe('CLI environment deletion', () => {
     expect(mocks.release).toHaveBeenCalledOnce();
   });
 
+  it('explains that deletion did not start when inventory verification fails', async () => {
+    mocks.deleteEnvironment.mockRejectedValue(
+      Object.assign(new Error('No resources were deleted'), {
+        code: 'environment_inventory_unavailable',
+      })
+    );
+
+    await expect(deleteCommand({ env: 'test', yes: true, all: true })).rejects.toThrow(
+      'No resources were deleted'
+    );
+    expect(
+      mocks.oraSpinners.some((spinner) =>
+        spinner.fail.mock.calls.some(([message]) =>
+          String(message).includes(
+            'Deletion did not start because Cloudflare resource inventory could not be verified'
+          )
+        )
+      )
+    ).toBe(true);
+    expect(mocks.release).toHaveBeenCalledOnce();
+  });
+
+  it('localizes a no-lock inventory failure before deletion starts', async () => {
+    await setLocale('ja');
+    mocks.confirmEnvironmentObservedForDeletion.mockRejectedValue(
+      Object.assign(new Error('No resources were deleted'), {
+        code: 'environment_inventory_unavailable',
+      })
+    );
+
+    await expect(deleteCommand({ env: 'test', yes: true, all: true })).rejects.toThrow(
+      'No resources were deleted'
+    );
+    expect(mocks.deleteEnvironment).not.toHaveBeenCalled();
+    expect(
+      mocks.oraSpinners.some((spinner) =>
+        spinner.fail.mock.calls.some(([message]) =>
+          String(message).includes(
+            'Cloudflareのリソース一覧を確認できなかったため、削除を開始しませんでした'
+          )
+        )
+      )
+    ).toBe(true);
+    expect(mocks.release).toHaveBeenCalledOnce();
+  });
+
   it('preserves local environment state when Cloudflare deletion has real errors', async () => {
     mocks.deleteEnvironment.mockResolvedValue({
       success: false,
       completion: 'failed',
+      environmentEmpty: false,
       deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
       manualR2: [],
       errors: ['Failed to delete Worker: test-ar-auth'],
@@ -204,6 +253,7 @@ describe('CLI environment deletion', () => {
     mocks.deleteEnvironment.mockResolvedValue({
       success: true,
       completion: 'complete',
+      environmentEmpty: false,
       deleted: {
         workers: ['test-ar-auth'],
         d1: [],
@@ -264,6 +314,7 @@ describe('CLI environment deletion', () => {
       return {
         success: true,
         completion: 'complete',
+        environmentEmpty: true,
         deleted: {
           workers: ['test-ar-auth'],
           d1: [],

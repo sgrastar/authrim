@@ -79,7 +79,8 @@ function resolveSAMLMappingSetDestinationProfiles(input: {
 			version: { schema: Record<string, unknown> };
 		} =>
 			profile.destinationType === 'saml' &&
-			destinationProfileIds.has(profile.id) &&
+			(destinationProfileIds.has(profile.id) ||
+				destinationProfileIds.has(`destination-profile-${profile.id}`)) &&
 			Boolean(profile.version?.schema)
 	);
 }

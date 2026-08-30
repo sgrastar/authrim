@@ -6,12 +6,24 @@ import {
   parseWranglerToml,
   toToml,
 } from '../core/wrangler.js';
+import { MANAGED_WORKER_DEPLOY_BUILD_COMMAND } from '../core/managed-worker-deploy.js';
 import { createDefaultConfig } from '../core/config.js';
 import type { AuthrimConfig } from '../core/config.js';
 import type { AuthrimLock } from '../core/lock.js';
 import { WORKER_COMPONENTS, getRequiredDataRolesForComponent } from '../core/naming.js';
 
 describe('Worker placement generation', () => {
+  it('protects generated deployment config with the setup-managed build guard', () => {
+    const config = createDefaultConfig('test');
+    config.components.adminUi = false;
+    const generated = generateWranglerConfig('ar-auth', config, { d1: {}, kv: {} });
+
+    expect(generated.build).toEqual({ command: MANAGED_WORKER_DEPLOY_BUILD_COMMAND });
+    expect(toToml(generated, 'test')).toContain(
+      `[build]\ncommand = "${MANAGED_WORKER_DEPLOY_BUILD_COMMAND}"`
+    );
+  });
+
   it('defaults to off and permits an explicit Smart Placement experiment', () => {
     const config = createDefaultConfig('test');
     config.urls = {

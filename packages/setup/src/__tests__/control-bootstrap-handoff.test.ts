@@ -339,6 +339,15 @@ describe('initial Control topology handoff registration', () => {
     expect(
       db
         .prepare(
+          `SELECT json_extract(desired_spec_json, '$.lookup_capacity_domain_id') AS capacity_domain
+             FROM control_desired_resources
+            WHERE logical_shard_id = 'bootstrap:lookup:default'`
+        )
+        .get()
+    ).toEqual({ capacity_domain: 'lookup:builtin:residency:default:default' });
+    expect(
+      db
+        .prepare(
           `SELECT status, COUNT(*) AS count
              FROM control_operation_steps
             WHERE step_key = 'reconcile_worker_bindings'

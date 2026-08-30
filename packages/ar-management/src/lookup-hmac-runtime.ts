@@ -14,6 +14,32 @@ interface CachedState {
 }
 
 const cache = new Map<string, CachedState>();
+const inFlight = new Map<string, Promise<ResolvedLookupHmacKeys>>();
+
+async function loadVerifiedRuntimeKeys(
+  env: Env,
+  environmentId: string,
+  nowMs: number
+): Promise<ResolvedLookupHmacKeys> {
+  try {
+    const state = await loadVerifiedLookupHmacKeyState({
+      store: env.TENANT_RUNTIME_REGISTRY!,
+      environmentId,
+      publicJwks: env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS!,
+      now: Math.floor(nowMs / 1000),
+    });
+    return await resolveLookupHmacKeys({
+      state,
+      slotA: env.LOOKUP_HMAC_KEY_SLOT_A,
+      slotB: env.LOOKUP_HMAC_KEY_SLOT_B,
+    });
+  } catch (error) {
+    if (error instanceof Error && /^lookup_hmac_key_[a-z0-9_:-]{1,96}$/u.test(error.message)) {
+      throw error;
+    }
+    throw new Error('lookup_hmac_key_state_load_failed', { cause: error });
+  }
+}
 
 export async function loadLookupHmacRuntimeKeys(
   env: Env,
@@ -33,21 +59,26 @@ export async function loadLookupHmacRuntimeKeys(
   if (!options.bypassCache && cached && nowMs - cached.loadedAt < CACHE_TTL_MS) {
     return cached.value;
   }
-  const state = await loadVerifiedLookupHmacKeyState({
-    store: env.TENANT_RUNTIME_REGISTRY,
-    environmentId,
-    publicJwks: env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS,
-    now: Math.floor(nowMs / 1000),
+  if (options.bypassCache) {
+    const resolved = await loadVerifiedRuntimeKeys(env, environmentId, nowMs);
+    cache.set(environmentId, { loadedAt: nowMs, value: resolved });
+    return resolved;
+  }
+  const active = inFlight.get(environmentId);
+  if (active) return active;
+  const loading = loadVerifiedRuntimeKeys(env, environmentId, nowMs).then((resolved) => {
+    cache.set(environmentId, { loadedAt: nowMs, value: resolved });
+    return resolved;
   });
-  const resolved = await resolveLookupHmacKeys({
-    state,
-    slotA: env.LOOKUP_HMAC_KEY_SLOT_A,
-    slotB: env.LOOKUP_HMAC_KEY_SLOT_B,
-  });
-  cache.set(environmentId, { loadedAt: nowMs, value: resolved });
-  return resolved;
+  inFlight.set(environmentId, loading);
+  try {
+    return await loading;
+  } finally {
+    if (inFlight.get(environmentId) === loading) inFlight.delete(environmentId);
+  }
 }
 
 export function resetLookupHmacRuntimeKeyCacheForTest(): void {
   cache.clear();
+  inFlight.clear();
 }

@@ -54,6 +54,7 @@ class FakeRepository implements ControlRepository {
   partition: ResidencyPartitionRow | null = {
     residency_policy_id: 'residency-default',
     residency_partition: 'jp',
+    lookup_capacity_domain_id: 'lookup:residency-default:jp',
     jurisdiction: null,
     location_hint: 'apac',
   };
@@ -93,6 +94,7 @@ class FakeRepository implements ControlRepository {
   assignableShard: Omit<ControlTenantShardCapacityTarget, 'assignmentGeneration'> | null = null;
   hasAssignment = false;
   capacityOperation: ControlOperationView | null = null;
+  activeTenantShardSupplyCount = 0;
   tenantPlacementPolicy: ControlTenantPlacementPolicy | null = {
     tenantId: 'tenant-test',
     isolationPolicy: 'shared_pool',
@@ -267,6 +269,10 @@ class FakeRepository implements ControlRepository {
 
   async findCapacityProvisioningOperation(): Promise<ControlOperationView | null> {
     return this.capacityOperation;
+  }
+
+  async getActiveTenantShardSupplyCount(): Promise<number> {
+    return this.activeTenantShardSupplyCount;
   }
 
   async listPendingShardPlans(): Promise<TenantShardPlan[]> {
@@ -929,7 +935,7 @@ describe('ControlService tenant shard provisioning', () => {
     expect(repository.operations.size).toBe(1);
   });
 
-  it('returns the exact three server-owned runtime route targets', async () => {
+  it('returns every server-owned runtime route target for a scaled-out tenant', async () => {
     const repository = new FakeRepository();
     repository.runtimeRouteTargets = (
       ['tenant_core/default', 'tenant_core/users', 'tenant_pii'] as const
@@ -946,6 +952,24 @@ describe('ControlService tenant shard provisioning', () => {
       ownerTenantId: null,
       assignmentGeneration: 1,
     }));
+    repository.runtimeRouteTargets.push(
+      {
+        ...repository.runtimeRouteTargets[1],
+        shardId: 'shard-users-2',
+        bindingRef: 'TDB_ROUTE_USERS_2_CORE',
+        databaseId: 'database-users-2',
+        databaseName: 'database-name-users-2',
+        assignmentGeneration: 2,
+      },
+      {
+        ...repository.runtimeRouteTargets[2],
+        shardId: 'shard-pii-2',
+        bindingRef: 'TDB_ROUTE_PII_2_CORE',
+        databaseId: 'database-pii-2',
+        databaseName: 'database-name-pii-2',
+        assignmentGeneration: 2,
+      }
+    );
     const service = new ControlService({ repository, env: env(), now: () => NOW });
 
     await expect(
@@ -1123,6 +1147,18 @@ describe('ControlService tenant shard provisioning', () => {
     await expect(service.getTenantRuntimeRouteTargets(request, 'env-test')).rejects.toThrow(
       'control_tenant_shard_assignment_owner_mismatch'
     );
+
+    repository.runtimeRouteTargets = repository.runtimeRouteTargets.map((target) => ({
+      ...target,
+      ownerTenantId: 'tenant-test',
+    }));
+    repository.runtimeRouteTargets.push({
+      ...repository.runtimeRouteTargets[1],
+      shardId: 'shard-users-duplicate-binding',
+    });
+    await expect(service.getTenantRuntimeRouteTargets(request, 'env-test')).rejects.toThrow(
+      'control_tenant_shard_assignment_incomplete'
+    );
   });
 
   it('returns assignment-owned deletion inventory without account allocation dependency', async () => {
@@ -1247,6 +1283,158 @@ describe('ControlService tenant shard provisioning', () => {
     expect(repository.operations.size).toBe(0);
   });
 
+  it('assigns an active shared spare when a tenant reaches the low watermark', async () => {
+    const repository = new FakeRepository();
+    repository.lowWatermark = [
+      {
+        environmentId: 'env-test',
+        tenantId: 'tenant-test',
+        dataRole: 'tenant_core/users',
+        residencyPolicyId: 'residency-default',
+        residencyPartition: 'jp',
+        allocationScope: 'shared_pool',
+        ownerTenantId: null,
+        activeSupplyCount: 2,
+      },
+    ];
+    repository.assignableShard = {
+      shardId: 'shard-shared-spare',
+      dataRole: 'tenant_core/users',
+      residencyPolicyId: 'residency-default',
+      residencyPartition: 'jp',
+      routeGeneration: 3,
+      bindingRef: 'TDB_USERS_SHARED_SPARE',
+      databaseId: 'database-shared-spare',
+      databaseName: 'authrim-test-users-jp-shared-spare',
+      allocationScope: 'shared_pool',
+      ownerTenantId: null,
+    };
+    const service = new ControlService({ repository, env: env(), now: () => NOW });
+
+    await expect(service.replenishLowWatermark()).resolves.toEqual({ planned: 1, failed: 0 });
+    expect(repository.hasAssignment).toBe(true);
+    expect(repository.operations.size).toBe(0);
+  });
+
+  it('converges simultaneous shared-pool low-watermark requests on one operation', async () => {
+    const repository = new FakeRepository();
+    repository.lowWatermark = ['tenant-a', 'tenant-b'].map((tenantId) => ({
+      environmentId: 'env-test',
+      tenantId,
+      dataRole: 'tenant_core/users' as const,
+      residencyPolicyId: 'residency-default',
+      residencyPartition: 'jp',
+      allocationScope: 'shared_pool' as const,
+      ownerTenantId: null,
+      activeSupplyCount: 2,
+    }));
+    const createD1Database = vi.fn(async ({ name }: { name: string }) => ({
+      uuid: 'database-shared-new',
+      name,
+    }));
+    const service = new ControlService({
+      repository,
+      env: env(),
+      now: () => NOW,
+      createApiClient: () =>
+        controlApi({
+          listD1Databases: async () => [],
+          createD1Database,
+        }),
+    });
+
+    await expect(service.replenishLowWatermark()).resolves.toEqual({ planned: 2, failed: 0 });
+    expect(repository.operations.size).toBe(1);
+    expect(createD1Database).toHaveBeenCalledOnce();
+  });
+
+  it('provisions exclusive low-watermark capacity with a generation-safe key', async () => {
+    const repository = new FakeRepository();
+    repository.tenantPlacementPolicy = {
+      ...required(repository.tenantPlacementPolicy),
+      tenantId: 'tenant-exclusive',
+      isolationPolicy: 'tenant_exclusive',
+    };
+    repository.lowWatermark = [
+      {
+        environmentId: 'env-test',
+        tenantId: 'tenant-exclusive',
+        dataRole: 'tenant_core/users',
+        residencyPolicyId: 'residency-default',
+        residencyPartition: 'jp',
+        allocationScope: 'tenant_exclusive',
+        ownerTenantId: 'tenant-exclusive',
+        activeSupplyCount: 4,
+      },
+    ];
+    const service = new ControlService({
+      repository,
+      env: env(),
+      now: () => NOW,
+      createApiClient: () =>
+        controlApi({
+          listD1Databases: async () => [],
+          createD1Database: async ({ name }) => ({ uuid: 'database-exclusive-new', name }),
+        }),
+    });
+
+    await expect(service.replenishLowWatermark()).resolves.toEqual({ planned: 1, failed: 0 });
+    const created = [...repository.plans.values()];
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({
+      allocationScope: 'tenant_exclusive',
+      ownerTenantId: 'tenant-exclusive',
+    });
+    expect(created[0]?.idempotencyKey).toMatch(
+      /^low-water:tenant_exclusive:tenant-core-users:4:[a-f0-9]{24}$/u
+    );
+  });
+
+  it('converges concurrent exclusive low-watermark reconciliations on the active generation', async () => {
+    const repository = new FakeRepository();
+    repository.tenantPlacementPolicy = {
+      ...required(repository.tenantPlacementPolicy),
+      tenantId: 'tenant-exclusive',
+      isolationPolicy: 'tenant_exclusive',
+    };
+    repository.lowWatermark = [
+      {
+        environmentId: 'env-test',
+        tenantId: 'tenant-exclusive',
+        dataRole: 'tenant_core/users',
+        residencyPolicyId: 'residency-default',
+        residencyPartition: 'jp',
+        allocationScope: 'tenant_exclusive',
+        ownerTenantId: 'tenant-exclusive',
+        activeSupplyCount: 3,
+      },
+    ];
+    const createD1Database = vi.fn(async ({ name }: { name: string }) => ({
+      uuid: 'database-exclusive-new',
+      name,
+    }));
+    const service = new ControlService({
+      repository,
+      env: env(),
+      now: () => NOW,
+      createApiClient: () =>
+        controlApi({
+          listD1Databases: async () => [],
+          createD1Database,
+        }),
+    });
+
+    await expect(
+      Promise.all([service.replenishLowWatermark(), service.replenishLowWatermark()])
+    ).resolves.toEqual([
+      { planned: 1, failed: 0 },
+      { planned: 1, failed: 0 },
+    ]);
+    expect(repository.operations.size).toBe(1);
+    expect(repository.plans.size).toBe(1);
+    expect(createD1Database).toHaveBeenCalledOnce();
+  });
+
   it('reuses an in-flight capacity operation instead of creating a duplicate shard', async () => {
     const repository = new FakeRepository();
     const plan = await new ControlService({
@@ -1274,6 +1462,10 @@ describe('ControlService tenant shard provisioning', () => {
 
   it('starts one capacity operation when no eligible or in-flight shard exists', async () => {
     const repository = new FakeRepository();
+    const createD1Database = vi.fn(async ({ name }: { name: string }) => ({
+      uuid: 'database-new',
+      name,
+    }));
     const service = new ControlService({
       repository,
       env: env(),
@@ -1281,7 +1473,7 @@ describe('ControlService tenant shard provisioning', () => {
       createApiClient: () =>
         controlApi({
           listD1Databases: async () => [],
-          createD1Database: async ({ name }) => ({ uuid: 'database-new', name }),
+          createD1Database,
         }),
     });
 
@@ -1290,9 +1482,65 @@ describe('ControlService tenant shard provisioning', () => {
     expect(result).toMatchObject({
       state: 'provisioning',
       target: null,
-      operation: { status: 'waiting_retry' },
+      operation: { status: 'queued' },
     });
     expect(repository.operations.size).toBe(1);
+    expect(createD1Database).not.toHaveBeenCalled();
+  });
+
+  it('converges simultaneous account-capacity requests with distinct caller keys', async () => {
+    const repository = new FakeRepository();
+    repository.activeTenantShardSupplyCount = 7;
+    repository.provisioningAuthority = {
+      automaticProvisioningEnabled: false,
+      tokenOwnership: 'none',
+      capabilityState: 'disabled',
+    };
+    const service = new ControlService({ repository, env: env(), now: () => NOW });
+
+    const [first, second] = await Promise.all([
+      service.ensureTenantShardCapacity(
+        capacityRequest({ idempotencyKey: 'account-capacity:account-a:tenant-core-users' }),
+        'env-test'
+      ),
+      service.ensureTenantShardCapacity(
+        capacityRequest({ idempotencyKey: 'account-capacity:account-b:tenant-core-users' }),
+        'env-test'
+      ),
+    ]);
+
+    expect(first.operation?.operationId).toBe(second.operation?.operationId);
+    expect(first.state).toBe('blocked');
+    expect(second.state).toBe('blocked');
+    expect(repository.operations.size).toBe(1);
+    expect(repository.plans.size).toBe(1);
+    expect([...repository.plans.values()][0]?.idempotencyKey).toMatch(
+      /^low-water:shared_pool:tenant-core-users:7:[a-f0-9]{24}$/u
+    );
+  });
+
+  it('keeps a blocked capacity operation terminal until an authorized retry', async () => {
+    const repository = new FakeRepository();
+    const plan = await new ControlService({
+      repository,
+      env: env(),
+      now: () => NOW,
+    }).requestTenantShard(request({ dryRun: true }));
+    repository.capacityOperation = {
+      ...operation(plan.plan),
+      status: 'blocked',
+      lastErrorCode: 'control_d1_resource_limit',
+    };
+    const service = new ControlService({ repository, env: env(), now: () => NOW });
+
+    await expect(
+      service.ensureTenantShardCapacity(capacityRequest(), 'env-test')
+    ).resolves.toMatchObject({
+      state: 'blocked',
+      reasonCode: 'control_d1_resource_limit',
+      operation: { operationId: repository.capacityOperation.operationId },
+    });
+    expect(repository.operations.size).toBe(0);
   });
 
   it('creates once and reuses the deterministic provider database on retry', async () => {
@@ -1377,6 +1625,26 @@ describe('ControlService tenant shard provisioning', () => {
     expect(result.operation?.status).toBe('waiting_retry');
     expect(result.operation?.lastErrorCode).toBe('cloudflare_d1_request_failed');
     expect(JSON.stringify(result)).not.toContain('provider detail');
+    expect(result.operation?.nextAttemptAt).toBeGreaterThanOrEqual(NOW + 30);
+  });
+
+  it('normalizes client construction failures after leasing into a retrying operation', async () => {
+    const repository = new FakeRepository();
+    const service = new ControlService({
+      repository,
+      env: env(),
+      now: () => NOW,
+      createApiClient: () => {
+        throw new Error('transient client construction failure');
+      },
+    });
+
+    const result = await service.requestTenantShard(request());
+
+    expect(result.operation).toMatchObject({
+      status: 'waiting_retry',
+      lastErrorCode: 'cloudflare_d1_request_failed',
+    });
     expect(result.operation?.nextAttemptAt).toBeGreaterThanOrEqual(NOW + 30);
   });
 

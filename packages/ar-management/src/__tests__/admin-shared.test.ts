@@ -342,6 +342,33 @@ describe('admin-shared audit detail externalization', () => {
     expect(detailCatalog.public_artifact_id).toMatch(/^oa_/);
   });
 
+  it('resolves the opaque tenant key from Core instead of the Admin database', async () => {
+    const coreQueryOne = vi.fn(async (sql: string) =>
+      sql.includes('SELECT tenant_key FROM tenants') ? { tenant_key: 't_core_tenant' } : null
+    );
+    const coreAdapter = {
+      ...mockAdapter,
+      queryOne: coreQueryOne,
+    };
+    const { c } = createMockContext({ DB: coreAdapter as unknown as Env['DB'] });
+
+    await writeAdminAuditLog(c, {
+      action: 'admin.user.created',
+      resourceType: 'admin_user',
+      resourceId: 'admin-core-key',
+      result: 'success',
+      metadata: { source: 'test' },
+    });
+
+    expect(coreQueryOne).toHaveBeenCalledWith('SELECT tenant_key FROM tenants WHERE id = ?', [
+      'tenant-1',
+    ]);
+    expect(mockAdapter.queryOne).not.toHaveBeenCalledWith(
+      'SELECT tenant_key FROM tenants WHERE id = ?',
+      ['tenant-1']
+    );
+  });
+
   it('falls back to inline JSON when encrypted object storage is unavailable', async () => {
     const { c } = createMockContext({
       SENSITIVE_DETAILS: undefined,
@@ -388,6 +415,7 @@ describe('admin-shared audit detail externalization', () => {
       after: { email: 'fallback-admin@example.com' },
     });
 
+    expect(dbState.objectCatalog).toHaveLength(0);
     expect(dbState.objectCatalogObjects).toHaveLength(0);
     expect(dbState.sensitiveDetailChunkIndex).toHaveLength(0);
     expect(dbState.adminAuditLogs).toHaveLength(1);

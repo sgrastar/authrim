@@ -114,7 +114,7 @@ interface BootstrapDesiredSpec {
   manifest_digest: string;
   migration_files: BootstrapMigrationFile[];
   data_role?: ControlBootstrapResourceRole;
-  allocation_scope?: 'tenant_exclusive';
+  allocation_scope?: 'shared_pool' | 'tenant_exclusive';
   owner_tenant_id?: string;
 }
 
@@ -197,14 +197,26 @@ function parseDesiredSpec(resource: BootstrapResource): BootstrapDesiredSpec {
     ) {
       throw new Error('control_bootstrap_desired_spec_invalid');
     }
-  } else if (
-    record.data_role !== resource.role ||
-    record.allocation_scope !== 'tenant_exclusive' ||
-    typeof record.owner_tenant_id !== 'string' ||
-    record.owner_tenant_id.length === 0 ||
-    record.owner_tenant_id !== resource.desiredTenantId
-  ) {
-    throw new Error('control_bootstrap_desired_spec_invalid');
+  } else {
+    const tenantExclusive = record.allocation_scope === 'tenant_exclusive';
+    const sharedPool = record.allocation_scope === 'shared_pool';
+    if (
+      record.data_role !== resource.role ||
+      (!tenantExclusive && !sharedPool) ||
+      (tenantExclusive &&
+        (resource.desiredResourceScope !== 'tenant' ||
+          typeof resource.desiredTenantId !== 'string' ||
+          resource.desiredTenantId.length === 0 ||
+          typeof record.owner_tenant_id !== 'string' ||
+          record.owner_tenant_id.length === 0 ||
+          record.owner_tenant_id !== resource.desiredTenantId)) ||
+      (sharedPool &&
+        (resource.desiredResourceScope !== 'platform' ||
+          resource.desiredTenantId !== null ||
+          record.owner_tenant_id !== undefined))
+    ) {
+      throw new Error('control_bootstrap_desired_spec_invalid');
+    }
   }
   const seen = new Set<string>();
   const migrationFiles = files.map((candidate) => {
@@ -233,8 +245,9 @@ function parseDesiredSpec(resource: BootstrapResource): BootstrapDesiredSpec {
     manifest_digest: resource.manifestDigest,
     migration_files: migrationFiles,
     data_role: record.data_role as ControlBootstrapResourceRole,
-    allocation_scope: record.allocation_scope,
-    owner_tenant_id: record.owner_tenant_id,
+    allocation_scope: record.allocation_scope as 'shared_pool' | 'tenant_exclusive' | undefined,
+    owner_tenant_id:
+      typeof record.owner_tenant_id === 'string' ? record.owner_tenant_id : undefined,
   };
 }
 
@@ -503,16 +516,27 @@ export class BootstrapHandoffVerifier {
         throw new Error('control_bootstrap_resource_state_mismatch');
       }
     } else {
+      const tenantExclusive = resource.allocationScope === 'tenant_exclusive';
+      const sharedPool = resource.allocationScope === 'shared_pool';
+      const assignmentIsActive =
+        resource.assignmentCount === 1 &&
+        typeof resource.assignmentTenantId === 'string' &&
+        resource.assignmentTenantId.length > 0 &&
+        resource.assignmentState === 'active' &&
+        resource.placementIsolationPolicy === resource.allocationScope &&
+        resource.placementPolicyState === 'active';
       if (
-        resource.desiredResourceScope !== 'tenant' ||
-        !resource.desiredTenantId ||
-        resource.allocationScope !== 'tenant_exclusive' ||
-        resource.ownerTenantId !== resource.desiredTenantId ||
-        resource.assignmentCount !== 1 ||
-        resource.assignmentTenantId !== resource.desiredTenantId ||
-        resource.assignmentState !== 'active' ||
-        resource.placementIsolationPolicy !== 'tenant_exclusive' ||
-        resource.placementPolicyState !== 'active'
+        !assignmentIsActive ||
+        (!tenantExclusive && !sharedPool) ||
+        (tenantExclusive &&
+          (resource.desiredResourceScope !== 'tenant' ||
+            !resource.desiredTenantId ||
+            resource.ownerTenantId !== resource.desiredTenantId ||
+            resource.assignmentTenantId !== resource.desiredTenantId)) ||
+        (sharedPool &&
+          (resource.desiredResourceScope !== 'platform' ||
+            resource.desiredTenantId !== null ||
+            resource.ownerTenantId !== null))
       ) {
         throw new Error('control_bootstrap_resource_scope_mismatch');
       }
@@ -694,7 +718,12 @@ export class D1BootstrapHandoffRepository implements BootstrapHandoffRepository 
            LEFT JOIN control_shard_capacity capacity ON capacity.shard_id = shard.shard_id
            LEFT JOIN control_tenant_placement_policies policy
              ON policy.environment_id = shard.environment_id
-            AND policy.tenant_id = shard.owner_tenant_id
+            AND policy.tenant_id = COALESCE(shard.owner_tenant_id, (
+                  SELECT MIN(assignment.tenant_id)
+                    FROM control_tenant_shard_assignments assignment
+                   WHERE assignment.environment_id = desired.environment_id
+                     AND assignment.shard_id = shard.shard_id
+                ))
            LEFT JOIN control_lookup_physical_shards lookup
              ON lookup.d1_desired_resource_id = desired.desired_resource_id
             AND lookup.environment_id = desired.environment_id

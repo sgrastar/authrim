@@ -26,6 +26,12 @@ describe('control worker desired inventory registration', () => {
     database.exec(
       readFileSync(resolve(ROOT_DIR, 'migrations/control/001_pre_1_0_control_baseline.sql'), 'utf8')
     );
+    database.exec(
+      readFileSync(
+        resolve(ROOT_DIR, 'migrations/control/002_lookup_predictive_scale_out.sql'),
+        'utf8'
+      )
+    );
   });
 
   afterEach(() => database.close());
@@ -85,7 +91,8 @@ describe('control worker desired inventory registration', () => {
     expect(
       database
         .prepare(
-          `SELECT residency_policy_id, residency_partition, jurisdiction, location_hint, status
+          `SELECT residency_policy_id, residency_partition, jurisdiction, location_hint, status,
+                  lookup_capacity_domain_id
              FROM control_residency_partitions
             WHERE environment_id = 'env-test'`
         )
@@ -97,8 +104,52 @@ describe('control worker desired inventory registration', () => {
         jurisdiction: null,
         location_hint: null,
         status: 'active',
+        lookup_capacity_domain_id: 'lookup:builtin:residency:default:default',
       },
     ]);
+
+    database.exec(
+      `UPDATE control_residency_partitions
+          SET lookup_capacity_domain_id = NULL, updated_at = 50
+        WHERE environment_id = 'env-test'
+          AND residency_policy_id = 'builtin:residency:default'
+          AND residency_partition = 'default';`
+    );
+    database.exec(plan.bootstrapSql);
+    expect(
+      database
+        .prepare(
+          `SELECT lookup_capacity_domain_id, updated_at
+             FROM control_residency_partitions
+            WHERE environment_id = 'env-test'
+              AND residency_policy_id = 'builtin:residency:default'
+              AND residency_partition = 'default'`
+        )
+        .get()
+    ).toEqual({
+      lookup_capacity_domain_id: 'lookup:builtin:residency:default:default',
+      updated_at: 100,
+    });
+
+    database.exec(
+      `UPDATE control_residency_partitions
+          SET lookup_capacity_domain_id = 'lookup:operator:shared', updated_at = 200
+        WHERE environment_id = 'env-test'
+          AND residency_policy_id = 'builtin:residency:default'
+          AND residency_partition = 'default';`
+    );
+    database.exec(plan.bootstrapSql);
+    expect(
+      database
+        .prepare(
+          `SELECT lookup_capacity_domain_id, updated_at
+             FROM control_residency_partitions
+            WHERE environment_id = 'env-test'
+              AND residency_policy_id = 'builtin:residency:default'
+              AND residency_partition = 'default'`
+        )
+        .get()
+    ).toEqual({ lookup_capacity_domain_id: 'lookup:operator:shared', updated_at: 200 });
 
     const inventory = database
       .prepare(

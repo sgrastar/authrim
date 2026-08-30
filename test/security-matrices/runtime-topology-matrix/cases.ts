@@ -1286,7 +1286,7 @@ export function decideRoutingRb(row: Row): RbDecision {
     return { ...base, errorCode: 'invalid_route_contract', rejectionLayer: 'provider' };
   }
   if (generationState === 'stale' || generationState === 'ahead') {
-    return { ...base, errorCode: 'invalid_snapshot_signature', rejectionLayer: 'generation' };
+    return { ...base, errorCode: 'snapshot_generation_propagating', rejectionLayer: 'generation' };
   }
   // Four distinct verification failures share the same error surface and each writes a
   // security event: the payload was tampered after signing, the signature bytes were
@@ -1397,7 +1397,7 @@ export function decideRoutingRc(row: Row): RcDecision {
     return { ...base, errorCode: 'missing_generation', rejectionLayer: 'generation' };
   }
   if (runtimeGeneration === 'stale' || runtimeGeneration === 'ahead') {
-    return { ...base, errorCode: 'invalid_snapshot_signature', rejectionLayer: 'generation' };
+    return { ...base, errorCode: 'snapshot_generation_propagating', rejectionLayer: 'generation' };
   }
   return {
     ...base,

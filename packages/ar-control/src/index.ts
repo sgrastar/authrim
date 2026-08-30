@@ -1,4 +1,5 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
+import { createLogger } from '@authrim/ar-lib-core';
 import {
   assertControlPlaneRecordIsSecretFree,
   ApiMigrationEngine,
@@ -52,6 +53,11 @@ import { LookupHmacKeyStatePublisher } from './lookup-hmac-key-state-publisher';
 import { LookupHmacKeyStateService, validateLookupHmacKeyMetadata } from './lookup-hmac-key-state';
 import { PluginRunnerRegistryPublisher } from './plugin-runner-registry-publisher';
 import { LookupBucketMigrationService } from './lookup-bucket-migration';
+import { LookupScaleOutForecastService } from './lookup-scale-out-forecast';
+import {
+  AccountScaleOutForecastService,
+  type AccountScaleOutForecastView,
+} from './account-scale-out-forecast';
 import { LookupRetentionProjectionService } from './lookup-retention-projection';
 import { ReadReplicationService } from './read-replication';
 import {
@@ -85,6 +91,7 @@ import {
   releaseInitialBootstrapAcceleration,
 } from './bootstrap-accelerator';
 import { ReleaseMigrationRolloutReconciler } from './release-migration-rollout-reconciler';
+import { getControlStorageTopology } from './storage-topology';
 import {
   getR2BucketMetricInventory,
   reportR2BucketMetrics,
@@ -99,16 +106,90 @@ function service(env: ControlEnv): ControlService {
   });
 }
 
-const EXPOSED_RPC_ERROR =
-  /^(invalid_[a-z0-9_]+|directory_rewrite_[a-z0-9_]+|lookup_hmac_[a-z0-9_]+|read_replication_[a-z0-9_]+|control_(rpc_caller_unauthorized|environment_not_found|residency_partition_not_found|resource_policy_not_found|d1_resource_limit|destructive_operations_disabled|capacity_[a-z0-9_]+|operation_idempotency_conflict|operation_retry_(conflict|not_retryable)|release_rollout_retry_(conflict|not_retryable)|operation_cancel_(conflict|not_allowed)|operation_restore_(conflict|not_allowed)|account_allocation_idempotency_conflict|account_allocation_capacity_unavailable|worker_inventory_drift_review_conflict|tenant_dr_[a-z0-9_]+|tenant_default_allocation_[a-z0-9_]+|tenant_placement_policy_[a-z0-9_]+|tenant_runtime_route_observation_[a-z0-9_]+|tenant_placement_migration_[a-z0-9_]+|tenant_region_shard_[a-z0-9_]+|tenant_shard_assignment_[a-z0-9_]+|shard_(quarantine|cleanup)_[a-z0-9_]+|lookup_bucket_[a-z0-9_]+|lookup_retention_[a-z0-9_]+|account_legal_hold_[a-z0-9_]+|plugin_[a-z0-9_]+))$/u;
+const ACCOUNT_SCALE_OUT_TERMINAL_ERROR =
+  /^(?:invalid_[a-z0-9_]+|control_(?:d1_resource_limit|environment_not_found|residency_partition_not_found|resource_policy_not_found|tenant_placement_policy_missing|operation_idempotency_conflict))$/u;
 
-async function rpcResult<T>(operation: () => Promise<T>): Promise<T> {
+async function reconcileAccountScaleOut(
+  env: ControlEnv,
+  environmentId: string,
+  tenantId?: string
+): Promise<AccountScaleOutForecastView[]> {
+  const now = () => Math.floor(Date.now() / 1000);
+  const forecast = new AccountScaleOutForecastService(env.CONTROL_DB, now);
+  const reconciliation = await forecast.observe(environmentId, tenantId);
+  if (reconciliation.capacityRequests.length === 0) return reconciliation.views;
+
+  const d1Token = env.CLOUDFLARE_D1_API_TOKEN?.trim();
+  const workersToken = env.CLOUDFLARE_WORKERS_API_TOKEN?.trim();
+  if (
+    env.AUTHRIM_AUTOMATIC_PROVISIONING !== 'true' ||
+    !d1Token ||
+    !workersToken ||
+    d1Token === workersToken
+  ) {
+    return reconciliation.views;
+  }
+  const repository = new D1ControlRepository(env.CONTROL_DB);
+  if (!(await repository.hasReadyAutomaticProvisioning())) return reconciliation.views;
+  const control = new ControlService({ repository, env, now });
+
+  for (const request of reconciliation.capacityRequests) {
+    let capacity: Awaited<ReturnType<ControlService['requestAccountScaleOutCapacity']>>;
+    try {
+      capacity = await control.requestAccountScaleOutCapacity(request, environmentId);
+    } catch (error) {
+      const terminalErrorCode =
+        error instanceof Error && ACCOUNT_SCALE_OUT_TERMINAL_ERROR.test(error.message)
+          ? error.message
+          : null;
+      await forecast.recordCapacityRequestFailure(
+        request,
+        terminalErrorCode ?? 'account_scale_out_capacity_request_retry',
+        terminalErrorCode !== null
+      );
+      continue;
+    }
+    if (!capacity.operation) {
+      await forecast.recordCapacityRequestFailure(
+        request,
+        'account_scale_out_capacity_operation_pending',
+        false
+      );
+      continue;
+    }
+    await forecast.recordProvisioningOperation({
+      request,
+      operationId: capacity.operation.operationId,
+      operationStatus: capacity.operation.status,
+      lastErrorCode: capacity.operation.lastErrorCode,
+    });
+  }
+  return reconciliation.views;
+}
+
+const log = createLogger().module('CONTROL_RPC');
+const SAFE_INTERNAL_ERROR_NAME = /^[a-zA-Z][a-zA-Z0-9]{0,79}$/u;
+
+const EXPOSED_RPC_ERROR =
+  /^(invalid_[a-z0-9_]+|directory_rewrite_[a-z0-9_]+|lookup_hmac_[a-z0-9_]+|lookup_scale_out_[a-z0-9_]+|read_replication_[a-z0-9_]+|control_(rpc_caller_unauthorized|environment_not_found|residency_partition_not_found|resource_policy_not_found|d1_resource_limit|destructive_operations_disabled|capacity_[a-z0-9_]+|operation_idempotency_conflict|operation_retry_(conflict|not_retryable)|release_rollout_retry_(conflict|not_retryable)|operation_cancel_(conflict|not_allowed)|operation_restore_(conflict|not_allowed)|account_allocation_idempotency_conflict|account_allocation_capacity_unavailable|worker_inventory_drift_review_conflict|tenant_dr_[a-z0-9_]+|tenant_default_allocation_[a-z0-9_]+|tenant_placement_policy_[a-z0-9_]+|tenant_runtime_route_observation_[a-z0-9_]+|tenant_placement_migration_[a-z0-9_]+|tenant_region_shard_[a-z0-9_]+|tenant_shard_assignment_[a-z0-9_]+|shard_(quarantine|cleanup)_[a-z0-9_]+|lookup_bucket_[a-z0-9_]+|lookup_retention_[a-z0-9_]+|account_legal_hold_[a-z0-9_]+|plugin_[a-z0-9_]+))$/u;
+
+async function rpcResult<T>(operation: () => Promise<T>, action = 'unknown'): Promise<T> {
   try {
     return await operation();
   } catch (error) {
     if (error instanceof Error && EXPOSED_RPC_ERROR.test(error.message)) {
       throw new Error(error.message);
     }
+    const incidentId = crypto.randomUUID();
+    const errorType =
+      error instanceof Error && SAFE_INTERNAL_ERROR_NAME.test(error.name)
+        ? error.name
+        : 'NonErrorThrow';
+    log.error('Control RPC failed', {
+      action,
+      requestId: incidentId,
+      errorType,
+    });
     throw new Error('control_internal_error');
   }
 }
@@ -928,6 +1009,8 @@ function lookupBucketLoadSnapshot(input: unknown) {
           'assignmentGeneration',
           'activeIdentifierCount',
           'activeAliasCount',
+          'successfulRoutePublicationCount',
+          'publicationCounterUpdatedAt',
           'counterUpdatedAt',
         ],
         'invalid_lookup_bucket_load_observation'
@@ -1126,13 +1209,37 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
     });
   }
 
+  getStorageTopology() {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      let providerDatabases = null;
+      try {
+        providerDatabases = await createControlApiClients(this.env).d1.listD1Databases();
+      } catch (error) {
+        log.warn('Cloudflare D1 inventory unavailable for storage topology', {
+          action: 'get_storage_topology',
+          errorType:
+            error instanceof Error && SAFE_INTERNAL_ERROR_NAME.test(error.name)
+              ? error.name
+              : 'NonErrorThrow',
+        });
+      }
+      return getControlStorageTopology({
+        database: this.env.CONTROL_DB,
+        environmentId: caller.environmentId,
+        generatedAt: Math.floor(Date.now() / 1000),
+        providerDatabases,
+      });
+    }, 'get_storage_topology');
+  }
+
   ensureTenantShardCapacity(input: unknown) {
     return rpcResult(async () => {
       const caller = authorizedCaller(this.ctx.props);
       const result = await service(this.env).ensureTenantShardCapacity(input, caller.environmentId);
       assertControlPlaneRecordIsSecretFree(result);
       return result;
-    });
+    }, 'ensure_tenant_shard_capacity');
   }
 
   getTenantRuntimeRouteTargets(input: unknown) {
@@ -1821,12 +1928,74 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
   }
 
   allocateAccountRoute(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const allocation = await new ControlAccountAllocationService(
+        new D1AccountAllocationRepository(this.env.CONTROL_DB),
+        () => Math.floor(Date.now() / 1000)
+      ).allocate(input, caller.environmentId);
+      this.ctx.waitUntil(
+        reconcileAccountScaleOut(this.env, caller.environmentId, allocation.tenantId).catch(
+          (error) => {
+            log.warn('Account scale-out forecast deferred after allocation', {
+              action: 'allocateAccountRoute',
+              errorType:
+                error instanceof Error && SAFE_INTERNAL_ERROR_NAME.test(error.name)
+                  ? error.name
+                  : 'NonErrorThrow',
+            });
+          }
+        )
+      );
+      return allocation;
+    });
+  }
+
+  tryAllocateAccountRoute(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const attempt = await new ControlAccountAllocationService(
+        new D1AccountAllocationRepository(this.env.CONTROL_DB),
+        () => Math.floor(Date.now() / 1000)
+      ).tryAllocate(input, caller.environmentId);
+      if (attempt.state === 'allocated') {
+        this.ctx.waitUntil(
+          reconcileAccountScaleOut(
+            this.env,
+            caller.environmentId,
+            attempt.allocation.tenantId
+          ).catch((error) => {
+            log.warn('Account scale-out forecast deferred after allocation', {
+              action: 'tryAllocateAccountRoute',
+              errorType:
+                error instanceof Error && SAFE_INTERNAL_ERROR_NAME.test(error.name)
+                  ? error.name
+                  : 'NonErrorThrow',
+            });
+          })
+        );
+      }
+      return attempt;
+    });
+  }
+
+  commitAccountRoute(input: unknown) {
     return rpcResult(() => {
       const caller = authorizedCaller(this.ctx.props);
       return new ControlAccountAllocationService(
         new D1AccountAllocationRepository(this.env.CONTROL_DB),
         () => Math.floor(Date.now() / 1000)
-      ).allocate(input, caller.environmentId);
+      ).commit(input, caller.environmentId);
+    });
+  }
+
+  releaseAccountRoute(input: unknown) {
+    return rpcResult(() => {
+      const caller = authorizedCaller(this.ctx.props);
+      return new ControlAccountAllocationService(
+        new D1AccountAllocationRepository(this.env.CONTROL_DB),
+        () => Math.floor(Date.now() / 1000)
+      ).release(input, caller.environmentId);
     });
   }
 
@@ -1904,6 +2073,17 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
     });
   }
 
+  releaseLookupBucketMigration(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const result = await new LookupBucketMigrationService(this.env.CONTROL_DB, () =>
+        Math.floor(Date.now() / 1000)
+      ).release(caller.environmentId, lookupBucketMigrationCutover(input));
+      assertControlPlaneRecordIsSecretFree(result);
+      return result;
+    });
+  }
+
   cutoverLookupBucketMigration(input: unknown) {
     return rpcResult(async () => {
       const caller = authorizedCaller(this.ctx.props);
@@ -1955,6 +2135,95 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
       ).planNextAutomaticMigration(caller.environmentId, lookupBucketLoadSnapshot(input));
       assertControlPlaneRecordIsSecretFree(result);
       return result;
+    });
+  }
+
+  reconcileLookupScaleOut(input: unknown) {
+    return rpcResult(async () => {
+      const caller = authorizedCaller(this.ctx.props);
+      const forecast = new LookupScaleOutForecastService(this.env.CONTROL_DB, () =>
+        Math.floor(Date.now() / 1000)
+      );
+      const result = await forecast.observe(caller.environmentId, lookupBucketLoadSnapshot(input));
+      if (!result.capacityRequest) {
+        assertControlPlaneRecordIsSecretFree(result.views);
+        return result.views;
+      }
+      const request = result.capacityRequest;
+      let capacity: Awaited<ReturnType<ControlService['requestLookupScaleOutCapacity']>>;
+      try {
+        capacity = await service(this.env).requestLookupScaleOutCapacity(
+          request,
+          caller.environmentId
+        );
+      } catch (error) {
+        const terminalErrorCode =
+          error instanceof Error &&
+          /^(?:invalid_[a-z0-9_]+|control_(?:d1_resource_limit|environment_not_found|lookup_capacity_domain_mismatch|residency_partition_not_found|resource_policy_not_found|operation_idempotency_conflict))$/u.test(
+            error.message
+          )
+            ? error.message
+            : null;
+        if (terminalErrorCode) {
+          await forecast.blockCapacityRequest(caller.environmentId, request, terminalErrorCode);
+          const views = result.views.map((view) =>
+            view.lookupCapacityDomainId === request.lookupCapacityDomainId
+              ? { ...view, status: 'blocked' as const, lastErrorCode: terminalErrorCode }
+              : view
+          );
+          assertControlPlaneRecordIsSecretFree(views);
+          return views;
+        }
+        const errorCode = 'lookup_scale_out_capacity_request_retry';
+        await forecast.recordCapacityRequestRetry(caller.environmentId, request, errorCode);
+        const views = result.views.map((view) =>
+          view.lookupCapacityDomainId === request.lookupCapacityDomainId
+            ? {
+                ...view,
+                status: 'provisioning' as const,
+                requestedOperationId: null,
+                lastErrorCode: errorCode,
+              }
+            : view
+        );
+        assertControlPlaneRecordIsSecretFree(views);
+        return views;
+      }
+      if (!capacity.operation) {
+        const errorCode = 'lookup_scale_out_capacity_operation_pending';
+        await forecast.recordCapacityRequestRetry(caller.environmentId, request, errorCode);
+        const views = result.views.map((view) =>
+          view.lookupCapacityDomainId === request.lookupCapacityDomainId
+            ? { ...view, status: 'provisioning' as const, lastErrorCode: errorCode }
+            : view
+        );
+        assertControlPlaneRecordIsSecretFree(views);
+        return views;
+      }
+      const operation = capacity.operation;
+      await forecast.recordProvisioningOperation(
+        caller.environmentId,
+        request,
+        operation.operationId,
+        operation.status,
+        operation.lastErrorCode
+      );
+      const operationBlocked = operation.status === 'blocked' || operation.status === 'canceled';
+      const operationErrorCode = operationBlocked
+        ? (operation.lastErrorCode ?? 'lookup_scale_out_capacity_operation_blocked')
+        : null;
+      const views = result.views.map((view) =>
+        view.lookupCapacityDomainId === request.lookupCapacityDomainId
+          ? {
+              ...view,
+              status: operationBlocked ? ('blocked' as const) : view.status,
+              requestedOperationId: operation.operationId,
+              lastErrorCode: operationErrorCode,
+            }
+          : view
+      );
+      assertControlPlaneRecordIsSecretFree(views);
+      return views;
     });
   }
 
@@ -2472,6 +2741,67 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
         Math.floor(Date.now() / 1000)
       );
       tasks.push(
+        scheduledTask(
+          'account_scale_out_forecast_reconciliation',
+          this.env.AUTHRIM_ENVIRONMENT_NAME
+            ? reconcileAccountScaleOut(this.env, this.env.AUTHRIM_ENVIRONMENT_NAME)
+            : Promise.resolve()
+        ),
+        scheduledTask(
+          'lookup_scale_out_forecast_reconciliation',
+          (async () => {
+            const forecast = new LookupScaleOutForecastService(this.env.CONTROL_DB, () =>
+              Math.floor(Date.now() / 1000)
+            );
+            const reconciliation = await forecast.reconcileProvisioningOperations();
+            for (const request of reconciliation.capacityRequests) {
+              let capacity: Awaited<ReturnType<ControlService['requestLookupScaleOutCapacity']>>;
+              try {
+                capacity = await control.requestLookupScaleOutCapacity(
+                  request,
+                  request.environmentId
+                );
+              } catch (error) {
+                const terminalErrorCode =
+                  error instanceof Error &&
+                  /^(?:invalid_[a-z0-9_]+|control_(?:d1_resource_limit|environment_not_found|lookup_capacity_domain_mismatch|residency_partition_not_found|resource_policy_not_found|operation_idempotency_conflict))$/u.test(
+                    error.message
+                  )
+                    ? error.message
+                    : null;
+                if (terminalErrorCode) {
+                  await forecast.blockCapacityRequest(
+                    request.environmentId,
+                    request,
+                    terminalErrorCode
+                  );
+                } else {
+                  await forecast.recordCapacityRequestRetry(
+                    request.environmentId,
+                    request,
+                    'lookup_scale_out_capacity_request_retry'
+                  );
+                }
+                continue;
+              }
+              if (!capacity.operation) {
+                await forecast.recordCapacityRequestRetry(
+                  request.environmentId,
+                  request,
+                  'lookup_scale_out_capacity_operation_pending'
+                );
+                continue;
+              }
+              await forecast.recordProvisioningOperation(
+                request.environmentId,
+                request,
+                capacity.operation.operationId,
+                capacity.operation.status,
+                capacity.operation.lastErrorCode
+              );
+            }
+          })()
+        ),
         scheduledTask('low_watermark_replenishment', control.replenishLowWatermark()),
         scheduledTask('worker_inventory_reconciliation', workerInventory.reconcile()),
         scheduledTask(

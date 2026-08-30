@@ -21,7 +21,11 @@ export default [
         ecmaVersion: 'latest',
         sourceType: 'module',
         tsconfigRootDir: import.meta.dirname,
-        project: ['./packages/*/tsconfig.json', './tools/*/tsconfig.json'],
+        project: [
+          './packages/*/tsconfig.json',
+          './tools/*/tsconfig.json',
+          './test/scale-out-correctness-phase1/tsconfig.json',
+        ],
       },
       globals: {
         ...globals.node,

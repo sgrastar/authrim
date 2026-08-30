@@ -13,9 +13,9 @@ import { t } from '../../i18n/index.js';
 import {
   isWranglerInstalled,
   checkAuth,
+  confirmEnvironmentObservedForDeletion,
   detectEnvironments,
   deleteEnvironment,
-  hasControlManagedResourcesForEnvironment,
 } from '../../core/cloudflare.js';
 import { cleanupLocalEnvironmentArtifacts } from '../../core/environment-cleanup.js';
 import { findAuthrimBaseDir } from '../../core/paths.js';
@@ -146,9 +146,6 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
   const deleteQueues = options.all || options.queues !== false;
   const deleteR2 = options.all || options.r2 !== false;
   const deletePages = options.all || options.pages !== false;
-  const deletesEntireEnvironment =
-    deleteWorkers && deleteD1 && deleteKV && deleteQueues && deleteR2 && deletePages;
-
   console.log(chalk.gray('\nResources to delete:'));
   console.log(chalk.gray(`  Workers: ${deleteWorkers ? '✓' : '✗'}`));
   console.log(chalk.gray(`  D1:      ${deleteD1 ? '✓' : '✗'}`));
@@ -184,21 +181,37 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
   let deleteSpinner: ReturnType<typeof ora> | undefined;
   try {
     const lock = operationLock.lock;
-    if (!lock && !detectedEnvironments) {
+    if (!lock) {
       const detectSpinner = ora('Confirming remote environment resources...').start();
       try {
-        detectedEnvironments = await detectEnvironments();
+        const environmentObservedRemotely = await confirmEnvironmentObservedForDeletion(env, {
+          deleteWorkers,
+          deleteD1,
+          deleteKV,
+          deleteQueues,
+          deleteR2,
+          deletePages,
+        });
+        detectedEnvironments = environmentObservedRemotely
+          ? [{ env, workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] }]
+          : [];
         detectSpinner.succeed('Remote environment resources confirmed');
       } catch (error) {
-        detectSpinner.fail('Remote environment scan failed');
+        const inventoryUnavailable =
+          typeof error === 'object' &&
+          error !== null &&
+          'code' in error &&
+          error.code === 'environment_inventory_unavailable';
+        detectSpinner.fail(
+          inventoryUnavailable ? t('delete.inventoryUnavailable') : 'Remote environment scan failed'
+        );
         throw error;
       }
     }
     const environmentObservedByBaseline = detectedEnvironments?.some(
       (candidate) => candidate.env === env
     );
-    const environmentObservedRemotely =
-      environmentObservedByBaseline || (await hasControlManagedResourcesForEnvironment(env));
+    const environmentObservedRemotely = Boolean(environmentObservedByBaseline);
     const decision = evaluateEnvironmentOperation({
       operation: 'delete',
       lock,
@@ -208,6 +221,9 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
       throw new Error(environmentOperationBlockMessage(decision));
     }
     const knownD1Names = lock ? Object.values(lock.d1).map((entry) => entry.name) : [];
+    const knownWorkerNames = lock
+      ? Object.values(lock.workers ?? {}).map((entry) => entry.name)
+      : [];
     const knownQueueNames = lock?.queues
       ? Object.values(lock.queues).map((entry) => entry.name)
       : [];
@@ -229,6 +245,7 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
       deleteQueues,
       deleteR2,
       deletePages,
+      knownWorkerNames,
       knownD1Names,
       knownQueueNames,
       onProgress: updateDeleteSpinner,
@@ -255,7 +272,8 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
       );
     }
 
-    if (result.success && deletesEntireEnvironment) {
+    const environmentEmpty = result.environmentEmpty === true;
+    if (result.success && environmentEmpty) {
       const cleanupResult = await cleanupLocalEnvironmentArtifacts({
         baseDir,
         env,
@@ -279,7 +297,7 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
       : 'failed';
     if (result.completion === 'complete') {
       deleteSpinner.succeed(
-        deletesEntireEnvironment ? 'Environment resources deleted' : t('delete.partialSuccess')
+        environmentEmpty ? 'Environment resources deleted' : t('delete.partialSuccess')
       );
     } else if (result.completion === 'manual_action_required') {
       deleteSpinner.warn('Cloud resources deleted; R2 cleanup requires a manual action');
@@ -287,7 +305,16 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
       deleteSpinner.fail('Environment deletion encountered errors');
     }
   } catch (error) {
-    deleteSpinner?.fail('Environment deletion failed unexpectedly');
+    const inventoryUnavailable =
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      error.code === 'environment_inventory_unavailable';
+    deleteSpinner?.fail(
+      inventoryUnavailable
+        ? t('delete.inventoryUnavailable')
+        : 'Environment deletion failed unexpectedly'
+    );
     throw error;
   } finally {
     await operationLock.release();
@@ -338,7 +365,7 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
         '\n⚠️  Environment resources were deleted. Complete the R2 actions above to finish cleanup.'
       )
     );
-  } else if (result.success && deletesEntireEnvironment) {
+  } else if (result.success && result.environmentEmpty === true) {
     console.log(chalk.green('\n✅ Environment deleted successfully!'));
   } else if (result.success) {
     console.log(chalk.green(`\n✅ ${t('delete.partialSuccess')}`));

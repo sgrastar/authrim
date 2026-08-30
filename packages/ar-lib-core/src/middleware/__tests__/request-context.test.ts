@@ -741,6 +741,40 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(body.email).toBeUndefined();
     });
 
+    it('returns a retryable PII-free 503 while a signed snapshot generation propagates', async () => {
+      runtimeMocks.resolveTenantMetadata.mockRejectedValueOnce(
+        new TenantDatabaseResolverError(
+          'snapshot_generation_propagating',
+          'Runtime registry generation is propagating'
+        )
+      );
+      const db = createMockDB({ tenantRow: { id: 'sample' } });
+      const kv = createMockKV({
+        valuesByKey: {
+          'v1:tenant-exists:sample': 'true',
+        },
+      });
+      const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
+      const app = buildApp(env);
+
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
+
+      expect(res.status).toBe(503);
+      expect(res.headers.get('Retry-After')).toBe('1');
+      const body = await res.json<{
+        error: string;
+        route: string;
+        tenant_id: string;
+        email?: string;
+      }>();
+      expect(body).toMatchObject({
+        error: 'snapshot_generation_propagating',
+        route: '/test',
+        tenant_id: 'sample',
+      });
+      expect(body.email).toBeUndefined();
+    });
+
     it('returns a PII-free 409 for protocol routes without a signed snapshot', async () => {
       runtimeMocks.resolveTenantMetadata.mockRejectedValueOnce(
         new TenantDatabaseResolverError('missing_generation', 'Runtime generation is missing')

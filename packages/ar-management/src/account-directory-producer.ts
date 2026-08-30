@@ -17,10 +17,19 @@ import {
   type AccountCreationOperation,
 } from './account-creation-operation';
 import { InitialAccountIdentifierReservationService } from './account-directory-reservation';
+import { ACCOUNT_DIRECTORY_WRITE_BINDING_UNAVAILABLE } from './account-directory-errors';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
 import { loadLookupHmacRuntimeKeys } from './lookup-hmac-runtime';
 
 const log = createLogger().module('ACCOUNT-DIRECTORY-PRODUCER');
+const SAFE_PREPARATION_ERROR =
+  /^(?:account_directory|control_account_allocation|lookup_hmac_key)_[a-z0-9_:-]{1,96}$/u;
+
+export function classifyAccountCreationPreparationError(error: unknown): string {
+  return error instanceof Error && SAFE_PREPARATION_ERROR.test(error.message)
+    ? error.message
+    : 'account_creation_preparation_failed';
+}
 
 export interface InitialAccountDirectoryPublicationInput {
   tenantId: string;
@@ -49,6 +58,7 @@ export interface InitialAccountDirectoryWriteContext {
 export interface InitialAccountDirectoryWriteDependencies {
   writeAuthoritative(context: InitialAccountDirectoryWriteContext): Promise<void>;
   reserveIdentifiers?: (publication: AccountDirectoryPublication) => Promise<void>;
+  releaseIdentifiers?: (publication: AccountDirectoryPublication) => Promise<void>;
   lookupForBucket?: (virtualBucket: number) => Promise<D1Database>;
   now?: () => number;
 }
@@ -79,13 +89,47 @@ export interface DurableInitialAccountDirectoryWriteResult extends InitialAccoun
   operation: AccountCreationOperation;
 }
 
+type ControlAccountAllocationRpcStage =
+  | 'try_allocate'
+  | 'allocate'
+  | 'ensure_capacity'
+  | 'commit'
+  | 'release';
+
+async function callControlAccountAllocationRpc<T>(
+  stage: ControlAccountAllocationRpcStage,
+  call: () => Promise<T>
+): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    // The legacy allocation RPC reports exhausted capacity by throwing this stable domain error.
+    // Preserve it so the caller can start idempotent capacity provisioning. Any other rejection at
+    // this private RPC boundary means that no validated Control response was received and is safe
+    // to retry through the durable account-creation operation.
+    if (
+      error instanceof Error &&
+      error.message === 'control_account_allocation_capacity_unavailable'
+    ) {
+      throw error;
+    }
+    log.warn(
+      'Control account allocation RPC rejected',
+      { stage },
+      error instanceof Error ? error : new Error('unknown_control_rpc_rejection')
+    );
+    throw new Error('control_account_allocation_rpc_unavailable', { cause: error });
+  }
+}
+
 async function allocateAccountRouteWithElasticCapacity(
   env: Env,
   input: InitialAccountDirectoryPublicationInput,
   accountIdBlindDigest: string,
   dataRoles: readonly ['tenant_core/users', 'tenant_pii']
 ) {
-  if (!env.CONTROL) throw new Error('account_directory_control_unavailable');
+  const control = env.CONTROL;
+  if (!control) throw new Error('account_directory_control_unavailable');
   const request = {
     tenantId: input.tenantId,
     accountIdBlindDigest,
@@ -94,48 +138,66 @@ async function allocateAccountRouteWithElasticCapacity(
     idempotencyKey: input.idempotencyKey,
     dataRoles: [...dataRoles],
   };
+  const allocateOnce = async () => {
+    if (typeof control.tryAllocateAccountRoute === 'function') {
+      const attempt = await callControlAccountAllocationRpc('try_allocate', () =>
+        control.tryAllocateAccountRoute!(request)
+      );
+      if (attempt.state === 'capacity_unavailable') {
+        throw new Error('control_account_allocation_capacity_unavailable');
+      }
+      if (attempt.state !== 'allocated' || !attempt.allocation) {
+        throw new Error('account_directory_capacity_response_invalid');
+      }
+      return attempt.allocation;
+    }
+    return callControlAccountAllocationRpc('allocate', () => control.allocateAccountRoute(request));
+  };
   try {
-    return await env.CONTROL.allocateAccountRoute(request);
+    return await allocateOnce();
   } catch (error) {
     if (
       !(error instanceof Error) ||
       error.message !== 'control_account_allocation_capacity_unavailable' ||
-      !env.CONTROL.ensureTenantShardCapacity
+      typeof control.ensureTenantShardCapacity !== 'function'
     ) {
       throw error;
     }
-  }
-
-  const capacity = await Promise.all(
-    dataRoles.map((dataRole) =>
-      env.CONTROL!.ensureTenantShardCapacity!({
-        tenantId: input.tenantId,
-        dataRole,
-        residencyPolicyId: input.residencyPolicyId,
-        residencyPartition: input.residencyPartition,
-        idempotencyKey: `account-capacity:${accountIdBlindDigest.slice(0, 32)}:${dataRole.replaceAll('/', '-')}`,
-      })
-    )
-  );
-  for (const [index, result] of capacity.entries()) {
-    if (
-      !result ||
-      (result.state !== 'ready' && result.state !== 'provisioning' && result.state !== 'blocked') ||
-      (result.state === 'ready' && result.target.dataRole !== dataRoles[index])
-    ) {
-      throw new Error('account_directory_capacity_response_invalid');
+    const capacity = await Promise.all(
+      dataRoles.map((dataRole) =>
+        callControlAccountAllocationRpc('ensure_capacity', () =>
+          control.ensureTenantShardCapacity!({
+            tenantId: input.tenantId,
+            dataRole,
+            residencyPolicyId: input.residencyPolicyId,
+            residencyPartition: input.residencyPartition,
+            idempotencyKey: `account-capacity:${accountIdBlindDigest.slice(0, 32)}:${dataRole.replaceAll('/', '-')}`,
+          })
+        )
+      )
+    );
+    for (const [index, result] of capacity.entries()) {
+      if (
+        !result ||
+        (result.state !== 'ready' &&
+          result.state !== 'provisioning' &&
+          result.state !== 'blocked') ||
+        (result.state === 'ready' && result.target.dataRole !== dataRoles[index])
+      ) {
+        throw new Error('account_directory_capacity_response_invalid');
+      }
     }
+    if (capacity.some((result) => result.state !== 'ready')) {
+      throw new Error('control_account_allocation_capacity_unavailable');
+    }
+    return allocateOnce();
   }
-  if (capacity.some((result) => result.state !== 'ready')) {
-    throw new Error('control_account_allocation_capacity_unavailable');
-  }
-  return env.CONTROL.allocateAccountRoute(request);
 }
 
 function d1Binding(env: Env, bindingRef: string): D1Database {
   const value = (env as unknown as Record<string, unknown>)[bindingRef];
   if (!value || typeof value !== 'object') {
-    throw new Error('account_directory_write_binding_unavailable');
+    throw new Error(ACCOUNT_DIRECTORY_WRITE_BINDING_UNAVAILABLE);
   }
   const binding = value as Partial<D1Database>;
   if (
@@ -143,7 +205,7 @@ function d1Binding(env: Env, bindingRef: string): D1Database {
     typeof binding.batch !== 'function' ||
     typeof binding.withSession !== 'function'
   ) {
-    throw new Error('account_directory_write_binding_unavailable');
+    throw new Error(ACCOUNT_DIRECTORY_WRITE_BINDING_UNAVAILABLE);
   }
   return value as D1Database;
 }
@@ -249,6 +311,99 @@ async function reserveInitialIdentifiers(
   }
 }
 
+async function releaseInitialIdentifiers(
+  env: Env,
+  publication: AccountDirectoryPublication,
+  dependencies: InitialAccountDirectoryWriteDependencies,
+  now: number
+): Promise<void> {
+  if (dependencies.releaseIdentifiers) {
+    await dependencies.releaseIdentifiers(publication);
+    return;
+  }
+  if (dependencies.reserveIdentifiers) return;
+  if (!publication.indexes.some((index) => index.indexKind !== 'account_id')) return;
+  const lookupForBucket =
+    dependencies.lookupForBucket ?? (await lookupResolverFromEnvironment(env));
+  await new InitialAccountIdentifierReservationService({
+    lookupForBucket,
+    now: () => now,
+  }).release(publication);
+}
+
+function accountRouteAllocationRequest(publication: AccountDirectoryPublication) {
+  const accountIndex = publication.indexes.find((index) => index.indexKind === 'account_id');
+  if (!accountIndex) throw new Error('account_directory_allocation_commit_invalid');
+  return {
+    tenantId: publication.tenantId,
+    accountIdBlindDigest: accountIndex.digest,
+    residencyPolicyId: publication.routeProjection.residencyPolicyId,
+    residencyPartition: publication.routeProjection.targets[0]?.residencyPartition ?? '',
+    idempotencyKey: publication.idempotencyKey,
+    dataRoles: ['tenant_core/users', 'tenant_pii'] as const,
+  };
+}
+
+async function commitInitialAccountRouteAllocation(
+  env: Env,
+  publication: AccountDirectoryPublication
+): Promise<void> {
+  if (!env.CONTROL?.commitAccountRoute) {
+    throw new Error('account_directory_allocation_commit_unavailable');
+  }
+  const dataRoles = ['tenant_core/users', 'tenant_pii'] as const;
+  const request = accountRouteAllocationRequest(publication);
+  const committed = validateControlAccountRouteAllocationResult(
+    await callControlAccountAllocationRpc('commit', () =>
+      env.CONTROL!.commitAccountRoute!({ ...request, dataRoles: [...dataRoles] })
+    ),
+    {
+      tenantId: publication.tenantId,
+      residencyPolicyId: publication.routeProjection.residencyPolicyId,
+      residencyPartition: publication.routeProjection.targets[0]?.residencyPartition ?? '',
+      dataRoles,
+    }
+  );
+  const projectedByRole = new Map(
+    publication.routeProjection.targets.map((target) => [target.dataRole, target] as const)
+  );
+  for (const target of committed.targets) {
+    const projected = projectedByRole.get(target.dataRole);
+    if (
+      !projected ||
+      projected.residencyPartition !== target.residencyPartition ||
+      projected.shardId !== target.shardId ||
+      projected.bindingRef !== target.bindingRef ||
+      projected.requiredBindingRouteGeneration !== target.routeGeneration
+    ) {
+      throw new Error('account_directory_allocation_commit_route_mismatch');
+    }
+  }
+}
+
+async function releaseInitialAccountRouteAllocation(
+  env: Env,
+  publication: AccountDirectoryPublication
+): Promise<void> {
+  if (!env.CONTROL?.releaseAccountRoute) {
+    throw new Error('account_directory_allocation_release_unavailable');
+  }
+  const request = accountRouteAllocationRequest(publication);
+  await callControlAccountAllocationRpc('release', () =>
+    env.CONTROL!.releaseAccountRoute!({ ...request, dataRoles: [...request.dataRoles] })
+  );
+}
+
+async function rollbackInitialReservations(
+  env: Env,
+  publication: AccountDirectoryPublication,
+  dependencies: InitialAccountDirectoryWriteDependencies,
+  now: number
+): Promise<void> {
+  await releaseInitialIdentifiers(env, publication, dependencies, now);
+  await releaseInitialAccountRouteAllocation(env, publication);
+}
+
 export async function executeInitialAccountDirectoryWrite(
   env: Env,
   input: InitialAccountDirectoryPublicationInput,
@@ -260,7 +415,14 @@ export async function executeInitialAccountDirectoryWrite(
   }
   const publication = await buildInitialAccountDirectoryPublication(env, input);
   const targets = await resolveInitialAccountDirectoryWriteTargets(env, publication);
-  await reserveInitialIdentifiers(env, publication, dependencies, now);
+  try {
+    await reserveInitialIdentifiers(env, publication, dependencies, now);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'directory_identifier_reservation_conflict') {
+      await rollbackInitialReservations(env, publication, dependencies, now);
+    }
+    throw error;
+  }
   const tenantCoreUsers = ensureDatabaseAdapter(
     targets.tenantCoreUsers,
     'account-directory-tenant-core-users'
@@ -271,6 +433,7 @@ export async function executeInitialAccountDirectoryWrite(
     tenantPii: ensureDatabaseAdapter(targets.tenantPii, 'account-directory-tenant-pii'),
     residencyPartition: targets.residencyPartition,
   });
+  await commitInitialAccountRouteAllocation(env, publication);
   await markAccountDirectoryPublicationReady(tenantCoreUsers, publication.operationId, now);
   return {
     publication,
@@ -297,20 +460,45 @@ export async function executeDurableInitialAccountDirectoryWrite(
     now,
   });
   if (operation.status === 'blocked' || operation.status === 'canceled') {
+    if (
+      operation.status === 'blocked' &&
+      operation.lastErrorCode === 'directory_identifier_reservation_conflict' &&
+      operation.publication
+    ) {
+      await rollbackInitialReservations(env, operation.publication, dependencies, now);
+      throw new Error('directory_identifier_reservation_conflict');
+    }
     throw new Error(`account_creation_operation_${operation.status}`);
   }
   let publication = operation.publication;
   if (!publication) {
-    publication = await buildInitialAccountDirectoryPublication(env, {
-      tenantId: operation.tenantId,
-      accountId: operation.accountId,
-      email: input.email,
-      externalSubject: input.externalSubject,
-      residencyPolicyId: input.residencyPolicyId,
-      residencyPartition: input.residencyPartition,
-      idempotencyKey: operation.allocationIdempotencyKey,
-      operationId: operation.operationId,
-    });
+    try {
+      publication = await buildInitialAccountDirectoryPublication(env, {
+        tenantId: operation.tenantId,
+        accountId: operation.accountId,
+        email: input.email,
+        externalSubject: input.externalSubject,
+        residencyPolicyId: input.residencyPolicyId,
+        residencyPartition: input.residencyPartition,
+        idempotencyKey: operation.allocationIdempotencyKey,
+        operationId: operation.operationId,
+      });
+    } catch (error) {
+      try {
+        await dependencies.operationRepository.recordPreparationFailure(
+          operation,
+          classifyAccountCreationPreparationError(error),
+          now
+        );
+      } catch (recordError) {
+        log.warn(
+          'Account creation preparation failure could not be persisted',
+          { stage: 'preparation_failure_persistence' },
+          recordError instanceof Error ? recordError : new Error('unknown_persistence_failure')
+        );
+      }
+      throw error;
+    }
     operation = await dependencies.operationRepository.recordPublication(
       operation,
       publication,
@@ -318,6 +506,7 @@ export async function executeDurableInitialAccountDirectoryWrite(
     );
   }
   if (operation.status === 'succeeded') {
+    await commitInitialAccountRouteAllocation(env, publication);
     return {
       operation,
       publication,
@@ -335,7 +524,20 @@ export async function executeDurableInitialAccountDirectoryWrite(
     'account-directory-tenant-core-users'
   );
   if (['preparing', 'reserved', 'writing'].includes(operation.status)) {
-    await reserveInitialIdentifiers(env, publication, dependencies, now);
+    try {
+      await reserveInitialIdentifiers(env, publication, dependencies, now);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'directory_identifier_reservation_conflict') {
+        await dependencies.operationRepository.recordDirectoryOutcome({
+          publication,
+          outcome: 'blocked',
+          now,
+          errorCode: 'directory_identifier_reservation_conflict',
+        });
+        await rollbackInitialReservations(env, publication, dependencies, now);
+      }
+      throw error;
+    }
   }
   if (operation.status === 'preparing') {
     operation = await dependencies.operationRepository.transition(operation, 'reserved', now);
@@ -356,6 +558,9 @@ export async function executeDurableInitialAccountDirectoryWrite(
     log.info('Durable account authoritative write completed', {
       stage: 'authoritative_write_completed',
     });
+    log.info('Account route allocation commit started', { stage: 'allocation_commit_started' });
+    await commitInitialAccountRouteAllocation(env, publication);
+    log.info('Account route allocation commit completed', { stage: 'allocation_commit_completed' });
     log.info('Directory outbox ready transition started', { stage: 'outbox_ready_started' });
     await markAccountDirectoryPublicationReady(tenantCoreUsers, publication.operationId, now);
     log.info('Directory outbox ready transition completed', { stage: 'outbox_ready_completed' });

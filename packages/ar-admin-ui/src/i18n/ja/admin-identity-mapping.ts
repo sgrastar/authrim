@@ -38,6 +38,7 @@ const adminIdentityMapping = {
 		'{name} はすでに存在します。別のField Mapping Set名を選択してください。',
 	admin_identity_mapping_editor_no_policy_selected: 'Field Mapping Set未選択',
 	admin_identity_mapping_editor_activate: '有効化',
+	admin_identity_mapping_editor_active: '有効',
 	admin_identity_mapping_editor_delete: '削除',
 	admin_identity_mapping_editor_confirm_delete: '削除を確認',
 	admin_identity_mapping_editor_side_not_selected: 'side未選択',
@@ -71,6 +72,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_created_description:
 		'Admin UI Flow Editorから作成されたField Mapping Setです。',
 	admin_identity_mapping_editor_load_failed: 'Field Mapping状態の読み込みに失敗しました',
+	admin_identity_mapping_flow_profile_status: 'プロファイル状態',
 
 	admin_identity_mapping_profiles_head_title: 'Source & Destination Profiles - Authrim Admin',
 	admin_identity_mapping_profiles_title: 'Source & Destination Profiles',

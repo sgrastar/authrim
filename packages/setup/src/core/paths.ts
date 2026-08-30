@@ -486,7 +486,11 @@ export function listEnvironments(baseDir: string, keysBaseDir?: string): string[
         .filter((d) => d.isDirectory())
         .filter((d) => {
           const envPath = join(authrimDir, d.name);
-          return existsSync(join(envPath, CONFIG_FILE)) || existsSync(join(envPath, KEYS_DIR));
+          return (
+            existsSync(join(envPath, CONFIG_FILE)) ||
+            existsSync(join(envPath, LOCK_FILE)) ||
+            existsSync(join(envPath, KEYS_DIR))
+          );
         })
         .forEach((d) => envs.add(d.name));
     } catch {

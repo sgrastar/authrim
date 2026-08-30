@@ -117,6 +117,12 @@ describe('LookupBucketMigrationWorker', () => {
       .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()');
     source.exec(schema);
     target.exec(schema);
+    const metricsMigration = readFileSync(
+      resolve(REPO_ROOT, 'migrations/lookup/002_lookup_scale_out_publication_metrics.sql'),
+      'utf8'
+    );
+    source.exec(metricsMigration);
+    target.exec(metricsMigration);
     for (let index = 0; index < 105; index += 1) {
       const digest = index.toString(16).padStart(64, '0');
       source
@@ -154,6 +160,14 @@ describe('LookupBucketMigrationWorker', () => {
                  1, 1, ${BUCKET}, '${'e'.repeat(64)}', ${BUCKET}, '${'f'.repeat(64)}',
                  'completed', 99, 100, 100, 100);`
     );
+    source
+      .prepare(
+        `UPDATE lookup_bucket_counters
+            SET successful_route_publication_count = 123,
+                publication_counter_updated_at = 99
+          WHERE virtual_bucket = ?`
+      )
+      .run(BUCKET);
     now = 100;
     worker = new LookupBucketMigrationWorker(d1(source), d1(target), () => now);
   });
@@ -249,6 +263,17 @@ describe('LookupBucketMigrationWorker', () => {
       count: 1,
     });
     expect(
+      target
+        .prepare(
+          `SELECT successful_route_publication_count, publication_counter_updated_at
+             FROM lookup_bucket_counters WHERE virtual_bucket = ?`
+        )
+        .get(BUCKET)
+    ).toEqual({
+      successful_route_publication_count: 123,
+      publication_counter_updated_at: 99,
+    });
+    expect(
       target.prepare(`SELECT COUNT(*) AS count FROM lookup_identifier_replacements`).get()
     ).toEqual({ count: 1 });
     const verified = await verifyAll();
@@ -342,6 +367,70 @@ describe('LookupBucketMigrationWorker', () => {
       route_projection_json: '{"newer":true}',
       account_route_generation: 2,
       updated_at: 200,
+    });
+  });
+
+  it('preserves a route and publication counter dual-written during backfill', async () => {
+    const first = await worker.copyNext(migrationView('backfilling'), '{}');
+    expect(first.done).toBe(false);
+    const digest = 'f'.repeat(64);
+    const insert = (database: DatabaseSync) => {
+      database
+        .prepare(
+          `INSERT INTO lookup_identifiers (
+             virtual_bucket, index_kind, normalization_version, hmac_key_generation,
+             identifier_blind_digest, tenant_id, account_id, route_schema_version,
+             account_route_generation, required_binding_route_generation, residency_policy_id,
+             route_projection_json, tenant_lifecycle_state, runtime_route_status,
+             lifecycle_state, created_at, updated_at
+           ) VALUES (?, 'account_id', 1, 1, ?, 'tenant-a', 'account-dual-write',
+                     1, 1, 1, 'default', '{"dualWrite":true}', 'active', 'active',
+                     'active', 150, 150)`
+        )
+        .run(BUCKET, digest);
+      database
+        .prepare(
+          `UPDATE lookup_bucket_counters
+              SET successful_route_publication_count =
+                    successful_route_publication_count + 1,
+                  publication_counter_updated_at = 150
+            WHERE virtual_bucket = ?`
+        )
+        .run(BUCKET);
+    };
+    insert(source);
+    insert(target);
+
+    let cursor = first.cursor;
+    for (let iteration = 0; iteration < 20; iteration += 1) {
+      const result = await worker.copyNext(migrationView('backfilling'), cursor);
+      cursor = result.cursor;
+      if (result.done) break;
+      if (iteration === 19) throw new Error('copy_did_not_complete');
+    }
+
+    await expect(verifyAll()).resolves.toMatchObject({
+      sourceRowCount: 109,
+      targetRowCount: 109,
+    });
+    expect(
+      target
+        .prepare(
+          `SELECT route_projection_json FROM lookup_identifiers
+            WHERE virtual_bucket = ? AND account_id = 'account-dual-write'`
+        )
+        .get(BUCKET)
+    ).toEqual({ route_projection_json: '{"dualWrite":true}' });
+    expect(
+      target
+        .prepare(
+          `SELECT successful_route_publication_count, publication_counter_updated_at
+             FROM lookup_bucket_counters WHERE virtual_bucket = ?`
+        )
+        .get(BUCKET)
+    ).toEqual({
+      successful_route_publication_count: 124,
+      publication_counter_updated_at: 150,
     });
   });
 

@@ -834,6 +834,8 @@ const DOMAIN_FORM_BROWSER_SCRIPT = String.raw`
           const suggested = apiPrefixLabels[apiPrefixLabels.length - 1] + '.' + zoneName;
           issues.push({
             field: 'apiDomain',
+            kind: 'baseDomainDepth',
+            hostname: apiDomain,
             message: buildBaseMessage(apiDomain),
             suggestion: suggested,
           });
@@ -858,6 +860,8 @@ const DOMAIN_FORM_BROWSER_SCRIPT = String.raw`
           const suggestion = uiPrefixLabels.join('-') + '.' + parentDomain;
           issues.push({
             field: field,
+            kind: 'uiDomainDepth',
+            hostname: hostname,
             message: buildUiMessage(label, hostname, suggestion),
             suggestion: suggestion,
           });
@@ -2960,7 +2964,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deletedItems': 'Deleted {{count}} items',
           'web.delete.complete': 'Deletion complete.',
           'web.delete.success': 'Environment deleted successfully.',
+          'web.delete.partialSuccess': 'Selected resources were deleted. The environment and remaining local state were preserved.',
           'web.delete.errorList': 'Some errors occurred: {{errors}}',
+          'web.delete.inventoryUnavailable': 'Cloudflare resource inventory could not be verified, so deletion did not start. Check your connection and Cloudflare sign-in, then retry.',
           'web.status.errorWithMessage': 'Error: {{error}}',
           'web.status.unknownError': 'Unknown error',
           'web.delete.confirmExact': 'To delete this environment, type <b>{{env}}</b> exactly.',
@@ -3040,7 +3046,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deletedItems': '{{count}} 件削除しました',
           'web.delete.complete': '削除が完了しました。',
           'web.delete.success': '環境を削除しました。',
+          'web.delete.partialSuccess': '選択したリソースを削除しました。環境と残りのローカル状態は保持されています。',
           'web.delete.errorList': 'エラーが発生しました: {{errors}}',
+          'web.delete.inventoryUnavailable': 'Cloudflareのリソース一覧を確認できなかったため、削除を開始しませんでした。接続とCloudflareへのログイン状態を確認して、再試行してください。',
           'web.status.errorWithMessage': 'エラー: {{error}}',
           'web.status.unknownError': '不明なエラー',
           'web.delete.confirmExact': '削除を実行するには、環境名 <b>{{env}}</b> を正確に入力してください。',
@@ -3120,7 +3128,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deletedItems': '已删除 {{count}} 项',
           'web.delete.complete': '删除已完成。',
           'web.delete.success': '环境已删除。',
+          'web.delete.partialSuccess': '已删除所选资源。环境和剩余本地状态已保留。',
           'web.delete.errorList': '发生错误：{{errors}}',
+          'web.delete.inventoryUnavailable': '无法验证 Cloudflare 资源清单，因此未开始删除。请检查网络连接和 Cloudflare 登录状态后重试。',
           'web.status.errorWithMessage': '错误：{{error}}',
           'web.status.unknownError': '未知错误',
           'web.delete.confirmExact': '要删除此环境，请准确输入 <b>{{env}}</b>。',
@@ -3200,7 +3210,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deletedItems': '已刪除 {{count}} 項',
           'web.delete.complete': '刪除已完成。',
           'web.delete.success': '環境已刪除。',
+          'web.delete.partialSuccess': '已刪除所選資源。環境和剩餘本機狀態已保留。',
           'web.delete.errorList': '發生錯誤：{{errors}}',
+          'web.delete.inventoryUnavailable': '無法驗證 Cloudflare 資源清單，因此未開始刪除。請檢查網路連線和 Cloudflare 登入狀態後重試。',
           'web.status.errorWithMessage': '錯誤：{{error}}',
           'web.status.unknownError': '未知錯誤',
           'web.delete.confirmExact': '若要刪除此環境，請正確輸入 <b>{{env}}</b>。',
@@ -3279,7 +3291,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deletedItems': '{{count}} elementos eliminados',
           'web.delete.complete': 'Eliminación completada.',
           'web.delete.success': 'Entorno eliminado.',
+          'web.delete.partialSuccess': 'Se eliminaron los recursos seleccionados. Se conservaron el entorno y el estado local restante.',
           'web.delete.errorList': 'Se produjeron errores: {{errors}}',
+          'web.delete.inventoryUnavailable': 'No se pudo verificar el inventario de recursos de Cloudflare, por lo que no se inició la eliminación. Comprueba la conexión y la sesión de Cloudflare e inténtalo de nuevo.',
           'web.status.errorWithMessage': 'Error: {{error}}',
           'web.status.unknownError': 'Error desconocido',
           'web.delete.confirmExact': 'Para eliminar este entorno, escribe <b>{{env}}</b> exactamente.',
@@ -3358,7 +3372,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deletedItems': '{{count}} itens excluídos',
           'web.delete.complete': 'Exclusão concluída.',
           'web.delete.success': 'Ambiente excluído.',
+          'web.delete.partialSuccess': 'Os recursos selecionados foram excluídos. O ambiente e o estado local restante foram preservados.',
           'web.delete.errorList': 'Ocorreram erros: {{errors}}',
+          'web.delete.inventoryUnavailable': 'Não foi possível verificar o inventário de recursos da Cloudflare, portanto a exclusão não foi iniciada. Verifique a conexão e o login da Cloudflare e tente novamente.',
           'web.status.errorWithMessage': 'Erro: {{error}}',
           'web.status.unknownError': 'Erro desconhecido',
           'web.delete.confirmExact': 'Para excluir este ambiente, digite <b>{{env}}</b> exatamente.',
@@ -3437,7 +3453,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deletedItems': '{{count}} éléments supprimés',
           'web.delete.complete': 'Suppression terminée.',
           'web.delete.success': 'Environnement supprimé.',
+          'web.delete.partialSuccess': 'Les ressources sélectionnées ont été supprimées. L’environnement et l’état local restant ont été conservés.',
           'web.delete.errorList': 'Des erreurs sont survenues : {{errors}}',
+          'web.delete.inventoryUnavailable': 'L’inventaire des ressources Cloudflare n’a pas pu être vérifié. La suppression n’a donc pas commencé. Vérifiez la connexion et la session Cloudflare, puis réessayez.',
           'web.status.errorWithMessage': 'Erreur : {{error}}',
           'web.status.unknownError': 'Erreur inconnue',
           'web.delete.confirmExact': 'Pour supprimer cet environnement, saisissez exactement <b>{{env}}</b>.',
@@ -3516,7 +3534,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deletedItems': '{{count}} Elemente gelöscht',
           'web.delete.complete': 'Löschen abgeschlossen.',
           'web.delete.success': 'Umgebung gelöscht.',
+          'web.delete.partialSuccess': 'Die ausgewählten Ressourcen wurden gelöscht. Die Umgebung und der verbleibende lokale Status wurden beibehalten.',
           'web.delete.errorList': 'Es sind Fehler aufgetreten: {{errors}}',
+          'web.delete.inventoryUnavailable': 'Der Cloudflare-Ressourcenbestand konnte nicht verifiziert werden. Die Löschung wurde daher nicht gestartet. Prüfen Sie die Verbindung und die Cloudflare-Anmeldung und versuchen Sie es erneut.',
           'web.status.errorWithMessage': 'Fehler: {{error}}',
           'web.status.unknownError': 'Unbekannter Fehler',
           'web.delete.confirmExact': 'Zum Löschen dieser Umgebung geben Sie <b>{{env}}</b> exakt ein.',
@@ -3595,7 +3615,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deletedItems': '{{count}}개 항목 삭제됨',
           'web.delete.complete': '삭제가 완료되었습니다.',
           'web.delete.success': '환경이 삭제되었습니다.',
+          'web.delete.partialSuccess': '선택한 리소스를 삭제했습니다. 환경과 남은 로컬 상태는 유지되었습니다.',
           'web.delete.errorList': '오류가 발생했습니다: {{errors}}',
+          'web.delete.inventoryUnavailable': 'Cloudflare 리소스 목록을 확인할 수 없어 삭제를 시작하지 않았습니다. 연결 및 Cloudflare 로그인 상태를 확인한 후 다시 시도하세요.',
           'web.status.errorWithMessage': '오류: {{error}}',
           'web.status.unknownError': '알 수 없는 오류',
           'web.delete.confirmExact': '이 환경을 삭제하려면 <b>{{env}}</b>를 정확히 입력하세요.',
@@ -3674,7 +3696,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deletedItems': 'Удалено элементов: {{count}}',
           'web.delete.complete': 'Удаление завершено.',
           'web.delete.success': 'Среда удалена.',
+          'web.delete.partialSuccess': 'Выбранные ресурсы удалены. Среда и оставшееся локальное состояние сохранены.',
           'web.delete.errorList': 'Произошли ошибки: {{errors}}',
+          'web.delete.inventoryUnavailable': 'Не удалось проверить список ресурсов Cloudflare, поэтому удаление не было начато. Проверьте подключение и вход в Cloudflare, затем повторите попытку.',
           'web.status.errorWithMessage': 'Ошибка: {{error}}',
           'web.status.unknownError': 'Неизвестная ошибка',
           'web.delete.confirmExact': 'Чтобы удалить эту среду, введите <b>{{env}}</b> точно.',
@@ -3753,7 +3777,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.deletedItems': '{{count}} item dihapus',
           'web.delete.complete': 'Penghapusan selesai.',
           'web.delete.success': 'Environment dihapus.',
+          'web.delete.partialSuccess': 'Resource yang dipilih telah dihapus. Environment dan status lokal yang tersisa dipertahankan.',
           'web.delete.errorList': 'Terjadi error: {{errors}}',
+          'web.delete.inventoryUnavailable': 'Inventaris resource Cloudflare tidak dapat diverifikasi, sehingga penghapusan tidak dimulai. Periksa koneksi dan status login Cloudflare, lalu coba lagi.',
           'web.status.errorWithMessage': 'Error: {{error}}',
           'web.status.unknownError': 'Error tidak diketahui',
           'web.delete.confirmExact': 'Untuk menghapus environment ini, ketik <b>{{env}}</b> persis.',
@@ -5007,6 +5033,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
               <span class="sw-label">
                 <span data-i18n="domain.configureBinding">Configure custom domain binding for Workers</span>
                 <small><span data-i18n="web.domain.bindingHint">Bind the selected domain to</span> <span id="binding-router-name">router Worker</span></small>
+                <small data-i18n="domain.configureBindingDesc">Assign the base domain directly to the router Worker so Cloudflare manages its DNS and TLS certificate. Tenant subdomains continue to use wildcard routing.</small>
               </span>
               <span class="sw-state" data-i18n="config.enabled">Enabled</span>
             </label>
@@ -6533,10 +6560,24 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         if (result?.errorCode === 'setup_operation_in_progress') {
           result.error = t('web.status.operationInProgress');
         }
+        if (result?.errorCode === 'environment_inventory_unavailable') {
+          result.error = t('web.delete.inventoryUnavailable');
+          result.errors = [result.error];
+        }
         return result;
       } finally {
         if (isMutation) inFlightMutationRequests = Math.max(0, inFlightMutationRequests - 1);
       }
+    }
+
+    function apiErrorMessages(result) {
+      const messages = Array.isArray(result?.errors)
+        ? result.errors.filter(message => typeof message === 'string' && message.trim())
+        : [];
+      if (typeof result?.error === 'string' && result.error.trim() && !messages.includes(result.error)) {
+        messages.push(result.error);
+      }
+      return messages.length > 0 ? messages : [t('web.status.unknownError')];
     }
 
     const WILDCARD_DNS_MANUAL_COPY_DATA = ${wildcardDnsManualCopyJson};
@@ -8757,9 +8798,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         return;
       }
 
+      const message = issue.kind === 'baseDomainDepth'
+        ? t('domain.baseDomainDepthError', { hostname: issue.hostname })
+        : t('domain.uiDomainDepthError', {
+            label: issue.field === 'loginUiDomain'
+              ? t('web.domain.loginUi')
+              : t('web.domain.adminUi'),
+            hostname: issue.hostname,
+          });
       el.textContent = issue.suggestion
-        ? issue.message + ' Suggested host: ' + issue.suggestion
-        : issue.message;
+        ? message + ' ' + t('domain.suggestedHost', { hostname: issue.suggestion })
+        : message;
       el.style.display = 'block';
     }
 
@@ -10108,17 +10157,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }, 500);
 
       try {
-        // Check if keys already exist for this environment
-        const keysCheck = await api('/keys/check/' + config.env);
-        if (keysCheck.exists) {
-          output.textContent += 'Warning: Keys already exist for environment "' + config.env + '"\\n';
-          output.textContent += '   Existing keys will be overwritten.\\n';
-          output.textContent += '\\n';
-          scrollToBottom(log);
-        }
-
         // Generate keys
-        output.textContent += 'Generating cryptographic keys...\\n';
+        output.textContent += t('keys.generating') + '\\n';
         scrollToBottom(log);
         const keyResult = await api('/keys/generate', {
           method: 'POST',
@@ -10127,6 +10167,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         output.textContent += '  ✓ RSA key pair generated\\n';
         output.textContent += '  ✓ Encryption keys generated\\n';
         output.textContent += '  ✓ Admin secrets generated\\n';
+        if (keyResult.replacedExistingKeys === true) {
+          output.textContent += '  ⚠ ' + t('keys.replaced') + '\\n';
+        }
         output.textContent += '\\n';
         provisionProgress.handle('Admin secrets generated');
         scrollToBottom(log);
@@ -11861,7 +11904,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     async function resumeInitialDeploymentFromEnvironment() {
-      if (!selectedEnvForDetail) return;
+      const envName = selectedEnvForDetail?.env || config?.env;
+      if (!envName) return;
       const button = document.getElementById('btn-resume-initial-deploy');
       const spinner = button.querySelector('.inline-action-spinner');
       button.disabled = true;
@@ -11869,12 +11913,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       spinner?.classList.remove('hidden');
       try {
         const recoveryStatus = await api(
-          '/deploy/recovery/' + encodeURIComponent(selectedEnvForDetail.env)
+          '/deploy/recovery/' + encodeURIComponent(envName)
         );
         if (recoveryStatus.success !== true || recoveryStatus.canResume !== true) {
           throw new Error(describeInitialDeploymentRecovery(recoveryStatus));
         }
-        const response = await api('/config?env=' + encodeURIComponent(selectedEnvForDetail.env));
+        const response = await api('/config?env=' + encodeURIComponent(envName));
         if (!response.exists || !response.config) {
           throw new Error(t('web.loadConfig.provisionedValid'));
         }
@@ -14295,7 +14339,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           // Final progress update
           updateProgressUI('delete', totalToDelete, totalToDelete, t('web.delete.complete'));
           result.textContent = '';
-          result.appendChild(createAlert('success', t('web.delete.success')));
+          const environmentDeleted = deleteResult.environmentDeleted === true;
+          result.appendChild(createAlert(
+            environmentDeleted ? 'success' : 'warning',
+            t(environmentDeleted ? 'web.delete.success' : 'web.delete.partialSuccess')
+          ));
 
           // Refresh environment list after a short delay
           setTimeout(async () => {
@@ -14309,7 +14357,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         } else {
           markProgressBarError('delete');
           result.textContent = '';
-          result.appendChild(createAlert('error', t('web.delete.errorList', { errors: (deleteResult.errors || []).join(', ') })));
+          result.appendChild(createAlert('error', t('web.delete.errorList', { errors: apiErrorMessages(deleteResult).join(', ') })));
           appendManualR2CleanupNotice(result, deleteResult.manualR2);
           btn.classList.remove('hidden');
           btn.disabled = false;
@@ -14319,7 +14367,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         markProgressBarError('delete');
         result.classList.remove('hidden');
         result.textContent = '';
-        result.appendChild(createAlert('error', t('web.status.errorWithMessage', { error: error.message })));
+        const message = error instanceof Error && error.message
+          ? error.message
+          : t('web.status.unknownError');
+        result.appendChild(createAlert('error', t('web.status.errorWithMessage', { error: message })));
         btn.classList.remove('hidden');
         btn.disabled = false;
       }

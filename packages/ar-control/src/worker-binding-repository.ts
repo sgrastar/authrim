@@ -42,6 +42,7 @@ export interface WorkerDeploymentLease {
   fencingToken: number;
   expectedSourceVersionId: string;
   mutationStarted: boolean;
+  mutationStartedAt: number | null;
   previousDeploymentId: string | null;
   patchResultVersionId: string | null;
   patchResultDeploymentId: string | null;
@@ -81,6 +82,7 @@ interface WorkerDeploymentLeaseRow {
   fencing_token: number;
   expected_source_version_id: string;
   mutation_started: number;
+  mutation_started_at: number | null;
   previous_deployment_id: string | null;
   patch_result_version_id: string | null;
   patch_result_deployment_id: string | null;
@@ -120,6 +122,7 @@ function leaseFromRow(row: WorkerDeploymentLeaseRow): WorkerDeploymentLease {
     fencingToken: row.fencing_token,
     expectedSourceVersionId: row.expected_source_version_id,
     mutationStarted: row.mutation_started === 1,
+    mutationStartedAt: row.mutation_started_at,
     previousDeploymentId: row.previous_deployment_id,
     patchResultVersionId: row.patch_result_version_id,
     patchResultDeploymentId: row.patch_result_deployment_id,
@@ -133,6 +136,44 @@ function safeLimit(limit: number): number {
 
 export class D1WorkerBindingRepository {
   constructor(private readonly db: D1Database) {}
+
+  async acquireReconcilerLease(input: {
+    environmentId: string;
+    ownerId: string;
+    now: number;
+    ttlSeconds: number;
+  }): Promise<boolean> {
+    const expiresAt = input.now + Math.max(30, Math.min(input.ttlSeconds, 900));
+    const changed = await this.db
+      .prepare(
+        `INSERT INTO control_worker_binding_reconciler_leases (
+           environment_id, owner_id, lease_expires_at, updated_at
+         ) VALUES (?, ?, ?, ?)
+         ON CONFLICT(environment_id) DO UPDATE SET
+           owner_id = excluded.owner_id,
+           lease_expires_at = excluded.lease_expires_at,
+           updated_at = excluded.updated_at
+         WHERE control_worker_binding_reconciler_leases.lease_expires_at <= excluded.updated_at
+            OR control_worker_binding_reconciler_leases.owner_id = excluded.owner_id`
+      )
+      .bind(input.environmentId, input.ownerId, expiresAt, input.now)
+      .run();
+    return (changed.meta.changes ?? 0) === 1;
+  }
+
+  async releaseReconcilerLease(input: {
+    environmentId: string;
+    ownerId: string;
+  }): Promise<boolean> {
+    const changed = await this.db
+      .prepare(
+        `DELETE FROM control_worker_binding_reconciler_leases
+          WHERE environment_id = ? AND owner_id = ?`
+      )
+      .bind(input.environmentId, input.ownerId)
+      .run();
+    return (changed.meta.changes ?? 0) === 1;
+  }
 
   async ensurePendingTargets(now: number): Promise<void> {
     await this.db.batch([
@@ -302,6 +343,37 @@ export class D1WorkerBindingRepository {
               )`
         )
         .bind(now),
+      // A target-level transient failure can be replaced by normal lease or propagation progress
+      // before the parent operation runs again. Re-derive the aggregate error from the current
+      // non-terminal targets so Admin does not expose that stale failure while retry is healthy.
+      this.db
+        .prepare(
+          `UPDATE control_operations
+              SET last_error_code = NULL, last_error_redacted = NULL, updated_at = ?
+            WHERE operation_kind = 'provision_shard'
+              AND status IN ('running', 'waiting_retry')
+              AND last_error_code = 'control_worker_binding_reconciliation_failed'
+              AND EXISTS (
+                SELECT 1 FROM control_worker_binding_reconciliations target
+                 WHERE target.operation_id = control_operations.operation_id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM control_worker_binding_reconciliations target
+                 WHERE target.operation_id = control_operations.operation_id
+                   AND (
+                     target.state IN ('rollback_required', 'blocked') OR
+                     (target.state NOT IN ('succeeded', 'rolled_back', 'blocked')
+                      AND target.last_error_code IS NOT NULL
+                      AND target.last_error_code NOT IN (
+                        'control_worker_deployment_lease_busy',
+                        'control_worker_deployment_lease_lost',
+                        'control_worker_patch_propagating',
+                        'runtime_smoke_binding_unavailable'
+                      ))
+                   )
+              )`
+        )
+        .bind(now),
       this.db
         .prepare(
           `UPDATE control_tenant_shards SET status = 'failed', updated_at = ?
@@ -352,6 +424,25 @@ export class D1WorkerBindingRepository {
                AND target.patch_result_version_id = lease.patch_result_version_id
                AND target.patch_result_deployment_id = lease.patch_result_deployment_id
           )`
+        )
+        .bind(),
+      this.db
+        .prepare(
+          `DELETE FROM control_worker_deployment_leases AS lease
+            WHERE lease.mutation_started = 0
+              AND EXISTS (
+                SELECT 1 FROM control_operations operation
+                 WHERE operation.operation_id = lease.owner_operation_id
+                   AND operation.environment_id = lease.environment_id
+                   AND operation.status IN ('succeeded', 'canceled')
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM control_worker_binding_reconciliations target
+                 WHERE target.operation_id = lease.owner_operation_id
+                   AND target.environment_id = lease.environment_id
+                   AND target.worker_script_name = lease.worker_script_name
+                   AND target.state NOT IN ('succeeded', 'blocked', 'rolled_back')
+              )`
         )
         .bind(),
     ]);
@@ -461,6 +552,11 @@ export class D1WorkerBindingRepository {
              THEN control_worker_deployment_leases.mutation_started
              ELSE 0
            END,
+           mutation_started_at = CASE
+             WHEN control_worker_deployment_leases.owner_operation_id = excluded.owner_operation_id
+             THEN control_worker_deployment_leases.mutation_started_at
+             ELSE NULL
+           END,
            previous_deployment_id = CASE
              WHEN control_worker_deployment_leases.owner_operation_id = excluded.owner_operation_id
              THEN control_worker_deployment_leases.previous_deployment_id
@@ -531,7 +627,8 @@ export class D1WorkerBindingRepository {
     const row = await this.db
       .prepare(
         `SELECT environment_id, worker_script_name, owner_operation_id, fencing_token,
-                expected_source_version_id, mutation_started, previous_deployment_id,
+                expected_source_version_id, mutation_started, mutation_started_at,
+                previous_deployment_id,
                 patch_result_version_id, patch_result_deployment_id
            FROM control_worker_deployment_leases
           WHERE environment_id = ? AND worker_script_name = ? AND owner_operation_id = ?`
@@ -577,11 +674,13 @@ export class D1WorkerBindingRepository {
       this.db
         .prepare(
           `UPDATE control_worker_deployment_leases
-              SET mutation_started = 1, previous_deployment_id = ?, updated_at = ?
+              SET mutation_started = 1, mutation_started_at = COALESCE(mutation_started_at, ?),
+                  previous_deployment_id = ?, updated_at = ?
             WHERE environment_id = ? AND worker_script_name = ? AND owner_operation_id = ?
               AND fencing_token = ? AND lease_expires_at > ? AND mutation_started = 0`
         )
         .bind(
+          input.now,
           input.previousDeploymentId,
           input.now,
           input.lease.environmentId,
@@ -628,6 +727,33 @@ export class D1WorkerBindingRepository {
     if ((results[0]?.meta.changes ?? 0) !== 1 || (results[1]?.meta.changes ?? 0) !== 1) {
       throw new Error('control_worker_binding_stale_fencing_token');
     }
+  }
+
+  async rearmPatchIntent(input: {
+    target: WorkerBindingTarget;
+    lease: WorkerDeploymentLease;
+    now: number;
+  }): Promise<boolean> {
+    const changed = await this.db
+      .prepare(
+        `UPDATE control_worker_deployment_leases
+            SET mutation_started = 0, mutation_started_at = NULL,
+                previous_deployment_id = NULL, updated_at = ?
+          WHERE environment_id = ? AND worker_script_name = ? AND owner_operation_id = ?
+            AND fencing_token = ? AND lease_expires_at > ?
+            AND mutation_started = 1 AND patch_result_version_id IS NULL
+            AND patch_result_deployment_id IS NULL`
+      )
+      .bind(
+        input.now,
+        input.lease.environmentId,
+        input.lease.workerScriptName,
+        input.lease.operationId,
+        input.lease.fencingToken,
+        input.now
+      )
+      .run();
+    return (changed.meta.changes ?? 0) === 1;
   }
 
   async recordAlreadySatisfied(input: {
@@ -1201,6 +1327,11 @@ export class D1WorkerBindingRepository {
     nextAttemptAt: number,
     now: number
   ): Promise<void> {
+    const normalProgress =
+      errorCode === 'control_worker_deployment_lease_busy' ||
+      errorCode === 'control_worker_deployment_lease_lost' ||
+      errorCode === 'control_worker_patch_propagating' ||
+      errorCode === 'runtime_smoke_binding_unavailable';
     await this.db.batch([
       this.db
         .prepare(
@@ -1213,10 +1344,17 @@ export class D1WorkerBindingRepository {
       this.db
         .prepare(
           `UPDATE control_operations
-              SET status = 'waiting_retry', next_attempt_at = ?, last_error_code = ?, updated_at = ?
+              SET status = 'waiting_retry', next_attempt_at = ?, last_error_code = ?,
+                  last_error_redacted = ?, updated_at = ?
             WHERE operation_id = ? AND status IN ('waiting_retry', 'running')`
         )
-        .bind(nextAttemptAt, errorCode, now, target.operationId),
+        .bind(
+          nextAttemptAt,
+          normalProgress ? null : errorCode,
+          normalProgress ? null : errorCode,
+          now,
+          target.operationId
+        ),
     ]);
   }
 
@@ -1507,6 +1645,81 @@ export class D1WorkerBindingRepository {
               )`
         )
         .bind(now, now, operationId, operationId),
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO control_tenant_shard_assignments (
+             environment_id, tenant_id, data_role, residency_policy_id,
+             residency_partition, shard_id, assignment_generation, assignment_state,
+             source_operation_id, created_at, activated_at, updated_at
+           )
+           SELECT shard.environment_id, placement.tenant_id, shard.data_role,
+                  shard.residency_policy_id, shard.residency_partition, shard.shard_id,
+                  COALESCE((
+                    SELECT MAX(existing.assignment_generation) + 1
+                      FROM control_tenant_shard_assignments existing
+                     WHERE existing.environment_id = shard.environment_id
+                       AND existing.tenant_id = placement.tenant_id
+                       AND existing.data_role = shard.data_role
+                       AND existing.residency_partition = shard.residency_partition
+                  ), 1),
+                  'active', ?, ?, ?, ?
+             FROM control_tenant_shards shard
+             JOIN control_desired_resources desired
+               ON desired.desired_resource_id = shard.d1_desired_resource_id
+              AND desired.environment_id = shard.environment_id
+             JOIN control_tenant_placement_policies placement
+               ON placement.environment_id = shard.environment_id
+              AND placement.policy_state = 'active'
+              AND placement.isolation_policy = shard.allocation_scope
+              AND (
+                (placement.isolation_policy = 'shared_pool'
+                 AND shard.owner_tenant_id IS NULL) OR
+                (placement.isolation_policy = 'tenant_exclusive'
+                 AND shard.owner_tenant_id = placement.tenant_id)
+              )
+             JOIN control_shard_capacity capacity ON capacity.shard_id = shard.shard_id
+            WHERE shard.status = 'active'
+              AND shard.data_role IN ('tenant_core/users', 'tenant_pii')
+              AND desired.origin_operation_id = ?
+              AND desired.provisioning_state = 'ready'
+              AND capacity.health_status = 'healthy'
+              AND capacity.allocation_status = 'eligible'
+              AND (capacity.target_account_count - capacity.allocated_account_count) * 5 >=
+                  capacity.target_account_count
+              AND EXISTS (
+                SELECT 1 FROM control_operations
+                 WHERE operation_id = ? AND status = 'succeeded'
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                  FROM control_tenant_shard_assignments assigned
+                  JOIN control_tenant_shards assigned_shard
+                    ON assigned_shard.shard_id = assigned.shard_id
+                   AND assigned_shard.environment_id = assigned.environment_id
+                  JOIN control_shard_capacity assigned_capacity
+                    ON assigned_capacity.shard_id = assigned.shard_id
+                 WHERE assigned.environment_id = shard.environment_id
+                   AND assigned.tenant_id = placement.tenant_id
+                   AND assigned.data_role = shard.data_role
+                   AND assigned.residency_policy_id = shard.residency_policy_id
+                   AND assigned.residency_partition = shard.residency_partition
+                   AND assigned.assignment_state = 'active'
+                   AND assigned_shard.status = 'active'
+                   AND assigned_shard.allocation_scope = placement.isolation_policy
+                   AND (
+                     (placement.isolation_policy = 'shared_pool'
+                      AND assigned_shard.owner_tenant_id IS NULL) OR
+                     (placement.isolation_policy = 'tenant_exclusive'
+                      AND assigned_shard.owner_tenant_id = placement.tenant_id)
+                   )
+                   AND assigned_capacity.health_status = 'healthy'
+                   AND assigned_capacity.allocation_status = 'eligible'
+                   AND (assigned_capacity.target_account_count -
+                        assigned_capacity.allocated_account_count) * 5 >=
+                       assigned_capacity.target_account_count
+              )`
+        )
+        .bind(operationId, now, now, now, operationId, operationId),
     ]);
     if ((results[0]?.meta.changes ?? 0) !== 1) return false;
     const activatedTenantShards = results[1]?.meta.changes ?? 0;

@@ -69,7 +69,10 @@ import { processScheduledAgentTokenRevocations } from './agent-token-revocation'
 import { processScheduledAgentPayloadRetention } from './agent-payload-retention';
 import { processControlPlaneDriftNotifications } from './control-plane-drift-notifications';
 import { isDirectoryScheduledCron, processScheduledDirectoryJobs } from './directory-scheduled';
-import { processNextLookupBucketMigration } from './lookup-bucket-migration-scheduled';
+import {
+  isLookupScaleOutObservationDue,
+  processNextLookupBucketMigration,
+} from './lookup-bucket-migration-scheduled';
 import { processScheduledIdentifierReplacements } from './identifier-replacement-scheduled';
 import {
   getR2MaintenanceDashboard,
@@ -4174,7 +4177,11 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   }
   if (isDirectoryScheduledCron(event.cron)) {
     try {
-      const migration = await processNextLookupBucketMigration(env);
+      // Use the scheduled timestamp for cadence selection. Earlier scheduled work can delay this
+      // callback past the ten-minute wall-clock boundary; using Date.now() here would then skip the
+      // complete planning window. The snapshot still records its actual observation time.
+      const observationDue = isLookupScaleOutObservationDue(Math.floor(event.scheduledTime / 1000));
+      const migration = await processNextLookupBucketMigration(env, { observationDue });
       log.info('Lookup bucket migration scheduler completed', {
         status: migration.status,
         state: migration.state,

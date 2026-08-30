@@ -110,6 +110,12 @@ describe('LookupBucketMigrationService', () => {
       )
     );
     database.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/002_lookup_predictive_scale_out.sql'),
+        'utf8'
+      )
+    );
+    database.exec(
       `INSERT INTO control_environments (
          environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
        ) VALUES ('test', 'test', 'urn:authrim:control:test', 'active', 1, 1);
@@ -124,14 +130,23 @@ describe('LookupBucketMigrationService', () => {
          max_d1_resources, daily_d1_create_budget, target_account_count,
          created_at, updated_at
        ) VALUES ('test', 2, 2, 10, 10, 100000, 1, 1);
+       INSERT INTO control_residency_partitions (
+         environment_id, residency_policy_id, residency_partition,
+         lookup_capacity_domain_id, status, created_at, updated_at
+       ) VALUES
+         ('test', 'global', 'default', 'lookup:global:default', 'active', 1, 1),
+         ('test', 'global-eu', 'eu', 'lookup:global-eu:eu', 'active', 1, 1);
        INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          deterministic_name, ownership_fingerprint, provisioning_state,
          origin_operation_id, desired_spec_json, created_at, updated_at
        ) VALUES
-         ('resource-a', 'test', 'd1', 'lookup-a', 'lookup-a', 'fingerprint-a', 'active', 'seed', '{}', 1, 1),
-         ('resource-b', 'test', 'd1', 'lookup-b', 'lookup-b', 'fingerprint-b', 'active', 'seed', '{}', 1, 1),
-         ('resource-c', 'test', 'd1', 'lookup-c', 'lookup-c', 'fingerprint-c', 'active', 'seed', '{}', 1, 1);
+         ('resource-a', 'test', 'd1', 'lookup-a', 'lookup-a', 'fingerprint-a', 'active', 'seed',
+          '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}', 1, 1),
+         ('resource-b', 'test', 'd1', 'lookup-b', 'lookup-b', 'fingerprint-b', 'active', 'seed',
+          '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}', 1, 1),
+         ('resource-c', 'test', 'd1', 'lookup-c', 'lookup-c', 'fingerprint-c', 'active', 'seed',
+          '{"residency_policy_id":"global-eu","lookup_capacity_domain_id":"lookup:global-eu:eu"}', 1, 1);
        INSERT INTO control_lookup_physical_shards (
          lookup_shard_id, environment_id, residency_partition, binding_ref,
          d1_desired_resource_id, status, created_at, updated_at
@@ -167,6 +182,8 @@ describe('LookupBucketMigrationService', () => {
           assignmentGeneration: 3,
           activeIdentifierCount: 90,
           activeAliasCount: 0,
+          successfulRoutePublicationCount: 90,
+          publicationCounterUpdatedAt: now,
           counterUpdatedAt: now,
         },
         {
@@ -175,6 +192,8 @@ describe('LookupBucketMigrationService', () => {
           assignmentGeneration: 1,
           activeIdentifierCount: 1,
           activeAliasCount: 0,
+          successfulRoutePublicationCount: 1,
+          publicationCounterUpdatedAt: now,
           counterUpdatedAt: now,
         },
         {
@@ -183,6 +202,8 @@ describe('LookupBucketMigrationService', () => {
           assignmentGeneration: 1,
           activeIdentifierCount: 9,
           activeAliasCount: 0,
+          successfulRoutePublicationCount: 9,
+          publicationCounterUpdatedAt: now,
           counterUpdatedAt: now,
         },
       ],
@@ -208,6 +229,60 @@ describe('LookupBucketMigrationService', () => {
     await expect(service.planNextAutomaticMigration('test', snapshot)).resolves.toBeNull();
   });
 
+  it('prefers an empty active shard when load-improvement scores tie', async () => {
+    database.exec(
+      `INSERT INTO control_desired_resources (
+         desired_resource_id, environment_id, resource_kind, logical_shard_id,
+         deterministic_name, ownership_fingerprint, provisioning_state,
+         origin_operation_id, desired_spec_json, created_at, updated_at
+       ) VALUES (
+         'resource-d', 'test', 'd1', 'lookup-d', 'lookup-d', 'fingerprint-d', 'active', 'seed',
+         '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}',
+         1, 1
+       );
+       INSERT INTO control_lookup_physical_shards (
+         lookup_shard_id, environment_id, residency_partition, binding_ref,
+         d1_desired_resource_id, status, created_at, updated_at
+       ) VALUES ('lookup-d', 'test', 'default', 'LOOKUP_D', 'resource-d', 'active', 1, 1);
+       INSERT INTO control_lookup_bucket_assignments (
+         environment_id, virtual_bucket, lookup_shard_id, assignment_generation, state, updated_at
+       ) VALUES ('test', 10, 'lookup-b', 1, 'active', 1);`
+    );
+
+    const planned = await service.planNextAutomaticMigration('test', {
+      ownerId: 'management-planner',
+      observedAt: now,
+      buckets: [
+        ...[7, 8, 9].map((virtualBucket) => ({
+          virtualBucket,
+          lookupShardId: 'lookup-a',
+          assignmentGeneration: virtualBucket === 7 ? 3 : 1,
+          activeIdentifierCount: 10,
+          activeAliasCount: 0,
+          successfulRoutePublicationCount: 10,
+          publicationCounterUpdatedAt: now,
+          counterUpdatedAt: now,
+        })),
+        {
+          virtualBucket: 10,
+          lookupShardId: 'lookup-b',
+          assignmentGeneration: 1,
+          activeIdentifierCount: 1,
+          activeAliasCount: 0,
+          successfulRoutePublicationCount: 1,
+          publicationCounterUpdatedAt: now,
+          counterUpdatedAt: now,
+        },
+      ],
+    });
+
+    expect(planned).toMatchObject({
+      source: { lookupShardId: 'lookup-a' },
+      target: { lookupShardId: 'lookup-d' },
+      state: 'dual_write',
+    });
+  });
+
   it('compares shard load after normalizing by configured capacity weight', async () => {
     database.exec(
       `UPDATE control_lookup_physical_shards SET capacity_weight = 2
@@ -227,6 +302,8 @@ describe('LookupBucketMigrationService', () => {
             assignmentGeneration: 3,
             activeIdentifierCount: 90,
             activeAliasCount: 0,
+            successfulRoutePublicationCount: 90,
+            publicationCounterUpdatedAt: now,
             counterUpdatedAt: now,
           },
           {
@@ -235,6 +312,8 @@ describe('LookupBucketMigrationService', () => {
             assignmentGeneration: 1,
             activeIdentifierCount: 60,
             activeAliasCount: 0,
+            successfulRoutePublicationCount: 60,
+            publicationCounterUpdatedAt: now,
             counterUpdatedAt: now,
           },
           {
@@ -243,6 +322,8 @@ describe('LookupBucketMigrationService', () => {
             assignmentGeneration: 1,
             activeIdentifierCount: 9,
             activeAliasCount: 0,
+            successfulRoutePublicationCount: 9,
+            publicationCounterUpdatedAt: now,
             counterUpdatedAt: now,
           },
         ],
@@ -430,6 +511,40 @@ describe('LookupBucketMigrationService', () => {
     });
     now = 500;
     await expect(service.claimNext('test', 'another-run')).resolves.toBeNull();
+  });
+
+  it('releases a completed scheduler step for immediate fenced reclaim', async () => {
+    const migration = await service.start('test', {
+      virtualBucket: 7,
+      targetLookupShardId: 'lookup-b',
+      idempotencyKey: 'move-bucket-7',
+      ownerId: 'management-run-1',
+    });
+
+    const released = await service.release('test', {
+      operationId: migration.operationId,
+      ownerId: 'management-run-1',
+      fencingToken: migration.fencingToken,
+    });
+    expect(released.leaseExpiresAt).toBe(now);
+
+    const reclaimed = await service.claimNext('test', 'management-run-2');
+    expect(reclaimed).toMatchObject({
+      operationId: migration.operationId,
+      fencingToken: migration.fencingToken + 1,
+    });
+    expect(
+      database
+        .prepare(
+          `SELECT owner_id, fencing_token, lease_expires_at
+             FROM control_directory_rewrite_leases WHERE environment_id = 'test'`
+        )
+        .get()
+    ).toEqual({
+      owner_id: 'management-run-2',
+      fencing_token: migration.fencingToken + 1,
+      lease_expires_at: now + 120,
+    });
   });
 
   it('resolves the pinned source and target generations during migration', async () => {
@@ -767,5 +882,32 @@ describe('LookupBucketMigrationService', () => {
         )
         .get()
     ).toEqual({ state: 'active' });
+  });
+
+  it('rejects a target in another explicit Lookup capacity domain', async () => {
+    database
+      .prepare(
+        `UPDATE control_desired_resources
+            SET desired_spec_json = ?
+          WHERE desired_resource_id = 'resource-b'`
+      )
+      .run(
+        JSON.stringify({
+          residency_policy_id: 'global',
+          lookup_capacity_domain_id: 'lookup:isolated:default',
+        })
+      );
+
+    await expect(
+      service.start('test', {
+        virtualBucket: 7,
+        targetLookupShardId: 'lookup-b',
+        idempotencyKey: 'move-cross-domain',
+        ownerId: 'management-run-1',
+      })
+    ).rejects.toThrow('control_lookup_bucket_migration_target_unavailable');
+    expect(
+      database.prepare(`SELECT COUNT(*) AS count FROM control_lookup_bucket_migrations`).get()
+    ).toEqual({ count: 0 });
   });
 });

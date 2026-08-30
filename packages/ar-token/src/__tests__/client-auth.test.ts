@@ -5738,6 +5738,7 @@ describe('Client Authentication Tests', () => {
           client_auth_method: 'private_key_jwt',
           scope: 'admin:tenants.read admin:clients.create',
           tenant_scope: ['default'],
+          signing_tenant_id: 'default',
         }),
         expect.anything(),
         expect.any(String),

@@ -75,6 +75,20 @@ function resource(role: (typeof roles)[number], index: number): BootstrapResourc
   };
 }
 
+function useSharedPool(entry: BootstrapResource): void {
+  if (entry.role === 'lookup') throw new Error('bootstrap_test_tenant_resource_required');
+  entry.desiredSpecJson = JSON.stringify({
+    ...JSON.parse(entry.desiredSpecJson),
+    allocation_scope: 'shared_pool',
+    owner_tenant_id: undefined,
+  });
+  entry.desiredResourceScope = 'platform';
+  entry.desiredTenantId = null;
+  entry.allocationScope = 'shared_pool';
+  entry.ownerTenantId = null;
+  entry.placementIsolationPolicy = 'shared_pool';
+}
+
 async function fixture() {
   const resources = roles.map((role, index) => resource(role, index + 1));
   const settings: CloudflareWorkerSettings = {
@@ -206,6 +220,66 @@ describe('BootstrapHandoffVerifier', () => {
       expect(observation.settingsDigest).toMatch(/^[0-9a-f]{64}$/u);
     }
     expect(state.blocked).not.toHaveBeenCalled();
+  });
+
+  it('accepts platform-owned shared-pool shards with one active tenant assignment', async () => {
+    const state = await fixture();
+    for (const entry of state.resources) {
+      if (entry.role !== 'lookup') useSharedPool(entry);
+    }
+
+    const result = await new BootstrapHandoffVerifier(
+      state.repository,
+      state.api,
+      () => 1_800_000_000
+    ).reconcile();
+
+    expect(result).toEqual({ attempted: 1, accepted: 1, blocked: 0, retrying: 0 });
+    expect(state.accepted).toHaveBeenCalledOnce();
+    expect(state.blocked).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'a shared-pool owner',
+      mutate: (entry: BootstrapResource) => {
+        entry.ownerTenantId = tenantId;
+      },
+      error: 'control_bootstrap_resource_scope_mismatch',
+    },
+    {
+      name: 'a tenant-scoped shared-pool desired resource',
+      mutate: (entry: BootstrapResource) => {
+        entry.desiredResourceScope = 'tenant';
+        entry.desiredTenantId = tenantId;
+      },
+      error: 'control_bootstrap_desired_spec_invalid',
+    },
+    {
+      name: 'a mismatched shared-pool placement policy',
+      mutate: (entry: BootstrapResource) => {
+        entry.placementIsolationPolicy = 'tenant_exclusive';
+      },
+      error: 'control_bootstrap_resource_scope_mismatch',
+    },
+  ])('blocks shared-pool bootstrap with $name', async ({ mutate, error }) => {
+    const state = await fixture();
+    for (const entry of state.resources) {
+      if (entry.role !== 'lookup') useSharedPool(entry);
+    }
+    const entry = state.resources.find((candidate) => candidate.role === 'tenant_core/default');
+    if (!entry) throw new Error('bootstrap_test_default_resource_missing');
+    mutate(entry);
+
+    const result = await new BootstrapHandoffVerifier(
+      state.repository,
+      state.api,
+      () => 1_800_000_000
+    ).reconcile();
+
+    expect(result).toEqual({ attempted: 1, accepted: 0, blocked: 1, retrying: 0 });
+    expect(state.blocked).toHaveBeenCalledWith(state.handoff, error, 1_800_000_000);
+    expect(state.api.getD1Database).not.toHaveBeenCalledWith(entry.providerDatabaseId);
   });
 
   it('blocks instead of adopting a wrong D1 binding', async () => {

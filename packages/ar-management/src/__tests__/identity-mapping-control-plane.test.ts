@@ -1634,7 +1634,9 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             priority: 0,
             metadata_json: JSON.stringify({ source: 'test' }),
             edge_id: 'edge_1',
-            source_ref_json: JSON.stringify({ profileId: 'source-profile-workforce' }),
+            source_ref_json: JSON.stringify({
+              profileId: 'source-profile-source_profile_workforce',
+            }),
             target_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
             edge_kind: 'direct',
             display_order: 0,
@@ -1649,7 +1651,9 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             metadata_json: JSON.stringify({ source: 'test' }),
             edge_id: 'edge_2',
             source_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
-            target_ref_json: JSON.stringify({ profileId: 'destination-profile-oidc' }),
+            target_ref_json: JSON.stringify({
+              profileId: 'destination-profile-destination_profile_oidc',
+            }),
             edge_kind: 'transform_input',
             display_order: 0,
           },
@@ -1678,8 +1682,8 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
         fieldMappingSetId: 'policy_1',
         versionLabel: 'draft-1',
         directions: { source: true, destination: true },
-        sourceProfileIds: ['source-profile-workforce'],
-        destinationProfileIds: ['destination-profile-oidc'],
+        sourceProfileIds: ['source_profile_workforce'],
+        destinationProfileIds: ['destination_profile_oidc'],
         rules: [
           expect.objectContaining({
             id: 'rule_1',
@@ -1687,7 +1691,7 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             edges: [
               expect.objectContaining({
                 id: 'edge_1',
-                sourceRef: { profileId: 'source-profile-workforce' },
+                sourceRef: { profileId: 'source-profile-source_profile_workforce' },
                 targetRef: { nodeId: 'canonical-email' },
               }),
             ],
@@ -1990,6 +1994,124 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
         activationScope: { kind: 'tenant', id: 'tenant_a' },
       })
     ).resolves.toMatchObject({ lifecycleState: 'active' });
+    expect(
+      adapter.executes.some(
+        (item) =>
+          item.sql.includes('UPDATE compiled_mapping_snapshots') &&
+          item.sql.includes('field_mapping_version_id IN')
+      )
+    ).toBe(true);
+    expect(
+      adapter.executes.some(
+        (item) => item.sql.includes('UPDATE field_mapping_versions') && item.sql.includes('id <> ?')
+      )
+    ).toBe(true);
+  });
+
+  it('allows activation for a built-in system identity source absent from the custom claim catalog', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_version_1',
+          tenant_id: 'tenant_a',
+          field_mapping_set_id: 'policy_1',
+          version_label: 'v1',
+          lifecycle_state: 'published',
+          field_mapping_hash: 'field_mapping_hash_1',
+        },
+        {
+          id: 'snapshot_1',
+          tenant_id: 'tenant_a',
+          field_mapping_version_id: 'policy_version_1',
+          catalog_version_id: 'system_default_canonical_catalog_schema_v1',
+          snapshot_hash: 'snapshot_hash_1',
+          lifecycle_state: 'draft',
+        },
+        null,
+      ],
+      queryRowSets: [
+        [
+          {
+            source_ref_json: JSON.stringify({
+              side: 'source',
+              namespace: 'authrim.profile',
+              path: 'account_id',
+              catalogEntryId: 'system.identity.account_uuid',
+            }),
+            target_ref_json: JSON.stringify({
+              side: 'destination',
+              namespace: 'saml.attribute',
+              path: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.10',
+              profileId: 'destination-profile-profile_saml',
+            }),
+          },
+        ],
+      ],
+    });
+    const coreAdapter = createAdapter({ queryRows: [sensitiveCatalogRow] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000, coreAdapter);
+
+    await expect(
+      repository.activateFieldMappingVersion('tenant_a', 'policy_1', 'policy_version_1', {
+        snapshotId: 'snapshot_1',
+        activationScope: { kind: 'tenant' },
+      })
+    ).resolves.toMatchObject({ lifecycleState: 'active' });
+  });
+
+  it('still rejects an unknown tenant claim absent from the compiled catalog', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_version_1',
+          tenant_id: 'tenant_a',
+          field_mapping_set_id: 'policy_1',
+          version_label: 'v1',
+          lifecycle_state: 'published',
+          field_mapping_hash: 'field_mapping_hash_1',
+        },
+        {
+          id: 'snapshot_1',
+          tenant_id: 'tenant_a',
+          field_mapping_version_id: 'policy_version_1',
+          catalog_version_id: 'system_default_canonical_catalog_schema_v1',
+          snapshot_hash: 'snapshot_hash_1',
+          lifecycle_state: 'draft',
+        },
+      ],
+      queryRowSets: [
+        [
+          {
+            source_ref_json: JSON.stringify({
+              side: 'source',
+              namespace: 'authrim.profile',
+              path: 'unknown_claim',
+              catalogEntryId: 'field.canonical.unknown_claim',
+            }),
+            target_ref_json: JSON.stringify({
+              side: 'destination',
+              namespace: 'saml.attribute',
+              path: 'urn:example:unknown',
+              profileId: 'destination-profile-profile_saml',
+            }),
+          },
+        ],
+      ],
+    });
+    const coreAdapter = createAdapter({ queryRows: [sensitiveCatalogRow] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000, coreAdapter);
+
+    await expect(
+      repository.activateFieldMappingVersion('tenant_a', 'policy_1', 'policy_version_1', {
+        snapshotId: 'snapshot_1',
+        activationScope: { kind: 'tenant' },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+      message: expect.stringContaining('mapping source field is missing from compiled catalog'),
+    });
+    expect(adapter.executes).toHaveLength(0);
   });
 
   it('deactivates an active field mapping set version', async () => {
@@ -2013,6 +2135,49 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
       expect.stringContaining('UPDATE field_mapping_activations'),
       expect.stringContaining('UPDATE compiled_mapping_snapshots'),
       expect.stringContaining('UPDATE field_mapping_versions'),
+      expect.stringContaining('UPDATE field_mapping_sets'),
+    ]);
+  });
+
+  it('repairs parent lifecycle state when an already-active version is activated again', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_version_1',
+          tenant_id: 'tenant_a',
+          field_mapping_set_id: 'policy_1',
+          version_label: 'v1',
+          lifecycle_state: 'published',
+          field_mapping_hash: 'field_mapping_hash_1',
+        },
+        {
+          id: 'snapshot_1',
+          tenant_id: 'tenant_a',
+          field_mapping_version_id: 'policy_version_1',
+          catalog_version_id: 'catalog_version_1',
+          snapshot_hash: 'snapshot_hash_1',
+          lifecycle_state: 'active',
+        },
+        { id: 'activation_1' },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.activateFieldMappingVersion('tenant_a', 'policy_1', 'policy_version_1', {
+        snapshotId: 'snapshot_1',
+        activationScope: { kind: 'tenant' },
+      })
+    ).resolves.toMatchObject({
+      id: 'activation_1',
+      lifecycleState: 'active',
+      alreadyActive: true,
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('UPDATE field_mapping_versions'),
+      expect.stringContaining('UPDATE compiled_mapping_snapshots'),
+      expect.stringContaining('UPDATE field_mapping_versions'),
+      expect.stringContaining('UPDATE field_mapping_sets'),
     ]);
   });
 

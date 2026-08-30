@@ -255,6 +255,10 @@ const adminSaml = {
 	admin_saml_detail_delete: 'Delete',
 	admin_saml_detail_provider_status: 'Provider Status',
 	admin_saml_detail_provider_status_desc: 'Enable or disable this SAML provider.',
+	admin_saml_detail_provider_status_mapping_required:
+		'Choose and save a Field Mapping Set before enabling this provider.',
+	admin_saml_detail_mapping_pending:
+		'This provider was registered in a disabled state. Choose the appropriate Field Mapping Set below, then enable and save the provider.',
 	admin_saml_detail_basic_information: 'Basic Information',
 	admin_saml_detail_name_required: 'Name *',
 	admin_saml_detail_name_required_error: 'Name is required',
@@ -313,6 +317,9 @@ const adminSaml = {
 		'Legacy relaxes compatibility for older SPs. Use it only for an explicit legacy exception.',
 	admin_saml_detail_identity_mapping_policy: 'Field Mapping Set',
 	admin_saml_detail_identity_mapping_policy_default: 'Select a Field Mapping Set',
+	admin_saml_detail_identity_mapping_policy_required: 'Select an active Field Mapping Set.',
+	admin_saml_detail_identity_mapping_policy_no_compatible:
+		'No active compatible Field Mapping Sets are available.',
 	admin_saml_detail_identity_mapping_policy_hint:
 		'Selects the active Field Mapping Set used for inbound and outbound SAML attribute mapping.',
 	admin_saml_detail_identity_mapping_policy_link: 'Manage Field Mapping Sets',
@@ -392,6 +399,8 @@ const adminSaml = {
 	admin_saml_new_signature_via: 'via {profile:string}',
 	admin_saml_new_create_providers: 'Create Providers',
 	admin_saml_new_create_providers_desc: 'Select entities from this aggregate',
+	admin_saml_new_aggregate_mapping_after_create:
+		'Selected IdP and SP entities are registered as disabled providers. Choose the appropriate Field Mapping Set on each provider detail page, then enable the provider.',
 	admin_saml_new_federation_trust_profile: 'Federation Trust Profile',
 	admin_saml_new_federation_trust_profile_desc: 'Register trust anchor for this aggregate',
 	admin_saml_new_profile_name_required: 'Profile Name *',
@@ -422,6 +431,11 @@ const adminSaml = {
 	admin_saml_new_load_more: 'Load more',
 	admin_saml_new_batch_progress:
 		'Processed {processed:number} / {total:number} · Succeeded {succeeded:number} · Failed {failed:number}',
+	admin_saml_new_batch_mapping_next:
+		'Registration is complete. Configure a Field Mapping Set for each provider before enabling it.',
+	admin_saml_new_configure_created_provider: 'Configure {name:string}',
+	admin_saml_new_provider_import_failed:
+		'{entityId:string} could not be registered: {error:string}',
 	admin_saml_new_choose_provider_type: 'Choose Provider Type',
 	admin_saml_new_choose_provider_type_hint:
 		'Choose IdP or SP for a single SAML counterparty, or Federation for aggregate metadata trust anchors.',

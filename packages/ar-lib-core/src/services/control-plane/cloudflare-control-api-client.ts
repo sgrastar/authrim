@@ -12,6 +12,9 @@ const CLOUDFLARE_API_PREFIX = '/client/v4/accounts';
 const RESPONSE_LIMIT_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 30_000;
 const JSON_REQUEST_LIMIT_BYTES = 4 * 1024 * 1024;
+const D1_LIST_PAGE_SIZE = 1_000;
+const D1_LIST_MAX_PAGES = 1_000;
+const D1_LIST_MAX_ATTEMPTS = 3;
 const D1_LOCATION_HINTS = new Set(['wnam', 'enam', 'weur', 'eeur', 'apac', 'oc']);
 const D1_JURISDICTIONS = new Set(['eu', 'fedramp']);
 
@@ -25,6 +28,18 @@ interface CloudflareApiEnvelope<T> {
   result?: T;
   errors?: CloudflareApiErrorDetail[];
   messages?: CloudflareApiErrorDetail[];
+  result_info?: {
+    page?: number;
+    per_page?: number;
+    count?: number;
+    total_count?: number;
+    total_pages?: number;
+  };
+}
+
+interface CloudflareApiResult<T> {
+  result: T;
+  resultInfo: CloudflareApiEnvelope<T>['result_info'];
 }
 
 export interface CloudflareD1Database {
@@ -165,6 +180,52 @@ function validateD1CreateInput(input: {
   }
 }
 
+function parseD1ListDatabase(value: unknown): CloudflareD1Database {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('cloudflare_d1_list_invalid_result');
+  }
+  const row = value as Record<string, unknown>;
+  const hasValue = (field: unknown): boolean => field !== undefined && field !== null;
+  if (
+    typeof row.uuid !== 'string' ||
+    row.uuid.length === 0 ||
+    typeof row.name !== 'string' ||
+    row.name.length === 0 ||
+    (hasValue(row.created_at) && typeof row.created_at !== 'string') ||
+    (hasValue(row.file_size) &&
+      (!Number.isSafeInteger(row.file_size) || Number(row.file_size) < 0)) ||
+    (hasValue(row.num_tables) &&
+      (!Number.isSafeInteger(row.num_tables) || Number(row.num_tables) < 0)) ||
+    (hasValue(row.jurisdiction) && typeof row.jurisdiction !== 'string') ||
+    (hasValue(row.version) && typeof row.version !== 'string') ||
+    (hasValue(row.read_replication) &&
+      (!row.read_replication ||
+        typeof row.read_replication !== 'object' ||
+        Array.isArray(row.read_replication) ||
+        !['auto', 'disabled'].includes(
+          String((row.read_replication as Record<string, unknown>).mode)
+        )))
+  ) {
+    throw new Error('cloudflare_d1_list_invalid_result');
+  }
+  return {
+    uuid: row.uuid,
+    name: row.name,
+    ...(hasValue(row.created_at) ? { created_at: row.created_at as string } : {}),
+    ...(hasValue(row.file_size) ? { file_size: Number(row.file_size) } : {}),
+    ...(hasValue(row.num_tables) ? { num_tables: Number(row.num_tables) } : {}),
+    ...(hasValue(row.jurisdiction) ? { jurisdiction: row.jurisdiction as string } : {}),
+    ...(hasValue(row.version) ? { version: row.version as string } : {}),
+    ...(hasValue(row.read_replication)
+      ? {
+          read_replication: {
+            mode: (row.read_replication as { mode: 'auto' | 'disabled' }).mode,
+          },
+        }
+      : {}),
+  };
+}
+
 export class CloudflareControlApiError extends Error {
   readonly operation: CloudflareControlOperation;
   readonly status: number;
@@ -202,11 +263,11 @@ export class CloudflareControlApiClient {
         }));
   }
 
-  private async request<T>(
+  private async requestEnvelope<T>(
     operation: CloudflareControlOperation,
     path: string,
     init: Omit<ControlRequestInit, 'headers'> & { headers?: ControlHeadersInit } = {}
-  ): Promise<T> {
+  ): Promise<CloudflareApiResult<T>> {
     const token = selectCloudflareControlToken(operation, this.tokens);
     const url = `${CLOUDFLARE_API_ORIGIN}${CLOUDFLARE_API_PREFIX}/${this.accountId}${path}`;
     const headers = new Headers(init.headers);
@@ -231,7 +292,15 @@ export class CloudflareControlApiClient {
         ) ?? [];
       throw new CloudflareControlApiError(operation, response.status, providerCodes);
     }
-    return envelope.result;
+    return { result: envelope.result, resultInfo: envelope.result_info };
+  }
+
+  private async request<T>(
+    operation: CloudflareControlOperation,
+    path: string,
+    init: Omit<ControlRequestInit, 'headers'> & { headers?: ControlHeadersInit } = {}
+  ): Promise<T> {
+    return (await this.requestEnvelope<T>(operation, path, init)).result;
   }
 
   private requestJson<T>(
@@ -247,8 +316,78 @@ export class CloudflareControlApiClient {
     });
   }
 
-  listD1Databases(): Promise<CloudflareD1Database[]> {
-    return this.request('d1.list', '/d1/database?per_page=1000');
+  async listD1Databases(): Promise<CloudflareD1Database[]> {
+    for (let attempt = 1; attempt <= D1_LIST_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.listD1DatabasesOnce();
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          error.message !== 'cloudflare_d1_list_pagination_invalid' ||
+          attempt === D1_LIST_MAX_ATTEMPTS
+        ) {
+          throw error;
+        }
+      }
+    }
+    throw new Error('cloudflare_d1_list_pagination_invalid');
+  }
+
+  private async listD1DatabasesOnce(): Promise<CloudflareD1Database[]> {
+    const databases: CloudflareD1Database[] = [];
+    const seen = new Map<string, string>();
+    for (let page = 1; page <= D1_LIST_MAX_PAGES; page += 1) {
+      const { result, resultInfo } = await this.requestEnvelope<unknown>(
+        'd1.list',
+        `/d1/database?page=${page}&per_page=${D1_LIST_PAGE_SIZE}`
+      );
+      if (!Array.isArray(result)) throw new Error('cloudflare_d1_list_invalid_result');
+      for (const candidate of result) {
+        const database = parseD1ListDatabase(candidate);
+        const previousName = seen.get(database.uuid);
+        if (previousName !== undefined && previousName !== database.name) {
+          throw new Error('cloudflare_d1_list_duplicate_conflict');
+        }
+        if (previousName === undefined) {
+          seen.set(database.uuid, database.name);
+          databases.push(database);
+        }
+      }
+
+      const totalPages = resultInfo?.total_pages;
+      const totalCount = resultInfo?.total_count;
+      const reportedPage = resultInfo?.page;
+      const reportedCount = resultInfo?.count;
+      const effectivePageSize = resultInfo?.per_page ?? D1_LIST_PAGE_SIZE;
+      if (
+        (reportedPage !== undefined &&
+          (!Number.isSafeInteger(reportedPage) || reportedPage !== page)) ||
+        (reportedCount !== undefined &&
+          (!Number.isSafeInteger(reportedCount) || reportedCount !== result.length)) ||
+        (totalPages !== undefined &&
+          (!Number.isSafeInteger(totalPages) ||
+            totalPages < 0 ||
+            totalPages > D1_LIST_MAX_PAGES)) ||
+        (totalCount !== undefined && (!Number.isSafeInteger(totalCount) || totalCount < 0)) ||
+        !Number.isSafeInteger(effectivePageSize) ||
+        effectivePageSize < 1 ||
+        effectivePageSize > D1_LIST_PAGE_SIZE
+      ) {
+        throw new Error('cloudflare_d1_list_pagination_invalid');
+      }
+      if (totalCount !== undefined && totalCount < databases.length) {
+        throw new Error('cloudflare_d1_list_pagination_invalid');
+      }
+      if (
+        result.length === 0 ||
+        (totalPages !== undefined && page >= totalPages) ||
+        (totalCount !== undefined && databases.length >= totalCount) ||
+        (totalPages === undefined && totalCount === undefined && result.length < effectivePageSize)
+      ) {
+        return databases;
+      }
+    }
+    throw new Error('cloudflare_d1_list_pagination_limit');
   }
 
   getD1Database(databaseId: string): Promise<CloudflareD1Database> {

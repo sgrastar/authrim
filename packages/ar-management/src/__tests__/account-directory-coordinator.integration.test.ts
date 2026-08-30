@@ -191,6 +191,12 @@ describe('AccountDirectoryCoordinator', () => {
         .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
         .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
+    lookupDatabase.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/lookup/002_lookup_scale_out_publication_metrics.sql'),
+        'utf8'
+      )
+    );
     tenant = new SqliteD1(tenantDatabase);
     lookup = new SqliteD1(lookupDatabase);
     publication = await buildPublication();
@@ -261,6 +267,27 @@ describe('AccountDirectoryCoordinator', () => {
     );
   });
 
+  it('releases only reservations owned by the failed operation and replays idempotently', async () => {
+    await reservations().reserve(publication);
+
+    await expect(reservations().release(publication)).resolves.toEqual({ releasedCount: 1 });
+    await expect(reservations().release(publication)).resolves.toEqual({ releasedCount: 0 });
+
+    expect(
+      lookupDatabase
+        .prepare(
+          `SELECT reservation_state, lease_expires_at, released_at, committed_at
+             FROM lookup_identifier_reservations`
+        )
+        .get()
+    ).toEqual({
+      reservation_state: 'released',
+      lease_expires_at: null,
+      released_at: 90,
+      committed_at: null,
+    });
+  });
+
   it('resumes forward after response loss at final account activation', async () => {
     await reservations().reserve(publication);
     tenant.failOnceFor = "SET directory_publication_state = 'active'";
@@ -289,6 +316,34 @@ describe('AccountDirectoryCoordinator', () => {
     expect(
       lookupDatabase.prepare(`SELECT COUNT(*) AS count FROM lookup_identifiers`).get()
     ).toEqual({ count: 2 });
+    expect(
+      lookupDatabase
+        .prepare(
+          `SELECT SUM(successful_route_publication_count) AS count
+             FROM lookup_bucket_counters`
+        )
+        .get()
+    ).toEqual({ count: 2 });
+  });
+
+  it('does not activate a route when its publication counter row is missing', async () => {
+    await reservations().reserve(publication);
+    const firstIndex = publication.indexes[0];
+    if (!firstIndex) throw new Error('missing_test_index');
+    lookupDatabase
+      .prepare(`DELETE FROM lookup_bucket_counters WHERE virtual_bucket = ?`)
+      .run(firstIndex.virtualBucket);
+
+    await expect(coordinator().publish(publication)).rejects.toThrow(
+      'directory_publication_counter_missing'
+    );
+    expect(
+      lookupDatabase
+        .prepare(
+          `SELECT COUNT(*) AS count FROM lookup_identifiers WHERE lifecycle_state = 'active'`
+        )
+        .get()
+    ).toEqual({ count: 0 });
   });
 
   it('adds a reserved external subject without reactivating an already active account', async () => {

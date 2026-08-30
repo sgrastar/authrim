@@ -27,12 +27,15 @@ import {
   getTenantDatabaseResourcePrefix,
 } from '@authrim/ar-lib-core/control-plane';
 import type { ControlRepository } from './repository';
+import type { LookupScaleOutCapacityRequest } from './lookup-scale-out-forecast';
+import type { AccountScaleOutCapacityRequest } from './account-scale-out-forecast';
 import { ApiMigrationEngine, cloudflareMigrationExecutor } from './migration-engine';
 import { MigrationReleaseArtifactReader, R2ReleaseArtifactStore } from './release-artifact';
 import { createControlApiClients } from './control-api-clients';
 import {
   type ControlEnv,
   type ControlOperationView,
+  type LowWatermarkRequest,
   type PendingMigrationPlan,
   type ProvisionedD1DataRole,
   type TenantShardDataRole,
@@ -144,6 +147,10 @@ function parseRequest(
     dataRole: dataRole as ProvisionedD1DataRole,
     residencyPolicyId: requiredSafeId(value.residencyPolicyId, 'residency_policy_id'),
     residencyPartition: requiredPartition(value.residencyPartition, 'residency_partition'),
+    lookupCapacityDomainId:
+      value.lookupCapacityDomainId === undefined
+        ? undefined
+        : requiredSafeId(value.lookupCapacityDomainId, 'lookup_capacity_domain_id'),
     idempotencyKey: requiredSafeId(value.idempotencyKey, 'idempotency_key'),
     allocationScope,
     ownerTenantId,
@@ -245,6 +252,26 @@ async function capacityUnitIdempotencyKey(input: {
     )
   ).slice(0, 24);
   return `capacity:${input.scope}:${slug(input.tenantId ?? 'shared')}:${unitDigest}:${input.unitIndex}`;
+}
+
+async function lowWatermarkIdempotencyKey(request: LowWatermarkRequest): Promise<string> {
+  // Pending/ready shards must not advance this generation. Otherwise a concurrent caller can
+  // observe the first caller's new pending shard and derive a second key for the same boundary.
+  const digest = (
+    await sha256(
+      JSON.stringify([
+        request.environmentId,
+        request.allocationScope === 'tenant_exclusive' ? request.tenantId : null,
+        request.dataRole,
+        request.residencyPolicyId,
+        request.residencyPartition,
+        request.allocationScope,
+        request.ownerTenantId,
+        request.activeSupplyCount,
+      ])
+    )
+  ).slice(0, 24);
+  return `low-water:${request.allocationScope}:${slug(request.dataRole)}:${request.activeSupplyCount}:${digest}`;
 }
 
 function parsePlacementPolicyRegistration(
@@ -532,6 +559,7 @@ async function buildPlan(
       request.dataRole,
       request.residencyPolicyId,
       request.residencyPartition,
+      request.lookupCapacityDomainId ?? '',
       request.idempotencyKey,
     ].join('\0')
   );
@@ -554,6 +582,8 @@ async function buildPlan(
     dataRole: request.dataRole,
     residencyPolicyId: request.residencyPolicyId,
     residencyPartition: request.residencyPartition,
+    lookupCapacityDomainId:
+      request.dataRole === 'lookup' ? (request.lookupCapacityDomainId ?? null) : null,
     logicalShardId,
     databaseName: `${getTenantDatabaseResourcePrefix(environmentName)}-tenant-${slug(role)}-${slug(request.residencyPartition)}${request.ownerTenantId ? `-${slug(request.ownerTenantId)}` : ''}-db-${digest.slice(0, 8)}`,
     bindingRef: `${getTenantDatabaseBindingPrefix(environmentName)}_${bindingRole}_${digest.slice(0, 8).toUpperCase()}_${bindingSuffix}`,
@@ -669,11 +699,23 @@ export class ControlService {
       residencyPolicyId,
       residencyPartition,
     });
-    const requiredRoles = new Set<TenantShardDataRole>(TENANT_DATA_ROLES);
+    const roleCounts = new Map<TenantShardDataRole, number>(
+      [...TENANT_DATA_ROLES].map((role) => [role, 0])
+    );
+    const shardIds = new Set<string>();
+    const bindingRefs = new Set<string>();
+    for (const target of targets) {
+      roleCounts.set(target.dataRole, (roleCounts.get(target.dataRole) ?? 0) + 1);
+      if (shardIds.has(target.shardId) || bindingRefs.has(target.bindingRef)) {
+        throw new Error('control_tenant_shard_assignment_incomplete');
+      }
+      shardIds.add(target.shardId);
+      bindingRefs.add(target.bindingRef);
+    }
     if (
-      targets.length !== requiredRoles.size ||
-      targets.some((target) => !requiredRoles.delete(target.dataRole)) ||
-      requiredRoles.size !== 0
+      roleCounts.get('tenant_core/default') !== 1 ||
+      (roleCounts.get('tenant_core/users') ?? 0) < 1 ||
+      (roleCounts.get('tenant_pii') ?? 0) < 1
     ) {
       throw new Error('control_tenant_shard_assignment_incomplete');
     }
@@ -918,6 +960,27 @@ export class ControlService {
     return this.requestTenantShardAs(input, 'admin', expectedEnvironmentId);
   }
 
+  requestLookupScaleOutCapacity(
+    input: LookupScaleOutCapacityRequest,
+    expectedEnvironmentId: string
+  ): Promise<TenantShardRequestResult> {
+    return this.requestTenantShardAs(
+      {
+        environmentId: expectedEnvironmentId,
+        dataRole: 'lookup',
+        residencyPolicyId: input.residencyPolicyId,
+        residencyPartition: input.residencyPartition,
+        lookupCapacityDomainId: input.lookupCapacityDomainId,
+        allocationScope: 'shared_pool',
+        ownerTenantId: null,
+        idempotencyKey: input.idempotencyKey,
+      },
+      'scheduler',
+      expectedEnvironmentId,
+      true
+    );
+  }
+
   async registerTenantPlacementPolicy(
     input: unknown,
     expectedEnvironmentId: string
@@ -1041,9 +1104,30 @@ export class ControlService {
     }
 
     const inFlight = await this.dependencies.repository.findCapacityProvisioningOperation(scope);
+    const activeSupplyCount = inFlight
+      ? null
+      : await this.dependencies.repository.getActiveTenantShardSupplyCount(scope);
+    const convergedRequest =
+      activeSupplyCount === null
+        ? request
+        : {
+            ...request,
+            idempotencyKey: await lowWatermarkIdempotencyKey({
+              ...scope,
+              activeSupplyCount,
+            }),
+          };
     const operation =
       inFlight ??
-      (await this.requestTenantShardAs(request, 'admin', expectedEnvironmentId)).operation;
+      (
+        await this.requestTenantShardAs(
+          convergedRequest,
+          'scheduler',
+          expectedEnvironmentId,
+          false,
+          true
+        )
+      ).operation;
     if (!operation) throw new Error('control_capacity_operation_missing');
 
     if (operation.status === 'succeeded') {
@@ -1087,11 +1171,48 @@ export class ControlService {
     return result;
   }
 
+  async requestAccountScaleOutCapacity(
+    request: AccountScaleOutCapacityRequest,
+    expectedEnvironmentId: string
+  ): Promise<TenantShardRequestResult> {
+    const environmentId = requiredSafeId(expectedEnvironmentId, 'environment_id');
+    if (request.environmentId !== environmentId) {
+      throw new Error('account_scale_out_environment_mismatch');
+    }
+    const ownerTenantId =
+      request.ownerTenantId === null
+        ? null
+        : requiredSafeId(request.ownerTenantId, 'owner_tenant_id');
+    if (
+      (request.allocationScope === 'shared_pool' && ownerTenantId !== null) ||
+      (request.allocationScope === 'tenant_exclusive' && ownerTenantId === null)
+    ) {
+      throw new Error('account_scale_out_scope_invalid');
+    }
+    return this.requestTenantShardAs(
+      {
+        environmentId,
+        ...(ownerTenantId ? { tenantId: ownerTenantId } : {}),
+        dataRole: request.dataRole,
+        residencyPolicyId: request.residencyPolicyId,
+        residencyPartition: request.residencyPartition,
+        allocationScope: request.allocationScope,
+        ownerTenantId,
+        idempotencyKey: request.idempotencyKey,
+      },
+      'scheduler',
+      environmentId,
+      false,
+      true
+    );
+  }
+
   private async requestTenantShardAs(
     input: unknown,
     requestedByType: 'admin' | 'scheduler',
     expectedEnvironmentId?: string,
-    allowLookup = false
+    allowLookup = false,
+    deferExecution = false
   ): Promise<TenantShardRequestResult> {
     const request = parseRequest(input, expectedEnvironmentId, allowLookup);
     const allocationScope = request.allocationScope ?? 'shared_pool';
@@ -1136,8 +1257,20 @@ export class ControlService {
     if (!environment) throw new Error('control_environment_not_found');
     if (!partition) throw new Error('control_residency_partition_not_found');
     if (!policy) throw new Error('control_resource_policy_not_found');
+    if (
+      (request.dataRole === 'lookup' &&
+        request.lookupCapacityDomainId !== undefined &&
+        request.lookupCapacityDomainId !== partition.lookup_capacity_domain_id) ||
+      (request.dataRole !== 'lookup' && request.lookupCapacityDomainId !== undefined)
+    ) {
+      throw new Error('control_lookup_capacity_domain_mismatch');
+    }
     const plan = await buildPlan(
-      request,
+      {
+        ...request,
+        lookupCapacityDomainId:
+          request.dataRole === 'lookup' ? partition.lookup_capacity_domain_id : undefined,
+      },
       environment.environment_name,
       partition,
       replicationPolicy?.desired_mode ?? 'disabled'
@@ -1171,6 +1304,9 @@ export class ControlService {
         operation.operationId,
         this.dependencies.now()
       );
+      return { dryRun: false, plan, operation };
+    }
+    if (deferExecution) {
       return { dryRun: false, plan, operation };
     }
     if (operation.status === 'queued' || operation.status === 'running') {
@@ -1225,6 +1361,13 @@ export class ControlService {
             ),
           ]);
           if (!partition) throw new Error('control_residency_partition_missing');
+          if (
+            resource.dataRole === 'lookup' &&
+            resource.lookupCapacityDomainId !== undefined &&
+            resource.lookupCapacityDomainId !== partition.lookup_capacity_domain_id
+          ) {
+            throw new Error('control_lookup_capacity_domain_mismatch');
+          }
           const shardPlan = await buildPlan(
             {
               environmentId,
@@ -1232,6 +1375,8 @@ export class ControlService {
               dataRole: resource.dataRole,
               residencyPolicyId: resource.residencyPolicyId,
               residencyPartition: resource.residencyPartition,
+              lookupCapacityDomainId:
+                resource.dataRole === 'lookup' ? partition.lookup_capacity_domain_id : undefined,
               allocationScope: request.scope,
               ownerTenantId: request.scope === 'tenant_exclusive' ? request.tenantId : null,
               idempotencyKey: await capacityUnitIdempotencyKey({
@@ -1255,6 +1400,7 @@ export class ControlService {
             dataRole: shardPlan.dataRole,
             residencyPolicyId: shardPlan.residencyPolicyId,
             residencyPartition: shardPlan.residencyPartition,
+            lookupCapacityDomainId: shardPlan.lookupCapacityDomainId,
             logicalShardId: shardPlan.logicalShardId,
             databaseName: shardPlan.databaseName,
             bindingRef: shardPlan.bindingRef,
@@ -1301,6 +1447,7 @@ export class ControlService {
           dataRole: target.dataRole,
           residencyPolicyId: target.residencyPolicyId,
           residencyPartition: target.residencyPartition,
+          lookupCapacityDomainId: target.lookupCapacityDomainId ?? undefined,
           allocationScope: request.scope,
           ownerTenantId: request.scope === 'tenant_exclusive' ? request.tenantId : null,
           idempotencyKey: await capacityUnitIdempotencyKey({
@@ -1387,13 +1534,39 @@ export class ControlService {
     let failed = 0;
     for (const request of requests) {
       try {
-        await this.requestTenantShardAs(
-          {
-            ...request,
-            idempotencyKey: `low-water:${slug(request.dataRole)}:${request.residencyPartition}:${request.supplyCount}`,
-          },
-          'scheduler'
-        );
+        const idempotencyKey = await lowWatermarkIdempotencyKey(request);
+        const scope = {
+          environmentId: request.environmentId,
+          tenantId: request.tenantId,
+          dataRole: request.dataRole,
+          residencyPolicyId: request.residencyPolicyId,
+          residencyPartition: request.residencyPartition,
+          allocationScope: request.allocationScope,
+          ownerTenantId: request.ownerTenantId,
+        };
+        const assignable = await this.dependencies.repository.findAssignableTenantShard(scope);
+        if (assignable) {
+          await this.dependencies.repository.assignTenantShard(
+            {
+              environmentId: scope.environmentId,
+              tenantId: scope.tenantId,
+              dataRole: scope.dataRole,
+              residencyPolicyId: scope.residencyPolicyId,
+              residencyPartition: scope.residencyPartition,
+              shardId: assignable.shardId,
+              sourceOperationId: idempotencyKey,
+            },
+            this.dependencies.now()
+          );
+        } else {
+          await this.requestTenantShardAs(
+            {
+              ...request,
+              idempotencyKey,
+            },
+            'scheduler'
+          );
+        }
         planned += 1;
       } catch {
         failed += 1;
@@ -1421,19 +1594,20 @@ export class ControlService {
       if (!deferred) throw new Error('control_operation_missing_after_defer');
       return deferred;
     }
-    const api =
-      this.dependencies.createApiClient?.(this.dependencies.env) ??
-      createControlApiClients(this.dependencies.env).d1;
     return executeControlProvisioningEffect({
       executor: 'control',
       effect: 'create_d1',
       operation: lease.operation,
-      execute: () =>
-        ensureControlProvisioningD1({
+      execute: () => {
+        const api =
+          this.dependencies.createApiClient?.(this.dependencies.env) ??
+          createControlApiClients(this.dependencies.env).d1;
+        return ensureControlProvisioningD1({
           plan,
           provider: api,
           reserveCreate: () => this.dependencies.repository.reserveD1CreateBudget(lease, now),
-        }),
+        });
+      },
       onSuccess: (databaseId) =>
         this.dependencies.repository.markDatabaseCreated(
           lease,

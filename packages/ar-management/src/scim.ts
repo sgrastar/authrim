@@ -60,6 +60,10 @@ import {
   resolveInitialAccountDirectoryWriteTargets,
   type DurableInitialAccountDirectoryWriteResult,
 } from './account-directory-producer';
+import {
+  isAccountDirectoryWriteBindingUnavailable,
+  isLookupRegistryGenerationPropagating,
+} from './account-directory-errors';
 import { writeCanonicalAccountAuthoritative } from './account-authoritative-write';
 import {
   attemptImmediateAccountDirectoryRemovals,
@@ -2517,8 +2521,6 @@ app.post('/Users', async (c) => {
     if (mappingResponse) return mappingResponse;
     const lookupInputResponse = scimLookupInputError(c, error);
     if (lookupInputResponse) return lookupInputResponse;
-    const log = getLogger(c).module('SCIM');
-    log.error('SCIM create user error', { action: 'create_user' }, error as Error);
     if (error instanceof Error) {
       if (error.message === 'scim_account_idempotency_key_invalid') {
         return scimError(
@@ -2538,6 +2540,16 @@ app.post('/Users', async (c) => {
         return scimError(c, 503, 'Account storage capacity is temporarily unavailable');
       }
     }
+    if (isAccountDirectoryWriteBindingUnavailable(error)) {
+      c.header('Retry-After', '1');
+      return scimError(c, 503, 'Runtime database binding is propagating; retry shortly');
+    }
+    if (isLookupRegistryGenerationPropagating(error)) {
+      c.header('Retry-After', '1');
+      return scimError(c, 503, 'Runtime lookup registry generation is propagating; retry shortly');
+    }
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM create user error', { action: 'create_user' }, error as Error);
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -3971,6 +3983,30 @@ async function processUserOperation(
             },
           };
         }
+        if (isAccountDirectoryWriteBindingUnavailable(error)) {
+          return {
+            method: 'POST',
+            bulkId,
+            status: '503',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '503',
+              detail: 'Runtime database binding is propagating; retry shortly',
+            },
+          };
+        }
+        if (isLookupRegistryGenerationPropagating(error)) {
+          return {
+            method: 'POST',
+            bulkId,
+            status: '503',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '503',
+              detail: 'Runtime lookup registry generation is propagating; retry shortly',
+            },
+          };
+        }
         throw error;
       }
       const userId = result.operation.userId;
@@ -3995,7 +4031,36 @@ async function processUserOperation(
         };
       }
 
-      const targets = await resolveInitialAccountDirectoryWriteTargets(c.env, result.publication);
+      let targets: Awaited<ReturnType<typeof resolveInitialAccountDirectoryWriteTargets>>;
+      try {
+        targets = await resolveInitialAccountDirectoryWriteTargets(c.env, result.publication);
+      } catch (error) {
+        if (isAccountDirectoryWriteBindingUnavailable(error)) {
+          return {
+            method: 'POST',
+            bulkId,
+            status: '503',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '503',
+              detail: 'Runtime database binding is propagating; retry shortly',
+            },
+          };
+        }
+        if (isLookupRegistryGenerationPropagating(error)) {
+          return {
+            method: 'POST',
+            bulkId,
+            status: '503',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '503',
+              detail: 'Runtime lookup registry generation is propagating; retry shortly',
+            },
+          };
+        }
+        throw error;
+      }
       const createdProjectionRepository = new CanonicalRuntimeUserProjectionRepository(
         ensureDatabaseAdapter(targets.tenantCoreUsers, 'scim-bulk-user-create-result-core'),
         tenantId,

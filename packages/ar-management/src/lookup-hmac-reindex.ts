@@ -494,9 +494,41 @@ async function upsertCurrentIdentifier(input: {
     }
   }
   const projection = JSON.stringify(input.routeProjection);
-  await lookup
-    .prepare(
-      `INSERT INTO lookup_identifiers (
+  const publicationCounter = await lookup
+    .prepare(`SELECT 1 AS present FROM lookup_bucket_counters WHERE virtual_bucket = ?`)
+    .bind(input.currentIndex.virtualBucket)
+    .first<{ present: number }>();
+  if (publicationCounter?.present !== 1) {
+    throw new Error('lookup_hmac_reindex_publication_counter_missing');
+  }
+  await lookup.batch([
+    lookup
+      .prepare(
+        `UPDATE lookup_bucket_counters
+            SET successful_route_publication_count = successful_route_publication_count + 1,
+                publication_counter_updated_at = MAX(publication_counter_updated_at, ?)
+          WHERE virtual_bucket = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM lookup_identifiers
+               WHERE virtual_bucket = ? AND index_kind = ? AND normalization_version = ?
+                 AND hmac_key_generation = ? AND identifier_blind_digest = ?
+                 AND tenant_id = ? AND account_id = ? AND lifecycle_state = 'active'
+            )`
+      )
+      .bind(
+        input.now,
+        input.currentIndex.virtualBucket,
+        input.currentIndex.virtualBucket,
+        input.currentIndex.indexKind,
+        input.currentIndex.normalizationVersion,
+        input.currentIndex.hmacKeyGeneration,
+        input.currentIndex.digest,
+        input.tenantId,
+        input.accountId
+      ),
+    lookup
+      .prepare(
+        `INSERT INTO lookup_identifiers (
          virtual_bucket, index_kind, normalization_version, hmac_key_generation,
          identifier_blind_digest, tenant_id, account_id, route_schema_version,
          account_route_generation, required_binding_route_generation, residency_policy_id,
@@ -509,26 +541,26 @@ async function upsertCurrentIdentifier(input: {
        ) DO UPDATE SET lifecycle_state = 'active', disabled_at = NULL, updated_at = excluded.updated_at
        WHERE lookup_identifiers.route_projection_json = excluded.route_projection_json
          AND lookup_identifiers.account_route_generation = excluded.account_route_generation`
-    )
-    .bind(
-      input.currentIndex.virtualBucket,
-      input.currentIndex.indexKind,
-      input.currentIndex.normalizationVersion,
-      input.currentIndex.hmacKeyGeneration,
-      input.currentIndex.digest,
-      input.tenantId,
-      input.accountId,
-      input.routeProjection.schemaVersion,
-      input.routeProjection.accountRouteGeneration,
-      Math.max(
-        ...input.routeProjection.targets.map((target) => target.requiredBindingRouteGeneration)
+      )
+      .bind(
+        input.currentIndex.virtualBucket,
+        input.currentIndex.indexKind,
+        input.currentIndex.normalizationVersion,
+        input.currentIndex.hmacKeyGeneration,
+        input.currentIndex.digest,
+        input.tenantId,
+        input.accountId,
+        input.routeProjection.schemaVersion,
+        input.routeProjection.accountRouteGeneration,
+        Math.max(
+          ...input.routeProjection.targets.map((target) => target.requiredBindingRouteGeneration)
+        ),
+        input.routeProjection.residencyPolicyId,
+        projection,
+        input.now,
+        input.now
       ),
-      input.routeProjection.residencyPolicyId,
-      projection,
-      input.now,
-      input.now
-    )
-    .run();
+  ]);
   const reflected = await lookup
     .prepare(
       `SELECT tenant_id, account_id, route_projection_json, lifecycle_state

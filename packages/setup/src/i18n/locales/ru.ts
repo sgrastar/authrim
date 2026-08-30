@@ -31,7 +31,7 @@ const ru: Translations = {
 
   // Main menu
   'menu.prompt': 'Что вы хотите сделать?',
-  'menu.quick': 'Быстрая настройка (5 минут)',
+  'menu.quick': 'Быстрая настройка',
   'menu.quickDesc': 'Развернуть Authrim с минимальной конфигурацией',
   'menu.custom': 'Расширенная настройка',
   'menu.customDesc': 'Настроить все параметры пошагово',
@@ -104,6 +104,8 @@ const ru: Translations = {
   'prereq.notLoggedIn': 'Не выполнен вход в Cloudflare',
   'prereq.loginHint': 'Выполните следующую команду для аутентификации:',
   'prereq.loggedInAs': 'Подключено к Cloudflare ({{email}})',
+  'prereq.authenticated': 'Подключено к Cloudflare',
+  'prereq.checkFailed': 'Не удалось проверить wrangler',
   'prereq.accountId': 'ID аккаунта: {{accountId}}',
 
   // Environment
@@ -182,6 +184,13 @@ const ru: Translations = {
   'domain.zoneCheckSkipped': 'Проверка зоны пропущена, продолжение настройки...',
   'domain.continueWithoutZone': 'Продолжить без проверки зоны?',
   'domain.configureBinding': 'Настроить привязку пользовательского домена для Workers',
+  'domain.configureBindingDesc':
+    'Назначает базовый домен непосредственно Worker-маршрутизатору, чтобы Cloudflare управляла DNS и TLS-сертификатом. Поддомены тенантов продолжают использовать маршрутизацию по шаблону.',
+  'domain.customHostnamesDesc':
+    'Автоматизируйте пользовательские домены тенантов с помощью Cloudflare Custom Hostnames.',
+  'domain.customHostnamesPrivacy':
+    'Токен хранится только в локальном секретном файле и загружается как секрет Worker; он не сохраняется в D1, KV или конфигурации.',
+  'domain.customHostnamesPrompt': 'Включить автоматизацию Cloudflare Custom Hostnames?',
   'domain.action.retryCheck': 'Проверить снова',
   'domain.action.reloadPage': 'Перезагрузить страницу',
   'domain.action.openCloudflareDashboard': 'Открыть панель Cloudflare',
@@ -225,6 +234,13 @@ const ru: Translations = {
   'domain.apiDomain': 'Домен API / издателя (например, auth.example.com)',
   'domain.loginUiDomain': 'Домен UI для входа (Enter для пропуска)',
   'domain.adminUiDomain': 'Домен панели администратора (Enter для пропуска)',
+  'domain.baseDomainDepthError':
+    'Base Domain должен быть родительским доменом URL тенантов. В «{{hostname}}» слишком много меток перед зарегистрированным доменом.',
+  'domain.uiDomainDepthError':
+    'Домен {{label}} «{{hostname}}» имеет слишком большую глубину для стандартной модели доменов тенанта.',
+  'domain.suggestedHost': 'Рекомендуемый хост: {{hostname}}',
+  'domain.uiRequiresOwnRoute':
+    'Для пользовательского домена {{label}} требуется отдельный маршрут Worker.',
   'domain.enterDomains':
     'Введите собственные домены (оставьте пустым для использования Cloudflare по умолчанию)',
   'domain.singleTenantNote': 'В однотенантном режиме URL издателя = домен API',
@@ -274,6 +290,7 @@ const ru: Translations = {
   'keys.generated': 'Ключи сгенерированы ({{path}})',
   'keys.existing': 'Ключи для окружения "{{env}}" уже существуют',
   'keys.existingWarning': 'Существующие ключи будут перезаписаны.',
+  'keys.replaced': 'Существующие ключи заменены после подтверждения доступности окружения.',
   'keys.error': 'Не удалось сгенерировать ключи',
   'keys.regeneratePrompt': 'Перегенерировать ключи?',
   'keys.regenerateWarning': 'Это сделает недействительными все существующие токены!',
@@ -324,6 +341,15 @@ const ru: Translations = {
   'config.shards': 'шардов',
   'config.sec': 'сек',
   'config.automatic': 'Автоматически',
+  'config.d1Routing': 'Маршрутизация D1:',
+  'config.placement': 'Размещение:',
+  'config.provisioning': 'Подготовка ресурсов:',
+  'config.uiEnvNoApi': 'ui.env будет создан после настройки URL API.',
+  'config.wranglerConfigsSaved': 'Сохранено главных конфигураций wrangler.toml: {{count}}',
+  'config.wranglerConfigsPartial': 'Некоторые конфигурации wrangler не удалось сохранить',
+  'config.wranglerConfigsSyncing': 'Синхронизация конфигураций wrangler с пакетами...',
+  'config.wranglerConfigsSynced': 'Конфигурации wrangler синхронизированы с {{count}} компонентами',
+  'config.wranglerConfigsSyncFailed': 'Не удалось синхронизировать конфигурации wrangler',
 
   // Deploy
   'deploy.prompt': 'Начать настройку с этой конфигурацией?',
@@ -353,6 +379,8 @@ const ru: Translations = {
   'deploy.wranglerKeep': '📝 Сохранить ручные изменения (развернуть как есть)',
   'deploy.wranglerBackup': '💾 Создать резервную копию и перезаписать мастером',
   'deploy.wranglerOverwrite': '⚠️  Перезаписать мастером (потерять изменения)',
+  'deploy.initialProvisioningFailed':
+    'Подготовка Cloudflare не завершена. Блокировка среды не создана; запустите init ещё раз для безопасного продолжения.',
 
   // Email provider
   'email.title': 'Провайдер email',
@@ -408,16 +436,23 @@ const ru: Translations = {
   // Cloudflare API Token
   'cf.apiTokenPrompt': 'Введите API-токен Cloudflare',
   'cf.apiTokenValidation': 'Пожалуйста, введите корректный API-токен',
-
-  // OIDC Profile
-  'profile.prompt': 'Выберите профиль OIDC',
-  'profile.basicOp': 'Basic OP (Стандартный OIDC-провайдер)',
-  'profile.basicOpDesc': 'Стандартные функции OIDC',
-  'profile.fapiRw': 'FAPI Read-Write (Финансовый уровень)',
-  'profile.fapiRwDesc': 'Соответствует профилю безопасности FAPI 1.0 Read-Write',
-  'profile.fapi2Security': 'FAPI 2.0 Security Profile',
-  'profile.fapi2SecurityDesc':
-    'Соответствует профилю безопасности FAPI 2.0 (максимальная безопасность)',
+  'cf.apiTokenCreationMethod': 'Как вы хотите создать API-токен?',
+  'cf.apiTokenCreateFromLink': 'Создать по предварительно настроенной ссылке (рекомендуется)',
+  'cf.apiTokenCreateFromLinkDesc': 'Открыть Cloudflare с уже выбранными правами и зоной',
+  'cf.apiTokenCreateManually': 'Создать вручную',
+  'cf.apiTokenCreateManuallyDesc': 'Проверить необходимые права и самостоятельно настроить токен',
+  'cf.apiTokenTemplateUrl': 'URL создания токена Cloudflare:',
+  'cf.apiTokenTemplateOpenPrompt': 'Нажмите Enter, чтобы открыть Cloudflare в браузере',
+  'cf.apiTokenTemplateOpened': 'Открыта страница создания токена Cloudflare',
+  'cf.apiTokenTemplateOpenFailed': 'Не удалось открыть браузер. Откройте URL ниже вручную.',
+  'cf.apiTokenManualTitle': 'Создайте пользовательский API-токен со следующими параметрами:',
+  'cf.apiTokenManualType': 'Используйте API Token, а не Global API Key.',
+  'cf.apiTokenManualPermission': 'Право: Zone > SSL and Certificates > Edit',
+  'cf.apiTokenManualResource': 'Ресурс зоны: Include > Specific zone > {{zone}}',
+  'cf.apiTokenManualLeastPrivilege': 'Не добавляйте несвязанные права или зоны.',
+  'cf.apiTokenSecretOnce':
+    'Секрет токена показывается только один раз. Скопируйте его до выхода из Cloudflare.',
+  'cf.apiTokenSelectedZone': 'зона, используемая этой средой',
 
   // Tenant configuration
   'tenant.title': 'Режим тенантов',
@@ -436,6 +471,20 @@ const ru: Translations = {
   'tenant.defaultTenantPrompt': 'Имя тенанта по умолчанию (идентификатор)',
   'tenant.defaultTenantValidation': 'Допускаются только строчные буквы, цифры и дефисы',
   'tenant.displayNamePrompt': 'Отображаемое имя тенанта по умолчанию',
+  'tenant.domainSetupHint':
+    'Оставьте пустым, чтобы использовать workers.dev в режиме одного тенанта.',
+  'tenant.customDomainExamples': 'С пользовательским доменом:',
+  'tenant.nakedDomainExample': 'https://example.com (issuer без поддомена тенанта)',
+  'tenant.subdomainExample': 'https://acme.example.com (issuer с поддоменом тенанта)',
+  'tenant.idRules':
+    'ID тенанта должен содержать 1–63 символа, начинаться со строчной буквы и включать только строчные буквы, цифры и дефисы.',
+  'tenant.randomIdHint':
+    'Случайный ID тенанта не раскрывает имя клиента или компании в URL issuer.',
+  'tenant.randomIdPrompt': 'Создать случайный ID тенанта? ({{id}})',
+  'tenant.initialDisplayName': 'Начальный тенант',
+  'tenant.nakedDomainPrompt': 'Использовать базовый домен как issuer основного тенанта?',
+  'tenant.primaryTenantPrompt':
+    'ID основного тенанта для базового домена (оставьте пустым для начального тенанта)',
   'tenant.singleTenantTitle': 'Конфигурация URL однотенантности',
   'tenant.singleTenantNote1': 'В однотенантном режиме:',
   'tenant.singleTenantNote2': 'URL издателя = собственный домен API (или workers.dev по умолчанию)',
@@ -520,6 +569,19 @@ const ru: Translations = {
   'complete.urls': 'URL-адреса:',
   'complete.configLocation': 'Конфигурация:',
   'complete.keysLocation': 'Ключи:',
+  'complete.createdResources': 'Созданные ресурсы:',
+  'complete.generatedFiles': 'Созданные файлы:',
+  'complete.automaticStep1': '1. Примените схемы и разверните полный релиз:',
+  'complete.automaticStep2':
+    '2. По запросу создайте и введите одноразовый загрузочный токен Cloudflare.',
+  'complete.automaticStep2Detail':
+    'Setup регистрирует разделённые дочерние токены напрямую в Control и отзывает загрузочный токен.',
+  'complete.manualStep1':
+    '1. Примените схемы и выполните развёртывание с текущим входом Wrangler OAuth:',
+  'complete.manualStep2':
+    '2. Используйте Setup для выполнения ожидающих операций подготовки, запрошенных из Admin.',
+  'complete.manualStep2Detail':
+    'Автоматическая подготовка отключена; токен API Cloudflare не хранится в Control.',
 
   // Resource provisioning
   'resource.provisioning': 'Подготовка {{resource}}...',
@@ -577,6 +639,8 @@ const ru: Translations = {
   // Common
   'common.yes': 'Да',
   'common.no': 'Нет',
+  'common.example': 'Пример',
+  'common.comingSoon': 'скоро',
   'common.continue': 'Продолжить',
   'common.cancel': 'Отмена',
   'common.skip': 'Пропустить',
@@ -633,6 +697,8 @@ const ru: Translations = {
   'delete.r2Buckets': 'Бакеты R2',
   'delete.pages': 'Проекты Pages',
   'delete.partialSuccess': 'Выбранные ресурсы удалены, остальные данные окружения сохранены',
+  'delete.inventoryUnavailable':
+    'Удаление не началось, так как не удалось проверить список ресурсов Cloudflare',
 
   // Info command
   'info.title': 'Информация об окружении',

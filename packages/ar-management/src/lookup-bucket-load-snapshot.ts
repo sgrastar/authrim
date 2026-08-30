@@ -8,13 +8,15 @@ import {
 
 const SAFE_BINDING = /^[A-Z][A-Z0-9_]{0,127}$/u;
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
-const MAX_COUNTER_AGE_SECONDS = 24 * 60 * 60;
 const QUERY_CONCURRENCY = 4;
+const QUERY_BUCKET_LIMIT = 100;
 
 interface CounterRow {
   virtual_bucket: number;
   active_identifier_count: number;
   active_alias_count: number;
+  successful_route_publication_count: number;
+  publication_counter_updated_at: number;
   counter_updated_at: number;
 }
 
@@ -40,38 +42,83 @@ function integer(value: unknown, minimum: number, code: string): number {
   return value as number;
 }
 
-async function counters(env: Env, bindingRef: string): Promise<Map<number, CounterRow>> {
-  const result = await database(env, bindingRef)
-    .withSession('first-primary')
-    .prepare(
-      `SELECT virtual_bucket,
-              estimated_active_identifier_count AS active_identifier_count,
-              estimated_active_alias_count AS active_alias_count,
-              updated_at AS counter_updated_at
-         FROM lookup_bucket_counters
-        ORDER BY virtual_bucket
-        LIMIT 4097`
-    )
-    .bind()
-    .all<CounterRow>();
-  if (result.results.length > 4096) throw new Error('lookup_bucket_load_counter_overflow');
-  const rows = new Map<number, CounterRow>();
-  for (const row of result.results) {
-    const virtualBucket = integer(row.virtual_bucket, 0, 'lookup_bucket_load_counter_invalid');
-    if (virtualBucket > 4095 || rows.has(virtualBucket)) {
-      throw new Error('lookup_bucket_load_counter_invalid');
-    }
-    rows.set(virtualBucket, {
-      virtual_bucket: virtualBucket,
-      active_identifier_count: integer(
-        row.active_identifier_count,
-        0,
-        'lookup_bucket_load_counter_invalid'
-      ),
-      active_alias_count: integer(row.active_alias_count, 0, 'lookup_bucket_load_counter_invalid'),
-      counter_updated_at: integer(row.counter_updated_at, 1, 'lookup_bucket_load_counter_invalid'),
-    });
+async function counters(
+  env: Env,
+  bindingRef: string,
+  assignedBuckets: readonly number[]
+): Promise<Map<number, CounterRow>> {
+  if (assignedBuckets.length < 1 || assignedBuckets.length > 4096) {
+    throw new Error('lookup_bucket_load_assignment_invalid');
   }
+  const uniqueBuckets = new Set<number>();
+  for (const virtualBucket of assignedBuckets) {
+    integer(virtualBucket, 0, 'lookup_bucket_load_assignment_invalid');
+    if (virtualBucket > 4095 || uniqueBuckets.has(virtualBucket)) {
+      throw new Error('lookup_bucket_load_assignment_invalid');
+    }
+    uniqueBuckets.add(virtualBucket);
+  }
+  const session = database(env, bindingRef).withSession('first-primary');
+  const statements = [];
+  for (let offset = 0; offset < assignedBuckets.length; offset += QUERY_BUCKET_LIMIT) {
+    const page = assignedBuckets.slice(offset, offset + QUERY_BUCKET_LIMIT);
+    const placeholders = page.map(() => '?').join(', ');
+    statements.push(
+      session
+        .prepare(
+          `SELECT virtual_bucket,
+                  estimated_active_identifier_count AS active_identifier_count,
+                  estimated_active_alias_count AS active_alias_count,
+                  successful_route_publication_count,
+                  publication_counter_updated_at,
+                  updated_at AS counter_updated_at
+             FROM lookup_bucket_counters
+            WHERE virtual_bucket IN (${placeholders})
+            ORDER BY virtual_bucket`
+        )
+        .bind(...page)
+    );
+  }
+  const results = await session.batch<CounterRow>(statements);
+  const rows = new Map<number, CounterRow>();
+  for (const result of results) {
+    for (const row of result.results) {
+      const virtualBucket = integer(row.virtual_bucket, 0, 'lookup_bucket_load_counter_invalid');
+      if (virtualBucket > 4095 || !uniqueBuckets.has(virtualBucket) || rows.has(virtualBucket)) {
+        throw new Error('lookup_bucket_load_counter_invalid');
+      }
+      rows.set(virtualBucket, {
+        virtual_bucket: virtualBucket,
+        active_identifier_count: integer(
+          row.active_identifier_count,
+          0,
+          'lookup_bucket_load_counter_invalid'
+        ),
+        active_alias_count: integer(
+          row.active_alias_count,
+          0,
+          'lookup_bucket_load_counter_invalid'
+        ),
+        successful_route_publication_count: integer(
+          row.successful_route_publication_count,
+          0,
+          'lookup_bucket_load_counter_invalid'
+        ),
+        publication_counter_updated_at: integer(
+          row.publication_counter_updated_at,
+          0,
+          'lookup_bucket_load_counter_invalid'
+        ),
+        counter_updated_at: integer(
+          row.counter_updated_at,
+          1,
+          'lookup_bucket_load_counter_invalid'
+        ),
+      });
+    }
+  }
+  if (rows.size !== assignedBuckets.length)
+    throw new Error('lookup_bucket_load_snapshot_incomplete');
   return rows;
 }
 
@@ -117,14 +164,22 @@ export async function collectLookupBucketLoadSnapshot(
   }
   if (assignments.size !== 4096) throw new Error('lookup_bucket_load_registry_incomplete');
 
-  const bindingRefs = [
-    ...new Set([...assignments.values()].map((value) => value.bindingRef)),
-  ].sort();
+  const bucketsByBinding = new Map<string, number[]>();
+  for (const [virtualBucket, assignment] of assignments) {
+    const buckets = bucketsByBinding.get(assignment.bindingRef) ?? [];
+    buckets.push(virtualBucket);
+    bucketsByBinding.set(assignment.bindingRef, buckets);
+  }
+  const bindingRefs = [...bucketsByBinding.keys()].sort();
   const countersByBinding = new Map<string, Map<number, CounterRow>>();
   for (let offset = 0; offset < bindingRefs.length; offset += QUERY_CONCURRENCY) {
     const page = bindingRefs.slice(offset, offset + QUERY_CONCURRENCY);
     const results = await Promise.all(
-      page.map(async (bindingRef) => [bindingRef, await counters(env, bindingRef)] as const)
+      page.map(async (bindingRef) => {
+        const buckets = bucketsByBinding.get(bindingRef);
+        if (!buckets) throw new Error('lookup_bucket_load_assignment_invalid');
+        return [bindingRef, await counters(env, bindingRef, buckets)] as const;
+      })
     );
     for (const [bindingRef, rows] of results) countersByBinding.set(bindingRef, rows);
   }
@@ -136,9 +191,12 @@ export async function collectLookupBucketLoadSnapshot(
       ? countersByBinding.get(assignment.bindingRef)?.get(virtualBucket)
       : undefined;
     if (!assignment || !row) throw new Error('lookup_bucket_load_snapshot_incomplete');
+    // An unchanged bucket legitimately has an old timestamp. The counters are maintained by the
+    // same D1 transaction as route lifecycle changes, so absence and future timestamps fail closed;
+    // age alone must not stop forecasting for a quiet dynamically bound Lookup shard.
     if (
       row.counter_updated_at > observedAt + 5 ||
-      row.counter_updated_at < observedAt - MAX_COUNTER_AGE_SECONDS
+      row.publication_counter_updated_at > observedAt + 5
     ) {
       throw new Error('lookup_bucket_load_counter_stale');
     }
@@ -148,6 +206,8 @@ export async function collectLookupBucketLoadSnapshot(
       assignmentGeneration: assignment.assignmentGeneration,
       activeIdentifierCount: row.active_identifier_count,
       activeAliasCount: row.active_alias_count,
+      successfulRoutePublicationCount: row.successful_route_publication_count,
+      publicationCounterUpdatedAt: row.publication_counter_updated_at,
       counterUpdatedAt: row.counter_updated_at,
     });
   }

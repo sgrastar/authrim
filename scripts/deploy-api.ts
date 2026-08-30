@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 
-import { stat } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import {
   cleanupLegacyStaticSecrets,
@@ -22,10 +22,12 @@ import {
   WORKER_DEPLOYMENT_DEPENDENCIES,
   type WorkerComponent,
 } from '../packages/setup/src/core/naming.js';
-import { findKeysDirectory } from '../packages/setup/src/core/paths.js';
+import { findKeysDirectory, getEnvironmentPaths } from '../packages/setup/src/core/paths.js';
 import { ensureSupplementalKeyFiles } from '../packages/setup/src/core/keys.js';
 import { getMissingRequiredDeploySecrets } from '../packages/setup/src/core/secrets.js';
 import { getRootProductVersion } from '../packages/setup/src/core/version.js';
+import { AuthrimConfigSchema } from '../packages/setup/src/core/config.js';
+import { refreshWorkerDeploymentArtifacts } from '../packages/setup/src/core/worker-deployment-artifacts.js';
 import {
   evaluateReleaseDeploymentGuard,
   releaseDeploymentGuardMessage,
@@ -333,8 +335,9 @@ async function main(): Promise<void> {
   }
   const selected = options.component ? [options.component] : [...CORE_WORKER_COMPONENTS];
   const deploymentScope = getDeploymentScope(selected);
+  let workingLock = lock;
   const lockComponents = CORE_WORKER_COMPONENTS.filter(
-    (component) => lock?.workers?.[component] !== undefined
+    (component) => workingLock.workers?.[component] !== undefined
   );
   let keysPath: string | undefined;
   if (options.keysDir) {
@@ -400,10 +403,11 @@ async function main(): Promise<void> {
       existingComponents: lockComponents,
       secrets,
       cleanupLegacyStaticSecrets: true,
-      ...(lock?.d1.CONTROL_DB
+      requireManagedArtifactVerification: true,
+      ...(workingLock.d1.CONTROL_DB
         ? {
             deploymentLease: {
-              controlDatabaseId: lock.d1.CONTROL_DB.id,
+              controlDatabaseId: workingLock.d1.CONTROL_DB.id,
               environmentId: options.env,
               actorId: 'setup:deploy-api',
               required: true,
@@ -418,6 +422,30 @@ async function main(): Promise<void> {
       onError: (component, error) => {
         console.error(`${component}: ${error.message}`);
       },
+      ...(!options.dryRun && !options.preflight
+        ? {
+            beforeWorkerMutations: async () => {
+              const environmentPaths = getEnvironmentPaths({
+                baseDir: rootDir,
+                env: options.env,
+              });
+              const config = AuthrimConfigSchema.parse(
+                JSON.parse(await readFile(environmentPaths.config, 'utf-8'))
+              );
+              const refreshed = await refreshWorkerDeploymentArtifacts({
+                baseDir: rootDir,
+                env: options.env,
+                config,
+                lock: workingLock,
+                lockPath,
+                components: deploymentScope,
+                registeredBy: 'setup:deploy-api',
+                onProgress: console.log,
+              });
+              workingLock = refreshed.lock;
+            },
+          }
+        : {}),
     };
     const existingComponents = options.dryRun
       ? lockComponents
@@ -485,11 +513,10 @@ async function main(): Promise<void> {
 
     if (
       !options.dryRun &&
-      lock &&
       lockPath &&
       summary.results.some((result) => result.success || result.trafficCommitted)
     ) {
-      await saveLockFile(updateLockWithDeployments(lock, summary.results), lockPath);
+      await saveLockFile(updateLockWithDeployments(workingLock, summary.results), lockPath);
       console.log(`Lock file updated: ${lockPath}`);
     }
     if (controller.signal.aborted) {

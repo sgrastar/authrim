@@ -14,8 +14,11 @@ import {
   deleteQueueConsumer,
   deleteQueueConsumersForWorkers,
   detectEnvironments,
+  EnvironmentInventoryUnavailableError,
   filterKnownQueueNamesForEnvironment,
+  filterKnownWorkerNamesForEnvironment,
   getQueueConsumerWorkerNamesForDeletion,
+  listD1Databases,
   parseQueueRows,
 } from '../core/cloudflare.js';
 
@@ -43,14 +46,14 @@ describe('Cloudflare Queue deletion helpers', () => {
     vi.unstubAllGlobals();
   });
 
-  it('targets every environment Worker for queue consumer detachment', () => {
+  it('targets only the configured management Queue consumer Worker', () => {
     expect(
       getQueueConsumerWorkerNamesForDeletion('test', [
         { name: 'test-ar-auth' },
         { name: 'test-ar-management' },
         { name: 'test-ar-token' },
       ])
-    ).toEqual(['test-ar-auth', 'test-ar-management', 'test-ar-token']);
+    ).toEqual(['test-ar-management']);
   });
 
   it('does not detach consumers from unrelated environment Workers', () => {
@@ -59,7 +62,7 @@ describe('Cloudflare Queue deletion helpers', () => {
         { name: 'prod-ar-management' },
         { name: 'test-ar-auth' },
       ])
-    ).toEqual(['test-ar-auth']);
+    ).toEqual([]);
   });
 
   it('filters lock-recorded queues to the requested environment', () => {
@@ -71,6 +74,17 @@ describe('Cloudflare Queue deletion helpers', () => {
         'test-unrelated-queue',
       ])
     ).toEqual(['test-audit-queue', 'test-logging-delivery-critical-queue']);
+  });
+
+  it('filters lock-recorded Workers to the requested environment', () => {
+    expect(
+      filterKnownWorkerNamesForEnvironment('test', [
+        'test-ar-auth',
+        'test-ar-management',
+        'prod-ar-auth',
+        'test-unrelated-worker',
+      ])
+    ).toEqual(['test-ar-auth', 'test-ar-management']);
   });
 
   it('parses Queue names from Wrangler table output', () => {
@@ -116,10 +130,13 @@ describe('Cloudflare Queue deletion helpers', () => {
       ['test-ar-management']
     );
 
-    expect(removed).toEqual([
-      { queueName: 'test-audit-queue', workerName: 'test-ar-management' },
-      { queueName: 'test-logging-delivery-queue', workerName: 'test-ar-management' },
-    ]);
+    expect(removed).toEqual({
+      removed: [
+        { queueName: 'test-audit-queue', workerName: 'test-ar-management' },
+        { queueName: 'test-logging-delivery-queue', workerName: 'test-ar-management' },
+      ],
+      errors: [],
+    });
     expect(execaMock.mock.calls.map(([, args]) => args)).toEqual([
       [
         'wrangler',
@@ -140,6 +157,70 @@ describe('Cloudflare Queue deletion helpers', () => {
         'test-ar-management',
       ],
     ]);
+  });
+
+  it('preserves the actual Queue consumer detach failure', async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'authentication expired',
+    });
+    const progress: string[] = [];
+
+    const summary = await deleteQueueConsumersForWorkers(
+      [{ name: 'test-audit-queue' }],
+      ['test-ar-management'],
+      (message) => progress.push(message)
+    );
+
+    expect(summary.removed).toEqual([]);
+    expect(summary.errors).toEqual([expect.stringContaining('authentication expired')]);
+    expect(progress).toContainEqual(expect.stringContaining('authentication expired'));
+    expect(progress).not.toContainEqual(expect.stringContaining('not attached or already removed'));
+  });
+
+  it('treats an already-unattached Queue consumer as an idempotent no-op', async () => {
+    execaMock.mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'The queue does not have a consumer for this script',
+    });
+
+    await expect(
+      deleteQueueConsumersForWorkers([{ name: 'test-audit-queue' }], ['test-ar-management'])
+    ).resolves.toEqual({ removed: [], errors: [] });
+  });
+
+  it('reads every API page even when Cloudflare returns fewer rows than requested', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    const firstPage = Array.from({ length: 20 }, (_, index) => ({
+      name: `database-${index}`,
+      uuid: `00000000-0000-0000-0000-${String(index).padStart(12, '0')}`,
+    }));
+    const secondPage = [{ name: 'database-20', uuid: '00000000-0000-0000-0000-000000000020' }];
+    fetchMock.mockImplementation(async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      const page = Number(url.searchParams.get('page') ?? '1');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          result: page === 1 ? firstPage : secondPage,
+          result_info: {
+            count: page === 1 ? 20 : 1,
+            page,
+            per_page: 20,
+            total_count: 21,
+            total_pages: 2,
+          },
+        }),
+      };
+    });
+
+    await expect(listD1Databases()).resolves.toHaveLength(21);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('deletes a Queue using Wrangler', async () => {
@@ -200,6 +281,46 @@ describe('Cloudflare Queue deletion helpers', () => {
     ]);
   });
 
+  it('retries Worker inventory and fails closed before deleting any resource', async () => {
+    mockCloudflareInventory([{ queue_name: 'test-audit-queue', queue_id: 'queue-audit' }]);
+    fetchMock.mockImplementation(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/user/tokens/verify')) {
+        return { ok: true, status: 200, json: async () => ({ success: true }) };
+      }
+      if (url.includes('/workers/scripts')) {
+        return {
+          ok: false,
+          status: 503,
+          json: async () => ({ success: false }),
+        };
+      }
+      throw new Error(`unexpected inventory URL: ${url}`);
+    });
+    const progress: string[] = [];
+
+    await expect(
+      deleteEnvironment({
+        env: 'test',
+        deleteWorkers: true,
+        deleteD1: false,
+        deleteKV: false,
+        deleteQueues: true,
+        deleteR2: false,
+        deletePages: false,
+        onProgress: (message) => progress.push(message),
+      })
+    ).rejects.toBeInstanceOf(EnvironmentInventoryUnavailableError);
+
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input).includes('/workers/scripts'))
+    ).toHaveLength(3);
+    expect(progress).toContain('Worker inventory check failed; retrying (2/3)...');
+    expect(progress).toContain('Worker inventory check failed; retrying (3/3)...');
+    expect(execaMock.mock.calls.some(([, args]) => (args as string[])[1] === 'delete')).toBe(false);
+    expect(execaMock.mock.calls.some(([, args]) => (args as string[])[1] === 'd1')).toBe(false);
+  });
+
   it('detects R2-only environments including an orphan plugin bundle bucket', async () => {
     mockCloudflareInventory([], [], [{ name: 'test-plugin-bundles' }]);
 
@@ -239,6 +360,7 @@ describe('Cloudflare Queue deletion helpers', () => {
     expect(result).toMatchObject({
       success: true,
       completion: 'manual_action_required',
+      environmentEmpty: false,
       errors: [],
       manualR2: [{ bucketName: 'test-diagnostic-logs', objectCount: 2_000 }],
     });
@@ -274,13 +396,50 @@ describe('Cloudflare Queue deletion helpers', () => {
     });
   });
 
+  it('preserves D1 object catalog data when R2 deletion fails', async () => {
+    mockCloudflareInventory(
+      [],
+      [],
+      [{ name: 'test-diagnostic-logs' }],
+      undefined,
+      [],
+      0,
+      'permission denied by Cloudflare'
+    );
+    const progress: string[] = [];
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      environmentKnownLocally: true,
+      deleteWorkers: false,
+      deleteD1: true,
+      deleteKV: false,
+      deleteQueues: false,
+      deleteR2: true,
+      deletePages: false,
+      knownD1Names: ['test-authrim-core-db'],
+      onProgress: (message) => progress.push(message),
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.deleted.d1).toEqual([]);
+    expect(
+      execaMock.mock.calls.some(([, args]) =>
+        (args as string[]).join(' ').startsWith('wrangler d1 delete ')
+      )
+    ).toBe(false);
+    expect(progress).toContain(
+      '  ⚠️ The R2 object catalog was preserved so the deletion can be retried safely.'
+    );
+  });
+
   it('does not probe Queue consumers belonging to another environment', async () => {
     mockCloudflareInventory(
       [
         { queue_name: 'test-audit-queue', queue_id: 'queue-test' },
         { queue_name: 'prod-audit-queue', queue_id: 'queue-prod' },
       ],
-      [{ id: 'test-ar-auth' }]
+      [{ id: 'test-ar-management' }]
     );
 
     await deleteEnvironment({
@@ -300,7 +459,7 @@ describe('Cloudflare Queue deletion helpers', () => {
       .map(([, args]) => (args as string[]).join(' '))
       .filter((args) => args.includes('queues consumer worker remove'));
     expect(detachCalls).toEqual([
-      'wrangler queues consumer worker remove test-audit-queue test-ar-auth',
+      'wrangler queues consumer worker remove test-audit-queue test-ar-management',
     ]);
   });
 
@@ -350,6 +509,66 @@ describe('Cloudflare Queue deletion helpers', () => {
     ]);
   });
 
+  it('unions lock-recorded Workers with remote inventory before detaching and deleting', async () => {
+    mockCloudflareInventory(
+      [{ queue_name: 'test-audit-queue', queue_id: 'queue-audit' }],
+      [{ id: 'test-ar-auth' }]
+    );
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      deleteWorkers: true,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: true,
+      deleteR2: false,
+      deletePages: false,
+      knownWorkerNames: ['test-ar-management', 'prod-ar-management'],
+      queueConsumerDetachPropagationDelayMs: 0,
+      workerDeletePropagationDelayMs: 0,
+      onProgress: () => {},
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.deleted.workers).toEqual(['test-ar-auth', 'test-ar-management']);
+    const wranglerCalls = execaMock.mock.calls.map(([, args]) => (args as string[]).join(' '));
+    expect(wranglerCalls).toContain(
+      'wrangler queues consumer worker remove test-audit-queue test-ar-management'
+    );
+    expect(wranglerCalls).toContain('wrangler delete --name test-ar-management --force');
+    expect(wranglerCalls.some((call) => call.includes('prod-ar-management'))).toBe(false);
+  });
+
+  it('preserves the Wrangler detail when Queue deletion is rejected', async () => {
+    mockCloudflareInventory(
+      [{ queue_name: 'test-audit-queue', queue_id: 'queue-audit' }],
+      [],
+      [],
+      undefined,
+      [],
+      0,
+      undefined,
+      [],
+      'producer bindings remain'
+    );
+    const progress: string[] = [];
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      deleteWorkers: false,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: true,
+      deleteR2: false,
+      deletePages: false,
+      onProgress: (message) => progress.push(message),
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toEqual([expect.stringContaining('producer bindings remain')]);
+    expect(progress).toContainEqual(expect.stringContaining('producer bindings remain'));
+  });
+
   it('completes a deletion retry when lock-recorded D1 and Queues are already absent', async () => {
     mockCloudflareInventory([], [], [], undefined, [], 0, undefined, [
       'test-authrim-core-db',
@@ -372,6 +591,7 @@ describe('Cloudflare Queue deletion helpers', () => {
     expect(result).toMatchObject({
       success: true,
       completion: 'complete',
+      environmentEmpty: true,
       errors: [],
       deleted: {
         d1: ['test-authrim-core-db'],
@@ -398,6 +618,7 @@ describe('Cloudflare Queue deletion helpers', () => {
     expect(result).toMatchObject({
       success: true,
       completion: 'complete',
+      environmentEmpty: true,
       errors: [],
       deleted: {
         workers: [],
@@ -407,6 +628,33 @@ describe('Cloudflare Queue deletion helpers', () => {
         r2: [],
         pages: [],
       },
+    });
+  });
+
+  it('does not report an environment empty while an unselected resource remains', async () => {
+    mockCloudflareInventory(
+      [{ queue_name: 'test-audit-queue', queue_id: 'queue-audit' }],
+      [],
+      [],
+      undefined,
+      [{ name: 'test-authrim-core-db', uuid: 'core-db' }]
+    );
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      deleteWorkers: false,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: true,
+      deleteR2: false,
+      deletePages: false,
+      onProgress: () => {},
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      environmentEmpty: false,
+      deleted: { queues: ['test-audit-queue'], d1: [] },
     });
   });
 
@@ -481,24 +729,23 @@ describe('Cloudflare Queue deletion helpers', () => {
     const wranglerCalls = execaMock.mock.calls
       .map(([, args]) => args as string[])
       .filter((args) => args[0] === 'wrangler');
-    const detachAuthIndex = wranglerCalls.findIndex((args) =>
-      args.join(' ').includes('queues consumer worker remove test-audit-queue test-ar-auth')
-    );
     const detachManagementIndex = wranglerCalls.findIndex((args) =>
       args.join(' ').includes('queues consumer worker remove test-audit-queue test-ar-management')
     );
     const deleteAuthIndex = wranglerCalls.findIndex((args) =>
       args.join(' ').includes('delete --name test-ar-auth --force')
     );
+    const deleteManagementIndex = wranglerCalls.findIndex((args) =>
+      args.join(' ').includes('delete --name test-ar-management --force')
+    );
     const deleteQueueIndex = wranglerCalls.findIndex((args) =>
       args.join(' ').includes('queues delete test-audit-queue')
     );
 
-    expect(detachAuthIndex).toBeGreaterThanOrEqual(0);
     expect(detachManagementIndex).toBeGreaterThanOrEqual(0);
-    expect(deleteAuthIndex).toBeGreaterThan(detachAuthIndex);
     expect(deleteAuthIndex).toBeGreaterThan(detachManagementIndex);
-    expect(deleteQueueIndex).toBeGreaterThan(deleteAuthIndex);
+    expect(deleteManagementIndex).toBeGreaterThan(deleteAuthIndex);
+    expect(deleteQueueIndex).toBeGreaterThan(deleteManagementIndex);
   });
 
   it('reports a Worker deletion failure instead of declaring the environment deleted', async () => {
@@ -530,7 +777,133 @@ describe('Cloudflare Queue deletion helpers', () => {
     ).toHaveLength(3);
   });
 
-  it('describes a partial resource deletion without claiming the environment was deleted', async () => {
+  it('restores detached consumers and stops before Worker deletion when another detach fails', async () => {
+    mockCloudflareInventory(
+      [
+        { queue_name: 'test-audit-queue', queue_id: 'queue-audit' },
+        { queue_name: 'test-logging-delivery-queue', queue_id: 'queue-logging' },
+      ],
+      [{ id: 'test-ar-management' }],
+      [],
+      undefined,
+      [],
+      0,
+      undefined,
+      [],
+      undefined,
+      {
+        detach: {
+          match: 'test-logging-delivery-queue test-ar-management',
+          error: 'Cloudflare authentication expired',
+        },
+      }
+    );
+    const progress: string[] = [];
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      deleteWorkers: true,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: true,
+      deleteR2: false,
+      deletePages: false,
+      queueConsumerDetachPropagationDelayMs: 0,
+      workerDeletePropagationDelayMs: 0,
+      onProgress: (message) => progress.push(message),
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining('authentication expired'));
+    const wranglerCalls = execaMock.mock.calls.map(([, args]) => (args as string[]).join(' '));
+    expect(wranglerCalls).toContain(
+      'wrangler queues consumer worker add test-audit-queue test-ar-management'
+    );
+    expect(wranglerCalls.some((call) => call.includes('delete --name test-ar-management'))).toBe(
+      false
+    );
+    expect(wranglerCalls.some((call) => call.startsWith('wrangler queues delete '))).toBe(false);
+    expect(progress).toContain(
+      '  ⚠️ Stopping before deleting Workers because Queue consumers could not be detached safely.'
+    );
+  });
+
+  it('stops before deleting bound storage and Queues when a Worker cannot be deleted', async () => {
+    mockCloudflareInventory(
+      [{ queue_name: 'test-audit-queue', queue_id: 'queue-audit' }],
+      [{ id: 'test-ar-management' }],
+      [],
+      'test-ar-management'
+    );
+    const progress: string[] = [];
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      environmentKnownLocally: true,
+      deleteWorkers: true,
+      deleteD1: true,
+      deleteKV: false,
+      deleteQueues: true,
+      deleteR2: false,
+      deletePages: false,
+      knownD1Names: ['test-authrim-core-db'],
+      queueConsumerDetachPropagationDelayMs: 0,
+      workerDeletePropagationDelayMs: 0,
+      onProgress: (message) => progress.push(message),
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.deleted).toMatchObject({
+      workers: [],
+      d1: [],
+      queues: [],
+    });
+    expect(progress).toContain(
+      '  ⚠️ Stopping before deleting bound storage and Queues because Worker deletion is incomplete.'
+    );
+    expect(progress).toContain(
+      '  ⚠️ Resolve the Worker error, then retry the environment deletion.'
+    );
+    const wranglerCalls = execaMock.mock.calls.map(([, args]) => (args as string[]).join(' '));
+    expect(wranglerCalls.some((call) => call.startsWith('wrangler d1 delete '))).toBe(false);
+    expect(wranglerCalls.some((call) => call.startsWith('wrangler queues delete '))).toBe(false);
+    expect(wranglerCalls).toContain(
+      'wrangler queues consumer worker add test-audit-queue test-ar-management'
+    );
+  });
+
+  it('keeps the management consumer available when an earlier Worker deletion fails', async () => {
+    mockCloudflareInventory(
+      [{ queue_name: 'test-audit-queue', queue_id: 'queue-audit' }],
+      [{ id: 'test-ar-auth' }, { id: 'test-ar-management' }],
+      [],
+      'test-ar-auth'
+    );
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      deleteWorkers: true,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: true,
+      deleteR2: false,
+      deletePages: false,
+      queueConsumerDetachPropagationDelayMs: 0,
+      workerDeletePropagationDelayMs: 0,
+      onProgress: () => {},
+    });
+
+    expect(result.success).toBe(false);
+    const wranglerCalls = execaMock.mock.calls.map(([, args]) => (args as string[]).join(' '));
+    expect(wranglerCalls.some((call) => call.includes('delete --name test-ar-management'))).toBe(
+      false
+    );
+    expect(wranglerCalls).toContain(
+      'wrangler queues consumer worker add test-audit-queue test-ar-management'
+    );
+  });
+
+  it('reports the environment empty when a partial retry removes its final resource', async () => {
     mockCloudflareInventory([], [{ id: 'test-ar-auth' }]);
     const progress: string[] = [];
 
@@ -546,11 +919,8 @@ describe('Cloudflare Queue deletion helpers', () => {
       onProgress: (message) => progress.push(message),
     });
 
-    expect(result.success).toBe(true);
-    expect(progress).toContain(
-      "✅ Selected resources for 'test' deleted; remaining environment preserved"
-    );
-    expect(progress).not.toContain("✅ Environment 'test' deleted successfully!");
+    expect(result).toMatchObject({ success: true, environmentEmpty: true });
+    expect(progress).toContain("✅ Environment 'test' deleted successfully!");
   });
 });
 
@@ -562,7 +932,12 @@ function mockCloudflareInventory(
   d1Databases: Array<{ name: string; uuid: string }> = [],
   r2ObjectCount = 0,
   r2DeleteFailure?: string,
-  alreadyAbsentDeletes: string[] = []
+  alreadyAbsentDeletes: string[] = [],
+  queueDeleteFailure?: string,
+  queueConsumerFailures: {
+    detach?: { match: string; error: string };
+    restore?: { match: string; error: string };
+  } = {}
 ): void {
   process.env.CLOUDFLARE_API_TOKEN = 'test-token';
   process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
@@ -616,6 +991,15 @@ function mockCloudflareInventory(
       return { exitCode: 0, stdout: JSON.stringify(queues), stderr: '' };
     }
     if (key.startsWith('queues consumer worker remove ')) {
+      if (queueConsumerFailures.detach && key.includes(queueConsumerFailures.detach.match)) {
+        return { exitCode: 1, stdout: '', stderr: queueConsumerFailures.detach.error };
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    }
+    if (key.startsWith('queues consumer worker add ')) {
+      if (queueConsumerFailures.restore && key.includes(queueConsumerFailures.restore.match)) {
+        return { exitCode: 1, stdout: '', stderr: queueConsumerFailures.restore.error };
+      }
       return { exitCode: 0, stdout: '', stderr: '' };
     }
     if (key.startsWith('delete --name ')) {
@@ -638,6 +1022,9 @@ function mockCloudflareInventory(
       return { exitCode: 0, stdout: '', stderr: '' };
     }
     if (key.startsWith('queues delete ')) {
+      if (queueDeleteFailure) {
+        return { exitCode: 1, stdout: '', stderr: queueDeleteFailure };
+      }
       if (alreadyAbsentDeletes.some((name) => key.includes(name))) {
         return {
           exitCode: 1,

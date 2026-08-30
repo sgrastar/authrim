@@ -31,7 +31,7 @@ const ja: Translations = {
 
   // Main menu
   'menu.prompt': '何をしますか？',
-  'menu.quick': 'クイックセットアップ（5分）',
+  'menu.quick': 'クイックセットアップ',
   'menu.quickDesc': '最小限の設定でAuthrimをデプロイ',
   'menu.custom': 'カスタムセットアップ',
   'menu.customDesc': 'すべてのオプションを段階的に設定',
@@ -104,6 +104,8 @@ const ja: Translations = {
   'prereq.notLoggedIn': 'Cloudflareにログインしていません',
   'prereq.loginHint': '以下のコマンドで認証してください:',
   'prereq.loggedInAs': 'Cloudflareに接続しました ({{email}})',
+  'prereq.authenticated': 'Cloudflareに接続しました',
+  'prereq.checkFailed': 'wranglerの確認に失敗しました',
   'prereq.accountId': 'アカウントID: {{accountId}}',
 
   // Environment
@@ -180,6 +182,13 @@ const ja: Translations = {
   'domain.zoneCheckSkipped': 'ゾーン確認をスキップしてセットアップを続行します...',
   'domain.continueWithoutZone': 'ゾーン確認なしで続行しますか？',
   'domain.configureBinding': 'Workersのカスタムドメインバインディングを設定する',
+  'domain.configureBindingDesc':
+    'ベースドメインをルーターWorkerへ直接割り当て、DNSとTLS証明書をCloudflareに管理させます。テナントのサブドメインには引き続きワイルドカードルーティングを使用します。',
+  'domain.customHostnamesDesc':
+    'Cloudflare Custom Hostnamesを使ってテナントの独自ドメイン設定を自動化します。',
+  'domain.customHostnamesPrivacy':
+    'トークンはローカルのシークレットファイルにのみ保存し、Workerシークレットとしてアップロードします。D1、KV、セットアップ設定には保存しません。',
+  'domain.customHostnamesPrompt': 'Cloudflare Custom Hostnamesの自動化を有効にしますか？',
   'domain.action.retryCheck': '再確認',
   'domain.action.reloadPage': 'ページを再読み込み',
   'domain.action.openCloudflareDashboard': 'Cloudflare ダッシュボードを開く',
@@ -223,6 +232,12 @@ const ja: Translations = {
   'domain.apiDomain': 'API / Issuerドメイン（例: auth.example.com）',
   'domain.loginUiDomain': 'ログインUIドメイン（Enterでスキップ）',
   'domain.adminUiDomain': '管理UIドメイン（Enterでスキップ）',
+  'domain.baseDomainDepthError':
+    'Base DomainにはテナントURLの親ドメインを指定してください。「{{hostname}}」は登録ドメインの前のラベル数が多すぎます。',
+  'domain.uiDomainDepthError':
+    '{{label}}ドメイン「{{hostname}}」は標準のテナントドメイン構成に対して深すぎます。',
+  'domain.suggestedHost': '推奨ホスト: {{hostname}}',
+  'domain.uiRequiresOwnRoute': '{{label}}のカスタムドメインには個別のWorkerルートが必要です。',
   'domain.enterDomains': 'カスタムドメインを入力（空欄でCloudflareデフォルトを使用）',
   'domain.singleTenantNote': 'シングルテナントモードでは、Issuer URL = APIドメインです',
   'domain.usingWorkersDev': '（Cloudflare workers.devドメインを使用）',
@@ -271,6 +286,7 @@ const ja: Translations = {
   'keys.generated': 'キーを生成しました ({{path}})',
   'keys.existing': '環境 "{{env}}" のキーが既に存在します',
   'keys.existingWarning': '既存のキーは上書きされます。',
+  'keys.replaced': '環境名が利用可能であることを確認した後、既存のキーを置き換えました。',
   'keys.error': 'キーの生成に失敗しました',
   'keys.regeneratePrompt': 'キーを再生成しますか？',
   'keys.regenerateWarning': 'これにより既存のすべてのトークンが無効になります！',
@@ -321,6 +337,15 @@ const ja: Translations = {
   'config.shards': 'シャード',
   'config.sec': '秒',
   'config.automatic': '自動',
+  'config.d1Routing': 'D1ルーティング:',
+  'config.placement': '配置:',
+  'config.provisioning': 'プロビジョニング:',
+  'config.uiEnvNoApi': 'API URLの設定後に ui.env が作成されます。',
+  'config.wranglerConfigsSaved': 'wrangler.toml マスター設定を {{count}} 件保存しました',
+  'config.wranglerConfigsPartial': '一部のwrangler設定を保存できませんでした',
+  'config.wranglerConfigsSyncing': 'wrangler設定をパッケージへ同期中...',
+  'config.wranglerConfigsSynced': 'wrangler設定を {{count}} 個のコンポーネントへ同期しました',
+  'config.wranglerConfigsSyncFailed': 'wrangler設定の同期に失敗しました',
 
   // Deploy
   'deploy.prompt': 'この設定でセットアップを開始しますか？',
@@ -351,6 +376,8 @@ const ja: Translations = {
   'deploy.wranglerKeep': '📝 手動変更を保持（そのままデプロイ）',
   'deploy.wranglerBackup': '💾 バックアップしてマスターで上書き',
   'deploy.wranglerOverwrite': '⚠️  マスターで上書き（変更を破棄）',
+  'deploy.initialProvisioningFailed':
+    'Cloudflareのプロビジョニングが完了しませんでした。環境ロックは作成されていません。initを再実行すると安全に再開できます。',
 
   // Email provider
   'email.title': 'メールプロバイダー',
@@ -406,15 +433,23 @@ const ja: Translations = {
   // Cloudflare API Token
   'cf.apiTokenPrompt': 'Cloudflare APIトークンを入力',
   'cf.apiTokenValidation': '有効なAPIトークンを入力してください',
-
-  // OIDC Profile
-  'profile.prompt': 'OIDCプロファイルを選択',
-  'profile.basicOp': 'Basic OP（標準OIDCプロバイダー）',
-  'profile.basicOpDesc': '標準OIDC機能',
-  'profile.fapiRw': 'FAPI Read-Write（金融グレード）',
-  'profile.fapiRwDesc': 'FAPI 1.0 Read-Writeセキュリティプロファイル準拠',
-  'profile.fapi2Security': 'FAPI 2.0 セキュリティプロファイル',
-  'profile.fapi2SecurityDesc': 'FAPI 2.0 セキュリティプロファイル準拠（最高セキュリティ）',
+  'cf.apiTokenCreationMethod': 'APIトークンをどのように作成しますか？',
+  'cf.apiTokenCreateFromLink': '設定済みリンクから作成（推奨）',
+  'cf.apiTokenCreateFromLinkDesc': '必要な権限と対象Zoneを選択済みの状態でCloudflareを開きます',
+  'cf.apiTokenCreateManually': '手動で作成',
+  'cf.apiTokenCreateManuallyDesc': '必要な権限を確認して自分でトークンを設定します',
+  'cf.apiTokenTemplateUrl': 'Cloudflareトークン作成URL:',
+  'cf.apiTokenTemplateOpenPrompt': 'Enterを押してCloudflareをブラウザで開く',
+  'cf.apiTokenTemplateOpened': 'Cloudflareのトークン作成ページを開きました',
+  'cf.apiTokenTemplateOpenFailed': 'ブラウザを開けませんでした。以下のURLを手動で開いてください。',
+  'cf.apiTokenManualTitle': '以下の設定でユーザーAPIトークンを作成してください:',
+  'cf.apiTokenManualType': 'Global API KeyではなくAPI Tokenを使用します。',
+  'cf.apiTokenManualPermission': '権限: Zone > SSL and Certificates > Edit',
+  'cf.apiTokenManualResource': 'Zoneリソース: Include > Specific zone > {{zone}}',
+  'cf.apiTokenManualLeastPrivilege': '無関係な権限やZoneは追加しないでください。',
+  'cf.apiTokenSecretOnce':
+    'トークンの値は一度しか表示されません。Cloudflareを離れる前にコピーしてください。',
+  'cf.apiTokenSelectedZone': 'この環境で使用するZone',
 
   // Tenant configuration
   'tenant.title': 'テナントモード',
@@ -433,6 +468,19 @@ const ja: Translations = {
   'tenant.defaultTenantPrompt': 'デフォルトテナント名（識別子）',
   'tenant.defaultTenantValidation': '小文字英数字とハイフンのみ使用可能',
   'tenant.displayNamePrompt': 'デフォルトテナントの表示名',
+  'tenant.domainSetupHint': '空欄の場合はworkers.devを使うシングルテナントモードになります。',
+  'tenant.customDomainExamples': 'カスタムドメインを使う場合:',
+  'tenant.nakedDomainExample': 'https://example.com（テナントサブドメインなしのIssuer）',
+  'tenant.subdomainExample': 'https://acme.example.com（テナントサブドメイン付きのIssuer）',
+  'tenant.idRules':
+    'テナントIDは1〜63文字で、小文字から始まり、小文字・数字・ハイフンのみ使用できます。',
+  'tenant.randomIdHint':
+    'ランダムなテナントIDを使うと、Issuer URLに顧客名や企業名が露出するのを防げます。',
+  'tenant.randomIdPrompt': 'ランダムなテナントIDを生成しますか？（{{id}}）',
+  'tenant.initialDisplayName': '初期テナント',
+  'tenant.nakedDomainPrompt': 'プライマリテナントのIssuerにベースドメインを使用しますか？',
+  'tenant.primaryTenantPrompt':
+    'ベースドメインで使用するプライマリテナントID（空欄で初期テナントを使用）',
   'tenant.singleTenantTitle': 'シングルテナントURL設定',
   'tenant.singleTenantNote1': 'シングルテナントモードでは:',
   'tenant.singleTenantNote2': 'Issuer URL = APIカスタムドメイン（またはworkers.devフォールバック）',
@@ -517,6 +565,17 @@ const ja: Translations = {
   'complete.urls': 'URL:',
   'complete.configLocation': '設定:',
   'complete.keysLocation': 'キー:',
+  'complete.createdResources': '作成したリソース:',
+  'complete.generatedFiles': '生成したファイル:',
+  'complete.automaticStep1': '1. スキーマを適用し、リリース全体をデプロイします:',
+  'complete.automaticStep2':
+    '2. 表示されたら、1回限りのCloudflareブートストラップトークンを作成して入力します。',
+  'complete.automaticStep2Detail':
+    'Setupは分割した子トークンをControlに直接登録し、ブートストラップトークンを無効化します。',
+  'complete.manualStep1': '1. 現在のWrangler OAuthログインでスキーマを適用し、デプロイします:',
+  'complete.manualStep2': '2. Adminから要求された保留中のプロビジョニング操作をSetupで実行します。',
+  'complete.manualStep2Detail':
+    '自動プロビジョニングはオフで、Cloudflare APIトークンはControlに保存されません。',
 
   // Resource provisioning
   'resource.provisioning': '{{resource}}をプロビジョニング中...',
@@ -574,6 +633,8 @@ const ja: Translations = {
   // Common
   'common.yes': 'はい',
   'common.no': 'いいえ',
+  'common.example': '例',
+  'common.comingSoon': '近日対応',
   'common.continue': '続行',
   'common.cancel': 'キャンセル',
   'common.skip': 'スキップ',
@@ -629,6 +690,8 @@ const ja: Translations = {
   'delete.r2Buckets': 'R2バケット',
   'delete.pages': 'Pagesプロジェクト',
   'delete.partialSuccess': '選択したリソースを削除し、残りの環境情報は保持しました',
+  'delete.inventoryUnavailable':
+    'Cloudflareのリソース一覧を確認できなかったため、削除を開始しませんでした',
 
   // Info command
   'info.title': '環境情報',

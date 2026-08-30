@@ -235,13 +235,14 @@ const SAML_JIT_EMAIL_LINKING_POLICIES = new Set<SAMLJitEmailLinkingPolicy>([
 ]);
 
 function normalizeSAMLIdPJitLinkingPolicyConfig(
-  config: SAMLIdPConfig
+  config: SAMLIdPConfig,
+  options: { requireIdentityMapping?: boolean } = {}
 ): SAMLIdPConfig | ResponseValidationError {
   const policy = config.jitEmailLinkingPolicy ?? 'email_linking';
   if (!SAML_JIT_EMAIL_LINKING_POLICIES.has(policy)) {
     return { field: 'jitEmailLinkingPolicy' };
   }
-  if (!config.identityMapping?.fieldMappingSetId) {
+  if (options.requireIdentityMapping !== false && !config.identityMapping?.fieldMappingSetId) {
     return { field: 'identityMapping.fieldMappingSetId' };
   }
 
@@ -252,8 +253,11 @@ function normalizeSAMLIdPJitLinkingPolicyConfig(
   };
 }
 
-function normalizeSAMLSPConfig(config: SAMLSPConfig): SAMLSPConfig | ResponseValidationError {
-  if (!config.identityMapping?.fieldMappingSetId) {
+function normalizeSAMLSPConfig(
+  config: SAMLSPConfig,
+  options: { requireIdentityMapping?: boolean } = {}
+): SAMLSPConfig | ResponseValidationError {
+  if (options.requireIdentityMapping !== false && !config.identityMapping?.fieldMappingSetId) {
     return { field: 'identityMapping.fieldMappingSetId' };
   }
   const signingConfig = applySafeSAMLSPSigningDefaults(config);
@@ -261,19 +265,26 @@ function normalizeSAMLSPConfig(config: SAMLSPConfig): SAMLSPConfig | ResponseVal
     return { field: 'signResponses' };
   }
   const destinationFieldPolicies = normalizeSAMLDestinationFieldPolicies(
-    config.identityMapping.destinationFieldPolicies
+    config.identityMapping?.destinationFieldPolicies
   );
   if (destinationFieldPolicies === null) {
     return { field: 'identityMapping.destinationFieldPolicies' };
   }
-  const { destinationProfileId: _legacyDestinationProfileId, ...identityMapping } =
-    config.identityMapping;
-  const normalizedIdentityMapping = {
-    ...identityMapping,
-    ...(destinationFieldPolicies ? { destinationFieldPolicies } : {}),
-  };
+  const normalizedIdentityMapping = config.identityMapping
+    ? (() => {
+        const { destinationProfileId: _legacyDestinationProfileId, ...identityMapping } =
+          config.identityMapping;
+        return {
+          ...identityMapping,
+          ...(destinationFieldPolicies ? { destinationFieldPolicies } : {}),
+        };
+      })()
+    : undefined;
   if (config.attributeReleaseConsent === undefined) {
-    return { ...signingConfig, identityMapping: normalizedIdentityMapping };
+    return {
+      ...signingConfig,
+      ...(normalizedIdentityMapping ? { identityMapping: normalizedIdentityMapping } : {}),
+    };
   }
 
   const attributeReleaseConsent = normalizeAttributeReleaseConsentPolicy(
@@ -285,7 +296,7 @@ function normalizeSAMLSPConfig(config: SAMLSPConfig): SAMLSPConfig | ResponseVal
 
   return {
     ...signingConfig,
-    identityMapping: normalizedIdentityMapping,
+    ...(normalizedIdentityMapping ? { identityMapping: normalizedIdentityMapping } : {}),
     attributeReleaseConsent,
   };
 }
@@ -1558,22 +1569,26 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
       }
     }
 
+    const requestedEnabled = body.enabled !== false;
     const normalizedConfig =
       body.providerType === 'saml_sp'
-        ? normalizeSAMLSPConfig(config as SAMLSPConfig)
-        : normalizeSAMLIdPJitLinkingPolicyConfig(config as SAMLIdPConfig);
+        ? normalizeSAMLSPConfig(config as SAMLSPConfig, {
+            requireIdentityMapping: requestedEnabled,
+          })
+        : normalizeSAMLIdPJitLinkingPolicyConfig(config as SAMLIdPConfig, {
+            requireIdentityMapping: requestedEnabled,
+          });
     if (isResponseValidationError(normalizedConfig)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: normalizedConfig.field },
       });
     }
     const tenantId = resolveSAMLTenantIdFromContext(c);
-    if (body.providerType === 'saml_sp') {
-      const mappingError = await validateSAMLSPMappingConfig(
-        c.env,
-        tenantId,
-        normalizedConfig as SAMLSPConfig
-      );
+    if (requestedEnabled && normalizedConfig.identityMapping?.fieldMappingSetId) {
+      const mappingError =
+        body.providerType === 'saml_sp'
+          ? await validateSAMLSPMappingConfig(c.env, tenantId, normalizedConfig as SAMLSPConfig)
+          : await validateSAMLIdPMappingConfig(c.env, tenantId, normalizedConfig as SAMLIdPConfig);
       if (mappingError) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
           variables: { field: mappingError.field },
@@ -1583,8 +1598,7 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
     const normalizedConfigWithValidation =
       await withProviderCertificateValidation(normalizedConfig);
     const providerEnabled =
-      body.enabled !== false &&
-      normalizedConfigWithValidation.certificateValidation?.allExpired !== true;
+      requestedEnabled && normalizedConfigWithValidation.certificateValidation?.allExpired !== true;
     const id = crypto.randomUUID();
     const now = Date.now();
 
@@ -1614,7 +1628,11 @@ export async function handleCreateProvider(c: AdminSAMLContext): Promise<Respons
         enabled: providerEnabled,
         metadata_imported: hasMetadataInput,
         disabled_due_to_expired_certificate:
-          body.enabled !== false && !providerEnabled ? true : undefined,
+          requestedEnabled &&
+          normalizedConfigWithValidation.certificateValidation?.allExpired === true
+            ? true
+            : undefined,
+        mapping_configuration_pending: !normalizedConfig.identityMapping?.fieldMappingSetId,
       },
     });
     await invalidateAuthenticationMethodsCacheForSAML(c.env, tenantId, 'saml.provider.created', c);
@@ -1745,24 +1763,31 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
       SINGLE_METADATA_REQUEST_LIMIT_BYTES
     );
     const existingConfig = JSON.parse(existing.config_json);
+    const requestedEnabled = body.enabled !== undefined ? body.enabled : existing.enabled === 1;
 
     // Merge config updates
     const mergedConfig = body.config ? { ...existingConfig, ...body.config } : existingConfig;
     const newConfig =
       existing.provider_type === 'saml_sp'
-        ? normalizeSAMLSPConfig(mergedConfig as SAMLSPConfig)
-        : normalizeSAMLIdPJitLinkingPolicyConfig(mergedConfig as SAMLIdPConfig);
+        ? normalizeSAMLSPConfig(mergedConfig as SAMLSPConfig, {
+            requireIdentityMapping: requestedEnabled,
+          })
+        : normalizeSAMLIdPJitLinkingPolicyConfig(mergedConfig as SAMLIdPConfig, {
+            requireIdentityMapping: requestedEnabled,
+          });
     if (isResponseValidationError(newConfig)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
         variables: { field: newConfig.field },
       });
     }
-    if (existing.provider_type === 'saml_sp') {
-      const mappingError = await validateSAMLSPMappingConfig(
-        c.env,
-        tenantId,
-        newConfig as SAMLSPConfig
-      );
+    // Disabling is an emergency containment operation. It must remain available even when the
+    // provider's Mapping Set was deleted, deactivated, or otherwise became invalid. The complete
+    // mapping is validated again before a later enable can succeed.
+    if (requestedEnabled && newConfig.identityMapping?.fieldMappingSetId) {
+      const mappingError =
+        existing.provider_type === 'saml_sp'
+          ? await validateSAMLSPMappingConfig(c.env, tenantId, newConfig as SAMLSPConfig)
+          : await validateSAMLIdPMappingConfig(c.env, tenantId, newConfig as SAMLIdPConfig);
       if (mappingError) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
           variables: { field: mappingError.field },
@@ -1770,7 +1795,6 @@ export async function handleUpdateProvider(c: AdminSAMLContext): Promise<Respons
       }
     }
     const newConfigWithValidation = await withProviderCertificateValidation(newConfig);
-    const requestedEnabled = body.enabled !== undefined ? body.enabled : existing.enabled === 1;
     const nextEnabled =
       requestedEnabled && newConfigWithValidation.certificateValidation?.allExpired !== true;
     const now = Date.now();
@@ -2372,7 +2396,7 @@ async function validateAggregateBatchCreateRequest(
   tenantId: string,
   preview: { entities: SAMLMetadataEntitySummary[] },
   body: SAMLMetadataBatchCreateRequest & { entityIds: string[] }
-): Promise<{ providerType: 'saml_idp' | 'saml_sp' } | ResponseValidationError> {
+): Promise<{ providerType?: 'saml_idp' | 'saml_sp' } | ResponseValidationError> {
   if (!Array.isArray(preview.entities)) return { field: 'entityIds' };
   const entitiesById = new Map(preview.entities.map((entity) => [entity.entityId, entity]));
   const selected = body.entityIds.map((entityId) => entitiesById.get(entityId));
@@ -2393,30 +2417,40 @@ async function validateAggregateBatchCreateRequest(
       resolvedRoles.add(entity.role);
     }
   }
+  if (!body.identityMapping?.fieldMappingSetId) {
+    if (body.enabled !== false) return { field: 'identityMapping.fieldMappingSetId' };
+    return {
+      providerType: resolvedRoles.size === 1 ? [...resolvedRoles][0] : undefined,
+    };
+  }
+
   if (resolvedRoles.size !== 1) return { field: 'entityIds' };
   const providerType = [...resolvedRoles][0];
   if (!providerType) return { field: 'entityIds' };
-
-  if (!body.identityMapping?.fieldMappingSetId) {
-    return { field: 'identityMapping.fieldMappingSetId' };
-  }
+  if (body.enabled === false) return { providerType };
 
   for (const entity of selected as SAMLMetadataEntitySummary[]) {
     if (providerType === 'saml_sp') {
-      const config = normalizeSAMLSPConfig({
-        entityId: entity.entityId,
-        identityMapping: body.identityMapping,
-      } as SAMLSPConfig);
+      const config = normalizeSAMLSPConfig(
+        {
+          entityId: entity.entityId,
+          identityMapping: body.identityMapping,
+        } as SAMLSPConfig,
+        { requireIdentityMapping: true }
+      );
       if (isResponseValidationError(config)) return config;
       const mappingError = await validateSAMLSPMappingConfig(env, tenantId, config);
       if (mappingError) return mappingError;
       continue;
     }
 
-    const config = normalizeSAMLIdPJitLinkingPolicyConfig({
-      entityId: entity.entityId,
-      identityMapping: body.identityMapping,
-    } as SAMLIdPConfig);
+    const config = normalizeSAMLIdPJitLinkingPolicyConfig(
+      {
+        entityId: entity.entityId,
+        identityMapping: body.identityMapping,
+      } as SAMLIdPConfig,
+      { requireIdentityMapping: true }
+    );
     if (isResponseValidationError(config)) return config;
     const mappingError = await validateSAMLIdPMappingConfig(env, tenantId, config);
     if (mappingError) return mappingError;
@@ -3180,17 +3214,20 @@ async function processAggregateBatchCreate(
         } as SAMLIdPConfig | SAMLSPConfig;
         const config =
           providerType === 'saml_sp'
-            ? normalizeSAMLSPConfig(configWithMapping as SAMLSPConfig)
-            : normalizeSAMLIdPJitLinkingPolicyConfig(configWithMapping as SAMLIdPConfig);
+            ? normalizeSAMLSPConfig(configWithMapping as SAMLSPConfig, {
+                requireIdentityMapping: input.enabled,
+              })
+            : normalizeSAMLIdPJitLinkingPolicyConfig(configWithMapping as SAMLIdPConfig, {
+                requireIdentityMapping: input.enabled,
+              });
         if (isResponseValidationError(config)) {
           throw new Error(`Invalid ${config.field}`);
         }
-        if (providerType === 'saml_sp') {
-          const mappingError = await validateSAMLSPMappingConfig(
-            env,
-            input.tenantId,
-            config as SAMLSPConfig
-          );
+        if (input.enabled && config.identityMapping?.fieldMappingSetId) {
+          const mappingError =
+            providerType === 'saml_sp'
+              ? await validateSAMLSPMappingConfig(env, input.tenantId, config as SAMLSPConfig)
+              : await validateSAMLIdPMappingConfig(env, input.tenantId, config as SAMLIdPConfig);
           if (mappingError) throw new Error(`Invalid ${mappingError.field}`);
         }
         const metadataAnalysis = analyzeSAMLMetadata(metadataXml);

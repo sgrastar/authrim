@@ -55,6 +55,10 @@ import {
   executeDurableInitialAccountDirectoryWrite,
   resolveInitialAccountDirectoryWriteTargets,
 } from './account-directory-producer';
+import {
+  isAccountDirectoryWriteBindingUnavailable,
+  isLookupRegistryGenerationPropagating,
+} from './account-directory-errors';
 import { writeCanonicalAccountAuthoritative } from './account-authoritative-write';
 import {
   attemptImmediateAccountDirectoryRemovals,
@@ -68,6 +72,7 @@ import {
   type CrossShardAccountListItem,
 } from './cross-shard-account-list';
 import { findActiveAccountLegalHold } from './account-legal-hold-guard';
+import { usesRoutedAccountStorage } from './tenant-routed-storage';
 
 type AdminRuntimeUserCore = {
   email_verified: boolean | number;
@@ -88,14 +93,7 @@ type AdminRuntimeUserPII = {
 };
 
 function usesTenantD1Storage(c: Context<{ Bindings: Env }>): boolean {
-  const metadata = getTenantMetadataContextFromHono(c);
-  const legacyStorageProfileId = (
-    metadata as (typeof metadata & { storageProfileId?: string }) | undefined
-  )?.storageProfileId;
-  return (
-    metadata?.route?.allocationScope === 'tenant_exclusive' ||
-    legacyStorageProfileId === 'builtin:storage:tenant-d1'
-  );
+  return usesRoutedAccountStorage(getTenantMetadataContextFromHono(c));
 }
 
 function resolveAdminPiiAdapter(
@@ -903,6 +901,20 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
         400
       );
     }
+    if (
+      error instanceof Error &&
+      (error.message === 'lookup_route_binding_generation_stale' ||
+        error.message === 'lookup_route_binding_unavailable')
+    ) {
+      c.header('Retry-After', '5');
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'The tenant runtime route is refreshing; retry shortly',
+        },
+        503
+      );
+    }
     logSanitizedError('Admin users list error', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -1164,7 +1176,11 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
     const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
-    const hasInitialPiiTarget = customClaimSources.piiDb !== null || hasPIIDatabase(c);
+    // A new account has no Lookup route (and therefore no account data context) yet. The fixed
+    // bootstrap PII binding still proves that PII storage is configured; Control allocates the
+    // account's authoritative D1 targets below.
+    const hasInitialPiiTarget =
+      customClaimSources.piiDb !== null || hasPIIDatabase(c) || c.env.DB_PII !== undefined;
     if (!hasInitialPiiTarget) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
@@ -1304,7 +1320,6 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       201
     );
   } catch (error) {
-    logSanitizedError('Admin user create error', error);
     const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
     if (writeFenceResponse) return writeFenceResponse;
     if (
@@ -1324,6 +1339,7 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       error instanceof Error &&
       error.message === 'control_account_allocation_capacity_unavailable'
     ) {
+      c.header('Retry-After', '10');
       return c.json(
         {
           error: 'temporarily_unavailable',
@@ -1332,6 +1348,37 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
         503
       );
     }
+    if (error instanceof Error && error.message === 'control_account_allocation_rpc_unavailable') {
+      c.header('Retry-After', '5');
+      return c.json(
+        {
+          error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
+          error_description: 'Control plane is temporarily unavailable during rollout',
+        },
+        503
+      );
+    }
+    if (isAccountDirectoryWriteBindingUnavailable(error)) {
+      c.header('Retry-After', '1');
+      return c.json(
+        {
+          error: 'runtime_binding_propagating',
+          error_description: 'Runtime database binding is propagating; retry shortly',
+        },
+        503
+      );
+    }
+    if (isLookupRegistryGenerationPropagating(error)) {
+      c.header('Retry-After', '1');
+      return c.json(
+        {
+          error: 'snapshot_generation_propagating',
+          error_description: 'Runtime lookup registry generation is propagating; retry shortly',
+        },
+        503
+      );
+    }
+    logSanitizedError('Admin user create error', error);
     return c.json(
       {
         error: 'server_error',

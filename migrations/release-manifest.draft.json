@@ -11,18 +11,28 @@
     {
       "id": "d1-core",
       "dialect": "sqlite",
-      "logicalRoles": ["core", "tenant_core"],
+      "logicalRoles": [
+        "core",
+        "tenant_core"
+      ],
       "files": [
         {
           "path": "001_pre_1_0_core_baseline.sql",
           "checksum": "775e2c11e1f508595f7db02e129ea91817ac40038b04ab4ec1083e500bf5f532"
+        },
+        {
+          "path": "002_initial_tenant_placement_bootstrap.sql",
+          "checksum": "4b7f728a69c50efd3041c74a2df821def70a31db88ba06803f7d54f677b78573"
         }
       ]
     },
     {
       "id": "d1-pii",
       "dialect": "sqlite",
-      "logicalRoles": ["pii", "tenant_pii"],
+      "logicalRoles": [
+        "pii",
+        "tenant_pii"
+      ],
       "files": [
         {
           "path": "001_pre_1_0_pii_baseline.sql",
@@ -33,7 +43,9 @@
     {
       "id": "d1-admin",
       "dialect": "sqlite",
-      "logicalRoles": ["admin"],
+      "logicalRoles": [
+        "admin"
+      ],
       "files": [
         {
           "path": "001_pre_1_0_admin_baseline.sql",
@@ -44,29 +56,59 @@
     {
       "id": "d1-control",
       "dialect": "sqlite",
-      "logicalRoles": ["control"],
+      "logicalRoles": [
+        "control"
+      ],
       "files": [
         {
           "path": "001_pre_1_0_control_baseline.sql",
           "checksum": "3237581f71fcc99f1b3c1a327d718b190e13984ae079818410683b4c20192624"
+        },
+        {
+          "path": "002_lookup_predictive_scale_out.sql",
+          "checksum": "d51e5d848121b44a5300b938d14dfd247765145c18ccbf12490dfaace4faf638"
+        },
+        {
+          "path": "003_worker_binding_patch_intent_recovery.sql",
+          "checksum": "b310039f59e9cc2d8615970c90ad8d6fa1b95b638ae644067ef24d30b592b134"
+        },
+        {
+          "path": "004_worker_binding_reconciler_lease.sql",
+          "checksum": "5a0ba05be8f8ad21bd6ad4f69cc1444915350c63282141dc6e4080b36ef54615"
+        },
+        {
+          "path": "005_account_predictive_scale_out.sql",
+          "checksum": "f0e01c55e0675a0a5e9875da33e1dfcac5e13c25898c8c53062bb08cc0fb5b6f"
+        },
+        {
+          "path": "006_account_spare_assignment_threshold.sql",
+          "checksum": "dbd8afc8aefe74478ec4b139b8a876ff8165047e09ab58da9a5f3113216eb133"
         }
       ]
     },
     {
       "id": "d1-lookup",
       "dialect": "sqlite",
-      "logicalRoles": ["lookup"],
+      "logicalRoles": [
+        "lookup"
+      ],
       "files": [
         {
           "path": "001_pre_1_0_lookup_baseline.sql",
           "checksum": "9aa3b6caa51a522dff5a1dacca1a14df53a363a8732ddc25e4a89485d69a5d84"
+        },
+        {
+          "path": "002_lookup_scale_out_publication_metrics.sql",
+          "checksum": "b0407d037bd695605c9e86165e591f41a1457645bd5504c9933d9c7ae4de0bb2"
         }
       ]
     },
     {
       "id": "d1-plugin-runner",
       "dialect": "sqlite",
-      "logicalRoles": ["plugin_runner"],
+      "logicalRoles": [
+        "plugin_runner"
+      ],
       "files": [
         {
           "path": "001_pre_1_0_plugin_runner_baseline.sql",
@@ -77,7 +119,11 @@
     {
       "id": "external-postgres-core",
       "dialect": "postgres",
-      "logicalRoles": ["core", "custom", "policy"],
+      "logicalRoles": [
+        "core",
+        "custom",
+        "policy"
+      ],
       "files": [
         {
           "path": "001_pre_1_0_external_postgres_core_baseline.sql",
@@ -88,7 +134,9 @@
     {
       "id": "external-postgres-pii",
       "dialect": "postgres",
-      "logicalRoles": ["pii"],
+      "logicalRoles": [
+        "pii"
+      ],
       "files": [
         {
           "path": "002_pre_1_0_external_postgres_pii_baseline.sql",

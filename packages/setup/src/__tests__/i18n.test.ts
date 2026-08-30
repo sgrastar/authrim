@@ -128,6 +128,88 @@ describe('setup i18n locale contracts', () => {
     }
   });
 
+  it('does not promise an unmeasured setup duration in the quick setup menu', async () => {
+    for (const locale of getSupportedLocales()) {
+      const translations = await loadTranslations(locale.code);
+      expect(translations['menu.quick'], locale.code).not.toContain('5');
+    }
+  });
+
+  it('does not retain translations for the removed OIDC profile selector', async () => {
+    for (const locale of getSupportedLocales()) {
+      const translations = await loadTranslations(locale.code);
+      expect(
+        Object.keys(translations).filter((key) => key.startsWith('profile.')),
+        locale.code
+      ).toEqual([]);
+    }
+  });
+
+  it('localizes the complete CLI custom-setup domain flow', async () => {
+    const keys = [
+      'domain.configureBindingDesc',
+      'domain.baseDomainDepthError',
+      'domain.uiDomainDepthError',
+      'domain.suggestedHost',
+      'domain.uiRequiresOwnRoute',
+      'tenant.domainSetupHint',
+      'tenant.customDomainExamples',
+      'tenant.idRules',
+      'tenant.randomIdHint',
+      'tenant.randomIdPrompt',
+      'tenant.nakedDomainPrompt',
+      'tenant.primaryTenantPrompt',
+      'config.d1Routing',
+      'config.placement',
+      'config.provisioning',
+      'common.comingSoon',
+    ] as const;
+    const english = await loadTranslations('en');
+
+    for (const locale of getSupportedLocales()) {
+      const translations = await loadTranslations(locale.code);
+      for (const key of keys) {
+        expect(translations[key], `${locale.code}:${key}`).toBeTruthy();
+        if (locale.code !== 'en') {
+          expect(translations[key], `${locale.code}:${key}`).not.toBe(english[key]);
+        }
+      }
+    }
+  });
+
+  it('localizes the initial provisioning and completion flow', async () => {
+    const keys = [
+      'prereq.authenticated',
+      'prereq.checkFailed',
+      'config.uiEnvNoApi',
+      'config.wranglerConfigsSaved',
+      'config.wranglerConfigsPartial',
+      'config.wranglerConfigsSyncing',
+      'config.wranglerConfigsSynced',
+      'config.wranglerConfigsSyncFailed',
+      'deploy.initialProvisioningFailed',
+      'complete.createdResources',
+      'complete.generatedFiles',
+      'complete.automaticStep1',
+      'complete.automaticStep2',
+      'complete.automaticStep2Detail',
+      'complete.manualStep1',
+      'complete.manualStep2',
+      'complete.manualStep2Detail',
+    ] as const;
+    const english = await loadTranslations('en');
+
+    for (const locale of getSupportedLocales()) {
+      const translations = await loadTranslations(locale.code);
+      for (const key of keys) {
+        expect(translations[key], `${locale.code}:${key}`).toBeTruthy();
+        if (locale.code !== 'en') {
+          expect(translations[key], `${locale.code}:${key}`).not.toBe(english[key]);
+        }
+      }
+    }
+  });
+
   it('provides localized initial deployment recovery guidance for every supported locale', async () => {
     const keys = [
       'web.envDetail.initialDeployRecoveryTitle',

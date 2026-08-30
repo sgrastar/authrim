@@ -9,7 +9,10 @@ const {
 } = vi.hoisted(() => {
   const repository = {
     listActiveRegistryRowsForRole: vi.fn(),
+    listActiveRegistryRowsForTenantRole: vi.fn(),
     getLatestRuntimeRegistrySnapshot: vi.fn(),
+    upsertRegistryRow: vi.fn(),
+    setActivePointer: vi.fn(),
   };
   function MockRepositoryConstructor() {
     return repository;
@@ -67,7 +70,10 @@ describe('tenant runtime registry snapshot jobs', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRepository.listActiveRegistryRowsForRole.mockResolvedValue([]);
+    mockRepository.listActiveRegistryRowsForTenantRole.mockResolvedValue([]);
     mockRepository.getLatestRuntimeRegistrySnapshot.mockResolvedValue(null);
+    mockRepository.upsertRegistryRow.mockImplementation(async (row: unknown) => row);
+    mockRepository.setActivePointer.mockImplementation(async (row: unknown) => row);
     mockPublishTenantRuntimeRegistrySnapshot.mockResolvedValue({});
     mockResolveTenantRuntimePlacementSnapshot.mockResolvedValue({
       isolationPolicy: 'tenant_exclusive',
@@ -149,6 +155,108 @@ describe('tenant runtime registry snapshot jobs', () => {
       skipped: 0,
       failed: 0,
     });
+  });
+
+  it('reconciles every Control scale-out target before publishing the tenant snapshot', async () => {
+    const metadata = (dataRole: string) =>
+      JSON.stringify({
+        control_data_role: dataRole,
+        control_residency_policy_id: 'builtin:residency:default',
+        control_residency_partition: 'default',
+      });
+    mockRepository.listActiveRegistryRowsForRole.mockResolvedValue([
+      { tenant_id: 'tenant-a', role: 'tenant_core', status: 'active' },
+    ]);
+    mockRepository.listActiveRegistryRowsForTenantRole.mockImplementation(
+      async (_tenantId: string, role: string) =>
+        role === 'tenant_core'
+          ? [
+              {
+                tenant_id: 'tenant-a',
+                role: 'tenant_core',
+                shard_group: 'default',
+                binding_ref: 'TDB_DEFAULT',
+                metadata_json: metadata('tenant_core/default'),
+              },
+              {
+                tenant_id: 'tenant-a',
+                role: 'tenant_core',
+                shard_group: 'users',
+                binding_ref: 'TDB_USERS_1',
+                metadata_json: metadata('tenant_core/users'),
+              },
+            ]
+          : [
+              {
+                tenant_id: 'tenant-a',
+                role: 'tenant_pii',
+                shard_group: 'default',
+                binding_ref: 'TDB_PII_1',
+                metadata_json: metadata('tenant_pii'),
+              },
+            ]
+    );
+    const target = (
+      dataRole: 'tenant_core/default' | 'tenant_core/users' | 'tenant_pii',
+      suffix: string,
+      assignmentGeneration: number
+    ) => ({
+      shardId: `shard-${suffix}`,
+      dataRole,
+      residencyPolicyId: 'builtin:residency:default',
+      residencyPartition: 'default',
+      routeGeneration: 1,
+      bindingRef: `TDB_${suffix}`,
+      databaseId: `database-${suffix}`,
+      databaseName: `database-${suffix}`,
+      allocationScope: 'tenant_exclusive' as const,
+      ownerTenantId: 'tenant-a',
+      assignmentGeneration,
+    });
+    const getTenantRuntimeRouteTargets = vi.fn(async () => [
+      target('tenant_core/default', 'DEFAULT', 1),
+      target('tenant_core/users', 'USERS_1', 1),
+      target('tenant_core/users', 'USERS_2', 2),
+      target('tenant_pii', 'PII_1', 1),
+      target('tenant_pii', 'PII_2', 2),
+    ]);
+
+    const summary = await refreshTenantRuntimeRegistrySnapshots(
+      {
+        DB_ADMIN: 'control',
+        TENANT_RUNTIME_REGISTRY: snapshotStore,
+        CONTROL: { ...controlSigner, getTenantRuntimeRouteTargets },
+      } as never,
+      logger
+    );
+
+    expect(summary).toEqual({ scanned: 1, published: 1, skipped: 0, failed: 0 });
+    expect(getTenantRuntimeRouteTargets).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      residencyPolicyId: 'builtin:residency:default',
+      residencyPartition: 'default',
+    });
+    expect(mockRepository.upsertRegistryRow).toHaveBeenCalledTimes(5);
+    expect(mockRepository.upsertRegistryRow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenant_id: 'tenant-a',
+        role: 'tenant_core',
+        shard_group: 'users',
+        shard_index: 1,
+        shard_count: 2,
+        binding_ref: 'TDB_USERS_2',
+      })
+    );
+    expect(mockRepository.setActivePointer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenant_id: 'tenant-a',
+        role: 'tenant_pii',
+        shard_group: 'default',
+        shard_count: 2,
+        runtime_generation: 4,
+      })
+    );
+    expect(mockPublishTenantRuntimeRegistrySnapshot).toHaveBeenCalledTimes(1);
   });
 
   it('continues publishing remaining tenants when one snapshot fails', async () => {

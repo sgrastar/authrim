@@ -26,6 +26,7 @@ import {
 } from './tenant-database.js';
 import { resolveRegisteredSchemaReferences } from './release-migrations.js';
 import type { ActivePluginRunnerResourceBinding } from './plugin-resource-deployment-projection.js';
+import { MANAGED_WORKER_DEPLOY_BUILD_COMMAND } from './managed-worker-deploy.js';
 
 // =============================================================================
 // Types
@@ -71,6 +72,7 @@ export interface WranglerConfig {
   compatibility_date: string;
   compatibility_flags: string[];
   workers_dev: boolean;
+  build?: { command: string };
   placement?: { mode: string };
   version_metadata?: { binding: string };
   worker_loaders?: Array<{ binding: string }>;
@@ -623,6 +625,7 @@ export function generateWranglerConfig(
       component === 'ar-control' || component === 'ar-plugin-runner'
         ? false
         : !config.urls?.api?.custom,
+    build: { command: MANAGED_WORKER_DEPLOY_BUILD_COMMAND },
     vars: generateEnvVars(component, config, workersSubdomain),
   };
   if (resourceIds.controlKeyState && component === 'ar-control') {
@@ -1642,6 +1645,12 @@ export function toToml(config: WranglerConfig, envName?: string): string {
     );
     lines.push('');
 
+    if (config.build) {
+      lines.push('[build]');
+      lines.push(`command = ${JSON.stringify(config.build.command)}`);
+      lines.push('');
+    }
+
     // Migrations at top level (for Durable Objects definitions - applies to all envs)
     if (config.migrations && config.migrations.length > 0) {
       lines.push('# Durable Objects Migrations');
@@ -1852,6 +1861,12 @@ export function toToml(config: WranglerConfig, envName?: string): string {
     );
     lines.push(`workers_dev = ${config.workers_dev}`);
     lines.push('');
+
+    if (config.build) {
+      lines.push('[build]');
+      lines.push(`command = ${JSON.stringify(config.build.command)}`);
+      lines.push('');
+    }
 
     // Placement
     if (config.placement) {

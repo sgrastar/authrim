@@ -31,7 +31,7 @@ const ko: Translations = {
 
   // Main menu
   'menu.prompt': '무엇을 하시겠습니까?',
-  'menu.quick': '빠른 설정 (5분)',
+  'menu.quick': '빠른 설정',
   'menu.quickDesc': '최소 구성으로 Authrim 배포',
   'menu.custom': '사용자 정의 설정',
   'menu.customDesc': '모든 옵션을 단계별로 구성',
@@ -103,6 +103,8 @@ const ko: Translations = {
   'prereq.notLoggedIn': 'Cloudflare에 로그인되지 않았습니다',
   'prereq.loginHint': '다음 명령어를 실행하여 인증하세요:',
   'prereq.loggedInAs': 'Cloudflare에 연결됨 ({{email}})',
+  'prereq.authenticated': 'Cloudflare에 연결됨',
+  'prereq.checkFailed': 'wrangler 확인에 실패했습니다',
   'prereq.accountId': '계정 ID: {{accountId}}',
 
   // Environment
@@ -179,6 +181,13 @@ const ko: Translations = {
   'domain.zoneCheckSkipped': '영역 확인을 건너뛰고 설정을 계속합니다...',
   'domain.continueWithoutZone': '영역 확인 없이 계속하시겠습니까?',
   'domain.configureBinding': 'Workers에 대한 사용자 정의 도메인 바인딩 구성',
+  'domain.configureBindingDesc':
+    '기본 도메인을 라우터 Worker에 직접 할당하여 Cloudflare가 DNS와 TLS 인증서를 관리하도록 합니다. 테넌트 하위 도메인은 계속 와일드카드 라우팅을 사용합니다.',
+  'domain.customHostnamesDesc':
+    'Cloudflare Custom Hostnames로 테넌트 사용자 정의 도메인을 자동화합니다.',
+  'domain.customHostnamesPrivacy':
+    '토큰은 로컬 비밀 파일에만 저장되고 Worker 비밀로 업로드되며 D1, KV 또는 설정 구성에는 저장되지 않습니다.',
+  'domain.customHostnamesPrompt': 'Cloudflare Custom Hostnames 자동화를 활성화하시겠습니까?',
   'domain.action.retryCheck': '다시 확인',
   'domain.action.reloadPage': '페이지 새로고침',
   'domain.action.openCloudflareDashboard': 'Cloudflare 대시보드 열기',
@@ -224,6 +233,13 @@ const ko: Translations = {
   'domain.apiDomain': 'API / 발급자 도메인 (예: auth.example.com)',
   'domain.loginUiDomain': '로그인 UI 도메인 (건너뛰려면 Enter)',
   'domain.adminUiDomain': '관리자 UI 도메인 (건너뛰려면 Enter)',
+  'domain.baseDomainDepthError':
+    'Base Domain은 테넌트 URL에 사용되는 상위 도메인이어야 합니다. "{{hostname}}"에는 등록 도메인 앞에 너무 많은 레이블이 있습니다.',
+  'domain.uiDomainDepthError':
+    '{{label}} 도메인 "{{hostname}}"은 표준 테넌트 도메인 모델에 비해 너무 깊습니다.',
+  'domain.suggestedHost': '권장 호스트: {{hostname}}',
+  'domain.uiRequiresOwnRoute':
+    '{{label}} 사용자 지정 도메인에는 별도의 Worker 라우트가 필요합니다.',
   'domain.enterDomains': '사용자 정의 도메인 입력 (Cloudflare 기본값을 사용하려면 비워두세요)',
   'domain.singleTenantNote': '단일 테넌트 모드에서는 발급자 URL = API 도메인',
   'domain.usingWorkersDev': '(Cloudflare workers.dev 도메인 사용)',
@@ -272,6 +288,7 @@ const ko: Translations = {
   'keys.generated': '키 생성됨 ({{path}})',
   'keys.existing': '"{{env}}" 환경의 키가 이미 존재합니다',
   'keys.existingWarning': '기존 키가 덮어쓰기됩니다.',
+  'keys.replaced': '환경 이름을 사용할 수 있음을 확인한 후 기존 키를 교체했습니다.',
   'keys.error': '키 생성 실패',
   'keys.regeneratePrompt': '키를 재생성하시겠습니까?',
   'keys.regenerateWarning': '기존의 모든 토큰이 무효화됩니다!',
@@ -322,6 +339,15 @@ const ko: Translations = {
   'config.shards': '샤드',
   'config.sec': '초',
   'config.automatic': '자동',
+  'config.d1Routing': 'D1 라우팅:',
+  'config.placement': '배치:',
+  'config.provisioning': '프로비저닝:',
+  'config.uiEnvNoApi': 'API URL을 설정하면 ui.env가 생성됩니다.',
+  'config.wranglerConfigsSaved': 'wrangler.toml 마스터 설정 {{count}}개를 저장했습니다',
+  'config.wranglerConfigsPartial': '일부 wrangler 설정을 저장하지 못했습니다',
+  'config.wranglerConfigsSyncing': 'wrangler 설정을 패키지에 동기화하는 중...',
+  'config.wranglerConfigsSynced': 'wrangler 설정을 {{count}}개 컴포넌트에 동기화했습니다',
+  'config.wranglerConfigsSyncFailed': 'wrangler 설정 동기화에 실패했습니다',
 
   // Deploy
   'deploy.prompt': '이 구성으로 설정을 시작하시겠습니까?',
@@ -351,6 +377,8 @@ const ko: Translations = {
   'deploy.wranglerKeep': '📝 수동 변경 유지 (현재 상태로 배포)',
   'deploy.wranglerBackup': '💾 백업 후 마스터로 덮어쓰기',
   'deploy.wranglerOverwrite': '⚠️  마스터로 덮어쓰기 (변경 사항 손실)',
+  'deploy.initialProvisioningFailed':
+    'Cloudflare 프로비저닝이 완료되지 않았습니다. 환경 잠금은 생성되지 않았으며, init을 다시 실행하면 안전하게 재개할 수 있습니다.',
 
   // Email provider
   'email.title': '이메일 제공자',
@@ -406,15 +434,22 @@ const ko: Translations = {
   // Cloudflare API Token
   'cf.apiTokenPrompt': 'Cloudflare API 토큰 입력',
   'cf.apiTokenValidation': '유효한 API 토큰을 입력하세요',
-
-  // OIDC Profile
-  'profile.prompt': 'OIDC 프로필 선택',
-  'profile.basicOp': 'Basic OP (표준 OIDC 제공자)',
-  'profile.basicOpDesc': '표준 OIDC 기능',
-  'profile.fapiRw': 'FAPI Read-Write (금융 등급)',
-  'profile.fapiRwDesc': 'FAPI 1.0 Read-Write 보안 프로필 준수',
-  'profile.fapi2Security': 'FAPI 2.0 Security Profile',
-  'profile.fapi2SecurityDesc': 'FAPI 2.0 보안 프로필 준수 (최고 보안)',
+  'cf.apiTokenCreationMethod': 'API 토큰을 어떻게 생성하시겠습니까?',
+  'cf.apiTokenCreateFromLink': '미리 설정된 링크에서 생성(권장)',
+  'cf.apiTokenCreateFromLinkDesc': '필요한 권한과 Zone이 선택된 상태로 Cloudflare를 엽니다',
+  'cf.apiTokenCreateManually': '수동으로 생성',
+  'cf.apiTokenCreateManuallyDesc': '필요한 권한을 확인하고 토큰을 직접 설정합니다',
+  'cf.apiTokenTemplateUrl': 'Cloudflare 토큰 생성 URL:',
+  'cf.apiTokenTemplateOpenPrompt': 'Enter를 눌러 브라우저에서 Cloudflare 열기',
+  'cf.apiTokenTemplateOpened': 'Cloudflare 토큰 생성 페이지를 열었습니다',
+  'cf.apiTokenTemplateOpenFailed': '브라우저를 열 수 없습니다. 아래 URL을 직접 여세요.',
+  'cf.apiTokenManualTitle': '다음 설정으로 사용자 API 토큰을 생성하세요:',
+  'cf.apiTokenManualType': 'Global API Key가 아닌 API Token을 사용하세요.',
+  'cf.apiTokenManualPermission': '권한: Zone > SSL and Certificates > Edit',
+  'cf.apiTokenManualResource': 'Zone 리소스: Include > Specific zone > {{zone}}',
+  'cf.apiTokenManualLeastPrivilege': '관련 없는 권한이나 Zone을 추가하지 마세요.',
+  'cf.apiTokenSecretOnce': '토큰 비밀값은 한 번만 표시됩니다. Cloudflare를 나가기 전에 복사하세요.',
+  'cf.apiTokenSelectedZone': '이 환경에서 사용하는 Zone',
 
   // Tenant configuration
   'tenant.title': '테넌트 모드',
@@ -433,6 +468,18 @@ const ko: Translations = {
   'tenant.defaultTenantPrompt': '기본 테넌트 이름 (식별자)',
   'tenant.defaultTenantValidation': '소문자 영숫자와 하이픈만 허용됩니다',
   'tenant.displayNamePrompt': '기본 테넌트 표시 이름',
+  'tenant.domainSetupHint': '비워 두면 단일 테넌트 모드에서 workers.dev를 사용합니다.',
+  'tenant.customDomainExamples': '사용자 정의 도메인을 사용하는 경우:',
+  'tenant.nakedDomainExample': 'https://example.com (테넌트 하위 도메인 없는 issuer)',
+  'tenant.subdomainExample': 'https://acme.example.com (테넌트 하위 도메인이 있는 issuer)',
+  'tenant.idRules':
+    '테넌트 ID는 1~63자이며 소문자로 시작하고 소문자, 숫자, 하이픈만 포함해야 합니다.',
+  'tenant.randomIdHint':
+    '무작위 테넌트 ID를 사용하면 issuer URL에 고객명이나 회사명이 노출되지 않습니다.',
+  'tenant.randomIdPrompt': '무작위 테넌트 ID를 생성하시겠습니까? ({{id}})',
+  'tenant.initialDisplayName': '초기 테넌트',
+  'tenant.nakedDomainPrompt': '기본 테넌트의 issuer로 기본 도메인을 사용하시겠습니까?',
+  'tenant.primaryTenantPrompt': '기본 도메인용 기본 테넌트 ID (비워 두면 초기 테넌트 사용)',
   'tenant.singleTenantTitle': '단일 테넌트 URL 구성',
   'tenant.singleTenantNote1': '단일 테넌트 모드에서는:',
   'tenant.singleTenantNote2': '발급자 URL = API 사용자 정의 도메인 (또는 workers.dev 폴백)',
@@ -515,6 +562,16 @@ const ko: Translations = {
   'complete.urls': 'URL:',
   'complete.configLocation': '구성:',
   'complete.keysLocation': '키:',
+  'complete.createdResources': '생성된 리소스:',
+  'complete.generatedFiles': '생성된 파일:',
+  'complete.automaticStep1': '1. 스키마를 적용하고 전체 릴리스를 배포합니다:',
+  'complete.automaticStep2': '2. 요청되면 일회용 Cloudflare 부트스트랩 토큰을 생성하여 입력합니다.',
+  'complete.automaticStep2Detail':
+    'Setup이 분할된 하위 토큰을 Control에 직접 등록하고 부트스트랩 토큰을 폐기합니다.',
+  'complete.manualStep1': '1. 현재 Wrangler OAuth 로그인으로 스키마를 적용하고 배포합니다:',
+  'complete.manualStep2': '2. Setup으로 Admin이 요청한 대기 중인 프로비저닝 작업을 실행합니다.',
+  'complete.manualStep2Detail':
+    '자동 프로비저닝은 꺼져 있으며 Cloudflare API 토큰은 Control에 저장되지 않습니다.',
 
   // Resource provisioning
   'resource.provisioning': '{{resource}} 프로비저닝 중...',
@@ -572,6 +629,8 @@ const ko: Translations = {
   // Common
   'common.yes': '예',
   'common.no': '아니오',
+  'common.example': '예',
+  'common.comingSoon': '출시 예정',
   'common.continue': '계속',
   'common.cancel': '취소',
   'common.skip': '건너뛰기',
@@ -628,6 +687,8 @@ const ko: Translations = {
   'delete.r2Buckets': 'R2 버킷',
   'delete.pages': 'Pages 프로젝트',
   'delete.partialSuccess': '선택한 리소스를 삭제하고 나머지 환경 상태는 유지했습니다',
+  'delete.inventoryUnavailable':
+    'Cloudflare 리소스 목록을 확인할 수 없어 삭제를 시작하지 않았습니다',
 
   // Info command
   'info.title': '환경 정보',
