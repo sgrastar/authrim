@@ -450,6 +450,20 @@ export function needsMigration(baseDir: string): boolean {
   return structure.type === 'legacy';
 }
 
+function hasMatchingEnvironmentConfig(envPath: string, env: string): boolean {
+  const configPath = join(envPath, CONFIG_FILE);
+  if (!existsSync(configPath)) {
+    return false;
+  }
+
+  try {
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+    return config?.environment?.prefix === env;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * List all available environments
  *
@@ -487,7 +501,7 @@ export function listEnvironments(baseDir: string, keysBaseDir?: string): string[
         .filter((d) => {
           const envPath = join(authrimDir, d.name);
           return (
-            existsSync(join(envPath, CONFIG_FILE)) ||
+            hasMatchingEnvironmentConfig(envPath, d.name) ||
             existsSync(join(envPath, LOCK_FILE)) ||
             existsSync(join(envPath, KEYS_DIR))
           );
