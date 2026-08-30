@@ -1222,6 +1222,32 @@ describe('Phase 1 runner', () => {
     ).toEqual([1, 2]);
   });
 
+  it('flushes terminal request evidence before advancing the resume checkpoint', async () => {
+    const order: string[] = [];
+    await runAccountCreation({
+      config: config({ accountCount: 1, ratePerSecond: 1, maximumInFlight: 1 }),
+      runId: 'run-durable-evidence-order',
+      seed: 'private-seed',
+      adminToken: 'private-token',
+      count: 1,
+      dependencies: {
+        fetcher: async () =>
+          new Response(JSON.stringify({ user: { id: 'user-durable' } }), { status: 201 }),
+        writeEvent: async (event) => {
+          order.push(`event:${event.kind}`);
+        },
+        flushEventEvidence: async () => {
+          order.push('flush');
+        },
+        writeCheckpoint: async () => {
+          order.push('checkpoint');
+        },
+      },
+    });
+
+    expect(order.slice(-3)).toEqual(['event:accepted_201', 'flush', 'checkpoint']);
+  });
+
   it('replays a capacity 503 with the exact same request and idempotency key', async () => {
     let now = Date.parse('2026-08-27T00:00:00.000Z');
     const requests: Array<{ body: string; key: string }> = [];

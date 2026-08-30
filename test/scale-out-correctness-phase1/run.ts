@@ -141,6 +141,7 @@ export interface Phase1RunnerDependencies {
   random?: () => number;
   signal?: AbortSignal;
   writeEvent: (event: Phase1RequestEvent) => Promise<void>;
+  flushEventEvidence?: () => Promise<void>;
   writeCheckpoint?: (result: Phase1AccountResult) => Promise<void>;
 }
 
@@ -312,12 +313,13 @@ function runnerFromEvidence(input: {
     accounts: [...input.accounts].sort((left, right) => left.accountIndex - right.accountIndex),
     metrics: {
       scheduled: input.config.load.accountCount,
-      attempts: input.events.filter(
-        (event) => event.kind === 'attempt' || event.kind === 'operation_poll'
-      ).length,
-      accepted201: input.events.filter((event) => event.kind === 'accepted_201').length,
-      accepted202: uniqueAccepted202.size,
-      capacity503: input.events.filter((event) => event.kind === 'capacity_503').length,
+      attempts: input.accounts.reduce((total, account) => total + account.attempts, 0),
+      accepted201: input.accounts.filter((account) => account.firstResponseStatus === 201).length,
+      accepted202: Math.max(
+        uniqueAccepted202.size,
+        input.accounts.filter((account) => account.firstResponseStatus === 202).length
+      ),
+      capacity503: input.accounts.reduce((total, account) => total + account.capacity503, 0),
       registryPropagation503: input.events.filter(
         (event) =>
           event.kind === 'registry_propagation_503' ||
@@ -334,7 +336,7 @@ function runnerFromEvidence(input: {
           event.errorCode !== REGISTRY_GENERATION_PROPAGATING &&
           event.errorCode !== RUNTIME_BINDING_PROPAGATING
       ).length,
-      retries: input.events.filter((event) => event.kind === 'retry_scheduled').length,
+      retries: input.accounts.reduce((total, account) => total + account.retries, 0),
       terminalFailures: input.accounts.filter((account) => account.userId === null).length,
     },
   };
@@ -665,6 +667,10 @@ export async function runAccountCreation(input: {
           ...(item.operationId ? { operationId: item.operationId } : {}),
           userId: outcome.userId,
         });
+        // A completed checkpoint makes the account ineligible for replay on resume. Persist its
+        // terminal event first so an interrupted run cannot advance the checkpoint past evidence
+        // that is still buffered in memory.
+        await input.dependencies.flushEventEvidence?.();
         await input.dependencies.writeCheckpoint?.(result);
         return;
       }
@@ -835,6 +841,7 @@ export async function runAccountCreation(input: {
         ...(item.operationId ? { operationId: item.operationId } : {}),
         errorCode,
       });
+      await input.dependencies.flushEventEvidence?.();
       await input.dependencies.writeCheckpoint?.(result);
     })();
     active.add(task);
@@ -1073,6 +1080,7 @@ export async function executePhase1Harness(input: {
       fetcher: input.fetcher,
       signal: runnerController.signal,
       writeEvent: (event) => requestWriter.write(event),
+      flushEventEvidence: () => requestWriter.flush(),
       writeCheckpoint: (result) => checkpointWriter.record(result),
     };
     if (resumeRunDirectory) {
