@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
   buildControlQueryBatch,
   diffControlSnapshots,
@@ -837,6 +837,7 @@ describe('Phase 1 evidence contracts', () => {
 
   it('creates a validation-only run without reading credentials', async () => {
     const directory = await mkdtemp(resolve(tmpdir(), 'authrim-phase1-test-'));
+    onTestFinished(() => rm(directory, { recursive: true, force: true }));
     const result = await executePhase1Harness({
       config: config(),
       outputDirectory: directory,
@@ -853,6 +854,7 @@ describe('Phase 1 evidence contracts', () => {
 
   it('rejects a run ID that could escape the evidence root', async () => {
     const directory = await mkdtemp(resolve(tmpdir(), 'authrim-phase1-safe-path-'));
+    onTestFinished(() => rm(directory, { recursive: true, force: true }));
     await expect(
       executePhase1Harness({
         config: config(),
@@ -1100,6 +1102,7 @@ describe('Phase 1 evidence contracts', () => {
       },
     };
     const outputDirectory = await mkdtemp(resolve(tmpdir(), 'authrim-phase1-e2e-'));
+    onTestFinished(() => rm(outputDirectory, { recursive: true, force: true }));
     const execution = await executePhase1Harness({
       config: testConfig,
       outputDirectory,
