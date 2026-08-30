@@ -117,12 +117,6 @@ describe('LookupBucketMigrationWorker', () => {
       .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()');
     source.exec(schema);
     target.exec(schema);
-    const metricsMigration = readFileSync(
-      resolve(REPO_ROOT, 'migrations/lookup/002_lookup_scale_out_publication_metrics.sql'),
-      'utf8'
-    );
-    source.exec(metricsMigration);
-    target.exec(metricsMigration);
     for (let index = 0; index < 105; index += 1) {
       const digest = index.toString(16).padStart(64, '0');
       source

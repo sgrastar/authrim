@@ -286,24 +286,6 @@ describe('D1ControlRepository lease and budget integration', () => {
       )
     );
     database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/002_lookup_predictive_scale_out.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/003_worker_binding_patch_intent_recovery.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/004_worker_binding_reconciler_lease.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
       `INSERT INTO control_environments (
          environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
        ) VALUES ('env-test', 'test', 'urn:authrim:control:env-test', 'active', 1, 1);
