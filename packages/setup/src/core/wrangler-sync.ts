@@ -237,13 +237,13 @@ function getWranglerComponentsForConfig(config: AuthrimConfig): WorkerComponent[
  * in the deploy file matches the master config content.
  */
 export async function checkWranglerStatus(
-  options: Pick<WranglerSyncOptions, 'baseDir' | 'env' | 'packagesDir'>
+  options: Pick<WranglerSyncOptions, 'baseDir' | 'env' | 'packagesDir' | 'components'>
 ): Promise<WranglerFileStatus[]> {
   const { baseDir, env, packagesDir } = options;
   const envPaths = getEnvironmentPaths({ baseDir, env });
   const results: WranglerFileStatus[] = [];
 
-  for (const component of WORKER_COMPONENTS) {
+  for (const component of options.components ?? WORKER_COMPONENTS) {
     const masterPath = getMasterWranglerPath(envPaths, component);
     const deployPath = getDeployWranglerPath(packagesDir, component);
 
@@ -254,10 +254,13 @@ export async function checkWranglerStatus(
     if (masterExists && deployExists) {
       const masterContent = await readFile(masterPath, 'utf-8');
       const deployContent = await readFile(deployPath, 'utf-8');
-      // Compare only the relevant [env.xxx] section content.
+      // The selected environment and generated top-level settings are both deployment inputs.
+      // Other environment sections intentionally remain independent in the shared package file.
       inSync =
+        normalizeToml(extractTopLevelPreamble(masterContent)) ===
+          normalizeToml(extractTopLevelPreamble(deployContent)) &&
         normalizeToml(extractEnvironmentSectionFromToml(masterContent, env)) ===
-        normalizeToml(extractEnvironmentSectionFromToml(deployContent, env));
+          normalizeToml(extractEnvironmentSectionFromToml(deployContent, env));
     } else if (masterExists !== deployExists) {
       inSync = false;
     }

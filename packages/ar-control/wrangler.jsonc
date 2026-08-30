@@ -4,6 +4,9 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-07-01",
   "workers_dev": false,
+  "build": {
+    "command": "node ../../scripts/guard-managed-worker-deploy.mjs",
+  },
   "observability": {
     "enabled": true,
   },

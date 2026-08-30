@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   publishBundles: vi.fn(),
   registerExternal: vi.fn(),
   sync: vi.fn(),
+  checkStatus: vi.fn(),
 }));
 
 vi.mock('../core/control-generated-state.js', () => ({
@@ -26,6 +27,7 @@ vi.mock('../core/deployment-resource-ids.js', () => ({
   buildWorkerDeploymentResourceIds: mocks.buildDeploymentResourceIds,
 }));
 vi.mock('../core/wrangler-sync.js', () => ({
+  checkWranglerStatus: mocks.checkStatus,
   saveMasterWranglerConfigs: mocks.saveMaster,
   syncWranglerConfigs: mocks.sync,
 }));
@@ -77,6 +79,16 @@ describe('Worker deployment artifact refresh', () => {
       skipped: [],
       errors: [],
     });
+    mocks.checkStatus.mockResolvedValue([
+      {
+        component: 'ar-plugin-runner',
+        masterExists: true,
+        deployExists: true,
+        inSync: true,
+        masterPath: '/repo/.authrim/test/wrangler/ar-plugin-runner.toml',
+        deployPath: '/repo/packages/ar-plugin-runner/wrangler.toml',
+      },
+    ]);
   });
 
   it('regenerates, registers, and syncs a focused Plugin Runner deployment before deploy', async () => {
@@ -119,9 +131,37 @@ describe('Worker deployment artifact refresh', () => {
     expect(mocks.sync).toHaveBeenCalledWith(
       expect.objectContaining({ components: ['ar-plugin-runner'], force: true })
     );
+    expect(mocks.checkStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ components: ['ar-plugin-runner'], env: 'test' })
+    );
     expect(mocks.registerInventory.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.sync.mock.invocationCallOrder[0]!
     );
+  });
+
+  it('fails closed when the generated and package deployment configs differ after sync', async () => {
+    mocks.checkStatus.mockResolvedValue([
+      {
+        component: 'ar-plugin-runner',
+        masterExists: true,
+        deployExists: true,
+        inSync: false,
+        masterPath: '/repo/.authrim/test/wrangler/ar-plugin-runner.toml',
+        deployPath: '/repo/packages/ar-plugin-runner/wrangler.toml',
+      },
+    ]);
+
+    await expect(
+      refreshWorkerDeploymentArtifacts({
+        baseDir: '/repo',
+        env: 'test',
+        config: createDefaultConfig('test'),
+        lock: lock(),
+        lockPath: '/repo/.authrim/test/lock.json',
+        components: ['ar-plugin-runner'],
+        registeredBy: 'setup:upgrade',
+      })
+    ).rejects.toThrow('wrangler_config_post_sync_mismatch:ar-plugin-runner');
   });
 
   it('fails before sync when generated configuration cannot be validated', async () => {

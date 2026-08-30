@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { cleanupLocalEnvironmentArtifacts } from '../core/environment-cleanup.js';
 import {
+  checkWranglerStatus,
   extractEnvironmentSectionFromToml,
   mergeEnvironmentSectionIntoToml,
   removeEnvironmentSectionFromToml,
@@ -220,5 +221,40 @@ name = "single-ar-saml"
     ]);
     expect(existsSync(envDir)).toBe(true);
     await expect(readFile(join(envDir, 'lock.json'), 'utf-8')).resolves.toContain('"test"');
+  });
+});
+
+describe('checkWranglerStatus', () => {
+  afterEach(async () => {
+    await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  it('requires both the selected environment and generated top-level deployment settings', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'authrim-wrangler-status-'));
+    tempDirs.push(baseDir);
+    const masterDir = join(baseDir, '.authrim', 'test', 'wrangler');
+    const packageDir = join(baseDir, 'packages', 'ar-saml');
+    await mkdir(masterDir, { recursive: true });
+    await mkdir(packageDir, { recursive: true });
+    const environmentSection = '# Environment: test\n[env.test]\nname = "test-ar-saml"\n';
+    await writeFile(
+      join(masterDir, 'ar-saml.toml'),
+      `main = "src/index.ts"\n[build]\ncommand = "managed"\n\n${environmentSection}`,
+      'utf8'
+    );
+    await writeFile(
+      join(packageDir, 'wrangler.toml'),
+      `main = "src/index.ts"\n\n${environmentSection}`,
+      'utf8'
+    );
+
+    const [status] = await checkWranglerStatus({
+      baseDir,
+      env: 'test',
+      packagesDir: join(baseDir, 'packages'),
+      components: ['ar-saml'],
+    });
+
+    expect(status.inSync).toBe(false);
   });
 });

@@ -6,7 +6,7 @@
  */
 
 import { execa, type ExecaError } from 'execa';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -27,7 +27,7 @@ import {
   type UiEnvConfig,
 } from './ui-env.js';
 import { DISABLED_API_BACKEND_URL } from './ui-deployment.js';
-import { generateUiWorkersWranglerConfig } from './wrangler.js';
+import { generateUiWorkersWranglerConfig, parseWranglerToml } from './wrangler.js';
 import { getPackageVersion } from './version.js';
 import {
   EPHEMERAL_ENV_SECRET_NAMES,
@@ -41,6 +41,11 @@ import {
   SetupWorkerDeploymentLeaseCoordinator,
   type SetupWorkerDeploymentLease,
 } from './worker-deployment-lease.js';
+import {
+  createManagedWorkerDeployTicket,
+  hasManagedWorkerDeployGuard,
+} from './managed-worker-deploy.js';
+import { checkWranglerStatus } from './wrangler-sync.js';
 
 export {
   DEFAULT_SECRET_TARGET_WORKERS,
@@ -286,8 +291,10 @@ export interface DeployOptions {
   };
   /** Internal state shared by one deployment operation and its rollback/cleanup paths. */
   deploymentLeaseSession?: WorkerDeploymentLeaseSession;
-  /** Refresh generated deployment artifacts after all required Worker leases are held. */
+  /** Refresh generated deployment artifacts before deployment contexts and Cloudflare baselines. */
   beforeWorkerMutations?: () => Promise<void>;
+  /** Require the generated .authrim/<env> config to still match the package config at mutation time. */
+  requireManagedArtifactVerification?: boolean;
 }
 
 export interface DeployResult {
@@ -1030,6 +1037,138 @@ async function createTemporarySecretFile(
   }
 }
 
+async function runManagedWranglerBuild<T>(
+  context: WorkerDeploymentContext,
+  options: DeployOptions,
+  wranglerCommand: 'deploy' | 'versions upload',
+  operation: (managedEnv: Readonly<Record<string, string>>) => Promise<T>
+): Promise<T> {
+  const managedEnvironmentExists = existsSync(
+    join(options.rootDir, '.authrim', options.env, 'config.json')
+  );
+  if (options.requireManagedArtifactVerification || managedEnvironmentExists) {
+    const [status] = await checkWranglerStatus({
+      baseDir: options.rootDir,
+      env: options.env,
+      packagesDir: join(options.rootDir, 'packages'),
+      components: [context.component],
+    });
+    if (!status?.masterExists || !status.deployExists || !status.inSync) {
+      throw new Error(`managed_worker_deploy_config_mismatch:${context.component}`);
+    }
+  }
+  const ticket = await createManagedWorkerDeployTicket({
+    wranglerCommand,
+    component: context.component,
+    environment: options.env,
+    workerName: context.workerName,
+    packageDir: context.packageDir,
+    configFile: options.configFile,
+  });
+  if (!ticket) {
+    return operation({});
+  }
+
+  try {
+    const result = await operation(ticket.env);
+    await ticket.assertConsumed();
+    return result;
+  } finally {
+    await ticket.cleanup();
+  }
+}
+
+interface WranglerVersionBinding {
+  name?: unknown;
+  type?: unknown;
+  id?: unknown;
+}
+
+function parseWranglerVersionD1Bindings(output: unknown): Record<string, string> {
+  if (typeof output !== 'string' || output.trim().length === 0) {
+    throw new Error('worker_version_binding_readback_empty');
+  }
+  const parsed = JSON.parse(output) as {
+    resources?: { bindings?: WranglerVersionBinding[] };
+  };
+  if (!Array.isArray(parsed.resources?.bindings)) {
+    throw new Error('worker_version_binding_readback_invalid');
+  }
+
+  const bindings: Record<string, string> = {};
+  for (const binding of parsed.resources.bindings) {
+    if (binding.type !== 'd1') continue;
+    if (typeof binding.name !== 'string' || typeof binding.id !== 'string') {
+      throw new Error('worker_version_d1_binding_readback_invalid');
+    }
+    if (bindings[binding.name] !== undefined) {
+      throw new Error(`worker_version_d1_binding_duplicate:${binding.name}`);
+    }
+    bindings[binding.name] = binding.id;
+  }
+  return bindings;
+}
+
+function describeD1BindingMismatch(
+  expected: Readonly<Record<string, string>>,
+  actual: Readonly<Record<string, string>>
+): string | undefined {
+  const names = Array.from(new Set([...Object.keys(expected), ...Object.keys(actual)])).sort();
+  const mismatches = names.filter((name) => expected[name] !== actual[name]);
+  return mismatches.length > 0 ? mismatches.join(',') : undefined;
+}
+
+async function verifyUploadedWorkerD1Bindings(
+  context: WorkerDeploymentContext,
+  cloudflareVersionId: string,
+  options: DeployOptions,
+  throttle: DeploymentThrottle
+): Promise<void> {
+  if (!(await hasManagedWorkerDeployGuard(context.packageDir, options.configFile))) {
+    return;
+  }
+
+  const configContent = await readFile(
+    resolve(context.packageDir, options.configFile ?? 'wrangler.toml'),
+    'utf8'
+  );
+  const expected = parseWranglerToml(configContent, options.env).d1;
+  const commandResult = await runWithAdaptiveRetry(
+    `Verifying D1 bindings for ${context.workerName} version`,
+    options,
+    throttle,
+    () =>
+      execa(
+        'pnpm',
+        [
+          'exec',
+          'wrangler',
+          'versions',
+          'view',
+          cloudflareVersionId,
+          '--json',
+          ...getConfigArgs(options),
+          '--env',
+          options.env,
+        ],
+        {
+          cwd: context.packageDir,
+          reject: true,
+          cancelSignal: options.signal,
+          env: { WRANGLER_LOG: 'warn' },
+        }
+      )
+  );
+  const actual = parseWranglerVersionD1Bindings(commandResult.stdout);
+  const mismatch = describeD1BindingMismatch(expected, actual);
+  if (mismatch) {
+    throw new Error(`worker_version_d1_binding_mismatch:${mismatch}`);
+  }
+  options.onProgress?.(
+    `  ✓ ${context.workerName} version D1 bindings verified (${Object.keys(expected).length})`
+  );
+}
+
 async function getWorkerDeploymentContext(
   component: WorkerComponent,
   options: DeployOptions
@@ -1112,6 +1251,8 @@ async function deployWorkerDirect(
 ): Promise<DeployResult> {
   let secretFile: TemporarySecretFile | undefined;
   let outputDirectory: string | undefined;
+  let deployedVersionId: string | undefined;
+  let deploymentMayBeLive = false;
   try {
     secretFile = await createTemporarySecretFile(
       getSecretsForWorker(context.component, options.secrets)
@@ -1123,34 +1264,47 @@ async function deployWorkerDirect(
       throttle,
       async () =>
         runAuthorizedWorkerMutation(context, options, throttle, () =>
-          execa(
-            'pnpm',
-            [
-              'exec',
-              'wrangler',
-              'deploy',
-              ...WORKER_BUNDLE_UPLOAD_ARGS,
-              ...getConfigArgs(options),
-              '--env',
-              options.env,
-              ...getVarArgs(context.component, options),
-              ...(secretFile ? ['--secrets-file', secretFile.path] : []),
-            ],
-            {
-              cwd: context.packageDir,
-              reject: true,
-              cancelSignal: options.signal,
-              env: {
-                WRANGLER_OUTPUT_FILE_DIRECTORY: outputDirectory,
-              },
-            }
-          )
+          runManagedWranglerBuild(context, options, 'deploy', async (managedEnv) => {
+            const result = await execa(
+              'pnpm',
+              [
+                'exec',
+                'wrangler',
+                'deploy',
+                ...WORKER_BUNDLE_UPLOAD_ARGS,
+                ...getConfigArgs(options),
+                '--env',
+                options.env,
+                ...getVarArgs(context.component, options),
+                ...(secretFile ? ['--secrets-file', secretFile.path] : []),
+              ],
+              {
+                cwd: context.packageDir,
+                reject: true,
+                cancelSignal: options.signal,
+                env: {
+                  ...managedEnv,
+                  WRANGLER_OUTPUT_FILE_DIRECTORY: outputDirectory,
+                },
+              }
+            );
+            // Wrangler deploy is atomic: once the command returns, its version may already
+            // be serving traffic even if capability-consumption verification fails next.
+            deploymentMayBeLive = true;
+            return result;
+          })
         )
     );
-    const versionId = await readVersionIdFromStructuredOutput(
+    deployedVersionId = await readVersionIdFromStructuredOutput(
       outputDirectory,
       commandResult.stdout
     );
+    if (await hasManagedWorkerDeployGuard(context.packageDir, options.configFile)) {
+      if (!deployedVersionId) {
+        throw new Error('managed_worker_deploy_version_id_missing');
+      }
+      await verifyUploadedWorkerD1Bindings(context, deployedVersionId, options, throttle);
+    }
     options.onProgress?.(`  ✓ ${context.workerName} deployed successfully`);
     return {
       component: context.component,
@@ -1158,11 +1312,16 @@ async function deployWorkerDirect(
       success: true,
       deployedAt: new Date().toISOString(),
       version: context.packageVersion,
-      cloudflareVersionId: versionId,
+      cloudflareVersionId: deployedVersionId,
       duration: Date.now() - context.startedAt,
     };
   } catch (error) {
-    return deploymentFailure(context, error);
+    return {
+      ...deploymentFailure(context, error),
+      ...(deploymentMayBeLive
+        ? { trafficCommitted: true, cloudflareVersionId: deployedVersionId }
+        : {}),
+    };
   } finally {
     await Promise.allSettled([
       secretFile?.cleanup(),
@@ -1225,28 +1384,31 @@ async function uploadWorkerVersion(
       throttle,
       () =>
         runAuthorizedWorkerMutation(context, options, throttle, () =>
-          execa(
-            'pnpm',
-            [
-              'exec',
-              'wrangler',
-              'versions',
-              'upload',
-              ...WORKER_BUNDLE_UPLOAD_ARGS,
-              ...getConfigArgs(options),
-              '--env',
-              options.env,
-              ...getVarArgs(context.component, options),
-              ...(secretFile ? ['--secrets-file', secretFile.path] : []),
-            ],
-            {
-              cwd: context.packageDir,
-              reject: true,
-              cancelSignal: options.signal,
-              env: {
-                WRANGLER_OUTPUT_FILE_DIRECTORY: outputDirectory,
-              },
-            }
+          runManagedWranglerBuild(context, options, 'versions upload', (managedEnv) =>
+            execa(
+              'pnpm',
+              [
+                'exec',
+                'wrangler',
+                'versions',
+                'upload',
+                ...WORKER_BUNDLE_UPLOAD_ARGS,
+                ...getConfigArgs(options),
+                '--env',
+                options.env,
+                ...getVarArgs(context.component, options),
+                ...(secretFile ? ['--secrets-file', secretFile.path] : []),
+              ],
+              {
+                cwd: context.packageDir,
+                reject: true,
+                cancelSignal: options.signal,
+                env: {
+                  ...managedEnv,
+                  WRANGLER_OUTPUT_FILE_DIRECTORY: outputDirectory,
+                },
+              }
+            )
           )
         )
     );
@@ -1257,6 +1419,7 @@ async function uploadWorkerVersion(
     if (!versionId) {
       throw new Error('Wrangler did not report the uploaded Cloudflare Version ID');
     }
+    await verifyUploadedWorkerD1Bindings(context, versionId, options, throttle);
     options.onProgress?.(`  ✓ ${context.workerName} version uploaded`);
     return {
       component: context.component,
@@ -1623,8 +1786,8 @@ async function runSingleWorkerWithDeploymentLease<T>(
 ): Promise<T> {
   const existingSession = options.deploymentLeaseSession;
   if (existingSession || options.dryRun) return operation();
+  await options.beforeWorkerMutations?.();
   if (!options.deploymentLease) {
-    await options.beforeWorkerMutations?.();
     return operation();
   }
   const context = await getWorkerDeploymentContext(component, options);
@@ -1640,7 +1803,6 @@ async function runSingleWorkerWithDeploymentLease<T>(
   options.deploymentLeaseSession = session;
   let success = false;
   try {
-    await options.beforeWorkerMutations?.();
     const result = await operation();
     success = succeeded(result);
     return result;
@@ -2294,6 +2456,10 @@ export async function deployAll(
     `Strategy: ${strategy}; maximum concurrency: ${throttle.configuredConcurrency}\n`
   );
 
+  if (!options.dryRun) {
+    await options.beforeWorkerMutations?.();
+  }
+
   const contexts = new Map<WorkerComponent, WorkerDeploymentContext>();
   const validationFailures = new Map<WorkerComponent, DeployResult>();
   for (const component of components) {
@@ -2314,9 +2480,6 @@ export async function deployAll(
   let deploymentSucceeded = false;
 
   try {
-    if (!options.dryRun) {
-      await options.beforeWorkerMutations?.();
-    }
     let resultMap: Map<WorkerComponent, DeployResult>;
     if (options.dryRun) {
       resultMap = await runDependencyScheduler(components, options, throttle, async (component) => {

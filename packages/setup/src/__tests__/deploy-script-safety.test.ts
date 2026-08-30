@@ -6,6 +6,9 @@ const deployWithRetryPath = fileURLToPath(
   new URL('../../../../scripts/deploy-with-retry.sh', import.meta.url)
 );
 const deployApiPath = fileURLToPath(new URL('../../../../scripts/deploy-api.ts', import.meta.url));
+const controlWranglerJsoncPath = fileURLToPath(
+  new URL('../../../ar-control/wrangler.jsonc', import.meta.url)
+);
 
 describe('deployment script version safety', () => {
   it('finalizes shared legacy secret cleanup after the complete gradual rollout', () => {
@@ -46,5 +49,11 @@ describe('deployment script version safety', () => {
     expect(refreshIndex).toBeGreaterThan(-1);
     expect(deploymentIndex).toBeGreaterThan(refreshIndex);
     expect(apiSource).toContain('updateLockWithDeployments(workingLock, summary.results)');
+  });
+
+  it('blocks unmanaged deploys through the tracked Wrangler JSONC fallback', () => {
+    const controlConfig = readFileSync(controlWranglerJsoncPath, 'utf8');
+
+    expect(controlConfig).toContain('node ../../scripts/guard-managed-worker-deploy.mjs');
   });
 });

@@ -403,6 +403,7 @@ async function main(): Promise<void> {
       existingComponents: lockComponents,
       secrets,
       cleanupLegacyStaticSecrets: true,
+      requireManagedArtifactVerification: true,
       ...(workingLock.d1.CONTROL_DB
         ? {
             deploymentLease: {
