@@ -53,9 +53,7 @@ describe('deploy prompt policy', () => {
 
   it('detects bootstrap token ownership after receiving the secret', () => {
     const source = readFileSync(new URL('../cli/commands/deploy.ts', import.meta.url), 'utf8');
-    const tokenInputIndex = source.indexOf(
-      'bootstrapToken = options.cloudflareBootstrapTokenFile'
-    );
+    const tokenInputIndex = source.indexOf('bootstrapToken = options.cloudflareBootstrapTokenFile');
     const ownershipDetectionIndex = source.indexOf(
       'const detectedOwnership = await detectCloudflareTokenOwnership({'
     );

@@ -36,8 +36,6 @@ describe('SAML provider deferred mapping setup UI', () => {
 
 	it('waits for Mapping Set resolution before saving an enabled provider', () => {
 		expect(pageSource).toContain('if (enabled && loadingMappingReleaseFields) return');
-		expect(pageSource).toContain(
-			'disabled={saving || (enabled && loadingMappingReleaseFields)}'
-		);
+		expect(pageSource).toContain('disabled={saving || (enabled && loadingMappingReleaseFields)}');
 	});
 });

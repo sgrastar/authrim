@@ -306,9 +306,7 @@ export function getDeployKeysDirHint(input: {
   // under .authrim-keys/{env}. Never let an unrelated legacy/root keys directory shadow the
   // environment-scoped discovery performed by resolveDownstreamIntrospectionKeysDir().
   if (configuredPath === resolve(input.baseDir, 'keys')) return undefined;
-  return existsSync(configuredPath)
-    ? input.configuredKeysDir
-    : undefined;
+  return existsSync(configuredPath) ? input.configuredKeysDir : undefined;
 }
 
 export function resolveApiDeployComponents(
