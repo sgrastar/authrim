@@ -11,11 +11,9 @@ import {
   parsePendingLookupHmacRotation,
   promoteLookupHmacCandidateSecret,
   lookupHmacRotationTargetComponents,
-  runWithEphemeralSetupMachineAccess,
   type LookupHmacRotation,
   type PendingLookupHmacRotation,
 } from '../cli/commands/lookup-hmac-rotate.js';
-import type { AuthrimConfig } from '../core/config.js';
 
 const sourceSecret = 'source-secret';
 const candidateSecret = 'candidate-secret';
@@ -61,6 +59,46 @@ afterEach(async () => {
 });
 
 describe('Lookup HMAC rotation command state', () => {
+  it('authorizes every Control phase under a fresh exact-D1 environment lock', async () => {
+    const source = await readFile(
+      new URL('../cli/commands/lookup-hmac-rotate.ts', import.meta.url),
+      'utf8'
+    );
+    const lockIndex = source.indexOf('await acquireEnvironmentOperationForEnvironment({');
+    const initialConfigIdentity = source.indexOf(
+      'if (config.environment.prefix !== env)',
+      source.indexOf('async function loadEnvironment(')
+    );
+    const lockedConfigIdentity = source.indexOf(
+      'if (lockedConfig.environment.prefix !== context.env)',
+      lockIndex
+    );
+    const lockIdentity = source.indexOf('if (operationLock.lock.env !== context.env)', lockIndex);
+    const identityIndex = source.indexOf('assertFixedD1ResourceIdentities({', lockIndex);
+    const adminIdentifierIndex = source.indexOf(
+      'const adminDatabaseIdentifier = operationLock.lock.d1.DB_ADMIN?.id;',
+      identityIndex
+    );
+    const machineAccessIndex = source.indexOf(
+      'return await runEphemeralSetupMachineAccess({',
+      adminIdentifierIndex
+    );
+
+    expect(lockIndex).toBeGreaterThan(-1);
+    expect(initialConfigIdentity).toBeGreaterThan(-1);
+    expect(lockIdentity).toBeGreaterThan(lockIndex);
+    expect(lockedConfigIdentity).toBeGreaterThan(lockIndex);
+    expect(identityIndex).toBeGreaterThan(lockIndex);
+    expect(identityIndex).toBeGreaterThan(lockedConfigIdentity);
+    expect(adminIdentifierIndex).toBeGreaterThan(identityIndex);
+    expect(machineAccessIndex).toBeGreaterThan(adminIdentifierIndex);
+    expect(source.slice(machineAccessIndex, machineAccessIndex + 300)).toContain(
+      'databaseIdentifier: adminDatabaseIdentifier'
+    );
+    expect(source).toContain('lock.d1.CONTROL_DB?.id');
+    expect(source).not.toContain('lock.d1.CONTROL_DB?.name');
+  });
+
   it('focuses deployment on every Worker that owns a Lookup HMAC slot', () => {
     expect(lookupHmacRotationTargetComponents()).toEqual([
       'ar-lib-core',
@@ -231,130 +269,5 @@ describe('Lookup HMAC rotation command state', () => {
         'distribution'
       )
     ).toThrow('lookup_hmac_verification_status_invalid');
-  });
-});
-
-describe('Lookup HMAC rotation setup machine lifecycle', () => {
-  const config = {} as AuthrimConfig;
-
-  it('registers access before the action and removes it afterward', async () => {
-    const calls: string[] = [];
-    const result = await runWithEphemeralSetupMachineAccess(
-      {
-        env: 'test',
-        config,
-        keysDir: '/tmp/keys',
-        ensure: async () => {
-          calls.push('ensure');
-          return { success: true };
-        },
-        cleanup: async () => {
-          calls.push('cleanup');
-          return { success: true };
-        },
-      },
-      async () => {
-        calls.push('action');
-        return 'completed';
-      }
-    );
-
-    expect(result).toBe('completed');
-    expect(calls).toEqual(['ensure', 'action', 'cleanup']);
-  });
-
-  it('removes access after an action failure and preserves the action error', async () => {
-    const failure = new Error('rotation_failed');
-    let cleanedUp = false;
-
-    await expect(
-      runWithEphemeralSetupMachineAccess(
-        {
-          env: 'test',
-          config,
-          keysDir: '/tmp/keys',
-          ensure: async () => ({ success: true }),
-          cleanup: async () => {
-            cleanedUp = true;
-            return { success: true };
-          },
-        },
-        async () => {
-          throw failure;
-        }
-      )
-    ).rejects.toBe(failure);
-    expect(cleanedUp).toBe(true);
-  });
-
-  it('reports a cleanup failure after a successful action', async () => {
-    await expect(
-      runWithEphemeralSetupMachineAccess(
-        {
-          env: 'test',
-          config,
-          keysDir: '/tmp/keys',
-          ensure: async () => ({ success: true }),
-          cleanup: async () => ({ success: false, error: 'cleanup_failed' }),
-        },
-        async () => 'completed'
-      )
-    ).rejects.toThrow('lookup_hmac_setup_machine_cleanup_failed:cleanup_failed');
-  });
-
-  it('preserves both action and thrown cleanup failures', async () => {
-    const actionError = new Error('rotation_failed');
-    let caught: unknown;
-    try {
-      await runWithEphemeralSetupMachineAccess(
-        {
-          env: 'test',
-          config,
-          keysDir: '/tmp/keys',
-          ensure: async () => ({ success: true }),
-          cleanup: async () => {
-            throw new Error('cleanup_response_lost');
-          },
-        },
-        async () => {
-          throw actionError;
-        }
-      );
-    } catch (error) {
-      caught = error;
-    }
-
-    expect(caught).toBeInstanceOf(AggregateError);
-    expect((caught as AggregateError).errors).toEqual([
-      actionError,
-      expect.objectContaining({
-        message: 'lookup_hmac_setup_machine_cleanup_failed:cleanup_response_lost',
-      }),
-    ]);
-  });
-
-  it('does not run the action or cleanup when access registration is rejected', async () => {
-    let actionRan = false;
-    let cleanupRan = false;
-
-    await expect(
-      runWithEphemeralSetupMachineAccess(
-        {
-          env: 'test',
-          config,
-          keysDir: '/tmp/keys',
-          ensure: async () => ({ success: false, error: 'bootstrap_failed' }),
-          cleanup: async () => {
-            cleanupRan = true;
-            return { success: true };
-          },
-        },
-        async () => {
-          actionRan = true;
-        }
-      )
-    ).rejects.toThrow('lookup_hmac_setup_machine_bootstrap_failed:bootstrap_failed');
-    expect(actionRan).toBe(false);
-    expect(cleanupRan).toBe(false);
   });
 });

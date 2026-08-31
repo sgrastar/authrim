@@ -2,10 +2,20 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AUTHRIM_MIGRATION_HISTORY_SQL } from '@authrim/ar-lib-core/control-plane';
+import {
+  AUTHRIM_MIGRATIONS_COLUMN_ALTERS,
+  AUTHRIM_MIGRATIONS_TABLE_SQL,
+  AUTHRIM_MIGRATION_HISTORY_SQL,
+} from '@authrim/ar-lib-core/control-plane';
 
 const execaMock = vi.hoisted(() => vi.fn());
 const fetchMock = vi.hoisted(() => vi.fn());
+const WRANGLER_WHOAMI_STDOUT =
+  'You are logged in with an OAuth Token.\n' + 'Account ID: 0123456789abcdef0123456789abcdef';
+const WRANGLER_AUTH_ERROR =
+  'Authentication error [code: 10000] while requesting ' +
+  'https://api.cloudflare.com/client/v4/accounts/' +
+  '0123456789abcdef0123456789abcdef/d1/database';
 
 vi.mock('execa', () => ({
   execa: execaMock,
@@ -15,7 +25,9 @@ import {
   calculateD1MigrationChecksum,
   collectManifestMigrationChecksumEvidence,
   executeD1Batch,
+  findMigrationsRoot,
   getD1MigrationStatus,
+  getD1MigrationStatusForEnvironment,
   queryD1Rows,
   runD1Migrations,
   shouldRefreshD1OAuthCredential,
@@ -70,6 +82,28 @@ describe('D1 migration history safety', () => {
     writeFileSync(path, 'CREATE TABLE existing_schema (id TEXT PRIMARY KEY);');
     return { directory, filename, path };
   }
+
+  it('does not borrow migrations from the process cwd in strict source mode', async () => {
+    const sourceRoot = mkdtempSync(join(tmpdir(), 'authrim-source-without-migrations-'));
+    const fallbackRoot = mkdtempSync(join(tmpdir(), 'authrim-unrelated-checkout-'));
+    tempDirs.push(sourceRoot, fallbackRoot);
+    mkdirSync(join(fallbackRoot, 'migrations'), { recursive: true });
+    const originalCwd = process.cwd();
+    try {
+      process.chdir(fallbackRoot);
+      await expect(
+        findMigrationsRoot(sourceRoot, undefined, { strictRoot: true })
+      ).resolves.toEqual({
+        path: null,
+        searchPaths: [join(sourceRoot, 'migrations'), join(sourceRoot, 'authrim', 'migrations')],
+      });
+      await expect(findMigrationsRoot(sourceRoot)).resolves.toMatchObject({
+        path: join(process.cwd(), 'migrations'),
+      });
+    } finally {
+      process.chdir(originalCwd);
+    }
+  });
 
   it('executes D1 statements as one strict provider batch', async () => {
     process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
@@ -220,6 +254,84 @@ describe('D1 migration history safety', () => {
     expect(execaMock.mock.calls.some(([, args]) => args.includes('--file'))).toBe(false);
   });
 
+  it('retries transient authentication failures while preparing migration tracking', async () => {
+    const fixture = createMigrationFixture();
+    const progress: string[] = [];
+    let createAttempts = 0;
+    execaMock.mockImplementation(async (_command: string, args: string[]) => {
+      if (args.slice(0, 2).join(' ') === 'wrangler whoami') {
+        return { exitCode: 0, stdout: WRANGLER_WHOAMI_STDOUT, stderr: '' };
+      }
+      const commandIndex = args.indexOf('--command');
+      const sql = commandIndex >= 0 ? args[commandIndex + 1] : undefined;
+      if (sql === AUTHRIM_MIGRATIONS_TABLE_SQL) {
+        createAttempts++;
+        if (createAttempts === 1) {
+          return {
+            exitCode: 1,
+            stdout: '',
+            stderr: WRANGLER_AUTH_ERROR,
+          };
+        }
+      }
+      if (sql && AUTHRIM_MIGRATIONS_COLUMN_ALTERS.some((candidate) => candidate === sql)) {
+        const column = sql.match(/ADD COLUMN\s+(\w+)/u)?.[1] ?? 'checksum';
+        return {
+          exitCode: 1,
+          stdout: '',
+          stderr: `duplicate column name: ${column}: SQLITE_ERROR [code: 7500]`,
+        };
+      }
+      if (sql === AUTHRIM_MIGRATION_HISTORY_SQL) {
+        return { exitCode: 0, stdout: JSON.stringify([{ results: [] }]), stderr: '' };
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+
+    await expect(
+      runD1Migrations('test-db', fixture.directory, (message) => progress.push(message))
+    ).resolves.toEqual({ success: true, appliedCount: 1, skippedCount: 0 });
+    expect(createAttempts).toBe(2);
+    expect(
+      progress.some(
+        (message) =>
+          message.includes('Transient Cloudflare D1 authentication failure') &&
+          message.includes('test-db') &&
+          message.includes('attempt 1/8')
+      )
+    ).toBe(true);
+  });
+
+  it('does not hide deterministic migration tracking preparation failures', async () => {
+    const fixture = createMigrationFixture();
+    const progress: string[] = [];
+    execaMock.mockImplementation(async (_command: string, args: string[]) => {
+      const commandIndex = args.indexOf('--command');
+      const sql = commandIndex >= 0 ? args[commandIndex + 1] : undefined;
+      if (sql === AUTHRIM_MIGRATIONS_TABLE_SQL) {
+        return { exitCode: 0, stdout: '', stderr: '' };
+      }
+      if (sql === AUTHRIM_MIGRATIONS_COLUMN_ALTERS[0]) {
+        return {
+          exitCode: 1,
+          stdout: '',
+          stderr: 'SQLITE_ERROR: authorization denied while altering migration history',
+        };
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+
+    const result = await runD1Migrations('test-db', fixture.directory, (message) =>
+      progress.push(message)
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Could not update migration tracking for test-db');
+    expect(result.error).toContain('authorization denied');
+    expect(progress.some((message) => message.includes('authorization denied'))).toBe(true);
+    expect(execaMock.mock.calls.some(([, args]) => args.includes('--file'))).toBe(false);
+  });
+
   it('prefers the Cloudflare D1 API for migration history in CI', async () => {
     const fixture = createMigrationFixture();
     const checksum = calculateD1MigrationChecksum(fixture.path);
@@ -267,7 +379,7 @@ describe('D1 migration history safety', () => {
       new URL(
         'https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/d1/database/database-id/query'
       ),
-      {
+      expect.objectContaining({
         method: 'POST',
         headers: {
           Authorization: 'Bearer test-token',
@@ -276,7 +388,8 @@ describe('D1 migration history safety', () => {
         body: JSON.stringify({
           sql: AUTHRIM_MIGRATION_HISTORY_SQL,
         }),
-      }
+        signal: expect.any(AbortSignal),
+      })
     );
     expect(
       execaMock.mock.calls.some(([, args]) =>
@@ -291,7 +404,7 @@ describe('D1 migration history safety', () => {
     const checksum = calculateD1MigrationChecksum(fixture.path);
     process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
     process.env.CLOUDFLARE_API_TOKEN = 'test-token';
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+    fetchMock.mockResolvedValue({ ok: false, status: 503 });
     execaMock.mockImplementation(async (_command: string, args: string[]) => {
       if (args.join(' ').includes('SELECT filename, checksum, applied_at, execution_time_ms')) {
         return {
@@ -365,6 +478,48 @@ describe('D1 migration history safety', () => {
     );
   });
 
+  it('resolves an immutable D1 UUID before unrelated same-name inventory rows', async () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    execaMock.mockResolvedValue({
+      exitCode: 0,
+      stdout: '[wrangler:notice] query completed without structured output',
+      stderr: '',
+    });
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          result: [
+            { name: 'fixed-name', uuid: 'replacement-id' },
+            { name: 'fixed-name', uuid: 'locked-database-id' },
+          ],
+          result_info: { total_count: 2 },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          result: [{ success: true, results: [{ state: 'ready' }] }],
+        }),
+      });
+
+    await expect(
+      queryD1Rows<{ state: string }>('locked-database-id', 'SELECT state FROM rollout')
+    ).resolves.toEqual([{ state: 'ready' }]);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      new URL(
+        'https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/d1/database/locked-database-id/query'
+      ),
+      expect.objectContaining({ method: 'POST' })
+    );
+  });
+
   it('reports both providers when Wrangler and the D1 API query fail', async () => {
     process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
     process.env.CLOUDFLARE_API_TOKEN = 'test-token';
@@ -373,7 +528,7 @@ describe('D1 migration history safety', () => {
       stdout: '[wrangler:notice] no JSON payload',
       stderr: '',
     });
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
+    fetchMock.mockResolvedValue({ ok: false, status: 503 });
 
     await expect(queryD1Rows('test-db', 'SELECT state FROM rollout')).rejects.toThrow(
       'Could not query D1 via Wrangler (Wrangler stdout and stderr did not contain a valid D1 query result) or the Cloudflare API (Cloudflare D1 database list failed (503))'
@@ -435,7 +590,11 @@ describe('D1 migration history safety', () => {
     const checksum = calculateD1MigrationChecksum(fixture.path);
     let historyQueries = 0;
     let backfillSql = '';
+    let backfillAttempts = 0;
     execaMock.mockImplementation(async (_command: string, args: string[]) => {
+      if (args.slice(0, 2).join(' ') === 'wrangler whoami') {
+        return { exitCode: 0, stdout: WRANGLER_WHOAMI_STDOUT, stderr: '' };
+      }
       const command = args.join(' ');
       if (command.includes('SELECT filename, checksum, applied_at, execution_time_ms')) {
         historyQueries += 1;
@@ -456,7 +615,17 @@ describe('D1 migration history safety', () => {
           stderr: '',
         };
       }
-      if (command.includes('UPDATE authrim_migrations SET checksum')) backfillSql = command;
+      if (command.includes('UPDATE authrim_migrations SET checksum')) {
+        backfillSql = command;
+        backfillAttempts += 1;
+        if (backfillAttempts === 1) {
+          return {
+            exitCode: 1,
+            stdout: '',
+            stderr: WRANGLER_AUTH_ERROR,
+          };
+        }
+      }
       return { exitCode: 0, stdout: '', stderr: '' };
     });
 
@@ -469,6 +638,7 @@ describe('D1 migration history safety', () => {
     ).resolves.toEqual({ success: true, appliedCount: 0, skippedCount: 1 });
     expect(backfillSql).toContain(fixture.filename);
     expect(backfillSql).toContain(checksum);
+    expect(backfillAttempts).toBe(2);
   });
 
   it('backfills legacy superseded rows before materializing a consolidated release file', async () => {
@@ -483,6 +653,7 @@ describe('D1 migration history safety', () => {
     const bundleChecksum = calculateD1MigrationChecksum(bundlePath);
     let historyQueries = 0;
     let backfillSql = '';
+    let consolidatedRecordAttempts = 0;
     execaMock.mockImplementation(async (_command: string, args: string[]) => {
       const command = args.join(' ');
       if (command.includes('SELECT filename, checksum, applied_at, execution_time_ms')) {
@@ -505,6 +676,19 @@ describe('D1 migration history safety', () => {
         };
       }
       if (command.includes('UPDATE authrim_migrations SET checksum')) backfillSql = command;
+      if (
+        command.includes('INSERT INTO authrim_migrations') &&
+        command.includes('001_release.sql')
+      ) {
+        consolidatedRecordAttempts += 1;
+        if (consolidatedRecordAttempts === 1) {
+          return {
+            exitCode: 1,
+            stdout: '',
+            stderr: 'HTTP 429: rate limit exceeded [code: 971]',
+          };
+        }
+      }
       return { exitCode: 0, stdout: '', stderr: '' };
     });
 
@@ -523,6 +707,7 @@ describe('D1 migration history safety', () => {
     ).resolves.toEqual({ success: true, appliedCount: 0, skippedCount: 1 });
     expect(backfillSql).toContain('001_draft.sql');
     expect(backfillSql).toContain(sourceChecksum);
+    expect(consolidatedRecordAttempts).toBe(2);
   });
 
   it('rejects conflicting checksum evidence in a published release manifest', () => {
@@ -554,6 +739,83 @@ describe('D1 migration history safety', () => {
     expect(status.error).toContain('Release manifest checksum mismatch');
   });
 
+  it('queries environment migration status by pinned UUID while preserving display names', async () => {
+    const rootDirectory = mkdtempSync(join(tmpdir(), 'authrim-environment-migration-status-'));
+    tempDirs.push(rootDirectory);
+    const migrationsRoot = join(rootDirectory, 'migrations');
+    mkdirSync(join(migrationsRoot, 'pii'), { recursive: true });
+    mkdirSync(join(migrationsRoot, 'admin'), { recursive: true });
+    writeReleaseMigrationManifest(join(migrationsRoot, DRAFT_RELEASE_MANIFEST_FILENAME), {
+      formatVersion: 1,
+      productVersion: '0.4.0',
+      streams: [
+        { id: 'd1-core', dialect: 'sqlite', logicalRoles: ['core'], files: [] },
+        { id: 'd1-pii', dialect: 'sqlite', logicalRoles: ['pii'], files: [] },
+        { id: 'd1-admin', dialect: 'sqlite', logicalRoles: ['admin'], files: [] },
+      ],
+    });
+    execaMock.mockResolvedValue({
+      exitCode: 0,
+      stdout: JSON.stringify([{ results: [] }]),
+      stderr: '',
+    });
+
+    const status = await getD1MigrationStatusForEnvironment('test', rootDirectory, undefined, {
+      productVersion: '0.4.0',
+      allowDraft: true,
+      databaseIdentifiers: {
+        core: 'core-immutable-id',
+        pii: 'pii-immutable-id',
+        admin: 'admin-immutable-id',
+      },
+    });
+
+    expect(status.databases.map((database) => database.dbName)).toEqual([
+      'test-authrim-core-db',
+      'test-authrim-pii-db',
+      'test-authrim-admin-db',
+    ]);
+    const queriedIdentifiers = new Set(
+      execaMock.mock.calls
+        .map(([, args]) => {
+          const values = args as string[];
+          const executeIndex = values.indexOf('execute');
+          return executeIndex >= 0 ? values[executeIndex + 1] : undefined;
+        })
+        .filter((value): value is string => typeof value === 'string')
+    );
+    expect(queriedIdentifiers).toEqual(
+      new Set(['core-immutable-id', 'pii-immutable-id', 'admin-immutable-id'])
+    );
+    expect(queriedIdentifiers.has('test-authrim-core-db')).toBe(false);
+  });
+
+  it('fails closed when a pinned environment migration identifier set is incomplete', async () => {
+    const rootDirectory = mkdtempSync(join(tmpdir(), 'authrim-environment-migration-status-'));
+    tempDirs.push(rootDirectory);
+    const migrationsRoot = join(rootDirectory, 'migrations');
+    mkdirSync(join(migrationsRoot, 'pii'), { recursive: true });
+    mkdirSync(join(migrationsRoot, 'admin'), { recursive: true });
+    writeReleaseMigrationManifest(join(migrationsRoot, DRAFT_RELEASE_MANIFEST_FILENAME), {
+      formatVersion: 1,
+      productVersion: '0.4.0',
+      streams: [
+        { id: 'd1-core', dialect: 'sqlite', logicalRoles: ['core'], files: [] },
+        { id: 'd1-pii', dialect: 'sqlite', logicalRoles: ['pii'], files: [] },
+        { id: 'd1-admin', dialect: 'sqlite', logicalRoles: ['admin'], files: [] },
+      ],
+    });
+
+    await expect(
+      getD1MigrationStatusForEnvironment('test', rootDirectory, undefined, {
+        productVersion: '0.4.0',
+        allowDraft: true,
+        databaseIdentifiers: { core: 'core-immutable-id' },
+      })
+    ).rejects.toThrow('fixed_migration_database_id_required:pii');
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
   it('refuses a selected migration file outside the exact release manifest', async () => {
     const fixture = createMigrationFixture();
     const extraFilename = '002_unreleased_schema.sql';
@@ -569,6 +831,31 @@ describe('D1 migration history safety', () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain('not part of the selected release manifest');
     expect(execaMock).not.toHaveBeenCalled();
+  });
+
+  it('reports only migration files selected by the exact release manifest', async () => {
+    const fixture = createMigrationFixture();
+    writeFileSync(
+      join(fixture.directory, '002_unreleased_schema.sql'),
+      'CREATE TABLE unreleased (id TEXT);'
+    );
+    const checksum = calculateD1MigrationChecksum(fixture.path);
+    const progress: string[] = [];
+    execaMock.mockImplementation(async (_command: string, args: string[]) => {
+      if (args.join(' ').includes('SELECT filename, checksum, applied_at, execution_time_ms')) {
+        return { exitCode: 0, stdout: JSON.stringify([{ results: [] }]), stderr: '' };
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    });
+
+    await expect(
+      runD1Migrations('test-db', fixture.directory, (message) => progress.push(message), {
+        manifestFiles: [{ path: fixture.filename, checksum }],
+        releaseVersion: '0.4.0',
+      })
+    ).resolves.toEqual({ success: true, appliedCount: 1, skippedCount: 0 });
+    expect(progress).toContain('  Found 1 migration files');
+    expect(progress).not.toContain('  Found 2 migration files');
   });
 
   it('auto-discovers supersedes metadata for legacy deploy and tenant call paths', async () => {

@@ -83,6 +83,18 @@
         {
           "path": "006_account_spare_assignment_threshold.sql",
           "checksum": "dbd8afc8aefe74478ec4b139b8a876ff8165047e09ab58da9a5f3113216eb133"
+        },
+        {
+          "path": "007_control_token_bootstrap_cutover.sql",
+          "checksum": "e00bd5557f909c8bf49e830ac57ca0dc03ca6b54e8db90439844c001fd772e13"
+        },
+        {
+          "path": "008_control_provisioning_secret_generation.sql",
+          "checksum": "8a4b9aa7c784e5988f8bf1b5c2244d0390b2a65fdf1d51dd3d3196b55377b3a5"
+        },
+        {
+          "path": "009_provider_identity_checkpoint.sql",
+          "checksum": "3724af53350f2466843ebbe62685e186f7b9382ef5bd2f9512b26039194e321d"
         }
       ]
     },

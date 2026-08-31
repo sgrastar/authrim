@@ -75,6 +75,27 @@ describe('prepareAdminUiBffDeployment', () => {
     expect(callOrder).toEqual(['keys', 'register', 'load']);
   });
 
+  it('registers the BFF credential only in the exact locked DB_ADMIN identifier', async () => {
+    const keysDir = await mkdtemp(join(tmpdir(), 'authrim-admin-ui-bff-'));
+    tempDirs.push(keysDir);
+    const config = createDefaultConfig('test');
+
+    await prepareAdminUiBffDeployment({
+      env: 'test',
+      config,
+      keysDir,
+      databaseIdentifier: 'admin-d1-uuid',
+    });
+
+    expect(ensureAdminUiBffMachineAccessInD1Mock).toHaveBeenCalledWith(
+      'test',
+      config,
+      keysDir,
+      undefined,
+      { databaseIdentifier: 'admin-d1-uuid' }
+    );
+  });
+
   it('fails closed before reading or deploying the private key when DB registration fails', async () => {
     const keysDir = await mkdtemp(join(tmpdir(), 'authrim-admin-ui-bff-'));
     tempDirs.push(keysDir);

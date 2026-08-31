@@ -135,7 +135,7 @@ async function runTargetGroup(input: {
     const directory = target.streamId
       ? streamDirectory(input.migrationsRoot, target.streamId)
       : null;
-    if (!stream || !directory || !target.databaseName) {
+    if (!stream || !directory) {
       results.push({
         targetId: target.id,
         success: false,
@@ -145,10 +145,25 @@ async function runTargetGroup(input: {
       });
       break;
     }
+    if (!target.databaseId) {
+      results.push({
+        targetId: target.id,
+        success: false,
+        appliedCount: 0,
+        skippedCount: 0,
+        error: `release_migration_target_database_id_required:${target.id}`,
+      });
+      break;
+    }
+    const targetLabel = target.binding ?? target.id;
+    const targetDisplayName = target.databaseName ?? target.databaseId;
     input.onProgress?.(
-      `Migrating ${target.binding ?? target.id} to ${input.manifest.productVersion}`
+      `Migrating ${targetLabel} (${targetDisplayName}) to ${input.manifest.productVersion}`
     );
-    const result = await runD1Migrations(target.databaseName, directory, input.onProgress, {
+    const targetProgress = input.onProgress
+      ? (message: string): void => input.onProgress?.(`[${targetLabel}] ${message.trimStart()}`)
+      : undefined;
+    const result = await runD1Migrations(target.databaseId, directory, targetProgress, {
       manifestFiles: stream.files,
       releaseVersion: input.manifest.productVersion,
       backfillLegacyChecksums: input.backfillLegacyChecksums,
@@ -160,7 +175,12 @@ async function runTargetGroup(input: {
       skippedCount: result.skippedCount,
       ...(result.error ? { error: result.error } : {}),
     });
-    if (!result.success) break;
+    if (!result.success) {
+      input.onProgress?.(
+        `❌ Migration failed for ${targetLabel} (${targetDisplayName}): ${result.error ?? 'unknown migration error'}`
+      );
+      break;
+    }
   }
   return results;
 }

@@ -1,10 +1,10 @@
-import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
 import { EnvironmentInventoryUnavailableError } from '../core/cloudflare.js';
-import { acquireEnvironmentOperationLock } from '../core/lock.js';
+import { acquireDeployConfigLock, acquireEnvironmentOperationLock } from '../core/lock.js';
 import { createApiRoutes, generateSessionToken, getSessionToken } from '../web/api.js';
 
 const cloudflareMocks = vi.hoisted(() => ({
@@ -14,6 +14,11 @@ const cloudflareMocks = vi.hoisted(() => ({
 }));
 const runReleaseUpdateCliMock = vi.hoisted(() => vi.fn());
 const completeInitialSetupMock = vi.hoisted(() => vi.fn());
+const cleanupSetupManagedControlTokensMock = vi.hoisted(() => vi.fn());
+const tokenBootstrapMocks = vi.hoisted(() => ({
+  detectCloudflareTokenOwnership: vi.fn(),
+  cleanupCloudflareBootstrapToken: vi.fn(),
+}));
 
 vi.mock('../core/cloudflare.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../core/cloudflare.js')>();
@@ -37,6 +42,20 @@ vi.mock('../core/admin.js', async (importOriginal) => {
   };
 });
 
+vi.mock('../core/control-token-environment-cleanup.js', () => ({
+  cleanupSetupManagedControlTokens: cleanupSetupManagedControlTokensMock,
+}));
+
+vi.mock('../core/cloudflare-control-token-bootstrap.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../core/cloudflare-control-token-bootstrap.js')>();
+  return {
+    ...actual,
+    detectCloudflareTokenOwnership: tokenBootstrapMocks.detectCloudflareTokenOwnership,
+    cleanupCloudflareBootstrapToken: tokenBootstrapMocks.cleanupCloudflareBootstrapToken,
+  };
+});
+
 const originalCwd = process.cwd();
 let root: string;
 
@@ -56,7 +75,16 @@ async function writeDeployedLock(
   resources: {
     d1?: Record<string, { id: string; name: string }>;
     queues?: Record<string, { id: string; name: string }>;
-    workers?: Record<string, { name: string; deployedAt?: string }>;
+    workers?: Record<
+      string,
+      {
+        name: string;
+        deployedAt?: string;
+        cloudflareVersionId?: string;
+        cloudflareScriptTag?: string;
+      }
+    >;
+    workerScriptOwnership?: Record<string, Record<string, unknown>>;
   } = {}
 ): Promise<void> {
   const envDir = join(root, '.authrim', env);
@@ -78,6 +106,7 @@ async function writeDeployedLock(
         kv: {},
         queues: resources.queues,
         workers: resources.workers ?? {},
+        workerScriptOwnership: resources.workerScriptOwnership,
       },
       null,
       2
@@ -102,6 +131,15 @@ describe('setup web basic API contracts', () => {
       success: false,
       error: 'Setup key material is unavailable',
     });
+    cleanupSetupManagedControlTokensMock.mockReset().mockResolvedValue({
+      status: 'completed',
+      revokedTokenIds: [],
+      alreadyAbsentTokenIds: [],
+    });
+    tokenBootstrapMocks.detectCloudflareTokenOwnership.mockReset().mockResolvedValue('account');
+    tokenBootstrapMocks.cleanupCloudflareBootstrapToken
+      .mockReset()
+      .mockResolvedValue({ revoked: true });
     root = await realpath(await mkdtemp(join(tmpdir(), 'authrim-web-basic-')));
     process.chdir(root);
   });
@@ -365,6 +403,45 @@ describe('setup web basic API contracts', () => {
     });
   });
 
+  it('deletes config, intent, pending secrets, and keys from pre-resource provisioning', async () => {
+    const env = 'partial';
+    const envDir = join(root, '.authrim', env);
+    const keysDir = join(root, '.authrim-keys', env);
+    await mkdir(envDir, { recursive: true });
+    await mkdir(keysDir, { recursive: true });
+    await writeFile(
+      join(envDir, 'config.json'),
+      `${JSON.stringify({
+        keys: {
+          storageType: 'external',
+          secretsPath: `${keysDir}/`,
+        },
+      })}\n`
+    );
+    await chmod(join(envDir, 'config.json'), 0o600);
+    await writeFile(join(envDir, 'provisioning-intent.json'), '{}\n');
+    await writeFile(join(envDir, 'pending-email-secrets.json'), '{"token":"secret"}\n');
+    await writeFile(join(keysDir, 'private.pem'), 'secret-key');
+    cloudflareMocks.confirmEnvironmentObservedForDeletion.mockResolvedValueOnce(false);
+
+    const response = await createApiRoutes().request(
+      `/environments/${env}/delete`,
+      post(`/environments/${env}/delete`, {}, generateSessionToken())
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      environmentDeleted: true,
+    });
+    expect(cloudflareMocks.confirmEnvironmentObservedForDeletion).toHaveBeenCalledOnce();
+    expect(cloudflareMocks.deleteEnvironment).toHaveBeenCalledWith(
+      expect.objectContaining({ env, environmentKnownLocally: true })
+    );
+    await expect(readFile(join(envDir, 'config.json'), 'utf-8')).rejects.toThrow();
+    await expect(readFile(join(keysDir, 'private.pem'), 'utf-8')).rejects.toThrow();
+  });
+
   it('does not let deletion race another environment mutation', async () => {
     const env = 'prod';
     await writeDeployedLock(env);
@@ -390,7 +467,35 @@ describe('setup web basic API contracts', () => {
     }
   });
 
-  it('passes lock-recorded D1 and Queue names through the shared safe deletion core', async () => {
+  it('does not let web deletion race package wrangler changes from another environment', async () => {
+    const env = 'prod';
+    await writeDeployedLock(env);
+    const heldDeployConfig = await acquireDeployConfigLock({
+      baseDir: root,
+      env: 'other',
+      operation: 'test-held-deploy-config',
+    });
+    try {
+      const response = await createApiRoutes().request(
+        `/environments/${env}/delete`,
+        post(`/environments/${env}/delete`, {}, generateSessionToken())
+      );
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        success: false,
+        error: 'Another setup operation is already in progress. Wait for it to finish and retry.',
+      });
+      expect(cloudflareMocks.deleteEnvironment).not.toHaveBeenCalled();
+      await expect(readFile(join(root, '.authrim', env, 'lock.json'), 'utf-8')).resolves.toContain(
+        '"env": "prod"'
+      );
+    } finally {
+      await heldDeployConfig.release();
+    }
+  });
+
+  it('passes lock-recorded immutable storage identities through the shared safe deletion core', async () => {
     const env = 'prod';
     await writeDeployedLock(env, {
       d1: {
@@ -404,12 +509,28 @@ describe('setup web basic API contracts', () => {
         AUDIT_QUEUE: { id: 'queue-id', name: 'prod-audit-queue' },
       },
       workers: {
-        'ar-auth': { name: 'prod-ar-auth' },
-        'ar-management': { name: 'prod-ar-management' },
+        'ar-auth': { name: 'prod-ar-auth', cloudflareScriptTag: 'auth-tag' },
+        'ar-management': {
+          name: 'prod-ar-management',
+          cloudflareScriptTag: 'management-tag',
+        },
       },
     });
     const token = generateSessionToken();
     const app = createApiRoutes();
+    cloudflareMocks.deleteEnvironment.mockImplementationOnce(async (options) => {
+      await options.beforeD1Deletion?.({
+        observedD1Resources: [{ id: 'control-id', name: 'prod-authrim-control-db' }],
+      });
+      return {
+        success: true,
+        completion: 'complete',
+        environmentEmpty: true,
+        deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+        manualR2: [],
+        errors: [],
+      };
+    });
 
     const response = await app.request(
       `/environments/${env}/delete`,
@@ -420,11 +541,90 @@ describe('setup web basic API contracts', () => {
     expect(cloudflareMocks.deleteEnvironment).toHaveBeenCalledWith(
       expect.objectContaining({
         env,
-        knownWorkerNames: ['prod-ar-auth', 'prod-ar-management'],
-        knownD1Names: ['prod-authrim-control-db', 'prod-authrim-tenant-default-bootstrap-db'],
-        knownQueueNames: ['prod-audit-queue'],
+        knownWorkerResources: [
+          { name: 'prod-ar-auth', cloudflareScriptTag: 'auth-tag' },
+          { name: 'prod-ar-management', cloudflareScriptTag: 'management-tag' },
+        ],
+        knownD1Resources: [
+          { id: 'control-id', name: 'prod-authrim-control-db' },
+          { id: 'bootstrap-id', name: 'prod-authrim-tenant-default-bootstrap-db' },
+        ],
+        knownKVResources: [],
+        knownQueueResources: [{ id: 'queue-id', name: 'prod-audit-queue' }],
       })
     );
+    expect(cleanupSetupManagedControlTokensMock).toHaveBeenCalledWith({
+      baseDir: root,
+      environment: env,
+      controlDatabaseIdentifier: 'control-id',
+    });
+  });
+
+  it('persists a verified legacy Worker script tag before deletion continues', async () => {
+    const env = 'prod';
+    const versionId = '11111111-1111-4111-8111-111111111111';
+    await writeDeployedLock(env, {
+      workers: {
+        'ar-auth': { name: 'prod-ar-auth', cloudflareVersionId: versionId },
+      },
+    });
+    cloudflareMocks.deleteEnvironment.mockImplementationOnce(async (options) => {
+      await options.onWorkerIdentityBackfill?.([
+        {
+          name: 'prod-ar-auth',
+          cloudflareVersionId: versionId,
+          cloudflareScriptTag: 'verified-auth-tag',
+        },
+      ]);
+      return {
+        success: true,
+        completion: 'complete',
+        environmentEmpty: false,
+        retryable: false,
+        postDeleteVerification: 'not_required',
+        deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [], dns: [] },
+        manualR2: [],
+        manualDns: [],
+        errors: [],
+      };
+    });
+
+    const response = await createApiRoutes().request(
+      `/environments/${env}/delete`,
+      post(`/environments/${env}/delete`, {}, generateSessionToken())
+    );
+
+    expect(response.status).toBe(200);
+    const persisted = JSON.parse(
+      await readFile(join(root, '.authrim', env, 'lock.json'), 'utf-8')
+    ) as { workers: Record<string, { cloudflareScriptTag?: string }> };
+    expect(persisted.workers['ar-auth']?.cloudflareScriptTag).toBe('verified-auth-tag');
+  });
+
+  it('blocks Worker deletion while a provisional script ownership checkpoint exists', async () => {
+    const env = 'prod';
+    await writeDeployedLock(env, {
+      workerScriptOwnership: {
+        'ar-auth': {
+          name: 'prod-ar-auth',
+          cloudflareScriptTag: 'provisional-auth-tag',
+          state: 'provisional',
+          updatedAt: '2026-08-31T00:00:00.000Z',
+        },
+      },
+    });
+
+    const response = await createApiRoutes().request(
+      `/environments/${env}/delete`,
+      post(`/environments/${env}/delete`, {}, generateSessionToken())
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining('unfinished Worker ownership checkpoint'),
+    });
+    expect(cloudflareMocks.deleteEnvironment).not.toHaveBeenCalled();
   });
 
   it('returns a retryable inventory error without deleting or cleaning local state', async () => {
@@ -631,6 +831,45 @@ describe('setup web basic API contracts', () => {
     };
     expect(persistedLock.env).toBe('prod');
     expect(persistedLock.workers).toEqual({ 'ar-token': { name: 'prod-ar-token' } });
+  });
+
+  it('returns a retryable response and preserves local state when post-delete readback fails', async () => {
+    const env = 'prod';
+    await writeDeployedLock(env, {
+      workers: { 'ar-auth': { name: 'prod-ar-auth' } },
+    });
+    const lockPath = join(root, '.authrim', env, 'lock.json');
+    cloudflareMocks.deleteEnvironment.mockResolvedValueOnce({
+      success: false,
+      completion: 'failed',
+      environmentEmpty: false,
+      retryable: true,
+      postDeleteVerification: 'inventory_unavailable',
+      deleted: {
+        workers: [],
+        d1: [],
+        kv: [],
+        queues: [],
+        r2: [],
+        pages: [],
+      },
+      manualR2: [],
+      errors: ['Post-delete Cloudflare inventory verification was unavailable; retry deletion.'],
+    });
+
+    const response = await createApiRoutes().request(
+      `/environments/${env}/delete`,
+      post(`/environments/${env}/delete`, {}, generateSessionToken())
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      retryable: true,
+      postDeleteVerification: 'inventory_unavailable',
+      environmentDeleted: false,
+    });
+    await expect(readFile(lockPath, 'utf-8')).resolves.toContain('prod-ar-auth');
   });
 
   it('preserves local inventory after a successful partial resource deletion', async () => {
@@ -1132,6 +1371,46 @@ describe('setup web basic API contracts', () => {
     });
   });
 
+  it('rejects bootstrap cleanup behind an external environment lock before token API access', async () => {
+    await writeDeployedLock('test');
+    await writeFile(
+      join(root, '.authrim', 'test', 'config.json'),
+      `${JSON.stringify(createDefaultConfig('test'), null, 2)}\n`
+    );
+    const held = await acquireEnvironmentOperationLock(
+      join(root, '.authrim', 'test', 'lock.json'),
+      'external-deploy'
+    );
+    try {
+      const session = generateSessionToken();
+      const response = await createApiRoutes().request(
+        '/control/automatic-provisioning/cleanup-bootstrap',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-Token': session,
+            Origin: 'http://localhost',
+          },
+          body: JSON.stringify({
+            env: 'test',
+            bootstrapToken: 'bootstrap-token-value-123',
+            ownership: 'account',
+          }),
+        }
+      );
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({
+        success: false,
+        errorCode: 'setup_operation_in_progress',
+      });
+      expect(tokenBootstrapMocks.detectCloudflareTokenOwnership).not.toHaveBeenCalled();
+      expect(tokenBootstrapMocks.cleanupCloudflareBootstrapToken).not.toHaveBeenCalled();
+    } finally {
+      await held.release();
+    }
+  });
+
   it('protects pending Control operation discovery with the setup session', async () => {
     const token = generateSessionToken();
     const app = createApiRoutes();
@@ -1299,6 +1578,11 @@ describe('setup web basic API contracts', () => {
   it('generates environment-scoped keys and reports their availability', async () => {
     const token = generateSessionToken();
     const app = createApiRoutes();
+    const configured = await app.request(
+      '/config/default',
+      post('/config/default', { env: 'prod' }, token)
+    );
+    expect(configured.status).toBe(200);
     await expect((await app.request('/keys/check/prod')).json()).resolves.toMatchObject({
       exists: false,
       env: 'prod',
@@ -1327,8 +1611,9 @@ describe('setup web basic API contracts', () => {
     expect(regenerated.status).toBe(200);
     await expect(regenerated.json()).resolves.toMatchObject({
       success: true,
-      keyId: 'setup-key-2',
-      replacedExistingKeys: true,
+      keyId: 'setup-key-1',
+      replacedExistingKeys: false,
+      reusedExistingKeys: true,
     });
   });
 

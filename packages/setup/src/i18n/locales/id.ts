@@ -903,6 +903,8 @@ const id: Translations = {
   'web.envDetail.automaticProvisioningMissing': '(kurang: {{missing}})',
   'web.envDetail.automaticProvisioningRepairHint':
     'Masukkan token sekali pakai baru untuk memperbaikinya.',
+  'web.envDetail.bootstrapRetainedForRetry':
+    'Cloudflare mengembalikan kesalahan sementara. Token bootstrap masih aktif; masukkan kembali token yang sama lalu pilih Aktifkan untuk melanjutkan.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Cabut token bootstrap dan token turunan Authrim yang disebutkan di Cloudflare Dashboard sebelum mencoba lagi.',
   'web.envDetail.bootstrapRevokedPendingReset':

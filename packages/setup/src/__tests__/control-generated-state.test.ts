@@ -111,6 +111,36 @@ function lock(includeTenantBinding = true) {
 }
 
 describe('Control generated D1 state', () => {
+  it('refreshes generated state through the immutable Control database ID', async () => {
+    const query = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce(keyRows());
+
+    await expect(
+      refreshLockFromControlGeneratedState({
+        lock: lock(false),
+        environmentId: 'env-test',
+        query,
+      })
+    ).resolves.toMatchObject({ added: [], removed: [], changed: [] });
+
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls.every((call) => call[0] === 'control-id')).toBe(true);
+  });
+
+  it('fails closed instead of falling back to the Control database name', async () => {
+    const nameOnlyLock = lock(false);
+    delete (nameOnlyLock.d1.CONTROL_DB as { id?: string }).id;
+    const query = vi.fn();
+
+    await expect(
+      refreshLockFromControlGeneratedState({
+        lock: nameOnlyLock,
+        environmentId: 'env-test',
+        query,
+      })
+    ).rejects.toThrow('control_database_id_required');
+    expect(query).not.toHaveBeenCalled();
+  });
+
   it('loads ready provider-backed bindings with an environment-scoped query', async () => {
     const query = vi.fn(async () => [
       {

@@ -165,6 +165,9 @@ interface PendingPlanRow {
   deterministic_name: string;
   binding_ref: string;
   ownership_fingerprint: string;
+  provider_create_state: 'not_started' | 'issued' | 'identified';
+  provider_resource_id: string | null;
+  provider_identity_checkpointed_at: number | null;
   jurisdiction: 'eu' | 'fedramp' | null;
   location_hint: 'wnam' | 'enam' | 'weur' | 'eeur' | 'apac' | 'oc' | null;
   idempotency_key: string;
@@ -367,6 +370,18 @@ export interface ControlRepository {
     now: number
   ): Promise<ProvisioningLease | null>;
   reserveD1CreateBudget(lease: ProvisioningLease, now: number): Promise<boolean>;
+  markD1CreateIssued(lease: ProvisioningLease, plan: TenantShardPlan, now: number): Promise<void>;
+  markD1CreateDefinitelyRejected(
+    lease: ProvisioningLease,
+    plan: TenantShardPlan,
+    now: number
+  ): Promise<void>;
+  checkpointD1ProviderIdentity(
+    lease: ProvisioningLease,
+    plan: TenantShardPlan,
+    databaseId: string,
+    now: number
+  ): Promise<void>;
   markDatabaseCreated(
     lease: ProvisioningLease,
     plan: TenantShardPlan,
@@ -498,6 +513,9 @@ function planFromPendingRow(row: PendingPlanRow): TenantShardPlan {
     databaseName: row.deterministic_name,
     bindingRef: row.binding_ref,
     ownershipFingerprint: row.ownership_fingerprint,
+    providerCreateState: row.provider_create_state,
+    providerResourceId: row.provider_resource_id,
+    providerIdentityCheckpointedAt: row.provider_identity_checkpointed_at,
     allocationScope: row.allocation_scope,
     ownerTenantId: row.owner_tenant_id,
     jurisdiction: row.jurisdiction ?? undefined,
@@ -3575,7 +3593,9 @@ export class D1ControlRepository implements ControlRepository {
          )
          SELECT o.operation_id, o.environment_id, o.idempotency_key,
                 d.desired_resource_id, d.logical_shard_id, d.deterministic_name,
-                d.ownership_fingerprint, s.shard_id, s.data_role, s.residency_policy_id,
+                d.ownership_fingerprint, d.provider_create_state, d.provider_resource_id,
+                d.provider_identity_checkpointed_at,
+                s.shard_id, s.data_role, s.residency_policy_id,
                 s.residency_partition, s.binding_ref, s.jurisdiction, s.location_hint,
                 s.read_replication_mode, s.allocation_scope, s.owner_tenant_id,
                 s.lookup_capacity_domain_id, e.environment_name
@@ -4003,6 +4023,7 @@ export class D1ControlRepository implements ControlRepository {
     now: number
   ): Promise<ProvisioningLease | null> {
     const leaseExpiresAt = now + 5 * 60;
+    const assertionId = `operation-transition:provision:${operationId}:${ownerId}`;
     const [started] = await this.db.batch([
       this.db
         .prepare(
@@ -4072,6 +4093,42 @@ export class D1ControlRepository implements ControlRepository {
             )`
         )
         .bind(now, operationId, operationId, ownerId),
+      this.db
+        .prepare(
+          `INSERT INTO control_operation_transition_assertions (
+             assertion_id, valid, created_at
+           ) SELECT ?, CASE WHEN
+             (SELECT COUNT(*) FROM control_operation_steps step
+               WHERE step.operation_id = operation.operation_id
+                 AND step.step_key = 'create_d1' AND step.status = 'running') = 1
+             AND (SELECT COUNT(*) FROM control_desired_resources desired
+               WHERE desired.origin_operation_id = operation.operation_id
+                 AND desired.environment_id = operation.environment_id
+                 AND desired.provisioning_state = 'creating') = 1
+             AND (
+               (SELECT COUNT(*) FROM control_tenant_shards shard
+                 JOIN control_desired_resources desired
+                   ON desired.desired_resource_id = shard.d1_desired_resource_id
+                  AND desired.environment_id = shard.environment_id
+                WHERE desired.origin_operation_id = operation.operation_id
+                  AND shard.status = 'provisioning')
+               +
+               (SELECT COUNT(*) FROM control_lookup_physical_shards shard
+                 JOIN control_desired_resources desired
+                   ON desired.desired_resource_id = shard.d1_desired_resource_id
+                  AND desired.environment_id = shard.environment_id
+                WHERE desired.origin_operation_id = operation.operation_id
+                  AND shard.status = 'provisioning')
+             ) = 1
+             THEN 1 ELSE 0 END, ?
+             FROM control_operations operation
+            WHERE operation.operation_id = ? AND operation.lock_owner = ?
+              AND operation.status = 'running' AND operation.lock_expires_at = ?`
+        )
+        .bind(assertionId, now, operationId, ownerId, leaseExpiresAt),
+      this.db
+        .prepare(`DELETE FROM control_operation_transition_assertions WHERE assertion_id = ?`)
+        .bind(assertionId),
     ]);
     if ((started.meta.changes ?? 0) === 0) return null;
 
@@ -4125,6 +4182,117 @@ export class D1ControlRepository implements ControlRepository {
     return reservation !== null;
   }
 
+  async markD1CreateIssued(
+    lease: ProvisioningLease,
+    plan: TenantShardPlan,
+    now: number
+  ): Promise<void> {
+    const result = await this.db
+      .prepare(
+        `UPDATE control_desired_resources
+            SET provider_create_state = 'issued', updated_at = ?
+          WHERE desired_resource_id = ? AND environment_id = ? AND origin_operation_id = ?
+            AND provider_create_state = 'not_started' AND provider_resource_id IS NULL
+            AND provider_identity_checkpointed_at IS NULL
+            AND EXISTS (
+              SELECT 1 FROM control_operations operation
+               WHERE operation.operation_id = ? AND operation.environment_id = ?
+                 AND operation.lock_owner = ? AND operation.fencing_token = ?
+                 AND operation.status = 'running'
+            )`
+      )
+      .bind(
+        now,
+        plan.desiredResourceId,
+        plan.environmentId,
+        plan.operationId,
+        plan.operationId,
+        plan.environmentId,
+        lease.ownerId,
+        lease.fencingToken
+      )
+      .run();
+    if (Number(result.meta.changes ?? 0) !== 1) {
+      throw new Error('control_d1_create_issue_checkpoint_failed');
+    }
+  }
+
+  async markD1CreateDefinitelyRejected(
+    lease: ProvisioningLease,
+    plan: TenantShardPlan,
+    now: number
+  ): Promise<void> {
+    const result = await this.db
+      .prepare(
+        `UPDATE control_desired_resources
+            SET provider_create_state = 'not_started', updated_at = ?
+          WHERE desired_resource_id = ? AND environment_id = ? AND origin_operation_id = ?
+            AND provider_create_state = 'issued' AND provider_resource_id IS NULL
+            AND provider_identity_checkpointed_at IS NULL
+            AND EXISTS (
+              SELECT 1 FROM control_operations operation
+               WHERE operation.operation_id = ? AND operation.environment_id = ?
+                 AND operation.lock_owner = ? AND operation.fencing_token = ?
+                 AND operation.status = 'running'
+            )`
+      )
+      .bind(
+        now,
+        plan.desiredResourceId,
+        plan.environmentId,
+        plan.operationId,
+        plan.operationId,
+        plan.environmentId,
+        lease.ownerId,
+        lease.fencingToken
+      )
+      .run();
+    if (Number(result.meta.changes ?? 0) !== 1) {
+      throw new Error('control_d1_create_rejection_checkpoint_failed');
+    }
+  }
+
+  async checkpointD1ProviderIdentity(
+    lease: ProvisioningLease,
+    plan: TenantShardPlan,
+    databaseId: string,
+    now: number
+  ): Promise<void> {
+    const result = await this.db
+      .prepare(
+        `UPDATE control_desired_resources
+            SET provider_create_state = 'identified', provider_resource_id = ?,
+                provider_identity_checkpointed_at = COALESCE(provider_identity_checkpointed_at, ?),
+                updated_at = ?
+          WHERE desired_resource_id = ? AND environment_id = ? AND origin_operation_id = ?
+            AND (provider_create_state = 'issued' OR
+                 (provider_create_state = 'identified' AND provider_resource_id = ?))
+            AND EXISTS (
+              SELECT 1 FROM control_operations operation
+               WHERE operation.operation_id = ? AND operation.environment_id = ?
+                 AND operation.lock_owner = ? AND operation.fencing_token = ?
+                 AND operation.status = 'running'
+            )`
+      )
+      .bind(
+        databaseId,
+        now,
+        now,
+        plan.desiredResourceId,
+        plan.environmentId,
+        plan.operationId,
+        databaseId,
+        plan.operationId,
+        plan.environmentId,
+        lease.ownerId,
+        lease.fencingToken
+      )
+      .run();
+    if (Number(result.meta.changes ?? 0) !== 1) {
+      throw new Error('control_d1_provider_identity_checkpoint_failed');
+    }
+  }
+
   async markDatabaseCreated(
     lease: ProvisioningLease,
     plan: TenantShardPlan,
@@ -4133,7 +4301,18 @@ export class D1ControlRepository implements ControlRepository {
     now: number
   ): Promise<ControlOperationView> {
     const observedId = `observed:${plan.desiredResourceId}`;
-    await this.db.batch([
+    const projectionAssertionId = `projection:${plan.operationId}:${lease.fencingToken}`;
+    const shardProjectionTable =
+      plan.dataRole === 'lookup' ? 'control_lookup_physical_shards' : 'control_tenant_shards';
+    const shardProjectionIdColumn = plan.dataRole === 'lookup' ? 'lookup_shard_id' : 'shard_id';
+    const providerIdentityGuard = `EXISTS (
+      SELECT 1 FROM control_desired_resources identity
+       WHERE identity.desired_resource_id = ? AND identity.environment_id = ?
+         AND identity.provider_create_state = 'identified'
+         AND identity.provider_resource_id = ?
+         AND identity.provider_identity_checkpointed_at IS NOT NULL
+    )`;
+    const results = await this.db.batch([
       this.db
         .prepare(
           `INSERT INTO control_observed_resources (
@@ -4145,13 +4324,14 @@ export class D1ControlRepository implements ControlRepository {
                SELECT 1 FROM control_operations
                 WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
              )
+              AND ${providerIdentityGuard}
            ON CONFLICT(observed_resource_id) DO UPDATE SET
              provider_resource_id = excluded.provider_resource_id,
              observed_state = 'present', observed_at = excluded.observed_at
            WHERE EXISTS (
              SELECT 1 FROM control_operations
               WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
-           )`
+           ) AND ${providerIdentityGuard}`
         )
         .bind(
           observedId,
@@ -4164,9 +4344,15 @@ export class D1ControlRepository implements ControlRepository {
           plan.operationId,
           lease.ownerId,
           lease.fencingToken,
+          plan.desiredResourceId,
+          plan.environmentId,
+          databaseId,
           plan.operationId,
           lease.ownerId,
-          lease.fencingToken
+          lease.fencingToken,
+          plan.desiredResourceId,
+          plan.environmentId,
+          databaseId
         ),
       this.db
         .prepare(
@@ -4176,7 +4362,7 @@ export class D1ControlRepository implements ControlRepository {
             WHERE desired_resource_id = ? AND EXISTS (
               SELECT 1 FROM control_operations
                WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
-            )`
+            ) AND ${providerIdentityGuard}`
         )
         .bind(
           databaseId,
@@ -4184,17 +4370,20 @@ export class D1ControlRepository implements ControlRepository {
           plan.desiredResourceId,
           plan.operationId,
           lease.ownerId,
-          lease.fencingToken
+          lease.fencingToken,
+          plan.desiredResourceId,
+          plan.environmentId,
+          databaseId
         ),
       this.db
         .prepare(
-          `UPDATE control_tenant_shards
+          `UPDATE ${shardProjectionTable}
               SET read_replication_mode = ?, observed_replication_state = ?,
                   replication_checked_at = ?, replication_error_code = NULL, updated_at = ?
-            WHERE shard_id = ? AND EXISTS (
+            WHERE ${shardProjectionIdColumn} = ? AND EXISTS (
               SELECT 1 FROM control_operations
                WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
-            )`
+            ) AND ${providerIdentityGuard}`
         )
         .bind(
           plan.readReplicationMode,
@@ -4204,7 +4393,10 @@ export class D1ControlRepository implements ControlRepository {
           plan.shardId,
           plan.operationId,
           lease.ownerId,
-          lease.fencingToken
+          lease.fencingToken,
+          plan.desiredResourceId,
+          plan.environmentId,
+          databaseId
         ),
       this.db
         .prepare(
@@ -4213,7 +4405,7 @@ export class D1ControlRepository implements ControlRepository {
             WHERE desired_resource_id = ? AND EXISTS (
               SELECT 1 FROM control_operations
                WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
-            )`
+            ) AND ${providerIdentityGuard}`
         )
         .bind(
           observedId,
@@ -4221,7 +4413,10 @@ export class D1ControlRepository implements ControlRepository {
           plan.desiredResourceId,
           plan.operationId,
           lease.ownerId,
-          lease.fencingToken
+          lease.fencingToken,
+          plan.desiredResourceId,
+          plan.environmentId,
+          databaseId
         ),
       this.db
         .prepare(
@@ -4232,7 +4427,7 @@ export class D1ControlRepository implements ControlRepository {
             WHERE operation_id = ? AND step_key = 'create_d1' AND EXISTS (
               SELECT 1 FROM control_operations
                WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
-            )`
+            ) AND ${providerIdentityGuard}`
         )
         .bind(
           databaseId,
@@ -4241,16 +4436,99 @@ export class D1ControlRepository implements ControlRepository {
           plan.operationId,
           plan.operationId,
           lease.ownerId,
-          lease.fencingToken
+          lease.fencingToken,
+          plan.desiredResourceId,
+          plan.environmentId,
+          databaseId
         ),
       this.db
         .prepare(
           `UPDATE control_operations
               SET status = 'waiting_retry', next_attempt_at = NULL,
                   lock_owner = NULL, lock_expires_at = NULL, updated_at = ?
-            WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?`
+            WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
+              AND ${providerIdentityGuard}`
         )
-        .bind(now, plan.operationId, lease.ownerId, lease.fencingToken),
+        .bind(
+          now,
+          plan.operationId,
+          lease.ownerId,
+          lease.fencingToken,
+          plan.desiredResourceId,
+          plan.environmentId,
+          databaseId
+        ),
+      this.db
+        .prepare(
+          `INSERT INTO control_provider_identity_projection_assertions (
+             assertion_id, environment_id, desired_resource_id, valid, created_at
+           ) VALUES (?, ?, ?, CASE WHEN
+             EXISTS (
+               SELECT 1 FROM control_observed_resources observed
+                WHERE observed.observed_resource_id = ? AND observed.environment_id = ?
+                  AND observed.desired_resource_id = ? AND observed.provider_resource_id = ?
+                  AND observed.provider_name = ? AND observed.observed_state = 'present'
+             ) AND EXISTS (
+               SELECT 1 FROM control_tenant_database_migration_state migration
+                WHERE migration.desired_resource_id = ? AND migration.environment_id = ?
+                  AND migration.operation_id = ? AND migration.provider_database_id = ?
+                  AND migration.state = 'requested'
+             ) AND EXISTS (
+               SELECT 1 FROM ${shardProjectionTable} shard
+                WHERE shard.${shardProjectionIdColumn} = ? AND shard.environment_id = ?
+                  AND shard.read_replication_mode = ? AND shard.observed_replication_state = ?
+             ) AND EXISTS (
+               SELECT 1 FROM control_desired_resources desired
+                WHERE desired.desired_resource_id = ? AND desired.environment_id = ?
+                  AND desired.observed_resource_id = ? AND desired.provisioning_state = 'creating'
+                  AND desired.provider_create_state = 'identified'
+                  AND desired.provider_resource_id = ?
+                  AND desired.provider_identity_checkpointed_at IS NOT NULL
+             ) AND EXISTS (
+               SELECT 1 FROM control_operation_steps step
+                WHERE step.operation_id = ? AND step.step_key = 'create_d1'
+                  AND step.status = 'succeeded' AND step.observed_resource_id = ?
+             ) AND EXISTS (
+               SELECT 1 FROM control_operations operation
+                WHERE operation.operation_id = ? AND operation.environment_id = ?
+                  AND operation.status = 'waiting_retry' AND operation.lock_owner IS NULL
+                  AND operation.lock_expires_at IS NULL AND operation.fencing_token = ?
+             ) THEN 1 ELSE 0 END, ?)`
+        )
+        .bind(
+          projectionAssertionId,
+          plan.environmentId,
+          plan.desiredResourceId,
+          observedId,
+          plan.environmentId,
+          plan.desiredResourceId,
+          databaseId,
+          plan.databaseName,
+          plan.desiredResourceId,
+          plan.environmentId,
+          plan.operationId,
+          databaseId,
+          plan.shardId,
+          plan.environmentId,
+          plan.readReplicationMode,
+          observedReplicationMode,
+          plan.desiredResourceId,
+          plan.environmentId,
+          observedId,
+          databaseId,
+          plan.operationId,
+          databaseId,
+          plan.operationId,
+          plan.environmentId,
+          lease.fencingToken,
+          now
+        ),
+      this.db
+        .prepare(
+          `DELETE FROM control_provider_identity_projection_assertions
+            WHERE assertion_id = ? AND environment_id = ? AND desired_resource_id = ?`
+        )
+        .bind(projectionAssertionId, plan.environmentId, plan.desiredResourceId),
       this.db
         .prepare(
           `INSERT OR IGNORE INTO control_audit_events (
@@ -4274,6 +4552,9 @@ export class D1ControlRepository implements ControlRepository {
           lease.fencingToken
         ),
     ]);
+    if (results.slice(0, 6).some((result) => Number(result.meta.changes ?? 0) !== 1)) {
+      throw new Error('control_d1_provider_identity_projection_mismatch');
+    }
     const operation = await this.getOperation(plan.operationId);
     if (!operation) throw new Error('control_operation_missing_after_database_create');
     return operation;
@@ -4285,9 +4566,11 @@ export class D1ControlRepository implements ControlRepository {
     now: number
   ): Promise<ProvisioningLease | null> {
     const leaseExpiresAt = now + 5 * 60;
-    const started = await this.db
-      .prepare(
-        `UPDATE control_operations AS candidate
+    const assertionId = `operation-transition:migration:${operationId}:${ownerId}`;
+    const [started] = await this.db.batch([
+      this.db
+        .prepare(
+          `UPDATE control_operations AS candidate
             SET status = 'running', attempt_count = attempt_count + 1,
                 next_attempt_at = NULL, last_error_code = NULL,
                 lock_owner = ?, lock_expires_at = ?, fencing_token = fencing_token + 1,
@@ -4314,9 +4597,54 @@ export class D1ControlRepository implements ControlRepository {
                 FROM control_environment_resource_policies policy
                WHERE policy.environment_id = candidate.environment_id
             ), 0)`
-      )
-      .bind(ownerId, leaseExpiresAt, now, now, operationId, now)
-      .run();
+        )
+        .bind(ownerId, leaseExpiresAt, now, now, operationId, now),
+      this.db
+        .prepare(
+          `UPDATE control_operation_steps
+              SET status = 'running', attempt_count = attempt_count + 1,
+                  next_attempt_at = NULL, last_error_code = NULL,
+                  started_at = COALESCE(started_at, ?), updated_at = ?
+            WHERE operation_id = ? AND step_key = 'apply_migrations' AND EXISTS (
+              SELECT 1 FROM control_operations
+               WHERE operation_id = ? AND lock_owner = ? AND status = 'running'
+            )`
+        )
+        .bind(now, now, operationId, operationId, ownerId),
+      this.db
+        .prepare(
+          `UPDATE control_tenant_database_migration_state
+              SET state = 'applying', last_error_code = NULL,
+                  started_at = COALESCE(started_at, ?), updated_at = ?
+            WHERE operation_id = ? AND EXISTS (
+              SELECT 1 FROM control_operations
+               WHERE operation_id = ? AND lock_owner = ? AND status = 'running'
+            )`
+        )
+        .bind(now, now, operationId, operationId, ownerId),
+      this.db
+        .prepare(
+          `INSERT INTO control_operation_transition_assertions (
+             assertion_id, valid, created_at
+           ) SELECT ?, CASE WHEN
+             (SELECT COUNT(*) FROM control_operation_steps step
+               WHERE step.operation_id = operation.operation_id
+                 AND step.step_key = 'apply_migrations' AND step.status = 'running') = 1
+             AND (SELECT COUNT(*) FROM control_tenant_database_migration_state migration
+               WHERE migration.operation_id = operation.operation_id
+                 AND migration.environment_id = operation.environment_id
+                 AND migration.provider_database_id IS NOT NULL
+                 AND migration.state = 'applying') = 1
+             THEN 1 ELSE 0 END, ?
+             FROM control_operations operation
+            WHERE operation.operation_id = ? AND operation.lock_owner = ?
+              AND operation.status = 'running' AND operation.lock_expires_at = ?`
+        )
+        .bind(assertionId, now, operationId, ownerId, leaseExpiresAt),
+      this.db
+        .prepare(`DELETE FROM control_operation_transition_assertions WHERE assertion_id = ?`)
+        .bind(assertionId),
+    ]);
     if ((started.meta.changes ?? 0) === 0) return null;
 
     const row = await this.db
@@ -4329,33 +4657,7 @@ export class D1ControlRepository implements ControlRepository {
       )
       .bind(operationId, ownerId)
       .first<OperationRow>();
-    if (!row) return null;
-
-    await this.db.batch([
-      this.db
-        .prepare(
-          `UPDATE control_operation_steps
-              SET status = 'running', attempt_count = attempt_count + 1,
-                  next_attempt_at = NULL, last_error_code = NULL,
-                  started_at = COALESCE(started_at, ?), updated_at = ?
-            WHERE operation_id = ? AND step_key = 'apply_migrations' AND EXISTS (
-              SELECT 1 FROM control_operations
-               WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
-            )`
-        )
-        .bind(now, now, operationId, operationId, ownerId, row.fencing_token),
-      this.db
-        .prepare(
-          `UPDATE control_tenant_database_migration_state
-              SET state = 'applying', last_error_code = NULL,
-                  started_at = COALESCE(started_at, ?), updated_at = ?
-            WHERE operation_id = ? AND EXISTS (
-              SELECT 1 FROM control_operations
-               WHERE operation_id = ? AND lock_owner = ? AND fencing_token = ?
-            )`
-        )
-        .bind(now, now, operationId, operationId, ownerId, row.fencing_token),
-    ]);
+    if (!row) throw new Error('control_operation_transition_mismatch');
     return { operation: operationView(row), ownerId, fencingToken: row.fencing_token };
   }
 
@@ -4379,6 +4681,10 @@ export class D1ControlRepository implements ControlRepository {
       last_filename: result.lastFilename,
       state: 'ready',
     });
+    const assertionId = `operation-transition:migration-ready:${plan.operationId}:${lease.fencingToken}`;
+    const shardProjectionTable =
+      plan.dataRole === 'lookup' ? 'control_lookup_physical_shards' : 'control_tenant_shards';
+    const shardProjectionIdColumn = plan.dataRole === 'lookup' ? 'lookup_shard_id' : 'shard_id';
     await this.db.batch([
       this.db
         .prepare(
@@ -4463,6 +4769,66 @@ export class D1ControlRepository implements ControlRepository {
         .bind(now, now, plan.operationId, lease.ownerId, lease.fencingToken),
       this.db
         .prepare(
+          `INSERT INTO control_operation_transition_assertions (
+             assertion_id, valid, created_at
+           ) SELECT ?, CASE WHEN
+             EXISTS (
+               SELECT 1 FROM control_tenant_database_migration_state migration
+                WHERE migration.desired_resource_id = ? AND migration.environment_id = ?
+                  AND migration.operation_id = ? AND migration.provider_database_id = ?
+                  AND migration.state = 'ready' AND migration.expected_file_count = ?
+                  AND migration.applied_file_count = ?
+                  AND migration.observed_sentinel_json = ?
+             ) AND EXISTS (
+               SELECT 1 FROM control_operation_steps step
+                WHERE step.operation_id = operation.operation_id
+                  AND step.step_key = 'apply_migrations' AND step.status = 'succeeded'
+                  AND step.progress_current = ? AND step.progress_total = ?
+             ) AND EXISTS (
+               SELECT 1 FROM control_desired_resources desired
+                WHERE desired.desired_resource_id = ? AND desired.environment_id = ?
+                  AND desired.provisioning_state = 'ready'
+                  AND desired.provider_create_state = 'identified'
+                  AND desired.provider_resource_id = ?
+                  AND desired.provider_identity_checkpointed_at IS NOT NULL
+             ) AND EXISTS (
+               SELECT 1 FROM ${shardProjectionTable} shard
+                WHERE shard.${shardProjectionIdColumn} = ? AND shard.environment_id = ?
+                  AND shard.status = 'ready'
+             ) AND operation.next_attempt_at = ? AND operation.last_error_code IS NULL
+               AND operation.lock_owner IS NULL AND operation.lock_expires_at IS NULL
+             THEN 1 ELSE 0 END, ?
+             FROM control_operations operation
+            WHERE operation.operation_id = ? AND operation.environment_id = ?
+              AND operation.fencing_token = ? AND operation.status = 'waiting_retry'`
+        )
+        .bind(
+          assertionId,
+          plan.desiredResourceId,
+          plan.environmentId,
+          plan.operationId,
+          plan.databaseId,
+          result.totalFiles,
+          result.totalFiles,
+          sentinel,
+          result.totalFiles,
+          result.totalFiles,
+          plan.desiredResourceId,
+          plan.environmentId,
+          plan.databaseId,
+          plan.shardId,
+          plan.environmentId,
+          now,
+          now,
+          plan.operationId,
+          plan.environmentId,
+          lease.fencingToken
+        ),
+      this.db
+        .prepare(`DELETE FROM control_operation_transition_assertions WHERE assertion_id = ?`)
+        .bind(assertionId),
+      this.db
+        .prepare(
           `INSERT OR IGNORE INTO control_audit_events (
              event_id, environment_id, operation_id, event_type, actor_type,
              resource_kind, resource_id, outcome, redacted_payload_json, created_at
@@ -4501,6 +4867,7 @@ export class D1ControlRepository implements ControlRepository {
     nextAttemptAt: number,
     now: number
   ): Promise<void> {
+    const assertionId = `operation-transition:migration-retry:${lease.operation.operationId}:${lease.fencingToken}`;
     await this.db.batch([
       this.db
         .prepare(
@@ -4554,6 +4921,42 @@ export class D1ControlRepository implements ControlRepository {
         ),
       this.db
         .prepare(
+          `INSERT INTO control_operation_transition_assertions (
+             assertion_id, valid, created_at
+           ) SELECT ?, CASE WHEN
+             EXISTS (
+               SELECT 1 FROM control_operation_steps step
+                WHERE step.operation_id = operation.operation_id
+                  AND step.step_key = 'apply_migrations' AND step.status = 'waiting_retry'
+                  AND step.next_attempt_at = ? AND step.last_error_code = ?
+             ) AND EXISTS (
+               SELECT 1 FROM control_tenant_database_migration_state migration
+                WHERE migration.operation_id = operation.operation_id
+                  AND migration.environment_id = operation.environment_id
+                  AND migration.state = 'waiting_retry' AND migration.last_error_code = ?
+             ) AND operation.next_attempt_at = ? AND operation.last_error_code = ?
+               AND operation.lock_owner IS NULL AND operation.lock_expires_at IS NULL
+             THEN 1 ELSE 0 END, ?
+             FROM control_operations operation
+            WHERE operation.operation_id = ? AND operation.fencing_token = ?
+              AND operation.status = 'waiting_retry'`
+        )
+        .bind(
+          assertionId,
+          nextAttemptAt,
+          errorCode,
+          errorCode,
+          nextAttemptAt,
+          errorCode,
+          now,
+          lease.operation.operationId,
+          lease.fencingToken
+        ),
+      this.db
+        .prepare(`DELETE FROM control_operation_transition_assertions WHERE assertion_id = ?`)
+        .bind(assertionId),
+      this.db
+        .prepare(
           `INSERT OR IGNORE INTO control_audit_events (
              event_id, environment_id, operation_id, event_type, actor_type,
              resource_kind, resource_id, outcome, redacted_payload_json, created_at
@@ -4581,6 +4984,7 @@ export class D1ControlRepository implements ControlRepository {
     errorCode: string,
     now: number
   ): Promise<void> {
+    const assertionId = `operation-transition:migration-blocked:${lease.operation.operationId}:${lease.fencingToken}`;
     await this.db.batch([
       this.db
         .prepare(
@@ -4626,6 +5030,40 @@ export class D1ControlRepository implements ControlRepository {
         ),
       this.db
         .prepare(
+          `INSERT INTO control_operation_transition_assertions (
+             assertion_id, valid, created_at
+           ) SELECT ?, CASE WHEN
+             EXISTS (
+               SELECT 1 FROM control_operation_steps step
+                WHERE step.operation_id = operation.operation_id
+                  AND step.step_key = 'apply_migrations' AND step.status = 'blocked'
+                  AND step.last_error_code = ?
+             ) AND EXISTS (
+               SELECT 1 FROM control_tenant_database_migration_state migration
+                WHERE migration.operation_id = operation.operation_id
+                  AND migration.environment_id = operation.environment_id
+                  AND migration.state = 'blocked' AND migration.last_error_code = ?
+             ) AND operation.last_error_code = ?
+               AND operation.lock_owner IS NULL AND operation.lock_expires_at IS NULL
+             THEN 1 ELSE 0 END, ?
+             FROM control_operations operation
+            WHERE operation.operation_id = ? AND operation.fencing_token = ?
+              AND operation.status = 'blocked'`
+        )
+        .bind(
+          assertionId,
+          errorCode,
+          errorCode,
+          errorCode,
+          now,
+          lease.operation.operationId,
+          lease.fencingToken
+        ),
+      this.db
+        .prepare(`DELETE FROM control_operation_transition_assertions WHERE assertion_id = ?`)
+        .bind(assertionId),
+      this.db
+        .prepare(
           `INSERT OR IGNORE INTO control_audit_events (
              event_id, environment_id, operation_id, event_type, actor_type,
              resource_kind, resource_id, outcome, redacted_payload_json, created_at
@@ -4655,6 +5093,7 @@ export class D1ControlRepository implements ControlRepository {
     nextAttemptAt: number,
     now: number
   ): Promise<void> {
+    const assertionId = `operation-transition:create-retry:${lease.operation.operationId}:${lease.fencingToken}`;
     await this.db.batch([
       this.db
         .prepare(
@@ -4674,23 +5113,6 @@ export class D1ControlRepository implements ControlRepository {
         ),
       this.db
         .prepare(
-          `INSERT OR IGNORE INTO control_audit_events (
-             event_id, environment_id, operation_id, event_type, actor_type,
-             resource_kind, resource_id, outcome, redacted_payload_json, created_at
-           ) SELECT ?, environment_id, operation_id, 'control.d1.create', 'reconciler',
-                    'd1', NULL, 'failed', ?, ?
-               FROM control_operations
-              WHERE operation_id = ? AND fencing_token = ? AND status = 'waiting_retry'`
-        )
-        .bind(
-          `audit:${lease.operation.operationId}:${lease.fencingToken}:retry`,
-          JSON.stringify({ error_code: errorCode, retry_at: nextAttemptAt }),
-          now,
-          lease.operation.operationId,
-          lease.fencingToken
-        ),
-      this.db
-        .prepare(
           `UPDATE control_operation_steps
               SET status = 'waiting_retry', next_attempt_at = ?, last_error_code = ?,
                   last_error_redacted = NULL, updated_at = ?
@@ -4704,6 +5126,52 @@ export class D1ControlRepository implements ControlRepository {
           errorCode,
           now,
           lease.operation.operationId,
+          lease.operation.operationId,
+          lease.fencingToken
+        ),
+      this.db
+        .prepare(
+          `INSERT INTO control_operation_transition_assertions (
+             assertion_id, valid, created_at
+           ) SELECT ?, CASE WHEN EXISTS (
+             SELECT 1 FROM control_operation_steps step
+              WHERE step.operation_id = operation.operation_id
+                AND step.step_key = 'create_d1' AND step.status = 'waiting_retry'
+                AND step.next_attempt_at = ? AND step.last_error_code = ?
+           ) AND operation.next_attempt_at = ? AND operation.last_error_code = ?
+             AND operation.lock_owner IS NULL AND operation.lock_expires_at IS NULL
+             THEN 1 ELSE 0 END, ?
+             FROM control_operations operation
+            WHERE operation.operation_id = ? AND operation.fencing_token = ?
+              AND operation.status = 'waiting_retry'`
+        )
+        .bind(
+          assertionId,
+          nextAttemptAt,
+          errorCode,
+          nextAttemptAt,
+          errorCode,
+          now,
+          lease.operation.operationId,
+          lease.fencingToken
+        ),
+      this.db
+        .prepare(`DELETE FROM control_operation_transition_assertions WHERE assertion_id = ?`)
+        .bind(assertionId),
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO control_audit_events (
+             event_id, environment_id, operation_id, event_type, actor_type,
+             resource_kind, resource_id, outcome, redacted_payload_json, created_at
+           ) SELECT ?, environment_id, operation_id, 'control.d1.create', 'reconciler',
+                    'd1', NULL, 'failed', ?, ?
+               FROM control_operations
+              WHERE operation_id = ? AND fencing_token = ? AND status = 'waiting_retry'`
+        )
+        .bind(
+          `audit:${lease.operation.operationId}:${lease.fencingToken}:retry`,
+          JSON.stringify({ error_code: errorCode, retry_at: nextAttemptAt }),
+          now,
           lease.operation.operationId,
           lease.fencingToken
         ),
@@ -4731,6 +5199,7 @@ export class D1ControlRepository implements ControlRepository {
     errorCode: string,
     now: number
   ): Promise<void> {
+    const assertionId = `operation-transition:create-blocked:${lease.operation.operationId}:${lease.fencingToken}`;
     await this.db.batch([
       this.db
         .prepare(
@@ -4757,6 +5226,33 @@ export class D1ControlRepository implements ControlRepository {
           lease.operation.operationId,
           lease.fencingToken
         ),
+      this.db
+        .prepare(
+          `INSERT INTO control_operation_transition_assertions (
+             assertion_id, valid, created_at
+           ) SELECT ?, CASE WHEN EXISTS (
+             SELECT 1 FROM control_operation_steps step
+              WHERE step.operation_id = operation.operation_id
+                AND step.step_key = 'create_d1' AND step.status = 'blocked'
+                AND step.last_error_code = ?
+           ) AND operation.last_error_code = ?
+             AND operation.lock_owner IS NULL AND operation.lock_expires_at IS NULL
+             THEN 1 ELSE 0 END, ?
+             FROM control_operations operation
+            WHERE operation.operation_id = ? AND operation.fencing_token = ?
+              AND operation.status = 'blocked'`
+        )
+        .bind(
+          assertionId,
+          errorCode,
+          errorCode,
+          now,
+          lease.operation.operationId,
+          lease.fencingToken
+        ),
+      this.db
+        .prepare(`DELETE FROM control_operation_transition_assertions WHERE assertion_id = ?`)
+        .bind(assertionId),
       this.db
         .prepare(
           `INSERT OR IGNORE INTO control_audit_events (

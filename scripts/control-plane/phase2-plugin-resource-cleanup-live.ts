@@ -55,10 +55,10 @@ async function main(): Promise<void> {
   }
   const lock = JSON.parse(
     await readFile(resolve(REPO_ROOT, '.authrim/test/lock.json'), 'utf8')
-  ) as { d1?: Record<string, { name?: unknown }> };
-  const controlDatabaseName = lock.d1?.CONTROL_DB?.name;
-  const pluginRunnerDatabaseName = lock.d1?.PLUGIN_RUNNER_DB?.name;
-  if (typeof controlDatabaseName !== 'string' || typeof pluginRunnerDatabaseName !== 'string') {
+  ) as { d1?: Record<string, { id?: unknown }> };
+  const controlDatabaseId = lock.d1?.CONTROL_DB?.id;
+  const pluginRunnerDatabaseId = lock.d1?.PLUGIN_RUNNER_DB?.id;
+  if (typeof controlDatabaseId !== 'string' || typeof pluginRunnerDatabaseId !== 'string') {
     throw new Error('phase2_plugin_cleanup_database_missing');
   }
   const baseUrl = resolveIssuerUrl(config, { env: 'test' })?.replace(/\/+$/u, '');
@@ -126,7 +126,7 @@ async function main(): Promise<void> {
   });
 
   const projected = await queryD1Rows<{ state: string; control_operation_id: string }>(
-    pluginRunnerDatabaseName,
+    pluginRunnerDatabaseId,
     `SELECT state, control_operation_id
       FROM plugin_runner_dynamic_worker_resources
       WHERE tenant_id = '${tenantId}'
@@ -145,7 +145,7 @@ async function main(): Promise<void> {
       drain_not_before: number | null;
       created_at: number;
     }>(
-      controlDatabaseName,
+      controlDatabaseId,
       `SELECT state, drain_not_before, created_at
          FROM control_plugin_resource_cleanup_operations
         WHERE environment_id = 'test' AND operation_id = '${cleanup.operationId}'`

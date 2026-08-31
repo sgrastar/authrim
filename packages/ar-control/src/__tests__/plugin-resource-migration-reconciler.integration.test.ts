@@ -168,6 +168,12 @@ describe('PluginResourceMigrationReconciler', () => {
         'utf8'
       )
     );
+    database.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
+        'utf8'
+      )
+    );
   });
 
   afterEach(() => database.close());

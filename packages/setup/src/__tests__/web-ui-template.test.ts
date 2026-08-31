@@ -181,8 +181,8 @@ describe('getHtmlTemplate', () => {
       SUPPORTED_LOCALES
     );
 
-    expect(html).toContain('keyResult.replacedExistingKeys === true');
-    expect(html).toContain("t('keys.replaced')");
+    expect(html).toContain('keyResult.reusedExistingKeys === true');
+    expect(html).toContain('Existing environment keys reused');
     expect(html).not.toContain("output.textContent += '   Existing keys will be overwritten.");
   });
 
@@ -1059,10 +1059,21 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain("api('/control/automatic-provisioning/cleanup-bootstrap'");
     expect(html).toContain("api('/control/automatic-provisioning/cancel-pending'");
     expect(html).toContain('error.cleanupRequired === false');
+    expect(html).toContain('completionError.bootstrapRetainedForRetry =');
+    expect(html).toContain('completionError.cutoverPending = completed.cutoverPending === true');
+    expect(html).toContain("const recoveringCutover = envControlBootstrapPhase !== 'none'");
+    expect(html).toContain('if (!recoveringCutover) {');
+    expect(html).toContain('if (recoveringCutover || error.cutoverPending === true)');
+    expect(html).toContain('if (error.bootstrapRetainedForRetry === true)');
+    expect(html).toContain("t('web.envDetail.bootstrapRetainedForRetry')");
+    expect(html.indexOf('if (error.bootstrapRetainedForRetry === true)')).toBeLessThan(
+      html.indexOf("api('/control/automatic-provisioning/cleanup-bootstrap'")
+    );
     expect(html).toContain('Automatic provisioning returned to Off.');
     expect(html).toContain("api('/control/automatic-provisioning/status?env='");
-    expect(html).toContain('if (!bootstrapToken) {');
+    expect(html).toContain('if (!bootstrapToken && !recoveringCutover) {');
     expect(html).not.toContain('if (!bootstrapToken || !envControlBootstrapOwnership)');
+    expect(html).toContain('if (error.recoveryTokenRequired === true)');
     expect(html.indexOf("api('/deploy/component/ar-control'")).toBeLessThan(
       html.indexOf("api('/control/automatic-provisioning/complete'")
     );
@@ -1088,6 +1099,28 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('let inFlightMutationRequests = 0;');
     expect(html).toContain('inFlightMutationRequests === 0');
     expect(html).not.toContain('pending.tenantId =');
+  });
+
+  it('stops provisioning and keeps deploy blocked when key generation fails', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    const keyRequest = html.indexOf("api('/keys/generate'");
+    const keyGuard = html.indexOf('if (!keyResult.success)', keyRequest);
+    const keySuccessOutput = html.indexOf('RSA key pair generated', keyRequest);
+    const provisionRequest = html.indexOf("api('/provision'", keyRequest);
+
+    expect(keyRequest).toBeGreaterThanOrEqual(0);
+    expect(keyGuard).toBeGreaterThan(keyRequest);
+    expect(keySuccessOutput).toBeGreaterThan(keyGuard);
+    expect(provisionRequest).toBeGreaterThan(keyGuard);
+    expect(html).toContain("throw new Error(apiErrorMessages(keyResult).join('; '))");
+    expect(html).toContain('btnGotoDeploy.disabled = !provisioningCompleted;');
   });
 
   it('offers the same server-owned capacity profiles without raw D1 inputs', () => {

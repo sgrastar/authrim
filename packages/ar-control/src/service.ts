@@ -588,6 +588,9 @@ async function buildPlan(
     databaseName: `${getTenantDatabaseResourcePrefix(environmentName)}-tenant-${slug(role)}-${slug(request.residencyPartition)}${request.ownerTenantId ? `-${slug(request.ownerTenantId)}` : ''}-db-${digest.slice(0, 8)}`,
     bindingRef: `${getTenantDatabaseBindingPrefix(environmentName)}_${bindingRole}_${digest.slice(0, 8).toUpperCase()}_${bindingSuffix}`,
     ownershipFingerprint: digest,
+    providerCreateState: 'not_started',
+    providerResourceId: null,
+    providerIdentityCheckpointedAt: null,
     allocationScope: request.allocationScope ?? 'shared_pool',
     ownerTenantId: request.ownerTenantId ?? null,
     jurisdiction: partition.jurisdiction ?? undefined,
@@ -1605,7 +1608,26 @@ export class ControlService {
         return ensureControlProvisioningD1({
           plan,
           provider: api,
+          checkpoint: {
+            state: plan.providerCreateState,
+            providerResourceId: plan.providerResourceId,
+          },
           reserveCreate: () => this.dependencies.repository.reserveD1CreateBudget(lease, now),
+          markCreateIssued: () =>
+            this.dependencies.repository.markD1CreateIssued(lease, plan, this.dependencies.now()),
+          markCreateDefinitelyRejected: () =>
+            this.dependencies.repository.markD1CreateDefinitelyRejected(
+              lease,
+              plan,
+              this.dependencies.now()
+            ),
+          checkpointProviderIdentity: (databaseId) =>
+            this.dependencies.repository.checkpointD1ProviderIdentity(
+              lease,
+              plan,
+              databaseId,
+              this.dependencies.now()
+            ),
         });
       },
       onSuccess: (databaseId) =>

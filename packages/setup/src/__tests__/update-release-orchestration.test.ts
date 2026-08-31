@@ -1,7 +1,10 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import {
   assertProductUpgradeAllowed,
+  assertUpdateCloudflareResourceIdentity,
   getWorkspaceVersionMismatches,
+  includeWorkersMissingExactVersionEvidence,
   includeRequiredReleaseControlCoordinator,
   includeRequiredReleaseManagement,
   resolveLegacyDeploymentVersion,
@@ -10,6 +13,7 @@ import {
   splitReleaseSchemaTargetsForControlHandoff,
   getUiComponentsToUpdate,
   isUpdateSourceLockUnchanged,
+  updateLockWithDeploymentsAndVersions,
   recoverActiveControlReleaseRollout,
   withRecoveredReleaseUpdateState,
   withReleaseUpdateState,
@@ -18,6 +22,12 @@ import {
 import { AuthrimLockSchema } from '../core/lock.js';
 import type { ReleaseSchemaUpdatePlan } from '../core/release-update.js';
 import { createDefaultConfig } from '../core/config.js';
+import {
+  D1_DATABASES,
+  KV_NAMESPACES,
+  getD1DatabaseName,
+  getKVNamespaceName,
+} from '../core/naming.js';
 
 function plan(): ReleaseSchemaUpdatePlan {
   const automatic = {
@@ -81,7 +91,175 @@ function lock() {
   });
 }
 
+function lockedCloudflareResources() {
+  const base = lock();
+  const d1 = Object.fromEntries(
+    D1_DATABASES.map((database) => {
+      const name = getD1DatabaseName('prod', database.dbType);
+      return [database.binding, { id: `id-${database.binding}`, name }];
+    })
+  );
+  const kv = Object.fromEntries(
+    KV_NAMESPACES.map((binding) => {
+      const name = getKVNamespaceName('prod', binding);
+      return [binding, { id: `id-${binding}`, name }];
+    })
+  );
+  return AuthrimLockSchema.parse({
+    ...base,
+    d1,
+    kv,
+    r2: {
+      MIGRATION_RELEASES: { name: 'prod-migration-releases' },
+    },
+  });
+}
+
 describe('release update orchestration', () => {
+  it('never exits the process while update operation locks are held', async () => {
+    const source = await readFile(new URL('../cli/commands/update.ts', import.meta.url), 'utf-8');
+    const lockedUpdate = source.slice(
+      source.indexOf(
+        "const operationLock = await acquireEnvironmentOperationLock(lockPath, 'update')"
+      )
+    );
+
+    expect(lockedUpdate).not.toContain('process.exit(');
+    expect(lockedUpdate).toContain('await deployConfigLock?.release()');
+    expect(lockedUpdate).toContain('await operationLock.release()');
+  });
+
+  it('pins update config and lock environment identity before planning and reuses the locked config', async () => {
+    const source = await readFile(new URL('../cli/commands/update.ts', import.meta.url), 'utf-8');
+    const initialLockLoad = source.indexOf('await loadLockFileAuto(baseDir, env)');
+    const initialLockIdentity = source.indexOf('if (lock.env !== env)', initialLockLoad);
+    const initialConfigRead = source.indexOf(
+      "await readFile(envPaths.config, 'utf-8')",
+      initialLockIdentity
+    );
+    const initialConfigIdentity = source.indexOf(
+      'if (config.environment.prefix !== env)',
+      initialConfigRead
+    );
+    const versionPlanning = source.indexOf('const localVersions = await getLocalPackageVersions');
+    const operationLock = source.indexOf(
+      "const operationLock = await acquireEnvironmentOperationLock(lockPath, 'update')"
+    );
+    const lockedConfigIdentity = source.indexOf(
+      'if (lockedConfig.environment.prefix !== env)',
+      operationLock
+    );
+
+    expect(initialLockIdentity).toBeGreaterThan(initialLockLoad);
+    expect(initialConfigIdentity).toBeGreaterThan(initialConfigRead);
+    expect(versionPlanning).toBeGreaterThan(initialConfigIdentity);
+    expect(lockedConfigIdentity).toBeGreaterThan(operationLock);
+    expect(source).toContain('loginUi: lockedConfig.components.loginUi ?? true');
+    expect(source).toContain('const workersDevEnabled = !lockedConfig.urls?.api?.custom;');
+  });
+
+  it('requires exact immutable Cloudflare identities before a release mutation', () => {
+    const resourceLock = lockedCloudflareResources();
+    const databases = D1_DATABASES.map((database) => ({
+      name: getD1DatabaseName('prod', database.dbType),
+      uuid: `id-${database.binding}`,
+    }));
+    const namespaces = KV_NAMESPACES.map((binding) => ({
+      title: getKVNamespaceName('prod', binding),
+      id: `id-${binding}`,
+    }));
+    const exactInput = {
+      lock: resourceLock,
+      env: 'prod',
+      databases,
+      namespaces,
+      queues: [],
+      requiredQueues: [],
+      r2Buckets: [{ name: 'prod-migration-releases' }],
+      requiredR2BucketNames: ['prod-migration-releases'],
+    };
+
+    expect(() => assertUpdateCloudflareResourceIdentity(exactInput)).not.toThrow();
+    expect(() =>
+      assertUpdateCloudflareResourceIdentity({
+        ...exactInput,
+        databases: databases.map((database, index) =>
+          index === 0 ? { ...database, uuid: 'replacement-database-id' } : database
+        ),
+      })
+    ).toThrow('cloudflare_resource_identity_mismatch');
+    expect(() => assertUpdateCloudflareResourceIdentity({ ...exactInput, r2Buckets: [] })).toThrow(
+      'required_cloudflare_resources_missing:R2:prod-migration-releases'
+    );
+  });
+
+  it('records only fully successful exact Worker versions and retries post-traffic failures', () => {
+    const source = AuthrimLockSchema.parse({
+      ...lock(),
+      workers: {
+        'ar-control': {
+          name: 'prod-ar-control',
+          version: '1.0.0',
+          deployedAt: '2026-07-21T00:00:00.000Z',
+          cloudflareVersionId: '00000000-0000-4000-8000-000000000001',
+        },
+      },
+    });
+    const failedAfterTraffic = updateLockWithDeploymentsAndVersions(
+      source,
+      [
+        {
+          component: 'ar-control',
+          workerName: 'prod-ar-control',
+          success: false,
+          trafficCommitted: true,
+          error: 'trigger synchronization failed',
+          deployedAt: '2026-07-21T00:01:00.000Z',
+          version: '1.1.0',
+          cloudflareVersionId: '00000000-0000-4000-8000-000000000002',
+        },
+      ],
+      { 'ar-control': '1.1.0' }
+    );
+    expect(failedAfterTraffic.workers?.['ar-control']).toEqual(source.workers?.['ar-control']);
+
+    const completed = updateLockWithDeploymentsAndVersions(
+      source,
+      [
+        {
+          component: 'ar-control',
+          workerName: 'prod-ar-control',
+          success: true,
+          deployedAt: '2026-07-21T00:02:00.000Z',
+          version: '1.1.0',
+          cloudflareVersionId: '00000000-0000-4000-8000-000000000003',
+          cloudflareScriptTag: 'immutable-control-script-tag',
+        },
+      ],
+      { 'ar-control': '1.1.0' }
+    );
+    expect(completed.workers?.['ar-control']).toMatchObject({
+      version: '1.1.0',
+      cloudflareVersionId: '00000000-0000-4000-8000-000000000003',
+      cloudflareScriptTag: 'immutable-control-script-tag',
+    });
+    expect(() =>
+      updateLockWithDeploymentsAndVersions(
+        source,
+        [
+          {
+            component: 'ar-control',
+            workerName: 'prod-ar-control',
+            success: true,
+            deployedAt: '2026-07-21T00:02:00.000Z',
+            version: '1.1.0',
+          },
+        ],
+        { 'ar-control': '1.1.0' }
+      )
+    ).toThrow('worker_deployment_exact_version_unavailable:ar-control');
+  });
+
   it('deploys the Control coordinator first when a release updates multiple API Workers', () => {
     expect(
       splitReleaseDeploymentForControlCoordinator(['ar-auth', 'ar-control', 'ar-userinfo'])
@@ -173,8 +351,16 @@ describe('release update orchestration', () => {
     const currentLock = AuthrimLockSchema.parse({
       ...lock(),
       workers: {
-        'ar-login-ui': { name: 'prod-ar-login-ui', version: '1.0.0' },
-        'ar-admin-ui': { name: 'prod-ar-admin-ui', version: '1.1.0' },
+        'ar-login-ui': {
+          name: 'prod-ar-login-ui',
+          version: '1.0.0',
+          cloudflareVersionId: '00000000-0000-4000-8000-000000000011',
+        },
+        'ar-admin-ui': {
+          name: 'prod-ar-admin-ui',
+          version: '1.1.0',
+          cloudflareVersionId: '00000000-0000-4000-8000-000000000012',
+        },
       },
     });
     const versions = new Map([
@@ -189,6 +375,37 @@ describe('release update orchestration', () => {
     expect(
       getUiComponentsToUpdate({ config, lock: currentLock, localVersions: versions, all: true })
     ).toEqual(['ar-admin-ui']);
+  });
+
+  it('forces a Worker redeploy when immutable Cloudflare version evidence is missing', () => {
+    const currentLock = AuthrimLockSchema.parse({
+      ...lock(),
+      workers: {
+        'ar-control': { name: 'prod-ar-control', version: '1.0.0' },
+        'ar-auth': {
+          name: 'prod-ar-auth',
+          version: '1.0.0',
+          cloudflareVersionId: '00000000-0000-4000-8000-000000000013',
+        },
+      },
+    });
+    expect(includeWorkersMissingExactVersionEvidence([], currentLock)).toEqual(['ar-control']);
+
+    const config = createDefaultConfig('prod');
+    currentLock.workers = {
+      'ar-admin-ui': { name: 'prod-ar-admin-ui', version: '1.1.0' },
+    };
+    expect(
+      getUiComponentsToUpdate({
+        config,
+        lock: currentLock,
+        localVersions: new Map([
+          ['ar-admin-ui', '1.1.0'],
+          ['ar-login-ui', '1.1.0'],
+        ]),
+        all: false,
+      })
+    ).toContain('ar-admin-ui');
   });
 
   it('fails workspace release validation for missing or mismatched required packages', () => {

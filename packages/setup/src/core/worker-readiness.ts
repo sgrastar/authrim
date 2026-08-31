@@ -57,6 +57,7 @@ export interface TenantRoutingReadinessResult extends RouterReadinessResult {
 export interface WorkerDeploymentReadinessTarget {
   workerName: string;
   deployedAt?: string | null;
+  expectedVersionId?: string | null;
 }
 
 export interface WorkerDeploymentReadinessResult {
@@ -480,6 +481,16 @@ function deploymentIsAtLeast(
   return actual + 60_000 >= expected;
 }
 
+function deploymentMatchesTarget(
+  deployment: Awaited<ReturnType<typeof getWorkerDeployments>>,
+  target: WorkerDeploymentReadinessTarget
+): boolean {
+  if (target.expectedVersionId) {
+    return deployment.versionId === target.expectedVersionId;
+  }
+  return deploymentIsAtLeast(deployment.lastDeployedAt, target.deployedAt);
+}
+
 export async function waitForWorkerDeploymentsReady(options: {
   targets: WorkerDeploymentReadinessTarget[];
   requireFreshDeployment?: boolean;
@@ -489,6 +500,9 @@ export async function waitForWorkerDeploymentsReady(options: {
   onProgress?: (message: string) => void;
 }): Promise<WorkerDeploymentReadinessResult> {
   const targets = options.targets.filter((target) => target.workerName);
+  const requireFreshDeployment =
+    options.requireFreshDeployment ??
+    targets.some((target) => Boolean(target.deployedAt || target.expectedVersionId));
   const checkedWorkers = targets.map((target) => target.workerName);
   const startedAt = Date.now();
   const maxWaitMs = options.maxWaitMs ?? 120_000;
@@ -528,9 +542,9 @@ export async function waitForWorkerDeploymentsReady(options: {
     lastStale = results
       .filter(
         (result) =>
-          options.requireFreshDeployment === true &&
+          requireFreshDeployment &&
           result.deployment.exists &&
-          !deploymentIsAtLeast(result.deployment.lastDeployedAt, result.target.deployedAt)
+          !deploymentMatchesTarget(result.deployment, result.target)
       )
       .map((result) => result.target.workerName);
 

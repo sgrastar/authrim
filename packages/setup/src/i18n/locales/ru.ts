@@ -904,6 +904,8 @@ const ru: Translations = {
   'web.envDetail.automaticProvisioningMissing': '(отсутствует: {{missing}})',
   'web.envDetail.automaticProvisioningRepairHint':
     'Введите новый одноразовый токен для исправления.',
+  'web.envDetail.bootstrapRetainedForRetry':
+    'Cloudflare вернул временную ошибку. Bootstrap-токен остаётся активным; повторно введите тот же токен и выберите «Включить», чтобы продолжить.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Перед повторной попыткой отзовите указанные bootstrap- и дочерние токены Authrim в Cloudflare Dashboard.',
   'web.envDetail.bootstrapRevokedPendingReset':

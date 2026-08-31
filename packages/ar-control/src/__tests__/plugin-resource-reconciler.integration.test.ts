@@ -118,6 +118,12 @@ describe('PluginResourceReconciler', () => {
         'utf8'
       )
     );
+    database.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
+        'utf8'
+      )
+    );
     database.exec(`
       INSERT INTO control_environments (
         environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
@@ -214,11 +220,18 @@ describe('PluginResourceReconciler', () => {
     expect(
       database
         .prepare(
-          `SELECT provider_resource_id, provider_name, status
+          `SELECT provider_create_state, provider_resource_id, provider_name,
+                  provider_identity_checkpointed_at, status
              FROM control_plugin_desired_resources`
         )
         .get()
-    ).toEqual({ provider_resource_id: 'kv-a', provider_name: expectedName, status: 'ready' });
+    ).toEqual({
+      provider_create_state: 'identified',
+      provider_resource_id: 'kv-a',
+      provider_name: expectedName,
+      provider_identity_checkpointed_at: 100,
+      status: 'ready',
+    });
     expect(
       database
         .prepare(
@@ -228,7 +241,150 @@ describe('PluginResourceReconciler', () => {
     ).toEqual({ status: 'succeeded', observed_resource_id: 'kv-a' });
   });
 
-  it('adopts a deterministic managed namespace after response loss without creating a duplicate', async () => {
+  it('resumes a managed D1 only from its checkpointed UUID', async () => {
+    const inserted = insertResource({ kind: 'd1' });
+    const expectedName = managedPluginResourceName('test', inserted.fingerprint, 'd1');
+    database
+      .prepare(
+        `UPDATE control_plugin_desired_resources
+            SET provider_create_state = 'identified', provider_resource_id = 'exact-database-id',
+                provider_name = ?, provider_identity_checkpointed_at = 50
+          WHERE plugin_resource_id = ?`
+      )
+      .run(expectedName, inserted.resourceId);
+    const list = vi.fn();
+    const create = vi.fn();
+    const get = vi.fn(async (databaseId: string) => ({
+      uuid: databaseId,
+      name: expectedName,
+      read_replication: { mode: 'disabled' as const },
+    }));
+    const reconciler = new PluginResourceReconciler(
+      d1(database),
+      clients({
+        d1: {
+          ...clients().d1,
+          listD1Databases: list,
+          createD1Database: create,
+          getD1Database: get,
+        },
+      }),
+      () => 100
+    );
+
+    await expect(reconciler.reconcile()).resolves.toBe(1);
+
+    expect(list).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    expect(get).toHaveBeenCalledWith('exact-database-id');
+    expect(database.prepare(`SELECT status FROM control_plugin_desired_resources`).get()).toEqual({
+      status: 'ready',
+    });
+  });
+
+  it('rolls the success and failure projections back when the provider step disappears', async () => {
+    const inserted = insertResource({ kind: 'd1' });
+    const expectedName = managedPluginResourceName('test', inserted.fingerprint, 'd1');
+    database
+      .prepare(
+        `UPDATE control_plugin_desired_resources
+            SET provider_create_state = 'identified', provider_resource_id = 'exact-database-id',
+                provider_name = ?, provider_identity_checkpointed_at = 50
+          WHERE plugin_resource_id = ?`
+      )
+      .run(expectedName, inserted.resourceId);
+    const reconciler = new PluginResourceReconciler(
+      d1(database),
+      clients({
+        d1: {
+          ...clients().d1,
+          listD1Databases: vi.fn(),
+          createD1Database: vi.fn(),
+          getD1Database: vi.fn(async (databaseId: string) => {
+            database
+              .prepare(
+                `DELETE FROM control_operation_steps
+                  WHERE operation_id = ? AND step_key = ?`
+              )
+              .run(inserted.operationId, `${inserted.stepPrefix}_provider`);
+            return {
+              uuid: databaseId,
+              name: expectedName,
+              read_replication: { mode: 'disabled' as const },
+            };
+          }),
+        },
+      }),
+      () => 100
+    );
+
+    await expect(reconciler.reconcile()).rejects.toThrow(
+      'plugin_resource_provider_projection_mismatch'
+    );
+    expect(
+      database
+        .prepare(
+          `SELECT status, provider_create_state, provider_resource_id
+             FROM control_plugin_desired_resources`
+        )
+        .get()
+    ).toEqual({
+      status: 'pending',
+      provider_create_state: 'identified',
+      provider_resource_id: 'exact-database-id',
+    });
+    expect(
+      database
+        .prepare(
+          `SELECT status, lock_owner, fencing_token FROM control_operations
+            WHERE operation_id = ?`
+        )
+        .get(inserted.operationId)
+    ).toEqual({
+      status: 'running',
+      lock_owner: 'plugin-resource-reconciler',
+      fencing_token: 1,
+    });
+    expect(
+      database
+        .prepare(`SELECT COUNT(*) AS count FROM control_audit_events WHERE operation_id = ?`)
+        .get(inserted.operationId)
+    ).toEqual({ count: 0 });
+    expect(
+      database
+        .prepare(`SELECT COUNT(*) AS count FROM control_plugin_provider_projection_assertions`)
+        .get()
+    ).toEqual({ count: 0 });
+  });
+
+  it('rejects an unowned same-name namespace instead of adopting it', async () => {
+    const inserted = insertResource({ kind: 'kv_namespace' });
+    const expectedName = managedPluginResourceName('test', inserted.fingerprint, 'kv_namespace');
+    const create = vi.fn();
+    const reconciler = new PluginResourceReconciler(
+      d1(database),
+      clients({
+        kv: {
+          listKvNamespaces: vi.fn(async () => [{ id: 'unowned-id', title: expectedName }]),
+          createKvNamespace: create,
+          deleteKvNamespace: unavailable,
+        },
+      }),
+      () => 100
+    );
+
+    await expect(reconciler.reconcile()).resolves.toBe(1);
+
+    expect(create).not.toHaveBeenCalled();
+    expect(
+      database.prepare(`SELECT status, last_error_code FROM control_operations`).get()
+    ).toEqual({
+      status: 'blocked',
+      last_error_code: 'plugin_resource_provider_name_conflict',
+    });
+  });
+
+  it('blocks an ambiguous managed namespace response without creating a duplicate', async () => {
     const inserted = insertResource({ kind: 'kv_namespace' });
     const expectedName = managedPluginResourceName('test', inserted.fingerprint, 'kv_namespace');
     const namespaces: Array<{ id: string; title: string }> = [];
@@ -249,17 +405,27 @@ describe('PluginResourceReconciler', () => {
     );
 
     await reconciler.reconcile();
+    await expect(reconciler.reconcile()).resolves.toBe(0);
 
     expect(create).toHaveBeenCalledOnce();
     expect(create).toHaveBeenCalledWith(expectedName);
     expect(
       database
-        .prepare(`SELECT provider_resource_id, status FROM control_plugin_desired_resources`)
+        .prepare(
+          `SELECT provider_create_state, provider_resource_id, status
+             FROM control_plugin_desired_resources`
+        )
         .get()
-    ).toEqual({ provider_resource_id: 'kv-created-before-response-loss', status: 'ready' });
+    ).toEqual({ provider_create_state: 'issued', provider_resource_id: null, status: 'failed' });
+    expect(
+      database.prepare(`SELECT status, last_error_code FROM control_operations`).get()
+    ).toEqual({
+      status: 'blocked',
+      last_error_code: 'plugin_resource_create_outcome_ambiguous',
+    });
   });
 
-  it('adopts a deterministic managed D1 after its create response is lost', async () => {
+  it('blocks an ambiguous managed D1 response without creating a duplicate', async () => {
     const inserted = insertResource({ kind: 'd1' });
     const expectedName = managedPluginResourceName('test', inserted.fingerprint, 'd1');
     const databases: Array<{
@@ -298,29 +464,29 @@ describe('PluginResourceReconciler', () => {
     );
 
     await expect(reconciler.reconcile()).resolves.toBe(1);
+    await expect(reconciler.reconcile()).resolves.toBe(0);
 
     expect(create).toHaveBeenCalledOnce();
     expect(create).toHaveBeenCalledWith({ name: expectedName });
     expect(
       database
-        .prepare(`SELECT provider_resource_id, status FROM control_plugin_desired_resources`)
+        .prepare(
+          `SELECT provider_create_state, provider_resource_id, status
+             FROM control_plugin_desired_resources`
+        )
         .get()
-    ).toEqual({ provider_resource_id: 'd1-created-before-response-loss', status: 'ready' });
+    ).toEqual({ provider_create_state: 'issued', provider_resource_id: null, status: 'failed' });
   });
 
-  it('adopts a deterministic managed R2 bucket after its create response is lost', async () => {
-    const inserted = insertResource({ kind: 'r2_bucket' });
-    const expectedName = managedPluginResourceName('test', inserted.fingerprint, 'r2_bucket');
-    const buckets: Array<{ name: string }> = [];
-    const create = vi.fn(async (name: string) => {
-      buckets.push({ name });
-      throw new Error('response_lost');
-    });
+  it('hands managed R2 creation to Setup before any provider request', async () => {
+    insertResource({ kind: 'r2_bucket' });
+    const list = vi.fn(async () => []);
+    const create = vi.fn(async (name: string) => ({ name }));
     const reconciler = new PluginResourceReconciler(
       d1(database),
       clients({
         r2: {
-          listR2Buckets: vi.fn(async () => [...buckets]),
+          listR2Buckets: list,
           createR2Bucket: create,
           deleteR2Bucket: unavailable,
         },
@@ -330,13 +496,26 @@ describe('PluginResourceReconciler', () => {
 
     await expect(reconciler.reconcile()).resolves.toBe(1);
 
-    expect(create).toHaveBeenCalledOnce();
-    expect(create).toHaveBeenCalledWith(expectedName);
+    expect(list).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
     expect(
       database
-        .prepare(`SELECT provider_resource_id, status FROM control_plugin_desired_resources`)
+        .prepare(
+          `SELECT provider_create_state, provider_resource_id, status
+             FROM control_plugin_desired_resources`
+        )
         .get()
-    ).toEqual({ provider_resource_id: expectedName, status: 'ready' });
+    ).toEqual({
+      provider_create_state: 'not_started',
+      provider_resource_id: null,
+      status: 'failed',
+    });
+    expect(
+      database.prepare(`SELECT status, last_error_code FROM control_operations`).get()
+    ).toEqual({
+      status: 'blocked',
+      last_error_code: 'operator_action_required',
+    });
   });
 
   it('blocks an existing-resource name mismatch without mutating or deleting the provider', async () => {

@@ -79,11 +79,15 @@ async function uploadArtifactWithRetry(input: {
   upload: R2ObjectUploader;
   bucketName: string;
   object: MigrationReleaseArtifactObject;
+  verifyBucketOwnership?: () => Promise<void>;
   onProgress?: (message: string) => void;
   sleep: Sleep;
 }): Promise<void> {
   for (let attempt = 1; attempt <= ARTIFACT_UPLOAD_MAX_ATTEMPTS; attempt += 1) {
     try {
+      // A retry is a fresh write boundary: the deterministic bucket name may have been
+      // deleted/recreated after the prior attempt or its response was lost.
+      await input.verifyBucketOwnership?.();
       await input.upload({
         bucketName: input.bucketName,
         objectKey: input.object.objectKey,
@@ -433,6 +437,7 @@ export async function publishAndActivateMigrationRelease(input: {
   upload?: R2ObjectUploader;
   executeBatch?: D1BatchExecutor;
   sleep?: Sleep;
+  verifyBucketOwnership?: () => Promise<void>;
   onProgress?: (message: string) => void;
 }): Promise<{ artifact: MigrationReleaseArtifactPlan; operationId: string }> {
   const artifact = buildMigrationReleaseArtifactPlan(input);
@@ -445,10 +450,14 @@ export async function publishAndActivateMigrationRelease(input: {
       upload,
       bucketName: input.bucketName,
       object,
+      verifyBucketOwnership: input.verifyBucketOwnership,
       onProgress: input.onProgress,
       sleep,
     });
   }
+  // Do not activate a catalog entry that could resolve to a same-name replacement created
+  // after the final upload. The provider has no generation-qualified R2 URL.
+  await input.verifyBucketOwnership?.();
   const catalog = buildMigrationReleaseCatalogPlan({
     environmentId: input.environmentId,
     artifact,

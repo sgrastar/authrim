@@ -5598,6 +5598,7 @@ describe('Client Authentication Tests', () => {
         clientId?: string;
         credentialId?: string;
         credentialKid?: string;
+        credentialExpiresAt?: number | null;
         displayName?: string;
         principalPermissions?: string[];
         credentialPermissions?: string[];
@@ -5648,7 +5649,7 @@ describe('Client Authentication Tests', () => {
             credential_description: null,
             credential_status: overrides.credentialStatus ?? 'active',
             credential_not_before: null,
-            credential_expires_at: null,
+            credential_expires_at: overrides.credentialExpiresAt ?? null,
             credential_last_used_at: null,
             credential_last_used_ip: null,
             credential_last_used_user_agent: null,
@@ -5790,6 +5791,72 @@ describe('Client Authentication Tests', () => {
         600,
         expect.any(String)
       );
+    });
+
+    it('rejects an expired Admin machine credential before token issuance', async () => {
+      mockAdminMachineAccess({ credentialExpiresAt: Date.now() - 1 });
+      mocks.mockParseToken.mockReturnValue({
+        iss: 'setup-tool',
+        sub: 'setup-tool',
+        aud: 'https://test.example.com/token',
+        exp: Math.floor(Date.now() / 1000) + 60,
+        iat: Math.floor(Date.now() / 1000),
+        jti: 'assertion-expired-credential',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'setup-2026-05' });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: 'setup-tool',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'header.payload.signature',
+            audience: 'authrim:admin-api',
+            scope: 'admin:tenants.read',
+          },
+          env: { ...mockEnv, ENABLE_CLIENT_CREDENTIALS: 'true' },
+        })
+      );
+
+      expect(response.status).toBe(401);
+      expect(mocks.mockValidateClientAssertion).not.toHaveBeenCalled();
+      expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+    });
+
+    it('caps an Admin machine access token inside the credential hard expiry', async () => {
+      mockAdminMachineAccess({ credentialExpiresAt: Date.now() + 120_000 });
+      mocks.mockParseToken.mockReturnValue({
+        iss: 'setup-tool',
+        sub: 'setup-tool',
+        aud: 'https://test.example.com/token',
+        exp: Math.floor(Date.now() / 1000) + 60,
+        iat: Math.floor(Date.now() / 1000),
+        jti: 'assertion-bounded-credential',
+      });
+      mocks.mockParseTokenHeader.mockReturnValue({ alg: 'ES256', kid: 'setup-2026-05' });
+      mocks.mockValidateClientAssertion.mockResolvedValue({ valid: true, client_id: 'setup-tool' });
+
+      const response = await tokenHandler(
+        createMockContext({
+          method: 'POST',
+          body: {
+            grant_type: 'client_credentials',
+            client_id: 'setup-tool',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: 'header.payload.signature',
+            audience: 'authrim:admin-api',
+            scope: 'admin:tenants.read',
+          },
+          env: { ...mockEnv, ENABLE_CLIENT_CREDENTIALS: 'true' },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      const body = await parseJsonResponse<{ expires_in?: number }>(response);
+      expect(body.expires_in).toBeGreaterThanOrEqual(117);
+      expect(body.expires_in).toBeLessThanOrEqual(119);
     });
 
     it('limits Admin API machine token scope to the principal and credential permission intersection', async () => {

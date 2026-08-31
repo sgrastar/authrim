@@ -46,6 +46,9 @@ function operation(): PendingControlOperatorOperation {
     databaseName: 'authrim-test-default-1234',
     desiredResourceId: 'desired-1',
     ownershipFingerprint: 'a'.repeat(64),
+    providerCreateState: 'not_started',
+    providerResourceId: null,
+    providerIdentityCheckpointedAt: null,
     shardId: 'shard-1',
     bindingRef: 'TDB_DEFAULT_1234_CORE',
     jurisdiction: null,
@@ -56,11 +59,16 @@ function operation(): PendingControlOperatorOperation {
 }
 
 function successfulBatch(length: number) {
-  return Array.from({ length }, () => ({ success: true, results: [] }));
+  return Array.from({ length }, () => ({
+    success: true,
+    results: [],
+    meta: { changes: 1 },
+  }));
 }
 
 function client(options: { createError?: unknown; staleClaim?: boolean } = {}) {
   let batchCall = 0;
+  let createdDatabaseName = 'authrim-test-default-1234';
   const queryD1Batch = vi.fn(async (_databaseId: string, batch: readonly unknown[]) => {
     batchCall += 1;
     if (batchCall === 1) {
@@ -98,11 +106,27 @@ function client(options: { createError?: unknown; staleClaim?: boolean } = {}) {
       };
       return results;
     }
-    if (batchCall === 2) {
+    const statements = batch as Array<{ sql?: string }>;
+    if (statements.some((statement) => statement.sql?.includes('control_d1_create_budget'))) {
       return [
-        { success: true, results: [] },
-        { success: true, results: [{ operation_id: 'op_test_1' }] },
+        { success: true, results: [], meta: { changes: 1 } },
+        {
+          success: true,
+          results: [{ operation_id: 'op_test_1' }],
+          meta: { changes: 0 },
+        },
       ];
+    }
+    if (
+      batch.length === 1 &&
+      statements.some(
+        (statement) =>
+          statement.sql?.includes("provider_create_state = 'issued'") ||
+          statement.sql?.includes("provider_create_state = 'not_started'") ||
+          statement.sql?.includes("provider_create_state = 'identified'")
+      )
+    ) {
+      return successfulBatch(batch.length);
     }
     const results = successfulBatch(batch.length);
     results[results.length - 1] = options.createError
@@ -161,6 +185,7 @@ function client(options: { createError?: unknown; staleClaim?: boolean } = {}) {
     listD1Databases: vi.fn(async () => []),
     createD1Database: vi.fn(async ({ name }) => {
       if (options.createError) throw options.createError;
+      createdDatabaseName = name;
       return { uuid: 'database-id', name, read_replication: { mode: 'disabled' } };
     }),
     updateD1Database: vi.fn(async () => {
@@ -168,7 +193,7 @@ function client(options: { createError?: unknown; staleClaim?: boolean } = {}) {
     }),
     getD1Database: vi.fn(async () => ({
       uuid: 'database-id',
-      name: 'authrim-test-default-1234',
+      name: createdDatabaseName,
       read_replication: { mode: 'disabled' },
     })),
   };
@@ -193,13 +218,57 @@ describe('setup canonical Control operator executor', () => {
       nextAttemptAt: null,
     });
 
-    expect(mocked.queryD1Batch).toHaveBeenCalledTimes(3);
+    expect(mocked.queryD1Batch).toHaveBeenCalledTimes(5);
     const claimBatch = mocked.queryD1Batch.mock.calls[0]?.[1] as Array<{ sql: string }>;
     expect(claimBatch[0]?.sql).toContain("status = 'blocked'");
     expect(claimBatch[0]?.sql).toContain('fencing_token = fencing_token + 1');
-    const commitBatch = mocked.queryD1Batch.mock.calls[2]?.[1] as Array<{ sql: string }>;
+    const commitBatch = mocked.queryD1Batch.mock.calls[4]?.[1] as Array<{ sql: string }>;
+    expect(commitBatch).toHaveLength(12);
     expect(commitBatch.some((statement) => statement.sql.includes('actor_type'))).toBe(true);
+    expect(
+      commitBatch.some((statement) =>
+        statement.sql.includes('control_provider_identity_projection_assertions')
+      )
+    ).toBe(true);
+    expect(
+      commitBatch
+        .slice(0, 6)
+        .every(
+          (statement) =>
+            statement.sql.includes("provider_create_state = 'identified'") &&
+            statement.sql.includes('provider_resource_id = ?')
+        )
+    ).toBe(true);
     expect(JSON.stringify(mocked.queryD1Batch.mock.calls)).not.toMatch(/api[_-]?token|secret/iu);
+  });
+
+  it('projects Lookup creation through the exact Lookup shard inventory atomically', async () => {
+    const mocked = client();
+    const lookupOperation: PendingControlOperatorOperation = {
+      ...operation(),
+      dataRole: 'lookup',
+      databaseName: 'authrim-test-lookup-1234',
+      shardId: 'lookup-shard-1',
+      bindingRef: 'TDB_LOOKUP_1234_CORE',
+    };
+    await expect(
+      executeSetupControlOperatorCreate({
+        controlDatabaseId: '11111111-1111-1111-1111-111111111111',
+        operation: lookupOperation,
+        client: mocked.api,
+        executionId: 'execution-1',
+        now: () => 200,
+      })
+    ).resolves.toMatchObject({ state: 'awaiting_migration' });
+
+    const commitBatch = mocked.queryD1Batch.mock.calls[4]?.[1] as Array<{ sql: string }>;
+    expect(commitBatch[2]?.sql).toContain('UPDATE control_lookup_physical_shards');
+    expect(commitBatch[2]?.sql).toContain('WHERE lookup_shard_id = ?');
+    const assertion = commitBatch.find((statement) =>
+      statement.sql.startsWith('INSERT INTO control_provider_identity_projection_assertions')
+    );
+    expect(assertion?.sql).toContain('FROM control_lookup_physical_shards shard');
+    expect(assertion?.sql).toContain('shard.lookup_shard_id = ?');
   });
 
   it('keeps a transient failure operator-actionable without exposing the provider body', async () => {
@@ -217,7 +286,7 @@ describe('setup canonical Control operator executor', () => {
       state: 'retry_required',
       errorCode: 'cloudflare_d1_request_failed',
     });
-    const failureBatch = mocked.queryD1Batch.mock.calls[2]?.[1] as Array<{
+    const failureBatch = mocked.queryD1Batch.mock.calls[4]?.[1] as Array<{
       sql: string;
       params?: unknown[];
     }>;

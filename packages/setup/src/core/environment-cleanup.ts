@@ -1,9 +1,19 @@
 import { existsSync } from 'node:fs';
-import { rm, readFile, writeFile } from 'node:fs/promises';
+import { rm, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { WORKER_COMPONENTS } from './naming.js';
-import { AUTHRIM_KEYS_DIR, getEnvironmentPaths, getLegacyPaths } from './paths.js';
-import { getDeployWranglerPath, removeEnvironmentSectionFromToml } from './wrangler-sync.js';
+import {
+  AUTHRIM_KEYS_DIR,
+  deriveExternalKeysBaseDirFromConfigPath,
+  getEnvironmentPaths,
+  getExternalKeysDir,
+  getLegacyPaths,
+} from './paths.js';
+import {
+  getDeployWranglerPath,
+  removeEnvironmentSectionFromToml,
+  writeWranglerFileAtomically,
+} from './wrangler-sync.js';
 
 export interface LocalEnvironmentCleanupOptions {
   baseDir: string;
@@ -18,16 +28,54 @@ export interface LocalEnvironmentCleanupResult {
   errors: string[];
 }
 
+interface LocalEnvironmentCleanupDependencies {
+  writeWranglerFile?: typeof writeWranglerFileAtomically;
+}
+
 export async function cleanupLocalEnvironmentArtifacts(
-  options: LocalEnvironmentCleanupOptions
+  options: LocalEnvironmentCleanupOptions,
+  dependencies: LocalEnvironmentCleanupDependencies = {}
 ): Promise<LocalEnvironmentCleanupResult> {
   const { baseDir, env, packagesDir, keysBaseDir = baseDir, onProgress } = options;
   const removed: string[] = [];
   const errors: string[] = [];
 
   const envPaths = getEnvironmentPaths({ baseDir, env });
-  const externalKeysDir = join(keysBaseDir, AUTHRIM_KEYS_DIR, env);
+  // Legacy environments did not record key storage explicitly and used the cwd-relative
+  // .authrim-keys directory. Keep that fallback only while there is no explicit storage mode:
+  // an internal-key environment must never delete an unrelated external bundle with the same name.
+  let externalKeysDir: string | null = join(keysBaseDir, AUTHRIM_KEYS_DIR, env);
   const legacyKeysDir = getLegacyPaths(baseDir, env).keys;
+
+  // The external key location is pinned in config and can differ from the cwd used for delete.
+  // Resolve it before removing config.json; otherwise a successful remote deletion can erase the
+  // only pointer to a directory that still contains production credentials.
+  if (existsSync(envPaths.config)) {
+    try {
+      const raw = JSON.parse(await readFile(envPaths.config, 'utf-8')) as {
+        keys?: { storageType?: unknown; secretsPath?: unknown };
+      };
+      if (raw.keys?.storageType === 'external') {
+        if (typeof raw.keys.secretsPath !== 'string') {
+          throw new Error('external_keys_config_path_required');
+        }
+        const configuredBaseDir = deriveExternalKeysBaseDirFromConfigPath(
+          env,
+          raw.keys.secretsPath
+        );
+        externalKeysDir = getExternalKeysDir(env, configuredBaseDir);
+      } else if (raw.keys?.storageType === 'internal') {
+        externalKeysDir = null;
+      }
+    } catch (error) {
+      const message = `Failed to resolve configured external keys directory: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      errors.push(message);
+      onProgress?.(`  ⚠️ ${message}`);
+      externalKeysDir = null;
+    }
+  }
 
   const removeDirIfExists = async (path: string, label: string) => {
     if (!existsSync(path)) {
@@ -47,7 +95,9 @@ export async function cleanupLocalEnvironmentArtifacts(
 
   // Keep the lock/config inventory until every independent cleanup step has run. If key or
   // wrangler cleanup fails, the operator can retry without losing the environment record.
-  await removeDirIfExists(externalKeysDir, 'external keys directory');
+  if (externalKeysDir) {
+    await removeDirIfExists(externalKeysDir, 'external keys directory');
+  }
   await removeDirIfExists(legacyKeysDir, 'legacy keys directory');
 
   if (packagesDir && existsSync(packagesDir)) {
@@ -68,7 +118,11 @@ export async function cleanupLocalEnvironmentArtifacts(
           continue;
         }
 
-        await writeFile(deployPath, content, 'utf-8');
+        await (dependencies.writeWranglerFile ?? writeWranglerFileAtomically)(deployPath, content);
+        const reflected = await readFile(deployPath, 'utf-8');
+        if (reflected !== content || removeEnvironmentSectionFromToml(reflected, env).removed) {
+          throw new Error('wrangler_environment_cleanup_reflection_failed');
+        }
         removed.push(deployPath);
         onProgress?.(`  🧹 Removed [env.${env}] from ${component}/wrangler.toml`);
       } catch (error) {

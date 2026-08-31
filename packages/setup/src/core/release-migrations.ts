@@ -43,7 +43,14 @@ export const ReleaseMigrationStreamSchema = z
   })
   .refine((stream) => new Set(stream.files.map((file) => file.path)).size === stream.files.length, {
     message: 'Migration paths must be unique within a stream',
-  });
+  })
+  .refine(
+    (stream) =>
+      stream.files.every((file, index) => index === 0 || stream.files[index - 1]!.path < file.path),
+    {
+      message: 'Migration paths must be in strict lexicographic execution order',
+    }
+  );
 
 export const ReleaseRolloutPolicySchema = z.object({
   databaseExecution: z.literal('setup_then_control'),
@@ -108,19 +115,80 @@ export function assertReleaseDatabaseCompatibility(input: {
   manifestChecksum: string;
   installedProductVersion?: string;
   installedSchemaManifestChecksums?: readonly string[];
+  installedSchemaTargets?: AuthrimLock['schemaTargets'];
+  currentTargets?: readonly Pick<ReleaseMigrationPhysicalTarget, 'id' | 'streamId'>[];
+  targetManifestIsDraft?: boolean;
 }): void {
   if (input.manifest.databaseCompatibility !== 'fresh_install_only') return;
   if (!input.installedProductVersion) return;
+  if (calculateReleaseManifestChecksum(input.manifest) !== input.manifestChecksum) {
+    throw new Error('release_manifest_checksum_mismatch');
+  }
   const installedChecksums = input.installedSchemaManifestChecksums ?? [];
   const alreadyOnExactBaseline =
     input.installedProductVersion === input.manifest.productVersion &&
     installedChecksums.length > 0 &&
     installedChecksums.every((checksum) => checksum === input.manifestChecksum);
-  if (!alreadyOnExactBaseline) {
-    throw new Error(
-      `fresh_install_required:${input.installedProductVersion}:${input.manifest.productVersion}`
-    );
-  }
+  if (alreadyOnExactBaseline) return;
+
+  // A development draft may grow while an existing disposable test environment remains on the
+  // same pre-1.0 product version. Permit only a cryptographically evidenced forward suffix. The
+  // lock must describe every current physical target, and every recorded path/checksum pair must
+  // be an exact prefix of that target's current stream. This deliberately excludes published
+  // manifests, semantic baseline rewrites, missing legacy evidence, target-set changes, edits,
+  // removals, and reordering.
+  const schemaTargets = input.installedSchemaTargets;
+  const currentTargets = input.currentTargets ?? [];
+  const schemaTargetEntries = Object.entries(schemaTargets ?? {});
+  const currentTargetIds = new Set(currentTargets.map((target) => target.id));
+  const appendOnlyDraftEvolution =
+    input.targetManifestIsDraft === true &&
+    input.installedProductVersion === input.manifest.productVersion &&
+    currentTargets.length > 0 &&
+    currentTargetIds.size === currentTargets.length &&
+    schemaTargetEntries.length === currentTargets.length &&
+    schemaTargetEntries.every(([targetId]) => currentTargetIds.has(targetId)) &&
+    (() => {
+      let hasForwardProgress = false;
+      for (const target of currentTargets) {
+        const state = schemaTargets?.[target.id];
+        if (
+          !target.streamId ||
+          !state ||
+          state.productVersion !== input.manifest.productVersion ||
+          state.streamId !== target.streamId ||
+          !Array.isArray(state.files)
+        ) {
+          return false;
+        }
+        const stream = input.manifest.streams.find((candidate) => candidate.id === target.streamId);
+        if (!stream || state.files.length > stream.files.length) return false;
+        for (let index = 0; index < state.files.length; index += 1) {
+          const installedFile = state.files[index];
+          const targetFile = stream.files[index];
+          if (
+            installedFile.path !== targetFile.path ||
+            installedFile.checksum !== targetFile.checksum
+          ) {
+            return false;
+          }
+        }
+        if (state.manifestChecksum === input.manifestChecksum) {
+          // A target checkpointed against this exact manifest must already contain its full
+          // stream; a shorter list would be contradictory evidence.
+          if (state.files.length !== stream.files.length) return false;
+          hasForwardProgress = true;
+        } else if (state.files.length < stream.files.length) {
+          hasForwardProgress = true;
+        }
+      }
+      return hasForwardProgress;
+    })();
+  if (appendOnlyDraftEvolution) return;
+
+  throw new Error(
+    `fresh_install_required:${input.installedProductVersion}:${input.manifest.productVersion}`
+  );
 }
 
 export interface MigrationStreamDefinition {

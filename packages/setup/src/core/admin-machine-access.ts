@@ -1,12 +1,13 @@
 import { createSign, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AuthrimConfig } from './config.js';
 import { generateEs256KeyPair, type JWK } from './keys.js';
 import { readResponseJsonWithLimit, readResponseTextWithLimit } from './http-limits.js';
 import { fetchWithDnsFallback, getRemainingDeadlineMs } from './dns-aware-fetch.js';
 import { getPortableSqlExpressions } from './sql-portability.js';
+import { writePrivateFileAtomically } from './atomic-file.js';
 
 export const ADMIN_MACHINE_AUDIENCE = 'authrim:admin-api';
 export const SETUP_MACHINE_CLIENT_ID = 'authrim-setup';
@@ -18,8 +19,17 @@ export const ADMIN_UI_BFF_PRINCIPAL_ID = 'amp_authrim_admin_ui_bff';
 export const ADMIN_UI_BFF_PRIVATE_KEY_FILE = 'admin_ui_bff_private.pem';
 export const ADMIN_UI_BFF_PUBLIC_JWK_FILE = 'admin_ui_bff_public.jwk.json';
 export const ADMIN_UI_BFF_SCOPES = ['admin-ui:proxy'] as const;
+/**
+ * Hard lifetime of a setup-only machine credential in DB_ADMIN.
+ *
+ * Setup access is normally deleted as soon as the operation completes. This
+ * bounded lease is the fail-safe for process termination or cleanup failure.
+ * Re-running setup renews the same credential for one more bounded window.
+ */
+export const SETUP_MACHINE_CREDENTIAL_LEASE_SECONDS = 30 * 60;
 
 const ADMIN_MACHINE_TOKEN_MAX_ATTEMPTS = 4;
+const SETUP_MACHINE_CREDENTIAL_LEASE_MILLISECONDS = SETUP_MACHINE_CREDENTIAL_LEASE_SECONDS * 1000;
 
 export const SETUP_MACHINE_DEFAULT_SCOPES = [
   'admin:clients:*',
@@ -192,8 +202,7 @@ export async function loadSetupMachinePublicJwk(keysDir: string): Promise<JWK> {
 }
 
 async function writeSensitiveFile(path: string, content: string): Promise<void> {
-  await writeFile(path, content, 'utf-8');
-  await chmod(path, 0o600);
+  await writePrivateFileAtomically(path, content, 0o600);
 }
 
 async function unlinkIfExists(path: string): Promise<void> {
@@ -223,7 +232,11 @@ export async function ensureSetupMachineKeyFiles(
   }
 
   if (hasPrivateKey !== hasPublicJwk) {
-    throw new Error('setup_machine_key_pair_incomplete');
+    // Setup-machine credentials are deliberately short-lived and are re-registered on every
+    // setup operation. A process may stop between publishing the two local files; discard that
+    // unusable partial generation so the next invocation can recover without manual cleanup.
+    await unlinkIfExists(privateKeyPath);
+    await unlinkIfExists(publicJwkPath);
   }
 
   await mkdir(keysDir, { recursive: true, mode: 0o700 });
@@ -433,8 +446,21 @@ export function buildSetupMachineAccessBootstrapSql(
   const credentialId = safeCredentialIdFromKid(publicJwk.kid);
   const publicJwkJson = JSON.stringify(publicJwk);
   const permissionValuesSql = buildPermissionValuesSql(principalId, permissions);
+  const credentialExpiresAtSql = `(${sqlExpr.nowEpochMilliseconds} + ${SETUP_MACHINE_CREDENTIAL_LEASE_MILLISECONDS})`;
 
+  // Expire every previous credential first. If execution stops between SQL
+  // statements, the safe intermediate state has no unbounded active key; the
+  // current key is reactivated only with its fresh hard expiry below.
   return `
+UPDATE admin_machine_credentials
+SET status = CASE
+      WHEN status IN ('active', 'rotating') THEN 'expired'
+      ELSE status
+    END,
+    expires_at = ${sqlExpr.nowEpochMilliseconds},
+    updated_at = ${sqlExpr.nowEpochMilliseconds}
+WHERE principal_id = ${sqlString(principalId)};
+
 INSERT INTO admin_machine_principals (
   id, client_id, display_name, description, principal_type, status,
   default_audience, token_ttl_seconds, created_by_actor_type, created_by_actor_id,
@@ -485,7 +511,7 @@ SELECT
   'System-managed setup tool public JWK.',
   'active',
   NULL,
-  NULL,
+  ${credentialExpiresAtSql},
   'bootstrap',
   'setup',
   ${sqlExpr.nowEpochMilliseconds},
@@ -503,6 +529,8 @@ SET public_jwk_json = ${sqlString(publicJwkJson)},
     display_name = 'Setup tool ES256 key',
     description = 'System-managed setup tool public JWK.',
     status = 'active',
+    not_before = NULL,
+    expires_at = ${credentialExpiresAtSql},
     updated_at = ${sqlExpr.nowEpochMilliseconds},
     revoked_at = NULL,
     revoked_by_actor_type = NULL,

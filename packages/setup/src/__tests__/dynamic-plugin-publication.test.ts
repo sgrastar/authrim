@@ -76,6 +76,7 @@ describe('Dynamic plugin publication', () => {
     const plugin = source('bundle.json', bytes);
     const db = database();
     const upload = vi.fn(async () => undefined);
+    const verifyBucketOwnership = vi.fn(async () => undefined);
     const execute = vi.fn(async (_name: string, sql: string) => {
       db.exec(sql);
       return { stdout: '', stderr: '' };
@@ -90,9 +91,10 @@ describe('Dynamic plugin publication', () => {
       enabled: true,
       sources: [plugin],
       bucketName: 'test-plugin-bundles',
-      pluginRunnerDatabaseName: 'test-plugin-runner',
+      pluginRunnerDatabaseId: 'plugin-runner-id',
       now: 100,
       upload,
+      verifyBucketOwnership,
       execute,
       query,
     });
@@ -101,21 +103,25 @@ describe('Dynamic plugin publication', () => {
       enabled: true,
       sources: [plugin],
       bucketName: 'test-plugin-bundles',
-      pluginRunnerDatabaseName: 'test-plugin-runner',
+      pluginRunnerDatabaseId: 'plugin-runner-id',
       now: 101,
       upload,
+      verifyBucketOwnership,
       execute,
       query,
     });
 
     expect(first).toEqual(second);
     expect(upload).toHaveBeenCalledTimes(2);
+    expect(verifyBucketOwnership).toHaveBeenCalledTimes(4);
     expect(upload.mock.calls[0]?.[0]).toMatchObject({
       bucketName: 'test-plugin-bundles',
       objectKey: plugin.pluginPolicy?.workerArtifact?.codeObjectKey,
       contentType: 'application/json',
     });
     expect(Array.from(upload.mock.calls[0]?.[0].bytes ?? [])).toEqual(Array.from(bytes));
+    expect(execute).toHaveBeenCalledWith('plugin-runner-id', expect.any(String));
+    expect(query).toHaveBeenCalledWith('plugin-runner-id', expect.any(String));
     expect(
       db
         .prepare(
@@ -200,6 +206,15 @@ describe('Dynamic plugin publication', () => {
         upload,
       })
     ).rejects.toThrow('dynamic_plugin_worker_capability_disabled');
+    await expect(
+      publishDynamicPluginWorkerBundles({
+        baseDir: root,
+        enabled: true,
+        sources: [plugin],
+        bucketName: 'test-plugin-bundles',
+        upload,
+      })
+    ).rejects.toThrow('dynamic_plugin_worker_database_id_missing');
     await writeFile(path, '{"pluginId":"plugin-b"}');
     await expect(
       publishDynamicPluginWorkerBundles({
@@ -207,7 +222,7 @@ describe('Dynamic plugin publication', () => {
         enabled: true,
         sources: [plugin],
         bucketName: 'test-plugin-bundles',
-        pluginRunnerDatabaseName: 'test-plugin-runner',
+        pluginRunnerDatabaseId: 'plugin-runner-id',
         upload,
       })
     ).rejects.toThrow('dynamic_plugin_worker_bundle_changed_after_discovery');
@@ -237,7 +252,7 @@ describe('Dynamic plugin publication', () => {
       enabled: true,
       sources: [plugin],
       bucketName: 'test-plugin-bundles',
-      pluginRunnerDatabaseName: 'test-plugin-runner',
+      pluginRunnerDatabaseId: 'plugin-runner-id',
       now: 100,
       upload: vi.fn(async () => undefined),
       execute,
@@ -280,7 +295,7 @@ describe('Dynamic plugin publication', () => {
       enabled: true,
       sources: [plugin],
       bucketName: 'test-plugin-bundles',
-      pluginRunnerDatabaseName: 'test-plugin-runner',
+      pluginRunnerDatabaseId: 'plugin-runner-id',
       now: 100,
       upload: vi.fn(async () => undefined),
       execute,

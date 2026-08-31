@@ -1,7 +1,8 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { lstat, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -27,6 +28,17 @@ vi.mock('../core/cloudflare.js', () => ({
   findMigrationsRoot: mocks.findMigrationsRoot,
   getKVKeyByNamespaceId: mocks.getKVKeyByNamespaceId,
   getOptionalKVKeyByNamespaceId: mocks.getOptionalKVKeyByNamespaceId,
+  getProvisioningResourceAdoptionPolicy: (
+    resources: Record<string, { state: string; id?: string }>,
+    resource: { kind: string; binding: string }
+  ) => {
+    const checkpoint = resources[`${resource.kind}:${resource.binding}`];
+    return {
+      allowExisting: checkpoint?.state === 'identified' || checkpoint?.state === 'created',
+      recordedState: checkpoint?.state,
+      expectedExistingId: checkpoint?.id,
+    };
+  },
   putKVKeyByNamespaceId: mocks.putKVKeyByNamespaceId,
   queryD1Rows: mocks.queryD1Rows,
   runD1Migrations: mocks.runD1Migrations,
@@ -54,11 +66,14 @@ import {
   calculateReleaseManifestChecksum,
   type ReleaseMigrationManifest,
 } from '../core/release-migrations.js';
+import { loadProvisioningIntent } from '../core/provisioning-intent.js';
+import { loadLockFileAuto, saveLockFile } from '../core/lock.js';
 
 let root: string;
 
 function config(automaticProvisioning = true) {
   const value = createDefaultConfig('prod');
+  value.cloudflare.accountId = 'a'.repeat(32);
   value.controlPlane.automaticProvisioning = automaticProvisioning;
   value.tenant.name = 'tenant-ohara';
   return value;
@@ -143,10 +158,39 @@ describe('initial Control Plane bootstrap orchestration', () => {
       selected_shard_id: 'default-shard',
     }));
 
+  async function prepareRuntimeRegistryVerification() {
+    await writeRuntimeRegistrySigningKey();
+    const kv = new Map<string, string>();
+    mocks.putKVKeyByNamespaceId.mockImplementation(
+      async (_namespace: string, key: string, value: string) => void kv.set(key, value)
+    );
+    mocks.queryD1Rows.mockImplementation(async (_database: string, sql: string) => {
+      if (sql.includes('control_tenant_default_allocations')) return regionPolicyRows();
+      if (sql.includes('tenant_database_active_pointers')) return [{ count: '3' }];
+      if (sql.includes('lookup_tenant_aliases')) return [{ count: '3' }];
+      return [{ count: 1 }];
+    });
+    return kv;
+  }
+
   beforeEach(async () => {
     root = await realpath(await mkdtemp(join(tmpdir(), 'authrim-tenant-bootstrap-')));
     vi.clearAllMocks();
-    mocks.createD1Database.mockImplementation(async (name: string) => ({ id: `${name}-id`, name }));
+    mocks.createD1Database.mockImplementation(
+      async (
+        name: string,
+        _options: unknown,
+        behavior?: {
+          onCreateIssued?: () => Promise<void>;
+          onProviderIdentityIdentified?: (identity: { id: string }) => Promise<void>;
+        }
+      ) => {
+        await behavior?.onCreateIssued?.();
+        const id = `${name}-id`;
+        await behavior?.onProviderIdentityIdentified?.({ id });
+        return { id, name };
+      }
+    );
     mocks.executeD1Migration.mockResolvedValue({ success: true });
     mocks.findMigrationsRoot.mockResolvedValue({ path: join(root, 'migrations'), searchPaths: [] });
     mocks.runD1Migrations.mockResolvedValue({ success: true });
@@ -213,12 +257,22 @@ describe('initial Control Plane bootstrap orchestration', () => {
     delete currentLock.d1.PROD_TDB_USERS_BOOTSTRAP_CORE;
     delete currentLock.d1.PROD_TDB_PII_BOOTSTRAP_PII;
     const progress: string[] = [];
+    const persistedBindings: string[][] = [];
     const result = await ensureInitialControlPlaneResources({
       env: 'prod',
       config: config(),
       lock: currentLock,
       rootDir: root,
       release: { manifest: release(), draft: true },
+      persistLockCheckpoint: async (checkpoint) => {
+        const intent = await loadProvisioningIntent({ baseDir: root, environment: 'prod' });
+        const lockedBindings = Object.keys(checkpoint.d1).filter((binding) =>
+          binding.includes('_TDB_')
+        );
+        const lastBinding = lockedBindings.at(-1);
+        expect(intent?.resources[`d1:${lastBinding}`]?.state).toBe('created');
+        persistedBindings.push(lockedBindings);
+      },
       onProgress: (message) => progress.push(message),
     });
     expect(result).toEqual({ success: true, createdCount: 3, migratedCount: 3 });
@@ -226,7 +280,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
       id: expect.any(String),
     });
     expect(mocks.runD1Migrations).toHaveBeenCalledWith(
-      'prod-authrim-tenant-default-bootstrap-db',
+      'prod-authrim-tenant-default-bootstrap-db-id',
       join(root, 'migrations'),
       expect.any(Function),
       expect.objectContaining({
@@ -234,7 +288,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
       })
     );
     expect(mocks.runD1Migrations).toHaveBeenCalledWith(
-      'prod-authrim-tenant-users-bootstrap-db',
+      'prod-authrim-tenant-users-bootstrap-db-id',
       join(root, 'migrations'),
       expect.any(Function),
       expect.objectContaining({
@@ -242,7 +296,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
       })
     );
     expect(mocks.runD1Migrations).toHaveBeenCalledWith(
-      'prod-authrim-tenant-pii-bootstrap-db',
+      'prod-authrim-tenant-pii-bootstrap-db-id',
       join(root, 'migrations', 'pii'),
       expect.any(Function),
       expect.objectContaining({
@@ -250,9 +304,268 @@ describe('initial Control Plane bootstrap orchestration', () => {
       })
     );
     expect(mocks.executeD1Command).toHaveBeenCalledTimes(3);
+    expect(mocks.queryD1Rows).toHaveBeenCalledWith(
+      'control-id',
+      expect.stringContaining('FROM control_bootstrap_handoffs')
+    );
     expect(progress.some((message) => message.includes('Ensuring initial Control-plane'))).toBe(
       true
     );
+    expect(persistedBindings.map((bindings) => bindings.length)).toEqual([1, 2, 3]);
+  });
+
+  it('fails closed with exact remediation after an ambiguous tenant-shard create', async () => {
+    const currentLock = lock();
+    delete currentLock.d1.PROD_TDB_DEFAULT_BOOTSTRAP_CORE;
+    delete currentLock.d1.PROD_TDB_USERS_BOOTSTRAP_CORE;
+    delete currentLock.d1.PROD_TDB_PII_BOOTSTRAP_PII;
+    let providerAttempt = 0;
+    const observedAllowExisting: boolean[] = [];
+    mocks.createD1Database.mockImplementation(
+      async (
+        name: string,
+        _options: unknown,
+        behavior?: { allowExisting?: boolean; onCreateIssued?: () => Promise<void> }
+      ) => {
+        observedAllowExisting.push(behavior?.allowExisting === true);
+        if (providerAttempt++ === 0) {
+          await behavior?.onCreateIssued?.();
+          throw new Error('provider response lost');
+        }
+        throw new Error(`unsafe second provider mutation for ${name}`);
+      }
+    );
+
+    await expect(
+      ensureInitialControlPlaneResources({
+        env: 'prod',
+        config: config(),
+        lock: currentLock,
+        rootDir: root,
+        release: { manifest: release(), draft: true },
+        persistLockCheckpoint: async () => undefined,
+      })
+    ).resolves.toMatchObject({ success: false, error: 'provider response lost' });
+    await expect(
+      loadProvisioningIntent({ baseDir: root, environment: 'prod' })
+    ).resolves.toMatchObject({
+      resources: {
+        'd1:PROD_TDB_DEFAULT_BOOTSTRAP_CORE': { state: 'create_issued' },
+      },
+    });
+
+    const resumed = await ensureInitialControlPlaneResources({
+      env: 'prod',
+      config: config(),
+      lock: currentLock,
+      rootDir: root,
+      release: { manifest: release(), draft: true },
+      persistLockCheckpoint: async () => undefined,
+    });
+    expect(resumed).toMatchObject({ success: false });
+    expect(resumed.error).toContain('initial_control_plane_resource_create_ambiguous');
+    expect(resumed.error).toContain('PROD_TDB_DEFAULT_BOOTSTRAP_CORE');
+    expect(resumed.error).toContain('prod-authrim-tenant-default-bootstrap-db');
+    expect(resumed.error).toContain('Cloudflare');
+    expect(resumed.error).toContain('automatic recovery is unavailable');
+    expect(resumed.error).toContain('inspect the exact name');
+    expect(resumed.error).toContain('pnpm run setup delete --env prod --all --yes');
+    expect(resumed.error).toContain('immutable identity is missing');
+    expect(resumed.error).toContain('manually delete only that exact ambiguous name');
+    expect(resumed.error).toContain('pnpm run setup init --env prod');
+    expect(observedAllowExisting).toEqual([false]);
+    expect(providerAttempt).toBe(1);
+    await expect(
+      loadProvisioningIntent({ baseDir: root, environment: 'prod' })
+    ).resolves.toMatchObject({
+      resources: {
+        'd1:PROD_TDB_DEFAULT_BOOTSTRAP_CORE': { state: 'create_issued' },
+      },
+    });
+  });
+
+  it('clears a fully checkpointed intent when Control has already accepted the handoff', async () => {
+    const currentLock = lock();
+    delete currentLock.d1.PROD_TDB_DEFAULT_BOOTSTRAP_CORE;
+    delete currentLock.d1.PROD_TDB_USERS_BOOTSTRAP_CORE;
+    delete currentLock.d1.PROD_TDB_PII_BOOTSTRAP_PII;
+    let checkpoints = 0;
+
+    await expect(
+      ensureInitialControlPlaneResources({
+        env: 'prod',
+        config: config(),
+        lock: currentLock,
+        rootDir: root,
+        release: { manifest: release(), draft: true },
+        persistLockCheckpoint: async () => {
+          checkpoints += 1;
+          if (checkpoints === 3) throw new Error('crash_after_final_lock_checkpoint');
+        },
+      })
+    ).resolves.toMatchObject({ success: false, error: 'crash_after_final_lock_checkpoint' });
+    await expect(
+      loadProvisioningIntent({ baseDir: root, environment: 'prod' })
+    ).resolves.toMatchObject({
+      resources: {
+        'd1:PROD_TDB_DEFAULT_BOOTSTRAP_CORE': { state: 'created' },
+        'd1:PROD_TDB_USERS_BOOTSTRAP_CORE': { state: 'created' },
+        'd1:PROD_TDB_PII_BOOTSTRAP_PII': { state: 'created' },
+      },
+    });
+
+    mocks.queryD1Rows.mockResolvedValueOnce([{ state: 'accepted', verification_error_code: null }]);
+    await expect(
+      ensureInitialControlPlaneResources({
+        env: 'prod',
+        config: config(),
+        lock: currentLock,
+        rootDir: root,
+        release: { manifest: release(), draft: true },
+      })
+    ).resolves.toEqual({ success: true, skipped: true });
+    await expect(
+      loadProvisioningIntent({ baseDir: root, environment: 'prod' })
+    ).resolves.toBeNull();
+  });
+
+  it('does not complete an intent whose created checkpoint disagrees with the lock', async () => {
+    const currentLock = lock();
+    delete currentLock.d1.PROD_TDB_DEFAULT_BOOTSTRAP_CORE;
+    delete currentLock.d1.PROD_TDB_USERS_BOOTSTRAP_CORE;
+    delete currentLock.d1.PROD_TDB_PII_BOOTSTRAP_PII;
+
+    await expect(
+      ensureInitialControlPlaneResources({
+        env: 'prod',
+        config: config(),
+        lock: currentLock,
+        rootDir: root,
+        release: { manifest: release(), draft: true },
+        persistLockCheckpoint: async () => {
+          throw new Error('crash_after_first_lock_checkpoint');
+        },
+      })
+    ).resolves.toMatchObject({ success: false, error: 'crash_after_first_lock_checkpoint' });
+    currentLock.d1.PROD_TDB_DEFAULT_BOOTSTRAP_CORE!.id = 'different-database-id';
+
+    await expect(
+      ensureInitialControlPlaneResources({
+        env: 'prod',
+        config: config(),
+        lock: currentLock,
+        rootDir: root,
+        release: { manifest: release(), draft: true },
+        persistLockCheckpoint: async () => undefined,
+      })
+    ).resolves.toMatchObject({
+      success: false,
+      error: 'initial_control_plane_intent_lock_mismatch:PROD_TDB_DEFAULT_BOOTSTRAP_CORE',
+    });
+    expect(mocks.createD1Database).toHaveBeenCalledTimes(1);
+    await expect(
+      loadProvisioningIntent({ baseDir: root, environment: 'prod' })
+    ).resolves.not.toBeNull();
+  });
+
+  it('fails closed instead of overwriting a concurrently changed environment lock', async () => {
+    const persistedLock = {
+      ...lock(),
+      version: '1.0.0',
+      createdAt: new Date().toISOString(),
+      env: 'prod',
+      kv: {
+        AUTHRIM_CONFIG: { id: 'config-kv', name: 'prod-AUTHRIM_CONFIG' },
+        TENANT_RUNTIME_REGISTRY: { id: 'registry-kv', name: 'prod-TENANT_RUNTIME_REGISTRY' },
+      },
+    };
+    delete persistedLock.d1.PROD_TDB_DEFAULT_BOOTSTRAP_CORE;
+    delete persistedLock.d1.PROD_TDB_USERS_BOOTSTRAP_CORE;
+    delete persistedLock.d1.PROD_TDB_PII_BOOTSTRAP_PII;
+    const lockPath = join(root, '.authrim', 'prod', 'lock.json');
+    await saveLockFile(persistedLock, lockPath);
+    const staleLock = structuredClone(persistedLock);
+    const concurrentLock = structuredClone(persistedLock);
+    concurrentLock.workers = { 'ar-control': { name: 'prod-ar-control' } };
+    await saveLockFile(concurrentLock, lockPath);
+
+    await expect(
+      ensureInitialControlPlaneResources({
+        env: 'prod',
+        config: config(),
+        lock: staleLock,
+        rootDir: root,
+        release: { manifest: release(), draft: true },
+      })
+    ).resolves.toMatchObject({
+      success: false,
+      error: 'initial_control_plane_lock_changed_before_checkpoint:PROD_TDB_DEFAULT_BOOTSTRAP_CORE',
+    });
+    const reflected = await loadLockFileAuto(root, 'prod');
+    expect(reflected.lock?.workers?.['ar-control']).toEqual({ name: 'prod-ar-control' });
+    expect(reflected.lock?.d1.PROD_TDB_DEFAULT_BOOTSTRAP_CORE).toBeUndefined();
+  });
+
+  it('strictly replaces stale in-memory lock keys from an already-persisted shard checkpoint', async () => {
+    const persistedLock = {
+      ...lock(),
+      version: '1.0.0',
+      createdAt: new Date().toISOString(),
+      env: 'prod',
+      kv: {
+        AUTHRIM_CONFIG: { id: 'config-kv', name: 'prod-AUTHRIM_CONFIG' },
+        TENANT_RUNTIME_REGISTRY: { id: 'registry-kv', name: 'prod-TENANT_RUNTIME_REGISTRY' },
+      },
+    };
+    const databaseName = 'prod-authrim-tenant-default-bootstrap-db';
+    persistedLock.d1.PROD_TDB_DEFAULT_BOOTSTRAP_CORE = {
+      id: `${databaseName}-id`,
+      name: databaseName,
+    };
+    const lockPath = join(root, '.authrim', 'prod', 'lock.json');
+    await saveLockFile(persistedLock, lockPath);
+
+    const staleLock = structuredClone(persistedLock);
+    delete staleLock.d1.PROD_TDB_DEFAULT_BOOTSTRAP_CORE;
+    staleLock.d1.STALE_TENANT_DATABASE = { id: 'stale-id', name: 'stale-db' };
+    (staleLock as typeof staleLock & { workers?: Record<string, { name: string }> }).workers = {
+      'ar-control': { name: 'stale-prod-ar-control' },
+    };
+
+    await expect(
+      ensureInitialControlPlaneResources({
+        env: 'prod',
+        config: config(),
+        lock: staleLock as never,
+        rootDir: root,
+        release: { manifest: release(), draft: true },
+      })
+    ).resolves.toMatchObject({ success: true, createdCount: 1 });
+
+    const reflected = await loadLockFileAuto(root, 'prod');
+    expect(staleLock).toEqual(reflected.lock);
+    expect(staleLock.d1.STALE_TENANT_DATABASE).toBeUndefined();
+    expect('workers' in staleLock).toBe(false);
+  });
+
+  it('fails closed when an accepted handoff is missing a locked shard identity', async () => {
+    const currentLock = lock();
+    delete currentLock.d1.PROD_TDB_PII_BOOTSTRAP_PII;
+    mocks.queryD1Rows.mockResolvedValueOnce([{ state: 'accepted', verification_error_code: null }]);
+
+    await expect(
+      ensureInitialControlPlaneResources({
+        env: 'prod',
+        config: config(),
+        lock: currentLock,
+        rootDir: root,
+        release: { manifest: release(), draft: true },
+      })
+    ).resolves.toMatchObject({
+      success: false,
+      error: 'initial_control_plane_accepted_lock_incomplete:PROD_TDB_PII_BOOTSTRAP_PII',
+    });
+    expect(mocks.createD1Database).not.toHaveBeenCalled();
   });
 
   it('detects missing or unregistered tenant topology without mutating resources', () => {
@@ -421,6 +734,23 @@ describe('initial Control Plane bootstrap orchestration', () => {
     });
   });
 
+  it('does not fall back to the Control database name when its immutable ID is missing', async () => {
+    const controlWithoutId = lock();
+    delete (controlWithoutId.d1.CONTROL_DB as { id?: string }).id;
+
+    await expect(
+      ensureInitialControlPlaneResources({
+        env: 'prod',
+        config: config(),
+        lock: controlWithoutId,
+        rootDir: root,
+        release: { manifest: release(), draft: true },
+      })
+    ).resolves.toMatchObject({ success: false, error: 'control_database_id_required' });
+    expect(mocks.runD1Migrations).not.toHaveBeenCalled();
+    expect(mocks.queryD1Rows).not.toHaveBeenCalled();
+  });
+
   it('seeds a deterministic policy-bound region config and preserves a matching config', async () => {
     const values = new Map<string, string>();
     const first = await ensureInitialTenantRegionShardConfig({
@@ -529,6 +859,21 @@ describe('initial Control Plane bootstrap orchestration', () => {
       if (sql.includes('lookup_tenant_aliases')) return [{ count: '3' }];
       return [{ count: 1 }];
     });
+    let adminSqlPath = '';
+    mocks.executeD1Migration.mockImplementationOnce(async (databaseId: string, sqlPath: string) => {
+      expect(databaseId).toBe('admin-id');
+      adminSqlPath = sqlPath;
+      const metadata = await lstat(sqlPath);
+      expect(metadata.isFile()).toBe(true);
+      expect(metadata.isSymbolicLink()).toBe(false);
+      expect(metadata.nlink).toBe(1);
+      if (process.platform !== 'win32') {
+        expect(metadata.mode & 0o777).toBe(0o600);
+        expect((await lstat(dirname(sqlPath))).mode & 0o777).toBe(0o700);
+      }
+      expect(await readFile(sqlPath, 'utf8')).toBe('REGISTRY SQL');
+      return { success: true };
+    });
     const result = await publishInitialControlPlaneRuntimeSnapshot({
       env: 'prod',
       config: config(),
@@ -583,15 +928,131 @@ describe('initial Control Plane bootstrap orchestration', () => {
         expect.objectContaining({ dataRole: 'tenant_pii' }),
       ])
     );
+    expect(mocks.executeD1Command).toHaveBeenCalledWith('default-id', 'INITIAL TENANT SQL');
     expect(mocks.executeD1Command).toHaveBeenCalledWith(
-      'prod-authrim-tenant-default-bootstrap-db',
-      'INITIAL TENANT SQL'
-    );
-    expect(mocks.executeD1Command).toHaveBeenCalledWith(
-      'lookup-db',
+      'lookup-id',
       expect.stringContaining('INSERT INTO lookup_tenant_aliases')
     );
+    expect(adminSqlPath).not.toBe('');
+    expect(existsSync(adminSqlPath)).toBe(false);
+    expect(existsSync(dirname(adminSqlPath))).toBe(false);
     expect(mocks.queryD1Rows).toHaveBeenCalledTimes(4);
+  });
+
+  it('waits for a stale runtime registry KV observation to converge to the exact publication', async () => {
+    const kv = await prepareRuntimeRegistryVerification();
+    const readsByKey = new Map<string, number>();
+    const wait = vi.fn().mockResolvedValue(undefined);
+    mocks.getKVKeyByNamespaceId.mockImplementation(async (_namespace: string, key: string) => {
+      const value = kv.get(key)!;
+      const readCount = readsByKey.get(key) ?? 0;
+      readsByKey.set(key, readCount + 1);
+      if (readCount > 0) return value;
+      const stale = JSON.parse(value) as { publishedAt: string; expiresAt: string };
+      stale.publishedAt = '2026-01-01T00:00:00.000Z';
+      stale.expiresAt = '2026-01-02T00:00:00.000Z';
+      return JSON.stringify(stale);
+    });
+
+    await expect(
+      publishInitialControlPlaneRuntimeSnapshot({
+        env: 'prod',
+        config: config(),
+        lock: lock(),
+        rootDir: root,
+        keysDir: root,
+        release: release(),
+        runtimeRegistryVerification: { retryDelaysMs: [1], wait },
+      })
+    ).resolves.toEqual({ success: true, publishedSnapshot: true });
+    expect(wait).toHaveBeenCalledOnce();
+    expect(wait).toHaveBeenCalledWith(1);
+    expect(mocks.getKVKeyByNamespaceId).toHaveBeenCalledTimes(4);
+    expect(mocks.putKVKeyByNamespaceId).toHaveBeenCalledTimes(3);
+  });
+
+  it('fails closed after bounded retries when a stale runtime registry publication persists', async () => {
+    const kv = await prepareRuntimeRegistryVerification();
+    const wait = vi.fn().mockResolvedValue(undefined);
+    mocks.getKVKeyByNamespaceId.mockImplementation(async (_namespace: string, key: string) => {
+      const value = kv.get(key)!;
+      if (!key.includes(':snapshot:')) return value;
+      const stale = JSON.parse(value) as { publishedAt: string; expiresAt: string };
+      stale.publishedAt = '2026-01-01T00:00:00.000Z';
+      stale.expiresAt = '2026-01-01T00:30:00.000Z';
+      return JSON.stringify(stale);
+    });
+
+    await expect(
+      publishInitialControlPlaneRuntimeSnapshot({
+        env: 'prod',
+        config: config(),
+        lock: lock(),
+        rootDir: root,
+        keysDir: root,
+        release: release(),
+        runtimeRegistryVerification: { retryDelaysMs: [1, 2, 4], wait },
+      })
+    ).resolves.toEqual({
+      success: false,
+      error: 'initial_control_plane_runtime_snapshot_smoke_failed',
+    });
+    expect(wait.mock.calls.map(([delay]) => delay)).toEqual([1, 2, 4]);
+    expect(mocks.getKVKeyByNamespaceId).toHaveBeenCalledTimes(8);
+    expect(mocks.putKVKeyByNamespaceId).toHaveBeenCalledTimes(3);
+  });
+
+  it('fails closed immediately for a malformed reflected runtime registry snapshot', async () => {
+    const kv = await prepareRuntimeRegistryVerification();
+    const wait = vi.fn().mockResolvedValue(undefined);
+    mocks.getKVKeyByNamespaceId.mockImplementation(async (_namespace: string, key: string) =>
+      key.includes(':snapshot:') ? '{"invalid":' : kv.get(key)!
+    );
+
+    await expect(
+      publishInitialControlPlaneRuntimeSnapshot({
+        env: 'prod',
+        config: config(),
+        lock: lock(),
+        rootDir: root,
+        keysDir: root,
+        release: release(),
+        runtimeRegistryVerification: { retryDelaysMs: [1, 2, 4], wait },
+      })
+    ).resolves.toEqual({
+      success: false,
+      error: 'initial_control_plane_runtime_snapshot_malformed',
+    });
+    expect(wait).not.toHaveBeenCalled();
+    expect(mocks.getKVKeyByNamespaceId).toHaveBeenCalledOnce();
+    expect(mocks.putKVKeyByNamespaceId).toHaveBeenCalledTimes(3);
+  });
+
+  it('retries a transient runtime registry read error without rewriting the publication', async () => {
+    const kv = await prepareRuntimeRegistryVerification();
+    const wait = vi.fn().mockResolvedValue(undefined);
+    let snapshotReadAttempts = 0;
+    mocks.getKVKeyByNamespaceId.mockImplementation(async (_namespace: string, key: string) => {
+      if (key.includes(':snapshot:') && snapshotReadAttempts++ === 0) {
+        throw new Error('transient KV read failure');
+      }
+      return kv.get(key)!;
+    });
+
+    await expect(
+      publishInitialControlPlaneRuntimeSnapshot({
+        env: 'prod',
+        config: config(),
+        lock: lock(),
+        rootDir: root,
+        keysDir: root,
+        release: release(),
+        runtimeRegistryVerification: { retryDelaysMs: [1], wait },
+      })
+    ).resolves.toEqual({ success: true, publishedSnapshot: true });
+    expect(wait).toHaveBeenCalledWith(1);
+    expect(mocks.getKVKeyByNamespaceId).toHaveBeenCalledTimes(3);
+    expect(mocks.putKVKeyByNamespaceId).toHaveBeenCalledTimes(3);
   });
 
   it('does not publish a runtime route when the dedicated core tenant seed fails', async () => {
@@ -742,6 +1203,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
         rootDir: root,
         keysDir: root,
         release: release(),
+        runtimeRegistryVerification: { retryDelaysMs: [] },
       })
     ).resolves.toEqual({
       success: false,
@@ -781,6 +1243,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
         rootDir: root,
         keysDir: root,
         release: release(),
+        runtimeRegistryVerification: { retryDelaysMs: [] },
       })
     ).resolves.toEqual({
       success: false,

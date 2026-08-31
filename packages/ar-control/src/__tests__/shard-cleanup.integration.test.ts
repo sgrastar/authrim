@@ -133,7 +133,7 @@ function seedRetiredShard(database: DatabaseSync): void {
       origin_operation_id, desired_spec_json, created_at, updated_at
     ) VALUES (
       'resource-retired', 'env-test', 'd1', 'retired-default',
-      'test-retired-default', '${hash}', 'active', 'seed-op', '{}', 1, 1
+      'test-retired-default', '${hash}', 'creating', 'seed-op', '{}', 1, 1
     );
     INSERT INTO control_observed_resources (
       observed_resource_id, environment_id, desired_resource_id, provider_resource_id,
@@ -143,7 +143,8 @@ function seedRetiredShard(database: DatabaseSync): void {
       'observed-retired', 'env-test', 'resource-retired', 'database-retired',
       'test-retired-default', 'd1', '${hash}', 'present', '{}', 1
     );
-    UPDATE control_desired_resources SET observed_resource_id = 'observed-retired'
+    UPDATE control_desired_resources
+       SET observed_resource_id = 'observed-retired', provisioning_state = 'active'
       WHERE desired_resource_id = 'resource-retired';
     INSERT INTO control_tenant_shards (
       shard_id, environment_id, data_role, residency_policy_id, residency_partition,

@@ -56,6 +56,25 @@ describe('Cloudflare D1 database listing', () => {
     );
   });
 
+  it('rejects duplicate Wrangler D1 names or immutable IDs', () => {
+    expect(() =>
+      parseD1DatabaseListOutput(
+        JSON.stringify([
+          { name: 'same-name', uuid: 'first-id' },
+          { name: 'same-name', uuid: 'second-id' },
+        ])
+      )
+    ).toThrow('duplicate resource name');
+    expect(() =>
+      parseD1DatabaseListOutput(
+        JSON.stringify([
+          { name: 'first-name', uuid: 'same-id' },
+          { name: 'second-name', uuid: 'same-id' },
+        ])
+      )
+    ).toThrow('duplicate immutable resource ID');
+  });
+
   it('prefers the Cloudflare API when CI credentials are available', async () => {
     process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
     process.env.CLOUDFLARE_API_TOKEN = 'test-token';
@@ -76,7 +95,10 @@ describe('Cloudflare D1 database listing', () => {
       new URL(
         'https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/d1/database?page=1&per_page=1000'
       ),
-      { headers: { Authorization: 'Bearer test-token' } }
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer test-token' },
+        signal: expect.any(AbortSignal),
+      })
     );
     expect(execaMock).not.toHaveBeenCalled();
   });
@@ -101,5 +123,32 @@ describe('Cloudflare D1 database listing', () => {
       ['wrangler', 'd1', 'list', '--json'],
       expect.objectContaining({ reject: false, timeout: 30000 })
     );
+  });
+
+  it('rejects a repeated API page instead of satisfying total_count with duplicates', async () => {
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        result: [{ name: 'repeated', uuid: 'repeated-id' }],
+        result_info: { count: 1, page: 1, per_page: 1, total_count: 2, total_pages: 2 },
+      }),
+    });
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        result: [{ name: 'repeated', uuid: 'repeated-id' }],
+        result_info: { count: 1, page: 1, per_page: 1, total_count: 2, total_pages: 2 },
+      }),
+    });
+    execaMock.mockRejectedValueOnce(new Error('Wrangler unavailable'));
+
+    await expect(listD1Databases()).rejects.toThrow('duplicate resource identity');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

@@ -28,6 +28,11 @@ export interface ControlProvisioningD1Plan {
   readReplicationMode: 'enabled' | 'disabled';
 }
 
+export interface ControlProvisioningD1CreateCheckpoint {
+  state: 'not_started' | 'issued' | 'identified';
+  providerResourceId: string | null;
+}
+
 export interface ControlProvisioningOperationState {
   operationId: string;
   attemptCount: number;
@@ -97,7 +102,11 @@ export function classifyControlProvisioningFailure(
     }
     if (
       code === 'cloudflare_d1_create_missing_id' ||
-      code === 'cloudflare_d1_replication_state_mismatch'
+      code === 'cloudflare_d1_replication_state_mismatch' ||
+      code === 'cloudflare_d1_provider_identity_mismatch' ||
+      code === 'cloudflare_d1_name_conflict' ||
+      code === 'cloudflare_d1_create_outcome_ambiguous' ||
+      code === 'control_d1_create_checkpoint_invalid'
     ) {
       return { code, permanent: true };
     }
@@ -208,22 +217,70 @@ export async function executeControlProvisioningEffect<TResult, TState>(
 export async function ensureControlProvisioningD1(input: {
   plan: ControlProvisioningD1Plan;
   provider: ControlProvisioningD1Provider;
+  checkpoint: ControlProvisioningD1CreateCheckpoint;
   reserveCreate: () => Promise<boolean>;
+  markCreateIssued: () => Promise<void>;
+  markCreateDefinitelyRejected: () => Promise<void>;
+  checkpointProviderIdentity: (databaseId: string) => Promise<void>;
 }): Promise<string> {
-  const existing = (await input.provider.listD1Databases()).find(
-    (database) => database.name === input.plan.databaseName
-  );
-  if (!existing && !(await input.reserveCreate())) {
-    throw new Error('control_daily_d1_budget_exhausted');
+  if (
+    (input.checkpoint.state === 'identified') !== Boolean(input.checkpoint.providerResourceId) ||
+    (input.checkpoint.state !== 'identified' && input.checkpoint.providerResourceId !== null)
+  ) {
+    throw new Error('control_d1_create_checkpoint_invalid');
   }
-  const database =
-    existing ??
-    (await input.provider.createD1Database({
-      name: input.plan.databaseName,
-      jurisdiction: input.plan.jurisdiction,
-      primary_location_hint: input.plan.locationHint,
-    }));
-  if (!database.uuid) throw new Error('cloudflare_d1_create_missing_id');
+
+  let database: ControlProvisioningD1Database;
+  if (input.checkpoint.state === 'identified') {
+    database = await input.provider.getD1Database(input.checkpoint.providerResourceId!);
+    if (
+      database.uuid !== input.checkpoint.providerResourceId ||
+      database.name !== input.plan.databaseName
+    ) {
+      throw new Error('cloudflare_d1_provider_identity_mismatch');
+    }
+  } else {
+    if (input.checkpoint.state === 'issued') {
+      throw new Error('cloudflare_d1_create_outcome_ambiguous');
+    }
+    if (
+      (await input.provider.listD1Databases()).some(
+        (candidate) => candidate.name === input.plan.databaseName
+      )
+    ) {
+      throw new Error('cloudflare_d1_name_conflict');
+    }
+    if (!(await input.reserveCreate())) {
+      throw new Error('control_daily_d1_budget_exhausted');
+    }
+    await input.markCreateIssued();
+    try {
+      database = await input.provider.createD1Database({
+        name: input.plan.databaseName,
+        jurisdiction: input.plan.jurisdiction,
+        primary_location_hint: input.plan.locationHint,
+      });
+    } catch (error) {
+      const status = errorStatus(error);
+      if (
+        status === 401 ||
+        status === 403 ||
+        status === 429 ||
+        (status !== null && status >= 400 && status < 500 && status !== 408)
+      ) {
+        await input.markCreateDefinitelyRejected();
+      }
+      throw error;
+    }
+    if (!database.uuid) throw new Error('cloudflare_d1_create_missing_id');
+    // Persist the immutable UUID before read-replication changes or any other post-create call.
+    // A crash after this point can resume only by exact ID; a crash before it remains ambiguous
+    // and must never trigger a second create.
+    await input.checkpointProviderIdentity(database.uuid);
+    if (database.name !== input.plan.databaseName) {
+      throw new Error('cloudflare_d1_provider_identity_mismatch');
+    }
+  }
 
   const desiredProviderMode = input.plan.readReplicationMode === 'enabled' ? 'auto' : 'disabled';
   const replicationResult =
@@ -236,7 +293,11 @@ export async function ensureControlProvisioningD1(input: {
     throw new Error('cloudflare_d1_replication_state_mismatch');
   }
   const reflectedDatabase = await input.provider.getD1Database(database.uuid);
-  if (reflectedDatabase.read_replication?.mode !== desiredProviderMode) {
+  if (
+    reflectedDatabase.uuid !== database.uuid ||
+    reflectedDatabase.name !== input.plan.databaseName ||
+    reflectedDatabase.read_replication?.mode !== desiredProviderMode
+  ) {
     throw new Error('cloudflare_d1_replication_state_mismatch');
   }
   return database.uuid;

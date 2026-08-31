@@ -12,8 +12,9 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 import { join, basename } from 'node:path';
+import { writePrivateFileAtomically } from './atomic-file.js';
 import { getEnvironmentPaths } from './paths.js';
 import { generateWranglerConfig, toToml, type ResourceIds } from './wrangler.js';
 import type { AuthrimConfig } from './config.js';
@@ -76,6 +77,43 @@ export interface WranglerFileStatus {
 // =============================================================================
 // Utility Functions
 // =============================================================================
+
+const DEFAULT_WRANGLER_FILE_MODE = 0o644;
+
+async function readSafeWranglerFileMode(path: string): Promise<number | null> {
+  try {
+    const metadata = await stat(path);
+    if (!metadata.isFile()) {
+      throw new Error(`wrangler_config_path_not_regular_file:${path}`);
+    }
+    // Wrangler configs are non-secret deployment inputs. Preserve existing
+    // restrictions without retaining executable or group/other write bits.
+    return metadata.mode & 0o777 & DEFAULT_WRANGLER_FILE_MODE;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+export async function writeWranglerFileAtomically(
+  path: string,
+  content: string,
+  sourceModePath?: string
+): Promise<void> {
+  const targetMode = await readSafeWranglerFileMode(path);
+  const sourceMode = sourceModePath ? await readSafeWranglerFileMode(sourceModePath) : null;
+  const mode =
+    targetMode !== null && sourceMode !== null
+      ? targetMode & sourceMode
+      : (targetMode ?? sourceMode ?? DEFAULT_WRANGLER_FILE_MODE);
+  await writePrivateFileAtomically(path, content, mode);
+}
+
+// Atomic rename prevents a crash from publishing a truncated individual file.
+// It does not serialize read-merge-write or make a multi-component update a
+// transaction. Every caller that reads, merges, writes, or subsequently uses
+// package wrangler.toml files must hold the workspace deploy-config lock for
+// that entire interval.
 
 /**
  * Normalize TOML content for comparison (remove comments, whitespace variations)
@@ -360,7 +398,7 @@ export async function saveMasterWranglerConfigs(
       const masterPath = getMasterWranglerPath(envPaths, component);
 
       if (!dryRun) {
-        await writeFile(masterPath, tomlContent, 'utf-8');
+        await writeWranglerFileAtomically(masterPath, tomlContent);
         onProgress?.(`  Saved ${component}.toml`);
       } else {
         onProgress?.(`  Would save ${component}.toml`);
@@ -460,7 +498,7 @@ export async function syncWranglerConfigs(
             case 'backup':
               if (!dryRun) {
                 const backupPath = deployPath + '.backup';
-                await writeFile(backupPath, deployContent, 'utf-8');
+                await writeWranglerFileAtomically(backupPath, deployContent, deployPath);
                 onProgress?.(`  ${component}: Backed up to ${basename(backupPath)}`);
               }
               // Fall through to overwrite
@@ -475,7 +513,7 @@ export async function syncWranglerConfigs(
 
       // Write master content to deploy location
       if (!dryRun) {
-        await writeFile(deployPath, nextDeployContent, 'utf-8');
+        await writeWranglerFileAtomically(deployPath, nextDeployContent, masterPath);
         onProgress?.(`  ${component}: Synced to wrangler.toml`);
       } else {
         onProgress?.(`  ${component}: Would sync to wrangler.toml`);
@@ -509,7 +547,7 @@ export async function backupDeployConfigs(
     if (existsSync(deployPath)) {
       const content = await readFile(deployPath, 'utf-8');
       const backupPath = deployPath + '.backup';
-      await writeFile(backupPath, content, 'utf-8');
+      await writeWranglerFileAtomically(backupPath, content, deployPath);
       backedUp.push(component);
       onProgress?.(`  Backed up ${component}/wrangler.toml`);
     }
@@ -533,7 +571,7 @@ export async function restoreDeployConfigs(
 
     if (existsSync(backupPath)) {
       const content = await readFile(backupPath, 'utf-8');
-      await writeFile(deployPath, content, 'utf-8');
+      await writeWranglerFileAtomically(deployPath, content, backupPath);
       restored.push(component);
       onProgress?.(`  Restored ${component}/wrangler.toml`);
     }

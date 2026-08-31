@@ -865,6 +865,8 @@ const zhTW: Translations = {
   'web.envDetail.automaticProvisioningBlocked': '自動佈建已被封鎖。',
   'web.envDetail.automaticProvisioningMissing': '（缺少：{{missing}}）',
   'web.envDetail.automaticProvisioningRepairHint': '請輸入新的一次性 token 進行修復。',
+  'web.envDetail.bootstrapRetainedForRetry':
+    'Cloudflare 發生暫時性錯誤。Bootstrap token 仍然有效；請重新輸入相同 token 並選擇「啟用」以繼續。',
   'web.envDetail.revokeTokensBeforeRetry':
     '重試前，請在 Cloudflare Dashboard 撤銷列出的 Authrim bootstrap token 與子 token。',
   'web.envDetail.bootstrapRevokedPendingReset': 'Bootstrap token 已撤銷，但無法重設待處理狀態。',

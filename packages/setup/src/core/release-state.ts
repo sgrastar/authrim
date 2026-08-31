@@ -6,6 +6,148 @@ import {
   type ReleaseMigrationPhysicalTarget,
 } from './release-migrations.js';
 
+export type AppendOnlyInitialDraftResumeResult =
+  | { allowed: true; appendedFileCount: number }
+  | {
+      allowed: false;
+      reason:
+        | 'not_draft'
+        | 'release_state_ineligible'
+        | 'manifest_version_mismatch'
+        | 'manifest_checksum_mismatch'
+        | 'manifest_checksum_unchanged'
+        | 'target_evidence_missing'
+        | 'target_identity_changed'
+        | 'target_stream_changed'
+        | 'target_ownership_changed'
+        | 'migration_file_removed_or_reordered'
+        | 'migration_file_changed'
+        | 'no_forward_migration_added';
+    };
+
+/**
+ * Prove that an interrupted fresh installation can safely advance to a newer draft manifest.
+ *
+ * Draft manifests are mutable during development, while a database that has already completed the
+ * schema phase is not. The lock therefore has to provide complete, exact evidence for every
+ * physical target. A resume is allowed only when the target inventory is unchanged and each
+ * previously applied file is an identical prefix of the current stream. Published manifests and
+ * incomplete/legacy checkpoints deliberately remain outside this recovery path.
+ */
+export function evaluateAppendOnlyInitialDraftResume(input: {
+  lock: AuthrimLock;
+  currentManifest: ReleaseMigrationManifest;
+  currentManifestChecksum: string;
+  currentTargets: readonly ReleaseMigrationPhysicalTarget[];
+  currentManifestIsDraft: boolean;
+}): AppendOnlyInitialDraftResumeResult {
+  if (!input.currentManifestIsDraft) return { allowed: false, reason: 'not_draft' };
+
+  const release = input.lock.releaseUpdate;
+  if (
+    input.lock.productVersion !== undefined ||
+    !release ||
+    release.previousProductVersion !== undefined ||
+    (release.phase !== 'schema_applied' && release.phase !== 'workers_deployed') ||
+    release.initialWorkerRedeployRequired === true
+  ) {
+    return { allowed: false, reason: 'release_state_ineligible' };
+  }
+  if (
+    release.targetVersion !== input.currentManifest.productVersion ||
+    input.currentManifest.productVersion.length === 0
+  ) {
+    return { allowed: false, reason: 'manifest_version_mismatch' };
+  }
+  if (calculateReleaseManifestChecksum(input.currentManifest) !== input.currentManifestChecksum) {
+    return { allowed: false, reason: 'manifest_checksum_mismatch' };
+  }
+  if (release.manifestChecksum === input.currentManifestChecksum) {
+    return { allowed: false, reason: 'manifest_checksum_unchanged' };
+  }
+
+  const appliedTargetIds = release.appliedTargets;
+  const currentTargetIds = input.currentTargets.map((target) => target.id);
+  const uniqueAppliedTargetIds = new Set(appliedTargetIds);
+  const uniqueCurrentTargetIds = new Set(currentTargetIds);
+  const schemaTargetIds = Object.keys(input.lock.schemaTargets ?? {});
+  if (
+    appliedTargetIds.length === 0 ||
+    uniqueAppliedTargetIds.size !== appliedTargetIds.length ||
+    uniqueCurrentTargetIds.size !== currentTargetIds.length ||
+    uniqueAppliedTargetIds.size !== uniqueCurrentTargetIds.size ||
+    [...uniqueAppliedTargetIds].some((targetId) => !uniqueCurrentTargetIds.has(targetId)) ||
+    [...uniqueCurrentTargetIds].some((targetId) => !uniqueAppliedTargetIds.has(targetId)) ||
+    schemaTargetIds.length === 0 ||
+    schemaTargetIds.some((targetId) => !input.lock.schemaTargets?.[targetId]) ||
+    [...uniqueAppliedTargetIds].some((targetId) => !input.lock.schemaTargets?.[targetId])
+  ) {
+    return { allowed: false, reason: 'target_evidence_missing' };
+  }
+  if (
+    schemaTargetIds.length !== uniqueCurrentTargetIds.size ||
+    schemaTargetIds.some((targetId) => !uniqueCurrentTargetIds.has(targetId)) ||
+    [...uniqueCurrentTargetIds].some((targetId) => !input.lock.schemaTargets?.[targetId])
+  ) {
+    return { allowed: false, reason: 'target_identity_changed' };
+  }
+
+  const manualTargetIds = new Set(release.manualTargets);
+  if (
+    manualTargetIds.size !== release.manualTargets.length ||
+    [...manualTargetIds].some((targetId) => !uniqueCurrentTargetIds.has(targetId))
+  ) {
+    return { allowed: false, reason: 'target_evidence_missing' };
+  }
+
+  let appendedFileCount = 0;
+  for (const target of input.currentTargets) {
+    const state = input.lock.schemaTargets?.[target.id];
+    if (
+      !state ||
+      state.productVersion !== release.targetVersion ||
+      state.manifestChecksum !== release.manifestChecksum ||
+      !state.streamId ||
+      !Array.isArray(state.files)
+    ) {
+      return { allowed: false, reason: 'target_evidence_missing' };
+    }
+    if (!target.streamId || target.streamId !== state.streamId) {
+      return { allowed: false, reason: 'target_stream_changed' };
+    }
+    const expectedManual = !target.automatic;
+    if (
+      manualTargetIds.has(target.id) !== expectedManual ||
+      (state.appliedBy === 'operator') !== expectedManual
+    ) {
+      return { allowed: false, reason: 'target_ownership_changed' };
+    }
+
+    const currentStream = input.currentManifest.streams.find(
+      (stream) => stream.id === target.streamId
+    );
+    if (!currentStream || currentStream.files.length < state.files.length) {
+      return { allowed: false, reason: 'migration_file_removed_or_reordered' };
+    }
+    for (let index = 0; index < state.files.length; index += 1) {
+      const previousFile = state.files[index];
+      const currentFile = currentStream.files[index];
+      if (currentFile.path !== previousFile.path) {
+        return { allowed: false, reason: 'migration_file_removed_or_reordered' };
+      }
+      if (currentFile.checksum !== previousFile.checksum) {
+        return { allowed: false, reason: 'migration_file_changed' };
+      }
+    }
+    appendedFileCount += currentStream.files.length - state.files.length;
+  }
+
+  if (appendedFileCount === 0) {
+    return { allowed: false, reason: 'no_forward_migration_added' };
+  }
+  return { allowed: true, appendedFileCount };
+}
+
 export function withReleaseUpdateState(
   lock: AuthrimLock,
   input: {

@@ -55,6 +55,12 @@ interface RefreshedSigningState {
   staged: ControlStagedSigningKey[];
 }
 
+function assertSigningKeyEnvironmentLock(lock: AuthrimLock, environment: string): void {
+  if (lock.env !== environment) {
+    throw new Error('signing_key_rotation_lock_environment_mismatch');
+  }
+}
+
 function purposeState(
   state: ControlKeyState,
   purpose: ControlSigningKeyPurpose
@@ -134,6 +140,9 @@ async function loadEnvironment(options: SigningKeyRotateOptions): Promise<Enviro
   const paths = getEnvironmentPaths({ baseDir, env });
   if (!existsSync(paths.config)) throw new Error(`environment_config_not_found:${env}`);
   const config = AuthrimConfigSchema.parse(JSON.parse(await readFile(paths.config, 'utf8')));
+  if (config.environment.prefix !== env) {
+    throw new Error('signing_key_rotation_config_environment_mismatch');
+  }
   const source = options.source ? resolve(options.source) : baseDir;
   const keysDir = resolveDownstreamIntrospectionKeysDir({
     env,
@@ -160,15 +169,16 @@ async function refreshSigningState(input: {
   context: EnvironmentContext;
   lock: AuthrimLock;
 }): Promise<RefreshedSigningState> {
-  const controlDatabaseName = input.lock.d1.CONTROL_DB?.name;
-  if (!controlDatabaseName) throw new Error('control_database_required_for_signing_key_rotation');
+  assertSigningKeyEnvironmentLock(input.lock, input.context.env);
+  const controlDatabaseId = input.lock.d1.CONTROL_DB?.id;
+  if (!controlDatabaseId) throw new Error('control_database_required_for_signing_key_rotation');
   const keyState = await loadControlGeneratedKeyState({
-    controlDatabaseName,
+    controlDatabaseName: controlDatabaseId,
     environmentId: input.context.env,
   });
   if (!keyState) throw new Error('control_generated_key_state_missing');
   const staged = await loadControlStagedSigningKeys({
-    controlDatabaseName,
+    controlDatabaseName: controlDatabaseId,
     environmentId: input.context.env,
   });
   await reconcileLocalControlKeyFiles({
@@ -234,6 +244,7 @@ async function rotateControlSigningKey(
   const label = purpose === 'runtime_registry' ? 'Runtime Registry' : 'smoke RPC';
   const initial = await loadLockFileAuto(context.environmentBaseDir, context.env);
   if (!initial.lock) throw new Error(`environment_lock_not_found:${context.env}`);
+  assertSigningKeyEnvironmentLock(initial.lock, context.env);
 
   console.log(chalk.bold(`\nAuthrim ${label} signing key rotation\n`));
   console.log(`Environment: ${chalk.cyan(context.env)}`);
@@ -291,20 +302,23 @@ async function rotateControlSigningKey(
     await deployRotationState(context, options, purpose);
 
     const verificationLock = await loadLockFileAuto(context.environmentBaseDir, context.env);
-    const controlDatabaseName = verificationLock.lock?.d1.CONTROL_DB?.name;
-    if (!controlDatabaseName || !staged) {
+    if (verificationLock.lock) {
+      assertSigningKeyEnvironmentLock(verificationLock.lock, context.env);
+    }
+    const controlDatabaseId = verificationLock.lock?.d1.CONTROL_DB?.id;
+    if (!controlDatabaseId || !staged) {
       throw new Error('signing_key_rotation_state_missing');
     }
     const verificationCandidate = (
       await loadControlStagedSigningKeys({
-        controlDatabaseName,
+        controlDatabaseName: controlDatabaseId,
         environmentId: context.env,
       })
     ).find((candidate) => candidate.purpose === purpose);
     if (!verificationCandidate) throw new Error('signing_key_rotation_staged_state_missing');
     console.log(chalk.cyan('Waiting for candidate test-vector verification on all targets...'));
     await waitForSigningKeyVerification({
-      controlDatabaseName,
+      controlDatabaseName: controlDatabaseId,
       environmentId: context.env,
       purpose,
       keyId: staged.candidateKeyId,
@@ -370,6 +384,7 @@ async function rotateControlSigningKey(
   if (!beforeFinalDeploy.lock?.controlKeyState) {
     throw new Error('signing_key_rotation_state_missing');
   }
+  assertSigningKeyEnvironmentLock(beforeFinalDeploy.lock, context.env);
   await waitUntilEpochSecondAfter(
     purposeState(beforeFinalDeploy.lock.controlKeyState, purpose).updatedAt * 1000
   );
@@ -377,6 +392,7 @@ async function rotateControlSigningKey(
   await deployRotationState(context, options, purpose);
 
   const finalLock = await loadLockFileAuto(context.environmentBaseDir, context.env);
+  if (finalLock.lock) assertSigningKeyEnvironmentLock(finalLock.lock, context.env);
   if (!finalLock.lock || activatedSigningRotationNeedsDeployment(finalLock.lock, purpose)) {
     throw new Error('signing_key_rotation_final_deployment_not_observed');
   }

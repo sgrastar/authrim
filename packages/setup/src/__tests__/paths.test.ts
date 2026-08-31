@@ -6,6 +6,7 @@ import {
   getEnvironmentPaths,
   getExternalKeysDir,
   getExternalKeysPathForConfig,
+  deriveExternalKeysBaseDirFromConfigPath,
   findKeysDirectory,
   getLegacyPaths,
   detectStructure,
@@ -48,6 +49,7 @@ describe('paths module', () => {
       expect(paths.root).toBe('/project/.authrim/dev');
       expect(paths.config).toBe('/project/.authrim/dev/config.json');
       expect(paths.lock).toBe('/project/.authrim/dev/lock.json');
+      expect(paths.pendingEmailSecrets).toBe('/project/.authrim/dev/pending-email-secrets.json');
       expect(paths.version).toBe('/project/.authrim/dev/version.txt');
       expect(paths.keys).toBe('/project/.authrim/dev/keys');
       expect(paths.uiEnv).toBe('/project/.authrim/dev/ui.env');
@@ -519,6 +521,23 @@ describe('paths module', () => {
       expect(() => getExternalKeysPathForConfig('PROD', '/home/user')).toThrow(
         'must be lowercase alphanumeric'
       );
+    });
+  });
+
+  describe('deriveExternalKeysBaseDirFromConfigPath', () => {
+    it('recovers the exact key base from a persisted external path', () => {
+      expect(
+        deriveExternalKeysBaseDirFromConfigPath('prod', '/srv/authrim/.authrim-keys/prod/')
+      ).toBe('/srv/authrim');
+    });
+
+    it('rejects a path for another environment or storage layout', () => {
+      expect(() =>
+        deriveExternalKeysBaseDirFromConfigPath('prod', '/srv/authrim/.authrim-keys/test/')
+      ).toThrow('external_keys_config_path_mismatch');
+      expect(() =>
+        deriveExternalKeysBaseDirFromConfigPath('prod', '/srv/authrim/keys/prod/')
+      ).toThrow('external_keys_config_path_mismatch');
     });
   });
 

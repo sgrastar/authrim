@@ -6531,6 +6531,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     let selectedEnvDetailConfig = null;
     let selectedEnvRecoveryStatus = null;
     let envControlBootstrapOwnership = null;
+    let envControlBootstrapPhase = 'unknown';
     let controlCapacityPreview = null;
     let selectedEnvForDelete = null;
     let envCardRenderGeneration = 0;
@@ -10164,11 +10165,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           method: 'POST',
           body: { keyId: config.env + '-key-' + Date.now(), env: config.env },
         });
+        if (!keyResult.success) {
+          throw new Error(apiErrorMessages(keyResult).join('; '));
+        }
         output.textContent += '  ✓ RSA key pair generated\\n';
         output.textContent += '  ✓ Encryption keys generated\\n';
         output.textContent += '  ✓ Admin secrets generated\\n';
-        if (keyResult.replacedExistingKeys === true) {
-          output.textContent += '  ⚠ ' + t('keys.replaced') + '\\n';
+        if (keyResult.reusedExistingKeys === true) {
+          output.textContent += '  ✓ Existing environment keys reused\\n';
         }
         output.textContent += '\\n';
         provisionProgress.handle('Admin secrets generated');
@@ -10248,7 +10252,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         status.className = '';
         btn.classList.remove('hidden');
         btn.disabled = false;
-        btnGotoDeploy.disabled = false;
+        btnGotoDeploy.disabled = !provisioningCompleted;
         resourcePreview.classList.remove('hidden');
       }
     });
@@ -10331,7 +10335,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         const button = document.getElementById('btn-env-enable-control-automatic');
         const status = document.getElementById('env-control-automatic-message');
         let bootstrapToken = input.value.trim();
-        if (!bootstrapToken) {
+        const recoveringCutover = envControlBootstrapPhase !== 'none';
+        if (!bootstrapToken && !recoveringCutover) {
           status.textContent = t('web.envDetail.enterOneTimeTokenFirst');
           input.focus();
           return;
@@ -10340,28 +10345,30 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         button.disabled = true;
         status.textContent = t('web.envDetail.preparingControlAuthority');
         try {
-          const prepared = await api('/control/automatic-provisioning/prepare', {
-            method: 'POST',
-            body: {
-              env: envName,
-              ...(envControlBootstrapOwnership
-                ? { ownership: envControlBootstrapOwnership }
-                : {}),
-            },
-          });
-          if (!prepared.success) throw new Error(prepared.error || 'Preparation failed');
-          status.textContent = t('web.envDetail.deployingControlWorker');
-          const deployed = await api('/deploy/component/ar-control', {
-            method: 'POST',
-            body: { env: envName, dryRun: false, skipBuild: false },
-          });
-          if (!deployed.success) throw new Error(deployed.error || 'Control deployment failed');
+          if (!recoveringCutover) {
+            const prepared = await api('/control/automatic-provisioning/prepare', {
+              method: 'POST',
+              body: {
+                env: envName,
+                ...(envControlBootstrapOwnership
+                  ? { ownership: envControlBootstrapOwnership }
+                  : {}),
+              },
+            });
+            if (!prepared.success) throw new Error(prepared.error || 'Preparation failed');
+            status.textContent = t('web.envDetail.deployingControlWorker');
+            const deployed = await api('/deploy/component/ar-control', {
+              method: 'POST',
+              body: { env: envName, dryRun: false, skipBuild: false },
+            });
+            if (!deployed.success) throw new Error(deployed.error || 'Control deployment failed');
+          }
           status.textContent = t('web.envDetail.registeringScopedCredentials');
           const completed = await api('/control/automatic-provisioning/complete', {
             method: 'POST',
             body: {
               env: envName,
-              bootstrapToken,
+              ...(bootstrapToken ? { bootstrapToken } : {}),
               ...(envControlBootstrapOwnership
                 ? { ownership: envControlBootstrapOwnership }
                 : {}),
@@ -10370,11 +10377,40 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           if (!completed.success) {
             const completionError = new Error(completed.error || 'Credential bootstrap failed');
             completionError.cleanupRequired = completed.cleanupRequired === true;
+            completionError.bootstrapRetainedForRetry =
+              completed.bootstrapRetainedForRetry === true;
+            completionError.cutoverPending = completed.cutoverPending === true;
+            completionError.recoveryTokenRequired = completed.recoveryTokenRequired === true;
             throw completionError;
           }
           envControlBootstrapOwnership = null;
           await loadEnvControlAutomaticProvisioning(envName);
         } catch (error) {
+          if (error.recoveryTokenRequired === true) {
+            envControlBootstrapOwnership = null;
+            document
+              .getElementById('btn-env-create-control-bootstrap-token')
+              .classList.remove('hidden');
+            status.textContent =
+              (error.message || 'The previous revocation response was interrupted.') +
+              ' Create a new one-time token, enter it here, and select Enable to verify and finish cleanup.';
+            input.focus();
+            return;
+          }
+          if (recoveringCutover || error.cutoverPending === true) {
+            status.textContent =
+              (error.message || 'Automatic provisioning cutover paused.') +
+              ' Select Enable again to resume the durable cutover.';
+            return;
+          }
+          if (error.bootstrapRetainedForRetry === true) {
+            status.textContent =
+              (error.message || 'Automatic provisioning setup paused.') +
+              ' ' +
+              t('web.envDetail.bootstrapRetainedForRetry');
+            input.focus();
+            return;
+          }
           let cleanupConfirmed = error.cleanupRequired === false;
           if (!cleanupConfirmed) {
             try {
@@ -10652,7 +10688,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           if (result.logPath) {
             output.textContent += '\\nLog: ' + result.logPath + '\\n';
           }
-          throw new Error(result.error || t('web.status.error'));
+          const deploymentError = new Error(result.error || t('web.status.error'));
+          deploymentError.cleanupRequired = result.cleanupRequired === true;
+          deploymentError.bootstrapRetainedForRetry =
+            result.bootstrapRetainedForRetry === true;
+          deploymentError.recoveryTokenRequired = result.recoveryTokenRequired === true;
+          throw deploymentError;
         }
       } catch (error) {
         bootstrapTokenInput.value = '';
@@ -10661,6 +10702,16 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           pollInterval = null;
         }
         output.textContent += '\\n✗ Error: ' + error.message + '\\n';
+        if (error.bootstrapRetainedForRetry === true) {
+          output.textContent +=
+            t('web.envDetail.bootstrapRetainedForRetry') + '\\n';
+        }
+        if (error.recoveryTokenRequired === true) {
+          resumeControlBootstrapReady = false;
+          controlBootstrapOwnership = null;
+          document.getElementById('control-bootstrap-token-status').textContent =
+            'Create and enter a new one-time token to verify the interrupted revocation, then retry deployment.';
+        }
         status.textContent = t('web.status.error');
         status.className = '';
         let renderedServerSnapshot = false;
@@ -11953,12 +12004,18 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (!controlPlane) return;
       const capabilityState = result.authority?.capabilityState ||
         (result.enabled ? 'pending' : 'disabled');
-      status.textContent = capabilityState === 'ready'
+      envControlBootstrapPhase = result.authority?.bootstrapPhase || 'none';
+      status.textContent = envControlBootstrapPhase !== 'none'
+        ? envControlBootstrapPhase.replaceAll('_', ' ')
+        : capabilityState === 'ready'
         ? t('web.envDetail.automaticProvisioningOn')
         : capabilityState === 'disabled'
           ? t('web.envDetail.automaticProvisioningOff')
           : capabilityState;
       inputs.classList.toggle('hidden', capabilityState === 'ready');
+      document
+        .getElementById('btn-env-create-control-bootstrap-token')
+        .classList.toggle('hidden', envControlBootstrapPhase !== 'none');
       const missingResourceClasses = Array.isArray(result.missingResourceClasses)
         ? result.missingResourceClasses.join(', ')
         : '';
@@ -11975,6 +12032,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     async function loadEnvControlAutomaticProvisioning(envName) {
       const status = document.getElementById('env-control-automatic-status');
+      envControlBootstrapPhase = 'unknown';
+      document.getElementById('env-control-automatic-inputs').classList.add('hidden');
+      document.getElementById('btn-env-create-control-bootstrap-token').classList.add('hidden');
       status.textContent = t('web.envDetail.automaticProvisioningChecking');
       try {
         renderEnvControlAutomaticProvisioning(

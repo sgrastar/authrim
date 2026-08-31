@@ -65,6 +65,149 @@ export function buildSetupUiUrl(baseUrl: string, options: { lang?: string; token
   return url.toString();
 }
 
+export interface WebRequestDrainController {
+  beginRequest: () => boolean;
+  finishRequest: () => void;
+  beginDrain: () => void;
+  waitForIdle: () => Promise<void>;
+  activeRequests: () => number;
+}
+
+/** Track complete Hono request lifetimes so route-level async cleanup finishes before shutdown. */
+export function createWebRequestDrainController(): WebRequestDrainController {
+  let acceptingRequests = true;
+  let activeRequests = 0;
+  const idleWaiters = new Set<() => void>();
+
+  const resolveIdleWaiters = (): void => {
+    if (activeRequests !== 0) return;
+    for (const resolveIdle of idleWaiters) resolveIdle();
+    idleWaiters.clear();
+  };
+
+  return {
+    beginRequest: () => {
+      if (!acceptingRequests) return false;
+      activeRequests += 1;
+      return true;
+    },
+    finishRequest: () => {
+      if (activeRequests <= 0) {
+        throw new Error('web_request_drain_counter_underflow');
+      }
+      activeRequests -= 1;
+      resolveIdleWaiters();
+    },
+    beginDrain: () => {
+      acceptingRequests = false;
+      resolveIdleWaiters();
+    },
+    waitForIdle: () => {
+      if (activeRequests === 0) return Promise.resolve();
+      return new Promise<void>((resolveIdle) => idleWaiters.add(resolveIdle));
+    },
+    activeRequests: () => activeRequests,
+  };
+}
+
+type ShutdownSignal = 'SIGINT' | 'SIGTERM';
+
+export interface WebShutdownController {
+  handleSignal: (signal: ShutdownSignal) => Promise<void>;
+}
+
+export interface WebShutdownControllerOptions {
+  stopAccepting: () => void | Promise<void>;
+  waitForDrain: () => Promise<void>;
+  exit: (code: number) => void;
+  gracePeriodMs?: number;
+  scheduleTimeout?: (callback: () => void, milliseconds: number) => () => void;
+  onStopping?: (signal: ShutdownSignal) => void;
+  onStopped?: () => void;
+  onWarning?: (message: string) => void;
+}
+
+const DEFAULT_WEB_SHUTDOWN_GRACE_PERIOD_MS = 60_000;
+
+/**
+ * Coordinate signal shutdown without making tests terminate their own process.
+ *
+ * The first signal closes admission and waits for every tracked request, including route-level
+ * `finally` cleanup. A second signal is an explicit force-exit request.
+ */
+export function createWebShutdownController(
+  options: WebShutdownControllerOptions
+): WebShutdownController {
+  const scheduleTimeout =
+    options.scheduleTimeout ??
+    ((callback: () => void, milliseconds: number) => {
+      const timer = setTimeout(callback, milliseconds);
+      timer.unref();
+      return () => clearTimeout(timer);
+    });
+  const gracePeriodMs = options.gracePeriodMs ?? DEFAULT_WEB_SHUTDOWN_GRACE_PERIOD_MS;
+  let shutdown: Promise<void> | null = null;
+  let exitRequested = false;
+
+  const requestExit = (code: number): void => {
+    if (exitRequested) return;
+    exitRequested = true;
+    options.exit(code);
+  };
+
+  const startShutdown = async (signal: ShutdownSignal): Promise<void> => {
+    options.onStopping?.(signal);
+    let cancelTimeout = (): void => undefined;
+    const timeout = new Promise<'timeout'>((resolveTimeout) => {
+      cancelTimeout = scheduleTimeout(() => {
+        resolveTimeout('timeout');
+      }, gracePeriodMs);
+    });
+
+    try {
+      const drain = (async () => {
+        await options.stopAccepting();
+        await options.waitForDrain();
+      })();
+      const outcome = await Promise.race([drain.then(() => 'drained' as const), timeout]);
+      cancelTimeout();
+
+      if (exitRequested) return;
+      if (outcome === 'timeout') {
+        options.onWarning?.(
+          `Setup shutdown exceeded the ${Math.ceil(gracePeriodMs / 1000)}s grace period; forcing exit before all cleanup completed.`
+        );
+        requestExit(1);
+        return;
+      }
+
+      // Observe a rejection that could otherwise arrive just after the race winner was selected.
+      await drain;
+      options.onStopped?.();
+      requestExit(0);
+    } catch (error) {
+      cancelTimeout();
+      if (exitRequested) return;
+      options.onWarning?.(
+        `Setup shutdown cleanup failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+      requestExit(1);
+    }
+  };
+
+  return {
+    handleSignal: (signal) => {
+      if (shutdown) {
+        options.onWarning?.(`Received ${signal} again; forcing setup shutdown.`);
+        requestExit(1);
+        return Promise.resolve();
+      }
+      shutdown = startShutdown(signal);
+      return shutdown;
+    },
+  };
+}
+
 // =============================================================================
 // Server
 // =============================================================================
@@ -90,6 +233,18 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
   const sessionToken = getSessionToken();
 
   const app = new Hono();
+  const requestDrain = createWebRequestDrainController();
+
+  app.use('*', async (c, next) => {
+    if (!requestDrain.beginRequest()) {
+      return c.json({ error: 'Setup server is shutting down' }, 503);
+    }
+    try {
+      await next();
+    } finally {
+      requestDrain.finishRequest();
+    }
+  });
 
   // CORS for API requests. Even when binding to 0.0.0.0 for WSL, restrict
   // browser origins to loopback hosts so LAN pages cannot call privileged APIs.
@@ -217,19 +372,39 @@ export async function startWebServer(options: WebServerOptions = {}): Promise<vo
 
   console.log(chalk.gray('Press Ctrl+C to stop\n'));
 
-  // Handle Ctrl+C (SIGINT) gracefully.
-  // Without this, the process exits with code 130 (128 + SIGINT), which
-  // pnpm/npm treats as a failure and prints "Command failed with exit code 130".
-  process.on('SIGINT', () => {
-    console.log(chalk.gray('\nStopped.'));
-    process.exit(0);
-  });
-
-  serve({
+  const server = serve({
     fetch: app.fetch,
     port,
     hostname: host,
   });
+  let serverClosed: Promise<void> | null = null;
+  const shutdown = createWebShutdownController({
+    stopAccepting: () => {
+      requestDrain.beginDrain();
+      serverClosed ??= new Promise<void>((resolveClosed, rejectClosed) => {
+        server.close((error?: Error) => {
+          if (error) rejectClosed(error);
+          else resolveClosed();
+        });
+      });
+    },
+    waitForDrain: async () => {
+      await requestDrain.waitForIdle();
+      await serverClosed;
+    },
+    exit: (code) => process.exit(code),
+    onStopping: (signal) => {
+      console.log(
+        chalk.gray(
+          `\nReceived ${signal}. Stopping new setup requests and waiting for active cleanup...`
+        )
+      );
+    },
+    onStopped: () => console.log(chalk.gray('Stopped.')),
+    onWarning: (message) => console.warn(chalk.yellow(message)),
+  });
+  process.on('SIGINT', () => void shutdown.handleSignal('SIGINT'));
+  process.on('SIGTERM', () => void shutdown.handleSignal('SIGTERM'));
 }
 
 /**

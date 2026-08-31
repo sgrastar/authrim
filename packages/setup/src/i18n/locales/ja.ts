@@ -898,6 +898,8 @@ const ja: Translations = {
   'web.envDetail.automaticProvisioningMissing': '（不足: {{missing}}）',
   'web.envDetail.automaticProvisioningRepairHint':
     '修復するには新しい一回限りのtokenを入力してください。',
+  'web.envDetail.bootstrapRetainedForRetry':
+    'Cloudflareで一時的なエラーが発生しました。bootstrap tokenは有効なままです。同じtokenを再入力して「有効化」を選択すると再開できます。',
   'web.envDetail.revokeTokensBeforeRetry':
     '再試行前に、Cloudflare Dashboardで表示されたAuthrim bootstrap tokenと子tokenを失効させてください。',
   'web.envDetail.bootstrapRevokedPendingReset':

@@ -136,11 +136,12 @@ export async function publishDynamicPluginWorkerBundles(input: {
   enabled: boolean;
   sources: readonly AggregatedExternalCapabilitySource[];
   bucketName?: string;
-  pluginRunnerDatabaseName?: string;
+  pluginRunnerDatabaseId?: string;
   now?: number;
   upload?: typeof putR2Object;
   execute?: typeof executeD1Command;
   query?: typeof queryD1Rows;
+  verifyBucketOwnership?: () => Promise<void>;
   onProgress?: (message: string) => void;
 }): Promise<DynamicPluginPublicationResult> {
   const dynamicSources = input.sources.filter(
@@ -150,8 +151,8 @@ export async function publishDynamicPluginWorkerBundles(input: {
   if (dynamicSources.length === 0) return { published: [] };
   if (!input.enabled) throw new Error('dynamic_plugin_worker_capability_disabled');
   if (!input.bucketName?.trim()) throw new Error('dynamic_plugin_worker_bundle_bucket_missing');
-  if (!input.pluginRunnerDatabaseName?.trim()) {
-    throw new Error('dynamic_plugin_worker_database_missing');
+  if (!input.pluginRunnerDatabaseId?.trim()) {
+    throw new Error('dynamic_plugin_worker_database_id_missing');
   }
   const now = input.now ?? Math.floor(Date.now() / 1_000);
   if (!Number.isSafeInteger(now) || now < 1)
@@ -186,12 +187,16 @@ export async function publishDynamicPluginWorkerBundles(input: {
       throw new Error('dynamic_plugin_worker_bundle_changed_after_discovery');
     }
     input.onProgress?.(`Publishing Dynamic Worker bundle ${source.sourceId}`);
+    await input.verifyBucketOwnership?.();
     await upload({
       bucketName: input.bucketName,
       objectKey: artifact.codeObjectKey,
       bytes,
       contentType: 'application/json',
     });
+    // The DB row makes this object executable. Re-check after the write so a replacement bucket
+    // cannot be activated in the interval between object upload and catalog mutation.
+    await input.verifyBucketOwnership?.();
     const approvedPolicy = source.pluginPolicy;
     if (!approvedPolicy) throw new Error('dynamic_plugin_worker_policy_missing');
     const policy = {
@@ -211,7 +216,7 @@ export async function publishDynamicPluginWorkerBundles(input: {
       policy,
     });
     await execute(
-      input.pluginRunnerDatabaseName,
+      input.pluginRunnerDatabaseId,
       `INSERT OR IGNORE INTO plugin_runner_dynamic_worker_releases (
          plugin_id, version_digest, code_sha256, code_object_key, source_manifest_hash,
          capability_manifest_digest, policy_json, state, published_at, updated_at
@@ -261,7 +266,7 @@ export async function publishDynamicPluginWorkerBundles(input: {
       egress_count: number | string;
       credential_count: number | string;
     }>(
-      input.pluginRunnerDatabaseName,
+      input.pluginRunnerDatabaseId,
       `SELECT release.plugin_id, release.version_digest, release.code_sha256,
               release.code_object_key, release.state, release.source_manifest_hash,
               release.capability_manifest_digest, release.policy_json,

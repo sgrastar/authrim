@@ -16,20 +16,38 @@ describe('Plugin resource deployment projection', () => {
     const query = queryWithRows([
       {
         resource_kind: 'd1',
+        lifecycle_mode: 'managed',
         provider_resource_id: 'database-id',
         provider_name: 'database-name',
+        provider_create_state: 'identified',
+        provider_creation_date: null,
+        provider_ownership_marker_key: null,
+        provider_ownership_id: null,
+        provider_identity_checkpointed_at: 10,
         ownership_fingerprint: 'a'.repeat(64),
       },
       {
         resource_kind: 'kv_namespace',
+        lifecycle_mode: 'managed',
         provider_resource_id: 'namespace-id',
         provider_name: 'namespace-name',
+        provider_create_state: 'identified',
+        provider_creation_date: null,
+        provider_ownership_marker_key: null,
+        provider_ownership_id: null,
+        provider_identity_checkpointed_at: 10,
         ownership_fingerprint: 'b'.repeat(64),
       },
       {
         resource_kind: 'r2_bucket',
+        lifecycle_mode: 'managed',
         provider_resource_id: 'bucket-name',
         provider_name: 'bucket-name',
+        provider_create_state: 'identified',
+        provider_creation_date: '2026-08-31T00:00:00.000Z',
+        provider_ownership_marker_key: '.authrim/ownership/test',
+        provider_ownership_id: 'ownership-id',
+        provider_identity_checkpointed_at: 10,
         ownership_fingerprint: 'c'.repeat(64),
       },
     ]);
@@ -109,6 +127,31 @@ describe('Plugin resource deployment projection', () => {
         controlDatabaseName: 'test-control-db',
         environmentId: 'test',
         query: mismatchedR2,
+      })
+    ).rejects.toThrow('plugin_resource_projection_row_invalid');
+  });
+
+  it('rejects managed ready resources without immutable provider evidence', async () => {
+    const unverifiedR2 = queryWithRows([
+      {
+        resource_kind: 'r2_bucket',
+        lifecycle_mode: 'managed',
+        provider_resource_id: 'bucket-name',
+        provider_name: 'bucket-name',
+        provider_create_state: 'not_started',
+        provider_creation_date: null,
+        provider_ownership_marker_key: null,
+        provider_ownership_id: null,
+        provider_identity_checkpointed_at: null,
+        ownership_fingerprint: 'c'.repeat(64),
+      },
+    ]);
+
+    await expect(
+      loadPluginRunnerResourceBindingsForDeployment({
+        controlDatabaseName: 'test-control-db',
+        environmentId: 'test',
+        query: unverifiedR2,
       })
     ).rejects.toThrow('plugin_resource_projection_row_invalid');
   });

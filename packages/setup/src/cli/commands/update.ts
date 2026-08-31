@@ -13,10 +13,16 @@ import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 
 import {
+  acquireDeployConfigLock,
   acquireEnvironmentOperationLock,
+  clearProvisionalWorkerScriptOwnership,
   loadLockFileAuto,
+  reconcileD1ResourcesInLock,
+  reconcileQueueResourcesInLock,
+  reconcileSharedKVResourcesInLock,
   saveLockFile,
   type AuthrimLock,
+  type DeployConfigLockProof,
 } from '../../core/lock.js';
 import {
   deployAll,
@@ -38,10 +44,21 @@ import {
   getWorkersSubdomain,
   findMigrationsRoot,
   ensureInitialTenantInD1,
-  ensureSetupMachineAccessInD1,
-  cleanupSetupMachineAccessInD1,
+  getRequiredQueues,
+  getRequiredR2Buckets,
+  listD1Databases,
+  listKVNamespaces,
+  listQueues,
+  listR2Buckets,
+  assertR2BucketOwnershipIdentity,
+  assertR2BucketOwnershipForUse,
 } from '../../core/cloudflare.js';
-import { CORE_WORKER_COMPONENTS, type WorkerComponent } from '../../core/naming.js';
+import { runEphemeralSetupMachineAccess } from '../../core/setup-machine-access-lifecycle.js';
+import { CORE_WORKER_COMPONENTS, getWorkerName, type WorkerComponent } from '../../core/naming.js';
+import {
+  prepareManagedWorkerScriptOwnership,
+  type WorkerScriptOwnershipGuard,
+} from '../../core/worker-script-ownership.js';
 import {
   getLocalPackageVersions,
   getRootProductVersion,
@@ -417,26 +434,36 @@ function displayVersionTable(comparisons: VersionComparison[]): void {
 /**
  * Update lock file with deployment results AND version info
  */
-function updateLockWithDeploymentsAndVersions(
+export function updateLockWithDeploymentsAndVersions(
   lock: AuthrimLock,
   results: DeployResult[],
   localVersions: Partial<Record<WorkerComponent, string>>
 ): AuthrimLock {
   const workers = { ...lock.workers };
+  const workerScriptOwnership = { ...lock.workerScriptOwnership };
 
   for (const result of results) {
-    if ((result.success || result.trafficCommitted) && result.deployedAt) {
-      workers[result.component] = {
-        name: result.workerName,
-        deployedAt: result.deployedAt,
-        version: localVersions[result.component] || result.version,
-      };
+    // A committed script followed by trigger/secret-cleanup failure is not a completed release
+    // deployment. Retain the previous lock version so the next update must reconcile that Worker.
+    if (!result.success) continue;
+    if (!result.deployedAt || !result.cloudflareVersionId || !result.cloudflareScriptTag) {
+      throw new Error(`worker_deployment_exact_version_unavailable:${result.component}`);
     }
+    workers[result.component] = {
+      name: result.workerName,
+      deployedAt: result.deployedAt,
+      version: localVersions[result.component] || result.version,
+      cloudflareVersionId: result.cloudflareVersionId,
+      cloudflareScriptTag: result.cloudflareScriptTag,
+    };
+    delete workerScriptOwnership[result.component];
   }
 
   return {
     ...lock,
     workers,
+    workerScriptOwnership:
+      Object.keys(workerScriptOwnership).length > 0 ? workerScriptOwnership : undefined,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -559,9 +586,23 @@ export function getUiComponentsToUpdate(input: {
         : input.config.components.adminUi !== false;
     if (!enabled || !input.localVersions.has(component)) return false;
     return (
-      input.all || input.lock.workers?.[component]?.version !== input.localVersions.get(component)
+      input.all ||
+      input.lock.workers?.[component]?.version !== input.localVersions.get(component) ||
+      !input.lock.workers?.[component]?.cloudflareVersionId
     );
   });
+}
+
+export function includeWorkersMissingExactVersionEvidence(
+  components: readonly WorkerComponent[],
+  lock: AuthrimLock
+): WorkerComponent[] {
+  const selected = new Set(components);
+  for (const component of CORE_WORKER_COMPONENTS) {
+    const worker = lock.workers?.[component];
+    if (worker && !worker.cloudflareVersionId) selected.add(component);
+  }
+  return [...selected];
 }
 
 export function getWorkspaceVersionMismatches(input: {
@@ -581,6 +622,48 @@ export function getWorkspaceVersionMismatches(input: {
     .map(([component, version]) => `${component}=${version ?? 'missing'}`);
 }
 
+export function assertUpdateCloudflareResourceIdentity(input: {
+  lock: AuthrimLock;
+  env: string;
+  databases: Array<{ name: string; uuid: string }>;
+  namespaces: Array<{ title: string; id: string }>;
+  queues: Array<{ name: string; id?: string }>;
+  requiredQueues: Array<{ binding: string; name: string }>;
+  r2Buckets: Array<{ name: string }>;
+  requiredR2BucketNames: readonly string[];
+}): void {
+  const d1 = reconcileD1ResourcesInLock(input.lock, input.env, input.databases);
+  const kv = reconcileSharedKVResourcesInLock(d1.lock, input.env, input.namespaces);
+  const queues = reconcileQueueResourcesInLock(kv.lock, input.queues, input.requiredQueues);
+  const identityMismatches = [
+    ...d1.identityMismatches.map((item) => ({ type: 'D1', ...item })),
+    ...kv.identityMismatches.map((item) => ({ type: 'KV', ...item })),
+    ...queues.identityMismatches.map((item) => ({ type: 'Queue', ...item })),
+  ];
+  if (identityMismatches.length > 0) {
+    const summary = identityMismatches
+      .map(
+        (item) =>
+          `${item.type}:${item.binding}:${item.lockedId ?? 'missing'}:${item.liveId ?? 'unavailable'}`
+      )
+      .join(',');
+    throw new Error(`cloudflare_resource_identity_mismatch:${summary}`);
+  }
+
+  const missingResources = [
+    ...d1.missingBindings.map((item) => `D1:${item.binding}:${item.name}`),
+    ...kv.missingBindings.map((item) => `KV:${item.binding}:${item.name}`),
+    ...queues.missingBindings.map((item) => `Queue:${item.binding}:${item.name}`),
+  ];
+  const liveR2BucketNames = new Set(input.r2Buckets.map((bucket) => bucket.name));
+  for (const bucketName of input.requiredR2BucketNames) {
+    if (!liveR2BucketNames.has(bucketName)) missingResources.push(`R2:${bucketName}`);
+  }
+  if (missingResources.length > 0) {
+    throw new Error(`required_cloudflare_resources_missing:${missingResources.join(',')}`);
+  }
+}
+
 async function deployReleaseUiWorkers(input: {
   env: string;
   baseDir: string;
@@ -591,8 +674,15 @@ async function deployReleaseUiWorkers(input: {
   productVersion: string;
   release: ReleaseMigrationManifest;
   skipBuild: boolean;
+  deployConfigLockProof: DeployConfigLockProof;
+  workerScriptOwnership: WorkerScriptOwnershipGuard;
 }): Promise<AuthrimLock> {
   if (input.components.length === 0) return input.lock;
+  const coreDatabaseIdentifier = input.lock.d1.DB?.id;
+  const adminDatabaseIdentifier = input.lock.d1.DB_ADMIN?.id;
+  if (!coreDatabaseIdentifier || !adminDatabaseIdentifier) {
+    throw new Error('fixed_bootstrap_databases_required_for_ui_update');
+  }
   const keysDirectory = findKeysDirectory({
     env: input.env,
     sourceDir: input.baseDir,
@@ -610,7 +700,9 @@ async function deployReleaseUiWorkers(input: {
     );
   }
 
-  const initialTenant = await ensureInitialTenantInD1(input.env, input.config);
+  const initialTenant = await ensureInitialTenantInD1(input.env, input.config, undefined, {
+    databaseIdentifier: coreDatabaseIdentifier,
+  });
   if (!initialTenant.success) {
     throw new Error(
       `Initial tenant prerequisite failed: ${initialTenant.error ?? 'unknown error'}`
@@ -632,45 +724,24 @@ async function deployReleaseUiWorkers(input: {
   for (const component of input.components) {
     let loginUiClientId: string | undefined;
     if (component === 'ar-login-ui') {
-      const setupMachine = await ensureSetupMachineAccessInD1(
-        input.env,
-        input.config,
-        keysDirectory.path
-      );
-      if (!setupMachine.success) {
-        throw new Error(`Setup machine access failed: ${setupMachine.error ?? 'unknown error'}`);
-      }
-      let loginUiClientError: Error | undefined;
-      try {
-        const client = await ensureLoginUiClient({
-          apiBaseUrl,
-          loginUiUrl: resolveLoginUiExecutionOrigin(input.config, { env: input.env }),
-          keysDir: keysDirectory.path,
-          tenantId: input.config.tenant.name,
-        });
-        if (!client.success || !client.clientId) {
-          throw new Error(`Login UI client update failed: ${client.error ?? 'unknown error'}`);
-        }
-        loginUiClientId = client.clientId;
-      } catch (error) {
-        loginUiClientError = error instanceof Error ? error : new Error(String(error));
-      }
-      const cleanup = await cleanupSetupMachineAccessInD1(input.env, keysDirectory.path);
-      if (!cleanup.success) {
-        const cleanupError = new Error(
-          `Setup machine access cleanup failed: ${cleanup.error ?? 'unknown error'}`
-        );
-        if (loginUiClientError) {
-          throw new AggregateError(
-            [loginUiClientError, cleanupError],
-            'Login UI client update and setup machine access cleanup both failed.'
-          );
-        }
-        throw cleanupError;
-      }
-      if (loginUiClientError) {
-        throw loginUiClientError;
-      }
+      loginUiClientId = await runEphemeralSetupMachineAccess({
+        env: input.env,
+        config: input.config,
+        keysDir: keysDirectory.path,
+        databaseIdentifier: adminDatabaseIdentifier,
+        action: async () => {
+          const client = await ensureLoginUiClient({
+            apiBaseUrl,
+            loginUiUrl: resolveLoginUiExecutionOrigin(input.config, { env: input.env }),
+            keysDir: keysDirectory.path,
+            tenantId: input.config.tenant.name,
+          });
+          if (!client.success || !client.clientId) {
+            throw new Error(`Login UI client update failed: ${client.error ?? 'unknown error'}`);
+          }
+          return client.clientId;
+        },
+      });
     }
 
     const settings = resolveUiDeploymentSettings({
@@ -691,6 +762,7 @@ async function deployReleaseUiWorkers(input: {
             env: input.env,
             config: input.config,
             keysDir: keysDirectory.path,
+            databaseIdentifier: adminDatabaseIdentifier,
           })
         : undefined;
     const result = await deployUiWorkerComponent(component, {
@@ -704,12 +776,25 @@ async function deployReleaseUiWorkers(input: {
       routes: settings.routes,
       adminUiBffSecrets,
       skipBuild: input.skipBuild,
+      deployConfigLockProof: input.deployConfigLockProof,
+      workerScriptOwnership: input.workerScriptOwnership,
     });
-    if (!result.success || !result.deployedAt) {
+    if (
+      !result.success ||
+      !result.deployedAt ||
+      !result.cloudflareVersionId ||
+      !result.cloudflareScriptTag
+    ) {
       throw new Error(`${component} release deployment failed: ${result.error ?? 'unknown error'}`);
     }
     const visibility = await waitForWorkerDeploymentsReady({
-      targets: [{ workerName: result.projectName, deployedAt: result.deployedAt }],
+      targets: [
+        {
+          workerName: result.projectName,
+          deployedAt: result.deployedAt,
+          expectedVersionId: result.cloudflareVersionId,
+        },
+      ],
     });
     if (!visibility.ready) {
       throw new Error(
@@ -729,29 +814,34 @@ async function deployReleaseUiWorkers(input: {
         `${component} release deployment is not reachable: ${httpReadiness.error ?? entryUrl}`
       );
     }
-    workingLock = {
-      ...workingLock,
-      workers: {
-        ...workingLock.workers,
-        [component]: {
-          name: result.projectName,
-          deployedAt: result.deployedAt,
-          version: input.productVersion,
+    workingLock = clearProvisionalWorkerScriptOwnership(
+      {
+        ...workingLock,
+        workers: {
+          ...workingLock.workers,
+          [component]: {
+            name: result.projectName,
+            deployedAt: result.deployedAt,
+            version: input.productVersion,
+            cloudflareVersionId: result.cloudflareVersionId,
+            cloudflareScriptTag: result.cloudflareScriptTag,
+          },
         },
+        updatedAt: new Date().toISOString(),
       },
-      updatedAt: new Date().toISOString(),
-    };
+      [component]
+    );
     await saveLockFile(workingLock, input.lockPath);
   }
-  const controlDatabaseName = workingLock.d1.CONTROL_DB?.name;
-  if (!controlDatabaseName) {
+  const controlDatabaseId = workingLock.d1.CONTROL_DB?.id;
+  if (!controlDatabaseId) {
     throw new Error('control_database_required_for_ui_worker_inventory');
   }
   await registerUiWorkerInventoryFromArtifacts({
     baseDir: input.baseDir,
     environmentId: input.env,
     environmentName: input.env,
-    controlDatabaseName,
+    controlDatabaseName: controlDatabaseId,
     components: input.components,
     environmentBootstrap: {
       defaultResidencyPolicyId: input.config.profiles.defaults.residency,
@@ -814,6 +904,9 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     console.log(chalk.yellow('Run "authrim-setup init" first to create the environment.'));
     process.exit(1);
   }
+  if (lock.env !== env) {
+    throw new Error('update_lock_environment_mismatch');
+  }
 
   spinner.succeed(`Environment loaded: ${env}`);
   console.log(chalk.gray(`  Lock file: ${lockPath}`));
@@ -834,6 +927,9 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     process.exit(1);
   }
   const config = AuthrimConfigSchema.parse(JSON.parse(await readFile(envPaths.config, 'utf-8')));
+  if (config.environment.prefix !== env) {
+    throw new Error('update_config_environment_mismatch');
+  }
 
   // Get version comparison
   spinner.start('Comparing versions...');
@@ -904,7 +1000,10 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
   displayVersionTable(comparisons);
 
   // Get components to update
-  const componentsToUpdate = getComponentsToUpdate(comparisons, options.all || false);
+  const componentsToUpdate = includeWorkersMissingExactVersionEvidence(
+    getComponentsToUpdate(comparisons, options.all || false),
+    workingLock
+  );
   const uiComponentsToUpdate = getUiComponentsToUpdate({
     config,
     lock: workingLock,
@@ -920,7 +1019,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
   );
 
   spinner.start('Resolving release migration manifest...');
-  const migrationSearch = await findMigrationsRoot(baseDir);
+  const migrationSearch = await findMigrationsRoot(baseDir, undefined, { strictRoot: true });
   if (!migrationSearch.path) {
     spinner.fail('Migration directory not found');
     console.error(chalk.red(migrationSearch.searchPaths.join(', ')));
@@ -957,6 +1056,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     process.exit(1);
   }
   const manifestChecksum = calculateReleaseManifestChecksum(targetManifestResult.manifest);
+  const physicalTargets = resolveReleaseMigrationTargets({ lock: workingLock, config });
   try {
     assertReleaseDatabaseCompatibility({
       manifest: targetManifestResult.manifest,
@@ -965,6 +1065,9 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       installedSchemaManifestChecksums: Object.values(workingLock.schemaTargets ?? {}).map(
         (state) => state.manifestChecksum
       ),
+      installedSchemaTargets: workingLock.schemaTargets,
+      currentTargets: physicalTargets,
+      targetManifestIsDraft: targetManifestResult.draft,
     });
   } catch (error) {
     spinner.fail('This pre-1.0 database baseline requires a fresh installation');
@@ -996,7 +1099,6 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       currentManifest = readReleaseMigrationManifest(currentManifestPath);
     }
   }
-  const physicalTargets = resolveReleaseMigrationTargets({ lock: workingLock, config });
   const targetManifestCache = new Map<string, ReturnType<typeof readReleaseMigrationManifest>>();
   const currentManifestForTarget = (
     target: (typeof physicalTargets)[number]
@@ -1069,7 +1171,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       process.exit(1);
     }
     const inconsistentWorkers = Object.entries(workingLock.workers ?? {}).filter(
-      ([, worker]) => worker.version !== workingLock.productVersion
+      ([, worker]) => worker.version !== workingLock.productVersion || !worker.cloudflareVersionId
     );
     if (inconsistentWorkers.length > 0 || Object.keys(workingLock.workers ?? {}).length === 0) {
       spinner.fail('Exact current Worker version evidence is required for a database-only update');
@@ -1208,7 +1310,13 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
   }
 
   const operationLock = await acquireEnvironmentOperationLock(lockPath, 'update');
+  let deployConfigLock: Awaited<ReturnType<typeof acquireDeployConfigLock>> | undefined;
   try {
+    deployConfigLock = await acquireDeployConfigLock({
+      baseDir,
+      env,
+      operation: 'update',
+    });
     const lockedEnvironment = await loadLockFileAuto(baseDir, env);
     if (!isUpdateSourceLockUnchanged(lock, lockedEnvironment.lock)) {
       throw new Error('environment_changed_while_waiting_for_update_lock');
@@ -1216,6 +1324,9 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     const lockedConfig = AuthrimConfigSchema.parse(
       JSON.parse(await readFile(envPaths.config, 'utf-8'))
     );
+    if (lockedConfig.environment.prefix !== env) {
+      throw new Error('update_config_environment_mismatch_after_operation_lock');
+    }
     if (JSON.stringify(lockedConfig) !== JSON.stringify(config)) {
       throw new Error('config_changed_while_waiting_for_update_lock');
     }
@@ -1230,6 +1341,50 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     ) {
       throw new Error('release_manifest_changed_while_waiting_for_update_lock');
     }
+
+    // The migration plan addresses D1 targets by name, while the lock retains their immutable
+    // provider IDs. Re-prove the complete topology after both locks are held and before persisting
+    // `planned` or mutating any schema. This prevents a deleted resource from being silently
+    // replaced by an unrelated same-name D1/KV/Queue between release planning and execution.
+    const requiredQueues =
+      lockedConfig.features.queue?.enabled === true ? getRequiredQueues(env) : [];
+    const verifyQueues =
+      requiredQueues.length > 0 || Object.keys(workingLock.queues ?? {}).length > 0;
+    const requiredR2BucketNames = [
+      ...new Set([
+        ...Object.values(workingLock.r2 ?? {}).map((bucket) => bucket.name),
+        ...getRequiredR2Buckets(env, {
+          includeFeatureBuckets: lockedConfig.features.r2?.enabled === true,
+        }).map((bucket) => bucket.name),
+      ]),
+    ];
+    const [liveDatabases, liveNamespaces, liveQueues, liveR2Buckets] = await Promise.all([
+      listD1Databases(),
+      listKVNamespaces(),
+      verifyQueues ? listQueues({ strictOutput: true, requireIds: true }) : Promise.resolve([]),
+      requiredR2BucketNames.length > 0
+        ? listR2Buckets({ throwOnError: true })
+        : Promise.resolve([]),
+    ]);
+    await Promise.all(
+      Object.entries(workingLock.r2 ?? {}).map(([binding, bucket]) =>
+        assertR2BucketOwnershipIdentity({
+          ...bucket,
+          environment: workingLock.env,
+          binding,
+        })
+      )
+    );
+    assertUpdateCloudflareResourceIdentity({
+      lock: workingLock,
+      env,
+      databases: liveDatabases,
+      namespaces: liveNamespaces,
+      queues: liveQueues,
+      requiredQueues,
+      r2Buckets: liveR2Buckets,
+      requiredR2BucketNames,
+    });
 
     workingLock = withReleaseUpdateState(workingLock, {
       targetVersion: productVersion,
@@ -1321,6 +1476,13 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       }
       const releasePublicationSpinner = ora('Publishing migration release artifact...').start();
       try {
+        const verifyMigrationBucketOwnership = () =>
+          assertR2BucketOwnershipForUse({
+            ...migrationReleaseBucket,
+            environment: env,
+            binding: 'MIGRATION_RELEASES',
+          });
+        await verifyMigrationBucketOwnership();
         const publication = await publishAndActivateMigrationRelease({
           migrationsRoot,
           manifestPath: targetManifestResult.path,
@@ -1328,6 +1490,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           controlDatabaseId: controlDatabase.id,
           environmentId: env,
           actorId: 'setup:update',
+          verifyBucketOwnership: verifyMigrationBucketOwnership,
           onProgress: (message) => {
             releasePublicationSpinner.text = message;
           },
@@ -1390,6 +1553,25 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     });
     await saveLockFile(workingLock, lockPath);
 
+    const workerOwnership = await prepareManagedWorkerScriptOwnership({
+      lock: workingLock,
+      lockPath,
+      targets: [
+        ...componentsToUpdate.map((component) => ({
+          component,
+          workerName: getWorkerName(env, component),
+        })),
+        ...uiComponentsToUpdate.map((component) => ({
+          component,
+          workerName: `${env}-${component}`,
+        })),
+      ],
+    });
+    if (workerOwnership.changed) {
+      workingLock = workerOwnership.lock;
+      await saveLockFile(workingLock, lockPath);
+    }
+
     if (componentsToUpdate.length === 0) {
       if (controlManagedStreamIds.length > 0) {
         if (!controlDatabase || !migrationReleaseArtifact) {
@@ -1423,11 +1605,22 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       const lockedWorkers = Object.values(workingLock.workers ?? {}).filter(
         (worker) => worker.version === retainedWorkerVersion
       );
+      const workersWithoutExactVersion = lockedWorkers.filter(
+        (worker) => !worker.cloudflareVersionId
+      );
+      if (workersWithoutExactVersion.length > 0) {
+        throw new Error(
+          `worker_deployment_exact_version_unavailable:${workersWithoutExactVersion
+            .map((worker) => worker.name)
+            .join(',')}`
+        );
+      }
       const verificationSpinner = ora('Verifying existing Worker deployments...').start();
       const deploymentVerification = await waitForWorkerDeploymentsReady({
         targets: lockedWorkers.map((worker) => ({
           workerName: worker.name,
           deployedAt: worker.deployedAt,
+          expectedVersionId: worker.cloudflareVersionId,
         })),
         onProgress: (message) => {
           verificationSpinner.text = message;
@@ -1436,7 +1629,9 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       if (!deploymentVerification.ready) {
         verificationSpinner.fail('Existing Worker deployment verification failed');
         console.error(chalk.red(deploymentVerification.error ?? 'unknown verification error'));
-        process.exit(1);
+        throw new Error(
+          `existing_worker_deployment_verification_failed:${deploymentVerification.error ?? 'unknown'}`
+        );
       }
       const workersSubdomain = await getWorkersSubdomain();
       const httpTargets = buildWorkerHttpReadinessTargets(
@@ -1449,7 +1644,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         if (!httpResult.ready) {
           verificationSpinner.fail('Existing Worker HTTP health checks failed');
           console.error(chalk.red(httpResult.error ?? 'unknown health-check error'));
-          process.exit(1);
+          throw new Error(`existing_worker_http_health_failed:${httpResult.error ?? 'unknown'}`);
         }
       }
       verificationSpinner.succeed('Existing Worker deployments are healthy');
@@ -1464,11 +1659,15 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           productVersion,
           release: targetManifestResult.manifest,
           skipBuild: options.skipBuild === true,
+          deployConfigLockProof: deployConfigLock!.proof,
+          workerScriptOwnership: workerOwnership.guard,
         });
       } catch (error) {
         verificationSpinner.fail('UI Worker release deployment failed');
         console.error(chalk.red(error instanceof Error ? error.message : String(error)));
-        process.exit(1);
+        throw error instanceof Error
+          ? error
+          : new Error('ui_worker_release_deployment_failed', { cause: error });
       }
       if (!controlDatabase && workingLock.releaseUpdate?.controlOperationId) {
         throw new Error('control_database_required_for_release_rollout_completion');
@@ -1509,7 +1708,9 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     } catch (error) {
       wranglerSpinner.fail('Control DB generated-state projection failed');
       console.error(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
-      process.exit(1);
+      throw error instanceof Error
+        ? error
+        : new Error('control_generated_state_projection_failed', { cause: error });
     }
     const deploymentResourceIds = await buildWorkerDeploymentResourceIds({
       lock: workingLock,
@@ -1529,12 +1730,12 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     if (!masterResult.success) {
       wranglerSpinner.fail('Wrangler config generation failed');
       console.error(chalk.red(`\nErrors: ${masterResult.errors.join(', ')}`));
-      process.exit(1);
+      throw new Error(`wrangler_config_generation_failed:${masterResult.errors.join(',')}`);
     }
-    const controlDatabaseName = workingLock.d1?.CONTROL_DB?.name;
-    if (!controlDatabaseName) {
+    const controlDatabaseId = workingLock.d1?.CONTROL_DB?.id;
+    if (!controlDatabaseId) {
       wranglerSpinner.fail('CONTROL_DB is required for desired Worker inventory');
-      process.exit(1);
+      throw new Error('control_database_required_for_desired_worker_inventory');
     }
     try {
       const inventory = await compileControlWorkerInventoryFromArtifacts({
@@ -1545,7 +1746,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         artifactPaths: masterResult.files,
       });
       await registerControlWorkerInventory({
-        controlDatabaseName,
+        controlDatabaseName: controlDatabaseId,
         records: inventory,
         environmentBootstrap: {
           defaultResidencyPolicyId: config.profiles.defaults.residency,
@@ -1557,18 +1758,32 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         },
       });
       const externalSources = await discoverExternalCapabilities({ baseDir });
+      const pluginBundleBucket = workingLock.r2?.PLUGIN_BUNDLES;
+      const verifyPluginBundleOwnership = pluginBundleBucket
+        ? () =>
+            assertR2BucketOwnershipForUse({
+              ...pluginBundleBucket,
+              environment: env,
+              binding: 'PLUGIN_BUNDLES',
+            })
+        : undefined;
+      if (config.features.pluginDynamicWorkers.enabled) {
+        if (!pluginBundleBucket) throw new Error('plugin_bundle_bucket_required');
+        await verifyPluginBundleOwnership!();
+      }
       await publishDynamicPluginWorkerBundles({
         baseDir,
         enabled: config.features.pluginDynamicWorkers.enabled,
         sources: externalSources,
-        bucketName: workingLock.r2?.PLUGIN_BUNDLES?.name,
-        pluginRunnerDatabaseName: workingLock.d1?.PLUGIN_RUNNER_DB?.name,
+        bucketName: pluginBundleBucket?.name,
+        pluginRunnerDatabaseId: workingLock.d1?.PLUGIN_RUNNER_DB?.id,
+        verifyBucketOwnership: verifyPluginBundleOwnership,
         onProgress: (message) => {
           wranglerSpinner.text = message;
         },
       });
       await registerExternalCapabilities({
-        controlDatabaseName,
+        controlDatabaseName: controlDatabaseId,
         environmentId: env,
         sources: externalSources,
         registeredBy: 'setup:update',
@@ -1576,7 +1791,9 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     } catch (error) {
       wranglerSpinner.fail('Desired Worker inventory registration failed');
       console.error(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
-      process.exit(1);
+      throw error instanceof Error
+        ? error
+        : new Error('desired_worker_inventory_registration_failed', { cause: error });
     }
     const syncResult = await syncWranglerConfigs({
       baseDir,
@@ -1591,7 +1808,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     if (!syncResult.success && syncResult.errors.length > 0) {
       wranglerSpinner.fail('Wrangler config sync failed');
       console.error(chalk.red(`\nErrors: ${syncResult.errors.join(', ')}`));
-      process.exit(1);
+      throw new Error(`wrangler_config_sync_failed:${syncResult.errors.join(',')}`);
     }
     wranglerSpinner.succeed(`Refreshed ${syncResult.synced.length} wrangler config(s)`);
 
@@ -1609,7 +1826,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       if (!buildResult.success) {
         buildSpinner.fail('Build failed');
         console.error(chalk.red(`\nError: ${buildResult.error}`));
-        process.exit(1);
+        throw new Error(`worker_build_failed:${buildResult.error ?? 'unknown'}`);
       }
 
       buildSpinner.succeed('Build complete');
@@ -1654,6 +1871,8 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         required: true,
       },
       cleanupLegacyStaticSecrets: true,
+      deployConfigLockProof: deployConfigLock!.proof,
+      workerScriptOwnership: workerOwnership.guard,
       onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
       onError: (component, error) => {
         console.error(chalk.red(`  ❌ Error in ${component}: ${error.message}`));
@@ -1667,24 +1886,21 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     }
 
     if (componentsToUpdate.includes('ar-router') && existsSync(envPaths.config)) {
-      const config = AuthrimConfigSchema.parse(
-        JSON.parse(await readFile(envPaths.config, 'utf-8'))
-      );
       const missingUiBindingTargets = await resolveMissingUiWorkerBindingTargets(deployOptions, {
-        loginUi: config.components.loginUi ?? true,
-        adminUi: config.components.adminUi ?? true,
+        loginUi: lockedConfig.components.loginUi ?? true,
+        adminUi: lockedConfig.components.adminUi ?? true,
       });
       if (missingUiBindingTargets.loginUi || missingUiBindingTargets.adminUi) {
         const placeholderSummary = await deployUiWorkerBindingTargets(
           {
             ...deployOptions,
-            apiBaseUrl: resolveIssuerUrl(config, { env }),
+            apiBaseUrl: resolveIssuerUrl(lockedConfig, { env }),
           },
           missingUiBindingTargets
         );
         if (placeholderSummary.failedCount > 0) {
           console.error(chalk.red('UI Worker binding-target deployment failed'));
-          process.exit(1);
+          throw new Error('ui_worker_binding_target_deployment_failed');
         }
       }
     }
@@ -1701,12 +1917,32 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         throw new Error('release_rollout_control_coordinator_not_updated');
       }
       const coordinatorReady = await waitForWorkerDeploymentsReady({
-        targets: [{ workerName: coordinator.name, deployedAt: coordinator.deployedAt }],
+        targets: [
+          {
+            workerName: coordinator.name,
+            deployedAt: coordinator.deployedAt,
+            expectedVersionId: coordinator.cloudflareVersionId,
+          },
+        ],
       });
       if (!coordinatorReady.ready) {
         throw new Error(
           `release_rollout_control_coordinator_not_ready:${coordinatorReady.error ?? 'unknown'}`
         );
+      }
+      const coordinatorWorkersSubdomain = await getWorkersSubdomain();
+      const coordinatorHttpTargets = buildWorkerHttpReadinessTargets(
+        [{ workerName: coordinator.name }],
+        coordinatorWorkersSubdomain,
+        { workersDevEnabled: !config.urls?.api?.custom }
+      );
+      if (coordinatorHttpTargets.length > 0) {
+        const coordinatorHttp = await waitForWorkerHttpReady({ targets: coordinatorHttpTargets });
+        if (!coordinatorHttp.ready) {
+          throw new Error(
+            `release_rollout_control_coordinator_not_healthy:${coordinatorHttp.error ?? 'unknown'}`
+          );
+        }
       }
       const observation = await awaitControlManagedReleaseRollout({
         controlDatabaseId: controlDatabase.id,
@@ -1738,7 +1974,6 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           coordinatorSummary.results,
           localVersions
         );
-        await saveLockFile(workingLock, lockPath);
         if (!(await ensureControlRolloutReady())) {
           console.log(
             chalk.cyan(
@@ -1775,23 +2010,30 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     }
 
     // Update lock file with new versions
-    if (summary.results.some((result) => result.success || result.trafficCommitted)) {
+    if (summary.results.some((result) => result.success)) {
       workingLock = updateLockWithDeploymentsAndVersions(
         workingLock,
         summary.results,
         localVersions
       );
-      await saveLockFile(workingLock, lockPath);
-      console.log(chalk.gray(`\n  Lock file updated: ${lockPath}`));
     }
 
-    if (!options.dryRun && summary.failedCount === 0) {
-      workingLock = withReleaseUpdateState(workingLock, {
-        targetVersion: productVersion,
-        phase: 'workers_deployed',
-        manifestChecksum,
-      });
-      await saveLockFile(workingLock, lockPath);
+    if (summary.failedCount > 0) {
+      console.error(
+        chalk.red(
+          `\nWorker activation failed: ${summary.successCount}/${summary.totalComponents} updated, ${summary.failedCount} failed`
+        )
+      );
+      for (const result of summary.results.filter((candidate) => !candidate.success)) {
+        console.error(chalk.red(`  • ${result.component}: ${result.error ?? 'unknown error'}`));
+      }
+      // Successful components remain checkpointed for an idempotent resume, but a partial
+      // activation is never a successful CLI operation. In particular, the Web wrapper must not
+      // mistake the retained control_handoff phase for a healthy in-progress database rollout.
+      throw new Error(`release_worker_deployment_failed:${summary.failedCount}`);
+    }
+
+    if (!options.dryRun) {
       const verificationSpinner = ora('Verifying Worker deployments...').start();
       const verificationResult = await waitForWorkerDeploymentsReady({
         targets: summary.results
@@ -1799,6 +2041,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           .map((result) => ({
             workerName: result.workerName,
             deployedAt: result.deployedAt,
+            expectedVersionId: result.cloudflareVersionId,
           })),
         onProgress: (msg) => {
           verificationSpinner.text = msg;
@@ -1809,18 +2052,13 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       } else {
         verificationSpinner.fail('Worker deployments did not become visible');
         console.error(chalk.red(`  ${verificationResult.error || 'unknown verification error'}`));
-        process.exit(1);
+        throw new Error(
+          `worker_deployment_verification_failed:${verificationResult.error ?? 'unknown'}`
+        );
       }
 
       const workersSubdomain = await getWorkersSubdomain();
-      let workersDevEnabled = true;
-      try {
-        const configContent = await readFile(envPaths.config, 'utf-8');
-        const config = AuthrimConfigSchema.parse(JSON.parse(configContent));
-        workersDevEnabled = !config.urls?.api?.custom;
-      } catch {
-        workersDevEnabled = true;
-      }
+      const workersDevEnabled = !lockedConfig.urls?.api?.custom;
       const workerHttpTargets = buildWorkerHttpReadinessTargets(
         summary.results.filter((result) => result.success),
         workersSubdomain,
@@ -1839,9 +2077,18 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         } else {
           httpSpinner.fail('Worker HTTP health checks failed');
           console.error(chalk.red(`  ${httpResult.error || 'unknown health check error'}`));
-          process.exit(1);
+          throw new Error(`worker_http_health_failed:${httpResult.error ?? 'unknown'}`);
         }
       }
+      workingLock = withReleaseUpdateState(workingLock, {
+        targetVersion: productVersion,
+        phase: 'workers_deployed',
+        manifestChecksum,
+      });
+      await saveLockFile(workingLock, lockPath);
+      console.log(
+        chalk.gray(`\n  Lock file updated after identity and health checks: ${lockPath}`)
+      );
       try {
         workingLock = await deployReleaseUiWorkers({
           env,
@@ -1853,11 +2100,15 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           productVersion,
           release: targetManifestResult.manifest,
           skipBuild: options.skipBuild === true,
+          deployConfigLockProof: deployConfigLock!.proof,
+          workerScriptOwnership: workerOwnership.guard,
         });
       } catch (error) {
         verificationSpinner.fail('UI Worker release deployment failed');
         console.error(chalk.red(error instanceof Error ? error.message : String(error)));
-        process.exit(1);
+        throw error instanceof Error
+          ? error
+          : new Error('ui_worker_release_deployment_failed', { cause: error });
       }
       if (!controlDatabase && workingLock.releaseUpdate?.controlOperationId) {
         throw new Error('control_database_required_for_release_rollout_completion');
@@ -1882,23 +2133,14 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     console.log(chalk.bold('  Update Summary'));
     console.log(chalk.bold('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n'));
 
-    if (summary.failedCount === 0) {
-      console.log(chalk.green(`  ✅ ${summary.successCount} worker(s) updated successfully!`));
-    } else {
-      console.log(
-        chalk.yellow(
-          `  ⚠️  ${summary.successCount}/${summary.totalComponents} updated, ${summary.failedCount} failed`
-        )
-      );
-
-      console.log(chalk.bold('\n  Failed:'));
-      for (const result of summary.results.filter((r) => !r.success)) {
-        console.log(chalk.red(`    • ${result.component}: ${result.error}`));
-      }
-    }
+    console.log(chalk.green(`  ✅ ${summary.successCount} worker(s) updated successfully!`));
 
     console.log('');
   } finally {
-    await operationLock.release();
+    try {
+      await deployConfigLock?.release();
+    } finally {
+      await operationLock.release();
+    }
   }
 }

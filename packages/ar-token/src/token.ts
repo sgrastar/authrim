@@ -7979,7 +7979,7 @@ async function handleAdminMachineClientCredentialsGrant(
     return oauthError(c, 'server_error', 'Failed to load signing key', 500);
   }
 
-  const expiresIn = Math.min(principal.tokenTtlSeconds, 900);
+  let expiresIn = Math.min(principal.tokenTtlSeconds, 900);
   const dpopProof = extractDPoPProof(c.req.raw.headers);
   let dpopJkt: string | undefined;
   if (dpopProof) {
@@ -8021,6 +8021,17 @@ async function handleAdminMachineClientCredentialsGrant(
   let accessTokenJti = '';
   try {
     const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, adminSigningTenantId);
+    if (credential.expiresAt !== null) {
+      // Keep an issued bearer token strictly inside the credential's hard
+      // lifetime. The one-second margin accounts for JWT NumericDate rounding
+      // between this calculation and createAccessToken's own clock read.
+      const remainingCredentialLifetimeSeconds =
+        Math.floor((credential.expiresAt - Date.now()) / 1000) - 1;
+      if (remainingCredentialLifetimeSeconds < 1) {
+        return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+      }
+      expiresIn = Math.min(expiresIn, remainingCredentialLifetimeSeconds);
+    }
     const result = await createAccessToken(
       accessTokenClaims as Parameters<typeof createAccessToken>[0],
       privateKey,

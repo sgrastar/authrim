@@ -157,6 +157,26 @@ describe('release migration manifests', () => {
     ).toThrow();
   });
 
+  it('rejects migration files whose manifest order differs from execution order', () => {
+    expect(() =>
+      ReleaseMigrationManifestSchema.parse({
+        formatVersion: 1,
+        productVersion: '1.0.0',
+        streams: [
+          {
+            id: 'd1-control',
+            dialect: 'sqlite',
+            logicalRoles: ['control'],
+            files: [
+              { path: '002_second.sql', checksum: 'b'.repeat(64) },
+              { path: '001_first.sql', checksum: 'a'.repeat(64) },
+            ],
+          },
+        ],
+      })
+    ).toThrow('Migration paths must be in strict lexicographic execution order');
+  });
+
   it('requires an explicit exact Worker compatibility contract for database-only updates', () => {
     const manifest = ReleaseMigrationManifestSchema.parse({
       formatVersion: 1,
@@ -260,6 +280,80 @@ describe('release migration manifests', () => {
         manifestChecksum,
         installedProductVersion: '0.9.0',
         installedSchemaManifestChecksums: ['a'.repeat(64)],
+      })
+    ).toThrow('fresh_install_required:0.9.0:0.9.0');
+  });
+
+  it('allows only exact-prefix migration additions to a same-version development draft', () => {
+    const migrationsRoot = temporaryMigrations();
+    const previous = generateReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '0.9.0',
+    });
+    const previousChecksum = calculateReleaseManifestChecksum(previous);
+    const previousCoreFiles = previous.streams.find((stream) => stream.id === 'd1-core')!.files;
+    writeFileSync(
+      join(migrationsRoot, '002_core_append.sql'),
+      'ALTER TABLE core_record ADD value TEXT;\n'
+    );
+    const current = generateReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '0.9.0',
+    });
+    const currentChecksum = calculateReleaseManifestChecksum(current);
+    const targetId = 'd1:core-id:d1-core';
+    const installedSchemaTargets: NonNullable<AuthrimLock['schemaTargets']> = {
+      [targetId]: {
+        productVersion: '0.9.0',
+        manifestChecksum: previousChecksum,
+        streamId: 'd1-core',
+        files: previousCoreFiles.map(({ path, checksum }) => ({ path, checksum })),
+        appliedBy: 'automatic',
+        updatedAt: '2026-08-31T00:00:00.000Z',
+      },
+    };
+    const compatibilityInput = {
+      installedProductVersion: '0.9.0',
+      installedSchemaManifestChecksums: [previousChecksum],
+      installedSchemaTargets,
+      currentTargets: [{ id: targetId, streamId: 'd1-core' }],
+      targetManifestIsDraft: true,
+    } as const;
+
+    expect(() =>
+      assertReleaseDatabaseCompatibility({
+        ...compatibilityInput,
+        manifest: current,
+        manifestChecksum: currentChecksum,
+      })
+    ).not.toThrow();
+
+    const changed = structuredClone(current);
+    changed.streams.find((stream) => stream.id === 'd1-core')!.files[0]!.checksum = 'f'.repeat(64);
+    expect(() =>
+      assertReleaseDatabaseCompatibility({
+        ...compatibilityInput,
+        manifest: changed,
+        manifestChecksum: calculateReleaseManifestChecksum(changed),
+      })
+    ).toThrow('fresh_install_required:0.9.0:0.9.0');
+
+    const removed = structuredClone(current);
+    removed.streams.find((stream) => stream.id === 'd1-core')!.files = [];
+    expect(() =>
+      assertReleaseDatabaseCompatibility({
+        ...compatibilityInput,
+        manifest: removed,
+        manifestChecksum: calculateReleaseManifestChecksum(removed),
+      })
+    ).toThrow('fresh_install_required:0.9.0:0.9.0');
+
+    expect(() =>
+      assertReleaseDatabaseCompatibility({
+        ...compatibilityInput,
+        manifest: current,
+        manifestChecksum: currentChecksum,
+        targetManifestIsDraft: false,
       })
     ).toThrow('fresh_install_required:0.9.0:0.9.0');
   });
@@ -555,16 +649,19 @@ describe('release migration topology', () => {
         expect.objectContaining({ binding: 'DB', streamId: 'd1-core', scope: 'deployment' }),
         expect.objectContaining({
           binding: 'CONTROL_DB',
+          databaseId: 'db-control',
           streamId: 'd1-control',
           logicalRoles: ['control'],
         }),
         expect.objectContaining({
           binding: 'LOOKUP_DB',
+          databaseId: 'db-lookup',
           streamId: 'd1-lookup',
           logicalRoles: ['lookup'],
         }),
         expect.objectContaining({
           binding: 'PLUGIN_RUNNER_DB',
+          databaseId: 'db-plugin-runner',
           streamId: 'd1-plugin-runner',
           logicalRoles: ['plugin_runner'],
         }),

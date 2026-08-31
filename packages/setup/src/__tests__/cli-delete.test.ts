@@ -16,12 +16,16 @@ const mocks = vi.hoisted(() => ({
   detectEnvironments: vi.fn(),
   deleteEnvironment: vi.fn(),
   cleanupLocalEnvironmentArtifacts: vi.fn(),
+  inspectLocalEnvironmentState: vi.fn(),
   findAuthrimBaseDir: vi.fn(),
+  acquireDeployConfigLock: vi.fn(),
   acquireEnvironmentOperationForEnvironment: vi.fn(),
   evaluateEnvironmentOperation: vi.fn(),
   reconcileLockAfterResourceDeletion: vi.fn((lock) => lock),
   saveLockFile: vi.fn(),
   release: vi.fn(),
+  deployConfigRelease: vi.fn(),
+  cleanupSetupManagedControlTokens: vi.fn(),
   oraSpinners: [] as MockSpinner[],
 }));
 
@@ -53,11 +57,20 @@ vi.mock('../core/environment-cleanup.js', () => ({
   cleanupLocalEnvironmentArtifacts: mocks.cleanupLocalEnvironmentArtifacts,
 }));
 
+vi.mock('../core/control-token-environment-cleanup.js', () => ({
+  cleanupSetupManagedControlTokens: mocks.cleanupSetupManagedControlTokens,
+}));
+
+vi.mock('../core/local-environment-state.js', () => ({
+  inspectLocalEnvironmentState: mocks.inspectLocalEnvironmentState,
+}));
+
 vi.mock('../core/paths.js', () => ({
   findAuthrimBaseDir: mocks.findAuthrimBaseDir,
 }));
 
 vi.mock('../core/lock.js', () => ({
+  acquireDeployConfigLock: mocks.acquireDeployConfigLock,
   acquireEnvironmentOperationForEnvironment: mocks.acquireEnvironmentOperationForEnvironment,
   reconcileLockAfterResourceDeletion: mocks.reconcileLockAfterResourceDeletion,
   saveLockFile: mocks.saveLockFile,
@@ -87,8 +100,51 @@ describe('CLI environment deletion', () => {
       lock: null,
       release: mocks.release,
     });
+    mocks.acquireDeployConfigLock.mockResolvedValue({
+      path: '/workspace/.authrim/deploy-config.operation-lock',
+      release: mocks.deployConfigRelease,
+    });
     mocks.evaluateEnvironmentOperation.mockReturnValue({ allowed: true });
     mocks.cleanupLocalEnvironmentArtifacts.mockResolvedValue({ errors: [] });
+    mocks.cleanupSetupManagedControlTokens.mockResolvedValue({
+      status: 'completed',
+      revokedTokenIds: [],
+      alreadyAbsentTokenIds: [],
+    });
+    mocks.inspectLocalEnvironmentState.mockReturnValue({ exists: false, paths: [] });
+  });
+
+  it('deletes config-and-intent-only interrupted provisioning state', async () => {
+    mocks.inspectLocalEnvironmentState.mockReturnValue({
+      exists: true,
+      paths: [
+        '/workspace/.authrim/test/config.json',
+        '/workspace/.authrim/test/provisioning-intent.json',
+      ],
+    });
+    mocks.confirmEnvironmentObservedForDeletion.mockResolvedValue(false);
+    mocks.deleteEnvironment.mockResolvedValue({
+      success: true,
+      completion: 'complete',
+      environmentEmpty: true,
+      deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+      manualR2: [],
+      errors: [],
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await deleteCommand({ env: 'test', yes: true, all: true });
+      expect(mocks.evaluateEnvironmentOperation).toHaveBeenCalledWith(
+        expect.objectContaining({ environmentKnownLocally: true })
+      );
+      expect(mocks.deleteEnvironment).toHaveBeenCalledWith(
+        expect.objectContaining({ env: 'test', environmentKnownLocally: true })
+      );
+      expect(mocks.cleanupLocalEnvironmentArtifacts).toHaveBeenCalledOnce();
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it('reports a large R2 cleanup as a manual action instead of an error', async () => {
@@ -123,6 +179,91 @@ describe('CLI environment deletion', () => {
       );
       expect(mocks.cleanupLocalEnvironmentArtifacts).not.toHaveBeenCalled();
       expect(mocks.release).toHaveBeenCalledOnce();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('wires setup-managed token cleanup to the exact lock-recorded Control D1 boundary', async () => {
+    mocks.acquireEnvironmentOperationForEnvironment.mockResolvedValueOnce({
+      lock: {
+        env: 'test',
+        d1: { CONTROL_DB: { id: 'control-id', name: 'test-authrim-control-db' } },
+        kv: {},
+        workers: {
+          'ar-auth': { name: 'test-ar-auth', cloudflareScriptTag: 'auth-worker-tag' },
+        },
+      },
+      lockFilePath: '/workspace/.authrim/test/lock.json',
+      release: mocks.release,
+    });
+    mocks.deleteEnvironment.mockImplementationOnce(async (options) => {
+      await options.beforeD1Deletion?.({
+        observedD1Resources: [{ id: 'control-id', name: 'test-authrim-control-db' }],
+      });
+      return {
+        success: true,
+        completion: 'complete',
+        environmentEmpty: false,
+        deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+        manualR2: [],
+        errors: [],
+      };
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await deleteCommand({ env: 'test', yes: true, all: true });
+      expect(mocks.deleteEnvironment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          knownD1Resources: [{ id: 'control-id', name: 'test-authrim-control-db' }],
+          knownWorkerResources: [{ name: 'test-ar-auth', cloudflareScriptTag: 'auth-worker-tag' }],
+          knownKVResources: [],
+          knownQueueResources: [],
+        })
+      );
+      expect(mocks.cleanupSetupManagedControlTokens).toHaveBeenCalledWith({
+        baseDir: '/workspace',
+        environment: 'test',
+        controlDatabaseIdentifier: 'control-id',
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('does not query a same-name replacement Control D1 during token cleanup', async () => {
+    mocks.acquireEnvironmentOperationForEnvironment.mockResolvedValueOnce({
+      lock: {
+        env: 'test',
+        d1: { CONTROL_DB: { id: 'control-id', name: 'test-authrim-control-db' } },
+        kv: {},
+      },
+      lockFilePath: '/workspace/.authrim/test/lock.json',
+      release: mocks.release,
+    });
+    mocks.deleteEnvironment.mockImplementationOnce(async (options) => {
+      await options.beforeD1Deletion?.({
+        observedD1Resources: [{ id: 'replacement-control-id', name: 'test-authrim-control-db' }],
+      });
+      return {
+        success: true,
+        completion: 'complete',
+        environmentEmpty: false,
+        deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+        manualR2: [],
+        errors: [],
+      };
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await deleteCommand({ env: 'test', yes: true, all: true });
+      expect(mocks.cleanupSetupManagedControlTokens).toHaveBeenCalledWith({
+        baseDir: '/workspace',
+        environment: 'test',
+        controlDatabaseIdentifier: null,
+      });
     } finally {
       log.mockRestore();
     }
@@ -232,6 +373,36 @@ describe('CLI environment deletion', () => {
       );
       expect(mocks.cleanupLocalEnvironmentArtifacts).not.toHaveBeenCalled();
       expect(mocks.release).toHaveBeenCalledOnce();
+    } finally {
+      exit.mockRestore();
+      log.mockRestore();
+    }
+  });
+
+  it('reports retryable post-delete verification without cleaning local state', async () => {
+    mocks.deleteEnvironment.mockResolvedValue({
+      success: false,
+      completion: 'failed',
+      environmentEmpty: false,
+      retryable: true,
+      postDeleteVerification: 'resources_remaining',
+      deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+      manualR2: [],
+      errors: ['Cloudflare resources still remain; retry deletion.'],
+    });
+    const exit = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+      throw new Error(`process.exit:${code ?? 0}`);
+    }) as never);
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await expect(deleteCommand({ env: 'test', yes: true, all: true })).rejects.toThrow(
+        'process.exit:1'
+      );
+      expect(log.mock.calls.flat().join('\n')).toContain(
+        'Local recovery state was preserved; retry the same delete command.'
+      );
+      expect(mocks.cleanupLocalEnvironmentArtifacts).not.toHaveBeenCalled();
     } finally {
       exit.mockRestore();
       log.mockRestore();

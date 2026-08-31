@@ -916,6 +916,8 @@ const pt: Translations = {
   'web.envDetail.automaticProvisioningMissing': '(ausente: {{missing}})',
   'web.envDetail.automaticProvisioningRepairHint':
     'Digite um novo token de uso único para corrigir.',
+  'web.envDetail.bootstrapRetainedForRetry':
+    'A Cloudflare retornou um erro temporário. O token de bootstrap continua ativo; insira o mesmo token novamente e selecione Ativar para retomar.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Revogue os tokens bootstrap e filhos do Authrim indicados no Dashboard Cloudflare antes de tentar novamente.',
   'web.envDetail.bootstrapRevokedPendingReset':

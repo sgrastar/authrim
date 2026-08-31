@@ -66,9 +66,13 @@ export interface SetupOperatorExecutionResult {
 }
 
 class SetupR2ReleaseArtifactStore implements ReleaseArtifactStore {
-  constructor(private readonly bucketName: string) {}
+  constructor(
+    private readonly bucketName: string,
+    private readonly verifyBucketOwnership?: () => Promise<void>
+  ) {}
 
   async get(key: string): Promise<ReleaseArtifactObject | null> {
+    await this.verifyBucketOwnership?.();
     const bytes = await getR2ObjectBytes({
       bucketName: this.bucketName,
       objectKey: key,
@@ -398,6 +402,126 @@ async function reserveCreate(input: {
   );
 }
 
+async function markCreateIssued(input: {
+  client: SetupOperatorD1Client;
+  controlDatabaseId: string;
+  operation: PendingControlOperatorOperation;
+  lease: SetupOperatorLease;
+  now: number;
+}): Promise<void> {
+  const results = await input.client.queryD1Batch(input.controlDatabaseId, [
+    {
+      sql: `UPDATE control_desired_resources
+               SET provider_create_state = 'issued', updated_at = ?
+             WHERE desired_resource_id = ? AND environment_id = ? AND origin_operation_id = ?
+               AND provider_create_state = 'not_started' AND provider_resource_id IS NULL
+               AND provider_identity_checkpointed_at IS NULL
+               AND EXISTS (
+                 SELECT 1 FROM control_operations operation
+                  WHERE operation.operation_id = ? AND operation.environment_id = ?
+                    AND operation.lock_owner = ? AND operation.fencing_token = ?
+                    AND operation.status = 'running'
+               )`,
+      params: [
+        input.now,
+        input.operation.desiredResourceId,
+        input.operation.environmentId,
+        input.operation.operationId,
+        input.operation.operationId,
+        input.operation.environmentId,
+        input.lease.ownerId,
+        input.lease.fencingToken,
+      ],
+    },
+  ]);
+  assertBatch(results, 1);
+  if (Number(results[0]?.meta?.changes ?? 0) !== 1) {
+    throw new Error('control_d1_create_issue_checkpoint_failed');
+  }
+}
+
+async function markCreateDefinitelyRejected(input: {
+  client: SetupOperatorD1Client;
+  controlDatabaseId: string;
+  operation: PendingControlOperatorOperation;
+  lease: SetupOperatorLease;
+  now: number;
+}): Promise<void> {
+  const results = await input.client.queryD1Batch(input.controlDatabaseId, [
+    {
+      sql: `UPDATE control_desired_resources
+               SET provider_create_state = 'not_started', updated_at = ?
+             WHERE desired_resource_id = ? AND environment_id = ? AND origin_operation_id = ?
+               AND provider_create_state = 'issued' AND provider_resource_id IS NULL
+               AND provider_identity_checkpointed_at IS NULL
+               AND EXISTS (
+                 SELECT 1 FROM control_operations operation
+                  WHERE operation.operation_id = ? AND operation.environment_id = ?
+                    AND operation.lock_owner = ? AND operation.fencing_token = ?
+                    AND operation.status = 'running'
+               )`,
+      params: [
+        input.now,
+        input.operation.desiredResourceId,
+        input.operation.environmentId,
+        input.operation.operationId,
+        input.operation.operationId,
+        input.operation.environmentId,
+        input.lease.ownerId,
+        input.lease.fencingToken,
+      ],
+    },
+  ]);
+  assertBatch(results, 1);
+  if (Number(results[0]?.meta?.changes ?? 0) !== 1) {
+    throw new Error('control_d1_create_rejection_checkpoint_failed');
+  }
+}
+
+async function checkpointProviderIdentity(input: {
+  client: SetupOperatorD1Client;
+  controlDatabaseId: string;
+  operation: PendingControlOperatorOperation;
+  lease: SetupOperatorLease;
+  databaseId: string;
+  now: number;
+}): Promise<void> {
+  const results = await input.client.queryD1Batch(input.controlDatabaseId, [
+    {
+      sql: `UPDATE control_desired_resources
+               SET provider_create_state = 'identified', provider_resource_id = ?,
+                   provider_identity_checkpointed_at = COALESCE(provider_identity_checkpointed_at, ?),
+                   updated_at = ?
+             WHERE desired_resource_id = ? AND environment_id = ? AND origin_operation_id = ?
+               AND (provider_create_state = 'issued' OR
+                    (provider_create_state = 'identified' AND provider_resource_id = ?))
+               AND EXISTS (
+                 SELECT 1 FROM control_operations operation
+                  WHERE operation.operation_id = ? AND operation.environment_id = ?
+                    AND operation.lock_owner = ? AND operation.fencing_token = ?
+                    AND operation.status = 'running'
+               )`,
+      params: [
+        input.databaseId,
+        input.now,
+        input.now,
+        input.operation.desiredResourceId,
+        input.operation.environmentId,
+        input.operation.operationId,
+        input.databaseId,
+        input.operation.operationId,
+        input.operation.environmentId,
+        input.lease.ownerId,
+        input.lease.fencingToken,
+      ],
+    },
+  ]);
+  assertBatch(results, 1);
+  if (Number(results[0]?.meta?.changes ?? 0) !== 1) {
+    throw new Error('control_d1_provider_identity_checkpoint_failed');
+  }
+}
+
 async function markCreateSucceeded(input: {
   client: SetupOperatorD1Client;
   controlDatabaseId: string;
@@ -407,7 +531,26 @@ async function markCreateSucceeded(input: {
   now: number;
 }): Promise<SetupOperatorExecutionResult> {
   const observedId = `observed:${input.operation.desiredResourceId}`;
+  const projectionAssertionId = `projection:${input.lease.operationId}:${input.lease.fencingToken}:setup`;
+  const shardProjectionTable =
+    input.operation.dataRole === 'lookup'
+      ? 'control_lookup_physical_shards'
+      : 'control_tenant_shards';
+  const shardProjectionIdColumn =
+    input.operation.dataRole === 'lookup' ? 'lookup_shard_id' : 'shard_id';
   const fence = [input.lease.operationId, input.lease.ownerId, input.lease.fencingToken] as const;
+  const identity = [
+    input.operation.desiredResourceId,
+    input.operation.environmentId,
+    input.databaseId,
+  ] as const;
+  const identityGuard = `EXISTS (
+    SELECT 1 FROM control_desired_resources identity
+     WHERE identity.desired_resource_id = ? AND identity.environment_id = ?
+       AND identity.provider_create_state = 'identified'
+       AND identity.provider_resource_id = ?
+       AND identity.provider_identity_checkpointed_at IS NOT NULL
+  )`;
   const results = await input.client.queryD1Batch(input.controlDatabaseId, [
     {
       sql: `INSERT INTO control_observed_resources (
@@ -419,7 +562,7 @@ async function markCreateSucceeded(input: {
                 SELECT 1 FROM control_operations operation
                  WHERE operation.operation_id = ? AND operation.lock_owner = ?
                    AND operation.fencing_token = ?
-              )
+              ) AND ${identityGuard}
             ON CONFLICT(observed_resource_id) DO UPDATE SET
               provider_resource_id = excluded.provider_resource_id,
               provider_name = excluded.provider_name,
@@ -429,7 +572,7 @@ async function markCreateSucceeded(input: {
               SELECT 1 FROM control_operations operation
                WHERE operation.operation_id = ? AND operation.lock_owner = ?
                  AND operation.fencing_token = ?
-            )`,
+            ) AND ${identityGuard}`,
       params: [
         observedId,
         input.operation.environmentId,
@@ -439,7 +582,9 @@ async function markCreateSucceeded(input: {
         input.operation.ownershipFingerprint,
         input.now,
         ...fence,
+        ...identity,
         ...fence,
+        ...identity,
       ],
     },
     {
@@ -451,25 +596,26 @@ async function markCreateSucceeded(input: {
                  SELECT 1 FROM control_operations operation
                   WHERE operation.operation_id = ? AND operation.lock_owner = ?
                     AND operation.fencing_token = ?
-               )`,
+               ) AND ${identityGuard}`,
       params: [
         input.databaseId,
         input.now,
         input.operation.desiredResourceId,
         input.operation.environmentId,
         ...fence,
+        ...identity,
       ],
     },
     {
-      sql: `UPDATE control_tenant_shards
+      sql: `UPDATE ${shardProjectionTable}
                SET read_replication_mode = ?, observed_replication_state = ?,
                    replication_checked_at = ?, replication_error_code = NULL, updated_at = ?
-             WHERE shard_id = ? AND environment_id = ?
+             WHERE ${shardProjectionIdColumn} = ? AND environment_id = ?
                AND EXISTS (
                  SELECT 1 FROM control_operations operation
                   WHERE operation.operation_id = ? AND operation.lock_owner = ?
                     AND operation.fencing_token = ?
-               )`,
+               ) AND ${identityGuard}`,
       params: [
         input.operation.readReplicationMode,
         input.operation.readReplicationMode,
@@ -478,6 +624,7 @@ async function markCreateSucceeded(input: {
         input.operation.shardId,
         input.operation.environmentId,
         ...fence,
+        ...identity,
       ],
     },
     {
@@ -488,13 +635,14 @@ async function markCreateSucceeded(input: {
                  SELECT 1 FROM control_operations operation
                   WHERE operation.operation_id = ? AND operation.lock_owner = ?
                     AND operation.fencing_token = ?
-               )`,
+               ) AND ${identityGuard}`,
       params: [
         observedId,
         input.now,
         input.operation.desiredResourceId,
         input.operation.environmentId,
         ...fence,
+        ...identity,
       ],
     },
     {
@@ -505,21 +653,29 @@ async function markCreateSucceeded(input: {
                  SELECT 1 FROM control_operations operation
                   WHERE operation.operation_id = ? AND operation.lock_owner = ?
                     AND operation.fencing_token = ?
-               )`,
-      params: [input.databaseId, input.now, input.now, input.lease.operationId, ...fence],
+               ) AND ${identityGuard}`,
+      params: [
+        input.databaseId,
+        input.now,
+        input.now,
+        input.lease.operationId,
+        ...fence,
+        ...identity,
+      ],
     },
     {
       sql: `UPDATE control_operations
                SET status = 'waiting_retry', next_attempt_at = NULL,
                    lock_owner = NULL, lock_expires_at = NULL, updated_at = ?
              WHERE operation_id = ? AND environment_id = ?
-               AND lock_owner = ? AND fencing_token = ?`,
+               AND lock_owner = ? AND fencing_token = ? AND ${identityGuard}`,
       params: [
         input.now,
         input.lease.operationId,
         input.lease.environmentId,
         input.lease.ownerId,
         input.lease.fencingToken,
+        ...identity,
       ],
     },
     {
@@ -553,6 +709,91 @@ async function markCreateSucceeded(input: {
         input.lease.operationId,
         input.lease.environmentId,
         input.lease.fencingToken,
+      ],
+    },
+    {
+      sql: `INSERT INTO control_provider_identity_projection_assertions (
+              assertion_id, environment_id, desired_resource_id, valid, created_at
+            ) VALUES (?, ?, ?, CASE WHEN
+              EXISTS (
+                SELECT 1 FROM control_observed_resources observed
+                 WHERE observed.observed_resource_id = ? AND observed.environment_id = ?
+                   AND observed.desired_resource_id = ? AND observed.provider_resource_id = ?
+                   AND observed.provider_name = ? AND observed.observed_state = 'present'
+              ) AND EXISTS (
+                SELECT 1 FROM control_tenant_database_migration_state migration
+                 WHERE migration.desired_resource_id = ? AND migration.environment_id = ?
+                   AND migration.operation_id = ? AND migration.provider_database_id = ?
+                   AND migration.state = 'requested'
+              ) AND EXISTS (
+                SELECT 1 FROM ${shardProjectionTable} shard
+                 WHERE shard.${shardProjectionIdColumn} = ? AND shard.environment_id = ?
+                   AND shard.read_replication_mode = ?
+                   AND shard.observed_replication_state = ?
+              ) AND EXISTS (
+                SELECT 1 FROM control_desired_resources desired
+                 WHERE desired.desired_resource_id = ? AND desired.environment_id = ?
+                   AND desired.observed_resource_id = ?
+                   AND desired.provisioning_state = 'creating'
+                   AND desired.provider_create_state = 'identified'
+                   AND desired.provider_resource_id = ?
+                   AND desired.provider_identity_checkpointed_at IS NOT NULL
+              ) AND EXISTS (
+                SELECT 1 FROM control_operation_steps create_step
+                 WHERE create_step.operation_id = ? AND create_step.step_key = 'create_d1'
+                   AND create_step.status = 'succeeded'
+                   AND create_step.observed_resource_id = ?
+              ) AND EXISTS (
+                SELECT 1 FROM control_operation_steps migration_step
+                 WHERE migration_step.operation_id = ?
+                   AND migration_step.step_key = 'apply_migrations'
+                   AND migration_step.status = 'blocked'
+                   AND migration_step.last_error_code = 'operator_action_required'
+              ) AND EXISTS (
+                SELECT 1 FROM control_operations operation
+                 WHERE operation.operation_id = ? AND operation.environment_id = ?
+                   AND operation.status = 'blocked'
+                   AND operation.last_error_code = 'operator_action_required'
+                   AND operation.lock_owner IS NULL AND operation.lock_expires_at IS NULL
+                   AND operation.fencing_token = ?
+              ) THEN 1 ELSE 0 END, ?)`,
+      params: [
+        projectionAssertionId,
+        input.operation.environmentId,
+        input.operation.desiredResourceId,
+        observedId,
+        input.operation.environmentId,
+        input.operation.desiredResourceId,
+        input.databaseId,
+        input.operation.databaseName,
+        input.operation.desiredResourceId,
+        input.operation.environmentId,
+        input.operation.operationId,
+        input.databaseId,
+        input.operation.shardId,
+        input.operation.environmentId,
+        input.operation.readReplicationMode,
+        input.operation.readReplicationMode,
+        input.operation.desiredResourceId,
+        input.operation.environmentId,
+        observedId,
+        input.databaseId,
+        input.operation.operationId,
+        input.databaseId,
+        input.operation.operationId,
+        input.operation.operationId,
+        input.operation.environmentId,
+        input.lease.fencingToken,
+        input.now,
+      ],
+    },
+    {
+      sql: `DELETE FROM control_provider_identity_projection_assertions
+             WHERE assertion_id = ? AND environment_id = ? AND desired_resource_id = ?`,
+      params: [
+        projectionAssertionId,
+        input.operation.environmentId,
+        input.operation.desiredResourceId,
       ],
     },
     {
@@ -594,19 +835,23 @@ async function markCreateSucceeded(input: {
               JOIN control_desired_resources desired
                 ON desired.origin_operation_id = operation.operation_id
                AND desired.desired_resource_id = ?
+               AND desired.provider_create_state = 'identified'
+               AND desired.provider_resource_id = ?
+               AND desired.provider_identity_checkpointed_at IS NOT NULL
               JOIN control_tenant_database_migration_state migration
                 ON migration.operation_id = operation.operation_id
                AND migration.desired_resource_id = desired.desired_resource_id
              WHERE operation.operation_id = ? AND operation.environment_id = ?`,
       params: [
         input.operation.desiredResourceId,
+        input.databaseId,
         input.lease.operationId,
         input.lease.environmentId,
       ],
     },
   ]);
-  assertBatch(results, 10);
-  const [reflected] = resultRows<Record<string, unknown>>(results[9]);
+  assertBatch(results, 12);
+  const [reflected] = resultRows<Record<string, unknown>>(results[11]);
   if (
     !reflected ||
     reflected.operation_status !== 'blocked' ||
@@ -2172,7 +2417,11 @@ export async function createSetupOperatorD1Client(
     expectedAccountId?: string;
   } = {}
 ): Promise<CloudflareControlApiClient> {
-  const [accountId, token] = await Promise.all([getAccountId(), getCloudflareApiToken()]);
+  // Resolve the account first. For Wrangler OAuth this may refresh the cached credential; reading
+  // the token in parallel can capture the expired pre-refresh value and fail the first operator
+  // request even though account discovery succeeded.
+  const accountId = await getAccountId();
+  const token = await getCloudflareApiToken();
   if (!accountId || !token?.token) throw new Error('wrangler_oauth_credentials_required');
   if (input.expectedAccountId && accountId !== input.expectedAccountId) {
     throw new Error('control_operator_account_mismatch');
@@ -2418,11 +2667,40 @@ export async function executeSetupControlOperatorCreate(input: {
           readReplicationMode: input.operation.readReplicationMode,
         },
         provider: client,
+        checkpoint: {
+          state: input.operation.providerCreateState,
+          providerResourceId: input.operation.providerResourceId,
+        },
         reserveCreate: () =>
           reserveCreate({
             client,
             controlDatabaseId: input.controlDatabaseId,
             lease,
+            now: now(),
+          }),
+        markCreateIssued: () =>
+          markCreateIssued({
+            client,
+            controlDatabaseId: input.controlDatabaseId,
+            operation: input.operation,
+            lease,
+            now: now(),
+          }),
+        markCreateDefinitelyRejected: () =>
+          markCreateDefinitelyRejected({
+            client,
+            controlDatabaseId: input.controlDatabaseId,
+            operation: input.operation,
+            lease,
+            now: now(),
+          }),
+        checkpointProviderIdentity: (databaseId) =>
+          checkpointProviderIdentity({
+            client,
+            controlDatabaseId: input.controlDatabaseId,
+            operation: input.operation,
+            lease,
+            databaseId,
             now: now(),
           }),
       }),
@@ -2465,6 +2743,7 @@ export async function executeSetupControlOperatorMigration(input: {
   expectedAccountId?: string;
   executionId?: string;
   artifactStore?: ReleaseArtifactStore;
+  verifyMigrationReleaseBucketOwnership?: () => Promise<void>;
   now?: () => number;
 }): Promise<SetupOperatorExecutionResult> {
   if (input.operation.currentStep !== 'apply_migrations' || !input.operation.migration) {
@@ -2493,7 +2772,11 @@ export async function executeSetupControlOperatorMigration(input: {
   const migration = input.operation.migration;
   const engine = new ApiMigrationEngine(
     new MigrationReleaseArtifactReader(
-      input.artifactStore ?? new SetupR2ReleaseArtifactStore(input.migrationReleaseBucketName)
+      input.artifactStore ??
+        new SetupR2ReleaseArtifactStore(
+          input.migrationReleaseBucketName,
+          input.verifyMigrationReleaseBucketOwnership
+        )
     ),
     client,
     now

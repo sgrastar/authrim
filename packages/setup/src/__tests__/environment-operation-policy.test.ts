@@ -50,6 +50,17 @@ describe('environment operation policy', () => {
     ).toMatchObject({ allowed: true, lifecycle: 'absent' });
   });
 
+  it('allows deletion of config-only interrupted provisioning state', () => {
+    expect(
+      evaluateEnvironmentOperation({
+        operation: 'delete',
+        lock: null,
+        environmentObservedRemotely: false,
+        environmentKnownLocally: true,
+      })
+    ).toMatchObject({ allowed: true, lifecycle: 'absent' });
+  });
+
   it('classifies every persisted lifecycle shape centrally', () => {
     expect(classifyEnvironmentLifecycle()).toBe('absent');
     expect(classifyEnvironmentLifecycle(lock())).toBe('provisioned');
@@ -204,6 +215,27 @@ describe('environment operation policy', () => {
     ).toBe('initial_manifest_changed');
   });
 
+  it('allows legacy initial recovery only after the caller verifies explicit ownership evidence', () => {
+    const value = lock({
+      workers: { 'ar-auth': { name: 'test-ar-auth', version: '1.1.0' } },
+    });
+    expect(
+      evaluateEnvironmentOperation({
+        operation: 'initial_deploy',
+        lock: value,
+        targetVersion: '1.1.0',
+      })
+    ).toMatchObject({ allowed: false, reason: 'legacy_reconciliation_required' });
+    expect(
+      evaluateEnvironmentOperation({
+        operation: 'initial_deploy',
+        lock: value,
+        targetVersion: '1.1.0',
+        explicitLegacyInitialRecoveryVerified: true,
+      })
+    ).toMatchObject({ allowed: true, lifecycle: 'legacy' });
+  });
+
   it('fails closed when a same-version operation omits its target version', () => {
     expect(
       evaluateEnvironmentOperation({
@@ -256,6 +288,23 @@ describe('environment operation policy', () => {
         targetVersion: '1.1.0',
       }).reason
     ).toBe('inconsistent_release_state');
+
+    const missingProductVersion = lock({
+      release: {
+        ...updatingRelease,
+        previousProductVersion: undefined,
+        phase: 'verified',
+        targetVersion: '1.1.0',
+      },
+    });
+    expect(
+      evaluateEnvironmentOperation({
+        operation: 'initial_deploy',
+        lock: missingProductVersion,
+        targetVersion: '1.1.0',
+        explicitLegacyInitialRecoveryVerified: true,
+      })
+    ).toMatchObject({ allowed: false, reason: 'inconsistent_release_state' });
   });
 
   it.each(['config_staged', 'preparing', 'pending_deploy'] as const)(

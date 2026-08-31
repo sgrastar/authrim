@@ -30,6 +30,18 @@ describe('generated approvals smoke', () => {
     };
 
     await writeFile(join(envDir, 'config.json'), JSON.stringify(config, null, 2));
+    await writeFile(
+      join(envDir, 'lock.json'),
+      JSON.stringify({
+        version: '1.0.0',
+        env,
+        createdAt: '2026-08-31T00:00:00.000Z',
+        d1: {
+          DB_ADMIN: { id: 'admin-immutable-id', name: `${env}-authrim-admin-db` },
+        },
+        kv: {},
+      })
+    );
 
     const fetchMock = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>();
     vi.stubGlobal('fetch', fetchMock as typeof fetch);
@@ -285,6 +297,18 @@ describe('generated approvals smoke', () => {
     };
 
     await writeFile(join(envDir, 'config.json'), JSON.stringify(config, null, 2));
+    await writeFile(
+      join(envDir, 'lock.json'),
+      JSON.stringify({
+        version: '1.0.0',
+        env,
+        createdAt: '2026-08-31T00:00:00.000Z',
+        d1: {
+          DB_ADMIN: { id: 'admin-immutable-id', name: `${env}-authrim-admin-db` },
+        },
+        kv: {},
+      })
+    );
 
     let protectedReadCount = 0;
     const fetchMock = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>();

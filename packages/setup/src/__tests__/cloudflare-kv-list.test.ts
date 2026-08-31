@@ -61,6 +61,25 @@ describe('Cloudflare KV namespace listing', () => {
     );
   });
 
+  it('rejects duplicate Wrangler KV names or immutable IDs', () => {
+    expect(() =>
+      parseKVNamespaceListOutput(
+        JSON.stringify([
+          { title: 'SAME', id: 'first-id' },
+          { title: 'SAME', id: 'second-id' },
+        ])
+      )
+    ).toThrow('duplicate resource name');
+    expect(() =>
+      parseKVNamespaceListOutput(
+        JSON.stringify([
+          { title: 'FIRST', id: 'same-id' },
+          { title: 'SECOND', id: 'same-id' },
+        ])
+      )
+    ).toThrow('duplicate immutable resource ID');
+  });
+
   it('parses exact KV key inventory and reads only an exact match', async () => {
     expect(parseKVKeyListOutput('[{"name":"region_shard_config:tenant-a"}]')).toEqual([
       { name: 'region_shard_config:tenant-a' },
@@ -129,7 +148,10 @@ describe('Cloudflare KV namespace listing', () => {
       new URL(
         'https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/storage/kv/namespaces?page=1&per_page=1000'
       ),
-      { headers: { Authorization: 'Bearer test-token' } }
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer test-token' },
+        signal: expect.any(AbortSignal),
+      })
     );
     expect(execaMock).not.toHaveBeenCalled();
   });

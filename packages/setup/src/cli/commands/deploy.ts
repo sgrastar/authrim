@@ -10,8 +10,10 @@ import { confirm, password, select } from '@inquirer/prompts';
 import { t, getLocale } from '../../i18n/index.js';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { lstat, readFile, unlink, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { AuthrimConfigSchema, type AuthrimConfig } from '../../core/config.js';
+import { consumePrivateFileSecurely, writePrivateFileAtomically } from '../../core/atomic-file.js';
+import { assertFixedD1ResourceIdentities } from '../../core/fixed-d1-identity.js';
 
 function updateOraSpinner(spinner: ReturnType<typeof ora>, message: string): void {
   if (spinner.isSpinning === false) {
@@ -22,10 +24,15 @@ function updateOraSpinner(spinner: ReturnType<typeof ora>, message: string): voi
 }
 import {
   saveLockFile,
+  loadLockFile,
   loadLockFileAuto,
   reconcileD1ResourcesInLock,
+  reconcileQueueResourcesInLock,
   reconcileSharedKVResourcesInLock,
+  acquireDeployConfigLock,
   acquireEnvironmentOperationLock,
+  clearProvisionalWorkerScriptOwnership,
+  withDnsOwnershipEntry,
   type AuthrimLock,
 } from '../../core/lock.js';
 import {
@@ -69,17 +76,22 @@ import {
   ensureWildcardDnsForMultiTenant,
   listD1Databases,
   listKVNamespaces,
+  listQueues,
+  listR2Buckets,
+  getRequiredR2Buckets,
+  getRequiredQueues,
   findMigrationsRoot,
   getAccountId,
   getCloudflareApiToken,
+  assertR2BucketOwnershipForUse,
 } from '../../core/cloudflare.js';
-import { type WorkerComponent, CORE_WORKER_COMPONENTS } from '../../core/naming.js';
+import { type WorkerComponent, CORE_WORKER_COMPONENTS, getWorkerName } from '../../core/naming.js';
+import {
+  prepareManagedWorkerScriptOwnership,
+  type WorkerScriptOwnershipGuard,
+} from '../../core/worker-script-ownership.js';
 import { generateWranglerConfig, toToml, buildResourceIdsFromLock } from '../../core/wrangler.js';
 import { buildWorkerDeploymentResourceIds } from '../../core/deployment-resource-ids.js';
-import {
-  loadWorkerCapabilityManifests,
-  validateGeneratedWorkerCapabilities,
-} from '../../core/worker-capabilities.js';
 import {
   compileControlWorkerInventoryFromArtifacts,
   registerControlWorkerInventory,
@@ -120,6 +132,7 @@ import {
   resolveLoginUiExecutionOrigin,
 } from '../../core/url-config.js';
 import { ensureSupplementalKeyFiles } from '../../core/keys.js';
+import { promotePendingEmailSecrets } from '../../core/pending-email-secrets.js';
 import { getPackageVersion, getRootProductVersion } from '../../core/version.js';
 import {
   calculateReleaseManifestChecksum,
@@ -169,15 +182,22 @@ import {
   CloudflareTokenBootstrapError,
   detectCloudflareTokenOwnership,
   selectPreferredCloudflareTokenOwnership,
-  validateDirectControlTokens,
+  validateDirectControlTokensWithEvidence,
   type CloudflareTokenOwnership,
+  type DirectControlTokenEvidence,
   WranglerControlSecretSink,
 } from '../../core/cloudflare-control-token-bootstrap.js';
 import { openExternalHttpsUrl } from '../../core/open-external-url.js';
-import { writeControlProvisioningAuthority } from '../../core/control-provisioning-authority.js';
+import {
+  isTokenlessPendingControlProvisioningAuthority,
+  readControlProvisioningAuthority,
+  writeControlProvisioningAuthority,
+} from '../../core/control-provisioning-authority.js';
+import { loadPendingControlBootstrap } from '../../core/pending-control-bootstrap.js';
 import {
   completeControlTokenBootstrap,
   hasReadyControlTokenBootstrap,
+  reconcileControlSecretGenerationWorkerLock,
   resolveControlTokenResourceClasses,
 } from '../../core/control-token-bootstrap-orchestrator.js';
 import { validateSetupDomainInputs } from '../../web/domain-form-state.js';
@@ -199,6 +219,16 @@ import {
   updateDeploymentProgress,
   type DeploymentProgressSnapshot,
 } from '../../core/deployment-progress.js';
+import {
+  adoptLegacyQueueIdentities,
+  assertLegacyQueueIdentityAdoptionPersisted,
+  type LegacyQueueIdentityAdoptionEvidence,
+} from '../../core/legacy-queue-identity-adoption.js';
+import {
+  adoptLegacyWorkerDeployments,
+  assertLegacyWorkerDeploymentAdoptionPersisted,
+  type LegacyWorkerDeploymentTarget,
+} from '../../core/legacy-worker-deployment-adoption.js';
 
 // =============================================================================
 // Types
@@ -230,6 +260,10 @@ export interface DeployCommandOptions {
   operationKind?: 'worker_redeploy' | 'topology_change';
   /** Internal maintenance callers require a thrown error instead of process exit state only. */
   throwOnFailure?: boolean;
+  /** Explicit one-time checkpoint upgrade for historical Queue entries whose id equaled name. */
+  adoptLegacyQueueIdentities?: boolean;
+  /** Explicitly recover exact Worker ownership after a pre-checkpoint initial deployment. */
+  recoverLegacyWorkerDeployments?: boolean;
 }
 
 export function resolveDeployOperationKind(input: {
@@ -238,6 +272,41 @@ export function resolveDeployOperationKind(input: {
 }): 'initial_deploy' | 'worker_redeploy' | 'topology_change' {
   if (input.isInitialDeployment) return 'initial_deploy';
   return input.operationKind ?? 'worker_redeploy';
+}
+
+export function isInitialDeploymentLock(lock: AuthrimLock): boolean {
+  return lock.productVersion === undefined;
+}
+
+export function assertExplicitLegacyInitialWorkerRecoveryState(input: {
+  lock: AuthrimLock;
+  environment: string;
+  targetVersion: string;
+  enabledComponents: readonly string[];
+}): void {
+  if (
+    input.lock.productVersion !== undefined ||
+    input.lock.releaseUpdate !== undefined ||
+    Object.keys(input.lock.workers ?? {}).length === 0
+  ) {
+    throw new Error('legacy_worker_recovery_state_invalid');
+  }
+  const enabled = new Set(input.enabledComponents);
+  for (const [component, worker] of Object.entries(input.lock.workers ?? {})) {
+    if (
+      !enabled.has(component) ||
+      worker.name !== `${input.environment}-${component}` ||
+      worker.version !== input.targetVersion ||
+      (!worker.cloudflareScriptTag && !worker.cloudflareVersionId)
+    ) {
+      throw new Error(`legacy_worker_recovery_state_invalid:${component}`);
+    }
+  }
+  for (const [component, ownership] of Object.entries(input.lock.workerScriptOwnership ?? {})) {
+    if (!enabled.has(component) || ownership.name !== `${input.environment}-${component}`) {
+      throw new Error(`legacy_worker_recovery_state_invalid:${component}`);
+    }
+  }
 }
 
 export function resolveDeployFailureAction(input: {
@@ -269,7 +338,8 @@ export function buildInitialHandoffResumeSummary(input: {
       !worker ||
       worker.name !== expectedName ||
       !worker.deployedAt ||
-      !worker.cloudflareVersionId
+      !worker.cloudflareVersionId ||
+      !worker.cloudflareScriptTag
     ) {
       throw new Error(`initial_handoff_resume_worker_evidence_missing:${component}`);
     }
@@ -280,6 +350,7 @@ export function buildInitialHandoffResumeSummary(input: {
       deployedAt: worker.deployedAt,
       version: worker.version,
       cloudflareVersionId: worker.cloudflareVersionId,
+      cloudflareScriptTag: worker.cloudflareScriptTag,
     };
   });
   return {
@@ -407,9 +478,28 @@ async function loadConfig(configPath: string): Promise<AuthrimConfig | null> {
     const data = JSON.parse(content);
     return AuthrimConfigSchema.parse(data);
   } catch (error) {
-    console.error(chalk.red(`Failed to load config: ${error}`));
-    return null;
+    throw new Error(`deployment_config_invalid:${resolve(configPath)}`, { cause: error });
   }
+}
+
+export async function getInitialDeploymentWorkspaceVersionMismatches(input: {
+  rootDir: string;
+  productVersion: string;
+  config: AuthrimConfig;
+}): Promise<string[]> {
+  const requiredComponents = [
+    ...CORE_WORKER_COMPONENTS,
+    ...(input.config.components.loginUi !== false ? (['ar-login-ui'] as const) : []),
+    ...(input.config.components.adminUi !== false ? (['ar-admin-ui'] as const) : []),
+  ];
+  const mismatches: string[] = [];
+  for (const component of requiredComponents) {
+    const version = await getPackageVersion(join(input.rootDir, 'packages', component));
+    if (version !== input.productVersion) {
+      mismatches.push(`${component}=${version ?? 'missing'}`);
+    }
+  }
+  return mismatches;
 }
 
 function validateDeployDomainDepthConfig(config: AuthrimConfig): Array<{
@@ -441,13 +531,26 @@ function validateDeployDomainDepthConfig(config: AuthrimConfig): Array<{
 async function ensureSupplementalKeysForDeploy(
   keysDir: string,
   onProgress: (message: string) => void,
-  options: { includeSetupMachineKeyPair: boolean }
+  options: {
+    includeSetupMachineKeyPair: boolean;
+    baseDir: string;
+    environment: string;
+    configuredEmail: AuthrimConfig['features']['email'];
+  }
 ): Promise<void> {
   if (!existsSync(keysDir)) {
     return;
   }
 
-  const result = await ensureSupplementalKeyFiles(keysDir, options);
+  await promotePendingEmailSecrets({
+    baseDir: options.baseDir,
+    environment: options.environment,
+    keysDir,
+    configuredEmail: options.configuredEmail,
+  });
+  const result = await ensureSupplementalKeyFiles(keysDir, {
+    includeSetupMachineKeyPair: options.includeSetupMachineKeyPair,
+  });
   if (result.createdFiles.length === 0) {
     return;
   }
@@ -504,6 +607,8 @@ async function promptForMissingControlTokens(
 
 interface PendingControlTokenBootstrap {
   ownership: CloudflareTokenOwnership;
+  /** A fully staged generation must resume without asking for or issuing another bootstrap token. */
+  recoverWithoutBootstrapToken?: boolean;
 }
 
 async function prepareControlTokenBootstrap(input: {
@@ -524,22 +629,31 @@ async function promptForControlTokenBootstrap(input: {
   accountId: string;
   environment: string;
   ownership: CloudflareTokenOwnership;
+  openTemplate?: boolean;
 }): Promise<string> {
   const templateUrl = buildCloudflareBootstrapTemplateUrl({
     accountId: input.accountId,
     environment: input.environment,
     ownership: input.ownership,
   });
-  console.log(
-    chalk.gray(
-      'Cloudflare Dashboard login is independent from Wrangler OAuth, so Dashboard may ask you to sign in again.'
-    )
-  );
-  if (!(await openExternalHttpsUrl(templateUrl))) {
-    console.log(chalk.yellow('Open this Cloudflare token template URL:'));
-    console.log(templateUrl);
+  if (input.openTemplate !== false) {
+    console.log(
+      chalk.gray(
+        'Cloudflare Dashboard login is independent from Wrangler OAuth, so Dashboard may ask you to sign in again.'
+      )
+    );
+    if (!(await openExternalHttpsUrl(templateUrl))) {
+      console.log(chalk.yellow('Open this Cloudflare token template URL:'));
+      console.log(templateUrl);
+    } else {
+      console.log(chalk.gray(`Opened Cloudflare ${input.ownership}-owned token template.`));
+    }
   } else {
-    console.log(chalk.gray(`Opened Cloudflare ${input.ownership}-owned token template.`));
+    console.log(
+      chalk.yellow(
+        'Resuming a checkpointed token cutover. Enter the exact same bootstrap token; do not create a replacement.'
+      )
+    );
   }
   return (
     await password({
@@ -552,20 +666,26 @@ async function promptForControlTokenBootstrap(input: {
 
 export async function consumeControlBootstrapTokenFile(path: string): Promise<string> {
   const absolutePath = resolve(path);
-  const stat = await lstat(absolutePath);
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error('The Cloudflare bootstrap token path must be a regular file.');
-  }
-  if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) {
-    throw new Error('The Cloudflare bootstrap token file must have mode 0600.');
-  }
-
-  const token = (await readFile(absolutePath, 'utf8')).trim();
-  if (token.length < 20 || token.length > 4096 || /\s/u.test(token)) {
-    throw new Error('The Cloudflare bootstrap token file contains an invalid token.');
-  }
-
-  await unlink(absolutePath);
+  const invalidPathError = 'The Cloudflare bootstrap token path must be a regular file.';
+  const invalidTokenError = 'The Cloudflare bootstrap token file contains an invalid token.';
+  const token = await consumePrivateFileSecurely(
+    absolutePath,
+    {
+      // The largest accepted token plus a trailing CRLF. Bound the read before allocating/parsing.
+      maxBytes: 4098,
+      invalidError: invalidPathError,
+      permissionsError: 'The Cloudflare bootstrap token file must have mode 0600.',
+      tooLargeError: invalidTokenError,
+    },
+    (content) => {
+      const value = content.trim();
+      if (value.length < 20 || value.length > 4096 || /\s/u.test(value)) {
+        throw new Error(invalidTokenError);
+      }
+      return value;
+    }
+  );
+  if (token === null) throw new Error(invalidPathError);
   return token;
 }
 
@@ -655,58 +775,40 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     return null;
   };
 
-  if (options.env) {
-    // Environment specified - try new structure first, then legacy
-    // Also search in common subdirectories
+  if (options.env && !options.config) {
+    // Environment specified - try the canonical structure first, then legacy. A parent checkout
+    // and its nested authrim source can both contain `.authrim/<env>`; selecting the first one
+    // would make the same command target different resources depending on cwd traversal order.
     const searchDirs = [baseDir, join(baseDir, 'authrim')];
-
-    for (const searchDir of searchDirs) {
-      if (!existsSync(searchDir)) {
-        continue;
+    const canonicalCandidates = searchDirs.flatMap((searchDir) => {
+      if (!existsSync(searchDir)) return [];
+      const paths = getEnvironmentPaths({ baseDir: searchDir, env: options.env! });
+      return existsSync(paths.config) || existsSync(paths.lock) ? [{ searchDir, paths }] : [];
+    });
+    if (canonicalCandidates.length > 1) {
+      throw new Error('deployment_environment_source_root_ambiguous');
+    }
+    const canonicalCandidate = canonicalCandidates[0];
+    if (canonicalCandidate) {
+      const { searchDir, paths } = canonicalCandidate;
+      configPath = paths.config;
+      if (existsSync(paths.config)) {
+        config = await loadConfig(paths.config);
+      } else if (existsSync(paths.lock)) {
+        throw new Error(`deployment_config_recovery_required:${paths.config}`);
       }
-
-      const resolved = resolvePaths({ baseDir: searchDir, env: options.env });
-      let envLockPath: string;
-
-      if (resolved.type === 'new') {
-        const envPaths = resolved.paths as EnvironmentPaths;
-        configPath = envPaths.config;
-        envLockPath = envPaths.lock;
-      } else {
-        const legacyPaths = resolved.paths as LegacyPaths;
-        configPath = legacyPaths.config;
-        envLockPath = legacyPaths.lock;
-      }
-
-      // Check for config.json first, then fall back to lock.json
-      if (existsSync(configPath)) {
+      baseDir = searchDir;
+      if (!options.source) rootDir = findAuthrimSource(searchDir) || searchDir;
+    } else {
+      for (const searchDir of searchDirs) {
+        if (!existsSync(searchDir)) continue;
+        configPath = findLegacyConfigPath(searchDir, options.env);
+        if (!existsSync(configPath)) continue;
         config = await loadConfig(configPath);
-        if (config) {
-          baseDir = searchDir;
-          if (!options.source) {
-            rootDir = findAuthrimSource(searchDir) || searchDir;
-          }
-          break;
-        }
-      } else if (existsSync(envLockPath)) {
-        // config.json missing but lock.json exists - create minimal config
-        console.log(
-          chalk.yellow(`\n⚠️  config.json not found for env "${options.env}", using lock.json`)
-        );
-        const { loadLockFile } = await import('../../core/lock.js');
-        const lock = await loadLockFile(envLockPath);
-        if (lock) {
-          config = {
-            version: '1.0.0',
-            environment: { prefix: lock.env },
-            components: { api: true, loginUi: true, adminUi: true },
-          } as AuthrimConfig;
-          baseDir = searchDir;
-          if (!options.source) {
-            rootDir = findAuthrimSource(searchDir) || searchDir;
-          }
-          break;
-        }
+        if (!config) continue;
+        baseDir = searchDir;
+        if (!options.source) rootDir = findAuthrimSource(searchDir) || searchDir;
+        break;
       }
     }
   } else if (options.config) {
@@ -730,60 +832,45 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     // No options - auto-detect
     // Search current directory and common subdirectories
     const searchDirs = [baseDir, join(baseDir, 'authrim')];
-
-    for (const searchDir of searchDirs) {
-      if (!existsSync(searchDir)) continue;
-
-      const environments = listEnvironments(searchDir);
-      if (environments.length > 0) {
-        // Try first environment in new structure
-        const envPaths = getEnvironmentPaths({ baseDir: searchDir, env: environments[0] });
-        // Check for lock.json since config.json might be missing
-        if (existsSync(envPaths.config) || existsSync(envPaths.lock)) {
-          if (existsSync(envPaths.config)) {
-            configPath = envPaths.config;
-            config = await loadConfig(configPath);
-          }
-          if (config || existsSync(envPaths.lock)) {
-            baseDir = searchDir;
-            if (!options.source) {
-              rootDir = findAuthrimSource(searchDir) || searchDir;
-            }
-            // If config is missing but lock exists, we can still proceed with defaults
-            if (!config && existsSync(envPaths.lock)) {
-              console.log(
-                chalk.yellow(
-                  '\n⚠️  config.json not found, using lock.json to determine environment'
-                )
-              );
-              const { loadLockFile } = await import('../../core/lock.js');
-              const lock = await loadLockFile(envPaths.lock);
-              if (lock) {
-                // Create minimal config from lock file
-                config = {
-                  version: '1.0.0',
-                  environment: { prefix: lock.env },
-                  components: { api: true, loginUi: true, adminUi: true },
-                } as AuthrimConfig;
-              }
-            }
-            break;
-          }
+    const canonicalCandidates = searchDirs.flatMap((searchDir) =>
+      existsSync(searchDir)
+        ? listEnvironments(searchDir).flatMap((environment) => {
+            const paths = getEnvironmentPaths({ baseDir: searchDir, env: environment });
+            return existsSync(paths.config) || existsSync(paths.lock)
+              ? [{ searchDir, environment, paths }]
+              : [];
+          })
+        : []
+    );
+    if (canonicalCandidates.length > 1) {
+      throw new Error('deployment_environment_selection_ambiguous_use_env');
+    }
+    const canonicalCandidate = canonicalCandidates[0];
+    if (canonicalCandidate) {
+      const { searchDir, paths } = canonicalCandidate;
+      configPath = paths.config;
+      if (existsSync(paths.config)) config = await loadConfig(configPath);
+      if (config || existsSync(paths.lock)) {
+        baseDir = searchDir;
+        if (!options.source) rootDir = findAuthrimSource(searchDir) || searchDir;
+        if (!config && existsSync(paths.lock)) {
+          throw new Error(`deployment_config_recovery_required:${paths.config}`);
         }
       }
-      // Fall back to legacy
-      if (!config) {
+    }
+
+    // Legacy layouts have no canonical environment index. Search them only when no canonical
+    // candidate exists; otherwise a malformed canonical config must fail closed.
+    if (!canonicalCandidate) {
+      for (const searchDir of searchDirs) {
+        if (!existsSync(searchDir)) continue;
         configPath = findLegacyConfigPath(searchDir, options.env);
-        if (existsSync(configPath)) {
-          config = await loadConfig(configPath);
-          if (config) {
-            baseDir = searchDir;
-            if (!options.source) {
-              rootDir = findAuthrimSource(searchDir) || searchDir;
-            }
-            break;
-          }
-        }
+        if (!existsSync(configPath)) continue;
+        config = await loadConfig(configPath);
+        if (!config) continue;
+        baseDir = searchDir;
+        if (!options.source) rootDir = findAuthrimSource(searchDir) || searchDir;
+        break;
       }
     }
   }
@@ -810,6 +897,23 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   }
 
   const env = options.env || config.environment.prefix;
+  const resolvedConfigPath = resolve(configPath);
+  const canonicalConfigPath = resolve(getEnvironmentPaths({ baseDir, env }).config);
+  const configDirectory = dirname(resolvedConfigPath);
+  const canonicalEnvironmentDirectory = dirname(canonicalConfigPath);
+  const configIsUnderCanonicalEnvironmentRoot =
+    dirname(configDirectory) === dirname(canonicalEnvironmentDirectory);
+  if (
+    config.environment.prefix !== env ||
+    (configIsUnderCanonicalEnvironmentRoot && resolvedConfigPath !== canonicalConfigPath)
+  ) {
+    throw new Error('deployment_config_environment_mismatch');
+  }
+  const packagesDir = join(rootDir, 'packages');
+  if (!existsSync(packagesDir) || !existsSync(join(packagesDir, 'ar-auth'))) {
+    throw new Error(`deployment_source_not_found:${rootDir}`);
+  }
+  const targetProductVersion = await getRootProductVersion(rootDir);
   const placementModeByComponent = resolveTestPlacementOverrides({
     environmentId: env,
     component: options.component,
@@ -828,6 +932,22 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     console.log(chalk.yellow('Run "authrim-setup init" first to provision resources.'));
     process.exit(1);
   }
+  if (loadedLock.lock.env !== env) {
+    throw new Error('deployment_lock_environment_mismatch');
+  }
+  const initialDeploymentFromLock = isInitialDeploymentLock(loadedLock.lock);
+  if (initialDeploymentFromLock) {
+    const workspaceVersionMismatches = await getInitialDeploymentWorkspaceVersionMismatches({
+      rootDir,
+      productVersion: targetProductVersion,
+      config,
+    });
+    if (workspaceVersionMismatches.length > 0) {
+      throw new Error(
+        `deployment_workspace_version_mismatch:${targetProductVersion}:${workspaceVersionMismatches.join(',')}`
+      );
+    }
+  }
   const authenticatedAccountId = auth.accountId ?? (await getAccountId());
   if (!authenticatedAccountId) {
     throw new Error('cloudflare_account_id_required_for_deployment');
@@ -835,19 +955,15 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   if (config.cloudflare?.accountId && config.cloudflare.accountId !== authenticatedAccountId) {
     throw new Error('cloudflare_config_account_id_mismatch');
   }
+  let configPersistenceRequired = false;
   if (!config.cloudflare?.accountId) {
     config = AuthrimConfigSchema.parse({
       ...config,
       cloudflare: { accountId: authenticatedAccountId },
       updatedAt: new Date().toISOString(),
     });
-    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+    configPersistenceRequired = true;
   }
-  const initialDeploymentFromLock =
-    !loadedLock.lock.productVersion &&
-    (Object.keys(loadedLock.lock.workers ?? {}).length === 0 ||
-      (loadedLock.lock.releaseUpdate !== undefined &&
-        loadedLock.lock.releaseUpdate.phase !== 'verified'));
   // A newly provisioned environment has an empty Control D1. Its authority table is
   // created by the schema phase below, so querying it here would abort the first deploy
   // with `no such table: control_environments`. Resumed initial deployments have either
@@ -857,15 +973,93 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     loadedLock.lock.releaseUpdate !== undefined;
 
   let pendingControlTokenBootstrap: PendingControlTokenBootstrap | null = null;
-  let directControlTokenOwnership: CloudflareTokenOwnership | null = null;
+  let directControlTokenEvidence: DirectControlTokenEvidence | null = null;
   let promptedDirectControlSecrets: Record<string, string> = {};
   let existingControlTokenBootstrapReady = false;
+  let checkpointedControlTokenAuthority:
+    | Awaited<ReturnType<typeof readControlProvisioningAuthority>>
+    | undefined;
+  let controlTokenBootstrapPlanningDeferred = false;
   const focusedDeployment = Boolean(options.component || options.components);
+  if (options.adoptLegacyQueueIdentities && options.dryRun) {
+    throw new Error('legacy_queue_adoption_dry_run_unsupported');
+  }
+  if (options.adoptLegacyQueueIdentities && focusedDeployment) {
+    throw new Error('legacy_queue_adoption_full_deploy_required');
+  }
+  if (options.recoverLegacyWorkerDeployments && options.dryRun) {
+    throw new Error('legacy_worker_recovery_dry_run_unsupported');
+  }
+  if (options.recoverLegacyWorkerDeployments && (focusedDeployment || options.skipUi)) {
+    throw new Error('legacy_worker_recovery_full_deploy_required');
+  }
   const controlIncluded = options.component
     ? options.component === 'ar-control'
     : options.components
       ? options.components.includes('ar-control')
       : true;
+  const planMissingControlProvisioningCredentials = async (): Promise<void> => {
+    controlTokenBootstrapPlanningDeferred = false;
+    // A one-use token file is the non-interactive equivalent of choosing the default
+    // bootstrap flow at the prompt. Keep the secret unread until the Control Worker is
+    // deployed and ready; consumeControlBootstrapTokenFile() then validates and unlinks it.
+    if (options.cloudflareBootstrapTokenFile) {
+      pendingControlTokenBootstrap = await prepareControlTokenBootstrap({
+        accountId: authenticatedAccountId,
+      });
+      return;
+    }
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      throw new Error(
+        'The Control Worker needs Cloudflare API credentials for automatic provisioning. Non-interactive setup cannot prompt for a one-time bootstrap token, so provide --cloudflare-bootstrap-token-file or distinct CLOUDFLARE_D1_API_TOKEN and CLOUDFLARE_WORKERS_API_TOKEN values.'
+      );
+    }
+    const mode = await select({
+      message: 'Control Worker provisioning mode',
+      choices: [
+        {
+          value: 'bootstrap',
+          name: 'Automatic provisioning (one-time bootstrap token)',
+          description:
+            'The Control Worker needs this temporary token to create scoped D1, Workers, KV, and R2 credentials.',
+        },
+        {
+          value: 'skip',
+          name: 'Skip Automatic provisioning',
+          description: 'Store no Cloudflare token on Control; setup remains the operator executor.',
+        },
+        {
+          value: 'direct',
+          name: 'Direct split tokens (advanced)',
+          description: 'Enter distinct pre-created D1 and Workers Scripts tokens.',
+        },
+      ],
+      default: 'bootstrap',
+    });
+    if (mode === 'skip') {
+      const disabledConfig = AuthrimConfigSchema.parse({
+        ...config,
+        updatedAt: new Date().toISOString(),
+        controlPlane: { automaticProvisioning: false },
+      });
+      Object.assign(config, disabledConfig);
+      configPersistenceRequired = true;
+      console.log(
+        chalk.yellow(
+          'Automatic provisioning is OFF. Pending Admin operations can be executed by setup.'
+        )
+      );
+    } else if (mode === 'direct') {
+      promptedDirectControlSecrets = await promptForMissingControlTokens({}, [
+        'CLOUDFLARE_D1_API_TOKEN',
+        'CLOUDFLARE_WORKERS_API_TOKEN',
+      ]);
+    } else {
+      pendingControlTokenBootstrap = await prepareControlTokenBootstrap({
+        accountId: authenticatedAccountId,
+      });
+    }
+  };
   if (
     requiresInitialControlTokenBootstrap({
       isInitialDeployment: initialDeploymentFromLock,
@@ -874,11 +1068,15 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       automaticProvisioningEnabled: config.controlPlane?.automaticProvisioning === true,
     })
   ) {
-    const controlDatabaseName = loadedLock.lock.d1.CONTROL_DB?.name;
-    if (controlDatabaseName && hasInitialDeploymentProgress) {
+    const controlDatabaseId = loadedLock.lock.d1.CONTROL_DB?.id;
+    if (controlDatabaseId && hasInitialDeploymentProgress) {
+      checkpointedControlTokenAuthority = await readControlProvisioningAuthority({
+        environmentId: env,
+        controlDatabaseName: controlDatabaseId,
+      });
       existingControlTokenBootstrapReady = await hasReadyControlTokenBootstrap({
         environmentId: env,
-        controlDatabaseName,
+        controlDatabaseName: controlDatabaseId,
         resourceClasses: resolveControlTokenResourceClasses(config),
         secretSink: new WranglerControlSecretSink({
           workerName: `${env}-ar-control`,
@@ -889,78 +1087,28 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     const directD1 = process.env.CLOUDFLARE_D1_API_TOKEN?.trim();
     const directWorkers = process.env.CLOUDFLARE_WORKERS_API_TOKEN?.trim();
     if (
+      checkpointedControlTokenAuthority &&
+      checkpointedControlTokenAuthority.bootstrapPhase !== 'none'
+    ) {
+      if (checkpointedControlTokenAuthority.bootstrapTokenOwnership === 'none') {
+        throw new Error('control_token_bootstrap_checkpoint_invalid');
+      }
+      pendingControlTokenBootstrap = {
+        ownership: checkpointedControlTokenAuthority.bootstrapTokenOwnership,
+      };
+    } else if (
+      isTokenlessPendingControlProvisioningAuthority(checkpointedControlTokenAuthority ?? null)
+    ) {
+      // A staged generation may exist locally even though the process stopped before the
+      // corresponding Control authority write. Defer all prompts until the artifact is securely
+      // loaded again under the environment operation lock.
+      controlTokenBootstrapPlanningDeferred = true;
+    } else if (
       !existingControlTokenBootstrapReady &&
       !(directD1 && directWorkers && directD1 !== directWorkers)
     ) {
-      if (!process.stdin.isTTY || !process.stdout.isTTY) {
-        console.error(
-          chalk.red(
-            'The Control Worker needs Cloudflare API credentials for automatic provisioning. Non-interactive setup cannot prompt for a one-time bootstrap token, so provide distinct CLOUDFLARE_D1_API_TOKEN and CLOUDFLARE_WORKERS_API_TOKEN values.'
-          )
-        );
-        process.exit(1);
-      }
-      const mode = await select({
-        message: 'Control Worker provisioning mode',
-        choices: [
-          {
-            value: 'bootstrap',
-            name: 'Automatic provisioning (one-time bootstrap token)',
-            description:
-              'The Control Worker needs this temporary token to create scoped D1, Workers, KV, and R2 credentials.',
-          },
-          {
-            value: 'skip',
-            name: 'Skip Automatic provisioning',
-            description:
-              'Store no Cloudflare token on Control; setup remains the operator executor.',
-          },
-          {
-            value: 'direct',
-            name: 'Direct split tokens (advanced)',
-            description: 'Enter distinct pre-created D1 and Workers Scripts tokens.',
-          },
-        ],
-        default: 'bootstrap',
-      });
-      if (mode === 'skip') {
-        config = AuthrimConfigSchema.parse({
-          ...config,
-          updatedAt: new Date().toISOString(),
-          controlPlane: { automaticProvisioning: false },
-        });
-        await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-        console.log(
-          chalk.yellow(
-            'Automatic provisioning is OFF. Pending Admin operations can be executed by setup.'
-          )
-        );
-      } else if (mode === 'direct') {
-        promptedDirectControlSecrets = await promptForMissingControlTokens({}, [
-          'CLOUDFLARE_D1_API_TOKEN',
-          'CLOUDFLARE_WORKERS_API_TOKEN',
-        ]);
-      } else {
-        const accountId = config.cloudflare?.accountId ?? (await getAccountId());
-        if (!accountId) throw new Error('cloudflare_account_id_required_for_token_bootstrap');
-        pendingControlTokenBootstrap = await prepareControlTokenBootstrap({
-          accountId,
-        });
-      }
+      await planMissingControlProvisioningCredentials();
     }
-  }
-
-  // Validate source directory
-  const packagesDir = join(rootDir, 'packages');
-  if (!existsSync(packagesDir) || !existsSync(join(packagesDir, 'ar-auth'))) {
-    console.error(chalk.red('\n❌ Authrim source not found'));
-    console.log(chalk.yellow('\nThe deploy command needs access to the Authrim source code.'));
-    console.log(chalk.gray(`  Searched in: ${rootDir}`));
-    console.log(chalk.yellow('\nSolutions:'));
-    console.log(chalk.gray('  1. Run deploy from the authrim source directory'));
-    console.log(chalk.gray('  2. Specify the source directory with --source <path>'));
-    console.log(chalk.gray('     Example: deploy --env ' + env + ' --source ./path/to/authrim'));
-    process.exit(1);
   }
 
   console.log(chalk.cyan(`\nEnvironment: ${env}`));
@@ -972,8 +1120,10 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
   const { lock, path: lockPath, type: structureType } = loadedLock;
   console.log(chalk.cyan(`Lock: ${lockPath}`));
   let currentLock = lock!;
-  const targetProductVersion = await getRootProductVersion(rootDir);
   const isInitialDeployment = initialDeploymentFromLock;
+  if (options.recoverLegacyWorkerDeployments && !isInitialDeployment) {
+    throw new Error('legacy_worker_recovery_initial_deploy_required');
+  }
   if (isInitialDeployment && focusedDeployment) {
     console.error(chalk.red('\nInitial deployment must deploy the complete release.'));
     process.exit(1);
@@ -990,7 +1140,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     console.error(chalk.red('\nInitial deployment cannot skip enabled UI components.'));
     process.exit(1);
   }
-  const migrationsRootResult = await findMigrationsRoot(rootDir);
+  const migrationsRootResult = await findMigrationsRoot(rootDir, undefined, { strictRoot: true });
   if (!migrationsRootResult.path) {
     console.error(chalk.red('\nRelease migrations directory was not found.'));
     process.exit(1);
@@ -1038,6 +1188,24 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     isInitialDeployment,
     operationKind: options.operationKind,
   });
+  const hasUnversionedLegacyWorkerState =
+    isInitialDeployment &&
+    currentLock.releaseUpdate === undefined &&
+    Object.keys(currentLock.workers ?? {}).length > 0;
+  let explicitLegacyInitialRecoveryVerified = false;
+  if (hasUnversionedLegacyWorkerState && options.recoverLegacyWorkerDeployments) {
+    assertExplicitLegacyInitialWorkerRecoveryState({
+      lock: currentLock,
+      environment: env,
+      targetVersion: targetProductVersion,
+      enabledComponents: [
+        ...CORE_WORKER_COMPONENTS,
+        ...(config.components.loginUi !== false ? ['ar-login-ui'] : []),
+        ...(config.components.adminUi !== false ? ['ar-admin-ui'] : []),
+      ],
+    });
+    explicitLegacyInitialRecoveryVerified = true;
+  }
   const deploymentGuard = evaluateReleaseDeploymentGuard(
     currentLock,
     targetProductVersion,
@@ -1045,6 +1213,17 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     isInitialDeployment && initialManifestChecksum
       ? {
           releaseManifestChecksum: initialManifestChecksum,
+          ...(initialRelease?.draft
+            ? {
+                initialDraft: {
+                  manifest: initialRelease.manifest,
+                  targets: initialTargets,
+                },
+              }
+            : {}),
+          ...(explicitLegacyInitialRecoveryVerified
+            ? { explicitLegacyInitialRecoveryVerified: true }
+            : {}),
         }
       : undefined
   );
@@ -1054,7 +1233,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     );
     process.exit(1);
   }
-  const resumeInitialHandoff =
+  let resumeInitialHandoff =
     hasInitialWorkerCheckpoint &&
     currentLock.releaseUpdate?.initialWorkerRedeployRequired !== true &&
     currentLock.releaseUpdate?.targetVersion === targetProductVersion &&
@@ -1095,8 +1274,53 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     const operationLock = options.dryRun
       ? undefined
       : await acquireEnvironmentOperationLock(lockPath, `deploy:${uiComponent}`);
+    let deployConfigLock: Awaited<ReturnType<typeof acquireDeployConfigLock>> | undefined;
+    let uiSetupMachineAccessAttempted = false;
+    let uiSetupMachineAccessCleanupDone = false;
+    let uiSetupMachineAccessKeysDir: string | undefined;
+    let uiAdminDatabaseIdentifier: string | undefined;
+    let uiSetupMachineAccessCleanupError: Error | undefined;
+    let uiDeploymentError: Error | undefined;
+    const cleanupUiSetupMachineAccess = async (): Promise<boolean> => {
+      if (
+        !uiSetupMachineAccessAttempted ||
+        uiSetupMachineAccessCleanupDone ||
+        !uiSetupMachineAccessKeysDir ||
+        !uiAdminDatabaseIdentifier
+      ) {
+        return uiSetupMachineAccessCleanupDone || !uiSetupMachineAccessAttempted;
+      }
+      try {
+        const result = await cleanupSetupMachineAccessInD1(
+          env,
+          uiSetupMachineAccessKeysDir,
+          undefined,
+          { databaseIdentifier: uiAdminDatabaseIdentifier }
+        );
+        if (result.success) {
+          uiSetupMachineAccessCleanupDone = true;
+          uiSetupMachineAccessCleanupError = undefined;
+          return true;
+        }
+        uiSetupMachineAccessCleanupError = new Error(
+          `setup_machine_access_cleanup_failed:${result.error ?? 'unknown'}`
+        );
+      } catch (error) {
+        uiSetupMachineAccessCleanupError =
+          error instanceof Error ? error : new Error('setup_machine_access_cleanup_failed');
+      }
+      return false;
+    };
     try {
       if (operationLock) {
+        // Package-level UI build inputs and wrangler.toml are shared by every environment in this
+        // checkout. Keep the environment lock outermost, then hold the workspace lock through
+        // config generation, build, deployment, verification, and temporary-file cleanup.
+        deployConfigLock = await acquireDeployConfigLock({
+          baseDir: rootDir,
+          env,
+          operation: `deploy:${uiComponent}`,
+        });
         const lockedEnvironment = await loadLockFileAuto(baseDir, env);
         if (
           !lockedEnvironment.lock ||
@@ -1111,6 +1335,15 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           throw new Error('config_changed_while_waiting_for_deploy_lock');
         }
         currentLock = lockedEnvironment.lock;
+        assertFixedD1ResourceIdentities({
+          environment: env,
+          lock: currentLock,
+          databases: await listD1Databases(),
+        });
+        uiAdminDatabaseIdentifier = currentLock.d1.DB_ADMIN?.id;
+        if (!uiAdminDatabaseIdentifier) {
+          throw new Error('admin_database_required_for_ui_deployment');
+        }
       }
 
       const apiBaseUrl = resolveIssuerUrl(config, { env });
@@ -1129,7 +1362,12 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           (message) => {
             console.log(chalk.gray(message));
           },
-          { includeSetupMachineKeyPair: uiComponent === 'ar-login-ui' }
+          {
+            includeSetupMachineKeyPair: uiComponent === 'ar-login-ui',
+            baseDir,
+            environment: env,
+            configuredEmail: config.features.email,
+          }
         );
       }
 
@@ -1147,11 +1385,17 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               `API router did not become reachable at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
             )
           );
-          process.exit(1);
+          throw new Error('router_readiness_failed');
         }
 
-        const setupMachineResult = await ensureSetupMachineAccessInD1(env, config, keysDir, (msg) =>
-          console.log(chalk.gray(`  ${msg}`))
+        uiSetupMachineAccessAttempted = true;
+        uiSetupMachineAccessKeysDir = keysDir;
+        const setupMachineResult = await ensureSetupMachineAccessInD1(
+          env,
+          config,
+          keysDir,
+          (msg) => console.log(chalk.gray(`  ${msg}`)),
+          { databaseIdentifier: uiAdminDatabaseIdentifier }
         );
         if (!setupMachineResult.success) {
           console.error(
@@ -1159,9 +1403,10 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               `Setup machine access bootstrap failed: ${setupMachineResult.error || 'unknown error'}`
             )
           );
-          process.exit(1);
+          throw new Error('setup_machine_access_bootstrap_failed');
         }
 
+        let loginUiClientError: Error | undefined;
         try {
           const clientResult = await ensureLoginUiClient({
             apiBaseUrl,
@@ -1182,11 +1427,28 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             console.error(
               chalk.red(`Login UI client creation failed: ${clientResult.error || 'unknown error'}`)
             );
-            process.exit(1);
+            throw new Error('login_ui_client_creation_failed');
           }
-        } finally {
-          await cleanupSetupMachineAccessInD1(env, keysDir);
+        } catch (error) {
+          loginUiClientError =
+            error instanceof Error ? error : new Error('login_ui_client_creation_failed');
         }
+
+        // A successful second cleanup is a recovered transient, not a failed deployment. This is
+        // deliberately separate from Wrangler's inner D1 retry because OAuth credential refresh
+        // can complete only after the first command invocation has returned.
+        if (!(await cleanupUiSetupMachineAccess())) {
+          await cleanupUiSetupMachineAccess();
+        }
+
+        if (loginUiClientError && uiSetupMachineAccessCleanupError) {
+          throw new AggregateError(
+            [loginUiClientError, uiSetupMachineAccessCleanupError],
+            'Login UI client setup and temporary machine-access cleanup both failed.'
+          );
+        }
+        if (uiSetupMachineAccessCleanupError) throw uiSetupMachineAccessCleanupError;
+        if (loginUiClientError) throw loginUiClientError;
       }
 
       const uiSettings = resolveUiDeploymentSettings({
@@ -1207,9 +1469,24 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               env,
               config,
               keysDir: uiKeysDir!,
+              databaseIdentifier: uiAdminDatabaseIdentifier,
               onProgress: (message) => console.log(chalk.gray(`  ${message}`)),
             })
           : undefined;
+
+      let uiWorkerOwnership: WorkerScriptOwnershipGuard | undefined;
+      if (!options.dryRun) {
+        const prepared = await prepareManagedWorkerScriptOwnership({
+          lock: currentLock,
+          lockPath,
+          targets: [{ component: uiComponent, workerName: `${env}-${uiComponent}` }],
+        });
+        if (prepared.changed) {
+          currentLock = prepared.lock;
+          await saveLockFile(currentLock, lockPath);
+        }
+        uiWorkerOwnership = prepared.guard;
+      }
 
       const result = await deployUiWorkerComponent(uiComponent, {
         env,
@@ -1222,34 +1499,25 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         workersDev: uiSettings.workersDev,
         routes: uiSettings.routes,
         adminUiBffSecrets,
+        deployConfigLockProof: deployConfigLock?.proof,
+        workerScriptOwnership: uiWorkerOwnership,
         onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
       });
 
-      if (!options.dryRun && result.deployedAt && (result.success || result.trafficCommitted)) {
-        const version = await getPackageVersion(join(rootDir, 'packages', uiComponent));
-        currentLock = {
-          ...currentLock,
-          workers: {
-            ...currentLock.workers,
-            [uiComponent]: {
-              name: result.projectName,
-              deployedAt: result.deployedAt,
-              version: version ?? undefined,
-            },
-          },
-          updatedAt: new Date().toISOString(),
-        };
-        await saveLockFile(currentLock, lockPath);
-      }
-
       if (!result.success) {
         console.error(chalk.red(`\n${uiComponent} deployment failed: ${result.error}`));
-        process.exit(1);
+        throw new Error('ui_worker_deployment_failed');
       }
 
       if (!options.dryRun) {
         const visibility = await waitForWorkerDeploymentsReady({
-          targets: [{ workerName: result.projectName, deployedAt: result.deployedAt }],
+          targets: [
+            {
+              workerName: result.projectName,
+              deployedAt: result.deployedAt,
+              expectedVersionId: result.cloudflareVersionId,
+            },
+          ],
         });
         if (!visibility.ready) {
           throw new Error(
@@ -1274,14 +1542,54 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             `UI Worker HTTP readiness failed: ${httpReadiness.error ?? 'unknown error'}`
           );
         }
+        if (!result.deployedAt || !result.cloudflareVersionId || !result.cloudflareScriptTag) {
+          throw new Error(`ui_worker_deployment_exact_identity_unavailable:${uiComponent}`);
+        }
+        const version = await getPackageVersion(join(rootDir, 'packages', uiComponent));
+        currentLock = clearProvisionalWorkerScriptOwnership(
+          {
+            ...currentLock,
+            workers: {
+              ...currentLock.workers,
+              [uiComponent]: {
+                name: result.projectName,
+                deployedAt: result.deployedAt,
+                version: version ?? undefined,
+                cloudflareVersionId: result.cloudflareVersionId,
+                cloudflareScriptTag: result.cloudflareScriptTag,
+              },
+            },
+            updatedAt: new Date().toISOString(),
+          },
+          [uiComponent]
+        );
+        await saveLockFile(currentLock, lockPath);
       }
 
       console.log(chalk.green(`\n✓ ${uiComponent} deployed successfully`));
       console.log(chalk.gray(`  Project: ${result.projectName}`));
-      return;
+    } catch (error) {
+      uiDeploymentError = error instanceof Error ? error : new Error('ui_worker_deployment_failed');
     } finally {
-      await operationLock?.release();
+      if (!(await cleanupUiSetupMachineAccess())) {
+        await cleanupUiSetupMachineAccess();
+      }
+      try {
+        await deployConfigLock?.release();
+      } finally {
+        await operationLock?.release();
+      }
     }
+
+    if (uiDeploymentError && uiSetupMachineAccessCleanupError) {
+      throw new AggregateError(
+        [uiDeploymentError, uiSetupMachineAccessCleanupError],
+        'UI deployment and temporary machine-access cleanup both failed.'
+      );
+    }
+    if (uiSetupMachineAccessCleanupError) throw uiSetupMachineAccessCleanupError;
+    if (uiDeploymentError) throw uiDeploymentError;
+    return;
   }
 
   // Determine what to deploy
@@ -1334,11 +1642,77 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       return;
     }
   }
+  if (options.adoptLegacyQueueIdentities && !options.yes) {
+    const confirmed = await confirm({
+      message:
+        'Replace only legacy Queue lock sentinels (id == name) with the exact immutable IDs from this Cloudflare account?',
+      default: false,
+    });
+    if (!confirmed) {
+      console.log(chalk.yellow('Legacy Queue identity adoption cancelled.'));
+      return;
+    }
+  }
+  if (options.recoverLegacyWorkerDeployments && !options.yes) {
+    const confirmed = await confirm({
+      message:
+        'Recover exact ownership of canonical Workers left by an interrupted initial deployment, then redeploy and verify them?',
+      default: false,
+    });
+    if (!confirmed) {
+      console.log(chalk.yellow('Legacy Worker deployment recovery cancelled.'));
+      return;
+    }
+  }
+
+  const legacyWorkerRecoveryTargets: LegacyWorkerDeploymentTarget[] = [
+    ...(componentsToDeply ?? []).map((component) => ({
+      component,
+      workerName: getWorkerName(env, component),
+      expectedPackageVersion: targetProductVersion,
+    })),
+    ...UI_WORKER_COMPONENTS.filter((component) =>
+      component === 'ar-login-ui'
+        ? config.components.loginUi !== false
+        : config.components.adminUi !== false
+    ).map((component) => ({
+      component,
+      workerName: `${env}-${component}`,
+      expectedPackageVersion: targetProductVersion,
+    })),
+  ];
 
   const operationLock = options.dryRun
     ? undefined
     : await acquireEnvironmentOperationLock(lockPath, 'deploy');
+  let deployConfigLock: Awaited<ReturnType<typeof acquireDeployConfigLock>> | undefined;
   let deploymentSecrets: Record<string, string> = {};
+  let cleanupEphemeralSetupMachineAccess: (() => Promise<boolean>) | undefined;
+  let lockedCoreDatabaseIdentifier: string | undefined;
+  let lockedPiiDatabaseIdentifier: string | undefined;
+  let lockedAdminDatabaseIdentifier: string | undefined;
+  const requireLockedCoreDatabaseIdentifier = (): string => {
+    if (!lockedCoreDatabaseIdentifier) {
+      throw new Error('core_database_required_for_bootstrap');
+    }
+    return lockedCoreDatabaseIdentifier;
+  };
+  const requireLockedAdminDatabaseIdentifier = (): string => {
+    if (!lockedAdminDatabaseIdentifier) {
+      throw new Error('admin_database_required_for_bootstrap');
+    }
+    return lockedAdminDatabaseIdentifier;
+  };
+  const requireLockedPiiDatabaseIdentifier = (): string => {
+    if (!lockedPiiDatabaseIdentifier) {
+      throw new Error('pii_database_required_for_migration');
+    }
+    return lockedPiiDatabaseIdentifier;
+  };
+  const abortLockedDeployment = (reason: string): never => {
+    process.exitCode = 1;
+    throw new Error(reason);
+  };
   let activeDeploySpinner: ReturnType<typeof ora> | undefined;
   const startDeploySpinner = (text: string): ReturnType<typeof ora> => {
     const nextSpinner = ora(text).start();
@@ -1350,8 +1724,38 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       activeDeploySpinner.fail(t('error.deployFailed'));
     }
   };
+  let apiBuildCompleted = false;
+  const buildPackagesForDeployment = async (): Promise<void> => {
+    const buildSpinner = startDeploySpinner('Building packages...');
+    const buildResult = await buildApiPackages({
+      rootDir,
+      onProgress: (msg) => {
+        updateOraSpinner(buildSpinner, msg);
+      },
+    });
+
+    if (!buildResult.success) {
+      buildSpinner.fail('Failed to build packages');
+      console.error(chalk.red(`\nBuild error: ${buildResult.error}`));
+      console.log(chalk.yellow('\nYou can try building manually:'));
+      console.log(chalk.cyan('  pnpm install'));
+      console.log(chalk.cyan('  pnpm run build:api'));
+      abortLockedDeployment('worker_package_build_failed');
+    }
+
+    buildSpinner.succeed('Packages built successfully');
+    apiBuildCompleted = true;
+    console.log('');
+  };
   try {
     if (operationLock) {
+      // The package wrangler files, bootstrap configs, UI build inputs, and build outputs are
+      // workspace-global. Acquire this only after the environment lock and release it first.
+      deployConfigLock = await acquireDeployConfigLock({
+        baseDir: rootDir,
+        env,
+        operation: 'deploy',
+      });
       const lockedEnvironment = await loadLockFileAuto(baseDir, env);
       if (
         !lockedEnvironment.lock ||
@@ -1382,6 +1786,164 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       ) {
         throw new Error('release_manifest_changed_while_waiting_for_deploy_lock');
       }
+      if (configPersistenceRequired) {
+        const persistedConfig = AuthrimConfigSchema.parse({
+          ...config,
+          updatedAt: new Date().toISOString(),
+        });
+        Object.assign(config, persistedConfig);
+        await writePrivateFileAtomically(
+          configPath,
+          `${JSON.stringify(persistedConfig, null, 2)}\n`
+        );
+        configPersistenceRequired = false;
+      }
+
+      if (options.recoverLegacyWorkerDeployments) {
+        const recoveredCompletedWorkerPhase = resumeInitialHandoff;
+        const recovery = await adoptLegacyWorkerDeployments({
+          lock: currentLock,
+          environment: env,
+          authenticatedAccountId,
+          configuredAccountId: config.cloudflare?.accountId,
+          productVersion: targetProductVersion,
+          targets: legacyWorkerRecoveryTargets,
+          requireAllTargets: recoveredCompletedWorkerPhase,
+          allowNoop: explicitLegacyInitialRecoveryVerified,
+        });
+        currentLock = recovery.lock;
+        if (recoveredCompletedWorkerPhase) {
+          if (!initialManifestChecksum) {
+            throw new Error('legacy_worker_recovery_release_manifest_required');
+          }
+          // Provider metadata cannot prove that the orphaned active version contains the exact
+          // local build artifacts. Persist this before continuing so a crash after adoption still
+          // forces every recovered Worker through the normal deploy and readiness gates.
+          currentLock = withReleaseUpdateState(currentLock, {
+            targetVersion: targetProductVersion,
+            phase: 'workers_deployed',
+            manifestChecksum: initialManifestChecksum,
+            initialWorkerRedeployRequired: true,
+          });
+          resumeInitialHandoff = false;
+        }
+        if (recovery.adopted.length > 0 || recoveredCompletedWorkerPhase) {
+          await saveLockFile(currentLock, lockPath);
+          const checkpoint = await loadLockFile(lockPath);
+          if (!checkpoint) {
+            throw new Error('legacy_worker_recovery_checkpoint_verification_failed');
+          }
+          if (recovery.adopted.length > 0) {
+            assertLegacyWorkerDeploymentAdoptionPersisted(checkpoint, env, recovery.adopted);
+          }
+          currentLock = checkpoint;
+        }
+
+        // Re-enter the normal immutable-tag ownership guard after the explicit checkpoint. This
+        // performs a fresh provider read and catches delete/recreate races before any schema or
+        // Worker mutation proceeds.
+        const verifiedOwnership = await prepareManagedWorkerScriptOwnership({
+          lock: currentLock,
+          lockPath,
+          targets: legacyWorkerRecoveryTargets,
+        });
+        currentLock = verifiedOwnership.lock;
+      }
+
+      // Bootstrap planning happens before waiting for the cross-process environment lock. Re-read
+      // both durable authority and the active Worker secret generation under that lock so a
+      // concurrent CLI/Web completion cannot cause another token generation or token prompt.
+      const lockedControlDatabaseId = currentLock.d1.CONTROL_DB?.id;
+      if (
+        lockedControlDatabaseId &&
+        hasInitialDeploymentProgress &&
+        config.controlPlane?.automaticProvisioning === true
+      ) {
+        const [lockedAuthority, lockedPendingArtifact] = await Promise.all([
+          readControlProvisioningAuthority({
+            environmentId: env,
+            controlDatabaseName: lockedControlDatabaseId,
+          }),
+          loadPendingControlBootstrap({ baseDir: rootDir, environment: env }),
+        ]);
+        if (lockedPendingArtifact?.accountId !== undefined) {
+          if (
+            lockedPendingArtifact.accountId !== authenticatedAccountId ||
+            lockedPendingArtifact.environment !== env
+          ) {
+            throw new CloudflareTokenBootstrapError(
+              'cloudflare_token_bootstrap_checkpoint_mismatch'
+            );
+          }
+        }
+        if (
+          lockedAuthority?.automaticProvisioningEnabled === true &&
+          lockedAuthority.capabilityState === 'ready'
+        ) {
+          const lockedReady = await hasReadyControlTokenBootstrap({
+            environmentId: env,
+            controlDatabaseName: lockedControlDatabaseId,
+            resourceClasses: resolveControlTokenResourceClasses(config),
+            secretSink: new WranglerControlSecretSink({
+              workerName: `${env}-ar-control`,
+              cwd: rootDir,
+            }),
+          });
+          if (!lockedReady) {
+            throw new Error('control_token_bootstrap_ready_generation_mismatch');
+          }
+          const reconciled = reconcileControlSecretGenerationWorkerLock({
+            lock: currentLock,
+            authority: lockedAuthority,
+          });
+          if (reconciled.changed) {
+            currentLock = reconciled.lock;
+            await saveLockFile(currentLock, lockPath);
+          }
+          pendingControlTokenBootstrap = null;
+          existingControlTokenBootstrapReady = true;
+        } else if (
+          lockedAuthority?.bootstrapPhase === 'pending_revocation' ||
+          lockedAuthority?.bootstrapPhase === 'cutover_verified'
+        ) {
+          if (lockedAuthority.bootstrapTokenOwnership === 'none') {
+            throw new Error('control_token_bootstrap_checkpoint_invalid');
+          }
+          pendingControlTokenBootstrap = {
+            ownership: lockedAuthority.bootstrapTokenOwnership,
+          };
+          controlTokenBootstrapPlanningDeferred = false;
+        } else if (
+          lockedPendingArtifact &&
+          isTokenlessPendingControlProvisioningAuthority(lockedAuthority)
+        ) {
+          pendingControlTokenBootstrap = {
+            ownership: lockedPendingArtifact.ownership,
+            recoverWithoutBootstrapToken: true,
+          };
+          controlTokenBootstrapPlanningDeferred = false;
+        } else if (lockedPendingArtifact) {
+          // A staged child-token generation is authority only for the exact tokenless pending
+          // Control transition. Never ignore it and issue a replacement generation.
+          throw new CloudflareTokenBootstrapError('cloudflare_token_bootstrap_checkpoint_mismatch');
+        }
+      }
+      if (controlTokenBootstrapPlanningDeferred) {
+        const directD1 = process.env.CLOUDFLARE_D1_API_TOKEN?.trim();
+        const directWorkers = process.env.CLOUDFLARE_WORKERS_API_TOKEN?.trim();
+        if (!(directD1 && directWorkers && directD1 !== directWorkers)) {
+          await planMissingControlProvisioningCredentials();
+        } else {
+          controlTokenBootstrapPlanningDeferred = false;
+        }
+      }
+    }
+
+    // A deterministic local build failure must not leave a new environment with a partially
+    // migrated schema or Control-plane state. Existing environments keep the previous ordering
+    // so release-update compatibility checks continue to run before a potentially expensive build.
+    if (isInitialDeployment && !resumeInitialHandoff && !options.skipBuild && !options.dryRun) {
+      await buildPackagesForDeployment();
     }
 
     console.log('');
@@ -1392,7 +1954,12 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         (message) => {
           console.log(chalk.gray(message));
         },
-        { includeSetupMachineKeyPair: !focusedDeployment }
+        {
+          includeSetupMachineKeyPair: !focusedDeployment,
+          baseDir,
+          environment: env,
+          configuredEmail: config.features.email,
+        }
       );
     }
 
@@ -1438,11 +2005,11 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             'Provide the Cloudflare control-plane tokens in the setup process environment and rerun deploy.'
           )
         );
-        process.exit(1);
+        abortLockedDeployment('required_control_worker_secrets_missing');
       }
       const accountId = config.cloudflare?.accountId ?? (await getAccountId());
       if (!accountId) throw new Error('cloudflare_account_id_required_for_token_validation');
-      directControlTokenOwnership = await validateDirectControlTokens({
+      directControlTokenEvidence = await validateDirectControlTokensWithEvidence({
         accountId,
         d1Token: deploymentSecrets.CLOUDFLARE_D1_API_TOKEN!,
         workersToken: deploymentSecrets.CLOUDFLARE_WORKERS_API_TOKEN!,
@@ -1454,43 +2021,155 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         'Refreshing Cloudflare resource IDs...'
       );
       try {
-        const [databases, namespaces] = await Promise.all([listD1Databases(), listKVNamespaces()]);
+        const canonicalQueues = getRequiredQueues(env);
+        const requiredQueues = config.features.queue?.enabled === true ? canonicalQueues : [];
+        const verifyQueues =
+          options.adoptLegacyQueueIdentities === true ||
+          requiredQueues.length > 0 ||
+          Object.keys(currentLock.queues ?? {}).length > 0;
+        const requiredR2Buckets = [
+          ...new Map(
+            [
+              ...Object.entries(currentLock.r2 ?? {}).map(([binding, bucket]) => ({
+                binding,
+                name: bucket.name,
+              })),
+              ...getRequiredR2Buckets(env, {
+                includeFeatureBuckets: config.features.r2?.enabled === true,
+              }),
+            ].map((bucket) => [bucket.name, bucket] as const)
+          ).values(),
+        ];
+        const [databases, namespaces, queues, r2Buckets] = await Promise.all([
+          listD1Databases(),
+          listKVNamespaces(),
+          verifyQueues ? listQueues({ strictOutput: true, requireIds: true }) : Promise.resolve([]),
+          listR2Buckets({ throwOnError: true }),
+        ]);
         const d1Reconciliation = reconcileD1ResourcesInLock(currentLock, env, databases);
         const kvReconciliation = reconcileSharedKVResourcesInLock(
           d1Reconciliation.lock,
           env,
           namespaces
         );
+        let legacyQueueAdoptionEvidence: LegacyQueueIdentityAdoptionEvidence[] = [];
+        let queueReconciliationLock = kvReconciliation.lock;
+        if (options.adoptLegacyQueueIdentities) {
+          const adoption = adoptLegacyQueueIdentities({
+            lock: queueReconciliationLock,
+            environment: env,
+            authenticatedAccountId,
+            configuredAccountId: config.cloudflare?.accountId,
+            liveQueues: queues,
+            canonicalQueues,
+          });
+          queueReconciliationLock = adoption.lock;
+          legacyQueueAdoptionEvidence = adoption.adopted;
+        }
+        const queueReconciliation = reconcileQueueResourcesInLock(
+          queueReconciliationLock,
+          queues,
+          requiredQueues
+        );
         const missingResources = [
           ...d1Reconciliation.missingBindings.map((missing) => ({ type: 'D1', ...missing })),
           ...kvReconciliation.missingBindings.map((missing) => ({ type: 'KV', ...missing })),
+          ...queueReconciliation.missingBindings.map((missing) => ({
+            type: 'Queue',
+            ...missing,
+          })),
+          ...requiredR2Buckets
+            .filter((required) => !r2Buckets.some((bucket) => bucket.name === required.name))
+            .map((missing) => ({ type: 'R2', ...missing })),
         ];
+        const identityMismatches = [
+          ...d1Reconciliation.identityMismatches.map((mismatch) => ({
+            type: 'D1',
+            ...mismatch,
+          })),
+          ...kvReconciliation.identityMismatches.map((mismatch) => ({
+            type: 'KV',
+            ...mismatch,
+          })),
+          ...queueReconciliation.identityMismatches.map((mismatch) => ({
+            type: 'Queue',
+            ...mismatch,
+          })),
+        ];
+
+        if (identityMismatches.length > 0) {
+          resourceReconciliationSpinner.fail('Cloudflare resource identity changed');
+          for (const mismatch of identityMismatches) {
+            console.log(
+              chalk.red(
+                `  • ${mismatch.type} ${mismatch.binding}: ${mismatch.expectedName} ` +
+                  `(locked ${mismatch.lockedId ?? 'missing'}, live ${mismatch.liveId ?? 'unavailable'})`
+              )
+            );
+          }
+          console.error(
+            chalk.gray(
+              'A same-name resource has a different immutable ID. Setup will not adopt it automatically; restore the original resource or explicitly recreate the environment.'
+            )
+          );
+          abortLockedDeployment('cloudflare_resource_identity_mismatch');
+        }
 
         if (missingResources.length > 0) {
           resourceReconciliationSpinner.fail('Required Cloudflare resources are missing');
           for (const missing of missingResources) {
             console.log(chalk.red(`  • ${missing.type} ${missing.binding}: ${missing.name}`));
           }
-          process.exit(1);
+          abortLockedDeployment('required_cloudflare_resources_missing');
         }
 
-        currentLock = kvReconciliation.lock;
+        currentLock = queueReconciliation.lock;
+        lockedCoreDatabaseIdentifier = currentLock.d1.DB?.id;
+        lockedPiiDatabaseIdentifier = currentLock.d1.DB_PII?.id;
+        lockedAdminDatabaseIdentifier = currentLock.d1.DB_ADMIN?.id;
+        if (
+          !lockedCoreDatabaseIdentifier ||
+          !lockedPiiDatabaseIdentifier ||
+          !lockedAdminDatabaseIdentifier
+        ) {
+          throw new Error('fixed_bootstrap_databases_required');
+        }
         const updatedResources = [
           ...d1Reconciliation.updatedBindings.map((binding) => `D1 ${binding}`),
           ...kvReconciliation.updatedBindings.map((binding) => `KV ${binding}`),
+          ...legacyQueueAdoptionEvidence.map((adopted) => `Queue ${adopted.binding}`),
         ];
         if (updatedResources.length > 0) {
           await saveLockFile(currentLock, lockPath);
+          if (legacyQueueAdoptionEvidence.length > 0) {
+            const checkpoint = await loadLockFile(lockPath);
+            if (!checkpoint) {
+              throw new Error('legacy_queue_adoption_checkpoint_verification_failed');
+            }
+            assertLegacyQueueIdentityAdoptionPersisted(
+              checkpoint,
+              env,
+              legacyQueueAdoptionEvidence
+            );
+            currentLock = checkpoint;
+          }
           resourceReconciliationSpinner.succeed(
             `Refreshed Cloudflare bindings: ${updatedResources.join(', ')}`
           );
         } else {
-          resourceReconciliationSpinner.succeed('D1 and KV resource IDs are current');
+          resourceReconciliationSpinner.succeed('D1, KV, Queue, and R2 resources are current');
         }
       } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message === 'cloudflare_resource_identity_mismatch' ||
+            error.message === 'required_cloudflare_resources_missing')
+        ) {
+          throw error;
+        }
         resourceReconciliationSpinner.fail('Failed to refresh Cloudflare resource IDs');
         console.log(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
-        process.exit(1);
+        abortLockedDeployment('cloudflare_resource_reconciliation_failed');
       }
     }
 
@@ -1504,13 +2183,19 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       initialRelease &&
       initialManifestChecksum
     ) {
-      currentLock = withReleaseUpdateState(currentLock, {
-        targetVersion: targetProductVersion,
-        phase: 'planned',
-        manifestChecksum: initialManifestChecksum,
-        manualTargets: [...initialManualTargetIds],
-      });
-      await saveLockFile(currentLock, lockPath);
+      // An append-only draft resume is authorized by the exact schema/release evidence in the
+      // existing checkpoint. Keep that evidence durable until the newly appended migrations have
+      // all succeeded; replacing it with a new `planned` checksum first would make a failed run
+      // impossible to authenticate and retry.
+      if (!deploymentGuard.appendOnlyInitialDraftResume) {
+        currentLock = withReleaseUpdateState(currentLock, {
+          targetVersion: targetProductVersion,
+          phase: 'planned',
+          manifestChecksum: initialManifestChecksum,
+          manualTargets: [...initialManualTargetIds],
+        });
+        await saveLockFile(currentLock, lockPath);
+      }
 
       const initialMigrationSpinner = startDeploySpinner('Applying initial release schema...');
       const automaticInitialTargets = initialTargets.filter((target) => target.automatic);
@@ -1535,7 +2220,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             chalk.red(`  ${failed.targetId}: ${failed.error ?? 'unknown migration error'}`)
           );
         }
-        process.exit(1);
+        abortLockedDeployment('initial_release_schema_failed');
       }
       const migratedTargetIds = new Set(result.results.map((target) => target.targetId));
       const missingAutomaticTargets = automaticInitialTargets.filter(
@@ -1546,7 +2231,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         for (const target of missingAutomaticTargets) {
           console.error(chalk.red(`  Missing migration result: ${target.id}`));
         }
-        process.exit(1);
+        abortLockedDeployment('initial_release_schema_evidence_incomplete');
       }
       initialMigrationSpinner.succeed('Initial release schema applied');
 
@@ -1587,6 +2272,13 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       }
       const releaseSpinner = startDeploySpinner('Publishing migration release artifact...');
       try {
+        const verifyMigrationBucketOwnership = () =>
+          assertR2BucketOwnershipForUse({
+            ...migrationReleaseBucket,
+            environment: env,
+            binding: 'MIGRATION_RELEASES',
+          });
+        await verifyMigrationBucketOwnership();
         const publication = await publishAndActivateMigrationRelease({
           migrationsRoot: migrationsRootResult.path,
           manifestPath: deploymentRelease.path,
@@ -1594,6 +2286,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           controlDatabaseId: controlDatabase.id,
           environmentId: env,
           actorId: 'setup:deploy',
+          verifyBucketOwnership: verifyMigrationBucketOwnership,
           onProgress: (message) => {
             updateOraSpinner(releaseSpinner, message);
           },
@@ -1653,7 +2346,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           } else {
             controlPlaneBootstrapSpinner.fail('Control Plane bootstrap failed');
             console.log(chalk.red(`  ${controlPlaneBootstrapResult.error || 'unknown error'}`));
-            process.exit(1);
+            abortLockedDeployment('initial_control_plane_bootstrap_failed');
           }
         }
       } else {
@@ -1678,7 +2371,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               `Rerun authrim-setup init --env ${env} before bootstrap handoff acceptance, or repair the resource from Admin UI after handoff.`
             )
           );
-          process.exit(1);
+          abortLockedDeployment('initial_control_plane_topology_incomplete');
         }
       }
 
@@ -1698,20 +2391,20 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         } catch (error) {
           masterSpinner.fail('Control DB generated-state projection failed');
           console.error(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
-          process.exit(1);
+          abortLockedDeployment('control_generated_state_projection_failed');
         }
       }
       if (!options.dryRun && currentLock.workers?.['ar-control']) {
         try {
-          const controlDatabaseName = currentLock.d1.CONTROL_DB?.name;
-          if (!controlDatabaseName) throw new Error('control_database_name_required');
+          const controlDatabaseId = currentLock.d1.CONTROL_DB?.id;
+          if (!controlDatabaseId) throw new Error('control_database_id_required');
           const keyState = await loadControlGeneratedKeyState({
-            controlDatabaseName,
+            controlDatabaseName: controlDatabaseId,
             environmentId: env,
           });
           if (!keyState) throw new Error('control_generated_key_state_missing');
           const stagedSigningKeys = await loadControlStagedSigningKeys({
-            controlDatabaseName,
+            controlDatabaseName: controlDatabaseId,
             environmentId: env,
           });
           await reconcileLocalControlKeyFiles({
@@ -1725,7 +2418,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         } catch (error) {
           masterSpinner.fail('Control DB key-state projection failed');
           console.error(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
-          process.exit(1);
+          abortLockedDeployment('control_key_state_projection_failed');
         }
       }
       const resourceIds = await buildWorkerDeploymentResourceIds({
@@ -1753,16 +2446,16 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         for (const error of masterResult.errors) {
           console.log(chalk.red(`  • ${error}`));
         }
-        process.exit(1);
+        abortLockedDeployment('generated_wrangler_config_refresh_failed');
       }
 
       masterSpinner.succeed(`Refreshed ${masterResult.files.length} generated wrangler config(s)`);
 
       if (!options.dryRun) {
-        const controlDatabaseName = currentLock.d1?.CONTROL_DB?.name;
-        if (!controlDatabaseName) {
+        const controlDatabaseId = currentLock.d1?.CONTROL_DB?.id;
+        if (!controlDatabaseId) {
           console.error(chalk.red('\nCONTROL_DB is required for desired Worker inventory.'));
-          process.exit(1);
+          abortLockedDeployment('control_database_required_for_worker_inventory');
         }
         const inventorySpinner = startDeploySpinner('Registering desired Worker inventory...');
         try {
@@ -1774,7 +2467,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             artifactPaths: masterResult.files,
           });
           await registerControlWorkerInventory({
-            controlDatabaseName,
+            controlDatabaseName: controlDatabaseId,
             records: inventory,
             environmentBootstrap: {
               defaultResidencyPolicyId: config.profiles.defaults.residency,
@@ -1789,7 +2482,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             await registerInitialControlTopology({
               environmentId: env,
               tenantId: config.tenant?.name?.trim() || 'default',
-              controlDatabaseName,
+              controlDatabaseName: controlDatabaseId,
               lock: currentLock,
               release: deploymentRelease.manifest,
               releaseDraft: deploymentRelease.draft,
@@ -1803,12 +2496,10 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             await ensureInitialTenantRegionShardConfig({
               environmentId: env,
               tenantId: config.tenant?.name?.trim() || 'default',
-              controlDatabaseName,
+              controlDatabaseName: controlDatabaseId,
               configNamespaceId,
             });
           }
-          const controlDatabaseId = currentLock.d1?.CONTROL_DB?.id;
-          if (!controlDatabaseId) throw new Error('control_database_id_required_for_key_state');
           await initializeControlKeyState({
             controlDatabaseId,
             environmentId: env,
@@ -1816,12 +2507,12 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             actorId: 'setup:deploy',
           });
           const keyState = await loadControlGeneratedKeyState({
-            controlDatabaseName,
+            controlDatabaseName: controlDatabaseId,
             environmentId: env,
           });
           if (!keyState) throw new Error('control_generated_key_state_missing');
           const stagedSigningKeys = await loadControlStagedSigningKeys({
-            controlDatabaseName,
+            controlDatabaseName: controlDatabaseId,
             environmentId: env,
           });
           await reconcileLocalControlKeyFiles({
@@ -1833,18 +2524,32 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           currentLock = keyProjection.lock;
           if (keyProjection.changed) await saveLockFile(currentLock, lockPath);
           const externalSources = await discoverExternalCapabilities({ baseDir: rootDir });
+          const pluginBundleBucket = currentLock.r2?.PLUGIN_BUNDLES;
+          const verifyPluginBundleOwnership = pluginBundleBucket
+            ? () =>
+                assertR2BucketOwnershipForUse({
+                  ...pluginBundleBucket,
+                  environment: env,
+                  binding: 'PLUGIN_BUNDLES',
+                })
+            : undefined;
+          if (config.features.pluginDynamicWorkers.enabled) {
+            if (!pluginBundleBucket) throw new Error('plugin_bundle_bucket_required');
+            await verifyPluginBundleOwnership!();
+          }
           await publishDynamicPluginWorkerBundles({
             baseDir: rootDir,
             enabled: config.features.pluginDynamicWorkers.enabled,
             sources: externalSources,
-            bucketName: currentLock.r2?.PLUGIN_BUNDLES?.name,
-            pluginRunnerDatabaseName: currentLock.d1?.PLUGIN_RUNNER_DB?.name,
+            bucketName: pluginBundleBucket?.name,
+            pluginRunnerDatabaseId: currentLock.d1?.PLUGIN_RUNNER_DB?.id,
+            verifyBucketOwnership: verifyPluginBundleOwnership,
             onProgress: (message) => {
               updateOraSpinner(inventorySpinner, message);
             },
           });
           await registerExternalCapabilities({
-            controlDatabaseName,
+            controlDatabaseName: controlDatabaseId,
             environmentId: env,
             sources: externalSources,
             registeredBy: 'setup:deploy',
@@ -1853,7 +2558,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         } catch (error) {
           inventorySpinner.fail('Desired Worker inventory registration failed');
           console.error(chalk.red(`  ${error instanceof Error ? error.message : String(error)}`));
-          process.exit(1);
+          abortLockedDeployment('desired_worker_inventory_registration_failed');
         }
       }
     }
@@ -1968,96 +2673,36 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             updateOraSpinner(genSpinner, message);
           },
         });
-
-        // Get workers subdomain
-        const workersSubdomain = await getWorkersSubdomain();
-        const capabilityManifests = new Map(
-          (
-            await loadWorkerCapabilityManifests({
-              baseDir: rootDir,
-              components: CORE_WORKER_COMPONENTS,
-            })
-          ).map((manifest) => [manifest.component, manifest])
-        );
-
-        // Generate wrangler.toml for each component
-        let generatedCount = 0;
-        for (const component of CORE_WORKER_COMPONENTS) {
-          const componentDir = join(rootDir, 'packages', component);
-          if (!existsSync(componentDir)) {
-            continue;
-          }
-
-          const wranglerConfig = generateWranglerConfig(
-            component,
-            config,
-            resourceIds,
-            workersSubdomain ?? undefined
-          );
-          const capabilityManifest = capabilityManifests.get(component);
-          if (!capabilityManifest) {
-            throw new Error(`worker_capability_manifest_missing:${component}`);
-          }
-          validateGeneratedWorkerCapabilities({
-            compiled: capabilityManifest,
-            config: wranglerConfig,
-          });
-          const tomlContent = toToml(wranglerConfig, env);
-          const tomlPath = join(componentDir, 'wrangler.toml');
-
-          if (!options.dryRun) {
-            await writeFile(tomlPath, tomlContent, 'utf-8');
-            if (component === 'ar-control') {
-              const bootstrapConfig = generateWranglerConfig(
-                component,
-                config,
-                resourceIds,
-                workersSubdomain ?? undefined,
-                { includeControlSmokeBindings: false }
-              );
-              await writeFile(
-                join(componentDir, 'wrangler.bootstrap.toml'),
-                toToml(bootstrapConfig, env),
-                'utf-8'
-              );
-            }
-            if (component === 'ar-auth') {
-              const bootstrapConfig = generateWranglerConfig(
-                component,
-                config,
-                resourceIds,
-                workersSubdomain ?? undefined,
-                { includeAuthAccountProvisioner: false }
-              );
-              await writeFile(
-                join(componentDir, 'wrangler.bootstrap.toml'),
-                toToml(bootstrapConfig, env),
-                'utf-8'
-              );
-            }
-            if (component === 'ar-bridge') {
-              const bootstrapConfig = generateWranglerConfig(
-                component,
-                config,
-                resourceIds,
-                workersSubdomain ?? undefined,
-                { includeExternalIdpAccountProvisioner: false }
-              );
-              await writeFile(
-                join(componentDir, 'wrangler.bootstrap.toml'),
-                toToml(bootstrapConfig, env),
-                'utf-8'
-              );
-            }
-          }
-          generatedCount++;
+        const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
+          baseDir,
+          env,
+          dryRun: options.dryRun,
+          capabilityManifestBaseDir: rootDir,
+          components: [...CORE_WORKER_COMPONENTS],
+          onProgress: (message) => updateOraSpinner(genSpinner, message),
+        });
+        if (!masterResult.success) {
+          throw new Error(`generated_wrangler_config_failed:${masterResult.errors.join(',')}`);
+        }
+        const { syncWranglerConfigs } = await import('../../core/wrangler-sync.js');
+        const syncResult = await syncWranglerConfigs({
+          baseDir,
+          env,
+          packagesDir: join(rootDir, 'packages'),
+          force: true,
+          dryRun: options.dryRun,
+          components: [...CORE_WORKER_COMPONENTS],
+          onProgress: (message) => updateOraSpinner(genSpinner, message),
+        });
+        if (!syncResult.success) {
+          throw new Error(`wrangler_config_sync_failed:${syncResult.errors.join(',')}`);
         }
 
-        genSpinner.succeed(`Generated ${generatedCount} wrangler config(s)`);
+        genSpinner.succeed(`Generated ${syncResult.synced.length} wrangler config(s)`);
       } catch (error) {
         genSpinner.fail('Failed to generate wrangler configs');
         console.error(chalk.red(`\nError: ${error}`));
-        process.exit(1);
+        abortLockedDeployment('generated_wrangler_config_generation_failed');
       }
     }
 
@@ -2075,10 +2720,10 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           workersSubdomain ?? undefined,
           { includeControlSmokeBindings: false }
         );
-        await writeFile(
+        await writePrivateFileAtomically(
           join(controlDir, 'wrangler.bootstrap.toml'),
           toToml(bootstrapConfig, env),
-          'utf-8'
+          0o644
         );
       }
       const authDir = join(rootDir, 'packages', 'ar-auth');
@@ -2091,10 +2736,10 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           workersSubdomain ?? undefined,
           { includeAuthAccountProvisioner: false }
         );
-        await writeFile(
+        await writePrivateFileAtomically(
           join(authDir, 'wrangler.bootstrap.toml'),
           toToml(bootstrapConfig, env),
-          'utf-8'
+          0o644
         );
       }
       const bridgeDir = join(rootDir, 'packages', 'ar-bridge');
@@ -2107,37 +2752,17 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           workersSubdomain ?? undefined,
           { includeExternalIdpAccountProvisioner: false }
         );
-        await writeFile(
+        await writePrivateFileAtomically(
           join(bridgeDir, 'wrangler.bootstrap.toml'),
           toToml(bootstrapConfig, env),
-          'utf-8'
+          0o644
         );
       }
     }
 
     // Build packages first (unless skipped or dry-run)
-    if (!resumeInitialHandoff && !options.skipBuild && !options.dryRun) {
-      const buildSpinner = startDeploySpinner('Building packages...');
-
-      const buildResult = await buildApiPackages({
-        rootDir,
-        onProgress: (msg) => {
-          updateOraSpinner(buildSpinner, msg);
-        },
-      });
-
-      if (buildResult.success) {
-        buildSpinner.succeed('Packages built successfully');
-      } else {
-        buildSpinner.fail('Failed to build packages');
-        console.error(chalk.red(`\nBuild error: ${buildResult.error}`));
-        console.log(chalk.yellow('\nYou can try building manually:'));
-        console.log(chalk.cyan('  pnpm install'));
-        console.log(chalk.cyan('  pnpm run build:api'));
-        process.exit(1);
-      }
-
-      console.log('');
+    if (!resumeInitialHandoff && !options.skipBuild && !options.dryRun && !apiBuildCompleted) {
+      await buildPackagesForDeployment();
     }
 
     // Load secrets once; Wrangler uploads each Worker's subset with its code/version.
@@ -2178,9 +2803,20 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       }
 
       try {
-        await ensureWildcardDnsForMultiTenant(config, (message) => {
-          console.log(chalk.gray(message));
-        });
+        await ensureWildcardDnsForMultiTenant(
+          config,
+          (message) => {
+            console.log(chalk.gray(message));
+          },
+          undefined,
+          {
+            get: (role) => currentLock.dns?.[role],
+            persist: async (entry) => {
+              currentLock = withDnsOwnershipEntry(currentLock, entry);
+              await saveLockFile(currentLock, lockPath);
+            },
+          }
+        );
         console.log('');
       } catch (error) {
         const wildcardBaseDomain =
@@ -2199,14 +2835,14 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             console.log('');
           }
           console.log('');
-          process.exit(1);
+          abortLockedDeployment('wildcard_dns_manual_action_required');
         }
         console.error(
           chalk.red(
             `Failed to prepare wildcard DNS: ${error instanceof Error ? error.message : String(error)}`
           )
         );
-        process.exit(1);
+        abortLockedDeployment('wildcard_dns_preparation_failed');
       }
     }
 
@@ -2240,6 +2876,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           }
         : {}),
       cleanupLegacyStaticSecrets: true,
+      deployConfigLockProof: deployConfigLock?.proof,
       onProgress: (msg) => console.log(msg),
       onError: (component, error) => {
         console.error(chalk.red(`Error in ${component}: ${error.message}`));
@@ -2265,6 +2902,38 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       : { loginUi: false, adminUi: false };
     const shouldPrepareUiBindingTargets =
       routerSelected && (missingUiBindingTargets.loginUi || missingUiBindingTargets.adminUi);
+
+    if (!options.dryRun && !resumeInitialHandoff) {
+      const workerOwnershipTargets = [
+        ...componentsToDeply.map((component) => ({
+          component,
+          workerName: getWorkerName(env, component),
+        })),
+        ...(!focusedDeployment && !options.skipUi
+          ? UI_WORKER_COMPONENTS.filter((component) =>
+              component === 'ar-login-ui'
+                ? config.components.loginUi !== false
+                : config.components.adminUi !== false
+            ).map((component) => ({ component, workerName: `${env}-${component}` }))
+          : []),
+        ...(missingUiBindingTargets.loginUi && (focusedDeployment || options.skipUi)
+          ? [{ component: 'ar-login-ui', workerName: `${env}-ar-login-ui` }]
+          : []),
+        ...(missingUiBindingTargets.adminUi && (focusedDeployment || options.skipUi)
+          ? [{ component: 'ar-admin-ui', workerName: `${env}-ar-admin-ui` }]
+          : []),
+      ];
+      const ownership = await prepareManagedWorkerScriptOwnership({
+        lock: currentLock,
+        lockPath,
+        targets: workerOwnershipTargets,
+      });
+      if (ownership.changed) {
+        currentLock = ownership.lock;
+        await saveLockFile(currentLock, lockPath);
+      }
+      deployOptions.workerScriptOwnership = ownership.guard;
+    }
 
     if (shouldPrepareUiBindingTargets) {
       const placeholderSummary = await deployUiWorkerBindingTargets(
@@ -2298,17 +2967,6 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       );
     }
 
-    // Update lock file with deployment results
-    if (
-      !options.dryRun &&
-      !resumeInitialHandoff &&
-      summary.results.some((result) => result.success || result.trafficCommitted)
-    ) {
-      currentLock = updateLockWithDeployments(currentLock, summary.results);
-      await saveLockFile(currentLock, lockPath);
-      console.log(chalk.gray(`\nLock file updated: ${lockPath}`));
-    }
-
     // Re-resolve workers.dev URLs with the current account subdomain. Init may have run while
     // Wrangler OAuth was expired and therefore persisted the unsuffixed fallback URL.
     const deploymentWorkersSubdomain = await getWorkersSubdomain();
@@ -2324,6 +2982,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           .map((result) => ({
             workerName: result.workerName,
             deployedAt: result.deployedAt,
+            expectedVersionId: result.cloudflareVersionId,
           })),
         onProgress: (msg) => {
           updateOraSpinner(workerDeploymentSpinner, msg);
@@ -2336,7 +2995,11 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         console.error(
           chalk.red(`  ${workerDeploymentResult.error || 'unknown verification error'}`)
         );
-        process.exit(1);
+        abortLockedDeployment('worker_deployment_visibility_failed');
+      }
+
+      if (!resumeInitialHandoff && summary.results.some((result) => result.success)) {
+        currentLock = updateLockWithDeployments(currentLock, summary.results);
       }
 
       if (
@@ -2352,49 +3015,146 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           manifestChecksum: initialManifestChecksum,
           initialWorkerRedeployRequired: false,
         });
-        await saveLockFile(currentLock, lockPath);
       }
 
       if (pendingControlTokenBootstrap) {
         const pendingBootstrap = pendingControlTokenBootstrap;
         const accountId = config.cloudflare?.accountId ?? (await getAccountId());
-        const controlDatabaseName = currentLock.d1.CONTROL_DB?.name;
-        if (!accountId || !controlDatabaseName) {
+        const controlDatabaseId = currentLock.d1.CONTROL_DB?.id;
+        if (!accountId || !controlDatabaseId) {
           throw new Error('control_token_bootstrap_target_missing');
         }
         const tokenSpinner = startDeploySpinner('Registering scoped Control Worker tokens...');
         let bootstrapToken = '';
         try {
-          tokenSpinner.stop();
-          console.log(
-            chalk.yellow(
-              'The Control Worker needs a one-time Cloudflare API token to create its scoped D1, Workers, KV, and R2 credentials.'
-            )
-          );
-          bootstrapToken = options.cloudflareBootstrapTokenFile
-            ? await consumeControlBootstrapTokenFile(options.cloudflareBootstrapTokenFile)
-            : await promptForControlTokenBootstrap({
-                accountId,
-                environment: env,
-                ownership: pendingBootstrap.ownership,
-              });
-          const detectedOwnership = await detectCloudflareTokenOwnership({
-            accountId,
-            token: bootstrapToken,
+          const checkpointedAuthority = await readControlProvisioningAuthority({
+            environmentId: env,
+            controlDatabaseName: controlDatabaseId,
           });
+          const recoveringCutover =
+            checkpointedAuthority?.bootstrapPhase === 'pending_revocation' ||
+            checkpointedAuthority?.bootstrapPhase === 'cutover_verified';
+          const stagedRecovery = pendingBootstrap.recoverWithoutBootstrapToken
+            ? await loadPendingControlBootstrap({ baseDir: rootDir, environment: env })
+            : null;
+          const recoveringBeforeAuthorityWrite =
+            pendingBootstrap.recoverWithoutBootstrapToken === true &&
+            stagedRecovery !== null &&
+            isTokenlessPendingControlProvisioningAuthority(checkpointedAuthority);
+          if (pendingBootstrap.recoverWithoutBootstrapToken) {
+            if (
+              !recoveringBeforeAuthorityWrite ||
+              stagedRecovery.accountId !== accountId ||
+              stagedRecovery.environment !== env ||
+              stagedRecovery.ownership !== pendingBootstrap.ownership
+            ) {
+              throw new CloudflareTokenBootstrapError(
+                'cloudflare_token_bootstrap_checkpoint_mismatch'
+              );
+            }
+          }
+          const recoveringBootstrap = recoveringCutover || recoveringBeforeAuthorityWrite;
+          const expectedOwnership = recoveringCutover
+            ? checkpointedAuthority.bootstrapTokenOwnership === 'none'
+              ? pendingBootstrap.ownership
+              : checkpointedAuthority.bootstrapTokenOwnership
+            : pendingBootstrap.ownership;
+          if (!recoveringBootstrap) {
+            tokenSpinner.stop();
+            console.log(
+              chalk.yellow(
+                'The Control Worker needs a one-time Cloudflare API token to create its scoped D1, Workers, KV, and R2 credentials.'
+              )
+            );
+            bootstrapToken = options.cloudflareBootstrapTokenFile
+              ? await consumeControlBootstrapTokenFile(options.cloudflareBootstrapTokenFile)
+              : await promptForControlTokenBootstrap({
+                  accountId,
+                  environment: env,
+                  ownership: expectedOwnership,
+                  openTemplate: true,
+                });
+          }
+          const detectedOwnership = recoveringBootstrap
+            ? expectedOwnership
+            : await detectCloudflareTokenOwnership({
+                accountId,
+                token: bootstrapToken,
+              });
           if (!detectedOwnership) {
             throw new CloudflareTokenBootstrapError('cloudflare_bootstrap_token_inactive');
           }
           tokenSpinner.start('Registering scoped Control Worker tokens...');
-          await completeControlTokenBootstrap({
-            accountId,
-            environment: env,
-            rootDir,
-            controlDatabaseName,
-            bootstrapToken,
-            ownership: detectedOwnership,
-            resourceClasses: resolveControlTokenResourceClasses(config),
+          const completeBootstrap = (token?: string) =>
+            completeControlTokenBootstrap({
+              accountId,
+              environment: env,
+              rootDir,
+              controlDatabaseName: controlDatabaseId,
+              ...(token ? { bootstrapToken: token } : {}),
+              ownership: detectedOwnership,
+              resourceClasses: resolveControlTokenResourceClasses(config),
+            });
+          try {
+            await completeBootstrap(bootstrapToken || undefined);
+          } catch (error) {
+            if (
+              !recoveringBootstrap ||
+              !(error instanceof CloudflareTokenBootstrapError) ||
+              error.code !== 'cloudflare_bootstrap_recovery_token_required'
+            ) {
+              throw error;
+            }
+            tokenSpinner.stop();
+            console.log(
+              chalk.yellow(
+                'The previous token was revoked before its local confirmation was saved. Enter a new one-time token so setup can verify the old token ID and finish cleanup.'
+              )
+            );
+            bootstrapToken = options.cloudflareBootstrapTokenFile
+              ? await consumeControlBootstrapTokenFile(options.cloudflareBootstrapTokenFile)
+              : await promptForControlTokenBootstrap({
+                  accountId,
+                  environment: env,
+                  ownership: expectedOwnership,
+                  openTemplate: true,
+                });
+            const recoveryOwnership = await detectCloudflareTokenOwnership({
+              accountId,
+              token: bootstrapToken,
+            });
+            if (recoveryOwnership !== expectedOwnership) {
+              throw new CloudflareTokenBootstrapError(
+                'cloudflare_bootstrap_token_ownership_mismatch'
+              );
+            }
+            tokenSpinner.start('Reconciling revoked bootstrap credentials...');
+            await completeBootstrap(bootstrapToken);
+          }
+          const readyAuthority = await readControlProvisioningAuthority({
+            environmentId: env,
+            controlDatabaseName: controlDatabaseId,
           });
+          if (
+            readyAuthority?.capabilityState !== 'ready' ||
+            readyAuthority.tokenManagement !== 'setup' ||
+            !readyAuthority.secretGeneration
+          ) {
+            throw new Error('control_token_bootstrap_ready_evidence_missing');
+          }
+          const reconciled = reconcileControlSecretGenerationWorkerLock({
+            lock: currentLock,
+            authority: readyAuthority,
+          });
+          currentLock = reconciled.lock;
+          const controlResult = summary.results.find(
+            (result) => result.component === 'ar-control' && result.success
+          );
+          if (!controlResult) {
+            throw new Error('control_token_bootstrap_deployment_result_missing');
+          }
+          controlResult.cloudflareVersionId = readyAuthority.secretGeneration.versionId;
+          controlResult.deployedAt = new Date(readyAuthority.updatedAt * 1000).toISOString();
           bootstrapToken = '';
           pendingControlTokenBootstrap = null;
           tokenSpinner.succeed(
@@ -2408,12 +3168,18 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             typeof error === 'object' &&
             'cleanupRequired' in error &&
             error.cleanupRequired === true;
+          const bootstrapRetainedForRetry =
+            error instanceof CloudflareTokenBootstrapError && error.bootstrapRetainedForRetry;
           console.error(
-            chalk.red(
-              cleanupRequired
-                ? 'Cloudflare token cleanup could not be confirmed. Revoke the named Authrim bootstrap/child tokens in Dashboard before retrying.'
-                : 'The bootstrap was rejected or safely cleaned up. Retry Automatic provisioning setup.'
-            )
+            bootstrapRetainedForRetry
+              ? chalk.yellow(
+                  'Cloudflare returned a temporary error. The staged bootstrap transaction remains available for an automatic retry.'
+                )
+              : chalk.red(
+                  cleanupRequired
+                    ? 'Cloudflare token cleanup could not be confirmed. Revoke the named Authrim bootstrap/child tokens in Dashboard before retrying.'
+                    : 'The bootstrap was rejected or safely cleaned up. Retry Automatic provisioning setup.'
+                )
           );
           if (error instanceof CloudflareTokenBootstrapError && error.capabilityDiagnostic) {
             const { issuedFor, probes } = error.capabilityDiagnostic;
@@ -2427,15 +3193,31 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           }
           throw error;
         }
-      } else if (automaticProvisioning && directControlTokenOwnership) {
-        const controlDatabaseName = currentLock.d1.CONTROL_DB?.name;
-        if (!controlDatabaseName) throw new Error('control_database_name_required');
+      } else if (automaticProvisioning && directControlTokenEvidence) {
+        const controlDatabaseId = currentLock.d1.CONTROL_DB?.id;
+        if (!controlDatabaseId) throw new Error('control_database_id_required');
+        const controlDeployment = summary.results.find(
+          (result) => result.component === 'ar-control' && result.success
+        );
+        if (!controlDeployment?.cloudflareVersionId) {
+          throw new Error('control_direct_token_deployment_evidence_missing');
+        }
+        const secretGeneration = await new WranglerControlSecretSink({
+          workerName: `${env}-ar-control`,
+          cwd: rootDir,
+        }).readActiveGeneration();
+        if (secretGeneration.versionId !== controlDeployment.cloudflareVersionId) {
+          throw new Error('control_direct_token_secret_generation_mismatch');
+        }
         await writeControlProvisioningAuthority({
-          controlDatabaseName,
+          controlDatabaseName: controlDatabaseId,
           environmentId: env,
           automaticProvisioningEnabled: true,
-          tokenOwnership: directControlTokenOwnership,
+          tokenOwnership: directControlTokenEvidence.ownership,
+          tokenManagement: 'operator',
           capabilityState: 'ready',
+          childTokens: directControlTokenEvidence.childTokens,
+          secretGeneration,
         });
       }
 
@@ -2465,8 +3247,15 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         } else {
           workerHttpSpinner.fail('[5/10] Worker HTTP health checks failed');
           console.error(chalk.red(`  ${workerHttpResult.error || 'unknown health check error'}`));
-          process.exit(1);
+          abortLockedDeployment('worker_http_health_check_failed');
         }
+      }
+
+      if (!resumeInitialHandoff && summary.results.some((result) => result.success)) {
+        await saveLockFile(currentLock, lockPath);
+        console.log(
+          chalk.gray(`\nLock file updated after identity and health checks: ${lockPath}`)
+        );
       }
 
       if (!deploymentApiBaseUrl) {
@@ -2500,13 +3289,12 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             `  ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
           )
         );
-        process.exit(1);
+        abortLockedDeployment('router_readiness_failed');
       }
 
       if (isInitialDeployment) {
-        const controlDatabaseName = currentLock.d1.CONTROL_DB?.name;
         const controlDatabaseId = currentLock.d1.CONTROL_DB?.id;
-        if (!controlDatabaseName || !controlDatabaseId) {
+        if (!controlDatabaseId) {
           throw new Error('control_database_required');
         }
         const handoffSpinner = startDeploySpinner(
@@ -2517,15 +3305,13 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             resumeInitialHandoff &&
             (await isInitialBootstrapHandoffAccepted({
               environmentId: env,
-              controlDatabaseName,
+              controlDatabaseName: controlDatabaseId,
             }));
           if (alreadyAccepted) {
             handoffSpinner.succeed('[6/10] Initial D1 topology was already accepted by Control');
           } else {
             const deployedWorkerCount = new Set(
-              summary.results
-                .filter((result) => result.success || result.trafficCommitted)
-                .map((result) => result.workerName)
+              summary.results.filter((result) => result.success).map((result) => result.workerName)
             ).size;
             updateOraSpinner(
               handoffSpinner,
@@ -2535,7 +3321,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             const smokeKeyState = currentLock.controlKeyState?.smokeRpc;
             await waitForInitialBootstrapHandoff({
               environmentId: env,
-              controlDatabaseName,
+              controlDatabaseName: controlDatabaseId,
               timeoutMs: 30 * 60_000,
               stallTimeoutMs: 5 * 60_000,
               pollIntervalMs: 2_000,
@@ -2568,13 +3354,13 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
                   : () =>
                       advanceInitialBootstrapWorkerBindingsAsOperator({
                         controlDatabaseId,
-                        controlDatabaseName,
+                        controlDatabaseName: controlDatabaseId,
                         environmentId: env,
                       }),
               refreshEvidence: () =>
                 recordInitialBootstrapWorkerEvidence({
                   environmentId: env,
-                  controlDatabaseName,
+                  controlDatabaseName: controlDatabaseId,
                   deployments: summary.results,
                   allowSecretTriggeredVersionAdvanceFor:
                     config.controlPlane?.automaticProvisioning === true
@@ -2603,37 +3389,51 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     let initialNotificationProviderSuccess = true;
     let initialAdminRolesSuccess = true;
     let setupMachineAccessSuccess = true;
+    let setupMachineAccessAttempted = false;
+    let setupMachineAccessCleanupSuccess = true;
     let setupMachineAccessCleanupDone = false;
     let adminUiBffMachineAccessSuccess = true;
     let defaultCanonicalCatalogSeedSuccess = true;
     let runtimeProfileSeedSuccess = true;
     let uiWorkersSuccess = true;
-    const cleanupEphemeralSetupMachineAccess = async (): Promise<void> => {
+    cleanupEphemeralSetupMachineAccess = async (): Promise<boolean> => {
       if (
         setupMachineAccessCleanupDone ||
         options.dryRun ||
         focusedDeployment ||
-        !setupMachineAccessSuccess
+        !setupMachineAccessAttempted
       ) {
-        return;
+        return setupMachineAccessCleanupSuccess;
       }
-      setupMachineAccessCleanupDone = true;
       const cleanupSpinner = startDeploySpinner('Removing setup machine access...');
-      const cleanupResult = await cleanupSetupMachineAccessInD1(
-        env,
-        getResolvedKeysDir(),
-        (msg) => {
-          updateOraSpinner(cleanupSpinner, msg);
+      try {
+        const cleanupResult = await cleanupSetupMachineAccessInD1(
+          env,
+          getResolvedKeysDir(),
+          (msg) => {
+            updateOraSpinner(cleanupSpinner, msg);
+          },
+          { databaseIdentifier: requireLockedAdminDatabaseIdentifier() }
+        );
+        if (cleanupResult.success) {
+          setupMachineAccessCleanupDone = true;
+          setupMachineAccessCleanupSuccess = true;
+          cleanupSpinner.succeed('Setup machine access removed');
+          return true;
         }
-      );
-      if (cleanupResult.success) {
-        cleanupSpinner.succeed('Setup machine access removed');
-      } else {
+        setupMachineAccessCleanupSuccess = false;
         cleanupSpinner.warn('Setup machine access cleanup failed');
         if (cleanupResult.error) {
           console.log(chalk.yellow(`  ${cleanupResult.error}`));
         }
+      } catch (error) {
+        // Wrangler OAuth and D1 may fail transiently after a successful mutation. Keep the
+        // cleanup idempotent and let the bounded same-run retry confirm that access is absent.
+        setupMachineAccessCleanupSuccess = false;
+        cleanupSpinner.warn('Setup machine access cleanup failed');
+        console.log(chalk.yellow(`  ${error instanceof Error ? error.message : String(error)}`));
       }
+      return false;
     };
     if (
       !options.skipMigrations &&
@@ -2660,6 +3460,12 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               {
                 productVersion: targetProductVersion,
                 allowDraft: deploymentRelease.draft,
+                databaseIdentifiers: {
+                  core: requireLockedCoreDatabaseIdentifier(),
+                  pii: requireLockedPiiDatabaseIdentifier(),
+                  admin: requireLockedAdminDatabaseIdentifier(),
+                },
+                strictMigrationsRoot: true,
               }
             );
 
@@ -2671,9 +3477,14 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           }
 
           const bootstrapSpinner = startDeploySpinner('Ensuring initial tenant exists...');
-          const bootstrapResult = await ensureInitialTenantInD1(env, config, (msg) => {
-            updateOraSpinner(bootstrapSpinner, msg);
-          });
+          const bootstrapResult = await ensureInitialTenantInD1(
+            env,
+            config,
+            (msg) => {
+              updateOraSpinner(bootstrapSpinner, msg);
+            },
+            { databaseIdentifier: requireLockedCoreDatabaseIdentifier() }
+          );
 
           if (bootstrapResult.success) {
             bootstrapSpinner.succeed(`Initial tenant ready: ${config.tenant.name}`);
@@ -2710,9 +3521,14 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           }
 
           const adminRolesSpinner = startDeploySpinner('Ensuring initial admin roles exist...');
-          const adminRolesResult = await ensureInitialAdminRolesInD1(env, config, (msg) => {
-            updateOraSpinner(adminRolesSpinner, msg);
-          });
+          const adminRolesResult = await ensureInitialAdminRolesInD1(
+            env,
+            config,
+            (msg) => {
+              updateOraSpinner(adminRolesSpinner, msg);
+            },
+            { databaseIdentifier: requireLockedAdminDatabaseIdentifier() }
+          );
 
           if (adminRolesResult.success) {
             adminRolesSpinner.succeed(`Initial admin roles ready: ${config.tenant.name}`);
@@ -2725,13 +3541,15 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           }
 
           const setupMachineSpinner = startDeploySpinner('Ensuring setup machine access exists...');
+          setupMachineAccessAttempted = true;
           const setupMachineResult = await ensureSetupMachineAccessInD1(
             env,
             config,
             getResolvedKeysDir(),
             (msg) => {
               updateOraSpinner(setupMachineSpinner, msg);
-            }
+            },
+            { databaseIdentifier: requireLockedAdminDatabaseIdentifier() }
           );
 
           if (setupMachineResult.success) {
@@ -2754,7 +3572,8 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               getResolvedKeysDir(),
               (msg) => {
                 updateOraSpinner(adminUiBffSpinner, msg);
-              }
+              },
+              { databaseIdentifier: requireLockedAdminDatabaseIdentifier() }
             );
 
             if (adminUiBffResult.success) {
@@ -2771,9 +3590,14 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           const catalogSeedSpinner = startDeploySpinner(
             'Seeding default canonical field catalog...'
           );
-          const catalogSeedResult = await seedDefaultCanonicalCatalog(env, config, (msg) => {
-            updateOraSpinner(catalogSeedSpinner, msg);
-          });
+          const catalogSeedResult = await seedDefaultCanonicalCatalog(
+            env,
+            config,
+            (msg) => {
+              updateOraSpinner(catalogSeedSpinner, msg);
+            },
+            { databaseIdentifier: requireLockedAdminDatabaseIdentifier() }
+          );
 
           if (catalogSeedResult.success) {
             catalogSeedSpinner.succeed(
@@ -2788,9 +3612,14 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           }
 
           const profileSeedSpinner = startDeploySpinner('Seeding runtime profiles...');
-          const profileSeedResult = await seedRuntimeProfiles(env, config, (msg) => {
-            updateOraSpinner(profileSeedSpinner, msg);
-          });
+          const profileSeedResult = await seedRuntimeProfiles(
+            env,
+            config,
+            (msg) => {
+              updateOraSpinner(profileSeedSpinner, msg);
+            },
+            { databaseIdentifier: requireLockedCoreDatabaseIdentifier() }
+          );
 
           if (profileSeedResult.success) {
             profileSeedSpinner.succeed(
@@ -2850,7 +3679,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
                   console.error(
                     chalk.red(`  ${postBootstrapHealth.error || 'unknown health check error'}`)
                   );
-                  process.exit(1);
+                  abortLockedDeployment('post_bootstrap_worker_health_check_failed');
                 }
                 postBootstrapHealthSpinner.succeed(
                   'Tenant-aware Worker health checks passed after runtime snapshot'
@@ -2862,7 +3691,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             if (controlPlaneSnapshotResult.error) {
               console.log(chalk.red(`  ${controlPlaneSnapshotResult.error}`));
             }
-            process.exit(1);
+            abortLockedDeployment('initial_control_plane_runtime_snapshot_failed');
           }
         } else {
           migrationsSpinner?.warn('Some migrations failed');
@@ -2922,6 +3751,8 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           knownRouterReadyBaseUrls: deploymentApiBaseUrl ? [deploymentApiBaseUrl] : undefined,
           tenantId: config.tenant?.name,
           dryRun: options.dryRun,
+          deployConfigLockProof: deployConfigLock?.proof,
+          workerScriptOwnership: deployOptions.workerScriptOwnership,
           onProgress: (msg) => {
             downstreamProgress = updateDeploymentProgress(downstreamProgress, msg);
             updateOraSpinner(
@@ -3029,11 +3860,13 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               `  ✗ Login UI client creation failed: ${clientResult.error || 'unknown error'}`
             )
           );
-          process.exit(1);
+          abortLockedDeployment('login_ui_client_creation_failed');
         }
       }
 
-      await cleanupEphemeralSetupMachineAccess();
+      if (!(await cleanupEphemeralSetupMachineAccess())) {
+        abortLockedDeployment('setup_machine_access_cleanup_failed');
+      }
 
       const loginUiSettings = resolveUiDeploymentSettings({
         component: 'ar-login-ui',
@@ -3056,6 +3889,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               env,
               config,
               keysDir: getResolvedKeysDir(),
+              databaseIdentifier: requireLockedAdminDatabaseIdentifier(),
               onProgress: (message) => console.log(chalk.gray(`  ${message}`)),
             })
           : undefined;
@@ -3099,36 +3933,13 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         }
       );
 
-      if (
-        !options.dryRun &&
-        uiWorkersResult.results.some((result) => result.success || result.trafficCommitted)
-      ) {
-        const workers = { ...currentLock.workers };
-        for (const result of uiWorkersResult.results) {
-          if ((!result.success && !result.trafficCommitted) || !result.deployedAt) {
-            continue;
-          }
-          workers[result.component] = {
-            name: result.projectName,
-            deployedAt: result.deployedAt,
-            version:
-              (await getPackageVersion(join(rootDir, 'packages', result.component))) ?? undefined,
-          };
-        }
-        currentLock = {
-          ...currentLock,
-          workers,
-          updatedAt: new Date().toISOString(),
-        };
-        await saveLockFile(currentLock, lockPath);
-      }
-
       uiWorkersSuccess = uiWorkersResult.failedCount === 0;
       if (uiWorkersSuccess && !options.dryRun) {
         const visibility = await waitForWorkerDeploymentsReady({
           targets: uiWorkersResult.results.map((result) => ({
             workerName: result.projectName,
             deployedAt: result.deployedAt,
+            expectedVersionId: result.cloudflareVersionId,
           })),
         });
         if (!visibility.ready) {
@@ -3163,15 +3974,40 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         }
       }
       if (uiWorkersSuccess && !options.dryRun && uiWorkersResult.results.length > 0) {
-        const controlDatabaseName = currentLock.d1.CONTROL_DB?.name;
-        if (!controlDatabaseName) {
+        const workers = { ...currentLock.workers };
+        for (const result of uiWorkersResult.results) {
+          if (!result.success) continue;
+          if (!result.deployedAt || !result.cloudflareVersionId || !result.cloudflareScriptTag) {
+            throw new Error(`ui_worker_deployment_exact_identity_unavailable:${result.component}`);
+          }
+          workers[result.component] = {
+            name: result.projectName,
+            deployedAt: result.deployedAt,
+            version:
+              (await getPackageVersion(join(rootDir, 'packages', result.component))) ?? undefined,
+            cloudflareVersionId: result.cloudflareVersionId,
+            cloudflareScriptTag: result.cloudflareScriptTag,
+          };
+        }
+        currentLock = clearProvisionalWorkerScriptOwnership(
+          {
+            ...currentLock,
+            workers,
+            updatedAt: new Date().toISOString(),
+          },
+          uiWorkersResult.results.map((result) => result.component)
+        );
+        await saveLockFile(currentLock, lockPath);
+
+        const controlDatabaseId = currentLock.d1.CONTROL_DB?.id;
+        if (!controlDatabaseId) {
           throw new Error('control_database_required_for_ui_worker_inventory');
         }
         await registerUiWorkerInventoryFromArtifacts({
           baseDir: rootDir,
           environmentId: env,
           environmentName: env,
-          controlDatabaseName,
+          controlDatabaseName: controlDatabaseId,
           components: uiWorkersResult.results.map((result) => result.component),
           environmentBootstrap: {
             defaultResidencyPolicyId: config.profiles.defaults.residency,
@@ -3202,11 +4038,23 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       }
     }
 
-    // Final summary
-    console.log(chalk.bold('\n━━━ Deployment Complete ━━━\n'));
+    // Temporary setup authority must be removed before reporting success or performing any
+    // remaining post-bootstrap mutation. The finally block retries cleanup after a failed attempt.
+    // A command-level retry can still exhaust just before Wrangler refreshes an OAuth
+    // credential. Re-run the idempotent DELETE once before classifying cleanup as blocking.
+    if (
+      !(await cleanupEphemeralSetupMachineAccess()) &&
+      !(await cleanupEphemeralSetupMachineAccess())
+    ) {
+      abortLockedDeployment('setup_machine_access_cleanup_failed');
+    }
+
+    // Report component results now, but do not claim the deployment is complete until the
+    // durable release/topology verification state has been persisted below.
+    console.log(chalk.bold('\n━━━ Deployment Results ━━━\n'));
 
     if (summary.failedCount === 0 && bootstrapSuccess && uiWorkersSuccess) {
-      console.log(chalk.green('✅ All components deployed and migrations applied!\n'));
+      console.log(chalk.green('✓ All components deployed and migrations applied.\n'));
     } else if (summary.failedCount === 0 && !migrationsSuccess) {
       console.log(chalk.yellow('⚠️  All components deployed, but some migrations failed.\n'));
     } else if (summary.failedCount === 0 && !initialTenantSuccess) {
@@ -3310,14 +4158,14 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       }
     }
 
-    await cleanupEphemeralSetupMachineAccess();
-
     const blockingDeploymentFailures = hasBlockingDeploymentFailures({
       workerFailedCount: summary.failedCount,
       migrationsSuccess,
       initialTenantSuccess,
+      initialNotificationProviderSuccess,
       initialAdminRolesSuccess,
       setupMachineAccessSuccess,
+      setupMachineAccessCleanupSuccess,
       adminUiBffMachineAccessSuccess,
       defaultCanonicalCatalogSeedSuccess,
       runtimeProfileSeedSuccess,
@@ -3356,6 +4204,19 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       console.log(chalk.gray('Topology update state verified and cleared.'));
     }
 
+    if (!blockingDeploymentFailures) {
+      console.log(
+        chalk.bold(
+          options.dryRun
+            ? '\n━━━ Deployment Dry Run Complete ━━━\n'
+            : '\n━━━ Deployment Complete ━━━\n'
+        )
+      );
+      if (!options.dryRun && isInitialDeployment && initialRelease) {
+        console.log(chalk.green('✅ Durable release state verified.\n'));
+      }
+    }
+
     const failureAction = resolveDeployFailureAction({
       blockingDeploymentFailures,
       throwOnFailure: options.throwOnFailure,
@@ -3366,8 +4227,25 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       if (failureAction === 'throw') throw new Error('deploy_command_blocking_failure');
     }
   } finally {
+    if (cleanupEphemeralSetupMachineAccess) {
+      try {
+        if (!(await cleanupEphemeralSetupMachineAccess())) {
+          await cleanupEphemeralSetupMachineAccess();
+        }
+      } catch (error) {
+        console.error(
+          chalk.red(
+            `Setup machine access cleanup failed unexpectedly: ${error instanceof Error ? error.message : String(error)}`
+          )
+        );
+      }
+    }
     failUnexpectedActiveSpinner();
-    await operationLock?.release();
+    try {
+      await deployConfigLock?.release();
+    } finally {
+      await operationLock?.release();
+    }
   }
 }
 

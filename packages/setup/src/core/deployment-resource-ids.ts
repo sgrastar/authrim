@@ -18,12 +18,12 @@ export async function buildWorkerDeploymentResourceIds(input: {
     ? input.components.includes('ar-plugin-runner')
     : getEnabledComponents(input.config.components).has('ar-plugin-runner');
   if (!pluginRunnerIncluded) return resourceIds;
-  const controlDatabaseName = input.lock.d1.CONTROL_DB?.name;
-  if (!controlDatabaseName) {
+  const controlDatabaseId = input.lock.d1.CONTROL_DB?.id;
+  if (!controlDatabaseId) {
     throw new Error('control_database_required_for_plugin_resource_projection');
   }
   resourceIds.pluginRunnerResources = await loadPluginRunnerResourceBindingsForDeployment({
-    controlDatabaseName,
+    controlDatabaseName: controlDatabaseId,
     environmentId: input.environmentId,
     query: input.query,
   });
