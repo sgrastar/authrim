@@ -37,18 +37,15 @@ const SECRET_GENERATION = {
   versionId: 'version:test-456',
 } as const;
 const CONTROL_MIGRATIONS = [
-  '001_pre_1_0_control_baseline.sql',
-  '002_lookup_predictive_scale_out.sql',
-  '003_worker_binding_patch_intent_recovery.sql',
-  '004_worker_binding_reconciler_lease.sql',
-  '005_account_predictive_scale_out.sql',
-  '006_account_spare_assignment_threshold.sql',
-  '007_control_token_bootstrap_cutover.sql',
-  '008_control_provisioning_secret_generation.sql',
+  { number: 1, filename: '001_pre_1_0_control_baseline.sql' },
+  { number: 7, filename: '007_control_token_bootstrap_cutover.sql' },
+  { number: 8, filename: '008_control_provisioning_secret_generation.sql' },
 ] as const;
 
-function applyControlMigrations(database: DatabaseSync, count: number): void {
-  for (const filename of CONTROL_MIGRATIONS.slice(0, count)) {
+function applyControlMigrations(database: DatabaseSync, throughMigration: number): void {
+  for (const { filename } of CONTROL_MIGRATIONS.filter(
+    (migration) => migration.number <= throughMigration
+  )) {
     database.exec(readFileSync(resolve(ROOT_DIR, 'migrations/control', filename), 'utf8'));
   }
 }

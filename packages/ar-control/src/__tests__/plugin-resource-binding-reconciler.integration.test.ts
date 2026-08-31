@@ -121,12 +121,6 @@ describe('PluginResourceBindingReconciler', () => {
     );
     database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/003_worker_binding_patch_intent_recovery.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(
         resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
         'utf8'
       )

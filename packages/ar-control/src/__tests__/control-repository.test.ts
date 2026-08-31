@@ -331,24 +331,6 @@ describe('D1ControlRepository lease and budget integration', () => {
     );
     database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/002_lookup_predictive_scale_out.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/003_worker_binding_patch_intent_recovery.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/004_worker_binding_reconciler_lease.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(
         resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
         'utf8'
       )
