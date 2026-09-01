@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   bootstrapControlWorkerTokens,
   buildCloudflareChildTokenName,
+  buildCloudflareBootstrapTokenEndDate,
   buildCloudflareBootstrapTemplateUrl,
   cleanupCloudflareBootstrapToken,
   CloudflareTokenBootstrapError,
@@ -77,6 +78,7 @@ class FakeAuthority implements CloudflareTokenAuthority {
       name: 'authrim-test-bootstrap',
       status: 'active',
       policies: [bootstrapPolicy],
+      expires_on: new Date(Date.now() + 24 * 60 * 60 * 1_000).toISOString(),
       value: this.bootstrapValue,
     });
   }
@@ -274,6 +276,15 @@ describe('Cloudflare Control token bootstrap', () => {
     expect(JSON.parse(user.searchParams.get('permissionGroupKeys')!)).toEqual([
       { key: 'api_tokens', type: 'edit' },
     ]);
+  });
+
+  it('computes the next UTC calendar date for the Dashboard End Date field', () => {
+    expect(buildCloudflareBootstrapTokenEndDate(new Date('2026-09-01T23:59:59Z'))).toBe(
+      '2026-09-02'
+    );
+    expect(() => buildCloudflareBootstrapTokenEndDate(new Date('invalid'))).toThrow(
+      'cloudflare_bootstrap_token_end_date_invalid'
+    );
   });
 
   it('prefers account ownership for an accepted Super Administrator membership', async () => {
@@ -603,6 +614,37 @@ describe('Cloudflare Control token bootstrap', () => {
     }
     expect(JSON.stringify(result)).not.toContain('child-secret');
     expect(JSON.stringify(result)).not.toContain(authority.bootstrapValue);
+  });
+
+  it.each([
+    { expiresOn: undefined, code: 'cloudflare_bootstrap_token_expiration_required' },
+    { expiresOn: 'invalid', code: 'cloudflare_bootstrap_token_expiration_invalid' },
+    {
+      expiresOn: '2026-09-01T12:10:00Z',
+      code: 'cloudflare_bootstrap_token_expiration_too_soon',
+    },
+    {
+      expiresOn: '2026-09-04T12:00:00Z',
+      code: 'cloudflare_bootstrap_token_expiration_too_long',
+    },
+  ])('rejects an unsafe bootstrap token lifetime: $code', async ({ expiresOn, code }) => {
+    const authority = new FakeAuthority();
+    const bootstrap = authority.records.get(BOOTSTRAP_ID)!;
+    if (expiresOn === undefined) delete bootstrap.expires_on;
+    else bootstrap.expires_on = expiresOn;
+
+    await expect(
+      bootstrapControlWorkerTokens({
+        accountId: ACCOUNT_ID,
+        environment: 'test',
+        ownership: 'account',
+        authority,
+        secretSink: new FakeSecretSink(),
+        now: () => Date.parse('2026-09-01T12:00:00Z'),
+      })
+    ).rejects.toMatchObject({ code });
+    expect(authority.createCalls).toBe(0);
+    expect(authority.deleted).toEqual([BOOTSTRAP_ID]);
   });
 
   it('creates and capability-probes all requested resource-class tokens', async () => {

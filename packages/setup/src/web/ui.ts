@@ -10291,7 +10291,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           method: 'POST',
           body: { env: config.env },
         });
-        if (!result.success || !result.url) {
+        if (!result.success || !result.url || !result.expiresOnDate) {
           dashboardWindow?.close();
           status.textContent = result.error || 'Could not create the Cloudflare token link.';
           return;
@@ -10300,7 +10300,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         controlBootstrapOwnership = result.ownership;
         if (dashboardWindow) dashboardWindow.location.replace(result.url);
         status.textContent = dashboardWindow
-          ? t('web.deploy.bootstrapTokenCreateStatus')
+          ? t('web.deploy.bootstrapTokenCreateStatus', { endDate: result.expiresOnDate })
           : t('web.deploy.bootstrapPopupBlocked');
       });
 
@@ -10315,7 +10315,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           method: 'POST',
           body: { env: selectedEnvForDetail.env },
         });
-        if (!result.success || !result.url) {
+        if (!result.success || !result.url || !result.expiresOnDate) {
           dashboardWindow?.close();
           status.textContent = result.error || 'Could not create the Cloudflare token link.';
           return;
@@ -10323,7 +10323,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         envControlBootstrapOwnership = result.ownership;
         if (dashboardWindow) dashboardWindow.location.replace(result.url);
         status.textContent = dashboardWindow
-          ? t('web.envDetail.enterOneTimeTokenThenEnable')
+          ? t('web.envDetail.enterOneTimeTokenThenEnable', { endDate: result.expiresOnDate })
           : t('web.envDetail.bootstrapPopupBlocked');
       });
 

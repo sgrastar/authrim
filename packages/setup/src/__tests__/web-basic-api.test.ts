@@ -12,6 +12,7 @@ const cloudflareMocks = vi.hoisted(() => ({
   detectEnvironments: vi.fn(),
   deleteEnvironment: vi.fn(),
   getAccountId: vi.fn(),
+  getCloudflareApiToken: vi.fn(),
   listQueues: vi.fn(),
 }));
 const runReleaseUpdateCliMock = vi.hoisted(() => vi.fn());
@@ -20,6 +21,7 @@ const cleanupSetupManagedControlTokensMock = vi.hoisted(() => vi.fn());
 const tokenBootstrapMocks = vi.hoisted(() => ({
   detectCloudflareTokenOwnership: vi.fn(),
   cleanupCloudflareBootstrapToken: vi.fn(),
+  selectPreferredCloudflareTokenOwnership: vi.fn(),
 }));
 
 vi.mock('../core/cloudflare.js', async (importOriginal) => {
@@ -30,6 +32,7 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
     detectEnvironments: cloudflareMocks.detectEnvironments,
     deleteEnvironment: cloudflareMocks.deleteEnvironment,
     getAccountId: cloudflareMocks.getAccountId,
+    getCloudflareApiToken: cloudflareMocks.getCloudflareApiToken,
     listQueues: cloudflareMocks.listQueues,
   };
 });
@@ -57,6 +60,8 @@ vi.mock('../core/cloudflare-control-token-bootstrap.js', async (importOriginal) 
     ...actual,
     detectCloudflareTokenOwnership: tokenBootstrapMocks.detectCloudflareTokenOwnership,
     cleanupCloudflareBootstrapToken: tokenBootstrapMocks.cleanupCloudflareBootstrapToken,
+    selectPreferredCloudflareTokenOwnership:
+      tokenBootstrapMocks.selectPreferredCloudflareTokenOwnership,
   };
 });
 
@@ -123,6 +128,9 @@ describe('setup web basic API contracts', () => {
     cloudflareMocks.detectEnvironments.mockReset().mockResolvedValue([]);
     cloudflareMocks.confirmEnvironmentObservedForDeletion.mockReset().mockResolvedValue(true);
     cloudflareMocks.getAccountId.mockReset().mockResolvedValue('98edc9b77724418e61ae577980a7369b');
+    cloudflareMocks.getCloudflareApiToken
+      .mockReset()
+      .mockResolvedValue({ token: 'oauth-token', source: 'oauth' });
     cloudflareMocks.listQueues.mockReset().mockResolvedValue([]);
     cloudflareMocks.deleteEnvironment.mockReset().mockResolvedValue({
       success: true,
@@ -146,6 +154,9 @@ describe('setup web basic API contracts', () => {
     tokenBootstrapMocks.cleanupCloudflareBootstrapToken
       .mockReset()
       .mockResolvedValue({ revoked: true });
+    tokenBootstrapMocks.selectPreferredCloudflareTokenOwnership
+      .mockReset()
+      .mockResolvedValue('account');
     root = await realpath(await mkdtemp(join(tmpdir(), 'authrim-web-basic-')));
     process.chdir(root);
   });
@@ -1375,6 +1386,32 @@ describe('setup web basic API contracts', () => {
       },
     });
     expect(crossOrigin.status).toBe(403);
+  });
+
+  it('returns the next UTC End Date with the Web token template flow', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-01T23:59:59Z'));
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const config = createDefaultConfig('test');
+    expect((await app.request('/config', post('/config', config, token))).status).toBe(200);
+
+    const response = await app.request('/cloudflare/control-token-template', {
+      ...post('/cloudflare/control-token-template', { env: 'test' }, token),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+        Origin: 'http://localhost',
+      },
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      ownership: 'account',
+      expiresOnDate: '2026-09-02',
+      url: expect.stringContaining('dash.cloudflare.com'),
+    });
   });
 
   it('requires same-loopback origin and strict input for Automatic provisioning completion', async () => {

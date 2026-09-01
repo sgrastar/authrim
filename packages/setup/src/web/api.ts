@@ -273,6 +273,7 @@ import { validateSetupDomainInputs } from './domain-form-state.js';
 import { runReleaseUpdateCli } from './release-update-runner.js';
 import { getMissingRequiredDeploySecrets } from '../core/secrets.js';
 import {
+  buildCloudflareBootstrapTokenEndDate,
   buildCloudflareBootstrapTemplateUrl,
   cleanupCloudflareBootstrapToken,
   CloudflareTokenBootstrapError,
@@ -1619,6 +1620,7 @@ export function createApiRoutes(): Hono {
       return c.json({
         success: true,
         ownership,
+        expiresOnDate: buildCloudflareBootstrapTokenEndDate(),
         url: buildCloudflareBootstrapTemplateUrl({
           accountId: wranglerAccountId,
           environment: parsed.data.env,

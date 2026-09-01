@@ -878,7 +878,7 @@ const id: Translations = {
     'Token sementara ini memungkinkan Authrim membuat database tenant secara otomatis. Token ini memerlukan izin untuk membuat dan mengedit token API: Account API Tokens: Write/Edit untuk token akun atau API Tokens: Write/Edit untuk token pengguna. Setup menggunakannya untuk membuat token API dengan cakupan terbatas untuk D1, Workers, KV, dan R2 sesuai kebutuhan, mendaftarkannya ke Control Worker, lalu mencabut token sementara.',
   'web.deploy.manualDnsSectionTitle': 'Pengaturan DNS',
   'web.deploy.bootstrapTokenCreateStatus':
-    'Buat token sementara di Cloudflare Dashboard, lalu masukkan di bawah.',
+    'Atur End Date ke {{endDate}} (UTC) di Cloudflare Dashboard, buat token sementara, lalu masukkan di bawah.',
   'web.deploy.bootstrapPopupBlocked':
     'Browser memblokir tab baru. Izinkan popup lalu pilih tombol ini lagi.',
   'web.deploy.bootstrapTokenRequired':
@@ -889,7 +889,8 @@ const id: Translations = {
   'web.envDetail.createOneTimeCloudflareToken': 'Buat token Cloudflare sekali pakai',
   'web.envDetail.oneTimeBootstrapTokenPlaceholder': 'Token bootstrap sekali pakai',
   'web.envDetail.enableAutomaticProvisioning': 'Aktifkan',
-  'web.envDetail.enterOneTimeTokenThenEnable': 'Masukkan token sekali pakai, lalu pilih Aktifkan.',
+  'web.envDetail.enterOneTimeTokenThenEnable':
+    'Atur End Date ke {{endDate}} (UTC), buat dan masukkan token sekali pakai, lalu pilih Aktifkan.',
   'web.envDetail.bootstrapPopupBlocked': 'Browser memblokir tab Cloudflare Dashboard.',
   'web.envDetail.enterOneTimeTokenFirst': 'Masukkan token Cloudflare sekali pakai terlebih dahulu.',
   'web.envDetail.preparingControlAuthority': 'Menyiapkan otoritas provisi Control...',

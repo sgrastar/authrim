@@ -178,6 +178,7 @@ import {
 import { ensureInitialNotificationProviderConfiguration } from '../../core/notification-provider-bootstrap.js';
 import { getMissingRequiredDeploySecrets } from '../../core/secrets.js';
 import {
+  buildCloudflareBootstrapTokenEndDate,
   buildCloudflareBootstrapTemplateUrl,
   CloudflareTokenBootstrapError,
   detectCloudflareTokenOwnership,
@@ -631,6 +632,7 @@ async function promptForControlTokenBootstrap(input: {
   ownership: CloudflareTokenOwnership;
   openTemplate?: boolean;
 }): Promise<string> {
+  const endDate = buildCloudflareBootstrapTokenEndDate();
   const templateUrl = buildCloudflareBootstrapTemplateUrl({
     accountId: input.accountId,
     environment: input.environment,
@@ -648,6 +650,11 @@ async function promptForControlTokenBootstrap(input: {
     } else {
       console.log(chalk.gray(`Opened Cloudflare ${input.ownership}-owned token template.`));
     }
+    console.log(
+      chalk.yellow(
+        `Before creating the token, set End Date to ${endDate} (UTC). Cloudflare template links cannot pre-fill TTL fields.`
+      )
+    );
   } else {
     console.log(
       chalk.yellow(
