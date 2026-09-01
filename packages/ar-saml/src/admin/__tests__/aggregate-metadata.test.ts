@@ -85,9 +85,23 @@ const aggregateXml = `<?xml version="1.0" encoding="UTF-8"?>
   xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
   xmlns:ds="http://www.w3.org/2000/09/xmldsig#"
   xmlns:mdui="urn:oasis:names:tc:SAML:metadata:ui"
+  xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+  xmlns:mdattr="urn:oasis:names:tc:SAML:metadata:attribute"
+  xmlns:mdrpi="urn:oasis:names:tc:SAML:metadata:rpi"
   ID="_aggregate"
   validUntil="2030-01-01T00:00:00Z">
   <md:EntityDescriptor entityID="https://idp.example.test/idp">
+    <md:Extensions>
+      <mdattr:EntityAttributes>
+        <saml:Attribute Name="http://macedir.org/entity-category">
+          <saml:AttributeValue>http://refeds.org/category/research-and-scholarship</saml:AttributeValue>
+        </saml:Attribute>
+        <saml:Attribute Name="http://macedir.org/entity-category-support">
+          <saml:AttributeValue>http://refeds.org/category/research-and-scholarship</saml:AttributeValue>
+        </saml:Attribute>
+      </mdattr:EntityAttributes>
+      <mdrpi:RegistrationInfo registrationAuthority="https://federation.example.test" />
+    </md:Extensions>
     <md:IDPSSODescriptor
       protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
       <md:Extensions>
@@ -142,6 +156,9 @@ describe('SAML aggregate metadata', () => {
       certificateCount: 1,
       keywords: ['category:location:tohoku', 'category:type:test'],
       logoUrl: 'https://idp.example.test/logo.png',
+      entityCategories: ['http://refeds.org/category/research-and-scholarship'],
+      entityCategorySupport: ['http://refeds.org/category/research-and-scholarship'],
+      registrationAuthority: 'https://federation.example.test',
     });
     expect(aggregate.entities[1]).toMatchObject({
       entityId: 'https://sp.example.test/sp',
@@ -149,6 +166,16 @@ describe('SAML aggregate metadata', () => {
       acsUrl: 'https://sp.example.test/acs',
       certificateCount: 0,
     });
+  });
+
+  it('rejects duplicate entityID values in one aggregate', () => {
+    const duplicate = aggregateXml.replace(
+      'entityID="https://sp.example.test/sp"',
+      'entityID="https://idp.example.test/idp"'
+    );
+    expect(() => parseAggregateMetadata(duplicate)).toThrow(
+      'entityID values must be present and unique'
+    );
   });
 
   it('extracts a selected EntityDescriptor with namespace declarations preserved', () => {
@@ -170,6 +197,60 @@ describe('SAML aggregate metadata', () => {
     expect(entities).toHaveLength(2);
     expect(entities.get('https://idp.example.test/idp')).toContain('Example IdP');
     expect(entities.get('https://sp.example.test/sp')).toContain('AssertionConsumerService');
+  });
+
+  it('propagates the earliest ancestor validUntil into each extracted entity', () => {
+    const nestedValidity = aggregateXml
+      .replace('2030-01-01T00:00:00Z', '2099-01-01T00:00:00Z')
+      .replace(
+        '<md:EntitiesDescriptor Name="nested">',
+        '<md:EntitiesDescriptor Name="nested" validUntil="2098-01-01T00:00:00Z">'
+      );
+
+    const parsed = parseAggregateMetadata(nestedValidity);
+    const extracted = extractEntityDescriptorXml(nestedValidity, 'https://sp.example.test/sp');
+
+    expect(parsed.entities[1]?.validUntil).toBe('2098-01-01T00:00:00Z');
+    expect(extracted).toContain('validUntil="2098-01-01T00:00:00Z"');
+  });
+
+  it('requires the mdrpi namespace for registration authority metadata', () => {
+    const lookalike = aggregateXml.replace(
+      '<mdrpi:RegistrationInfo registrationAuthority="https://federation.example.test" />',
+      '<fake:RegistrationInfo xmlns:fake="urn:attacker:lookalike" registrationAuthority="https://federation.example.test" />'
+    );
+    expect(parseAggregateMetadata(lookalike).entities[0]?.registrationAuthority).toBeUndefined();
+
+    const duplicate = aggregateXml.replace(
+      '<mdrpi:RegistrationInfo registrationAuthority="https://federation.example.test" />',
+      '<mdrpi:RegistrationInfo registrationAuthority="https://federation.example.test" /><mdrpi:RegistrationInfo registrationAuthority="https://other.example.test" />'
+    );
+    expect(() => parseAggregateMetadata(duplicate)).toThrow(
+      'multiple mdrpi RegistrationInfo elements'
+    );
+  });
+
+  it('ignores category and registration metadata outside EntityDescriptor Extensions', () => {
+    const misplaced = aggregateXml
+      .replace(/<mdattr:EntityAttributes>[\s\S]*?<\/mdattr:EntityAttributes>/, '')
+      .replace(
+        '<mdrpi:RegistrationInfo registrationAuthority="https://federation.example.test" />',
+        ''
+      )
+      .replace(
+        '<mdui:UIInfo>',
+        `<mdui:UIInfo>
+          <saml:Attribute Name="http://macedir.org/entity-category">
+            <saml:AttributeValue>http://refeds.org/category/research-and-scholarship</saml:AttributeValue>
+          </saml:Attribute>
+          <mdrpi:RegistrationInfo registrationAuthority="https://federation.example.test" />`
+      );
+
+    expect(parseAggregateMetadata(misplaced).entities[0]).toMatchObject({
+      entityCategories: undefined,
+      entityCategorySupport: undefined,
+      registrationAuthority: undefined,
+    });
   });
 
   it('rejects expired and malformed aggregate root validUntil values', () => {

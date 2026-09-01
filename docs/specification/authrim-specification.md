@@ -48,7 +48,7 @@ The keywords **MUST**, **MUST NOT**, **SHOULD**, **SHOULD NOT**, and **MAY** are
 | `token_session`                        | Pure browser/API-oriented SDK profile using OAuth tokens, PKCE, DPoP, and memory-first token storage.                                                                                                                                                          |
 | Application group                      | Public/Admin/API name for a related application set used for explicit group logout and managed grouping. Internally this maps to the security boundary historically named `trust_group`.                                                                       |
 | Web origin registry                    | Public/Admin/API name for the registry of RP/browser origins, CORS policy, CSP policy, handoff permission, iframe permission, and environment membership. Internally this may map to `rp_origin_registry`.                                                     |
-| Tenant placement policy                | Tenant-owned policy selecting `shared_pool` or `tenant_exclusive`; it does not select a runtime backend or transient-authentication persistence.                                                                                                                |
+| Tenant placement policy                | Tenant-owned policy selecting `shared_pool` or `tenant_exclusive`; it does not select a runtime backend or transient-authentication persistence.                                                                                                               |
 | Audit profile                          | Runtime policy describing audit primary store, archive store, forwarding sinks, routing, and failure behavior.                                                                                                                                                 |
 | Storage destination                    | Admin-managed or setup-managed storage/sink target used for archive, diagnostic detail, sensitive detail, import/export artifacts, DLQ payloads, or external logging delivery.                                                                                 |
 | Logging policy snapshot                | Published runtime logging policy used by Workers to resolve log type, plane, destination, fallback, and delivery behavior.                                                                                                                                     |
@@ -1510,7 +1510,27 @@ algorithm, SHA-1 fingerprint, SHA-256 fingerprint, PEM copy, and PEM download.
 
 SAML provider import supports direct provider metadata and aggregate metadata selection. Aggregate
 imports can expose candidate entity display names, entity IDs, SSO endpoints, `mdui:Keywords`, and
-`mdui:Logo` values.
+`mdui:Logo` values. Verified aggregates are also stored as source-scoped runtime directories.
+
+Aggregate runtime resolution is fail-closed and opt-in. The default `inventory_only` mode never uses
+new entities for authentication. An `automatic` source declares allowed SAML roles, a Field Mapping
+Set per enabled role, source priority, optional Registration Authority restrictions, and optional
+Entity Category allow/deny rules. Category rules may select a built-in SP attribute-release preset.
+Entity Category Support is inventory data and does not satisfy Entity Category membership rules.
+Registration Authority and Entity Category values are accepted only from their schema-defined
+EntityDescriptor extension locations. Effective entity validity is the earliest `validUntil` inherited
+from the entity and its enclosing aggregate groups.
+Explicit provider records take precedence over aggregate entries. Equal-priority aggregate matches are
+ambiguous and denied. Only the latest valid document of an active source is consulted, so entity
+removal or source suspension takes effect without mutating historical snapshots.
+
+Authrim-managed runtime snapshots are isolated from operator-registered federation documents and use
+bounded source-scoped retention: 8 documents, 128 validation events, and 64 refresh jobs. Expired
+provider trust is denied immediately while its last-known-good configuration is retained for recovery.
+Each automatic source refresh reconciles at most 25 explicit provider rows and persists its
+continuation cursor in refresh job state. Before writing provider configuration, the refresh owner
+must revalidate and extend its source lease; source changes and deletion fail closed while that lease
+is active.
 
 When imported providers are used as Login UI methods:
 

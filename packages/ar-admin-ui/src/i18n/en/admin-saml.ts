@@ -30,6 +30,53 @@ const adminSaml = {
 	admin_saml_metadata_not_checked: 'Not checked',
 	admin_saml_metadata_changed: 'Changed',
 	admin_saml_metadata_current: 'Current',
+	admin_saml_metadata_source_url: 'Metadata source URL',
+	admin_saml_federation_source_url_hint:
+		'The exact aggregate metadata URL that Authrim fetches. URL patterns remain trust-scope restrictions.',
+	admin_saml_metadata_auto_polling: 'Automatic metadata updates',
+	admin_saml_metadata_auto_polling_desc:
+		'Periodically fetch and validate the source. Turn this off to update only with Refresh now.',
+	admin_saml_metadata_polling: 'Polling',
+	admin_saml_metadata_polling_interval: 'Successful refresh interval',
+	admin_saml_metadata_interval_1h: 'Every hour',
+	admin_saml_metadata_interval_6h: 'Every 6 hours',
+	admin_saml_metadata_interval_12h: 'Every 12 hours',
+	admin_saml_metadata_interval_24h: 'Every 24 hours',
+	admin_saml_metadata_refresh_now: 'Refresh now',
+	admin_saml_metadata_refreshing: 'Refreshing...',
+	admin_saml_metadata_refresh_failed: 'Failed to refresh SAML metadata',
+	admin_saml_metadata_refreshed_changed: 'Metadata refreshed and changes were applied.',
+	admin_saml_metadata_refreshed_unchanged: 'Metadata refreshed; no changes were found.',
+	admin_saml_metadata_last_success: 'Last successful refresh',
+	admin_saml_metadata_next_refresh: 'Next refresh',
+	admin_saml_metadata_last_error: 'Last error',
+	admin_saml_metadata_never: 'Never',
+	admin_saml_metadata_manual_mode: 'Manual',
+	admin_saml_metadata_automatic_mode: 'Automatic',
+	admin_saml_federation_runtime_automatic: 'Use verified aggregate entities at runtime',
+	admin_saml_federation_runtime_automatic_desc:
+		'Resolve entityIDs from the latest valid aggregate. Off keeps the aggregate as inventory only.',
+	admin_saml_federation_runtime_roles: 'Runtime roles',
+	admin_saml_federation_runtime_idp_role: 'Resolve upstream IdPs',
+	admin_saml_federation_runtime_sp_role: 'Resolve downstream SPs',
+	admin_saml_federation_runtime_idp_mapping: 'IdP field mapping set ID',
+	admin_saml_federation_runtime_sp_mapping: 'SP field mapping set ID',
+	admin_saml_federation_runtime_priority: 'Source priority',
+	admin_saml_federation_runtime_default_preset: 'Default SP attribute preset',
+	admin_saml_federation_runtime_default_decision: 'Default Entity Category decision',
+	admin_saml_federation_runtime_authorities: 'Allowed registration authorities',
+	admin_saml_federation_runtime_authorities_hint:
+		'Optional allow-list, one registration authority URI per line.',
+	admin_saml_federation_runtime_category_rules: 'Entity Category rules',
+	admin_saml_federation_runtime_category_rules_hint:
+		'One rule per line: allow|deny, category URI, and optional SP attribute preset ID.',
+	admin_saml_federation_runtime_mapping_error:
+		'Select at least one runtime role and provide its field mapping set ID.',
+	admin_saml_federation_runtime_category_rule_error:
+		'An Entity Category rule is invalid. Use: allow|deny category-uri [preset-id].',
+	admin_saml_actions: 'Actions',
+	admin_saml_federation_refresh_complete:
+		'Federation metadata refreshed: {entities:number} entities, {updated:number} providers updated, {missing:number} missing, {failed:number} failed.',
 	admin_saml_federation_trust_profiles: 'Federation Trust Profiles',
 	admin_saml_federation_trust_desc:
 		'Trust anchors used to verify signed aggregate metadata before importing federation entities.',

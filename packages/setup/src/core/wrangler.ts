@@ -664,6 +664,12 @@ export function generateWranglerConfig(
     };
   }
 
+  if (component === 'ar-saml') {
+    wranglerConfig.triggers = {
+      crons: ['*/5 * * * *'],
+    };
+  }
+
   if (component === 'ar-control') {
     wranglerConfig.triggers = {
       crons: ['* * * * *'],

@@ -9,10 +9,13 @@
 		type SAMLAttributeReleaseConfirmationValueDisplay,
 		type SAMLDestinationFieldReleaseMode,
 		type SAMLFederationTrustProfile,
+		type SAMLFederationRuntimeResolutionPolicy,
+		type SAMLAttributePresetId,
 		type SAMLMetadataAggregatePreviewResponse,
 		type SAMLMetadataBatchStatus,
 		type SAMLMetadataEntitySummary,
 		type SAMLMetadataKeywordFacet,
+		type SAMLMetadataRefreshPolicy,
 		type SAMLJitEmailLinkingPolicy,
 		type SAMLProvider,
 		type SAMLProviderConfig,
@@ -160,10 +163,26 @@
 	let aggregateBatchPolling: ReturnType<typeof setInterval> | undefined;
 	let aggregateImportMode = $state<SAMLMetadataAggregateImportMode>('selected_entities');
 	let federationProfileName = $state('');
+	let federationProfileMetadataUrl = $state('');
+	let federationOriginalMetadataUrl = $state('');
 	let federationProfileUrlPattern = $state('');
 	let federationProfileCertificateUrl = $state('');
 	let federationProfileCertificate = $state('');
 	let federationProfilePolicy = $state<'strict' | 'warn' | 'disabled'>('strict');
+	let federationAutoPolling = $state(true);
+	let federationPollingIntervalSeconds = $state(6 * 60 * 60);
+	let federationExistingPolling = $state<SAMLMetadataRefreshPolicy | undefined>(undefined);
+	let federationProfileExpectedUpdatedAt = $state<number | undefined>(undefined);
+	let federationRuntimeAutomatic = $state(false);
+	let federationRuntimeIdP = $state(false);
+	let federationRuntimeSP = $state(false);
+	let federationRuntimePriority = $state(0);
+	let federationRuntimeIdPMappingSetId = $state('');
+	let federationRuntimeSPMappingSetId = $state('');
+	let federationRuntimeDefaultAttributePresetId = $state<'' | SAMLAttributePresetId>('');
+	let federationRuntimeRegistrationAuthorities = $state('');
+	let federationRuntimeDefaultCategoryDecision = $state<'allow' | 'deny'>('deny');
+	let federationRuntimeCategoryRules = $state('');
 	let federationProfileCreated = $state<SAMLFederationTrustProfile | null>(null);
 	let federationProfileSavedMessage = $state('');
 	let providerSavedMessage = $state('');
@@ -302,6 +321,31 @@
 			description = profile.description ?? '';
 			enabled = profile.enabled;
 			federationProfilePolicy = profile.policy ?? 'strict';
+			federationProfileMetadataUrl = profile.metadataUrl ?? '';
+			federationOriginalMetadataUrl = profile.metadataUrl ?? '';
+			federationAutoPolling = profile.polling?.mode !== 'manual';
+			federationPollingIntervalSeconds = profile.polling?.intervalSeconds ?? 6 * 60 * 60;
+			federationExistingPolling = profile.polling;
+			federationProfileExpectedUpdatedAt = profile.updatedAt;
+			const runtimeResolution = profile.runtimeResolution;
+			federationRuntimeAutomatic = runtimeResolution?.mode === 'automatic';
+			federationRuntimeIdP = runtimeResolution?.roles.includes('saml_idp') ?? false;
+			federationRuntimeSP = runtimeResolution?.roles.includes('saml_sp') ?? false;
+			federationRuntimePriority = runtimeResolution?.priority ?? 0;
+			federationRuntimeIdPMappingSetId = runtimeResolution?.idpFieldMappingSetId ?? '';
+			federationRuntimeSPMappingSetId = runtimeResolution?.spFieldMappingSetId ?? '';
+			federationRuntimeDefaultAttributePresetId = runtimeResolution?.defaultAttributePresetId ?? '';
+			federationRuntimeRegistrationAuthorities =
+				runtimeResolution?.registrationAuthorities?.join('\n') ?? '';
+			federationRuntimeDefaultCategoryDecision =
+				runtimeResolution?.entityCategoryPolicy?.defaultDecision ?? 'deny';
+			federationRuntimeCategoryRules =
+				runtimeResolution?.entityCategoryPolicy?.rules
+					.map(
+						(rule) =>
+							`${rule.decision} ${rule.entityCategory}${rule.attributePresetId ? ` ${rule.attributePresetId}` : ''}`
+					)
+					.join('\n') ?? '';
 			federationProfileUrlPattern = profile.metadataUrlPatterns.join('\n');
 			federationProfileCertificate = profile.certificates
 				.map((certificate) => certificate.certificate.trim())
@@ -746,6 +790,9 @@
 		if (metadataUrl.trim() && !federationProfileUrlPattern.trim()) {
 			federationProfileUrlPattern = metadataUrl.trim();
 		}
+		if (metadataUrl.trim() && !federationProfileMetadataUrl.trim()) {
+			federationProfileMetadataUrl = metadataUrl.trim();
+		}
 		if (metadataUrl.trim() && !federationProfileName.trim()) {
 			federationProfileName = buildFederationProfileName(metadataUrl.trim());
 		}
@@ -853,9 +900,11 @@
 			if (options.sourceUrl) {
 				federationProfileName =
 					federationProfileName || buildFederationProfileName(options.sourceUrl);
+				federationProfileMetadataUrl = federationProfileMetadataUrl || options.sourceUrl;
 				federationProfileUrlPattern = federationProfileUrlPattern || options.sourceUrl;
 			} else {
 				federationProfileName = federationProfileName || 'SAML federation';
+				federationAutoPolling = false;
 			}
 			metadataImportTone = preview.verification.status === 'verified' ? 'success' : 'warning';
 			metadataImportMessage = $LL.admin_saml_new_aggregate_loaded({
@@ -898,10 +947,26 @@
 		aggregateBatch = null;
 		aggregateImportMode = 'selected_entities';
 		federationProfileName = '';
+		federationProfileMetadataUrl = '';
+		federationOriginalMetadataUrl = '';
 		federationProfileUrlPattern = '';
 		federationProfileCertificateUrl = '';
 		federationProfileCertificate = '';
 		federationProfilePolicy = 'strict';
+		federationAutoPolling = true;
+		federationPollingIntervalSeconds = 6 * 60 * 60;
+		federationExistingPolling = undefined;
+		federationProfileExpectedUpdatedAt = undefined;
+		federationRuntimeAutomatic = false;
+		federationRuntimeIdP = false;
+		federationRuntimeSP = false;
+		federationRuntimePriority = 0;
+		federationRuntimeIdPMappingSetId = '';
+		federationRuntimeSPMappingSetId = '';
+		federationRuntimeDefaultAttributePresetId = '';
+		federationRuntimeRegistrationAuthorities = '';
+		federationRuntimeDefaultCategoryDecision = 'deny';
+		federationRuntimeCategoryRules = '';
 		federationProfileCreated = null;
 		federationProfileSavedMessage = '';
 		providerSavedMessage = '';
@@ -985,6 +1050,76 @@
 		}));
 	}
 
+	function buildFederationRuntimeResolution(): SAMLFederationRuntimeResolutionPolicy | null {
+		if (!federationRuntimeAutomatic) return { mode: 'inventory_only', roles: [] };
+		const roles: Array<'saml_idp' | 'saml_sp'> = [];
+		if (federationRuntimeIdP) roles.push('saml_idp');
+		if (federationRuntimeSP) roles.push('saml_sp');
+		if (
+			roles.length === 0 ||
+			(federationRuntimeIdP && !federationRuntimeIdPMappingSetId.trim()) ||
+			(federationRuntimeSP && !federationRuntimeSPMappingSetId.trim())
+		) {
+			error = $LL.admin_saml_federation_runtime_mapping_error();
+			return null;
+		}
+		const presetIds = new Set<SAMLAttributePresetId>([
+			'basic.v1',
+			'academic_publisher.v1',
+			'enterprise_saas.v1',
+			'research_federation.v1'
+		]);
+		const rules = federationRuntimeCategoryRules
+			.split(/\r?\n/)
+			.map((value) => value.trim())
+			.filter(Boolean)
+			.map((line) => {
+				const [decision, entityCategory, attributePresetId, ...extra] = line.split(/\s+/);
+				if (
+					(decision !== 'allow' && decision !== 'deny') ||
+					!entityCategory ||
+					extra.length > 0 ||
+					(attributePresetId && !presetIds.has(attributePresetId as SAMLAttributePresetId))
+				) {
+					return null;
+				}
+				const normalizedDecision: 'allow' | 'deny' = decision;
+				return {
+					entityCategory,
+					decision: normalizedDecision,
+					...(attributePresetId
+						? { attributePresetId: attributePresetId as SAMLAttributePresetId }
+						: {})
+				};
+			});
+		if (rules.some((rule) => rule === null)) {
+			error = $LL.admin_saml_federation_runtime_category_rule_error();
+			return null;
+		}
+		return {
+			mode: 'automatic',
+			roles,
+			priority: federationRuntimePriority,
+			...(federationRuntimeIdP
+				? { idpFieldMappingSetId: federationRuntimeIdPMappingSetId.trim() }
+				: {}),
+			...(federationRuntimeSP
+				? { spFieldMappingSetId: federationRuntimeSPMappingSetId.trim() }
+				: {}),
+			...(federationRuntimeDefaultAttributePresetId
+				? { defaultAttributePresetId: federationRuntimeDefaultAttributePresetId }
+				: {}),
+			registrationAuthorities: federationRuntimeRegistrationAuthorities
+				.split(/\r?\n/)
+				.map((value) => value.trim())
+				.filter(Boolean),
+			entityCategoryPolicy: {
+				defaultDecision: federationRuntimeDefaultCategoryDecision,
+				rules: rules.filter((rule) => rule !== null)
+			}
+		};
+	}
+
 	async function createFederationTrustProfile() {
 		if (!federationProfileName.trim()) {
 			error = $LL.admin_saml_new_federation_name_error();
@@ -995,11 +1130,17 @@
 			error = $LL.admin_saml_new_metadata_pattern_error();
 			return;
 		}
+		if (federationAutoPolling && !federationProfileMetadataUrl.trim()) {
+			error = $LL.admin_saml_new_metadata_url_error();
+			return;
+		}
 		const certificates = parseFederationProfileCertificates();
 		if (certificates.length === 0) {
 			error = $LL.admin_saml_new_federation_certificate_error();
 			return;
 		}
+		const runtimeResolution = buildFederationRuntimeResolution();
+		if (!runtimeResolution) return;
 
 		saving = true;
 		error = '';
@@ -1010,14 +1151,26 @@
 				description: aggregatePreview
 					? `Created from aggregate metadata preview ${aggregatePreview.previewId}`
 					: description.trim() || undefined,
+				metadataUrl: federationProfileMetadataUrl.trim() || undefined,
 				metadataUrlPatterns,
 				certificates,
 				policy: federationProfilePolicy,
+				polling: {
+					...(federationProfileMetadataUrl.trim() === federationOriginalMetadataUrl
+						? (federationExistingPolling ?? {})
+						: {}),
+					mode: federationAutoPolling ? ('automatic' as const) : ('manual' as const),
+					intervalSeconds: federationPollingIntervalSeconds
+				},
+				runtimeResolution,
 				enabled
 			};
 			federationProfileCreated =
 				isEditingFederationProfile && !aggregatePreview
-					? await adminSAMLAPI.updateFederationTrustProfile(editingFederationProfileId, request)
+					? await adminSAMLAPI.updateFederationTrustProfile(editingFederationProfileId, {
+							...request,
+							expectedUpdatedAt: federationProfileExpectedUpdatedAt ?? 0
+						})
 					: await adminSAMLAPI.createFederationTrustProfile(request);
 			saving = false;
 			federationProfileSavedMessage = isEditingFederationProfile
@@ -1363,6 +1516,122 @@
 	</div>
 {/snippet}
 
+{#snippet federationRuntimeFields(idPrefix: string)}
+	<div class="admin-field admin-field--full federation-runtime-fields">
+		<ToggleSwitch
+			bind:checked={federationRuntimeAutomatic}
+			label={$LL.admin_saml_federation_runtime_automatic()}
+			description={$LL.admin_saml_federation_runtime_automatic_desc()}
+		/>
+		{#if federationRuntimeAutomatic}
+			<div class="form-grid federation-runtime-grid">
+				<div class="admin-field admin-field--full">
+					<span class="admin-field__label">{$LL.admin_saml_federation_runtime_roles()}</span>
+					<label class="checkbox-row">
+						<input type="checkbox" bind:checked={federationRuntimeIdP} />
+						<span>{$LL.admin_saml_federation_runtime_idp_role()}</span>
+					</label>
+					<label class="checkbox-row">
+						<input type="checkbox" bind:checked={federationRuntimeSP} />
+						<span>{$LL.admin_saml_federation_runtime_sp_role()}</span>
+					</label>
+				</div>
+				{#if federationRuntimeIdP}
+					<div class="admin-field">
+						<label for={`${idPrefix}RuntimeIdPMapping`} class="admin-field__label">
+							{$LL.admin_saml_federation_runtime_idp_mapping()}
+						</label>
+						<input
+							id={`${idPrefix}RuntimeIdPMapping`}
+							bind:value={federationRuntimeIdPMappingSetId}
+							class="admin-input"
+						/>
+					</div>
+				{/if}
+				{#if federationRuntimeSP}
+					<div class="admin-field">
+						<label for={`${idPrefix}RuntimeSPMapping`} class="admin-field__label">
+							{$LL.admin_saml_federation_runtime_sp_mapping()}
+						</label>
+						<input
+							id={`${idPrefix}RuntimeSPMapping`}
+							bind:value={federationRuntimeSPMappingSetId}
+							class="admin-input"
+						/>
+					</div>
+				{/if}
+				<div class="admin-field">
+					<label for={`${idPrefix}RuntimePriority`} class="admin-field__label">
+						{$LL.admin_saml_federation_runtime_priority()}
+					</label>
+					<input
+						id={`${idPrefix}RuntimePriority`}
+						type="number"
+						min="-1000"
+						max="1000"
+						bind:value={federationRuntimePriority}
+						class="admin-input"
+					/>
+				</div>
+				<div class="admin-field">
+					<label for={`${idPrefix}RuntimePreset`} class="admin-field__label">
+						{$LL.admin_saml_federation_runtime_default_preset()}
+					</label>
+					<select
+						id={`${idPrefix}RuntimePreset`}
+						bind:value={federationRuntimeDefaultAttributePresetId}
+						class="admin-select"
+					>
+						<option value="">—</option>
+						<option value="basic.v1">basic.v1</option>
+						<option value="academic_publisher.v1">academic_publisher.v1</option>
+						<option value="enterprise_saas.v1">enterprise_saas.v1</option>
+						<option value="research_federation.v1">research_federation.v1</option>
+					</select>
+				</div>
+				<div class="admin-field">
+					<label for={`${idPrefix}RuntimeDefaultDecision`} class="admin-field__label">
+						{$LL.admin_saml_federation_runtime_default_decision()}
+					</label>
+					<select
+						id={`${idPrefix}RuntimeDefaultDecision`}
+						bind:value={federationRuntimeDefaultCategoryDecision}
+						class="admin-select"
+					>
+						<option value="deny">deny</option>
+						<option value="allow">allow</option>
+					</select>
+				</div>
+				<div class="admin-field admin-field--full">
+					<label for={`${idPrefix}RuntimeAuthorities`} class="admin-field__label">
+						{$LL.admin_saml_federation_runtime_authorities()}
+					</label>
+					<textarea
+						id={`${idPrefix}RuntimeAuthorities`}
+						bind:value={federationRuntimeRegistrationAuthorities}
+						class="admin-input form-textarea monospace"
+						rows="3"
+					></textarea>
+					<p class="field-hint">{$LL.admin_saml_federation_runtime_authorities_hint()}</p>
+				</div>
+				<div class="admin-field admin-field--full">
+					<label for={`${idPrefix}RuntimeCategoryRules`} class="admin-field__label">
+						{$LL.admin_saml_federation_runtime_category_rules()}
+					</label>
+					<textarea
+						id={`${idPrefix}RuntimeCategoryRules`}
+						bind:value={federationRuntimeCategoryRules}
+						class="admin-input form-textarea monospace"
+						rows="5"
+						placeholder="allow http://refeds.org/category/research-and-scholarship research_federation.v1"
+					></textarea>
+					<p class="field-hint">{$LL.admin_saml_federation_runtime_category_rules_hint()}</p>
+				</div>
+			</div>
+		{/if}
+	</div>
+{/snippet}
+
 {#snippet pageActions()}
 	<a href="/admin/saml" class="btn btn-secondary">{$LL.admin_saml_detail_back()}</a>
 {/snippet}
@@ -1540,6 +1809,41 @@
 									<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
 								</select>
 							</div>
+							<div class="admin-field admin-field--full">
+								<label for="federationProfileMetadataUrl" class="admin-field__label">
+									{$LL.admin_saml_metadata_source_url()}
+								</label>
+								<input
+									id="federationProfileMetadataUrl"
+									type="url"
+									bind:value={federationProfileMetadataUrl}
+									class="admin-input"
+								/>
+								<p class="field-hint">{$LL.admin_saml_federation_source_url_hint()}</p>
+							</div>
+							<div class="admin-field admin-field--full">
+								<ToggleSwitch
+									bind:checked={federationAutoPolling}
+									label={$LL.admin_saml_metadata_auto_polling()}
+									description={$LL.admin_saml_metadata_auto_polling_desc()}
+								/>
+								{#if federationAutoPolling}
+									<label for="federationPollingInterval" class="admin-field__label">
+										{$LL.admin_saml_metadata_polling_interval()}
+									</label>
+									<select
+										id="federationPollingInterval"
+										bind:value={federationPollingIntervalSeconds}
+										class="admin-select"
+									>
+										<option value={3600}>{$LL.admin_saml_metadata_interval_1h()}</option>
+										<option value={21600}>{$LL.admin_saml_metadata_interval_6h()}</option>
+										<option value={43200}>{$LL.admin_saml_metadata_interval_12h()}</option>
+										<option value={86400}>{$LL.admin_saml_metadata_interval_24h()}</option>
+									</select>
+								{/if}
+							</div>
+							{@render federationRuntimeFields('aggregateFederation')}
 							<div class="admin-field admin-field--full">
 								<label for="federationProfileUrlPattern" class="admin-field__label">
 									{$LL.admin_saml_new_metadata_url_pattern_required()}
@@ -1885,6 +2189,42 @@
 								<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
 							</select>
 						</div>
+						<div class="admin-field admin-field--full">
+							<label for="manualFederationMetadataUrl" class="admin-field__label">
+								{$LL.admin_saml_metadata_source_url()}
+							</label>
+							<input
+								id="manualFederationMetadataUrl"
+								type="url"
+								bind:value={federationProfileMetadataUrl}
+								class="admin-input"
+								placeholder="https://metadata.example.org/federation.xml"
+							/>
+							<p class="field-hint">{$LL.admin_saml_federation_source_url_hint()}</p>
+						</div>
+						<div class="admin-field admin-field--full">
+							<ToggleSwitch
+								bind:checked={federationAutoPolling}
+								label={$LL.admin_saml_metadata_auto_polling()}
+								description={$LL.admin_saml_metadata_auto_polling_desc()}
+							/>
+							{#if federationAutoPolling}
+								<label for="manualFederationPollingInterval" class="admin-field__label">
+									{$LL.admin_saml_metadata_polling_interval()}
+								</label>
+								<select
+									id="manualFederationPollingInterval"
+									bind:value={federationPollingIntervalSeconds}
+									class="admin-select"
+								>
+									<option value={3600}>{$LL.admin_saml_metadata_interval_1h()}</option>
+									<option value={21600}>{$LL.admin_saml_metadata_interval_6h()}</option>
+									<option value={43200}>{$LL.admin_saml_metadata_interval_12h()}</option>
+									<option value={86400}>{$LL.admin_saml_metadata_interval_24h()}</option>
+								</select>
+							{/if}
+						</div>
+						{@render federationRuntimeFields('manualFederation')}
 						<div class="admin-field admin-field--full">
 							<label for="manualFederationDescription" class="admin-field__label">
 								{$LL.admin_saml_detail_description()}

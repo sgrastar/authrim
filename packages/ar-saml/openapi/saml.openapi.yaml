@@ -416,7 +416,10 @@ paths:
       summary: Refresh SAML provider metadata.
       description:
         Fetches metadata from the configured or supplied HTTPS metadata URL and updates the
-        provider configuration, certificate validation state, and metadata refresh status.
+        provider configuration, certificate validation state, and metadata refresh status. The
+        metadata-refresh permission is sufficient only when the configured URL and entityID remain
+        unchanged. Supplying a different URL or approving an entityID change also requires the
+        provider-update permission.
       responses:
         '200':
           $ref: '#/components/responses/SAMLMetadataRefresh'
@@ -429,6 +432,34 @@ paths:
             type: string
       requestBody:
         $ref: '#/components/requestBodies/SAMLMetadataRefresh'
+      security: *a1
+  /api/admin/saml-federation-sources/{id}/refresh-metadata:
+    post:
+      tags:
+        - SAML Admin
+      operationId: postApiAdminSamlFederationSourcesByIdRefreshMetadata
+      summary: Refresh federation aggregate metadata.
+      description:
+        Fetches and verifies the aggregate metadata source immediately, records the validated
+        document and entity summaries, and reconciles already activated providers. This manual
+        operation is available whether scheduled polling is automatic or manual.
+      responses:
+        '200':
+          $ref: '#/components/responses/SAMLFederationMetadataRefresh'
+        '409':
+          description: Another refresh or trust-source update superseded this operation.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Federation trust source id.
+          schema:
+            type: string
       security: *a1
   /api/admin/saml-providers/{id}/signing-rollover/promote-next:
     post:
@@ -659,6 +690,7 @@ components:
           schema:
             $ref: '#/components/schemas/SAMLProviderUpdateRequest'
           example:
+            expectedUpdatedAt: '2026-09-02T00:00:00.000Z'
             name: Example SAML IdP
             enabled: true
             config:
@@ -938,6 +970,20 @@ components:
             metadataRefreshStatus:
               diff:
                 changed: true
+    SAMLFederationMetadataRefresh:
+      description: Federation aggregate metadata refresh result.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SAMLFederationMetadataRefreshResponse'
+          example:
+            success: true
+            sourceId: federation_source_123
+            changed: true
+            entityCount: 120
+            providersUpdated: 8
+            providersMissing: 0
+            verificationStatus: verified
     SAMLSigningRollover:
       description: Successful JSON response.
       content:
@@ -1125,6 +1171,8 @@ components:
         metadataXml:
           type: string
           maxLength: 1048576
+        metadataRefreshPolicy:
+          $ref: '#/components/schemas/SAMLMetadataRefreshPolicy'
         nameIdFormat:
           type: string
         metadataNameIdFormats:
@@ -1145,6 +1193,50 @@ components:
                 - once
                 - every_time
                 - until_attributes_change
+    SAMLMetadataRefreshPolicy:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - intervalSeconds
+      properties:
+        mode:
+          type: string
+          enum:
+            - automatic
+            - manual
+          description: URL-backed providers default to automatic when this property is omitted.
+        intervalSeconds:
+          type: integer
+          minimum: 900
+          maximum: 604800
+          default: 21600
+        nextRefreshAt:
+          type: integer
+          format: int64
+        lastAttemptAt:
+          type: integer
+          format: int64
+        lastSuccessAt:
+          type: integer
+          format: int64
+        consecutiveFailures:
+          type: integer
+          minimum: 0
+        sourceState:
+          type: string
+          enum:
+            - healthy
+            - stale
+            - error
+            - expired
+            - missing
+            - identity_change_pending
+        lastErrorCode:
+          type: string
+        suspendedByMetadataSync:
+          type: boolean
+          description: True when metadata lifecycle automation disabled the provider.
     SAMLIdentityMapping:
       type: object
       additionalProperties: true
@@ -1198,7 +1290,13 @@ components:
           type: string
     SAMLProviderUpdateRequest:
       type: object
+      required:
+        - expectedUpdatedAt
       properties:
+        expectedUpdatedAt:
+          type: string
+          format: date-time
+          description: Current provider updatedAt value used for optimistic concurrency control.
         name:
           type: string
         config:
@@ -1307,6 +1405,7 @@ components:
         metadataUrl:
           type: string
           format: uri
+          description: A different URL requires the provider-update permission before it is fetched.
         samlProfile:
           type: string
         attributePresetId:
@@ -1505,6 +1604,12 @@ components:
         metadataUrl:
           type: string
           format: uri
+        allowEntityIdChange:
+          type: boolean
+          default: false
+          description: >
+            Explicitly approve an entityID change during this manual refresh. An actual entityID
+            change also requires the provider-update permission.
     SAMLMetadataRefreshResponse:
       type: object
       required:
@@ -1529,6 +1634,41 @@ components:
         metadataRefreshStatus:
           type: object
           additionalProperties: true
+    SAMLFederationMetadataRefreshResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - success
+        - sourceId
+        - changed
+        - entityCount
+        - providersUpdated
+        - providersMissing
+        - providersFailed
+        - verificationStatus
+      properties:
+        success:
+          type: boolean
+          enum:
+            - true
+        sourceId:
+          type: string
+        changed:
+          type: boolean
+        entityCount:
+          type: integer
+          minimum: 0
+        providersUpdated:
+          type: integer
+          minimum: 0
+        providersMissing:
+          type: integer
+          minimum: 0
+        providersFailed:
+          type: integer
+          minimum: 0
+        verificationStatus:
+          type: string
     SAMLSigningRolloverRequest:
       type: object
       properties:
@@ -1801,6 +1941,16 @@ components:
           type: array
           items:
             type: string
+        entityCategories:
+          type: array
+          items:
+            type: string
+        entityCategorySupport:
+          type: array
+          items:
+            type: string
+        registrationAuthority:
+          type: string
         logoUrl:
           type: string
           format: uri

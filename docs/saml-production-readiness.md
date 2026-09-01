@@ -31,6 +31,7 @@ Authrim includes SAML 2.0 IdP and SP support for tenant-scoped deployments. The 
 - SP metadata import for ACS, SLO, signing certificates, encryption certificates, and RequestedAttribute data.
 - Aggregate metadata import with search, lazy loading, `mdui:Keywords` filtering, `mdui:Logo` display, and selected provider creation.
 - Provider Login UI logo URL and curated login-button icon selection for SAML/OIDC authentication methods.
+- Automatic and manual metadata refresh for URL-backed IdPs, SPs, and federation aggregates.
 - Metadata refresh diffing for entityID, `validUntil`, signing/encryption certificates, and SSO/SLO/ACS endpoints.
 - Built-in attribute preset catalog for common academic, federation, and enterprise SaaS profiles.
 - Response/assertion signing policy, AuthnRequest signature policy, SLO signature policy, and algorithm allow-list behavior.
@@ -43,13 +44,70 @@ Authrim includes SAML 2.0 IdP and SP support for tenant-scoped deployments. The 
 
 ## Metadata Operations
 
-SAML provider records can store a metadata URL and refresh status. A metadata refresh records a hash, critical field snapshots, and a diff summary. Expired metadata is persisted as an observable state and returned to administrators instead of being silently ignored.
+SAML provider records can store a metadata URL, refresh policy, and operational status. URL-backed
+providers default to automatic polling every six hours. Administrators can switch each provider to
+manual mode, choose a supported interval, or request an immediate refresh regardless of mode.
+
+The `ar-saml` Worker runs a bounded five-minute scheduler that selects only due sources. HTTP ETag and
+Last-Modified validators avoid reprocessing unchanged documents. Successful refreshes record a hash,
+critical field snapshots, and a diff summary. Failures use bounded exponential retry and retain the
+last known-good provider configuration. Expired metadata or an all-expired certificate set suspends
+the provider from runtime use. A later valid automatic refresh restores only providers suspended by
+metadata automation; an operator-disabled provider remains disabled. Unexpected entityID changes are
+recorded for manual approval and are not activated automatically.
 
 Manual refresh endpoint:
 
 ```http
 POST /api/admin/saml-providers/:id/refresh-metadata
 ```
+
+Federation aggregate manual refresh endpoint:
+
+```http
+POST /api/admin/saml-federation-sources/:id/refresh-metadata
+```
+
+## Federation Metadata Sources
+
+A federation source is a signed aggregate metadata publisher plus its trust anchors and verification
+policy. Its role is broader than importing many independent XML files: Authrim fetches and verifies the
+aggregate once, records the validated document and entity inventory, then reconciles the already
+activated IdP/SP providers linked to that source.
+
+Each valid aggregate snapshot also replaces the source's verified runtime directory. The safe default
+is `inventory_only`: new entities are searchable but cannot participate in authentication. An operator
+can opt a source into `automatic` runtime resolution separately for upstream IdPs and downstream SPs.
+Each enabled role requires an explicit Field Mapping Set. Explicitly configured providers always win;
+if multiple automatic sources expose the same entityID at the same highest priority, resolution fails
+closed.
+
+Automatic sources may restrict entities by Registration Authority and Entity Category. Category rules
+support allow/deny decisions and can select a built-in SP attribute-release preset. Deny rules take
+precedence and the default decision is configurable; the Admin UI defaults it to deny. Authrim reads
+these values only from their standard EntityDescriptor `Extensions` locations. Entity Category
+Support is retained for inventory display but is never treated as Entity Category membership.
+
+When a valid refresh adds an entity, it is immediately available to an opted-in runtime source. When
+the latest valid snapshot removes an entity, runtime resolution stops immediately because older
+snapshots are not consulted. Stopping a trust source removes it from resolution without deleting its
+history; deleting the source removes its runtime rows and metadata history. Separately, explicitly
+created providers retain the existing two-snapshot missing-entity grace period before being disabled.
+Invalid signatures, expired aggregates, transport failures, and entityID changes never replace the
+last known-good configuration.
+
+Polling snapshots use an internal document class isolated from documents registered through the
+Management API. Per source, Authrim retains the latest 8 polling documents, 128 polling validation
+events, and 64 refresh jobs; runtime rows and entity summaries are pruned with their owning snapshot.
+Automatic refresh reconciles at most 25 explicit provider rows per source invocation and stores a
+durable continuation cursor in the refresh job history. The source refresh lease is revalidated and
+extended immediately before those provider writes, so a superseded refresh cannot publish stale
+provider configuration.
+
+Federation trust URL patterns restrict which publisher URLs a trust profile may validate. The exact
+metadata source URL is stored separately and is the address polled by Authrim. Automatic polling is on
+by default; manual mode retains the source and trust relationship while requiring an administrator to
+request refreshes.
 
 The Admin UI SAML page surfaces provider metadata status, validity, expiry window, RequestedAttribute counts, release policy suggestion counts, metadata import candidates, provider logos, and icon settings.
 
@@ -127,7 +185,6 @@ The observer does not retry LogoutRequests. Retry behavior remains a deployment 
 
 - Active SAML sessions are not migrated during disaster recovery failover.
 - Transient SAML state is short-lived and treated as re-authentication state, not DR state.
-- Metadata refresh scheduling can reuse the same refresh core, but automatic URL polling policy is deployment-specific.
 - Metadata signing uses the active SAML signing key when enabled; a dedicated metadata signing key can be added later if required.
 - Real publisher metadata samples are tracked privately unless redistribution is permitted.
 - Browser CSP and SP compatibility can affect HTTP-POST binding tests. Some public SAML test sites apply restrictive or inconsistent `form-action` policies; use a reliable SP test target before treating a browser-side form-post block as an IdP response defect.

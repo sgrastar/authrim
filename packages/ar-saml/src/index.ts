@@ -76,6 +76,7 @@ import {
   handlePreviewMetadata,
   handleImportMetadata,
   handleRefreshMetadata,
+  handleRefreshFederationMetadataSource,
   handlePreviewFederationTrustCertificate,
   handleListAggregatePreviewEntities,
   handleStartAggregateBatchCreate,
@@ -286,6 +287,10 @@ app.post('/api/admin/saml-providers/:id/import-metadata', handleImportMetadata);
  * Refresh Metadata
  */
 app.post('/api/admin/saml-providers/:id/refresh-metadata', handleRefreshMetadata);
+app.post(
+  '/api/admin/saml-federation-sources/:id/refresh-metadata',
+  handleRefreshFederationMetadataSource
+);
 
 /**
  * Signing Rollover Operations

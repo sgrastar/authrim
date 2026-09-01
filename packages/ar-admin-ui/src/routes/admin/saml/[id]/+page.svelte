@@ -87,6 +87,8 @@
 	let description = $state('');
 	let enabled = $state(true);
 	let metadataUrl = $state('');
+	let metadataAutoPolling = $state(true);
+	let metadataPollingIntervalSeconds = $state(6 * 60 * 60);
 	let providerName = $state('Authrim');
 	let logoUrl = $state('');
 	let iconName = $state('');
@@ -185,6 +187,9 @@
 		description = data.config.description || '';
 		enabled = data.enabled;
 		metadataUrl = data.config.metadataUrl || '';
+		metadataAutoPolling = data.config.metadataRefreshPolicy?.mode !== 'manual';
+		metadataPollingIntervalSeconds =
+			data.config.metadataRefreshPolicy?.intervalSeconds ?? 6 * 60 * 60;
 		providerName = data.config.providerName || 'Authrim';
 		logoUrl = data.config.logoUrl || '';
 		iconName = data.config.iconName || '';
@@ -366,6 +371,11 @@
 		return date.toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
+	function formatMetadataTimestamp(value?: number) {
+		if (!value) return $LL.admin_saml_metadata_never();
+		return new Date(value).toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
+	}
+
 	function providerCertificateMessage() {
 		const validation = provider?.config.certificateValidation;
 		if (!validation) return '';
@@ -491,12 +501,18 @@
 	}
 
 	function buildConfig(): SAMLProviderConfig {
+		const sourceUrl = metadataUrl.trim();
 		const config: SAMLProviderConfig = {
+			...(provider?.config ?? {}),
 			description: description.trim(),
 			logoUrl: logoUrl.trim() || undefined,
 			iconName: iconName || undefined,
 			entityId: entityId.trim(),
-			metadataUrl: metadataUrl.trim(),
+			metadataUrl: sourceUrl || undefined,
+			metadataRefreshPolicy: {
+				mode: sourceUrl && metadataAutoPolling ? 'automatic' : 'manual',
+				intervalSeconds: metadataPollingIntervalSeconds
+			},
 			sloUrl: sloUrl.trim(),
 			certificate: certificate.trim(),
 			nameIdFormat,
@@ -620,6 +636,7 @@
 		message = '';
 		try {
 			const updated = await adminSAMLAPI.updateProvider(providerId, {
+				expectedUpdatedAt: provider!.updatedAt,
 				name: name.trim(),
 				enabled,
 				config: buildConfig()
@@ -631,6 +648,27 @@
 			error = err instanceof Error ? err.message : $LL.admin_saml_detail_error_update();
 		} finally {
 			saving = false;
+		}
+	}
+
+	async function refreshMetadataNow() {
+		if (!providerId || !metadataUrl.trim() || metadataUrl.trim() !== provider?.config.metadataUrl)
+			return;
+		busyAction = 'refresh-metadata';
+		error = '';
+		message = '';
+		try {
+			const result = await adminSAMLAPI.refreshMetadata(providerId);
+			const refreshed = await adminSAMLAPI.getProvider(providerId);
+			provider = refreshed;
+			populateForm(refreshed);
+			message = result.changed
+				? $LL.admin_saml_metadata_refreshed_changed()
+				: $LL.admin_saml_metadata_refreshed_unchanged();
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.admin_saml_metadata_refresh_failed();
+		} finally {
+			busyAction = '';
 		}
 	}
 
@@ -911,6 +949,57 @@
 						<p class="field-hint">
 							{$LL.admin_saml_detail_metadata_source_hint()}
 						</p>
+						<ToggleSwitch
+							bind:checked={metadataAutoPolling}
+							label={$LL.admin_saml_metadata_auto_polling()}
+							description={$LL.admin_saml_metadata_auto_polling_desc()}
+							disabled={!metadataUrl.trim()}
+						/>
+						{#if metadataAutoPolling && metadataUrl.trim()}
+							<label for="metadataPollingInterval" class="admin-field__label">
+								{$LL.admin_saml_metadata_polling_interval()}
+							</label>
+							<select
+								id="metadataPollingInterval"
+								bind:value={metadataPollingIntervalSeconds}
+								class="admin-select"
+							>
+								<option value={3600}>{$LL.admin_saml_metadata_interval_1h()}</option>
+								<option value={21600}>{$LL.admin_saml_metadata_interval_6h()}</option>
+								<option value={43200}>{$LL.admin_saml_metadata_interval_12h()}</option>
+								<option value={86400}>{$LL.admin_saml_metadata_interval_24h()}</option>
+							</select>
+						{/if}
+						<div class="metadata-refresh-status">
+							<span>
+								{$LL.admin_saml_metadata_last_success()}:
+								{formatMetadataTimestamp(provider.config.metadataRefreshPolicy?.lastSuccessAt)}
+							</span>
+							<span>
+								{$LL.admin_saml_metadata_next_refresh()}:
+								{metadataAutoPolling
+									? formatMetadataTimestamp(provider.config.metadataRefreshPolicy?.nextRefreshAt)
+									: $LL.admin_saml_metadata_manual_mode()}
+							</span>
+							{#if provider.config.metadataRefreshPolicy?.lastErrorCode}
+								<span class="form-error">
+									{$LL.admin_saml_metadata_last_error()}:
+									{provider.config.metadataRefreshPolicy.lastErrorCode}
+								</span>
+							{/if}
+						</div>
+						<button
+							type="button"
+							class="btn btn-secondary btn-sm"
+							onclick={refreshMetadataNow}
+							disabled={!metadataUrl.trim() ||
+								metadataUrl.trim() !== provider.config.metadataUrl ||
+								busyAction === 'refresh-metadata'}
+						>
+							{busyAction === 'refresh-metadata'
+								? $LL.admin_saml_metadata_refreshing()
+								: $LL.admin_saml_metadata_refresh_now()}
+						</button>
 					</div>
 
 					<div class="admin-field admin-field--full">

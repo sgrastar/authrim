@@ -5377,6 +5377,166 @@ type RootTranslation = {
 	 */
 	admin_saml_metadata_current: string
 	/**
+	 * M​e​t​a​d​a​t​a​ ​s​o​u​r​c​e​ ​U​R​L
+	 */
+	admin_saml_metadata_source_url: string
+	/**
+	 * T​h​e​ ​e​x​a​c​t​ ​a​g​g​r​e​g​a​t​e​ ​m​e​t​a​d​a​t​a​ ​U​R​L​ ​t​h​a​t​ ​A​u​t​h​r​i​m​ ​f​e​t​c​h​e​s​.​ ​U​R​L​ ​p​a​t​t​e​r​n​s​ ​r​e​m​a​i​n​ ​t​r​u​s​t​-​s​c​o​p​e​ ​r​e​s​t​r​i​c​t​i​o​n​s​.
+	 */
+	admin_saml_federation_source_url_hint: string
+	/**
+	 * A​u​t​o​m​a​t​i​c​ ​m​e​t​a​d​a​t​a​ ​u​p​d​a​t​e​s
+	 */
+	admin_saml_metadata_auto_polling: string
+	/**
+	 * P​e​r​i​o​d​i​c​a​l​l​y​ ​f​e​t​c​h​ ​a​n​d​ ​v​a​l​i​d​a​t​e​ ​t​h​e​ ​s​o​u​r​c​e​.​ ​T​u​r​n​ ​t​h​i​s​ ​o​f​f​ ​t​o​ ​u​p​d​a​t​e​ ​o​n​l​y​ ​w​i​t​h​ ​R​e​f​r​e​s​h​ ​n​o​w​.
+	 */
+	admin_saml_metadata_auto_polling_desc: string
+	/**
+	 * P​o​l​l​i​n​g
+	 */
+	admin_saml_metadata_polling: string
+	/**
+	 * S​u​c​c​e​s​s​f​u​l​ ​r​e​f​r​e​s​h​ ​i​n​t​e​r​v​a​l
+	 */
+	admin_saml_metadata_polling_interval: string
+	/**
+	 * E​v​e​r​y​ ​h​o​u​r
+	 */
+	admin_saml_metadata_interval_1h: string
+	/**
+	 * E​v​e​r​y​ ​6​ ​h​o​u​r​s
+	 */
+	admin_saml_metadata_interval_6h: string
+	/**
+	 * E​v​e​r​y​ ​1​2​ ​h​o​u​r​s
+	 */
+	admin_saml_metadata_interval_12h: string
+	/**
+	 * E​v​e​r​y​ ​2​4​ ​h​o​u​r​s
+	 */
+	admin_saml_metadata_interval_24h: string
+	/**
+	 * R​e​f​r​e​s​h​ ​n​o​w
+	 */
+	admin_saml_metadata_refresh_now: string
+	/**
+	 * R​e​f​r​e​s​h​i​n​g​.​.​.
+	 */
+	admin_saml_metadata_refreshing: string
+	/**
+	 * F​a​i​l​e​d​ ​t​o​ ​r​e​f​r​e​s​h​ ​S​A​M​L​ ​m​e​t​a​d​a​t​a
+	 */
+	admin_saml_metadata_refresh_failed: string
+	/**
+	 * M​e​t​a​d​a​t​a​ ​r​e​f​r​e​s​h​e​d​ ​a​n​d​ ​c​h​a​n​g​e​s​ ​w​e​r​e​ ​a​p​p​l​i​e​d​.
+	 */
+	admin_saml_metadata_refreshed_changed: string
+	/**
+	 * M​e​t​a​d​a​t​a​ ​r​e​f​r​e​s​h​e​d​;​ ​n​o​ ​c​h​a​n​g​e​s​ ​w​e​r​e​ ​f​o​u​n​d​.
+	 */
+	admin_saml_metadata_refreshed_unchanged: string
+	/**
+	 * L​a​s​t​ ​s​u​c​c​e​s​s​f​u​l​ ​r​e​f​r​e​s​h
+	 */
+	admin_saml_metadata_last_success: string
+	/**
+	 * N​e​x​t​ ​r​e​f​r​e​s​h
+	 */
+	admin_saml_metadata_next_refresh: string
+	/**
+	 * L​a​s​t​ ​e​r​r​o​r
+	 */
+	admin_saml_metadata_last_error: string
+	/**
+	 * N​e​v​e​r
+	 */
+	admin_saml_metadata_never: string
+	/**
+	 * M​a​n​u​a​l
+	 */
+	admin_saml_metadata_manual_mode: string
+	/**
+	 * A​u​t​o​m​a​t​i​c
+	 */
+	admin_saml_metadata_automatic_mode: string
+	/**
+	 * U​s​e​ ​v​e​r​i​f​i​e​d​ ​a​g​g​r​e​g​a​t​e​ ​e​n​t​i​t​i​e​s​ ​a​t​ ​r​u​n​t​i​m​e
+	 */
+	admin_saml_federation_runtime_automatic: string
+	/**
+	 * R​e​s​o​l​v​e​ ​e​n​t​i​t​y​I​D​s​ ​f​r​o​m​ ​t​h​e​ ​l​a​t​e​s​t​ ​v​a​l​i​d​ ​a​g​g​r​e​g​a​t​e​.​ ​O​f​f​ ​k​e​e​p​s​ ​t​h​e​ ​a​g​g​r​e​g​a​t​e​ ​a​s​ ​i​n​v​e​n​t​o​r​y​ ​o​n​l​y​.
+	 */
+	admin_saml_federation_runtime_automatic_desc: string
+	/**
+	 * R​u​n​t​i​m​e​ ​r​o​l​e​s
+	 */
+	admin_saml_federation_runtime_roles: string
+	/**
+	 * R​e​s​o​l​v​e​ ​u​p​s​t​r​e​a​m​ ​I​d​P​s
+	 */
+	admin_saml_federation_runtime_idp_role: string
+	/**
+	 * R​e​s​o​l​v​e​ ​d​o​w​n​s​t​r​e​a​m​ ​S​P​s
+	 */
+	admin_saml_federation_runtime_sp_role: string
+	/**
+	 * I​d​P​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​I​D
+	 */
+	admin_saml_federation_runtime_idp_mapping: string
+	/**
+	 * S​P​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​I​D
+	 */
+	admin_saml_federation_runtime_sp_mapping: string
+	/**
+	 * S​o​u​r​c​e​ ​p​r​i​o​r​i​t​y
+	 */
+	admin_saml_federation_runtime_priority: string
+	/**
+	 * D​e​f​a​u​l​t​ ​S​P​ ​a​t​t​r​i​b​u​t​e​ ​p​r​e​s​e​t
+	 */
+	admin_saml_federation_runtime_default_preset: string
+	/**
+	 * D​e​f​a​u​l​t​ ​E​n​t​i​t​y​ ​C​a​t​e​g​o​r​y​ ​d​e​c​i​s​i​o​n
+	 */
+	admin_saml_federation_runtime_default_decision: string
+	/**
+	 * A​l​l​o​w​e​d​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​a​u​t​h​o​r​i​t​i​e​s
+	 */
+	admin_saml_federation_runtime_authorities: string
+	/**
+	 * O​p​t​i​o​n​a​l​ ​a​l​l​o​w​-​l​i​s​t​,​ ​o​n​e​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​a​u​t​h​o​r​i​t​y​ ​U​R​I​ ​p​e​r​ ​l​i​n​e​.
+	 */
+	admin_saml_federation_runtime_authorities_hint: string
+	/**
+	 * E​n​t​i​t​y​ ​C​a​t​e​g​o​r​y​ ​r​u​l​e​s
+	 */
+	admin_saml_federation_runtime_category_rules: string
+	/**
+	 * O​n​e​ ​r​u​l​e​ ​p​e​r​ ​l​i​n​e​:​ ​a​l​l​o​w​|​d​e​n​y​,​ ​c​a​t​e​g​o​r​y​ ​U​R​I​,​ ​a​n​d​ ​o​p​t​i​o​n​a​l​ ​S​P​ ​a​t​t​r​i​b​u​t​e​ ​p​r​e​s​e​t​ ​I​D​.
+	 */
+	admin_saml_federation_runtime_category_rules_hint: string
+	/**
+	 * S​e​l​e​c​t​ ​a​t​ ​l​e​a​s​t​ ​o​n​e​ ​r​u​n​t​i​m​e​ ​r​o​l​e​ ​a​n​d​ ​p​r​o​v​i​d​e​ ​i​t​s​ ​f​i​e​l​d​ ​m​a​p​p​i​n​g​ ​s​e​t​ ​I​D​.
+	 */
+	admin_saml_federation_runtime_mapping_error: string
+	/**
+	 * A​n​ ​E​n​t​i​t​y​ ​C​a​t​e​g​o​r​y​ ​r​u​l​e​ ​i​s​ ​i​n​v​a​l​i​d​.​ ​U​s​e​:​ ​a​l​l​o​w​|​d​e​n​y​ ​c​a​t​e​g​o​r​y​-​u​r​i​ ​[​p​r​e​s​e​t​-​i​d​]​.
+	 */
+	admin_saml_federation_runtime_category_rule_error: string
+	/**
+	 * A​c​t​i​o​n​s
+	 */
+	admin_saml_actions: string
+	/**
+	 * F​e​d​e​r​a​t​i​o​n​ ​m​e​t​a​d​a​t​a​ ​r​e​f​r​e​s​h​e​d​:​ ​{​e​n​t​i​t​i​e​s​}​ ​e​n​t​i​t​i​e​s​,​ ​{​u​p​d​a​t​e​d​}​ ​p​r​o​v​i​d​e​r​s​ ​u​p​d​a​t​e​d​,​ ​{​m​i​s​s​i​n​g​}​ ​m​i​s​s​i​n​g​,​ ​{​f​a​i​l​e​d​}​ ​f​a​i​l​e​d​.
+	 * @param {number} entities
+	 * @param {number} failed
+	 * @param {number} missing
+	 * @param {number} updated
+	 */
+	admin_saml_federation_refresh_complete: RequiredParams<'entities' | 'failed' | 'missing' | 'updated'>
+	/**
 	 * F​e​d​e​r​a​t​i​o​n​ ​T​r​u​s​t​ ​P​r​o​f​i​l​e​s
 	 */
 	admin_saml_federation_trust_profiles: string
@@ -38585,6 +38745,162 @@ export type TranslationFunctions = {
 	 * Current
 	 */
 	admin_saml_metadata_current: () => LocalizedString
+	/**
+	 * Metadata source URL
+	 */
+	admin_saml_metadata_source_url: () => LocalizedString
+	/**
+	 * The exact aggregate metadata URL that Authrim fetches. URL patterns remain trust-scope restrictions.
+	 */
+	admin_saml_federation_source_url_hint: () => LocalizedString
+	/**
+	 * Automatic metadata updates
+	 */
+	admin_saml_metadata_auto_polling: () => LocalizedString
+	/**
+	 * Periodically fetch and validate the source. Turn this off to update only with Refresh now.
+	 */
+	admin_saml_metadata_auto_polling_desc: () => LocalizedString
+	/**
+	 * Polling
+	 */
+	admin_saml_metadata_polling: () => LocalizedString
+	/**
+	 * Successful refresh interval
+	 */
+	admin_saml_metadata_polling_interval: () => LocalizedString
+	/**
+	 * Every hour
+	 */
+	admin_saml_metadata_interval_1h: () => LocalizedString
+	/**
+	 * Every 6 hours
+	 */
+	admin_saml_metadata_interval_6h: () => LocalizedString
+	/**
+	 * Every 12 hours
+	 */
+	admin_saml_metadata_interval_12h: () => LocalizedString
+	/**
+	 * Every 24 hours
+	 */
+	admin_saml_metadata_interval_24h: () => LocalizedString
+	/**
+	 * Refresh now
+	 */
+	admin_saml_metadata_refresh_now: () => LocalizedString
+	/**
+	 * Refreshing...
+	 */
+	admin_saml_metadata_refreshing: () => LocalizedString
+	/**
+	 * Failed to refresh SAML metadata
+	 */
+	admin_saml_metadata_refresh_failed: () => LocalizedString
+	/**
+	 * Metadata refreshed and changes were applied.
+	 */
+	admin_saml_metadata_refreshed_changed: () => LocalizedString
+	/**
+	 * Metadata refreshed; no changes were found.
+	 */
+	admin_saml_metadata_refreshed_unchanged: () => LocalizedString
+	/**
+	 * Last successful refresh
+	 */
+	admin_saml_metadata_last_success: () => LocalizedString
+	/**
+	 * Next refresh
+	 */
+	admin_saml_metadata_next_refresh: () => LocalizedString
+	/**
+	 * Last error
+	 */
+	admin_saml_metadata_last_error: () => LocalizedString
+	/**
+	 * Never
+	 */
+	admin_saml_metadata_never: () => LocalizedString
+	/**
+	 * Manual
+	 */
+	admin_saml_metadata_manual_mode: () => LocalizedString
+	/**
+	 * Automatic
+	 */
+	admin_saml_metadata_automatic_mode: () => LocalizedString
+	/**
+	 * Use verified aggregate entities at runtime
+	 */
+	admin_saml_federation_runtime_automatic: () => LocalizedString
+	/**
+	 * Resolve entityIDs from the latest valid aggregate. Off keeps the aggregate as inventory only.
+	 */
+	admin_saml_federation_runtime_automatic_desc: () => LocalizedString
+	/**
+	 * Runtime roles
+	 */
+	admin_saml_federation_runtime_roles: () => LocalizedString
+	/**
+	 * Resolve upstream IdPs
+	 */
+	admin_saml_federation_runtime_idp_role: () => LocalizedString
+	/**
+	 * Resolve downstream SPs
+	 */
+	admin_saml_federation_runtime_sp_role: () => LocalizedString
+	/**
+	 * IdP field mapping set ID
+	 */
+	admin_saml_federation_runtime_idp_mapping: () => LocalizedString
+	/**
+	 * SP field mapping set ID
+	 */
+	admin_saml_federation_runtime_sp_mapping: () => LocalizedString
+	/**
+	 * Source priority
+	 */
+	admin_saml_federation_runtime_priority: () => LocalizedString
+	/**
+	 * Default SP attribute preset
+	 */
+	admin_saml_federation_runtime_default_preset: () => LocalizedString
+	/**
+	 * Default Entity Category decision
+	 */
+	admin_saml_federation_runtime_default_decision: () => LocalizedString
+	/**
+	 * Allowed registration authorities
+	 */
+	admin_saml_federation_runtime_authorities: () => LocalizedString
+	/**
+	 * Optional allow-list, one registration authority URI per line.
+	 */
+	admin_saml_federation_runtime_authorities_hint: () => LocalizedString
+	/**
+	 * Entity Category rules
+	 */
+	admin_saml_federation_runtime_category_rules: () => LocalizedString
+	/**
+	 * One rule per line: allow|deny, category URI, and optional SP attribute preset ID.
+	 */
+	admin_saml_federation_runtime_category_rules_hint: () => LocalizedString
+	/**
+	 * Select at least one runtime role and provide its field mapping set ID.
+	 */
+	admin_saml_federation_runtime_mapping_error: () => LocalizedString
+	/**
+	 * An Entity Category rule is invalid. Use: allow|deny category-uri [preset-id].
+	 */
+	admin_saml_federation_runtime_category_rule_error: () => LocalizedString
+	/**
+	 * Actions
+	 */
+	admin_saml_actions: () => LocalizedString
+	/**
+	 * Federation metadata refreshed: {entities} entities, {updated} providers updated, {missing} missing, {failed} failed.
+	 */
+	admin_saml_federation_refresh_complete: (arg: { entities: number, failed: number, missing: number, updated: number }) => LocalizedString
 	/**
 	 * Federation Trust Profiles
 	 */

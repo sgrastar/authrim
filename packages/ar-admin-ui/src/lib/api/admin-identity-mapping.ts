@@ -441,6 +441,10 @@ export interface IdentityMappingFederationTrustSourceRequest {
 	}>;
 }
 
+export interface IdentityMappingFederationTrustSourceUpdateRequest extends IdentityMappingFederationTrustSourceRequest {
+	expectedUpdatedAt: number;
+}
+
 export interface IdentityMappingFederationMetadataDocument {
 	id: string;
 	tenantId: string;
@@ -1034,7 +1038,7 @@ export const adminIdentityMappingAPI = {
 
 	async createFederationTrustSource(
 		request: IdentityMappingFederationTrustSourceRequest
-	): Promise<IdentityMappingFederationTrustSourceSummary> {
+	): Promise<{ result: IdentityMappingFederationTrustSourceSummary }> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources`,
 			{
@@ -1048,8 +1052,8 @@ export const adminIdentityMappingAPI = {
 
 	async updateFederationTrustSource(
 		trustSourceId: string,
-		request: IdentityMappingFederationTrustSourceRequest
-	): Promise<IdentityMappingFederationTrustSourceSummary> {
+		request: IdentityMappingFederationTrustSourceUpdateRequest
+	): Promise<{ result: IdentityMappingFederationTrustSourceSummary }> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources/${encodeURIComponent(trustSourceId)}`,
 			{
@@ -1070,7 +1074,11 @@ export const adminIdentityMappingAPI = {
 				body: JSON.stringify({})
 			}
 		);
-		return parseJson(response, 'Failed to delete federation trust source');
+		const body = await parseJson<{ result: { success: boolean } }>(
+			response,
+			'Failed to delete federation trust source'
+		);
+		return body.result;
 	},
 
 	async listFederationMetadataDocuments(
