@@ -367,6 +367,38 @@ name = "single-ar-saml"
     expect(existsSync(envDir)).toBe(false);
   });
 
+  it.each(['./keys/', 'keys/'])(
+    'maps the historical external-key placeholder %s to the environment-scoped key bundle',
+    async (secretsPath) => {
+      const baseDir = await mkdtemp(join(tmpdir(), 'authrim-cleanup-placeholder-keys-'));
+      tempDirs.push(baseDir);
+      const envDir = join(baseDir, '.authrim', 'conformance');
+      const selectedKeysDir = join(baseDir, '.authrim-keys', 'conformance');
+      const unrelatedKeysDir = join(baseDir, '.authrim-keys', 'scaleout');
+      await mkdir(envDir, { recursive: true });
+      await mkdir(selectedKeysDir, { recursive: true });
+      await mkdir(unrelatedKeysDir, { recursive: true });
+      await writeFile(
+        join(envDir, 'config.json'),
+        JSON.stringify({ keys: { storageType: 'external', secretsPath } }),
+        'utf-8'
+      );
+      await writeFile(join(selectedKeysDir, 'private.pem'), 'selected', 'utf-8');
+      await writeFile(join(unrelatedKeysDir, 'private.pem'), 'unrelated', 'utf-8');
+
+      const result = await cleanupLocalEnvironmentArtifacts({
+        baseDir,
+        env: 'conformance',
+        keysBaseDir: baseDir,
+      });
+
+      expect(result.errors).toEqual([]);
+      expect(existsSync(envDir)).toBe(false);
+      expect(existsSync(selectedKeysDir)).toBe(false);
+      expect(existsSync(unrelatedKeysDir)).toBe(true);
+    }
+  );
+
   it('does not remove a same-name external key bundle for an internal-key environment', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'authrim-cleanup-internal-keys-'));
     tempDirs.push(baseDir);

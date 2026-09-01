@@ -59,11 +59,15 @@ export async function cleanupLocalEnvironmentArtifacts(
         if (typeof raw.keys.secretsPath !== 'string') {
           throw new Error('external_keys_config_path_required');
         }
-        const configuredBaseDir = deriveExternalKeysBaseDirFromConfigPath(
-          env,
-          raw.keys.secretsPath
-        );
-        externalKeysDir = getExternalKeysDir(env, configuredBaseDir);
+        const configuredPath = raw.keys.secretsPath.trim();
+        if (configuredPath === './keys/' || configuredPath === 'keys/') {
+          // Fresh-install configs historically retained this portable placeholder while setup
+          // stored external keys in the environment-scoped .authrim-keys/{env} directory.
+          externalKeysDir = getExternalKeysDir(env, keysBaseDir);
+        } else {
+          const configuredBaseDir = deriveExternalKeysBaseDirFromConfigPath(env, configuredPath);
+          externalKeysDir = getExternalKeysDir(env, configuredBaseDir);
+        }
       } else if (raw.keys?.storageType === 'internal') {
         externalKeysDir = null;
       }

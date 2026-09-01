@@ -59,6 +59,8 @@ export interface EnvironmentPaths {
   pendingControlBootstrap: string;
   /** Durable exact-ID checkpoint used while revoking setup-managed Control tokens on delete. */
   controlTokenCleanup: string;
+  /** Durable proof that no setup-managed Control token revocation was required on delete. */
+  controlTokenCleanupConclusion: string;
   /** Version tracking file: .authrim/{env}/version.txt */
   version: string;
   /** Keys directory: .authrim/{env}/keys/ */
@@ -283,6 +285,7 @@ export function getEnvironmentPaths(config: PathConfig): EnvironmentPaths {
     pendingEmailSecrets: join(root, PENDING_EMAIL_SECRETS_FILE),
     pendingControlBootstrap: join(root, PENDING_CONTROL_BOOTSTRAP_FILE),
     controlTokenCleanup: join(root, 'control-token-cleanup.json'),
+    controlTokenCleanupConclusion: join(root, 'control-token-cleanup-conclusion.json'),
     version: join(root, VERSION_FILE),
     keys: keysDir,
     wrangler: wranglerDir,

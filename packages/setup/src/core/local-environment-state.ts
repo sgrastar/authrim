@@ -25,6 +25,7 @@ export function inspectLocalEnvironmentState(input: {
     current.pendingEmailSecrets,
     current.pendingControlBootstrap,
     current.controlTokenCleanup,
+    current.controlTokenCleanupConclusion,
     legacy.config,
     legacy.lock,
   ];

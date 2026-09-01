@@ -25,6 +25,7 @@ const TOKEN_ID = /^[0-9a-f]{32}$/u;
 const FINGERPRINT = /^[0-9a-f]{64}$/u;
 const RECEIPT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const CLEANUP_FILE = 'control-token-cleanup.json';
+const CLEANUP_CONCLUSION_FILE = 'control-token-cleanup-conclusion.json';
 const MAX_CLEANUP_CHECKPOINT_BYTES = 64 * 1024;
 const DEFAULT_RETRY_DELAYS_MS = [250, 1_000, 2_000] as const;
 
@@ -57,6 +58,16 @@ export interface ControlTokenCleanupCheckpoint {
   createdAt: string;
   updatedAt: string;
   checkpointDigest: string;
+}
+
+export interface ControlTokenCleanupConclusion {
+  version: 1;
+  environment: string;
+  accountId: string;
+  status: 'not_required';
+  reason: 'authority_absent' | 'not_setup_managed';
+  createdAt: string;
+  conclusionDigest: string;
 }
 
 interface CleanupDependencies {
@@ -104,6 +115,10 @@ function checkpointPath(baseDir: string, environment: string): string {
   return join(getEnvironmentPaths({ baseDir, env: environment }).root, CLEANUP_FILE);
 }
 
+function conclusionPath(baseDir: string, environment: string): string {
+  return join(getEnvironmentPaths({ baseDir, env: environment }).root, CLEANUP_CONCLUSION_FILE);
+}
+
 function checkpointContent(
   checkpoint: Omit<ControlTokenCleanupCheckpoint, 'checkpointDigest'>
 ): string {
@@ -114,6 +129,18 @@ function withCheckpointDigest(
   checkpoint: Omit<ControlTokenCleanupCheckpoint, 'checkpointDigest'>
 ): ControlTokenCleanupCheckpoint {
   return { ...checkpoint, checkpointDigest: sha256(checkpointContent(checkpoint)) };
+}
+
+function conclusionContent(
+  conclusion: Omit<ControlTokenCleanupConclusion, 'conclusionDigest'>
+): string {
+  return canonicalize(conclusion);
+}
+
+function withConclusionDigest(
+  conclusion: Omit<ControlTokenCleanupConclusion, 'conclusionDigest'>
+): ControlTokenCleanupConclusion {
+  return { ...conclusion, conclusionDigest: sha256(conclusionContent(conclusion)) };
 }
 
 function parseAuthoritySnapshot(value: unknown): CleanupAuthoritySnapshot {
@@ -465,6 +492,49 @@ function parseCheckpoint(raw: unknown, expectedEnvironment: string): ControlToke
   };
 }
 
+function parseConclusion(raw: unknown, expectedEnvironment: string): ControlTokenCleanupConclusion {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('control_token_cleanup_conclusion_invalid');
+  }
+  const value = raw as Record<string, unknown>;
+  if (
+    !hasExactKeys(value, [
+      'accountId',
+      'conclusionDigest',
+      'createdAt',
+      'environment',
+      'reason',
+      'status',
+      'version',
+    ]) ||
+    value.version !== 1 ||
+    value.environment !== expectedEnvironment ||
+    typeof value.accountId !== 'string' ||
+    !ACCOUNT_ID.test(value.accountId) ||
+    value.status !== 'not_required' ||
+    (value.reason !== 'authority_absent' && value.reason !== 'not_setup_managed') ||
+    typeof value.createdAt !== 'string' ||
+    !Number.isFinite(Date.parse(value.createdAt)) ||
+    typeof value.conclusionDigest !== 'string' ||
+    !FINGERPRINT.test(value.conclusionDigest)
+  ) {
+    throw new Error('control_token_cleanup_conclusion_invalid');
+  }
+  const reason: ControlTokenCleanupConclusion['reason'] = value.reason;
+  const withoutDigest = {
+    version: 1 as const,
+    environment: value.environment,
+    accountId: value.accountId,
+    status: 'not_required' as const,
+    reason,
+    createdAt: value.createdAt,
+  };
+  if (value.conclusionDigest !== sha256(canonicalize(withoutDigest))) {
+    throw new Error('control_token_cleanup_conclusion_tampered');
+  }
+  return { ...withoutDigest, conclusionDigest: value.conclusionDigest };
+}
+
 export async function loadControlTokenCleanupCheckpoint(input: {
   baseDir: string;
   environment: string;
@@ -487,6 +557,27 @@ export async function loadControlTokenCleanupCheckpoint(input: {
   }
 }
 
+export async function loadControlTokenCleanupConclusion(input: {
+  baseDir: string;
+  environment: string;
+}): Promise<ControlTokenCleanupConclusion | null> {
+  if (!ENVIRONMENT.test(input.environment)) {
+    throw new Error('control_token_cleanup_environment_invalid');
+  }
+  const content = await readPrivateFileSecurely(conclusionPath(input.baseDir, input.environment), {
+    maxBytes: MAX_CLEANUP_CHECKPOINT_BYTES,
+    invalidError: 'control_token_cleanup_conclusion_invalid',
+    permissionsError: 'control_token_cleanup_conclusion_permissions_invalid',
+  });
+  if (content === null) return null;
+  try {
+    return parseConclusion(JSON.parse(content), input.environment);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('control_token_cleanup_')) throw error;
+    throw new Error('control_token_cleanup_conclusion_invalid', { cause: error });
+  }
+}
+
 async function persistCheckpoint(input: {
   baseDir: string;
   checkpoint: Omit<ControlTokenCleanupCheckpoint, 'checkpointDigest'>;
@@ -503,6 +594,26 @@ async function persistCheckpoint(input: {
   });
   if (!reflected || reflected.checkpointDigest !== checkpoint.checkpointDigest) {
     throw new Error('control_token_cleanup_checkpoint_reflection_failed');
+  }
+  return reflected;
+}
+
+async function persistConclusion(input: {
+  baseDir: string;
+  conclusion: Omit<ControlTokenCleanupConclusion, 'conclusionDigest'>;
+}): Promise<ControlTokenCleanupConclusion> {
+  const conclusion = withConclusionDigest(input.conclusion);
+  await writePrivateFileAtomically(
+    conclusionPath(input.baseDir, conclusion.environment),
+    `${JSON.stringify(conclusion, null, 2)}\n`,
+    0o600
+  );
+  const reflected = await loadControlTokenCleanupConclusion({
+    baseDir: input.baseDir,
+    environment: conclusion.environment,
+  });
+  if (!reflected || reflected.conclusionDigest !== conclusion.conclusionDigest) {
+    throw new Error('control_token_cleanup_conclusion_reflection_failed');
   }
   return reflected;
 }
@@ -714,8 +825,18 @@ export async function cleanupSetupManagedControlTokens(input: {
     baseDir: input.baseDir,
     environment: input.environment,
   });
+  const conclusion = await loadControlTokenCleanupConclusion({
+    baseDir: input.baseDir,
+    environment: input.environment,
+  });
   if (checkpoint && checkpoint.accountId !== resolvedAccountId) {
     throw new Error('control_token_cleanup_account_mismatch');
+  }
+  if (conclusion && conclusion.accountId !== resolvedAccountId) {
+    throw new Error('control_token_cleanup_account_mismatch');
+  }
+  if (checkpoint && conclusion) {
+    throw new Error('control_token_cleanup_checkpoint_conclusion_conflict');
   }
 
   const pendingArtifact = await (input.dependencies?.loadPending ?? loadPendingControlBootstrap)({
@@ -738,6 +859,27 @@ export async function cleanupSetupManagedControlTokens(input: {
       artifact: pendingArtifact,
       authority: currentAuthority ?? null,
     });
+  }
+
+  if (conclusion) {
+    if (pendingArtifact) {
+      throw new Error('control_token_cleanup_conclusion_pending_conflict_manual_recovery_required');
+    }
+    if (currentAuthority !== undefined) {
+      const conclusionStillApplies =
+        conclusion.reason === 'authority_absent'
+          ? currentAuthority === null
+          : currentAuthority !== null && currentAuthority.tokenManagement !== 'setup';
+      if (!conclusionStillApplies) {
+        throw new Error('control_token_cleanup_conclusion_changed_manual_recovery_required');
+      }
+    }
+    return {
+      status: 'not_required',
+      reason: conclusion.reason,
+      revokedTokenIds: [],
+      alreadyAbsentTokenIds: [],
+    };
   }
 
   const checkpointMatchesSnapshot = (
@@ -823,6 +965,18 @@ export async function cleanupSetupManagedControlTokens(input: {
         'control_token_cleanup_checkpoint_required_for_missing_control_database_manual_recovery_required'
       );
     } else if (!currentAuthority) {
+      const now = new Date().toISOString();
+      await persistConclusion({
+        baseDir: input.baseDir,
+        conclusion: {
+          version: 1,
+          environment: input.environment,
+          accountId: resolvedAccountId,
+          status: 'not_required',
+          reason: 'authority_absent',
+          createdAt: now,
+        },
+      });
       return {
         status: 'not_required',
         reason: 'authority_absent',
@@ -830,6 +984,18 @@ export async function cleanupSetupManagedControlTokens(input: {
         alreadyAbsentTokenIds: [],
       };
     } else if (currentAuthority.tokenManagement !== 'setup') {
+      const now = new Date().toISOString();
+      await persistConclusion({
+        baseDir: input.baseDir,
+        conclusion: {
+          version: 1,
+          environment: input.environment,
+          accountId: resolvedAccountId,
+          status: 'not_required',
+          reason: 'not_setup_managed',
+          createdAt: now,
+        },
+      });
       return {
         status: 'not_required',
         reason: 'not_setup_managed',

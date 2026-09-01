@@ -2,6 +2,7 @@ import { execFile as execFileCallback } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import {
+  chmod,
   mkdtemp,
   mkdir,
   open,
@@ -26,6 +27,7 @@ import {
 import {
   cleanupSetupManagedControlTokens,
   loadControlTokenCleanupCheckpoint,
+  loadControlTokenCleanupConclusion,
 } from '../core/control-token-environment-cleanup.js';
 import type { ControlProvisioningAuthorityState } from '../core/control-provisioning-authority.js';
 import {
@@ -635,6 +637,13 @@ describe('setup-managed Control token environment cleanup', () => {
     await expect(
       loadControlTokenCleanupCheckpoint({ baseDir, environment: ENVIRONMENT })
     ).resolves.toBeNull();
+    await expect(
+      loadControlTokenCleanupConclusion({ baseDir, environment: ENVIRONMENT })
+    ).resolves.toMatchObject({
+      status: 'not_required',
+      reason: 'not_setup_managed',
+      accountId: ACCOUNT_ID,
+    });
   });
 
   it('uses the user token authority for setup-managed user-owned children', async () => {
@@ -785,6 +794,23 @@ describe('setup-managed Control token environment cleanup', () => {
     ).resolves.toMatchObject({ status: 'not_required', reason: 'authority_absent' });
     expect(fake.authority.verifySelf).not.toHaveBeenCalled();
     expect(fake.authority.deleteToken).not.toHaveBeenCalled();
+    await expect(
+      loadControlTokenCleanupConclusion({ baseDir, environment: ENVIRONMENT })
+    ).resolves.toMatchObject({
+      status: 'not_required',
+      reason: 'authority_absent',
+      accountId: ACCOUNT_ID,
+    });
+
+    await expect(
+      cleanupSetupManagedControlTokens({
+        baseDir,
+        environment: ENVIRONMENT,
+        controlDatabaseName: null,
+        dependencies: deps,
+      })
+    ).resolves.toMatchObject({ status: 'not_required', reason: 'authority_absent' });
+    expect(fake.authority.verifySelf).not.toHaveBeenCalled();
   });
 
   it('fails closed without checkpoint evidence when Control D1 is already missing', async () => {
@@ -803,6 +829,80 @@ describe('setup-managed Control token environment cleanup', () => {
       'control_token_cleanup_checkpoint_required_for_missing_control_database_manual_recovery_required'
     );
     expect(fake.authority.listTokens).not.toHaveBeenCalled();
+    expect(fake.authority.deleteToken).not.toHaveBeenCalled();
+  });
+
+  it('rejects a tampered not-required conclusion before provider access', async () => {
+    const baseDir = await root();
+    const fake = fakeAuthority({});
+    const deps = dependencies({ authority: fake.authority, readAuthority: async () => null });
+    await cleanupSetupManagedControlTokens({
+      baseDir,
+      environment: ENVIRONMENT,
+      controlDatabaseName: 'test-authrim-control-db',
+      dependencies: deps,
+    });
+    const path = join(baseDir, '.authrim', ENVIRONMENT, 'control-token-cleanup-conclusion.json');
+    const conclusion = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
+    conclusion.reason = 'not_setup_managed';
+    await writeFile(path, `${JSON.stringify(conclusion, null, 2)}\n`, { mode: 0o600 });
+
+    await expect(
+      cleanupSetupManagedControlTokens({
+        baseDir,
+        environment: ENVIRONMENT,
+        controlDatabaseName: null,
+        dependencies: deps,
+      })
+    ).rejects.toThrow('control_token_cleanup_conclusion_tampered');
+    expect(fake.authority.verifySelf).not.toHaveBeenCalled();
+  });
+
+  it('rejects a publicly readable not-required conclusion before provider access', async () => {
+    const baseDir = await root();
+    const fake = fakeAuthority({});
+    const deps = dependencies({ authority: fake.authority, readAuthority: async () => null });
+    await cleanupSetupManagedControlTokens({
+      baseDir,
+      environment: ENVIRONMENT,
+      controlDatabaseName: 'test-authrim-control-db',
+      dependencies: deps,
+    });
+    const path = join(baseDir, '.authrim', ENVIRONMENT, 'control-token-cleanup-conclusion.json');
+    await chmod(path, 0o644);
+
+    await expect(
+      cleanupSetupManagedControlTokens({
+        baseDir,
+        environment: ENVIRONMENT,
+        controlDatabaseName: null,
+        dependencies: deps,
+      })
+    ).rejects.toThrow('control_token_cleanup_conclusion_permissions_invalid');
+    expect(fake.authority.verifySelf).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a persisted not-required conclusion no longer matches Control', async () => {
+    const baseDir = await root();
+    const fake = fakeAuthority({});
+    await cleanupSetupManagedControlTokens({
+      baseDir,
+      environment: ENVIRONMENT,
+      controlDatabaseName: 'test-authrim-control-db',
+      dependencies: dependencies({ authority: fake.authority, readAuthority: async () => null }),
+    });
+    const changedRead = vi.fn(async () => setupAuthority());
+
+    await expect(
+      cleanupSetupManagedControlTokens({
+        baseDir,
+        environment: ENVIRONMENT,
+        controlDatabaseName: 'test-authrim-control-db',
+        dependencies: dependencies({ authority: fake.authority, readAuthority: changedRead }),
+      })
+    ).rejects.toThrow('control_token_cleanup_conclusion_changed_manual_recovery_required');
+    expect(changedRead).toHaveBeenCalledOnce();
+    expect(fake.authority.verifySelf).not.toHaveBeenCalled();
     expect(fake.authority.deleteToken).not.toHaveBeenCalled();
   });
 

@@ -11709,7 +11709,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     onProgress('🔐 Revoking setup-managed Control API tokens...');
     try {
       await beforeD1Deletion({ observedD1Resources });
-      onProgress('  ✅ Control API token cleanup checkpoint complete');
+      onProgress('  ✅ Control API token cleanup evidence verified');
     } catch (error) {
       const detail = sanitizeError(error);
       errors.push(`Failed to revoke setup-managed Control API tokens: ${detail}`);
