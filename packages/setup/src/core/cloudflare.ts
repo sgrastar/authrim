@@ -2722,7 +2722,7 @@ async function ensureProxiedCnameDnsRecord(options: {
 export async function ensureWildcardDnsForMultiTenant(
   cfg: Partial<AuthrimConfig> | null | undefined,
   onProgress?: (message: string) => void,
-  _verifyPublicDns: (baseDomain: string) => Promise<boolean> = verifyWildcardDnsPublicResolution,
+  verifyPublicDns: (baseDomain: string) => Promise<boolean> = verifyWildcardDnsPublicResolution,
   ownership?: DnsOwnershipPersistence
 ): Promise<void> {
   const baseDomain = cfg?.tenant?.multiTenant === true ? cfg.tenant.baseDomain?.trim() : undefined;
@@ -2763,6 +2763,17 @@ export async function ensureWildcardDnsForMultiTenant(
     ownership
   );
   if (result.verificationLimited) {
+    const providerMutationWasNotObserved =
+      result.created === false &&
+      result.updated === false &&
+      result.recordId === undefined &&
+      result.ownership === undefined;
+    if (providerMutationWasNotObserved && (await verifyPublicDns(baseDomain))) {
+      onProgress?.(
+        `✓ Wildcard DNS resolves publicly and remains externally managed: ${result.name}`
+      );
+      return;
+    }
     throw new Error(
       `Token lacks zone:read or dns:edit permission to verify the exact proxied CNAME target for ${result.name}`
     );

@@ -566,14 +566,55 @@ describe('ensureWildcardDnsForMultiTenant', () => {
     );
   });
 
-  it('does not accept public resolution as proof of the exact proxied CNAME target', async () => {
+  it('accepts public resolution for externally managed wildcard DNS without recording ownership', async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ success: false }, 403));
+    const verifyPublicDns = vi.fn().mockResolvedValue(true);
+    const onProgress = vi.fn();
+    const persist = vi.fn();
+
+    await cloudflare.ensureWildcardDnsForMultiTenant(
+      {
+        tenant: {
+          multiTenant: true,
+          baseDomain: 'test.example.com',
+        },
+        urls: {
+          api: {
+            zoneId: 'zone-123',
+          },
+        },
+      },
+      onProgress,
+      verifyPublicDns,
+      { get: () => undefined, persist }
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(verifyPublicDns).toHaveBeenCalledWith('test.example.com');
+    expect(persist).not.toHaveBeenCalled();
+    expect(onProgress).toHaveBeenNthCalledWith(
+      1,
+      'Ensuring wildcard DNS for *.test.example.com...'
+    );
+    expect(onProgress).toHaveBeenNthCalledWith(
+      2,
+      '✓ Wildcard DNS resolves publicly and remains externally managed: *.test.example.com'
+    );
+    expect(onProgress).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not report an unverified wildcard create as successful', async () => {
     const fetchMock = vi.fn<typeof fetch>();
     vi.stubGlobal('fetch', fetchMock);
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ success: false }, 403))
-      .mockResolvedValueOnce(jsonResponse({ success: false }, 403));
-    const verifyPublicDns = vi.fn().mockResolvedValue(true);
+      .mockResolvedValueOnce(
+        jsonResponse({ success: true, result: { id: 'record-wildcard' } }, 200)
+      );
     const onProgress = vi.fn();
+    const verifyPublicDns = vi.fn().mockResolvedValue(true);
 
     await expect(
       cloudflare.ensureWildcardDnsForMultiTenant(
@@ -595,41 +636,6 @@ describe('ensureWildcardDnsForMultiTenant', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(verifyPublicDns).not.toHaveBeenCalled();
-    expect(onProgress).toHaveBeenNthCalledWith(
-      1,
-      'Ensuring wildcard DNS for *.test.example.com...'
-    );
-    expect(onProgress).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not report an unverified wildcard create as successful', async () => {
-    const fetchMock = vi.fn<typeof fetch>();
-    vi.stubGlobal('fetch', fetchMock);
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse({ success: false }, 403))
-      .mockResolvedValueOnce(
-        jsonResponse({ success: true, result: { id: 'record-wildcard' } }, 200)
-      );
-    const onProgress = vi.fn();
-
-    await expect(
-      cloudflare.ensureWildcardDnsForMultiTenant(
-        {
-          tenant: {
-            multiTenant: true,
-            baseDomain: 'test.example.com',
-          },
-          urls: {
-            api: {
-              zoneId: 'zone-123',
-            },
-          },
-        },
-        onProgress
-      )
-    ).rejects.toThrow('verify the exact proxied CNAME target');
-
-    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(onProgress).toHaveBeenCalledTimes(1);
     expect(onProgress).toHaveBeenNthCalledWith(
       1,
