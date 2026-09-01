@@ -428,7 +428,6 @@ describe('setup web basic API contracts', () => {
       `/environments/${env}/delete`,
       post(`/environments/${env}/delete`, {}, generateSessionToken())
     );
-
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       success: true,
@@ -440,6 +439,31 @@ describe('setup web basic API contracts', () => {
     );
     await expect(readFile(join(envDir, 'config.json'), 'utf-8')).rejects.toThrow();
     await expect(readFile(join(keysDir, 'private.pem'), 'utf-8')).rejects.toThrow();
+  });
+
+  it('repairs a legacy 0644 environment config before deletion', async () => {
+    const env = 'legacy-config-mode';
+    const envDir = join(root, '.authrim', env);
+    await mkdir(envDir, { recursive: true });
+    const configPath = join(envDir, 'config.json');
+    await writeFile(configPath, `${JSON.stringify({ environment: { prefix: env } })}\n`);
+    await chmod(configPath, 0o644);
+    cloudflareMocks.confirmEnvironmentObservedForDeletion.mockResolvedValueOnce(false);
+
+    const response = await createApiRoutes().request(
+      `/environments/${env}/delete`,
+      post(`/environments/${env}/delete`, {}, generateSessionToken())
+    );
+    const result = await response.json();
+
+    expect(response.status, JSON.stringify(result)).toBe(200);
+    expect(result).toMatchObject({
+      success: true,
+      environmentDeleted: true,
+    });
+    expect(cloudflareMocks.deleteEnvironment).toHaveBeenCalledWith(
+      expect.objectContaining({ env, environmentKnownLocally: true })
+    );
   });
 
   it('does not let deletion race another environment mutation', async () => {

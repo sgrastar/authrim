@@ -261,6 +261,7 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
           maxBytes: 1024 * 1024,
           invalidError: 'environment_config_invalid',
           permissionsError: 'environment_config_permissions_invalid',
+          repairLegacyPublicReadPermissions: true,
         })
       : null;
     const parsedLocalConfig = localConfigText

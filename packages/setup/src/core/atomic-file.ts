@@ -24,6 +24,13 @@ export interface ReadPrivateFileOptions {
   permissionsError: string;
   /** Optional stable error used when the regular file exceeds maxBytes. */
   tooLargeError?: string;
+  /**
+   * Repair an owner-controlled legacy 0644 file to 0600 through the pinned descriptor.
+   *
+   * This is intentionally limited to historical non-secret environment config files. Secret
+   * artifacts must never enable it, and group/other-writable or hard-linked files stay rejected.
+   */
+  repairLegacyPublicReadPermissions?: boolean;
 }
 
 function privateFileOpenFlags(): number {
@@ -96,10 +103,37 @@ async function readOpenedPrivateFileSecurely(
   options: ReadPrivateFileOptions
 ): Promise<SecurePrivateFileSnapshot> {
   try {
-    const before = await handle.stat({ bigint: true });
+    let before = await handle.stat({ bigint: true });
     if (!before.isFile()) throw new Error(options.invalidError);
     if (process.platform !== 'win32' && (before.mode & 0o777n) !== 0o600n) {
-      throw new Error(options.permissionsError);
+      const getuid = process.getuid;
+      if (typeof getuid !== 'function') throw new Error(options.permissionsError);
+      const currentUid = BigInt(getuid());
+      if (
+        options.repairLegacyPublicReadPermissions !== true ||
+        (before.mode & 0o777n) !== 0o644n ||
+        before.uid !== currentUid ||
+        before.nlink !== 1n
+      ) {
+        throw new Error(options.permissionsError);
+      }
+
+      // Older Authrim releases wrote config.json as 0644. Repair only that exact historical mode
+      // on the already-opened inode, then use the repaired snapshot for the mutation/read race
+      // checks below. No pathname is followed during the repair.
+      await handle.chmod(0o600);
+      await handle.sync();
+      const repaired = await handle.stat({ bigint: true });
+      if (
+        !repaired.isFile() ||
+        !privateFileIdentityMatches(before, repaired) ||
+        repaired.uid !== currentUid ||
+        repaired.nlink !== 1n ||
+        (repaired.mode & 0o777n) !== 0o600n
+      ) {
+        throw new Error(options.permissionsError);
+      }
+      before = repaired;
     }
     if (before.size > BigInt(options.maxBytes)) {
       throw new Error(options.tooLargeError ?? options.invalidError);
