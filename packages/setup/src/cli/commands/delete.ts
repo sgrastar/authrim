@@ -23,6 +23,7 @@ import { inspectLocalEnvironmentState } from '../../core/local-environment-state
 import { findAuthrimBaseDir } from '../../core/paths.js';
 import { readPrivateFileSecurely } from '../../core/atomic-file.js';
 import { AuthrimConfigSchema } from '../../core/config.js';
+import { reconcileLegacyQueueIdentitiesForDeletion } from '../../core/legacy-queue-identity-deletion.js';
 import {
   acquireDeployConfigLock,
   acquireEnvironmentOperationForEnvironment,
@@ -241,18 +242,6 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
         'Worker deletion is blocked because an unfinished Worker ownership checkpoint requires recovery'
       );
     }
-    const knownWorkerResources = lock ? Object.values(lock.workers ?? {}) : [];
-    const knownD1Resources = lock ? Object.values(lock.d1) : [];
-    const knownKVResources = lock ? Object.values(lock.kv) : [];
-    const knownQueueResources = lock?.queues ? Object.values(lock.queues) : [];
-    const knownR2Resources = lock?.r2
-      ? Object.entries(lock.r2).map(([binding, resource]) => ({
-          ...resource,
-          environment: env,
-          binding,
-        }))
-      : [];
-    const knownPagesResources = lock?.pages ? Object.values(lock.pages) : [];
     const localConfigPath = localEnvironmentState.paths.find((path) =>
       /\/(?:config|authrim(?:-[^/]+)?-config)\.json$/u.test(path)
     );
@@ -285,6 +274,36 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     if (localConfig && localConfig.environment.prefix !== env) {
       throw new Error('environment_config_identity_mismatch');
     }
+    if (lock && (deleteQueues || deleteWorkers)) {
+      const queueIdentity = await reconcileLegacyQueueIdentitiesForDeletion({
+        lock,
+        environment: env,
+        config: localConfig,
+        lockFilePath: operationLock.lockFilePath,
+      });
+      lock = queueIdentity.lock;
+      if (queueIdentity.adopted.length > 0) {
+        console.log(
+          chalk.gray(
+            `Verified legacy Queue identities: ${queueIdentity.adopted
+              .map((queue) => queue.name)
+              .join(', ')}`
+          )
+        );
+      }
+    }
+    const knownWorkerResources = lock ? Object.values(lock.workers ?? {}) : [];
+    const knownD1Resources = lock ? Object.values(lock.d1) : [];
+    const knownKVResources = lock ? Object.values(lock.kv) : [];
+    const knownQueueResources = lock?.queues ? Object.values(lock.queues) : [];
+    const knownR2Resources = lock?.r2
+      ? Object.entries(lock.r2).map(([binding, resource]) => ({
+          ...resource,
+          environment: env,
+          binding,
+        }))
+      : [];
+    const knownPagesResources = lock?.pages ? Object.values(lock.pages) : [];
     const dnsCleanupRequired = Boolean(
       localConfig?.tenant.multiTenant && localConfig.tenant.baseDomain?.trim()
     );

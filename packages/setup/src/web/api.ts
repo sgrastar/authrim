@@ -125,6 +125,7 @@ import {
   type WorkerScriptOwnershipGuard,
 } from '../core/worker-script-ownership.js';
 import { readPrivateFileSecurely, writePrivateFileAtomically } from '../core/atomic-file.js';
+import { reconcileLegacyQueueIdentitiesForDeletion } from '../core/legacy-queue-identity-deletion.js';
 import {
   promotePendingEmailSecrets,
   recoverLegacyPreBundleEmailSecrets,
@@ -7246,6 +7247,22 @@ export function createApiRoutes(): Hono {
             'Worker deletion is blocked because an unfinished Worker ownership checkpoint requires recovery'
           );
         }
+        if (deletionLock && (deleteQueues || deleteWorkers)) {
+          const queueIdentity = await reconcileLegacyQueueIdentitiesForDeletion({
+            lock: deletionLock,
+            environment: env,
+            config: deleteConfig,
+            lockFilePath: operationLock.lockFilePath,
+          });
+          deletionLock = queueIdentity.lock;
+          if (queueIdentity.adopted.length > 0) {
+            addProgress(
+              `Verified legacy Queue identities: ${queueIdentity.adopted
+                .map((queue) => queue.name)
+                .join(', ')}`
+            );
+          }
+        }
         const result = await deleteEnvironment({
           env,
           environmentKnownLocally: Boolean(operationLock.lock) || localEnvironmentState.exists,
@@ -7256,21 +7273,17 @@ export function createApiRoutes(): Hono {
           deleteR2,
           deletePages,
           knownWorkerResources: deletionLock ? Object.values(deletionLock.workers ?? {}) : [],
-          knownD1Resources: operationLock.lock ? Object.values(operationLock.lock.d1) : [],
-          knownKVResources: operationLock.lock ? Object.values(operationLock.lock.kv) : [],
-          knownQueueResources: operationLock.lock?.queues
-            ? Object.values(operationLock.lock.queues)
-            : [],
-          knownR2Resources: operationLock.lock?.r2
-            ? Object.entries(operationLock.lock.r2).map(([binding, resource]) => ({
+          knownD1Resources: deletionLock ? Object.values(deletionLock.d1) : [],
+          knownKVResources: deletionLock ? Object.values(deletionLock.kv) : [],
+          knownQueueResources: deletionLock?.queues ? Object.values(deletionLock.queues) : [],
+          knownR2Resources: deletionLock?.r2
+            ? Object.entries(deletionLock.r2).map(([binding, resource]) => ({
                 ...resource,
                 environment: env,
                 binding,
               }))
             : [],
-          knownPagesResources: operationLock.lock?.pages
-            ? Object.values(operationLock.lock.pages)
-            : [],
+          knownPagesResources: deletionLock?.pages ? Object.values(deletionLock.pages) : [],
           ...(deletionLock
             ? {
                 onWorkerIdentityBackfill: async (
@@ -7305,7 +7318,7 @@ export function createApiRoutes(): Hono {
                 },
               }
             : {}),
-          knownDnsOwnership: operationLock.lock?.dns,
+          knownDnsOwnership: deletionLock?.dns,
           dnsCleanupRequired: Boolean(
             deleteConfig?.tenant.multiTenant && deleteConfig.tenant.baseDomain?.trim()
           ),
@@ -7313,7 +7326,7 @@ export function createApiRoutes(): Hono {
           ...(deleteD1
             ? {
                 beforeD1Deletion: ({ observedD1Resources }) => {
-                  const controlDatabaseId = operationLock?.lock?.d1.CONTROL_DB?.id;
+                  const controlDatabaseId = deletionLock?.d1.CONTROL_DB?.id;
                   return cleanupSetupManagedControlTokens({
                     baseDir,
                     environment: env,

@@ -6575,8 +6575,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const messages = Array.isArray(result?.errors)
         ? result.errors.filter(message => typeof message === 'string' && message.trim())
         : [];
-      if (typeof result?.error === 'string' && result.error.trim() && !messages.includes(result.error)) {
-        messages.push(result.error);
+      const summary = typeof result?.error === 'string' ? result.error.trim() : '';
+      if (summary && !messages.includes(summary) && summary !== messages.join(', ')) {
+        messages.push(summary);
       }
       return messages.length > 0 ? messages : [t('web.status.unknownError')];
     }

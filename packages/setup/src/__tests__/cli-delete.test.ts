@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   release: vi.fn(),
   deployConfigRelease: vi.fn(),
   cleanupSetupManagedControlTokens: vi.fn(),
+  reconcileLegacyQueueIdentitiesForDeletion: vi.fn(),
   oraSpinners: [] as MockSpinner[],
 }));
 
@@ -59,6 +60,10 @@ vi.mock('../core/environment-cleanup.js', () => ({
 
 vi.mock('../core/control-token-environment-cleanup.js', () => ({
   cleanupSetupManagedControlTokens: mocks.cleanupSetupManagedControlTokens,
+}));
+
+vi.mock('../core/legacy-queue-identity-deletion.js', () => ({
+  reconcileLegacyQueueIdentitiesForDeletion: mocks.reconcileLegacyQueueIdentitiesForDeletion,
 }));
 
 vi.mock('../core/local-environment-state.js', () => ({
@@ -111,6 +116,10 @@ describe('CLI environment deletion', () => {
       revokedTokenIds: [],
       alreadyAbsentTokenIds: [],
     });
+    mocks.reconcileLegacyQueueIdentitiesForDeletion.mockImplementation(async ({ lock }) => ({
+      lock,
+      adopted: [],
+    }));
     mocks.inspectLocalEnvironmentState.mockReturnValue({ exists: false, paths: [] });
   });
 
@@ -227,6 +236,63 @@ describe('CLI environment deletion', () => {
         environment: 'test',
         controlDatabaseIdentifier: 'control-id',
       });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('passes an atomically upgraded legacy Queue identity to deletion', async () => {
+    const queueName = 'test-audit-queue';
+    const lock = {
+      env: 'test',
+      d1: {},
+      kv: {},
+      workers: {},
+      queues: { AUDIT_QUEUE: { id: queueName, name: queueName } },
+    };
+    const upgradedLock = {
+      ...lock,
+      queues: { AUDIT_QUEUE: { id: 'queue-provider-id', name: queueName } },
+    };
+    mocks.acquireEnvironmentOperationForEnvironment.mockResolvedValueOnce({
+      lock,
+      lockFilePath: '/workspace/.authrim/test/lock.json',
+      release: mocks.release,
+    });
+    mocks.reconcileLegacyQueueIdentitiesForDeletion.mockResolvedValueOnce({
+      lock: upgradedLock,
+      adopted: [
+        {
+          binding: 'AUDIT_QUEUE',
+          name: queueName,
+          previousId: queueName,
+          providerId: 'queue-provider-id',
+        },
+      ],
+    });
+    mocks.deleteEnvironment.mockResolvedValueOnce({
+      success: true,
+      completion: 'complete',
+      environmentEmpty: false,
+      deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+      manualR2: [],
+      errors: [],
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await deleteCommand({ env: 'test', yes: true, all: true });
+      expect(mocks.reconcileLegacyQueueIdentitiesForDeletion).toHaveBeenCalledWith({
+        lock,
+        environment: 'test',
+        config: null,
+        lockFilePath: '/workspace/.authrim/test/lock.json',
+      });
+      expect(mocks.deleteEnvironment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          knownQueueResources: [{ id: 'queue-provider-id', name: queueName }],
+        })
+      );
     } finally {
       log.mockRestore();
     }

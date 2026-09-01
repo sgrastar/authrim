@@ -154,6 +154,7 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain("result?.errorCode === 'environment_inventory_unavailable'");
     expect(html).toContain("result.error = t('web.delete.inventoryUnavailable')");
     expect(html).toContain('function apiErrorMessages(result)');
+    expect(html).toContain("summary !== messages.join(', ')");
     expect(html).toContain("messages.length > 0 ? messages : [t('web.status.unknownError')]");
     expect(html).not.toContain("(deleteResult.errors || []).join(', ')");
   });

@@ -11,6 +11,8 @@ const cloudflareMocks = vi.hoisted(() => ({
   confirmEnvironmentObservedForDeletion: vi.fn(),
   detectEnvironments: vi.fn(),
   deleteEnvironment: vi.fn(),
+  getAccountId: vi.fn(),
+  listQueues: vi.fn(),
 }));
 const runReleaseUpdateCliMock = vi.hoisted(() => vi.fn());
 const completeInitialSetupMock = vi.hoisted(() => vi.fn());
@@ -27,6 +29,8 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
     confirmEnvironmentObservedForDeletion: cloudflareMocks.confirmEnvironmentObservedForDeletion,
     detectEnvironments: cloudflareMocks.detectEnvironments,
     deleteEnvironment: cloudflareMocks.deleteEnvironment,
+    getAccountId: cloudflareMocks.getAccountId,
+    listQueues: cloudflareMocks.listQueues,
   };
 });
 
@@ -118,6 +122,8 @@ describe('setup web basic API contracts', () => {
   beforeEach(async () => {
     cloudflareMocks.detectEnvironments.mockReset().mockResolvedValue([]);
     cloudflareMocks.confirmEnvironmentObservedForDeletion.mockReset().mockResolvedValue(true);
+    cloudflareMocks.getAccountId.mockReset().mockResolvedValue('98edc9b77724418e61ae577980a7369b');
+    cloudflareMocks.listQueues.mockReset().mockResolvedValue([]);
     cloudflareMocks.deleteEnvironment.mockReset().mockResolvedValue({
       success: true,
       completion: 'complete',
@@ -581,6 +587,55 @@ describe('setup web basic API contracts', () => {
       baseDir: root,
       environment: env,
       controlDatabaseIdentifier: 'control-id',
+    });
+  });
+
+  it('atomically upgrades legacy Queue name sentinels before confirmed deletion', async () => {
+    const env = 'conformance';
+    const accountId = '98edc9b77724418e61ae577980a7369b';
+    const queueName = `${env}-audit-queue`;
+    const providerId = 'queue-provider-id';
+    await writeDeployedLock(env, {
+      queues: {
+        AUDIT_QUEUE: { id: queueName, name: queueName },
+      },
+    });
+    const config = createDefaultConfig(env);
+    config.cloudflare = { accountId };
+    config.keys.secretsPath = `${join(root, '.authrim-keys', env)}/`;
+    await writeFile(
+      join(root, '.authrim', env, 'config.json'),
+      `${JSON.stringify(config, null, 2)}\n`,
+      { mode: 0o600 }
+    );
+    cloudflareMocks.listQueues.mockResolvedValueOnce([{ id: providerId, name: queueName }]);
+    cloudflareMocks.deleteEnvironment.mockImplementationOnce(async (options) => {
+      expect(options.knownQueueResources).toEqual([{ id: providerId, name: queueName }]);
+      const persisted = JSON.parse(
+        await readFile(join(root, '.authrim', env, 'lock.json'), 'utf-8')
+      ) as { queues: Record<string, { id: string; name: string }> };
+      expect(persisted.queues.AUDIT_QUEUE).toEqual({ id: providerId, name: queueName });
+      return {
+        success: true,
+        completion: 'complete',
+        environmentEmpty: true,
+        deleted: { workers: [], d1: [], kv: [], queues: [queueName], r2: [], pages: [] },
+        manualR2: [],
+        errors: [],
+      };
+    });
+
+    const response = await createApiRoutes().request(
+      `/environments/${env}/delete`,
+      post(`/environments/${env}/delete`, {}, generateSessionToken())
+    );
+    const body = await response.json();
+
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(cloudflareMocks.getAccountId).toHaveBeenCalledOnce();
+    expect(cloudflareMocks.listQueues).toHaveBeenCalledWith({
+      strictOutput: true,
+      requireIds: true,
     });
   });
 
