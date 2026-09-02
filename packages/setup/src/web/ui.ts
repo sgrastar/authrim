@@ -13900,8 +13900,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       document.getElementById('delete-workers').checked = true;
       document.getElementById('delete-d1').checked = true;
       document.getElementById('delete-kv').checked = true;
-      document.getElementById('delete-queues').checked = env.queues.length > 0;
-      document.getElementById('delete-r2').checked = env.r2.length > 0;
+      // Current resource inventories remain strict even at zero. Legacy Pages is selected only
+      // when observed; the API separately records that this flow intends to finish the environment.
+      document.getElementById('delete-queues').checked = true;
+      document.getElementById('delete-r2').checked = true;
       document.getElementById('delete-pages').checked = (env.pages || []).length > 0;
 
       // Reset UI state
@@ -14318,6 +14320,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         deleteQueues: document.getElementById('delete-queues').checked,
         deleteR2: document.getElementById('delete-r2').checked,
         deletePages: document.getElementById('delete-pages').checked,
+        finalizeEnvironment: true,
       };
 
       // Count actual resources to delete based on environment info

@@ -1511,6 +1511,83 @@ describe('Cloudflare Queue deletion helpers', () => {
     });
   });
 
+  it('completes current-resource deletion when unobserved legacy Pages inventory is unavailable', async () => {
+    mockCloudflareInventory([]);
+    const defaultFetch = fetchMock.getMockImplementation();
+    const defaultExeca = execaMock.getMockImplementation();
+    fetchMock.mockImplementation(async (input: string | URL | Request, init) => {
+      if (String(input).includes('/pages/projects?')) {
+        return {
+          ok: false,
+          status: 503,
+          json: async () => ({ success: false }),
+        };
+      }
+      if (!defaultFetch) throw new Error('missing default Cloudflare fetch mock');
+      return defaultFetch(input, init);
+    });
+    execaMock.mockImplementation(async (command: string, args: string[], options) => {
+      if (args.slice(1).join(' ') === 'pages project list') {
+        return { exitCode: 1, stdout: '', stderr: 'Pages command unavailable' };
+      }
+      if (!defaultExeca) throw new Error('missing default Wrangler mock');
+      return defaultExeca(command, args, options);
+    });
+    const progress: string[] = [];
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      environmentKnownLocally: true,
+      finalizeEnvironment: true,
+      deleteWorkers: true,
+      deleteD1: true,
+      deleteKV: true,
+      deleteQueues: true,
+      deleteR2: true,
+      deletePages: false,
+      onProgress: (message) => progress.push(message),
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      completion: 'complete',
+      environmentEmpty: true,
+      postDeleteVerification: 'verified_empty',
+      errors: [],
+    });
+    expect(progress).toEqual(
+      expect.arrayContaining([expect.stringContaining('Could not scan Pages projects')])
+    );
+  });
+
+  it('does not let finalization bypass a lock-recorded legacy Pages identity', async () => {
+    await expect(
+      deleteEnvironment({
+        env: 'test',
+        environmentKnownLocally: true,
+        finalizeEnvironment: true,
+        deleteWorkers: true,
+        deleteD1: true,
+        deleteKV: true,
+        deleteQueues: true,
+        deleteR2: true,
+        deletePages: false,
+        knownPagesResources: [
+          {
+            name: 'test-ar-admin-ui',
+            id: 'pages-provider-id',
+            createdOn: TEST_R2_CREATION_DATE,
+          },
+        ],
+        onProgress: () => {},
+      })
+    ).rejects.toThrow(
+      'Lock-recorded Pages projects must remain selected during final environment deletion'
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(execaMock).not.toHaveBeenCalled();
+  });
+
   it('fails retryably when strict post-delete readback still finds a Cloudflare resource', async () => {
     mockCloudflareInventory(
       [],

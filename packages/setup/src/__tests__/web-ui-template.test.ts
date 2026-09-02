@@ -173,6 +173,28 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('環境と残りのローカル状態は保持されています。');
   });
 
+  it('finishes an empty environment without making unobserved legacy Pages inventory strict', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    for (const resourceType of ['queues', 'r2']) {
+      expect(html).toContain(`document.getElementById('delete-${resourceType}').checked = true;`);
+    }
+    expect(html).toContain(
+      "document.getElementById('delete-pages').checked = (env.pages || []).length > 0;"
+    );
+    expect(html).toContain('finalizeEnvironment: true,');
+    expect(html).not.toContain(
+      "document.getElementById('delete-queues').checked = env.queues.length > 0;"
+    );
+    expect(html).not.toContain("document.getElementById('delete-r2').checked = env.r2.length > 0;");
+  });
+
   it('reports key replacement only after guarded generation succeeds', () => {
     const html = getHtmlTemplate(
       'session-token',

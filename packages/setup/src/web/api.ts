@@ -487,6 +487,7 @@ const EnvironmentDeleteRequestSchema = z
     deleteQueues: z.boolean().optional().default(true),
     deleteR2: z.boolean().optional().default(true),
     deletePages: z.boolean().optional().default(true),
+    finalizeEnvironment: z.boolean().optional().default(false),
   })
   .strict();
 
@@ -7227,8 +7228,16 @@ export function createApiRoutes(): Hono {
         if (!bodyResult.success) {
           return c.json({ success: false, error: 'Invalid environment deletion request' }, 400);
         }
-        const { deleteWorkers, deleteD1, deleteKV, deleteQueues, deleteR2, deletePages } =
-          bodyResult.data;
+        const {
+          deleteWorkers,
+          deleteD1,
+          deleteKV,
+          deleteQueues,
+          deleteR2,
+          deletePages: requestedDeletePages,
+          finalizeEnvironment,
+        } = bodyResult.data;
+        let deletePages = requestedDeletePages;
         if (
           ![deleteWorkers, deleteD1, deleteKV, deleteQueues, deleteR2, deletePages].some(Boolean)
         ) {
@@ -7260,6 +7269,12 @@ export function createApiRoutes(): Hono {
         });
         state.logPath = await beginProgressLog(env, 'delete');
         addProgress(`Preparing to delete environment: ${env}`);
+        // A retired Pages project is outside the current Authrim topology, so a zero-count UI
+        // deletion may finish when its best-effort inventory is unavailable. Exact Pages identities
+        // already recorded in the lock remain a strict ownership boundary and cannot be skipped.
+        if (finalizeEnvironment && Object.keys(operationLock.lock?.pages ?? {}).length > 0) {
+          deletePages = true;
+        }
         let environmentObservedRemotely = Boolean(operationLock.lock);
         if (!environmentObservedRemotely) {
           environmentObservedRemotely = await confirmEnvironmentObservedForDeletion(env, {
@@ -7313,7 +7328,7 @@ export function createApiRoutes(): Hono {
           deleteKV &&
           deleteQueues &&
           deleteR2 &&
-          deletePages
+          (deletePages || finalizeEnvironment)
         ) {
           throw new Error('environment_config_invalid_for_dns_cleanup');
         }
@@ -7370,6 +7385,7 @@ export function createApiRoutes(): Hono {
         const result = await deleteEnvironment({
           env,
           environmentKnownLocally: Boolean(operationLock.lock) || localEnvironmentState.exists,
+          finalizeEnvironment,
           deleteWorkers,
           deleteD1,
           deleteKV,
@@ -7437,6 +7453,7 @@ export function createApiRoutes(): Hono {
           result.deleted.kv.length +
           result.deleted.queues.length +
           result.deleted.r2.length +
+          result.deleted.pages.length +
           (result.deleted.dns?.length ?? 0);
         if (deletionLock && deletedLockResourceCount > 0) {
           await saveLockFile(

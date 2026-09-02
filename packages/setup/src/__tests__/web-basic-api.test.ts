@@ -84,6 +84,7 @@ async function writeDeployedLock(
   resources: {
     d1?: Record<string, { id: string; name: string }>;
     queues?: Record<string, { id: string; name: string }>;
+    pages?: Record<string, { name: string; id: string; createdOn: string }>;
     workers?: Record<
       string,
       {
@@ -114,6 +115,7 @@ async function writeDeployedLock(
         d1: resources.d1 ?? {},
         kv: {},
         queues: resources.queues,
+        pages: resources.pages,
         workers: resources.workers ?? {},
         workerScriptOwnership: resources.workerScriptOwnership,
       },
@@ -1030,6 +1032,89 @@ describe('setup web basic API contracts', () => {
       workers: { 'ar-token': { name: 'prod-ar-token' } },
     });
     expect(persistedLock.workers).not.toHaveProperty('ar-auth');
+  });
+
+  it('keeps lock-recorded legacy Pages projects inside the strict final deletion boundary', async () => {
+    const env = 'prod';
+    const page = {
+      name: 'prod-ar-admin-ui',
+      id: 'pages-provider-id',
+      createdOn: '2026-08-31T00:00:00.000Z',
+    };
+    await writeDeployedLock(env, { pages: { 'ar-admin-ui': page } });
+
+    const response = await createApiRoutes().request(
+      `/environments/${env}/delete`,
+      post(
+        `/environments/${env}/delete`,
+        {
+          deleteWorkers: true,
+          deleteD1: true,
+          deleteKV: true,
+          deleteQueues: true,
+          deleteR2: true,
+          deletePages: false,
+          finalizeEnvironment: true,
+        },
+        generateSessionToken()
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(cloudflareMocks.deleteEnvironment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        finalizeEnvironment: true,
+        deletePages: true,
+        knownPagesResources: [page],
+      })
+    );
+  });
+
+  it('removes a deleted legacy Pages identity from a lock preserved for partial deletion', async () => {
+    const env = 'prod';
+    const page = {
+      name: 'prod-ar-admin-ui',
+      id: 'pages-provider-id',
+      createdOn: '2026-08-31T00:00:00.000Z',
+    };
+    await writeDeployedLock(env, { pages: { 'ar-admin-ui': page } });
+    cloudflareMocks.deleteEnvironment.mockResolvedValueOnce({
+      success: true,
+      completion: 'complete',
+      environmentEmpty: false,
+      deleted: {
+        workers: [],
+        d1: [],
+        kv: [],
+        queues: [],
+        r2: [],
+        pages: [page.name],
+      },
+      manualR2: [],
+      errors: [],
+    });
+
+    const response = await createApiRoutes().request(
+      `/environments/${env}/delete`,
+      post(
+        `/environments/${env}/delete`,
+        {
+          deleteWorkers: false,
+          deleteD1: false,
+          deleteKV: false,
+          deleteQueues: false,
+          deleteR2: false,
+          deletePages: true,
+        },
+        generateSessionToken()
+      )
+    );
+
+    expect(response.status).toBe(200);
+    const persistedLock = JSON.parse(
+      await readFile(join(root, '.authrim', env, 'lock.json'), 'utf-8')
+    ) as { pages?: Record<string, unknown> };
+    expect(persistedLock.pages).toEqual({});
   });
 
   it('removes local state when a partial retry deletes the final remaining resources', async () => {

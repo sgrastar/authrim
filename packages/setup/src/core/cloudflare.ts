@@ -8446,6 +8446,12 @@ export interface DeleteOptions {
   env: string;
   /** The environment still has a local operation lock even if remote inventory is already empty. */
   environmentKnownLocally?: boolean;
+  /**
+   * Complete environment deletion after every current resource type is verified, even when an
+   * unobserved legacy Pages project was not selected. A lock-recorded Pages identity must still be
+   * selected and verified by the caller.
+   */
+  finalizeEnvironment?: boolean;
   deleteWorkers?: boolean;
   deleteD1?: boolean;
   deleteKV?: boolean;
@@ -9946,6 +9952,7 @@ interface PostDeleteVerificationResult {
 
 async function verifyEnvironmentAbsentAfterDeletion(options: {
   env: string;
+  selection: DeletionResourceSelection;
   attempts: number;
   retryDelayMs: number;
   onProgress: (message: string) => void;
@@ -9961,14 +9968,7 @@ async function verifyEnvironmentAbsentAfterDeletion(options: {
     try {
       const resourceRemains = await confirmEnvironmentObservedForDeletion(
         options.env,
-        {
-          deleteWorkers: true,
-          deleteD1: true,
-          deleteKV: true,
-          deleteQueues: true,
-          deleteR2: true,
-          deletePages: true,
-        },
+        options.selection,
         options.onDetail
       );
       if (!resourceRemains) {
@@ -11172,6 +11172,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   const {
     env,
     environmentKnownLocally = false,
+    finalizeEnvironment = false,
     deleteWorkers = true,
     deleteD1 = true,
     deleteKV = true,
@@ -11201,6 +11202,11 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     onResourceProgress,
   } = options;
   validateEnvName(env);
+  if (finalizeEnvironment && !deletePages && knownPagesResources.length > 0) {
+    throw new Error(
+      'Lock-recorded Pages projects must remain selected during final environment deletion'
+    );
+  }
 
   const deleted = {
     workers: [] as string[],
@@ -11467,8 +11473,10 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   const queueConsumerWorkerNamesForDeletion = deleteWorkers
     ? getQueueConsumerWorkerNamesForDeletion(env, envInfo.workers)
     : [];
+  const allCurrentResourceTypesSelected =
+    deleteWorkers && deleteD1 && deleteKV && deleteQueues && deleteR2;
   const fullDeletionRequested =
-    deleteWorkers && deleteD1 && deleteKV && deleteQueues && deleteR2 && deletePages;
+    allCurrentResourceTypesSelected && (deletePages || finalizeEnvironment);
 
   const totalResources =
     (deleteWorkers ? envInfo.workers.length : 0) +
@@ -11477,9 +11485,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     (deleteQueues ? envInfo.queues.length : 0) +
     (deleteR2 ? envInfo.r2.length : 0) +
     (deletePages ? envInfo.pages.length : 0) +
-    (deleteWorkers && deleteD1 && deleteKV && deleteQueues && deleteR2 && deletePages
-      ? Object.keys(knownDnsOwnership ?? {}).length
-      : 0);
+    (fullDeletionRequested ? Object.keys(knownDnsOwnership ?? {}).length : 0);
   let processedResources = 0;
   const reportResourceProcessed = () => {
     processedResources += 1;
@@ -11907,8 +11913,6 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     deleted.r2.length +
     deleted.pages.length +
     deleted.dns.length;
-  const allResourceTypesSelected =
-    deleteWorkers && deleteD1 && deleteKV && deleteQueues && deleteR2 && deletePages;
   // A partial deletion deliberately preserves the environment even when the selected inventory
   // happens to be empty. Unselected inventory may be unavailable, so it cannot prove that the
   // remote environment is empty or justify deleting the local recovery state.
@@ -11916,13 +11920,21 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   let retryable = false;
   let postDeleteVerification: PostDeleteVerificationStatus = 'not_required';
   if (
-    allResourceTypesSelected &&
+    fullDeletionRequested &&
     errors.length === 0 &&
     manualR2.length === 0 &&
     manualDns.length === 0
   ) {
     const verification = await verifyEnvironmentAbsentAfterDeletion({
       env,
+      selection: {
+        deleteWorkers,
+        deleteD1,
+        deleteKV,
+        deleteQueues,
+        deleteR2,
+        deletePages,
+      },
       attempts: postDeleteVerificationAttempts,
       retryDelayMs: postDeleteVerificationDelayMs,
       onProgress,
