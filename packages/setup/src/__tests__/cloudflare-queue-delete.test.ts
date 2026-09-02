@@ -19,6 +19,7 @@ import {
   filterKnownWorkerNamesForEnvironment,
   getQueueConsumerWorkerNamesForDeletion,
   listD1Databases,
+  listPagesProjects,
   parseQueueRows,
 } from '../core/cloudflare.js';
 
@@ -529,6 +530,50 @@ describe('Cloudflare Queue deletion helpers', () => {
     ).rejects.toBeInstanceOf(EnvironmentInventoryUnavailableError);
   });
 
+  it('accepts name-only Wrangler Pages inventory when the target environment has no project', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    fetchMock.mockRejectedValue(new Error('temporary Pages API failure'));
+    execaMock.mockResolvedValue({
+      exitCode: 0,
+      stdout: `
+        │ Project Name    │ Project Domains             │ Git Provider │ Last Modified │
+        │ authrim-website │ authrim-website.pages.dev   │ Yes          │ 1 week ago    │
+      `,
+      stderr: '',
+    });
+
+    await expect(
+      listPagesProjects({
+        strictOutput: true,
+        requireIdentity: true,
+        requireIdentityForEnvironment: 'conformance',
+      })
+    ).resolves.toEqual([{ name: 'authrim-website' }]);
+  });
+
+  it('still blocks name-only Wrangler Pages inventory for the target environment', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    fetchMock.mockRejectedValue(new Error('temporary Pages API failure'));
+    execaMock.mockResolvedValue({
+      exitCode: 0,
+      stdout: `
+        │ Project Name              │ Project Domains                         │ Git Provider │ Last Modified │
+        │ conformance-ar-admin-ui   │ conformance-ar-admin-ui.pages.dev       │ No           │ 1 week ago    │
+      `,
+      stderr: '',
+    });
+
+    await expect(
+      listPagesProjects({
+        strictOutput: true,
+        requireIdentity: true,
+        requireIdentityForEnvironment: 'conformance',
+      })
+    ).rejects.toThrow('Pages project inventory failed through both');
+  });
+
   it('does not adopt an R2-only bucket outside the Authrim inventory suffixes', async () => {
     mockCloudflareInventory([], [], [{ name: 'test-customer-backups' }]);
 
@@ -694,6 +739,51 @@ describe('Cloudflare Queue deletion helpers', () => {
     expect(progress).not.toContain(
       '⚠️ DNS ownership preflight failed. No Cloudflare environment resource was deleted.'
     );
+  });
+
+  it('finalizes an empty environment when only unrelated name-only Pages projects exist', async () => {
+    mockCloudflareInventory([]);
+    const inventoryFetch = fetchMock.getMockImplementation();
+    const inventoryExeca = execaMock.getMockImplementation();
+    if (!inventoryFetch || !inventoryExeca) throw new Error('inventory mock was not initialized');
+    fetchMock.mockImplementation(
+      async (input: string | URL | Request, init?: Parameters<typeof fetch>[1]) => {
+        if (String(input).includes('/pages/projects')) {
+          throw new Error('temporary Pages API failure');
+        }
+        return inventoryFetch(input, init);
+      }
+    );
+    execaMock.mockImplementation(async (command: string, args: string[], options: unknown) => {
+      if (args.slice(1).join(' ') === 'pages project list') {
+        return {
+          exitCode: 0,
+          stdout:
+            '│ Project Name    │ Project Domains           │ Git Provider │ Last Modified │\n' +
+            '│ authrim-website │ authrim-website.pages.dev │ Yes          │ 1 week ago    │',
+          stderr: '',
+        };
+      }
+      return inventoryExeca(command, args, options);
+    });
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      environmentKnownLocally: true,
+      dnsCleanupRequired: true,
+      requiredDnsRoles: ['tenant_wildcard'],
+      postDeleteVerificationAttempts: 1,
+      postDeleteVerificationDelayMs: 0,
+      onProgress: () => {},
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      completion: 'manual_action_required',
+      environmentEmpty: true,
+      postDeleteVerification: 'verified_empty',
+      errors: [],
+    });
   });
 
   it('still blocks deletion when a lock-recorded DNS identity no longer matches', async () => {

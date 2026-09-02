@@ -9517,7 +9517,8 @@ function parsePagesProjectListOutput(stdout: string): {
   const projects: Array<{ name: string }> = [];
   let recognizedTable = false;
 
-  for (const line of lines) {
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
     // Skip header lines and empty lines
     if (
       line.startsWith('│') ||
@@ -9562,8 +9563,15 @@ async function listPagesProjectsViaApi(): Promise<PagesProjectProviderIdentity[]
 }
 
 export async function listPagesProjects(
-  options: { strictOutput?: boolean; requireIdentity?: boolean } = {}
+  options: {
+    strictOutput?: boolean;
+    requireIdentity?: boolean;
+    requireIdentityForEnvironment?: string;
+  } = {}
 ): Promise<PagesProjectProviderIdentity[]> {
+  if (options.requireIdentityForEnvironment) {
+    validateEnvName(options.requireIdentityForEnvironment);
+  }
   let apiError: unknown;
   try {
     const projects = await listPagesProjectsViaApi();
@@ -9578,7 +9586,12 @@ export async function listPagesProjects(
     if (options.strictOutput && !parsed.recognized) {
       throw new Error('Wrangler output did not contain a recognizable Pages project list');
     }
-    if (options.requireIdentity && parsed.projects.length > 0) {
+    const projectsRequiringIdentity = options.requireIdentityForEnvironment
+      ? parsed.projects.filter((project) =>
+          isPagesNameForEnvironment(options.requireIdentityForEnvironment!, project.name)
+        )
+      : parsed.projects;
+    if (options.requireIdentity && projectsRequiringIdentity.length > 0) {
       throw new Error(
         'Cloudflare Pages inventory omitted provider ID/created_on; name-only cleanup is blocked',
         { cause: apiError }
@@ -9968,9 +9981,29 @@ export async function confirmEnvironmentObservedForDeletion(
   onProgress?: (message: string) => void
 ): Promise<boolean> {
   const environments = await detectEnvironments(onProgress, {
-    requiredResources: getRequiredDeletionInventoryResources(selection),
+    // A post-delete read does not mutate Pages. Require a recognizable name inventory here, then
+    // scope exact provider-identity requirements to this environment below. Unrelated legacy
+    // projects must not prevent an otherwise empty environment from being finalized.
+    requiredResources: getRequiredDeletionInventoryResources(selection).filter(
+      (resource) => resource !== 'Pages projects'
+    ),
   });
   if (environments.some((candidate) => candidate.env === env)) return true;
+
+  if (selection.deletePages) {
+    try {
+      const pagesProjects = await listPagesProjects({
+        strictOutput: true,
+        requireIdentity: true,
+        requireIdentityForEnvironment: env,
+      });
+      if (pagesProjects.some((project) => isPagesNameForEnvironment(env, project.name))) {
+        return true;
+      }
+    } catch (error) {
+      throw new EnvironmentInventoryUnavailableError('Pages projects', error);
+    }
+  }
 
   if (!selection.deleteD1 && !selection.deleteKV && !selection.deleteR2) return false;
   try {
@@ -11375,13 +11408,11 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     deleteR2,
     deletePages,
   });
-  // The broad discovery pass is advisory for storage types that receive an independently retried
-  // strict snapshot below. Worker listing already performs its own bounded retries, while legacy
-  // Pages has no separate snapshot, so those two remain required here.
+  // The broad discovery pass is advisory for resource types that receive an independently retried
+  // strict snapshot below. Worker listing already performs its own bounded retries, so it remains
+  // required here rather than multiplying the same retry loop.
   const envs = await detectEnvironments(onProgress, {
-    requiredResources: requiredResources.filter(
-      (resource) => resource === 'Workers' || resource === 'Pages projects'
-    ),
+    requiredResources: requiredResources.filter((resource) => resource === 'Workers'),
   });
   let envInfo = envs.find((e) => e.env === env);
   const safeKnownWorkerNames = filterKnownWorkerNamesForEnvironment(env, knownWorkerNames);
@@ -11434,7 +11465,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     }
     throw new EnvironmentInventoryUnavailableError(resourceType, lastError);
   };
-  const [workerInventory, d1Inventory, kvInventory, queueInventory, r2Inventory] =
+  const [workerInventory, d1Inventory, kvInventory, queueInventory, r2Inventory, pagesInventory] =
     await Promise.all([
       deleteWorkers ? requireInventory('Workers', () => listWorkers({ onRetry: onProgress })) : [],
       deleteD1 ? requireInventory('D1 databases', () => listD1Databases()) : [],
@@ -11446,6 +11477,17 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         ? requireInventory('R2 buckets', () =>
             listR2Buckets({ throwOnError: true, requireIdentity: true }).then((buckets) =>
               buckets.filter((bucket) => isR2NameForEnvironment(env, bucket.name))
+            )
+          )
+        : [],
+      deletePages
+        ? requireInventory('Pages projects', () =>
+            listPagesProjects({
+              strictOutput: true,
+              requireIdentity: true,
+              requireIdentityForEnvironment: env,
+            }).then((projects) =>
+              projects.filter((project) => isPagesNameForEnvironment(env, project.name))
             )
           )
         : [],
@@ -11499,7 +11541,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         mismatches: [] as string[],
         liveNames: new Set<string>(),
       };
-  const remotePages = (deletePages ? (envInfo?.pages ?? []) : []).map((project) => {
+  const remotePages = pagesInventory.map((project) => {
     if (!project.id || !project.createdOn) {
       throw new EnvironmentInventoryUnavailableError(
         'Pages projects',

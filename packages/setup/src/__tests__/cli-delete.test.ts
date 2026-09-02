@@ -214,6 +214,37 @@ describe('CLI environment deletion', () => {
     }
   });
 
+  it('labels a DNS-only follow-up as DNS review instead of R2 cleanup', async () => {
+    mocks.deleteEnvironment.mockResolvedValue({
+      success: true,
+      completion: 'manual_action_required',
+      environmentEmpty: true,
+      deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+      manualR2: [],
+      manualDns: [
+        {
+          role: 'tenant_wildcard',
+          name: '(tenant_wildcard)',
+          reason: 'dns_ownership_evidence_missing',
+        },
+      ],
+      errors: [],
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await deleteCommand({ env: 'test', yes: true, all: true });
+      const warnings = mocks.oraSpinners.flatMap((spinner) =>
+        spinner.warn.mock.calls.flat().map(String)
+      );
+      expect(warnings).toContain('Environment deleted; manual DNS review remains');
+      expect(warnings.join('\n')).not.toContain('R2 cleanup');
+      expect(mocks.cleanupLocalEnvironmentArtifacts).toHaveBeenCalledOnce();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it('reports missing Control token evidence as manual review and completes local cleanup', async () => {
     mocks.deleteEnvironment.mockResolvedValue({
       success: true,

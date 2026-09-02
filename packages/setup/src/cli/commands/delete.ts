@@ -457,13 +457,22 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
         environmentEmpty ? 'Environment resources deleted' : t('delete.partialSuccess')
       );
     } else if (result.completion === 'manual_action_required') {
-      deleteSpinner.warn(
-        manualControlTokenTargets.length > 0
+      const hasManualR2 = result.manualR2.length > 0;
+      const hasManualDns = (result.manualDns?.length ?? 0) > 0;
+      const hasManualControlTokens = manualControlTokenTargets.length > 0;
+      const manualReviewMessage =
+        hasManualControlTokens && !hasManualR2 && !hasManualDns
           ? environmentEmpty
             ? 'Environment deleted; manual Cloudflare token review remains'
-            : 'Cloud resources deleted; manual Cloudflare review is required'
-          : 'Cloud resources deleted; R2 cleanup requires a manual action'
-      );
+            : 'Cloud resources deleted; manual Cloudflare token review is required'
+          : hasManualR2 && !hasManualDns && !hasManualControlTokens
+            ? 'Cloud resources deleted; R2 cleanup requires a manual action'
+            : hasManualDns && !hasManualR2 && !hasManualControlTokens
+              ? environmentEmpty
+                ? 'Environment deleted; manual DNS review remains'
+                : 'Cloud resources deleted; manual DNS review is required'
+              : 'Cloud resources deleted; manual Cloudflare review is required';
+      deleteSpinner.warn(manualReviewMessage);
     } else {
       deleteSpinner.fail('Environment deletion encountered errors');
     }
