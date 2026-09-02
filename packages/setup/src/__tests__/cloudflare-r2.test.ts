@@ -26,6 +26,7 @@ import {
   getR2ObjectBytes,
   listR2Objects,
   listR2Buckets,
+  parseR2BucketRows,
   putR2Object,
   provisionResources,
   provisionR2Buckets,
@@ -89,6 +90,17 @@ describe('Cloudflare R2 helpers', () => {
             result: {
               buckets: bucketExists ? [{ name: input.name, creation_date: creationDate }] : [],
             },
+          }),
+        };
+      }
+      if (new URL(url).pathname.endsWith(`/r2/buckets/${input.name}`) && method === 'GET') {
+        return {
+          ok: bucketExists,
+          status: bucketExists ? 200 : 404,
+          headers: new Headers(),
+          json: async () => ({
+            success: bucketExists,
+            result: bucketExists ? { name: input.name, creation_date: creationDate } : undefined,
           }),
         };
       }
@@ -695,6 +707,60 @@ describe('Cloudflare R2 helpers', () => {
     expect(execaMock).not.toHaveBeenCalled();
   });
 
+  it('preserves creation dates from Wrangler 4.x plain-text bucket blocks', () => {
+    expect(
+      parseR2BucketRows(`
+        ⛅️ wrangler 4.110.0
+        Listing buckets...
+        name:           conformance-public-assets
+        creation_date:  2026-09-02T12:27:58.917Z
+
+        name:           scaleout-public-assets
+        creation_date:  2026-08-30T03:20:18.341Z
+      `)
+    ).toEqual([
+      {
+        name: 'conformance-public-assets',
+        creationDate: '2026-09-02T12:27:58.917Z',
+      },
+      {
+        name: 'scaleout-public-assets',
+        creationDate: '2026-08-30T03:20:18.341Z',
+      },
+    ]);
+  });
+
+  it('uses Wrangler list identities without issuing one info request per bucket', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    fetchMock.mockRejectedValueOnce(new Error('Cloudflare R2 list temporarily unavailable'));
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: `
+        Listing buckets...
+        name:           conformance-public-assets
+        creation_date:  2026-09-02T12:27:58.917Z
+
+        name:           scaleout-public-assets
+        creation_date:  2026-08-30T03:20:18.341Z
+      `,
+      stderr: '',
+    });
+
+    await expect(listR2Buckets({ throwOnError: true, requireIdentity: true })).resolves.toEqual([
+      {
+        name: 'conformance-public-assets',
+        creationDate: '2026-09-02T12:27:58.917Z',
+      },
+      {
+        name: 'scaleout-public-assets',
+        creationDate: '2026-08-30T03:20:18.341Z',
+      },
+    ]);
+    expect(execaMock).toHaveBeenCalledOnce();
+    expect((execaMock.mock.calls[0]?.[1] as string[]).join(' ')).toBe('wrangler r2 bucket list');
+  });
+
   it('lists every R2 bucket page using the returned cursor', async () => {
     process.env.CLOUDFLARE_API_TOKEN = 'test-token';
     process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
@@ -1176,6 +1242,17 @@ describe('Cloudflare R2 helpers', () => {
             result: {
               buckets: [{ name: 'prod-migration-releases', creation_date: creationDate }],
             },
+          }),
+        };
+      }
+      if (new URL(url).pathname.endsWith('/r2/buckets/prod-migration-releases')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          json: async () => ({
+            success: true,
+            result: { name: 'prod-migration-releases', creation_date: creationDate },
           }),
         };
       }

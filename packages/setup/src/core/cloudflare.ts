@@ -79,6 +79,8 @@ const WORKER_DELETE_RETRY_DELAY_MS = 1_000;
 const WORKER_INVENTORY_MAX_ATTEMPTS = 3;
 const WORKER_INVENTORY_REQUEST_TIMEOUT_MS = 10_000;
 const WORKER_INVENTORY_RETRY_DELAY_MS = 1_000;
+const DELETION_PREFLIGHT_INVENTORY_MAX_ATTEMPTS = 2;
+const DELETION_PREFLIGHT_INVENTORY_RETRY_DELAY_MS = 1_000;
 const ENVIRONMENT_DELETE_VERIFY_MAX_ATTEMPTS = 5;
 const ENVIRONMENT_DELETE_VERIFY_RETRY_DELAY_MS = 2_000;
 // Cloudflare's REST API is rate limited. Keep deletion concurrent, while letting the request
@@ -2111,6 +2113,17 @@ interface CloudflareR2BucketListResponse {
   result_info?: {
     cursor?: unknown;
     per_page?: unknown;
+  };
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}
+
+interface CloudflareR2BucketGetResponse {
+  success?: boolean;
+  result?: {
+    name?: unknown;
+    creation_date?: unknown;
+    creationDate?: unknown;
   };
   errors?: CloudflareApiMessage[];
   messages?: CloudflareApiMessage[];
@@ -7643,14 +7656,27 @@ function normalizeCloudflareTimestamp(value: unknown, label: string): string | u
 }
 
 export function parseR2BucketRows(stdout: string): R2BucketProviderIdentity[] {
+  let parsedJson: unknown;
   try {
-    const parsed = JSON.parse(stdout) as
-      | Array<{ name?: unknown; creation_date?: unknown; creationDate?: unknown }>
-      | {
-          buckets?: Array<{ name?: unknown; creation_date?: unknown; creationDate?: unknown }>;
-          result?: Array<{ name?: unknown; creation_date?: unknown; creationDate?: unknown }>;
-        };
-    const rows = Array.isArray(parsed) ? parsed : (parsed.buckets ?? parsed.result ?? []);
+    parsedJson = JSON.parse(stripAnsiSequences(stdout));
+  } catch {
+    // Wrangler 4.x emits a sequence of name/creation_date blocks instead of JSON.
+  }
+
+  if (parsedJson !== undefined) {
+    const parsed = parsedJson as {
+      buckets?: Array<{ name?: unknown; creation_date?: unknown; creationDate?: unknown }>;
+      result?: Array<{ name?: unknown; creation_date?: unknown; creationDate?: unknown }>;
+    } | null;
+    const rows = Array.isArray(parsedJson)
+      ? (parsedJson as Array<{
+          name?: unknown;
+          creation_date?: unknown;
+          creationDate?: unknown;
+        }>)
+      : parsed && typeof parsed === 'object'
+        ? (parsed.buckets ?? parsed.result ?? [])
+        : [];
     return rows
       .map((row) => ({
         name: typeof row.name === 'string' ? row.name.trim() : '',
@@ -7660,24 +7686,36 @@ export function parseR2BucketRows(stdout: string): R2BucketProviderIdentity[] {
         ),
       }))
       .filter((row) => row.name.length > 0);
-  } catch {
-    // Wrangler has emitted plain text in older versions. Keep a conservative fallback.
   }
 
-  return stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .flatMap((line) => {
-      const nameMatch = line.match(/^name:\s+(.+)$/i);
-      if (nameMatch?.[1]) {
-        return [{ name: nameMatch[1].trim() }];
-      }
-      if (/^[a-z0-9][a-z0-9-]*$/i.test(line)) {
-        return [{ name: line }];
-      }
-      return [];
-    });
+  const rows: R2BucketProviderIdentity[] = [];
+  let pendingName: string | undefined;
+  for (const rawLine of stripAnsiSequences(stdout).split('\n')) {
+    const line = rawLine.trim();
+    const nameMatch = line.match(/^name:\s+(.+)$/iu);
+    if (nameMatch?.[1]) {
+      if (pendingName) rows.push({ name: pendingName });
+      pendingName = nameMatch[1].trim();
+      continue;
+    }
+    const creationDateMatch = line.match(/^creation_date:\s+(.+)$/iu);
+    if (creationDateMatch?.[1] && pendingName) {
+      const creationDate = normalizeCloudflareTimestamp(
+        creationDateMatch[1].trim(),
+        `R2 bucket ${pendingName} creation_date`
+      );
+      rows.push({ name: pendingName, ...(creationDate ? { creationDate } : {}) });
+      pendingName = undefined;
+      continue;
+    }
+    if (/^[a-z0-9][a-z0-9-]*$/iu.test(line)) {
+      if (pendingName) rows.push({ name: pendingName });
+      rows.push({ name: line });
+      pendingName = undefined;
+    }
+  }
+  if (pendingName) rows.push({ name: pendingName });
+  return rows;
 }
 
 function normalizeR2BucketRows(rows: unknown): R2BucketProviderIdentity[] {
@@ -10733,6 +10771,78 @@ async function requestR2Api<
   throw new Error(`${label} OAuth refresh retry loop exited unexpectedly`);
 }
 
+function parseR2BucketInfoOutput(
+  stdout: string,
+  expectedName: string
+): R2BucketProviderIdentity & { creationDate: string } {
+  const cleaned = stripAnsiSequences(stdout).trim();
+  let row: unknown;
+  try {
+    const parsed: unknown = JSON.parse(cleaned);
+    row =
+      parsed && typeof parsed === 'object' && !Array.isArray(parsed) && 'result' in parsed
+        ? (parsed as { result?: unknown }).result
+        : parsed;
+  } catch {
+    const exact = parseR2BucketRows(cleaned).find((candidate) => candidate.name === expectedName);
+    if (!exact) throw new Error(`Wrangler omitted exact identity for R2 bucket ${expectedName}`);
+    assertR2BucketIdentityComplete(exact);
+    return exact;
+  }
+
+  const exact = normalizeR2BucketRows([row]).find((candidate) => candidate.name === expectedName);
+  if (!exact) throw new Error(`Wrangler omitted exact identity for R2 bucket ${expectedName}`);
+  assertR2BucketIdentityComplete(exact);
+  return exact;
+}
+
+/**
+ * Read one exact R2 provider generation. Ownership-sensitive paths must not repeatedly depend on
+ * the account-wide list when Cloudflare exposes a bucket-scoped identity endpoint.
+ */
+async function getR2BucketIdentityStrict(
+  name: string
+): Promise<(R2BucketProviderIdentity & { creationDate: string }) | null> {
+  if (!R2_BUCKET_NAME_PATTERN.test(name)) throw new Error('invalid_r2_bucket_name');
+
+  let apiError: unknown;
+  try {
+    const credentials = await resolveCloudflareInventoryCredentials();
+    if (credentials) {
+      const { data, notFound } = await requestR2Api<CloudflareR2BucketGetResponse>(
+        `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(name)}`,
+        { headers: { Authorization: `Bearer ${credentials.token}` } },
+        `Cloudflare R2 bucket ${name} identity`,
+        true,
+        credentials.source
+      );
+      if (notFound) return null;
+      const exact = normalizeR2BucketRows([data.result]).find(
+        (candidate) => candidate.name === name
+      );
+      if (!exact) throw new Error(`Cloudflare omitted exact identity for R2 bucket ${name}`);
+      assertR2BucketIdentityComplete(exact);
+      return exact;
+    }
+  } catch (error) {
+    apiError = error;
+  }
+
+  try {
+    const { stdout } = await wrangler(['r2', 'bucket', 'info', name, '--json']);
+    return parseR2BucketInfoOutput(stdout, name);
+  } catch (error) {
+    if (isCloudflareResourceAlreadyAbsent(error)) return null;
+    if (apiError) {
+      throw new AggregateError(
+        [apiError, error],
+        `R2 bucket ${name} identity failed through both the Cloudflare API and Wrangler`
+      );
+    }
+    throw error;
+  }
+}
+
 async function getR2ObjectBytesViaApi(input: {
   bucketName: string;
   objectKey: string;
@@ -10922,9 +11032,7 @@ async function assertLiveR2DeletionIdentity(
   identity: ExactDeletionR2Identity,
   options: { requireMarker: boolean }
 ): Promise<'present' | 'absent'> {
-  const live = (await listR2BucketIdentitiesStrict()).find(
-    (bucket) => bucket.name === identity.name
-  );
+  const live = await getR2BucketIdentityStrict(identity.name);
   if (!live) return 'absent';
   if (live.creationDate !== identity.creationDate) {
     throw new Error(
@@ -11267,7 +11375,14 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     deleteR2,
     deletePages,
   });
-  const envs = await detectEnvironments(onProgress, { requiredResources });
+  // The broad discovery pass is advisory for storage types that receive an independently retried
+  // strict snapshot below. Worker listing already performs its own bounded retries, while legacy
+  // Pages has no separate snapshot, so those two remain required here.
+  const envs = await detectEnvironments(onProgress, {
+    requiredResources: requiredResources.filter(
+      (resource) => resource === 'Workers' || resource === 'Pages projects'
+    ),
+  });
   let envInfo = envs.find((e) => e.env === env);
   const safeKnownWorkerNames = filterKnownWorkerNamesForEnvironment(env, knownWorkerNames);
   const safeKnownD1Names = filterKnownD1NamesForEnvironment(env, knownD1Names);
@@ -11299,11 +11414,25 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     resourceType: EnvironmentInventoryResource,
     operation: () => Promise<T>
   ): Promise<T> => {
-    try {
-      return await operation();
-    } catch (error) {
-      throw new EnvironmentInventoryUnavailableError(resourceType, error);
+    let lastError: unknown;
+    const maxAttempts = resourceType === 'Workers' ? 1 : DELETION_PREFLIGHT_INVENTORY_MAX_ATTEMPTS;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error;
+        if (attempt < maxAttempts) {
+          onProgress(
+            `${resourceType} deletion preflight failed; retrying ` +
+              `(${attempt + 1}/${maxAttempts})...`
+          );
+          if (process.env.NODE_ENV !== 'test') {
+            await sleep(DELETION_PREFLIGHT_INVENTORY_RETRY_DELAY_MS * attempt);
+          }
+        }
+      }
     }
+    throw new EnvironmentInventoryUnavailableError(resourceType, lastError);
   };
   const [workerInventory, d1Inventory, kvInventory, queueInventory, r2Inventory] =
     await Promise.all([

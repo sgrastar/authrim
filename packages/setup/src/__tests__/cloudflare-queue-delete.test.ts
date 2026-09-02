@@ -393,6 +393,63 @@ describe('Cloudflare Queue deletion helpers', () => {
     expect(execaMock.mock.calls.some(([, args]) => (args as string[])[1] === 'd1')).toBe(false);
   });
 
+  it('retries a transient Queue inventory outage before deleting by immutable ID', async () => {
+    mockCloudflareInventory([{ queue_name: 'test-audit-queue', queue_id: 'queue-test' }]);
+    const inventoryFetch = fetchMock.getMockImplementation();
+    const inventoryExeca = execaMock.getMockImplementation();
+    if (!inventoryFetch || !inventoryExeca) throw new Error('inventory mock was not initialized');
+    let queueApiFailures = 14;
+    let queueWranglerFailures = 2;
+    fetchMock.mockImplementation(
+      async (input: string | URL | Request, init?: Parameters<typeof fetch>[1]) => {
+        if (String(input).includes('/queues?') && queueApiFailures > 0) {
+          queueApiFailures -= 1;
+          throw new Error('temporary Queue API network failure');
+        }
+        return inventoryFetch(input, init);
+      }
+    );
+    execaMock.mockImplementation(async (command: string, args: string[], options: unknown) => {
+      if (args.slice(1).join(' ') === 'queues list' && queueWranglerFailures > 0) {
+        queueWranglerFailures -= 1;
+        throw new Error('temporary Wrangler Queue inventory failure');
+      }
+      return inventoryExeca(command, args, options);
+    });
+    const progress: string[] = [];
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      environmentKnownLocally: true,
+      deleteWorkers: false,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: true,
+      deleteR2: false,
+      deletePages: false,
+      knownQueueResources: [{ name: 'test-audit-queue', id: 'queue-test' }],
+      onProgress: (message) => progress.push(message),
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      deleted: { queues: ['test-audit-queue'] },
+    });
+    expect(progress).toContain('Queues deletion preflight failed; retrying (2/2)...');
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          String(input).endsWith('/queues/queue-test') &&
+          (init as { method?: string } | undefined)?.method === 'DELETE'
+      )
+    ).toBe(true);
+    expect(
+      execaMock.mock.calls.some(([, args]) =>
+        (args as string[]).join(' ').includes('queues delete test-audit-queue')
+      )
+    ).toBe(false);
+  });
+
   it('detects R2-only environments including an orphan plugin bundle bucket', async () => {
     mockCloudflareInventory([], [], [{ name: 'test-plugin-bundles' }]);
 
@@ -2305,6 +2362,18 @@ function mockCloudflareInventory(
         result = {
           buckets: exactR2Buckets.filter((bucket) => liveR2Buckets.has(bucket.name)),
         };
+      } else if (
+        /\/r2\/buckets\/[^/?]+$/u.test(new URL(url).pathname) &&
+        init?.method !== 'DELETE'
+      ) {
+        const bucketName = decodeURIComponent(new URL(url).pathname.split('/').at(-1)!);
+        const bucket = exactR2Buckets.find(
+          (candidate) => candidate.name === bucketName && liveR2Buckets.has(candidate.name)
+        );
+        if (!bucket) {
+          return { ok: false, status: 404, json: async () => ({ success: false }) };
+        }
+        result = bucket;
       } else if (url.includes('/r2/buckets/') && url.includes('/objects?')) {
         const prefix = new URL(url).searchParams.get('prefix');
         return {
