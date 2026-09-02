@@ -2963,6 +2963,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': 'Starting deletion...',
           'web.delete.deletedItems': 'Deleted {{count}} items',
           'web.delete.complete': 'Deletion complete.',
+          'web.delete.manualActionRequired': 'Manual action required.',
           'web.delete.success': 'Environment deleted successfully.',
           'web.delete.partialSuccess': 'Selected resources were deleted. The environment and remaining local state were preserved.',
           'web.delete.errorList': 'Some errors occurred: {{errors}}',
@@ -3045,6 +3046,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': '削除を開始しています...',
           'web.delete.deletedItems': '{{count}} 件削除しました',
           'web.delete.complete': '削除が完了しました。',
+          'web.delete.manualActionRequired': '手動対応が必要です。',
           'web.delete.success': '環境を削除しました。',
           'web.delete.partialSuccess': '選択したリソースを削除しました。環境と残りのローカル状態は保持されています。',
           'web.delete.errorList': 'エラーが発生しました: {{errors}}',
@@ -3127,6 +3129,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': '正在开始删除...',
           'web.delete.deletedItems': '已删除 {{count}} 项',
           'web.delete.complete': '删除已完成。',
+          'web.delete.manualActionRequired': '需要手动处理。',
           'web.delete.success': '环境已删除。',
           'web.delete.partialSuccess': '已删除所选资源。环境和剩余本地状态已保留。',
           'web.delete.errorList': '发生错误：{{errors}}',
@@ -3209,6 +3212,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': '正在開始刪除...',
           'web.delete.deletedItems': '已刪除 {{count}} 項',
           'web.delete.complete': '刪除已完成。',
+          'web.delete.manualActionRequired': '需要手動處理。',
           'web.delete.success': '環境已刪除。',
           'web.delete.partialSuccess': '已刪除所選資源。環境和剩餘本機狀態已保留。',
           'web.delete.errorList': '發生錯誤：{{errors}}',
@@ -3290,6 +3294,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': 'Iniciando eliminación...',
           'web.delete.deletedItems': '{{count}} elementos eliminados',
           'web.delete.complete': 'Eliminación completada.',
+          'web.delete.manualActionRequired': 'Se requiere una acción manual.',
           'web.delete.success': 'Entorno eliminado.',
           'web.delete.partialSuccess': 'Se eliminaron los recursos seleccionados. Se conservaron el entorno y el estado local restante.',
           'web.delete.errorList': 'Se produjeron errores: {{errors}}',
@@ -3371,6 +3376,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': 'Iniciando exclusão...',
           'web.delete.deletedItems': '{{count}} itens excluídos',
           'web.delete.complete': 'Exclusão concluída.',
+          'web.delete.manualActionRequired': 'É necessária uma ação manual.',
           'web.delete.success': 'Ambiente excluído.',
           'web.delete.partialSuccess': 'Os recursos selecionados foram excluídos. O ambiente e o estado local restante foram preservados.',
           'web.delete.errorList': 'Ocorreram erros: {{errors}}',
@@ -3452,6 +3458,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': 'Suppression en cours...',
           'web.delete.deletedItems': '{{count}} éléments supprimés',
           'web.delete.complete': 'Suppression terminée.',
+          'web.delete.manualActionRequired': 'Une action manuelle est requise.',
           'web.delete.success': 'Environnement supprimé.',
           'web.delete.partialSuccess': 'Les ressources sélectionnées ont été supprimées. L’environnement et l’état local restant ont été conservés.',
           'web.delete.errorList': 'Des erreurs sont survenues : {{errors}}',
@@ -3533,6 +3540,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': 'Löschen wird gestartet...',
           'web.delete.deletedItems': '{{count}} Elemente gelöscht',
           'web.delete.complete': 'Löschen abgeschlossen.',
+          'web.delete.manualActionRequired': 'Eine manuelle Aktion ist erforderlich.',
           'web.delete.success': 'Umgebung gelöscht.',
           'web.delete.partialSuccess': 'Die ausgewählten Ressourcen wurden gelöscht. Die Umgebung und der verbleibende lokale Status wurden beibehalten.',
           'web.delete.errorList': 'Es sind Fehler aufgetreten: {{errors}}',
@@ -3614,6 +3622,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': '삭제 시작 중...',
           'web.delete.deletedItems': '{{count}}개 항목 삭제됨',
           'web.delete.complete': '삭제가 완료되었습니다.',
+          'web.delete.manualActionRequired': '수동 작업이 필요합니다.',
           'web.delete.success': '환경이 삭제되었습니다.',
           'web.delete.partialSuccess': '선택한 리소스를 삭제했습니다. 환경과 남은 로컬 상태는 유지되었습니다.',
           'web.delete.errorList': '오류가 발생했습니다: {{errors}}',
@@ -3695,6 +3704,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': 'Запуск удаления...',
           'web.delete.deletedItems': 'Удалено элементов: {{count}}',
           'web.delete.complete': 'Удаление завершено.',
+          'web.delete.manualActionRequired': 'Требуется ручное действие.',
           'web.delete.success': 'Среда удалена.',
           'web.delete.partialSuccess': 'Выбранные ресурсы удалены. Среда и оставшееся локальное состояние сохранены.',
           'web.delete.errorList': 'Произошли ошибки: {{errors}}',
@@ -3776,6 +3786,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': 'Memulai penghapusan...',
           'web.delete.deletedItems': '{{count}} item dihapus',
           'web.delete.complete': 'Penghapusan selesai.',
+          'web.delete.manualActionRequired': 'Diperlukan tindakan manual.',
           'web.delete.success': 'Environment dihapus.',
           'web.delete.partialSuccess': 'Resource yang dipilih telah dihapus. Environment dan status lokal yang tersisa dipertahankan.',
           'web.delete.errorList': 'Terjadi error: {{errors}}',
@@ -14424,7 +14435,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         result.classList.remove('hidden');
 
         if (deleteResult.success && deleteResult.completion === 'manual_action_required') {
-          updateProgressUI('delete', totalToDelete, totalToDelete, t('web.delete.complete'));
+          const environmentDeleted = deleteResult.environmentDeleted === true;
+          updateProgressUI(
+            'delete',
+            totalToDelete,
+            totalToDelete,
+            t(environmentDeleted ? 'web.delete.complete' : 'web.delete.manualActionRequired')
+          );
           result.textContent = '';
           const manualR2Targets = Array.isArray(deleteResult.manualR2) ? deleteResult.manualR2 : [];
           const manualDnsIssues = Array.isArray(deleteResult.manualDns) ? deleteResult.manualDns : [];

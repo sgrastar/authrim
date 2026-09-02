@@ -208,6 +208,10 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('function appendManualDnsCleanupNotice(parent, issues)');
     expect(html).toContain('if (manualR2Targets.length > 0)');
     expect(html).toContain('if (manualDnsIssues.length > 0)');
+    expect(html).toContain('const environmentDeleted = deleteResult.environmentDeleted === true;');
+    expect(html).toContain(
+      "t(environmentDeleted ? 'web.delete.complete' : 'web.delete.manualActionRequired')"
+    );
     expect(html).toContain('appendManualR2CleanupNotice(result, manualR2Targets)');
     expect(html).toContain('appendManualDnsCleanupNotice(result, manualDnsIssues)');
     expect(html).toContain('if (target.dashboardUrl)');
@@ -938,6 +942,9 @@ describe('getHtmlTemplate', () => {
       SUPPORTED_LOCALES.length + 1
     );
     expect(html.match(/'web.delete.manualR2Summary'/gu)).toHaveLength(SUPPORTED_LOCALES.length + 1);
+    expect(html.match(/'web.delete.manualActionRequired'/gu)).toHaveLength(
+      SUPPORTED_LOCALES.length + 1
+    );
   });
 
   it('keeps provisioning progress complete after trailing log messages and polling races', () => {

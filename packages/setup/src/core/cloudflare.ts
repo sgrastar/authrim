@@ -2792,6 +2792,10 @@ export interface ManagedDnsCleanupIssue {
   reason: string;
 }
 
+function isUntrackedDnsCleanupIssue(issue: ManagedDnsCleanupIssue): boolean {
+  return issue.reason === 'dns_ownership_evidence_missing';
+}
+
 async function readSingleDnsRecordForOwnership(options: {
   entry: DnsOwnershipEntry;
   token: string;
@@ -11219,6 +11223,20 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   };
   const manualR2: R2ManualCleanupTarget[] = [];
   const manualDns: ManagedDnsCleanupIssue[] = [];
+  const recordManualDnsIssues = (issues: readonly ManagedDnsCleanupIssue[]): void => {
+    for (const issue of issues) {
+      if (
+        !manualDns.some(
+          (existing) =>
+            existing.role === issue.role &&
+            existing.name === issue.name &&
+            existing.reason === issue.reason
+        )
+      ) {
+        manualDns.push(issue);
+      }
+    }
+  };
   const errors: string[] = [];
   let dependentDeletionBlocked = false;
   let dependentDeletionReason:
@@ -11594,14 +11612,23 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       preflightOnly: true,
     });
     if (dnsPreflight.issues.length > 0) {
-      manualDns.push(...dnsPreflight.issues);
-      dependentDeletionBlocked = true;
-      dependentDeletionReason = 'dns_cleanup';
-      onProgress(
-        '⚠️ DNS ownership preflight failed. No Cloudflare environment resource was deleted.'
-      );
-      for (const issue of dnsPreflight.issues) {
-        onProgress(`  ❌ ${issue.name} - ${issue.reason}`);
+      recordManualDnsIssues(dnsPreflight.issues);
+      if (dnsPreflight.issues.every(isUntrackedDnsCleanupIssue)) {
+        onProgress(
+          '⚠️ DNS ownership was never recorded. Setup will leave untracked DNS unchanged and continue deleting the environment.'
+        );
+        for (const issue of dnsPreflight.issues) {
+          onProgress(`  ⚠️ ${issue.name} - ${issue.reason}`);
+        }
+      } else {
+        dependentDeletionBlocked = true;
+        dependentDeletionReason = 'dns_cleanup';
+        onProgress(
+          '⚠️ DNS ownership preflight failed. No Cloudflare environment resource was deleted.'
+        );
+        for (const issue of dnsPreflight.issues) {
+          onProgress(`  ❌ ${issue.name} - ${issue.reason}`);
+        }
       }
       onProgress('');
     }
@@ -11743,16 +11770,18 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       onProgress,
     });
     deleted.dns.push(...dnsCleanup.completedNames);
-    manualDns.push(...dnsCleanup.issues);
+    recordManualDnsIssues(dnsCleanup.issues);
     for (let index = 0; index < Object.keys(knownDnsOwnership ?? {}).length; index++) {
       reportResourceProcessed();
     }
-    if (dnsCleanup.issues.length > 0) {
+    if (dnsCleanup.issues.some((issue) => !isUntrackedDnsCleanupIssue(issue))) {
       dependentDeletionBlocked = true;
       dependentDeletionReason = 'dns_cleanup';
       onProgress(
         '  ⚠️ Setup cannot safely delete or restore DNS without exact ownership evidence. No bound storage was deleted.'
       );
+    } else if (dnsCleanup.issues.length > 0) {
+      onProgress('  ⚠️ Untracked DNS was left unchanged for manual review.');
     }
     onProgress('');
   }
@@ -11919,11 +11948,12 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   let environmentEmpty = false;
   let retryable = false;
   let postDeleteVerification: PostDeleteVerificationStatus = 'not_required';
+  const hasBlockingManualDns = manualDns.some((issue) => !isUntrackedDnsCleanupIssue(issue));
   if (
     fullDeletionRequested &&
     errors.length === 0 &&
     manualR2.length === 0 &&
-    manualDns.length === 0
+    !hasBlockingManualDns
   ) {
     const verification = await verifyEnvironmentAbsentAfterDeletion({
       env,

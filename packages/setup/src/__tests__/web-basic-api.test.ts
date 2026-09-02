@@ -906,7 +906,7 @@ describe('setup web basic API contracts', () => {
     cloudflareMocks.deleteEnvironment.mockResolvedValueOnce({
       success: true,
       completion: 'manual_action_required',
-      environmentEmpty: false,
+      environmentEmpty: true,
       deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
       manualR2: [],
       manualDns: [
@@ -928,6 +928,7 @@ describe('setup web basic API contracts', () => {
     await expect(response.json()).resolves.toMatchObject({
       success: true,
       completion: 'manual_action_required',
+      environmentDeleted: true,
       manualR2: [],
       manualDns: [
         {
@@ -936,6 +937,9 @@ describe('setup web basic API contracts', () => {
         },
       ],
     });
+    await expect(readFile(join(root, '.authrim', env, 'lock.json'), 'utf-8')).rejects.toMatchObject(
+      { code: 'ENOENT' }
+    );
   });
 
   it('returns an error and preserves local state when Cloudflare deletion is incomplete', async () => {

@@ -600,6 +600,123 @@ describe('Cloudflare Queue deletion helpers', () => {
     });
   });
 
+  it('finishes an empty environment while leaving never-recorded DNS for manual review', async () => {
+    mockCloudflareInventory([]);
+    const progress: string[] = [];
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      environmentKnownLocally: true,
+      dnsCleanupRequired: true,
+      requiredDnsRoles: ['tenant_wildcard'],
+      postDeleteVerificationAttempts: 1,
+      postDeleteVerificationDelayMs: 0,
+      onProgress: (message) => progress.push(message),
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      completion: 'manual_action_required',
+      environmentEmpty: true,
+      postDeleteVerification: 'verified_empty',
+      deleted: { dns: [] },
+      manualDns: [
+        {
+          role: 'tenant_wildcard',
+          name: '(tenant_wildcard)',
+          reason: 'dns_ownership_evidence_missing',
+        },
+      ],
+      errors: [],
+    });
+    expect(result.manualDns).toHaveLength(1);
+    expect(progress).toContain(
+      '⚠️ DNS ownership was never recorded. Setup will leave untracked DNS unchanged and continue deleting the environment.'
+    );
+    expect(progress).toContain('  ⚠️ Untracked DNS was left unchanged for manual review.');
+    expect(progress).not.toContain(
+      '⚠️ DNS ownership preflight failed. No Cloudflare environment resource was deleted.'
+    );
+  });
+
+  it('still blocks deletion when a lock-recorded DNS identity no longer matches', async () => {
+    mockCloudflareInventory([]);
+    const inventoryFetch = fetchMock.getMockImplementation();
+    const operationId = '44444444-4444-4444-8444-444444444444';
+    const marker = `Authrim Setup managed DNS ownership ${operationId}`;
+    fetchMock.mockImplementation(
+      async (input: string | URL | Request, init?: Parameters<typeof fetch>[1]) => {
+        const url = String(input);
+        if (url.includes('/zones/zone-123/dns_records')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              success: true,
+              result: [
+                {
+                  id: 'replacement-record',
+                  type: 'CNAME',
+                  name: '*.test.example.com',
+                  content: 'operator.example.com',
+                  proxied: true,
+                  ttl: 1,
+                },
+              ],
+            }),
+          };
+        }
+        if (!inventoryFetch) throw new Error(`unexpected request: ${url}`);
+        return inventoryFetch(input, init);
+      }
+    );
+    const progress: string[] = [];
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      environmentKnownLocally: true,
+      knownDnsOwnership: {
+        tenant_wildcard: {
+          role: 'tenant_wildcard',
+          state: 'managed',
+          action: 'created',
+          operationId,
+          zoneId: 'zone-123',
+          recordId: 'dns-record-1',
+          name: '*.test.example.com',
+          target: 'test.example.com',
+          marker,
+          previous: null,
+          updatedAt: new Date().toISOString(),
+        },
+      },
+      dnsCleanupRequired: true,
+      requiredDnsRoles: ['tenant_wildcard'],
+      postDeleteVerificationAttempts: 1,
+      postDeleteVerificationDelayMs: 0,
+      onProgress: (message) => progress.push(message),
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      completion: 'manual_action_required',
+      environmentEmpty: false,
+      postDeleteVerification: 'not_required',
+      manualDns: [
+        {
+          role: 'tenant_wildcard',
+          reason: expect.stringContaining('dns_managed_record_identity_mismatch'),
+        },
+      ],
+    });
+    expect(progress).toContain(
+      '⚠️ DNS ownership preflight failed. No Cloudflare environment resource was deleted.'
+    );
+    expect(progress).not.toContain(
+      '⚠️ DNS ownership was never recorded. Setup will leave untracked DNS unchanged and continue deleting the environment.'
+    );
+  });
+
   it('preserves the provider error when an R2 bucket deletion actually fails', async () => {
     mockCloudflareInventory(
       [],
