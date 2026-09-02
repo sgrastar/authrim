@@ -18,6 +18,7 @@ import {
   type PendingControlBootstrapArtifact,
 } from './pending-control-bootstrap.js';
 import { getEnvironmentPaths } from './paths.js';
+import { MISSING_CONTROL_TOKEN_CLEANUP_CHECKPOINT } from './control-token-manual-action.js';
 
 const ACCOUNT_ID = /^[0-9a-f]{32}$/u;
 const ENVIRONMENT = /^[a-z][a-z0-9-]{0,31}$/u;
@@ -961,9 +962,7 @@ export async function cleanupSetupManagedControlTokens(input: {
         },
       });
     } else if (!controlDatabaseIdentifier) {
-      throw new Error(
-        'control_token_cleanup_checkpoint_required_for_missing_control_database_manual_recovery_required'
-      );
+      throw new Error(MISSING_CONTROL_TOKEN_CLEANUP_CHECKPOINT);
     } else if (!currentAuthority) {
       const now = new Date().toISOString();
       await persistConclusion({

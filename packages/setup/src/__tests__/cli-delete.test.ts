@@ -214,6 +214,43 @@ describe('CLI environment deletion', () => {
     }
   });
 
+  it('reports missing Control token evidence as manual review and completes local cleanup', async () => {
+    mocks.deleteEnvironment.mockResolvedValue({
+      success: true,
+      completion: 'manual_action_required',
+      environmentEmpty: true,
+      deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+      manualR2: [],
+      manualDns: [],
+      manualControlTokens: [
+        {
+          reason:
+            'control_token_cleanup_checkpoint_required_for_missing_control_database_manual_recovery_required',
+        },
+      ],
+      errors: [],
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await deleteCommand({ env: 'test', yes: true, all: true });
+      const output = log.mock.calls.flat().join('\n');
+      expect(output).toContain('Control API tokens requiring manual review');
+      expect(output).toContain('https://dash.cloudflare.com/?to=/:account/api-tokens');
+      expect(output).toContain('https://dash.cloudflare.com/profile/api-tokens');
+      expect(mocks.cleanupLocalEnvironmentArtifacts).toHaveBeenCalledOnce();
+      expect(
+        mocks.oraSpinners.some((spinner) =>
+          spinner.warn.mock.calls.some(([message]) =>
+            String(message).includes('manual Cloudflare token review remains')
+          )
+        )
+      ).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it('wires setup-managed token cleanup to the exact lock-recorded Control D1 boundary', async () => {
     mocks.acquireEnvironmentOperationForEnvironment.mockResolvedValueOnce({
       lock: {

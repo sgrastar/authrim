@@ -19,6 +19,10 @@ import {
 } from '../../core/cloudflare.js';
 import { cleanupLocalEnvironmentArtifacts } from '../../core/environment-cleanup.js';
 import { cleanupSetupManagedControlTokens } from '../../core/control-token-environment-cleanup.js';
+import {
+  buildControlTokenManualCleanupTarget,
+  type ControlTokenManualCleanupTarget,
+} from '../../core/control-token-manual-action.js';
 import { inspectLocalEnvironmentState } from '../../core/local-environment-state.js';
 import { findAuthrimBaseDir } from '../../core/paths.js';
 import { readPrivateFileSecurely } from '../../core/atomic-file.js';
@@ -186,6 +190,7 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     requireExisting: false,
   });
   let result: Awaited<ReturnType<typeof deleteEnvironment>>;
+  let manualControlTokenTargets: ControlTokenManualCleanupTarget[] = [];
   let deleteSpinner: ReturnType<typeof ora> | undefined;
   let deployConfigLock: Awaited<ReturnType<typeof acquireDeployConfigLock>> | undefined;
   try {
@@ -400,6 +405,13 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
         }
       },
     });
+    manualControlTokenTargets = (result.manualControlTokens ?? []).map((issue) =>
+      buildControlTokenManualCleanupTarget({
+        issue,
+        accountId: localConfig?.cloudflare.accountId,
+        environment: env,
+      })
+    );
 
     const deletedLockResourceCount =
       result.deleted.workers.length +
@@ -434,7 +446,9 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     }
     result.success = result.errors.length === 0;
     result.completion = result.success
-      ? result.manualR2.length > 0 || (result.manualDns?.length ?? 0) > 0
+      ? result.manualR2.length > 0 ||
+        (result.manualDns?.length ?? 0) > 0 ||
+        manualControlTokenTargets.length > 0
         ? 'manual_action_required'
         : 'complete'
       : 'failed';
@@ -443,7 +457,13 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
         environmentEmpty ? 'Environment resources deleted' : t('delete.partialSuccess')
       );
     } else if (result.completion === 'manual_action_required') {
-      deleteSpinner.warn('Cloud resources deleted; R2 cleanup requires a manual action');
+      deleteSpinner.warn(
+        manualControlTokenTargets.length > 0
+          ? environmentEmpty
+            ? 'Environment deleted; manual Cloudflare token review remains'
+            : 'Cloud resources deleted; manual Cloudflare review is required'
+          : 'Cloud resources deleted; R2 cleanup requires a manual action'
+      );
     } else {
       deleteSpinner.fail('Environment deletion encountered errors');
     }
@@ -509,6 +529,24 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     }
   }
 
+  if (manualControlTokenTargets.length > 0) {
+    console.log(chalk.yellow('\nControl API tokens requiring manual review:'));
+    for (const target of manualControlTokenTargets) {
+      if (target.expectedTokenNames.length > 0) {
+        for (const tokenName of target.expectedTokenNames) {
+          console.log(chalk.yellow(`  • ${tokenName}`));
+        }
+      } else {
+        console.log(chalk.yellow(`  • ${target.reason}`));
+      }
+      console.log(chalk.cyan(`    Account tokens: ${target.accountTokensDashboardUrl}`));
+      console.log(chalk.cyan(`    User tokens: ${target.userTokensDashboardUrl}`));
+    }
+    console.log(
+      chalk.gray('  Review matching tokens manually; token names alone are not deletion evidence.')
+    );
+  }
+
   if (result.errors.length > 0) {
     console.log(chalk.yellow(`\nErrors (${result.errors.length}):`));
     for (const error of result.errors) {
@@ -527,7 +565,9 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
   if (result.completion === 'manual_action_required') {
     console.log(
       chalk.yellow(
-        '\n⚠️  Environment cleanup requires the manual actions above before it can finish.'
+        result.environmentEmpty
+          ? '\n⚠️  Environment deletion is complete. Review the Cloudflare items above separately.'
+          : '\n⚠️  Environment cleanup requires the manual actions above before it can finish.'
       )
     );
   } else if (result.success && result.environmentEmpty === true) {

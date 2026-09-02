@@ -2342,6 +2342,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.manualR2Title': 'Large R2 buckets were not deleted automatically. Empty them in Cloudflare Dashboard:',
           'web.delete.manualR2Open': 'Open R2 Dashboard ↗',
           'web.delete.manualR2Summary': 'All other selected environment resources were deleted. One or more R2 buckets are waiting for the manual actions below; this is not an API failure.',
+          'web.delete.manualControlTokensTitle': 'Control API token review',
+          'web.delete.manualControlTokensSummary': 'The Control database and its exact token cleanup checkpoint were already absent. Environment deletion continued, but Setup could not safely identify any older API tokens. Review the candidate names below in both Cloudflare token lists; do not delete a token based on its name alone.',
+          'web.delete.manualControlTokensAccountOpen': 'Open account API tokens ↗',
+          'web.delete.manualControlTokensUserOpen': 'Open user API tokens ↗',
         },
         ja: {
           'web.common.setupTool': 'セットアップツール',
@@ -2478,6 +2482,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.manualR2Title': '大容量のR2バケットは自動削除していません。Cloudflare DashboardでEmpty Bucketを実行してください：',
           'web.delete.manualR2Open': 'R2 Dashboardを開く ↗',
           'web.delete.manualR2Summary': '選択したその他の環境リソースは削除済みです。以下のR2バケットだけが手動作業待ちです。APIエラーではありません。',
+          'web.delete.manualControlTokensTitle': 'Control APIトークンの手動確認',
+          'web.delete.manualControlTokensSummary': 'Controlデータベースと正確なトークン清掃チェックポイントがすでに存在しないため、環境削除は続行しましたが、古いAPIトークンを安全に特定できませんでした。Cloudflareの両方のトークン一覧で候補名を確認してください。名前だけを根拠に削除しないでください。',
+          'web.delete.manualControlTokensAccountOpen': 'アカウントAPIトークンを開く ↗',
+          'web.delete.manualControlTokensUserOpen': 'ユーザーAPIトークンを開く ↗',
         },
         'zh-CN': {
           'web.common.setupTool': '设置工具',
@@ -7578,6 +7586,49 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       dashboardLink.rel = 'noreferrer';
       dashboardLink.textContent = t('web.deploy.openCloudflareDns');
       content.appendChild(dashboardLink);
+
+      parent.appendChild(createAlert('warning', content));
+    }
+
+    function appendManualControlTokenCleanupNotice(parent, targets) {
+      if (!Array.isArray(targets) || targets.length === 0) return;
+
+      const content = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = t('web.delete.manualControlTokensTitle');
+      content.appendChild(title);
+
+      const summary = document.createElement('p');
+      summary.textContent = t('web.delete.manualControlTokensSummary');
+      content.appendChild(summary);
+
+      const candidateNames = Array.from(
+        new Set(targets.flatMap((target) => Array.isArray(target.expectedTokenNames) ? target.expectedTokenNames : []))
+      );
+      if (candidateNames.length > 0) {
+        const list = document.createElement('ul');
+        for (const tokenName of candidateNames) {
+          const item = document.createElement('li');
+          item.textContent = String(tokenName);
+          list.appendChild(item);
+        }
+        content.appendChild(list);
+      }
+
+      const accountLink = document.createElement('a');
+      accountLink.href = targets.find((target) => target && target.accountTokensDashboardUrl)?.accountTokensDashboardUrl || 'https://dash.cloudflare.com/';
+      accountLink.target = '_blank';
+      accountLink.rel = 'noreferrer';
+      accountLink.textContent = t('web.delete.manualControlTokensAccountOpen');
+      content.appendChild(accountLink);
+      content.appendChild(document.createTextNode(' '));
+
+      const userLink = document.createElement('a');
+      userLink.href = targets.find((target) => target && target.userTokensDashboardUrl)?.userTokensDashboardUrl || 'https://dash.cloudflare.com/profile/api-tokens';
+      userLink.target = '_blank';
+      userLink.rel = 'noreferrer';
+      userLink.textContent = t('web.delete.manualControlTokensUserOpen');
+      content.appendChild(userLink);
 
       parent.appendChild(createAlert('warning', content));
     }
@@ -14445,6 +14496,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           result.textContent = '';
           const manualR2Targets = Array.isArray(deleteResult.manualR2) ? deleteResult.manualR2 : [];
           const manualDnsIssues = Array.isArray(deleteResult.manualDns) ? deleteResult.manualDns : [];
+          const manualControlTokenTargets = Array.isArray(deleteResult.manualControlTokens) ? deleteResult.manualControlTokens : [];
           if (manualR2Targets.length > 0) {
             result.appendChild(createAlert('warning', t('web.delete.manualR2Summary')));
             appendManualR2CleanupNotice(result, manualR2Targets);
@@ -14452,6 +14504,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           if (manualDnsIssues.length > 0) {
             result.appendChild(createAlert('warning', t('web.delete.dnsNote')));
             appendManualDnsCleanupNotice(result, manualDnsIssues);
+          }
+          appendManualControlTokenCleanupNotice(result, manualControlTokenTargets);
+          if (environmentDeleted) {
+            // Keep the follow-up guidance visible while refreshing the hidden environment list so
+            // navigating back cannot resurrect an entry whose local recovery state was removed.
+            setTimeout(async () => {
+              await resetServerState();
+              selectedEnvForDelete = null;
+              selectedEnvForDetail = null;
+              await loadEnvironments();
+            }, 0);
           }
         } else if (deleteResult.success) {
           // Final progress update
@@ -14478,6 +14541,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           result.appendChild(createAlert('error', t('web.delete.errorList', { errors: apiErrorMessages(deleteResult).join(', ') })));
           appendManualR2CleanupNotice(result, deleteResult.manualR2);
           appendManualDnsCleanupNotice(result, deleteResult.manualDns);
+          appendManualControlTokenCleanupNotice(result, deleteResult.manualControlTokens);
           btn.classList.remove('hidden');
           btn.disabled = false;
         }

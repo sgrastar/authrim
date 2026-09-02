@@ -942,6 +942,57 @@ describe('setup web basic API contracts', () => {
     );
   });
 
+  it('returns actionable token review links and still removes an empty local environment', async () => {
+    const env = 'prod';
+    const accountId = '98edc9b77724418e61ae577980a7369b';
+    await writeDeployedLock(env);
+    const config = createDefaultConfig(env);
+    config.cloudflare = { accountId };
+    await writeFile(
+      join(root, '.authrim', env, 'config.json'),
+      `${JSON.stringify(config, null, 2)}\n`,
+      { mode: 0o600 }
+    );
+    cloudflareMocks.deleteEnvironment.mockResolvedValueOnce({
+      success: true,
+      completion: 'manual_action_required',
+      environmentEmpty: true,
+      deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+      manualR2: [],
+      manualDns: [],
+      manualControlTokens: [
+        {
+          reason:
+            'control_token_cleanup_checkpoint_required_for_missing_control_database_manual_recovery_required',
+        },
+      ],
+      errors: [],
+    });
+
+    const response = await createApiRoutes().request(
+      `/environments/${env}/delete`,
+      post(`/environments/${env}/delete`, {}, generateSessionToken())
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      success: true,
+      completion: 'manual_action_required',
+      environmentDeleted: true,
+      manualControlTokens: [
+        {
+          accountTokensDashboardUrl: 'https://dash.cloudflare.com/?to=/:account/api-tokens',
+          userTokensDashboardUrl: 'https://dash.cloudflare.com/profile/api-tokens',
+        },
+      ],
+    });
+    expect(body.manualControlTokens[0].expectedTokenNames).toHaveLength(5);
+    await expect(readFile(join(root, '.authrim', env, 'lock.json'), 'utf-8')).rejects.toMatchObject(
+      { code: 'ENOENT' }
+    );
+  });
+
   it('returns an error and preserves local state when Cloudflare deletion is incomplete', async () => {
     const env = 'prod';
     await writeDeployedLock(env, {

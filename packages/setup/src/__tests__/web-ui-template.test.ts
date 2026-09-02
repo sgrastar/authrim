@@ -206,6 +206,7 @@ describe('getHtmlTemplate', () => {
 
     expect(html).toContain('function appendManualR2CleanupNotice(parent, targets)');
     expect(html).toContain('function appendManualDnsCleanupNotice(parent, issues)');
+    expect(html).toContain('function appendManualControlTokenCleanupNotice(parent, targets)');
     expect(html).toContain('if (manualR2Targets.length > 0)');
     expect(html).toContain('if (manualDnsIssues.length > 0)');
     expect(html).toContain('const environmentDeleted = deleteResult.environmentDeleted === true;');
@@ -214,6 +215,11 @@ describe('getHtmlTemplate', () => {
     );
     expect(html).toContain('appendManualR2CleanupNotice(result, manualR2Targets)');
     expect(html).toContain('appendManualDnsCleanupNotice(result, manualDnsIssues)');
+    expect(html).toContain(
+      'appendManualControlTokenCleanupNotice(result, manualControlTokenTargets)'
+    );
+    expect(html).toContain('if (environmentDeleted) {');
+    expect(html).toContain('await loadEnvironments();');
     expect(html).toContain('if (target.dashboardUrl)');
     expect(html).toContain('link.href = target.dashboardUrl');
     expect(html).toContain("t('web.deploy.openCloudflareDns')");

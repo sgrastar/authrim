@@ -51,6 +51,10 @@ import {
   withPrivateTemporaryOutputFile,
   withPrivateTemporaryTextFile,
 } from './private-temporary-file.js';
+import {
+  MISSING_CONTROL_TOKEN_CLEANUP_CHECKPOINT,
+  type ControlTokenManualCleanupIssue,
+} from './control-token-manual-action.js';
 const D1_MIGRATION_EXECUTE_TIMEOUT_MS = 180_000;
 const D1_MIGRATION_MAX_ATTEMPTS = 4;
 const D1_MIGRATION_AUTH_MAX_ATTEMPTS = 8;
@@ -11171,6 +11175,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   };
   manualR2: R2ManualCleanupTarget[];
   manualDns: ManagedDnsCleanupIssue[];
+  manualControlTokens?: ControlTokenManualCleanupIssue[];
   errors: string[];
 }> {
   const {
@@ -11223,6 +11228,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   };
   const manualR2: R2ManualCleanupTarget[] = [];
   const manualDns: ManagedDnsCleanupIssue[] = [];
+  const manualControlTokens: ControlTokenManualCleanupIssue[] = [];
   const recordManualDnsIssues = (issues: readonly ManagedDnsCleanupIssue[]): void => {
     for (const issue of issues) {
       if (
@@ -11444,6 +11450,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       deleted,
       manualR2,
       manualDns,
+      manualControlTokens,
       errors: [`Environment '${env}' not found`],
     };
   }
@@ -11832,10 +11839,18 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       onProgress('  ✅ Control API token cleanup evidence verified');
     } catch (error) {
       const detail = sanitizeError(error);
-      errors.push(`Failed to revoke setup-managed Control API tokens: ${detail}`);
-      dependentDeletionBlocked = true;
-      dependentDeletionReason = 'control_token_cleanup';
-      onProgress(`  ❌ Control API token cleanup blocked D1 deletion: ${detail}`);
+      if (detail === MISSING_CONTROL_TOKEN_CLEANUP_CHECKPOINT) {
+        manualControlTokens.push({ reason: detail });
+        onProgress(
+          '  ⚠️ Control D1 and its token cleanup checkpoint are already absent. ' +
+            'Unidentified API tokens were left unchanged for manual review.'
+        );
+      } else {
+        errors.push(`Failed to revoke setup-managed Control API tokens: ${detail}`);
+        dependentDeletionBlocked = true;
+        dependentDeletionReason = 'control_token_cleanup';
+        onProgress(`  ❌ Control API token cleanup blocked D1 deletion: ${detail}`);
+      }
     }
     onProgress('');
   }
@@ -11993,9 +12008,12 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   onProgress('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   if (errors.length > 0) {
     onProgress(`❌ Environment '${env}' deletion encountered ${errors.length} error(s)`);
-  } else if (manualR2.length > 0 || manualDns.length > 0) {
+  } else if (manualR2.length > 0 || manualDns.length > 0 || manualControlTokens.length > 0) {
+    const manualActionCount = manualR2.length + manualDns.length + manualControlTokens.length;
     onProgress(
-      `⚠️ Environment '${env}' deletion requires ${manualR2.length + manualDns.length} manual action(s)`
+      environmentEmpty
+        ? `✅ Environment '${env}' deleted; ${manualActionCount} Cloudflare follow-up review(s) remain`
+        : `⚠️ Environment '${env}' deletion requires ${manualActionCount} manual action(s)`
     );
   } else if (environmentEmpty) {
     onProgress(`✅ Environment '${env}' deleted successfully!`);
@@ -12003,8 +12021,10 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     onProgress(`✅ Selected resources for '${env}' deleted; remaining environment preserved`);
   }
   onProgress(`   Deleted: ${totalDeleted} resources`);
-  if (manualR2.length > 0 || manualDns.length > 0) {
-    onProgress(`   Manual actions: ${manualR2.length + manualDns.length}`);
+  if (manualR2.length > 0 || manualDns.length > 0 || manualControlTokens.length > 0) {
+    onProgress(
+      `   Manual actions: ${manualR2.length + manualDns.length + manualControlTokens.length}`
+    );
   }
   if (errors.length > 0) {
     onProgress(`   Errors: ${errors.length}`);
@@ -12015,7 +12035,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     completion:
       errors.length > 0
         ? 'failed'
-        : manualR2.length > 0 || manualDns.length > 0
+        : manualR2.length > 0 || manualDns.length > 0 || manualControlTokens.length > 0
           ? 'manual_action_required'
           : 'complete',
     environmentEmpty,
@@ -12024,6 +12044,7 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     deleted,
     manualR2,
     manualDns,
+    manualControlTokens,
     errors,
   };
 }

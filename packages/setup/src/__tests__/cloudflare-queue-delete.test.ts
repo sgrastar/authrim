@@ -1597,6 +1597,47 @@ describe('Cloudflare Queue deletion helpers', () => {
     ).toBe(false);
   });
 
+  it('continues deletion with manual token review when Control D1 and its checkpoint are absent', async () => {
+    mockCloudflareInventory([]);
+    const progress: string[] = [];
+    const beforeD1Deletion = vi.fn(async () => {
+      throw new Error(
+        'control_token_cleanup_checkpoint_required_for_missing_control_database_manual_recovery_required'
+      );
+    });
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      environmentKnownLocally: true,
+      deleteWorkers: true,
+      deleteD1: true,
+      deleteKV: true,
+      deleteQueues: true,
+      deleteR2: true,
+      deletePages: true,
+      beforeD1Deletion,
+      onProgress: (message) => progress.push(message),
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      completion: 'manual_action_required',
+      environmentEmpty: true,
+      postDeleteVerification: 'verified_empty',
+      errors: [],
+      manualControlTokens: [
+        {
+          reason:
+            'control_token_cleanup_checkpoint_required_for_missing_control_database_manual_recovery_required',
+        },
+      ],
+    });
+    expect(beforeD1Deletion).toHaveBeenCalledOnce();
+    expect(progress).toEqual(
+      expect.arrayContaining([expect.stringContaining('left unchanged for manual review')])
+    );
+  });
+
   it('completes a local cleanup retry when the operation lock remains after remote deletion', async () => {
     mockCloudflareInventory([]);
 

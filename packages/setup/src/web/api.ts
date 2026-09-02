@@ -147,6 +147,7 @@ import { buildWorkerDeploymentResourceIds } from '../core/deployment-resource-id
 import { refreshWorkerDeploymentArtifacts } from '../core/worker-deployment-artifacts.js';
 import { cleanupLocalEnvironmentArtifacts } from '../core/environment-cleanup.js';
 import { cleanupSetupManagedControlTokens } from '../core/control-token-environment-cleanup.js';
+import { buildControlTokenManualCleanupTarget } from '../core/control-token-manual-action.js';
 import { inspectLocalEnvironmentState } from '../core/local-environment-state.js';
 import {
   updateDeploymentProgress,
@@ -7484,7 +7485,9 @@ export function createApiRoutes(): Hono {
         }
         result.success = result.errors.length === 0;
         result.completion = result.success
-          ? result.manualR2.length > 0 || (result.manualDns?.length ?? 0) > 0
+          ? result.manualR2.length > 0 ||
+            (result.manualDns?.length ?? 0) > 0 ||
+            (result.manualControlTokens?.length ?? 0) > 0
             ? 'manual_action_required'
             : 'complete'
           : 'failed';
@@ -7496,6 +7499,13 @@ export function createApiRoutes(): Hono {
           ...issue,
           dashboardUrl: manualDnsDashboardUrl,
         }));
+        const manualControlTokens = (result.manualControlTokens ?? []).map((issue) =>
+          buildControlTokenManualCleanupTarget({
+            issue,
+            accountId: deleteConfig?.cloudflare.accountId,
+            environment: env,
+          })
+        );
 
         if (state.logPath) {
           addProgress(`📝 Progress log saved: ${state.logPath}`);
@@ -7517,6 +7527,7 @@ export function createApiRoutes(): Hono {
             deleted: result.deleted,
             manualR2: result.manualR2,
             manualDns,
+            manualControlTokens,
             errors: result.errors,
             progress: state.progress,
             operationProgress: state.operationProgress,
