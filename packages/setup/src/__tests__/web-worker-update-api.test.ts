@@ -2697,6 +2697,12 @@ describe('setup web worker update API', () => {
       loginUi: false,
       adminUi: false,
     });
+    buildWorkerHttpReadinessTargetsMock.mockReturnValue([
+      {
+        workerName: `${env}-ar-auth`,
+        url: `https://${env}-ar-auth.example-subdomain.workers.dev/api/auth/health`,
+      },
+    ]);
     publishAndActivateMigrationReleaseMock.mockImplementation(async () => {
       events.push('release');
       return {
@@ -2815,6 +2821,17 @@ describe('setup web worker update API', () => {
     });
     expect(deployUiWorkerBindingTargetsMock).not.toHaveBeenCalled();
     expect(deployAllUiWorkersMock).not.toHaveBeenCalled();
+    expect(waitForWorkerHttpReadyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowTenantRegistryBootstrapGap: true,
+        targets: [
+          {
+            workerName: `${env}-ar-auth`,
+            url: `https://${env}-ar-auth.example-subdomain.workers.dev/api/auth/health`,
+          },
+        ],
+      })
+    );
     expect(ensureAdminUiBffMachineAccessInD1Mock).not.toHaveBeenCalled();
     expect(prepareAdminUiBffDeploymentMock).not.toHaveBeenCalled();
     expect(ensureInitialTenantInD1Mock).toHaveBeenCalledWith(

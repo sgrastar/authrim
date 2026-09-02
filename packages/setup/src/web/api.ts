@@ -5243,6 +5243,11 @@ export function createApiRoutes(): Hono {
           if (workerHttpTargets.length > 0) {
             const workerHttpResult = await waitForWorkerHttpReady({
               targets: workerHttpTargets,
+              // The first direct workers.dev probes can reach tenant-aware Workers before the
+              // initial Runtime Registry generation has propagated. The CLI initial-deploy path
+              // already treats only that narrow 409 state as bootstrap-ready; keep Web deploys
+              // and interrupted Web deploy resumes on the same contract.
+              allowTenantRegistryBootstrapGap: true,
               onProgress: addProgress,
             });
             if (!workerHttpResult.ready) {
