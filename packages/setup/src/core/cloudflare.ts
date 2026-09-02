@@ -8418,6 +8418,8 @@ export interface DeletionWorkerIdentity {
   name: string;
   cloudflareScriptTag?: string;
   cloudflareVersionId?: string;
+  /** Uploaded checkpoints are verified against version inventory, not active deployments. */
+  cloudflareVersionState?: 'active' | 'uploaded';
 }
 
 export interface DeletionR2Identity {
@@ -8795,6 +8797,7 @@ function normalizeKnownWorkerDeletionIdentities(
     const name = resource.name?.trim();
     const tag = resource.cloudflareScriptTag?.trim();
     const versionId = resource.cloudflareVersionId?.trim();
+    const versionState = resource.cloudflareVersionState;
     if (!name || name !== resource.name || name.length > 256) {
       throw new Error(`Worker deletion identity ${index} has an invalid name`);
     }
@@ -8805,7 +8808,9 @@ function normalizeKnownWorkerDeletionIdentities(
       (resource.cloudflareScriptTag !== undefined &&
         (!tag || tag !== resource.cloudflareScriptTag || tag.length > 256)) ||
       (resource.cloudflareVersionId !== undefined &&
-        (!versionId || versionId !== resource.cloudflareVersionId || versionId.length > 256))
+        (!versionId || versionId !== resource.cloudflareVersionId || versionId.length > 256)) ||
+      (versionState !== undefined && versionState !== 'active' && versionState !== 'uploaded') ||
+      (versionState !== undefined && !versionId)
     ) {
       throw new Error(`Worker deletion identity ${index} is invalid`);
     }
@@ -8818,6 +8823,7 @@ function normalizeKnownWorkerDeletionIdentities(
       name,
       ...(tag ? { cloudflareScriptTag: tag } : {}),
       ...(versionId ? { cloudflareVersionId: versionId } : {}),
+      ...(versionState ? { cloudflareVersionState: versionState } : {}),
     };
   });
 }
@@ -8881,25 +8887,36 @@ async function reconcileWorkerDeletionIdentities(input: {
       continue;
     }
     try {
-      const deployment = await getWorkerDeployments(pinned.name);
-      if (
-        !deployment.exists ||
-        !deployment.versionId ||
-        deployment.versionId !== pinned.cloudflareVersionId
-      ) {
-        mismatches.push(
-          `Worker ownership mismatch for ${pinned.name}: the active Version ID does not match the legacy lock`
-        );
-        continue;
+      if (pinned.cloudflareVersionState === 'uploaded') {
+        const version = await getWorkerVersion(pinned.name, pinned.cloudflareVersionId);
+        if (!version.exists || version.versionId !== pinned.cloudflareVersionId) {
+          mismatches.push(
+            `Worker ownership mismatch for ${pinned.name}: the uploaded Version ID does not match the pending checkpoint`
+          );
+          continue;
+        }
+      } else {
+        const deployment = await getWorkerDeployments(pinned.name);
+        if (
+          !deployment.exists ||
+          !deployment.versionId ||
+          deployment.versionId !== pinned.cloudflareVersionId
+        ) {
+          mismatches.push(
+            `Worker ownership mismatch for ${pinned.name}: the active Version ID does not match the legacy lock`
+          );
+          continue;
+        }
       }
     } catch (error) {
       mismatches.push(
-        `Worker ownership for ${pinned.name} could not verify its legacy Version ID: ${sanitizeError(error)}`
+        `Worker ownership for ${pinned.name} could not verify its ${pinned.cloudflareVersionState === 'uploaded' ? 'uploaded' : 'legacy'} Version ID: ${sanitizeError(error)}`
       );
       continue;
     }
-    const backfill = {
-      ...pinned,
+    const backfill: DeletionWorkerIdentity = {
+      name: pinned.name,
+      cloudflareVersionId: pinned.cloudflareVersionId,
       cloudflareScriptTag: liveTag,
     };
     backfills.push(backfill);
@@ -10089,6 +10106,31 @@ export interface WorkerDeploymentInfo {
   source?: string | null;
 }
 
+export interface WorkerVersionInfo {
+  name: string;
+  exists: boolean;
+  versionId: string | null;
+}
+
+function isWorkerInventoryNotFoundError(message: string): boolean {
+  return (
+    /does not exist|\b10007\b/iu.test(message) ||
+    /(?:worker\s+)?version[^\n]*not found|could not find[^\n]*(?:worker\s+)?version|no such (?:worker\s+)?version/iu.test(
+      message
+    )
+  );
+}
+
+function isRetryableWorkerInventoryError(message: string): boolean {
+  return (
+    isD1RateLimitError(message) ||
+    /authentication error\s*\[code:\s*10000\]/iu.test(message) ||
+    /\b5\d{2}\b|service unavailable|internal server error|fetch failed|network error|econnreset|etimedout|timed out/iu.test(
+      message
+    )
+  );
+}
+
 function parseLatestWorkerDeployment(stdout: string): {
   createdAt: string | null;
   author: string | null;
@@ -10150,7 +10192,7 @@ export async function getWorkerDeployments(name: string): Promise<WorkerDeployme
       const { stdout, stderr } = await wrangler(['deployments', 'list', '--name', name]);
 
       // Check if worker doesn't exist
-      if (/does not exist|\b10007\b/iu.test(stderr)) {
+      if (isWorkerInventoryNotFoundError(stderr)) {
         return {
           name,
           exists: false,
@@ -10178,7 +10220,7 @@ export async function getWorkerDeployments(name: string): Promise<WorkerDeployme
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (/does not exist|\b10007\b/iu.test(message)) {
+      if (isWorkerInventoryNotFoundError(message)) {
         return {
           name,
           exists: false,
@@ -10188,12 +10230,7 @@ export async function getWorkerDeployments(name: string): Promise<WorkerDeployme
           source: null,
         };
       }
-      const retryable =
-        isD1RateLimitError(message) ||
-        /authentication error\s*\[code:\s*10000\]/iu.test(message) ||
-        /\b5\d{2}\b|service unavailable|internal server error|fetch failed|network error|econnreset|etimedout|timed out/iu.test(
-          message
-        );
+      const retryable = isRetryableWorkerInventoryError(message);
       if (!retryable || attempt === maxAttempts) {
         throw new Error(`Worker deployment inventory unavailable for ${name}: ${message}`, {
           cause: error,
@@ -10205,6 +10242,43 @@ export async function getWorkerDeployments(name: string): Promise<WorkerDeployme
     }
   }
   throw new Error(`Worker deployment inventory retry loop exited unexpectedly for ${name}`);
+}
+
+/** Verify that a specific uploaded Worker Version still belongs to the named script. */
+export async function getWorkerVersion(
+  name: string,
+  versionId: string
+): Promise<WorkerVersionInfo> {
+  const maxAttempts = process.env.NODE_ENV === 'test' ? 2 : 4;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const { stdout } = await wrangler(['versions', 'view', versionId, '--name', name, '--json'], {
+        env: { WRANGLER_LOG: 'log' },
+      });
+      const parsed = JSON.parse(stdout) as { id?: unknown };
+      if (!parsed || typeof parsed !== 'object' || typeof parsed.id !== 'string') {
+        throw new Error('wrangler_worker_version_output_unparseable');
+      }
+      if (parsed.id !== versionId) {
+        throw new Error(`wrangler_worker_version_id_mismatch:${versionId}:${parsed.id}`);
+      }
+      return { name, exists: true, versionId: parsed.id };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isWorkerInventoryNotFoundError(message)) {
+        return { name, exists: false, versionId: null };
+      }
+      if (!isRetryableWorkerInventoryError(message) || attempt === maxAttempts) {
+        throw new Error(`Worker version inventory unavailable for ${name}: ${message}`, {
+          cause: error,
+        });
+      }
+      if (process.env.NODE_ENV !== 'test') {
+        await sleep(Math.min(1_000 * 2 ** (attempt - 1), 5_000));
+      }
+    }
+  }
+  throw new Error(`Worker version inventory retry loop exited unexpectedly for ${name}`);
 }
 
 /**

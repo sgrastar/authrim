@@ -12,7 +12,7 @@ import { existsSync, lstatSync, readFileSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
-import type { ProvisionedResources } from './cloudflare.js';
+import type { DeletionWorkerIdentity, ProvisionedResources } from './cloudflare.js';
 import { getAuthrimRoot, getEnvironmentPaths, getLegacyPaths } from './paths.js';
 import { D1_DATABASES, KV_NAMESPACES, getD1DatabaseName, getKVNamespaceName } from './naming.js';
 import { isTenantDatabaseBinding } from './tenant-database.js';
@@ -372,6 +372,73 @@ function omitResourceNames<T extends { name: string }>(
   );
 }
 
+/**
+ * Build the strongest available Worker identities for deletion. An unfinished deployment
+ * checkpoint supersedes the older final entry for the same component because it describes the
+ * most recent uploaded script, while Cloudflare deletion preflight still verifies that immutable
+ * identity before mutating anything.
+ */
+export function collectWorkerDeletionIdentities(
+  lock: Pick<AuthrimLock, 'workers' | 'workerScriptOwnership'>
+): DeletionWorkerIdentity[] {
+  const byComponent = new Map<string, DeletionWorkerIdentity>();
+  for (const [component, worker] of Object.entries(lock.workers ?? {})) {
+    byComponent.set(component, {
+      name: worker.name,
+      ...(worker.cloudflareScriptTag ? { cloudflareScriptTag: worker.cloudflareScriptTag } : {}),
+      ...(worker.cloudflareVersionId ? { cloudflareVersionId: worker.cloudflareVersionId } : {}),
+    });
+  }
+  for (const [component, checkpoint] of Object.entries(lock.workerScriptOwnership ?? {})) {
+    byComponent.set(
+      component,
+      checkpoint.state === 'provisional'
+        ? { name: checkpoint.name, cloudflareScriptTag: checkpoint.cloudflareScriptTag }
+        : {
+            name: checkpoint.name,
+            cloudflareVersionId: checkpoint.pendingCloudflareVersionId,
+            cloudflareVersionState: 'uploaded',
+          }
+    );
+  }
+  return Array.from(byComponent.values());
+}
+
+/** Persist a Version-ID checkpoint after deletion preflight resolves its immutable script tag. */
+export function withBackfilledWorkerDeletionIdentities(
+  lock: AuthrimLock,
+  resources: readonly DeletionWorkerIdentity[]
+): AuthrimLock {
+  const workers = { ...lock.workers };
+  const workerScriptOwnership = { ...lock.workerScriptOwnership };
+  for (const resource of resources) {
+    const component =
+      Object.entries(workers).find(([, worker]) => worker.name === resource.name)?.[0] ??
+      Object.entries(workerScriptOwnership).find(
+        ([, checkpoint]) => checkpoint.name === resource.name
+      )?.[0];
+    if (!component || !resource.cloudflareScriptTag) {
+      throw new Error(`Worker identity backfill target is unavailable: ${resource.name}`);
+    }
+    workers[component] = {
+      ...workers[component],
+      name: resource.name,
+      ...(resource.cloudflareVersionId
+        ? { cloudflareVersionId: resource.cloudflareVersionId }
+        : {}),
+      cloudflareScriptTag: resource.cloudflareScriptTag,
+    };
+    delete workerScriptOwnership[component];
+  }
+  return {
+    ...lock,
+    workers,
+    workerScriptOwnership:
+      Object.keys(workerScriptOwnership).length > 0 ? workerScriptOwnership : undefined,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 /** Preserve an environment lock after partial deletion while removing stale resource entries. */
 export function reconcileLockAfterResourceDeletion(
   lock: AuthrimLock,
@@ -392,6 +459,7 @@ export function reconcileLockAfterResourceDeletion(
           )
         : lock.dns,
     workers: omitResourceNames(lock.workers, deleted.workers),
+    workerScriptOwnership: omitResourceNames(lock.workerScriptOwnership, deleted.workers),
   };
 }
 

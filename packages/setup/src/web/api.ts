@@ -78,6 +78,7 @@ import {
   acquireDeployConfigLock,
   acquireEnvironmentOperationForEnvironment,
   clearProvisionalWorkerScriptOwnership,
+  collectWorkerDeletionIdentities,
   createLockFile,
   hasPostProvisioningLockState,
   loadLockFileAuto,
@@ -88,6 +89,7 @@ import {
   reconcileLockAfterResourceDeletion,
   reconcileSharedKVResourcesInLock,
   saveLockFile,
+  withBackfilledWorkerDeletionIdentities,
   withDnsOwnershipEntry,
   type AuthrimLock,
   type DeployConfigLockProof,
@@ -122,6 +124,7 @@ import {
 } from '../core/provisioning-intent.js';
 import {
   prepareManagedWorkerScriptOwnership,
+  prepareWorkerScriptOwnership,
   type WorkerScriptOwnershipGuard,
 } from '../core/worker-script-ownership.js';
 import { readPrivateFileSecurely, writePrivateFileAtomically } from '../core/atomic-file.js';
@@ -794,15 +797,6 @@ async function assertLockedCloudflareResourcesForWebMutation(input: {
     verifyQueues ? listQueues({ strictOutput: true, requireIds: true }) : Promise.resolve([]),
     requiredR2BucketNames.length > 0 ? listR2Buckets({ throwOnError: true }) : Promise.resolve([]),
   ]);
-  await Promise.all(
-    Object.entries(input.lock.r2 ?? {}).map(([binding, bucket]) =>
-      assertR2BucketOwnershipIdentity({
-        ...bucket,
-        environment: input.lock.env,
-        binding,
-      })
-    )
-  );
   const d1 = reconcileD1ResourcesInLock(input.lock, input.environment, databases);
   const kv = reconcileSharedKVResourcesInLock(d1.lock, input.environment, namespaces);
   const queue = reconcileQueueResourcesInLock(kv.lock, queues, requiredQueues);
@@ -826,6 +820,29 @@ async function assertLockedCloudflareResourcesForWebMutation(input: {
   if (missing.length > 0) {
     throw new Error(`required_cloudflare_resources_missing:${missing.join(',')}`);
   }
+  await Promise.all(
+    Object.entries(input.lock.r2 ?? {}).map(async ([binding, bucket]) => {
+      try {
+        await assertR2BucketOwnershipIdentity({
+          ...bucket,
+          environment: input.lock.env,
+          binding,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          /^R2 (?:bucket .* (?:provider creation_date changed|recorded in lock\.json is missing)|ownership marker (?:identity is invalid|is missing|is invalid|does not match))/u.test(
+            message
+          )
+        ) {
+          throw new Error(`cloudflare_resource_identity_mismatch:R2:${binding}`, {
+            cause: error,
+          });
+        }
+        throw error;
+      }
+    })
+  );
 }
 
 function loadConfigPinnedByProvisioningIntent(intent: ProvisioningIntent): AuthrimConfig {
@@ -6741,6 +6758,97 @@ export function createApiRoutes(): Hono {
           reasonCode: guard.reason ?? 'release_checkpoint_mismatch',
         });
       }
+      if (recoveryTargets.some((target) => !target.streamId)) {
+        return c.json({
+          ...responseBase,
+          status: 'recreate_required',
+          canResume: false,
+          requiresRecreate: true,
+          reasonCode: 'release_migration_target_unavailable',
+        });
+      }
+
+      const enabledComponents = Array.from(
+        getEnabledComponents({
+          saml: releaseConfig.components.saml,
+          async: releaseConfig.components.async,
+          vc: releaseConfig.components.vc,
+          bridge: releaseConfig.components.bridge,
+          policy: releaseConfig.components.policy,
+        })
+      );
+      const recoveryWorkerTargets = [
+        ...enabledComponents.map((component) => ({
+          component,
+          workerName: getWorkerName(env, component),
+        })),
+        ...UI_WORKER_COMPONENTS.filter((component) =>
+          component === 'ar-login-ui'
+            ? releaseConfig.components.loginUi !== false
+            : releaseConfig.components.adminUi !== false
+        ).map((component) => ({ component, workerName: `${env}-${component}` })),
+      ];
+
+      if (releaseConfig.cloudflare?.accountId) {
+        let currentAccountId: string | null;
+        try {
+          currentAccountId = await getAccountId();
+        } catch {
+          currentAccountId = null;
+        }
+        if (!currentAccountId || currentAccountId !== releaseConfig.cloudflare.accountId) {
+          return c.json({
+            ...responseBase,
+            status: 'blocked',
+            canResume: false,
+            requiresRecreate: false,
+            reasonCode: currentAccountId
+              ? 'cloudflare_account_mismatch'
+              : 'cloudflare_account_verification_unavailable',
+          });
+        }
+      }
+
+      try {
+        await assertLockedCloudflareResourcesForWebMutation({
+          environment: env,
+          config: releaseConfig,
+          lock,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const checkpointInvalid =
+          message.startsWith('cloudflare_resource_identity_mismatch:') ||
+          message.startsWith('required_cloudflare_resources_missing:');
+        return c.json({
+          ...responseBase,
+          status: checkpointInvalid ? 'recreate_required' : 'blocked',
+          canResume: false,
+          requiresRecreate: checkpointInvalid,
+          reasonCode: checkpointInvalid
+            ? 'cloudflare_resource_checkpoint_mismatch'
+            : 'cloudflare_resource_verification_unavailable',
+        });
+      }
+
+      try {
+        await prepareWorkerScriptOwnership({ lock, targets: recoveryWorkerTargets });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const checkpointInvalid =
+          /^worker_script_(?:provisional_name_mismatch|pending_version_mismatch|immutable_tag_(?:mismatch|unavailable|invalid)|missing|fresh_name_conflict|locked_name_mismatch|legacy_identity_insufficient|legacy_version_mismatch|inventory_(?:invalid|duplicate))/u.test(
+            message
+          );
+        return c.json({
+          ...responseBase,
+          status: checkpointInvalid ? 'recreate_required' : 'blocked',
+          canResume: false,
+          requiresRecreate: checkpointInvalid,
+          reasonCode: checkpointInvalid
+            ? 'worker_ownership_checkpoint_mismatch'
+            : 'worker_ownership_verification_unavailable',
+        });
+      }
       const checkExistingControlCredentials = async (): Promise<boolean> => {
         if (releaseConfig.controlPlane?.automaticProvisioning !== true) return true;
         const controlDatabaseId = lock.d1.CONTROL_DB?.id;
@@ -6834,15 +6942,6 @@ export function createApiRoutes(): Hono {
         });
       }
 
-      const enabledComponents = Array.from(
-        getEnabledComponents({
-          saml: releaseConfig.components.saml,
-          async: releaseConfig.components.async,
-          vc: releaseConfig.components.vc,
-          bridge: releaseConfig.components.bridge,
-          policy: releaseConfig.components.policy,
-        })
-      );
       let reconciledWorkerVersions: Set<string> | undefined;
       if (lock.releaseUpdate.phase === 'workers_deployed') {
         const controlDatabaseId = lock.d1.CONTROL_DB?.id;
@@ -7244,9 +7343,12 @@ export function createApiRoutes(): Hono {
         }
 
         let deletionLock = operationLock.lock;
-        if (deleteWorkers && Object.keys(deletionLock?.workerScriptOwnership ?? {}).length > 0) {
-          throw new Error(
-            'Worker deletion is blocked because an unfinished Worker ownership checkpoint requires recovery'
+        const unfinishedWorkerOwnershipCount = Object.keys(
+          deletionLock?.workerScriptOwnership ?? {}
+        ).length;
+        if (deleteWorkers && unfinishedWorkerOwnershipCount > 0) {
+          addProgress(
+            `Using ${unfinishedWorkerOwnershipCount} unfinished Worker ownership checkpoint(s) for verified deletion recovery.`
           );
         }
         if (deletionLock && (deleteQueues || deleteWorkers)) {
@@ -7274,7 +7376,7 @@ export function createApiRoutes(): Hono {
           deleteQueues,
           deleteR2,
           deletePages,
-          knownWorkerResources: deletionLock ? Object.values(deletionLock.workers ?? {}) : [],
+          knownWorkerResources: deletionLock ? collectWorkerDeletionIdentities(deletionLock) : [],
           knownD1Resources: deletionLock ? Object.values(deletionLock.d1) : [],
           knownKVResources: deletionLock ? Object.values(deletionLock.kv) : [],
           knownQueueResources: deletionLock?.queues ? Object.values(deletionLock.queues) : [],
@@ -7296,26 +7398,7 @@ export function createApiRoutes(): Hono {
                   }>
                 ) => {
                   if (!deletionLock) throw new Error('Worker identity lock is unavailable');
-                  const workers = { ...deletionLock.workers };
-                  for (const resource of resources) {
-                    const component = Object.entries(workers).find(
-                      ([, worker]) => worker.name === resource.name
-                    )?.[0];
-                    if (!component || !resource.cloudflareScriptTag) {
-                      throw new Error(
-                        `Worker identity backfill target is unavailable: ${resource.name}`
-                      );
-                    }
-                    workers[component] = {
-                      ...workers[component],
-                      cloudflareScriptTag: resource.cloudflareScriptTag,
-                    };
-                  }
-                  deletionLock = {
-                    ...deletionLock,
-                    workers,
-                    updatedAt: new Date().toISOString(),
-                  };
+                  deletionLock = withBackfilledWorkerDeletionIdentities(deletionLock, resources);
                   await saveLockFile(deletionLock, operationLock!.lockFilePath);
                 },
               }

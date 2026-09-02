@@ -691,7 +691,7 @@ describe('setup web basic API contracts', () => {
     expect(persisted.workers['ar-auth']?.cloudflareScriptTag).toBe('verified-auth-tag');
   });
 
-  it('blocks Worker deletion while a provisional script ownership checkpoint exists', async () => {
+  it('uses a provisional script ownership checkpoint for verified deletion recovery', async () => {
     const env = 'prod';
     await writeDeployedLock(env, {
       workerScriptOwnership: {
@@ -709,12 +709,20 @@ describe('setup web basic API contracts', () => {
       post(`/environments/${env}/delete`, {}, generateSessionToken())
     );
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      success: false,
-      error: expect.stringContaining('unfinished Worker ownership checkpoint'),
+      success: true,
+      progress: expect.arrayContaining([
+        expect.stringContaining('unfinished Worker ownership checkpoint'),
+      ]),
     });
-    expect(cloudflareMocks.deleteEnvironment).not.toHaveBeenCalled();
+    expect(cloudflareMocks.deleteEnvironment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        knownWorkerResources: [
+          { name: 'prod-ar-auth', cloudflareScriptTag: 'provisional-auth-tag' },
+        ],
+      })
+    );
   });
 
   it('returns a retryable inventory error without deleting or cleaning local state', async () => {

@@ -1062,17 +1062,20 @@ describe('deployWorker', () => {
     createManagedWorkerPackage(rootDir, 'ar-auth', '1.0.0', databaseId);
     const versionId = '22222222-2222-4222-8222-222222222222';
     const commands: string[][] = [];
+    const events: string[] = [];
 
     vi.mocked(execa).mockImplementation(async (_command, args, options) => {
       const commandArgs = [...(args ?? [])];
       commands.push(commandArgs);
       if (commandArgs.includes('upload')) {
+        events.push('upload');
         consumeManagedDeployTicket(options);
         writeFileSync(
           join(String(options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY), 'wrangler-output.ndjson'),
           `${JSON.stringify({ type: 'version-upload', version_id: versionId })}\n`
         );
       } else if (commandArgs.includes('view')) {
+        events.push('binding-readback');
         return {
           ...successfulCommandResult(),
           stdout: JSON.stringify({
@@ -1080,14 +1083,25 @@ describe('deployWorker', () => {
           }),
         };
       }
+      if (commandArgs.includes('deploy')) events.push('promote');
       return successfulCommandResult();
     });
 
-    const result = await deployWorker('ar-auth', {
+    const result = await deployWorkerCore('ar-auth', {
       env: 'test',
       rootDir,
       deploymentStrategy: 'staged',
       existingComponents: ['ar-auth'],
+      workerScriptOwnership: {
+        ...testWorkerScriptOwnership,
+        checkpointCommittedVersion: async () => {
+          events.push('checkpoint-version');
+        },
+        captureAfterMutation: async () => {
+          events.push('capture-tag');
+          return TEST_CLOUDFLARE_SCRIPT_TAG;
+        },
+      },
     });
 
     expect(result).toEqual(
@@ -1099,6 +1113,55 @@ describe('deployWorker', () => {
     );
     expect(viewIndex).toBeGreaterThan(-1);
     expect(promoteIndex).toBeGreaterThan(viewIndex);
+    expect(events.indexOf('checkpoint-version')).toBeLessThan(events.indexOf('capture-tag'));
+    expect(events.indexOf('capture-tag')).toBeLessThan(events.indexOf('binding-readback'));
+    const viewCall = vi.mocked(execa).mock.calls.find(([, args]) => (args ?? []).includes('view'));
+    expect(viewCall?.[2]?.env).toMatchObject({ WRANGLER_LOG: 'log' });
+  });
+
+  it('retries an empty uploaded-version binding readback before staged promotion', async () => {
+    const rootDir = createTempRoot();
+    const databaseId = '11111111-1111-4111-8111-111111111111';
+    createManagedWorkerPackage(rootDir, 'ar-auth', '1.0.0', databaseId);
+    const versionId = '22222222-2222-4222-8222-222222222222';
+    let viewAttempts = 0;
+
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('upload')) {
+        consumeManagedDeployTicket(options);
+        writeFileSync(
+          join(String(options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY), 'wrangler-output.ndjson'),
+          `${JSON.stringify({ type: 'version-upload', version_id: versionId })}\n`
+        );
+      } else if (commandArgs.includes('view')) {
+        viewAttempts++;
+        return {
+          ...successfulCommandResult(),
+          stdout:
+            viewAttempts === 1
+              ? ''
+              : JSON.stringify({
+                  resources: { bindings: [{ name: 'DB', type: 'd1', id: databaseId }] },
+                }),
+        };
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'staged',
+      existingComponents: ['ar-auth'],
+      maxRetries: 2,
+      retryDelayMs: 0,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ success: true, cloudflareVersionId: versionId })
+    );
+    expect(viewAttempts).toBe(2);
   });
 
   it.each([

@@ -22,6 +22,25 @@ const mocks = vi.hoisted(() => ({
   acquireEnvironmentOperationForEnvironment: vi.fn(),
   evaluateEnvironmentOperation: vi.fn(),
   reconcileLockAfterResourceDeletion: vi.fn((lock) => lock),
+  collectWorkerDeletionIdentities: vi.fn((lock) => {
+    const byComponent = new Map(Object.entries(lock.workers ?? {}));
+    for (const [component, checkpoint] of Object.entries(lock.workerScriptOwnership ?? {}) as Array<
+      [string, Record<string, string>]
+    >) {
+      byComponent.set(
+        component,
+        checkpoint.state === 'provisional'
+          ? { name: checkpoint.name, cloudflareScriptTag: checkpoint.cloudflareScriptTag }
+          : {
+              name: checkpoint.name,
+              cloudflareVersionId: checkpoint.pendingCloudflareVersionId,
+              cloudflareVersionState: 'uploaded',
+            }
+      );
+    }
+    return Array.from(byComponent.values());
+  }),
+  withBackfilledWorkerDeletionIdentities: vi.fn((lock) => lock),
   saveLockFile: vi.fn(),
   release: vi.fn(),
   deployConfigRelease: vi.fn(),
@@ -78,7 +97,9 @@ vi.mock('../core/lock.js', () => ({
   acquireDeployConfigLock: mocks.acquireDeployConfigLock,
   acquireEnvironmentOperationForEnvironment: mocks.acquireEnvironmentOperationForEnvironment,
   reconcileLockAfterResourceDeletion: mocks.reconcileLockAfterResourceDeletion,
+  collectWorkerDeletionIdentities: mocks.collectWorkerDeletionIdentities,
   saveLockFile: mocks.saveLockFile,
+  withBackfilledWorkerDeletionIdentities: mocks.withBackfilledWorkerDeletionIdentities,
 }));
 
 vi.mock('../core/environment-operation-policy.js', () => ({
@@ -236,6 +257,54 @@ describe('CLI environment deletion', () => {
         environment: 'test',
         controlDatabaseIdentifier: 'control-id',
       });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('uses a pending Worker Version ID checkpoint for verified deletion recovery', async () => {
+    mocks.acquireEnvironmentOperationForEnvironment.mockResolvedValueOnce({
+      lock: {
+        env: 'test',
+        d1: {},
+        kv: {},
+        workers: {},
+        workerScriptOwnership: {
+          'ar-auth': {
+            name: 'test-ar-auth',
+            pendingCloudflareVersionId: '11111111-1111-4111-8111-111111111111',
+            state: 'pending_tag',
+            updatedAt: '2026-09-02T00:00:00.000Z',
+          },
+        },
+      },
+      lockFilePath: '/workspace/.authrim/test/lock.json',
+      release: mocks.release,
+    });
+    mocks.deleteEnvironment.mockResolvedValueOnce({
+      success: true,
+      completion: 'complete',
+      environmentEmpty: true,
+      deleted: { workers: ['test-ar-auth'], d1: [], kv: [], queues: [], r2: [], pages: [] },
+      manualR2: [],
+      errors: [],
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      await deleteCommand({ env: 'test', yes: true, all: true });
+      expect(mocks.deleteEnvironment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          knownWorkerResources: [
+            {
+              name: 'test-ar-auth',
+              cloudflareVersionId: '11111111-1111-4111-8111-111111111111',
+              cloudflareVersionState: 'uploaded',
+            },
+          ],
+        })
+      );
+      expect(log.mock.calls.flat().join('\n')).toContain('unfinished Worker ownership checkpoint');
     } finally {
       log.mockRestore();
     }

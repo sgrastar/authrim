@@ -198,7 +198,7 @@ describe('Worker script immutable ownership', () => {
       targets: TARGET,
       dependencies: {
         list: async () => [{ name: 'test-ar-auth', tag: TAG_A }],
-        getDeployment: async () => ({ exists: true, versionId: VERSION_A }),
+        getVersion: async () => ({ exists: true, versionId: VERSION_A }),
       },
     });
 
@@ -231,7 +231,7 @@ describe('Worker script immutable ownership', () => {
     expect(persistCommittedVersion).not.toHaveBeenCalled();
   });
 
-  it('fails closed when a pending fresh version is not the live active version', async () => {
+  it('fails closed when a pending fresh version no longer belongs to the Worker script', async () => {
     await expect(
       prepareWorkerScriptOwnership({
         lock: {
@@ -248,7 +248,7 @@ describe('Worker script immutable ownership', () => {
         targets: TARGET,
         dependencies: {
           list: async () => [{ name: 'test-ar-auth', tag: TAG_B }],
-          getDeployment: async () => ({
+          getVersion: async () => ({
             exists: true,
             versionId: '00000000-0000-4000-8000-000000000099',
           }),

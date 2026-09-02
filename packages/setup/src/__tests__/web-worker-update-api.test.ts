@@ -35,6 +35,7 @@ const listKVNamespacesMock = vi.hoisted(() => vi.fn());
 const listQueuesMock = vi.hoisted(() => vi.fn());
 const listR2BucketsMock = vi.hoisted(() => vi.fn());
 const assertR2BucketOwnershipForUseMock = vi.hoisted(() => vi.fn());
+const assertR2BucketOwnershipIdentityMock = vi.hoisted(() => vi.fn());
 const listWorkersMock = vi.hoisted(() => vi.fn());
 const getAccountIdMock = vi.hoisted(() => vi.fn());
 const saveMasterWranglerConfigsMock = vi.hoisted(() => vi.fn());
@@ -163,6 +164,7 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
     listQueues: listQueuesMock,
     listR2Buckets: listR2BucketsMock,
     assertR2BucketOwnershipForUse: assertR2BucketOwnershipForUseMock,
+    assertR2BucketOwnershipIdentity: assertR2BucketOwnershipIdentityMock,
     listWorkers: listWorkersMock,
     getAccountId: getAccountIdMock,
     runMigrationsForEnvironment: runMigrationsForEnvironmentMock,
@@ -834,6 +836,8 @@ describe('setup web worker update API', () => {
     listR2BucketsMock.mockReset();
     assertR2BucketOwnershipForUseMock.mockReset();
     assertR2BucketOwnershipForUseMock.mockResolvedValue(undefined);
+    assertR2BucketOwnershipIdentityMock.mockReset();
+    assertR2BucketOwnershipIdentityMock.mockResolvedValue(undefined);
     listWorkersMock.mockReset();
     getAccountIdMock.mockReset();
     saveMasterWranglerConfigsMock.mockReset();
@@ -1373,6 +1377,249 @@ describe('setup web worker update API', () => {
       status: 'resumable',
       canResume: true,
       resumeFrom: 'database_migrations',
+    });
+  });
+
+  it('does not offer resume when a lock-recorded Cloudflare resource is missing', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    const manifestChecksum = Object.values(lock.schemaTargets)[0]?.manifestChecksum;
+    delete lock.productVersion;
+    lock.workers = {};
+    lock.releaseUpdate = {
+      targetVersion: '0.2.0',
+      phase: 'planned',
+      manifestChecksum,
+      startedAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    listD1DatabasesMock.mockResolvedValue(
+      (await listD1DatabasesMock.getMockImplementation()!()).filter(
+        (database: { uuid: string }) => database.uuid !== 'core-id'
+      )
+    );
+
+    const response = await createApiRoutes().request('/deploy/recovery/test');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      status: 'recreate_required',
+      canResume: false,
+      requiresRecreate: true,
+      reasonCode: 'cloudflare_resource_checkpoint_mismatch',
+    });
+  });
+
+  it('does not offer resume when a required R2 bucket is missing', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    const manifestChecksum = Object.values(lock.schemaTargets)[0]?.manifestChecksum;
+    delete lock.productVersion;
+    lock.workers = {};
+    lock.releaseUpdate = {
+      targetVersion: '0.2.0',
+      phase: 'planned',
+      manifestChecksum,
+      startedAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    listR2BucketsMock.mockResolvedValue([]);
+
+    const response = await createApiRoutes().request('/deploy/recovery/test');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      status: 'recreate_required',
+      canResume: false,
+      requiresRecreate: true,
+      reasonCode: 'cloudflare_resource_checkpoint_mismatch',
+    });
+    expect(assertR2BucketOwnershipIdentityMock).not.toHaveBeenCalled();
+  });
+
+  it('does not offer resume when an R2 ownership marker no longer matches', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    const manifestChecksum = Object.values(lock.schemaTargets)[0]?.manifestChecksum;
+    delete lock.productVersion;
+    lock.workers = {};
+    lock.releaseUpdate = {
+      targetVersion: '0.2.0',
+      phase: 'planned',
+      manifestChecksum,
+      startedAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    assertR2BucketOwnershipIdentityMock.mockRejectedValueOnce(
+      new Error('R2 ownership marker does not match test-migration-releases')
+    );
+
+    const response = await createApiRoutes().request('/deploy/recovery/test');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      status: 'recreate_required',
+      canResume: false,
+      requiresRecreate: true,
+      reasonCode: 'cloudflare_resource_checkpoint_mismatch',
+    });
+  });
+
+  it('temporarily blocks resume when R2 ownership verification is unavailable', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    const manifestChecksum = Object.values(lock.schemaTargets)[0]?.manifestChecksum;
+    delete lock.productVersion;
+    lock.workers = {};
+    lock.releaseUpdate = {
+      targetVersion: '0.2.0',
+      phase: 'planned',
+      manifestChecksum,
+      startedAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    assertR2BucketOwnershipIdentityMock.mockRejectedValueOnce(
+      new Error('Cloudflare R2 ownership marker read failed (503)')
+    );
+
+    const response = await createApiRoutes().request('/deploy/recovery/test');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      status: 'blocked',
+      canResume: false,
+      requiresRecreate: false,
+      reasonCode: 'cloudflare_resource_verification_unavailable',
+    });
+  });
+
+  it('temporarily blocks resume when Cloudflare resource verification is unavailable', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    const manifestChecksum = Object.values(lock.schemaTargets)[0]?.manifestChecksum;
+    delete lock.productVersion;
+    lock.workers = {};
+    lock.releaseUpdate = {
+      targetVersion: '0.2.0',
+      phase: 'planned',
+      manifestChecksum,
+      startedAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    listD1DatabasesMock.mockRejectedValue(new Error('Cloudflare API temporarily unavailable'));
+
+    const response = await createApiRoutes().request('/deploy/recovery/test');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      status: 'blocked',
+      canResume: false,
+      requiresRecreate: false,
+      reasonCode: 'cloudflare_resource_verification_unavailable',
+    });
+  });
+
+  it('does not offer resume when a same-name Worker has no ownership checkpoint', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    const manifestChecksum = Object.values(lock.schemaTargets)[0]?.manifestChecksum;
+    delete lock.productVersion;
+    lock.workers = {};
+    lock.releaseUpdate = {
+      targetVersion: '0.2.0',
+      phase: 'planned',
+      manifestChecksum,
+      startedAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    listWorkersMock.mockResolvedValue([
+      { name: 'test-ar-auth', id: 'test-ar-auth', tag: 'replacement-script-tag' },
+    ]);
+
+    const response = await createApiRoutes().request('/deploy/recovery/test');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      status: 'recreate_required',
+      canResume: false,
+      requiresRecreate: true,
+      reasonCode: 'worker_ownership_checkpoint_mismatch',
+    });
+  });
+
+  it('does not offer resume when a lock-recorded Worker is missing', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    const manifestChecksum = Object.values(lock.schemaTargets)[0]?.manifestChecksum;
+    delete lock.productVersion;
+    lock.workers = {};
+    lock.workerScriptOwnership = {
+      'ar-auth': {
+        name: 'test-ar-auth',
+        cloudflareScriptTag: 'immutable-ar-auth-tag',
+        state: 'provisional',
+        updatedAt: '2026-05-18T00:00:00.000Z',
+      },
+    };
+    lock.releaseUpdate = {
+      targetVersion: '0.2.0',
+      phase: 'planned',
+      manifestChecksum,
+      startedAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:00:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    listWorkersMock.mockResolvedValue([]);
+
+    const response = await createApiRoutes().request('/deploy/recovery/test');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      status: 'recreate_required',
+      canResume: false,
+      requiresRecreate: true,
+      reasonCode: 'worker_ownership_checkpoint_mismatch',
     });
   });
 

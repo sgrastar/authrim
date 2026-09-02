@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   acquireEnvironmentOperationLock,
   acquireDeployConfigLock,
+  collectWorkerDeletionIdentities,
   createLockFile,
   getDeployConfigLockPath,
   getNewLockFilePath,
@@ -24,7 +25,9 @@ import {
   mergeProvisionedResourcesIntoLock,
   reconcileD1ResourcesInLock,
   reconcileQueueResourcesInLock,
+  reconcileLockAfterResourceDeletion,
   reconcileSharedKVResourcesInLock,
+  withBackfilledWorkerDeletionIdentities,
   withEnvironmentOperationForEnvironment,
   withDeployConfigLock,
   type AuthrimLock,
@@ -59,6 +62,85 @@ function createTestLock(): AuthrimLock {
   };
   return lock;
 }
+
+describe('Worker deletion recovery identities', () => {
+  it('prefers the latest ownership checkpoint over an older final component identity', () => {
+    const lock = createTestLock();
+    lock.workers = {
+      'ar-auth': { name: 'test-ar-auth', cloudflareScriptTag: 'old-script-tag' },
+    };
+    lock.workerScriptOwnership = {
+      'ar-auth': {
+        name: 'test-ar-auth',
+        cloudflareScriptTag: 'uploaded-script-tag',
+        state: 'provisional',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+      },
+    };
+
+    expect(collectWorkerDeletionIdentities(lock)).toEqual([
+      { name: 'test-ar-auth', cloudflareScriptTag: 'uploaded-script-tag' },
+    ]);
+  });
+
+  it('promotes a verified pending Version ID to a final tag and clears its checkpoint', () => {
+    const lock = createTestLock();
+    const versionId = '11111111-1111-4111-8111-111111111111';
+    lock.workerScriptOwnership = {
+      'ar-auth': {
+        name: 'test-ar-auth',
+        pendingCloudflareVersionId: versionId,
+        state: 'pending_tag',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+      },
+    };
+
+    expect(collectWorkerDeletionIdentities(lock)).toEqual([
+      {
+        name: 'test-ar-auth',
+        cloudflareVersionId: versionId,
+        cloudflareVersionState: 'uploaded',
+      },
+    ]);
+
+    const updated = withBackfilledWorkerDeletionIdentities(lock, [
+      {
+        name: 'test-ar-auth',
+        cloudflareVersionId: versionId,
+        cloudflareScriptTag: 'verified-script-tag',
+      },
+    ]);
+
+    expect(updated.workers?.['ar-auth']).toMatchObject({
+      name: 'test-ar-auth',
+      cloudflareVersionId: versionId,
+      cloudflareScriptTag: 'verified-script-tag',
+    });
+    expect(updated.workerScriptOwnership).toBeUndefined();
+  });
+
+  it('removes a deleted Worker checkpoint during partial lock reconciliation', () => {
+    const lock = createTestLock();
+    lock.workerScriptOwnership = {
+      'ar-auth': {
+        name: 'test-ar-auth',
+        cloudflareScriptTag: 'uploaded-script-tag',
+        state: 'provisional',
+        updatedAt: '2026-09-02T00:00:00.000Z',
+      },
+    };
+
+    const updated = reconcileLockAfterResourceDeletion(lock, {
+      workers: ['test-ar-auth'],
+      d1: [],
+      kv: [],
+      queues: [],
+      r2: [],
+    });
+
+    expect(updated.workerScriptOwnership).toEqual({});
+  });
+});
 
 describe('loadLockFileAuto environment identity', () => {
   it('rejects a valid lock copied under a different environment directory', async () => {

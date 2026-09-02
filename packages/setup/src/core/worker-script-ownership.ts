@@ -6,7 +6,7 @@ import {
   withProvisionalWorkerScriptOwnership,
   type AuthrimLock,
 } from './lock.js';
-import { getWorkerDeployments, listWorkers } from './cloudflare.js';
+import { getWorkerDeployments, getWorkerVersion, listWorkers } from './cloudflare.js';
 
 export interface WorkerScriptOwnershipTarget {
   component: string;
@@ -52,6 +52,7 @@ interface WorkerDeploymentIdentity {
 interface WorkerScriptOwnershipDependencies {
   list?: () => Promise<WorkerInventoryEntry[]>;
   getDeployment?: (workerName: string) => Promise<WorkerDeploymentIdentity>;
+  getVersion?: (workerName: string, versionId: string) => Promise<WorkerDeploymentIdentity>;
   sleep?: (delayMs: number) => Promise<void>;
   captureMaxAttempts?: number;
 }
@@ -121,8 +122,9 @@ function assertUniqueTargets(targets: readonly WorkerScriptOwnershipTarget[]): v
  * Establish exact script ownership before a deployment operation.
  *
  * A fresh target is authorized only by strict absence. Existing targets require an exact immutable
- * tag. Pre-tag locks may be upgraded only when their pinned active Version ID still matches the
- * provider's active Version ID; a same-name script alone is never adopted.
+ * tag. Pending upload checkpoints are upgraded only while their exact Version still belongs to the
+ * script. Legacy final locks still require their pinned active Version to match; a same-name script
+ * alone is never adopted.
  */
 export async function prepareWorkerScriptOwnership(input: {
   lock: AuthrimLock;
@@ -146,6 +148,7 @@ export async function prepareWorkerScriptOwnership(input: {
   assertUniqueTargets(input.targets);
   const list = input.dependencies?.list ?? (() => listWorkers());
   const getDeployment = input.dependencies?.getDeployment ?? getWorkerDeployments;
+  const getVersion = input.dependencies?.getVersion ?? getWorkerVersion;
   const sleep =
     input.dependencies?.sleep ??
     ((delayMs: number) => new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
@@ -175,14 +178,17 @@ export async function prepareWorkerScriptOwnership(input: {
           );
         }
         if (provisional.state === 'pending_tag') {
-          const deployment = await getDeployment(target.workerName);
+          const version = await getVersion(
+            target.workerName,
+            provisional.pendingCloudflareVersionId
+          );
           if (
-            !deployment.exists ||
-            !deployment.versionId ||
-            deployment.versionId !== provisional.pendingCloudflareVersionId
+            !version.exists ||
+            !version.versionId ||
+            version.versionId !== provisional.pendingCloudflareVersionId
           ) {
             throw new Error(
-              `worker_script_pending_version_mismatch:${target.workerName}:${provisional.pendingCloudflareVersionId}:${deployment.versionId ?? 'missing'}`
+              `worker_script_pending_version_mismatch:${target.workerName}:${provisional.pendingCloudflareVersionId}:${version.versionId ?? 'missing'}`
             );
           }
           const liveTag = requireLiveTag(target.workerName, live);

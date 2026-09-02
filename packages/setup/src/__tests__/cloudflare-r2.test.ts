@@ -22,6 +22,7 @@ import {
   deleteR2Bucket,
   getR2BucketDashboardUrl,
   getWorkerDeployments,
+  getWorkerVersion,
   getR2ObjectBytes,
   listR2Objects,
   listR2Buckets,
@@ -1578,6 +1579,50 @@ Version(s):  (100%) 22222222-2222-4222-8222-222222222222
       name: 'test-ar-missing',
       exists: false,
     });
+  });
+
+  it('verifies an uploaded Worker version without requiring it to be active', async () => {
+    const versionId = '22222222-2222-4222-8222-222222222222';
+    execaMock.mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: JSON.stringify({ id: versionId, resources: { bindings: [] } }),
+      stderr: '',
+    });
+
+    await expect(getWorkerVersion('test-ar-lib-core', versionId)).resolves.toEqual({
+      name: 'test-ar-lib-core',
+      exists: true,
+      versionId,
+    });
+    expect(execaMock).toHaveBeenCalledWith(
+      'npx',
+      ['wrangler', 'versions', 'view', versionId, '--name', 'test-ar-lib-core', '--json'],
+      expect.objectContaining({ env: expect.objectContaining({ WRANGLER_LOG: 'log' }) })
+    );
+  });
+
+  it('reports a definitely missing uploaded Worker version as absent', async () => {
+    const versionId = '22222222-2222-4222-8222-222222222222';
+    execaMock.mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: '',
+      stderr: `Worker version ${versionId} not found`,
+    });
+
+    await expect(getWorkerVersion('test-ar-lib-core', versionId)).resolves.toEqual({
+      name: 'test-ar-lib-core',
+      exists: false,
+      versionId: null,
+    });
+  });
+
+  it('fails closed when uploaded Worker version output is malformed', async () => {
+    const versionId = '22222222-2222-4222-8222-222222222222';
+    execaMock.mockResolvedValueOnce({ exitCode: 0, stdout: '{}', stderr: '' });
+
+    await expect(getWorkerVersion('test-ar-lib-core', versionId)).rejects.toThrow(
+      'Worker version inventory unavailable'
+    );
   });
 
   it('fails closed when Worker inventory is unavailable due to permissions', async () => {

@@ -1171,6 +1171,60 @@ describe('Cloudflare Queue deletion helpers', () => {
     ]);
   });
 
+  it('backfills a pending Worker tag after its uploaded Version exists without active deployment', async () => {
+    const versionId = '11111111-1111-4111-8111-111111111111';
+    mockCloudflareInventory(
+      [],
+      [{ id: 'test-ar-auth', tag: 'verified-worker-tag' }],
+      [],
+      undefined,
+      [],
+      0,
+      undefined,
+      [],
+      undefined,
+      {},
+      [],
+      [],
+      { 'test-ar-auth': versionId }
+    );
+    const persistBackfill = vi.fn(async () => {});
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      deleteWorkers: true,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: false,
+      deleteR2: false,
+      deletePages: false,
+      knownWorkerResources: [
+        {
+          name: 'test-ar-auth',
+          cloudflareVersionId: versionId,
+          cloudflareVersionState: 'uploaded',
+        },
+      ],
+      onWorkerIdentityBackfill: persistBackfill,
+      workerDeletePropagationDelayMs: 0,
+      onProgress: () => {},
+    });
+
+    expect(result.success).toBe(true);
+    expect(persistBackfill).toHaveBeenCalledWith([
+      {
+        name: 'test-ar-auth',
+        cloudflareVersionId: versionId,
+        cloudflareScriptTag: 'verified-worker-tag',
+      },
+    ]);
+    const wranglerCalls = execaMock.mock.calls.map(([, args]) => (args as string[]).join(' '));
+    expect(wranglerCalls).toContain(
+      `wrangler versions view ${versionId} --name test-ar-auth --json`
+    );
+    expect(wranglerCalls).not.toContain('wrangler deployments list --name test-ar-auth');
+  });
+
   it('fails with zero mutations when a legacy Worker active Version ID no longer matches', async () => {
     const lockedVersionId = '11111111-1111-4111-8111-111111111111';
     const replacementVersionId = '22222222-2222-4222-8222-222222222222';
@@ -2171,6 +2225,19 @@ function mockCloudflareInventory(
           `Version(s): (100%) ${versionId}\n`,
         stderr: '',
       };
+    }
+    if (key.startsWith('versions view ')) {
+      const match = key.match(/^versions view (\S+) --name (\S+) --json$/u);
+      const versionId = match?.[1];
+      const workerName = match?.[2];
+      if (!versionId || !workerName || workerDeploymentVersionIds[workerName] !== versionId) {
+        return {
+          exitCode: 1,
+          stdout: '',
+          stderr: `Worker version ${versionId ?? 'unknown'} not found`,
+        };
+      }
+      return { exitCode: 0, stdout: JSON.stringify({ id: versionId }), stderr: '' };
     }
     if (key.startsWith('queues consumer worker remove ')) {
       if (queueConsumerFailures.detach && key.includes(queueConsumerFailures.detach.match)) {

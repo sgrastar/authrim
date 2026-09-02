@@ -1034,6 +1034,9 @@ function classifyRetry(error: unknown): RetryKind {
   if (/authentication error\s*\[code:\s*10000\]/i.test(message)) {
     return 'transient';
   }
+  if (/worker_version_(?:d1_)?binding_readback_(?:empty|invalid|invalid_json)/u.test(message)) {
+    return 'transient';
+  }
   if (
     /\b5\d{2}\b|\b7010\b|\b100146\b|requested Worker version could not be found|service unavailable|internal server error|fetch failed|network error|econnreset|econnrefused|etimedout|enotfound|eai_again|socket hang up|connection reset|timed out|und_err/i.test(
       message
@@ -1238,9 +1241,12 @@ function parseWranglerVersionD1Bindings(output: unknown): Record<string, string>
   if (typeof output !== 'string' || output.trim().length === 0) {
     throw new Error('worker_version_binding_readback_empty');
   }
-  const parsed = JSON.parse(output) as {
-    resources?: { bindings?: WranglerVersionBinding[] };
-  };
+  let parsed: { resources?: { bindings?: WranglerVersionBinding[] } };
+  try {
+    parsed = JSON.parse(output) as typeof parsed;
+  } catch {
+    throw new Error('worker_version_binding_readback_invalid_json');
+  }
   if (!Array.isArray(parsed.resources?.bindings)) {
     throw new Error('worker_version_binding_readback_invalid');
   }
@@ -1283,12 +1289,12 @@ async function verifyUploadedWorkerD1Bindings(
     'utf8'
   );
   const expected = parseWranglerToml(configContent, options.env).d1;
-  const commandResult = await runWithAdaptiveRetry(
+  const actual = await runWithAdaptiveRetry(
     `Verifying D1 bindings for ${context.workerName} version`,
     options,
     throttle,
-    () =>
-      execa(
+    async () => {
+      const commandResult = await execa(
         'pnpm',
         [
           'exec',
@@ -1305,11 +1311,17 @@ async function verifyUploadedWorkerD1Bindings(
           cwd: context.packageDir,
           reject: true,
           cancelSignal: options.signal,
-          env: { WRANGLER_LOG: 'warn' },
+          // Wrangler emits `versions view --json` through its `logRaw` channel. `warn`
+          // suppresses that channel and makes a successful readback look like empty stdout.
+          env: { WRANGLER_LOG: 'log' },
         }
-      )
+      );
+      // A successful Wrangler process can still yield a temporarily empty or incomplete JSON
+      // readback. Parse inside the bounded retry so only transport/readback failures retry;
+      // the actual binding contract mismatch below remains immediately fatal.
+      return parseWranglerVersionD1Bindings(commandResult.stdout);
+    }
   );
-  const actual = parseWranglerVersionD1Bindings(commandResult.stdout);
   const mismatch = describeD1BindingMismatch(expected, actual);
   if (mismatch) {
     throw new Error(`worker_version_d1_binding_mismatch:${mismatch}`);
@@ -1507,12 +1519,12 @@ async function deployWorkerDirect(
       context.workerName,
       deployedVersionId
     );
-    if (await hasManagedWorkerDeployGuard(context.packageDir, options.configFile)) {
-      await verifyUploadedWorkerD1Bindings(context, deployedVersionId, options, throttle);
-    }
     cloudflareScriptTag = await options.workerScriptOwnership?.captureAfterMutation(
       context.workerName
     );
+    if (await hasManagedWorkerDeployGuard(context.packageDir, options.configFile)) {
+      await verifyUploadedWorkerD1Bindings(context, deployedVersionId, options, throttle);
+    }
     options.onProgress?.(`  ✓ ${context.workerName} deployed successfully`);
     return {
       component: context.component,
@@ -1634,10 +1646,10 @@ async function uploadWorkerVersion(
       throw new Error('Wrangler did not report the uploaded Cloudflare Version ID');
     }
     await options.workerScriptOwnership?.checkpointCommittedVersion(context.workerName, versionId);
-    await verifyUploadedWorkerD1Bindings(context, versionId, options, throttle);
     const cloudflareScriptTag = await options.workerScriptOwnership?.captureAfterMutation(
       context.workerName
     );
+    await verifyUploadedWorkerD1Bindings(context, versionId, options, throttle);
     options.onProgress?.(`  ✓ ${context.workerName} version uploaded`);
     return {
       component: context.component,

@@ -27,8 +27,10 @@ import { reconcileLegacyQueueIdentitiesForDeletion } from '../../core/legacy-que
 import {
   acquireDeployConfigLock,
   acquireEnvironmentOperationForEnvironment,
+  collectWorkerDeletionIdentities,
   reconcileLockAfterResourceDeletion,
   saveLockFile,
+  withBackfilledWorkerDeletionIdentities,
 } from '../../core/lock.js';
 import {
   environmentOperationBlockMessage,
@@ -237,9 +239,12 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     if (!decision.allowed) {
       throw new Error(environmentOperationBlockMessage(decision));
     }
-    if (deleteWorkers && Object.keys(lock?.workerScriptOwnership ?? {}).length > 0) {
-      throw new Error(
-        'Worker deletion is blocked because an unfinished Worker ownership checkpoint requires recovery'
+    const unfinishedWorkerOwnershipCount = Object.keys(lock?.workerScriptOwnership ?? {}).length;
+    if (deleteWorkers && unfinishedWorkerOwnershipCount > 0) {
+      console.log(
+        chalk.yellow(
+          `Using ${unfinishedWorkerOwnershipCount} unfinished Worker ownership checkpoint(s) for verified deletion recovery.`
+        )
       );
     }
     const localConfigPath = localEnvironmentState.paths.find((path) =>
@@ -292,7 +297,7 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
         );
       }
     }
-    const knownWorkerResources = lock ? Object.values(lock.workers ?? {}) : [];
+    const knownWorkerResources = lock ? collectWorkerDeletionIdentities(lock) : [];
     const knownD1Resources = lock ? Object.values(lock.d1) : [];
     const knownKVResources = lock ? Object.values(lock.kv) : [];
     const knownQueueResources = lock?.queues ? Object.values(lock.queues) : [];
@@ -361,22 +366,7 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
               }>
             ) => {
               if (!lock) throw new Error('Worker identity lock is unavailable');
-              const workers = { ...lock.workers };
-              for (const resource of resources) {
-                const component = Object.entries(workers).find(
-                  ([, worker]) => worker.name === resource.name
-                )?.[0];
-                if (!component || !resource.cloudflareScriptTag) {
-                  throw new Error(
-                    `Worker identity backfill target is unavailable: ${resource.name}`
-                  );
-                }
-                workers[component] = {
-                  ...workers[component],
-                  cloudflareScriptTag: resource.cloudflareScriptTag,
-                };
-              }
-              lock = { ...lock, workers, updatedAt: new Date().toISOString() };
+              lock = withBackfilledWorkerDeletionIdentities(lock, resources);
               await saveLockFile(lock, operationLock.lockFilePath);
             },
           }
