@@ -59,7 +59,10 @@ import {
   assertR2BucketOwnershipIdentity,
   assertR2BucketOwnershipForUse,
 } from '../core/cloudflare.js';
-import { isWildcardDnsPermissionError } from '../core/wildcard-dns-manual-action.js';
+import {
+  getCloudflareDnsRecordsDashboardUrl,
+  isWildcardDnsPermissionError,
+} from '../core/wildcard-dns-manual-action.js';
 import {
   AuthrimConfigSchema,
   createDefaultConfig,
@@ -7485,6 +7488,14 @@ export function createApiRoutes(): Hono {
             ? 'manual_action_required'
             : 'complete'
           : 'failed';
+        const manualDnsDashboardUrl = getCloudflareDnsRecordsDashboardUrl(
+          deleteConfig?.cloudflare.accountId,
+          deleteDnsBaseDomain
+        );
+        const manualDns = (result.manualDns ?? []).map((issue) => ({
+          ...issue,
+          dashboardUrl: manualDnsDashboardUrl,
+        }));
 
         if (state.logPath) {
           addProgress(`📝 Progress log saved: ${state.logPath}`);
@@ -7505,7 +7516,7 @@ export function createApiRoutes(): Hono {
             postDeleteVerification: result.postDeleteVerification,
             deleted: result.deleted,
             manualR2: result.manualR2,
-            manualDns: result.manualDns,
+            manualDns,
             errors: result.errors,
             progress: state.progress,
             operationProgress: state.operationProgress,

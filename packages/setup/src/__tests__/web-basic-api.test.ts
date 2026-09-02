@@ -874,7 +874,13 @@ describe('setup web basic API contracts', () => {
       success: true,
       completion: 'manual_action_required',
       errors: [],
-      manualR2: [{ bucketName: 'prod-diagnostic-logs', objectCount: 5_214 }],
+      manualR2: [
+        {
+          bucketName: 'prod-diagnostic-logs',
+          objectCount: 5_214,
+          dashboardUrl: 'https://dash.cloudflare.com/account/r2/bucket',
+        },
+      ],
     });
     await expect((await createApiRoutes().request('/deploy/status')).json()).resolves.toMatchObject(
       {
@@ -882,6 +888,54 @@ describe('setup web basic API contracts', () => {
         error: null,
       }
     );
+  });
+
+  it('returns a Cloudflare DNS dashboard link for deletion DNS manual actions', async () => {
+    const env = 'prod';
+    const accountId = '98edc9b77724418e61ae577980a7369b';
+    await writeDeployedLock(env);
+    const config = createDefaultConfig(env);
+    config.cloudflare = { accountId };
+    config.tenant.multiTenant = true;
+    config.tenant.baseDomain = 'login.example.com';
+    await writeFile(
+      join(root, '.authrim', env, 'config.json'),
+      `${JSON.stringify(config, null, 2)}\n`,
+      { mode: 0o600 }
+    );
+    cloudflareMocks.deleteEnvironment.mockResolvedValueOnce({
+      success: true,
+      completion: 'manual_action_required',
+      environmentEmpty: false,
+      deleted: { workers: [], d1: [], kv: [], queues: [], r2: [], pages: [] },
+      manualR2: [],
+      manualDns: [
+        {
+          role: 'tenant_wildcard',
+          name: '(tenant_wildcard)',
+          reason: 'dns_ownership_evidence_missing',
+        },
+      ],
+      errors: [],
+    });
+
+    const response = await createApiRoutes().request(
+      `/environments/${env}/delete`,
+      post(`/environments/${env}/delete`, {}, generateSessionToken())
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      completion: 'manual_action_required',
+      manualR2: [],
+      manualDns: [
+        {
+          role: 'tenant_wildcard',
+          dashboardUrl: `https://dash.cloudflare.com/${accountId}/example.com/dns/records`,
+        },
+      ],
+    });
   });
 
   it('returns an error and preserves local state when Cloudflare deletion is incomplete', async () => {

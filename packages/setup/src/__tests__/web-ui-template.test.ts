@@ -195,6 +195,27 @@ describe('getHtmlTemplate', () => {
     expect(html).not.toContain("document.getElementById('delete-r2').checked = env.r2.length > 0;");
   });
 
+  it('renders R2 and DNS deletion manual actions independently with dashboard links', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('function appendManualR2CleanupNotice(parent, targets)');
+    expect(html).toContain('function appendManualDnsCleanupNotice(parent, issues)');
+    expect(html).toContain('if (manualR2Targets.length > 0)');
+    expect(html).toContain('if (manualDnsIssues.length > 0)');
+    expect(html).toContain('appendManualR2CleanupNotice(result, manualR2Targets)');
+    expect(html).toContain('appendManualDnsCleanupNotice(result, manualDnsIssues)');
+    expect(html).toContain('if (target.dashboardUrl)');
+    expect(html).toContain('link.href = target.dashboardUrl');
+    expect(html).toContain("t('web.deploy.openCloudflareDns')");
+    expect(html).toContain("'https://dash.cloudflare.com/'");
+  });
+
   it('reports key replacement only after guarded generation succeeds', () => {
     const html = getHtmlTemplate(
       'session-token',

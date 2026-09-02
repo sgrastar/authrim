@@ -205,7 +205,7 @@ describe('CLI environment deletion', () => {
         )
       ).toBe(true);
       expect(log.mock.calls.flat().join('\n')).toContain(
-        'Complete the R2 actions above to finish cleanup.'
+        'Environment cleanup requires the manual actions above before it can finish.'
       );
       expect(mocks.cleanupLocalEnvironmentArtifacts).not.toHaveBeenCalled();
       expect(mocks.release).toHaveBeenCalledOnce();

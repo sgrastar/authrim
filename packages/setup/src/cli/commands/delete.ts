@@ -527,7 +527,7 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
   if (result.completion === 'manual_action_required') {
     console.log(
       chalk.yellow(
-        '\n⚠️  Environment resources were deleted. Complete the R2 actions above to finish cleanup.'
+        '\n⚠️  Environment cleanup requires the manual actions above before it can finish.'
       )
     );
   } else if (result.success && result.environmentEmpty === true) {

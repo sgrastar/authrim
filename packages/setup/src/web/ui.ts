@@ -7542,6 +7542,35 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       parent.appendChild(createAlert('warning', content));
     }
 
+    function appendManualDnsCleanupNotice(parent, issues) {
+      if (!Array.isArray(issues) || issues.length === 0) return;
+
+      const content = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = t('web.deploy.manualDnsSectionTitle');
+      content.appendChild(title);
+
+      const list = document.createElement('ul');
+      for (const issue of issues) {
+        const item = document.createElement('li');
+        item.textContent = String(issue.name || issue.role || 'DNS') + ': ' + String(issue.reason || 'manual review required');
+        list.appendChild(item);
+      }
+      content.appendChild(list);
+
+      const dashboardLink = document.createElement('a');
+      dashboardLink.href =
+        issues.find((issue) => issue && issue.dashboardUrl)?.dashboardUrl ||
+        getManualWildcardDnsDashboardUrl() ||
+        'https://dash.cloudflare.com/';
+      dashboardLink.target = '_blank';
+      dashboardLink.rel = 'noreferrer';
+      dashboardLink.textContent = t('web.deploy.openCloudflareDns');
+      content.appendChild(dashboardLink);
+
+      parent.appendChild(createAlert('warning', content));
+    }
+
     function createUrlItem(label, text, href) {
       const row = document.createElement('tr');
       row.className = 'endpoint-row';
@@ -14397,8 +14426,16 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         if (deleteResult.success && deleteResult.completion === 'manual_action_required') {
           updateProgressUI('delete', totalToDelete, totalToDelete, t('web.delete.complete'));
           result.textContent = '';
-          result.appendChild(createAlert('warning', t('web.delete.manualR2Summary')));
-          appendManualR2CleanupNotice(result, deleteResult.manualR2);
+          const manualR2Targets = Array.isArray(deleteResult.manualR2) ? deleteResult.manualR2 : [];
+          const manualDnsIssues = Array.isArray(deleteResult.manualDns) ? deleteResult.manualDns : [];
+          if (manualR2Targets.length > 0) {
+            result.appendChild(createAlert('warning', t('web.delete.manualR2Summary')));
+            appendManualR2CleanupNotice(result, manualR2Targets);
+          }
+          if (manualDnsIssues.length > 0) {
+            result.appendChild(createAlert('warning', t('web.delete.dnsNote')));
+            appendManualDnsCleanupNotice(result, manualDnsIssues);
+          }
         } else if (deleteResult.success) {
           // Final progress update
           updateProgressUI('delete', totalToDelete, totalToDelete, t('web.delete.complete'));
@@ -14423,6 +14460,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           result.textContent = '';
           result.appendChild(createAlert('error', t('web.delete.errorList', { errors: apiErrorMessages(deleteResult).join(', ') })));
           appendManualR2CleanupNotice(result, deleteResult.manualR2);
+          appendManualDnsCleanupNotice(result, deleteResult.manualDns);
           btn.classList.remove('hidden');
           btn.disabled = false;
         }
