@@ -57,6 +57,13 @@ import {
   prepareManagedWorkerScriptOwnership,
   type WorkerScriptOwnershipGuard,
 } from './worker-script-ownership.js';
+import {
+  assertLocalDeploymentCapacity,
+  isInsufficientLocalDiskSpaceError,
+  MINIMUM_BUILD_FREE_BYTES,
+  MINIMUM_WORKER_DEPLOY_FREE_BYTES,
+  type ReadAvailableDiskBytes,
+} from './local-deployment-capacity.js';
 
 export {
   DEFAULT_SECRET_TARGET_WORKERS,
@@ -285,6 +292,8 @@ export interface DeployOptions {
   sleep?: (delayMs: number) => Promise<void>;
   /** Test hook for deterministic full-jitter retry behavior. */
   random?: () => number;
+  /** Test/embedding hook for deterministic local capacity checks. */
+  readAvailableDiskBytes?: ReadAvailableDiskBytes;
   /** Optional cancellation signal. Gradual rollouts use it to roll traffic back on interruption. */
   signal?: AbortSignal;
   /** Remove retired static bearer secrets after the replacement Worker code is live. */
@@ -648,11 +657,14 @@ export interface BuildOptions {
   rootDir: string;
   components?: WorkerComponent[];
   onProgress?: (message: string) => void;
+  /** Test/embedding hook for deterministic local capacity checks. */
+  readAvailableDiskBytes?: ReadAvailableDiskBytes;
 }
 
 export interface BuildResult {
   success: boolean;
   error?: string;
+  errorCode?: 'insufficient_local_disk_space';
 }
 
 export const DEFAULT_INTER_DEPLOY_DELAY_MS = 0;
@@ -731,7 +743,23 @@ export async function buildApiPackages(options: BuildOptions): Promise<BuildResu
       return { success: false, error };
     }
 
-    // Check if node_modules exists
+    // Clear turbo cache to ensure fresh builds
+    onProgress?.('Clearing build cache...');
+    await execa('rm', ['-rf', '.turbo', 'node_modules/.cache'], {
+      cwd: rootDir,
+      reject: false, // Don't fail if directories don't exist
+    });
+
+    onProgress?.('Checking local disk space before package build...');
+    await assertLocalDeploymentCapacity({
+      rootDir,
+      phase: 'package build',
+      minimumFreeBytes: MINIMUM_BUILD_FREE_BYTES,
+      readAvailableBytes: options.readAvailableDiskBytes,
+    });
+
+    // Check if node_modules exists only after the capacity preflight. Dependency installation can
+    // consume substantially more space than a normal incremental build.
     const nodeModulesPath = join(rootDir, 'node_modules');
     if (!existsSync(nodeModulesPath)) {
       onProgress?.('Installing dependencies (node_modules not found)...');
@@ -740,14 +768,14 @@ export async function buildApiPackages(options: BuildOptions): Promise<BuildResu
         stdio: 'pipe',
       });
       onProgress?.('Dependencies installed');
+      onProgress?.('Rechecking local disk space after dependency installation...');
+      await assertLocalDeploymentCapacity({
+        rootDir,
+        phase: 'package build',
+        minimumFreeBytes: MINIMUM_BUILD_FREE_BYTES,
+        readAvailableBytes: options.readAvailableDiskBytes,
+      });
     }
-
-    // Clear turbo cache to ensure fresh builds
-    onProgress?.('Clearing build cache...');
-    await execa('rm', ['-rf', '.turbo', 'node_modules/.cache'], {
-      cwd: rootDir,
-      reject: false, // Don't fail if directories don't exist
-    });
 
     const filters =
       components && components.length > 0
@@ -765,10 +793,24 @@ export async function buildApiPackages(options: BuildOptions): Promise<BuildResu
       stdio: 'pipe',
     });
 
+    onProgress?.('Checking local disk space before Worker deployment...');
+    await assertLocalDeploymentCapacity({
+      rootDir,
+      phase: 'Worker deployment',
+      minimumFreeBytes: MINIMUM_WORKER_DEPLOY_FREE_BYTES,
+      readAvailableBytes: options.readAvailableDiskBytes,
+    });
+
     return { success: true };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    return { success: false, error: errorMsg };
+    return {
+      success: false,
+      error: errorMsg,
+      ...(isInsufficientLocalDiskSpaceError(error)
+        ? { errorCode: 'insufficient_local_disk_space' as const }
+        : {}),
+    };
   }
 }
 
@@ -1015,6 +1057,12 @@ function getErrorText(error: unknown): string {
     }
   }
   return error instanceof Error ? error.message : String(error);
+}
+
+export function isLocalDiskExhaustionError(error: unknown): boolean {
+  return /\bENOSPC\b|no space left on device|insufficient[ _]local[ _]disk[ _]space/i.test(
+    getErrorText(error)
+  );
 }
 
 function classifyRetry(error: unknown): RetryKind {
@@ -1947,15 +1995,12 @@ async function runDependencyScheduler(
   >();
   const results = new Map<WorkerComponent, DeployResult>();
   let halted = false;
+  let haltReason = 'Skipped because another staged promotion failed';
 
   while (pending.size > 0 || active.size > 0) {
     if (halted) {
       for (const component of pending) {
-        const result = makeSkippedResult(
-          component,
-          options,
-          'Skipped because another staged promotion failed'
-        );
+        const result = makeSkippedResult(component, options, haltReason);
         results.set(component, result);
         options.onError?.(component, new Error(result.error));
       }
@@ -2023,7 +2068,11 @@ async function runDependencyScheduler(
     results.set(settled.component, settled.result);
     if (!settled.result.success) {
       options.onError?.(settled.component, new Error(settled.result.error));
-      if (schedulerOptions.stopOnFailure) {
+      if (isLocalDiskExhaustionError(settled.result.error)) {
+        halted = true;
+        haltReason =
+          'Skipped because Worker deployment stopped after local disk space was exhausted';
+      } else if (schedulerOptions.stopOnFailure) {
         halted = true;
       }
     }
@@ -2039,6 +2088,15 @@ async function runSingleWorkerWithDeploymentLease<T>(
 ): Promise<T> {
   const existingSession = options.deploymentLeaseSession;
   if (options.dryRun) return operation();
+  if (!existingSession) {
+    options.onProgress?.('Checking local disk space before Worker deployment...');
+    await assertLocalDeploymentCapacity({
+      rootDir: options.rootDir,
+      phase: 'Worker deployment',
+      minimumFreeBytes: MINIMUM_WORKER_DEPLOY_FREE_BYTES,
+      readAvailableBytes: options.readAvailableDiskBytes,
+    });
+  }
   await assertDeployConfigLockProof(options);
   if (existingSession) {
     if (!options.workerScriptOwnership) {
@@ -2726,6 +2784,15 @@ export async function deployAll(
   const startTime = Date.now();
   const components = resolvePlannedComponents(enabledComponents, options.existingComponents);
   const existingComponents = new Set(options.existingComponents ?? []);
+  if (!options.dryRun && components.length > 0) {
+    options.onProgress?.('Checking local disk space before Worker deployment...');
+    await assertLocalDeploymentCapacity({
+      rootDir: options.rootDir,
+      phase: 'Worker deployment',
+      minimumFreeBytes: MINIMUM_WORKER_DEPLOY_FREE_BYTES,
+      readAvailableBytes: options.readAvailableDiskBytes,
+    });
+  }
   if (
     !options.dryRun &&
     components.includes('ar-control') &&
@@ -3744,6 +3811,15 @@ export async function deployUiWorkerComponent(
 
   try {
     await assertDeployConfigLockProof(options);
+    if (!dryRun) {
+      onProgress?.('Checking local disk space before UI Worker deployment...');
+      await assertLocalDeploymentCapacity({
+        rootDir,
+        phase: skipBuild ? 'Worker deployment' : 'package build',
+        minimumFreeBytes: skipBuild ? MINIMUM_WORKER_DEPLOY_FREE_BYTES : MINIMUM_BUILD_FREE_BYTES,
+        readAvailableBytes: options.readAvailableDiskBytes,
+      });
+    }
     // Build the UI first
     onProgress?.(`Building ${component}...`);
 
@@ -4202,6 +4278,23 @@ export async function deployAllUiWorkers(
       ...(options.perComponent?.['ar-login-ui'] || {}),
     });
     results.push(loginResult);
+    if (!loginResult.success && isLocalDiskExhaustionError(loginResult.error)) {
+      if (enabledComponents.adminUi) {
+        results.push({
+          component: 'ar-admin-ui',
+          projectName:
+            options.perComponent?.['ar-admin-ui']?.projectName ?? `${options.env}-ar-admin-ui`,
+          success: false,
+          error: 'Skipped because UI deployment stopped after local disk space was exhausted',
+          duration: 0,
+        });
+      }
+      return {
+        results,
+        successCount: 0,
+        failedCount: results.length,
+      };
+    }
   }
 
   if (enabledComponents.adminUi) {

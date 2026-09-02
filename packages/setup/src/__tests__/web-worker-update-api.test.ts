@@ -93,6 +93,15 @@ const executeSetupPluginControlOperatorMock = vi.hoisted(() => vi.fn());
 const executeSetupPluginCleanupOperatorMock = vi.hoisted(() => vi.fn());
 const refreshWorkerDeploymentArtifactsMock = vi.hoisted(() => vi.fn());
 const prepareManagedWorkerScriptOwnershipMock = vi.hoisted(() => vi.fn());
+const assertLocalDeploymentCapacityMock = vi.hoisted(() => vi.fn());
+
+vi.mock('../core/local-deployment-capacity.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/local-deployment-capacity.js')>();
+  return {
+    ...actual,
+    assertLocalDeploymentCapacity: assertLocalDeploymentCapacityMock,
+  };
+});
 
 vi.mock('../core/deploy.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../core/deploy.js')>();
@@ -820,6 +829,7 @@ describe('setup web worker update API', () => {
     process.chdir(tempDir);
     controlTokenBootstrapCompleted = false;
 
+    assertLocalDeploymentCapacityMock.mockReset().mockResolvedValue(2 * 1024 * 1024 * 1024);
     buildApiPackagesMock.mockReset();
     deployAllMock.mockReset();
     deployAllUiWorkersMock.mockReset();
@@ -2404,6 +2414,38 @@ describe('setup web worker update API', () => {
       },
     });
     await expect(readFile(operationLockPath, 'utf-8')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('returns an actionable 507 response when the initial build has insufficient disk space', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    await markEnvironmentProvisioned(env);
+    buildApiPackagesMock.mockResolvedValue({
+      success: false,
+      errorCode: 'insufficient_local_disk_space',
+      error:
+        'Insufficient local disk space for package build: 144 MiB available; at least 1 GiB is required.',
+    });
+
+    const token = generateSessionToken();
+    const response = await createApiRoutes().request('/deploy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+      },
+      body: JSON.stringify({ env }),
+    });
+
+    expect(response.status).toBe(507);
+    await expect(response.json()).resolves.toMatchObject({
+      success: false,
+      errorCode: 'insufficient_local_disk_space',
+      requiredAction: 'free_local_disk_space_and_retry',
+      error: expect.stringContaining('144 MiB available'),
+    });
+    expect(applyReleaseSchemaUpdatePlanMock).not.toHaveBeenCalled();
+    expect(deployAllMock).not.toHaveBeenCalled();
   });
 
   it('rejects a same-name replacement D1 before Web schema or Worker mutation', async () => {

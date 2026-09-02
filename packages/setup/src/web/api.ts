@@ -201,6 +201,13 @@ import { publishDynamicPluginWorkerBundles } from '../core/dynamic-plugin-public
 import { publishAndActivateMigrationRelease } from '../core/migration-release-publication.js';
 import { ensureInitialNotificationProviderConfiguration } from '../core/notification-provider-bootstrap.js';
 import {
+  assertLocalDeploymentCapacity,
+  isInsufficientLocalDiskSpaceError,
+  MINIMUM_BUILD_FREE_BYTES,
+  MINIMUM_PROVISIONING_FREE_BYTES,
+  MINIMUM_WORKER_DEPLOY_FREE_BYTES,
+} from '../core/local-deployment-capacity.js';
+import {
   deployAll,
   buildApiPackages,
   deployAllUiWorkers,
@@ -3056,10 +3063,16 @@ export function createApiRoutes(): Hono {
             {
               success: false,
               error: state.error,
+              ...(buildResult.errorCode
+                ? {
+                    errorCode: buildResult.errorCode,
+                    requiredAction: 'free_local_disk_space_and_retry',
+                  }
+                : {}),
               progress: state.progress,
               logPath: state.logPath,
             },
-            500
+            buildResult.errorCode === 'insufficient_local_disk_space' ? 507 : 500
           );
         }
 
@@ -3352,7 +3365,19 @@ export function createApiRoutes(): Hono {
           state.status = 'error';
           state.error = `Build failed: ${buildResult.error}`;
           await flushProgressLog();
-          return c.json({ success: false, error: state.error }, 500);
+          return c.json(
+            {
+              success: false,
+              error: state.error,
+              ...(buildResult.errorCode
+                ? {
+                    errorCode: buildResult.errorCode,
+                    requiredAction: 'free_local_disk_space_and_retry',
+                  }
+                : {}),
+            },
+            buildResult.errorCode === 'insufficient_local_disk_space' ? 507 : 500
+          );
         }
 
         const emailDeployOptions = {
@@ -3706,6 +3731,12 @@ export function createApiRoutes(): Hono {
         state.logPath = await beginProgressLog(env, 'provision');
         clearProgress();
         state.config = config;
+        addProgress('Checking local disk space before provisioning...');
+        await assertLocalDeploymentCapacity({
+          rootDir,
+          phase: 'environment provisioning',
+          minimumFreeBytes: MINIMUM_PROVISIONING_FREE_BYTES,
+        });
         addProgress(`Provisioning Cloudflare resources for ${env}...`);
 
         if (!existingIntent) {
@@ -3867,6 +3898,18 @@ export function createApiRoutes(): Hono {
         state.error = sanitizeError(error);
         addProgress(`❌ Provisioning failed: ${state.error}`);
         await flushProgressLog();
+        if (isInsufficientLocalDiskSpaceError(error)) {
+          return c.json(
+            {
+              success: false,
+              error: sanitizeError(error),
+              errorCode: error.code,
+              requiredAction: 'free_local_disk_space_and_retry',
+              logPath: state.logPath,
+            },
+            507
+          );
+        }
         return c.json({ success: false, error: sanitizeError(error), logPath: state.logPath }, 500);
       } finally {
         try {
@@ -4511,12 +4554,27 @@ export function createApiRoutes(): Hono {
               {
                 success: false,
                 error: `Build failed: ${sanitizeError(new Error(buildResult.error))}`,
+                ...(buildResult.errorCode
+                  ? {
+                      errorCode: buildResult.errorCode,
+                      requiredAction: 'free_local_disk_space_and_retry',
+                    }
+                  : {}),
                 logPath: state.logPath,
               },
-              500
+              buildResult.errorCode === 'insufficient_local_disk_space' ? 507 : 500
             );
           }
           addProgress('Packages built successfully');
+        }
+
+        if (!dryRun) {
+          addProgress('Checking local disk space before release deployment...');
+          await assertLocalDeploymentCapacity({
+            rootDir: resolvedRootDir,
+            phase: 'release deployment',
+            minimumFreeBytes: MINIMUM_BUILD_FREE_BYTES,
+          });
         }
 
         const missingStreamTargets = initialTargets.filter((target) => !target.streamId);
@@ -5844,6 +5902,12 @@ export function createApiRoutes(): Hono {
           {
             success: false,
             error: state.error,
+            ...(isInsufficientLocalDiskSpaceError(error)
+              ? {
+                  errorCode: error.code,
+                  requiredAction: 'free_local_disk_space_and_retry',
+                }
+              : {}),
             logPath: state.logPath,
             cleanupRequired:
               error instanceof CloudflareTokenBootstrapError && error.cleanupRequired,
@@ -5853,7 +5917,7 @@ export function createApiRoutes(): Hono {
               error instanceof CloudflareTokenBootstrapError &&
               error.code === 'cloudflare_bootstrap_recovery_token_required',
           },
-          500
+          isInsufficientLocalDiskSpaceError(error) ? 507 : 500
         );
       } finally {
         bootstrapToken = '';
@@ -8208,10 +8272,16 @@ export function createApiRoutes(): Hono {
             {
               success: false,
               error: state.error,
+              ...(buildResult.errorCode
+                ? {
+                    errorCode: buildResult.errorCode,
+                    requiredAction: 'free_local_disk_space_and_retry',
+                  }
+                : {}),
               progress: state.progress,
               logPath: state.logPath,
             },
-            500
+            buildResult.errorCode === 'insufficient_local_disk_space' ? 507 : 500
           );
         }
 
@@ -8531,6 +8601,14 @@ export function createApiRoutes(): Hono {
             environment: env,
             config: AuthrimConfigSchema.parse(cfg),
             lock: componentDeploymentLock,
+          });
+          addProgress('Checking local disk space before component deployment...');
+          await assertLocalDeploymentCapacity({
+            rootDir,
+            phase: skipBuild ? 'Worker deployment' : 'package build',
+            minimumFreeBytes: skipBuild
+              ? MINIMUM_WORKER_DEPLOY_FREE_BYTES
+              : MINIMUM_BUILD_FREE_BYTES,
           });
         }
 
@@ -8951,7 +9029,19 @@ export function createApiRoutes(): Hono {
 
             if (!buildResult.success) {
               const error = markOperationError(`Build failed: ${buildResult.error}`);
-              return c.json({ success: false, error }, 500);
+              return c.json(
+                {
+                  success: false,
+                  error,
+                  ...(buildResult.errorCode
+                    ? {
+                        errorCode: buildResult.errorCode,
+                        requiredAction: 'free_local_disk_space_and_retry',
+                      }
+                    : {}),
+                },
+                buildResult.errorCode === 'insufficient_local_disk_space' ? 507 : 500
+              );
             }
           }
 
@@ -9170,7 +9260,20 @@ export function createApiRoutes(): Hono {
         }
       } catch (error) {
         const sanitizedError = markOperationError(sanitizeError(error));
-        return c.json({ success: false, error: sanitizedError, logPath: state.logPath }, 500);
+        return c.json(
+          {
+            success: false,
+            error: sanitizedError,
+            ...(isInsufficientLocalDiskSpaceError(error)
+              ? {
+                  errorCode: error.code,
+                  requiredAction: 'free_local_disk_space_and_retry',
+                }
+              : {}),
+            logPath: state.logPath,
+          },
+          isInsufficientLocalDiskSpaceError(error) ? 507 : 500
+        );
       } finally {
         await flushProgressLog();
         try {

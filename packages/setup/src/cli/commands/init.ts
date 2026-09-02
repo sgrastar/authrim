@@ -104,6 +104,10 @@ import {
 } from '../../core/pending-email-secrets.js';
 import { checkWranglerStatus } from '../../core/wrangler-sync.js';
 import {
+  assertLocalDeploymentCapacity,
+  MINIMUM_PROVISIONING_FREE_BYTES,
+} from '../../core/local-deployment-capacity.js';
+import {
   beginOrResumeProvisioningIntent,
   calculateProvisioningResourceSpecDigest,
   completeProvisioningIntent,
@@ -2839,6 +2843,12 @@ async function executeSetup(
     if (!provisionDecision.allowed) {
       throw new Error(environmentOperationBlockMessage(provisionDecision));
     }
+
+    await assertLocalDeploymentCapacity({
+      rootDir: outputDir,
+      phase: 'environment provisioning',
+      minimumFreeBytes: MINIMUM_PROVISIONING_FREE_BYTES,
+    });
 
     if (!existingIntent) {
       const remoteEnvironments = await detectEnvironments(undefined, {

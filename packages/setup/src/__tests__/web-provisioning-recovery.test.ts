@@ -131,8 +131,11 @@ describe('Web interrupted provisioning recovery', () => {
     );
     const configWrite = provisioning.indexOf('await writePrivateFileAtomically(envPaths.config,');
     const remoteProvisioning = provisioning.indexOf('const resources = await provisionResources({');
+    const capacityCheck = provisioning.indexOf('await assertLocalDeploymentCapacity({');
 
     expect(collisionCheck).toBeGreaterThanOrEqual(0);
+    expect(capacityCheck).toBeGreaterThanOrEqual(0);
+    expect(capacityCheck).toBeLessThan(collisionCheck);
     expect(intentWrite).toBeGreaterThan(collisionCheck);
     expect(configWrite).toBeGreaterThan(intentWrite);
     expect(remoteProvisioning).toBeGreaterThan(configWrite);

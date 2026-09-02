@@ -83,6 +83,7 @@ const mocks = vi.hoisted(() => ({
   waitForWorkerHttpReady: vi.fn(),
   buildWorkerHttpReadinessTargets: vi.fn(),
   prepareManagedWorkerScriptOwnership: vi.fn(),
+  assertLocalDeploymentCapacity: vi.fn(),
   ensureInitialControlPlaneResources: vi.fn(),
   ensureInitialTenantRegionShardConfig: vi.fn(),
   publishInitialControlPlaneRuntimeSnapshot: vi.fn(),
@@ -140,6 +141,14 @@ vi.mock('../core/deploy.js', async (importOriginal) => {
     loadDeploySecretsFromKeys: mocks.loadDeploySecretsFromKeys,
     resolveExistingWorkerComponents: mocks.resolveExistingWorkerComponents,
     resolveMissingUiWorkerBindingTargets: mocks.resolveMissingUiWorkerBindingTargets,
+  };
+});
+
+vi.mock('../core/local-deployment-capacity.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../core/local-deployment-capacity.js')>();
+  return {
+    ...actual,
+    assertLocalDeploymentCapacity: mocks.assertLocalDeploymentCapacity,
   };
 });
 
@@ -655,6 +664,7 @@ describe('CLI initial deployment', () => {
     vi.clearAllMocks();
     controlBootstrapCompleted = false;
     mocks.oraSpinners.length = 0;
+    mocks.assertLocalDeploymentCapacity.mockResolvedValue(2 * 1024 * 1024 * 1024);
 
     mocks.isWranglerInstalled.mockResolvedValue(true);
     mocks.checkAuth.mockResolvedValue({

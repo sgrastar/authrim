@@ -23,6 +23,7 @@ import {
   deployWorkerGradually as deployWorkerGraduallyCore,
   findNodeEngineMismatches,
   hasBlockingDeploymentFailures,
+  isLocalDiskExhaustionError,
   loadDeploySecretsFromKeys,
   nodeVersionSatisfiesEngine,
   resolveExistingWorkerComponents,
@@ -61,26 +62,42 @@ const testWorkerScriptOwnership: WorkerScriptOwnershipGuard = {
 const deployWorker = (
   ...[component, options]: Parameters<typeof deployWorkerCore>
 ): ReturnType<typeof deployWorkerCore> =>
-  deployWorkerCore(component, { ...options, workerScriptOwnership: testWorkerScriptOwnership });
+  deployWorkerCore(component, {
+    readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
+    ...options,
+    workerScriptOwnership: testWorkerScriptOwnership,
+  });
 
 const deployWorkerGradually = (
   ...[component, options, gradual]: Parameters<typeof deployWorkerGraduallyCore>
 ): ReturnType<typeof deployWorkerGraduallyCore> =>
   deployWorkerGraduallyCore(
     component,
-    { ...options, workerScriptOwnership: testWorkerScriptOwnership },
+    {
+      readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
+      ...options,
+      workerScriptOwnership: testWorkerScriptOwnership,
+    },
     gradual
   );
 
 const deployAll = (
   ...[options, components]: Parameters<typeof deployAllCore>
 ): ReturnType<typeof deployAllCore> =>
-  deployAllCore({ ...options, workerScriptOwnership: testWorkerScriptOwnership }, components);
+  deployAllCore(
+    {
+      readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
+      ...options,
+      workerScriptOwnership: testWorkerScriptOwnership,
+    },
+    components
+  );
 
 const deployUiWorkerComponent = (
   ...[component, options]: Parameters<typeof deployUiWorkerComponentCore>
 ): ReturnType<typeof deployUiWorkerComponentCore> =>
   deployUiWorkerComponentCore(component, {
+    readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
     ...options,
     workerScriptOwnership: testWorkerScriptOwnership,
   });
@@ -89,7 +106,11 @@ const deployUiWorkerBindingTargets = (
   ...[options, targets]: Parameters<typeof deployUiWorkerBindingTargetsCore>
 ): ReturnType<typeof deployUiWorkerBindingTargetsCore> =>
   deployUiWorkerBindingTargetsCore(
-    { ...options, workerScriptOwnership: testWorkerScriptOwnership },
+    {
+      readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
+      ...options,
+      workerScriptOwnership: testWorkerScriptOwnership,
+    },
     targets
   );
 
@@ -397,6 +418,7 @@ describe('buildApiPackages', () => {
       rootDir,
       components: ['ar-auth'],
       onProgress: (message) => progressMessages.push(message),
+      readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
     });
 
     expect(result.success).toBe(true);
@@ -406,6 +428,66 @@ describe('buildApiPackages', () => {
       ['exec', 'turbo', 'run', 'build', '--filter=@authrim/ar-auth'],
       expect.objectContaining({ cwd: rootDir })
     );
+  });
+
+  it('stops before turbo when local disk space is insufficient', async () => {
+    const rootDir = createTempRoot();
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+
+    const result = await buildApiPackages({
+      rootDir,
+      components: ['ar-auth'],
+      readAvailableDiskBytes: async () => 144 * 1024 * 1024,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      errorCode: 'insufficient_local_disk_space',
+      error: expect.stringContaining('144 MiB available'),
+    });
+    expect(
+      vi
+        .mocked(execa)
+        .mock.calls.some(([command, args]) => command === 'pnpm' && args.includes('turbo'))
+    ).toBe(false);
+  });
+
+  it('stops before Worker mutations when the build consumes the remaining disk reserve', async () => {
+    const rootDir = createTempRoot();
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+    const observations = [2 * 1024 * 1024 * 1024, 144 * 1024 * 1024];
+
+    const result = await buildApiPackages({
+      rootDir,
+      components: ['ar-auth'],
+      readAvailableDiskBytes: async () => observations.shift() ?? 0,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      errorCode: 'insufficient_local_disk_space',
+      error: expect.stringContaining('Worker deployment'),
+    });
+    expect(
+      vi
+        .mocked(execa)
+        .mock.calls.some(([command, args]) => command === 'pnpm' && args.includes('turbo'))
+    ).toBe(true);
+  });
+});
+
+describe('isLocalDiskExhaustionError', () => {
+  it.each([
+    'ENOSPC: write failed',
+    'no space left on device',
+    'Insufficient local disk space for package build',
+    'insufficient_local_disk_space',
+  ])('recognizes %s', (message) => {
+    expect(isLocalDiskExhaustionError(new Error(message))).toBe(true);
+  });
+
+  it('does not classify an ordinary Wrangler failure as disk exhaustion', () => {
+    expect(isLocalDiskExhaustionError(new Error('authentication failed'))).toBe(false);
   });
 });
 
@@ -2084,6 +2166,7 @@ describe('deployUiWorkerComponent', () => {
           workerScriptOwnership,
           maxRetries: 3,
           sleep: async () => undefined,
+          readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
         },
         { loginUi: true, adminUi: false }
       );
@@ -2095,6 +2178,7 @@ describe('deployUiWorkerComponent', () => {
           workerScriptOwnership,
           maxRetries: 3,
           sleep: async () => undefined,
+          readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
         },
         { loginUi: true, adminUi: false }
       );
@@ -2435,6 +2519,65 @@ describe('updateLockWithDeployments', () => {
 });
 
 describe('deployAll', () => {
+  it('rejects insufficient disk capacity before any Worker command starts', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-bridge', '1.0.0');
+
+    await expect(
+      deployAll(
+        {
+          env: 'test',
+          rootDir,
+          deploymentStrategy: 'direct',
+          readAvailableDiskBytes: async () => 144 * 1024 * 1024,
+        },
+        ['ar-bridge']
+      )
+    ).rejects.toMatchObject({ code: 'insufficient_local_disk_space' });
+    expect(vi.mocked(execa)).not.toHaveBeenCalled();
+  });
+
+  it('stops scheduling independent Workers after local disk exhaustion', async () => {
+    const rootDir = createTempRoot();
+    for (const component of ['ar-bridge', 'ar-userinfo', 'ar-vc']) {
+      createWorkerPackage(rootDir, component, '1.0.0');
+    }
+    const deployedComponents: string[] = [];
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      if (args.includes('deploy')) {
+        const component = basename(String(options?.cwd));
+        deployedComponents.push(component);
+        if (component === 'ar-bridge') {
+          throw commandError('ENOSPC: no space left on device, write');
+        }
+      }
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        concurrency: 1,
+        maxRetries: 0,
+      },
+      ['ar-bridge', 'ar-userinfo', 'ar-vc']
+    );
+
+    expect(deployedComponents).toEqual(['ar-bridge']);
+    expect(summary.failedCount).toBe(3);
+    expect(summary.results.find((result) => result.component === 'ar-bridge')?.error).toContain(
+      'no space left on device'
+    );
+    expect(summary.results.find((result) => result.component === 'ar-userinfo')?.error).toContain(
+      'local disk space was exhausted'
+    );
+    expect(summary.results.find((result) => result.component === 'ar-vc')?.error).toContain(
+      'local disk space was exhausted'
+    );
+  });
+
   it('does not issue staged rollback after the workspace capability is lost post-promotion', async () => {
     const rootDir = createTempRoot();
     createWorkerPackage(rootDir, 'ar-lib-core', '1.0.0');

@@ -90,6 +90,10 @@ import {
   prepareManagedWorkerScriptOwnership,
   type WorkerScriptOwnershipGuard,
 } from '../../core/worker-script-ownership.js';
+import {
+  assertLocalDeploymentCapacity,
+  MINIMUM_BUILD_FREE_BYTES,
+} from '../../core/local-deployment-capacity.js';
 import { generateWranglerConfig, toToml, buildResourceIdsFromLock } from '../../core/wrangler.js';
 import { buildWorkerDeploymentResourceIds } from '../../core/deployment-resource-ids.js';
 import {
@@ -2770,6 +2774,14 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     // Build packages first (unless skipped or dry-run)
     if (!resumeInitialHandoff && !options.skipBuild && !options.dryRun && !apiBuildCompleted) {
       await buildPackagesForDeployment();
+    }
+
+    if (!options.dryRun) {
+      await assertLocalDeploymentCapacity({
+        rootDir,
+        phase: 'release deployment',
+        minimumFreeBytes: MINIMUM_BUILD_FREE_BYTES,
+      });
     }
 
     // Load secrets once; Wrangler uploads each Worker's subset with its code/version.
