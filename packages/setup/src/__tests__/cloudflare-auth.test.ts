@@ -100,6 +100,39 @@ describe('checkAuth', () => {
     });
   });
 
+  it('uses Wranglers supported resolver for Keychain-backed OAuth credentials', async () => {
+    delete process.env.CLOUDFLARE_API_TOKEN;
+    vi.mocked(execa).mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: JSON.stringify({ type: 'oauth', token: 'wrangler-oauth-token' }),
+      stderr: '',
+    } as Awaited<ReturnType<typeof execa>>);
+
+    await expect(getCloudflareApiToken()).resolves.toEqual({
+      token: 'wrangler-oauth-token',
+      source: 'oauth',
+    });
+    expect(execa).toHaveBeenCalledWith(
+      'npx',
+      ['wrangler', 'auth', 'token', '--json'],
+      expect.objectContaining({ reject: false, timeout: 30_000 })
+    );
+  });
+
+  it('accepts an API token resolved by Wrangler without treating it as refreshable OAuth', async () => {
+    delete process.env.CLOUDFLARE_API_TOKEN;
+    vi.mocked(execa).mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: JSON.stringify({ type: 'api_token', token: 'wrangler-api-token' }),
+      stderr: '',
+    } as Awaited<ReturnType<typeof execa>>);
+
+    await expect(getCloudflareApiToken()).resolves.toEqual({
+      token: 'wrangler-api-token',
+      source: 'env',
+    });
+  });
+
   it('uses an explicit API token before a cached Wrangler OAuth session', async () => {
     vi.mocked(execa).mockResolvedValue({
       exitCode: 0,

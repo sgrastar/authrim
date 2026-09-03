@@ -1113,6 +1113,42 @@ export interface CloudflareApiToken {
   source: 'oauth' | 'env';
 }
 
+function parseWranglerAuthTokenOutput(stdout: string): CloudflareApiToken | null {
+  try {
+    const value = JSON.parse(stdout.trim()) as unknown;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const candidate = value as { type?: unknown; token?: unknown };
+    if (
+      (candidate.type !== 'oauth' && candidate.type !== 'api_token') ||
+      typeof candidate.token !== 'string'
+    ) {
+      return null;
+    }
+    const token = candidate.token.trim();
+    if (token.length === 0 || token.length > 8_192) return null;
+    return { token, source: candidate.type === 'oauth' ? 'oauth' : 'env' };
+  } catch {
+    return null;
+  }
+}
+
+async function getWranglerAuthToken(): Promise<CloudflareApiToken | null> {
+  try {
+    // Use Wrangler's supported credential resolver so Keychain-backed and named-profile OAuth
+    // sessions work. Never route this command through the generic wrapper: its failure text can
+    // include stdout, which is secret material for `auth token`.
+    const result = await execa('npx', ['wrangler', 'auth', 'token', '--json'], {
+      env: { ...process.env },
+      reject: false,
+      timeout: 30_000,
+      maxBuffer: 64 * 1024,
+    });
+    return result.exitCode === 0 ? parseWranglerAuthTokenOutput(result.stdout) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Get the explicit Cloudflare API token or the Wrangler OAuth credential.
  * An operator-supplied environment token is authoritative and must not be shadowed by an
@@ -1124,6 +1160,9 @@ export async function getCloudflareApiToken(): Promise<CloudflareApiToken | null
     if (apiToken) {
       return { token: apiToken, source: 'env' };
     }
+
+    const wranglerToken = await getWranglerAuthToken();
+    if (wranglerToken) return wranglerToken;
 
     const { readFile } = await import('node:fs/promises');
     const { homedir, platform } = await import('node:os');
