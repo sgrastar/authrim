@@ -278,9 +278,9 @@ describe('Cloudflare Control token bootstrap', () => {
     ]);
   });
 
-  it('computes the next UTC calendar date for the Dashboard End Date field', () => {
+  it('recommends a UTC End Date that leaves at least 24 hours at day rollover', () => {
     expect(buildCloudflareBootstrapTokenEndDate(new Date('2026-09-01T23:59:59Z'))).toBe(
-      '2026-09-02'
+      '2026-09-03'
     );
     expect(() => buildCloudflareBootstrapTokenEndDate(new Date('invalid'))).toThrow(
       'cloudflare_bootstrap_token_end_date_invalid'
@@ -617,34 +617,27 @@ describe('Cloudflare Control token bootstrap', () => {
   });
 
   it.each([
-    { expiresOn: undefined, code: 'cloudflare_bootstrap_token_expiration_required' },
-    { expiresOn: 'invalid', code: 'cloudflare_bootstrap_token_expiration_invalid' },
-    {
-      expiresOn: '2026-09-01T12:10:00Z',
-      code: 'cloudflare_bootstrap_token_expiration_too_soon',
-    },
-    {
-      expiresOn: '2026-09-04T12:00:00Z',
-      code: 'cloudflare_bootstrap_token_expiration_too_long',
-    },
-  ])('rejects an unsafe bootstrap token lifetime: $code', async ({ expiresOn, code }) => {
+    { label: 'no expiration', expiresOn: undefined },
+    { label: 'provider-specific metadata', expiresOn: 'invalid' },
+    { label: 'short expiration', expiresOn: '2026-09-01T12:10:00Z' },
+    { label: 'long expiration', expiresOn: '2027-09-01T12:00:00Z' },
+  ])('does not enforce bootstrap token lifetime: $label', async ({ expiresOn }) => {
     const authority = new FakeAuthority();
     const bootstrap = authority.records.get(BOOTSTRAP_ID)!;
     if (expiresOn === undefined) delete bootstrap.expires_on;
     else bootstrap.expires_on = expiresOn;
 
-    await expect(
-      bootstrapControlWorkerTokens({
-        accountId: ACCOUNT_ID,
-        environment: 'test',
-        ownership: 'account',
-        authority,
-        secretSink: new FakeSecretSink(),
-        now: () => Date.parse('2026-09-01T12:00:00Z'),
-      })
-    ).rejects.toMatchObject({ code });
-    expect(authority.createCalls).toBe(0);
-    expect(authority.deleted).toEqual([BOOTSTRAP_ID]);
+    const result = await bootstrapControlWorkerTokens({
+      accountId: ACCOUNT_ID,
+      environment: 'test',
+      ownership: 'account',
+      authority,
+      secretSink: new FakeSecretSink(),
+    });
+
+    expect(result.bootstrapRevoked).toBe(true);
+    expect(authority.createCalls).toBe(2);
+    expect(authority.deleted.at(-1)).toBe(BOOTSTRAP_ID);
   });
 
   it('creates and capability-probes all requested resource-class tokens', async () => {

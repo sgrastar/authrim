@@ -18,10 +18,6 @@ const DEFAULT_WRANGLER_SECRET_OPERATION_TIMEOUT_MS = 300_000;
 const TOKEN_INVENTORY_PAGE_SIZE = 50;
 const MAX_TOKEN_INVENTORY_PAGES = 100;
 const MAX_TOKEN_INVENTORY_RECORDS = TOKEN_INVENTORY_PAGE_SIZE * MAX_TOKEN_INVENTORY_PAGES;
-const BOOTSTRAP_TOKEN_MIN_REMAINING_LIFETIME_MS = 15 * 60 * 1_000;
-// Cloudflare's Dashboard accepts a calendar date, not an exact TTL. Selecting the next UTC date
-// can therefore produce a remaining lifetime between roughly 24 and 48 hours.
-const BOOTSTRAP_TOKEN_MAX_REMAINING_LIFETIME_MS = 48 * 60 * 60 * 1_000;
 
 interface OperationDeadline {
   readonly expiresAt: number;
@@ -304,14 +300,15 @@ export function buildCloudflareBootstrapTokenName(input: {
 }
 
 /**
- * Cloudflare token template URLs do not support TTL fields. Return the exact UTC calendar date the
- * operator must select in Dashboard so both the Web and CLI flows present the same short lifetime.
+ * Cloudflare token template URLs do not support TTL fields, and Dashboard dates expire at 00:00
+ * UTC. Recommend the date after tomorrow so a newly created token has between 24 and 48 hours of
+ * fallback lifetime. Setup does not enforce this recommendation and revokes the token after use.
  */
 export function buildCloudflareBootstrapTokenEndDate(now: Date = new Date()): string {
   if (!Number.isFinite(now.getTime())) {
     throw new Error('cloudflare_bootstrap_token_end_date_invalid');
   }
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1))
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 2))
     .toISOString()
     .slice(0, 10);
 }
@@ -884,23 +881,6 @@ function validateBootstrapPolicy(
   }
 }
 
-function validateBootstrapLifetime(token: CloudflareTokenRecord, nowMs: number): void {
-  if (!token.expires_on) {
-    throw new CloudflareTokenBootstrapError('cloudflare_bootstrap_token_expiration_required');
-  }
-  const expiresAt = Date.parse(token.expires_on);
-  if (!Number.isFinite(expiresAt)) {
-    throw new CloudflareTokenBootstrapError('cloudflare_bootstrap_token_expiration_invalid');
-  }
-  const remainingMs = expiresAt - nowMs;
-  if (remainingMs < BOOTSTRAP_TOKEN_MIN_REMAINING_LIFETIME_MS) {
-    throw new CloudflareTokenBootstrapError('cloudflare_bootstrap_token_expiration_too_soon');
-  }
-  if (remainingMs > BOOTSTRAP_TOKEN_MAX_REMAINING_LIFETIME_MS) {
-    throw new CloudflareTokenBootstrapError('cloudflare_bootstrap_token_expiration_too_long');
-  }
-}
-
 async function reconcileAmbiguousChildTokenCreation(
   authority: CloudflareTokenAuthority,
   tokenName: string,
@@ -1348,7 +1328,6 @@ export async function bootstrapControlWorkerTokens(input: {
   verifyControlSecretCutover?: (result: ControlTokenBootstrapPreparedResult) => Promise<boolean>;
   beforeBootstrapRevocation?: (result: ControlTokenBootstrapPreparedResult) => Promise<void>;
   afterBootstrapRevocation?: (result: ControlTokenBootstrapResult) => Promise<void>;
-  now?: () => number;
 }): Promise<ControlTokenBootstrapResult> {
   const accountId = requiredAccountId(input.accountId);
   requiredEnvironment(input.environment);
@@ -1384,7 +1363,6 @@ export async function bootstrapControlWorkerTokens(input: {
       throw new CloudflareTokenBootstrapError('cloudflare_bootstrap_token_identity_mismatch');
     }
     validateBootstrapPolicy(bootstrapRecord, input.ownership, accountId);
-    validateBootstrapLifetime(bootstrapRecord, input.now?.() ?? Date.now());
     await deleteStaleBootstrapTokens(
       input.authority,
       buildCloudflareBootstrapTokenName({ accountId, environment: input.environment }),

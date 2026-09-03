@@ -1594,7 +1594,7 @@ describe('setup web basic API contracts', () => {
     expect(crossOrigin.status).toBe(403);
   });
 
-  it('returns the next UTC End Date with the Web token template flow', async () => {
+  it('returns a UTC End Date with at least one full day for the Web token template flow', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-01T23:59:59Z'));
     const token = generateSessionToken();
@@ -1615,7 +1615,7 @@ describe('setup web basic API contracts', () => {
     await expect(response.json()).resolves.toMatchObject({
       success: true,
       ownership: 'account',
-      expiresOnDate: '2026-09-02',
+      expiresOnDate: '2026-09-03',
       url: expect.stringContaining('dash.cloudflare.com'),
     });
   });
