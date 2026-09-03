@@ -50,6 +50,41 @@ function extractInlineScripts(html: string): string[] {
   return scripts;
 }
 
+function extractInlineObject(
+  html: string,
+  variableName: string
+): Record<string, Record<string, string> | string[]> {
+  const marker = `const ${variableName} = `;
+  const markerIndex = html.indexOf(marker);
+  const objectStart = html.indexOf('{', markerIndex);
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+
+  expect(markerIndex, `${variableName} declaration`).toBeGreaterThanOrEqual(0);
+  expect(objectStart, `${variableName} object`).toBeGreaterThanOrEqual(0);
+
+  for (let index = objectStart; index < html.length; index += 1) {
+    const character = html[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === quote) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === '`') {
+      quote = character;
+      continue;
+    }
+    if (character === '{') depth += 1;
+    else if (character === '}' && --depth === 0) {
+      return vm.runInNewContext(`(${html.slice(objectStart, index + 1)})`);
+    }
+  }
+
+  throw new Error(`Could not extract ${variableName}`);
+}
+
 describe('getHtmlTemplate', () => {
   const localeCases = [
     { locale: 'en', translations: en, expected: 'Choose How to Start' },
@@ -125,6 +160,57 @@ describe('getHtmlTemplate', () => {
       );
 
       expect(missing, `${locale} missing translations`).toEqual([]);
+    }
+  });
+
+  it('provides explicit environment-management copy instead of English fallback', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const base = extractInlineObject(html, 'envManagementCopyByLocale');
+    const dynamic = extractInlineObject(html, 'envDynamicCopyByLocale');
+    const rows = extractInlineObject(html, 'envManagementSupplementalRows') as Record<
+      string,
+      string[]
+    >;
+    const supplementalLocales = SUPPORTED_LOCALES.map(({ code }) => code).filter(
+      (locale) => locale !== 'en' && locale !== 'ja'
+    );
+    const english = {
+      ...(base.en as Record<string, string>),
+      ...(dynamic.en as Record<string, string>),
+    };
+
+    for (const [localeIndex, locale] of supplementalLocales.entries()) {
+      const baseLocale = (base[locale] ?? {}) as Record<string, string>;
+      const dynamicLocale = (dynamic[locale] ?? {}) as Record<string, string>;
+      const supplemental = Object.fromEntries(
+        Object.entries(rows).map(([key, translations]) => {
+          expect(translations, `${key} translations`).toHaveLength(supplementalLocales.length);
+          expect(translations[localeIndex], `${locale} ${key}`).toBeTruthy();
+          return [key, translations[localeIndex]];
+        })
+      );
+      const keysRequiringExplicitTranslation = Object.keys(english).filter(
+        (key) => !(key in baseLocale) && !(key in dynamicLocale)
+      );
+
+      expect(
+        keysRequiringExplicitTranslation.filter((key) => !(key in supplemental)),
+        `${locale} environment-management English fallbacks`
+      ).toEqual([]);
+
+      for (const key of keysRequiringExplicitTranslation) {
+        const expectedPlaceholders = english[key].match(/{{[a-zA-Z0-9_-]+}}/g) ?? [];
+        const actualPlaceholders = supplemental[key].match(/{{[a-zA-Z0-9_-]+}}/g) ?? [];
+        expect(actualPlaceholders.sort(), `${locale} ${key} placeholders`).toEqual(
+          expectedPlaceholders.sort()
+        );
+      }
     }
   });
 
@@ -207,7 +293,9 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('function appendManualR2CleanupNotice(parent, targets)');
     expect(html).toContain('function appendManualDnsCleanupNotice(parent, issues)');
     expect(html).toContain('function appendManualControlTokenCleanupNotice(parent, targets)');
-    expect(html).toContain("item.textContent = 'Token ID: ' + String(tokenId)");
+    expect(html).toContain(
+      "item.textContent = t('web.delete.manualControlTokenId', { tokenId: String(tokenId) });"
+    );
     expect(html).toContain('if (manualR2Targets.length > 0)');
     expect(html).toContain('if (manualDnsIssues.length > 0)');
     expect(html).toContain('const environmentDeleted = deleteResult.environmentDeleted === true;');
