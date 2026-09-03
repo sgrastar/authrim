@@ -22,6 +22,10 @@ import {
   listPagesProjects,
   parseQueueRows,
 } from '../core/cloudflare.js';
+import {
+  CONTROL_TOKEN_CLEANUP_CREDENTIAL_UNAUTHORIZED,
+  ControlTokenCleanupManualActionError,
+} from '../core/control-token-manual-action.js';
 
 const TEST_R2_CREATION_DATE = '2026-08-31T00:00:00.000Z';
 const TEST_R2_OWNERSHIP_ID = '11111111-1111-4111-8111-111111111111';
@@ -1742,6 +1746,79 @@ describe('Cloudflare Queue deletion helpers', () => {
         ([, init]) => (init as { method?: string } | undefined)?.method === 'DELETE'
       )
     ).toBe(false);
+  });
+
+  it('continues verified storage deletion when token-edit authorization requires manual cleanup', async () => {
+    mockCloudflareInventory(
+      [{ queue_name: 'test-audit-queue', queue_id: 'queue-audit' }],
+      [],
+      [],
+      undefined,
+      [
+        { name: 'test-authrim-control-db', uuid: 'control-id' },
+        { name: 'test-authrim-core-db', uuid: 'core-id' },
+      ],
+      0,
+      undefined,
+      [],
+      undefined,
+      {},
+      [{ title: 'test-AUTHRIM_CONFIG', id: 'kv-config' }]
+    );
+    const progress: string[] = [];
+    const targetTokenIds = ['1'.repeat(32), '2'.repeat(32)];
+    const beforeD1Deletion = vi.fn(async () => {
+      throw new ControlTokenCleanupManualActionError({
+        reason: CONTROL_TOKEN_CLEANUP_CREDENTIAL_UNAUTHORIZED,
+        targetTokenIds,
+        tokenOwnership: 'account',
+      });
+    });
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      environmentKnownLocally: true,
+      deleteWorkers: false,
+      deleteD1: true,
+      deleteKV: true,
+      deleteQueues: true,
+      deleteR2: false,
+      deletePages: false,
+      knownD1Resources: [
+        { name: 'test-authrim-control-db', id: 'control-id' },
+        { name: 'test-authrim-core-db', id: 'core-id' },
+      ],
+      knownKVResources: [{ name: 'test-AUTHRIM_CONFIG', id: 'kv-config' }],
+      knownQueueResources: [{ name: 'test-audit-queue', id: 'queue-audit' }],
+      beforeD1Deletion,
+      onProgress: (message) => progress.push(message),
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      completion: 'manual_action_required',
+      deleted: {
+        d1: ['test-authrim-control-db', 'test-authrim-core-db'],
+        kv: ['test-AUTHRIM_CONFIG'],
+        queues: ['test-audit-queue'],
+      },
+      manualControlTokens: [
+        {
+          reason: CONTROL_TOKEN_CLEANUP_CREDENTIAL_UNAUTHORIZED,
+          targetTokenIds,
+          tokenOwnership: 'account',
+        },
+      ],
+      errors: [],
+    });
+    expect(beforeD1Deletion).toHaveBeenCalledOnce();
+    expect(progress).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('verified resource deletion will continue'),
+        expect.stringContaining(`Exact account token ID: ${targetTokenIds[0]}`),
+        expect.stringContaining(`Exact account token ID: ${targetTokenIds[1]}`),
+      ])
+    );
   });
 
   it('continues deletion with manual token review when Control D1 and its checkpoint are absent', async () => {

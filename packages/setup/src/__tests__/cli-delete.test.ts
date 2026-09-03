@@ -257,6 +257,8 @@ describe('CLI environment deletion', () => {
         {
           reason:
             'control_token_cleanup_checkpoint_required_for_missing_control_database_manual_recovery_required',
+          targetTokenIds: ['1'.repeat(32)],
+          tokenOwnership: 'account',
         },
       ],
       errors: [],
@@ -267,6 +269,7 @@ describe('CLI environment deletion', () => {
       await deleteCommand({ env: 'test', yes: true, all: true });
       const output = log.mock.calls.flat().join('\n');
       expect(output).toContain('Control API tokens requiring manual review');
+      expect(output).toContain(`Exact token ID: ${'1'.repeat(32)}`);
       expect(output).toContain('https://dash.cloudflare.com/?to=/:account/api-tokens');
       expect(output).toContain('https://dash.cloudflare.com/profile/api-tokens');
       expect(mocks.cleanupLocalEnvironmentArtifacts).toHaveBeenCalledOnce();

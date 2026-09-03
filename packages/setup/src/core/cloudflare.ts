@@ -52,6 +52,7 @@ import {
   withPrivateTemporaryTextFile,
 } from './private-temporary-file.js';
 import {
+  ControlTokenCleanupManualActionError,
   MISSING_CONTROL_TOKEN_CLEANUP_CHECKPOINT,
   type ControlTokenManualCleanupIssue,
 } from './control-token-manual-action.js';
@@ -12010,7 +12011,17 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       onProgress('  ✅ Control API token cleanup evidence verified');
     } catch (error) {
       const detail = sanitizeError(error);
-      if (detail === MISSING_CONTROL_TOKEN_CLEANUP_CHECKPOINT) {
+      if (error instanceof ControlTokenCleanupManualActionError) {
+        manualControlTokens.push(error.issue);
+        onProgress(
+          '  ⚠️ The current Cloudflare credential cannot revoke the recorded Control API ' +
+            'tokens. Exact checkpoint targets were retained for manual review; verified resource ' +
+            'deletion will continue.'
+        );
+        for (const tokenId of error.issue.targetTokenIds ?? []) {
+          onProgress(`    • Exact ${error.issue.tokenOwnership ?? 'unknown'} token ID: ${tokenId}`);
+        }
+      } else if (detail === MISSING_CONTROL_TOKEN_CLEANUP_CHECKPOINT) {
         manualControlTokens.push({ reason: detail });
         onProgress(
           '  ⚠️ Control D1 and its token cleanup checkpoint are already absent. ' +

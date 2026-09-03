@@ -29,6 +29,10 @@ import {
   loadControlTokenCleanupCheckpoint,
   loadControlTokenCleanupConclusion,
 } from '../core/control-token-environment-cleanup.js';
+import {
+  CONTROL_TOKEN_CLEANUP_CREDENTIAL_UNAUTHORIZED,
+  ControlTokenCleanupManualActionError,
+} from '../core/control-token-manual-action.js';
 import type { ControlProvisioningAuthorityState } from '../core/control-provisioning-authority.js';
 import {
   stagePendingControlBootstrap,
@@ -915,14 +919,25 @@ describe('setup-managed Control token environment cleanup', () => {
     });
     const deps = dependencies({ authority: fake.authority });
 
-    await expect(
-      cleanupSetupManagedControlTokens({
-        baseDir,
-        environment: ENVIRONMENT,
-        controlDatabaseName: 'test-authrim-control-db',
-        dependencies: deps,
-      })
-    ).rejects.toThrow('control_token_cleanup_token_edit_credential_unauthorized');
+    const failure = await cleanupSetupManagedControlTokens({
+      baseDir,
+      environment: ENVIRONMENT,
+      controlDatabaseName: 'test-authrim-control-db',
+      dependencies: deps,
+    }).then(
+      () => null,
+      (error: unknown) => error
+    );
+
+    expect(failure).toBeInstanceOf(ControlTokenCleanupManualActionError);
+    expect(failure).toMatchObject({
+      message: CONTROL_TOKEN_CLEANUP_CREDENTIAL_UNAUTHORIZED,
+      issue: {
+        reason: CONTROL_TOKEN_CLEANUP_CREDENTIAL_UNAUTHORIZED,
+        targetTokenIds: [D1_TOKEN_ID, WORKERS_TOKEN_ID],
+        tokenOwnership: 'account',
+      },
+    });
     expect(fake.authority.deleteToken).not.toHaveBeenCalled();
     expect(
       await loadControlTokenCleanupCheckpoint({ baseDir, environment: ENVIRONMENT })

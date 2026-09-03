@@ -964,6 +964,8 @@ describe('setup web basic API contracts', () => {
         {
           reason:
             'control_token_cleanup_checkpoint_required_for_missing_control_database_manual_recovery_required',
+          targetTokenIds: ['1'.repeat(32)],
+          tokenOwnership: 'account',
         },
       ],
       errors: [],
@@ -984,6 +986,8 @@ describe('setup web basic API contracts', () => {
         {
           accountTokensDashboardUrl: 'https://dash.cloudflare.com/?to=/:account/api-tokens',
           userTokensDashboardUrl: 'https://dash.cloudflare.com/profile/api-tokens',
+          targetTokenIds: ['1'.repeat(32)],
+          tokenOwnership: 'account',
         },
       ],
     });

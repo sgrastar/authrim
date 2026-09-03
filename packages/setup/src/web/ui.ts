@@ -2343,7 +2343,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.manualR2Open': 'Open R2 Dashboard ↗',
           'web.delete.manualR2Summary': 'All other selected environment resources were deleted. One or more R2 buckets are waiting for the manual actions below; this is not an API failure.',
           'web.delete.manualControlTokensTitle': 'Control API token review',
-          'web.delete.manualControlTokensSummary': 'The Control database and its exact token cleanup checkpoint were already absent. Environment deletion continued, but Setup could not safely identify any older API tokens. Review the candidate names below in both Cloudflare token lists; do not delete a token based on its name alone.',
+          'web.delete.manualControlTokensSummary': 'Setup could not automatically revoke one or more setup-managed Control API tokens. Environment resource deletion continued using exact ownership evidence. Review exact token IDs when shown and candidate names in both Cloudflare token lists; do not delete a token based on its name alone.',
           'web.delete.manualControlTokensAccountOpen': 'Open account API tokens ↗',
           'web.delete.manualControlTokensUserOpen': 'Open user API tokens ↗',
         },
@@ -2483,7 +2483,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.manualR2Open': 'R2 Dashboardを開く ↗',
           'web.delete.manualR2Summary': '選択したその他の環境リソースは削除済みです。以下のR2バケットだけが手動作業待ちです。APIエラーではありません。',
           'web.delete.manualControlTokensTitle': 'Control APIトークンの手動確認',
-          'web.delete.manualControlTokensSummary': 'Controlデータベースと正確なトークン清掃チェックポイントがすでに存在しないため、環境削除は続行しましたが、古いAPIトークンを安全に特定できませんでした。Cloudflareの両方のトークン一覧で候補名を確認してください。名前だけを根拠に削除しないでください。',
+          'web.delete.manualControlTokensSummary': 'Setupが管理するControl APIトークンの一部を自動取消しできませんでした。正確な所有権情報で検証済みの環境リソース削除は続行しました。表示される場合は正確なトークンIDと候補名をCloudflareの両方の一覧で確認してください。名前だけを根拠に削除しないでください。',
           'web.delete.manualControlTokensAccountOpen': 'アカウントAPIトークンを開く ↗',
           'web.delete.manualControlTokensUserOpen': 'ユーザーAPIトークンを開く ↗',
         },
@@ -7601,6 +7601,19 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const summary = document.createElement('p');
       summary.textContent = t('web.delete.manualControlTokensSummary');
       content.appendChild(summary);
+
+      const exactTokenIds = Array.from(
+        new Set(targets.flatMap((target) => Array.isArray(target.targetTokenIds) ? target.targetTokenIds : []))
+      );
+      if (exactTokenIds.length > 0) {
+        const list = document.createElement('ul');
+        for (const tokenId of exactTokenIds) {
+          const item = document.createElement('li');
+          item.textContent = 'Token ID: ' + String(tokenId);
+          list.appendChild(item);
+        }
+        content.appendChild(list);
+      }
 
       const candidateNames = Array.from(
         new Set(targets.flatMap((target) => Array.isArray(target.expectedTokenNames) ? target.expectedTokenNames : []))

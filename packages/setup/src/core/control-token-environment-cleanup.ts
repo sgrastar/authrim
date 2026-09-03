@@ -18,7 +18,14 @@ import {
   type PendingControlBootstrapArtifact,
 } from './pending-control-bootstrap.js';
 import { getEnvironmentPaths } from './paths.js';
-import { MISSING_CONTROL_TOKEN_CLEANUP_CHECKPOINT } from './control-token-manual-action.js';
+import {
+  CONTROL_TOKEN_CLEANUP_CREDENTIAL_REQUIRED,
+  CONTROL_TOKEN_CLEANUP_CREDENTIAL_UNAUTHORIZED,
+  CONTROL_TOKEN_CLEANUP_PERMISSION_REQUIRED,
+  ControlTokenCleanupManualActionError,
+  MISSING_CONTROL_TOKEN_CLEANUP_CHECKPOINT,
+  type ControlTokenManualCleanupReason,
+} from './control-token-manual-action.js';
 
 const ACCOUNT_ID = /^[0-9a-f]{32}$/u;
 const ENVIRONMENT = /^[a-z][a-z0-9-]{0,31}$/u;
@@ -1032,13 +1039,31 @@ export async function cleanupSetupManagedControlTokens(input: {
     return { status: 'completed', revokedTokenIds: [], alreadyAbsentTokenIds: [] };
   }
 
+  const manualActionError = (
+    reason: Exclude<
+      ControlTokenManualCleanupReason,
+      typeof MISSING_CONTROL_TOKEN_CLEANUP_CHECKPOINT
+    >,
+    cause?: unknown
+  ): ControlTokenCleanupManualActionError =>
+    new ControlTokenCleanupManualActionError(
+      {
+        reason,
+        targetTokenIds: checkpoint!.targetTokenIds.filter(
+          (tokenId) => !checkpoint!.completedTokenIds.includes(tokenId)
+        ),
+        tokenOwnership: checkpoint!.authority.tokenOwnership,
+      },
+      cause === undefined ? undefined : { cause }
+    );
+
   const apiToken = await (
     input.dependencies?.resolveApiToken ??
     (async () => {
       return (await getCloudflareApiToken())?.token ?? null;
     })
   )();
-  if (!apiToken) throw new Error('control_token_cleanup_token_edit_credential_required');
+  if (!apiToken) throw manualActionError(CONTROL_TOKEN_CLEANUP_CREDENTIAL_REQUIRED);
   const authority = (
     input.dependencies?.authorityFactory ??
     ((authorityInput) =>
@@ -1058,7 +1083,10 @@ export async function cleanupSetupManagedControlTokens(input: {
     targets = await preflightCleanupAuthority({ authority, checkpoint });
   } catch (error) {
     if (isUnauthorizedTokenApiError(error)) {
-      throw new Error('control_token_cleanup_token_edit_credential_unauthorized', { cause: error });
+      throw manualActionError(CONTROL_TOKEN_CLEANUP_CREDENTIAL_UNAUTHORIZED, error);
+    }
+    if (tokenApiErrorCode(error) === CONTROL_TOKEN_CLEANUP_PERMISSION_REQUIRED) {
+      throw manualActionError(CONTROL_TOKEN_CLEANUP_PERMISSION_REQUIRED, error);
     }
     throw error;
   }
@@ -1095,9 +1123,7 @@ export async function cleanupSetupManagedControlTokens(input: {
         deleteError = error;
       }
       if (deleteError && isUnauthorizedTokenApiError(deleteError)) {
-        throw new Error('control_token_cleanup_token_edit_credential_unauthorized', {
-          cause: deleteError,
-        });
+        throw manualActionError(CONTROL_TOKEN_CLEANUP_CREDENTIAL_UNAUTHORIZED, deleteError);
       }
       if (deleteError && isAlreadyAbsentTokenApiError(deleteError)) {
         completedByReflection = true;
@@ -1111,9 +1137,7 @@ export async function cleanupSetupManagedControlTokens(input: {
           reflectionError = error;
         }
         if (reflectionError && isUnauthorizedTokenApiError(reflectionError)) {
-          throw new Error('control_token_cleanup_token_edit_credential_unauthorized', {
-            cause: reflectionError,
-          });
+          throw manualActionError(CONTROL_TOKEN_CLEANUP_CREDENTIAL_UNAUTHORIZED, reflectionError);
         }
         if (reflected === null) {
           completedByReflection = true;

@@ -541,6 +541,10 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
   if (manualControlTokenTargets.length > 0) {
     console.log(chalk.yellow('\nControl API tokens requiring manual review:'));
     for (const target of manualControlTokenTargets) {
+      console.log(chalk.yellow(`  Reason: ${target.reason}`));
+      for (const tokenId of target.targetTokenIds ?? []) {
+        console.log(chalk.yellow(`  • Exact token ID: ${tokenId}`));
+      }
       if (target.expectedTokenNames.length > 0) {
         for (const tokenName of target.expectedTokenNames) {
           console.log(chalk.yellow(`  • ${tokenName}`));

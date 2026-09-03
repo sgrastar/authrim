@@ -207,6 +207,7 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('function appendManualR2CleanupNotice(parent, targets)');
     expect(html).toContain('function appendManualDnsCleanupNotice(parent, issues)');
     expect(html).toContain('function appendManualControlTokenCleanupNotice(parent, targets)');
+    expect(html).toContain("item.textContent = 'Token ID: ' + String(tokenId)");
     expect(html).toContain('if (manualR2Targets.length > 0)');
     expect(html).toContain('if (manualDnsIssues.length > 0)');
     expect(html).toContain('const environmentDeleted = deleteResult.environmentDeleted === true;');
