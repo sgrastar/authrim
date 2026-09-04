@@ -70,6 +70,15 @@ export type ProvisionedD1DataRole = TenantShardDataRole | 'lookup';
 
 export interface RuntimeSmokeServiceBinding {
   smokeTenantBinding: (token: string) => Promise<RuntimeSmokeResult>;
+  smokeTenantBindings?: (
+    tokens: string[]
+  ) => Promise<
+    Array<
+      | { ok: true; result: RuntimeSmokeResult }
+      | { ok: false; errorCode: string }
+      | RuntimeSmokeResult
+    >
+  >;
   verifyControlKeyCandidate?: (input: unknown) => Promise<RuntimeControlKeyVerificationResult>;
   verifyLookupHmacCandidate?: (
     input: unknown

@@ -221,11 +221,23 @@ export async function ensureWorkerBindingsPatched<
         input.state.rearmPatchIntent !== undefined &&
         now - input.lease.mutationStartedAt >= PATCH_RESPONSE_PROPAGATION_GRACE_SECONDS
       ) {
-        await input.state.rearmPatchIntent({
+        const rearmed = await input.state.rearmPatchIntent({
           target: input.target,
           lease: input.lease,
           now,
         });
+        if (!rearmed) throw new Error('control_worker_deployment_lease_lost');
+      } else {
+        const propagationDeadline =
+          input.lease.mutationStartedAt === null || input.lease.mutationStartedAt === undefined
+            ? now + retrySeconds
+            : input.lease.mutationStartedAt + PATCH_RESPONSE_PROPAGATION_GRACE_SECONDS;
+        await input.state.recordTransientError(
+          input.target,
+          'control_worker_patch_propagating',
+          Math.max(now + retrySeconds, propagationDeadline),
+          now
+        );
       }
       return { state: 'deferred', target: null };
     }
@@ -304,7 +316,75 @@ export async function ensureWorkerBindingsPatched<
   ) {
     throw new Error('control_worker_source_version_changed');
   }
-  await input.api.patchWorkerSettings(input.target.workerScriptName, patch);
+  try {
+    await input.api.patchWorkerSettings(input.target.workerScriptName, patch);
+  } catch (patchError) {
+    // A network failure can hide a successful provider mutation. Reconcile the observable
+    // deployment and settings before returning the original transient error so a retry never
+    // issues a duplicate PATCH merely because the response was lost.
+    let recovered:
+      | {
+          active: ActiveWorkerDeployment;
+          settings: CloudflareWorkerSettings;
+        }
+      | undefined;
+    try {
+      const recoveredDeployments = await input.api.listWorkerDeployments(
+        input.target.workerScriptName
+      );
+      const recoveredActive = activeWorkerDeployment(recoveredDeployments);
+      const beforeIds = new Set(input.deploymentsBefore.map((deployment) => deployment.id));
+      const recoveredNewDeployments = recoveredDeployments.filter(
+        (deployment) => !beforeIds.has(deployment.id)
+      );
+      if (
+        recoveredActive.versionId !== input.lease.expectedSourceVersionId &&
+        recoveredNewDeployments.length === 1 &&
+        recoveredNewDeployments[0]?.id === recoveredActive.deploymentId
+      ) {
+        recovered = {
+          active: recoveredActive,
+          settings: await input.api.getWorkerSettings(input.target.workerScriptName),
+        };
+      }
+    } catch {
+      // Keep the original provider error. The persisted mutation intent makes the next attempt
+      // observe deployments/settings before it is allowed to send another PATCH.
+    }
+    if (!recovered) throw patchError;
+    await input.state.recordPatchResult({
+      target: input.target,
+      lease: input.lease,
+      versionId: recovered.active.versionId,
+      deploymentId: recovered.active.deploymentId,
+      now: input.now(),
+    });
+    const recoveredIssues = verifyWorkerSettingsPreserved({
+      before: currentSettings,
+      after: recovered.settings,
+      desiredBindings,
+    });
+    if (recoveredIssues.length > 0) {
+      await input.state.markRollbackRequired(
+        input.target,
+        'control_worker_settings_preservation_failed',
+        input.now()
+      );
+      return { state: 'rollback_required', target: null };
+    }
+    return {
+      state: 'patched',
+      target: {
+        ...input.target,
+        state: 'settings_patched',
+        expectedSourceVersionId: input.lease.expectedSourceVersionId,
+        previousDeploymentId: input.activeBefore.deploymentId,
+        previousRestoreSettingsJson: JSON.stringify(restoreSettings),
+        patchResultVersionId: recovered.active.versionId,
+        patchResultDeploymentId: recovered.active.deploymentId,
+      },
+    };
+  }
 
   const deploymentsAfter = await input.api.listWorkerDeployments(input.target.workerScriptName);
   const activeAfter = activeWorkerDeployment(deploymentsAfter);

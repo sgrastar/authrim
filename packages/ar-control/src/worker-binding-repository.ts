@@ -523,6 +523,77 @@ export class D1WorkerBindingRepository {
     return result.results.map(targetFromRow);
   }
 
+  async listDueTargetsForWorkers(workerLimit: number, now: number): Promise<WorkerBindingTarget[]> {
+    const result = await this.db
+      .prepare(
+        `WITH selected_workers AS (
+           SELECT r.environment_id, r.worker_script_name,
+                  MIN(CASE r.state
+                        WHEN 'stabilizing' THEN 0
+                        WHEN 'smoke_verifying' THEN 1
+                        WHEN 'settings_patched' THEN 2
+                        WHEN 'rollback_required' THEN 3
+                        ELSE 4
+                      END) AS state_priority,
+                  MIN(CASE WHEN r.state = 'stabilizing' THEN r.stabilization_not_before
+                           ELSE r.updated_at END) AS due_order
+             FROM control_worker_binding_reconciliations r
+             JOIN control_operations o
+               ON o.operation_id = r.operation_id AND o.environment_id = r.environment_id
+            WHERE r.state IN ('pending', 'settings_patched', 'smoke_verifying', 'stabilizing',
+                              'rollback_required')
+              AND o.status IN ('running', 'waiting_retry')
+              AND (o.next_attempt_at IS NULL OR o.next_attempt_at <= ?)
+              AND (r.state <> 'stabilizing' OR r.stabilization_not_before <= ?)
+            GROUP BY r.environment_id, r.worker_script_name
+            ORDER BY state_priority, due_order, r.environment_id, r.worker_script_name
+            LIMIT ?
+         )
+         SELECT r.operation_id, r.environment_id, e.environment_name, r.worker_script_name,
+                r.shard_id, r.binding_ref, r.data_role, r.residency_partition,
+                r.migration_generation, r.provider_database_id,
+                r.state, r.expected_source_version_id, r.previous_deployment_id,
+                r.patch_result_version_id, r.patch_result_deployment_id,
+                r.previous_restore_settings_json, r.smoke_attempt_count,
+                r.consecutive_smoke_successes, r.stabilization_not_before, r.last_error_code,
+                EXISTS (
+                    SELECT 1 FROM control_audit_events audit
+                     WHERE audit.operation_id = r.operation_id
+                       AND audit.environment_id = r.environment_id
+                       AND audit.event_type = 'control.operation.restore_previous_settings'
+                       AND audit.actor_type = 'admin'
+                       AND audit.resource_kind = 'operation'
+                       AND audit.resource_id = r.operation_id
+                       AND audit.outcome = 'succeeded'
+                  ) AS manual_settings_restore_requested
+           FROM control_worker_binding_reconciliations r
+           JOIN selected_workers selected
+             ON selected.environment_id = r.environment_id
+            AND selected.worker_script_name = r.worker_script_name
+           JOIN control_environments e ON e.environment_id = r.environment_id
+           JOIN control_operations o
+             ON o.operation_id = r.operation_id AND o.environment_id = r.environment_id
+          WHERE r.state IN ('pending', 'settings_patched', 'smoke_verifying', 'stabilizing',
+                            'rollback_required')
+            AND o.status IN ('running', 'waiting_retry')
+            AND (o.next_attempt_at IS NULL OR o.next_attempt_at <= ?)
+            AND (r.state <> 'stabilizing' OR r.stabilization_not_before <= ?)
+          ORDER BY selected.state_priority, selected.due_order,
+                   r.environment_id, r.worker_script_name,
+                   CASE r.state
+                     WHEN 'stabilizing' THEN 0
+                     WHEN 'smoke_verifying' THEN 1
+                     WHEN 'settings_patched' THEN 2
+                     WHEN 'rollback_required' THEN 3
+                     ELSE 4
+                   END,
+                   r.operation_id, r.binding_ref`
+      )
+      .bind(now, now, safeLimit(workerLimit), now, now)
+      .all<WorkerBindingTargetRow>();
+    return result.results.map(targetFromRow);
+  }
+
   async acquireDeploymentLease(input: {
     target: WorkerBindingTarget;
     expectedSourceVersionId: string;
@@ -952,6 +1023,9 @@ export class D1WorkerBindingRepository {
     errorCode?: string;
     now: number;
   }): Promise<void> {
+    if (!input.target.patchResultVersionId || !input.target.patchResultDeploymentId) {
+      throw new Error('control_worker_patch_result_missing');
+    }
     const state =
       input.stabilizationNotBefore === undefined && input.completeStabilizationCheck !== true
         ? 'smoke_verifying'
@@ -965,7 +1039,9 @@ export class D1WorkerBindingRepository {
                 stabilization_not_before = COALESCE(?, stabilization_not_before),
                 last_error_code = ?, updated_at = ?
           WHERE operation_id = ? AND worker_script_name = ? AND binding_ref = ?
-            AND state IN ('settings_patched', 'smoke_verifying', 'stabilizing')`
+            AND state IN ('settings_patched', 'smoke_verifying', 'stabilizing')
+            AND patch_result_version_id = ? AND patch_result_deployment_id = ?
+            AND smoke_attempt_count < ?`
         )
         .bind(
           state,
@@ -976,7 +1052,10 @@ export class D1WorkerBindingRepository {
           input.now,
           input.target.operationId,
           input.target.workerScriptName,
-          input.target.bindingRef
+          input.target.bindingRef,
+          input.target.patchResultVersionId,
+          input.target.patchResultDeploymentId,
+          input.attempt
         ),
       this.db
         .prepare(
@@ -993,6 +1072,9 @@ export class D1WorkerBindingRepository {
                    AND target.binding_ref = ?
                    AND target.patch_result_version_id = control_worker_deployment_leases.patch_result_version_id
                    AND target.patch_result_deployment_id = control_worker_deployment_leases.patch_result_deployment_id
+                   AND target.patch_result_version_id = ?
+                   AND target.patch_result_deployment_id = ?
+                   AND target.smoke_attempt_count = ? AND target.updated_at = ?
               )`
         )
         .bind(
@@ -1001,8 +1083,29 @@ export class D1WorkerBindingRepository {
           input.target.environmentId,
           input.target.workerScriptName,
           input.target.operationId,
-          input.target.bindingRef
+          input.target.bindingRef,
+          input.target.patchResultVersionId,
+          input.target.patchResultDeploymentId,
+          input.attempt,
+          input.now
         ),
+      this.db
+        .prepare(
+          `SELECT target.state, target.smoke_attempt_count,
+                  target.patch_result_version_id, target.patch_result_deployment_id,
+                  EXISTS (
+                    SELECT 1 FROM control_worker_deployment_leases lease
+                     WHERE lease.environment_id = target.environment_id
+                       AND lease.worker_script_name = target.worker_script_name
+                       AND lease.owner_operation_id = target.operation_id
+                       AND lease.patch_result_version_id = target.patch_result_version_id
+                       AND lease.patch_result_deployment_id = target.patch_result_deployment_id
+                  ) AS lease_exists
+             FROM control_worker_binding_reconciliations target
+            WHERE target.operation_id = ? AND target.worker_script_name = ?
+              AND target.binding_ref = ?`
+        )
+        .bind(input.target.operationId, input.target.workerScriptName, input.target.bindingRef),
     ];
     if (input.stabilizationNotBefore !== undefined) {
       statements.push(
@@ -1042,10 +1145,25 @@ export class D1WorkerBindingRepository {
       );
     }
     const results = await this.db.batch(statements);
-    if ((results[0]?.meta.changes ?? 0) !== 1) {
+    const reflected = results[2]?.results?.[0] as Record<string, unknown> | undefined;
+    const expectedStates =
+      input.stabilizationNotBefore !== undefined || input.completeStabilizationCheck === true
+        ? ['stabilizing', 'succeeded']
+        : ['smoke_verifying', 'stabilizing', 'succeeded'];
+    const reflectedAtOrBeyondCheckpoint =
+      reflected?.patch_result_version_id === input.target.patchResultVersionId &&
+      reflected.patch_result_deployment_id === input.target.patchResultDeploymentId &&
+      typeof reflected.smoke_attempt_count === 'number' &&
+      reflected.smoke_attempt_count >= input.attempt &&
+      expectedStates.includes(String(reflected.state));
+    if ((results[0]?.meta.changes ?? 0) !== 1 && !reflectedAtOrBeyondCheckpoint) {
       throw new Error('control_worker_binding_smoke_state_stale');
     }
-    if ((results[1]?.meta.changes ?? 0) !== 1) {
+    if (
+      (results[1]?.meta.changes ?? 0) !== 1 &&
+      reflected?.lease_exists !== 1 &&
+      reflected?.state !== 'succeeded'
+    ) {
       throw new Error('control_worker_binding_smoke_lease_stale');
     }
   }

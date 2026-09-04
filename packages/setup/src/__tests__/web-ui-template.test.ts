@@ -14,7 +14,7 @@ import zhCN from '../i18n/locales/zh-CN.js';
 import zhTW from '../i18n/locales/zh-TW.js';
 import { SUPPORTED_LOCALES } from '../i18n/types.js';
 import { SETUP_WEB_FONT_FACE } from '../web/ui-fonts.js';
-import { getHtmlTemplate } from '../web/ui.js';
+import { CONTROL_OPERATION_RESULT_TRANSLATION_KEYS, getHtmlTemplate } from '../web/ui.js';
 import { SETUP_WEB_UI_STYLE } from '../web/ui-style.js';
 
 function extractInlineScripts(html: string): string[] {
@@ -161,6 +161,39 @@ describe('getHtmlTemplate', () => {
 
       expect(missing, `${locale} missing translations`).toEqual([]);
     }
+  });
+
+  it('localizes Control operation outcomes, R2 recovery, and progress copy', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(CONTROL_OPERATION_RESULT_TRANSLATION_KEYS).toMatchObject({
+      succeeded: 'web.control.operationSucceeded',
+      awaiting_quarantine: 'web.control.operationAwaitingQuarantine',
+      blocked: 'web.control.operationBlocked',
+    });
+    expect(Object.keys(CONTROL_OPERATION_RESULT_TRANSLATION_KEYS)).toEqual([
+      'awaiting_migration',
+      'awaiting_worker_bindings',
+      'awaiting_smoke',
+      'awaiting_quarantine',
+      'retry_required',
+      'lease_unavailable',
+      'succeeded',
+      'blocked',
+    ]);
+    expect(html).toContain('CONTROL_OPERATION_RESULT_TRANSLATION_KEYS[result.result?.state]');
+    expect(html).toContain("t('web.envDetail.r2OwnershipRecoverySummary'");
+    expect(html).toContain("t('web.envDetail.r2IdentityMismatchSummary'");
+    expect(html).toContain("t('web.status.percentComplete', { percent })");
+    expect(html).toContain("t('web.status.resourceProgress'");
+    expect(html).not.toContain("status.textContent = 'Running provisioning operation...'");
+    expect(html).not.toContain("result.error || 'Could not create the Cloudflare token link.'");
   });
 
   it('provides explicit environment-management copy instead of English fallback', () => {
@@ -1042,6 +1075,118 @@ describe('getHtmlTemplate', () => {
     );
   });
 
+  it('resets deletion UI when a new environment is selected without resetting locale refreshes', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('function showDeleteConfirmation(env, resetState = true)');
+    expect(html).toContain('if (resetState) {\n        resetDeleteSection();\n      }');
+    expect(html).toContain('showDeleteConfirmation(selectedEnvForDelete, false)');
+    expect(html).toContain("document.getElementById('delete-output').textContent = ''");
+    expect(html).toContain("resetProgressContainer('delete')");
+    expect(html).toContain("resetLogToggle('delete-log-toggle', 'delete-log')");
+  });
+
+  it('localizes deletion inventory progress for every supported locale', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const progressCopy = extractInlineObject(html, 'deleteProgressCopyByLocale');
+    const english = progressCopy.en as Record<string, string>;
+
+    for (const { code } of SUPPORTED_LOCALES) {
+      const localized = progressCopy[code] as Record<string, string>;
+      expect(localized, `${code} deletion progress copy`).toBeTruthy();
+      expect(Object.keys(localized).sort(), `${code} deletion progress keys`).toEqual(
+        Object.keys(english).sort()
+      );
+      for (const [key, englishText] of Object.entries(english)) {
+        const expectedPlaceholders = englishText.match(/{{[a-zA-Z0-9_-]+}}/g) ?? [];
+        const actualPlaceholders = localized[key].match(/{{[a-zA-Z0-9_-]+}}/g) ?? [];
+        expect(actualPlaceholders.sort(), `${code} ${key} placeholders`).toEqual(
+          expectedPlaceholders.sort()
+        );
+      }
+    }
+
+    const parserSource = html.match(
+      /function getDeleteProgressTask\(message\) \{[\s\S]*?(?=\n\s{4}function createProvisionProgressTracker)/u
+    )?.[0];
+    expect(parserSource).toBeTruthy();
+    const context = vm.createContext({
+      t: (key: string, params?: { resource?: string }) =>
+        params?.resource ? `${key}:${params.resource}` : key,
+    });
+    vm.runInContext(parserSource!, context);
+
+    expect(vm.runInContext("getDeleteProgressTask('Scanning R2 buckets...')", context)).toBe(
+      'web.delete.progress.scanningResource:R2'
+    );
+    expect(
+      vm.runInContext(
+        "getDeleteProgressTask('🔎 Verifying Cloudflare inventory after deletion...')",
+        context
+      )
+    ).toBe('web.delete.progress.verifyingInventory');
+    expect(html).toContain('getDeleteProgressTask(msg) || parseProgressMessage(msg)');
+  });
+
+  it('hides stale environment counts while a Cloudflare rescan is running', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('id="env-list-progress-summary"');
+    expect(html).toContain(
+      'function renderEnvironmentListSummary(count, scanState = environmentScanState)'
+    );
+    expect(html).toContain("environmentScanState = 'scanning'");
+    expect(html).toContain("summary.textContent = t('web.env.scanningEnvironments')");
+    expect(html).toContain("summary.setAttribute('aria-busy', 'true')");
+    expect(html).toContain("environmentScanState = 'complete'");
+    expect(html).toContain(
+      'renderEnvironmentListSummary(detectedEnvironments.length, environmentScanState)'
+    );
+    expect(html).toContain('const scanGeneration = ++environmentScanGeneration');
+    expect(html).toContain('refreshButton.disabled = true');
+    expect(html).toContain('scanGeneration !== environmentScanGeneration');
+    const loadEnvironmentsBody = html.match(
+      /async function loadEnvironments\(\) \{[\s\S]*?(?=\n\s{4}function getEnvironmentIssuerPreview)/u
+    )?.[0];
+    expect(loadEnvironmentsBody).not.toContain("api('/deploy/status')");
+  });
+
+  it('hydrates Cloudflare account context in manage-only mode', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      true,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('async function loadRuntimeContext()');
+    expect(html).toContain("const result = await api('/prerequisites')");
+    expect(html).toContain('async function initializeManageOnly()');
+    expect(html).toContain("setEnvManagementHero('envList')");
+    expect(html).toContain('await Promise.allSettled([runtimeContextPromise, loadEnvironments()])');
+    expect(html).toContain('unknownAccountValues.has(recapAccount)');
+    expect(html).toContain('initializeManageOnly();');
+  });
+
   it('keeps provisioning progress complete after trailing log messages and polling races', () => {
     const html = getHtmlTemplate(
       'session-token',
@@ -1164,6 +1309,12 @@ describe('getHtmlTemplate', () => {
     }
     expect(html).toContain('WILDCARD_DNS_MANUAL_COPY_DATA');
     expect(html).toContain('CLOUDFLARE_DNS_RECORDS_DOCS');
+    expect(html).toContain("status.textContent = t('web.deploy.manualWildcardTitle');");
+    expect(html).toContain(
+      "document.getElementById('deploy-manual-wildcard-recheck').addEventListener('click'"
+    );
+    expect(html).toContain('recheckButton.disabled = true;');
+    expect(html).toContain('deployButton.click();');
   });
 
   it('downloads config files with the environment name in the filename', () => {

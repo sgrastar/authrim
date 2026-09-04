@@ -2,6 +2,10 @@ import { signRuntimeRegistrySnapshotPayloadJws } from '@authrim/ar-lib-core';
 import { getTenantDatabaseBindingPrefix } from '@authrim/ar-lib-core/services/tenant-database-naming';
 import { runtimeRegistryPrivateJwkForSlot } from './lookup-registry-publisher';
 import { signControlRuntimeSmokeRequestWithKey } from './runtime-smoke-signer';
+import {
+  consumeServiceBindingInvocation,
+  type ServiceBindingInvocationBudget,
+} from './service-binding-invocation-budget';
 import type { ControlEnv, RuntimeSmokeServiceBinding } from './types';
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
@@ -168,7 +172,8 @@ export class SigningKeyCandidateVerifier {
   constructor(
     private readonly repository: SigningKeyVerificationRepository,
     private readonly env: ControlEnv,
-    private readonly now: () => number
+    private readonly now: () => number,
+    private readonly serviceBindingBudget?: ServiceBindingInvocationBudget
   ) {}
 
   async reconcile(): Promise<SigningKeyCandidateVerificationSummary> {
@@ -181,6 +186,7 @@ export class SigningKeyCandidateVerifier {
     for (const staged of stagedRows) {
       validateStaged(staged);
       for (const [component, bindingName] of targets(staged.purpose)) {
+        if (!consumeServiceBindingInvocation(this.serviceBindingBudget)) return summary;
         summary.attempted += 1;
         const workerScriptName = `${staged.environmentId}-${component}`;
         if (!SAFE_WORKER.test(workerScriptName)) {

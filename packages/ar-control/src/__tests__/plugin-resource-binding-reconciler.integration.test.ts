@@ -524,10 +524,10 @@ describe('PluginResourceBindingReconciler', () => {
       previous_deployment_id: 'deployment-old',
     });
 
-    now = 116;
-    await expect(reconciler.reconcile()).resolves.toMatchObject({ deferred: 1, blocked: 0 });
+    now = 130;
+    await expect(reconciler.reconcile()).resolves.toMatchObject({ succeeded: 1, blocked: 0 });
     expect(api.patchWorkerSettings).toHaveBeenCalledTimes(1);
-    expect(smoke).toHaveBeenCalledTimes(3);
+    expect(smoke).toHaveBeenCalledTimes(4);
     expect(
       database
         .prepare(
@@ -535,7 +535,7 @@ describe('PluginResourceBindingReconciler', () => {
              FROM control_plugin_resource_binding_reconciliations`
         )
         .get()
-    ).toEqual({ state: 'stabilizing', patch_result_version_id: 'version-new' });
+    ).toEqual({ state: 'succeeded', patch_result_version_id: 'version-new' });
   });
 
   it('blocks activation when Runner reflects a different resource contract', async () => {

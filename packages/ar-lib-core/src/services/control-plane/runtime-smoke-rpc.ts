@@ -123,6 +123,10 @@ export interface RuntimeSmokeResult {
   observedVersionTimestamp: string;
 }
 
+export type RuntimeSmokeBatchResult =
+  | { ok: true; result: RuntimeSmokeResult }
+  | { ok: false; errorCode: string };
+
 interface RuntimeSmokeD1Statement {
   bind(...values: unknown[]): RuntimeSmokeD1Statement;
   first<T>(): Promise<T | null>;

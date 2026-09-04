@@ -64,6 +64,7 @@ import {
   MINIMUM_WORKER_DEPLOY_FREE_BYTES,
   type ReadAvailableDiskBytes,
 } from './local-deployment-capacity.js';
+import { listWorkerCronTriggers } from './cloudflare.js';
 
 export {
   DEFAULT_SECRET_TARGET_WORKERS,
@@ -319,6 +320,10 @@ export interface DeployOptions {
   deployConfigLockProof?: DeployConfigLockProof;
   /** Exact immutable Worker script ownership established and durably checkpointed by Setup. */
   workerScriptOwnership?: WorkerScriptOwnershipGuard;
+  /** Account pinned by the environment config for provider-side trigger verification. */
+  cloudflareAccountId?: string;
+  /** Test/embedding hook for deterministic provider-side Cron Trigger readback. */
+  readWorkerCronTriggers?: (workerName: string, accountId?: string) => Promise<string[]>;
 }
 
 export interface DeployResult {
@@ -1760,6 +1765,93 @@ async function applyWorkerTriggers(
       )
     )
   );
+}
+
+function normalizeCronTriggerSet(crons: readonly string[], errorCode: string): string[] {
+  const normalized = [...crons].sort();
+  if (
+    normalized.some(
+      (cron) => typeof cron !== 'string' || cron.length === 0 || cron.trim() !== cron
+    ) ||
+    new Set(normalized).size !== normalized.length
+  ) {
+    throw new Error(errorCode);
+  }
+  return normalized;
+}
+
+function cronTriggerSetsMatch(expected: readonly string[], actual: readonly string[]): boolean {
+  return (
+    expected.length === actual.length && expected.every((cron, index) => cron === actual[index])
+  );
+}
+
+/**
+ * Verify provider-side Cron Triggers for already deployed Workers and repair an exact mismatch from
+ * the managed Wrangler config. This is deliberately separate from Worker traffic deployment so an
+ * interrupted initial handoff can resume without uploading or promoting code again.
+ */
+export async function reconcileWorkerCronTriggers(
+  options: DeployOptions,
+  components: readonly WorkerComponent[]
+): Promise<void> {
+  if (options.dryRun) {
+    options.onProgress?.('  [DRY RUN] Would verify and reconcile Worker Cron Triggers');
+    return;
+  }
+
+  const throttle = makeThrottle({ ...options, concurrency: 1 });
+  const readProviderCrons =
+    options.readWorkerCronTriggers ??
+    ((workerName: string, accountId?: string) =>
+      listWorkerCronTriggers({ workerName, ...(accountId ? { accountId } : {}) }));
+
+  for (const component of components) {
+    const context = await getWorkerDeploymentContext(component, options);
+    if (isDeployResult(context)) {
+      throw new Error(
+        `worker_cron_reconciliation_context_unavailable:${component}:${context.error ?? 'unknown'}`
+      );
+    }
+    const configPath = resolve(context.packageDir, options.configFile ?? 'wrangler.toml');
+    const expected = normalizeCronTriggerSet(
+      parseWranglerToml(await readFile(configPath, 'utf8'), options.env).crons,
+      `worker_cron_config_invalid:${component}`
+    );
+    // An omitted `triggers.crons` property intentionally leaves existing provider state untouched.
+    if (expected.length === 0) continue;
+
+    const actual = normalizeCronTriggerSet(
+      await readProviderCrons(context.workerName, options.cloudflareAccountId),
+      `worker_cron_provider_response_invalid:${component}`
+    );
+    if (cronTriggerSetsMatch(expected, actual)) {
+      options.onProgress?.(`  ✓ ${context.workerName} Cron Triggers verified`);
+      continue;
+    }
+
+    options.onProgress?.(
+      `  ⏳ ${context.workerName} Cron Triggers are missing or stale; reapplying managed triggers...`
+    );
+    await applyWorkerTriggers(context, options, throttle);
+
+    let verified = false;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      const readback = normalizeCronTriggerSet(
+        await readProviderCrons(context.workerName, options.cloudflareAccountId),
+        `worker_cron_provider_response_invalid:${component}`
+      );
+      if (cronTriggerSetsMatch(expected, readback)) {
+        verified = true;
+        break;
+      }
+      if (attempt < 4 && process.env.NODE_ENV !== 'test') {
+        await sleepForDeployment(options, Math.min(500 * 2 ** (attempt - 1), 2_000));
+      }
+    }
+    if (!verified) throw new Error(`worker_cron_reconciliation_failed:${component}`);
+    options.onProgress?.(`  ✓ ${context.workerName} Cron Triggers reapplied and verified`);
+  }
 }
 
 async function deployWorkerTraffic(

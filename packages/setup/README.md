@@ -155,6 +155,17 @@ update or delete itself.
 Every new D1 environment uses the unified Control Plane. The interactive CLI and Web setup offer
 `Automatic provisioning` as an execution-authority choice, not as a routing-mode choice:
 
+| Credential                                                                                                      | Owner and purpose                                                                                                            | Used by Web Setup itself                                  |
+| --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Wrangler OAuth                                                                                                  | Interactive operator credential for resource creation, migrations, Worker deployment, deletion, and post-deploy verification | Yes                                                       |
+| `CLOUDFLARE_API_TOKEN`                                                                                          | Generic operator credential for headless/non-interactive Setup                                                               | Only when explicitly configured instead of Wrangler OAuth |
+| One-time bootstrap API token                                                                                    | Creates the Control Worker's narrowly scoped child tokens and is then revoked                                                | Only for the bounded token bootstrap transaction          |
+| `CLOUDFLARE_D1_API_TOKEN`, `CLOUDFLARE_WORKERS_API_TOKEN`, `CLOUDFLARE_KV_API_TOKEN`, `CLOUDFLARE_R2_API_TOKEN` | Runtime child secrets owned by the Control Worker                                                                            | No                                                        |
+
+Setup must not use a Control child token for its own migrations, deletion, inventory, deployment, or
+verification work. In Web setup, those operations remain on the account-pinned Wrangler OAuth
+session and refresh that session once when Cloudflare rejects an expired access token.
+
 - **On:** setup opens a Cloudflare Dashboard link prefilled with only API-token creation permission.
   The Control Worker needs this one-time bootstrap token to create its scoped execution credentials;
   setup displays an explicit required-token message if it has not been entered. Enter the token once.

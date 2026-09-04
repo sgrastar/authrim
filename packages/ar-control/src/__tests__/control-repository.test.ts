@@ -1347,6 +1347,103 @@ describe('D1ControlRepository lease and budget integration', () => {
     ).toEqual({ reservation_state: 'released', capacity_counted_at: null, released_at: 120 });
   });
 
+  it('selects complete Worker target groups instead of splitting them at a row limit', async () => {
+    database.exec(
+      `UPDATE control_environment_resource_policies SET max_d1_resources = 200
+        WHERE environment_id = 'env-test'`
+    );
+    database.exec(`
+      INSERT INTO control_operations (
+        operation_id, environment_id, operation_kind, idempotency_key, status,
+        requested_by_type, attempt_count, created_at, updated_at
+      ) VALUES
+        ('op-worker-a', 'env-test', 'provision_shard', 'worker-a', 'running',
+         'reconciler', 1, 10, 10),
+        ('op-worker-b', 'env-test', 'provision_shard', 'worker-b', 'running',
+         'reconciler', 1, 20, 20);
+      INSERT INTO control_desired_worker_inventory (
+        environment_id, worker_script_name, package_name, deployment_target,
+        capability_manifest_digest, source_manifest_path, source_manifest_hash,
+        generated_artifact_hash, source_kind, source_reference, status,
+        registered_by_operation_id, registered_by, registered_at
+      ) VALUES
+        ('env-test', 'test-ar-auth', '@authrim/ar-auth', 'test-ar-auth',
+         '${'b'.repeat(64)}', 'auth.json', '${'c'.repeat(64)}', '${'d'.repeat(64)}',
+         'core_manifest', 'test', 'active', 'op-release', 'setup:test', 1),
+        ('env-test', 'test-ar-token', '@authrim/ar-token', 'test-ar-token',
+         '${'e'.repeat(64)}', 'token.json', '${'f'.repeat(64)}', '${'1'.repeat(64)}',
+         'core_manifest', 'test', 'active', 'op-release', 'setup:test', 1);
+      INSERT INTO control_worker_required_data_roles (
+        environment_id, worker_script_name, data_role, source_manifest_hash, updated_at
+      ) VALUES
+        ('env-test', 'test-ar-auth', 'tenant_core/users', '${'c'.repeat(64)}', 1),
+        ('env-test', 'test-ar-token', 'tenant_core/users', '${'f'.repeat(64)}', 1);
+    `);
+    const insert = database.prepare(`INSERT INTO control_worker_binding_reconciliations (
+      operation_id, environment_id, worker_script_name, shard_id, binding_ref,
+      data_role, residency_partition, migration_generation, provider_database_id,
+      state, created_at, updated_at
+    ) VALUES (?, 'env-test', ?, ?, ?, 'tenant_core/users', 'jp', 1, ?, 'pending', ?, ?)`);
+    const insertShard = database.prepare(`INSERT INTO control_tenant_shards (
+      shard_id, environment_id, data_role, residency_policy_id, residency_partition,
+      generation, logical_shard_id, binding_ref, d1_desired_resource_id,
+      location_hint, status, created_at, updated_at
+    ) VALUES (?, 'env-test', 'tenant_core/users', 'default', 'jp', 1, ?, ?, ?,
+              'apac', 'ready', ?, ?)`);
+    const insertDesired = database.prepare(`INSERT INTO control_desired_resources (
+      desired_resource_id, environment_id, resource_kind, logical_shard_id,
+      deterministic_name, ownership_fingerprint, provisioning_state,
+      origin_operation_id, created_at, updated_at
+    ) VALUES (?, 'env-test', 'd1', ?, ?, ?, 'requested', ?, ?, ?)`);
+    for (let index = 0; index < 101; index += 1) {
+      insertDesired.run(
+        `resource-a-${index}`,
+        `logical-a-${index}`,
+        `database-a-${index}`,
+        `fingerprint-a-${index}`,
+        'op-worker-a',
+        10,
+        10
+      );
+      insertShard.run(
+        `shard-a-${index}`,
+        `logical-a-${index}`,
+        `TDB_USERS_A_${index}`,
+        `resource-a-${index}`,
+        10,
+        10
+      );
+      insert.run(
+        'op-worker-a',
+        'test-ar-auth',
+        `shard-a-${index}`,
+        `TDB_USERS_A_${index}`,
+        `database-a-${index}`,
+        10,
+        10
+      );
+    }
+    insertDesired.run(
+      'resource-b',
+      'logical-b',
+      'database-b',
+      'fingerprint-b',
+      'op-worker-b',
+      20,
+      20
+    );
+    insertShard.run('shard-b', 'logical-b', 'TDB_USERS_B', 'resource-b', 20, 20);
+    insert.run('op-worker-b', 'test-ar-token', 'shard-b', 'TDB_USERS_B', 'database-b', 20, 20);
+    const bindingRepository = new D1WorkerBindingRepository(d1Adapter(database));
+
+    await expect(bindingRepository.listDueTargets(100, 30)).resolves.toHaveLength(100);
+    const workerTargets = await bindingRepository.listDueTargetsForWorkers(1, 30);
+    expect(workerTargets).toHaveLength(101);
+    expect(new Set(workerTargets.map((target) => target.workerScriptName))).toEqual(
+      new Set(['test-ar-auth'])
+    );
+  });
+
   it('builds shared and tenant-exclusive planner inputs only from matching shard scope', async () => {
     database.exec(`INSERT INTO control_desired_worker_inventory (
       environment_id, worker_script_name, package_name, deployment_target,
@@ -3237,6 +3334,28 @@ describe('D1ControlRepository lease and budget integration', () => {
         now: 136 + attempt,
       });
     }
+    await expect(
+      bindingRepository.recordSmokeProgress({
+        target: adoptedTarget,
+        successful: true,
+        attempt: 3,
+        stabilizationNotBefore: 170,
+        now: 140,
+      })
+    ).resolves.toBeUndefined();
+    await expect(
+      bindingRepository.recordSmokeProgress({
+        target: {
+          ...adoptedTarget,
+          patchResultVersionId: 'version-stale',
+          patchResultDeploymentId: 'deployment-stale',
+        },
+        successful: true,
+        attempt: 4,
+        completeStabilizationCheck: true,
+        now: 141,
+      })
+    ).rejects.toThrow('control_worker_binding_smoke_state_stale');
     expect(
       database
         .prepare(

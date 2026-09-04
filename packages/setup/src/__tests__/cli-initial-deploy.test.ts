@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   buildApiPackages: vi.fn(),
   loadDeploySecretsFromKeys: vi.fn(),
   deployAll: vi.fn(),
+  reconcileWorkerCronTriggers: vi.fn(),
   deployAllUiWorkers: vi.fn(),
   deployUiWorkerBindingTargets: vi.fn(),
   resolveExistingWorkerComponents: vi.fn(),
@@ -136,6 +137,7 @@ vi.mock('../core/deploy.js', async (importOriginal) => {
     ...actual,
     buildApiPackages: mocks.buildApiPackages,
     deployAll: mocks.deployAll,
+    reconcileWorkerCronTriggers: mocks.reconcileWorkerCronTriggers,
     deployAllUiWorkers: mocks.deployAllUiWorkers,
     deployUiWorkerBindingTargets: mocks.deployUiWorkerBindingTargets,
     loadDeploySecretsFromKeys: mocks.loadDeploySecretsFromKeys,
@@ -665,6 +667,7 @@ describe('CLI initial deployment', () => {
     controlBootstrapCompleted = false;
     mocks.oraSpinners.length = 0;
     mocks.assertLocalDeploymentCapacity.mockResolvedValue(2 * 1024 * 1024 * 1024);
+    mocks.reconcileWorkerCronTriggers.mockResolvedValue(undefined);
 
     mocks.isWranglerInstalled.mockResolvedValue(true);
     mocks.checkAuth.mockResolvedValue({
@@ -1327,7 +1330,13 @@ describe('CLI initial deployment', () => {
     expect(handoffInput?.advanceBindings).toEqual(expect.any(Function));
     await handoffInput?.advanceBindings?.();
     await handoffInput?.refreshEvidence?.();
-    expect(mocks.requestInitialBootstrapAcceleration).not.toHaveBeenCalled();
+    expect(mocks.requestInitialBootstrapAcceleration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environmentId: env,
+        activeSlot: 'A',
+        activeKeyId: 'smoke-v1',
+      })
+    );
     expect(mocks.recordInitialBootstrapWorkerEvidence).toHaveBeenCalledOnce();
     expect(mocks.deployAll).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1550,6 +1559,7 @@ describe('CLI initial deployment', () => {
       controlDatabaseId: 'control-id',
       controlDatabaseName: 'control-id',
       environmentId: env,
+      onProgress: expect.any(Function),
     });
     expect(mocks.reconcileInitialBootstrapHandoffAsOperator).toHaveBeenCalledWith({
       controlDatabaseId: 'control-id',
@@ -2041,6 +2051,20 @@ describe('CLI initial deployment', () => {
   it('resumes a failed initial handoff without uploading or promoting Worker code again', async () => {
     const env = 'headless';
     await writeHeadlessEnvironment(env);
+    const configPath = join(root, '.authrim', env, 'config.json');
+    const config = JSON.parse(await readFile(configPath, 'utf-8'));
+    config.components.loginUi = true;
+    config.components.adminUi = true;
+    config.urls = {
+      api: { custom: null, auto: `https://${env}-ar-router.example.workers.dev` },
+      loginUi: { custom: null, auto: `https://${env}-ar-login-ui.example.workers.dev` },
+      adminUi: {
+        custom: null,
+        auto: `https://${env}-ar-admin-ui.example.workers.dev`,
+        sameAsApi: false,
+      },
+    };
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
     mocks.waitForInitialBootstrapHandoff.mockRejectedValueOnce(
       new Error('control_bootstrap_handoff_transient')
     );
@@ -2056,6 +2080,7 @@ describe('CLI initial deployment', () => {
     expect(checkpoint.workers['ar-control'].cloudflareVersionId).toMatch(/^[a-f0-9-]{36}$/u);
 
     mocks.deployAll.mockClear();
+    mocks.reconcileWorkerCronTriggers.mockClear();
     mocks.applyReleaseSchemaUpdatePlan.mockClear();
     mocks.publishAndActivateMigrationRelease.mockClear();
     mocks.isInitialBootstrapHandoffAccepted.mockResolvedValue(true);
@@ -2064,11 +2089,31 @@ describe('CLI initial deployment', () => {
     await deployCommand({ env, source: root, skipBuild: true, yes: true });
 
     expect(mocks.deployAll).not.toHaveBeenCalled();
+    expect(mocks.reconcileWorkerCronTriggers).toHaveBeenCalledOnce();
+    expect(mocks.reconcileWorkerCronTriggers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env,
+        cloudflareAccountId: TEST_ACCOUNT_ID,
+        workerScriptOwnership: expect.objectContaining({
+          assertBeforeMutation: expect.any(Function),
+        }),
+      }),
+      expect.arrayContaining(['ar-management'])
+    );
     expect(mocks.applyReleaseSchemaUpdatePlan).not.toHaveBeenCalled();
     expect(mocks.isInitialBootstrapHandoffAccepted).toHaveBeenCalledWith(
       expect.objectContaining({ environmentId: env })
     );
     expect(mocks.recordInitialBootstrapWorkerEvidence).not.toHaveBeenCalled();
+    expect(
+      mocks.prepareManagedWorkerScriptOwnership.mock.calls.some(([input]) => {
+        const targets = input.targets as Array<{ component: string }>;
+        return (
+          targets.some((target) => target.component === 'ar-login-ui') &&
+          targets.some((target) => target.component === 'ar-admin-ui')
+        );
+      })
+    ).toBe(true);
   });
 
   it('requires recreation without mutating schema or Workers when the draft manifest changed', async () => {

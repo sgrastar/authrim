@@ -156,7 +156,7 @@ describe('D1 migration history safety', () => {
     );
   });
 
-  it('prefers the split D1 token for typed D1 batches', async () => {
+  it('does not use the Control Worker split D1 token for Setup D1 batches', async () => {
     process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
     process.env.CLOUDFLARE_API_TOKEN = 'generic-token';
     process.env.CLOUDFLARE_D1_API_TOKEN = 'd1-token';
@@ -171,7 +171,7 @@ describe('D1 migration history safety', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: 'Bearer d1-token' }),
+        headers: expect.objectContaining({ Authorization: 'Bearer generic-token' }),
       })
     );
   });
@@ -183,20 +183,16 @@ describe('D1 migration history safety', () => {
       false
     );
     expect(shouldRefreshD1OAuthCredential({ status: 403, source: 'env', attempt: 1 })).toBe(false);
-    expect(shouldRefreshD1OAuthCredential({ status: 403, source: 'd1_env', attempt: 1 })).toBe(
-      false
-    );
   });
 
-  it('does not retry an explicit D1 token after a permission rejection', async () => {
+  it('does not accept a Control Worker D1 token as the Setup operator credential', async () => {
     process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
     process.env.CLOUDFLARE_D1_API_TOKEN = 'd1-token';
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 403 });
 
     await expect(
       executeD1Batch('11111111-1111-1111-1111-111111111111', [{ sql: 'SELECT 1' }])
-    ).rejects.toThrow('cloudflare_d1_batch_failed:403');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    ).rejects.toThrow('cloudflare_api_credentials_required');
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(execaMock).not.toHaveBeenCalled();
   });
 

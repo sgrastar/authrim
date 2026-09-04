@@ -13,12 +13,22 @@ import {
   WorkerBindingReconciler,
   type WorkerBindingReconcilerResult,
 } from './worker-binding-reconciler';
+import { BoundedServiceBindingInvocationBudget } from './service-binding-invocation-budget';
 
 const ACCELERATOR_LEASE_SECONDS = 60;
+const SAFE_ACCELERATOR_ERROR_CODE =
+  /^(?:bootstrap|cloudflare|control|runtime)_[a-z0-9_:,-]{1,159}$/u;
 
 export type BootstrapAcceleratorAdmission =
   | { state: 'acquired'; claims: BootstrapAcceleratorClaims }
   | { state: 'busy' | 'inactive' | 'replayed' };
+
+export function bootstrapAcceleratorFailureCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  return SAFE_ACCELERATOR_ERROR_CODE.test(message)
+    ? message
+    : 'bootstrap_accelerator_advance_failed';
+}
 
 function changes(result: D1Result<unknown>): number {
   const value = result.meta?.changes;
@@ -139,14 +149,13 @@ export async function advanceInitialBootstrap(input: {
     Boolean(input.env.CLOUDFLARE_WORKERS_API_TOKEN?.trim()) &&
     input.env.CLOUDFLARE_D1_API_TOKEN?.trim() !== input.env.CLOUDFLARE_WORKERS_API_TOKEN?.trim() &&
     (await repository.hasReadyAutomaticProvisioning());
-  if (!automaticProvisioningReady) {
-    throw new Error('bootstrap_accelerator_automatic_provisioning_unavailable');
-  }
-  if (repository.resumeAutomaticBootstrapOperations) {
+  if (automaticProvisioningReady && repository.resumeAutomaticBootstrapOperations) {
     await repository.resumeAutomaticBootstrapOperations(environmentId, now());
   }
-  const control = new ControlService({ repository, env: input.env, now });
-  await control.reconcilePending();
+  if (automaticProvisioningReady) {
+    const control = new ControlService({ repository, env: input.env, now });
+    await control.reconcilePending();
+  }
   const apiClients = createControlApiClients(input.env);
   const result = await new WorkerBindingReconciler(
     new D1WorkerBindingRepository(input.env.CONTROL_DB),
@@ -154,17 +163,22 @@ export async function advanceInitialBootstrap(input: {
     apiClients.workers,
     input.env,
     now,
-    true
+    automaticProvisioningReady,
+    new BoundedServiceBindingInvocationBudget()
   ).reconcile();
-  await new BootstrapHandoffVerifier(
-    new D1BootstrapHandoffRepository(input.env.CONTROL_DB),
-    {
-      getD1Database: (databaseId) => apiClients.d1.getD1Database(databaseId),
-      queryD1Batch: (databaseId, queries) => apiClients.d1.queryD1Batch(databaseId, queries),
-      getWorkerSettings: (scriptName) => apiClients.workers.getWorkerSettings(scriptName),
-      listWorkerDeployments: (scriptName) => apiClients.workers.listWorkerDeployments(scriptName),
-    },
-    now
-  ).reconcile(1);
+  // In operator mode, Setup owns provider API verification through Wrangler OAuth. Control can
+  // still run the signed service-binding smoke immediately, without retaining a provider token.
+  if (automaticProvisioningReady) {
+    await new BootstrapHandoffVerifier(
+      new D1BootstrapHandoffRepository(input.env.CONTROL_DB),
+      {
+        getD1Database: (databaseId) => apiClients.d1.getD1Database(databaseId),
+        queryD1Batch: (databaseId, queries) => apiClients.d1.queryD1Batch(databaseId, queries),
+        getWorkerSettings: (scriptName) => apiClients.workers.getWorkerSettings(scriptName),
+        listWorkerDeployments: (scriptName) => apiClients.workers.listWorkerDeployments(scriptName),
+      },
+      now
+    ).reconcile(1);
+  }
   return result;
 }

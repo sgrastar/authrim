@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { readResponseJsonWithLimit, readResponseTextWithLimit } from './http-limits.js';
+import { readResponseJsonWithLimit } from './http-limits.js';
 import { fetchWithDnsFallback, getRemainingDeadlineMs } from './dns-aware-fetch.js';
 import {
   requestAdminMachineAccessToken,
@@ -63,6 +63,30 @@ const CLIENT_SECRET_FILE = 'downstream_grant_introspection_client_secret.txt';
 const DOWNSTREAM_INTROSPECTION_CLIENT_MAX_RETRIES = 24;
 const DOWNSTREAM_INTROSPECTION_CLIENT_RETRY_BASE_DELAY_MS = 2000;
 const DOWNSTREAM_INTROSPECTION_CLIENT_RETRY_MAX_DELAY_MS = 15000;
+const SAFE_API_ERROR_DIAGNOSTIC = /^[a-z][a-z0-9_:-]{0,127}$/u;
+
+async function safeApiFailureDiagnostic(response: Response): Promise<string | null> {
+  const body = await readResponseJsonWithLimit<unknown>(response, 4096).catch(() => null);
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    const record = body as Record<string, unknown>;
+    for (const key of ['error_name', 'error', 'error_code'] as const) {
+      const value = record[key];
+      if (typeof value === 'number' && Number.isSafeInteger(value)) return `error_${value}`;
+      if (typeof value !== 'string') continue;
+      const normalized = value.trim().toLowerCase().replaceAll(' ', '_');
+      if (SAFE_API_ERROR_DIAGNOSTIC.test(normalized)) return normalized;
+    }
+  }
+  if (response.status === 502) return 'bad_gateway';
+  if (response.status === 503) return 'service_unavailable';
+  if (response.status === 504) return 'gateway_timeout';
+  return null;
+}
+
+async function apiFailureMessage(label: string, response: Response): Promise<string> {
+  const diagnostic = await safeApiFailureDiagnostic(response);
+  return `${label} (${response.status})${diagnostic ? `: ${diagnostic}` : ''}`;
+}
 
 async function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
   if (signal?.aborted) return false;
@@ -221,9 +245,8 @@ async function findClientByName(
   );
 
   if (!response.ok) {
-    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(
-      `Failed to check downstream introspection client (${response.status}): ${errorBody}`
+      await apiFailureMessage('Failed to check downstream introspection client', response)
     );
   }
 
@@ -262,9 +285,11 @@ async function updateClientDescription(
   );
 
   if (!response.ok) {
-    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(
-      `Failed to update downstream introspection client description (${response.status}): ${errorBody}`
+      await apiFailureMessage(
+        'Failed to update downstream introspection client description',
+        response
+      )
     );
   }
 }
@@ -290,9 +315,8 @@ async function getClientById(
   }
 
   if (!response.ok) {
-    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(
-      `Failed to read downstream introspection client (${response.status}): ${errorBody}`
+      await apiFailureMessage('Failed to read downstream introspection client', response)
     );
   }
 
@@ -317,9 +341,11 @@ async function regenerateClientSecret(
   );
 
   if (!response.ok) {
-    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(
-      `Failed to regenerate downstream introspection client secret (${response.status}): ${errorBody}`
+      await apiFailureMessage(
+        'Failed to regenerate downstream introspection client secret',
+        response
+      )
     );
   }
 
@@ -367,9 +393,8 @@ async function createClient(
   );
 
   if (!response.ok) {
-    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(
-      `Failed to create downstream introspection client (${response.status}): ${errorBody}`
+      await apiFailureMessage('Failed to create downstream introspection client', response)
     );
   }
 
@@ -492,7 +517,7 @@ export async function ensureDownstreamIntrospectionClient(
             httpOptions
           ).catch(() => false);
           if (exists) {
-            onProgress?.(`Downstream introspection client exists: ${stored.clientId}`);
+            onProgress?.('Downstream introspection client exists');
             return {
               success: true,
               clientId: stored.clientId,
@@ -519,7 +544,7 @@ export async function ensureDownstreamIntrospectionClient(
               httpOptions
             );
           }
-          onProgress?.(`Regenerating downstream introspection client secret: ${existing.clientId}`);
+          onProgress?.('Regenerating downstream introspection client secret');
           const clientSecret = await regenerateClientSecret(
             apiBaseUrl,
             adminBearerToken,

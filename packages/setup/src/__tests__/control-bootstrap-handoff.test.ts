@@ -673,6 +673,46 @@ describe('initial Control topology handoff registration', () => {
     ]);
   });
 
+  it('uses the Setup operator client instead of a Control Worker child token for evidence', async () => {
+    const plan = await buildInitialControlTopologyRegistration({
+      environmentId: 'test',
+      tenantId: 'default',
+      placementPolicy: 'tenant_exclusive',
+      lock: lock(),
+      release: release(),
+      now: 100,
+    });
+    const db = database(plan.manifestDigest);
+    openDatabases.push(db);
+    db.exec(plan.sql);
+    const execute = async (_name: string, sql: string) => {
+      db.exec(sql);
+      return { success: true } as never;
+    };
+    const query = async (_name: string, sql: string) => db.prepare(sql).all() as never;
+    const createOperatorClient = vi.fn().mockResolvedValue(bootstrapClient());
+    const previous = process.env.CLOUDFLARE_WORKERS_API_TOKEN;
+    process.env.CLOUDFLARE_WORKERS_API_TOKEN = 'control-runtime-child-token';
+    try {
+      await expect(
+        recordInitialBootstrapWorkerEvidence({
+          environmentId: 'test',
+          controlDatabaseName: 'control',
+          deployments: deploymentResults(),
+          now: 101,
+          accountId: 'account-id',
+          createOperatorClient,
+          execute,
+          query,
+        })
+      ).resolves.toMatchObject({ workerCount: 2 });
+    } finally {
+      if (previous === undefined) delete process.env.CLOUDFLARE_WORKERS_API_TOKEN;
+      else process.env.CLOUDFLARE_WORKERS_API_TOKEN = previous;
+    }
+    expect(createOperatorClient).toHaveBeenCalledWith({ expectedAccountId: 'account-id' });
+  });
+
   it('accepts only a secret-triggered Control version chain after token registration', async () => {
     const plan = await buildInitialControlTopologyRegistration({
       environmentId: 'test',
@@ -943,7 +983,7 @@ describe('initial Control topology handoff registration', () => {
       })
     ).resolves.toEqual({ state: 'accepted', acceptedAt: 200 });
     expect(progress).toEqual([
-      'Control is reconciling Worker bindings: 0 complete, 2 pending (2 discovered)',
+      'Worker binding progress: 0 awaiting PATCH, 0 PATCHed, 0 smoke checking, 0 stabilizing, 0 complete (2 total)',
     ]);
 
     await expect(
@@ -1225,6 +1265,47 @@ describe('initial Control topology handoff registration', () => {
         })
       ).resolves.toBe('accepted');
       expect(fetcher).toHaveBeenCalledOnce();
+    } finally {
+      await rm(keysDir, { recursive: true, force: true });
+    }
+  });
+
+  it('preserves a sanitized Control diagnostic when acceleration fails', async () => {
+    const keysDir = await mkdtemp(join(tmpdir(), 'authrim-bootstrap-accelerator-error-'));
+    try {
+      const pair = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+      if (!('privateKey' in pair)) throw new Error('expected_key_pair');
+      const privateJwk = {
+        ...(await crypto.subtle.exportKey('jwk', pair.privateKey)),
+        kid: 'smoke-a',
+        alg: 'EdDSA',
+        use: 'sig',
+      };
+      await writeFile(
+        join(keysDir, 'smoke_rpc_signing_jwk_slot_a.private.jwk.json'),
+        JSON.stringify(privateJwk),
+        'utf8'
+      );
+      const fetcher = vi.fn<typeof fetch>(
+        async () =>
+          new Response(null, {
+            status: 503,
+            headers: { 'X-Authrim-Error-Code': 'control_worker_smoke_service_binding_missing' },
+          })
+      );
+
+      await expect(
+        requestInitialBootstrapAcceleration({
+          apiBaseUrl: 'https://test.example.com',
+          environmentId: 'test',
+          keysDir,
+          activeSlot: 'A',
+          activeKeyId: 'smoke-a',
+          fetch: fetcher,
+        })
+      ).rejects.toThrow(
+        'control_bootstrap_accelerator_http_503:control_worker_smoke_service_binding_missing'
+      );
     } finally {
       await rm(keysDir, { recursive: true, force: true });
     }

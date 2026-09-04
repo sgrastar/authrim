@@ -475,7 +475,7 @@ describe('control-provision CLI command', () => {
       controlDatabaseId: 'control-id',
       operation: bindingOperation,
       expectedAccountId: 'account-1',
-      interTargetDelayMs: 15_000,
+      interTargetDelayMs: 0,
     });
     expect(mocks.spinner.succeed).toHaveBeenCalledWith(
       'Worker bindings patched; private smoke and stabilization are running.'

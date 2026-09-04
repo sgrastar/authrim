@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CloudflareControlApiClient } from '../cloudflare-control-api-client.js';
+import {
+  CloudflareControlApiClient,
+  CloudflareControlApiError,
+  parseCloudflareControlRetryAfterSeconds,
+} from '../cloudflare-control-api-client.js';
 
 const accountId = '0123456789abcdef0123456789abcdef';
 const tokens = {
@@ -20,6 +24,46 @@ function success(result: unknown, resultInfo?: Record<string, unknown>): Respons
 }
 
 describe('CloudflareControlApiClient', () => {
+  it('preserves bounded Retry-After guidance on provider errors', async () => {
+    expect(parseCloudflareControlRetryAfterSeconds('45', 0)).toBe(45);
+    expect(parseCloudflareControlRetryAfterSeconds('9999', 0)).toBe(300);
+    expect(parseCloudflareControlRetryAfterSeconds('-1', 0)).toBeNull();
+    expect(parseCloudflareControlRetryAfterSeconds('Thu, 01 Jan 1970 00:01:30 GMT', 30_000)).toBe(
+      60
+    );
+
+    const client = new CloudflareControlApiClient({
+      accountId,
+      tokens,
+      fetcher: vi
+        .fn()
+        .mockResolvedValue(
+          Response.json(
+            { success: false, errors: [{ code: 1015, message: 'rate limited' }] },
+            { status: 429, headers: { 'Retry-After': '75' } }
+          )
+        ),
+    });
+    const error = await client.listWorkerDeployments('worker').catch((caught) => caught);
+    expect(error).toBeInstanceOf(CloudflareControlApiError);
+    expect(error).toMatchObject({ status: 429, retryAfterSeconds: 75 });
+
+    const nonJsonClient = new CloudflareControlApiClient({
+      accountId,
+      tokens,
+      fetcher: vi.fn().mockResolvedValue(
+        new Response('temporarily unavailable', {
+          status: 429,
+          headers: { 'Retry-After': '30' },
+        })
+      ),
+    });
+    const nonJsonError = await nonJsonClient
+      .listWorkerDeployments('worker')
+      .catch((caught) => caught);
+    expect(nonJsonError).toMatchObject({ status: 429, retryAfterSeconds: 30 });
+  });
+
   it('uses only the D1 token for query, batch, raw, and import endpoints', async () => {
     const fetcher = vi
       .fn()
@@ -388,9 +432,7 @@ describe('CloudflareControlApiClient', () => {
     await expect(client.listD1Databases()).rejects.toThrow(
       'cloudflare_api_error:d1.list:403:10000'
     );
-    await expect(client.listD1Databases()).rejects.toThrow(
-      'cloudflare_api_invalid_json:d1.list:502'
-    );
+    await expect(client.listD1Databases()).rejects.toThrow('cloudflare_api_error:d1.list:502');
     for (const call of fetcher.mock.calls) {
       expect(JSON.stringify(call)).not.toContain('d1-token');
     }

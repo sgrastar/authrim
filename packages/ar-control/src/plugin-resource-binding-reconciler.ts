@@ -12,6 +12,10 @@ import {
 } from '@authrim/ar-lib-core/control-plane';
 import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types';
 import type { ControlEnv, RuntimeSmokeServiceBinding } from './types';
+import {
+  consumeServiceBindingInvocation,
+  type ServiceBindingInvocationBudget,
+} from './service-binding-invocation-budget';
 
 const SAFE_PLUGIN_ID = /^[a-z0-9][a-z0-9._-]{0,127}$/u;
 const SAFE_LOGICAL_RESOURCE = /^[a-z0-9][a-z0-9._-]{0,127}$/u;
@@ -1272,7 +1276,8 @@ export class PluginResourceBindingReconciler {
     private readonly api: WorkerSettingsApi,
     private readonly env: ControlEnv,
     private readonly now: () => number = () => Math.floor(Date.now() / 1000),
-    private readonly providerMutationEnabled = true
+    private readonly providerMutationEnabled = true,
+    private readonly serviceBindingBudget?: ServiceBindingInvocationBudget
   ) {
     this.repository = new PluginResourceBindingRepository(database);
   }
@@ -1389,6 +1394,13 @@ export class PluginResourceBindingReconciler {
         now + RETRY_SECONDS,
         now
       );
+      if (
+        deploymentLease &&
+        error instanceof Error &&
+        error.message === 'control_service_binding_invocation_budget_exhausted'
+      ) {
+        await this.repository.releaseDeploymentLease(deploymentLease);
+      }
       return 'deferred';
     }
   }
@@ -1417,6 +1429,9 @@ export class PluginResourceBindingReconciler {
     const smokePluginResourceBindings = smoke.smokePluginResourceBindings;
     if (!smokePluginResourceBindings) {
       throw new Error('plugin_resource_binding_smoke_unavailable');
+    }
+    if (!consumeServiceBindingInvocation(this.serviceBindingBudget)) {
+      throw new Error('control_service_binding_invocation_budget_exhausted');
     }
     const result = await smokePluginResourceBindings(
       this.smokeInput(targetValue, map, expectedVersionId)
@@ -1450,7 +1465,11 @@ export class PluginResourceBindingReconciler {
       try {
         await this.assertSmoke(targetValue, smoke, map, targetValue.patchResultVersionId);
       } catch (error) {
-        if (error instanceof Error && error.message === 'plugin_resource_binding_smoke_mismatch') {
+        if (
+          error instanceof Error &&
+          (error.message === 'plugin_resource_binding_smoke_mismatch' ||
+            error.message === 'control_service_binding_invocation_budget_exhausted')
+        ) {
           throw error;
         }
         throw new Error('plugin_resource_binding_smoke_failed');
@@ -1485,7 +1504,11 @@ export class PluginResourceBindingReconciler {
     try {
       await this.assertSmoke(targetValue, smoke, map, targetValue.patchResultVersionId);
     } catch (error) {
-      if (error instanceof Error && error.message === 'plugin_resource_binding_smoke_mismatch') {
+      if (
+        error instanceof Error &&
+        (error.message === 'plugin_resource_binding_smoke_mismatch' ||
+          error.message === 'control_service_binding_invocation_budget_exhausted')
+      ) {
         throw error;
       }
       throw new Error('plugin_resource_binding_stabilization_smoke_failed');

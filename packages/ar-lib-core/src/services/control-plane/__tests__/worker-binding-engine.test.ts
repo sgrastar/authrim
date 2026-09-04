@@ -249,6 +249,45 @@ describe('shared Worker binding provisioning effect', () => {
     expect(persistence.recordPatchResult).toHaveBeenCalledTimes(1);
   });
 
+  it('immediately adopts a successful patch whose response was lost', async () => {
+    const persistence = state();
+    const before = {
+      bindings: [{ name: 'DB', type: 'd1', database_id: 'shared-db' }],
+    };
+    const after = {
+      bindings: [
+        ...before.bindings,
+        { name: target.bindingRef, type: 'd1', database_id: target.databaseId },
+      ],
+    };
+    const api = {
+      getWorkerSettings: vi.fn().mockResolvedValueOnce(before).mockResolvedValueOnce(after),
+      patchWorkerSettings: vi.fn().mockRejectedValue(new Error('response_lost')),
+      listWorkerDeployments: vi
+        .fn()
+        .mockResolvedValueOnce([oldDeployment])
+        .mockResolvedValueOnce([newDeployment, oldDeployment]),
+    };
+
+    await expect(
+      ensureWorkerBindingPatched({
+        target,
+        lease,
+        deploymentsBefore: [oldDeployment],
+        activeBefore: activeWorkerDeployment([oldDeployment]),
+        api,
+        state: persistence,
+        now: () => 200,
+      })
+    ).resolves.toMatchObject({
+      state: 'patched',
+      target: { patchResultVersionId: 'version-new' },
+    });
+    expect(api.patchWorkerSettings).toHaveBeenCalledTimes(1);
+    expect(persistence.recordPatchResult).toHaveBeenCalledTimes(1);
+    expect(persistence.recordTransientError).not.toHaveBeenCalled();
+  });
+
   it('rearms a lost settings mutation only after the propagation grace window', async () => {
     const persistence = state();
     const api = {
@@ -294,6 +333,34 @@ describe('shared Worker binding provisioning effect', () => {
       now: () => 200,
     });
     expect(persistence.rearmPatchIntent).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a stale lease cannot rearm a lost settings mutation', async () => {
+    const persistence = state();
+    persistence.rearmPatchIntent.mockResolvedValue(false);
+
+    await expect(
+      ensureWorkerBindingPatched({
+        target,
+        lease: {
+          ...lease,
+          mutationStarted: true,
+          mutationStartedAt: 100,
+          previousDeploymentId: 'deployment-old',
+        },
+        deploymentsBefore: [oldDeployment],
+        activeBefore: activeWorkerDeployment([oldDeployment]),
+        api: {
+          getWorkerSettings: vi.fn().mockResolvedValue({
+            bindings: [{ name: 'DB', type: 'd1', database_id: 'shared-db' }],
+          }),
+          patchWorkerSettings: vi.fn(),
+          listWorkerDeployments: vi.fn(),
+        },
+        state: persistence,
+        now: () => 200,
+      })
+    ).rejects.toThrow('control_worker_deployment_lease_lost');
   });
 
   it('fails closed when latest changes immediately before the settings patch', async () => {

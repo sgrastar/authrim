@@ -26,6 +26,7 @@ import {
   isLocalDiskExhaustionError,
   loadDeploySecretsFromKeys,
   nodeVersionSatisfiesEngine,
+  reconcileWorkerCronTriggers,
   resolveExistingWorkerComponents,
   updateLockWithDeployments,
   type DeployOptions,
@@ -130,6 +131,28 @@ function createWorkerPackage(rootDir: string, component: string, version: string
       name: `@authrim/${component}`,
       version,
     })
+  );
+}
+
+function createWorkerPackageWithCrons(
+  rootDir: string,
+  component: string,
+  version: string,
+  crons: readonly string[]
+): void {
+  createWorkerPackage(rootDir, component, version);
+  writeFileSync(
+    join(rootDir, 'packages', component, 'wrangler.toml'),
+    [
+      `name = "test-${component}"`,
+      '',
+      '[env.test]',
+      `name = "test-${component}"`,
+      '',
+      '[env.test.triggers]',
+      `crons = [${crons.map((cron) => JSON.stringify(cron)).join(', ')}]`,
+      '',
+    ].join('\n')
   );
 }
 
@@ -2515,6 +2538,78 @@ describe('updateLockWithDeployments', () => {
         },
       ])
     ).toThrow('worker_deployment_exact_version_unavailable:ar-control');
+  });
+});
+
+describe('reconcileWorkerCronTriggers', () => {
+  const managementCrons = ['* * * * *', '*/2 * * * *', '*/5 * * * *', '0 */6 * * *'] as const;
+
+  it('accepts an exact provider schedule set without mutating the Worker', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackageWithCrons(rootDir, 'ar-management', '1.0.0', managementCrons);
+    const readWorkerCronTriggers = vi.fn().mockResolvedValue([...managementCrons].reverse());
+
+    await reconcileWorkerCronTriggers(
+      {
+        env: 'test',
+        rootDir,
+        cloudflareAccountId: '11111111111111111111111111111111',
+        readWorkerCronTriggers,
+        workerScriptOwnership: testWorkerScriptOwnership,
+      },
+      ['ar-management']
+    );
+
+    expect(readWorkerCronTriggers).toHaveBeenCalledWith(
+      'test-ar-management',
+      '11111111111111111111111111111111'
+    );
+    expect(vi.mocked(execa)).not.toHaveBeenCalled();
+  });
+
+  it('reapplies missing schedules and requires an exact provider readback', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackageWithCrons(rootDir, 'ar-management', '1.0.0', managementCrons);
+    const readWorkerCronTriggers = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([...managementCrons]);
+
+    await reconcileWorkerCronTriggers(
+      {
+        env: 'test',
+        rootDir,
+        readWorkerCronTriggers,
+        workerScriptOwnership: testWorkerScriptOwnership,
+      },
+      ['ar-management']
+    );
+
+    expect(readWorkerCronTriggers).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(execa)).toHaveBeenCalledOnce();
+    expect(vi.mocked(execa).mock.calls[0]?.[1]).toEqual(
+      expect.arrayContaining(['triggers', 'deploy', '--config', 'wrangler.toml', '--env', 'test'])
+    );
+  });
+
+  it('fails the resume when provider schedules remain inconsistent after repair', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackageWithCrons(rootDir, 'ar-management', '1.0.0', managementCrons);
+    const readWorkerCronTriggers = vi.fn().mockResolvedValue([]);
+
+    await expect(
+      reconcileWorkerCronTriggers(
+        {
+          env: 'test',
+          rootDir,
+          readWorkerCronTriggers,
+          workerScriptOwnership: testWorkerScriptOwnership,
+        },
+        ['ar-management']
+      )
+    ).rejects.toThrow('worker_cron_reconciliation_failed:ar-management');
+    expect(readWorkerCronTriggers).toHaveBeenCalledTimes(5);
+    expect(vi.mocked(execa)).toHaveBeenCalledOnce();
   });
 });
 

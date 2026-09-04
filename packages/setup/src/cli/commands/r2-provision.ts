@@ -14,6 +14,7 @@ import {
   adoptR2BucketOwnership,
   getAccountId,
   getRequiredR2Buckets,
+  hasExactR2BucketOwnership,
   listR2Buckets,
   provisionR2Buckets,
 } from '../../core/cloudflare.js';
@@ -37,14 +38,6 @@ interface R2ProvisionOptions {
   dryRun?: boolean;
   yes?: boolean;
   adoptLegacyR2Ownership?: boolean;
-}
-
-function hasExactR2Ownership(recorded: {
-  creationDate?: string;
-  ownershipMarkerKey?: string;
-  ownershipId?: string;
-}): boolean {
-  return Boolean(recorded.creationDate && recorded.ownershipMarkerKey && recorded.ownershipId);
 }
 
 export async function r2ProvisionCommand(options: R2ProvisionOptions): Promise<void> {
@@ -101,7 +94,7 @@ export async function r2ProvisionCommand(options: R2ProvisionOptions): Promise<v
   const missingBuckets = requiredBuckets.filter((bucket) => !lock.r2?.[bucket.binding]?.name);
   const legacyBuckets = requiredBuckets.filter((bucket) => {
     const recorded = lock.r2?.[bucket.binding];
-    return recorded !== undefined && !hasExactR2Ownership(recorded);
+    return recorded !== undefined && !hasExactR2BucketOwnership(recorded);
   });
 
   if (options.adoptLegacyR2Ownership) {

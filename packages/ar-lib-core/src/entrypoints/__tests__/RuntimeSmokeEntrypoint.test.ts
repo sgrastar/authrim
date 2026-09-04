@@ -103,6 +103,34 @@ describe('RuntimeSmokeEntrypoint', () => {
     });
   });
 
+  it('checks a bounded smoke batch through one RPC method without weakening each token check', async () => {
+    const entrypoint = worker();
+    const tokens = [
+      await token({ operationId: 'batch-1' }),
+      await token({ operationId: 'batch-2' }),
+    ];
+
+    await expect(entrypoint.smokeTenantBindings(tokens)).resolves.toMatchObject([
+      { ok: true, result: { bindingRef: BINDING, observedVersionId: 'version-1' } },
+      { ok: true, result: { bindingRef: BINDING, observedVersionId: 'version-1' } },
+    ]);
+    await expect(entrypoint.smokeTenantBindings([])).rejects.toThrow('runtime_smoke_batch_invalid');
+    await expect(entrypoint.smokeTenantBindings(Array(33).fill(tokens[0]))).rejects.toThrow(
+      'runtime_smoke_batch_invalid'
+    );
+  });
+
+  it('isolates an invalid token without discarding valid results in the same RPC batch', async () => {
+    const entrypoint = worker();
+
+    await expect(
+      entrypoint.smokeTenantBindings(['not-a-jws', await token({ operationId: 'batch-valid' })])
+    ).resolves.toMatchObject([
+      { ok: false, errorCode: 'runtime_smoke_invalid_jws' },
+      { ok: true, result: { bindingRef: BINDING, observedVersionId: 'version-1' } },
+    ]);
+  });
+
   it('rejects mismatched generated identity before signature or D1 access', async () => {
     const binding = database();
     const entrypoint = worker({
