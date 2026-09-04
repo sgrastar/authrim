@@ -22,6 +22,46 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe('/discover page server', () => {
+	it('redirects a single-tenant dedicated Login UI back to its own login URL', async () => {
+		const fetch = vi.fn().mockResolvedValueOnce(
+			jsonResponse({
+				config: {
+					tenant_id: 'default',
+					mode: 'discovery_optional',
+					discovery_methods: ['tenant_slug'],
+					selection_policy: 'select_if_multiple',
+					allow_manual_tenant_entry: true,
+					remember_last_tenant: true,
+					redirect_default_login_to_discovery: true,
+					require_common_discovery_before_login: true
+				},
+				single_tenant_mode: true,
+				is_common_entry_host: false,
+				common_discover_url: 'https://single-ar-login-ui.example.workers.dev/discover',
+				default_candidate: {
+					tenant_id: 'default',
+					tenant_code: 'default',
+					display_name: 'Initial Tenant',
+					logo_url: null,
+					login_url: 'https://single-ar-login-ui.example.workers.dev/login',
+					source: 'tenant_slug'
+				}
+			})
+		);
+
+		await expect(
+			load({
+				fetch,
+				cookies: createCookies(),
+				request: new Request('https://single-ar-login-ui.example.workers.dev/discover'),
+				url: new URL('https://single-ar-login-ui.example.workers.dev/discover')
+			} as never)
+		).rejects.toMatchObject({
+			status: 303,
+			location: 'https://single-ar-login-ui.example.workers.dev/login'
+		});
+	});
+
 	it('redirects tenant-specific discover pages back to /login', async () => {
 		const fetch = vi.fn().mockResolvedValueOnce(
 			jsonResponse({

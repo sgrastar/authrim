@@ -63,7 +63,7 @@ describe('updateDeploymentProgress', () => {
     const workers = updateDeploymentProgress(null, 'Deploying workers...');
     const manualDns = updateDeploymentProgress(
       workers,
-      '⚠️ Automatic wildcard DNS setup is unavailable.'
+      '⚠️ Waiting for the user to configure wildcard DNS.'
     );
 
     expect(manualDns).toMatchObject({ step: 8, phase: 'routing', status: 'warning' });
@@ -116,7 +116,7 @@ describe('updateDeploymentProgress', () => {
       'ar-login-ui deployed as UI Worker: test-ar-login-ui',
       'Deploying workers...',
       'Verifying Worker deployments are visible (15 workers)...',
-      'Waiting for Control bootstrap verification of 15 Worker(s)...',
+      'Control is verifying 15 Worker deployment(s)...',
       'Ensuring initial tenant exists (first)...',
       'Checking tenant routing for optional integrations...',
       'Configuring downstream grant introspection...',
@@ -129,5 +129,39 @@ describe('updateDeploymentProgress', () => {
       snapshot = updateDeploymentProgress(snapshot, message);
       expect(snapshot.step, message).toBe(expectedSteps[index]);
     }
+  });
+
+  it('keeps Setup operator binding progress in the Control reconciliation phase', () => {
+    const started = updateDeploymentProgress(
+      null,
+      'Setup operator is reconciling 15 Worker deployment(s) with Wrangler OAuth...'
+    );
+    const patched = updateDeploymentProgress(
+      started,
+      'Setup operator is reconciling Worker bindings: 13/34 patched'
+    );
+    const smoke = updateDeploymentProgress(
+      patched,
+      'Worker binding progress: 0 awaiting PATCH, 13 PATCHed, 1 smoke checking, 0 stabilizing, 0 complete (34 total)'
+    );
+
+    expect(started).toMatchObject({ step: 6, phase: 'control', status: 'waiting' });
+    expect(patched).toMatchObject({ step: 6, phase: 'control', status: 'waiting' });
+    expect(smoke).toMatchObject({ step: 6, phase: 'control', status: 'waiting' });
+  });
+
+  it('keeps the ar-control bootstrap deployment in the Worker phase', () => {
+    const workers = updateDeploymentProgress(null, 'Deploying workers...');
+    const bootstrap = updateDeploymentProgress(
+      workers,
+      'Deploying initial ar-control bootstrap without runtime smoke bindings...'
+    );
+    const redeploy = updateDeploymentProgress(
+      bootstrap,
+      'Redeploying ar-control with authenticated runtime smoke bindings...'
+    );
+
+    expect(bootstrap).toMatchObject({ step: 4, phase: 'workers' });
+    expect(redeploy).toMatchObject({ step: 4, phase: 'workers' });
   });
 });

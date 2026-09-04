@@ -87,6 +87,9 @@ const ENVIRONMENT_DELETE_VERIFY_RETRY_DELAY_MS = 2_000;
 // Cloudflare's REST API is rate limited. Keep deletion concurrent, while letting the request
 // retry/backoff logic absorb transient 429/971 responses instead of adding a fixed delay per object.
 const R2_OBJECT_DELETE_CONCURRENCY = 5;
+// Bucket creation is dominated by remote Wrangler/API round trips. Keep this deliberately low so
+// fresh installs are faster without creating an aggressive burst against the account API.
+const R2_BUCKET_PROVISIONING_CONCURRENCY = 2;
 const R2_BUCKET_LIST_PER_PAGE = 1_000;
 // Cloudflare currently permits up to 1,000,000 buckets per account. Keep the traversal bounded at
 // that documented ceiling so a malformed stream of unique cursors cannot make Setup loop forever.
@@ -298,11 +301,18 @@ export interface R2BucketInfo {
   ownershipId?: string;
 }
 
-export type R2BucketProvisioningState = 'configured' | 'recorded_but_missing' | 'missing';
+export type R2BucketProvisioningState =
+  | 'configured'
+  | 'recorded_but_missing'
+  | 'ownership_unverified'
+  | 'identity_mismatch'
+  | 'missing';
 
 export interface R2BucketProvisioningStatus extends R2BucketInfo {
   recorded: boolean;
   exists: boolean;
+  exactOwnership: boolean;
+  providerIdentityMatches: boolean;
   configured: boolean;
   state: R2BucketProvisioningState;
 }
@@ -555,8 +565,8 @@ export function getRequiredR2Buckets(
 
 export function buildR2BucketProvisioningStatus(
   env: string,
-  recordedBuckets: Record<string, { name: string }> | null | undefined,
-  cloudflareBucketNames: Iterable<string>
+  recordedBuckets: Record<string, Omit<R2BucketInfo, 'binding'>> | null | undefined,
+  cloudflareBuckets: Iterable<R2BucketProviderIdentity>
 ): {
   env: string;
   enabled: boolean;
@@ -565,24 +575,42 @@ export function buildR2BucketProvisioningStatus(
   missing: R2BucketProvisioningStatus[];
   buckets: R2BucketProvisioningStatus[];
 } {
-  const existingNames = new Set(cloudflareBucketNames);
+  const liveByName = new Map(
+    Array.from(cloudflareBuckets, (bucket) => [bucket.name, bucket] as const)
+  );
   const buckets = getRequiredR2Buckets(env).map((bucket) => {
-    const recordedName = recordedBuckets?.[bucket.binding]?.name;
+    const recordedBucket = recordedBuckets?.[bucket.binding];
+    const recordedName = recordedBucket?.name;
     const name = recordedName ?? bucket.name;
     const recorded = Boolean(recordedName);
-    const exists = existingNames.has(name);
-    const configured = recorded && exists;
-    const state: R2BucketProvisioningState = recorded
-      ? exists
-        ? 'configured'
-        : 'recorded_but_missing'
-      : 'missing';
+    const liveBucket = liveByName.get(name);
+    const exists = Boolean(liveBucket);
+    const exactOwnership = recordedBucket ? hasExactR2BucketOwnership(recordedBucket) : false;
+    const providerIdentityMatches = Boolean(
+      exactOwnership &&
+      liveBucket?.creationDate &&
+      liveBucket.creationDate === recordedBucket?.creationDate
+    );
+    const configured = recorded && exists && exactOwnership && providerIdentityMatches;
+    let state: R2BucketProvisioningState = 'missing';
+    if (recorded && !exists) {
+      state = 'recorded_but_missing';
+    } else if (recorded && !exactOwnership) {
+      state = 'ownership_unverified';
+    } else if (recorded && !providerIdentityMatches) {
+      state = 'identity_mismatch';
+    } else if (configured) {
+      state = 'configured';
+    }
 
     return {
       ...bucket,
+      ...recordedBucket,
       name,
       recorded,
       exists,
+      exactOwnership,
+      providerIdentityMatches,
       configured,
       state,
     };
@@ -596,6 +624,14 @@ export function buildR2BucketProvisioningStatus(
     missing: buckets.filter((bucket) => !bucket.configured),
     buckets,
   };
+}
+
+export function hasExactR2BucketOwnership(recorded: {
+  creationDate?: string;
+  ownershipMarkerKey?: string;
+  ownershipId?: string;
+}): boolean {
+  return Boolean(recorded.creationDate && recorded.ownershipMarkerKey && recorded.ownershipId);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -752,6 +788,8 @@ interface WranglerOAuthRefreshState {
   attempted: boolean;
 }
 
+const wranglerOAuthSessionRefreshes = new Map<string, Promise<void>>();
+
 function hasAuthoritativeWranglerApiToken(): boolean {
   // Wrangler reads CLOUDFLARE_API_TOKEN. Authrim's resource-specific token variables are secrets
   // installed into Control Workers; Wrangler does not use them as its own operator credential.
@@ -800,8 +838,25 @@ async function refreshWranglerOAuthSession(
   if (state.attempted || hasAuthoritativeWranglerApiToken()) return false;
   const pinnedAccountId = pinnedWranglerOAuthAccountId(message);
   state.attempted = true;
-  const { stdout, stderr } = await wrangler(['whoami'], { timeout: 30_000 });
-  assertCloudflareOAuthRefreshAccount(pinnedAccountId, `${stdout}\n${stderr}`);
+
+  const inFlight = wranglerOAuthSessionRefreshes.get(pinnedAccountId);
+  if (inFlight) {
+    await inFlight;
+    return true;
+  }
+
+  const refresh = (async () => {
+    const { stdout, stderr } = await wrangler(['whoami'], { timeout: 30_000 });
+    assertCloudflareOAuthRefreshAccount(pinnedAccountId, `${stdout}\n${stderr}`);
+  })();
+  wranglerOAuthSessionRefreshes.set(pinnedAccountId, refresh);
+  try {
+    await refresh;
+  } finally {
+    if (wranglerOAuthSessionRefreshes.get(pinnedAccountId) === refresh) {
+      wranglerOAuthSessionRefreshes.delete(pinnedAccountId);
+    }
+  }
   return true;
 }
 
@@ -3220,11 +3275,20 @@ function describeInventoryError(error: unknown, fallback: string): string {
   return fallback;
 }
 
-async function resolveCloudflareInventoryCredentials(accountIdHint?: string): Promise<{
+type CloudflareInventoryCredentials = {
   accountId: string;
   token: string;
   source: CloudflareApiToken['source'];
-} | null> {
+};
+
+const cloudflareInventoryCredentialResolutions = new Map<
+  string,
+  Promise<CloudflareInventoryCredentials | null>
+>();
+
+async function resolveCloudflareInventoryCredentialsUnshared(
+  accountIdHint?: string
+): Promise<CloudflareInventoryCredentials | null> {
   const hintedAccountId = accountIdHint?.trim();
   if (hintedAccountId && !/^[a-f0-9]{32}$/u.test(hintedAccountId)) {
     throw new Error('cloudflare_account_id_invalid');
@@ -3262,28 +3326,52 @@ async function resolveCloudflareInventoryCredentials(accountIdHint?: string): Pr
   return { accountId, token: tokenInfo.token, source: tokenInfo.source };
 }
 
+/**
+ * Share only concurrent credential resolution. Environment discovery reads several independent
+ * Cloudflare inventories at once; without single-flight coordination every reader launches its
+ * own Wrangler token/whoami subprocesses. The entry is removed as soon as resolution settles, so
+ * later operations still observe account switches and refreshed OAuth credentials.
+ */
+function resolveCloudflareInventoryCredentials(
+  accountIdHint?: string
+): Promise<CloudflareInventoryCredentials | null> {
+  const key = accountIdHint?.trim() ?? '';
+  const existing = cloudflareInventoryCredentialResolutions.get(key);
+  if (existing) return existing;
+
+  const pending = resolveCloudflareInventoryCredentialsUnshared(accountIdHint);
+  cloudflareInventoryCredentialResolutions.set(key, pending);
+  const clear = () => {
+    if (cloudflareInventoryCredentialResolutions.get(key) === pending) {
+      cloudflareInventoryCredentialResolutions.delete(key);
+    }
+  };
+  void pending.then(clear, clear);
+  return pending;
+}
+
 async function resolveCloudflareD1Credentials(accountIdHint?: string): Promise<{
   accountId: string;
   token: string;
-  source: CloudflareApiToken['source'] | 'd1_env';
+  source: CloudflareApiToken['source'];
 } | null> {
-  const d1Token = process.env.CLOUDFLARE_D1_API_TOKEN?.trim();
   if (
     process.env.NODE_ENV === 'test' &&
     ((!accountIdHint?.trim() && !process.env.CLOUDFLARE_ACCOUNT_ID?.trim()) ||
-      (!d1Token && !process.env.CLOUDFLARE_API_TOKEN?.trim()))
+      !process.env.CLOUDFLARE_API_TOKEN?.trim())
   ) {
     return null;
   }
-  const accountId =
-    accountIdHint?.trim() || process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || (await getAccountId());
-  if (d1Token && accountId) return { accountId, token: d1Token, source: 'd1_env' };
+  // CLOUDFLARE_D1_API_TOKEN is a runtime secret issued for the Control Worker. It is not a
+  // Setup/operator credential. Web Setup uses Wrangler OAuth; headless Setup may use the generic
+  // CLOUDFLARE_API_TOKEN. Keeping those authorities separate prevents a Control child token from
+  // being selected accidentally for migrations, deletion, or post-deploy verification.
   return resolveCloudflareInventoryCredentials(accountIdHint);
 }
 
 export function shouldRefreshD1OAuthCredential(input: {
   status: number;
-  source: CloudflareApiToken['source'] | 'd1_env';
+  source: CloudflareApiToken['source'];
   attempt: number;
 }): boolean {
   return (
@@ -3316,7 +3404,7 @@ export function assertCloudflareOAuthRefreshAccount(
   }
 }
 
-async function refreshPinnedCloudflareOAuthToken(
+export async function refreshPinnedCloudflareOAuthToken(
   accountId: string
 ): Promise<{ accountId: string; token: string; source: 'oauth' } | null> {
   if (process.env.CLOUDFLARE_API_TOKEN?.trim()) return null;
@@ -3325,6 +3413,87 @@ async function refreshPinnedCloudflareOAuthToken(
   const refreshed = await getCloudflareApiToken();
   if (!refreshed || refreshed.source !== 'oauth') return null;
   return { accountId, token: refreshed.token, source: 'oauth' };
+}
+
+export function normalizeWorkerCronTriggersResponse(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('cloudflare_worker_cron_response_invalid');
+  }
+  const result = (payload as { result?: unknown }).result;
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    throw new Error('cloudflare_worker_cron_response_invalid');
+  }
+  const schedules = (result as { schedules?: unknown }).schedules;
+  if (!Array.isArray(schedules)) {
+    throw new Error('cloudflare_worker_cron_response_invalid');
+  }
+
+  const crons: string[] = [];
+  const seen = new Set<string>();
+  for (const schedule of schedules) {
+    const cron =
+      schedule && typeof schedule === 'object' && !Array.isArray(schedule)
+        ? (schedule as { cron?: unknown }).cron
+        : undefined;
+    if (typeof cron !== 'string' || cron.length === 0 || cron.trim() !== cron || seen.has(cron)) {
+      throw new Error('cloudflare_worker_cron_response_invalid');
+    }
+    seen.add(cron);
+    crons.push(cron);
+  }
+  return crons.sort();
+}
+
+/** Read the exact Cron Trigger set attached to one Worker in the pinned Cloudflare account. */
+export async function listWorkerCronTriggers(input: {
+  workerName: string;
+  accountId?: string;
+}): Promise<string[]> {
+  if (!input.workerName || input.workerName.trim() !== input.workerName) {
+    throw new Error('cloudflare_worker_name_invalid');
+  }
+  let credentials = await resolveCloudflareInventoryCredentials(input.accountId);
+  if (!credentials) throw new Error('cloudflare_worker_cron_credentials_unavailable');
+
+  const url =
+    `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/workers/scripts/` +
+    `${encodeURIComponent(input.workerName)}/schedules`;
+  for (let authAttempt = 1; authAttempt <= 2; authAttempt++) {
+    const { response, data } = await requestCloudflareApiJson<{
+      success?: boolean;
+      result?: unknown;
+      errors?: CloudflareApiMessage[];
+    }>(
+      url,
+      { headers: { Authorization: `Bearer ${credentials.token}` } },
+      { label: `Cloudflare Cron Trigger lookup for ${input.workerName}`, retryMode: 'read' }
+    );
+    const errorCodes = (data.errors ?? []).flatMap((error) =>
+      typeof error.code === 'number' ? [error.code] : []
+    );
+    if (
+      shouldRefreshCloudflareOAuthCredential({
+        status: response.status,
+        errorCodes,
+        source: credentials.source,
+        attempt: authAttempt,
+      })
+    ) {
+      const refreshed = await refreshPinnedCloudflareOAuthToken(credentials.accountId);
+      if (refreshed) {
+        credentials = refreshed;
+        continue;
+      }
+    }
+    if (!response.ok || data.success === false) {
+      const detail = formatCloudflareApiMessages(data);
+      throw new Error(
+        `Cloudflare Cron Trigger lookup failed (${response.status})${detail ? `: ${detail}` : ''}`
+      );
+    }
+    return normalizeWorkerCronTriggersResponse(data);
+  }
+  throw new Error('cloudflare_worker_cron_oauth_refresh_retry_exhausted');
 }
 
 async function listCloudflarePaginatedResourcesViaApi<T>(input: {
@@ -7957,6 +8126,39 @@ async function waitForR2BucketVisible(
   throw visibilityError;
 }
 
+async function runR2BucketProvisioningPool<T>(
+  items: readonly T[],
+  worker: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  let nextIndex = 0;
+  let stopped = false;
+  let firstError: unknown;
+
+  const workers = Array.from(
+    { length: Math.min(R2_BUCKET_PROVISIONING_CONCURRENCY, items.length) },
+    async () => {
+      while (!stopped) {
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= items.length) return;
+
+        try {
+          await worker(items[index]!, index);
+        } catch (error) {
+          if (!stopped) {
+            stopped = true;
+            firstError = error;
+          }
+          return;
+        }
+      }
+    }
+  );
+
+  await Promise.all(workers);
+  if (stopped) throw firstError;
+}
+
 export async function provisionR2Buckets(
   env: string,
   options: {
@@ -7981,14 +8183,37 @@ export async function provisionR2Buckets(
 ): Promise<R2BucketInfo[]> {
   const onProgress = options.onProgress ?? (() => undefined);
   const existing = options.existing ?? {};
-  const provisioned: R2BucketInfo[] = [];
+  const requiredBuckets = getRequiredR2Buckets(env, {
+    includeFeatureBuckets: options.includeFeatureBuckets,
+  });
+  const provisioned: Array<R2BucketInfo | undefined> = new Array(requiredBuckets.length);
   const bucketsByName = new Map(
     (await listR2BucketIdentitiesStrict()).map((candidate) => [candidate.name, candidate])
   );
 
-  for (const bucket of getRequiredR2Buckets(env, {
-    includeFeatureBuckets: options.includeFeatureBuckets,
-  })) {
+  // Provisioning-intent callbacks update one shared durable file with read-modify-write semantics.
+  // Bucket work may overlap, but those checkpoint writes must remain serialized or one bucket can
+  // overwrite another bucket's freshly persisted state.
+  let checkpointTail: Promise<void> = Promise.resolve();
+  const serializeCheckpoint = <T>(
+    callback: ((resource: T) => Promise<void>) | undefined
+  ): ((resource: T) => Promise<void>) | undefined => {
+    if (!callback) return undefined;
+    return (resource: T) => {
+      const result = checkpointTail.then(() => callback(resource));
+      checkpointTail = result.then(
+        () => undefined,
+        () => undefined
+      );
+      return result;
+    };
+  };
+  const onResourceCreateIssued = serializeCheckpoint(options.onResourceCreateIssued);
+  const onResourceCreateRejected = serializeCheckpoint(options.onResourceCreateRejected);
+  const onResourceIdentified = serializeCheckpoint(options.onResourceIdentified);
+  const onResourceProvisioned = serializeCheckpoint(options.onResourceProvisioned);
+
+  await runR2BucketProvisioningPool(requiredBuckets, async (bucket, index) => {
     const lockedBucket = existing[bucket.binding];
     const bucketName = lockedBucket?.name ?? bucket.name;
     const checkpoint = options.provisioningIntentResources?.[`r2:${bucket.binding}`];
@@ -8006,15 +8231,13 @@ export async function provisionR2Buckets(
       ownershipId,
     };
     const behavior =
-      options.provisioningIntentResources &&
-      options.onResourceCreateIssued &&
-      options.onResourceCreateRejected
+      options.provisioningIntentResources && onResourceCreateIssued && onResourceCreateRejected
         ? getProvisioningCreateBehavior(
             {
               provisioningIntentResources: options.provisioningIntentResources,
-              onResourceCreateIssued: options.onResourceCreateIssued,
-              onResourceCreateRejected: options.onResourceCreateRejected,
-              onResourceIdentified: options.onResourceIdentified ?? (async () => undefined),
+              onResourceCreateIssued,
+              onResourceCreateRejected,
+              onResourceIdentified: onResourceIdentified ?? (async () => undefined),
             },
             identity
           )
@@ -8034,9 +8257,9 @@ export async function provisionR2Buckets(
         // A pre-fix lock/checkpoint remains usable as a non-destructive Worker binding so an
         // interrupted 0.4.0 setup can finish. It does not gain deletion authority and is never
         // silently upgraded to a marker-owned bucket.
-        provisioned.push({ binding: bucket.binding, name: bucketName });
+        provisioned[index] = { binding: bucket.binding, name: bucketName };
         onProgress(`  ✓ Existing legacy binding (name-only): ${bucketName}`);
-        continue;
+        return;
       }
       const expectedCreationDate = behavior.expectedCreationDate ?? lockedBucket?.creationDate;
       if (expectedCreationDate && liveBucket.creationDate !== expectedCreationDate) {
@@ -8071,25 +8294,25 @@ export async function provisionR2Buckets(
         );
       }
       const creationDate = expectedCreationDate ?? liveBucket.creationDate;
-      provisioned.push({
+      provisioned[index] = {
         binding: bucket.binding,
         name: bucketName,
         creationDate,
         ownershipMarkerKey,
         ownershipId,
-      });
-      await options.onResourceIdentified?.({
+      };
+      await onResourceIdentified?.({
         ...identity,
         state: 'identified',
         creationDate,
       });
-      await options.onResourceProvisioned?.({
+      await onResourceProvisioned?.({
         ...identity,
         state: 'created',
         creationDate,
       });
       onProgress(`  ✓ Existing: ${bucketName}`);
-      continue;
+      return;
     }
 
     if (behavior.recordedState === 'identified' || behavior.recordedState === 'created') {
@@ -8136,29 +8359,35 @@ export async function provisionR2Buckets(
         `R2 bucket ${result.name} was replaced while Setup established its ownership marker`
       );
     }
-    await options.onResourceIdentified?.({
+    await onResourceIdentified?.({
       ...identity,
       name: result.name,
       state: 'identified',
       creationDate: providerIdentity.creationDate,
     });
-    provisioned.push({
+    provisioned[index] = {
       binding: bucket.binding,
       name: result.name,
       creationDate: providerIdentity.creationDate,
       ownershipMarkerKey,
       ownershipId,
-    });
-    await options.onResourceProvisioned?.({
+    };
+    await onResourceProvisioned?.({
       ...identity,
       name: result.name,
       state: 'created',
       creationDate: providerIdentity.creationDate,
     });
     onProgress(`  ✅ ${bucketName} created`);
-  }
+  });
 
-  return provisioned;
+  return requiredBuckets.map((bucket, index) => {
+    const result = provisioned[index];
+    if (!result) {
+      throw new Error(`R2 bucket ${bucket.name} completed without a provisioning result`);
+    }
+    return result;
+  });
 }
 
 // =============================================================================
@@ -9125,12 +9354,8 @@ export async function listWorkers(
   for (let attempt = 1; attempt <= WORKER_INVENTORY_MAX_ATTEMPTS; attempt++) {
     let retryDelayMs = WORKER_INVENTORY_RETRY_DELAY_MS * attempt;
     try {
-      const accountId = await getAccountId();
-      if (!accountId) {
-        throw new Error('Cloudflare account ID is unavailable');
-      }
-      const tokenInfo = await getCloudflareApiToken();
-      if (!tokenInfo) {
+      const credentials = await resolveCloudflareInventoryCredentials();
+      if (!credentials) {
         throw new Error('Cloudflare API authentication is unavailable');
       }
 
@@ -9142,9 +9367,9 @@ export async function listWorkers(
           total_pages?: unknown;
         };
       }>(
-        `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts`,
+        `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/workers/scripts`,
         {
-          headers: { Authorization: `Bearer ${tokenInfo.token}` },
+          headers: { Authorization: `Bearer ${credentials.token}` },
         },
         {
           label: 'Cloudflare Worker inventory',
@@ -9803,196 +10028,133 @@ export async function detectEnvironments(
     }
   };
 
-  // Scan Workers first — environments are only valid if Workers or D1 exist
-  progress('Scanning Workers...');
-  const workerEnvs = new Set<string>();
-  try {
-    const workers = await listWorkers({
-      onRetry: progress,
-    });
-    for (const w of workers) {
-      const match = w.name.match(AUTHRIM_PATTERNS.worker);
-      if (match) {
-        const env = match[1].toLowerCase();
-        workerEnvs.add(env);
-        if (!environments.has(env)) {
-          environments.set(env, {
-            env,
-            workers: [],
-            d1: [],
-            kv: [],
-            queues: [],
-            r2: [],
-            pages: [],
-          });
-        }
-        environments.get(env)!.workers.push({ name: w.name });
-      }
+  const scanInventory = async <T>(
+    resourceType: EnvironmentInventoryResource,
+    message: string,
+    operation: () => Promise<T[]>
+  ): Promise<T[]> => {
+    progress(message);
+    try {
+      return await operation();
+    } catch (error) {
+      handleScanError(resourceType, error);
+      return [];
     }
-  } catch (error) {
-    handleScanError('Workers', error);
+  };
+  const queuesRequired = requiredResources.has('Queues');
+  const r2Required = requiredResources.has('R2 buckets');
+  const pagesRequired = requiredResources.has('Pages projects');
+
+  // These are independent account-level reads. Run them concurrently and share the in-flight
+  // Wrangler OAuth resolution above; serial reads made a normal Web environment refresh take over
+  // a minute even though none of the provider inventories depends on another.
+  const scans = [
+    () => scanInventory('Workers', 'Scanning Workers...', () => listWorkers({ onRetry: progress })),
+    () => scanInventory('D1 databases', 'Scanning D1 databases...', () => listD1Databases()),
+    () => scanInventory('KV namespaces', 'Scanning KV namespaces...', () => listKVNamespaces()),
+    () =>
+      scanInventory('Queues', 'Scanning Queues...', () =>
+        listQueues({ strictOutput: queuesRequired, requireIds: queuesRequired })
+      ),
+    () =>
+      scanInventory('R2 buckets', 'Scanning R2 buckets...', () =>
+        listR2Buckets({ throwOnError: r2Required, requireIdentity: r2Required })
+      ),
+    () =>
+      scanInventory('Pages projects', 'Scanning legacy Pages projects...', () =>
+        listPagesProjects({ strictOutput: pagesRequired, requireIdentity: pagesRequired })
+      ),
+  ] as const;
+  const inventories: [
+    Awaited<ReturnType<typeof listWorkers>>,
+    Awaited<ReturnType<typeof listD1Databases>>,
+    Awaited<ReturnType<typeof listKVNamespaces>>,
+    Awaited<ReturnType<typeof listQueues>>,
+    Awaited<ReturnType<typeof listR2Buckets>>,
+    Awaited<ReturnType<typeof listPagesProjects>>,
+  ] =
+    requiredResources.size === 0
+      ? await Promise.all([scans[0](), scans[1](), scans[2](), scans[3](), scans[4](), scans[5]()])
+      : [
+          await scans[0](),
+          await scans[1](),
+          await scans[2](),
+          await scans[3](),
+          await scans[4](),
+          await scans[5](),
+        ];
+  const [workers, databases, namespaces, queues, buckets, pagesProjects] = inventories;
+
+  const environmentFor = (env: string): EnvironmentInfo => {
+    const existing = environments.get(env);
+    if (existing) return existing;
+    const created: EnvironmentInfo = {
+      env,
+      workers: [],
+      d1: [],
+      kv: [],
+      queues: [],
+      r2: [],
+      pages: [],
+    };
+    environments.set(env, created);
+    return created;
+  };
+
+  for (const worker of workers) {
+    const match = worker.name.match(AUTHRIM_PATTERNS.worker);
+    if (match) environmentFor(match[1].toLowerCase()).workers.push({ name: worker.name });
   }
 
-  progress('Scanning D1 databases...');
-  const d1Envs = new Set<string>();
-  try {
-    const databases = await listD1Databases();
-    for (const db of databases) {
-      const match = db.name.match(AUTHRIM_PATTERNS.d1);
-      const matchedEnvironment = match
-        ? (match[1] ?? match[3]).toLowerCase()
-        : controlManagedEnvironment &&
-            isControlManagedD1NameForEnvironment(controlManagedEnvironment, db.name)
-          ? controlManagedEnvironment
-          : null;
-      if (matchedEnvironment) {
-        const env = matchedEnvironment;
-        d1Envs.add(env);
-        if (!environments.has(env)) {
-          environments.set(env, {
-            env,
-            workers: [],
-            d1: [],
-            kv: [],
-            queues: [],
-            r2: [],
-            pages: [],
-          });
-        }
-        environments.get(env)!.d1.push({ name: db.name, id: db.uuid });
-      }
+  for (const database of databases) {
+    const match = database.name.match(AUTHRIM_PATTERNS.d1);
+    const matchedEnvironment = match
+      ? (match[1] ?? match[3]).toLowerCase()
+      : controlManagedEnvironment &&
+          isControlManagedD1NameForEnvironment(controlManagedEnvironment, database.name)
+        ? controlManagedEnvironment
+        : null;
+    if (matchedEnvironment) {
+      environmentFor(matchedEnvironment).d1.push({ name: database.name, id: database.uuid });
     }
-  } catch (error) {
-    handleScanError('D1 databases', error);
   }
 
-  progress('Scanning KV namespaces...');
-  try {
-    const namespaces = await listKVNamespaces();
-    for (const ns of namespaces) {
-      const match = ns.title.match(AUTHRIM_PATTERNS.kv);
-      const matchedEnvironment = match
-        ? match[1].toLowerCase()
-        : controlManagedEnvironment &&
-            isControlManagedKVNameForEnvironment(controlManagedEnvironment, ns.title)
-          ? controlManagedEnvironment
-          : null;
-      if (matchedEnvironment) {
-        const env = matchedEnvironment;
-        // Keep KV-only environments visible. An interrupted provision/delete or manual cleanup
-        // can leave the deterministic namespace after every Worker and D1 is gone; hiding it here
-        // would let a later fresh attempt mutate D1 before discovering the KV name collision.
-        if (!environments.has(env)) {
-          environments.set(env, {
-            env,
-            workers: [],
-            d1: [],
-            kv: [],
-            queues: [],
-            r2: [],
-            pages: [],
-          });
-        }
-        environments.get(env)!.kv.push({ name: ns.title, id: ns.id });
-      }
+  for (const namespace of namespaces) {
+    const match = namespace.title.match(AUTHRIM_PATTERNS.kv);
+    const matchedEnvironment = match
+      ? match[1].toLowerCase()
+      : controlManagedEnvironment &&
+          isControlManagedKVNameForEnvironment(controlManagedEnvironment, namespace.title)
+        ? controlManagedEnvironment
+        : null;
+    // Keep KV-only environments visible so deterministic-name collisions remain recoverable.
+    if (matchedEnvironment) {
+      environmentFor(matchedEnvironment).kv.push({ name: namespace.title, id: namespace.id });
     }
-  } catch (error) {
-    handleScanError('KV namespaces', error);
   }
 
-  progress('Scanning Queues...');
-  try {
-    const queuesRequired = requiredResources.has('Queues');
-    const queues = await listQueues({
-      strictOutput: queuesRequired,
-      requireIds: queuesRequired,
-    });
-    for (const q of queues) {
-      const match = q.name.match(AUTHRIM_PATTERNS.queue);
-      if (match) {
-        const env = match[1].toLowerCase();
-        if (!environments.has(env)) {
-          environments.set(env, {
-            env,
-            workers: [],
-            d1: [],
-            kv: [],
-            queues: [],
-            r2: [],
-            pages: [],
-          });
-        }
-        environments.get(env)!.queues.push({ name: q.name, id: q.id });
-      }
+  for (const queue of queues) {
+    const match = queue.name.match(AUTHRIM_PATTERNS.queue);
+    if (match) {
+      environmentFor(match[1].toLowerCase()).queues.push({ name: queue.name, id: queue.id });
     }
-  } catch (error) {
-    handleScanError('Queues', error);
   }
 
-  progress('Scanning R2 buckets...');
-  try {
-    const r2Required = requiredResources.has('R2 buckets');
-    const buckets = await listR2Buckets({
-      throwOnError: r2Required,
-      requireIdentity: r2Required,
-    });
-    for (const bucket of buckets) {
-      const match = bucket.name.match(AUTHRIM_PATTERNS.r2);
-      const matchedEnvironment = match
-        ? match[1].toLowerCase()
-        : controlManagedEnvironment &&
-            isControlManagedR2NameForEnvironment(controlManagedEnvironment, bucket.name)
-          ? controlManagedEnvironment
-          : null;
-      if (matchedEnvironment) {
-        const env = matchedEnvironment;
-        if (!environments.has(env)) {
-          environments.set(env, {
-            env,
-            workers: [],
-            d1: [],
-            kv: [],
-            queues: [],
-            r2: [],
-            pages: [],
-          });
-        }
-        environments.get(env)!.r2.push(bucket);
-      }
-    }
-  } catch (error) {
-    handleScanError('R2 buckets', error);
+  for (const bucket of buckets) {
+    const match = bucket.name.match(AUTHRIM_PATTERNS.r2);
+    const matchedEnvironment = match
+      ? match[1].toLowerCase()
+      : controlManagedEnvironment &&
+          isControlManagedR2NameForEnvironment(controlManagedEnvironment, bucket.name)
+        ? controlManagedEnvironment
+        : null;
+    if (matchedEnvironment) environmentFor(matchedEnvironment).r2.push(bucket);
   }
 
-  progress('Scanning legacy Pages projects...');
-  try {
-    const pagesProjects = await listPagesProjects({
-      strictOutput: requiredResources.has('Pages projects'),
-      requireIdentity: requiredResources.has('Pages projects'),
-    });
-    for (const project of pagesProjects) {
-      const match = project.name.match(AUTHRIM_PATTERNS.pages);
-      if (match) {
-        const env = match[1].toLowerCase();
-        // Keep Pages-only legacy environments visible. Older installs can leave Pages projects
-        // after every Worker and storage resource is gone; hiding those projects makes the
-        // environment impossible to finish deleting through Setup.
-        if (!environments.has(env)) {
-          environments.set(env, {
-            env,
-            workers: [],
-            d1: [],
-            kv: [],
-            queues: [],
-            r2: [],
-            pages: [],
-          });
-        }
-        environments.get(env)!.pages.push(project);
-      }
-    }
-  } catch (error) {
-    handleScanError('Pages projects', error);
+  for (const project of pagesProjects) {
+    const match = project.name.match(AUTHRIM_PATTERNS.pages);
+    // Keep Pages-only legacy environments visible so they can be fully deleted through Setup.
+    if (match) environmentFor(match[1].toLowerCase()).pages.push(project);
   }
 
   // Keep independently listed KV, Queues, R2, and legacy Pages resources so interrupted operations are

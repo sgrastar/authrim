@@ -15,6 +15,7 @@ const JSON_REQUEST_LIMIT_BYTES = 4 * 1024 * 1024;
 const D1_LIST_PAGE_SIZE = 1_000;
 const D1_LIST_MAX_PAGES = 1_000;
 const D1_LIST_MAX_ATTEMPTS = 3;
+const MAX_PROVIDER_RETRY_AFTER_SECONDS = 5 * 60;
 const D1_LOCATION_HINTS = new Set(['wnam', 'enam', 'weur', 'eeur', 'apac', 'oc']);
 const D1_JURISDICTIONS = new Set(['eu', 'fedramp']);
 
@@ -230,11 +231,13 @@ export class CloudflareControlApiError extends Error {
   readonly operation: CloudflareControlOperation;
   readonly status: number;
   readonly providerCodes: readonly number[];
+  readonly retryAfterSeconds: number | null;
 
   constructor(
     operation: CloudflareControlOperation,
     status: number,
-    providerCodes: readonly number[] = []
+    providerCodes: readonly number[] = [],
+    retryAfterSeconds: number | null = null
   ) {
     const codes = providerCodes.length > 0 ? `:${providerCodes.join(',')}` : '';
     super(`cloudflare_api_error:${operation}:${status}${codes}`);
@@ -242,7 +245,31 @@ export class CloudflareControlApiError extends Error {
     this.operation = operation;
     this.status = status;
     this.providerCodes = [...providerCodes];
+    this.retryAfterSeconds =
+      typeof retryAfterSeconds === 'number' &&
+      Number.isFinite(retryAfterSeconds) &&
+      retryAfterSeconds >= 0
+        ? Math.min(Math.ceil(retryAfterSeconds), MAX_PROVIDER_RETRY_AFTER_SECONDS)
+        : null;
   }
+}
+
+export function parseCloudflareControlRetryAfterSeconds(
+  value: string | null | undefined,
+  nowMs = Date.now()
+): number | null {
+  const normalized = value?.trim();
+  if (!normalized) return null;
+  const seconds = Number(normalized);
+  if (Number.isFinite(seconds)) {
+    return seconds >= 0 ? Math.min(Math.ceil(seconds), MAX_PROVIDER_RETRY_AFTER_SECONDS) : null;
+  }
+  const retryAt = Date.parse(normalized);
+  if (!Number.isFinite(retryAt)) return null;
+  return Math.min(
+    Math.max(0, Math.ceil((retryAt - nowMs) / 1_000)),
+    MAX_PROVIDER_RETRY_AFTER_SECONDS
+  );
 }
 
 export class CloudflareControlApiClient {
@@ -283,6 +310,14 @@ export class CloudflareControlApiClient {
     try {
       envelope = text ? (JSON.parse(text) as CloudflareApiEnvelope<T>) : null;
     } catch {
+      if (!response.ok) {
+        throw new CloudflareControlApiError(
+          operation,
+          response.status,
+          [],
+          parseCloudflareControlRetryAfterSeconds(response.headers.get('retry-after'))
+        );
+      }
       throw new Error(`cloudflare_api_invalid_json:${operation}:${response.status}`);
     }
     if (!response.ok || envelope?.success !== true || envelope.result === undefined) {
@@ -290,7 +325,12 @@ export class CloudflareControlApiClient {
         envelope?.errors?.flatMap((error) =>
           typeof error.code === 'number' ? [error.code] : []
         ) ?? [];
-      throw new CloudflareControlApiError(operation, response.status, providerCodes);
+      throw new CloudflareControlApiError(
+        operation,
+        response.status,
+        providerCodes,
+        parseCloudflareControlRetryAfterSeconds(response.headers.get('retry-after'))
+      );
     }
     return { result: envelope.result, resultInfo: envelope.result_info };
   }

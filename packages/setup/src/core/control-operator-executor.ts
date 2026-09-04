@@ -6,18 +6,26 @@ import {
   activeWorkerDeployment,
   assertControlPlaneRecordIsSecretFree,
   ensureControlProvisioningD1,
+  ensureWorkerBindingsPatched,
   ensureWorkerBindingPatched,
   executeControlProvisioningEffect,
   type CloudflareD1Query,
   type CloudflareD1QueryResult,
   type CloudflareWorkerDeployment,
+  type CloudflareWorkerBinding,
   type CloudflareWorkerSettings,
   type ControlProvisioningFailureDecision,
   type ReleaseArtifactObject,
   type ReleaseArtifactStore,
   type WorkerBindingPatchState,
 } from '@authrim/ar-lib-core/control-plane';
-import { getAccountId, getCloudflareApiToken, getR2ObjectBytes } from './cloudflare.js';
+import {
+  getAccountId,
+  getCloudflareApiToken,
+  getR2ObjectBytes,
+  refreshPinnedCloudflareOAuthToken,
+  type CloudflareApiToken,
+} from './cloudflare.js';
 import type {
   PendingControlOperatorOperation,
   PendingTenantDisasterRecoveryOperatorOperation,
@@ -107,7 +115,7 @@ export interface SetupOperatorControlClient extends SetupOperatorD1Client {
   listWorkerDeployments(scriptName: string): Promise<CloudflareWorkerDeployment[]>;
 }
 
-export function setupOperatorControlTokens(token: string): {
+export function setupOperatorCredentialMap(token: string): {
   d1: string;
   workers: string;
   kv: string;
@@ -116,6 +124,87 @@ export function setupOperatorControlTokens(token: string): {
   const value = token.trim();
   if (!value) throw new Error('wrangler_oauth_credentials_required');
   return { d1: value, workers: value, kv: value, r2: value };
+}
+
+type SetupOperatorClientFactory = (accountId: string, token: string) => CloudflareControlApiClient;
+
+function isRefreshableCloudflareAuthenticationError(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || Array.isArray(error)) return false;
+  const candidate = error as { status?: unknown; providerCodes?: unknown };
+  return (
+    candidate.status === 401 ||
+    candidate.status === 403 ||
+    (Array.isArray(candidate.providerCodes) && candidate.providerCodes.includes(10_000))
+  );
+}
+
+/**
+ * Build the short-lived Setup operator client used by Web/CLI orchestration.
+ *
+ * Control's split CLOUDFLARE_*_API_TOKEN secrets are deliberately not accepted here. Setup uses
+ * Wrangler OAuth, or the generic CLOUDFLARE_API_TOKEN in headless operation. If Wrangler rotates
+ * its OAuth access token during a long deployment, retry the rejected request once with a freshly
+ * resolved, account-pinned credential.
+ */
+export function createRefreshingSetupOperatorClient(input: {
+  accountId: string;
+  credential: CloudflareApiToken;
+  createClient?: SetupOperatorClientFactory;
+  refreshOAuth?: typeof refreshPinnedCloudflareOAuthToken;
+}): CloudflareControlApiClient {
+  const createClient =
+    input.createClient ??
+    ((accountId: string, token: string) =>
+      new CloudflareControlApiClient({
+        accountId,
+        tokens: setupOperatorCredentialMap(token),
+      }));
+  const refreshOAuth = input.refreshOAuth ?? refreshPinnedCloudflareOAuthToken;
+  let credential = input.credential;
+  let client = createClient(input.accountId, credential.token);
+  let generation = 0;
+  let refreshPromise: Promise<boolean> | null = null;
+
+  const refresh = async (rejectedGeneration: number): Promise<boolean> => {
+    if (credential.source !== 'oauth') return false;
+    if (generation !== rejectedGeneration) return true;
+    refreshPromise ??= (async () => {
+      const refreshed = await refreshOAuth(input.accountId);
+      if (!refreshed) return false;
+      credential = refreshed;
+      client = createClient(input.accountId, refreshed.token);
+      generation += 1;
+      return true;
+    })().finally(() => {
+      refreshPromise = null;
+    });
+    return refreshPromise;
+  };
+
+  const invoke = async <T>(operation: (active: CloudflareControlApiClient) => Promise<T>) => {
+    const requestGeneration = generation;
+    try {
+      return await operation(client);
+    } catch (error) {
+      if (!isRefreshableCloudflareAuthenticationError(error)) throw error;
+      if (!(await refresh(requestGeneration))) throw error;
+      return operation(client);
+    }
+  };
+
+  // Proxy the complete client so plugin and cleanup operators receive the same refresh behavior
+  // without maintaining a second, inevitably incomplete method list here.
+  return new Proxy(client, {
+    get(_target, property) {
+      const value = Reflect.get(client, property, client) as unknown;
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) =>
+        invoke(async (active) => {
+          const method = Reflect.get(active, property, active) as (...values: unknown[]) => unknown;
+          return (await method.apply(active, args)) as unknown;
+        });
+    },
+  });
 }
 
 interface SetupWorkerBindingTarget {
@@ -161,6 +250,7 @@ interface SetupWorkerDeploymentLease {
   fencingToken: number;
   expectedSourceVersionId: string;
   mutationStarted: boolean;
+  mutationStartedAt: number | null;
   previousDeploymentId: string | null;
   patchResultVersionId: string | null;
   patchResultDeploymentId: string | null;
@@ -1732,8 +1822,9 @@ async function acquireSetupWorkerDeploymentLease(input: {
     {
       sql: `INSERT INTO control_worker_deployment_leases (
               environment_id, worker_script_name, owner_operation_id, fencing_token,
-              lease_expires_at, expected_source_version_id, mutation_started, updated_at
-            ) VALUES (?, ?, ?, 1, ?, ?, 0, ?)
+              lease_expires_at, expected_source_version_id, mutation_started,
+              mutation_started_at, updated_at
+            ) VALUES (?, ?, ?, 1, ?, ?, 0, NULL, ?)
             ON CONFLICT(environment_id, worker_script_name) DO UPDATE SET
               owner_operation_id = excluded.owner_operation_id,
               fencing_token = control_worker_deployment_leases.fencing_token + 1,
@@ -1752,6 +1843,9 @@ async function acquireSetupWorkerDeploymentLease(input: {
               mutation_started = CASE
                 WHEN control_worker_deployment_leases.owner_operation_id = excluded.owner_operation_id
                 THEN control_worker_deployment_leases.mutation_started ELSE 0 END,
+              mutation_started_at = CASE
+                WHEN control_worker_deployment_leases.owner_operation_id = excluded.owner_operation_id
+                THEN control_worker_deployment_leases.mutation_started_at ELSE NULL END,
               previous_deployment_id = CASE
                 WHEN control_worker_deployment_leases.owner_operation_id = excluded.owner_operation_id
                 THEN control_worker_deployment_leases.previous_deployment_id ELSE NULL END,
@@ -1775,7 +1869,8 @@ async function acquireSetupWorkerDeploymentLease(input: {
     },
     {
       sql: `SELECT environment_id, worker_script_name, owner_operation_id, fencing_token,
-                   expected_source_version_id, mutation_started, previous_deployment_id,
+                   expected_source_version_id, mutation_started, mutation_started_at,
+                   previous_deployment_id,
                    patch_result_version_id, patch_result_deployment_id, lease_expires_at
               FROM control_worker_deployment_leases
              WHERE environment_id = ? AND worker_script_name = ? AND owner_operation_id = ?`,
@@ -1792,6 +1887,9 @@ async function acquireSetupWorkerDeploymentLease(input: {
     !Number.isSafeInteger(row.fencing_token) ||
     typeof row.expected_source_version_id !== 'string' ||
     (row.mutation_started !== 0 && row.mutation_started !== 1) ||
+    (row.mutation_started_at !== null &&
+      row.mutation_started_at !== undefined &&
+      !Number.isSafeInteger(row.mutation_started_at)) ||
     !Number.isSafeInteger(row.lease_expires_at) ||
     (row.lease_expires_at as number) < 1 ||
     (row.mutation_started === 0 && row.lease_expires_at !== expiresAt)
@@ -1805,6 +1903,7 @@ async function acquireSetupWorkerDeploymentLease(input: {
     fencingToken: row.fencing_token as number,
     expectedSourceVersionId: row.expected_source_version_id,
     mutationStarted: row.mutation_started === 1,
+    mutationStartedAt: typeof row.mutation_started_at === 'number' ? row.mutation_started_at : null,
     previousDeploymentId: row.previous_deployment_id as string | null,
     patchResultVersionId: row.patch_result_version_id as string | null,
     patchResultDeploymentId: row.patch_result_deployment_id as string | null,
@@ -1853,7 +1952,7 @@ async function resetExpiredUnappliedWorkerBindingMutation(input: {
   const results = await input.client.queryD1Batch(input.controlDatabaseId, [
     {
       sql: `UPDATE control_worker_deployment_leases
-               SET mutation_started = 0, lease_expires_at = ?,
+               SET mutation_started = 0, mutation_started_at = NULL, lease_expires_at = ?,
                    expected_source_version_id = ?, previous_deployment_id = NULL,
                    patch_result_version_id = NULL, patch_result_deployment_id = NULL,
                    updated_at = ?
@@ -1954,6 +2053,7 @@ async function resetExpiredUnappliedWorkerBindingMutation(input: {
       ...input.lease,
       expectedSourceVersionId: active.versionId,
       mutationStarted: false,
+      mutationStartedAt: null,
       previousDeploymentId: null,
       patchResultVersionId: null,
       patchResultDeploymentId: null,
@@ -2142,10 +2242,13 @@ function createSetupWorkerBindingPatchState(input: {
         },
         {
           sql: `UPDATE control_worker_deployment_leases
-                   SET mutation_started = 1, previous_deployment_id = ?, updated_at = ?
+                   SET mutation_started = 1,
+                       mutation_started_at = COALESCE(mutation_started_at, ?),
+                       previous_deployment_id = ?, updated_at = ?
                  WHERE environment_id = ? AND worker_script_name = ? AND owner_operation_id = ?
                    AND fencing_token = ? AND lease_expires_at > ? AND mutation_started = 0`,
           params: [
+            now,
             previousDeploymentId,
             now,
             lease.environmentId,
@@ -2217,6 +2320,69 @@ function createSetupWorkerBindingPatchState(input: {
       ) {
         throw new Error('control_worker_binding_stale_fencing_token');
       }
+    },
+    rearmPatchIntent: async ({ target, lease, now }) => {
+      const results = await query([
+        {
+          sql: `UPDATE control_worker_deployment_leases
+                   SET mutation_started = 0, mutation_started_at = NULL,
+                       previous_deployment_id = NULL, updated_at = ?
+                 WHERE environment_id = ? AND worker_script_name = ? AND owner_operation_id = ?
+                   AND fencing_token = ? AND lease_expires_at > ?
+                   AND mutation_started = 1 AND patch_result_version_id IS NULL
+                   AND patch_result_deployment_id IS NULL`,
+          params: [
+            now,
+            lease.environmentId,
+            lease.workerScriptName,
+            lease.operationId,
+            lease.fencingToken,
+            now,
+          ],
+        },
+        {
+          sql: `UPDATE control_worker_binding_reconciliations
+                   SET expected_source_version_id = NULL, previous_deployment_id = NULL,
+                       previous_restore_settings_json = NULL, last_error_code = NULL, updated_at = ?
+                 WHERE operation_id = ? AND environment_id = ? AND worker_script_name = ?
+                   AND binding_ref = ? AND state = 'pending'
+                   AND patch_result_version_id IS NULL AND patch_result_deployment_id IS NULL
+                   AND EXISTS (
+                     SELECT 1 FROM control_worker_deployment_leases current_lease
+                      WHERE current_lease.environment_id = ?
+                        AND current_lease.worker_script_name = ?
+                        AND current_lease.owner_operation_id = ?
+                        AND current_lease.fencing_token = ?
+                        AND current_lease.mutation_started = 0
+                   )`,
+          params: [
+            now,
+            target.operationId,
+            target.environmentId,
+            target.workerScriptName,
+            target.bindingRef,
+            lease.environmentId,
+            lease.workerScriptName,
+            lease.operationId,
+            lease.fencingToken,
+          ],
+        },
+        {
+          sql: `SELECT mutation_started, mutation_started_at
+                  FROM control_worker_deployment_leases
+                 WHERE environment_id = ? AND worker_script_name = ? AND owner_operation_id = ?
+                   AND fencing_token = ?`,
+          params: [
+            lease.environmentId,
+            lease.workerScriptName,
+            lease.operationId,
+            lease.fencingToken,
+          ],
+        },
+      ]);
+      assertBatch(results, 3);
+      const [reflected] = resultRows<Record<string, unknown>>(results[2]);
+      return reflected?.mutation_started === 0 && reflected.mutation_started_at === null;
     },
     recordPatchResult: async ({ target, lease, versionId, deploymentId, now }) => {
       const results = await query([
@@ -2426,9 +2592,9 @@ export async function createSetupOperatorD1Client(
   if (input.expectedAccountId && accountId !== input.expectedAccountId) {
     throw new Error('control_operator_account_mismatch');
   }
-  return new CloudflareControlApiClient({
+  return createRefreshingSetupOperatorClient({
     accountId,
-    tokens: setupOperatorControlTokens(token.token),
+    credential: token,
   });
 }
 
@@ -2456,12 +2622,95 @@ function setupWorkerBindingFailure(error: unknown): {
   if (
     message === 'control_worker_active_deployment_ambiguous' ||
     message === 'control_worker_source_version_changed' ||
+    message === 'control_worker_binding_batch_conflict' ||
     message.startsWith('worker_settings_binding_') ||
     message.startsWith('worker_settings_payload_too_large')
   ) {
     return { code: message, permanent: true };
   }
   return { code: 'control_worker_settings_request_failed', permanent: false };
+}
+
+function setupWorkerBindingRetryAt(error: unknown, now: number): number {
+  const value =
+    error && typeof error === 'object' && !Array.isArray(error) && 'retryAfterSeconds' in error
+      ? (error as { retryAfterSeconds?: unknown }).retryAfterSeconds
+      : null;
+  const providerDelay =
+    typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.ceil(value)) : 0;
+  return now + Math.max(15, providerDelay);
+}
+
+function setupDesiredD1Bindings(
+  targets: readonly SetupWorkerBindingTarget[]
+): CloudflareWorkerBinding[] {
+  const byName = new Map<string, string>();
+  for (const target of targets) {
+    const existing = byName.get(target.bindingRef);
+    if (existing !== undefined && existing !== target.databaseId) {
+      throw new Error('control_worker_binding_batch_conflict');
+    }
+    byName.set(target.bindingRef, target.databaseId);
+  }
+  return [...byName].map(([name, database_id]) => ({ name, type: 'd1', database_id }));
+}
+
+async function releaseSetupWorkerDeploymentLease(input: {
+  client: SetupOperatorControlClient;
+  controlDatabaseId: string;
+  lease: SetupWorkerDeploymentLease;
+}): Promise<void> {
+  const results = await input.client.queryD1Batch(input.controlDatabaseId, [
+    {
+      sql: `DELETE FROM control_worker_deployment_leases
+             WHERE environment_id = ? AND worker_script_name = ? AND owner_operation_id = ?
+               AND fencing_token = ?`,
+      params: [
+        input.lease.environmentId,
+        input.lease.workerScriptName,
+        input.lease.operationId,
+        input.lease.fencingToken,
+      ],
+    },
+    {
+      sql: `SELECT 1 AS lease_exists FROM control_worker_deployment_leases
+             WHERE environment_id = ? AND worker_script_name = ? AND owner_operation_id = ?
+               AND fencing_token = ?`,
+      params: [
+        input.lease.environmentId,
+        input.lease.workerScriptName,
+        input.lease.operationId,
+        input.lease.fencingToken,
+      ],
+    },
+  ]);
+  assertBatch(results, 2);
+  if (resultRows<Record<string, unknown>>(results[1]).length !== 0) {
+    throw new Error('control_worker_deployment_lease_release_failed');
+  }
+}
+
+async function setupWorkerBindingDurableRetryAt(input: {
+  client: SetupOperatorControlClient;
+  controlDatabaseId: string;
+  operationId: string;
+}): Promise<number | null> {
+  const results = await input.client.queryD1Batch(input.controlDatabaseId, [
+    {
+      sql: `SELECT next_attempt_at FROM control_operations WHERE operation_id = ?`,
+      params: [input.operationId],
+    },
+  ]);
+  assertBatch(results, 1);
+  const [row] = resultRows<Record<string, unknown>>(results[0]);
+  if (!row) {
+    throw new Error('control_operator_worker_binding_retry_state_invalid');
+  }
+  if (row.next_attempt_at === null) return null;
+  if (!Number.isSafeInteger(row.next_attempt_at) || (row.next_attempt_at as number) < 1) {
+    throw new Error('control_operator_worker_binding_retry_state_invalid');
+  }
+  return row.next_attempt_at as number;
 }
 
 export async function executeSetupControlOperatorWorkerBindings(input: {
@@ -2472,6 +2721,7 @@ export async function executeSetupControlOperatorWorkerBindings(input: {
   now?: () => number;
   interTargetDelayMs?: number;
   sleep?: (milliseconds: number) => Promise<void>;
+  onProgress?: (message: string) => void;
 }): Promise<SetupOperatorExecutionResult> {
   if (
     input.operation.currentStep !== 'reconcile_worker_bindings' ||
@@ -2504,115 +2754,174 @@ export async function executeSetupControlOperatorWorkerBindings(input: {
     client,
     controlDatabaseId: input.controlDatabaseId,
   });
-  let deferredTarget: SetupWorkerBindingTarget | null = null;
-
-  for (const [index, target] of targets.entries()) {
-    if (index > 0 && interTargetDelayMs > 0) {
-      await sleep(interTargetDelayMs);
-    }
-    let activeTarget = target;
+  const targetsByWorker = new Map<string, SetupWorkerBindingTarget[]>();
+  for (const target of targets) {
+    const workerTargets = targetsByWorker.get(target.workerScriptName) ?? [];
+    workerTargets.push(target);
+    targetsByWorker.set(target.workerScriptName, workerTargets);
+  }
+  let targetIndex = 0;
+  input.onProgress?.(`Setup operator is reconciling Worker bindings: 0/${targets.length} patched`);
+  for (const workerTargets of targetsByWorker.values()) {
+    let desiredBindings: CloudflareWorkerBinding[];
     try {
-      const deployments = await client.listWorkerDeployments(target.workerScriptName);
-      const active = activeWorkerDeployment(deployments);
-      let lease = await acquireSetupWorkerDeploymentLease({
-        client,
-        controlDatabaseId: input.controlDatabaseId,
-        target,
-        expectedSourceVersionId: target.expectedSourceVersionId ?? active.versionId,
-        now: now(),
-      });
-      if (!lease) {
-        return {
-          operationId: input.operation.operationId,
-          state: 'lease_unavailable',
-          errorCode: 'control_worker_deployment_lease_busy',
-          nextAttemptAt: null,
-        };
-      }
-      const recovered = await resetExpiredUnappliedWorkerBindingMutation({
-        client,
-        controlDatabaseId: input.controlDatabaseId,
-        target,
-        lease,
-        now: now(),
-      });
-      if (recovered) {
-        activeTarget = recovered.target;
-        lease = recovered.lease;
-      }
-      const result = await ensureWorkerBindingPatched({
-        target: activeTarget,
-        lease,
-        deploymentsBefore: deployments,
-        activeBefore: active,
-        api: client,
-        state,
-        now,
-      });
-      if (result.state !== 'patched') {
-        if (result.state === 'deferred') {
-          deferredTarget = activeTarget;
-          continue;
-        }
-        return {
-          operationId: input.operation.operationId,
-          state: 'blocked',
-          errorCode:
-            result.state === 'rollback_required'
-              ? 'control_worker_settings_preservation_failed'
-              : 'control_worker_concurrent_deployment_detected',
-          nextAttemptAt: null,
-        };
-      }
+      desiredBindings = setupDesiredD1Bindings(workerTargets);
     } catch (error) {
-      try {
-        if (
-          await setupWorkerBindingTargetIsPatched({
-            client,
-            controlDatabaseId: input.controlDatabaseId,
-            target: activeTarget,
-          })
-        ) {
-          continue;
-        }
-      } catch {
-        // Preserve the original failure classification when the reconciliation read is unavailable.
-      }
       const failure = setupWorkerBindingFailure(error);
-      if (failure.permanent) {
-        await state.markBlocked(activeTarget, failure.code, now());
-        return {
-          operationId: input.operation.operationId,
-          state: 'blocked',
-          errorCode: failure.code,
-          nextAttemptAt: null,
-        };
-      }
-      const nextAttemptAt = now() + 15;
-      await state.recordTransientError(activeTarget, failure.code, nextAttemptAt, now());
+      const target = workerTargets[0];
+      if (!target) continue;
+      await state.markBlocked(target, failure.code, now());
       return {
         operationId: input.operation.operationId,
-        state: 'retry_required',
+        state: 'blocked',
         errorCode: failure.code,
-        nextAttemptAt,
+        nextAttemptAt: null,
       };
+    }
+    let offeredWorkerBatch = false;
+    for (const target of workerTargets) {
+      if (targetIndex > 0 && interTargetDelayMs > 0) {
+        await sleep(interTargetDelayMs);
+      }
+      targetIndex += 1;
+      let activeTarget = target;
+      let activeLease: SetupWorkerDeploymentLease | null = null;
+      try {
+        const deployments = await client.listWorkerDeployments(target.workerScriptName);
+        const active = activeWorkerDeployment(deployments);
+        let lease = await acquireSetupWorkerDeploymentLease({
+          client,
+          controlDatabaseId: input.controlDatabaseId,
+          target,
+          expectedSourceVersionId: target.expectedSourceVersionId ?? active.versionId,
+          now: now(),
+        });
+        if (!lease) {
+          return {
+            operationId: input.operation.operationId,
+            state: 'lease_unavailable',
+            errorCode: 'control_worker_deployment_lease_busy',
+            nextAttemptAt: null,
+          };
+        }
+        activeLease = lease;
+        const recovered = await resetExpiredUnappliedWorkerBindingMutation({
+          client,
+          controlDatabaseId: input.controlDatabaseId,
+          target,
+          lease,
+          now: now(),
+        });
+        if (recovered) {
+          activeTarget = recovered.target;
+          lease = recovered.lease;
+          activeLease = lease;
+        }
+        const common = {
+          target: activeTarget,
+          lease,
+          deploymentsBefore: deployments,
+          activeBefore: active,
+          api: client,
+          state,
+          now,
+        };
+        const useWorkerBatch = activeTarget.state === 'pending' && !offeredWorkerBatch;
+        if (useWorkerBatch) offeredWorkerBatch = true;
+        const result = useWorkerBatch
+          ? await ensureWorkerBindingsPatched({ ...common, desiredBindings })
+          : await ensureWorkerBindingPatched(common);
+        if (result.state !== 'patched') {
+          if (result.state === 'deferred') {
+            // Surface the deadline persisted by the durable state machine instead of returning a
+            // shorter UI retry that cannot yet make progress.
+            const nextAttemptAt =
+              (await setupWorkerBindingDurableRetryAt({
+                client,
+                controlDatabaseId: input.controlDatabaseId,
+                operationId: input.operation.operationId,
+              })) ?? now() + 15;
+            const deferredResult: SetupOperatorExecutionResult = {
+              operationId: input.operation.operationId,
+              state: 'retry_required',
+              errorCode: 'control_worker_patch_propagating',
+              nextAttemptAt,
+            };
+            assertControlPlaneRecordIsSecretFree(deferredResult);
+            return deferredResult;
+          }
+          return {
+            operationId: input.operation.operationId,
+            state: 'blocked',
+            errorCode:
+              result.state === 'rollback_required'
+                ? 'control_worker_settings_preservation_failed'
+                : 'control_worker_concurrent_deployment_detected',
+            nextAttemptAt: null,
+          };
+        }
+        await releaseSetupWorkerDeploymentLease({
+          client,
+          controlDatabaseId: input.controlDatabaseId,
+          lease,
+        });
+        activeLease = null;
+        input.onProgress?.(
+          `Setup operator is reconciling Worker bindings: ${targetIndex}/${targets.length} patched`
+        );
+      } catch (error) {
+        try {
+          if (
+            await setupWorkerBindingTargetIsPatched({
+              client,
+              controlDatabaseId: input.controlDatabaseId,
+              target: activeTarget,
+            })
+          ) {
+            if (activeLease) {
+              await releaseSetupWorkerDeploymentLease({
+                client,
+                controlDatabaseId: input.controlDatabaseId,
+                lease: activeLease,
+              });
+            }
+            input.onProgress?.(
+              `Setup operator is reconciling Worker bindings: ${targetIndex}/${targets.length} patched`
+            );
+            continue;
+          }
+        } catch {
+          // Preserve the original failure classification when recovery or lease release cannot be
+          // verified. The durable mutation checkpoint makes a later operator pass safe.
+        }
+        const failure = setupWorkerBindingFailure(error);
+        if (failure.permanent) {
+          await state.markBlocked(activeTarget, failure.code, now());
+          return {
+            operationId: input.operation.operationId,
+            state: 'blocked',
+            errorCode: failure.code,
+            nextAttemptAt: null,
+          };
+        }
+        const failedAt = now();
+        const nextAttemptAt = setupWorkerBindingRetryAt(error, failedAt);
+        await state.recordTransientError(activeTarget, failure.code, nextAttemptAt, failedAt);
+        return {
+          operationId: input.operation.operationId,
+          state: 'retry_required',
+          errorCode: failure.code,
+          nextAttemptAt,
+        };
+      }
     }
   }
 
-  const nextAttemptAt = deferredTarget ? now() + 15 : null;
-  if (deferredTarget && nextAttemptAt) {
-    await state.recordTransientError(
-      deferredTarget,
-      'control_worker_patch_propagating',
-      nextAttemptAt,
-      now()
-    );
-  }
   const result: SetupOperatorExecutionResult = {
     operationId: input.operation.operationId,
-    state: deferredTarget ? 'retry_required' : 'awaiting_smoke',
-    errorCode: deferredTarget ? 'control_worker_patch_propagating' : null,
-    nextAttemptAt,
+    state: 'awaiting_smoke',
+    errorCode: null,
+    nextAttemptAt: null,
   };
   assertControlPlaneRecordIsSecretFree(result);
   return result;

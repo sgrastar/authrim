@@ -9,11 +9,30 @@ import {
   getRequiredR2Buckets,
   getR2BucketName,
   isZoneReadPermissionError,
+  normalizeWorkerCronTriggersResponse,
   parseObjectCatalogR2RowsFromWranglerJson,
   toResourceIds,
 } from '../core/cloudflare.js';
 
 describe('Cloudflare pure resource contracts', () => {
+  it('normalizes a valid Cron Trigger API response and rejects ambiguous rows', () => {
+    expect(
+      normalizeWorkerCronTriggersResponse({
+        success: true,
+        result: { schedules: [{ cron: '*/5 * * * *' }, { cron: '* * * * *' }] },
+      })
+    ).toEqual(['* * * * *', '*/5 * * * *']);
+    expect(() =>
+      normalizeWorkerCronTriggersResponse({
+        success: true,
+        result: { schedules: [{ cron: '* * * * *' }, { cron: '* * * * *' }] },
+      })
+    ).toThrow('cloudflare_worker_cron_response_invalid');
+    expect(() =>
+      normalizeWorkerCronTriggersResponse({ success: true, result: { schedules: [{}] } })
+    ).toThrow('cloudflare_worker_cron_response_invalid');
+  });
+
   it('requires the complete eight-bucket R2 topology by default', () => {
     expect(getRequiredR2Buckets('prod')).toEqual([
       { binding: 'MIGRATION_RELEASES', name: 'prod-migration-releases' },
@@ -28,13 +47,22 @@ describe('Cloudflare pure resource contracts', () => {
   });
 
   it('distinguishes configured, stale, and unrecorded required R2 buckets', () => {
+    const ownershipId = '00000000-0000-4000-8000-000000000123';
+    const creationDate = '2026-05-18T00:00:00.000Z';
     const status = buildR2BucketProvisioningStatus(
       'prod',
       {
-        PUBLIC_ASSETS: { name: 'prod-public-assets' },
-        DIAGNOSTIC_LOGS: { name: 'legacy-diagnostic-logs' },
+        PUBLIC_ASSETS: {
+          name: 'prod-public-assets',
+          creationDate,
+          ownershipMarkerKey: `__authrim_setup__/ownership-v1-${ownershipId}.json`,
+          ownershipId,
+        },
+        DIAGNOSTIC_LOGS: {
+          name: 'legacy-diagnostic-logs',
+        },
       },
-      ['prod-public-assets']
+      [{ name: 'prod-public-assets', creationDate }]
     );
     expect(status.enabled).toBe(false);
     expect(status.configured).toBe(1);

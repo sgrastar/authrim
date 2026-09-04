@@ -152,6 +152,7 @@ async function executeInitialBootstrapWorkerBindingsAsOperator(input: {
   environmentId: string;
   accountId: string;
   client: SetupOperatorControlClient;
+  onProgress?: (message: string) => void;
 }): Promise<void> {
   const operations = (
     await listPendingControlOperatorOperations({
@@ -170,6 +171,7 @@ async function executeInitialBootstrapWorkerBindingsAsOperator(input: {
       operation,
       client: input.client,
       expectedAccountId: input.accountId,
+      onProgress: input.onProgress,
     });
     assertInitialBootstrapBindingExecutionCanContinue(result);
   }
@@ -199,6 +201,7 @@ export async function advanceInitialBootstrapWorkerBindingsAsOperator(input: {
   accountId?: string;
   token?: string;
   createClient?: (input: { expectedAccountId?: string }) => Promise<SetupOperatorControlClient>;
+  onProgress?: (message: string) => void;
 }): Promise<void> {
   const { accountId, client } = await createInitialBootstrapOperatorClient(input);
   await executeInitialBootstrapWorkerBindingsAsOperator({
@@ -207,6 +210,7 @@ export async function advanceInitialBootstrapWorkerBindingsAsOperator(input: {
     environmentId: input.environmentId,
     accountId,
     client,
+    onProgress: input.onProgress,
   });
 }
 
@@ -219,6 +223,7 @@ export async function reconcileInitialBootstrapHandoffAsOperator(input: {
   token?: string;
   createClient?: (input: { expectedAccountId?: string }) => Promise<SetupOperatorControlClient>;
   now?: () => number;
+  onProgress?: (message: string) => void;
 }): Promise<{ attempted: number; accepted: number; blocked: number; retrying: number }> {
   const { accountId, client } = await createInitialBootstrapOperatorClient(input);
   if (input.executeWorkerBindings) {
@@ -231,6 +236,7 @@ export async function reconcileInitialBootstrapHandoffAsOperator(input: {
       environmentId: input.environmentId,
       accountId,
       client,
+      onProgress: input.onProgress,
     });
   }
   const repository = createOperatorBootstrapHandoffRepository(input.controlDatabaseId, client);
@@ -831,23 +837,32 @@ export async function recordInitialBootstrapWorkerEvidence(input: {
     accountId: string,
     token: string
   ) => Pick<CloudflareControlApiClient, 'getWorkerSettings' | 'listWorkerDeployments'>;
+  createOperatorClient?: typeof createSetupOperatorD1Client;
   execute?: typeof executeD1Command;
   query?: typeof queryD1Rows;
 }): Promise<{ workerCount: number; controlDeploymentId: string; controlVersionId: string }> {
   const now = input.now ?? Math.floor(Date.now() / 1000);
   if (!Number.isSafeInteger(now) || now <= 0) throw new Error('control_bootstrap_time_invalid');
   const accountId = input.accountId?.trim() || (await getAccountId());
-  const workersToken =
-    input.token?.trim() ||
-    process.env.CLOUDFLARE_WORKERS_API_TOKEN?.trim() ||
-    process.env.CLOUDFLARE_API_TOKEN?.trim() ||
-    (await getCloudflareApiToken())?.token;
-  if (!accountId || !workersToken) {
+  if (!accountId) {
     throw new Error('control_bootstrap_worker_read_credentials_missing');
   }
-  const client = input.createClient
-    ? input.createClient(accountId, workersToken)
-    : new CloudflareControlApiClient({ accountId, tokens: { workers: workersToken } });
+  const explicitToken = input.token?.trim();
+  let client: Pick<CloudflareControlApiClient, 'getWorkerSettings' | 'listWorkerDeployments'>;
+  if (input.createClient || explicitToken) {
+    const operatorToken = explicitToken || (await getCloudflareApiToken())?.token;
+    if (!operatorToken) throw new Error('control_bootstrap_worker_read_credentials_missing');
+    client = input.createClient
+      ? input.createClient(accountId, operatorToken)
+      : new CloudflareControlApiClient({ accountId, tokens: { workers: operatorToken } });
+  } else {
+    // Post-deploy evidence is a Setup/operator operation. Never borrow the Control Worker's
+    // CLOUDFLARE_WORKERS_API_TOKEN child secret for it; Web Setup must stay on Wrangler OAuth and
+    // receive the same account-pinned refresh behavior as the other Setup operator operations.
+    client = await (input.createOperatorClient ?? createSetupOperatorD1Client)({
+      expectedAccountId: accountId,
+    });
+  }
   const query = input.query ?? queryD1Rows;
   const inventory = await query<{ worker_script_name: string }>(
     input.controlDatabaseName,
@@ -1099,7 +1114,15 @@ export async function requestInitialBootstrapAcceleration(input: {
   );
   if (response.status === 202) return 'accepted';
   if (response.status === 404) return 'inactive';
-  throw new Error(`control_bootstrap_accelerator_http_${response.status}`);
+  const responseErrorCode = response.headers.get('X-Authrim-Error-Code');
+  const safeResponseErrorCode =
+    responseErrorCode &&
+    /^(?:bootstrap|cloudflare|control|runtime)_[a-z0-9_:,-]{1,159}$/u.test(responseErrorCode)
+      ? responseErrorCode
+      : null;
+  throw new Error(
+    `control_bootstrap_accelerator_http_${response.status}${safeResponseErrorCode ? `:${safeResponseErrorCode}` : ''}`
+  );
 }
 
 export async function waitForInitialBootstrapHandoff(input: {
@@ -1139,6 +1162,11 @@ export async function waitForInitialBootstrapHandoff(input: {
       failed_bindings: number | string;
       failed_binding_error_code: string | null;
       latest_binding_update: number | string | null;
+      patch_pending_bindings: number | string;
+      patched_bindings: number | string;
+      smoke_verifying_bindings: number | string;
+      stabilizing_bindings: number | string;
+      succeeded_bindings: number | string;
     }>(
       input.controlDatabaseName,
       `SELECT handoff.state, handoff.verification_error_code, handoff.accepted_at,
@@ -1159,7 +1187,27 @@ export async function waitForInitialBootstrapHandoff(input: {
               (SELECT MAX(reconciliation.updated_at)
                  FROM control_worker_binding_reconciliations reconciliation
                 WHERE reconciliation.environment_id = handoff.environment_id)
-                AS latest_binding_update
+                AS latest_binding_update,
+              (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
+                WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.state IN ('pending', 'rollback_required'))
+                AS patch_pending_bindings,
+              (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
+                WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.state = 'settings_patched')
+                AS patched_bindings,
+              (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
+                WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.state = 'smoke_verifying')
+                AS smoke_verifying_bindings,
+              (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
+                WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.state = 'stabilizing')
+                AS stabilizing_bindings,
+              (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
+                WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.state = 'succeeded')
+                AS succeeded_bindings
          FROM control_bootstrap_handoffs handoff
         WHERE handoff.environment_id = ${sqlString(input.environmentId)}`
     );
@@ -1190,7 +1238,12 @@ export async function waitForInitialBootstrapHandoff(input: {
         ? queriedTotalBindings
         : pendingBindings;
     const completedBindings = Math.max(0, totalBindings - pendingBindings);
-    const progressIdentity = `${totalBindings}:${completedBindings}:${String(
+    const patchPendingBindings = Math.max(0, Number(row.patch_pending_bindings) || 0);
+    const patchedBindings = Math.max(0, Number(row.patched_bindings) || 0);
+    const smokeVerifyingBindings = Math.max(0, Number(row.smoke_verifying_bindings) || 0);
+    const stabilizingBindings = Math.max(0, Number(row.stabilizing_bindings) || 0);
+    const succeededBindings = Math.max(0, Number(row.succeeded_bindings) || 0);
+    const progressIdentity = `${totalBindings}:${completedBindings}:${patchPendingBindings}:${patchedBindings}:${smokeVerifyingBindings}:${stabilizingBindings}:${succeededBindings}:${String(
       row.latest_binding_update ?? ''
     )}`;
     const progressChanged = progressIdentity !== lastProgressIdentity;
@@ -1199,8 +1252,8 @@ export async function waitForInitialBootstrapHandoff(input: {
       stallDeadline = Math.min(deadline, now() + stallTimeoutMs);
       input.onProgress?.(
         pendingBindings === 0 && totalBindings > 0
-          ? `Control verified ${totalBindings} Worker binding checks; confirming stable inventory...`
-          : `Control is reconciling Worker bindings: ${completedBindings} complete, ${pendingBindings} pending (${totalBindings} discovered)`
+          ? `Worker bindings complete: ${totalBindings}/${totalBindings}; confirming stable inventory...`
+          : `Worker binding progress: ${patchPendingBindings} awaiting PATCH, ${patchedBindings} PATCHed, ${smokeVerifyingBindings} smoke checking, ${stabilizingBindings} stabilizing, ${succeededBindings} complete (${totalBindings} total)`
       );
     }
     const bindingsAreQuiescent =

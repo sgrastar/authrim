@@ -21,6 +21,7 @@ import {
   createR2Bucket,
   deleteR2Bucket,
   getR2BucketDashboardUrl,
+  getRequiredR2Buckets,
   getWorkerDeployments,
   getWorkerVersion,
   getR2ObjectBytes,
@@ -290,6 +291,45 @@ describe('Cloudflare R2 helpers', () => {
     expect(execaMock).toHaveBeenCalledTimes(3);
     expect(execaMock.mock.calls.map((call) => (call[1] as string[]).slice(0, 3).join(' '))).toEqual(
       ['wrangler r2 bucket', 'wrangler whoami', 'wrangler r2 bucket']
+    );
+  });
+
+  it('shares one Wrangler OAuth refresh across concurrent R2 creates', async () => {
+    delete process.env.CLOUDFLARE_API_TOKEN;
+    process.env.CLOUDFLARE_ACCOUNT_ID = oauthAccountId;
+    const attempts = new Map<string, number>();
+    let refreshes = 0;
+
+    execaMock.mockImplementation(async (_command: string, args: string[]) => {
+      if (args.slice(0, 2).join(' ') === 'wrangler whoami') {
+        refreshes += 1;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return {
+          exitCode: 0,
+          stdout: `You are logged in with an OAuth Token.\nAccount ID: ${oauthAccountId}`,
+          stderr: '',
+        };
+      }
+      if (args.slice(0, 4).join(' ') === 'wrangler r2 bucket create') {
+        const bucketName = args[4]!;
+        const attempt = (attempts.get(bucketName) ?? 0) + 1;
+        attempts.set(bucketName, attempt);
+        return attempt === 1
+          ? { exitCode: 1, stdout: '', stderr: r2AuthError }
+          : { exitCode: 0, stdout: '', stderr: '' };
+      }
+      throw new Error(`unexpected wrangler args: ${args.join(' ')}`);
+    });
+
+    await expect(
+      Promise.all([createR2Bucket('prod-public-assets'), createR2Bucket('prod-audit-archive')])
+    ).resolves.toEqual([{ name: 'prod-public-assets' }, { name: 'prod-audit-archive' }]);
+    expect(refreshes).toBe(1);
+    expect(attempts).toEqual(
+      new Map([
+        ['prod-public-assets', 2],
+        ['prod-audit-archive', 2],
+      ])
     );
   });
 
@@ -1011,7 +1051,166 @@ describe('Cloudflare R2 helpers', () => {
         stderr: '',
       });
 
-    await expect(provisionR2Buckets('prod')).rejects.toThrow(/was not visible after creation/);
+    await expect(provisionR2Buckets('prod', { includeFeatureBuckets: false })).rejects.toThrow(
+      /was not visible after creation/
+    );
+  });
+
+  it('provisions R2 buckets with bounded concurrency and serialized durable checkpoints', async () => {
+    process.env.CLOUDFLARE_API_TOKEN = 'test-token';
+    process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
+    const requiredBuckets = getRequiredR2Buckets('prod');
+    const bucketCreationDates = new Map(
+      requiredBuckets.map((bucket, index) => [
+        bucket.name,
+        `2026-08-31T00:00:${String(index).padStart(2, '0')}.000Z`,
+      ])
+    );
+    const createdBuckets = new Set<string>();
+    const markerPayloads = new Map<string, Uint8Array>();
+    let activeCreates = 0;
+    let maxActiveCreates = 0;
+    let activeCheckpoints = 0;
+    let maxActiveCheckpoints = 0;
+
+    fetchMock.mockImplementation(async (rawUrl: string | URL) => {
+      const url = new URL(String(rawUrl));
+      if (url.pathname.endsWith('/r2/buckets')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          json: async () => ({
+            success: true,
+            result: {
+              buckets: [...createdBuckets].map((name) => ({
+                name,
+                creation_date: bucketCreationDates.get(name),
+              })),
+            },
+          }),
+        };
+      }
+
+      const objectMatch = url.pathname.match(/\/r2\/buckets\/([^/]+)\/objects(?:\/(.*))?$/u);
+      if (objectMatch) {
+        const bucketName = decodeURIComponent(objectMatch[1]!);
+        const encodedObjectKey = objectMatch[2];
+        const markerPayload = markerPayloads.get(bucketName);
+        if (encodedObjectKey === undefined) {
+          const marker = markerPayload
+            ? (JSON.parse(new TextDecoder().decode(markerPayload)) as { ownershipId: string })
+            : null;
+          return {
+            ok: true,
+            status: 200,
+            headers: new Headers(),
+            json: async () => ({
+              success: true,
+              result: marker
+                ? [{ key: `__authrim_setup__/ownership-v1-${marker.ownershipId}.json` }]
+                : [],
+              result_info: { is_truncated: false },
+            }),
+          };
+        }
+        if (!markerPayload) {
+          return { ok: false, status: 404, headers: new Headers() };
+        }
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-length': String(markerPayload.byteLength) }),
+          arrayBuffer: async () => markerPayload.buffer,
+        };
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+
+    execaMock.mockImplementation(async (_command: string, args: string[]) => {
+      if (args.slice(0, 4).join(' ') === 'wrangler r2 bucket create') {
+        const bucketName = args[4]!;
+        activeCreates += 1;
+        maxActiveCreates = Math.max(maxActiveCreates, activeCreates);
+        await new Promise((resolve) =>
+          setTimeout(resolve, bucketName.endsWith('releases') ? 8 : 2)
+        );
+        createdBuckets.add(bucketName);
+        activeCreates -= 1;
+        return { exitCode: 0, stdout: '', stderr: '' };
+      }
+      if (args.slice(0, 4).join(' ') === 'wrangler r2 object put') {
+        const target = args[4]!;
+        const separator = target.indexOf('/');
+        const bucketName = target.slice(0, separator);
+        const filePath = args[args.indexOf('--file') + 1]!;
+        markerPayloads.set(bucketName, new Uint8Array(readFileSync(filePath)));
+        return { exitCode: 0, stdout: '', stderr: '' };
+      }
+      throw new Error(`unexpected wrangler args: ${args.join(' ')}`);
+    });
+
+    const checkpoint = async () => {
+      activeCheckpoints += 1;
+      maxActiveCheckpoints = Math.max(maxActiveCheckpoints, activeCheckpoints);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      activeCheckpoints -= 1;
+    };
+    const resources = await provisionR2Buckets('prod', {
+      provisioningIntentResources: {},
+      onResourceCreateIssued: checkpoint,
+      onResourceCreateRejected: checkpoint,
+      onResourceIdentified: checkpoint,
+      onResourceProvisioned: checkpoint,
+    });
+
+    expect(maxActiveCreates).toBe(2);
+    expect(maxActiveCheckpoints).toBe(1);
+    expect(resources.map(({ binding, name }) => ({ binding, name }))).toEqual(requiredBuckets);
+    expect(markerPayloads).toHaveLength(requiredBuckets.length);
+  });
+
+  it('does not start more R2 bucket creates after a concurrent create failure is observed', async () => {
+    delete process.env.CLOUDFLARE_API_TOKEN;
+    delete process.env.CLOUDFLARE_ACCOUNT_ID;
+    const started: string[] = [];
+    const rejected: string[] = [];
+    let rejectFirst!: () => void;
+    let rejectSecond!: () => void;
+    const firstFailure = new Promise<void>((_resolve, reject) => {
+      rejectFirst = () => reject(new Error('first R2 create permission denied'));
+    });
+    const secondFailure = new Promise<void>((_resolve, reject) => {
+      rejectSecond = () => reject(new Error('second R2 create permission denied'));
+    });
+
+    execaMock.mockImplementation(async (_command: string, args: string[]) => {
+      if (args.slice(0, 4).join(' ') === 'wrangler r2 bucket list') {
+        return { exitCode: 0, stdout: '[]', stderr: '' };
+      }
+      if (args.slice(0, 4).join(' ') === 'wrangler r2 bucket create') {
+        started.push(args[4]!);
+        return started.length === 1 ? firstFailure : secondFailure;
+      }
+      throw new Error(`unexpected wrangler args: ${args.join(' ')}`);
+    });
+
+    const provisioning = provisionR2Buckets('prod', {
+      provisioningIntentResources: {},
+      onResourceCreateIssued: async () => undefined,
+      onResourceCreateRejected: async (resource) => {
+        rejected.push(resource.name);
+      },
+    });
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    rejectFirst();
+    await vi.waitFor(() => expect(rejected).toContain('prod-migration-releases'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(started).toHaveLength(2);
+    rejectSecond();
+
+    await expect(provisioning).rejects.toThrow('first R2 create permission denied');
+    expect(started).toEqual(['prod-migration-releases', 'prod-plugin-bundles']);
   });
 
   it('does not claim a same-name R2 bucket after an ambiguous create response', async () => {
@@ -1512,10 +1711,16 @@ describe('Cloudflare R2 helpers', () => {
   });
 
   it('marks recorded R2 buckets as unconfigured when Cloudflare no longer lists them', () => {
+    const ownershipId = '00000000-0000-4000-8000-000000000123';
     const status = buildR2BucketProvisioningStatus(
       'prod',
       {
-        DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
+        DIAGNOSTIC_LOGS: {
+          name: 'prod-diagnostic-logs',
+          creationDate: '2026-05-18T00:00:00.000Z',
+          ownershipMarkerKey: `__authrim_setup__/ownership-v1-${ownershipId}.json`,
+          ownershipId,
+        },
       },
       []
     );
@@ -1536,28 +1741,38 @@ describe('Cloudflare R2 helpers', () => {
     );
   });
 
-  it('reports R2 enabled only when every recorded bucket exists in Cloudflare', () => {
+  it('reports R2 enabled only when every exact recorded identity exists in Cloudflare', () => {
+    const creationDate = '2026-05-18T00:00:00.000Z';
+    const exact = (name: string, index: number) => {
+      const ownershipId = `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
+      return {
+        name,
+        creationDate,
+        ownershipMarkerKey: `__authrim_setup__/ownership-v1-${ownershipId}.json`,
+        ownershipId,
+      };
+    };
     const status = buildR2BucketProvisioningStatus(
       'prod',
       {
-        MIGRATION_RELEASES: { name: 'prod-migration-releases' },
-        PLUGIN_BUNDLES: { name: 'prod-plugin-bundles' },
-        PUBLIC_ASSETS: { name: 'prod-public-assets' },
-        DIAGNOSTIC_LOGS: { name: 'prod-diagnostic-logs' },
-        AUDIT_ARCHIVE: { name: 'prod-audit-archive' },
-        IMPORT_ARTIFACTS: { name: 'prod-import-artifacts' },
-        EXPORT_ARTIFACTS: { name: 'prod-export-artifacts' },
-        SENSITIVE_DETAILS: { name: 'prod-sensitive-details' },
+        MIGRATION_RELEASES: exact('prod-migration-releases', 1),
+        PLUGIN_BUNDLES: exact('prod-plugin-bundles', 2),
+        PUBLIC_ASSETS: exact('prod-public-assets', 3),
+        DIAGNOSTIC_LOGS: exact('prod-diagnostic-logs', 4),
+        AUDIT_ARCHIVE: exact('prod-audit-archive', 5),
+        IMPORT_ARTIFACTS: exact('prod-import-artifacts', 6),
+        EXPORT_ARTIFACTS: exact('prod-export-artifacts', 7),
+        SENSITIVE_DETAILS: exact('prod-sensitive-details', 8),
       },
       [
-        'prod-migration-releases',
-        'prod-plugin-bundles',
-        'prod-public-assets',
-        'prod-diagnostic-logs',
-        'prod-audit-archive',
-        'prod-import-artifacts',
-        'prod-export-artifacts',
-        'prod-sensitive-details',
+        { name: 'prod-migration-releases', creationDate },
+        { name: 'prod-plugin-bundles', creationDate },
+        { name: 'prod-public-assets', creationDate },
+        { name: 'prod-diagnostic-logs', creationDate },
+        { name: 'prod-audit-archive', creationDate },
+        { name: 'prod-import-artifacts', creationDate },
+        { name: 'prod-export-artifacts', creationDate },
+        { name: 'prod-sensitive-details', creationDate },
       ]
     );
 
@@ -1566,6 +1781,30 @@ describe('Cloudflare R2 helpers', () => {
     expect(status.configured).toBe(8);
     expect(status.missing).toEqual([]);
     expect(status.buckets.every((bucket) => bucket.state === 'configured')).toBe(true);
+  });
+
+  it('does not configure a same-name replacement with a different provider identity', () => {
+    const ownershipId = '00000000-0000-4000-8000-000000000123';
+    const status = buildR2BucketProvisioningStatus(
+      'prod',
+      {
+        MIGRATION_RELEASES: {
+          name: 'prod-migration-releases',
+          creationDate: '2026-05-18T00:00:00.000Z',
+          ownershipMarkerKey: `__authrim_setup__/ownership-v1-${ownershipId}.json`,
+          ownershipId,
+        },
+      },
+      [{ name: 'prod-migration-releases', creationDate: '2026-05-19T00:00:00.000Z' }]
+    );
+
+    expect(status.configured).toBe(0);
+    expect(status.buckets[0]).toMatchObject({
+      state: 'identity_mismatch',
+      exactOwnership: true,
+      providerIdentityMatches: false,
+      configured: false,
+    });
   });
 
   it('uses the newest worker deployment when wrangler lists older secret changes first', async () => {

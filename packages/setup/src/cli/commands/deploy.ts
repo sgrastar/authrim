@@ -52,6 +52,7 @@ import {
   deployUiWorkerBindingTargets,
   resolveMissingUiWorkerBindingTargets,
   resolveExistingWorkerComponents,
+  reconcileWorkerCronTriggers,
   updateLockWithDeployments,
   buildApiPackages,
   loadDeploySecretsFromKeys,
@@ -2878,6 +2879,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       ),
       secrets: deploymentSecrets,
       automaticProvisioning: automaticProvisioning && pendingControlTokenBootstrap === null,
+      cloudflareAccountId: config.cloudflare?.accountId,
       varsByComponent: testEndpointVarsByComponent,
       ...(!isInitialDeployment
         ? {
@@ -2922,7 +2924,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     const shouldPrepareUiBindingTargets =
       routerSelected && (missingUiBindingTargets.loginUi || missingUiBindingTargets.adminUi);
 
-    if (!options.dryRun && !resumeInitialHandoff) {
+    if (!options.dryRun) {
       const workerOwnershipTargets = [
         ...componentsToDeply.map((component) => ({
           component,
@@ -2935,10 +2937,14 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
                 : config.components.adminUi !== false
             ).map((component) => ({ component, workerName: `${env}-${component}` }))
           : []),
-        ...(missingUiBindingTargets.loginUi && (focusedDeployment || options.skipUi)
+        ...(!resumeInitialHandoff &&
+        missingUiBindingTargets.loginUi &&
+        (focusedDeployment || options.skipUi)
           ? [{ component: 'ar-login-ui', workerName: `${env}-ar-login-ui` }]
           : []),
-        ...(missingUiBindingTargets.adminUi && (focusedDeployment || options.skipUi)
+        ...(!resumeInitialHandoff &&
+        missingUiBindingTargets.adminUi &&
+        (focusedDeployment || options.skipUi)
           ? [{ component: 'ar-admin-ui', workerName: `${env}-ar-admin-ui` }]
           : []),
       ];
@@ -2984,6 +2990,8 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           `Resuming initial deployment from ${summary.results.length} locked Worker version(s); no Worker traffic was changed.`
         )
       );
+      console.log(chalk.cyan('Verifying Worker Cron Triggers before continuing deployment...'));
+      await reconcileWorkerCronTriggers(deployOptions, componentsToDeply);
     }
 
     // Re-resolve workers.dev URLs with the current account subdomain. Init may have run while
@@ -3334,7 +3342,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             ).size;
             updateOraSpinner(
               handoffSpinner,
-              `[6/10] Waiting for Control verification of ${deployedWorkerCount} Worker(s)...`
+              config.controlPlane?.automaticProvisioning === true
+                ? `[6/10] Control is verifying ${deployedWorkerCount} Worker(s)...`
+                : `[6/10] Setup operator is reconciling ${deployedWorkerCount} Worker(s) with Wrangler OAuth...`
             );
             let acceleratorFallbackReported = false;
             const smokeKeyState = currentLock.controlKeyState?.smokeRpc;
@@ -3359,23 +3369,48 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
                             activeSlot: smokeKeyState.activeSlot,
                             activeKeyId: smokeKeyState.activeKeyId,
                           });
-                        } catch {
+                        } catch (error) {
                           if (!acceleratorFallbackReported) {
                             acceleratorFallbackReported = true;
+                            const diagnostic = error instanceof Error ? ` (${error.message})` : '';
                             updateOraSpinner(
                               handoffSpinner,
-                              '[6/10] Control bootstrap acceleration unavailable; continuing with scheduled verification...'
+                              `[6/10] Control bootstrap acceleration unavailable${diagnostic}; continuing with scheduled verification...`
                             );
                           }
                         }
                       }
                     : undefined
-                  : () =>
-                      advanceInitialBootstrapWorkerBindingsAsOperator({
+                  : async () => {
+                      await advanceInitialBootstrapWorkerBindingsAsOperator({
                         controlDatabaseId,
                         controlDatabaseName: controlDatabaseId,
                         environmentId: env,
-                      }),
+                        onProgress: (message) => {
+                          updateOraSpinner(handoffSpinner, `[6/10] ${message}`);
+                        },
+                      });
+                      if (smokeKeyState) {
+                        try {
+                          await requestInitialBootstrapAcceleration({
+                            apiBaseUrl: deploymentApiBaseUrl!,
+                            environmentId: env,
+                            keysDir: getResolvedKeysDir(),
+                            activeSlot: smokeKeyState.activeSlot,
+                            activeKeyId: smokeKeyState.activeKeyId,
+                          });
+                        } catch (error) {
+                          if (!acceleratorFallbackReported) {
+                            acceleratorFallbackReported = true;
+                            const diagnostic = error instanceof Error ? ` (${error.message})` : '';
+                            updateOraSpinner(
+                              handoffSpinner,
+                              `[6/10] Immediate binding smoke unavailable${diagnostic}; continuing with scheduled verification...`
+                            );
+                          }
+                        }
+                      }
+                    },
               refreshEvidence: () =>
                 recordInitialBootstrapWorkerEvidence({
                   environmentId: env,

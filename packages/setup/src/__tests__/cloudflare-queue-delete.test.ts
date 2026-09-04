@@ -282,6 +282,41 @@ describe('Cloudflare Queue deletion helpers', () => {
     ]);
   });
 
+  it('starts independent advisory inventories concurrently for the Web environment list', async () => {
+    mockCloudflareInventory([]);
+    const inventoryFetch = fetchMock.getMockImplementation();
+    if (!inventoryFetch) throw new Error('inventory mock was not initialized');
+    let releaseInventories!: () => void;
+    const inventoryGate = new Promise<void>((resolve) => {
+      releaseInventories = resolve;
+    });
+    const startedInventories = new Set<string>();
+    fetchMock.mockImplementation(
+      async (input: string | URL | Request, init?: { method?: string }) => {
+        const url = String(input);
+        const resource = [
+          '/workers/scripts',
+          '/d1/database?',
+          '/storage/kv/namespaces',
+          '/queues?',
+          '/r2/buckets?',
+          '/pages/projects?',
+        ].find((candidate) => url.includes(candidate));
+        if (resource && (init?.method ?? 'GET') === 'GET') {
+          startedInventories.add(resource);
+          await inventoryGate;
+        }
+        return inventoryFetch(input, init);
+      }
+    );
+
+    const detection = detectEnvironments();
+    await vi.waitFor(() => expect(startedInventories.size).toBe(6));
+    releaseInventories();
+
+    await expect(detection).resolves.toEqual([]);
+  });
+
   it('detects KV-only environments before a fresh provisioning mutation', async () => {
     mockCloudflareInventory([], [], [], undefined, [], 0, undefined, [], undefined, {}, [
       { title: 'test-AUTHRIM_CONFIG', id: 'kv-config' },

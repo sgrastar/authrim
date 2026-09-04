@@ -61,10 +61,19 @@ function phaseStepForMessage(message: string): number {
     return 7;
   }
   if (
+    normalized.includes('deploying initial ar-control bootstrap') ||
+    normalized.includes('redeploying ar-control with authenticated runtime smoke bindings')
+  ) {
+    return 4;
+  }
+  if (
     normalized.includes('control bootstrap') ||
     normalized.includes('control verification') ||
     normalized.includes('control is reconciling') ||
+    normalized.includes('control is verifying') ||
     normalized.includes('control verified') ||
+    normalized.includes('setup operator is reconciling') ||
+    normalized.includes('worker binding progress') ||
     normalized.includes('topology accepted') ||
     normalized.includes('initial d1 topology accepted')
   ) {

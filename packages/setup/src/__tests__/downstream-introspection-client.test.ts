@@ -306,6 +306,7 @@ describe('ensureDownstreamIntrospectionClient', () => {
   });
 
   it('updates metadata and rotates the secret for a discovered system client', async () => {
+    const progress: string[] = [];
     fetchMock
       .mockResolvedValueOnce(
         jsonResponse({
@@ -328,6 +329,7 @@ describe('ensureDownstreamIntrospectionClient', () => {
       adminBearerToken,
       keysDir: tempDir,
       maxRetries: 1,
+      onProgress: (message) => progress.push(message),
     });
 
     expect(result).toMatchObject({
@@ -338,6 +340,9 @@ describe('ensureDownstreamIntrospectionClient', () => {
       rotatedSecret: true,
     });
     expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(['GET', 'PUT', 'POST']);
+    expect(progress).toContain('Regenerating downstream introspection client secret');
+    expect(progress.join('\n')).not.toContain('existing-client');
+    expect(progress.join('\n')).not.toContain('rotated-secret');
   });
 
   it('restricts generated credentials even when replacing permissive files', async () => {
@@ -386,18 +391,21 @@ describe('ensureDownstreamIntrospectionClient', () => {
       })
     ).resolves.toMatchObject({ success: false, error: expect.stringContaining('keys not found') });
 
-    fetchMock.mockResolvedValueOnce(textResponse('forbidden', 403));
-    await expect(
-      ensureDownstreamIntrospectionClient({
-        apiBaseUrl: 'https://issuer.test',
-        adminBearerToken,
-        keysDir: tempDir,
-        maxRetries: 1,
-      })
-    ).resolves.toMatchObject({
+    fetchMock.mockResolvedValueOnce(
+      textResponse('{"client_secret":"must-not-appear","error":"forbidden"}', 403)
+    );
+    const failure = await ensureDownstreamIntrospectionClient({
+      apiBaseUrl: 'https://issuer.test',
+      adminBearerToken,
+      keysDir: tempDir,
+      maxRetries: 1,
+    });
+    expect(failure).toMatchObject({
       success: false,
       error: expect.stringContaining('Failed to check downstream introspection client (403)'),
     });
+    expect(failure.error).not.toContain('must-not-appear');
+    expect(failure.error).not.toContain('client_secret');
   });
 
   it('does not start Admin API work after the shared optional-integration deadline', async () => {

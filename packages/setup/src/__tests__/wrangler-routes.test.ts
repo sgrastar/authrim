@@ -1272,6 +1272,22 @@ id = "kv-id"
     expect(parseWranglerToml(toml, 'portableXprod').kv).toEqual({});
   });
 
+  it('parses the exact environment-scoped Cron Trigger intent', () => {
+    const toml = `
+[env.portable.triggers]
+crons = ["* * * * *", "*/5 * * * *", "0 */6 * * *"]
+
+[env.other.triggers]
+crons = ["*/15 * * * *"]
+`;
+
+    expect(parseWranglerToml(toml, 'portable').crons).toEqual([
+      '* * * * *',
+      '*/5 * * * *',
+      '0 */6 * * *',
+    ]);
+  });
+
   it('assigns AUDIT_QUEUE producer bindings to auth/token and a consumer to management', () => {
     const config = {
       version: '1.0.0',

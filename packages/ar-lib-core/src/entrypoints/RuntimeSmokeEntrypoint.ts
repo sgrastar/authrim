@@ -3,6 +3,7 @@ import { decodeProtectedHeader } from 'jose';
 import {
   inspectRuntimeSmokeBinding,
   verifyRuntimeSmokeRequest,
+  type RuntimeSmokeBatchResult,
   type RuntimeSmokeResult,
   type RuntimeSmokeVersionMetadata,
 } from '../services/control-plane/runtime-smoke-rpc.js';
@@ -24,6 +25,7 @@ const EXPOSED_ERROR = /^runtime_smoke_[a-z0-9_]+$/u;
 const EXPOSED_KEY_VERIFICATION_ERROR = /^runtime_key_verification_[a-z0-9_]+$/u;
 const SAFE_KEY_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const MAX_TEST_PAYLOAD_BYTES = 1024;
+const MAX_SMOKE_BATCH_SIZE = 32;
 const LOOKUP_HMAC_TEST_VECTOR = 'authrim-control-lookup-hmac-v1';
 const HEX_DIGEST = /^[a-f0-9]{64}$/u;
 
@@ -196,6 +198,25 @@ export class RuntimeSmokeEntrypoint extends WorkerEntrypoint<
       }
       throw new Error('runtime_smoke_internal_error');
     }
+  }
+
+  async smokeTenantBindings(tokens: unknown): Promise<RuntimeSmokeBatchResult[]> {
+    if (!Array.isArray(tokens) || tokens.length < 1 || tokens.length > MAX_SMOKE_BATCH_SIZE) {
+      throw new Error('runtime_smoke_batch_invalid');
+    }
+    const results: RuntimeSmokeBatchResult[] = [];
+    for (const token of tokens) {
+      try {
+        results.push({ ok: true, result: await this.smokeTenantBinding(token) });
+      } catch (error) {
+        const errorCode =
+          error instanceof Error && EXPOSED_ERROR.test(error.message)
+            ? error.message
+            : 'runtime_smoke_internal_error';
+        results.push({ ok: false, errorCode });
+      }
+    }
+    return results;
   }
 
   async verifyControlKeyCandidate(input: unknown): Promise<RuntimeControlKeyVerificationResult> {
