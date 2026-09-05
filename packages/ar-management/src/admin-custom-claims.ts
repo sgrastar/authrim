@@ -42,6 +42,7 @@ import {
   resolveCustomClaimRuntimeSourcesFromEnv,
   resolveTenantAssignedDatabaseSourcesFromRegistry,
   CanonicalRuntimeUserStore,
+  BUILTIN_PROFILE_CLAIM_KEYS,
 } from '@authrim/ar-lib-core';
 import { CUSTOM_CLAIM_PRESETS, type CustomClaimPresetField } from './custom-claim-presets';
 
@@ -200,6 +201,7 @@ async function countPiiFieldAcrossStores(
 
 /** Reserved OIDC claim names that cannot be used as field_key */
 const RESERVED_CLAIM_NAMES = new Set([
+  ...BUILTIN_PROFILE_CLAIM_KEYS,
   'sub',
   'iss',
   'aud',
@@ -601,7 +603,7 @@ async function listStoredFieldUsageBindings(
       `SELECT id, field_key, binding_type, binding_id, protection, reason, source,
               metadata_json, is_active, created_at, updated_at
          FROM field_usage_bindings
-        WHERE tenant_id = ? AND is_active = 1${fieldFilter}
+        WHERE tenant_id = ? AND is_active = TRUE${fieldFilter}
         ORDER BY binding_type ASC, binding_id ASC`,
       params
     );
@@ -880,6 +882,9 @@ async function seedPresetCustomClaimSchemas(
   schemas: CustomClaimPresetField[]
 ): Promise<number> {
   const now = Math.floor(Date.now() / 1000);
+  const usesNativeBooleans = adapter.getType() === 'postgres';
+  const databaseFlag = (value: number): number | boolean =>
+    usesNativeBooleans ? value === 1 : value;
   let createdCount = 0;
 
   for (const schema of schemas) {
@@ -899,7 +904,7 @@ async function seedPresetCustomClaimSchemas(
         include_in_id_token, include_in_userinfo, include_in_introspection,
         scope_mode, display_order, ui_group_key, ui_group_label, ui_group_order, ui_field_order,
         examples_json, schema_version, operation_status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 1, 1, ?, ?, 0, 0, 0, 0, 'any', ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, FALSE, TRUE, TRUE, ?, ?, FALSE, FALSE, FALSE, FALSE, 'any', ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)`,
       [
         generateId(),
         tenantId,
@@ -908,9 +913,9 @@ async function seedPresetCustomClaimSchemas(
         schema.display_label,
         schema.field_type,
         schema.cardinality ?? 'single',
-        schema.is_pii,
-        schema.is_searchable,
-        schema.is_exportable,
+        databaseFlag(schema.is_pii),
+        databaseFlag(schema.is_searchable),
+        databaseFlag(schema.is_exportable),
         schema.display_order,
         schema.ui_group_key,
         schema.ui_group_label,
@@ -994,7 +999,7 @@ export async function adminCustomClaimPresetsListHandler(c: AdminContext) {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const rows = await adapter.query<{ field_key: string }>(
-      'SELECT field_key FROM custom_claim_schemas WHERE tenant_id = ? AND is_active = 1',
+      'SELECT field_key FROM custom_claim_schemas WHERE tenant_id = ? AND is_active = TRUE',
       [tenantId]
     );
 
@@ -1131,7 +1136,7 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
         variables: {
           field: 'field_key',
-          reason: `'${field_key}' is a reserved OIDC claim name`,
+          reason: `'${field_key}' is a reserved or built-in profile field name`,
         },
       });
     }
@@ -1397,13 +1402,13 @@ export async function adminCustomClaimsStatsHandler(c: AdminContext) {
 
     // Non-PII count
     const nonPiiResult = await adapter.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM custom_claim_schemas WHERE tenant_id = ? AND is_pii = 0 AND is_active = 1',
+      'SELECT COUNT(*) as count FROM custom_claim_schemas WHERE tenant_id = ? AND is_pii = FALSE AND is_active = TRUE',
       [tenantId]
     );
 
     // PII count
     const piiResult = await adapter.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM custom_claim_schemas WHERE tenant_id = ? AND is_pii = 1 AND is_active = 1',
+      'SELECT COUNT(*) as count FROM custom_claim_schemas WHERE tenant_id = ? AND is_pii = TRUE AND is_active = TRUE',
       [tenantId]
     );
 
@@ -1681,8 +1686,8 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
     }
 
     // Block protected field changes for system claims
-    if (schema.is_system === 1) {
-      const protectedFields = ['field_key', 'field_type', 'cardinality', 'is_pii'];
+    if (schema.is_system === 1 || schema.is_system === true) {
+      const protectedFields = ['field_key', 'display_label', 'field_type', 'cardinality', 'is_pii'];
       for (const f of protectedFields) {
         if (body[f] !== undefined && body[f] !== schema[f]) {
           return c.json(
@@ -2079,7 +2084,7 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
     }
 
     // Block deletion of system claims
-    if (schema.is_system === 1) {
+    if (schema.is_system === 1 || schema.is_system === true) {
       return c.json(
         { error: 'forbidden', error_description: 'System claims cannot be deleted' },
         403
@@ -2276,7 +2281,7 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
         variables: {
           field: 'new_field_key',
-          reason: `'${newKey}' is a reserved OIDC claim name`,
+          reason: `'${newKey}' is a reserved or built-in profile field name`,
         },
       });
     }
@@ -2289,7 +2294,7 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
     }
 
     // Block renaming of system claims
-    if (schema.is_system === 1) {
+    if (schema.is_system === 1 || schema.is_system === true) {
       return c.json(
         { error: 'forbidden', error_description: 'System claims cannot be renamed' },
         403

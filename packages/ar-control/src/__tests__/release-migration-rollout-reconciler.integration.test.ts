@@ -168,10 +168,11 @@ function addDesiredResource(
     INSERT INTO control_desired_resources (
       desired_resource_id, environment_id, resource_kind, logical_shard_id,
       deterministic_name, ownership_fingerprint, desired_state, provisioning_state,
-      origin_operation_id, observed_resource_id, created_at, updated_at
+      origin_operation_id, observed_resource_id, provider_create_state,
+      provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
     ) VALUES (
       'resource-${id}', 'env-test', 'd1', '${id}', '${id}-database', '${'c'.repeat(64)}',
-      'present', 'active', 'op-origin', 'observed-${id}', 1, 1
+      'present', 'active', 'op-origin', 'observed-${id}', 'identified', '${databaseId}', 1, 1, 1
     );
     INSERT INTO control_observed_resources (
       observed_resource_id, environment_id, desired_resource_id, provider_resource_id,
@@ -251,10 +252,7 @@ describe('ReleaseMigrationRolloutReconciler', () => {
     database = new DatabaseSync(':memory:');
     database.exec('PRAGMA foreign_keys = ON');
     database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
     );
     currentTime = 100;
     seed(database);

@@ -107,13 +107,11 @@ describe('identifier replacement scheduled recovery', () => {
     admin = new DatabaseSync(':memory:');
     pii = new DatabaseSync(':memory:');
     admin.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/admin/001_pre_1_0_admin_baseline.sql'), 'utf8')
+      readFileSync(resolve(REPO_ROOT, 'migrations/admin/001_0_4_0_admin_baseline.sql'), 'utf8')
         .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
         .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
-    pii.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/pii/001_pre_1_0_pii_baseline.sql'), 'utf8')
-    );
+    pii.exec(readFileSync(resolve(REPO_ROOT, 'migrations/pii/001_0_4_0_pii_baseline.sql'), 'utf8'));
     adminD1 = new SqliteD1(admin);
     piiD1 = new SqliteD1(pii);
     vi.clearAllMocks();

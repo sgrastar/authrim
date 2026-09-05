@@ -109,10 +109,7 @@ describe('release rollout handoff', () => {
     database = new DatabaseSync(':memory:');
     database.exec('PRAGMA foreign_keys = ON');
     database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
     );
     database.exec(`
       INSERT INTO control_environments (
@@ -192,10 +189,7 @@ describe('release rollout handoff', () => {
   it('returns no active rollout before the handoff schema exists or before a handoff is created', async () => {
     const legacyDatabase = new DatabaseSync(':memory:');
     legacyDatabase.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
     );
     await expect(
       getActiveReleaseRolloutHandoffStatus({

@@ -125,6 +125,10 @@ const ReleaseUpdateStateSchema = z.object({
     'database_only_verified',
   ]),
   manifestChecksum: z.string().regex(/^[a-f0-9]{64}$/u),
+  controlManifestDigest: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .optional(),
   startedAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   appliedTargets: z.array(z.string()).default([]),

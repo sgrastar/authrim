@@ -215,8 +215,9 @@ describe('Admin Machine Access setup bootstrap', () => {
     expect(sql).toContain("'admin-ui:proxy'");
     expect(sql).not.toContain('UNION ALL');
     expect(sql).toContain('INSERT INTO admin_machine_principal_tenant_scopes');
-    expect(sql).toContain("'allow'");
-    expect(sql).toContain("'acme'");
+    expect(sql).toContain("'all',\n  NULL,");
+    expect(sql).not.toContain("'allow'");
+    expect(sql).not.toContain("'acme'");
     expect(sql).not.toContain("'*'");
     expect(sql).not.toContain('INSERT OR IGNORE');
     expect(sql).toContain("'active',\n  NULL,\n  NULL,");

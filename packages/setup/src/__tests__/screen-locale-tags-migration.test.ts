@@ -25,7 +25,7 @@ describe('screen locale tag normalization migrations', () => {
     const database = join(directory, 'core.db');
     try {
       const migration = renderPortableMigrationSql(
-        readFileSync(join(migrationsDir, '001_pre_1_0_core_baseline.sql'), 'utf8'),
+        readFileSync(join(migrationsDir, '001_0_4_0_core_baseline.sql'), 'utf8'),
         'sqlite'
       );
       execFileSync(sqlite3, [database], {
@@ -55,7 +55,7 @@ describe('screen locale tag normalization migrations', () => {
 
   it('uses matching BCP 47 keys in the PostgreSQL migration', () => {
     const migration = readFileSync(
-      join(migrationsDir, 'external/postgres/001_pre_1_0_external_postgres_core_baseline.sql'),
+      join(migrationsDir, 'external/postgres/001_0_4_0_external_postgres_core_baseline.sql'),
       'utf8'
     );
     expect(migration).toContain('zh-CN');

@@ -2779,7 +2779,7 @@ export async function executeSetupControlOperatorWorkerBindings(input: {
       };
     }
     let offeredWorkerBatch = false;
-    for (const target of workerTargets) {
+    for (const [workerTargetIndex, target] of workerTargets.entries()) {
       if (targetIndex > 0 && interTargetDelayMs > 0) {
         await sleep(interTargetDelayMs);
       }
@@ -2860,12 +2860,19 @@ export async function executeSetupControlOperatorWorkerBindings(input: {
             nextAttemptAt: null,
           };
         }
-        await releaseSetupWorkerDeploymentLease({
-          client,
-          controlDatabaseId: input.controlDatabaseId,
-          lease,
-        });
-        activeLease = null;
+        // A single operation can contain more than one binding for the same Worker (for example,
+        // tenant disaster recovery). Intermediate targets reuse the existing safe batching flow,
+        // but the final target must retain the deployment lease until Control finishes smoke and
+        // stabilization. Releasing every final lease here allowed another shard operation to
+        // deploy over the version that Control was still verifying.
+        if (workerTargetIndex < workerTargets.length - 1) {
+          await releaseSetupWorkerDeploymentLease({
+            client,
+            controlDatabaseId: input.controlDatabaseId,
+            lease,
+          });
+          activeLease = null;
+        }
         input.onProgress?.(
           `Setup operator is reconciling Worker bindings: ${targetIndex}/${targets.length} patched`
         );
@@ -2878,7 +2885,7 @@ export async function executeSetupControlOperatorWorkerBindings(input: {
               target: activeTarget,
             })
           ) {
-            if (activeLease) {
+            if (activeLease && workerTargetIndex < workerTargets.length - 1) {
               await releaseSetupWorkerDeploymentLease({
                 client,
                 controlDatabaseId: input.controlDatabaseId,

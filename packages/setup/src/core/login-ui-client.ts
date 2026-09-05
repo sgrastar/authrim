@@ -86,6 +86,14 @@ function isRetryableLoginUiClientError(error?: string | null): boolean {
     .toLowerCase();
 
   if (!normalized) return false;
+  // The release mutation fence is deterministic. Retrying it as router propagation wastes the
+  // full readiness window and hides the real ordering/configuration error from the operator.
+  if (
+    normalized.includes('admin_mutation_paused_for_release') ||
+    normalized.includes('control_plane_release_rollout_unavailable')
+  ) {
+    return false;
+  }
 
   return (
     normalized.includes('fetch failed') ||

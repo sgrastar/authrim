@@ -301,7 +301,7 @@ async function assertSchemasStillWritable(
          FROM custom_claim_schemas
         WHERE tenant_id = ?
           AND field_key IN (${chunk.map(() => '?').join(', ')})
-          AND is_active = 1
+	          AND is_active = TRUE
           AND operation_status = 'active'`,
       [tenantId, ...chunk]
     );

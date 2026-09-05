@@ -17,7 +17,7 @@ import type {
 	RuleDetail
 } from './types';
 
-interface IdentityMappingFlowInput {
+export interface IdentityMappingFlowInput {
 	policies: IdentityMappingFieldMappingSetSummary[];
 	catalogs: IdentityMappingCatalogSummary[];
 	identitySchemas?: CustomClaimSchema[];
@@ -30,6 +30,7 @@ interface IdentityMappingFlowInput {
 
 interface ProfileSchema {
 	id: string;
+	resourceId: string;
 	title: string;
 	source: string;
 	adapter: MappingAdapter;
@@ -97,17 +98,7 @@ const systemIdentityFields = [
 ] as const;
 
 export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput): MappingSample[] {
-	const sourceProfiles = [
-		...input.sourceProfiles.map(sourceProfileToProfile),
-		...input.externalSchemas.map(externalSchemaToProfile),
-		...input.protocolSchemas
-			.filter((schema) => isSourceProtocol(schema.protocol))
-			.map(protocolSchemaToSourceProfile)
-	];
-	const destinationProfiles = [
-		...input.destinationProfiles.map(destinationProfileToProfile),
-		...input.protocolSchemas.map(protocolSchemaToDestinationProfile)
-	];
+	const { sourceProfiles, destinationProfiles } = profilesForInput(input);
 	const canonicalTargets = buildIdentityTargets(input.identitySchemas ?? []);
 
 	if (
@@ -130,6 +121,71 @@ export function buildIdentityMappingFlowSamples(input: IdentityMappingFlowInput)
 	return sourceProfiles.map((sourceProfile) =>
 		buildSample(sourceProfile, destinationProfiles, canonicalTargets, input.policies.length)
 	);
+}
+
+/**
+ * Builds graphs used to edit inbound mappings. Destination profiles are deliberately excluded so
+ * hidden outbound state can never affect Source -> Identity DB validation or persistence.
+ */
+export function buildIdentityMappingSourceSamples(
+	input: IdentityMappingFlowInput
+): MappingSample[] {
+	// Only an explicitly registered source profile is an editable inbound endpoint. Protocol and
+	// imported schema catalogs describe reusable shapes; treating them as profiles creates phantom
+	// lanes and can make an inbound SCIM requirement appear in unrelated editors.
+	const sourceProfiles = input.sourceProfiles.map(sourceProfileToProfile);
+	const canonicalTargets = buildIdentityTargets(input.identitySchemas ?? []);
+	return sourceProfiles.map((sourceProfile) =>
+		buildSample(sourceProfile, [], canonicalTargets, input.policies.length)
+	);
+}
+
+/**
+ * Builds one graph per outbound profile. Source profiles are deliberately excluded so an inbound
+ * SCIM/CSV requirement can never leak into Identity DB -> Destination editing.
+ */
+export function buildIdentityMappingDestinationSamples(
+	input: IdentityMappingFlowInput
+): MappingSample[] {
+	// Outbound mappings are scoped to registered destination profiles. A protocol schema catalog
+	// (for example SCIM Core User) is not itself a destination and must never become selectable here.
+	const destinationProfiles = input.destinationProfiles.map(destinationProfileToProfile);
+	const canonicalTargets = buildIdentityTargets(input.identitySchemas ?? []);
+	return destinationProfiles.flatMap((destinationProfile) => {
+		const sample = buildDestinationOnlySample(
+			[destinationProfile],
+			canonicalTargets,
+			input.policies.length
+		);
+		return sample
+			? [
+					{
+						...sample,
+						id: destinationProfile.id,
+						title: destinationProfile.title
+					}
+				]
+			: [];
+	});
+}
+
+function profilesForInput(input: IdentityMappingFlowInput): {
+	sourceProfiles: ProfileSchema[];
+	destinationProfiles: ProfileSchema[];
+} {
+	return {
+		sourceProfiles: [
+			...input.sourceProfiles.map(sourceProfileToProfile),
+			...input.externalSchemas.map(externalSchemaToProfile),
+			...input.protocolSchemas
+				.filter((schema) => isSourceProtocol(schema.protocol))
+				.map(protocolSchemaToSourceProfile)
+		],
+		destinationProfiles: [
+			...input.destinationProfiles.map(destinationProfileToProfile),
+			...input.protocolSchemas.map(protocolSchemaToDestinationProfile)
+		]
+	};
 }
 
 function buildSample(
@@ -215,7 +271,8 @@ function buildDestinationOnlySample(
 
 function sourceProfileToProfile(profile: IdentityMappingSourceProfileSummary): ProfileSchema {
 	return {
-		id: `source-profile-${profile.id}`,
+		id: profile.id,
+		resourceId: profile.id,
 		title: profile.displayName,
 		source: `${profile.sourceType.toUpperCase()} / ${profile.profileKey}`,
 		adapter: adapterFrom(profile.sourceType),
@@ -231,6 +288,7 @@ function protocolSchemaToSourceProfile(
 ): ProfileSchema {
 	return {
 		id: `protocol-source-${schema.id}`,
+		resourceId: schema.id,
 		title: displayName(schema.displayName, schema.schemaKey),
 		source: `${schema.protocol} / ${schema.schemaKey}`,
 		adapter: adapterFrom(schema.protocol),
@@ -246,6 +304,7 @@ function protocolSchemaToDestinationProfile(
 ): ProfileSchema {
 	return {
 		id: `protocol-destination-${schema.id}`,
+		resourceId: schema.id,
 		title: displayName(schema.displayName, schema.schemaKey),
 		source: `${schema.protocol} / ${schema.schemaKey}`,
 		adapter: adapterFrom(schema.protocol),
@@ -260,7 +319,8 @@ function destinationProfileToProfile(
 	profile: IdentityMappingDestinationProfileSummary
 ): ProfileSchema {
 	return {
-		id: `destination-profile-${profile.id}`,
+		id: profile.id,
+		resourceId: profile.id,
 		title: profile.displayName,
 		source: `${profile.destinationType.toUpperCase()} / ${profile.profileKey}`,
 		adapter: adapterFrom(profile.destinationType),
@@ -274,6 +334,7 @@ function destinationProfileToProfile(
 function externalSchemaToProfile(schema: IdentityMappingExternalSchemaSummary): ProfileSchema {
 	return {
 		id: `external-source-${schema.id}`,
+		resourceId: schema.id,
 		title: displayName(schema.displayName, schema.schemaKey),
 		source: `${schema.sourceType} / ${schema.sourceKey ?? schema.sourceId ?? schema.schemaKey}`,
 		adapter: adapterFrom(schema.sourceType),
@@ -342,7 +403,7 @@ function buildCustomClaimTargets(schemas: CustomClaimSchema[]): MappingNode[] {
 				note: schema.description,
 				allowedValues: allowedValuesFromCustomClaim(schema),
 				valueMultiplicity: schema.cardinality === 'multi' ? 'multi' : 'single',
-				nullable: schema.is_required ? false : null,
+				nullable: !schema.is_required,
 				required: Boolean(schema.is_required)
 			})
 		);
@@ -460,7 +521,7 @@ function buildSchemaNodes(profile: ProfileSchema, role: 'source' | 'destination'
 				path: field.key
 			},
 			adapter: profile.adapter,
-			profileId: profile.id,
+			profileId: profile.resourceId,
 			profileTitle: profile.title,
 			label: field.label,
 			caption: field.caption,

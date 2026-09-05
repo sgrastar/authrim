@@ -33,7 +33,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_select_source_profile: 'Select source profile',
 	admin_identity_mapping_editor_select_destination_profile: 'Select destination profile',
 	admin_identity_mapping_editor_policy_name: 'Field Mapping Set name',
-	admin_identity_mapping_editor_policy_placeholder: 'Source Field Mapping Set',
+	admin_identity_mapping_editor_policy_placeholder: 'Field Mapping Set',
 	admin_identity_mapping_editor_policy_exists:
 		'{name:string} already exists. Choose a different field mapping set name.',
 	admin_identity_mapping_editor_no_policy_selected: 'No Field Mapping Set selected',

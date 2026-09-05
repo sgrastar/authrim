@@ -22,6 +22,10 @@ describe('buildInitialTenantBootstrapSql', () => {
     expect(sql).toContain('UPDATE flow_versions');
     expect(sql).toContain('UPDATE flow_assignments');
     expect(sql).toContain('UPDATE screens');
+    expect(sql).toContain('UPDATE custom_claim_schemas');
+    expect(sql).toContain("'builtin:' || 'first' || ':' || field.field_key");
+    expect(sql).toContain("'display_name'");
+    expect(sql).toContain("'picture_url'");
     expect(sql).toContain('(SELECT COUNT(*) FROM tenants) = 1');
     expect(sql).toContain('INSERT INTO tenants');
   });

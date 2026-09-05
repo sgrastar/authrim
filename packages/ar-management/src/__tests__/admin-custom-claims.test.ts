@@ -517,7 +517,7 @@ describe('Custom Claims Admin API', () => {
       expect(body.skipped_field_keys).toEqual(['email']);
       expect(mockDbExecute.mock.calls[0][0]).toContain('INSERT INTO custom_claim_schemas');
       expect(mockDbExecute.mock.calls[0][0]).toContain('ui_group_key');
-      expect(mockDbExecute.mock.calls[0][0]).toContain("0, 0, 0, 'any'");
+      expect(mockDbExecute.mock.calls[0][0]).toContain("FALSE, FALSE, FALSE, 'any'");
     });
 
     it('should reject unknown preset field keys', async () => {
@@ -601,6 +601,22 @@ describe('Custom Claims Admin API', () => {
       expect(status).toBe(400);
       expect(body.error_code).toBe('AR130002');
     });
+
+    it.each(['display_name', 'picture_url'])(
+      'should reject creation of built-in profile field %s',
+      async (fieldKey) => {
+        const c = createMockContext({
+          method: 'POST',
+          body: { field_key: fieldKey, display_label: 'Duplicate built-in' },
+        });
+
+        const res = await adminCustomClaimCreateHandler(c);
+        const { body, status } = await getResponseData(res);
+
+        expect(status).toBe(400);
+        expect(body.error_code).toBe('AR130002');
+      }
+    );
 
     it('should reject display_label longer than 255 chars', async () => {
       const c = createMockContext({
@@ -909,6 +925,8 @@ describe('Custom Claims Admin API', () => {
       expect(body.reserved_names).toBeInstanceOf(Array);
       expect(body.reserved_names).toContain('sub');
       expect(body.reserved_names).toContain('email');
+      expect(body.reserved_names).toContain('display_name');
+      expect(body.reserved_names).toContain('picture_url');
       // Verify sorted
       const sorted = [...body.reserved_names].sort();
       expect(body.reserved_names).toEqual(sorted);
@@ -1133,6 +1151,30 @@ describe('Custom Claims Admin API', () => {
       expect(body.schema).toBeDefined();
     });
 
+    it('should reject display label changes for built-in profile schemas', async () => {
+      mockDbQuery.mockResolvedValueOnce([
+        createSchemaRow({
+          id: 'builtin:test-tenant:display_name',
+          field_key: 'display_name',
+          display_label: 'Display Name',
+          is_system: true,
+        }),
+      ]);
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'builtin:test-tenant:display_name' },
+        body: { display_label: 'Renamed Profile Field' },
+      });
+
+      const res = await adminCustomClaimUpdateHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(403);
+      expect(body.error).toBe('forbidden');
+      expect(mockDbExecute).not.toHaveBeenCalled();
+    });
+
     it('should reject is_pii change', async () => {
       mockDbQuery.mockResolvedValueOnce([createSchemaRow({ is_pii: 0 })]);
 
@@ -1309,6 +1351,24 @@ describe('Custom Claims Admin API', () => {
   // ===========================================================================
 
   describe('DELETE /api/admin/custom-claims/:id (2-phase)', () => {
+    it('should reject deletion of PostgreSQL boolean system schemas', async () => {
+      mockDbQuery.mockResolvedValueOnce([
+        createSchemaRow({ id: 'builtin:test-tenant:email', field_key: 'email', is_system: true }),
+      ]);
+
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: 'builtin:test-tenant:email' },
+      });
+
+      const res = await adminCustomClaimDeleteHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(403);
+      expect(body.error).toBe('forbidden');
+      expect(mockDbExecute).not.toHaveBeenCalled();
+    });
+
     it('should delete non-PII schema with cascade', async () => {
       mockDbQuery.mockResolvedValueOnce([createSchemaRow()]);
       mockDbExecute.mockResolvedValue({ rowsAffected: 1 });
@@ -1408,6 +1468,29 @@ describe('Custom Claims Admin API', () => {
   // ===========================================================================
 
   describe('PATCH /api/admin/custom-claims/:id/rename (2-phase)', () => {
+    it('should reject renaming PostgreSQL boolean system schemas', async () => {
+      mockDbQuery.mockResolvedValueOnce([
+        createSchemaRow({
+          id: 'builtin:test-tenant:display_name',
+          field_key: 'display_name',
+          is_system: true,
+        }),
+      ]);
+
+      const c = createMockContext({
+        method: 'PATCH',
+        params: { id: 'builtin:test-tenant:display_name' },
+        body: { new_field_key: 'renamed_display_name' },
+      });
+
+      const res = await adminCustomClaimRenameHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(403);
+      expect(body.error).toBe('forbidden');
+      expect(mockDbExecute).not.toHaveBeenCalled();
+    });
+
     it('should rename non-PII field_key', async () => {
       mockDbQuery
         .mockResolvedValueOnce([createSchemaRow()]) // fetch existing

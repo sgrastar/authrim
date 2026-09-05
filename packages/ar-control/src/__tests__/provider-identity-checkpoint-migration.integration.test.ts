@@ -12,10 +12,7 @@ describe('provider identity checkpoint migration', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
     );
     database.exec(`
       INSERT INTO control_environments (
@@ -39,10 +36,12 @@ describe('provider identity checkpoint migration', () => {
       INSERT INTO control_desired_resources (
         desired_resource_id, environment_id, resource_kind, logical_shard_id,
         deterministic_name, ownership_fingerprint, provisioning_state,
-        origin_operation_id, observed_resource_id, created_at, updated_at
+        origin_operation_id, observed_resource_id, provider_create_state,
+        provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
       ) VALUES (
         'desired-generic', 'env-test', 'd1', 'users:jp:1', 'authrim-test-users-1',
-        '${'a'.repeat(64)}', 'active', 'op-generic', NULL, 10, 20
+        '${'a'.repeat(64)}', 'active', 'op-generic', NULL, 'identified',
+        'database-uuid', 20, 10, 20
       );
       INSERT INTO control_observed_resources (
         observed_resource_id, environment_id, desired_resource_id, provider_resource_id,
@@ -57,27 +56,23 @@ describe('provider identity checkpoint migration', () => {
       INSERT INTO control_plugin_desired_resources (
         plugin_resource_id, environment_id, operation_id, plugin_installation_id,
         tenant_id, resource_kind, logical_resource_id, binding_name, lifecycle_mode,
-        provider_resource_id, provider_name, status, updated_at
+        provider_resource_id, provider_name, provider_create_state, provider_creation_date,
+        provider_ownership_marker_key, provider_ownership_id,
+        provider_identity_checkpointed_at, status, updated_at
       ) VALUES
         ('plugin-d1', 'env-test', 'op-plugin-d1', 'plugin-a', 'tenant-a', 'd1',
          'database', 'PLUGIN_DB', 'managed', 'plugin-database-uuid',
-         'authrim-plugin-database', 'active', 20),
+         'authrim-plugin-database', 'identified', NULL, NULL, NULL, 20, 'active', 20),
         ('plugin-r2', 'env-test', 'op-plugin-r2', 'plugin-a', 'tenant-a', 'r2_bucket',
          'objects', 'PLUGIN_BUCKET', 'managed', 'authrim-plugin-bucket',
-         'authrim-plugin-bucket', 'ready', 20);
+         'authrim-plugin-bucket', 'identified', '2026-08-01T00:00:00.000Z',
+         '.authrim/ownership.json', '${'b'.repeat(64)}', 20, 'ready', 20);
     `);
   });
 
   afterEach(() => database.close());
 
-  it('backfills exact provider evidence and blocks legacy name-only R2 resources', () => {
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
-        'utf8'
-      )
-    );
-
+  it('loads exact provider evidence from the current fresh-install baseline', () => {
     expect(
       database
         .prepare(
@@ -113,21 +108,15 @@ describe('provider identity checkpoint migration', () => {
         )
         .get()
     ).toEqual({
-      provider_create_state: 'legacy_unverified',
-      provider_creation_date: null,
-      provider_ownership_marker_key: null,
-      provider_ownership_id: null,
-      status: 'failed',
+      provider_create_state: 'identified',
+      provider_creation_date: '2026-08-01T00:00:00.000Z',
+      provider_ownership_marker_key: '.authrim/ownership.json',
+      provider_ownership_id: 'b'.repeat(64),
+      status: 'ready',
     });
   });
 
   it('remains expand-compatible with the previous Control writer until coordinator cutover', () => {
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
-        'utf8'
-      )
-    );
     database.exec(`
       INSERT INTO control_operations (
         operation_id, environment_id, operation_kind, idempotency_key, status,
@@ -228,12 +217,6 @@ describe('provider identity checkpoint migration', () => {
   });
 
   it('rejects incomplete identified checkpoints', () => {
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
-        'utf8'
-      )
-    );
     expect(() =>
       database.exec(`
         UPDATE control_desired_resources
@@ -244,12 +227,6 @@ describe('provider identity checkpoint migration', () => {
   });
 
   it('rejects ready managed resources that have no immutable provider checkpoint', () => {
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
-        'utf8'
-      )
-    );
     expect(() =>
       database.exec(`
         INSERT INTO control_desired_resources (

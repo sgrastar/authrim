@@ -1236,6 +1236,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           ...(explicitLegacyInitialRecoveryVerified
             ? { explicitLegacyInitialRecoveryVerified: true }
             : {}),
+          ...(options.recoverLegacyWorkerDeployments
+            ? { explicitInitialWorkerRedeployRequested: true }
+            : {}),
         }
       : undefined
   );
@@ -1250,6 +1253,8 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     currentLock.releaseUpdate?.initialWorkerRedeployRequired !== true &&
     currentLock.releaseUpdate?.targetVersion === targetProductVersion &&
     currentLock.releaseUpdate.manifestChecksum === initialManifestChecksum;
+  let redeployingCompletedInitialWorkerCheckpoint =
+    currentLock.releaseUpdate?.initialWorkerRedeployRequired === true;
   if (options.operationKind === 'topology_change') {
     try {
       assertPendingTopologyUpdate(currentLock, {
@@ -1813,6 +1818,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
       if (options.recoverLegacyWorkerDeployments) {
         const recoveredCompletedWorkerPhase = resumeInitialHandoff;
+        redeployingCompletedInitialWorkerCheckpoint ||= recoveredCompletedWorkerPhase;
         const recovery = await adoptLegacyWorkerDeployments({
           lock: currentLock,
           environment: env,
@@ -1821,7 +1827,14 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           productVersion: targetProductVersion,
           targets: legacyWorkerRecoveryTargets,
           requireAllTargets: recoveredCompletedWorkerPhase,
-          allowNoop: explicitLegacyInitialRecoveryVerified,
+          // An explicit recovery at workers_deployed may be used to replace and re-verify the
+          // complete locked Worker set even when no orphan remains to adopt. This is needed when
+          // the initial attempt reached Worker checkpointing but failed in a later bootstrap/UI
+          // step and the repaired source must be deployed before that step can be retried.
+          allowNoop:
+            explicitLegacyInitialRecoveryVerified ||
+            recoveredCompletedWorkerPhase ||
+            redeployingCompletedInitialWorkerCheckpoint,
         });
         currentLock = recovery.lock;
         if (recoveredCompletedWorkerPhase) {
@@ -2191,6 +2204,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     if (
       isInitialDeployment &&
       !resumeInitialHandoff &&
+      !redeployingCompletedInitialWorkerCheckpoint &&
       !options.dryRun &&
       initialRelease &&
       initialManifestChecksum
@@ -2274,6 +2288,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       lock &&
       !options.dryRun &&
       !resumeInitialHandoff &&
+      !redeployingCompletedInitialWorkerCheckpoint &&
       deploymentOperationKind !== 'worker_redeploy'
     ) {
       const controlDatabase = currentLock.d1.CONTROL_DB;
@@ -2490,7 +2505,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               updateOraSpinner(inventorySpinner, message);
             },
           });
-          if (isInitialDeployment) {
+          if (isInitialDeployment && !redeployingCompletedInitialWorkerCheckpoint) {
             await registerInitialControlTopology({
               environmentId: env,
               tenantId: config.tenant?.name?.trim() || 'default',
@@ -3329,7 +3344,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         );
         try {
           const alreadyAccepted =
-            resumeInitialHandoff &&
+            (resumeInitialHandoff || redeployingCompletedInitialWorkerCheckpoint) &&
             (await isInitialBootstrapHandoffAccepted({
               environmentId: env,
               controlDatabaseName: controlDatabaseId,

@@ -89,10 +89,7 @@ describe('tenant placement migration operation', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
     );
     database.exec(`
       INSERT INTO control_environments (
@@ -131,14 +128,17 @@ describe('tenant placement migration operation', () => {
           `INSERT INTO control_desired_resources (
              desired_resource_id, environment_id, resource_kind, logical_shard_id,
              deterministic_name, ownership_fingerprint, provisioning_state,
-             origin_operation_id, created_at, updated_at
-           ) VALUES (?, 'env-test', 'd1', ?, ?, ?, 'active', 'fixture-shards', 1, 1)`
+             origin_operation_id, provider_create_state, provider_resource_id,
+             provider_identity_checkpointed_at, created_at, updated_at
+           ) VALUES (?, 'env-test', 'd1', ?, ?, ?, 'active', 'fixture-shards',
+                     'identified', ?, 1, 1, 1)`
         )
         .run(
           `desired-${index + 1}`,
           `logical-${index + 1}`,
           `database-${index + 1}`,
-          `fingerprint-${index + 1}`
+          `fingerprint-${index + 1}`,
+          `provider-database-${index + 1}`
         );
       database
         .prepare(

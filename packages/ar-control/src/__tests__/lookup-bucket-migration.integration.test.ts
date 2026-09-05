@@ -104,10 +104,7 @@ describe('LookupBucketMigrationService', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
     );
     database.exec(
       `INSERT INTO control_environments (
@@ -133,14 +130,18 @@ describe('LookupBucketMigrationService', () => {
        INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          deterministic_name, ownership_fingerprint, provisioning_state,
-         origin_operation_id, desired_spec_json, created_at, updated_at
+         origin_operation_id, desired_spec_json, provider_create_state,
+         provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
        ) VALUES
          ('resource-a', 'test', 'd1', 'lookup-a', 'lookup-a', 'fingerprint-a', 'active', 'seed',
-          '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}', 1, 1),
+          '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}',
+          'identified', 'database-a', 1, 1, 1),
          ('resource-b', 'test', 'd1', 'lookup-b', 'lookup-b', 'fingerprint-b', 'active', 'seed',
-          '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}', 1, 1),
+          '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}',
+          'identified', 'database-b', 1, 1, 1),
          ('resource-c', 'test', 'd1', 'lookup-c', 'lookup-c', 'fingerprint-c', 'active', 'seed',
-          '{"residency_policy_id":"global-eu","lookup_capacity_domain_id":"lookup:global-eu:eu"}', 1, 1);
+          '{"residency_policy_id":"global-eu","lookup_capacity_domain_id":"lookup:global-eu:eu"}',
+          'identified', 'database-c', 1, 1, 1);
        INSERT INTO control_lookup_physical_shards (
          lookup_shard_id, environment_id, residency_partition, binding_ref,
          d1_desired_resource_id, status, created_at, updated_at
@@ -228,11 +229,12 @@ describe('LookupBucketMigrationService', () => {
       `INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          deterministic_name, ownership_fingerprint, provisioning_state,
-         origin_operation_id, desired_spec_json, created_at, updated_at
+         origin_operation_id, desired_spec_json, provider_create_state,
+         provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
        ) VALUES (
          'resource-d', 'test', 'd1', 'lookup-d', 'lookup-d', 'fingerprint-d', 'active', 'seed',
          '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}',
-         1, 1
+         'identified', 'database-d', 1, 1, 1
        );
        INSERT INTO control_lookup_physical_shards (
          lookup_shard_id, environment_id, residency_partition, binding_ref,

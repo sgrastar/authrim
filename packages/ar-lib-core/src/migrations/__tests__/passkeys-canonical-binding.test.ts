@@ -26,7 +26,7 @@ function readMigration(relativePath: string): string {
 
 describe('passkeys canonical runtime user binding migrations', () => {
   it('defines final core passkeys without a users_core foreign key', () => {
-    const sql = readMigration('migrations/001_pre_1_0_core_baseline.sql');
+    const sql = readMigration('migrations/001_0_4_0_core_baseline.sql');
     const passkeysBlock =
       sql.match(/CREATE TABLE IF NOT EXISTS "passkeys" \([\s\S]*?\n\);/u)?.[0] ?? '';
 
@@ -38,7 +38,7 @@ describe('passkeys canonical runtime user binding migrations', () => {
 
   it('defines final PostgreSQL passkeys without a users_core foreign key', () => {
     const sql = readMigration(
-      'migrations/external/postgres/001_pre_1_0_external_postgres_core_baseline.sql'
+      'migrations/external/postgres/001_0_4_0_external_postgres_core_baseline.sql'
     );
     const passkeysBlock = sql.match(/CREATE TABLE public\.passkeys \([\s\S]*?\n\);/u)?.[0] ?? '';
 

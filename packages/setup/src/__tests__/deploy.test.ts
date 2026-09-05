@@ -817,6 +817,154 @@ describe('deployWorker', () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it('adopts the active version and retries only triggers after a partial trigger deployment', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-router', '1.0.0');
+    const activeVersionId = 'router-version-after-partial-trigger-failure';
+    const sleep = vi.fn(async () => undefined);
+    let deployAttempts = 0;
+    let triggerAttempts = 0;
+
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'router-deployment-after-trigger-failure',
+              versions: [{ version_id: activeVersionId, percentage: 100 }],
+            },
+          ]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (commandArgs.includes('triggers') && commandArgs.includes('deploy')) {
+        triggerAttempts++;
+        if (triggerAttempts === 1) {
+          throw commandError(
+            'Some triggers failed to deploy for test-ar-router:\n' +
+              '  - A request to the Cloudflare API (/accounts/account/workers/scripts/test-ar-router/domains/records) failed.'
+          );
+        }
+        return successfulCommandResult();
+      }
+      if (commandArgs.includes('deploy')) {
+        deployAttempts++;
+        throw commandError(
+          'Some triggers failed to deploy for test-ar-router:\n' +
+            '  - A request to the Cloudflare API (/accounts/account/workers/scripts/test-ar-router/domains/records) failed.'
+        );
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-router', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      maxRetries: 3,
+      retryDelayMs: 2,
+      random: () => 0.5,
+      sleep,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: true,
+        cloudflareVersionId: activeVersionId,
+      })
+    );
+    expect(deployAttempts).toBe(1);
+    expect(triggerAttempts).toBe(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it('checkpoints fresh ownership before retrying triggers after a partial deployment', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-router', '1.0.0');
+    const activeVersionId = '11111111-1111-4111-8111-111111111111';
+    const events: string[] = [];
+    let deployAttempts = 0;
+    let triggerAttempts = 0;
+    let ownershipState: 'absent' | 'pending' | 'owned' = 'absent';
+    const ownership: WorkerScriptOwnershipGuard = {
+      assertBeforeMutation: async () => {
+        events.push(`assert:${ownershipState}`);
+        if (deployAttempts > 0 && ownershipState !== 'owned') {
+          throw new Error('worker_script_fresh_name_conflict:test-ar-router');
+        }
+      },
+      checkpointCommittedVersion: async (_workerName, versionId) => {
+        expect(versionId).toBe(activeVersionId);
+        events.push('checkpoint');
+        ownershipState = 'pending';
+      },
+      captureAfterMutation: async () => {
+        events.push('capture');
+        ownershipState = 'owned';
+        return TEST_CLOUDFLARE_SCRIPT_TAG;
+      },
+      getEvidence: (workerName) =>
+        ownershipState === 'owned'
+          ? { workerName, state: 'owned', tag: TEST_CLOUDFLARE_SCRIPT_TAG }
+          : { workerName, state: 'absent' },
+    };
+
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'router-deployment-after-trigger-failure',
+              versions: [{ version_id: activeVersionId, percentage: 100 }],
+            },
+          ]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (commandArgs.includes('triggers') && commandArgs.includes('deploy')) {
+        triggerAttempts++;
+        return successfulCommandResult();
+      }
+      if (commandArgs.includes('deploy')) {
+        deployAttempts++;
+        throw commandError(
+          'Some triggers failed to deploy for test-ar-router:\n' +
+            '  - A request to the Cloudflare API (/accounts/account/workers/scripts/test-ar-router/domains/records) failed.'
+        );
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorkerCore('ar-router', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      maxRetries: 1,
+      workerScriptOwnership: ownership,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: true,
+        cloudflareVersionId: activeVersionId,
+        cloudflareScriptTag: TEST_CLOUDFLARE_SCRIPT_TAG,
+      })
+    );
+    expect(deployAttempts).toBe(1);
+    expect(triggerAttempts).toBe(1);
+    expect(events).toEqual([
+      'assert:absent',
+      'assert:absent',
+      'checkpoint',
+      'capture',
+      'assert:owned',
+      'checkpoint',
+      'capture',
+    ]);
+  });
+
   it('reconciles and retries a transient Wrangler authentication code 10000 failure', async () => {
     const rootDir = createTempRoot();
     createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
@@ -843,7 +991,9 @@ describe('deployWorker', () => {
       rootDir,
       deploymentStrategy: 'direct',
       maxRetries: 3,
-      retryDelayMs: 1,
+      // Keep the synthetic deadline well ahead of wall-clock execution so the assertion does
+      // not depend on whether a 1 ms retry window elapsed between the failure and throttle check.
+      retryDelayMs: 60_000,
       random: () => 0.5,
       sleep,
     });

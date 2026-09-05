@@ -8103,7 +8103,8 @@ paths:
       summary: Update a custom claim schema.
       description: >-
         Updates mutable custom claim schema fields. Field key and PII classification are
-        intentionally immutable through this endpoint.
+        intentionally immutable through this endpoint. Built-in system profile schemas also keep
+        their display label, field type, and cardinality immutable.
       responses:
         '200':
           $ref: '#/components/responses/CustomClaimMutation'
@@ -52260,6 +52261,12 @@ components:
           enum:
             - 0
             - 1
+        is_system:
+          type: integer
+          enum:
+            - 0
+            - 1
+          description: Built-in schemas cannot be renamed or deleted, and their identity fields are immutable.
         created_at:
           type: integer
           format: int64

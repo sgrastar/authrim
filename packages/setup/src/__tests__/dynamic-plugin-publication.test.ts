@@ -56,7 +56,7 @@ function database(): DatabaseSync {
   const db = new DatabaseSync(':memory:');
   db.exec(
     readFileSync(
-      resolve(REPO_ROOT, 'migrations/plugin-runner/001_pre_1_0_plugin_runner_baseline.sql'),
+      resolve(REPO_ROOT, 'migrations/plugin-runner/001_0_4_0_plugin_runner_baseline.sql'),
       'utf8'
     )
   );

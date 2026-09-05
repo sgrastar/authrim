@@ -121,7 +121,17 @@ export async function getSamlUserInfoById(
     return {
       id: canonicalProjection.id,
       ...(canonicalProjection.email ? { email: canonicalProjection.email } : {}),
-      name: canonicalProjection.name ?? undefined,
+      email_verified: canonicalProjection.email_verified === 1,
+      ...(canonicalProjection.name
+        ? { name: canonicalProjection.name, display_name: canonicalProjection.name }
+        : {}),
+      ...(canonicalProjection.given_name ? { given_name: canonicalProjection.given_name } : {}),
+      ...(canonicalProjection.family_name ? { family_name: canonicalProjection.family_name } : {}),
+      ...(canonicalProjection.preferred_username
+        ? { preferred_username: canonicalProjection.preferred_username }
+        : {}),
+      ...(canonicalProjection.picture ? { picture_url: canonicalProjection.picture } : {}),
+      ...(canonicalProjection.locale ? { locale: canonicalProjection.locale } : {}),
       customClaims: await getNonPiiCustomClaims(env, tenantId, userId),
       customFields: parseCustomFields(canonicalProjection.custom_attributes_json),
     };

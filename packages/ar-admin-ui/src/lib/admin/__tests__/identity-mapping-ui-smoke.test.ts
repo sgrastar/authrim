@@ -155,7 +155,7 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('nodeVisualOffset');
 		expect(flowEditor).toContain('animateNextSampleSourceNodes = true');
 		expect(flowEditor).toContain('animateVisibleNodeSwap');
-		expect(flowEditor).toContain('if (option.id === selectedSourcePolicyId) continue');
+		expect(flowEditor).toContain('if (option.id === resolvedSourcePolicyId) continue');
 		expect(flowEditor).toContain('swappingNodeIds');
 		expect(flowEditor).toContain('node-swap-enter');
 		expect(flowEditor).toContain('node-handle output');

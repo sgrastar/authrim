@@ -167,13 +167,23 @@ function validateActor(actorId: string): void {
 
 export function buildMigrationReleaseArtifactPlan(input: {
   migrationsRoot: string;
-  manifestPath: string;
+  manifestPath?: string;
+  manifest?: ReleaseMigrationManifest;
+  draft?: boolean;
 }): MigrationReleaseArtifactPlan {
-  const manifestBuffer = readFileSync(input.manifestPath);
-  if (manifestBuffer.byteLength === 0 || manifestBuffer.byteLength > MAX_MANIFEST_BYTES) {
+  if (!input.manifestPath && !input.manifest) {
+    throw new Error('migration_release_manifest_required');
+  }
+  const manifestBuffer = input.manifestPath ? readFileSync(input.manifestPath) : undefined;
+  if (
+    manifestBuffer &&
+    (manifestBuffer.byteLength === 0 || manifestBuffer.byteLength > MAX_MANIFEST_BYTES)
+  ) {
     throw new Error('migration_release_manifest_size_invalid');
   }
-  const manifest = decodeManifest(new Uint8Array(manifestBuffer));
+  const manifest = input.manifest
+    ? ReleaseMigrationManifestSchema.parse(input.manifest)
+    : decodeManifest(new Uint8Array(manifestBuffer!));
   const manifestBytes = new TextEncoder().encode(serializeReleaseMigrationManifest(manifest));
   if (manifestBytes.byteLength > MAX_MANIFEST_BYTES) {
     throw new Error('migration_release_manifest_size_invalid');
@@ -183,7 +193,8 @@ export function buildMigrationReleaseArtifactPlan(input: {
   }
   const manifestDigest = calculateReleaseManifestChecksum(manifest);
   const releaseId =
-    basename(input.manifestPath) === 'release-manifest.draft.json'
+    input.draft === true ||
+    (input.manifestPath && basename(input.manifestPath) === 'release-manifest.draft.json')
       ? `${manifest.productVersion}-draft.${manifestDigest.slice(0, 12)}`
       : manifest.productVersion;
   if (!SAFE_RELEASE_ID.test(releaseId)) throw new Error('migration_release_id_invalid');
@@ -192,7 +203,22 @@ export function buildMigrationReleaseArtifactPlan(input: {
   const objects: MigrationReleaseArtifactObject[] = [];
   const streamIds: string[] = [];
 
-  for (const stream of manifest.streams) {
+  const artifactStreams = manifest.streams.map((stream) => {
+    const files = new Map(stream.files.map((file) => [file.path, file] as const));
+    for (const upgradePath of manifest.upgradePaths ?? []) {
+      const upgradeStream = upgradePath.streams.find((candidate) => candidate.id === stream.id);
+      for (const file of upgradeStream?.files ?? []) {
+        const current = files.get(file.path);
+        if (current && current.checksum !== file.checksum) {
+          throw new Error(`migration_release_path_checksum_conflict:${stream.id}:${file.path}`);
+        }
+        files.set(file.path, file);
+      }
+    }
+    return { ...stream, files: [...files.values()].sort((a, b) => a.path.localeCompare(b.path)) };
+  });
+
+  for (const stream of artifactStreams) {
     if (stream.dialect !== 'sqlite' || stream.files.length === 0) continue;
     if (stream.files.length > MAX_FILES_PER_STREAM) {
       throw new Error(`migration_release_file_limit_exceeded:${stream.id}`);
@@ -428,7 +454,9 @@ function verifyActiveCatalogRows(
 
 export async function publishAndActivateMigrationRelease(input: {
   migrationsRoot: string;
-  manifestPath: string;
+  manifestPath?: string;
+  manifest?: ReleaseMigrationManifest;
+  draft?: boolean;
   bucketName: string;
   controlDatabaseId: string;
   environmentId: string;

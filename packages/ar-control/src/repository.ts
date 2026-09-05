@@ -463,6 +463,14 @@ function provisioningAuthorityBlockStatements(
       .prepare(
         `UPDATE control_environments
             SET provisioning_capability_state = 'blocked',
+                provisioning_token_management = 'none',
+                provisioning_bootstrap_phase = 'none',
+                provisioning_bootstrap_token_ownership = 'none',
+                provisioning_bootstrap_token_id = NULL,
+                provisioning_bootstrap_token_fingerprint = NULL,
+                provisioning_child_tokens_json = NULL,
+                provisioning_secret_generation_deployment_id = NULL,
+                provisioning_secret_generation_version_id = NULL,
                 provisioning_capability_checked_at = ?, updated_at = ?
           WHERE environment_id = ?
             AND automatic_provisioning_enabled = 1

@@ -1,13 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import { ADMIN_PERMISSIONS, type AdminAuthContext, type Env } from '@authrim/ar-lib-core';
 import { releaseRolloutMutationFenceMiddleware } from '../release-rollout-mutation-fence';
 
-function app(control?: Env['CONTROL']) {
+function app(control?: Env['CONTROL'], adminAuth?: AdminAuthContext) {
   const router = new Hono<{ Bindings: Env }>();
+  if (adminAuth) {
+    router.use('/api/admin/*', async (c, next) => {
+      (c as unknown as { set: (key: string, value: AdminAuthContext) => void }).set(
+        'adminAuth',
+        adminAuth
+      );
+      return next();
+    });
+  }
   router.use('/api/admin/*', releaseRolloutMutationFenceMiddleware());
   router.get('/api/admin/settings', (c) => c.json({ ok: true }));
   router.put('/api/admin/settings', (c) => c.json({ ok: true }));
+  router.post('/api/admin/clients', async (c) => c.json({ body: await c.req.json() }));
   router.post('/api/admin/logout', (c) => c.json({ ok: true }));
   router.post(
     '/api/admin/platform/control-plane/release-rollout/:operationId/targets/:targetId/retry',
@@ -111,6 +121,115 @@ describe('release rollout mutation fence', () => {
     expect((await router.request(recovery, { method: 'POST' }, env)).status).toBe(200);
     expect((await router.request(`${recovery}/extra`, { method: 'POST' }, env)).status).toBe(409);
     expect(getReleaseMigrationRolloutStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows only the exact initial Login UI client bootstrap for the setup machine', async () => {
+    const control = {
+      getReleaseMigrationRolloutStatus: vi.fn(async () => ({
+        operationId: 'release-1',
+        sourceVersion: null,
+        targetVersion: '0.4.0',
+        phase: 'workers_deployed' as const,
+        completedTargets: 3,
+        totalTargets: 3,
+        adminMutationMode: 'read_only' as const,
+        lastErrorCode: null,
+        updatedAt: 1_800_000_000,
+      })),
+    } as unknown as Env['CONTROL'];
+    const setupMachine: AdminAuthContext = {
+      userId: 'machine:authrim-setup',
+      authMethod: 'machine_access_token',
+      actorType: 'machine',
+      principalType: 'setup_tool',
+      clientId: 'authrim-setup',
+      roles: [],
+      permissions: [ADMIN_PERMISSIONS.CLIENTS_WRITE],
+    };
+    const { router, env } = app(control, setupMachine);
+    const origin = 'https://primary.example.test';
+    const payload = {
+      client_name: 'Login UI',
+      description: 'System-managed public OAuth client used by the built-in Authrim Login UI.',
+      redirect_uris: [
+        `${origin}/callback`,
+        `${origin}/reauth/callback`,
+        `${origin}/device/callback`,
+        `${origin}/ciba/callback`,
+      ],
+      grant_types: ['authorization_code'],
+      response_types: ['code'],
+      scope: 'openid profile email',
+      is_trusted: true,
+      skip_consent: true,
+      token_endpoint_auth_method: 'none',
+      require_pkce: true,
+      browser_public_client_mode: 'cookie_fallback',
+      browser_refresh_token_policy: 'disabled',
+      web_origin_registry: {
+        origins: [
+          {
+            origin,
+            cors: { allowed: true },
+            handoff_allowed: true,
+            iframe_allowed: false,
+          },
+        ],
+      },
+    };
+    const request = (body: unknown, idempotencyKey = `setup-login-ui-${'a'.repeat(32)}`) =>
+      router.request(
+        '/api/admin/clients',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+          },
+          body: JSON.stringify(body),
+        },
+        env
+      );
+
+    const accepted = await request(payload);
+    expect(accepted.status).toBe(200);
+    await expect(accepted.json()).resolves.toEqual({ body: payload });
+    expect((await request({ ...payload, client_name: 'Other client' })).status).toBe(409);
+    expect(
+      (
+        await request({
+          ...payload,
+          redirect_uris: [`https://evil.example/callback`, ...payload.redirect_uris.slice(1)],
+        })
+      ).status
+    ).toBe(409);
+    expect((await request(payload, 'setup-login-ui-invalid')).status).toBe(409);
+
+    const downstreamPayload = {
+      client_name: 'Downstream Grant Introspection',
+      description:
+        'System-managed confidential client used by Authrim for downstream grant introspection.',
+      application_type: 'service',
+      token_endpoint_auth_method: 'client_secret_basic',
+      redirect_uris: ['https://downstream-introspection.authrim.invalid/callback'],
+      grant_types: ['authorization_code', 'refresh_token', 'client_credentials'],
+      response_types: ['code'],
+      scope: 'openid',
+      is_trusted: true,
+      skip_consent: true,
+      client_credentials_allowed: true,
+    };
+    expect(
+      (await request(downstreamPayload, `setup-downstream-client-${'A'.repeat(24)}`)).status
+    ).toBe(200);
+    expect(
+      (
+        await request(
+          { ...downstreamPayload, client_name: 'Arbitrary confidential client' },
+          `setup-downstream-client-${'A'.repeat(24)}`
+        )
+      ).status
+    ).toBe(409);
   });
 
   it('fails closed when a configured Control status reader cannot verify state', async () => {

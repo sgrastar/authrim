@@ -137,7 +137,7 @@ describe('Plugin Dynamic Worker resource bindings', () => {
     runner = new DatabaseSync(':memory:');
     resource = new DatabaseSync(':memory:');
     runner.exec('PRAGMA foreign_keys = ON');
-    for (const migration of ['001_pre_1_0_plugin_runner_baseline.sql']) {
+    for (const migration of ['001_0_4_0_plugin_runner_baseline.sql']) {
       runner.exec(readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner', migration), 'utf8'));
     }
     resource.exec('CREATE TABLE plugin_state (id TEXT PRIMARY KEY, value TEXT NOT NULL)');

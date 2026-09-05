@@ -36,6 +36,7 @@ interface TargetCandidate extends Record<string, unknown> {
   release_id: string;
   manifest_digest: string;
   manifest_r2_object_key: string;
+  source_version: string | null;
   attempt_count: number;
   retry_budget_started_at: number;
   created_at: number;
@@ -128,6 +129,7 @@ export class ReleaseMigrationRolloutReconciler {
         `SELECT target.operation_id, target.environment_id, target.target_id,
                 target.provider_database_id, target.stream_id, target.release_id,
                 target.manifest_digest, rollout.manifest_r2_object_key,
+                rollout.source_version,
                 target.attempt_count, target.retry_budget_started_at, target.created_at
            FROM control_release_migration_targets target
            JOIN control_release_migration_rollouts rollout
@@ -457,6 +459,7 @@ export class ReleaseMigrationRolloutReconciler {
           releaseId: claimed.release_id,
           manifestDigest: claimed.manifest_digest,
           manifestObjectKey: claimed.manifest_r2_object_key,
+          ...(claimed.source_version ? { sourceProductVersion: claimed.source_version } : {}),
         },
       });
       const now = this.now();

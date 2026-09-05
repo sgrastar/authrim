@@ -288,7 +288,9 @@ describe('SAML user-store helpers', () => {
     await expect(getSamlUserInfoById({ DB: {} } as Env, 'tenant-c', 'user-3')).resolves.toEqual({
       id: 'user-3',
       email: 'full@example.com',
+      email_verified: true,
       name: 'Full User',
+      display_name: 'Full User',
       customClaims: {
         affiliation: ['member@example.edu'],
         entitlement: 'urn:mace:dir:entitlement:common-lib-terms',
@@ -310,6 +312,7 @@ describe('SAML user-store helpers', () => {
       getSamlUserInfoById({ DB: {} } as Env, 'tenant-no-email', 'user-no-email')
     ).resolves.toEqual({
       id: 'user-no-email',
+      email_verified: false,
       customClaims: {},
       customFields: {},
     });
@@ -453,7 +456,10 @@ describe('SAML user-store helpers', () => {
     await expect(getSamlUserInfoById({ DB: {} } as Env, 'tenant-d', 'user-4')).resolves.toEqual({
       id: 'user-4',
       email: 'canonical@example.com',
+      email_verified: true,
       name: 'Canonical User',
+      display_name: 'Canonical User',
+      locale: 'ja-JP',
       customClaims: {},
       customFields: {
         eduPersonAffiliation: 'member',

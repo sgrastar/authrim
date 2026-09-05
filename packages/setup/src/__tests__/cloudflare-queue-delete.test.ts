@@ -1655,6 +1655,85 @@ describe('Cloudflare Queue deletion helpers', () => {
     ).toBe(false);
   });
 
+  it('uses the verified Queue and Worker tuple when Cloudflare omits the optional consumer ID', async () => {
+    mockCloudflareInventory(
+      [{ queue_name: 'test-audit-queue', queue_id: 'queue-audit' }],
+      [{ id: 'test-ar-management', tag: 'owned-worker-tag' }]
+    );
+    const defaultFetch = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (input: string | URL | Request, init) => {
+      const url = String(input);
+      if (
+        url.endsWith('/queues/queue-audit/consumers') &&
+        (init as { method?: string } | undefined)?.method !== 'POST'
+      ) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            success: true,
+            result: [
+              {
+                type: 'worker',
+                // Wrangler 4.x normalizes this live Queue API response from script/service,
+                // while the current public API schema also documents script_name.
+                script: 'test-ar-management',
+                queue_name: 'test-audit-queue',
+                settings: { batch_size: 10 },
+              },
+            ],
+            result_info: { page: 1, total_pages: 1 },
+          }),
+        };
+      }
+      if (!defaultFetch) throw new Error('missing default Cloudflare fetch mock');
+      return defaultFetch(input, init);
+    });
+
+    const result = await deleteEnvironment({
+      env: 'test',
+      deleteWorkers: true,
+      deleteD1: false,
+      deleteKV: false,
+      deleteQueues: true,
+      deleteR2: false,
+      deletePages: false,
+      knownWorkerResources: [
+        { name: 'test-ar-management', cloudflareScriptTag: 'owned-worker-tag' },
+      ],
+      knownQueueResources: [{ name: 'test-audit-queue', id: 'queue-audit' }],
+      queueConsumerDetachPropagationDelayMs: 0,
+      workerDeletePropagationDelayMs: 0,
+      onProgress: () => {},
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      deleted: { workers: ['test-ar-management'], queues: ['test-audit-queue'] },
+    });
+    expect(
+      execaMock.mock.calls.some(([, args]) =>
+        (args as string[])
+          .join(' ')
+          .includes('queues consumer worker remove test-audit-queue test-ar-management')
+      )
+    ).toBe(true);
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          String(input).includes('/queues/queue-audit/consumers/') &&
+          (init as { method?: string } | undefined)?.method === 'DELETE'
+      )
+    ).toBe(false);
+    expect(
+      fetchMock.mock.calls.some(
+        ([input, init]) =>
+          String(input).endsWith('/queues/queue-audit') &&
+          (init as { method?: string } | undefined)?.method === 'DELETE'
+      )
+    ).toBe(true);
+  });
+
   it('deletes exact lock-recorded D1, KV, and Queue IDs through REST', async () => {
     mockCloudflareInventory(
       [{ queue_name: 'test-audit-queue', queue_id: 'queue-audit' }],

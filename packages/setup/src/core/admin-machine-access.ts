@@ -616,7 +616,7 @@ WHERE id = ${sqlString(principalId)}
 }
 
 export function buildAdminUiBffMachineAccessBootstrapSql(
-  config: AuthrimConfig,
+  _config: AuthrimConfig,
   publicJwk: JWK,
   options: {
     clientId?: string;
@@ -627,7 +627,6 @@ export function buildAdminUiBffMachineAccessBootstrapSql(
   const sqlExpr = getPortableSqlExpressions('sqlite');
   const clientId = options.clientId ?? ADMIN_UI_BFF_CLIENT_ID;
   const principalId = options.principalId ?? ADMIN_UI_BFF_PRINCIPAL_ID;
-  const tenantId = config.tenant?.name?.trim() || 'default';
   const permissions = options.permissions ?? ADMIN_UI_BFF_SCOPES;
 
   if (publicJwk.alg !== 'ES256' || typeof publicJwk.kid !== 'string' || !publicJwk.kid) {
@@ -732,8 +731,8 @@ INSERT INTO admin_machine_principal_tenant_scopes (
 )
 VALUES (
   ${sqlString(principalId)},
-  'allow',
-  ${sqlString(tenantId)},
+  'all',
+  NULL,
   ${sqlExpr.nowEpochMilliseconds},
   'bootstrap',
   'setup'

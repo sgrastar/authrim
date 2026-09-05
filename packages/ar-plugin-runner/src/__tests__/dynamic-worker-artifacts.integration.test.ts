@@ -9,7 +9,7 @@ const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 function database(): DatabaseSync {
   const db = new DatabaseSync(':memory:');
   db.exec('PRAGMA foreign_keys = ON');
-  for (const migration of ['001_pre_1_0_plugin_runner_baseline.sql']) {
+  for (const migration of ['001_0_4_0_plugin_runner_baseline.sql']) {
     db.exec(readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner', migration), 'utf8'));
   }
   db.exec(

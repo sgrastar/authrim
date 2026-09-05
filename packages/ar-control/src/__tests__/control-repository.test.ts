@@ -324,16 +324,7 @@ describe('D1ControlRepository lease and budget integration', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
     );
     database.exec(
       `INSERT INTO control_environments (
@@ -1864,8 +1855,12 @@ describe('D1ControlRepository lease and budget integration', () => {
     database.exec(`UPDATE control_environments
       SET automatic_provisioning_enabled = 1,
           provisioning_token_ownership = 'account',
+          provisioning_token_management = 'setup',
           provisioning_capability_state = 'ready',
           provisioning_capability_checked_at = 90,
+          provisioning_child_tokens_json = '[{"resourceClass":"d1","tokenId":"11111111111111111111111111111111","tokenName":"authrim-test-control-d1","secretName":"CLOUDFLARE_D1_API_TOKEN","tokenFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"resourceClass":"workers","tokenId":"22222222222222222222222222222222","tokenName":"authrim-test-control-workers","secretName":"CLOUDFLARE_WORKERS_API_TOKEN","tokenFingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]',
+          provisioning_secret_generation_deployment_id = 'deployment:test',
+          provisioning_secret_generation_version_id = 'version:test',
           updated_at = 90
       WHERE environment_id = 'env-test'`);
     const shardPlan = plan('authority-blocked');
@@ -1882,13 +1877,20 @@ describe('D1ControlRepository lease and budget integration', () => {
     expect(
       database
         .prepare(
-          `SELECT provisioning_capability_state, provisioning_capability_checked_at
+          `SELECT provisioning_capability_state, provisioning_capability_checked_at,
+                  provisioning_token_management, provisioning_child_tokens_json,
+                  provisioning_secret_generation_deployment_id,
+                  provisioning_secret_generation_version_id
              FROM control_environments WHERE environment_id = 'env-test'`
         )
         .get()
     ).toEqual({
       provisioning_capability_state: 'blocked',
       provisioning_capability_checked_at: 120,
+      provisioning_token_management: 'none',
+      provisioning_child_tokens_json: null,
+      provisioning_secret_generation_deployment_id: null,
+      provisioning_secret_generation_version_id: null,
     });
     expect(
       database
@@ -1911,8 +1913,12 @@ describe('D1ControlRepository lease and budget integration', () => {
     database.exec(`UPDATE control_environments
       SET automatic_provisioning_enabled = 1,
           provisioning_token_ownership = 'user',
+          provisioning_token_management = 'operator',
           provisioning_capability_state = 'ready',
           provisioning_capability_checked_at = 90,
+          provisioning_child_tokens_json = '[{"resourceClass":"d1","tokenId":"11111111111111111111111111111111","tokenName":"authrim-test-control-d1","secretName":"CLOUDFLARE_D1_API_TOKEN","tokenFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"resourceClass":"workers","tokenId":"22222222222222222222222222222222","tokenName":"authrim-test-control-workers","secretName":"CLOUDFLARE_WORKERS_API_TOKEN","tokenFingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]',
+          provisioning_secret_generation_deployment_id = 'deployment:test',
+          provisioning_secret_generation_version_id = 'version:test',
           updated_at = 90
       WHERE environment_id = 'env-test'`);
     const shardPlan = plan('workers-authority-blocked');
@@ -1951,13 +1957,20 @@ describe('D1ControlRepository lease and budget integration', () => {
     expect(
       database
         .prepare(
-          `SELECT provisioning_capability_state, provisioning_capability_checked_at
+          `SELECT provisioning_capability_state, provisioning_capability_checked_at,
+                  provisioning_token_management, provisioning_child_tokens_json,
+                  provisioning_secret_generation_deployment_id,
+                  provisioning_secret_generation_version_id
              FROM control_environments WHERE environment_id = 'env-test'`
         )
         .get()
     ).toEqual({
       provisioning_capability_state: 'blocked',
       provisioning_capability_checked_at: 130,
+      provisioning_token_management: 'none',
+      provisioning_child_tokens_json: null,
+      provisioning_secret_generation_deployment_id: null,
+      provisioning_secret_generation_version_id: null,
     });
     expect(
       database

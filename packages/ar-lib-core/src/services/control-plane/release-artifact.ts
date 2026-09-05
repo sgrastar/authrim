@@ -18,12 +18,14 @@ export interface MigrationReleasePin {
   releaseId: string;
   manifestDigest: string;
   manifestObjectKey: string;
+  sourceProductVersion?: string;
 }
 
 export interface MigrationArtifactFile {
   path: string;
   checksum: string;
   sql: string;
+  supersedes?: ManifestFile[];
 }
 
 export interface LoadedMigrationRelease {
@@ -31,6 +33,7 @@ export interface LoadedMigrationRelease {
   productVersion: string;
   rollout: MigrationReleaseRolloutPolicy;
   files: MigrationArtifactFile[];
+  knownHistory: ManifestFile[];
 }
 
 export interface MigrationReleaseRolloutPolicy {
@@ -60,6 +63,7 @@ export interface MigrationArtifactReaderLimits {
 interface ManifestFile {
   path: string;
   checksum: string;
+  supersedes?: ManifestFile[];
 }
 
 interface ManifestStream {
@@ -73,6 +77,12 @@ interface MigrationManifest {
   productVersion: string;
   rollout: MigrationReleaseRolloutPolicy;
   streams: ManifestStream[];
+  upgradePaths?: Array<{
+    fromProductVersion: string;
+    kind: 'delta' | 'bridge';
+    streams: ManifestStream[];
+  }>;
+  acceptedMigrationHistory?: ManifestStream[];
 }
 
 const DEFAULT_ROLLOUT_POLICY: MigrationReleaseRolloutPolicy = {
@@ -111,7 +121,7 @@ function assertSafeObjectKey(value: string): void {
   }
 }
 
-function parseManifestFile(value: unknown): ManifestFile {
+function parseMigrationIdentity(value: unknown): ManifestFile {
   if (!isRecord(value)) throw new Error('migration_artifact_manifest_invalid');
   if (
     typeof value.path !== 'string' ||
@@ -124,6 +134,22 @@ function parseManifestFile(value: unknown): ManifestFile {
     throw new Error('migration_artifact_manifest_invalid');
   }
   return { path: value.path, checksum: value.checksum };
+}
+
+function parseManifestFile(value: unknown): ManifestFile {
+  const file = parseMigrationIdentity(value);
+  if (!isRecord(value) || value.supersedes === undefined) return file;
+  if (!Array.isArray(value.supersedes) || value.supersedes.length > MAX_FILES_PER_STREAM) {
+    throw new Error('migration_artifact_manifest_limit_exceeded');
+  }
+  const supersedes = value.supersedes.map(parseMigrationIdentity);
+  if (
+    new Set(supersedes.map((candidate) => candidate.path)).size !== supersedes.length ||
+    supersedes.some((candidate) => candidate.path === file.path)
+  ) {
+    throw new Error('migration_artifact_manifest_duplicate_file');
+  }
+  return { ...file, supersedes };
 }
 
 function parseManifestStream(value: unknown): ManifestStream {
@@ -150,6 +176,18 @@ function parseManifestStream(value: unknown): ManifestStream {
   };
 }
 
+function parseManifestStreams(value: unknown): ManifestStream[] {
+  if (!Array.isArray(value)) throw new Error('migration_artifact_manifest_invalid');
+  if (value.length > MAX_STREAMS) {
+    throw new Error('migration_artifact_manifest_limit_exceeded');
+  }
+  const streams = value.map(parseManifestStream);
+  if (new Set(streams.map((stream) => stream.id)).size !== streams.length) {
+    throw new Error('migration_artifact_manifest_duplicate_stream');
+  }
+  return streams;
+}
+
 function parseManifest(bytes: Uint8Array): MigrationManifest {
   let value: unknown;
   try {
@@ -166,14 +204,39 @@ function parseManifest(bytes: Uint8Array): MigrationManifest {
   ) {
     throw new Error('migration_artifact_manifest_invalid');
   }
-  if (value.streams.length > MAX_STREAMS) {
-    throw new Error('migration_artifact_manifest_limit_exceeded');
-  }
-  const streams = value.streams.map(parseManifestStream);
-  if (new Set(streams.map((stream) => stream.id)).size !== streams.length) {
-    throw new Error('migration_artifact_manifest_duplicate_stream');
-  }
+  const streams = parseManifestStreams(value.streams);
   let rollout = DEFAULT_ROLLOUT_POLICY;
+  let upgradePaths: MigrationManifest['upgradePaths'];
+  if (value.upgradePaths !== undefined) {
+    if (!Array.isArray(value.upgradePaths)) {
+      throw new Error('migration_artifact_manifest_invalid');
+    }
+    upgradePaths = value.upgradePaths.map((path) => {
+      if (
+        !isRecord(path) ||
+        typeof path.fromProductVersion !== 'string' ||
+        !PRODUCT_VERSION_PATTERN.test(path.fromProductVersion) ||
+        !['delta', 'bridge'].includes(String(path.kind))
+      ) {
+        throw new Error('migration_artifact_manifest_invalid');
+      }
+      return {
+        fromProductVersion: path.fromProductVersion,
+        kind: path.kind as 'delta' | 'bridge',
+        streams: parseManifestStreams(path.streams),
+      };
+    });
+    if (new Set(upgradePaths.map((path) => path.fromProductVersion)).size !== upgradePaths.length) {
+      throw new Error('migration_artifact_manifest_duplicate_upgrade_path');
+    }
+  }
+  let acceptedMigrationHistory: ManifestStream[] | undefined;
+  if (value.acceptedMigrationHistory !== undefined) {
+    if (!Array.isArray(value.acceptedMigrationHistory)) {
+      throw new Error('migration_artifact_manifest_invalid');
+    }
+    acceptedMigrationHistory = parseManifestStreams(value.acceptedMigrationHistory);
+  }
   if (value.rollout !== undefined) {
     const rolloutRecord = isRecord(value.rollout) ? value.rollout : undefined;
     const rolloutKeys = rolloutRecord ? Object.keys(rolloutRecord) : [];
@@ -208,7 +271,14 @@ function parseManifest(bytes: Uint8Array): MigrationManifest {
     }
     rollout = value.rollout as unknown as MigrationReleaseRolloutPolicy;
   }
-  return { formatVersion: 1, productVersion: value.productVersion, rollout, streams };
+  return {
+    formatVersion: 1,
+    productVersion: value.productVersion,
+    rollout,
+    streams,
+    ...(upgradePaths ? { upgradePaths } : {}),
+    ...(acceptedMigrationHistory ? { acceptedMigrationHistory } : {}),
+  };
 }
 
 async function sha256(bytes: Uint8Array): Promise<string> {
@@ -256,6 +326,12 @@ export class MigrationReleaseArtifactReader {
     if (!SHA256_PATTERN.test(pin.manifestDigest)) {
       throw new Error('migration_release_manifest_digest_invalid');
     }
+    if (
+      pin.sourceProductVersion !== undefined &&
+      !PRODUCT_VERSION_PATTERN.test(pin.sourceProductVersion)
+    ) {
+      throw new Error('migration_release_source_version_invalid');
+    }
     assertSafeObjectKey(pin.manifestObjectKey);
     if (pin.manifestObjectKey !== `releases/${pin.releaseId}/${pin.manifestDigest}/manifest.json`) {
       throw new Error('migration_release_manifest_object_key_mismatch');
@@ -275,7 +351,12 @@ export class MigrationReleaseArtifactReader {
     if (manifest.productVersion !== pin.releaseId && expectedDraftReleaseId !== pin.releaseId) {
       throw new Error('migration_release_id_mismatch');
     }
-    const stream = manifest.streams.find((candidate) => candidate.id === pin.streamId);
+    const selectedStreams = pin.sourceProductVersion
+      ? manifest.upgradePaths?.find((path) => path.fromProductVersion === pin.sourceProductVersion)
+          ?.streams
+      : manifest.streams;
+    if (!selectedStreams) throw new Error('migration_release_upgrade_path_missing');
+    const stream = selectedStreams.find((candidate) => candidate.id === pin.streamId);
     if (!stream) throw new Error('migration_release_stream_missing');
     if (stream.dialect !== 'sqlite') {
       throw new Error('migration_release_stream_dialect_unsupported');
@@ -307,11 +388,28 @@ export class MigrationReleaseArtifactReader {
       }
       files.push({ ...file, sql });
     }
+    const knownHistoryCandidates = manifest.acceptedMigrationHistory?.find(
+      (candidate) => candidate.id === pin.streamId
+    )?.files ?? [
+      ...(manifest.streams.find((candidate) => candidate.id === pin.streamId)?.files ?? []),
+      ...(manifest.upgradePaths ?? []).flatMap(
+        (path) => path.streams.find((candidate) => candidate.id === pin.streamId)?.files ?? []
+      ),
+    ];
+    const knownHistoryByPath = new Map<string, ManifestFile>();
+    for (const file of knownHistoryCandidates) {
+      const existing = knownHistoryByPath.get(file.path);
+      if (existing && existing.checksum !== file.checksum) {
+        throw new Error('migration_artifact_manifest_history_conflict');
+      }
+      knownHistoryByPath.set(file.path, file);
+    }
     return {
       pin: { ...pin },
       productVersion: manifest.productVersion,
       rollout: manifest.rollout,
       files,
+      knownHistory: [...knownHistoryByPath.values()],
     };
   }
 }

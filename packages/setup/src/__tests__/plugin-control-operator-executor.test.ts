@@ -193,16 +193,7 @@ describe('setup plugin Control operator executor', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
     );
     database.exec(`
       INSERT INTO control_environments (

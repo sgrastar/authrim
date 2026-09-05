@@ -64,6 +64,67 @@ function releaseFixture() {
   return { files, manifest, objects, pin };
 }
 
+function supersededReleaseFixture() {
+  const sourceFiles = [
+    { path: '002_add_name.sql', checksum: digest('ALTER TABLE account ADD COLUMN name TEXT;') },
+    { path: '003_add_index.sql', checksum: digest('CREATE INDEX idx_name ON account(name);') },
+  ];
+  const bundle = {
+    path: '002_0_4_1_core_delta.sql',
+    sql: 'ALTER TABLE account ADD COLUMN name TEXT; CREATE INDEX idx_name ON account(name);',
+  };
+  const manifest = `${JSON.stringify({
+    formatVersion: 1,
+    productVersion: '0.4.1',
+    streams: [{ id: 'd1-core', dialect: 'sqlite', files: [] }],
+    upgradePaths: [
+      {
+        fromProductVersion: '0.4.0',
+        kind: 'delta',
+        streams: [
+          {
+            id: 'd1-core',
+            dialect: 'sqlite',
+            files: [
+              {
+                path: bundle.path,
+                checksum: digest(bundle.sql),
+                supersedes: sourceFiles,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    acceptedMigrationHistory: [
+      {
+        id: 'd1-core',
+        dialect: 'sqlite',
+        files: [...sourceFiles, { path: bundle.path, checksum: digest(bundle.sql) }],
+      },
+    ],
+  })}\n`;
+  const manifestDigest = digest(manifest);
+  const base = `releases/0.4.1/${manifestDigest}/`;
+  const pin: MigrationReleasePin = {
+    environmentId: 'env-test',
+    streamId: 'd1-core',
+    releaseId: '0.4.1',
+    manifestDigest,
+    manifestObjectKey: `${base}manifest.json`,
+    sourceProductVersion: '0.4.0',
+  };
+  return {
+    bundle,
+    sourceFiles,
+    pin,
+    objects: new Map<string, string>([
+      [pin.manifestObjectKey, manifest],
+      [`${base}streams/d1-core/${bundle.path}`, bundle.sql],
+    ]),
+  };
+}
+
 function successfulExecutor(input: {
   history?: Array<{ filename: string; checksum: string; applied_at: number }>;
   failFirstMigrationAfterCommit?: boolean;
@@ -189,6 +250,61 @@ describe('ApiMigrationEngine', () => {
         .flatMap((call) => call[1])
         .filter((query) => query.params?.[0] === fixture.files[0].path)
     ).toHaveLength(0);
+    expect(queryD1Batch).not.toHaveBeenCalled();
+  });
+
+  it('adopts a consolidated delta when every superseded source is already applied', async () => {
+    const release = supersededReleaseFixture();
+    const history = release.sourceFiles.map((file) => ({
+      ...file,
+      filename: file.path,
+      applied_at: 1,
+    }));
+    const { d1, queryD1Batch } = successfulExecutor({
+      history,
+      infrastructureReady: true,
+      sentinelOverride: {
+        stream_id: release.pin.streamId,
+        release_id: release.pin.releaseId,
+        manifest_digest: release.pin.manifestDigest,
+        applied_file_count: 1,
+        state: 'ready',
+        last_filename: release.bundle.path,
+      },
+    });
+    const engine = new ApiMigrationEngine(
+      new MigrationReleaseArtifactReader(new MemoryStore(release.objects)),
+      d1,
+      () => 2
+    );
+
+    await expect(engine.apply({ databaseId: 'db-id', pin: release.pin })).resolves.toMatchObject({
+      appliedFiles: 0,
+      skippedFiles: 1,
+      lastFilename: release.bundle.path,
+    });
+    const adoptionBatch = queryD1Batch.mock.calls[0]?.[1];
+    expect(adoptionBatch).toHaveLength(1);
+    expect(adoptionBatch?.[0]?.sql).toContain('INSERT INTO authrim_migrations');
+    expect(adoptionBatch?.[0]?.params?.[0]).toBe(release.bundle.path);
+  });
+
+  it('rejects partially applied superseded sources before executing a consolidated delta', async () => {
+    const release = supersededReleaseFixture();
+    const source = release.sourceFiles[0];
+    const { d1, queryD1Batch } = successfulExecutor({
+      history: [{ ...source, filename: source.path, applied_at: 1 }],
+      infrastructureReady: true,
+    });
+    const engine = new ApiMigrationEngine(
+      new MigrationReleaseArtifactReader(new MemoryStore(release.objects)),
+      d1,
+      () => 2
+    );
+
+    await expect(engine.apply({ databaseId: 'db-id', pin: release.pin })).rejects.toThrow(
+      'migration_history_partial_supersedes'
+    );
     expect(queryD1Batch).not.toHaveBeenCalled();
   });
 

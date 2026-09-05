@@ -103,10 +103,11 @@ function addResource(
     `INSERT INTO control_desired_resources (
        desired_resource_id, environment_id, resource_kind, logical_shard_id,
        deterministic_name, ownership_fingerprint, provisioning_state,
-       origin_operation_id, created_at, updated_at
+       origin_operation_id, provider_create_state, provider_resource_id,
+       provider_identity_checkpointed_at, created_at, updated_at
      ) VALUES ('${desiredId}', '${environmentId}', 'd1', '${input.id}',
        '${environmentId}-${input.id}', 'owner-${input.id}', 'active',
-       'bootstrap-${environmentId}', 1, 1);
+       'bootstrap-${environmentId}', 'identified', 'db-${environmentId}-${input.id}', 1, 1, 1);
      INSERT INTO control_observed_resources (
        observed_resource_id, environment_id, desired_resource_id, provider_resource_id,
        provider_name, resource_kind, observed_state, observed_at
@@ -169,10 +170,7 @@ describe('ReadReplicationService', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
     );
     seedEnvironment(database);
     addResource(database, { id: 'lookup-1', role: 'lookup' });

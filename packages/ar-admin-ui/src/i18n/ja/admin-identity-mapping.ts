@@ -33,7 +33,7 @@ const adminIdentityMapping = {
 	admin_identity_mapping_editor_select_source_profile: 'Source profileを選択',
 	admin_identity_mapping_editor_select_destination_profile: 'Destination profileを選択',
 	admin_identity_mapping_editor_policy_name: 'Field Mapping Set名',
-	admin_identity_mapping_editor_policy_placeholder: 'Source Field Mapping Set',
+	admin_identity_mapping_editor_policy_placeholder: 'Field Mapping Set',
 	admin_identity_mapping_editor_policy_exists:
 		'{name} はすでに存在します。別のField Mapping Set名を選択してください。',
 	admin_identity_mapping_editor_no_policy_selected: 'Field Mapping Set未選択',

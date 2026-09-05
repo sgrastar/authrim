@@ -39,6 +39,42 @@ describe('SchemaLoader', () => {
       expect(mockDb.query).toHaveBeenCalledWith(expect.stringContaining('custom_claim_schemas'), [
         'default',
       ]);
+      expect(mockDb.query.mock.calls[0][0]).toContain('is_active = TRUE');
+    });
+
+    it('normalizes PostgreSQL boolean flags from DB and cache', async () => {
+      const postgresSchema = {
+        id: '1',
+        field_key: 'email',
+        schema_version: 1,
+        is_pii: true,
+        is_required: false,
+        is_active: true,
+        include_in_id_token: false,
+        include_in_userinfo: true,
+        include_in_introspection: false,
+        is_searchable: true,
+        is_exportable: true,
+        is_vc_claim: false,
+      };
+      mockDb.query.mockResolvedValueOnce([postgresSchema]);
+
+      const fromDb = await new SchemaLoader(mockDb as any, null).loadActiveSchemas('default');
+      expect(fromDb[0]).toMatchObject({
+        is_pii: 1,
+        is_required: 0,
+        is_active: 1,
+        include_in_userinfo: 1,
+        is_vc_claim: 0,
+      });
+
+      mockKV.get.mockResolvedValueOnce(
+        JSON.stringify({ schemas: [postgresSchema], fetched_at: Date.now(), schema_version_max: 1 })
+      );
+      const fromCache = await new SchemaLoader(mockDb as any, mockKV as any).loadActiveSchemas(
+        'default'
+      );
+      expect(fromCache[0]).toMatchObject({ is_pii: 1, is_required: 0, is_active: 1 });
     });
 
     it('returns cached schemas when available', async () => {

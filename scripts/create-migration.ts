@@ -37,7 +37,9 @@ function main() {
   const rootPackage = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf-8')) as {
     version: string;
   };
-  assertProductVersionOpenForNewMigrations(migrationsDir, rootPackage.version);
+  assertProductVersionOpenForNewMigrations(migrationsDir, rootPackage.version, {
+    repositoryRoot: process.cwd(),
+  });
 
   // Find next version number
   const files = readdirSync(migrationsDir)

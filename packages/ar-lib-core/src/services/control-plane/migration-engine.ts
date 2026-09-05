@@ -213,7 +213,13 @@ export class ApiMigrationEngine {
     const history = parseHistoryRows(
       await this.d1.queryD1(input.databaseId, AUTHRIM_MIGRATION_HISTORY_SQL)
     );
-    const expectedFiles = new Map(release.files.map((file) => [file.path, file]));
+    const expectedFiles = new Map(release.knownHistory.map((file) => [file.path, file]));
+    for (const file of release.files) {
+      const expected = expectedFiles.get(file.path);
+      if (!expected || expected.checksum !== file.checksum) {
+        throw new Error('migration_release_history_contract_invalid');
+      }
+    }
     for (const [filename, applied] of history) {
       const expected = expectedFiles.get(filename);
       if (!expected) throw new Error('migration_history_unexpected_file');
@@ -222,10 +228,21 @@ export class ApiMigrationEngine {
       }
     }
 
+    const adoptFromSupersededHistory = new Set<string>();
+    for (const file of release.files) {
+      if (history.has(file.path) || !file.supersedes || file.supersedes.length === 0) continue;
+      const appliedSources = file.supersedes.filter((source) => history.has(source.path));
+      if (appliedSources.length === 0) continue;
+      if (appliedSources.length !== file.supersedes.length) {
+        throw new Error('migration_history_partial_supersedes');
+      }
+      adoptFromSupersededHistory.add(file.path);
+    }
+
     const lastFile = release.files.at(-1);
     if (!lastFile) throw new Error('migration_release_stream_empty');
     const lastFilename = lastFile.path;
-    if (history.size === release.files.length) {
+    if (release.files.every((file) => history.has(file.path))) {
       const [existingSentinel] = resultRows<MigrationSentinelRow>(
         await this.d1.queryD1(input.databaseId, MIGRATION_SENTINEL_SQL, [input.pin.streamId])
       );
@@ -258,7 +275,9 @@ export class ApiMigrationEngine {
         skippedFiles += 1;
         continue;
       }
-      const statements = splitMigrationSql(file.sql).map((sql) => ({ sql }));
+      const statements = adoptFromSupersededHistory.has(file.path)
+        ? []
+        : splitMigrationSql(file.sql).map((sql) => ({ sql }));
       const batch = [
         ...statements,
         recordMigrationQuery({
@@ -290,7 +309,11 @@ export class ApiMigrationEngine {
         checksum: file.checksum,
         applied_at: this.now(),
       });
-      appliedFiles += 1;
+      if (adoptFromSupersededHistory.has(file.path)) {
+        skippedFiles += 1;
+      } else {
+        appliedFiles += 1;
+      }
     }
 
     let sentinel: MigrationSentinelRow | undefined;

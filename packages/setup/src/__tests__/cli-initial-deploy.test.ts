@@ -1842,6 +1842,52 @@ describe('CLI initial deployment', () => {
     expect(verifiedLock.releaseUpdate.initialWorkerRedeployRequired).toBeUndefined();
   });
 
+  it('forces a full redeploy from a fully locked workers_deployed checkpoint', async () => {
+    const env = 'headless';
+    await writeHeadlessEnvironment(env);
+    mocks.waitForInitialBootstrapHandoff.mockRejectedValueOnce(
+      new Error('post_worker_bootstrap_transient')
+    );
+
+    await expect(deployCommand({ env, source: root, skipBuild: true, yes: true })).rejects.toThrow(
+      'post_worker_bootstrap_transient'
+    );
+
+    const lockPath = join(root, '.authrim', env, 'lock.json');
+    const interruptedLock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    expect(interruptedLock.releaseUpdate.phase).toBe('workers_deployed');
+    expect(Object.keys(interruptedLock.workers)).not.toHaveLength(0);
+    mocks.deployAll.mockClear();
+    mocks.registerInitialControlTopology.mockClear();
+    mocks.applyReleaseSchemaUpdatePlan.mockClear();
+    mocks.publishAndActivateMigrationRelease.mockClear();
+    let checkpointDuringRedeploy: Record<string, unknown> | undefined;
+    mocks.deployAll.mockImplementationOnce(async (_options, components) => {
+      checkpointDuringRedeploy = JSON.parse(await readFile(lockPath, 'utf-8'));
+      return successfulDeploymentSummary(env, components ?? CORE_WORKER_COMPONENTS);
+    });
+
+    await deployCommand({
+      env,
+      source: root,
+      skipBuild: true,
+      yes: true,
+      recoverLegacyWorkerDeployments: true,
+    });
+
+    expect(mocks.deployAll).toHaveBeenCalledOnce();
+    expect(mocks.registerInitialControlTopology).not.toHaveBeenCalled();
+    expect(mocks.applyReleaseSchemaUpdatePlan).not.toHaveBeenCalled();
+    expect(mocks.publishAndActivateMigrationRelease).not.toHaveBeenCalled();
+    expect(
+      (checkpointDuringRedeploy?.releaseUpdate as { initialWorkerRedeployRequired?: boolean })
+        .initialWorkerRedeployRequired
+    ).toBe(true);
+    const verifiedLock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    expect(verifiedLock.releaseUpdate.phase).toBe('verified');
+    expect(verifiedLock.releaseUpdate.initialWorkerRedeployRequired).toBeUndefined();
+  });
+
   it('does not recover a Worker automatically and preserves an empty lock on insufficient proof', async () => {
     const env = 'headless';
     await writeHeadlessEnvironment(env);
