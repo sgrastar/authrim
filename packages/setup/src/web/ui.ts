@@ -3036,6 +3036,10 @@ ${SETUP_WEB_UI_STYLE}</style>
         'web.control.pendingVerifyRuntimeBindings': ['验证运行时绑定', '驗證執行階段繫結', 'Verificar bindings de runtime', 'Verificar bindings de runtime', 'Vérifier les liaisons d’exécution', 'Laufzeitbindungen prüfen', '런타임 바인딩 확인', 'Проверка привязок среды выполнения', 'Verifikasi binding runtime'],
         'web.control.pendingSharedPool': ['共享池', '共用集區', 'Pool compartido', 'Pool compartilhado', 'Pool partagé', 'Gemeinsamer Pool', '공유 풀', 'Общий пул', 'Pool bersama'],
         'web.control.pendingProvisioning': ['正在预配', '正在佈建', 'Aprovisionamiento', 'Provisionamento', 'Provisionnement', 'Bereitstellung', '프로비저닝', 'Подготовка ресурсов', 'Provisioning'],
+        'web.control.pendingTitle': ['待处理的预配操作', '待處理的佈建操作', 'Operaciones de aprovisionamiento pendientes', 'Operações de provisionamento pendentes', 'Opérations de provisionnement en attente', 'Ausstehende Bereitstellungsvorgänge', '대기 중인 프로비저닝 작업', 'Ожидающие операции подготовки', 'Operasi provisioning tertunda'],
+        'web.control.pendingDescription': ['Setup将执行需要操作员权限的步骤，并持续显示Control的验证进度。', 'Setup 將執行需要操作員權限的步驟，並持續顯示 Control 的驗證進度。', 'Setup ejecuta los pasos que requieren permisos de operador y sigue mostrando el progreso de verificación de Control.', 'O Setup executa as etapas que exigem permissões do operador e continua exibindo o progresso da verificação do Control.', 'Setup exécute les étapes nécessitant les droits de l’opérateur et continue d’afficher la progression de la vérification de Control.', 'Setup führt Schritte aus, die Operatorrechte erfordern, und zeigt den Prüfungsfortschritt von Control weiter an.', 'Setup은 운영자 권한이 필요한 단계를 실행하고 Control 검증 진행 상황을 계속 표시합니다.', 'Setup выполняет этапы, требующие прав оператора, и продолжает показывать ход проверки Control.', 'Setup menjalankan langkah yang memerlukan izin operator dan terus menampilkan progres verifikasi Control.'],
+        'web.control.pendingRun': ['运行待处理操作', '執行待處理操作', 'Ejecutar operación pendiente', 'Executar operação pendente', 'Exécuter l’opération en attente', 'Ausstehenden Vorgang ausführen', '대기 중인 작업 실행', 'Выполнить ожидающую операцию', 'Jalankan operasi tertunda'],
+        'web.control.pendingObserving': ['Control正在执行私有冒烟测试或稳定化。此状态将自动刷新。', 'Control 正在執行私有冒煙測試或穩定化。此狀態將自動重新整理。', 'Control está ejecutando la prueba privada o la estabilización. Este estado se actualizará automáticamente.', 'O Control está executando o smoke test privado ou a estabilização. Este status será atualizado automaticamente.', 'Control exécute le test privé ou la stabilisation. Cet état sera actualisé automatiquement.', 'Control führt den privaten Smoke-Test oder die Stabilisierung aus. Dieser Status wird automatisch aktualisiert.', 'Control이 비공개 스모크 테스트 또는 안정화를 실행 중입니다. 상태가 자동으로 새로 고쳐집니다.', 'Control выполняет закрытую проверку или стабилизацию. Состояние обновится автоматически.', 'Control sedang menjalankan smoke test privat atau stabilisasi. Status ini akan dimuat ulang secara otomatis.'],
         'web.control.operationRunning': ['正在执行预配操作...', '正在執行佈建操作...', 'Ejecutando la operación de aprovisionamiento...', 'Executando a operação de provisionamento...', 'Exécution de l’opération de provisionnement...', 'Bereitstellungsvorgang wird ausgeführt...', '프로비저닝 작업 실행 중...', 'Выполняется операция подготовки ресурсов...', 'Menjalankan operasi provisioning...'],
         'web.control.operationFailed': ['Control 操作失败。', 'Control 操作失敗。', 'La operación de Control falló.', 'A operação de Control falhou.', 'L’opération Control a échoué.', 'Control-Vorgang fehlgeschlagen.', 'Control 작업에 실패했습니다.', 'Операция Control завершилась ошибкой.', 'Operasi Control gagal.'],
         'web.control.operationAwaitingMigration': ['D1 已创建。迁移已准备好进入下一操作步骤。', 'D1 已建立。移轉已可進入下一個操作步驟。', 'D1 creado. La migración está lista para el siguiente paso del operador.', 'D1 criado. A migração está pronta para a próxima etapa do operador.', 'D1 créé. La migration est prête pour l’étape opérateur suivante.', 'D1 erstellt. Die Migration ist für den nächsten Bedienerschritt bereit.', 'D1을 만들었습니다. 다음 운영자 단계에서 마이그레이션을 실행할 수 있습니다.', 'D1 создана. Миграция готова к следующему шагу оператора.', 'D1 dibuat. Migrasi siap untuk langkah operator berikutnya.'],
@@ -3166,6 +3170,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.control.pendingVerifyRuntimeBindings': 'Verify runtime bindings',
           'web.control.pendingSharedPool': 'Shared pool',
           'web.control.pendingProvisioning': 'Provisioning',
+          'web.control.pendingTitle': 'Pending provisioning operations',
+          'web.control.pendingDescription': 'Setup runs steps that require operator permissions and continues to show Control verification progress.',
+          'web.control.pendingRun': 'Run pending operation',
+          'web.control.pendingObserving': 'Control is running private smoke or stabilization. This status refreshes automatically.',
           'web.control.operationRunning': 'Running provisioning operation...',
           'web.control.operationFailed': 'Control operation failed.',
           'web.control.operationAwaitingMigration': 'D1 created. Migration is ready for the next operator step.',
@@ -3285,6 +3293,10 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.control.pendingVerifyRuntimeBindings': 'ランタイムバインディングを検証',
           'web.control.pendingSharedPool': '共有プール',
           'web.control.pendingProvisioning': 'プロビジョニング',
+          'web.control.pendingTitle': '保留中のプロビジョニング操作',
+          'web.control.pendingDescription': 'Setupはオペレーター権限が必要な手順を実行し、Controlによる検証の進捗も継続して表示します。',
+          'web.control.pendingRun': '保留中の操作を実行',
+          'web.control.pendingObserving': 'Controlが非公開スモークテストまたは安定化を実行中です。この状態は自動更新されます。',
           'web.control.operationRunning': 'プロビジョニング操作を実行中...',
           'web.control.operationFailed': 'Control操作に失敗しました。',
           'web.control.operationAwaitingMigration': 'D1を作成しました。次のオペレーター操作でマイグレーションを実行できます。',
@@ -5204,11 +5216,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       </div>
 
       <section id="pending-control-operations" class="alert warn hidden" aria-live="polite">
-        <div class="a-head">Pending provisioning operations</div>
-        <p>Admin requests are ready for setup operator execution. Their tenant and placement plan are already fixed.</p>
+        <div class="a-head" data-i18n="web.control.pendingTitle">Pending provisioning operations</div>
+        <p data-i18n="web.control.pendingDescription">Setup runs steps that require operator permissions and continues to show Control verification progress.</p>
         <div id="pending-control-operation-items"></div>
         <p id="pending-control-operation-result" aria-live="polite"></p>
-        <button type="button" class="btn btn-next" id="btn-open-pending-operation">Run pending operation</button>
+        <button type="button" class="btn btn-next" id="btn-open-pending-operation" data-i18n="web.control.pendingRun">Run pending operation</button>
       </section>
 
       <div class="modegrid setup-modegrid">
@@ -6552,7 +6564,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       <div class="actions setup-env-actions">
         <span class="progress" id="delete-progress-summary"><span data-i18n="web.delete.deleteTarget">Delete target</span> <b id="delete-total-count">0</b> <span data-i18n="web.delete.resourcesLabel">resources</span></span>
         <span class="spacer"></span>
-        <button class="btn btn-back" id="btn-back-env-delete">← <span data-i18n="common.cancel">Cancel</span></button>
+        <button class="btn btn-back" id="btn-back-env-delete">← <span id="delete-back-label" data-i18n="common.cancel">Cancel</span></button>
         <button class="btn-danger-solid" id="btn-confirm-delete" disabled><span data-i18n="web.delete.deletePermanently">Delete permanently</span></button>
       </div>
     </div>
@@ -6716,6 +6728,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     let resumeControlBootstrapReady = false;
+    let resumeWorkerOwnershipRecovery = false;
 
     function automaticProvisioningEnabled() {
       return document.querySelector('input[name="automatic-provisioning"]:checked')?.value !== 'off';
@@ -6895,6 +6908,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     // Environment management state
     let detectedEnvironments = [];
     let pendingControlOperations = [];
+    let pendingControlPollTimer = null;
     let selectedEnvForDetail = null;
     let selectedEnvDetailConfig = null;
     let selectedEnvRecoveryStatus = null;
@@ -7483,6 +7497,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     function showSection(name) {
+      if (name !== 'topMenu' && pendingControlPollTimer !== null) {
+        clearTimeout(pendingControlPollTimer);
+        pendingControlPollTimer = null;
+      }
       Object.values(sections).forEach(s => {
         s.classList.add('hidden');
         s.classList.remove('setup-section-enter');
@@ -8449,8 +8467,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       document.getElementById('delete-options-section').classList.remove('hidden');
       document.getElementById('btn-confirm-delete').classList.remove('hidden');
       document.getElementById('btn-confirm-delete').disabled = false;
+      const backLabel = document.getElementById('delete-back-label');
+      if (backLabel) backLabel.textContent = t('common.cancel');
       resetProgressContainer('delete');
       resetLogToggle('delete-log-toggle', 'delete-log');
+    }
+
+    function markDeleteNavigationComplete() {
+      const backLabel = document.getElementById('delete-back-label');
+      if (backLabel) {
+        backLabel.textContent = t('web.env.backToList').replace(/^←[ ]*/u, '');
+      }
     }
 
     async function resetSetupFlowState() {
@@ -8959,13 +8986,24 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     async function loadPendingControlOperations() {
       const panel = document.getElementById('pending-control-operations');
       const items = document.getElementById('pending-control-operation-items');
+      const button = document.getElementById('btn-open-pending-operation');
+      const status = document.getElementById('pending-control-operation-result');
       if (!panel || !items) return [];
-      panel.classList.add('hidden');
-      items.replaceChildren();
+      if (pendingControlPollTimer !== null) {
+        clearTimeout(pendingControlPollTimer);
+        pendingControlPollTimer = null;
+      }
       try {
         const result = await api('/control/pending-operations');
         const operations = result.success && Array.isArray(result.operations) ? result.operations : [];
-        if (operations.length === 0) return [];
+        if (operations.length === 0) {
+          panel.classList.add('hidden');
+          items.replaceChildren();
+          if (button) button.classList.remove('hidden');
+          if (status) status.textContent = '';
+          return [];
+        }
+        items.replaceChildren();
         for (const operation of operations.slice(0, 5)) {
           const row = document.createElement('p');
           if (operation.operationKind === 'tenant_disaster_recovery') {
@@ -8983,11 +9021,41 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           }
           items.appendChild(row);
         }
+        const executable = operations.find(isPendingControlOperationExecutable);
+        if (button) button.classList.toggle('hidden', !executable);
+        if (status) status.textContent = executable ? '' : t('web.control.pendingObserving');
         panel.classList.remove('hidden');
+        if (!sections.topMenu.classList.contains('hidden')) {
+          pendingControlPollTimer = setTimeout(async () => {
+            pendingControlPollTimer = null;
+            if (!sections.topMenu.classList.contains('hidden')) {
+              pendingControlOperations = await loadPendingControlOperations();
+            }
+          }, 5000);
+        }
         return operations;
       } catch {
-        return [];
+        if (!sections.topMenu.classList.contains('hidden')) {
+          pendingControlPollTimer = setTimeout(async () => {
+            pendingControlPollTimer = null;
+            if (!sections.topMenu.classList.contains('hidden')) {
+              pendingControlOperations = await loadPendingControlOperations();
+            }
+          }, 5000);
+        }
+        return pendingControlOperations;
       }
+    }
+
+    function isPendingControlOperationExecutable(operation) {
+      if (!operation || typeof operation !== 'object') return false;
+      if (
+        operation.operationKind === 'provision_plugin_resources' ||
+        operation.operationKind === 'cleanup_plugin_resources'
+      ) return true;
+      return ['create_d1', 'apply_migrations', 'reconcile_worker_bindings'].includes(
+        operation.currentStep
+      );
     }
 
     async function showTopMenu() {
@@ -9026,7 +9094,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     const menuManageEnv = document.getElementById('menu-manage-env');
 
     document.getElementById('btn-open-pending-operation')?.addEventListener('click', async () => {
-      const pending = pendingControlOperations[0];
+      const pending = pendingControlOperations.find(isPendingControlOperationExecutable);
       if (!pending) return;
       const button = document.getElementById('btn-open-pending-operation');
       const status = document.getElementById('pending-control-operation-result');
@@ -11098,6 +11166,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           body: {
             env: config.env,
             dryRun: false,
+            ...(resumeWorkerOwnershipRecovery ? { recoverWorkerOwnership: true } : {}),
             ...(automaticProvisioningEnabled() && !resumeControlBootstrapReady
               ? {
                   bootstrapToken,
@@ -12162,7 +12231,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       if (configKv && configKv.id) {
         // Check admin setup status asynchronously
-        checkAndShowAdminSetup(configKv.id);
+        checkAndShowAdminSetup(configKv.id, env.env);
       }
 
       document.getElementById('env-r2-provision-progress').classList.add('hidden');
@@ -12556,6 +12625,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         config = buildSetupConfigFromSavedConfig(response.config);
         controlBootstrapOwnership = null;
         resumeControlBootstrapReady = false;
+        resumeWorkerOwnershipRecovery =
+          recoveryStatus.requiresWorkerOwnershipRecovery === true;
         if (config.controlPlane?.automaticProvisioning === true) {
           resumeControlBootstrapReady = recoveryStatus.requiresBootstrapToken !== true;
         }
@@ -14253,15 +14324,25 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     // ===========================================
 
     // Check admin setup status and show section if needed
-    async function checkAndShowAdminSetup(kvNamespaceId) {
+    async function checkAndShowAdminSetup(kvNamespaceId, envName) {
       try {
-        const response = await api('/admin/status/' + encodeURIComponent(kvNamespaceId));
+        const response = await api(
+          '/admin/status/' + encodeURIComponent(kvNamespaceId) +
+          '?env=' + encodeURIComponent(envName)
+        );
         if (!response.success) return;
 
         const section = document.getElementById('admin-setup-section');
         const heading = section.querySelector('.a-head');
         const description = section.querySelector('p');
         const button = document.getElementById('btn-start-admin-setup');
+
+        if (response.statusKnown === false) {
+          // Do not turn a transient Cloudflare/namespace status failure into a false
+          // "not configured" instruction that invites another setup-token operation.
+          section.classList.add('hidden');
+          return;
+        }
 
         if (response.adminSetupCompleted) {
           section.className = 'alert ok';
@@ -15022,6 +15103,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           }
           appendManualControlTokenCleanupNotice(result, manualControlTokenTargets);
           if (environmentDeleted) {
+            markDeleteNavigationComplete();
             // Keep the follow-up guidance visible while refreshing the hidden environment list so
             // navigating back cannot resurrect an entry whose local recovery state was removed.
             setTimeout(async () => {
@@ -15036,6 +15118,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           updateProgressUI('delete', totalToDelete, totalToDelete, t('web.delete.complete'));
           result.textContent = '';
           const environmentDeleted = deleteResult.environmentDeleted === true;
+          if (environmentDeleted) markDeleteNavigationComplete();
           result.appendChild(createAlert(
             environmentDeleted ? 'success' : 'warning',
             t(environmentDeleted ? 'web.delete.success' : 'web.delete.partialSuccess')

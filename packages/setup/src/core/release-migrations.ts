@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { z } from 'zod';
@@ -23,9 +24,42 @@ export const ReleaseMigrationSupersededFileSchema = z.object({
   checksum: z.string().regex(/^[a-f0-9]{64}$/u),
 });
 
+const SemanticBaselineEvidenceSchema = z
+  .object({
+    formatVersion: z.literal(1),
+    productVersion: ProductVersionSchema,
+    compatibility: z.literal('fresh_install_only'),
+    streams: z.array(
+      z.object({
+        id: z.string().min(1),
+        dialect: z.enum(['sqlite', 'postgres', 'mysql']),
+        path: MigrationPathSchema,
+        checksum: z.string().regex(/^[a-f0-9]{64}$/u),
+        schemaChecksum: z.string().regex(/^[a-f0-9]{64}$/u),
+        seedChecksum: z.string().regex(/^[a-f0-9]{64}$/u),
+        objectCount: z.number().int().nonnegative(),
+        generatedFrom: z.array(ReleaseMigrationSupersededFileSchema),
+      })
+    ),
+  })
+  .refine(
+    (evidence) =>
+      new Set(evidence.streams.map((stream) => stream.id)).size === evidence.streams.length,
+    {
+      message: 'Semantic baseline evidence stream IDs must be unique',
+    }
+  );
+
 export const ReleaseMigrationFileSchema = z.object({
   path: MigrationPathSchema,
   checksum: z.string().regex(/^[a-f0-9]{64}$/u),
+  semanticEvidence: z
+    .object({
+      schemaChecksum: z.string().regex(/^[a-f0-9]{64}$/u),
+      seedChecksum: z.string().regex(/^[a-f0-9]{64}$/u),
+      objectCount: z.number().int().nonnegative(),
+    })
+    .optional(),
   supersedes: z
     .array(ReleaseMigrationSupersededFileSchema)
     .refine((files) => new Set(files.map((file) => file.path)).size === files.length, {
@@ -52,6 +86,20 @@ export const ReleaseMigrationStreamSchema = z
     }
   );
 
+export const ReleaseMigrationUpgradePathSchema = z
+  .object({
+    fromProductVersion: ProductVersionSchema,
+    kind: z.enum(['delta', 'bridge']),
+    streams: z.array(ReleaseMigrationStreamSchema),
+  })
+  .refine((path) => new Set(path.streams.map((stream) => stream.id)).size === path.streams.length, {
+    message: 'Release migration upgrade stream IDs must be unique',
+  });
+
+export const FreshInstallBaselineSchema = z.object({
+  productVersion: ProductVersionSchema,
+});
+
 export const ReleaseRolloutPolicySchema = z.object({
   databaseExecution: z.literal('setup_then_control'),
   workerActivation: z.literal('after_required_databases'),
@@ -74,7 +122,12 @@ export const ReleaseMigrationManifestSchema = z
     formatVersion: z.literal(RELEASE_MIGRATION_MANIFEST_FORMAT_VERSION),
     productVersion: ProductVersionSchema,
     minimumProductVersion: ProductVersionSchema.optional(),
-    databaseCompatibility: z.enum(['fresh_install_only', 'forward_only']).optional(),
+    databaseCompatibility: z
+      .enum(['fresh_install_only', 'fresh_and_forward', 'forward_only'])
+      .optional(),
+    freshInstallBaseline: FreshInstallBaselineSchema.optional(),
+    upgradePaths: z.array(ReleaseMigrationUpgradePathSchema).optional(),
+    acceptedMigrationHistory: z.array(ReleaseMigrationStreamSchema).optional(),
     rollout: ReleaseRolloutPolicySchema.optional(),
     streams: z.array(ReleaseMigrationStreamSchema),
   })
@@ -82,11 +135,76 @@ export const ReleaseMigrationManifestSchema = z
     (manifest) =>
       new Set(manifest.streams.map((stream) => stream.id)).size === manifest.streams.length,
     { message: 'Release migration stream IDs must be unique' }
+  )
+  .refine(
+    (manifest) =>
+      new Set((manifest.upgradePaths ?? []).map((path) => path.fromProductVersion)).size ===
+      (manifest.upgradePaths ?? []).length,
+    { message: 'Release migration upgrade source versions must be unique' }
+  )
+  .refine(
+    (manifest) =>
+      new Set((manifest.acceptedMigrationHistory ?? []).map((stream) => stream.id)).size ===
+      (manifest.acceptedMigrationHistory ?? []).length,
+    { message: 'Accepted migration history stream IDs must be unique' }
+  )
+  .refine(
+    (manifest) =>
+      (manifest.upgradePaths ?? []).every(
+        (path) => compareProductVersions(path.fromProductVersion, manifest.productVersion) < 0
+      ),
+    { message: 'Release migration upgrade paths must start below the target version' }
+  )
+  .refine(
+    (manifest) => {
+      if (!manifest.freshInstallBaseline) return true;
+      const [baselineMajor, baselineMinor, baselinePatch] = versionCore(
+        manifest.freshInstallBaseline.productVersion
+      );
+      const [productMajor, productMinor] = versionCore(manifest.productVersion);
+      return (
+        baselinePatch === 0 &&
+        /^\d+\.\d+\.0$/u.test(manifest.freshInstallBaseline.productVersion) &&
+        baselineMajor === productMajor &&
+        baselineMinor === productMinor &&
+        compareProductVersions(
+          manifest.freshInstallBaseline.productVersion,
+          manifest.productVersion
+        ) <= 0
+      );
+    },
+    {
+      message:
+        'Fresh-install baseline must be the major/minor boundary for the manifest product series',
+    }
+  )
+  .refine(
+    (manifest) =>
+      !manifest.freshInstallBaseline ||
+      manifest.streams.every(
+        (stream) =>
+          stream.files.length === 0 ||
+          stream.files.filter(
+            (file) =>
+              baselineVersionFromPath(file.path) === manifest.freshInstallBaseline!.productVersion
+          ).length === 1
+      ),
+    { message: 'Fresh-install streams must contain exactly one selected series baseline' }
+  )
+  .refine(
+    (manifest) =>
+      (manifest.upgradePaths ?? []).every((path) =>
+        path.streams.every((stream) =>
+          stream.files.every((file) => baselineVersionFromPath(file.path) === null)
+        )
+      ),
+    { message: 'Upgrade paths must not contain fresh-install baselines' }
   );
 
 export type ReleaseMigrationFile = z.infer<typeof ReleaseMigrationFileSchema>;
 export type ReleaseMigrationStream = z.infer<typeof ReleaseMigrationStreamSchema>;
 export type ReleaseMigrationManifest = z.infer<typeof ReleaseMigrationManifestSchema>;
+export type ReleaseMigrationUpgradePath = z.infer<typeof ReleaseMigrationUpgradePathSchema>;
 export type ReleaseRolloutPolicy = z.infer<typeof ReleaseRolloutPolicySchema>;
 
 export const DEFAULT_RELEASE_ROLLOUT_POLICY: ReleaseRolloutPolicy = {
@@ -307,13 +425,78 @@ export function calculateReleaseMigrationChecksum(
 }
 
 function previousFileByStreamAndPath(
-  previousManifest: ReleaseMigrationManifest | undefined
+  previousManifests: readonly ReleaseMigrationManifest[]
 ): Map<string, ReleaseMigrationFile> {
   const previous = new Map<string, ReleaseMigrationFile>();
-  for (const stream of previousManifest?.streams ?? []) {
-    for (const file of stream.files) previous.set(`${stream.id}:${file.path}`, file);
+  for (const manifest of previousManifests) {
+    for (const stream of manifest.streams) {
+      for (const file of stream.files) previous.set(`${stream.id}:${file.path}`, file);
+    }
+    for (const path of manifest.upgradePaths ?? []) {
+      for (const stream of path.streams) {
+        for (const file of stream.files) previous.set(`${stream.id}:${file.path}`, file);
+      }
+    }
+    for (const stream of manifest.acceptedMigrationHistory ?? []) {
+      for (const file of stream.files) previous.set(`${stream.id}:${file.path}`, file);
+    }
   }
   return previous;
+}
+
+function semanticBaselineProvenancePaths(migrationsRoot: string): ReadonlyMap<string, Set<string>> {
+  const evidencePath = join(migrationsRoot, 'semantic-baseline.evidence.json');
+  if (!existsSync(evidencePath)) return new Map();
+  const evidence = SemanticBaselineEvidenceSchema.parse(
+    JSON.parse(readFileSync(evidencePath, 'utf-8'))
+  );
+  return new Map(
+    evidence.streams.map((stream) => [
+      stream.id,
+      new Set(stream.generatedFrom.map((file) => file.path)),
+    ])
+  );
+}
+
+function versionCore(version: string): [number, number, number] {
+  const core = version
+    .split(/[+-]/u, 1)[0]!
+    .split('.')
+    .map((part) => Number.parseInt(part, 10));
+  return [core[0]!, core[1]!, core[2]!];
+}
+
+function sameReleaseSeries(left: string, right: string): boolean {
+  const [leftMajor, leftMinor] = versionCore(left);
+  const [rightMajor, rightMinor] = versionCore(right);
+  return leftMajor === rightMajor && leftMinor === rightMinor;
+}
+
+function baselineVersionFromPath(path: string): string | null {
+  const match = path.match(/^\d+_(\d+)_(\d+)_(\d+)(?:_[0-9A-Za-z]+)*_.*_baseline\.sql$/u);
+  return match ? `${match[1]}.${match[2]}.${match[3]}` : null;
+}
+
+function streamWithFiles(
+  stream: Omit<ReleaseMigrationStream, 'files'>,
+  files: ReleaseMigrationFile[]
+): ReleaseMigrationStream {
+  return ReleaseMigrationStreamSchema.parse({ ...stream, files });
+}
+
+function mergeMigrationFiles(
+  left: readonly ReleaseMigrationFile[],
+  right: readonly ReleaseMigrationFile[]
+): ReleaseMigrationFile[] {
+  const files = new Map<string, ReleaseMigrationFile>();
+  for (const file of [...left, ...right]) {
+    const current = files.get(file.path);
+    if (current && current.checksum !== file.checksum) {
+      throw new Error(`release_migration_path_checksum_conflict:${file.path}`);
+    }
+    files.set(file.path, file);
+  }
+  return [...files.values()].sort((a, b) => a.path.localeCompare(b.path));
 }
 
 export function generateReleaseMigrationManifest(input: {
@@ -321,14 +504,24 @@ export function generateReleaseMigrationManifest(input: {
   productVersion: string;
   minimumProductVersion?: string;
   previousManifest?: ReleaseMigrationManifest;
+  previousManifests?: readonly ReleaseMigrationManifest[];
+  semanticBaselineSource?: boolean;
 }): ReleaseMigrationManifest {
-  const previousFiles = previousFileByStreamAndPath(input.previousManifest);
+  const history = [
+    ...(input.previousManifests ?? []),
+    ...(input.previousManifest ? [input.previousManifest] : []),
+  ].filter(
+    (manifest, index, manifests) =>
+      manifests.findIndex((candidate) => candidate.productVersion === manifest.productVersion) ===
+      index
+  );
+  const previousFiles = previousFileByStreamAndPath(history);
   const minimumProductVersion =
     input.minimumProductVersion ??
     (input.previousManifest?.productVersion === input.productVersion
       ? input.previousManifest.minimumProductVersion
       : undefined);
-  const streams = RELEASE_MIGRATION_STREAM_DEFINITIONS.map((definition) => {
+  const discoveredStreams = RELEASE_MIGRATION_STREAM_DEFINITIONS.map((definition) => {
     const streamRoot = join(input.migrationsRoot, definition.directory);
     const paths = listSqlFiles(streamRoot, {
       excludeTopLevelDirectories: definition.excludeTopLevelDirectories,
@@ -346,6 +539,9 @@ export function generateReleaseMigrationManifest(input: {
         return {
           path,
           checksum,
+          ...(previous?.checksum === checksum && previous.semanticEvidence
+            ? { semanticEvidence: previous.semanticEvidence }
+            : {}),
           ...(previous?.checksum === checksum && previous.supersedes
             ? { supersedes: previous.supersedes }
             : {}),
@@ -353,6 +549,133 @@ export function generateReleaseMigrationManifest(input: {
       }),
     };
   });
+
+  const priorRelease = history
+    .filter((manifest) => compareProductVersions(manifest.productVersion, input.productVersion) < 0)
+    .sort((a, b) => compareProductVersions(a.productVersion, b.productVersion))
+    .at(-1);
+  const sameVersion = history.find((manifest) => manifest.productVersion === input.productVersion);
+  const isSeriesBoundary = versionCore(input.productVersion)[2] === 0;
+  const exactBaselineByStream = new Map(
+    discoveredStreams.map((stream) => [
+      stream.id,
+      stream.files.filter((file) => baselineVersionFromPath(file.path) === input.productVersion),
+    ])
+  );
+  const usesManagedLayout = discoveredStreams
+    .filter((stream) => stream.files.length > 0)
+    .every((stream) => (exactBaselineByStream.get(stream.id)?.length ?? 0) === 1);
+
+  if (
+    isSeriesBoundary &&
+    priorRelease?.freshInstallBaseline &&
+    !usesManagedLayout &&
+    input.semanticBaselineSource !== true
+  ) {
+    throw new Error(`fresh_install_baseline_required:${input.productVersion}`);
+  }
+
+  const provenancePaths = semanticBaselineProvenancePaths(input.migrationsRoot);
+  const newFilesByStream = new Map(
+    discoveredStreams.map((stream) => [
+      stream.id,
+      stream.files.filter(
+        (file) =>
+          !previousFiles.has(`${stream.id}:${file.path}`) &&
+          baselineVersionFromPath(file.path) !== input.productVersion &&
+          !provenancePaths.get(stream.id)?.has(file.path)
+      ),
+    ])
+  );
+  if (
+    usesManagedLayout &&
+    !priorRelease &&
+    input.semanticBaselineSource !== true &&
+    [...newFilesByStream.values()].some((files) => files.length > 0)
+  ) {
+    throw new Error(`initial_fresh_baseline_regeneration_required:${input.productVersion}`);
+  }
+  const freshInstallBaselineVersion =
+    isSeriesBoundary && usesManagedLayout
+      ? input.productVersion
+      : (sameVersion?.freshInstallBaseline?.productVersion ??
+        (priorRelease && sameReleaseSeries(priorRelease.productVersion, input.productVersion)
+          ? priorRelease.freshInstallBaseline?.productVersion
+          : undefined));
+  const streams =
+    input.semanticBaselineSource && !priorRelease && usesManagedLayout
+      ? discoveredStreams.map((stream) =>
+          streamWithFiles(
+            stream,
+            mergeMigrationFiles(
+              exactBaselineByStream.get(stream.id) ?? [],
+              newFilesByStream.get(stream.id) ?? []
+            )
+          )
+        )
+      : input.semanticBaselineSource && priorRelease && !usesManagedLayout
+        ? discoveredStreams.map((stream) => {
+            const previous = priorRelease.streams.find((candidate) => candidate.id === stream.id);
+            return streamWithFiles(
+              stream,
+              mergeMigrationFiles(previous?.files ?? [], newFilesByStream.get(stream.id) ?? [])
+            );
+          })
+        : isSeriesBoundary && usesManagedLayout
+          ? discoveredStreams.map((stream) =>
+              streamWithFiles(stream, exactBaselineByStream.get(stream.id) ?? [])
+            )
+          : sameVersion
+            ? discoveredStreams.map((stream) => {
+                const previous = sameVersion.streams.find(
+                  (candidate) => candidate.id === stream.id
+                );
+                return streamWithFiles(
+                  stream,
+                  mergeMigrationFiles(previous?.files ?? [], newFilesByStream.get(stream.id) ?? [])
+                );
+              })
+            : priorRelease && sameReleaseSeries(priorRelease.productVersion, input.productVersion)
+              ? discoveredStreams.map((stream) => {
+                  const previous = priorRelease.streams.find(
+                    (candidate) => candidate.id === stream.id
+                  );
+                  return streamWithFiles(
+                    stream,
+                    mergeMigrationFiles(
+                      previous?.files ?? [],
+                      newFilesByStream.get(stream.id) ?? []
+                    )
+                  );
+                })
+              : discoveredStreams;
+
+  const previousUpgradePaths = sameVersion?.upgradePaths ?? [];
+  const directUpgradePath = priorRelease
+    ? {
+        fromProductVersion: priorRelease.productVersion,
+        kind: sameReleaseSeries(priorRelease.productVersion, input.productVersion)
+          ? ('delta' as const)
+          : ('bridge' as const),
+        streams: discoveredStreams.map((stream) => {
+          const existing = sameVersion?.upgradePaths
+            ?.find((path) => path.fromProductVersion === priorRelease.productVersion)
+            ?.streams.find((candidate) => candidate.id === stream.id);
+          return streamWithFiles(
+            stream,
+            mergeMigrationFiles(existing?.files ?? [], newFilesByStream.get(stream.id) ?? [])
+          );
+        }),
+      }
+    : undefined;
+  const upgradePaths = directUpgradePath
+    ? [
+        ...previousUpgradePaths.filter(
+          (path) => path.fromProductVersion !== directUpgradePath.fromProductVersion
+        ),
+        directUpgradePath,
+      ].sort((a, b) => compareProductVersions(a.fromProductVersion, b.fromProductVersion))
+    : previousUpgradePaths;
 
   return ReleaseMigrationManifestSchema.parse({
     formatVersion: RELEASE_MIGRATION_MANIFEST_FORMAT_VERSION,
@@ -362,15 +685,138 @@ export function generateReleaseMigrationManifest(input: {
       input.previousManifest?.productVersion === input.productVersion &&
       input.previousManifest.databaseCompatibility
         ? input.previousManifest.databaseCompatibility
-        : compareProductVersions(input.productVersion, '1.0.0') <= 0
-          ? 'fresh_install_only'
-          : 'forward_only',
+        : priorRelease
+          ? 'fresh_and_forward'
+          : 'fresh_install_only',
+    ...(freshInstallBaselineVersion
+      ? { freshInstallBaseline: { productVersion: freshInstallBaselineVersion } }
+      : {}),
+    ...(upgradePaths.length > 0 ? { upgradePaths } : {}),
     rollout:
       input.previousManifest?.productVersion === input.productVersion &&
       input.previousManifest.rollout
         ? input.previousManifest.rollout
         : DEFAULT_RELEASE_ROLLOUT_POLICY,
     streams,
+  });
+}
+
+export function resolveReleaseMigrationExecutionManifest(input: {
+  targetManifest: ReleaseMigrationManifest;
+  installedProductVersion?: string;
+  availableManifests?: readonly ReleaseMigrationManifest[];
+}): ReleaseMigrationManifest {
+  if (!input.installedProductVersion) return input.targetManifest;
+  if (input.installedProductVersion === input.targetManifest.productVersion) {
+    return ReleaseMigrationManifestSchema.parse({
+      ...input.targetManifest,
+      streams: input.targetManifest.streams.map((stream) => ({ ...stream, files: [] })),
+      freshInstallBaseline: undefined,
+      upgradePaths: undefined,
+    });
+  }
+
+  const candidates = [input.targetManifest, ...(input.availableManifests ?? [])]
+    .filter(
+      (manifest, index, manifests) =>
+        compareProductVersions(manifest.productVersion, input.installedProductVersion!) > 0 &&
+        compareProductVersions(manifest.productVersion, input.targetManifest.productVersion) <= 0 &&
+        manifests.findIndex((candidate) => candidate.productVersion === manifest.productVersion) ===
+          index
+    )
+    .sort((a, b) => compareProductVersions(a.productVersion, b.productVersion));
+  let currentVersion = input.installedProductVersion;
+  const selected: ReleaseMigrationStream[] = RELEASE_MIGRATION_STREAM_DEFINITIONS.map(
+    (definition) => ({
+      id: definition.id,
+      dialect: definition.dialect,
+      logicalRoles: [...definition.logicalRoles],
+      files: [],
+    })
+  );
+
+  while (currentVersion !== input.targetManifest.productVersion) {
+    const next = candidates.find((manifest) =>
+      manifest.upgradePaths?.some((path) => path.fromProductVersion === currentVersion)
+    );
+    if (!next) {
+      throw new Error(
+        `release_upgrade_path_not_found:${currentVersion}:${input.targetManifest.productVersion}`
+      );
+    }
+    const path = next.upgradePaths!.find(
+      (candidate) => candidate.fromProductVersion === currentVersion
+    )!;
+    for (const targetStream of selected) {
+      const pathStream = path.streams.find((stream) => stream.id === targetStream.id);
+      targetStream.files = mergeMigrationFiles(targetStream.files, pathStream?.files ?? []);
+    }
+    currentVersion = next.productVersion;
+  }
+
+  return ReleaseMigrationManifestSchema.parse({
+    ...input.targetManifest,
+    streams: selected,
+    freshInstallBaseline: undefined,
+    upgradePaths: undefined,
+  });
+}
+
+export function buildReleaseMigrationArtifactManifest(input: {
+  targetManifest: ReleaseMigrationManifest;
+  installedProductVersion: string;
+  availableManifests?: readonly ReleaseMigrationManifest[];
+}): ReleaseMigrationManifest {
+  const execution = resolveReleaseMigrationExecutionManifest(input);
+  const kind = sameReleaseSeries(input.installedProductVersion, input.targetManifest.productVersion)
+    ? 'delta'
+    : 'bridge';
+  const historySources = [input.targetManifest, ...(input.availableManifests ?? [])].filter(
+    (manifest, index, manifests) =>
+      compareProductVersions(manifest.productVersion, input.targetManifest.productVersion) <= 0 &&
+      manifests.findIndex((candidate) => candidate.productVersion === manifest.productVersion) ===
+        index
+  );
+  const acceptedMigrationHistory = RELEASE_MIGRATION_STREAM_DEFINITIONS.map((definition) => {
+    let files: ReleaseMigrationFile[] = [];
+    for (const manifest of historySources) {
+      const streams = [
+        ...manifest.streams,
+        ...(manifest.upgradePaths ?? []).flatMap((path) => path.streams),
+        ...(manifest.acceptedMigrationHistory ?? []),
+      ];
+      for (const stream of streams.filter((candidate) => candidate.id === definition.id)) {
+        files = mergeMigrationFiles(
+          files,
+          stream.files.flatMap((file) => [
+            file,
+            ...(file.supersedes ?? []).map((superseded) => ({ ...superseded })),
+          ])
+        );
+      }
+    }
+    return {
+      id: definition.id,
+      dialect: definition.dialect,
+      logicalRoles: [...definition.logicalRoles],
+      files,
+    };
+  });
+  return ReleaseMigrationManifestSchema.parse({
+    ...input.targetManifest,
+    upgradePaths: [
+      ...(input.targetManifest.upgradePaths ?? []).filter(
+        (path) => path.fromProductVersion !== input.installedProductVersion
+      ),
+      {
+        fromProductVersion: input.installedProductVersion,
+        kind,
+        streams: execution.streams,
+      },
+    ].sort((left, right) =>
+      compareProductVersions(left.fromProductVersion, right.fromProductVersion)
+    ),
+    acceptedMigrationHistory,
   });
 }
 
@@ -398,16 +844,33 @@ export function syncDraftReleaseMigrationManifest(input: {
   migrationsRoot: string;
   productVersion: string;
 }): { path: string; manifest: ReleaseMigrationManifest } {
-  const publishedManifest = findLatestReleaseMigrationManifest(input.migrationsRoot)?.manifest;
+  const repositoryRoot = dirname(input.migrationsRoot);
+  validateRemoteMainPublishedReleaseMigrationManifests({
+    migrationsRoot: input.migrationsRoot,
+    repositoryRoot,
+  });
+  const releaseManifests = listReleaseMigrationManifests(input.migrationsRoot).map(
+    (release) => release.manifest
+  );
+  const publishedManifest = releaseManifests
+    .filter((manifest) =>
+      isVersionPublishedOnRemoteMain({
+        repositoryRoot,
+        productVersion: manifest.productVersion,
+      })
+    )
+    .at(-1);
+  const latestReleaseCandidate = releaseManifests.at(-1);
   assertProductVersionNotBehindPublished(input.productVersion, publishedManifest?.productVersion);
   const path = join(input.migrationsRoot, DRAFT_RELEASE_MANIFEST_FILENAME);
   const currentDraft = existsSync(path) ? readReleaseMigrationManifest(path) : undefined;
   const previousManifest =
-    currentDraft?.productVersion === input.productVersion ? currentDraft : publishedManifest;
+    currentDraft?.productVersion === input.productVersion ? currentDraft : latestReleaseCandidate;
   const manifest = generateReleaseMigrationManifest({
     migrationsRoot: input.migrationsRoot,
     productVersion: input.productVersion,
     previousManifest,
+    previousManifests: releaseManifests,
   });
   const publishedSameVersion = join(
     input.migrationsRoot,
@@ -417,7 +880,12 @@ export function syncDraftReleaseMigrationManifest(input: {
   if (existsSync(publishedSameVersion)) {
     const published = readReleaseMigrationManifest(publishedSameVersion);
     if (
-      serializeReleaseMigrationManifest(published) !== serializeReleaseMigrationManifest(manifest)
+      serializeReleaseMigrationManifest(published) !==
+        serializeReleaseMigrationManifest(manifest) &&
+      isVersionPublishedOnRemoteMain({
+        repositoryRoot,
+        productVersion: input.productVersion,
+      })
     ) {
       throw new Error(
         `product_version_already_published:${input.productVersion}:bump the root package version before adding migrations`
@@ -444,13 +912,89 @@ export function assertProductVersionNotBehindPublished(
 
 export function assertProductVersionOpenForNewMigrations(
   migrationsRoot: string,
-  productVersion: string
+  productVersion: string,
+  options: {
+    repositoryRoot?: string;
+    isVersionPublished?: (version: string) => boolean;
+  } = {}
 ): void {
-  if (existsSync(join(migrationsRoot, 'releases', `${productVersion}.json`))) {
+  const repositoryRoot = options.repositoryRoot ?? dirname(migrationsRoot);
+  const published =
+    options.isVersionPublished?.(productVersion) ??
+    isVersionPublishedOnRemoteMain({ repositoryRoot, productVersion });
+  if (published) {
     throw new Error(
       `product_version_already_published:${productVersion}:bump the root package version before adding migrations`
     );
   }
+}
+
+export function isVersionPublishedOnRemoteMain(input: {
+  repositoryRoot: string;
+  productVersion: string;
+  remote?: string;
+  mainBranch?: string;
+}): boolean {
+  return resolveVersionTagPublishedOnRemoteMain(input) !== null;
+}
+
+function resolveVersionTagPublishedOnRemoteMain(input: {
+  repositoryRoot: string;
+  productVersion: string;
+  remote?: string;
+  mainBranch?: string;
+}): string | null {
+  const remote = input.remote ?? 'origin';
+  const mainBranch = input.mainBranch ?? 'main';
+  const remoteMain = `refs/remotes/${remote}/${mainBranch}`;
+  try {
+    execFileSync('git', ['show-ref', '--verify', '--quiet', remoteMain], {
+      cwd: input.repositoryRoot,
+      stdio: 'ignore',
+    });
+  } catch {
+    return null;
+  }
+  for (const tag of [`v${input.productVersion}`, input.productVersion]) {
+    const tagRef = `refs/tags/${tag}`;
+    try {
+      execFileSync('git', ['show-ref', '--verify', '--quiet', tagRef], {
+        cwd: input.repositoryRoot,
+        stdio: 'ignore',
+      });
+      const localTagObject = execFileSync('git', ['rev-parse', tagRef], {
+        cwd: input.repositoryRoot,
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+      let remoteTags: string;
+      try {
+        remoteTags = execFileSync('git', ['ls-remote', '--tags', remote, tagRef], {
+          cwd: input.repositoryRoot,
+          encoding: 'utf-8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+      } catch {
+        throw new Error(`remote_tag_verification_failed:${remote}:${tag}`);
+      }
+      const remoteTagObject = remoteTags
+        .split(/\r?\n/u)
+        .map((line) => line.trim().split(/\s+/u))
+        .find((parts) => parts[1] === tagRef)?.[0];
+      if (remoteTagObject !== localTagObject) continue;
+      execFileSync('git', ['merge-base', '--is-ancestor', tagRef, remoteMain], {
+        cwd: input.repositoryRoot,
+        stdio: 'ignore',
+      });
+      return tag;
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('remote_tag_verification_failed:')) {
+        throw error;
+      }
+      // A local-only/mismatched tag, or a tag not reachable from remote main, is unpublished.
+    }
+  }
+  return null;
 }
 
 export function findLatestReleaseMigrationManifest(
@@ -483,10 +1027,36 @@ export function validateReleaseMigrationManifestFiles(
   migrationsRoot: string,
   manifest: ReleaseMigrationManifest
 ): void {
-  for (const stream of manifest.streams) {
+  const executableStreams = [
+    ...manifest.streams,
+    ...(manifest.upgradePaths ?? []).flatMap((path) => path.streams),
+  ];
+  const allStreams = [...executableStreams, ...(manifest.acceptedMigrationHistory ?? [])];
+  const historyByStreamAndPath = new Map<string, string>();
+  for (const stream of allStreams) {
+    for (const file of stream.files) {
+      const historyKey = `${stream.id}:${file.path}`;
+      const previousChecksum = historyByStreamAndPath.get(historyKey);
+      if (previousChecksum && previousChecksum !== file.checksum) {
+        throw new Error(
+          `Release migration history conflicts: ${manifest.productVersion}/${stream.id}/${file.path}`
+        );
+      }
+      historyByStreamAndPath.set(historyKey, file.checksum);
+    }
+  }
+
+  // acceptedMigrationHistory is provenance used to recognize SQL that was applied before an
+  // unpublished release was semantically consolidated. Those superseded source files are
+  // deliberately not published or executed, so only their path/checksum identity is validated.
+  const validated = new Set<string>();
+  for (const stream of executableStreams) {
     const directory = streamDirectory(migrationsRoot, stream.id);
     if (!directory) throw new Error(`Unknown release migration stream: ${stream.id}`);
     for (const file of stream.files) {
+      const validationKey = `${stream.id}:${file.path}:${file.checksum}`;
+      if (validated.has(validationKey)) continue;
+      validated.add(validationKey);
       const path = join(directory, file.path);
       if (!existsSync(path)) {
         throw new Error(
@@ -510,6 +1080,114 @@ export function validatePublishedReleaseMigrationManifests(migrationsRoot: strin
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(message.replace(/^Release migration/u, 'Published migration'));
+    }
+  }
+}
+
+export function validateRemoteMainPublishedReleaseMigrationManifests(input: {
+  migrationsRoot: string;
+  repositoryRoot?: string;
+}): void {
+  const repositoryRoot = input.repositoryRoot ?? dirname(input.migrationsRoot);
+  const remoteMain = 'refs/remotes/origin/main';
+  let mergedTags: string[];
+  try {
+    mergedTags = execFileSync('git', ['tag', '--merged', remoteMain, '--list'], {
+      cwd: repositoryRoot,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .split(/\r?\n/u)
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+  } catch {
+    return;
+  }
+
+  for (const candidateTag of mergedTags) {
+    const productVersion = candidateTag.startsWith('v') ? candidateTag.slice(1) : candidateTag;
+    if (!ProductVersionSchema.safeParse(productVersion).success) continue;
+    const tag = resolveVersionTagPublishedOnRemoteMain({ repositoryRoot, productVersion });
+    if (!tag || tag !== candidateTag) continue;
+    const manifestRelativePath = `migrations/releases/${productVersion}.json`;
+    try {
+      execFileSync('git', ['cat-file', '-e', `${tag}:${manifestRelativePath}`], {
+        cwd: repositoryRoot,
+        stdio: 'ignore',
+      });
+    } catch {
+      // Tags that predate the release-manifest workflow are outside this immutable artifact check.
+      continue;
+    }
+
+    const manifestPath = join(repositoryRoot, manifestRelativePath);
+    if (!existsSync(manifestPath)) {
+      throw new Error(`Published migration manifest is missing: ${productVersion}`);
+    }
+    const taggedManifestContents = execFileSync('git', ['show', `${tag}:${manifestRelativePath}`], {
+      cwd: repositoryRoot,
+    });
+    if (!readFileSync(manifestPath).equals(taggedManifestContents)) {
+      throw new Error(`Published migration manifest changed since tag: ${productVersion}`);
+    }
+
+    const manifest = readReleaseMigrationManifest(manifestPath);
+    try {
+      validateReleaseMigrationManifestFiles(input.migrationsRoot, manifest);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(message.replace(/^Release migration/u, 'Published migration'));
+    }
+
+    const executableStreams = [
+      ...manifest.streams,
+      ...(manifest.upgradePaths ?? []).flatMap((path) => path.streams),
+    ];
+    const compared = new Set<string>();
+    for (const stream of executableStreams) {
+      const directory = streamDirectory(input.migrationsRoot, stream.id);
+      if (!directory) throw new Error(`Unknown release migration stream: ${stream.id}`);
+      for (const file of stream.files) {
+        const filePath = join(directory, file.path);
+        const fileRelativePath = relative(repositoryRoot, filePath).replaceAll('\\', '/');
+        if (compared.has(fileRelativePath)) continue;
+        compared.add(fileRelativePath);
+        let taggedContents: Buffer;
+        try {
+          taggedContents = execFileSync('git', ['show', `${tag}:${fileRelativePath}`], {
+            cwd: repositoryRoot,
+          });
+        } catch {
+          throw new Error(
+            `Published migration was not present at its release tag: ${productVersion}/${fileRelativePath}`
+          );
+        }
+        if (!readFileSync(filePath).equals(taggedContents)) {
+          throw new Error(
+            `Published migration changed since tag: ${productVersion}/${fileRelativePath}`
+          );
+        }
+      }
+    }
+
+    const evidenceRelativePath = `migrations/evidence/${productVersion}.json`;
+    let taggedEvidenceExists = true;
+    try {
+      execFileSync('git', ['cat-file', '-e', `${tag}:${evidenceRelativePath}`], {
+        cwd: repositoryRoot,
+        stdio: 'ignore',
+      });
+    } catch {
+      taggedEvidenceExists = false;
+    }
+    if (taggedEvidenceExists) {
+      const taggedEvidence = execFileSync('git', ['show', `${tag}:${evidenceRelativePath}`], {
+        cwd: repositoryRoot,
+      });
+      const evidencePath = join(repositoryRoot, evidenceRelativePath);
+      if (!existsSync(evidencePath) || !readFileSync(evidencePath).equals(taggedEvidence)) {
+        throw new Error(`Published migration evidence changed since tag: ${productVersion}`);
+      }
     }
   }
 }
@@ -572,6 +1250,10 @@ export function loadTargetReleaseMigrationManifest(input: {
         draft.productVersion === input.productVersion &&
         serializeReleaseMigrationManifest(draft) !== serializeReleaseMigrationManifest(manifest)
       ) {
+        if (input.allowDraft) {
+          validateReleaseMigrationManifestFiles(input.migrationsRoot, draft);
+          return { path: draftPath, manifest: draft, draft: true };
+        }
         throw new Error(`draft_manifest_diverges_from_published_version:${input.productVersion}`);
       }
     }

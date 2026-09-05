@@ -18,7 +18,7 @@ describe('Lookup retention and OTP bucket migration', () => {
 
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
-    database.exec(migration('001_pre_1_0_lookup_baseline.sql'));
+    database.exec(migration('001_0_4_0_lookup_baseline.sql'));
   });
 
   afterEach(() => database.close());

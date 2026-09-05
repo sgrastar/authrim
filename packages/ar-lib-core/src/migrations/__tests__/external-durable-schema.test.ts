@@ -2,6 +2,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import {
+  BUILTIN_PROFILE_CLAIM_KEYS,
+  BUILTIN_PROFILE_CLAIM_SCHEMAS,
+} from '../../services/custom-claims/schema-catalog.js';
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 
@@ -76,7 +80,7 @@ const piiTables = [
 describe('external durable postgres schema', () => {
   it('keeps every shared durable core table explicitly tenant-scoped', () => {
     const coreSql = readMigration(
-      'migrations/external/postgres/001_pre_1_0_external_postgres_core_baseline.sql'
+      'migrations/external/postgres/001_0_4_0_external_postgres_core_baseline.sql'
     );
 
     for (const tableName of coreTables) {
@@ -87,7 +91,7 @@ describe('external durable postgres schema', () => {
 
   it('keeps every shared durable PII table explicitly tenant-scoped', () => {
     const piiSql = readMigration(
-      'migrations/external/postgres/002_pre_1_0_external_postgres_pii_baseline.sql'
+      'migrations/external/postgres/002_0_4_0_external_postgres_pii_baseline.sql'
     );
 
     for (const tableName of piiTables) {
@@ -98,8 +102,8 @@ describe('external durable postgres schema', () => {
 
   it('does not use D1-only SQLite syntax in postgres migrations', () => {
     const combinedSql = [
-      readMigration('migrations/external/postgres/001_pre_1_0_external_postgres_core_baseline.sql'),
-      readMigration('migrations/external/postgres/002_pre_1_0_external_postgres_pii_baseline.sql'),
+      readMigration('migrations/external/postgres/001_0_4_0_external_postgres_core_baseline.sql'),
+      readMigration('migrations/external/postgres/002_0_4_0_external_postgres_pii_baseline.sql'),
     ].join('\n');
 
     expect(combinedSql).not.toMatch(/\bAUTOINCREMENT\b/i);
@@ -110,7 +114,7 @@ describe('external durable postgres schema', () => {
 
   it('keeps passkeys bound to canonical runtime user ids instead of users_core rows', () => {
     const coreSql = readMigration(
-      'migrations/external/postgres/001_pre_1_0_external_postgres_core_baseline.sql'
+      'migrations/external/postgres/001_0_4_0_external_postgres_core_baseline.sql'
     );
     const passkeysBlock = extractCreateTableBlock(coreSql, 'passkeys');
 
@@ -119,5 +123,30 @@ describe('external durable postgres schema', () => {
       /ADD CONSTRAINT passkeys_unique_credential UNIQUE \(tenant_id, credential_id\)/i
     );
     expect(passkeysBlock).not.toMatch(/\bREFERENCES\s+users_core\b/i);
+  });
+
+  it('uses the canonical optional profile catalog without tenant-specific baseline rows', () => {
+    const profileSql = readMigration(
+      'migrations/external/postgres/001_0_4_0_external_postgres_core_baseline.sql'
+    );
+    const expectedKeys = [
+      'email',
+      'email_verified',
+      'display_name',
+      'given_name',
+      'family_name',
+      'preferred_username',
+      'picture_url',
+      'locale',
+    ];
+
+    expect([...BUILTIN_PROFILE_CLAIM_KEYS]).toEqual(expectedKeys);
+    expect(BUILTIN_PROFILE_CLAIM_SCHEMAS).toHaveLength(expectedKeys.length);
+    for (const schema of BUILTIN_PROFILE_CLAIM_SCHEMAS) {
+      expect(schema.is_required ?? 0).toBe(0);
+    }
+    expect(profileSql).toContain('CREATE TABLE public.custom_claim_schemas');
+    expect(profileSql).not.toContain('builtin:default:');
+    expect(BUILTIN_PROFILE_CLAIM_KEYS).not.toContain('name');
   });
 });

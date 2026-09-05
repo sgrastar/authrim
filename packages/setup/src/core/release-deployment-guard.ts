@@ -41,6 +41,7 @@ export function evaluateReleaseDeploymentGuard(
       targets: readonly ReleaseMigrationPhysicalTarget[];
     };
     explicitLegacyInitialRecoveryVerified?: boolean;
+    explicitInitialWorkerRedeployRequested?: boolean;
   } = {}
 ): ReleaseDeploymentGuardResult {
   const appendOnlyInitialDraftResume =
@@ -60,6 +61,7 @@ export function evaluateReleaseDeploymentGuard(
     releaseManifestChecksum: options.releaseManifestChecksum,
     appendOnlyInitialDraftResumeVerified: appendOnlyInitialDraftResume,
     explicitLegacyInitialRecoveryVerified: options.explicitLegacyInitialRecoveryVerified,
+    explicitInitialWorkerRedeployRequested: options.explicitInitialWorkerRedeployRequested,
   });
   if (decision.allowed) {
     return {

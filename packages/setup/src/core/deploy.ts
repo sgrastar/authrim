@@ -1070,6 +1070,10 @@ export function isLocalDiskExhaustionError(error: unknown): boolean {
   );
 }
 
+function isPartialWorkerTriggerDeploymentFailure(error: unknown): boolean {
+  return /some triggers failed to deploy for\s+[^:\n]+:/i.test(getErrorText(error));
+}
+
 function classifyRetry(error: unknown): RetryKind {
   if (
     error instanceof NonRetryableDeploymentError ||
@@ -1085,6 +1089,12 @@ function classifyRetry(error: unknown): RetryKind {
   // accepted moments later. Direct deploys still reconcile remote traffic before replaying, so
   // classifying this exact authentication response as transient does not permit a blind retry.
   if (/authentication error\s*\[code:\s*10000\]/i.test(message)) {
+    return 'transient';
+  }
+  // Wrangler emits this only after the Worker upload/deployment step completed and one or more
+  // trigger mutations failed. Trigger reconciliation is idempotent, so a trigger-only retry does
+  // not replay the Worker upload or a Durable Object migration.
+  if (isPartialWorkerTriggerDeploymentFailure(error)) {
     return 'transient';
   }
   if (/worker_version_(?:d1_)?binding_readback_(?:empty|invalid|invalid_json)/u.test(message)) {
@@ -1543,6 +1553,39 @@ async function deployWorkerDirect(
               `  ✓ Adopted committed ${context.workerName} deployment ${structuredVersionId} after response loss`
             );
             return { stdout: '', adoptedVersionId: structuredVersionId };
+          }
+
+          if (isPartialWorkerTriggerDeploymentFailure(error)) {
+            deploymentMayBeLive = true;
+            try {
+              const snapshot = await readWorkerTrafficSnapshot(context, options, throttle);
+              const activeVersionId = sourceVersionFromSnapshot(context.workerName, snapshot);
+              // Wrangler uploads and activates the Worker before it applies routes, custom
+              // domains, or cron triggers. A trigger-only failure therefore turns a fresh
+              // target from "absent" into a live script. Journal the exact committed Version
+              // and immutable script tag before retrying triggers; otherwise the ownership
+              // guard correctly sees a live name where absence was expected and mistakes our
+              // own partial deployment for a same-name race.
+              await options.workerScriptOwnership?.checkpointCommittedVersion(
+                context.workerName,
+                activeVersionId
+              );
+              await options.workerScriptOwnership?.captureAfterMutation(context.workerName);
+              options.onProgress?.(
+                `  ⏳ ${context.workerName} code is active; retrying only its failed triggers...`
+              );
+              await applyWorkerTriggers(context, options, throttle);
+              options.onProgress?.(
+                `  ✓ ${context.workerName} triggers reconciled without replaying the Worker upload`
+              );
+              return { stdout: '', adoptedVersionId: activeVersionId };
+            } catch (recoveryError) {
+              throw new NonRetryableDeploymentError(
+                `Partial trigger deployment recovery failed for ${context.workerName}: ${sanitizeDeploymentErrorMessage(
+                  getErrorText(recoveryError)
+                )}`
+              );
+            }
           }
 
           // An explicit authentication rejection is evidence that Cloudflare did not begin the

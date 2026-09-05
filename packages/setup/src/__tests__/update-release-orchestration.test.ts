@@ -616,6 +616,47 @@ describe('release update orchestration', () => {
     ).toThrow('release_rollout_active_target_mismatch');
   });
 
+  it('recovers a source-specific Control artifact without confusing it with the release checksum', () => {
+    const canonicalChecksum = 'b'.repeat(64);
+    const artifactDigest = 'e'.repeat(64);
+    const source = AuthrimLockSchema.parse({
+      ...lock(),
+      releaseUpdate: {
+        targetVersion: '1.1.0',
+        previousProductVersion: '1.0.0',
+        phase: 'control_handoff',
+        manifestChecksum: canonicalChecksum,
+        controlManifestDigest: artifactDigest,
+        startedAt: '2026-07-21T00:00:00.000Z',
+        updatedAt: '2026-07-21T00:01:00.000Z',
+        appliedTargets: [],
+        manualTargets: [],
+      },
+    });
+    const recovered = withRecoveredReleaseUpdateState(source, {
+      targetVersion: '1.1.0',
+      manifestChecksum: canonicalChecksum,
+      activeRollout: {
+        operationId: `op_release_rollout_${'5'.repeat(32)}`,
+        sourceVersion: '1.0.0',
+        targetVersion: '1.1.0',
+        releaseId: '1.1.0',
+        manifestDigest: artifactDigest,
+        phase: 'awaiting_setup',
+        completedTargets: 2,
+        totalTargets: 2,
+        lastErrorCode: null,
+        updatedAt: 100,
+      },
+    });
+
+    expect(recovered.releaseUpdate).toMatchObject({
+      manifestChecksum: canonicalChecksum,
+      controlManifestDigest: artifactDigest,
+      phase: 'awaiting_setup',
+    });
+  });
+
   it('never lets the external-ready acknowledgement bypass a missing migration stream', () => {
     const state = resolveSchemaExecutionState({
       plan: plan(),

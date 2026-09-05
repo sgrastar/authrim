@@ -14,7 +14,7 @@ function migration(path: string): string {
 
 function controlDatabase(): DatabaseSync {
   const db = new DatabaseSync(':memory:');
-  db.exec(migration('migrations/control/001_pre_1_0_control_baseline.sql'));
+  db.exec(migration('migrations/control/001_0_4_0_control_baseline.sql'));
   db.exec(
     `INSERT INTO control_environments (
        environment_id, environment_name, issuer, created_at, updated_at
@@ -98,12 +98,13 @@ describe('Control D1 schema', () => {
        INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          deterministic_name, ownership_fingerprint, provisioning_state,
-         origin_operation_id, created_at, updated_at
+         origin_operation_id, provider_create_state, provider_resource_id,
+         provider_identity_checkpointed_at, created_at, updated_at
        ) VALUES
          ('resource-lookup-base', 'env-1', 'd1', 'lookup-base', 'lookup-base',
-          'lookup-base-fingerprint', 'ready', 'op-1', 1, 1),
+          'lookup-base-fingerprint', 'ready', 'op-1', 'identified', 'database-base', 1, 1, 1),
          ('resource-lookup-extra', 'env-1', 'd1', 'lookup-extra', 'lookup-extra',
-          'lookup-extra-fingerprint', 'ready', 'op-1', 1, 1);
+          'lookup-extra-fingerprint', 'ready', 'op-1', 'identified', 'database-extra', 1, 1, 1);
        INSERT INTO control_lookup_physical_shards (
          lookup_shard_id, environment_id, residency_partition, binding_ref,
          d1_desired_resource_id, status, created_at, updated_at
@@ -306,8 +307,12 @@ describe('Control D1 schema', () => {
         WHERE environment_id = 'env-1';
        UPDATE control_environments
           SET provisioning_token_ownership = 'account',
+              provisioning_token_management = 'setup',
               provisioning_capability_state = 'ready',
-              provisioning_capability_checked_at = 2
+              provisioning_capability_checked_at = 2,
+              provisioning_child_tokens_json = '[{"resourceClass":"d1","tokenId":"11111111111111111111111111111111","tokenName":"authrim-test-control-d1","secretName":"CLOUDFLARE_D1_API_TOKEN","tokenFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"resourceClass":"workers","tokenId":"22222222222222222222222222222222","tokenName":"authrim-test-control-workers","secretName":"CLOUDFLARE_WORKERS_API_TOKEN","tokenFingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]',
+              provisioning_secret_generation_deployment_id = 'deployment:test',
+              provisioning_secret_generation_version_id = 'version:test'
         WHERE environment_id = 'env-1';`
     );
     expect(
@@ -697,7 +702,7 @@ describe('Control D1 schema', () => {
 describe('Lookup D1 schema', () => {
   it('enforces the three-state activation gate and tenant-scoped uniqueness authority', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/lookup/001_pre_1_0_lookup_baseline.sql'));
+    db.exec(migration('migrations/lookup/001_0_4_0_lookup_baseline.sql'));
     const identifierSql = `INSERT INTO lookup_identifiers (
       virtual_bucket, index_kind, normalization_version, hmac_key_generation,
       identifier_blind_digest, tenant_id, account_id, route_schema_version,
@@ -728,7 +733,7 @@ describe('Lookup D1 schema', () => {
 
   it('allows only one live tenant alias owner per exact alias digest', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/lookup/001_pre_1_0_lookup_baseline.sql'));
+    db.exec(migration('migrations/lookup/001_0_4_0_lookup_baseline.sql'));
     const insert = (tenantId: string, lifecycleState: 'pending' | 'active' | 'disabled') =>
       db
         .prepare(
@@ -751,7 +756,7 @@ describe('Lookup D1 schema', () => {
 
   it('stores discovery challenges without raw email or domain indexes', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/lookup/001_pre_1_0_lookup_baseline.sql'));
+    db.exec(migration('migrations/lookup/001_0_4_0_lookup_baseline.sql'));
     const schema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table'").all() as Array<{
       sql: string;
     }>;
@@ -774,7 +779,7 @@ describe('Lookup D1 schema', () => {
     const oldDigest = 'f'.repeat(64);
     const newDigest = '0'.repeat(64);
     const pii = new DatabaseSync(':memory:');
-    pii.exec(migration('migrations/pii/001_pre_1_0_pii_baseline.sql'));
+    pii.exec(migration('migrations/pii/001_0_4_0_pii_baseline.sql'));
     const insertChallenge = (reauthenticatedAt: number) =>
       pii
         .prepare(
@@ -845,7 +850,7 @@ describe('Lookup D1 schema', () => {
     pii.close();
 
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/lookup/001_pre_1_0_lookup_baseline.sql'));
+    db.exec(migration('migrations/lookup/001_0_4_0_lookup_baseline.sql'));
     db.exec(
       `INSERT INTO lookup_identifier_replacements (
          replacement_id, tenant_id, account_id, index_kind, normalization_version,
@@ -957,7 +962,7 @@ describe('Lookup D1 schema', () => {
 describe('tenant and plugin outbox schemas', () => {
   it('keeps account routing and plugin delivery separate and fixes retention periods', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/001_pre_1_0_core_baseline.sql'));
+    db.exec(migration('migrations/001_0_4_0_core_baseline.sql'));
     db.exec(
       `INSERT INTO plugin_hook_outbox (
          outbox_id, tenant_id, plugin_installation_id, capability, event_type,
@@ -1007,7 +1012,7 @@ describe('tenant and plugin outbox schemas', () => {
 
   it('enforces plugin outbox claim fencing and state transitions', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/001_pre_1_0_core_baseline.sql'));
+    db.exec(migration('migrations/001_0_4_0_core_baseline.sql'));
     db.exec(
       `INSERT INTO plugin_hook_outbox (
          outbox_id, tenant_id, plugin_installation_id, capability, event_type,
@@ -1075,7 +1080,7 @@ describe('tenant and plugin outbox schemas', () => {
 
   it('rejects overly broad plugin egress suffix wildcards', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/plugin-runner/001_pre_1_0_plugin_runner_baseline.sql'));
+    db.exec(migration('migrations/plugin-runner/001_0_4_0_plugin_runner_baseline.sql'));
     expect(() =>
       db.exec(
         `INSERT INTO plugin_runner_egress_allowed_hosts (
@@ -1093,7 +1098,7 @@ describe('tenant and plugin outbox schemas', () => {
 
   it('allows only one pending or running plugin sweep', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/plugin-runner/001_pre_1_0_plugin_runner_baseline.sql'));
+    db.exec(migration('migrations/plugin-runner/001_0_4_0_plugin_runner_baseline.sql'));
     db.exec(
       `INSERT INTO plugin_runner_full_sweep_state (
          sweep_id, state, active_sweep_key, created_at, updated_at

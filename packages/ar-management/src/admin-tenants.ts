@@ -44,6 +44,7 @@ import {
   type ControlTenantDefaultRouteAllocation,
   type ControlTenantShardCapacityTarget,
   type ControlTenantRuntimeRouteObservation,
+  seedBuiltinProfileClaimSchemas,
 } from '@authrim/ar-lib-core';
 import { createOpaqueTenantKey } from './logging-tenant-key';
 import { materializeDisabledTenantEmailProviderOrder } from './notification-provider-projection';
@@ -913,6 +914,11 @@ function tenantProvisioningDependencies(
         isolationPolicy: operation.isolationPolicy,
         lifecycleState: 'provisioning',
         nowTs: now,
+      });
+      await seedBuiltinProfileClaimSchemas({
+        db: tenantAdapter,
+        tenantId: operation.tenantId,
+        now,
       });
       await env.AUTHRIM_CONFIG?.put(
         buildContractKey(env, 'tenant', operation.tenantId),

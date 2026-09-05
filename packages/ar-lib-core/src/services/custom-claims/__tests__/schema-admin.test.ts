@@ -22,6 +22,7 @@ const mockAdapter = {
 describe('schema-admin', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockAdapter.getType.mockReturnValue('mock');
     mockAdapter.query.mockResolvedValue([]);
     mockAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
   });
@@ -99,6 +100,49 @@ describe('schema-admin', () => {
       'tenant-1',
       'department',
       'Department',
+      'department',
+    ]);
+  });
+
+  it('uses native PostgreSQL booleans and normalizes returned flags', async () => {
+    mockAdapter.getType.mockReturnValue('postgres');
+    mockAdapter.query
+      .mockResolvedValueOnce([{ count: 1 }])
+      .mockResolvedValueOnce([
+        { id: 'schema-1', is_pii: true, is_required: false, is_active: true, is_system: true },
+      ]);
+
+    const listed = await listCustomClaimSchemas(mockAdapter as any, {
+      tenantId: 'tenant-1',
+      isPii: 1,
+      isActive: 1,
+      isSystem: 1,
+      limit: 20,
+      offset: 0,
+    });
+
+    expect(mockAdapter.query.mock.calls[0][1]).toEqual(['tenant-1', true, true, true]);
+    expect(listed.schemas).toEqual([
+      { id: 'schema-1', is_pii: 1, is_required: 0, is_active: 1, is_system: 1 },
+    ]);
+
+    await insertCustomClaimSchema(mockAdapter as any, {
+      id: 'schema-2',
+      tenant_id: 'tenant-1',
+      field_key: 'department',
+      display_label: 'Department',
+      is_pii: 1,
+      is_required: 0,
+      is_active: 1,
+    });
+    expect(mockAdapter.execute.mock.calls.at(-1)?.[1]).toEqual([
+      'schema-2',
+      'tenant-1',
+      'department',
+      'Department',
+      true,
+      false,
+      true,
       'department',
     ]);
   });

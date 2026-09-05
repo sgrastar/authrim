@@ -176,6 +176,26 @@ describe('environment operation policy', () => {
     ).toBe('release_update_in_progress');
   });
 
+  it('keeps an interrupted first deployment on the initial-deploy state machine', () => {
+    const value = lock({
+      release: {
+        ...updatingRelease,
+        previousProductVersion: undefined,
+      },
+    });
+    expect(
+      evaluateEnvironmentOperation({
+        operation: 'release_update',
+        lock: value,
+        targetVersion: '1.1.0',
+      })
+    ).toMatchObject({
+      allowed: false,
+      lifecycle: 'updating',
+      reason: 'initial_deploy_required',
+    });
+  });
+
   it('allows an exact initial deployment to resume without weakening release updates', () => {
     const value = lock({
       release: {
@@ -213,6 +233,21 @@ describe('environment operation policy', () => {
         releaseManifestChecksum: checksum,
       }).reason
     ).toBe('initial_manifest_changed');
+    expect(
+      evaluateEnvironmentOperation({
+        operation: 'initial_deploy',
+        lock: lock({
+          release: {
+            ...updatingRelease,
+            previousProductVersion: undefined,
+            initialWorkerRedeployRequired: true,
+          },
+        }),
+        targetVersion: '1.1.0',
+        releaseManifestChecksum: checksum,
+        explicitInitialWorkerRedeployRequested: true,
+      }).allowed
+    ).toBe(true);
   });
 
   it('allows legacy initial recovery only after the caller verifies explicit ownership evidence', () => {

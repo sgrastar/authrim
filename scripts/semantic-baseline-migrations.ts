@@ -2,18 +2,28 @@
 
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import {
   RELEASE_MIGRATION_STREAM_DEFINITIONS,
   calculateReleaseMigrationChecksum,
   compareProductVersions,
   generateReleaseMigrationManifest,
+  isVersionPublishedOnRemoteMain,
   listReleaseMigrationManifests,
   serializeReleaseMigrationManifest,
   streamDirectory,
   syncDraftReleaseMigrationManifest,
+  validateRemoteMainPublishedReleaseMigrationManifests,
   type ReleaseMigrationFile,
   type ReleaseMigrationManifest,
   type ReleaseMigrationStream,
@@ -25,7 +35,6 @@ import {
   type MigrationSqlDialect,
 } from '../packages/setup/src/core/sql-portability.js';
 
-const STABLE_RELEASE_VERSION = '1.0.0';
 const POSTGRES_IMAGE = 'postgres:17-alpine';
 const MAX_SUBPROCESS_BUFFER = 128 * 1024 * 1024;
 const DETERMINISTIC_EPOCH_SECONDS = '1700000000';
@@ -48,6 +57,14 @@ interface GeneratedBaseline {
   objectCount: number;
 }
 
+export interface SemanticMigrationCompositionEvidence {
+  dialect: MigrationSqlDialect;
+  streamId: string;
+  schemaChecksum: string;
+  seedChecksum: string;
+  objectCount: number;
+}
+
 interface SemanticBaselineEvidence {
   formatVersion: 1;
   productVersion: string;
@@ -64,16 +81,26 @@ interface SemanticBaselineEvidence {
   }>;
 }
 
-const BASELINE_PATHS: Readonly<Record<string, string>> = {
-  'd1-core': '001_pre_1_0_core_baseline.sql',
-  'd1-pii': '001_pre_1_0_pii_baseline.sql',
-  'd1-admin': '001_pre_1_0_admin_baseline.sql',
-  'd1-control': '001_pre_1_0_control_baseline.sql',
-  'd1-lookup': '001_pre_1_0_lookup_baseline.sql',
-  'd1-plugin-runner': '001_pre_1_0_plugin_runner_baseline.sql',
-  'external-postgres-core': '001_pre_1_0_external_postgres_core_baseline.sql',
-  'external-postgres-pii': '002_pre_1_0_external_postgres_pii_baseline.sql',
+const BASELINE_FILENAME_PARTS: Readonly<Record<string, readonly [string, string]>> = {
+  'd1-core': ['001', 'core_baseline.sql'],
+  'd1-pii': ['001', 'pii_baseline.sql'],
+  'd1-admin': ['001', 'admin_baseline.sql'],
+  'd1-control': ['001', 'control_baseline.sql'],
+  'd1-lookup': ['001', 'lookup_baseline.sql'],
+  'd1-plugin-runner': ['001', 'plugin_runner_baseline.sql'],
+  'external-postgres-core': ['001', 'external_postgres_core_baseline.sql'],
+  'external-postgres-pii': ['002', 'external_postgres_pii_baseline.sql'],
 };
+
+export function semanticBaselinePath(productVersion: string, streamId: string): string {
+  const parts = BASELINE_FILENAME_PARTS[streamId];
+  if (!parts) throw new Error(`Unknown migration stream: ${streamId}`);
+  const versionToken = productVersion
+    .replaceAll(/[^0-9A-Za-z]+/gu, '_')
+    .replaceAll(/^_+|_+$/gu, '');
+  if (!versionToken) throw new Error(`Invalid semantic baseline version: ${productVersion}`);
+  return `${parts[0]}_${versionToken}_${parts[1]}`;
+}
 
 function parseArguments(argv: string[]): Arguments {
   const versionIndex = argv.indexOf('--version');
@@ -99,26 +126,17 @@ function rootProductVersion(rootDir: string): string {
 
 export function assertSemanticBaselineAllowed(input: {
   version: string;
-  manifests: Array<{ manifest: ReleaseMigrationManifest }>;
   write: boolean;
+  published?: boolean;
 }): void {
-  if (compareProductVersions(input.version, STABLE_RELEASE_VERSION) > 0) {
+  const stableBoundary = /^\d+\.\d+\.0$/u.test(input.version);
+  const [, , patch] = input.version.split(/[+-]/u, 1)[0]!.split('.').map(Number);
+  if (patch !== 0 || !stableBoundary) {
     throw new Error(
-      `Semantic baseline rewriting is forbidden after ${STABLE_RELEASE_VERSION}: ${input.version}`
+      `Fresh-install baselines may be generated only at a major or minor boundary: ${input.version}`
     );
   }
-  const stableManifest = input.manifests.find(
-    ({ manifest }) => compareProductVersions(manifest.productVersion, STABLE_RELEASE_VERSION) >= 0
-  );
-  if (stableManifest) {
-    throw new Error(
-      `The stable migration history is immutable after publishing ${stableManifest.manifest.productVersion}`
-    );
-  }
-  const publishedCurrentVersion = input.manifests.find(
-    ({ manifest }) => compareProductVersions(manifest.productVersion, input.version) === 0
-  );
-  if (input.write && publishedCurrentVersion) {
+  if (input.write && input.published) {
     throw new Error(
       `Product version ${input.version} is already published; bump root package.json before rewriting the semantic baseline`
     );
@@ -127,10 +145,10 @@ export function assertSemanticBaselineAllowed(input: {
 
 function baselineHeader(productVersion: string, streamId: string): string {
   return [
-    `-- Authrim ${productVersion} pre-1.0 semantic fresh-install baseline.`,
+    `-- Authrim ${productVersion} semantic fresh-install baseline.`,
     `-- Logical stream: ${streamId}.`,
     '-- Generated from the final database state; do not append historical migration SQL here.',
-    '-- Pre-1.0 databases are not upgrade-compatible and must be recreated.',
+    '-- Fresh-install baselines must never be applied to upgrade an existing database.',
     '',
   ].join('\n');
 }
@@ -310,7 +328,7 @@ function generateSqliteBaseline(input: {
   const evidence = sqliteSchemaAndSeedEvidence(verifyDb);
   return {
     stream: input.stream,
-    path: BASELINE_PATHS[input.stream.id],
+    path: semanticBaselinePath(input.productVersion, input.stream.id),
     sql,
     sourceFiles: input.stream.files,
     ...evidence,
@@ -497,6 +515,88 @@ class PostgresBaselineContainer {
   }
 }
 
+export function verifySemanticMigrationComposition(input: {
+  streamId: string;
+  dialect: MigrationSqlDialect;
+  baseSql: readonly string[];
+  sourceSql: readonly string[];
+  consolidatedSql: string;
+}): SemanticMigrationCompositionEvidence {
+  if (input.sourceSql.length === 0) {
+    throw new Error(`Semantic migration composition source is empty: ${input.streamId}`);
+  }
+  const tempDir = mkdtempSync(join(tmpdir(), 'authrim-semantic-delta-'));
+  let postgres: PostgresBaselineContainer | undefined;
+  try {
+    if (input.dialect === 'sqlite') {
+      const sourceDb = join(tempDir, 'source.sqlite');
+      const consolidatedDb = join(tempDir, 'consolidated.sqlite');
+      for (const sql of input.baseSql) {
+        const rendered = renderDeterministicMigrationSql(sql, input.dialect);
+        run({ executable: 'sqlite3', args: ['-bail', sourceDb], stdin: rendered });
+        run({ executable: 'sqlite3', args: ['-bail', consolidatedDb], stdin: rendered });
+      }
+      for (const sql of input.sourceSql) {
+        run({
+          executable: 'sqlite3',
+          args: ['-bail', sourceDb],
+          stdin: renderDeterministicMigrationSql(sql, input.dialect),
+        });
+      }
+      run({
+        executable: 'sqlite3',
+        args: ['-bail', consolidatedDb],
+        stdin: renderDeterministicMigrationSql(input.consolidatedSql, input.dialect),
+      });
+      if (sqliteDump(sourceDb) !== sqliteDump(consolidatedDb)) {
+        throw new Error(`SQLite semantic release delta verification failed for ${input.streamId}`);
+      }
+      return {
+        dialect: input.dialect,
+        streamId: input.streamId,
+        ...sqliteSchemaAndSeedEvidence(sourceDb),
+      };
+    }
+
+    if (input.dialect === 'postgres') {
+      postgres = new PostgresBaselineContainer();
+      postgres.start();
+      postgres.createDatabase('authrim_delta_source');
+      postgres.createDatabase('authrim_delta_consolidated');
+      for (const sql of input.baseSql) {
+        const rendered = renderDeterministicMigrationSql(sql, input.dialect);
+        postgres.execute('authrim_delta_source', rendered);
+        postgres.execute('authrim_delta_consolidated', rendered);
+      }
+      for (const sql of input.sourceSql) {
+        postgres.execute(
+          'authrim_delta_source',
+          renderDeterministicMigrationSql(sql, input.dialect)
+        );
+      }
+      postgres.execute(
+        'authrim_delta_consolidated',
+        renderDeterministicMigrationSql(input.consolidatedSql, input.dialect)
+      );
+      if (postgres.dump('authrim_delta_source') !== postgres.dump('authrim_delta_consolidated')) {
+        throw new Error(
+          `PostgreSQL semantic release delta verification failed for ${input.streamId}`
+        );
+      }
+      return {
+        dialect: input.dialect,
+        streamId: input.streamId,
+        ...postgres.evidence('authrim_delta_source'),
+      };
+    }
+
+    throw new Error(`Semantic release delta verification is unavailable for ${input.dialect}`);
+  } finally {
+    postgres?.stop();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 function generatePostgresBaseline(input: {
   productVersion: string;
   streamRoot: string;
@@ -524,7 +624,7 @@ function generatePostgresBaseline(input: {
   const evidence = input.container.evidence(verifyDatabase);
   return {
     stream: input.stream,
-    path: BASELINE_PATHS[input.stream.id],
+    path: semanticBaselinePath(input.productVersion, input.stream.id),
     sql,
     sourceFiles: input.stream.files,
     ...evidence,
@@ -532,6 +632,7 @@ function generatePostgresBaseline(input: {
 }
 
 function writeFileAtomically(path: string, contents: string): void {
+  mkdirSync(dirname(path), { recursive: true });
   const temporaryPath = `${path}.semantic-${process.pid}`;
   writeFileSync(temporaryPath, contents, 'utf8');
   renameSync(temporaryPath, path);
@@ -550,7 +651,7 @@ function baselineChecksum(baseline: GeneratedBaseline): string {
 
 function existingGeneratedFrom(
   migrationsRoot: string
-): ReadonlyMap<string, ReleaseMigrationFile[]> {
+): ReadonlyMap<string, { path: string; generatedFrom: ReleaseMigrationFile[] }> {
   const evidencePath = join(migrationsRoot, 'semantic-baseline.evidence.json');
   if (!existsSync(evidencePath)) return new Map();
   const parsed = JSON.parse(
@@ -562,20 +663,23 @@ function existingGeneratedFrom(
       .filter(
         (stream) =>
           typeof stream.id === 'string' &&
+          typeof stream.path === 'string' &&
           Array.isArray(stream.generatedFrom) &&
           stream.generatedFrom.length > 0
       )
-      .map((stream) => [stream.id, stream.generatedFrom])
+      .map((stream) => [stream.id, { path: stream.path, generatedFrom: stream.generatedFrom }])
   );
 }
 
 export function mergeSemanticBaselineProvenance(input: {
   baselinePath: string;
+  priorBaselinePath?: string;
   sourceFiles: readonly ReleaseMigrationFile[];
   priorGeneratedFrom?: readonly ReleaseMigrationFile[];
 }): ReleaseMigrationFile[] {
   const expanded = input.sourceFiles.flatMap((source) =>
-    source.path === input.baselinePath && input.priorGeneratedFrom?.length
+    (source.path === input.baselinePath || source.path === input.priorBaselinePath) &&
+    input.priorGeneratedFrom?.length
       ? input.priorGeneratedFrom
       : [source]
   );
@@ -599,39 +703,9 @@ function applySemanticRewrite(input: {
   migrationsRoot: string;
   productVersion: string;
   generated: GeneratedBaseline[];
-  manifests: Array<{ path: string; manifest: ReleaseMigrationManifest }>;
+  releaseHistory: readonly ReleaseMigrationManifest[];
+  hasPriorRelease: boolean;
 }): void {
-  const stableOrNewer = input.manifests.filter(
-    ({ manifest }) => compareProductVersions(manifest.productVersion, STABLE_RELEASE_VERSION) >= 0
-  );
-  if (stableOrNewer.length > 0) {
-    throw new Error('Refusing to rewrite a stable release migration manifest');
-  }
-
-  for (const baseline of input.generated) {
-    const streamRoot = streamDirectory(input.migrationsRoot, baseline.stream.id);
-    if (!streamRoot) throw new Error(`Unknown migration stream: ${baseline.stream.id}`);
-    const targetPath = join(streamRoot, baseline.path);
-    for (const source of baseline.sourceFiles) {
-      const sourcePath = join(streamRoot, source.path);
-      if (sourcePath === targetPath || !existsSync(sourcePath)) continue;
-      const checksum = calculateReleaseMigrationChecksum(sourcePath, baseline.stream.dialect);
-      if (checksum !== source.checksum) {
-        throw new Error(
-          `Refusing to remove changed migration source: ${baseline.stream.id}/${source.path}`
-        );
-      }
-      rmSync(sourcePath);
-    }
-    writeFileAtomically(targetPath, baseline.sql);
-  }
-
-  for (const release of input.manifests) rmSync(release.path);
-
-  const draft = syncDraftReleaseMigrationManifest({
-    migrationsRoot: input.migrationsRoot,
-    productVersion: input.productVersion,
-  }).manifest;
   const priorProvenance = existingGeneratedFrom(input.migrationsRoot);
   const evidence: SemanticBaselineEvidence = {
     formatVersion: 1,
@@ -647,15 +721,71 @@ function applySemanticRewrite(input: {
       objectCount: baseline.objectCount,
       generatedFrom: mergeSemanticBaselineProvenance({
         baselinePath: baseline.path,
+        priorBaselinePath: priorProvenance.get(baseline.stream.id)?.path,
         sourceFiles: baseline.sourceFiles,
-        priorGeneratedFrom: priorProvenance.get(baseline.stream.id),
+        priorGeneratedFrom: priorProvenance.get(baseline.stream.id)?.generatedFrom,
       }),
     })),
   };
+  for (const baseline of input.generated) {
+    const streamRoot = streamDirectory(input.migrationsRoot, baseline.stream.id);
+    if (!streamRoot) throw new Error(`Unknown migration stream: ${baseline.stream.id}`);
+    const targetPath = join(streamRoot, baseline.path);
+    if (existsSync(targetPath)) {
+      const existing = readFileSync(targetPath, 'utf8');
+      if (existing !== baseline.sql) writeFileAtomically(targetPath, baseline.sql);
+    } else {
+      writeFileAtomically(targetPath, baseline.sql);
+    }
+  }
+  const serializedEvidence = `${JSON.stringify(evidence, null, 2)}\n`;
   writeFileAtomically(
     join(input.migrationsRoot, 'semantic-baseline.evidence.json'),
-    `${JSON.stringify(evidence, null, 2)}\n`
+    serializedEvidence
   );
+  writeFileAtomically(
+    join(input.migrationsRoot, 'evidence', `${input.productVersion}.json`),
+    serializedEvidence
+  );
+
+  if (!input.hasPriorRelease) {
+    const protectedPaths = new Set<string>();
+    for (const manifest of input.releaseHistory) {
+      for (const stream of [
+        ...manifest.streams,
+        ...(manifest.upgradePaths ?? []).flatMap((path) => path.streams),
+      ]) {
+        for (const file of stream.files) protectedPaths.add(`${stream.id}:${file.path}`);
+      }
+    }
+    for (const baseline of input.generated) {
+      const streamRoot = streamDirectory(input.migrationsRoot, baseline.stream.id);
+      if (!streamRoot) throw new Error(`Unknown migration stream: ${baseline.stream.id}`);
+      for (const source of baseline.sourceFiles) {
+        if (
+          source.path === baseline.path ||
+          protectedPaths.has(`${baseline.stream.id}:${source.path}`)
+        ) {
+          continue;
+        }
+        const sourcePath = join(streamRoot, source.path);
+        if (!existsSync(sourcePath)) continue;
+        if (
+          calculateReleaseMigrationChecksum(sourcePath, baseline.stream.dialect) !== source.checksum
+        ) {
+          throw new Error(
+            `Refusing to remove changed semantic baseline source: ${baseline.stream.id}/${source.path}`
+          );
+        }
+        rmSync(sourcePath);
+      }
+    }
+  }
+
+  const draft = syncDraftReleaseMigrationManifest({
+    migrationsRoot: input.migrationsRoot,
+    productVersion: input.productVersion,
+  }).manifest;
   console.log(
     `Updated ${join(input.migrationsRoot, 'release-manifest.draft.json')} (${sha256(serializeReleaseMigrationManifest(draft))})`
   );
@@ -667,15 +797,24 @@ export function runSemanticBaselineMigrations(input: {
   write: boolean;
 }): void {
   const migrationsRoot = join(input.rootDir, 'migrations');
+  validateRemoteMainPublishedReleaseMigrationManifests({
+    migrationsRoot,
+    repositoryRoot: input.rootDir,
+  });
   const manifests = listReleaseMigrationManifests(migrationsRoot);
   assertSemanticBaselineAllowed({
     version: input.productVersion,
-    manifests,
     write: input.write,
+    published: isVersionPublishedOnRemoteMain({
+      repositoryRoot: input.rootDir,
+      productVersion: input.productVersion,
+    }),
   });
   const current = generateReleaseMigrationManifest({
     migrationsRoot,
     productVersion: input.productVersion,
+    previousManifests: manifests.map((release) => release.manifest),
+    semanticBaselineSource: true,
   });
   const tempDir = mkdtempSync(join(tmpdir(), 'authrim-semantic-baseline-'));
   const generated: GeneratedBaseline[] = [];
@@ -739,11 +878,15 @@ export function runSemanticBaselineMigrations(input: {
         migrationsRoot,
         productVersion: input.productVersion,
         generated,
-        manifests,
+        releaseHistory: manifests.map((release) => release.manifest),
+        hasPriorRelease: manifests.some(
+          (release) =>
+            compareProductVersions(release.manifest.productVersion, input.productVersion) < 0
+        ),
       });
-      console.log('Semantic pre-1.0 migration baselines written.');
+      console.log('Semantic fresh-install migration baselines written.');
     } else {
-      console.log('Dry run only; pass --write to replace pre-1.0 migration history.');
+      console.log('Dry run only; pass --write to add the verified fresh-install baselines.');
     }
   } finally {
     postgres?.stop();

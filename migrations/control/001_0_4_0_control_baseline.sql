@@ -1,7 +1,7 @@
--- Authrim 0.4.0 pre-1.0 semantic fresh-install baseline.
+-- Authrim 0.4.0 semantic fresh-install baseline.
 -- Logical stream: d1-control.
 -- Generated from the final database state; do not append historical migration SQL here.
--- Pre-1.0 databases are not upgrade-compatible and must be recreated.
+-- Fresh-install baselines must never be applied to upgrade an existing database.
 PRAGMA foreign_keys = OFF;
 
 CREATE TABLE control_environments (
@@ -17,7 +17,34 @@ CREATE TABLE control_environments (
   updated_at INTEGER NOT NULL, automatic_provisioning_enabled INTEGER NOT NULL DEFAULT 0
   CHECK (automatic_provisioning_enabled IN (0, 1)), provisioning_token_ownership TEXT NOT NULL DEFAULT 'none'
   CHECK (provisioning_token_ownership IN ('none', 'user', 'account')), provisioning_capability_state TEXT NOT NULL DEFAULT 'disabled'
-  CHECK (provisioning_capability_state IN ('disabled', 'pending', 'ready', 'blocked')), provisioning_capability_checked_at INTEGER,
+  CHECK (provisioning_capability_state IN ('disabled', 'pending', 'ready', 'blocked')), provisioning_capability_checked_at INTEGER, provisioning_bootstrap_phase TEXT NOT NULL DEFAULT 'none'
+  CHECK (provisioning_bootstrap_phase IN ('none', 'pending_revocation', 'cutover_verified')), provisioning_bootstrap_token_ownership TEXT NOT NULL DEFAULT 'none'
+  CHECK (provisioning_bootstrap_token_ownership IN ('none', 'user', 'account')), provisioning_bootstrap_token_id TEXT
+  CHECK (provisioning_bootstrap_token_id IS NULL OR (
+    length(provisioning_bootstrap_token_id) = 32
+    AND provisioning_bootstrap_token_id NOT GLOB '*[^0-9a-f]*'
+  )), provisioning_bootstrap_token_fingerprint TEXT
+  CHECK (provisioning_bootstrap_token_fingerprint IS NULL OR (
+    length(provisioning_bootstrap_token_fingerprint) = 64
+    AND provisioning_bootstrap_token_fingerprint NOT GLOB '*[^0-9a-f]*'
+  )), provisioning_child_tokens_json TEXT
+  CHECK (provisioning_child_tokens_json IS NULL OR (
+    json_valid(provisioning_child_tokens_json)
+    AND json_type(provisioning_child_tokens_json) = 'array'
+  )), provisioning_token_management TEXT NOT NULL DEFAULT 'none'
+  CHECK (provisioning_token_management IN ('none', 'setup', 'operator')), provisioning_secret_generation_deployment_id TEXT
+  CHECK (provisioning_secret_generation_deployment_id IS NULL OR (
+    length(provisioning_secret_generation_deployment_id) BETWEEN 1 AND 128
+    AND instr(provisioning_secret_generation_deployment_id, char(0)) = 0
+    AND provisioning_secret_generation_deployment_id GLOB '[A-Za-z0-9]*'
+    AND provisioning_secret_generation_deployment_id NOT GLOB '*[^A-Za-z0-9._:-]*'
+  )), provisioning_secret_generation_version_id TEXT
+  CHECK (provisioning_secret_generation_version_id IS NULL OR (
+    length(provisioning_secret_generation_version_id) BETWEEN 1 AND 128
+    AND instr(provisioning_secret_generation_version_id, char(0)) = 0
+    AND provisioning_secret_generation_version_id GLOB '[A-Za-z0-9]*'
+    AND provisioning_secret_generation_version_id NOT GLOB '*[^A-Za-z0-9._:-]*'
+  )),
   CHECK (issuer = 'urn:authrim:control:' || environment_id)
 );
 CREATE TABLE control_operations (
@@ -95,7 +122,8 @@ CREATE TABLE control_desired_resources (
   observed_resource_id TEXT,
   desired_spec_json TEXT NOT NULL DEFAULT '{}',
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL, provider_create_state TEXT NOT NULL DEFAULT 'not_started'
+    CHECK (provider_create_state IN ('not_started', 'issued', 'identified')), provider_resource_id TEXT, provider_identity_checkpointed_at INTEGER,
   UNIQUE (environment_id, resource_kind, logical_shard_id),
   UNIQUE (environment_id, deterministic_name),
   UNIQUE (desired_resource_id, environment_id),
@@ -748,7 +776,8 @@ CREATE TABLE control_plugin_desired_resources (
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'provisioning', 'ready', 'active', 'failed', 'deleting', 'deleted')),
   updated_at INTEGER NOT NULL, lifecycle_generation INTEGER NOT NULL DEFAULT 1
-    CHECK (lifecycle_generation >= 1),
+    CHECK (lifecycle_generation >= 1), provider_create_state TEXT NOT NULL DEFAULT 'not_started'
+    CHECK (provider_create_state IN ('not_started', 'issued', 'identified', 'legacy_unverified')), provider_creation_date TEXT, provider_ownership_marker_key TEXT, provider_ownership_id TEXT, provider_identity_checkpointed_at INTEGER,
   UNIQUE (environment_id, plugin_installation_id, tenant_id, logical_resource_id),
   FOREIGN KEY (environment_id) REFERENCES control_environments(environment_id) ON DELETE CASCADE,
   FOREIGN KEY (operation_id, environment_id)
@@ -2125,6 +2154,29 @@ CREATE TABLE control_account_scale_out_forecasts (
   CHECK ((decision_state IN ('warming', 'stable') AND requested_operation_id IS NULL) OR
          decision_state NOT IN ('warming', 'stable'))
 );
+CREATE TABLE control_provider_identity_projection_assertions (
+  assertion_id TEXT PRIMARY KEY,
+  environment_id TEXT NOT NULL,
+  desired_resource_id TEXT NOT NULL,
+  valid INTEGER NOT NULL CHECK (valid IN (0, 1)),
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (desired_resource_id, environment_id)
+    REFERENCES control_desired_resources(desired_resource_id, environment_id) ON DELETE CASCADE
+);
+CREATE TABLE control_operation_transition_assertions (
+  assertion_id TEXT PRIMARY KEY,
+  valid INTEGER NOT NULL CHECK (valid IN (0, 1)),
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE control_plugin_provider_projection_assertions (
+  assertion_id TEXT PRIMARY KEY,
+  environment_id TEXT NOT NULL,
+  plugin_resource_id TEXT NOT NULL,
+  valid INTEGER NOT NULL CHECK (valid IN (0, 1)),
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (plugin_resource_id)
+    REFERENCES control_plugin_desired_resources(plugin_resource_id) ON DELETE CASCADE
+);
 CREATE VIEW control_generated_lock_resources AS
 SELECT
   d.environment_id,
@@ -3039,45 +3091,6 @@ WHEN OLD.quarantine_operation_id IS NOT NULL AND (
 BEGIN
   SELECT RAISE(ABORT, 'control_shard_quarantine_identity_immutable');
 END;
-CREATE TRIGGER trg_control_environment_provisioning_authority_insert
-BEFORE INSERT ON control_environments
-WHEN NOT (
-  (NEW.automatic_provisioning_enabled = 0
-    AND NEW.provisioning_token_ownership = 'none'
-    AND NEW.provisioning_capability_state = 'disabled')
-  OR
-  (NEW.automatic_provisioning_enabled = 1
-    AND (
-      (NEW.provisioning_capability_state = 'pending'
-        AND NEW.provisioning_token_ownership = 'none')
-      OR
-      (NEW.provisioning_capability_state IN ('ready', 'blocked')
-        AND NEW.provisioning_token_ownership IN ('user', 'account'))
-    ))
-)
-BEGIN
-  SELECT RAISE(ABORT, 'control_automatic_provisioning_authority_invalid');
-END;
-CREATE TRIGGER trg_control_environment_provisioning_authority_update
-BEFORE UPDATE OF automatic_provisioning_enabled, provisioning_token_ownership,
-  provisioning_capability_state ON control_environments
-WHEN NOT (
-  (NEW.automatic_provisioning_enabled = 0
-    AND NEW.provisioning_token_ownership = 'none'
-    AND NEW.provisioning_capability_state = 'disabled')
-  OR
-  (NEW.automatic_provisioning_enabled = 1
-    AND (
-      (NEW.provisioning_capability_state = 'pending'
-        AND NEW.provisioning_token_ownership = 'none')
-      OR
-      (NEW.provisioning_capability_state IN ('ready', 'blocked')
-        AND NEW.provisioning_token_ownership IN ('user', 'account'))
-    ))
-)
-BEGIN
-  SELECT RAISE(ABORT, 'control_automatic_provisioning_authority_invalid');
-END;
 CREATE TRIGGER trg_control_bootstrap_worker_evidence_expectations_immutable
 BEFORE UPDATE OF expected_deployment_id, expected_version_id, expected_settings_digest
 ON control_bootstrap_worker_evidence
@@ -3617,6 +3630,463 @@ BEGIN
         LIMIT 1
      );
 END;
+CREATE TRIGGER trg_control_environment_provisioning_authority_insert
+BEFORE INSERT ON control_environments
+WHEN NOT (
+  (NEW.automatic_provisioning_enabled = 0
+    AND NEW.provisioning_token_ownership = 'none'
+    AND NEW.provisioning_capability_state = 'disabled'
+    AND NEW.provisioning_token_management = 'none'
+    AND NEW.provisioning_bootstrap_phase = 'none'
+    AND NEW.provisioning_bootstrap_token_ownership = 'none'
+    AND NEW.provisioning_bootstrap_token_id IS NULL
+    AND NEW.provisioning_bootstrap_token_fingerprint IS NULL
+    AND NEW.provisioning_child_tokens_json IS NULL
+    AND NEW.provisioning_secret_generation_deployment_id IS NULL
+    AND NEW.provisioning_secret_generation_version_id IS NULL)
+  OR
+  (NEW.automatic_provisioning_enabled = 1
+    AND (
+      (NEW.provisioning_capability_state = 'pending'
+        AND NEW.provisioning_token_ownership = 'none'
+        AND NEW.provisioning_token_management = 'none'
+        AND NEW.provisioning_bootstrap_phase = 'none'
+        AND NEW.provisioning_bootstrap_token_ownership = 'none'
+        AND NEW.provisioning_bootstrap_token_id IS NULL
+        AND NEW.provisioning_bootstrap_token_fingerprint IS NULL
+        AND NEW.provisioning_child_tokens_json IS NULL
+        AND NEW.provisioning_secret_generation_deployment_id IS NULL
+        AND NEW.provisioning_secret_generation_version_id IS NULL)
+      OR
+      (NEW.provisioning_capability_state = 'pending'
+        AND NEW.provisioning_token_ownership = 'none'
+        AND NEW.provisioning_token_management = 'setup'
+        AND NEW.provisioning_bootstrap_phase IN ('pending_revocation', 'cutover_verified')
+        AND NEW.provisioning_bootstrap_token_ownership IN ('user', 'account')
+        AND NEW.provisioning_bootstrap_token_id IS NOT NULL
+        AND NEW.provisioning_bootstrap_token_fingerprint IS NOT NULL
+        AND NEW.provisioning_secret_generation_deployment_id IS NOT NULL
+        AND NEW.provisioning_secret_generation_version_id IS NOT NULL
+        AND NEW.provisioning_child_tokens_json IS NOT NULL
+        AND json_array_length(NEW.provisioning_child_tokens_json) >= 2
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(NEW.provisioning_child_tokens_json) AS child
+          WHERE json_type(child.value) IS NOT 'object'
+             OR json_type(child.value, '$.resourceClass') IS NOT 'text'
+             OR json_extract(child.value, '$.resourceClass') NOT IN ('d1', 'workers', 'kv', 'r2')
+             OR json_type(child.value, '$.tokenId') IS NOT 'text'
+             OR length(json_extract(child.value, '$.tokenId')) <> 32
+             OR json_extract(child.value, '$.tokenId') GLOB '*[^0-9a-f]*'
+             OR json_type(child.value, '$.tokenName') IS NOT 'text'
+             OR length(json_extract(child.value, '$.tokenName')) NOT BETWEEN 1 AND 128
+             OR instr(json_extract(child.value, '$.tokenName'), char(0)) <> 0
+             OR json_extract(child.value, '$.tokenName') NOT GLOB '[A-Za-z0-9]*'
+             OR json_extract(child.value, '$.tokenName') GLOB '*[^A-Za-z0-9._:-]*'
+             OR json_type(child.value, '$.secretName') IS NOT 'text'
+             OR json_extract(child.value, '$.secretName') <> CASE json_extract(child.value, '$.resourceClass')
+                  WHEN 'd1' THEN 'CLOUDFLARE_D1_API_TOKEN'
+                  WHEN 'workers' THEN 'CLOUDFLARE_WORKERS_API_TOKEN'
+                  WHEN 'kv' THEN 'CLOUDFLARE_KV_API_TOKEN'
+                  WHEN 'r2' THEN 'CLOUDFLARE_R2_API_TOKEN'
+                END
+             OR json_type(child.value, '$.tokenFingerprint') IS NOT 'text'
+             OR length(json_extract(child.value, '$.tokenFingerprint')) <> 64
+             OR json_extract(child.value, '$.tokenFingerprint') GLOB '*[^0-9a-f]*'
+        )
+        AND (SELECT count(DISTINCT json_extract(child.value, '$.resourceClass'))
+               FROM json_each(NEW.provisioning_child_tokens_json) AS child)
+            = json_array_length(NEW.provisioning_child_tokens_json)
+        AND (SELECT count(DISTINCT json_extract(child.value, '$.tokenId'))
+               FROM json_each(NEW.provisioning_child_tokens_json) AS child)
+            = json_array_length(NEW.provisioning_child_tokens_json))
+      OR
+      (NEW.provisioning_capability_state = 'ready'
+        AND NEW.provisioning_token_ownership IN ('user', 'account')
+        AND NEW.provisioning_token_management IN ('setup', 'operator')
+        AND NEW.provisioning_bootstrap_phase = 'none'
+        AND NEW.provisioning_bootstrap_token_ownership = 'none'
+        AND NEW.provisioning_bootstrap_token_id IS NULL
+        AND NEW.provisioning_bootstrap_token_fingerprint IS NULL
+        AND NEW.provisioning_secret_generation_deployment_id IS NOT NULL
+        AND NEW.provisioning_secret_generation_version_id IS NOT NULL
+        AND NEW.provisioning_child_tokens_json IS NOT NULL
+        AND json_array_length(NEW.provisioning_child_tokens_json) >= 2
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(NEW.provisioning_child_tokens_json) AS child
+          WHERE json_type(child.value) IS NOT 'object'
+             OR json_type(child.value, '$.resourceClass') IS NOT 'text'
+             OR json_extract(child.value, '$.resourceClass') NOT IN ('d1', 'workers', 'kv', 'r2')
+             OR json_type(child.value, '$.tokenId') IS NOT 'text'
+             OR length(json_extract(child.value, '$.tokenId')) <> 32
+             OR json_extract(child.value, '$.tokenId') GLOB '*[^0-9a-f]*'
+             OR json_type(child.value, '$.tokenName') IS NOT 'text'
+             OR length(json_extract(child.value, '$.tokenName')) NOT BETWEEN 1 AND 128
+             OR instr(json_extract(child.value, '$.tokenName'), char(0)) <> 0
+             OR json_extract(child.value, '$.tokenName') NOT GLOB '[A-Za-z0-9]*'
+             OR json_extract(child.value, '$.tokenName') GLOB '*[^A-Za-z0-9._:-]*'
+             OR json_type(child.value, '$.secretName') IS NOT 'text'
+             OR json_extract(child.value, '$.secretName') <> CASE json_extract(child.value, '$.resourceClass')
+                  WHEN 'd1' THEN 'CLOUDFLARE_D1_API_TOKEN'
+                  WHEN 'workers' THEN 'CLOUDFLARE_WORKERS_API_TOKEN'
+                  WHEN 'kv' THEN 'CLOUDFLARE_KV_API_TOKEN'
+                  WHEN 'r2' THEN 'CLOUDFLARE_R2_API_TOKEN'
+                END
+             OR json_type(child.value, '$.tokenFingerprint') IS NOT 'text'
+             OR length(json_extract(child.value, '$.tokenFingerprint')) <> 64
+             OR json_extract(child.value, '$.tokenFingerprint') GLOB '*[^0-9a-f]*'
+        )
+        AND (SELECT count(DISTINCT json_extract(child.value, '$.resourceClass'))
+               FROM json_each(NEW.provisioning_child_tokens_json) AS child)
+            = json_array_length(NEW.provisioning_child_tokens_json)
+        AND (SELECT count(DISTINCT json_extract(child.value, '$.tokenId'))
+               FROM json_each(NEW.provisioning_child_tokens_json) AS child)
+            = json_array_length(NEW.provisioning_child_tokens_json))
+      OR
+      (NEW.provisioning_capability_state = 'blocked'
+        AND NEW.provisioning_token_ownership IN ('user', 'account')
+        AND NEW.provisioning_token_management = 'none'
+        AND NEW.provisioning_bootstrap_phase = 'none'
+        AND NEW.provisioning_bootstrap_token_ownership = 'none'
+        AND NEW.provisioning_bootstrap_token_id IS NULL
+        AND NEW.provisioning_bootstrap_token_fingerprint IS NULL
+        AND NEW.provisioning_child_tokens_json IS NULL
+        AND NEW.provisioning_secret_generation_deployment_id IS NULL
+        AND NEW.provisioning_secret_generation_version_id IS NULL)
+    ))
+)
+BEGIN
+  SELECT RAISE(ABORT, 'control_automatic_provisioning_authority_invalid');
+END;
+CREATE TRIGGER trg_control_environment_provisioning_authority_update
+BEFORE UPDATE OF automatic_provisioning_enabled, provisioning_token_ownership,
+  provisioning_capability_state, provisioning_token_management, provisioning_bootstrap_phase,
+  provisioning_bootstrap_token_ownership, provisioning_bootstrap_token_id,
+  provisioning_bootstrap_token_fingerprint, provisioning_child_tokens_json,
+  provisioning_secret_generation_deployment_id, provisioning_secret_generation_version_id
+ON control_environments
+WHEN NOT (
+  (NEW.automatic_provisioning_enabled = 0
+    AND NEW.provisioning_token_ownership = 'none'
+    AND NEW.provisioning_capability_state = 'disabled'
+    AND NEW.provisioning_token_management = 'none'
+    AND NEW.provisioning_bootstrap_phase = 'none'
+    AND NEW.provisioning_bootstrap_token_ownership = 'none'
+    AND NEW.provisioning_bootstrap_token_id IS NULL
+    AND NEW.provisioning_bootstrap_token_fingerprint IS NULL
+    AND NEW.provisioning_child_tokens_json IS NULL
+    AND NEW.provisioning_secret_generation_deployment_id IS NULL
+    AND NEW.provisioning_secret_generation_version_id IS NULL)
+  OR
+  (NEW.automatic_provisioning_enabled = 1
+    AND (
+      (NEW.provisioning_capability_state = 'pending'
+        AND NEW.provisioning_token_ownership = 'none'
+        AND NEW.provisioning_token_management = 'none'
+        AND NEW.provisioning_bootstrap_phase = 'none'
+        AND NEW.provisioning_bootstrap_token_ownership = 'none'
+        AND NEW.provisioning_bootstrap_token_id IS NULL
+        AND NEW.provisioning_bootstrap_token_fingerprint IS NULL
+        AND NEW.provisioning_child_tokens_json IS NULL
+        AND NEW.provisioning_secret_generation_deployment_id IS NULL
+        AND NEW.provisioning_secret_generation_version_id IS NULL)
+      OR
+      (NEW.provisioning_capability_state = 'pending'
+        AND NEW.provisioning_token_ownership = 'none'
+        AND NEW.provisioning_token_management = 'setup'
+        AND NEW.provisioning_bootstrap_phase IN ('pending_revocation', 'cutover_verified')
+        AND NEW.provisioning_bootstrap_token_ownership IN ('user', 'account')
+        AND NEW.provisioning_bootstrap_token_id IS NOT NULL
+        AND NEW.provisioning_bootstrap_token_fingerprint IS NOT NULL
+        AND NEW.provisioning_secret_generation_deployment_id IS NOT NULL
+        AND NEW.provisioning_secret_generation_version_id IS NOT NULL
+        AND NEW.provisioning_child_tokens_json IS NOT NULL
+        AND json_array_length(NEW.provisioning_child_tokens_json) >= 2
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(NEW.provisioning_child_tokens_json) AS child
+          WHERE json_type(child.value) IS NOT 'object'
+             OR json_type(child.value, '$.resourceClass') IS NOT 'text'
+             OR json_extract(child.value, '$.resourceClass') NOT IN ('d1', 'workers', 'kv', 'r2')
+             OR json_type(child.value, '$.tokenId') IS NOT 'text'
+             OR length(json_extract(child.value, '$.tokenId')) <> 32
+             OR json_extract(child.value, '$.tokenId') GLOB '*[^0-9a-f]*'
+             OR json_type(child.value, '$.tokenName') IS NOT 'text'
+             OR length(json_extract(child.value, '$.tokenName')) NOT BETWEEN 1 AND 128
+             OR instr(json_extract(child.value, '$.tokenName'), char(0)) <> 0
+             OR json_extract(child.value, '$.tokenName') NOT GLOB '[A-Za-z0-9]*'
+             OR json_extract(child.value, '$.tokenName') GLOB '*[^A-Za-z0-9._:-]*'
+             OR json_type(child.value, '$.secretName') IS NOT 'text'
+             OR json_extract(child.value, '$.secretName') <> CASE json_extract(child.value, '$.resourceClass')
+                  WHEN 'd1' THEN 'CLOUDFLARE_D1_API_TOKEN'
+                  WHEN 'workers' THEN 'CLOUDFLARE_WORKERS_API_TOKEN'
+                  WHEN 'kv' THEN 'CLOUDFLARE_KV_API_TOKEN'
+                  WHEN 'r2' THEN 'CLOUDFLARE_R2_API_TOKEN'
+                END
+             OR json_type(child.value, '$.tokenFingerprint') IS NOT 'text'
+             OR length(json_extract(child.value, '$.tokenFingerprint')) <> 64
+             OR json_extract(child.value, '$.tokenFingerprint') GLOB '*[^0-9a-f]*'
+        )
+        AND (SELECT count(DISTINCT json_extract(child.value, '$.resourceClass'))
+               FROM json_each(NEW.provisioning_child_tokens_json) AS child)
+            = json_array_length(NEW.provisioning_child_tokens_json)
+        AND (SELECT count(DISTINCT json_extract(child.value, '$.tokenId'))
+               FROM json_each(NEW.provisioning_child_tokens_json) AS child)
+            = json_array_length(NEW.provisioning_child_tokens_json))
+      OR
+      (NEW.provisioning_capability_state = 'ready'
+        AND NEW.provisioning_token_ownership IN ('user', 'account')
+        AND NEW.provisioning_token_management IN ('setup', 'operator')
+        AND NEW.provisioning_bootstrap_phase = 'none'
+        AND NEW.provisioning_bootstrap_token_ownership = 'none'
+        AND NEW.provisioning_bootstrap_token_id IS NULL
+        AND NEW.provisioning_bootstrap_token_fingerprint IS NULL
+        AND NEW.provisioning_secret_generation_deployment_id IS NOT NULL
+        AND NEW.provisioning_secret_generation_version_id IS NOT NULL
+        AND NEW.provisioning_child_tokens_json IS NOT NULL
+        AND json_array_length(NEW.provisioning_child_tokens_json) >= 2
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(NEW.provisioning_child_tokens_json) AS child
+          WHERE json_type(child.value) IS NOT 'object'
+             OR json_type(child.value, '$.resourceClass') IS NOT 'text'
+             OR json_extract(child.value, '$.resourceClass') NOT IN ('d1', 'workers', 'kv', 'r2')
+             OR json_type(child.value, '$.tokenId') IS NOT 'text'
+             OR length(json_extract(child.value, '$.tokenId')) <> 32
+             OR json_extract(child.value, '$.tokenId') GLOB '*[^0-9a-f]*'
+             OR json_type(child.value, '$.tokenName') IS NOT 'text'
+             OR length(json_extract(child.value, '$.tokenName')) NOT BETWEEN 1 AND 128
+             OR instr(json_extract(child.value, '$.tokenName'), char(0)) <> 0
+             OR json_extract(child.value, '$.tokenName') NOT GLOB '[A-Za-z0-9]*'
+             OR json_extract(child.value, '$.tokenName') GLOB '*[^A-Za-z0-9._:-]*'
+             OR json_type(child.value, '$.secretName') IS NOT 'text'
+             OR json_extract(child.value, '$.secretName') <> CASE json_extract(child.value, '$.resourceClass')
+                  WHEN 'd1' THEN 'CLOUDFLARE_D1_API_TOKEN'
+                  WHEN 'workers' THEN 'CLOUDFLARE_WORKERS_API_TOKEN'
+                  WHEN 'kv' THEN 'CLOUDFLARE_KV_API_TOKEN'
+                  WHEN 'r2' THEN 'CLOUDFLARE_R2_API_TOKEN'
+                END
+             OR json_type(child.value, '$.tokenFingerprint') IS NOT 'text'
+             OR length(json_extract(child.value, '$.tokenFingerprint')) <> 64
+             OR json_extract(child.value, '$.tokenFingerprint') GLOB '*[^0-9a-f]*'
+        )
+        AND (SELECT count(DISTINCT json_extract(child.value, '$.resourceClass'))
+               FROM json_each(NEW.provisioning_child_tokens_json) AS child)
+            = json_array_length(NEW.provisioning_child_tokens_json)
+        AND (SELECT count(DISTINCT json_extract(child.value, '$.tokenId'))
+               FROM json_each(NEW.provisioning_child_tokens_json) AS child)
+            = json_array_length(NEW.provisioning_child_tokens_json))
+      OR
+      (NEW.provisioning_capability_state = 'blocked'
+        AND NEW.provisioning_token_ownership IN ('user', 'account')
+        AND NEW.provisioning_token_management = 'none'
+        AND NEW.provisioning_bootstrap_phase = 'none'
+        AND NEW.provisioning_bootstrap_token_ownership = 'none'
+        AND NEW.provisioning_bootstrap_token_id IS NULL
+        AND NEW.provisioning_bootstrap_token_fingerprint IS NULL
+        AND NEW.provisioning_child_tokens_json IS NULL
+        AND NEW.provisioning_secret_generation_deployment_id IS NULL
+        AND NEW.provisioning_secret_generation_version_id IS NULL)
+    ))
+)
+BEGIN
+  SELECT RAISE(ABORT, 'control_automatic_provisioning_authority_invalid');
+END;
+CREATE TRIGGER trg_control_provider_identity_projection_assertion
+BEFORE INSERT ON control_provider_identity_projection_assertions
+WHEN NEW.valid <> 1
+BEGIN
+  SELECT RAISE(ABORT, 'control_d1_provider_identity_projection_mismatch');
+END;
+CREATE TRIGGER trg_control_operation_transition_assertion
+BEFORE INSERT ON control_operation_transition_assertions
+WHEN NEW.valid <> 1
+BEGIN
+  SELECT RAISE(ABORT, 'control_operation_transition_mismatch');
+END;
+CREATE TRIGGER trg_control_desired_resources_provider_identity_insert
+BEFORE INSERT ON control_desired_resources
+WHEN (NEW.provider_create_state = 'identified' AND
+      (NEW.provider_resource_id IS NULL OR NEW.provider_identity_checkpointed_at IS NULL))
+  OR (NEW.provider_create_state = 'issued' AND
+      (NEW.provider_resource_id IS NOT NULL OR NEW.provider_identity_checkpointed_at IS NOT NULL))
+  OR (NEW.resource_kind = 'd1' AND NEW.provisioning_state IN ('ready', 'active') AND
+      NEW.provider_create_state <> 'identified' AND NOT (
+        NEW.provider_create_state = 'not_started' AND NEW.observed_resource_id IS NOT NULL AND
+        EXISTS (
+          SELECT 1 FROM control_observed_resources observed
+           WHERE observed.observed_resource_id = NEW.observed_resource_id
+             AND observed.desired_resource_id = NEW.desired_resource_id
+             AND observed.environment_id = NEW.environment_id
+             AND observed.provider_resource_id IS NOT NULL
+        )
+      ))
+BEGIN
+  SELECT RAISE(ABORT, 'control_desired_resource_provider_identity_invalid');
+END;
+CREATE TRIGGER trg_control_desired_resources_provider_identity_update
+BEFORE UPDATE OF provider_create_state, provider_resource_id,
+  provider_identity_checkpointed_at, provisioning_state ON control_desired_resources
+WHEN (NEW.provider_create_state = 'identified' AND
+      (NEW.provider_resource_id IS NULL OR NEW.provider_identity_checkpointed_at IS NULL))
+  OR (NEW.provider_create_state = 'issued' AND
+      (NEW.provider_resource_id IS NOT NULL OR NEW.provider_identity_checkpointed_at IS NOT NULL))
+  OR (OLD.provider_create_state = 'identified' AND
+      (NEW.provider_create_state <> 'identified' OR
+       NEW.provider_resource_id <> OLD.provider_resource_id OR
+       NEW.provider_identity_checkpointed_at <> OLD.provider_identity_checkpointed_at))
+  OR (OLD.provider_create_state <> 'issued' AND OLD.provider_create_state <> 'identified' AND
+      NEW.provider_create_state = 'identified' AND NOT EXISTS (
+        SELECT 1 FROM control_observed_resources observed
+         WHERE observed.observed_resource_id = NEW.observed_resource_id
+           AND observed.desired_resource_id = NEW.desired_resource_id
+           AND observed.environment_id = NEW.environment_id
+           AND observed.provider_resource_id = NEW.provider_resource_id
+      ))
+  OR (OLD.provider_create_state <> 'not_started' AND NEW.provider_create_state = 'issued')
+  OR (NEW.resource_kind = 'd1' AND NEW.provisioning_state IN ('ready', 'active') AND
+      NEW.provider_create_state <> 'identified' AND NOT (
+        NEW.provider_create_state = 'not_started' AND NEW.observed_resource_id IS NOT NULL AND
+        EXISTS (
+          SELECT 1 FROM control_observed_resources observed
+           WHERE observed.observed_resource_id = NEW.observed_resource_id
+             AND observed.desired_resource_id = NEW.desired_resource_id
+             AND observed.environment_id = NEW.environment_id
+             AND observed.provider_resource_id IS NOT NULL
+        )
+      ))
+BEGIN
+  SELECT RAISE(ABORT, 'control_desired_resource_provider_identity_invalid');
+END;
+CREATE TRIGGER trg_control_desired_resources_provider_identity_from_observed
+AFTER UPDATE OF observed_resource_id ON control_desired_resources
+WHEN NEW.provider_create_state = 'not_started' AND NEW.observed_resource_id IS NOT NULL
+  AND EXISTS (
+    SELECT 1 FROM control_observed_resources observed
+     WHERE observed.observed_resource_id = NEW.observed_resource_id
+       AND observed.desired_resource_id = NEW.desired_resource_id
+       AND observed.environment_id = NEW.environment_id
+       AND observed.provider_resource_id IS NOT NULL
+  )
+BEGIN
+  UPDATE control_desired_resources
+     SET provider_create_state = 'identified',
+         provider_resource_id = (
+           SELECT observed.provider_resource_id
+             FROM control_observed_resources observed
+            WHERE observed.observed_resource_id = NEW.observed_resource_id
+              AND observed.desired_resource_id = NEW.desired_resource_id
+              AND observed.environment_id = NEW.environment_id
+         ),
+         provider_identity_checkpointed_at = NEW.updated_at
+   WHERE desired_resource_id = NEW.desired_resource_id
+     AND environment_id = NEW.environment_id
+     AND provider_create_state = 'not_started';
+END;
+CREATE TRIGGER trg_control_plugin_provider_projection_assertion
+BEFORE INSERT ON control_plugin_provider_projection_assertions
+WHEN NEW.valid <> 1
+BEGIN
+  SELECT RAISE(ABORT, 'plugin_resource_provider_projection_mismatch');
+END;
+CREATE TRIGGER trg_control_plugin_resources_provider_identity_insert
+BEFORE INSERT ON control_plugin_desired_resources
+WHEN (NEW.lifecycle_mode = 'managed' AND NEW.provider_create_state = 'identified' AND
+      (NEW.provider_resource_id IS NULL OR NEW.provider_name IS NULL OR
+       NEW.provider_identity_checkpointed_at IS NULL))
+  OR (NEW.lifecycle_mode = 'managed' AND NEW.provider_create_state = 'issued' AND
+      (NEW.provider_resource_id IS NOT NULL OR NEW.provider_name IS NOT NULL OR
+       NEW.provider_creation_date IS NOT NULL OR NEW.provider_identity_checkpointed_at IS NOT NULL))
+  OR (NEW.lifecycle_mode = 'managed' AND NEW.resource_kind = 'r2_bucket' AND
+      NEW.provider_create_state = 'issued' AND
+      ((NEW.provider_ownership_marker_key IS NULL) <> (NEW.provider_ownership_id IS NULL)))
+  OR (NEW.lifecycle_mode = 'managed' AND NEW.resource_kind = 'r2_bucket' AND
+      NEW.provider_create_state = 'identified' AND
+      (NEW.provider_creation_date IS NULL OR NEW.provider_ownership_marker_key IS NULL OR
+       NEW.provider_ownership_id IS NULL))
+  OR (NEW.lifecycle_mode = 'managed' AND NEW.resource_kind <> 'r2_bucket' AND
+      (NEW.provider_creation_date IS NOT NULL OR NEW.provider_ownership_marker_key IS NOT NULL OR
+       NEW.provider_ownership_id IS NOT NULL))
+  OR (NEW.lifecycle_mode = 'managed' AND NEW.provider_create_state = 'legacy_unverified' AND
+      (NEW.resource_kind <> 'r2_bucket' OR NEW.status <> 'failed' OR
+       NEW.provider_resource_id IS NULL OR NEW.provider_name IS NULL OR
+       NEW.provider_creation_date IS NOT NULL OR NEW.provider_ownership_marker_key IS NOT NULL OR
+       NEW.provider_ownership_id IS NOT NULL OR NEW.provider_identity_checkpointed_at IS NOT NULL))
+  OR (NEW.lifecycle_mode = 'managed' AND NEW.status IN ('ready', 'active') AND
+      NEW.provider_create_state <> 'identified' AND NOT (
+        NEW.resource_kind IN ('d1', 'kv_namespace') AND
+        NEW.provider_create_state = 'not_started' AND
+        NEW.provider_resource_id IS NOT NULL AND NEW.provider_name IS NOT NULL
+      ))
+BEGIN
+  SELECT RAISE(ABORT, 'control_plugin_resource_provider_identity_invalid');
+END;
+CREATE TRIGGER trg_control_plugin_resources_provider_identity_update
+BEFORE UPDATE OF provider_create_state, provider_resource_id, provider_name,
+  provider_creation_date, provider_ownership_marker_key, provider_ownership_id,
+  provider_identity_checkpointed_at, status ON control_plugin_desired_resources
+WHEN (NEW.lifecycle_mode = 'managed' AND NEW.provider_create_state = 'identified' AND
+      (NEW.provider_resource_id IS NULL OR NEW.provider_name IS NULL OR
+       NEW.provider_identity_checkpointed_at IS NULL))
+  OR (NEW.lifecycle_mode = 'managed' AND NEW.provider_create_state = 'issued' AND
+      (NEW.provider_resource_id IS NOT NULL OR NEW.provider_name IS NOT NULL OR
+       NEW.provider_creation_date IS NOT NULL OR NEW.provider_identity_checkpointed_at IS NOT NULL))
+  OR (NEW.lifecycle_mode = 'managed' AND NEW.resource_kind = 'r2_bucket' AND
+      NEW.provider_create_state = 'issued' AND
+      ((NEW.provider_ownership_marker_key IS NULL) <> (NEW.provider_ownership_id IS NULL)))
+  OR (NEW.lifecycle_mode = 'managed' AND NEW.resource_kind = 'r2_bucket' AND
+      NEW.provider_create_state = 'identified' AND
+      (NEW.provider_creation_date IS NULL OR NEW.provider_ownership_marker_key IS NULL OR
+       NEW.provider_ownership_id IS NULL))
+  OR (NEW.lifecycle_mode = 'managed' AND NEW.resource_kind <> 'r2_bucket' AND
+      (NEW.provider_creation_date IS NOT NULL OR NEW.provider_ownership_marker_key IS NOT NULL OR
+       NEW.provider_ownership_id IS NOT NULL))
+  OR (NEW.lifecycle_mode = 'managed' AND NEW.provider_create_state = 'legacy_unverified' AND
+      (NEW.resource_kind <> 'r2_bucket' OR NEW.status <> 'failed' OR
+       NEW.provider_resource_id IS NULL OR NEW.provider_name IS NULL OR
+       NEW.provider_creation_date IS NOT NULL OR NEW.provider_ownership_marker_key IS NOT NULL OR
+       NEW.provider_ownership_id IS NOT NULL OR NEW.provider_identity_checkpointed_at IS NOT NULL))
+  OR (OLD.lifecycle_mode = 'managed' AND OLD.provider_create_state = 'identified' AND
+      (NEW.provider_create_state <> 'identified' OR
+       NEW.provider_resource_id <> OLD.provider_resource_id OR
+       NEW.provider_name <> OLD.provider_name OR
+       COALESCE(NEW.provider_creation_date, '') <> COALESCE(OLD.provider_creation_date, '') OR
+       COALESCE(NEW.provider_ownership_marker_key, '') <>
+         COALESCE(OLD.provider_ownership_marker_key, '') OR
+       COALESCE(NEW.provider_ownership_id, '') <> COALESCE(OLD.provider_ownership_id, '') OR
+       NEW.provider_identity_checkpointed_at <> OLD.provider_identity_checkpointed_at))
+  OR (NEW.lifecycle_mode = 'managed' AND NEW.status IN ('ready', 'active') AND
+      NEW.provider_create_state <> 'identified' AND NOT (
+        NEW.resource_kind IN ('d1', 'kv_namespace') AND
+        NEW.provider_create_state = 'not_started' AND
+        NEW.provider_resource_id IS NOT NULL AND NEW.provider_name IS NOT NULL
+      ))
+BEGIN
+  SELECT RAISE(ABORT, 'control_plugin_resource_provider_identity_invalid');
+END;
+CREATE TRIGGER trg_control_plugin_resources_provider_identity_from_old_insert
+AFTER INSERT ON control_plugin_desired_resources
+WHEN NEW.lifecycle_mode = 'managed' AND NEW.resource_kind IN ('d1', 'kv_namespace')
+  AND NEW.provider_create_state = 'not_started'
+  AND NEW.provider_resource_id IS NOT NULL AND NEW.provider_name IS NOT NULL
+BEGIN
+  UPDATE control_plugin_desired_resources
+     SET provider_create_state = 'identified',
+         provider_identity_checkpointed_at = NEW.updated_at
+   WHERE plugin_resource_id = NEW.plugin_resource_id
+     AND environment_id = NEW.environment_id
+     AND provider_create_state = 'not_started';
+END;
+CREATE TRIGGER trg_control_plugin_resources_provider_identity_from_old_update
+AFTER UPDATE OF provider_resource_id, provider_name ON control_plugin_desired_resources
+WHEN NEW.lifecycle_mode = 'managed' AND NEW.resource_kind IN ('d1', 'kv_namespace')
+  AND NEW.provider_create_state = 'not_started'
+  AND NEW.provider_resource_id IS NOT NULL AND NEW.provider_name IS NOT NULL
+BEGIN
+  UPDATE control_plugin_desired_resources
+     SET provider_create_state = 'identified',
+         provider_identity_checkpointed_at = NEW.updated_at
+   WHERE plugin_resource_id = NEW.plugin_resource_id
+     AND environment_id = NEW.environment_id
+     AND provider_create_state = 'not_started';
+END;
 CREATE INDEX idx_control_operations_runnable
   ON control_operations(status, next_attempt_at, created_at);
 CREATE INDEX idx_control_operations_environment
@@ -3742,5 +4212,9 @@ CREATE INDEX idx_control_account_allocations_pending_capacity
   )
   WHERE capacity_counted_at IS NULL
     AND reservation_state IN ('reserved', 'committed');
+CREATE INDEX idx_control_desired_resources_provider_create_state
+  ON control_desired_resources(environment_id, provider_create_state, updated_at);
+CREATE INDEX idx_control_plugin_resources_provider_create_state
+  ON control_plugin_desired_resources(environment_id, provider_create_state, updated_at);
 
 PRAGMA foreign_keys = ON;

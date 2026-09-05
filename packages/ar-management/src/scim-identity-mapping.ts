@@ -120,6 +120,8 @@ function scimSourceValues(user: Record<string, unknown>): SourceValueEnvelope[] 
     scimSourceValue('emails.value', selectPrimaryScimValue(user.emails)),
     scimSourceValue('phoneNumbers', user.phoneNumbers),
     scimSourceValue('phoneNumbers.value', selectPrimaryScimValue(user.phoneNumbers)),
+    scimSourceValue('photos', user.photos),
+    scimSourceValue('photos.value', selectPrimaryScimValue(user.photos)),
     scimSourceValue('addresses', user.addresses),
     scimSourceValue('addresses.primary', selectPrimaryScimObject(user.addresses)),
     scimSourceValue('groups', user.groups),
@@ -278,6 +280,9 @@ function assignKnownField(user: Partial<InternalUser>, path: string, value: unkn
       return true;
     case 'display_name':
       user.name = stringValue(value);
+      return true;
+    case 'picture_url':
+      user.picture = stringValue(value);
       return true;
     case 'email':
     case 'phone_number':

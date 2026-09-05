@@ -14,6 +14,7 @@ import {
   getLogger,
   requireAdminDatabaseAdapter,
   resolveAuthCorePersistenceAdapterFromEnv,
+  seedBuiltinProfileClaimSchemas,
   type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import { requirePlatformTenantManagementAuthority } from './admin-tenant-access';
@@ -2044,6 +2045,10 @@ export async function prepareTenantCloneForProvisioning(
   if (response.status !== 201) {
     throw new Error('tenant_provisioning_clone_prepare_failed');
   }
+  await seedBuiltinProfileClaimSchemas({
+    db: targetAdapter,
+    tenantId: operation.tenantId,
+  });
   const result = (await response.json()) as Record<string, unknown>;
   if (
     result.source_tenant_id !== operation.sourceTenantId ||

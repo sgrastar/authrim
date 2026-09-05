@@ -69,6 +69,10 @@ export function isFixedRegistrationFieldKey(fieldKey: string): boolean {
   return FIXED_REGISTRATION_FIELD_KEYS.has(fieldKey.trim().toLowerCase());
 }
 
+function isPiiRegistrationField(schema: RegistrationFieldSchemaRow): boolean {
+  return schema.is_pii === 1 || schema.is_pii === true;
+}
+
 function readSubmittedStringByKeys(
   submitted: Record<string, unknown> | undefined,
   keys: string[]
@@ -351,7 +355,7 @@ export async function persistRegistrationFieldValues(
     }
 
     const serializedValue = serializeRegistrationValue(schema, fieldValue);
-    if (schema.is_pii === 1) {
+    if (isPiiRegistrationField(schema)) {
       piiValues[fieldKey] = serializedValue;
     } else {
       nonPiiValues[fieldKey] = serializedValue;
@@ -364,6 +368,7 @@ export async function persistRegistrationFieldValues(
       ...schema,
       tenant_id: tenantId,
       id: `${tenantId}:${schema.field_key}`,
+      is_pii: isPiiRegistrationField(schema) ? 1 : 0,
       is_required: 0,
       is_active: 1,
       include_in_id_token: 0,

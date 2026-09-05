@@ -451,6 +451,8 @@ interface FieldMappingRuleSummaryRow {
   rule_kind: string;
   action: string;
   priority: number;
+  scope_json: string | null;
+  condition_json: string | null;
   metadata_json: string | null;
   edge_id: string | null;
   source_ref_json: string | null;
@@ -467,6 +469,38 @@ interface FieldMappingTransformSummaryRow {
   step_order: number;
   operation: string;
   parameters_json: string | null;
+}
+
+interface FieldMappingValidationSummaryRow {
+  field_mapping_version_id: string;
+  rule_id: string | null;
+  validation_id: string;
+  target_ref_json: string;
+  validation_kind: string;
+  severity: string;
+  parameters_json: string | null;
+}
+
+interface FieldMappingReleaseSummaryRow {
+  field_mapping_version_id: string;
+  release_id: string;
+  destination_type: string;
+  destination_id: string | null;
+  source_ref_json: string;
+  release_action: string;
+  legal_basis: string | null;
+  purpose: string | null;
+  condition_json: string | null;
+  priority: number;
+}
+
+interface FieldMappingConflictSummaryRow {
+  field_mapping_version_id: string;
+  conflict_id: string;
+  target_ref_json: string;
+  conflict_strategy: string;
+  source_priority_json: string | null;
+  condition_json: string | null;
 }
 
 interface SensitiveReleaseMappingEdgeRow {
@@ -1944,7 +1978,7 @@ export class IdentityMappingControlPlaneRepository {
             schema_version
            FROM custom_claim_schemas
           WHERE tenant_id = ?
-            AND is_active = 1
+            AND is_active = TRUE
             AND operation_status = 'active'
           ORDER BY ui_group_order ASC, ui_field_order ASC, display_order ASC, field_key ASC`,
         [tenantId]
@@ -3476,6 +3510,8 @@ export class IdentityMappingControlPlaneRepository {
               r.rule_kind,
               r.action,
               r.priority,
+              r.scope_json,
+              r.condition_json,
               r.metadata_json,
               e.id AS edge_id,
               e.source_ref_json,
@@ -3512,6 +3548,59 @@ export class IdentityMappingControlPlaneRepository {
         ORDER BY v.id, r.priority ASC, t.step_order ASC`,
       [tenantId, fieldMappingSetId]
     );
+    const validationRows = await this.adapter.query<FieldMappingValidationSummaryRow>(
+      `SELECT v.id AS field_mapping_version_id,
+              vr.rule_id,
+              vr.id AS validation_id,
+              vr.target_ref_json,
+              vr.validation_kind,
+              vr.severity,
+              vr.parameters_json
+         FROM field_mapping_versions v
+         JOIN mapping_rules r
+           ON r.tenant_id = v.tenant_id
+          AND r.field_mapping_version_id = v.id
+         JOIN mapping_validation_rules vr
+           ON vr.tenant_id = r.tenant_id
+          AND vr.rule_id = r.id
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?
+        ORDER BY v.id, r.priority ASC, vr.created_at ASC, vr.id ASC`,
+      [tenantId, fieldMappingSetId]
+    );
+    const releaseRows = await this.adapter.query<FieldMappingReleaseSummaryRow>(
+      `SELECT v.id AS field_mapping_version_id,
+              rr.id AS release_id,
+              rr.destination_type,
+              rr.destination_id,
+              rr.source_ref_json,
+              rr.release_action,
+              rr.legal_basis,
+              rr.purpose,
+              rr.condition_json,
+              rr.priority
+         FROM field_mapping_versions v
+         JOIN mapping_release_rules rr
+           ON rr.tenant_id = v.tenant_id
+          AND rr.field_mapping_version_id = v.id
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?
+        ORDER BY v.id, rr.priority ASC, rr.created_at ASC, rr.id ASC`,
+      [tenantId, fieldMappingSetId]
+    );
+    const conflictRows = await this.adapter.query<FieldMappingConflictSummaryRow>(
+      `SELECT v.id AS field_mapping_version_id,
+              cr.id AS conflict_id,
+              cr.target_ref_json,
+              cr.conflict_strategy,
+              cr.source_priority_json,
+              cr.condition_json
+         FROM field_mapping_versions v
+         JOIN mapping_conflict_rules cr
+           ON cr.tenant_id = v.tenant_id
+          AND cr.field_mapping_version_id = v.id
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?
+        ORDER BY v.id, cr.created_at ASC, cr.id ASC`,
+      [tenantId, fieldMappingSetId]
+    );
     const summariesByVersion = new Map<
       string,
       {
@@ -3527,6 +3616,8 @@ export class IdentityMappingControlPlaneRepository {
             ruleKind: string;
             action: string;
             priority: number;
+            scope: Record<string, unknown>;
+            condition: Record<string, unknown>;
             metadata: Record<string, unknown>;
             edges: Array<{
               id: string;
@@ -3542,8 +3633,34 @@ export class IdentityMappingControlPlaneRepository {
               operation: string;
               parameters: Record<string, unknown>;
             }>;
+            validationRules: Array<{
+              id: string;
+              ruleId: string | null;
+              targetRef: Record<string, unknown>;
+              validationKind: string;
+              severity: string;
+              parameters: Record<string, unknown>;
+            }>;
           }
         >;
+        releaseRules: Array<{
+          id: string;
+          destinationType: string;
+          destinationId: string | null;
+          sourceRef: Record<string, unknown>;
+          releaseAction: string;
+          legalBasis: string | null;
+          purpose: string | null;
+          condition: Record<string, unknown>;
+          priority: number;
+        }>;
+        conflictRules: Array<{
+          id: string;
+          targetRef: Record<string, unknown>;
+          conflictStrategy: string;
+          sourcePriority: unknown[];
+          condition: Record<string, unknown>;
+        }>;
       }
     >();
     for (const row of ruleRows) {
@@ -3554,6 +3671,8 @@ export class IdentityMappingControlPlaneRepository {
         sourceProfileIds: new Set<string>(),
         destinationProfileIds: new Set<string>(),
         rules: new Map(),
+        releaseRules: [],
+        conflictRules: [],
       };
       if (row.rule_kind.includes('source')) summary.source = true;
       if (row.rule_kind.includes('destination') || row.rule_kind.includes('release')) {
@@ -3584,9 +3703,12 @@ export class IdentityMappingControlPlaneRepository {
         ruleKind: row.rule_kind,
         action: row.action,
         priority: row.priority,
+        scope: parseJsonObject(row.scope_json ?? '{}', {}),
+        condition: parseJsonObject(row.condition_json ?? '{}', {}),
         metadata: parseJsonObject(row.metadata_json ?? '{}', {}),
         edges: [],
         transforms: [],
+        validationRules: [],
       };
       if (row.edge_id && row.source_ref_json && row.target_ref_json) {
         rule.edges.push({
@@ -3612,6 +3734,49 @@ export class IdentityMappingControlPlaneRepository {
         parameters: parseJsonObject(row.parameters_json ?? '{}', {}),
       });
     }
+    for (const row of validationRows) {
+      const summary = summariesByVersion.get(row.field_mapping_version_id);
+      const rule = row.rule_id ? summary?.rules.get(row.rule_id) : null;
+      if (!summary || !rule) continue;
+      rule.validationRules.push({
+        id: row.validation_id,
+        ruleId: row.rule_id,
+        targetRef: parseJsonObject(row.target_ref_json, {}),
+        validationKind: row.validation_kind,
+        severity: row.severity,
+        parameters: parseJsonObject(row.parameters_json ?? '{}', {}),
+      });
+    }
+    for (const row of releaseRows) {
+      const summary = summariesByVersion.get(row.field_mapping_version_id);
+      if (!summary) continue;
+      summary.destination = true;
+      if (row.destination_id && isDestinationProfileMappingReference(row.destination_id)) {
+        summary.destinationProfileIds.add(normalizeDestinationProfileReference(row.destination_id));
+      }
+      summary.releaseRules.push({
+        id: row.release_id,
+        destinationType: row.destination_type,
+        destinationId: row.destination_id,
+        sourceRef: parseJsonObject(row.source_ref_json, {}),
+        releaseAction: row.release_action,
+        legalBasis: row.legal_basis,
+        purpose: row.purpose,
+        condition: parseJsonObject(row.condition_json ?? '{}', {}),
+        priority: row.priority,
+      });
+    }
+    for (const row of conflictRows) {
+      const summary = summariesByVersion.get(row.field_mapping_version_id);
+      if (!summary) continue;
+      summary.conflictRules.push({
+        id: row.conflict_id,
+        targetRef: parseJsonObject(row.target_ref_json, {}),
+        conflictStrategy: row.conflict_strategy,
+        sourcePriority: parseJsonUnknownArray(row.source_priority_json),
+        condition: parseJsonObject(row.condition_json ?? '{}', {}),
+      });
+    }
     return rows.map((row) => ({
       id: row.id,
       tenantId: row.tenant_id,
@@ -3631,6 +3796,8 @@ export class IdentityMappingControlPlaneRepository {
       sourceProfileIds: [...(summariesByVersion.get(row.id)?.sourceProfileIds ?? [])],
       destinationProfileIds: [...(summariesByVersion.get(row.id)?.destinationProfileIds ?? [])],
       rules: [...(summariesByVersion.get(row.id)?.rules.values() ?? [])],
+      releaseRules: summariesByVersion.get(row.id)?.releaseRules ?? [],
+      conflictRules: summariesByVersion.get(row.id)?.conflictRules ?? [],
       latestSnapshot: row.snapshot_id
         ? {
             id: row.snapshot_id,
@@ -7010,7 +7177,7 @@ function customClaimSchemaToCatalogEntry(
           : validation.valueMultiplicity === 'single' || validation.valueMultiplicity === 'multi'
             ? validation.valueMultiplicity
             : 'single',
-      nullable: required ? false : null,
+      nullable: !required,
       required,
     },
   ];

@@ -1,7 +1,7 @@
--- Authrim 0.4.0 pre-1.0 semantic fresh-install baseline.
+-- Authrim 0.4.0 semantic fresh-install baseline.
 -- Logical stream: d1-core.
 -- Generated from the final database state; do not append historical migration SQL here.
--- Pre-1.0 databases are not upgrade-compatible and must be recreated.
+-- Fresh-install baselines must never be applied to upgrade an existing database.
 PRAGMA foreign_keys = OFF;
 
 CREATE TABLE tenants (
@@ -1660,10 +1660,14 @@ CREATE TABLE custom_claim_schemas (
   registration_placeholder TEXT
 , ui_group_key TEXT, ui_group_label TEXT, ui_group_order INTEGER NOT NULL DEFAULT 0, ui_field_order INTEGER NOT NULL DEFAULT 0, examples_json TEXT CHECK(examples_json IS NULL OR json_valid(examples_json)), cardinality TEXT NOT NULL DEFAULT 'single'
   CHECK (cardinality IN ('single', 'multi')));
-INSERT INTO custom_claim_schemas VALUES('builtin:default:name','default','name','name','Full Name','string',1,0,1,NULL,0,1,0,NULL,'any',1,1,0,NULL,NULL,1,1,'active',NULL,0,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,1,'{"values":["John Doe","山田 太郎"]}','single');
-INSERT INTO custom_claim_schemas VALUES('builtin:default:locale','default','locale','locale','Locale','string',0,0,1,NULL,0,1,0,NULL,'any',0,1,0,NULL,NULL,12,1,'active',NULL,0,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,12,'{"values":["ja-JP","en-US"]}','single');
-INSERT INTO custom_claim_schemas VALUES('builtin:default:email','default','email','email','Email','string',1,0,1,NULL,0,1,0,NULL,'any',1,1,0,NULL,NULL,20,1,'active',NULL,0,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'contact','Contact',20,1,'{"values":["john@example.com"]}','single');
-INSERT INTO custom_claim_schemas VALUES('builtin:default:email_verified','default','email_verified','email_verified','Email Verified','boolean',0,0,1,NULL,0,1,0,NULL,'any',0,0,0,NULL,NULL,21,1,'active',NULL,0,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'contact','Contact',20,2,'{"values":[true]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:display_name','default','display_name','display_name','Display Name','string',1,0,1,NULL,0,0,0,NULL,'any',1,1,0,NULL,NULL,1,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,1,'{"values":["John Doe","山田 太郎"]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:locale','default','locale','locale','Locale','string',0,0,1,NULL,0,0,0,NULL,'any',0,1,0,NULL,NULL,6,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,6,'{"values":["ja-JP","en-US"]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:email','default','email','email','Email','string',1,0,1,NULL,0,0,0,NULL,'any',1,1,0,NULL,NULL,20,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'contact','Contact',20,1,'{"values":["john@example.com"]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:email_verified','default','email_verified','email_verified','Email Verified','boolean',0,0,1,NULL,0,0,0,NULL,'any',0,0,0,NULL,NULL,21,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'contact','Contact',20,2,'{"values":[true]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:given_name','default','given_name','given_name','Given Name','string',1,0,1,NULL,0,0,0,NULL,'any',1,1,0,NULL,NULL,2,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,2,'{"values":["John","太郎"]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:family_name','default','family_name','family_name','Family Name','string',1,0,1,NULL,0,0,0,NULL,'any',1,1,0,NULL,NULL,3,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,3,'{"values":["Doe","山田"]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:preferred_username','default','preferred_username','preferred_username','Preferred Username','string',0,0,1,NULL,0,0,0,NULL,'any',1,1,0,NULL,NULL,4,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,4,'{"values":["jdoe"]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:picture_url','default','picture_url','picture_url','Picture URL','string',1,0,1,NULL,0,0,0,NULL,'any',0,1,0,NULL,NULL,5,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,5,'{"values":["https://example.com/users/jdoe/photo.jpg"]}','single');
 CREATE TABLE custom_claim_schema_history (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -4673,5 +4677,14 @@ CREATE INDEX idx_application_launchers_updated
   ON application_launchers (tenant_id, updated_at, id);
 CREATE INDEX idx_launcher_favorites_user
   ON launcher_favorites (tenant_id, user_id, created_at, launcher_id);
+CREATE UNIQUE INDEX idx_identity_providers_saml_entity_id
+  ON identity_providers(
+    tenant_id,
+    provider_type,
+    json_extract(config_json, '$.entityId')
+  )
+  WHERE provider_type IN ('saml_idp', 'saml_sp')
+    AND json_valid(config_json)
+    AND json_type(config_json, '$.entityId') = 'text';
 
 PRAGMA foreign_keys = ON;

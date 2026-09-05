@@ -101,10 +101,7 @@ describe('LookupScaleOutForecastService', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
     );
     database.exec(
       `INSERT INTO control_environments (
@@ -128,11 +125,12 @@ describe('LookupScaleOutForecastService', () => {
        INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          deterministic_name, ownership_fingerprint, provisioning_state,
-         origin_operation_id, desired_spec_json, created_at, updated_at
+         origin_operation_id, desired_spec_json, provider_create_state,
+         provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
        ) VALUES ('resource-a', 'test', 'd1', 'lookup-a', 'lookup-a', 'fingerprint-a',
                  'active', 'seed',
                  '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}',
-                 1, 1);
+                 'identified', 'database-a', 1, 1, 1);
        INSERT INTO control_lookup_physical_shards (
          lookup_shard_id, environment_id, residency_partition, binding_ref,
          d1_desired_resource_id, status, created_at, updated_at
@@ -225,11 +223,12 @@ describe('LookupScaleOutForecastService', () => {
       INSERT INTO control_desired_resources (
         desired_resource_id, environment_id, resource_kind, logical_shard_id,
         deterministic_name, ownership_fingerprint, provisioning_state,
-        origin_operation_id, desired_spec_json, created_at, updated_at
+        origin_operation_id, desired_spec_json, provider_create_state,
+        provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
       ) VALUES ('resource-regional', 'test', 'd1', 'lookup-regional', 'lookup-regional',
                 'fingerprint-regional', 'active', 'seed',
                 '{"residency_policy_id":"regional","lookup_capacity_domain_id":"lookup:shared:default"}',
-                1, 1);
+                'identified', 'database-regional', 1, 1, 1);
       INSERT INTO control_lookup_physical_shards (
         lookup_shard_id, environment_id, residency_partition, binding_ref,
         d1_desired_resource_id, status, created_at, updated_at
@@ -366,11 +365,12 @@ describe('LookupScaleOutForecastService', () => {
       INSERT INTO control_desired_resources (
         desired_resource_id, environment_id, resource_kind, logical_shard_id,
         deterministic_name, ownership_fingerprint, provisioning_state,
-        origin_operation_id, desired_spec_json, created_at, updated_at
+        origin_operation_id, desired_spec_json, provider_create_state,
+        provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
       ) VALUES ('resource-b', 'test', 'd1', 'lookup-b', 'lookup-b', 'fingerprint-b',
                 'active', 'seed',
                 '{"residency_policy_id":"regional","lookup_capacity_domain_id":"lookup:b:default"}',
-                1, 1);
+                'identified', 'database-b', 1, 1, 1);
       INSERT INTO control_lookup_physical_shards (
         lookup_shard_id, environment_id, residency_partition, binding_ref,
         d1_desired_resource_id, status, created_at, updated_at
@@ -489,12 +489,13 @@ describe('LookupScaleOutForecastService', () => {
        INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          deterministic_name, ownership_fingerprint, provisioning_state,
-         origin_operation_id, desired_spec_json, created_at, updated_at
+         origin_operation_id, desired_spec_json, provider_create_state,
+         provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
        ) VALUES ('resource-completed', 'test', 'd1', 'lookup-completed',
                  'lookup-completed', 'fingerprint-completed', 'ready',
                  'completed-forecast-operation',
                  '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}',
-                 10600, 10600);
+                 'identified', 'database-completed', 10600, 10600, 10600);
        INSERT INTO control_lookup_physical_shards (
          lookup_shard_id, environment_id, residency_partition, binding_ref,
          d1_desired_resource_id, status, created_at, updated_at
@@ -548,12 +549,13 @@ describe('LookupScaleOutForecastService', () => {
        INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          deterministic_name, ownership_fingerprint, provisioning_state,
-         origin_operation_id, desired_spec_json, created_at, updated_at
+         origin_operation_id, desired_spec_json, provider_create_state,
+         provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
        ) VALUES ('resource-insufficient', 'test', 'd1', 'lookup-insufficient',
                  'lookup-insufficient', 'fingerprint-insufficient', 'ready',
                  'insufficient-forecast-operation',
                  '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}',
-                 10600, 10600);
+                 'identified', 'database-insufficient', 10600, 10600, 10600);
        INSERT INTO control_lookup_physical_shards (
          lookup_shard_id, environment_id, residency_partition, binding_ref,
          d1_desired_resource_id, status, created_at, updated_at
@@ -648,12 +650,13 @@ describe('LookupScaleOutForecastService', () => {
        INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          deterministic_name, ownership_fingerprint, provisioning_state,
-         origin_operation_id, desired_spec_json, created_at, updated_at
+         origin_operation_id, desired_spec_json, provider_create_state,
+         provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
        ) VALUES ('resource-unreflected', 'test', 'd1', 'lookup-unreflected',
                  'lookup-unreflected', 'fingerprint-unreflected', 'ready',
                  'unreflected-operation',
                  '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}',
-                 10600, 10660);
+                 'identified', 'database-unreflected', 10660, 10600, 10660);
        INSERT INTO control_lookup_physical_shards (
          lookup_shard_id, environment_id, residency_partition, binding_ref,
          d1_desired_resource_id, status, created_at, updated_at
@@ -795,11 +798,12 @@ describe('LookupScaleOutForecastService', () => {
       `INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          deterministic_name, ownership_fingerprint, provisioning_state,
-         origin_operation_id, desired_spec_json, created_at, updated_at
+         origin_operation_id, desired_spec_json, provider_create_state,
+         provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
        ) VALUES ('resource-target', 'test', 'd1', 'lookup-target', 'lookup-target',
                  'fingerprint-target', 'active', 'seed',
                  '{"residency_policy_id":"global","lookup_capacity_domain_id":"lookup:global:default"}',
-                 1, 1);
+                 'identified', 'database-target', 1, 1, 1);
        INSERT INTO control_lookup_physical_shards (
          lookup_shard_id, environment_id, residency_partition, binding_ref,
          d1_desired_resource_id, status, created_at, updated_at

@@ -471,7 +471,7 @@ describe('registration-field-utils', () => {
         field_key: 'ssn',
         display_label: 'SSN',
         field_type: 'string',
-        is_pii: 1,
+        is_pii: true,
         registration_required: 0,
         validation_rules: null,
       },

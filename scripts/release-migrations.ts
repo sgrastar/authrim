@@ -21,12 +21,16 @@ import {
   assertProductVersionNotBehindPublished,
   calculateReleaseMigrationChecksum,
   compareProductVersions,
-  findLatestReleaseMigrationManifest,
   generateReleaseMigrationManifest,
+  isVersionPublishedOnRemoteMain,
+  listReleaseMigrationManifests,
   readReleaseMigrationManifest,
+  resolveReleaseMigrationExecutionManifest,
   serializeReleaseMigrationManifest,
   streamDirectory,
   syncDraftReleaseMigrationManifest,
+  validateReleaseMigrationManifestFiles,
+  validateRemoteMainPublishedReleaseMigrationManifests,
   validatePublishedReleaseMigrationManifests,
   writeReleaseMigrationManifest,
   type ReleaseMigrationFile,
@@ -37,6 +41,7 @@ import {
   renderPortableMigrationSql,
   type MigrationSqlDialect,
 } from '../packages/setup/src/core/sql-portability.js';
+import { verifySemanticMigrationComposition } from './semantic-baseline-migrations.js';
 
 type Command = 'baseline' | 'draft' | 'check' | 'prepare';
 
@@ -46,13 +51,14 @@ interface Arguments {
   minimumVersion?: string;
   gitRef?: string;
   write: boolean;
+  requireReleaseCandidate: boolean;
 }
 
 function parseArguments(argv: string[]): Arguments {
   const command = argv[0] as Command | undefined;
   if (!command || !['baseline', 'draft', 'check', 'prepare'].includes(command)) {
     throw new Error(
-      'Usage: release-migrations.ts <baseline|draft|check|prepare> [--version x.y.z] [--git-ref ref] [--minimum-version x.y.z] [--write]'
+      'Usage: release-migrations.ts <baseline|draft|check|prepare> [--version x.y.z] [--git-ref ref] [--minimum-version x.y.z] [--write] [--require-release-candidate]'
     );
   }
   const readOption = (name: string): string | undefined => {
@@ -65,6 +71,7 @@ function parseArguments(argv: string[]): Arguments {
     minimumVersion: readOption('--minimum-version'),
     gitRef: readOption('--git-ref'),
     write: argv.includes('--write'),
+    requireReleaseCandidate: argv.includes('--require-release-candidate'),
   };
 }
 
@@ -167,14 +174,14 @@ function migrationNumber(path: string): number {
 }
 
 function releaseBundlePath(
-  files: ReleaseMigrationFile[],
   version: string,
-  streamId: string
+  streamId: string,
+  previousFiles: readonly ReleaseMigrationFile[] = []
 ): string {
-  const highest = Math.max(...files.map((file) => migrationNumber(file.path)));
-  const prefix = String(highest).padStart(3, '0');
-  const streamSuffix = streamId.startsWith('external-') ? `_${streamId.replaceAll('-', '_')}` : '';
-  return `${prefix}_release_${version.replaceAll(/[^0-9A-Za-z]+/gu, '_')}${streamSuffix}.sql`;
+  const next = Math.max(0, ...previousFiles.map((file) => migrationNumber(file.path))) + 1;
+  const prefix = String(next).padStart(3, '0');
+  const streamSuffix = streamId.replace(/^d1-/u, '').replaceAll('-', '_');
+  return `${prefix}_${version.replaceAll(/[^0-9A-Za-z]+/gu, '_')}_${streamSuffix}_delta.sql`;
 }
 
 function mergeSqlFiles(streamRoot: string, files: ReleaseMigrationFile[], version: string): string {
@@ -197,6 +204,7 @@ interface ConsolidationOperation {
   bundlePath: string;
   bundleSql: string;
   bundleChecksum: string;
+  replaceSources: boolean;
 }
 
 interface ReleasePreparationJournal {
@@ -209,6 +217,7 @@ interface ReleasePreparationJournal {
     sources: ReleaseMigrationFile[];
     bundlePath: string;
     bundleChecksum: string;
+    replaceSources: boolean;
   }>;
 }
 
@@ -252,18 +261,27 @@ function readPreparationJournal(path: string): ReleasePreparationJournal {
       !['sqlite', 'postgres', 'mysql'].includes(operation.dialect) ||
       typeof operation.bundlePath !== 'string' ||
       typeof operation.bundleChecksum !== 'string' ||
-      !Array.isArray(operation.sources)
+      !Array.isArray(operation.sources) ||
+      (operation.replaceSources !== undefined && typeof operation.replaceSources !== 'boolean')
     ) {
       throw new Error(`Invalid release preparation operation: ${path}`);
     }
+    const replaceSources = operation.replaceSources !== false;
     const sources = operation.sources.map((source) => ReleaseMigrationFileSchema.parse(source));
-    const bundle = manifest.streams
-      .find((stream) => stream.id === operation.streamId)
-      ?.files.find((file) => file.path === operation.bundlePath);
+    const matchingStreams = [
+      ...manifest.streams,
+      ...(manifest.upgradePaths ?? []).flatMap((path) => path.streams),
+    ].filter((stream) => stream.id === operation.streamId);
+    const bundle = matchingStreams
+      .flatMap((stream) => stream.files)
+      .find((file) => file.path === operation.bundlePath);
     if (
       !bundle ||
       bundle.checksum !== operation.bundleChecksum ||
-      JSON.stringify(bundle.supersedes ?? []) !== JSON.stringify(sources)
+      !bundle.semanticEvidence ||
+      (replaceSources
+        ? JSON.stringify(bundle.supersedes ?? []) !== JSON.stringify(sources)
+        : sources.length !== 1 || sources[0]?.path !== bundle.path)
     ) {
       throw new Error(`Release preparation journal does not match its manifest: ${path}`);
     }
@@ -273,6 +291,7 @@ function readPreparationJournal(path: string): ReleasePreparationJournal {
       sources,
       bundlePath: operation.bundlePath,
       bundleChecksum: operation.bundleChecksum,
+      replaceSources,
     };
   });
   return { formatVersion: 1, productVersion: raw.productVersion, manifest, operations };
@@ -287,7 +306,7 @@ function completeReleasePreparation(input: {
     const streamRoot = streamDirectory(input.migrationsRoot, operation.streamId);
     if (!streamRoot) throw new Error(`Unknown migration stream: ${operation.streamId}`);
     const bundlePath = join(streamRoot, operation.bundlePath);
-    if (!existsSync(bundlePath)) {
+    if (!existsSync(bundlePath) && operation.replaceSources) {
       for (const source of operation.sources) {
         const sourcePath = join(streamRoot, source.path);
         if (!existsSync(sourcePath)) {
@@ -306,6 +325,11 @@ function completeReleasePreparation(input: {
         throw new Error(`Cannot resume release; bundle checksum changed: ${operation.streamId}`);
       }
       writeFileAtomically(bundlePath, sql);
+    }
+    if (!existsSync(bundlePath)) {
+      throw new Error(
+        `Cannot resume release; canonical delta is missing: ${operation.streamId}/${operation.bundlePath}`
+      );
     }
     if (
       calculateReleaseMigrationChecksum(bundlePath, operation.dialect) !== operation.bundleChecksum
@@ -330,6 +354,7 @@ function completeReleasePreparation(input: {
   // The durable manifest now contains every supersedes mapping. Source cleanup
   // can be resumed safely after interruption without losing release identity.
   for (const operation of input.journal.operations) {
+    if (!operation.replaceSources) continue;
     const streamRoot = streamDirectory(input.migrationsRoot, operation.streamId);
     if (!streamRoot) throw new Error(`Unknown migration stream: ${operation.streamId}`);
     for (const source of operation.sources) {
@@ -352,6 +377,7 @@ function buildReleaseManifest(input: {
   minimumVersion?: string;
   current: ReleaseMigrationManifest;
   previous?: ReleaseMigrationManifest;
+  releaseHistory?: readonly ReleaseMigrationManifest[];
 }): { manifest: ReleaseMigrationManifest; operations: ConsolidationOperation[] } {
   if (!input.previous) {
     return {
@@ -366,36 +392,75 @@ function buildReleaseManifest(input: {
 
   const currentByStream = streamMap(input.current);
   const previousByStream = streamMap(input.previous);
+  const explicitDirectUpgrade = input.current.upgradePaths?.find(
+    (path) => path.fromProductVersion === input.previous!.productVersion
+  );
+  const directUpgrade =
+    explicitDirectUpgrade ??
+    (!input.current.freshInstallBaseline
+      ? {
+          fromProductVersion: input.previous.productVersion,
+          kind: 'delta' as const,
+          streams: input.current.streams.map((stream) => {
+            const previous = input.previous!.streams.find(
+              (candidate) => candidate.id === stream.id
+            );
+            const previousPaths = new Set((previous?.files ?? []).map((file) => file.path));
+            return {
+              ...stream,
+              files: stream.files.filter((file) => !previousPaths.has(file.path)),
+            };
+          }),
+        }
+      : undefined);
+  if (!directUpgrade) {
+    throw new Error(
+      `Release ${input.version} has no upgrade path from ${input.previous.productVersion}`
+    );
+  }
+  const upgradeByStream = streamMap({
+    formatVersion: 1,
+    productVersion: input.version,
+    streams: directUpgrade.streams,
+  });
   const operations: ConsolidationOperation[] = [];
   const streams = RELEASE_MIGRATION_STREAM_DEFINITIONS.map((definition) => {
     const current = currentByStream.get(definition.id);
     const previous = previousByStream.get(definition.id);
     if (!current) throw new Error(`Current manifest is missing stream ${definition.id}`);
-    const previousFiles = new Map((previous?.files ?? []).map((file) => [file.path, file]));
-    const currentFiles = new Map(current.files.map((file) => [file.path, file]));
-
-    for (const published of previous?.files ?? []) {
-      const candidate = currentFiles.get(published.path);
-      if (!candidate)
-        throw new Error(`Published migration is missing: ${definition.id}/${published.path}`);
-      if (candidate.checksum !== published.checksum) {
-        throw new Error(`Published migration checksum changed: ${definition.id}/${published.path}`);
-      }
-    }
-
-    const unpublished = current.files.filter((file) => !previousFiles.has(file.path));
-    if (unpublished.length <= 1) {
-      return {
-        ...current,
-        files: [...(previous?.files ?? []), ...unpublished],
-      };
-    }
+    const unpublished = upgradeByStream.get(definition.id)?.files ?? [];
+    if (unpublished.length === 0) return current;
 
     const streamRoot = streamDirectory(input.migrationsRoot, definition.id);
     if (!streamRoot) throw new Error(`Unknown migration stream: ${definition.id}`);
-    const bundlePath = releaseBundlePath(unpublished, input.version, definition.id);
-    if (currentFiles.has(bundlePath) && !unpublished.some((file) => file.path === bundlePath)) {
-      throw new Error(`Release bundle already exists: ${definition.id}/${bundlePath}`);
+    const previousFiles = input.previous
+      ? previousInstalledStreamFiles({
+          previous: input.previous,
+          releaseHistory: input.releaseHistory ?? [input.previous],
+          streamId: definition.id,
+        })
+      : (previous?.files ?? []);
+    const canonicalPath = releaseBundlePath(input.version, definition.id, previousFiles);
+    if (unpublished.length === 1 && unpublished[0]?.path === canonicalPath) {
+      const source = unpublished[0];
+      operations.push({
+        streamId: definition.id,
+        streamRoot,
+        dialect: definition.dialect,
+        sources: [source],
+        bundlePath: canonicalPath,
+        bundleSql: readFileSync(join(streamRoot, source.path), 'utf-8'),
+        bundleChecksum: source.checksum,
+        replaceSources: false,
+      });
+      return current;
+    }
+    const currentFiles = new Map(current.files.map((file) => [file.path, file]));
+    if (
+      currentFiles.has(canonicalPath) &&
+      !unpublished.some((file) => file.path === canonicalPath)
+    ) {
+      throw new Error(`Release bundle already exists: ${definition.id}/${canonicalPath}`);
     }
     const bundleSql = mergeSqlFiles(streamRoot, unpublished, input.version);
     const bundleChecksum = checksumSql(bundleSql, definition.dialect);
@@ -404,22 +469,57 @@ function buildReleaseManifest(input: {
       streamRoot,
       dialect: definition.dialect,
       sources: unpublished,
-      bundlePath,
+      bundlePath: canonicalPath,
       bundleSql,
       bundleChecksum,
+      replaceSources: true,
     });
+    const deltaIsPartOfFreshPlan = unpublished.some((source) =>
+      current.files.some((file) => file.path === source.path)
+    );
     return {
       ...current,
-      files: [
-        ...(previous?.files ?? []),
-        {
-          path: bundlePath,
-          checksum: bundleChecksum,
-          supersedes: unpublished.map((file) => ({ path: file.path, checksum: file.checksum })),
-        },
-      ],
+      files: deltaIsPartOfFreshPlan
+        ? current.files
+            .filter((file) => !unpublished.some((source) => source.path === file.path))
+            .concat({
+              path: canonicalPath,
+              checksum: bundleChecksum,
+              supersedes: unpublished.map((file) => ({
+                path: file.path,
+                checksum: file.checksum,
+              })),
+            })
+            .sort((left, right) => left.path.localeCompare(right.path))
+        : current.files,
     };
   });
+
+  const operationByStream = new Map(operations.map((operation) => [operation.streamId, operation]));
+  const upgradePaths = (input.current.upgradePaths ?? []).map((path) =>
+    path.fromProductVersion !== input.previous!.productVersion
+      ? path
+      : {
+          ...path,
+          streams: path.streams.map((stream) => {
+            const operation = operationByStream.get(stream.id);
+            if (!operation || !operation.replaceSources) return stream;
+            return {
+              ...stream,
+              files: [
+                {
+                  path: operation.bundlePath,
+                  checksum: operation.bundleChecksum,
+                  supersedes: operation.sources.map((file) => ({
+                    path: file.path,
+                    checksum: file.checksum,
+                  })),
+                },
+              ],
+            };
+          }),
+        }
+  );
 
   return {
     manifest: {
@@ -430,10 +530,96 @@ function buildReleaseManifest(input: {
         ? { databaseCompatibility: input.current.databaseCompatibility }
         : {}),
       ...(input.current.rollout ? { rollout: input.current.rollout } : {}),
+      ...(input.current.freshInstallBaseline
+        ? { freshInstallBaseline: input.current.freshInstallBaseline }
+        : {}),
+      ...(upgradePaths.length > 0 ? { upgradePaths } : {}),
       streams,
     },
     operations,
   };
+}
+
+function previousInstalledStreamFiles(input: {
+  previous: ReleaseMigrationManifest;
+  releaseHistory: readonly ReleaseMigrationManifest[];
+  streamId: string;
+}): ReleaseMigrationFile[] {
+  const freshFiles =
+    input.previous.streams.find((stream) => stream.id === input.streamId)?.files ?? [];
+  const baselineVersion = input.previous.freshInstallBaseline?.productVersion;
+  if (!baselineVersion || baselineVersion === input.previous.productVersion) return freshFiles;
+  const execution = resolveReleaseMigrationExecutionManifest({
+    targetManifest: input.previous,
+    installedProductVersion: baselineVersion,
+    availableManifests: input.releaseHistory,
+  });
+  const deltaFiles = execution.streams.find((stream) => stream.id === input.streamId)?.files ?? [];
+  const files = new Map<string, ReleaseMigrationFile>();
+  for (const file of [...freshFiles, ...deltaFiles]) {
+    const existing = files.get(file.path);
+    if (existing && existing.checksum !== file.checksum) {
+      throw new Error(`Release history checksum conflict: ${input.streamId}/${file.path}`);
+    }
+    files.set(file.path, file);
+  }
+  return [...files.values()];
+}
+
+function verifyConsolidationOperations(input: {
+  migrationsRoot: string;
+  previous?: ReleaseMigrationManifest;
+  releaseHistory: readonly ReleaseMigrationManifest[];
+  operations: readonly ConsolidationOperation[];
+  manifest: ReleaseMigrationManifest;
+}): ReleaseMigrationManifest {
+  const evidenceByBundle = new Map<
+    string,
+    { schemaChecksum: string; seedChecksum: string; objectCount: number }
+  >();
+  for (const operation of input.operations) {
+    const baseFiles = input.previous
+      ? previousInstalledStreamFiles({
+          previous: input.previous,
+          releaseHistory: input.releaseHistory,
+          streamId: operation.streamId,
+        })
+      : [];
+    const readSql = (file: ReleaseMigrationFile): string =>
+      readFileSync(join(operation.streamRoot, file.path), 'utf-8');
+    const evidence = verifySemanticMigrationComposition({
+      streamId: operation.streamId,
+      dialect: operation.dialect,
+      baseSql: baseFiles.map(readSql),
+      sourceSql: operation.sources.map(readSql),
+      consolidatedSql: operation.bundleSql,
+    });
+    evidenceByBundle.set(`${operation.streamId}:${operation.bundlePath}`, {
+      schemaChecksum: evidence.schemaChecksum,
+      seedChecksum: evidence.seedChecksum,
+      objectCount: evidence.objectCount,
+    });
+    console.log(
+      `  ${operation.streamId}: semantic delta verified ` +
+        `(${evidence.objectCount} objects, schema ${evidence.schemaChecksum.slice(0, 12)}, ` +
+        `seed ${evidence.seedChecksum.slice(0, 12)})`
+    );
+  }
+  const addEvidence = (stream: ReleaseMigrationStream): ReleaseMigrationStream => ({
+    ...stream,
+    files: stream.files.map((file) => {
+      const semanticEvidence = evidenceByBundle.get(`${stream.id}:${file.path}`);
+      return semanticEvidence ? { ...file, semanticEvidence } : file;
+    }),
+  });
+  return ReleaseMigrationManifestSchema.parse({
+    ...input.manifest,
+    streams: input.manifest.streams.map(addEvidence),
+    upgradePaths: input.manifest.upgradePaths?.map((path) => ({
+      ...path,
+      streams: path.streams.map(addEvidence),
+    })),
+  });
 }
 
 function printPreparationPlan(
@@ -449,7 +635,9 @@ function printPreparationPlan(
   }
   for (const operation of operations) {
     console.log(
-      `  ${operation.streamId}: ${operation.sources.length} files -> ${operation.bundlePath}`
+      operation.replaceSources
+        ? `  ${operation.streamId}: ${operation.sources.length} files -> ${operation.bundlePath}`
+        : `  ${operation.streamId}: verify canonical delta ${operation.bundlePath}`
     );
     for (const source of operation.sources) console.log(`    - ${source.path}`);
   }
@@ -482,16 +670,33 @@ export function prepareRelease(input: {
     console.log(`Resumed and completed Authrim migration release ${input.version}.`);
     return;
   }
-  const previous = findLatestReleaseMigrationManifest(input.migrationsRoot)?.manifest;
-  if (previous && compareProductVersions(input.version, previous.productVersion) <= 0) {
+  const releaseHistory = listReleaseMigrationManifests(input.migrationsRoot);
+  const sameVersionRelease = releaseHistory.find(
+    (release) => release.manifest.productVersion === input.version
+  );
+  const published = isVersionPublishedOnRemoteMain({
+    repositoryRoot: dirname(input.migrationsRoot),
+    productVersion: input.version,
+  });
+  if (sameVersionRelease && published) {
+    throw new Error(`Release version is published on remote main: ${input.version}`);
+  }
+  const previous = releaseHistory
+    .filter((release) => compareProductVersions(release.manifest.productVersion, input.version) < 0)
+    .at(-1)?.manifest;
+  const latestNewer = releaseHistory.find(
+    (release) => compareProductVersions(release.manifest.productVersion, input.version) > 0
+  );
+  if (latestNewer) {
     throw new Error(
-      `Release version must be newer than ${previous.productVersion}: ${input.version}`
+      `Release version must be newer than ${latestNewer.manifest.productVersion}: ${input.version}`
     );
   }
   const current = generateReleaseMigrationManifest({
     migrationsRoot: input.migrationsRoot,
     productVersion: input.version,
     previousManifest: previous,
+    previousManifests: releaseHistory.map((release) => release.manifest),
   });
   const plan = buildReleaseManifest({
     migrationsRoot: input.migrationsRoot,
@@ -499,11 +704,22 @@ export function prepareRelease(input: {
     minimumVersion: input.minimumVersion,
     current,
     previous,
+    releaseHistory: releaseHistory.map((release) => release.manifest),
+  });
+
+  plan.manifest = verifyConsolidationOperations({
+    migrationsRoot: input.migrationsRoot,
+    previous,
+    releaseHistory: releaseHistory.map((release) => release.manifest),
+    operations: plan.operations,
+    manifest: plan.manifest,
   });
 
   if (input.write) {
     const releasePath = join(input.migrationsRoot, 'releases', `${input.version}.json`);
-    if (existsSync(releasePath)) throw new Error(`Release manifest already exists: ${releasePath}`);
+    if (existsSync(releasePath) && published) {
+      throw new Error(`Release manifest already exists and is published: ${releasePath}`);
+    }
     const journal: ReleasePreparationJournal = {
       formatVersion: 1,
       productVersion: input.version,
@@ -514,12 +730,195 @@ export function prepareRelease(input: {
         sources: operation.sources,
         bundlePath: operation.bundlePath,
         bundleChecksum: operation.bundleChecksum,
+        replaceSources: operation.replaceSources,
       })),
     };
     writeFileAtomically(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
     completeReleasePreparation({ migrationsRoot: input.migrationsRoot, journalPath, journal });
   }
   printPreparationPlan(plan.manifest, plan.operations, input.write);
+}
+
+function versionParts(version: string): [number, number, number] {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/u);
+  if (!match) throw new Error(`Invalid release version: ${version}`);
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function validateSemanticBaselineEvidence(input: {
+  migrationsRoot: string;
+  manifest: ReleaseMigrationManifest;
+}): void {
+  const evidencePath = join(
+    input.migrationsRoot,
+    'evidence',
+    `${input.manifest.productVersion}.json`
+  );
+  if (!existsSync(evidencePath)) {
+    throw new Error(`Semantic baseline evidence is missing: ${evidencePath}`);
+  }
+  const evidenceContents = readFileSync(evidencePath, 'utf-8');
+  const currentEvidencePath = join(input.migrationsRoot, 'semantic-baseline.evidence.json');
+  if (
+    !existsSync(currentEvidencePath) ||
+    readFileSync(currentEvidencePath, 'utf-8') !== evidenceContents
+  ) {
+    throw new Error(
+      `Current semantic baseline evidence differs from the ${input.manifest.productVersion} release candidate`
+    );
+  }
+  const raw = JSON.parse(evidenceContents) as {
+    formatVersion?: unknown;
+    productVersion?: unknown;
+    compatibility?: unknown;
+    streams?: unknown;
+  };
+  if (
+    raw.formatVersion !== 1 ||
+    raw.productVersion !== input.manifest.productVersion ||
+    raw.compatibility !== 'fresh_install_only' ||
+    !Array.isArray(raw.streams)
+  ) {
+    throw new Error(
+      `Semantic baseline evidence does not target ${input.manifest.productVersion}: ${evidencePath}`
+    );
+  }
+  const evidenceByStream = new Map<
+    string,
+    {
+      path?: unknown;
+      checksum?: unknown;
+      schemaChecksum?: unknown;
+      seedChecksum?: unknown;
+      objectCount?: unknown;
+      generatedFrom?: unknown;
+    }
+  >();
+  for (const entry of raw.streams) {
+    if (!entry || typeof entry !== 'object') continue;
+    const record = entry as {
+      id?: unknown;
+      path?: unknown;
+      checksum?: unknown;
+      schemaChecksum?: unknown;
+      seedChecksum?: unknown;
+      objectCount?: unknown;
+      generatedFrom?: unknown;
+    };
+    if (typeof record.id === 'string') evidenceByStream.set(record.id, record);
+  }
+  for (const stream of input.manifest.streams) {
+    if (stream.files.length === 0) continue;
+    const baseline = stream.files.find(
+      (file) =>
+        file.path.includes(`_${input.manifest.productVersion.replaceAll('.', '_')}_`) &&
+        file.path.endsWith('_baseline.sql')
+    );
+    const evidence = evidenceByStream.get(stream.id);
+    if (
+      !baseline ||
+      evidence?.path !== baseline.path ||
+      evidence.checksum !== baseline.checksum ||
+      typeof evidence.schemaChecksum !== 'string' ||
+      !/^[a-f0-9]{64}$/u.test(evidence.schemaChecksum) ||
+      typeof evidence.seedChecksum !== 'string' ||
+      !/^[a-f0-9]{64}$/u.test(evidence.seedChecksum) ||
+      typeof evidence.objectCount !== 'number' ||
+      !Number.isInteger(evidence.objectCount) ||
+      evidence.objectCount < 0 ||
+      !Array.isArray(evidence.generatedFrom) ||
+      evidence.generatedFrom.length === 0
+    ) {
+      throw new Error(`Semantic baseline evidence is incomplete for ${stream.id}`);
+    }
+  }
+}
+
+export function validateReleaseCandidateForMain(input: {
+  migrationsRoot: string;
+  productVersion: string;
+}): void {
+  const releasePath = join(input.migrationsRoot, 'releases', `${input.productVersion}.json`);
+  if (!existsSync(releasePath)) {
+    throw new Error(
+      `Release migration candidate is missing for ${input.productVersion}. ` +
+        'Ask the repository owner to authorize baseline or release-delta preparation before merging to main.'
+    );
+  }
+  const draftPath = join(input.migrationsRoot, DRAFT_RELEASE_MANIFEST_FILENAME);
+  if (!existsSync(draftPath)) throw new Error(`Draft manifest is missing: ${draftPath}`);
+  const candidate = readReleaseMigrationManifest(releasePath);
+  const draft = readReleaseMigrationManifest(draftPath);
+  if (candidate.productVersion !== input.productVersion) {
+    throw new Error(`Release migration candidate version mismatch: ${candidate.productVersion}`);
+  }
+  if (serializeReleaseMigrationManifest(candidate) !== serializeReleaseMigrationManifest(draft)) {
+    throw new Error(
+      `Release migration candidate for ${input.productVersion} is not prepared from the current draft. ` +
+        'Ask the repository owner whether to prepare the release migration files.'
+    );
+  }
+  if (candidate.acceptedMigrationHistory) {
+    throw new Error(
+      'Canonical release candidates must not contain runtime accepted migration history'
+    );
+  }
+  validateReleaseMigrationManifestFiles(input.migrationsRoot, candidate);
+
+  const [major, minor, patch] = versionParts(input.productVersion);
+  const seriesBaselineVersion = `${major}.${minor}.0`;
+  if (candidate.freshInstallBaseline?.productVersion !== seriesBaselineVersion) {
+    throw new Error(
+      `Release ${input.productVersion} must select the ${seriesBaselineVersion} fresh-install baseline`
+    );
+  }
+  if (patch === 0) {
+    validateSemanticBaselineEvidence({ migrationsRoot: input.migrationsRoot, manifest: candidate });
+  }
+
+  const history = listReleaseMigrationManifests(input.migrationsRoot);
+  const previous = history
+    .filter(
+      (entry) => compareProductVersions(entry.manifest.productVersion, input.productVersion) < 0
+    )
+    .at(-1)?.manifest;
+  if (!previous) return;
+  const direct = candidate.upgradePaths?.find(
+    (path) => path.fromProductVersion === previous.productVersion
+  );
+  if (!direct) {
+    throw new Error(
+      `Release ${input.productVersion} is missing an explicit upgrade path from ${previous.productVersion}`
+    );
+  }
+  for (const stream of direct.streams) {
+    if (stream.files.length > 1) {
+      throw new Error(
+        `Release ${input.productVersion} has multiple unconsolidated deltas for ${stream.id}`
+      );
+    }
+    const file = stream.files[0];
+    if (!file) continue;
+    if (!file.semanticEvidence) {
+      throw new Error(
+        `Release ${input.productVersion} delta lacks semantic verification evidence: ${stream.id}/${file.path}`
+      );
+    }
+    const expectedPath = releaseBundlePath(
+      input.productVersion,
+      stream.id,
+      previousInstalledStreamFiles({
+        previous,
+        releaseHistory: history.map((entry) => entry.manifest),
+        streamId: stream.id,
+      })
+    );
+    if (file.path !== expectedPath) {
+      throw new Error(
+        `Release ${input.productVersion} delta is not canonical: ${stream.id}/${file.path}; expected ${expectedPath}`
+      );
+    }
+  }
 }
 
 export function runReleaseMigrationsCli(): void {
@@ -565,19 +964,36 @@ export function runReleaseMigrationsCli(): void {
     }
     checkWorkspaceVersions(rootDir, version);
     validatePublishedReleaseMigrationManifests(migrationsRoot);
+    validateRemoteMainPublishedReleaseMigrationManifests({
+      migrationsRoot,
+      repositoryRoot: rootDir,
+    });
     const draftPath = join(migrationsRoot, DRAFT_RELEASE_MANIFEST_FILENAME);
     if (!existsSync(draftPath)) throw new Error(`Draft manifest is missing: ${draftPath}`);
-    const publishedPrevious = findLatestReleaseMigrationManifest(migrationsRoot)?.manifest;
+    const releaseHistory = listReleaseMigrationManifests(migrationsRoot);
+    const publishedPrevious = releaseHistory
+      .filter((release) =>
+        isVersionPublishedOnRemoteMain({
+          repositoryRoot: rootDir,
+          productVersion: release.manifest.productVersion,
+        })
+      )
+      .at(-1)?.manifest;
+    const latestReleaseCandidate = releaseHistory.at(-1)?.manifest;
     assertProductVersionNotBehindPublished(version, publishedPrevious?.productVersion);
     const actual = readReleaseMigrationManifest(draftPath);
-    const previous = actual.productVersion === version ? actual : publishedPrevious;
+    const previous = actual.productVersion === version ? actual : latestReleaseCandidate;
     const expected = generateReleaseMigrationManifest({
       migrationsRoot,
       productVersion: version,
       previousManifest: previous,
+      previousManifests: releaseHistory.map((release) => release.manifest),
     });
     const publishedSameVersionPath = join(migrationsRoot, 'releases', `${version}.json`);
-    if (existsSync(publishedSameVersionPath)) {
+    if (
+      existsSync(publishedSameVersionPath) &&
+      isVersionPublishedOnRemoteMain({ repositoryRoot: rootDir, productVersion: version })
+    ) {
       const published = readReleaseMigrationManifest(publishedSameVersionPath);
       if (
         serializeReleaseMigrationManifest(published) !== serializeReleaseMigrationManifest(expected)
@@ -590,12 +1006,23 @@ export function runReleaseMigrationsCli(): void {
     if (serializeReleaseMigrationManifest(actual) !== serializeReleaseMigrationManifest(expected)) {
       throw new Error('Draft migration manifest is stale. Run pnpm migrate:manifest.');
     }
+    if (args.requireReleaseCandidate) {
+      validateReleaseCandidateForMain({ migrationsRoot, productVersion: version });
+      console.log(`Release migration candidate ${version} is ready for main.`);
+    }
     console.log('Draft migration manifest is current.');
     return;
   }
 
   checkWorkspaceVersions(rootDir, repositoryVersion);
-  validatePublishedReleaseMigrationManifests(migrationsRoot);
+  // Release candidates remain mutable until their version tag is reachable from remote main.
+  // Validating every local candidate here would prevent an explicitly authorized regeneration
+  // after semantic baseline generation changed its checksum. Published artifacts are still
+  // checked byte-for-byte against their remote-main tags.
+  validateRemoteMainPublishedReleaseMigrationManifests({
+    migrationsRoot,
+    repositoryRoot: rootDir,
+  });
 
   prepareRelease({
     migrationsRoot,

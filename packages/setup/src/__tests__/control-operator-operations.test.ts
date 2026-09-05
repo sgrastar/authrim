@@ -191,6 +191,29 @@ describe('setup pending Control operations', () => {
     );
   });
 
+  it('keeps post-patch smoke retries visible for observation without making them setup steps', async () => {
+    const query = vi.fn(async () => [
+      {
+        ...row,
+        status: 'waiting_retry',
+        last_error_code: 'control_worker_smoke_failed',
+        current_step: 'smoke_bindings',
+        provider_database_id: 'database-id',
+      },
+    ]);
+    const [operation] = await listPendingControlOperatorOperations({
+      controlDatabaseName: 'test-control',
+      query,
+    });
+
+    expect(operation).toMatchObject({
+      status: 'waiting_retry',
+      lastErrorCode: 'control_worker_smoke_failed',
+      currentStep: 'smoke_bindings',
+    });
+    expect(query.mock.calls[0]?.[1]).toContain("binding.state IN ('settings_patched'");
+  });
+
   it('resumes a running Worker binding step after cross-operation lease contention clears', async () => {
     const query = vi.fn(async () => [
       {

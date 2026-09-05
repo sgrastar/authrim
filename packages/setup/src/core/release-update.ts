@@ -56,6 +56,7 @@ export function buildReleaseSchemaUpdatePlan(input: {
   currentManifestForTarget?: (
     target: ReleaseMigrationPhysicalTarget
   ) => ReleaseMigrationManifest | undefined;
+  requireCurrentManifestForTargets?: boolean;
   targets: ReleaseMigrationPhysicalTarget[];
 }): ReleaseSchemaUpdatePlan {
   const targets = input.targets.map((target): ReleaseSchemaTargetPlan => {
@@ -71,15 +72,23 @@ export function buildReleaseSchemaUpdatePlan(input: {
       target.streamId
     );
     const missingStream = !target.streamId || !targetStream;
+    const missingRequiredHistory =
+      input.requireCurrentManifestForTargets === true &&
+      targetCurrentManifest === undefined &&
+      (targetStream?.files.length ?? 0) > 0;
     const requiresAction =
-      missingStream || targetCurrentManifest === undefined || changedFiles.length > 0;
+      missingStream ||
+      changedFiles.length > 0 ||
+      (targetCurrentManifest === undefined && input.requireCurrentManifestForTargets !== true);
     const blockedReason = missingStream
       ? target.streamId
         ? `release_migration_stream_not_found:${target.streamId}`
         : (target.blockedReason ?? `release_migration_stream_not_found:${target.id}`)
-      : requiresAction && !target.automatic
-        ? (target.blockedReason ?? 'manual_migration_required')
-        : undefined;
+      : missingRequiredHistory
+        ? `release_migration_target_history_required:${target.id}`
+        : requiresAction && !target.automatic
+          ? (target.blockedReason ?? 'manual_migration_required')
+          : undefined;
     return { target, changedFiles, requiresAction, ...(blockedReason ? { blockedReason } : {}) };
   });
   return {

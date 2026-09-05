@@ -348,7 +348,7 @@
 								type="text"
 								class="admin-input"
 								bind:value={editForm.display_label}
-								disabled={!isEditable}
+								disabled={!isEditable || isSystem}
 							/>
 						</div>
 

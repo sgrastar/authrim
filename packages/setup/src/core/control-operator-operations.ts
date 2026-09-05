@@ -66,6 +66,8 @@ export interface PendingControlOperatorOperation {
     | 'operator_action_required'
     | 'control_worker_settings_request_rejected'
     | 'control_worker_binding_reconciliation_failed'
+    | 'control_worker_smoke_failed'
+    | 'control_worker_deployment_lease_busy'
     | null;
   requestedByType: 'setup' | 'admin' | 'scheduler' | 'reconciler';
   attemptCount: number;
@@ -144,7 +146,11 @@ function parseRow(row: PendingOperatorOperationRow): PendingControlOperatorOpera
           String(row.last_error_code)
         )) ||
       (row.status === 'waiting_retry' &&
-        row.last_error_code === 'control_worker_binding_reconciliation_failed') ||
+        [
+          'control_worker_binding_reconciliation_failed',
+          'control_worker_smoke_failed',
+          'control_worker_deployment_lease_busy',
+        ].includes(String(row.last_error_code))) ||
       (row.status === 'running' && row.last_error_code === null)
     ) ||
     !['setup', 'admin', 'scheduler', 'reconciler'].includes(row.requested_by_type) ||
@@ -360,6 +366,18 @@ export async function listPendingControlOperatorOperations(input: {
                  AND lease.owner_operation_id <> operation.operation_id
               )
             )
+          OR (
+            operation.status = 'waiting_retry'
+            AND operation.last_error_code IN (
+              'control_worker_smoke_failed',
+              'control_worker_deployment_lease_busy'
+            )
+            AND EXISTS (
+              SELECT 1 FROM control_worker_binding_reconciliations binding
+               WHERE binding.operation_id = operation.operation_id
+                 AND binding.state IN ('settings_patched', 'smoke_verifying', 'stabilizing')
+            )
+          )
           OR (
             operation.status = 'running'
             AND operation.last_error_code IS NULL

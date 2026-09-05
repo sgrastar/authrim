@@ -78,6 +78,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
@@ -100,6 +102,10 @@ jobs:
 
       - name: Run type checking
         run: pnpm run typecheck
+
+      - name: Verify release migration candidate for main
+        if: github.base_ref == 'main'
+        run: pnpm migrate:release:check
 
   api-tests:
     name: API Tests with Coverage

@@ -774,7 +774,7 @@ describe('setup canonical Control operator executor', () => {
       queryD1Batch.mock.calls.some((call) =>
         call[1][0]?.sql.includes('DELETE FROM control_worker_deployment_leases')
       )
-    ).toBe(true);
+    ).toBe(false);
     expect(JSON.stringify(queryD1Batch.mock.calls)).not.toMatch(/api[_-]?token|secret/iu);
   });
 
@@ -924,7 +924,7 @@ describe('setup canonical Control operator executor', () => {
     expect(api.listWorkerDeployments).toHaveBeenCalledTimes(3);
   });
 
-  it('patches all bindings for one Worker once and releases the lease between targets', async () => {
+  it('patches all bindings once and retains the final Worker lease through smoke', async () => {
     const bindingOperation: PendingTenantDisasterRecoveryOperatorOperation = {
       operationId: 'tenant-dr-batched',
       environmentId: 'test',
@@ -1129,7 +1129,7 @@ describe('setup canonical Control operator executor', () => {
       queryD1Batch.mock.calls.filter((call) =>
         call[1][0]?.sql.includes('DELETE FROM control_worker_deployment_leases')
       )
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it('resumes as awaiting smoke when every Worker target is already patched', async () => {

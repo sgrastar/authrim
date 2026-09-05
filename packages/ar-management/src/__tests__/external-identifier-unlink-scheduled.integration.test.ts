@@ -154,7 +154,7 @@ describe('external identifier unlink scheduled recovery', () => {
     pii = new DatabaseSync(':memory:');
     lookup = new DatabaseSync(':memory:');
     core.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/001_pre_1_0_core_baseline.sql'), 'utf8')
+      readFileSync(resolve(REPO_ROOT, 'migrations/001_0_4_0_core_baseline.sql'), 'utf8')
         .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
         .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
@@ -163,11 +163,9 @@ describe('external identifier unlink scheduled recovery', () => {
          id, tenant_id, account_type, lifecycle_state, created_at, updated_at
        ) VALUES ('account:user-a', 'tenant-a', 'person', 'active', 1, 1);`
     );
-    pii.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/pii/001_pre_1_0_pii_baseline.sql'), 'utf8')
-    );
+    pii.exec(readFileSync(resolve(REPO_ROOT, 'migrations/pii/001_0_4_0_pii_baseline.sql'), 'utf8'));
     lookup.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_pre_1_0_lookup_baseline.sql'), 'utf8')
+      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_0_4_0_lookup_baseline.sql'), 'utf8')
         .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
         .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );

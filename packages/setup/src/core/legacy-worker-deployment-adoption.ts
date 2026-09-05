@@ -28,6 +28,61 @@ export interface LegacyWorkerDeploymentEvidence {
   expectedPackageVersion: string;
 }
 
+/**
+ * Bind an otherwise orphaned active Worker to one interrupted initial-deployment attempt.
+ *
+ * Canonical naming and an immutable provider identity are necessary but not sufficient: a Worker
+ * with the same name may predate the current setup attempt. Web resume therefore also requires at
+ * least one durable sibling upload checkpoint and constrains every orphan deployment to the same
+ * bounded upload window. The subsequent deployment still replaces/verifies every adopted Worker.
+ */
+export function assertInterruptedInitialWorkerDeploymentEvidence(input: {
+  lock: AuthrimLock;
+  evidence: readonly LegacyWorkerDeploymentEvidence[];
+  clockSkewMs?: number;
+}): void {
+  if (
+    input.evidence.length === 0 ||
+    !input.lock.releaseUpdate ||
+    !['schema_applied', 'workers_deployed'].includes(input.lock.releaseUpdate.phase)
+  ) {
+    throw new Error('interrupted_worker_recovery_release_checkpoint_invalid');
+  }
+
+  const siblingCheckpointTimes = Object.values(input.lock.workerScriptOwnership ?? {})
+    .map((checkpoint) => Date.parse(checkpoint.updatedAt))
+    .filter(Number.isFinite);
+  if (siblingCheckpointTimes.length === 0) {
+    throw new Error('interrupted_worker_recovery_sibling_checkpoint_required');
+  }
+
+  const releaseStartedAt = Date.parse(input.lock.releaseUpdate.startedAt);
+  const earliestSibling = Math.min(...siblingCheckpointTimes);
+  const latestSibling = Math.max(...siblingCheckpointTimes);
+  if (!Number.isFinite(releaseStartedAt)) {
+    throw new Error('interrupted_worker_recovery_release_timestamp_invalid');
+  }
+  const clockSkewMs = Math.max(0, input.clockSkewMs ?? 10 * 60_000);
+  const lowerBound = Math.max(releaseStartedAt, earliestSibling - clockSkewMs);
+  const upperBound = latestSibling + clockSkewMs;
+
+  for (const recovered of input.evidence) {
+    const deployedAt = Date.parse(recovered.deployedAt);
+    if (
+      input.lock.workers?.[recovered.component] ||
+      input.lock.workerScriptOwnership?.[recovered.component] ||
+      recovered.deploymentSource !== 'Upload' ||
+      !Number.isFinite(deployedAt) ||
+      deployedAt < lowerBound ||
+      deployedAt > upperBound
+    ) {
+      throw new Error(
+        `interrupted_worker_recovery_evidence_outside_upload_window:${recovered.component}`
+      );
+    }
+  }
+}
+
 interface LegacyWorkerDeploymentAdoptionDependencies {
   list?: () => Promise<Array<{ name: string; id: string; tag?: string }>>;
   getDeployment?: typeof getWorkerDeployments;

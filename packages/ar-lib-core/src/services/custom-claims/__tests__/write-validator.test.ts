@@ -169,6 +169,41 @@ describe('write-validator', () => {
     vi.clearAllMocks();
   });
 
+  it('silently discards submitted fields that have no active schema', async () => {
+    const state = {
+      schemas: [makeSchema({ is_required: 0 })],
+      userCustomFields: new Map<string, Record<string, string>>(),
+    };
+    const db = createMockCoreDb(state);
+
+    const validation = await validateCustomClaimWrite({
+      db,
+      tenantId: 'default',
+      userId: 'user-1',
+      submitted: { unknown_from_idp: 'discard-me' },
+      requireCompleteRecord: false,
+    });
+
+    expect(validation).toMatchObject({
+      ok: true,
+      nonPiiValues: {},
+      piiValues: {},
+      nonPiiKeysToDelete: [],
+      piiKeysToDelete: [],
+    });
+    if (!validation.ok) throw new Error(validation.error);
+
+    await persistCustomClaimWrite({
+      db,
+      tenantId: 'default',
+      userId: 'user-1',
+      validation,
+    });
+
+    expect(state.userCustomFields.get('user-1')).toBeUndefined();
+    expect(db.execute).not.toHaveBeenCalled();
+  });
+
   it('preserves existing required values during partial updates', async () => {
     const schemas = [
       makeSchema({ field_key: 'department', display_label: 'Department', is_required: 1 }),

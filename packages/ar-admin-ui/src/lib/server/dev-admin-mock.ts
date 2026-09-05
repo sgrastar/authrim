@@ -1175,21 +1175,57 @@ const fieldMappingVersions = [
 		destinationProfileIds: ['destination-profile-oidc-core', 'destination-profile-saml-sp'],
 		rules: [
 			{
-				id: 'rule-email',
-				ruleKey: 'email',
-				ruleKind: 'field',
+				id: 'rule-source-email',
+				ruleKey: 'source-email',
+				ruleKind: 'source_mapping',
 				action: 'map',
 				priority: 10,
 				metadata: {},
 				edges: [
 					{
-						id: 'edge-email',
+						id: 'edge-source-email',
 						sourceRef: {
 							side: 'source',
-							namespace: 'saml.attribute',
-							path: 'urn:oid:0.9.2342.19200300.100.1.3'
+							namespace: 'csv.column',
+							path: 'mail',
+							role: 'source',
+							profileId: 'source-profile-gakunin-saml'
 						},
-						targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'email' },
+						targetRef: {
+							side: 'destination',
+							namespace: 'authrim.profile',
+							path: 'email',
+							role: 'target'
+						},
+						edgeKind: 'direct',
+						displayOrder: 0
+					}
+				],
+				transforms: []
+			},
+			{
+				id: 'rule-destination-email',
+				ruleKey: 'destination-email',
+				ruleKind: 'destination_release',
+				action: 'map',
+				priority: 20,
+				metadata: {},
+				edges: [
+					{
+						id: 'edge-destination-email',
+						sourceRef: {
+							side: 'source',
+							namespace: 'authrim.profile',
+							path: 'email',
+							role: 'target'
+						},
+						targetRef: {
+							side: 'destination',
+							namespace: 'oidc.claim',
+							path: 'email',
+							role: 'destination',
+							profileId: 'destination-profile-destination-profile-oidc-core'
+						},
 						edgeKind: 'direct',
 						displayOrder: 0
 					}
@@ -1249,7 +1285,157 @@ const catalogEntries = [
 	}
 ];
 
+function devBuiltinProfileClaim(input: {
+	fieldKey: string;
+	displayLabel: string;
+	fieldType?: 'string' | 'boolean';
+	isPii: boolean;
+	isSearchable: boolean;
+	isExportable: boolean;
+	displayOrder: number;
+	groupKey: 'profile' | 'contact';
+	groupLabel: 'Profile' | 'Contact';
+	groupOrder: number;
+	fieldOrder: number;
+}): DevCustomClaimSchema {
+	return {
+		id: `builtin:${TENANT_ID}:${input.fieldKey}`,
+		field_key: input.fieldKey,
+		display_label: input.displayLabel,
+		field_type: input.fieldType ?? 'string',
+		is_pii: input.isPii,
+		is_required: false,
+		is_active: true,
+		is_system: true,
+		description: 'Built-in optional profile attribute available to identity mappings.',
+		validation_rules: null,
+		include_in_id_token: false,
+		include_in_userinfo: false,
+		include_in_introspection: false,
+		required_scopes: null,
+		scope_mode: 'any',
+		display_order: input.displayOrder,
+		claim_namespace: null,
+		is_searchable: input.isSearchable,
+		is_exportable: input.isExportable,
+		is_vc_claim: false,
+		show_on_registration: false,
+		registration_required: false,
+		registration_order: 0,
+		registration_placeholder: null,
+		operation_status: 'active',
+		operation_detail: null,
+		schema_version: 1,
+		user_count: 0,
+		user_count_approximate: input.isPii,
+		ui_group_key: input.groupKey,
+		ui_group_label: input.groupLabel,
+		ui_group_order: input.groupOrder,
+		ui_field_order: input.fieldOrder,
+		created_at: Math.floor(NOW / 1000),
+		updated_at: Math.floor(NOW / 1000),
+		created_by: 'system'
+	};
+}
+
 const customClaimSchemas: DevCustomClaimSchema[] = [
+	devBuiltinProfileClaim({
+		fieldKey: 'display_name',
+		displayLabel: 'Display Name',
+		isPii: true,
+		isSearchable: true,
+		isExportable: true,
+		displayOrder: 1,
+		groupKey: 'profile',
+		groupLabel: 'Profile',
+		groupOrder: 10,
+		fieldOrder: 1
+	}),
+	devBuiltinProfileClaim({
+		fieldKey: 'given_name',
+		displayLabel: 'Given Name',
+		isPii: true,
+		isSearchable: true,
+		isExportable: true,
+		displayOrder: 2,
+		groupKey: 'profile',
+		groupLabel: 'Profile',
+		groupOrder: 10,
+		fieldOrder: 2
+	}),
+	devBuiltinProfileClaim({
+		fieldKey: 'family_name',
+		displayLabel: 'Family Name',
+		isPii: true,
+		isSearchable: true,
+		isExportable: true,
+		displayOrder: 3,
+		groupKey: 'profile',
+		groupLabel: 'Profile',
+		groupOrder: 10,
+		fieldOrder: 3
+	}),
+	devBuiltinProfileClaim({
+		fieldKey: 'preferred_username',
+		displayLabel: 'Preferred Username',
+		isPii: false,
+		isSearchable: true,
+		isExportable: true,
+		displayOrder: 4,
+		groupKey: 'profile',
+		groupLabel: 'Profile',
+		groupOrder: 10,
+		fieldOrder: 4
+	}),
+	devBuiltinProfileClaim({
+		fieldKey: 'picture_url',
+		displayLabel: 'Picture URL',
+		isPii: true,
+		isSearchable: false,
+		isExportable: true,
+		displayOrder: 5,
+		groupKey: 'profile',
+		groupLabel: 'Profile',
+		groupOrder: 10,
+		fieldOrder: 5
+	}),
+	devBuiltinProfileClaim({
+		fieldKey: 'locale',
+		displayLabel: 'Locale',
+		isPii: false,
+		isSearchable: false,
+		isExportable: true,
+		displayOrder: 6,
+		groupKey: 'profile',
+		groupLabel: 'Profile',
+		groupOrder: 10,
+		fieldOrder: 6
+	}),
+	devBuiltinProfileClaim({
+		fieldKey: 'email',
+		displayLabel: 'Email',
+		isPii: true,
+		isSearchable: true,
+		isExportable: true,
+		displayOrder: 20,
+		groupKey: 'contact',
+		groupLabel: 'Contact',
+		groupOrder: 20,
+		fieldOrder: 1
+	}),
+	devBuiltinProfileClaim({
+		fieldKey: 'email_verified',
+		displayLabel: 'Email Verified',
+		fieldType: 'boolean',
+		isPii: false,
+		isSearchable: false,
+		isExportable: false,
+		displayOrder: 21,
+		groupKey: 'contact',
+		groupLabel: 'Contact',
+		groupOrder: 20,
+		fieldOrder: 2
+	}),
 	{
 		id: 'dev-claim-employee-id',
 		field_key: 'employee_id',
@@ -7496,46 +7682,153 @@ function sampleDestinationProfiles() {
 	];
 }
 
-function handleIdentityMapping(event: RequestEvent, segments: string[]): Response | null {
+async function handleIdentityMapping(
+	event: RequestEvent,
+	segments: string[]
+): Promise<Response | null> {
 	const method = event.request.method;
+	const mutableFieldMappingSets = fieldMappingSets as unknown as Array<Record<string, unknown>>;
+	const mutableFieldMappingVersions = fieldMappingVersions as unknown as Array<
+		Record<string, unknown>
+	>;
+	if (
+		segments[0] === 'persistent-identifier-profiles' &&
+		segments.length === 1 &&
+		method === 'GET'
+	) {
+		return json({ profiles: [] });
+	}
 	if (segments[0] === 'field-mapping-sets' && method === 'GET' && segments.length === 1) {
 		return json({ fieldMappingSets });
 	}
 	if (segments[0] === 'field-mapping-sets' && method === 'POST' && segments.length === 1) {
-		return json({
-			result: {
-				id: `field-mapping-dev-${fieldMappingSets.length + 1}`,
-				tenantId: TENANT_ID,
-				fieldMappingKey: 'dev-created-field-mapping',
-				displayName: 'Dev created field mapping set',
-				lifecycleState: 'draft',
-				createdAt: Date.now(),
-				updatedAt: Date.now()
-			}
-		});
+		const request = await readJson(event.request);
+		const now = Date.now();
+		const result = {
+			id: `field-mapping-dev-${fieldMappingSets.length + 1}`,
+			tenantId: TENANT_ID,
+			fieldMappingKey:
+				typeof request.fieldMappingKey === 'string'
+					? request.fieldMappingKey
+					: 'dev-created-field-mapping',
+			displayName:
+				typeof request.displayName === 'string'
+					? request.displayName
+					: 'Dev created field mapping set',
+			description: typeof request.description === 'string' ? request.description : null,
+			lifecycleState: 'draft',
+			createdAt: now,
+			updatedAt: now
+		};
+		mutableFieldMappingSets.unshift(result);
+		return json({ result });
 	}
-	if (segments[0] === 'field-mapping-sets' && segments[2] === 'versions' && method === 'GET') {
+	if (
+		segments[0] === 'field-mapping-sets' &&
+		segments[2] === 'versions' &&
+		segments.length === 3 &&
+		method === 'GET'
+	) {
 		return json({
 			fieldMappingVersions: fieldMappingVersions.filter(
 				(version) => version.fieldMappingSetId === segments[1]
 			)
 		});
 	}
-	if (segments[0] === 'field-mapping-sets' && segments[2] === 'versions' && method === 'POST') {
-		return json({
-			result: {
-				id: `field-mapping-version-dev-${Date.now()}`,
-				tenantId: TENANT_ID,
-				fieldMappingSetId: segments[1],
-				lifecycleState: 'draft'
-			}
-		});
+	if (
+		segments[0] === 'field-mapping-sets' &&
+		segments[2] === 'versions' &&
+		segments.length === 3 &&
+		method === 'POST'
+	) {
+		const request = await readJson(event.request);
+		const rules = Array.isArray(request.rules) ? request.rules : [];
+		const destinationProfileIds = Array.from(
+			new Set(
+				rules.flatMap((rule) => {
+					if (!rule || typeof rule !== 'object') return [];
+					const edges: unknown[] = 'edges' in rule && Array.isArray(rule.edges) ? rule.edges : [];
+					return edges.flatMap((edge) => {
+						if (!edge || typeof edge !== 'object' || !('targetRef' in edge)) return [];
+						const targetRef = edge.targetRef;
+						if (!targetRef || typeof targetRef !== 'object' || !('profileId' in targetRef)) {
+							return [];
+						}
+						return typeof targetRef.profileId === 'string' ? [targetRef.profileId] : [];
+					});
+				})
+			)
+		);
+		const now = Date.now();
+		const result = {
+			id: `field-mapping-version-dev-${now}`,
+			tenantId: TENANT_ID,
+			fieldMappingSetId: segments[1],
+			versionLabel: typeof request.versionLabel === 'string' ? request.versionLabel : `dev-${now}`,
+			lifecycleState: 'draft',
+			compatibilityRange:
+				typeof request.compatibilityRange === 'string' ? request.compatibilityRange : null,
+			authorId: 'admin-dev-admin',
+			publishedAt: null,
+			createdAt: now,
+			updatedAt: now,
+			directions: {
+				source: rules.some(
+					(rule) =>
+						rule &&
+						typeof rule === 'object' &&
+						'ruleKind' in rule &&
+						typeof rule.ruleKind === 'string' &&
+						rule.ruleKind.includes('source')
+				),
+				destination: rules.some(
+					(rule) =>
+						rule &&
+						typeof rule === 'object' &&
+						'ruleKind' in rule &&
+						typeof rule.ruleKind === 'string' &&
+						(rule.ruleKind.includes('destination') || rule.ruleKind.includes('release'))
+				)
+			},
+			sourceProfileIds: Array.isArray(request.sourceProfileIds) ? request.sourceProfileIds : [],
+			destinationProfileIds,
+			rules,
+			latestSnapshot: null
+		};
+		mutableFieldMappingVersions.unshift(result);
+		return json({ result });
 	}
 	if (segments[0] === 'field-mapping-sets' && method === 'DELETE') {
 		return json({ success: true });
 	}
 	if (segments[0] === 'field-mapping-sets' && method === 'POST') {
-		return json({ success: true, snapshotId: 'snapshot-gakunin-basic-v1' });
+		const version = mutableFieldMappingVersions.find((candidate) => candidate.id === segments[3]);
+		if (segments[4] === 'compile') {
+			const snapshot = {
+				id: `snapshot-${segments[3] ?? 'dev'}`,
+				catalogVersionId: 'catalog-version-core-v1',
+				lifecycleState: 'draft',
+				compiledAt: Date.now()
+			};
+			if (version) version.latestSnapshot = snapshot;
+			return json({ result: snapshot });
+		}
+		if (segments[4] === 'activate') {
+			for (const candidate of mutableFieldMappingVersions) {
+				if (candidate.fieldMappingSetId !== segments[1]) continue;
+				candidate.lifecycleState = candidate.id === segments[3] ? 'active' : 'published';
+			}
+			const latestSnapshot = version?.latestSnapshot;
+			if (latestSnapshot && typeof latestSnapshot === 'object') {
+				(latestSnapshot as Record<string, unknown>).lifecycleState = 'active';
+			}
+			const fieldMappingSet = mutableFieldMappingSets.find(
+				(candidate) => candidate.id === segments[1]
+			);
+			if (fieldMappingSet) fieldMappingSet.lifecycleState = 'active';
+			return json({ success: true });
+		}
+		return json({ success: true });
 	}
 	if (segments[0] === 'catalogs') {
 		return json({
@@ -7585,7 +7878,19 @@ function handleIdentityMapping(event: RequestEvent, segments: string[]): Respons
 						id: 'source-profile-version-gakunin-saml',
 						versionLabel: 'v1',
 						lifecycleState: 'active',
-						schema: { sourceType: 'csv', columns: [] }
+						schema: {
+							sourceType: 'csv',
+							columns: [
+								{
+									stableColumnId: 'csv.mail',
+									headerName: 'mail',
+									label: 'mail',
+									valueType: 'string',
+									required: false,
+									classification: 'pii'
+								}
+							]
+						}
 					}
 				}
 			]
@@ -13235,7 +13540,9 @@ export async function handleDevAdminMock(
 	if (tenantDomainMappingsResponse) return tenantDomainMappingsResponse;
 	const tenantVanityDomainsResponse = await handleTenantVanityDomains(event, segments);
 	if (tenantVanityDomainsResponse) return tenantVanityDomainsResponse;
-	if (segments[0] === 'field-mapping') return handleIdentityMapping(event, segments.slice(1));
+	if (segments[0] === 'field-mapping') {
+		return await handleIdentityMapping(event, segments.slice(1));
+	}
 	if (
 		segments[0] === 'saml-providers' ||
 		segments[0] === 'saml-settings' ||

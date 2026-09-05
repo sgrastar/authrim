@@ -8,8 +8,8 @@ import { listD1MigrationSqlFiles } from '../core/cloudflare.js';
 import { renderPortableMigrationSql } from '../core/sql-portability.js';
 
 const migrationsDir = fileURLToPath(new URL('../../../../migrations', import.meta.url));
-const d1Migration = '001_pre_1_0_core_baseline.sql';
-const postgresMigration = 'external/postgres/001_pre_1_0_external_postgres_core_baseline.sql';
+const d1Migration = '001_0_4_0_core_baseline.sql';
+const postgresMigration = 'external/postgres/001_0_4_0_external_postgres_core_baseline.sql';
 
 function findSqlite3(): string | null {
   try {

@@ -88,14 +88,17 @@ async function waitWithinDeadline(
     }
     return;
   }
-  await runWithinDeadline({
-    deadline,
-    attemptTimeoutMs: delayMs + 1,
-    timeoutCode,
-    operation: async () => {
-      await waitForTokenApiRetry(delayMs);
-    },
-  });
+  // Do not race two timers whose deadlines differ by only one millisecond. Under load the timeout
+  // timer can win even though the intended retry delay completed in the same event-loop turn,
+  // turning a transient provider response into a false terminal failure. Reserve the delay from
+  // the operation deadline first and verify the deadline again after waking.
+  if (remainingDeadlineMs(deadline) <= delayMs) {
+    throw new OperationDeadlineExceededError(timeoutCode);
+  }
+  await waitForTokenApiRetry(delayMs);
+  if (remainingDeadlineMs(deadline) <= 0) {
+    throw new OperationDeadlineExceededError(timeoutCode);
+  }
 }
 
 async function fetchWithinDeadline<T>(input: {

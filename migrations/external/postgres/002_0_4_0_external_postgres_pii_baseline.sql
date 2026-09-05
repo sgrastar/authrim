@@ -1,7 +1,7 @@
--- Authrim 0.4.0 pre-1.0 semantic fresh-install baseline.
+-- Authrim 0.4.0 semantic fresh-install baseline.
 -- Logical stream: external-postgres-pii.
 -- Generated from the final database state; do not append historical migration SQL here.
--- Pre-1.0 databases are not upgrade-compatible and must be recreated.
+-- Fresh-install baselines must never be applied to upgrade an existing database.
 --
 -- PostgreSQL database dump
 --

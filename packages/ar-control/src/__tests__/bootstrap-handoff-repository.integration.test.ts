@@ -83,10 +83,7 @@ describe('D1BootstrapHandoffRepository', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
     );
     database.exec(
       `INSERT INTO control_environments (
@@ -281,14 +278,17 @@ describe('D1BootstrapHandoffRepository', () => {
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          resource_scope, tenant_id, deterministic_name, ownership_fingerprint,
          desired_state, provisioning_state, origin_operation_id, observed_resource_id,
-         desired_spec_json, created_at, updated_at
+         desired_spec_json, provider_create_state, provider_resource_id,
+         provider_identity_checkpointed_at, created_at, updated_at
        ) VALUES
          ('lookup-resource', 'test', 'd1', 'lookup-default', 'platform', NULL,
           'authrim-test-lookup', '${'6'.repeat(64)}', 'present', 'ready', 'inventory-op',
-          'lookup-observed', '${lookupSpec.replaceAll("'", "''")}', 1, 1),
+          'lookup-observed', '${lookupSpec.replaceAll("'", "''")}', 'identified',
+          'lookup-db-id', 1, 1, 1),
          ('tenant-resource', 'test', 'd1', 'tenant-default', 'platform', NULL,
           'authrim-test-tenant-default', '${'7'.repeat(64)}', 'present', 'ready',
-          'bootstrap-op', 'tenant-observed', '${tenantSpec.replaceAll("'", "''")}', 1, 1);
+          'bootstrap-op', 'tenant-observed', '${tenantSpec.replaceAll("'", "''")}', 'identified',
+          'tenant-db-id', 1, 1, 1);
        INSERT INTO control_observed_resources (
          observed_resource_id, environment_id, desired_resource_id, provider_resource_id,
          provider_name, resource_kind, ownership_fingerprint, observed_state,

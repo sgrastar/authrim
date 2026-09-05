@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { startAuthentication } from '@simplewebauthn/browser';
+	import { startAuthentication, WebAuthnAbortService } from '@simplewebauthn/browser';
 	import { adminAuthAPI, getAuthErrorMessage } from '$lib/api/admin-auth';
+	import { AdminLoginTimeoutError, withAdminLoginTimeout } from '$lib/admin/admin-login-timeout';
 	import {
 		resolveAdminAgentLoginHandoffId,
 		resolveAdminLoginReturnTo
@@ -19,6 +20,8 @@
 	let selectedLanguage = $state<Locales>(getLocale());
 	let languageSaving = $state(false);
 	let languageError = $state('');
+	const ADMIN_API_TIMEOUT_MS = 30_000;
+	const PASSKEY_CEREMONY_TIMEOUT_MS = 120_000;
 
 	function getLanguageName(language: Locales): string {
 		const localizedName = language === 'en' ? $LL.language_english() : $LL.language_japanese();
@@ -102,26 +105,34 @@
 
 		try {
 			// Step 1: Get WebAuthn login options from server
-			const { options, challengeId } = await adminAuthAPI.getLoginOptions();
+			const { options, challengeId } = await withAdminLoginTimeout(
+				adminAuthAPI.getLoginOptions(),
+				ADMIN_API_TIMEOUT_MS
+			);
 
 			// Step 2: Perform WebAuthn authentication (browser prompt)
-			const credential = await startAuthentication({ optionsJSON: options });
+			const credential = await withAdminLoginTimeout(
+				startAuthentication({ optionsJSON: options }),
+				PASSKEY_CEREMONY_TIMEOUT_MS,
+				() => WebAuthnAbortService.cancelCeremony()
+			);
 
 			// Step 3: Verify credential with server
-			await adminAuthAPI.verifyLogin(challengeId, credential);
+			await withAdminLoginTimeout(
+				adminAuthAPI.verifyLogin(challengeId, credential),
+				ADMIN_API_TIMEOUT_MS
+			);
 
 			// Step 4: Refresh session-backed auth state, including tenant context and roles.
-			await adminAuth.checkAuth();
+			await withAdminLoginTimeout(adminAuth.checkAuth(), ADMIN_API_TIMEOUT_MS);
 
 			// Step 5: Resume a bounded browser authorization journey or open the dashboard.
 			await resumeAfterLogin();
 		} catch (err) {
-			console.error('Login error:', err);
-			error = getAuthErrorMessage(err);
-			// Debug: show actual error in development
-			if (err instanceof Error && err.message) {
-				error += ` (${err.name}: ${err.message})`;
-			}
+			error =
+				err instanceof AdminLoginTimeoutError
+					? $LL.admin_login_timeout()
+					: getAuthErrorMessage(err);
 		} finally {
 			loading = false;
 		}

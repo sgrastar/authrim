@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,16 +10,23 @@ import {
   assertReleaseDatabaseCompatibility,
   assertProductVersionOpenForNewMigrations,
   assertProductVersionNotBehindPublished,
+  buildReleaseMigrationArtifactManifest,
+  calculateReleaseMigrationChecksum,
   calculateReleaseManifestChecksum,
   compareProductVersions,
   discoverReleaseMigrationStream,
   generateReleaseMigrationManifest,
+  isVersionPublishedOnRemoteMain,
   loadInstalledReleaseMigrationManifest,
   loadTargetReleaseMigrationManifest,
+  readReleaseMigrationManifest,
   ReleaseMigrationManifestSchema,
   resolveReleaseMigrationTargets,
+  resolveReleaseMigrationExecutionManifest,
   resolveRegisteredSchemaReferences,
   syncDraftReleaseMigrationManifest,
+  validateReleaseMigrationManifestFiles,
+  validateRemoteMainPublishedReleaseMigrationManifests,
   validatePublishedReleaseMigrationManifests,
   writeReleaseMigrationManifest,
   type ReleaseMigrationManifest,
@@ -27,10 +35,11 @@ import {
   buildReleaseSchemaUpdatePlan,
   getControlManagedReleaseStreamIds,
 } from '../core/release-update.js';
-import { withVerifiedInitialReleaseState } from '../core/release-state.js';
+import { withSchemaTargetStates, withVerifiedInitialReleaseState } from '../core/release-state.js';
 import {
   assertReleaseVersionMatchesRoot,
   prepareRelease,
+  validateReleaseCandidateForMain,
 } from '../../../../scripts/release-migrations.js';
 import { parseArguments as parseD1RunnerArguments } from '../../../../scripts/run-d1-migrations.js';
 
@@ -111,6 +120,26 @@ function temporaryMigrations(): string {
   return root;
 }
 
+function managedCoreMigrations(): string {
+  const root = mkdtempSync(join(tmpdir(), 'authrim-managed-release-manifest-'));
+  temporaryDirectories.push(root);
+  for (const directory of [
+    'admin',
+    'control',
+    'lookup',
+    'pii',
+    'plugin-runner',
+    'external/postgres',
+  ]) {
+    mkdirSync(join(root, directory), { recursive: true });
+  }
+  writeFileSync(
+    join(root, '001_0_4_0_core_baseline.sql'),
+    'CREATE TABLE core_record (id TEXT PRIMARY KEY);\n'
+  );
+  return root;
+}
+
 function lock(d1: AuthrimLock['d1']): AuthrimLock {
   return AuthrimLockSchema.parse({
     version: '1.0.0',
@@ -122,6 +151,324 @@ function lock(d1: AuthrimLock['d1']): AuthrimLock {
 }
 
 describe('release migration manifests', () => {
+  it('separates a series fresh baseline from patch upgrade deltas', () => {
+    const migrationsRoot = managedCoreMigrations();
+    const baseline = generateReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '0.4.0',
+    });
+    expect(baseline.freshInstallBaseline).toEqual({ productVersion: '0.4.0' });
+    expect(baseline.upgradePaths).toBeUndefined();
+    writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), baseline);
+    writeFileSync(
+      join(migrationsRoot, '002_add_name.sql'),
+      'ALTER TABLE core_record ADD COLUMN name TEXT;\n'
+    );
+
+    const patch = generateReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '0.4.1',
+      previousManifest: baseline,
+      previousManifests: [baseline],
+    });
+    expect(patch.freshInstallBaseline).toEqual({ productVersion: '0.4.0' });
+    expect(
+      patch.streams.find((stream) => stream.id === 'd1-core')?.files.map((file) => file.path)
+    ).toEqual(['001_0_4_0_core_baseline.sql', '002_add_name.sql']);
+    expect(
+      patch.upgradePaths?.[0]?.streams
+        .find((stream) => stream.id === 'd1-core')
+        ?.files.map((file) => file.path)
+    ).toEqual(['002_add_name.sql']);
+  });
+
+  it('keeps an unpublished initial baseline editable through semantic regeneration', () => {
+    const migrationsRoot = managedCoreMigrations();
+    const baseline = generateReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '0.4.0',
+    });
+    writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), baseline);
+    writeFileSync(
+      join(migrationsRoot, '002_unpublished_change.sql'),
+      'ALTER TABLE core_record ADD COLUMN label TEXT;\n'
+    );
+
+    expect(() =>
+      generateReleaseMigrationManifest({
+        migrationsRoot,
+        productVersion: '0.4.0',
+        previousManifest: baseline,
+        previousManifests: [baseline],
+      })
+    ).toThrow('initial_fresh_baseline_regeneration_required:0.4.0');
+    expect(
+      generateReleaseMigrationManifest({
+        migrationsRoot,
+        productVersion: '0.4.0',
+        previousManifest: baseline,
+        previousManifests: [baseline],
+        semanticBaselineSource: true,
+      })
+        .streams.find((stream) => stream.id === 'd1-core')
+        ?.files.map((file) => file.path)
+    ).toEqual(['001_0_4_0_core_baseline.sql', '002_unpublished_change.sql']);
+  });
+
+  it('retains published legacy SQL without reapplying it after a semantic baseline exists', () => {
+    const migrationsRoot = managedCoreMigrations();
+    const baseline = generateReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '0.4.0',
+    });
+    writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), baseline);
+    const legacyPath = join(migrationsRoot, '001_published_legacy.sql');
+    writeFileSync(legacyPath, 'CREATE TABLE legacy_record (id TEXT PRIMARY KEY);\n');
+    const baselineFile = baseline.streams.find((stream) => stream.id === 'd1-core')!.files[0]!;
+    writeFileSync(
+      join(migrationsRoot, 'semantic-baseline.evidence.json'),
+      `${JSON.stringify({
+        formatVersion: 1,
+        productVersion: '0.4.0',
+        compatibility: 'fresh_install_only',
+        streams: [
+          {
+            id: 'd1-core',
+            dialect: 'sqlite',
+            path: baselineFile.path,
+            checksum: baselineFile.checksum,
+            schemaChecksum: 'a'.repeat(64),
+            seedChecksum: 'b'.repeat(64),
+            objectCount: 1,
+            generatedFrom: [
+              {
+                path: '001_published_legacy.sql',
+                checksum: calculateReleaseMigrationChecksum(legacyPath, 'sqlite'),
+              },
+            ],
+          },
+        ],
+      })}\n`
+    );
+
+    const normal = generateReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '0.4.0',
+      previousManifest: baseline,
+      previousManifests: [baseline],
+    });
+    expect(normal.streams.find((stream) => stream.id === 'd1-core')?.files).toEqual(
+      baseline.streams.find((stream) => stream.id === 'd1-core')?.files
+    );
+    expect(
+      generateReleaseMigrationManifest({
+        migrationsRoot,
+        productVersion: '0.4.0',
+        previousManifest: baseline,
+        previousManifests: [baseline],
+        semanticBaselineSource: true,
+      })
+        .streams.find((stream) => stream.id === 'd1-core')
+        ?.files.map((file) => file.path)
+    ).toEqual(['001_0_4_0_core_baseline.sql']);
+  });
+
+  it('resolves sequential deltas for upgrades and never applies a new baseline to an existing DB', () => {
+    const stream = (
+      files: Array<{ path: string; checksum: string }>
+    ): ReleaseMigrationManifest['streams'][number] => ({
+      id: 'd1-core',
+      dialect: 'sqlite',
+      logicalRoles: ['core'],
+      files,
+    });
+    const baseline040 = { path: '001_0_4_0_core_baseline.sql', checksum: 'a'.repeat(64) };
+    const delta041 = { path: '002_0_4_1_core_delta.sql', checksum: 'b'.repeat(64) };
+    const delta042 = { path: '003_0_4_2_core_delta.sql', checksum: 'c'.repeat(64) };
+    const baseline050 = { path: '001_0_5_0_core_baseline.sql', checksum: 'd'.repeat(64) };
+    const bridge050 = { path: '004_0_5_0_core_delta.sql', checksum: 'e'.repeat(64) };
+    const release040 = ReleaseMigrationManifestSchema.parse({
+      formatVersion: 1,
+      productVersion: '0.4.0',
+      freshInstallBaseline: { productVersion: '0.4.0' },
+      streams: [stream([baseline040])],
+    });
+    const release041 = ReleaseMigrationManifestSchema.parse({
+      formatVersion: 1,
+      productVersion: '0.4.1',
+      freshInstallBaseline: { productVersion: '0.4.0' },
+      streams: [stream([baseline040, delta041])],
+      upgradePaths: [{ fromProductVersion: '0.4.0', kind: 'delta', streams: [stream([delta041])] }],
+    });
+    const release042 = ReleaseMigrationManifestSchema.parse({
+      formatVersion: 1,
+      productVersion: '0.4.2',
+      freshInstallBaseline: { productVersion: '0.4.0' },
+      streams: [stream([baseline040, delta041, delta042])],
+      upgradePaths: [{ fromProductVersion: '0.4.1', kind: 'delta', streams: [stream([delta042])] }],
+    });
+    const release050 = ReleaseMigrationManifestSchema.parse({
+      formatVersion: 1,
+      productVersion: '0.5.0',
+      freshInstallBaseline: { productVersion: '0.5.0' },
+      streams: [stream([baseline050])],
+      upgradePaths: [
+        { fromProductVersion: '0.4.2', kind: 'bridge', streams: [stream([bridge050])] },
+      ],
+    });
+
+    expect(
+      resolveReleaseMigrationExecutionManifest({ targetManifest: release050 }).streams[0]?.files
+    ).toEqual([baseline050]);
+    expect(
+      resolveReleaseMigrationExecutionManifest({
+        targetManifest: release050,
+        installedProductVersion: '0.4.0',
+        availableManifests: [release040, release041, release042, release050],
+      }).streams[0]?.files.map((file) => file.path)
+    ).toEqual(['002_0_4_1_core_delta.sql', '003_0_4_2_core_delta.sql', '004_0_5_0_core_delta.sql']);
+    const artifact = buildReleaseMigrationArtifactManifest({
+      targetManifest: release050,
+      installedProductVersion: '0.4.0',
+      availableManifests: [release040, release041, release042, release050],
+    });
+    expect(artifact.streams[0]?.files).toEqual([baseline050]);
+    expect(
+      artifact.upgradePaths
+        ?.find((path) => path.fromProductVersion === '0.4.0')
+        ?.streams[0]?.files.map((file) => file.path)
+    ).toEqual(['002_0_4_1_core_delta.sql', '003_0_4_2_core_delta.sql', '004_0_5_0_core_delta.sql']);
+    expect(() =>
+      resolveReleaseMigrationExecutionManifest({
+        targetManifest: release050,
+        installedProductVersion: '0.3.4',
+        availableManifests: [release040, release041, release042, release050],
+      })
+    ).toThrow('release_upgrade_path_not_found:0.3.4:0.5.0');
+  });
+
+  it('retains superseded draft paths as accepted history without executing their SQL', () => {
+    const baseline = { path: '001_0_4_0_core_baseline.sql', checksum: 'a'.repeat(64) };
+    const draft = { path: '002_add_name.sql', checksum: 'b'.repeat(64) };
+    const delta = {
+      path: '002_0_4_1_core_delta.sql',
+      checksum: 'c'.repeat(64),
+      supersedes: [draft],
+    };
+    const stream = (files: ReleaseMigrationManifest['streams'][number]['files']) => ({
+      id: 'd1-core',
+      dialect: 'sqlite' as const,
+      logicalRoles: ['core'],
+      files,
+    });
+    const release = ReleaseMigrationManifestSchema.parse({
+      formatVersion: 1,
+      productVersion: '0.4.1',
+      freshInstallBaseline: { productVersion: '0.4.0' },
+      streams: [stream([baseline, delta])],
+      upgradePaths: [{ fromProductVersion: '0.4.0', kind: 'delta', streams: [stream([delta])] }],
+    });
+    const future = ReleaseMigrationManifestSchema.parse({
+      formatVersion: 1,
+      productVersion: '0.4.2',
+      streams: [stream([{ path: '003_0_4_2_core_delta.sql', checksum: 'd'.repeat(64) }])],
+    });
+
+    const artifact = buildReleaseMigrationArtifactManifest({
+      targetManifest: release,
+      installedProductVersion: '0.4.0',
+      availableManifests: [release, future],
+    });
+
+    expect(artifact.acceptedMigrationHistory?.[0]?.files).toEqual(
+      expect.arrayContaining([baseline, draft, delta])
+    );
+    expect(artifact.acceptedMigrationHistory?.[0]?.files).toHaveLength(3);
+    expect(
+      artifact.acceptedMigrationHistory?.[0]?.files.some(
+        (file) => file.path === '003_0_4_2_core_delta.sql'
+      )
+    ).toBe(false);
+    expect(
+      artifact.upgradePaths?.find((path) => path.fromProductVersion === '0.4.0')?.streams[0]?.files
+    ).toEqual([delta]);
+  });
+
+  it('validates executable SQL without requiring superseded accepted-history files', () => {
+    const root = mkdtempSync(join(tmpdir(), 'authrim-release-history-'));
+    temporaryDirectories.push(root);
+    const sql = 'CREATE TABLE example (id TEXT PRIMARY KEY);\n';
+    const path = join(root, '001_0_4_0_core_baseline.sql');
+    writeFileSync(path, sql);
+    const baseline = {
+      path: '001_0_4_0_core_baseline.sql',
+      checksum: calculateReleaseMigrationChecksum(path, 'sqlite'),
+    };
+    const stream = (files: ReleaseMigrationManifest['streams'][number]['files']) => ({
+      id: 'd1-core',
+      dialect: 'sqlite' as const,
+      logicalRoles: ['core'],
+      files,
+    });
+    const manifest = ReleaseMigrationManifestSchema.parse({
+      formatVersion: 1,
+      productVersion: '0.4.0',
+      freshInstallBaseline: { productVersion: '0.4.0' },
+      streams: [stream([baseline])],
+      acceptedMigrationHistory: [
+        stream([{ path: '002_unpublished_source.sql', checksum: 'b'.repeat(64) }]),
+      ],
+    });
+
+    expect(() => validateReleaseMigrationManifestFiles(root, manifest)).not.toThrow();
+    expect(() =>
+      validateReleaseMigrationManifestFiles(root, {
+        ...manifest,
+        acceptedMigrationHistory: [stream([{ ...baseline, checksum: 'c'.repeat(64) }])],
+      })
+    ).toThrow('Release migration history conflicts');
+  });
+
+  it('preserves prior per-target migration evidence when recording an upgrade delta', () => {
+    const targetId = 'd1:core-id:d1-core';
+    const initial = lock({ DB: { id: 'core-id', name: 'core' } });
+    initial.schemaTargets = {
+      [targetId]: {
+        productVersion: '0.4.0',
+        manifestChecksum: 'a'.repeat(64),
+        streamId: 'd1-core',
+        files: [{ path: '001_0_4_0_core_baseline.sql', checksum: 'b'.repeat(64) }],
+        appliedBy: 'automatic',
+        updatedAt: '2026-09-01T00:00:00.000Z',
+      },
+    };
+    const updated = withSchemaTargetStates(initial, {
+      targetIds: [targetId],
+      manualTargetIds: new Set(),
+      productVersion: '0.4.1',
+      manifestChecksum: 'c'.repeat(64),
+      targetStreamIds: new Map([[targetId, 'd1-core']]),
+      manifest: ReleaseMigrationManifestSchema.parse({
+        formatVersion: 1,
+        productVersion: '0.4.1',
+        streams: [
+          {
+            id: 'd1-core',
+            dialect: 'sqlite',
+            logicalRoles: ['core'],
+            files: [{ path: '002_0_4_1_core_delta.sql', checksum: 'd'.repeat(64) }],
+          },
+        ],
+      }),
+      preserveExistingFiles: true,
+    });
+
+    expect(updated.schemaTargets?.[targetId]?.files.map((file) => file.path)).toEqual([
+      '001_0_4_0_core_baseline.sql',
+      '002_0_4_1_core_delta.sql',
+    ]);
+  });
+
   it('orders stable semantic product versions above prereleases', () => {
     expect(compareProductVersions('1.10.0', '1.9.9')).toBeGreaterThan(0);
     expect(compareProductVersions('1.1.0', '1.1.0-rc.2')).toBeGreaterThan(0);
@@ -155,6 +502,17 @@ describe('release migration manifests', () => {
         streams: [stream, stream],
       })
     ).toThrow();
+  });
+
+  it('rejects a fresh baseline from another release series', () => {
+    expect(() =>
+      ReleaseMigrationManifestSchema.parse({
+        formatVersion: 1,
+        productVersion: '1.2.1',
+        freshInstallBaseline: { productVersion: '1.1.0' },
+        streams: [],
+      })
+    ).toThrow('Fresh-install baseline must be the major/minor boundary');
   });
 
   it('rejects migration files whose manifest order differs from execution order', () => {
@@ -246,7 +604,7 @@ describe('release migration manifests', () => {
     expect(next.streams.find((stream) => stream.id === 'd1-core')?.files[0].supersedes).toEqual([
       { path: '001_draft.sql', checksum: 'a'.repeat(64) },
     ]);
-    expect(next.databaseCompatibility).toBe('forward_only');
+    expect(next.databaseCompatibility).toBe('fresh_and_forward');
   });
 
   it('rejects pre-1.0 database upgrades unless every target already has the exact baseline', () => {
@@ -399,7 +757,7 @@ describe('release migration manifests', () => {
     });
     expect(
       released.streams.find((stream) => stream.id === 'd1-core')?.files.map((file) => file.path)
-    ).toEqual(['001_core.sql', '003_release_1_1_0.sql']);
+    ).toEqual(['001_core.sql', '002_1_1_0_core_delta.sql']);
     const releaseManifest = JSON.parse(
       readFileSync(join(migrationsRoot, 'releases/1.1.0.json'), 'utf-8')
     ) as ReleaseMigrationManifest;
@@ -410,6 +768,86 @@ describe('release migration manifests', () => {
       expect.objectContaining({ path: '003_draft_b.sql' }),
     ]);
     expect(existsSync(join(migrationsRoot, 'releases/.1.1.0.prepare-state'))).toBe(false);
+  });
+
+  it('increments canonical delta numbers across patch releases in a managed series', () => {
+    const migrationsRoot = managedCoreMigrations();
+    const baseline = generateReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '0.4.0',
+    });
+    writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), baseline);
+    writeFileSync(
+      join(migrationsRoot, '002_add_label.sql'),
+      'ALTER TABLE core_record ADD COLUMN label TEXT;\n'
+    );
+    writeFileSync(
+      join(migrationsRoot, '003_add_label_index.sql'),
+      'CREATE INDEX core_record_label_idx ON core_record(label);\n'
+    );
+
+    prepareRelease({ migrationsRoot, version: '0.4.1', write: true });
+    expect(existsSync(join(migrationsRoot, '002_0_4_1_core_delta.sql'))).toBe(true);
+    const release041 = readReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.1.json'));
+    expect(
+      release041.streams
+        .find((stream) => stream.id === 'd1-core')
+        ?.files.find((file) => file.path === '002_0_4_1_core_delta.sql')?.semanticEvidence
+    ).toMatchObject({ objectCount: 2 });
+
+    writeFileSync(
+      join(migrationsRoot, '003_add_state.sql'),
+      "ALTER TABLE core_record ADD COLUMN state TEXT NOT NULL DEFAULT 'active';\n"
+    );
+    writeFileSync(
+      join(migrationsRoot, '004_add_state_index.sql'),
+      'CREATE INDEX core_record_state_idx ON core_record(state);\n'
+    );
+
+    prepareRelease({ migrationsRoot, version: '0.4.2', write: true });
+    expect(existsSync(join(migrationsRoot, '003_0_4_2_core_delta.sql'))).toBe(true);
+    const release042 = readReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.2.json'));
+    expect(
+      release042.streams.find((stream) => stream.id === 'd1-core')?.files.map((file) => file.path)
+    ).toEqual([
+      '001_0_4_0_core_baseline.sql',
+      '002_0_4_1_core_delta.sql',
+      '003_0_4_2_core_delta.sql',
+    ]);
+    expect(
+      release042.upgradePaths?.[0]?.streams
+        .find((stream) => stream.id === 'd1-core')
+        ?.files.map((file) => file.path)
+    ).toEqual(['003_0_4_2_core_delta.sql']);
+
+    prepareRelease({ migrationsRoot, version: '0.4.2', write: true });
+    expect(readReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.2.json'))).toEqual(
+      release042
+    );
+  });
+
+  it('semantically verifies an already-canonical single patch delta without deleting it', () => {
+    const migrationsRoot = managedCoreMigrations();
+    const baseline = generateReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '0.4.0',
+    });
+    writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), baseline);
+    const deltaPath = join(migrationsRoot, '002_0_4_1_core_delta.sql');
+    writeFileSync(deltaPath, 'ALTER TABLE core_record ADD COLUMN label TEXT;\n');
+
+    prepareRelease({ migrationsRoot, version: '0.4.1', write: true });
+
+    expect(existsSync(deltaPath)).toBe(true);
+    const release = readReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.1.json'));
+    const delta = release.upgradePaths?.[0]?.streams
+      .find((stream) => stream.id === 'd1-core')
+      ?.files.at(0);
+    expect(delta).toMatchObject({
+      path: '002_0_4_1_core_delta.sql',
+      semanticEvidence: { objectCount: 1 },
+    });
+    expect(delta?.supersedes).toBeUndefined();
   });
 
   it('resumes release preparation from its durable journal after interruption', () => {
@@ -471,21 +909,351 @@ describe('release migration manifests', () => {
     expect(existsSync(join(migrationsRoot, '003_interrupted_b.sql'))).toBe(false);
   });
 
-  it('requires a product version bump after that version has been published', () => {
+  it('resumes a major/minor bridge whose delta is outside the fresh plan', () => {
+    const migrationsRoot = managedCoreMigrations();
+    const previous = generateReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '0.4.0',
+    });
+    writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), previous);
+    writeFileSync(
+      join(migrationsRoot, '001_0_5_0_core_baseline.sql'),
+      'CREATE TABLE core_record (id TEXT PRIMARY KEY, label TEXT);\n'
+    );
+    const bridgeSql = 'ALTER TABLE core_record ADD COLUMN label TEXT;\n';
+    writeFileSync(join(migrationsRoot, '002_bridge_to_0_5.sql'), bridgeSql);
+    prepareRelease({ migrationsRoot, version: '0.5.0', write: true });
+
+    const releasePath = join(migrationsRoot, 'releases/0.5.0.json');
+    const manifest = readReleaseMigrationManifest(releasePath);
+    const bundle = manifest.upgradePaths?.[0]?.streams
+      .find((stream) => stream.id === 'd1-core')
+      ?.files.at(0);
+    expect(bundle?.path).toBe('002_0_5_0_core_delta.sql');
+    expect(bundle?.semanticEvidence).toBeDefined();
+    if (!bundle?.supersedes) throw new Error('Expected consolidated bridge provenance');
+
+    rmSync(join(migrationsRoot, bundle.path));
+    rmSync(releasePath);
+    rmSync(join(migrationsRoot, 'release-manifest.draft.json'));
+    writeFileSync(join(migrationsRoot, '002_bridge_to_0_5.sql'), bridgeSql);
+    const journalPath = join(migrationsRoot, 'releases/.0.5.0.prepare-state');
+    writeFileSync(
+      journalPath,
+      `${JSON.stringify(
+        {
+          formatVersion: 1,
+          productVersion: '0.5.0',
+          manifest,
+          operations: [
+            {
+              streamId: 'd1-core',
+              dialect: 'sqlite',
+              sources: bundle.supersedes,
+              bundlePath: bundle.path,
+              bundleChecksum: bundle.checksum,
+            },
+          ],
+        },
+        null,
+        2
+      )}\n`
+    );
+
+    prepareRelease({ migrationsRoot, version: '0.5.0', write: true });
+    expect(existsSync(journalPath)).toBe(false);
+    expect(existsSync(join(migrationsRoot, bundle.path))).toBe(true);
+    expect(readReleaseMigrationManifest(releasePath)).toEqual(manifest);
+  });
+
+  it('uses the remote-main tag as the publication boundary', () => {
     const migrationsRoot = temporaryMigrations();
     const manifest = generateReleaseMigrationManifest({
       migrationsRoot,
       productVersion: '1.0.0',
     });
     writeReleaseMigrationManifest(join(migrationsRoot, 'releases/1.0.0.json'), manifest);
-    expect(() => assertProductVersionOpenForNewMigrations(migrationsRoot, '1.0.0')).toThrow(
-      'product_version_already_published:1.0.0'
-    );
+    expect(() =>
+      assertProductVersionOpenForNewMigrations(migrationsRoot, '1.0.0', {
+        isVersionPublished: () => true,
+      })
+    ).toThrow('product_version_already_published:1.0.0');
+    expect(() =>
+      assertProductVersionOpenForNewMigrations(migrationsRoot, '1.0.0', {
+        isVersionPublished: () => false,
+      })
+    ).not.toThrow();
 
     writeFileSync(join(migrationsRoot, '002_too_late.sql'), 'CREATE TABLE too_late (id TEXT);\n');
     expect(() =>
       syncDraftReleaseMigrationManifest({ migrationsRoot, productVersion: '1.0.0' })
-    ).toThrow('product_version_already_published:1.0.0');
+    ).not.toThrow();
+  });
+
+  it('does not treat a local-only tag on remote main as published', () => {
+    const root = mkdtempSync(join(tmpdir(), 'authrim-remote-tag-boundary-'));
+    temporaryDirectories.push(root);
+    const remote = join(root, 'origin.git');
+    const repository = join(root, 'repository');
+    execFileSync('git', ['init', '--bare', remote], { stdio: 'ignore' });
+    execFileSync('git', ['init', '--initial-branch=main', repository], { stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.email', 'migration-test@authrim.invalid'], {
+      cwd: repository,
+    });
+    execFileSync('git', ['config', 'user.name', 'Authrim Migration Test'], { cwd: repository });
+    writeFileSync(join(repository, 'README.md'), 'test\n');
+    execFileSync('git', ['add', 'README.md'], { cwd: repository });
+    execFileSync('git', ['commit', '-m', 'test'], { cwd: repository, stdio: 'ignore' });
+    execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: repository });
+    execFileSync('git', ['push', '--set-upstream', 'origin', 'main'], {
+      cwd: repository,
+      stdio: 'ignore',
+    });
+    execFileSync('git', ['tag', 'v0.4.0'], { cwd: repository });
+
+    expect(
+      isVersionPublishedOnRemoteMain({ repositoryRoot: repository, productVersion: '0.4.0' })
+    ).toBe(false);
+
+    execFileSync('git', ['push', 'origin', 'refs/tags/v0.4.0'], {
+      cwd: repository,
+      stdio: 'ignore',
+    });
+    expect(
+      isVersionPublishedOnRemoteMain({ repositoryRoot: repository, productVersion: '0.4.0' })
+    ).toBe(true);
+  });
+
+  it('compares published migration artifacts with their remote-main tag', () => {
+    const root = mkdtempSync(join(tmpdir(), 'authrim-published-artifact-boundary-'));
+    temporaryDirectories.push(root);
+    const remote = join(root, 'origin.git');
+    const repository = join(root, 'repository');
+    const migrationsRoot = join(repository, 'migrations');
+    execFileSync('git', ['init', '--bare', remote], { stdio: 'ignore' });
+    execFileSync('git', ['init', '--initial-branch=main', repository], { stdio: 'ignore' });
+    execFileSync('git', ['config', 'user.email', 'migration-test@authrim.invalid'], {
+      cwd: repository,
+    });
+    execFileSync('git', ['config', 'user.name', 'Authrim Migration Test'], { cwd: repository });
+    mkdirSync(join(migrationsRoot, 'releases'), { recursive: true });
+    mkdirSync(join(migrationsRoot, 'evidence'), { recursive: true });
+    const baselinePath = join(migrationsRoot, '001_0_4_0_core_baseline.sql');
+    const baselineSql = 'CREATE TABLE core_record (id TEXT PRIMARY KEY);\n';
+    writeFileSync(baselinePath, baselineSql);
+    const manifestPath = join(migrationsRoot, 'releases/0.4.0.json');
+    const manifest = ReleaseMigrationManifestSchema.parse({
+      formatVersion: 1,
+      productVersion: '0.4.0',
+      databaseCompatibility: 'fresh_install_only',
+      freshInstallBaseline: { productVersion: '0.4.0' },
+      streams: [
+        {
+          id: 'd1-core',
+          dialect: 'sqlite',
+          logicalRoles: ['core'],
+          files: [
+            {
+              path: '001_0_4_0_core_baseline.sql',
+              checksum: calculateReleaseMigrationChecksum(baselinePath, 'sqlite'),
+            },
+          ],
+        },
+      ],
+    });
+    writeReleaseMigrationManifest(manifestPath, manifest);
+    const evidencePath = join(migrationsRoot, 'evidence/0.4.0.json');
+    writeFileSync(evidencePath, '{"formatVersion":1}\n');
+    execFileSync('git', ['add', 'migrations'], { cwd: repository });
+    execFileSync('git', ['commit', '-m', 'release 0.4.0 migrations'], {
+      cwd: repository,
+      stdio: 'ignore',
+    });
+    execFileSync('git', ['remote', 'add', 'origin', remote], { cwd: repository });
+    execFileSync('git', ['push', '--set-upstream', 'origin', 'main'], {
+      cwd: repository,
+      stdio: 'ignore',
+    });
+    execFileSync('git', ['tag', 'v0.4.0'], { cwd: repository });
+    execFileSync('git', ['push', 'origin', 'refs/tags/v0.4.0'], {
+      cwd: repository,
+      stdio: 'ignore',
+    });
+
+    expect(() =>
+      validateRemoteMainPublishedReleaseMigrationManifests({
+        migrationsRoot,
+        repositoryRoot: repository,
+      })
+    ).not.toThrow();
+
+    writeFileSync(baselinePath, 'CREATE TABLE changed_record (id TEXT PRIMARY KEY);\n');
+    const changedManifest = {
+      ...manifest,
+      streams: manifest.streams.map((stream) => ({
+        ...stream,
+        files: stream.files.map((file) => ({
+          ...file,
+          checksum: calculateReleaseMigrationChecksum(baselinePath, 'sqlite'),
+        })),
+      })),
+    };
+    writeReleaseMigrationManifest(manifestPath, changedManifest);
+    expect(() =>
+      validateRemoteMainPublishedReleaseMigrationManifests({
+        migrationsRoot,
+        repositoryRoot: repository,
+      })
+    ).toThrow('Published migration manifest changed since tag: 0.4.0');
+
+    writeFileSync(baselinePath, baselineSql);
+    writeReleaseMigrationManifest(manifestPath, manifest);
+    rmSync(evidencePath);
+    expect(() =>
+      validateRemoteMainPublishedReleaseMigrationManifests({
+        migrationsRoot,
+        repositoryRoot: repository,
+      })
+    ).toThrow('Published migration evidence changed since tag: 0.4.0');
+  });
+
+  it('requires an owner-prepared baseline candidate before merging a boundary release to main', () => {
+    const migrationsRoot = mkdtempSync(join(tmpdir(), 'authrim-main-release-check-'));
+    temporaryDirectories.push(migrationsRoot);
+    mkdirSync(join(migrationsRoot, 'releases'), { recursive: true });
+    const baselinePath = '001_0_4_0_core_baseline.sql';
+    const fullPath = join(migrationsRoot, baselinePath);
+    writeFileSync(fullPath, 'CREATE TABLE core_record (id TEXT PRIMARY KEY);\n');
+    const baseline = {
+      path: baselinePath,
+      checksum: calculateReleaseMigrationChecksum(fullPath, 'sqlite'),
+    };
+    const manifest = ReleaseMigrationManifestSchema.parse({
+      formatVersion: 1,
+      productVersion: '0.4.0',
+      databaseCompatibility: 'fresh_install_only',
+      freshInstallBaseline: { productVersion: '0.4.0' },
+      streams: [{ id: 'd1-core', dialect: 'sqlite', logicalRoles: ['core'], files: [baseline] }],
+    });
+    writeReleaseMigrationManifest(join(migrationsRoot, 'release-manifest.draft.json'), manifest);
+    expect(() =>
+      validateReleaseCandidateForMain({ migrationsRoot, productVersion: '0.4.0' })
+    ).toThrow('Release migration candidate is missing');
+
+    writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), manifest);
+    const evidence = `${JSON.stringify({
+      formatVersion: 1,
+      productVersion: '0.4.0',
+      compatibility: 'fresh_install_only',
+      streams: [
+        {
+          id: 'd1-core',
+          dialect: 'sqlite',
+          ...baseline,
+          schemaChecksum: 'a'.repeat(64),
+          seedChecksum: 'b'.repeat(64),
+          objectCount: 1,
+          generatedFrom: [baseline],
+        },
+      ],
+    })}\n`;
+    writeFileSync(join(migrationsRoot, 'semantic-baseline.evidence.json'), evidence);
+    mkdirSync(join(migrationsRoot, 'evidence'), { recursive: true });
+    writeFileSync(join(migrationsRoot, 'evidence/0.4.0.json'), evidence);
+    expect(() =>
+      validateReleaseCandidateForMain({ migrationsRoot, productVersion: '0.4.0' })
+    ).not.toThrow();
+
+    writeReleaseMigrationManifest(join(migrationsRoot, 'release-manifest.draft.json'), {
+      ...manifest,
+      rollout: {
+        databaseExecution: 'setup_then_control',
+        workerActivation: 'after_required_databases',
+        adminMutationMode: 'available',
+      },
+    });
+    expect(() =>
+      validateReleaseCandidateForMain({ migrationsRoot, productVersion: '0.4.0' })
+    ).toThrow('is not prepared from the current draft');
+  });
+
+  it('requires one canonical owner-prepared delta per changed stream for a main-bound patch', () => {
+    const migrationsRoot = mkdtempSync(join(tmpdir(), 'authrim-main-patch-check-'));
+    temporaryDirectories.push(migrationsRoot);
+    mkdirSync(join(migrationsRoot, 'releases'), { recursive: true });
+    const baselinePath = '001_0_4_0_core_baseline.sql';
+    const deltaPath = '002_0_4_1_core_delta.sql';
+    writeFileSync(join(migrationsRoot, baselinePath), 'CREATE TABLE core_record (id TEXT);\n');
+    writeFileSync(
+      join(migrationsRoot, deltaPath),
+      'ALTER TABLE core_record ADD COLUMN name TEXT;\n'
+    );
+    const baseline = {
+      path: baselinePath,
+      checksum: calculateReleaseMigrationChecksum(join(migrationsRoot, baselinePath), 'sqlite'),
+    };
+    const delta = {
+      path: deltaPath,
+      checksum: calculateReleaseMigrationChecksum(join(migrationsRoot, deltaPath), 'sqlite'),
+      semanticEvidence: {
+        schemaChecksum: 'a'.repeat(64),
+        seedChecksum: 'b'.repeat(64),
+        objectCount: 1,
+      },
+    };
+    const stream = (files: ReleaseMigrationManifest['streams'][number]['files']) => ({
+      id: 'd1-core',
+      dialect: 'sqlite' as const,
+      logicalRoles: ['core'],
+      files,
+    });
+    const baselineManifest = ReleaseMigrationManifestSchema.parse({
+      formatVersion: 1,
+      productVersion: '0.4.0',
+      freshInstallBaseline: { productVersion: '0.4.0' },
+      streams: [stream([baseline])],
+    });
+    const patchManifest = ReleaseMigrationManifestSchema.parse({
+      formatVersion: 1,
+      productVersion: '0.4.1',
+      freshInstallBaseline: { productVersion: '0.4.0' },
+      streams: [stream([baseline, delta])],
+      upgradePaths: [{ fromProductVersion: '0.4.0', kind: 'delta', streams: [stream([delta])] }],
+    });
+    writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), baselineManifest);
+    writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.1.json'), patchManifest);
+    writeReleaseMigrationManifest(
+      join(migrationsRoot, 'release-manifest.draft.json'),
+      patchManifest
+    );
+
+    expect(() =>
+      validateReleaseCandidateForMain({ migrationsRoot, productVersion: '0.4.1' })
+    ).not.toThrow();
+
+    const unconsolidated = {
+      ...patchManifest,
+      streams: [stream([baseline, { ...delta, path: '002_add_name.sql' }])],
+      upgradePaths: [
+        {
+          fromProductVersion: '0.4.0',
+          kind: 'delta' as const,
+          streams: [stream([{ ...delta, path: '002_add_name.sql' }])],
+        },
+      ],
+    };
+    writeFileSync(
+      join(migrationsRoot, '002_add_name.sql'),
+      'ALTER TABLE core_record ADD COLUMN name TEXT;\n'
+    );
+    writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.1.json'), unconsolidated);
+    writeReleaseMigrationManifest(
+      join(migrationsRoot, 'release-manifest.draft.json'),
+      unconsolidated
+    );
+    expect(() =>
+      validateReleaseCandidateForMain({ migrationsRoot, productVersion: '0.4.1' })
+    ).toThrow('delta is not canonical');
   });
 
   it('preserves an explicit database-only compatibility contract when refreshing a draft', () => {
@@ -514,6 +1282,33 @@ describe('release migration manifests', () => {
     expect(refreshed.manifest.rollout?.databaseOnly).toEqual({
       compatibleWorkerVersions: ['1.0.0'],
     });
+  });
+
+  it('does not rewrite an untagged release candidate while refreshing the draft', () => {
+    const migrationsRoot = temporaryMigrations();
+    const candidatePath = join(migrationsRoot, 'releases/1.1.0.json');
+    const candidate = generateReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '1.1.0',
+    });
+    writeReleaseMigrationManifest(candidatePath, candidate);
+    writeFileSync(join(migrationsRoot, '002_next.sql'), 'CREATE TABLE next_record (id TEXT);\n');
+
+    const refreshed = syncDraftReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '1.1.0',
+    });
+
+    expect(readReleaseMigrationManifest(candidatePath)).toEqual(candidate);
+    expect(refreshed.manifest).not.toEqual(candidate);
+    expect(refreshed.manifest.streams[0]?.files.map((file) => file.path)).toContain('002_next.sql');
+    expect(
+      loadTargetReleaseMigrationManifest({
+        migrationsRoot,
+        productVersion: '1.1.0',
+        allowDraft: true,
+      })
+    ).toMatchObject({ draft: true, manifest: refreshed.manifest });
   });
 
   it('fails closed when a draft differs from the published manifest of the same version', () => {
@@ -586,7 +1381,7 @@ describe('release migration manifests', () => {
     );
   });
 
-  it('rejects a non-increasing release version before touching draft SQL', () => {
+  it('allows an untagged release candidate to be regenerated before publication', () => {
     const migrationsRoot = temporaryMigrations();
     const previous = generateReleaseMigrationManifest({
       migrationsRoot,
@@ -596,9 +1391,7 @@ describe('release migration manifests', () => {
     writeFileSync(join(migrationsRoot, '002_draft_a.sql'), 'CREATE TABLE draft_a (id TEXT);\n');
     writeFileSync(join(migrationsRoot, '003_draft_b.sql'), 'CREATE TABLE draft_b (id TEXT);\n');
 
-    expect(() => prepareRelease({ migrationsRoot, version: '1.1.0', write: true })).toThrow(
-      'Release version must be newer than 1.1.0'
-    );
+    expect(() => prepareRelease({ migrationsRoot, version: '1.1.0', write: true })).not.toThrow();
     expect(existsSync(join(migrationsRoot, '002_draft_a.sql'))).toBe(true);
     expect(existsSync(join(migrationsRoot, '003_draft_b.sql'))).toBe(true);
   });
@@ -833,6 +1626,69 @@ describe('release schema update plans', () => {
 
     expect(plan.automaticTargets).toHaveLength(1);
     expect(plan.targets[0]).toMatchObject({ changedFiles: [], requiresAction: true });
+  });
+
+  it('fails closed instead of applying only upgrade deltas when target history is missing', () => {
+    const migrationsRoot = temporaryMigrations();
+    const target = generateReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '1.1.0',
+    });
+    target.streams = target.streams.map((stream) =>
+      stream.id === 'd1-core'
+        ? { ...stream, files: [{ path: '002_1_1_0_core_delta.sql', checksum: 'a'.repeat(64) }] }
+        : stream
+    );
+    const d1Target = {
+      id: 'd1:unknown-core:d1-core',
+      streamId: 'd1-core',
+      driver: 'd1' as const,
+      scope: 'deployment' as const,
+      logicalRoles: ['core'],
+      databaseName: 'unknown-core',
+      automatic: true,
+    };
+
+    const plan = buildReleaseSchemaUpdatePlan({
+      targetManifest: target,
+      currentManifestForTarget: () => undefined,
+      requireCurrentManifestForTargets: true,
+      targets: [d1Target],
+    });
+
+    expect(plan.automaticTargets).toEqual([]);
+    expect(plan.blockedTargets[0]).toMatchObject({
+      changedFiles: ['002_1_1_0_core_delta.sql'],
+      requiresAction: true,
+      blockedReason: 'release_migration_target_history_required:d1:unknown-core:d1-core',
+    });
+  });
+
+  it('does not require target history for a Worker-only release with no schema delta', () => {
+    const target = generateReleaseMigrationManifest({
+      migrationsRoot: temporaryMigrations(),
+      productVersion: '1.1.0',
+    });
+    target.streams = target.streams.map((stream) => ({ ...stream, files: [] }));
+    const plan = buildReleaseSchemaUpdatePlan({
+      targetManifest: target,
+      currentManifestForTarget: () => undefined,
+      requireCurrentManifestForTargets: true,
+      targets: [
+        {
+          id: 'd1:unknown-core:d1-core',
+          streamId: 'd1-core',
+          driver: 'd1',
+          scope: 'deployment',
+          logicalRoles: ['core'],
+          databaseName: 'unknown-core',
+          automatic: true,
+        },
+      ],
+    });
+
+    expect(plan.targets[0]).toMatchObject({ changedFiles: [], requiresAction: false });
+    expect(plan.blockedTargets).toEqual([]);
   });
 
   it('only blocks an external target when its stream changed', () => {
@@ -1182,6 +2038,34 @@ describe('release update lock state', () => {
     expect(
       result.schemaTargets?.['external:postgres:primary:external-postgres-core']?.appliedBy
     ).toBe('operator');
+  });
+
+  it('rejects initial verification while a Control release rollout is recorded', () => {
+    const initialLock = lock({});
+    initialLock.releaseUpdate = {
+      targetVersion: '0.4.0',
+      phase: 'control_handoff',
+      manifestChecksum: 'a'.repeat(64),
+      startedAt: '2026-07-21T00:00:00.000Z',
+      updatedAt: '2026-07-21T00:01:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+      controlOperationId: `op_release_rollout_${'b'.repeat(32)}`,
+    };
+    const manifest: ReleaseMigrationManifest = {
+      formatVersion: 1,
+      productVersion: '0.4.0',
+      streams: [],
+    };
+
+    expect(() =>
+      withVerifiedInitialReleaseState(initialLock, {
+        productVersion: '0.4.0',
+        manifestChecksum: 'a'.repeat(64),
+        manifest,
+        targets: [],
+      })
+    ).toThrow('initial_release_control_rollout_incomplete');
   });
 
   it('allows an installed draft only when its verified checksum is unchanged', () => {

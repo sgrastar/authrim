@@ -451,13 +451,15 @@ export class WorkerBindingReconciler {
         return { state: 'outcome', outcome: 'blocked' };
       }
       if (target.state === 'settings_patched' || target.state === 'smoke_verifying') {
-        if (!target.expectedSourceVersionId && !target.patchResultVersionId) {
+        const expectedSourceVersionId =
+          target.expectedSourceVersionId ?? target.patchResultVersionId;
+        if (!expectedSourceVersionId) {
           await this.repository.markBlocked(target, 'control_worker_patch_result_missing', now);
           return { state: 'outcome', outcome: 'blocked' };
         }
         const lease = await this.repository.acquireDeploymentLease({
           target,
-          expectedSourceVersionId: target.expectedSourceVersionId ?? target.patchResultVersionId!,
+          expectedSourceVersionId,
           now,
           ttlSeconds: WORKER_DEPLOYMENT_LEASE_SECONDS,
         });
@@ -473,13 +475,15 @@ export class WorkerBindingReconciler {
         return { state: 'ready', phase: 'initial', target };
       }
       if (target.state === 'stabilizing') {
-        if (!target.expectedSourceVersionId && !target.patchResultVersionId) {
+        const expectedSourceVersionId =
+          target.expectedSourceVersionId ?? target.patchResultVersionId;
+        if (!expectedSourceVersionId) {
           await this.repository.markBlocked(target, 'control_worker_patch_result_missing', now);
           return { state: 'outcome', outcome: 'blocked' };
         }
         const lease = await this.repository.acquireDeploymentLease({
           target,
-          expectedSourceVersionId: target.expectedSourceVersionId ?? target.patchResultVersionId!,
+          expectedSourceVersionId,
           now,
           ttlSeconds: WORKER_DEPLOYMENT_LEASE_SECONDS,
         });

@@ -13,6 +13,7 @@ import {
   validateAuthrimMigrationHistoryRows,
   type AuthrimMigrationHistoryRow,
 } from '@authrim/ar-lib-core/control-plane';
+import { BUILTIN_PROFILE_CLAIM_SCHEMAS } from '@authrim/ar-lib-core/services/custom-claims/schema-catalog';
 import { createHash, randomUUID } from 'node:crypto';
 import { resolve4, resolve6, resolveCname } from 'node:dns/promises';
 import { basename, join as pathJoin } from 'node:path';
@@ -5304,6 +5305,28 @@ export function buildInitialTenantBootstrapSql(config: AuthrimConfig): string {
   const tenantCodeSql = sqlString(tenantCode);
   const displayNameSql = sqlString(displayName);
   const placementPolicySql = sqlString(placementPolicy);
+  const builtinProfileValuesSql = BUILTIN_PROFILE_CLAIM_SCHEMAS.map(
+    (schema) =>
+      `(${[
+        schema.field_key,
+        schema.display_label,
+        schema.field_type,
+        schema.cardinality ?? 'single',
+        schema.is_pii,
+        schema.is_searchable,
+        schema.is_exportable,
+        schema.display_order,
+        schema.ui_group_key ?? null,
+        schema.ui_group_label ?? null,
+        schema.ui_group_order ?? 0,
+        schema.ui_field_order ?? schema.display_order,
+        schema.examples_json ?? null,
+      ]
+        .map((value) =>
+          value === null ? 'NULL' : typeof value === 'number' ? value : sqlString(value)
+        )
+        .join(', ')})`
+  ).join(',\n    ');
 
   // Note: D1's HTTP API (used by `wrangler d1 execute --command`) does not support
   // explicit BEGIN TRANSACTION / COMMIT statements. Each statement runs as its own
@@ -5384,6 +5407,116 @@ SET tenant_code = ${tenantCodeSql},
     isolation_policy = ${placementPolicySql},
     updated_at = MAX(${sqlExpr.nowEpochSeconds}, updated_at + 1)
 WHERE id = ${tenantIdSql};
+
+-- A fresh baseline starts with tenant 'default'. Move its deterministic built-in profile
+-- schemas alongside a renamed initial tenant, without overwriting any destination schema
+-- that may already exist during an idempotent setup resume.
+DELETE FROM custom_claim_schemas
+WHERE tenant_id = 'default'
+  AND id = 'builtin:' || tenant_id || ':' || field_key
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default')
+  AND EXISTS (
+    SELECT 1
+    FROM custom_claim_schemas AS target
+    WHERE target.tenant_id = ${tenantIdSql}
+      AND target.field_key = custom_claim_schemas.field_key
+  );
+
+UPDATE custom_claim_schemas
+SET id = 'builtin:' || ${tenantIdSql} || ':' || field_key,
+    tenant_id = ${tenantIdSql},
+    updated_at = ${sqlExpr.nowEpochSeconds}
+WHERE tenant_id = 'default'
+  AND id = 'builtin:' || tenant_id || ':' || field_key
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
+
+-- Upgrade the unpublished legacy built-in 'name' key even when Setup is installing from
+-- a draft manifest that has not yet been finalized with the current development delta.
+UPDATE custom_claim_schemas
+SET id = 'builtin:' || tenant_id || ':display_name',
+    field_key = 'display_name',
+    active_field_key = 'display_name',
+    display_label = 'Display Name',
+    updated_at = ${sqlExpr.nowEpochSeconds}
+WHERE tenant_id = ${tenantIdSql}
+  AND field_key = 'name'
+  AND id = 'builtin:' || tenant_id || ':name'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM custom_claim_schemas AS target
+    WHERE target.tenant_id = custom_claim_schemas.tenant_id
+      AND target.field_key = 'display_name'
+  );
+
+DELETE FROM custom_claim_schemas
+WHERE tenant_id = ${tenantIdSql}
+  AND field_key = 'name'
+  AND id = 'builtin:' || tenant_id || ':name';
+
+WITH builtin_profile_fields(
+  field_key, display_label, field_type, cardinality, is_pii, is_searchable, is_exportable,
+  display_order, ui_group_key, ui_group_label, ui_group_order, ui_field_order, examples_json
+) AS (
+  VALUES
+    ${builtinProfileValuesSql}
+)
+INSERT INTO custom_claim_schemas (
+  id, tenant_id, field_key, active_field_key, display_label, field_type, cardinality,
+  is_pii, is_required, is_active, is_system, is_searchable, is_exportable, is_vc_claim,
+  include_in_id_token, include_in_userinfo, include_in_introspection, scope_mode,
+  display_order, ui_group_key, ui_group_label, ui_group_order, ui_field_order, examples_json,
+  schema_version, operation_status, created_at, updated_at
+)
+SELECT
+  'builtin:' || ${tenantIdSql} || ':' || field.field_key,
+  ${tenantIdSql},
+  field.field_key,
+  field.field_key,
+  field.display_label,
+  field.field_type,
+  field.cardinality,
+  field.is_pii,
+  0,
+  1,
+  1,
+  field.is_searchable,
+  field.is_exportable,
+  0,
+  0,
+  0,
+  0,
+  'any',
+  field.display_order,
+  field.ui_group_key,
+  field.ui_group_label,
+  field.ui_group_order,
+  field.ui_field_order,
+  field.examples_json,
+  1,
+  'active',
+  ${sqlExpr.nowEpochSeconds},
+  ${sqlExpr.nowEpochSeconds}
+FROM builtin_profile_fields AS field
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM custom_claim_schemas AS existing
+  WHERE existing.tenant_id = ${tenantIdSql}
+    AND existing.field_key = field.field_key
+);
+
+UPDATE custom_claim_schemas
+SET is_system = 1,
+    is_required = 0,
+    is_active = 1,
+    operation_status = 'active',
+    updated_at = ${sqlExpr.nowEpochSeconds}
+WHERE tenant_id = ${tenantIdSql}
+  AND id = 'builtin:' || tenant_id || ':' || field_key
+  AND field_key IN (${BUILTIN_PROFILE_CLAIM_SCHEMAS.map((schema) => sqlString(schema.field_key)).join(', ')});
 `.trim();
 }
 
@@ -7309,7 +7442,10 @@ export interface QueueConsumerDetachSummary {
 interface ExactQueueWorkerConsumerSnapshot {
   queueId: string;
   queueName: string;
-  consumerId: string;
+  // Cloudflare documents consumer_id as optional on the list response. Keep it when present so
+  // deletion can use the immutable REST identity; otherwise use Wrangler's queue/Worker tuple
+  // only after both resources have passed the strict ownership preflight.
+  consumerId?: string;
   workerName: string;
   restorePayload: {
     type: 'worker';
@@ -7337,6 +7473,8 @@ async function listExactQueueWorkerConsumers(input: {
         consumer_id?: unknown;
         type?: unknown;
         script_name?: unknown;
+        script?: unknown;
+        service?: unknown;
         dead_letter_queue?: unknown;
         settings?: unknown;
       }>;
@@ -7368,19 +7506,39 @@ async function listExactQueueWorkerConsumers(input: {
     for (const [index, consumer] of data.result.entries()) {
       if (consumer.type !== 'worker') continue;
       const consumerId =
-        typeof consumer.consumer_id === 'string' ? consumer.consumer_id.trim() : '';
-      const workerName =
-        typeof consumer.script_name === 'string' ? consumer.script_name.trim() : '';
-      if (!consumerId || !workerName || consumerId.length > 256 || workerName.length > 256) {
+        typeof consumer.consumer_id === 'string' ? consumer.consumer_id.trim() : undefined;
+      const workerNameFields = [consumer.script_name, consumer.script, consumer.service];
+      const invalidWorkerNameField = workerNameFields.some(
+        (value) => value !== undefined && (typeof value !== 'string' || value.trim().length === 0)
+      );
+      const workerNames = Array.from(
+        new Set(
+          workerNameFields
+            .filter((value): value is string => typeof value === 'string')
+            .map((value) => value.trim())
+            .filter(Boolean)
+        )
+      );
+      const workerName = workerNames[0] ?? '';
+      if (
+        (consumer.consumer_id !== undefined && !consumerId) ||
+        (consumerId !== undefined && consumerId.length > 256) ||
+        invalidWorkerNameField ||
+        workerNames.length !== 1 ||
+        !workerName ||
+        workerName.length > 256
+      ) {
         throw new Error(
           `Cloudflare Queue consumer inventory row ${index} was invalid for ${queue.name}`
         );
       }
-      const scopedConsumerId = `${queueId}:${consumerId}`;
-      if (consumerIds.has(scopedConsumerId)) {
-        throw new Error(`Cloudflare Queue consumer inventory contained duplicate immutable IDs`);
+      if (consumerId !== undefined) {
+        const scopedConsumerId = `${queueId}:${consumerId}`;
+        if (consumerIds.has(scopedConsumerId)) {
+          throw new Error(`Cloudflare Queue consumer inventory contained duplicate immutable IDs`);
+        }
+        consumerIds.add(scopedConsumerId);
       }
-      consumerIds.add(scopedConsumerId);
       if (!targets.has(workerName)) continue;
       if (workersSeen.has(workerName)) {
         throw new Error(
@@ -7419,6 +7577,12 @@ async function deleteExactQueueWorkerConsumer(
   consumer: ExactQueueWorkerConsumerSnapshot,
   credentials: CloudflareDeletionCredentials
 ): Promise<ExactResourceDeleteResult> {
+  if (consumer.consumerId === undefined) {
+    const result = await deleteQueueConsumerWithResult(consumer.queueName, consumer.workerName);
+    if (result.status === 'detached') return { status: 'deleted' };
+    if (result.status === 'already_absent') return { status: 'already_absent' };
+    return { status: 'failed', error: result.error };
+  }
   return deleteCloudflareAccountResourceById({
     credentials,
     resourcePath: `queues/${encodeURIComponent(consumer.queueId)}/consumers`,

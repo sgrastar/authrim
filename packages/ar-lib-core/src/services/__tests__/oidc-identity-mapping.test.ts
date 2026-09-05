@@ -130,6 +130,42 @@ describe('applyOIDCIdentityMapping fail-closed behavior', () => {
     expect(resolveBinding).not.toHaveBeenCalledWith(adapter, expect.anything());
   });
 
+  it('exposes neutral display and picture aliases only to the mapping runtime', async () => {
+    await applyOIDCIdentityMapping({
+      adapter,
+      tenantId: 'tenant-a',
+      clientId: 'client-a',
+      claims: {
+        sub: 'user-1',
+        name: 'Ada Lovelace',
+        picture: 'https://example.test/ada.png',
+      },
+    });
+
+    expect(executeMapping).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceValues: expect.arrayContaining([
+          expect.objectContaining({
+            value: 'Ada Lovelace',
+            sourceRef: expect.objectContaining({ path: 'display_name' }),
+          }),
+          expect.objectContaining({
+            value: 'https://example.test/ada.png',
+            sourceRef: expect.objectContaining({ path: 'picture_url' }),
+          }),
+        ]),
+      })
+    );
+    expect(filterClaims).toHaveBeenCalledWith(
+      expect.objectContaining({
+        claims: expect.not.objectContaining({
+          display_name: expect.anything(),
+          picture_url: expect.anything(),
+        }),
+      })
+    );
+  });
+
   it('fails closed when an explicitly selected policy binding is missing', async () => {
     resolveBinding.mockResolvedValue(null);
 

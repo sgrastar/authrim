@@ -48,6 +48,7 @@ const adapters = vi.hoisted(() => ({
 }));
 
 const ensureTenantRegionShardConfig = vi.hoisted(() => vi.fn(async () => ({})));
+const seedBuiltinProfileClaimSchemas = vi.hoisted(() => vi.fn(async () => 8));
 
 vi.mock('@authrim/ar-lib-core', () => ({
   ADMIN_PERMISSIONS: {
@@ -95,6 +96,7 @@ vi.mock('@authrim/ar-lib-core', () => ({
     await kv?.delete(`v1:tenant-exists:${tenantId}`);
   }),
   seedCustomClaimSchemas: vi.fn(async () => {}),
+  seedBuiltinProfileClaimSchemas,
   TENANT_POLICY_PRESETS: [
     {
       id: 'b2c-standard',

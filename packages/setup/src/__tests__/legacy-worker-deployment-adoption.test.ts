@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AuthrimLock } from '../core/lock.js';
 import {
   adoptLegacyWorkerDeployments,
+  assertInterruptedInitialWorkerDeploymentEvidence,
   assertLegacyWorkerDeploymentAdoptionPersisted,
   type LegacyWorkerDeploymentTarget,
 } from '../core/legacy-worker-deployment-adoption.js';
@@ -163,5 +164,82 @@ describe('legacy Worker deployment recovery', () => {
     expect(() =>
       assertLegacyWorkerDeploymentAdoptionPersisted(corrupted, 'conformance', result.adopted)
     ).toThrow('legacy_worker_recovery_checkpoint_verification_failed:ar-auth');
+  });
+
+  it('links an orphan only to the bounded upload window of an interrupted initial deploy', () => {
+    const lock = emptyLock();
+    lock.releaseUpdate = {
+      targetVersion: '0.4.0',
+      phase: 'schema_applied',
+      manifestChecksum: 'a'.repeat(64),
+      startedAt: '2026-08-31T00:00:00.000Z',
+      updatedAt: '2026-08-31T00:01:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+    };
+    lock.workerScriptOwnership = {
+      'ar-token': {
+        name: 'conformance-ar-token',
+        cloudflareScriptTag: 'immutable-token-tag',
+        state: 'provisional',
+        updatedAt: '2026-08-31T00:02:00.000Z',
+      },
+    };
+    const evidence = [
+      {
+        component: 'ar-auth',
+        workerName: 'conformance-ar-auth',
+        scriptTag: 'immutable-auth-tag',
+        activeVersionId: '00000000-0000-4000-8000-000000000001',
+        deployedAt: '2026-08-31T00:02:30.000Z',
+        deploymentSource: 'Upload',
+        expectedPackageVersion: '0.4.0',
+      },
+    ];
+
+    expect(() =>
+      assertInterruptedInitialWorkerDeploymentEvidence({ lock, evidence })
+    ).not.toThrow();
+    expect(() =>
+      assertInterruptedInitialWorkerDeploymentEvidence({
+        lock,
+        evidence: [{ ...evidence[0], deployedAt: '2026-08-30T20:00:00.000Z' }],
+      })
+    ).toThrow('interrupted_worker_recovery_evidence_outside_upload_window:ar-auth');
+    expect(() =>
+      assertInterruptedInitialWorkerDeploymentEvidence({
+        lock,
+        evidence: [{ ...evidence[0], deploymentSource: 'Secret Change' }],
+      })
+    ).toThrow('interrupted_worker_recovery_evidence_outside_upload_window:ar-auth');
+  });
+
+  it('requires a durable sibling upload checkpoint before interrupted adoption', () => {
+    const lock = emptyLock();
+    lock.releaseUpdate = {
+      targetVersion: '0.4.0',
+      phase: 'schema_applied',
+      manifestChecksum: 'a'.repeat(64),
+      startedAt: '2026-08-31T00:00:00.000Z',
+      updatedAt: '2026-08-31T00:01:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+    };
+    expect(() =>
+      assertInterruptedInitialWorkerDeploymentEvidence({
+        lock,
+        evidence: [
+          {
+            component: 'ar-auth',
+            workerName: 'conformance-ar-auth',
+            scriptTag: 'immutable-auth-tag',
+            activeVersionId: '00000000-0000-4000-8000-000000000001',
+            deployedAt: '2026-08-31T00:01:30.000Z',
+            deploymentSource: 'Upload',
+            expectedPackageVersion: '0.4.0',
+          },
+        ],
+      })
+    ).toThrow('interrupted_worker_recovery_sibling_checkpoint_required');
   });
 });

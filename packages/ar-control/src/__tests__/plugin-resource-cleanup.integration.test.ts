@@ -93,10 +93,7 @@ describe('PluginResourceCleanupService', () => {
   beforeEach(async () => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
-        'utf8'
-      )
+      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
     );
     installationId = await derivePluginInstallationId({
       environmentId: 'test',
@@ -293,10 +290,21 @@ describe('PluginResourceCleanupService', () => {
 
   it('blocks without credential fallback when a resource-class token is unavailable', async () => {
     database.exec(`
-      UPDATE control_plugin_desired_resources
-         SET resource_kind = 'r2_bucket', provider_resource_id = 'managed-r2-name',
-             provider_name = 'managed-r2-name'
-       WHERE plugin_resource_id = 'resource-managed';
+      DELETE FROM control_plugin_desired_resources WHERE plugin_resource_id = 'resource-managed';
+      INSERT INTO control_plugin_desired_resources (
+        plugin_resource_id, environment_id, operation_id, plugin_installation_id,
+        tenant_id, resource_kind, logical_resource_id, binding_name, lifecycle_mode,
+        provider_resource_id, provider_name, provider_create_state, provider_creation_date,
+        provider_ownership_marker_key, provider_ownership_id,
+        provider_identity_checkpointed_at, injection_policy_json, desired_spec_json,
+        status, updated_at, lifecycle_generation
+      ) VALUES (
+        'resource-managed', 'test', 'source-op', '${installationId}', 'tenant-a', 'r2_bucket',
+        'state', 'PLUGIN_STATE', 'managed', 'managed-r2-name', 'managed-r2-name', 'identified',
+        '2026-08-01T00:00:00.000Z', '.authrim/ownership.json', '${FINGERPRINT}', 1,
+        '{}', '{"pluginId":"plugin-a","ownershipFingerprint":"${FINGERPRINT}",
+        "ownership":"authrim_managed","deleteProviderResource":true}', 'active', 1, 1
+      );
     `);
     service = new PluginResourceCleanupService(
       d1(database),

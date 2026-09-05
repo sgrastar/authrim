@@ -132,6 +132,11 @@ import {
   prepareWorkerScriptOwnership,
   type WorkerScriptOwnershipGuard,
 } from '../core/worker-script-ownership.js';
+import {
+  adoptLegacyWorkerDeployments,
+  assertInterruptedInitialWorkerDeploymentEvidence,
+  assertLegacyWorkerDeploymentAdoptionPersisted,
+} from '../core/legacy-worker-deployment-adoption.js';
 import { readPrivateFileSecurely, writePrivateFileAtomically } from '../core/atomic-file.js';
 import { reconcileLegacyQueueIdentitiesForDeletion } from '../core/legacy-queue-identity-deletion.js';
 import {
@@ -4118,6 +4123,7 @@ export function createApiRoutes(): Hono {
             externalSchemaReady: z.boolean().optional(),
             bootstrapToken: z.string().min(20).max(4096).regex(/^\S+$/u).optional(),
             tokenOwnership: z.enum(['account', 'user']).optional(),
+            recoverWorkerOwnership: z.boolean().optional(),
           })
           .strict()
           .safeParse(await c.req.json());
@@ -4150,6 +4156,7 @@ export function createApiRoutes(): Hono {
           skipBuild = false,
           runMigrations = true,
           externalSchemaReady = false,
+          recoverWorkerOwnership = false,
         } = body;
         const env = body.env;
         const resolvedRootDir = resolve(findAuthrimBaseDir(process.cwd()));
@@ -4482,6 +4489,58 @@ export function createApiRoutes(): Hono {
             policy: releaseConfig.components.policy,
           })
         );
+        const initialWorkerRecoveryTargets = [
+          ...enabledComponents.map((component) => ({
+            component,
+            workerName: getWorkerName(env, component),
+            expectedPackageVersion: productVersion,
+          })),
+          ...UI_WORKER_COMPONENTS.filter((component) =>
+            component === 'ar-login-ui'
+              ? releaseConfig.components.loginUi !== false
+              : releaseConfig.components.adminUi !== false
+          ).map((component) => ({
+            component,
+            workerName: `${env}-${component}`,
+            expectedPackageVersion: productVersion,
+          })),
+        ];
+        if (recoverWorkerOwnership) {
+          if (!interruptedInitialRelease || !initialLockPath) {
+            return c.json(
+              { success: false, error: 'Worker ownership recovery is not available.' },
+              409
+            );
+          }
+          const authenticatedAccountId = await getAccountId();
+          if (!authenticatedAccountId) {
+            throw new Error('cloudflare_account_verification_unavailable');
+          }
+          const recovery = await adoptLegacyWorkerDeployments({
+            lock: existingDeploymentLock,
+            environment: env,
+            authenticatedAccountId,
+            configuredAccountId: releaseConfig.cloudflare?.accountId,
+            productVersion,
+            targets: initialWorkerRecoveryTargets,
+            requireAllTargets: false,
+            allowNoop: true,
+          });
+          if (recovery.adopted.length > 0) {
+            assertInterruptedInitialWorkerDeploymentEvidence({
+              lock: existingDeploymentLock,
+              evidence: recovery.adopted,
+            });
+            await saveLockFile(recovery.lock, initialLockPath);
+            const persisted = (await loadLockFileAuto(resolvedRootDir, env)).lock;
+            assertLegacyWorkerDeploymentAdoptionPersisted(persisted, env, recovery.adopted);
+            if (!persisted) throw new Error('worker_ownership_recovery_checkpoint_missing');
+            existingDeploymentLock = persisted;
+            addProgress(
+              `Recovered exact Worker ownership for ${recovery.adopted.map((item) => item.component).join(', ')}; all enabled Workers will be redeployed and verified.`
+            );
+          }
+        }
         if (requestedComponents !== undefined) {
           if (
             !Array.isArray(requestedComponents) ||
@@ -6166,10 +6225,57 @@ export function createApiRoutes(): Hono {
       }
 
       const status = await checkAdminSetupStatus(kvNamespaceId);
+      let adminSetupCompleted = status.completed;
+      let statusError = status.error;
+
+      // Wrangler inventory/auth lookups can fail transiently even while the deployed
+      // environment is healthy. Confirm an apparent or unknown incomplete state through
+      // the environment's public, secret-free setup status contract before telling the
+      // operator that no administrator exists.
+      const parsedEnv = EnvNameSchema.safeParse(c.req.query('env'));
+      if (!adminSetupCompleted && parsedEnv.success) {
+        try {
+          const baseDir = findAuthrimBaseDir(process.cwd());
+          const resolved = resolvePaths({ baseDir, env: parsedEnv.data });
+          const configPath =
+            resolved.type === 'new'
+              ? (resolved.paths as EnvironmentPaths).config
+              : (resolved.paths as LegacyPaths).config;
+          if (existsSync(configPath)) {
+            const config = parseEnvironmentConfigForEnv(
+              JSON.parse(await readFile(configPath, 'utf-8')),
+              parsedEnv.data
+            );
+            const response = await fetch(
+              `${resolveIssuerUrl(config, { env: parsedEnv.data }).replace(/\/$/u, '')}/api/admin-init-setup/status`,
+              {
+                headers: { accept: 'application/json' },
+                redirect: 'manual',
+                signal: AbortSignal.timeout(10_000),
+              }
+            );
+            const body = (await response.json().catch(() => null)) as Record<
+              string,
+              unknown
+            > | null;
+            if (
+              body?.error === 'setup_completed' ||
+              body?.setup_disabled === true ||
+              body?.initialized === true
+            ) {
+              adminSetupCompleted = true;
+              statusError = undefined;
+            }
+          }
+        } catch (error) {
+          statusError ??= sanitizeError(error);
+        }
+      }
       return c.json({
         success: true,
-        adminSetupCompleted: status.completed,
-        error: status.error,
+        adminSetupCompleted,
+        statusKnown: adminSetupCompleted || !statusError,
+        error: statusError,
       });
     } catch (error) {
       return c.json({ success: false, error: sanitizeError(error) }, 500);
@@ -6979,8 +7085,8 @@ export function createApiRoutes(): Hono {
         ).map((component) => ({ component, workerName: `${env}-${component}` })),
       ];
 
+      let currentAccountId: string | null = null;
       if (releaseConfig.cloudflare?.accountId) {
-        let currentAccountId: string | null;
         try {
           currentAccountId = await getAccountId();
         } catch {
@@ -7021,6 +7127,7 @@ export function createApiRoutes(): Hono {
         });
       }
 
+      let recoverableWorkerOwnershipComponents: string[] = [];
       try {
         await prepareWorkerScriptOwnership({ lock, targets: recoveryWorkerTargets });
       } catch (error) {
@@ -7029,15 +7136,49 @@ export function createApiRoutes(): Hono {
           /^worker_script_(?:provisional_name_mismatch|pending_version_mismatch|immutable_tag_(?:mismatch|unavailable|invalid)|missing|fresh_name_conflict|locked_name_mismatch|legacy_identity_insufficient|legacy_version_mismatch|inventory_(?:invalid|duplicate))/u.test(
             message
           );
-        return c.json({
-          ...responseBase,
-          status: checkpointInvalid ? 'recreate_required' : 'blocked',
-          canResume: false,
-          requiresRecreate: checkpointInvalid,
-          reasonCode: checkpointInvalid
-            ? 'worker_ownership_checkpoint_mismatch'
-            : 'worker_ownership_verification_unavailable',
-        });
+        if (
+          checkpointInvalid &&
+          message.startsWith('worker_script_fresh_name_conflict:') &&
+          currentAccountId
+        ) {
+          try {
+            const preview = await adoptLegacyWorkerDeployments({
+              lock,
+              environment: env,
+              authenticatedAccountId: currentAccountId,
+              configuredAccountId: releaseConfig.cloudflare?.accountId,
+              productVersion,
+              targets: recoveryWorkerTargets.map((target) => ({
+                ...target,
+                expectedPackageVersion: productVersion,
+              })),
+              requireAllTargets: false,
+            });
+            assertInterruptedInitialWorkerDeploymentEvidence({
+              lock,
+              evidence: preview.adopted,
+            });
+            recoverableWorkerOwnershipComponents = preview.adopted.map((item) => item.component);
+          } catch {
+            return c.json({
+              ...responseBase,
+              status: 'recreate_required',
+              canResume: false,
+              requiresRecreate: true,
+              reasonCode: 'worker_ownership_checkpoint_mismatch',
+            });
+          }
+        } else {
+          return c.json({
+            ...responseBase,
+            status: checkpointInvalid ? 'recreate_required' : 'blocked',
+            canResume: false,
+            requiresRecreate: checkpointInvalid,
+            reasonCode: checkpointInvalid
+              ? 'worker_ownership_checkpoint_mismatch'
+              : 'worker_ownership_verification_unavailable',
+          });
+        }
       }
       const checkExistingControlCredentials = async (): Promise<boolean> => {
         if (releaseConfig.controlPlane?.automaticProvisioning !== true) return true;
@@ -7079,6 +7220,8 @@ export function createApiRoutes(): Hono {
           resumeFrom: 'database_migrations',
           resumeMode: 'continue',
           requiresBootstrapToken: !controlCredentialsReady,
+          requiresWorkerOwnershipRecovery: recoverableWorkerOwnershipComponents.length > 0,
+          workerOwnershipRecoveryComponents: recoverableWorkerOwnershipComponents,
           reasonCode: 'append_only_draft_schema_pending',
         });
       }
@@ -7093,6 +7236,8 @@ export function createApiRoutes(): Hono {
           resumeFrom: 'database_migrations',
           resumeMode: 'continue',
           requiresBootstrapToken: !controlCredentialsReady,
+          requiresWorkerOwnershipRecovery: recoverableWorkerOwnershipComponents.length > 0,
+          workerOwnershipRecoveryComponents: recoverableWorkerOwnershipComponents,
           reasonCode: 'release_planned',
         });
       }
@@ -7119,6 +7264,8 @@ export function createApiRoutes(): Hono {
           resumeFrom: controlPlaneReady ? 'worker_deployment' : 'control_plane_bootstrap',
           resumeMode: 'continue',
           requiresBootstrapToken: !controlCredentialsReady,
+          requiresWorkerOwnershipRecovery: recoverableWorkerOwnershipComponents.length > 0,
+          workerOwnershipRecoveryComponents: recoverableWorkerOwnershipComponents,
           reasonCode: controlPlaneReady
             ? 'schema_checkpoint_verified'
             : 'initial_control_plane_bootstrap_incomplete',
@@ -7235,6 +7382,8 @@ export function createApiRoutes(): Hono {
         resumeFrom: 'post_deploy_verification',
         resumeMode: 'continue',
         requiresBootstrapToken: !controlCredentialsReady,
+        requiresWorkerOwnershipRecovery: recoverableWorkerOwnershipComponents.length > 0,
+        workerOwnershipRecoveryComponents: recoverableWorkerOwnershipComponents,
         reasonCode: controlCredentialsReady
           ? 'worker_checkpoint_verified'
           : 'control_credentials_repair_required',

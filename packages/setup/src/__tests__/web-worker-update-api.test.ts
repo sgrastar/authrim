@@ -1013,6 +1013,7 @@ describe('setup web worker update API', () => {
         controlTokenBootstrapCompleted && name.endsWith('-ar-control')
           ? '00000000-0000-4000-8000-000000000099'
           : '00000000-0000-4000-8000-000000000001',
+      source: 'Upload',
     }));
     listD1DatabasesMock.mockImplementation(async () =>
       ['test', 'headless'].flatMap((environment) => [
@@ -1608,6 +1609,135 @@ describe('setup web worker update API', () => {
       canResume: false,
       requiresRecreate: true,
       reasonCode: 'worker_ownership_checkpoint_mismatch',
+    });
+  });
+
+  it('offers explicit Web recovery for an orphan created in the sibling upload window', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const configPath = join(tempDir!, '.authrim', env, 'config.json');
+    const config = JSON.parse(await readFile(configPath, 'utf-8'));
+    config.cloudflare.accountId = TEST_ACCOUNT_ID;
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    const manifestChecksum = Object.values(lock.schemaTargets)[0]?.manifestChecksum;
+    delete lock.productVersion;
+    lock.workers = {};
+    lock.workerScriptOwnership = {
+      'ar-auth': {
+        name: 'test-ar-auth',
+        cloudflareScriptTag: 'immutable-ar-auth-tag',
+        state: 'provisional',
+        updatedAt: '2026-05-18T00:02:00.000Z',
+      },
+    };
+    lock.releaseUpdate = {
+      targetVersion: '0.2.0',
+      phase: 'schema_applied',
+      manifestChecksum,
+      startedAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:01:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    listWorkersMock.mockResolvedValue([
+      { name: 'test-ar-auth', id: 'test-ar-auth', tag: 'immutable-ar-auth-tag' },
+      { name: 'test-ar-router', id: 'test-ar-router', tag: 'immutable-ar-router-tag' },
+    ]);
+    getWorkerDeploymentsMock.mockImplementation(async (name: string) => ({
+      name,
+      exists: true,
+      lastDeployedAt: '2026-05-18T00:02:30.000Z',
+      author: 'test@example.com',
+      versionId: '00000000-0000-4000-8000-000000000001',
+      source: 'Upload',
+    }));
+
+    const response = await createApiRoutes().request('/deploy/recovery/test');
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      status: 'resumable',
+      canResume: true,
+      requiresRecreate: false,
+      resumeFrom: 'worker_deployment',
+      requiresWorkerOwnershipRecovery: true,
+      workerOwnershipRecoveryComponents: ['ar-router'],
+    });
+  });
+
+  it('persists explicit orphan ownership before continuing the Web deployment', async () => {
+    const env = 'headless';
+    await writeEnvironment(env);
+    await markEnvironmentProvisioned(env);
+    const configPath = join(tempDir!, '.authrim', env, 'config.json');
+    const config = createDefaultConfig(env);
+    config.cloudflare.accountId = TEST_ACCOUNT_ID;
+    config.controlPlane.automaticProvisioning = false;
+    config.components.loginUi = false;
+    config.components.adminUi = false;
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+    const lockPath = join(tempDir!, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    const manifest = JSON.parse(
+      await readFile(join(tempDir!, 'migrations', 'releases', '0.2.0.json'), 'utf-8')
+    );
+    lock.releaseUpdate = {
+      targetVersion: '0.2.0',
+      phase: 'schema_applied',
+      manifestChecksum: calculateReleaseManifestChecksum(manifest),
+      startedAt: '2026-05-18T00:00:00.000Z',
+      updatedAt: '2026-05-18T00:01:00.000Z',
+      appliedTargets: [],
+      manualTargets: [],
+    };
+    lock.workerScriptOwnership = {
+      'ar-auth': {
+        name: `${env}-ar-auth`,
+        cloudflareScriptTag: 'immutable-ar-auth-tag',
+        state: 'provisional',
+        updatedAt: '2026-05-18T00:02:00.000Z',
+      },
+    };
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    listWorkersMock.mockResolvedValue([
+      { name: `${env}-ar-auth`, id: `${env}-ar-auth`, tag: 'immutable-ar-auth-tag' },
+      { name: `${env}-ar-router`, id: `${env}-ar-router`, tag: 'immutable-ar-router-tag' },
+    ]);
+    getWorkerDeploymentsMock.mockImplementation(async (name: string) => ({
+      name,
+      exists: true,
+      lastDeployedAt: '2026-05-18T00:02:30.000Z',
+      author: 'test@example.com',
+      versionId: '00000000-0000-4000-8000-000000000001',
+      source: 'Upload',
+    }));
+    buildApiPackagesMock.mockResolvedValueOnce({
+      success: false,
+      error: 'intentional stop after ownership recovery',
+    });
+
+    const session = generateSessionToken();
+    const response = await createApiRoutes().request('/deploy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': session,
+      },
+      body: JSON.stringify({ env, recoverWorkerOwnership: true }),
+    });
+
+    expect(response.status).toBe(500);
+    const persisted = JSON.parse(await readFile(lockPath, 'utf-8'));
+    expect(persisted.workers['ar-router']).toMatchObject({
+      name: `${env}-ar-router`,
+      version: '0.2.0',
+      cloudflareVersionId: '00000000-0000-4000-8000-000000000001',
+      cloudflareScriptTag: 'immutable-ar-router-tag',
     });
   });
 
@@ -3668,6 +3798,47 @@ describe('setup web worker update API', () => {
       expectedAccountId: undefined,
       interTargetDelayMs: 0,
     });
+  });
+
+  it('reports post-patch smoke progress but does not execute it through Setup', async () => {
+    const env = 'test';
+    await writeEnvironment(env);
+    const operation = {
+      operationId: 'provision-shard-smoke-1',
+      environmentId: env,
+      operationKind: 'provision_shard',
+      status: 'waiting_retry',
+      lastErrorCode: 'control_worker_smoke_failed',
+      currentStep: 'smoke_bindings',
+    } as const;
+    listPendingControlOperatorOperationsMock.mockResolvedValue([operation]);
+
+    const token = generateSessionToken();
+    const app = createApiRoutes();
+    const listResponse = await app.request('/control/pending-operations', {
+      headers: { 'X-Session-Token': token },
+    });
+    expect(listResponse.status).toBe(200);
+    await expect(listResponse.json()).resolves.toMatchObject({
+      success: true,
+      operations: [operation],
+    });
+
+    const executeResponse = await app.request('/control/pending-operations/execute', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Session-Token': token,
+        Origin: 'http://localhost',
+      },
+      body: JSON.stringify({ environmentId: env, operationId: operation.operationId }),
+    });
+    expect(executeResponse.status).toBe(409);
+    await expect(executeResponse.json()).resolves.toMatchObject({
+      success: false,
+      operation,
+    });
+    expect(executeSetupControlOperatorWorkerBindingsMock).not.toHaveBeenCalled();
   });
 
   it('blocks Web Control execution while a release mutation is incomplete', async () => {

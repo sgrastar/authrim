@@ -335,6 +335,7 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain(
       "t(environmentDeleted ? 'web.delete.complete' : 'web.delete.manualActionRequired')"
     );
+    expect(html).toContain("backLabel.textContent = t('web.env.backToList')");
     expect(html).toContain('appendManualR2CleanupNotice(result, manualR2Targets)');
     expect(html).toContain('appendManualDnsCleanupNotice(result, manualDnsIssues)');
     expect(html).toContain(
@@ -538,6 +539,8 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain("button.setAttribute('aria-busy', 'true')");
     expect(html).toContain('const envName = selectedEnvForDetail?.env || config?.env');
     expect(html).toContain("'/deploy/recovery/' + encodeURIComponent(envName)");
+    expect(html).toContain('recoveryStatus.requiresWorkerOwnershipRecovery === true');
+    expect(html).toContain('resumeWorkerOwnershipRecovery ? { recoverWorkerOwnership: true } : {}');
     expect(html).toContain("'/config?env=' + encodeURIComponent(envName)");
     expect(html).toContain('recoveryStatus.requiresBootstrapToken !== true');
     expect(html).toContain('!resumeControlBootstrapReady');
@@ -651,6 +654,8 @@ describe('getHtmlTemplate', () => {
     expect(html).not.toContain("className = 'e-st");
     expect(html).not.toContain('admin-badge');
     expect(html).toContain('if (response.adminSetupCompleted) {');
+    expect(html).toContain('if (response.statusKnown === false) {');
+    expect(html).toContain("'?env=' + encodeURIComponent(envName)");
     expect(html).toContain("section.className = 'alert ok';");
     expect(html).toContain("heading.setAttribute('data-i18n', 'web.env.adminConfigured');");
     expect(html).toContain("description.classList.add('hidden');");
@@ -1389,7 +1394,9 @@ describe('getHtmlTemplate', () => {
     );
     expect(html).toContain('id="pending-control-operations"');
     expect(html).toContain("api('/control/pending-operations')");
-    expect(html).toContain('pendingControlOperations[0]');
+    expect(html).toContain('pendingControlOperations.find(isPendingControlOperationExecutable)');
+    expect(html).toContain("t('web.control.pendingObserving')");
+    expect(html).toContain('pendingControlPollTimer = setTimeout');
     expect(html).toContain('operation.tenantId');
     expect(html).toContain("api('/control/pending-operations/execute'");
     expect(html).toContain('Run pending operation');

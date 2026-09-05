@@ -31,6 +31,7 @@ const adminDashboard = {
 	admin_login_page_title: 'Admin Login - Authrim',
 	admin_login_panel: 'Admin Panel',
 	admin_login_authenticating: 'Authenticating...',
+	admin_login_timeout: 'Authentication took too long. Please try again.',
 	admin_login_with_passkey: 'Login with Passkey',
 	admin_login_hint: 'Only administrators with registered Passkeys can access this area.',
 	admin_login_theme_label: 'Theme',

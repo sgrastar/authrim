@@ -52,6 +52,135 @@ function fixture(sql = 'CREATE TABLE account (id TEXT PRIMARY KEY);') {
 }
 
 describe('MigrationReleaseArtifactReader', () => {
+  it('selects a source-version upgrade delta while keeping the fresh baseline for provisioning', async () => {
+    const baselineSql = 'CREATE TABLE account (id TEXT PRIMARY KEY);';
+    const deltaSql = 'ALTER TABLE account ADD COLUMN display_name TEXT;';
+    const encoded = `${JSON.stringify({
+      formatVersion: 1,
+      productVersion: '0.4.1',
+      streams: [
+        {
+          id: 'd1-core',
+          dialect: 'sqlite',
+          files: [{ path: '001_0_4_0_core_baseline.sql', checksum: digest(baselineSql) }],
+        },
+      ],
+      upgradePaths: [
+        {
+          fromProductVersion: '0.4.0',
+          kind: 'delta',
+          streams: [
+            {
+              id: 'd1-core',
+              dialect: 'sqlite',
+              files: [{ path: '002_0_4_1_core_delta.sql', checksum: digest(deltaSql) }],
+            },
+          ],
+        },
+      ],
+      acceptedMigrationHistory: [
+        {
+          id: 'd1-core',
+          dialect: 'sqlite',
+          files: [
+            { path: '001_0_4_0_core_baseline.sql', checksum: digest(baselineSql) },
+            { path: '002_unpublished_source.sql', checksum: 'a'.repeat(64) },
+            { path: '002_0_4_1_core_delta.sql', checksum: digest(deltaSql) },
+          ],
+        },
+      ],
+    })}\n`;
+    const manifestDigest = digest(encoded);
+    const base = `releases/0.4.1/${manifestDigest}/`;
+    const pin: MigrationReleasePin = {
+      environmentId: 'env-test',
+      streamId: 'd1-core',
+      releaseId: '0.4.1',
+      manifestDigest,
+      manifestObjectKey: `${base}manifest.json`,
+    };
+    const store = new MemoryArtifactStore(
+      new Map([
+        [pin.manifestObjectKey, encoded],
+        [`${base}streams/d1-core/001_0_4_0_core_baseline.sql`, baselineSql],
+        [`${base}streams/d1-core/002_0_4_1_core_delta.sql`, deltaSql],
+      ])
+    );
+
+    const fresh = await new MigrationReleaseArtifactReader(store).load(pin);
+    expect(fresh).toMatchObject({
+      files: [{ path: '001_0_4_0_core_baseline.sql' }],
+    });
+    expect(fresh.knownHistory.some((file) => file.path === '002_unpublished_source.sql')).toBe(
+      true
+    );
+    const upgrade = await new MigrationReleaseArtifactReader(store).load({
+      ...pin,
+      sourceProductVersion: '0.4.0',
+    });
+    expect(upgrade).toMatchObject({
+      files: [{ path: '002_0_4_1_core_delta.sql' }],
+    });
+    expect(upgrade.knownHistory.some((file) => file.path === '002_unpublished_source.sql')).toBe(
+      true
+    );
+    await expect(
+      new MigrationReleaseArtifactReader(store).load({
+        ...pin,
+        sourceProductVersion: '0.3.4',
+      })
+    ).rejects.toThrow('migration_release_upgrade_path_missing');
+    expect(store.reads).not.toContain(`${base}streams/d1-core/002_unpublished_source.sql`);
+  });
+
+  it('rejects conflicting fallback history identities across fresh and upgrade plans', async () => {
+    const baselineSql = 'CREATE TABLE account (id TEXT PRIMARY KEY);';
+    const deltaSql = 'ALTER TABLE account ADD COLUMN display_name TEXT;';
+    const encoded = JSON.stringify({
+      formatVersion: 1,
+      productVersion: '0.4.1',
+      streams: [
+        {
+          id: 'd1-core',
+          dialect: 'sqlite',
+          files: [{ path: '001_conflict.sql', checksum: digest(baselineSql) }],
+        },
+      ],
+      upgradePaths: [
+        {
+          fromProductVersion: '0.4.0',
+          kind: 'delta',
+          streams: [
+            {
+              id: 'd1-core',
+              dialect: 'sqlite',
+              files: [{ path: '001_conflict.sql', checksum: digest(deltaSql) }],
+            },
+          ],
+        },
+      ],
+    });
+    const manifestDigest = digest(encoded);
+    const base = `releases/0.4.1/${manifestDigest}/`;
+    const pin: MigrationReleasePin = {
+      environmentId: 'env-test',
+      streamId: 'd1-core',
+      releaseId: '0.4.1',
+      manifestDigest,
+      manifestObjectKey: `${base}manifest.json`,
+    };
+    const store = new MemoryArtifactStore(
+      new Map([
+        [pin.manifestObjectKey, encoded],
+        [`${base}streams/d1-core/001_conflict.sql`, baselineSql],
+      ])
+    );
+
+    await expect(new MigrationReleaseArtifactReader(store).load(pin)).rejects.toThrow(
+      'migration_artifact_manifest_history_conflict'
+    );
+  });
+
   it('loads only the pinned stream after exact manifest and SQL digest validation', async () => {
     const { manifest, pin, sql } = fixture();
     const base = pin.manifestObjectKey.slice(0, pin.manifestObjectKey.lastIndexOf('/') + 1);
@@ -71,6 +200,7 @@ describe('MigrationReleaseArtifactReader', () => {
         adminMutationMode: 'read_only',
       },
       files: [{ path: '001_core.sql', checksum: digest(sql), sql }],
+      knownHistory: [{ path: '001_core.sql', checksum: digest(sql) }],
     });
     expect(store.reads).toEqual([pin.manifestObjectKey, `${base}streams/d1-core/001_core.sql`]);
   });

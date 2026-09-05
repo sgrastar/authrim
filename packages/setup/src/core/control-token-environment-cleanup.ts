@@ -73,7 +73,7 @@ export interface ControlTokenCleanupConclusion {
   environment: string;
   accountId: string;
   status: 'not_required';
-  reason: 'authority_absent' | 'not_setup_managed';
+  reason: 'authority_absent' | 'automatic_provisioning_disabled' | 'not_setup_managed';
   createdAt: string;
   conclusionDigest: string;
 }
@@ -94,7 +94,7 @@ interface CleanupDependencies {
 
 export interface CleanupSetupManagedControlTokensResult {
   status: 'not_required' | 'completed';
-  reason?: 'authority_absent' | 'not_setup_managed';
+  reason?: 'authority_absent' | 'automatic_provisioning_disabled' | 'not_setup_managed';
   revokedTokenIds: string[];
   alreadyAbsentTokenIds: string[];
 }
@@ -520,7 +520,9 @@ function parseConclusion(raw: unknown, expectedEnvironment: string): ControlToke
     typeof value.accountId !== 'string' ||
     !ACCOUNT_ID.test(value.accountId) ||
     value.status !== 'not_required' ||
-    (value.reason !== 'authority_absent' && value.reason !== 'not_setup_managed') ||
+    (value.reason !== 'authority_absent' &&
+      value.reason !== 'automatic_provisioning_disabled' &&
+      value.reason !== 'not_setup_managed') ||
     typeof value.createdAt !== 'string' ||
     !Number.isFinite(Date.parse(value.createdAt)) ||
     typeof value.conclusionDigest !== 'string' ||
@@ -626,29 +628,45 @@ async function persistConclusion(input: {
   return reflected;
 }
 
-async function configuredAccountId(baseDir: string, environment: string): Promise<string | null> {
+async function configuredEnvironmentState(
+  baseDir: string,
+  environment: string
+): Promise<{
+  accountId: string | null;
+  automaticProvisioning: boolean | null;
+}> {
   const path = getEnvironmentPaths({ baseDir, env: environment }).config;
   const content = await readPrivateFileSecurely(path, {
     maxBytes: 1024 * 1024,
     invalidError: 'control_token_cleanup_config_invalid',
     permissionsError: 'control_token_cleanup_config_permissions_invalid',
   });
-  if (content === null) return null;
+  if (content === null) return { accountId: null, automaticProvisioning: null };
   let raw: unknown;
   try {
     raw = JSON.parse(content);
   } catch (error) {
     throw new Error('control_token_cleanup_config_invalid', { cause: error });
   }
-  const accountId =
+  const config =
     raw && typeof raw === 'object' && !Array.isArray(raw)
-      ? (raw as { cloudflare?: { accountId?: unknown } }).cloudflare?.accountId
-      : undefined;
-  if (accountId === undefined) return null;
-  if (typeof accountId !== 'string' || !ACCOUNT_ID.test(accountId)) {
+      ? (raw as {
+          cloudflare?: { accountId?: unknown };
+          controlPlane?: { automaticProvisioning?: unknown };
+        })
+      : null;
+  const accountId = config?.cloudflare?.accountId;
+  const automaticProvisioning = config?.controlPlane?.automaticProvisioning;
+  if (accountId !== undefined && (typeof accountId !== 'string' || !ACCOUNT_ID.test(accountId))) {
     throw new Error('control_token_cleanup_config_invalid');
   }
-  return accountId;
+  if (automaticProvisioning !== undefined && typeof automaticProvisioning !== 'boolean') {
+    throw new Error('control_token_cleanup_config_invalid');
+  }
+  return {
+    accountId: accountId ?? null,
+    automaticProvisioning: automaticProvisioning ?? null,
+  };
 }
 
 async function readAuthorityForCleanup(input: {
@@ -817,13 +835,13 @@ export async function cleanupSetupManagedControlTokens(input: {
   }
   const controlDatabaseIdentifier =
     input.controlDatabaseIdentifier ?? input.controlDatabaseName ?? null;
-  const configured = await configuredAccountId(input.baseDir, input.environment);
-  if (input.accountId && configured && input.accountId !== configured) {
+  const configured = await configuredEnvironmentState(input.baseDir, input.environment);
+  if (input.accountId && configured.accountId && input.accountId !== configured.accountId) {
     throw new Error('control_token_cleanup_account_mismatch');
   }
   const resolvedAccountId =
     input.accountId ??
-    configured ??
+    configured.accountId ??
     (await (input.dependencies?.resolveAccountId ?? getAccountId)());
   if (!resolvedAccountId || !ACCOUNT_ID.test(resolvedAccountId)) {
     throw new Error('control_token_cleanup_account_id_required');
@@ -855,6 +873,32 @@ export async function cleanupSetupManagedControlTokens(input: {
     throw new Error('control_token_cleanup_pending_account_mismatch_manual_recovery_required');
   }
 
+  if (
+    configured.automaticProvisioning === false &&
+    !checkpoint &&
+    !pendingArtifact &&
+    !conclusion
+  ) {
+    const now = new Date().toISOString();
+    await persistConclusion({
+      baseDir: input.baseDir,
+      conclusion: {
+        version: 1,
+        environment: input.environment,
+        accountId: resolvedAccountId,
+        status: 'not_required',
+        reason: 'automatic_provisioning_disabled',
+        createdAt: now,
+      },
+    });
+    return {
+      status: 'not_required',
+      reason: 'automatic_provisioning_disabled',
+      revokedTokenIds: [],
+      alreadyAbsentTokenIds: [],
+    };
+  }
+
   const currentAuthority = controlDatabaseIdentifier
     ? await readAuthorityForCleanup({
         controlDatabaseName: controlDatabaseIdentifier,
@@ -873,7 +917,13 @@ export async function cleanupSetupManagedControlTokens(input: {
     if (pendingArtifact) {
       throw new Error('control_token_cleanup_conclusion_pending_conflict_manual_recovery_required');
     }
-    if (currentAuthority !== undefined) {
+    if (
+      conclusion.reason === 'automatic_provisioning_disabled' &&
+      configured.automaticProvisioning !== false
+    ) {
+      throw new Error('control_token_cleanup_conclusion_changed_manual_recovery_required');
+    }
+    if (currentAuthority !== undefined && conclusion.reason !== 'automatic_provisioning_disabled') {
       const conclusionStillApplies =
         conclusion.reason === 'authority_absent'
           ? currentAuthority === null
