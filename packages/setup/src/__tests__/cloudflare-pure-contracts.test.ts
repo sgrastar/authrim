@@ -136,13 +136,30 @@ describe('Cloudflare pure resource contracts', () => {
         d1: [{ binding: 'DB', id: 'db-id', name: 'db-name' }],
         kv: [{ binding: 'SETTINGS', id: 'kv-id', name: 'kv-name' }],
         queues: [{ binding: 'AUDIT_QUEUE', id: 'queue-id', name: 'queue-name' }],
-        r2: [{ binding: 'AUDIT_ARCHIVE', name: 'archive-name' }],
+        r2: [
+          {
+            binding: 'AUDIT_ARCHIVE',
+            name: 'archive-name',
+            creationDate: '2026-08-31T00:00:00.000Z',
+            ownershipMarkerKey:
+              '__authrim_setup__/ownership-v1-11111111-1111-4111-8111-111111111111.json',
+            ownershipId: '11111111-1111-4111-8111-111111111111',
+          },
+        ],
       })
     ).toEqual({
       d1: { DB: { id: 'db-id', name: 'db-name' } },
       kv: { SETTINGS: { id: 'kv-id', name: 'kv-name' } },
       queues: { AUDIT_QUEUE: { id: 'queue-id', name: 'queue-name' } },
-      r2: { AUDIT_ARCHIVE: { name: 'archive-name' } },
+      r2: {
+        AUDIT_ARCHIVE: {
+          name: 'archive-name',
+          creationDate: '2026-08-31T00:00:00.000Z',
+          ownershipMarkerKey:
+            '__authrim_setup__/ownership-v1-11111111-1111-4111-8111-111111111111.json',
+          ownershipId: '11111111-1111-4111-8111-111111111111',
+        },
+      },
     });
   });
 

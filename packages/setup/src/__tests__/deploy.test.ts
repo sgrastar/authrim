@@ -16,26 +16,103 @@ import {
   buildUiWorkerBuildEnv,
   assertLoginUiBuildClientId,
   cleanupLegacyStaticSecrets,
-  deployAll,
-  deployUiWorkerComponent,
-  deployUiWorkerBindingTargets,
-  deployWorker,
-  deployWorkerGradually,
+  deployAll as deployAllCore,
+  deployUiWorkerComponent as deployUiWorkerComponentCore,
+  deployUiWorkerBindingTargets as deployUiWorkerBindingTargetsCore,
+  deployWorker as deployWorkerCore,
+  deployWorkerGradually as deployWorkerGraduallyCore,
   findNodeEngineMismatches,
   hasBlockingDeploymentFailures,
+  isLocalDiskExhaustionError,
   loadDeploySecretsFromKeys,
   nodeVersionSatisfiesEngine,
   resolveExistingWorkerComponents,
+  updateLockWithDeployments,
+  type DeployOptions,
   type WorkerDeploymentLeaseCoordinator,
 } from '../core/deploy.js';
+import type { WorkerScriptOwnershipGuard } from '../core/worker-script-ownership.js';
 import { CORE_WORKER_COMPONENTS } from '../core/naming.js';
 import type { SetupWorkerDeploymentLease } from '../core/worker-deployment-lease.js';
+import {
+  acquireDeployConfigLock,
+  AuthrimLockSchema,
+  type DeployConfigLock,
+  type DeployConfigLockProof,
+} from '../core/lock.js';
 
 vi.mock('execa', () => ({
   execa: vi.fn(),
 }));
 
 const tempDirs: string[] = [];
+const TEST_CLOUDFLARE_VERSION_ID = '77777777-7777-4777-8777-777777777777';
+const TEST_CLOUDFLARE_SCRIPT_TAG = 'test-worker-script-immutable-tag';
+const testWorkerScriptOwnership: WorkerScriptOwnershipGuard = {
+  assertBeforeMutation: async () => undefined,
+  checkpointCommittedVersion: async () => undefined,
+  captureAfterMutation: async () => TEST_CLOUDFLARE_SCRIPT_TAG,
+  getEvidence: (workerName) => ({
+    workerName,
+    state: 'owned',
+    tag: TEST_CLOUDFLARE_SCRIPT_TAG,
+  }),
+};
+
+const deployWorker = (
+  ...[component, options]: Parameters<typeof deployWorkerCore>
+): ReturnType<typeof deployWorkerCore> =>
+  deployWorkerCore(component, {
+    readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
+    ...options,
+    workerScriptOwnership: testWorkerScriptOwnership,
+  });
+
+const deployWorkerGradually = (
+  ...[component, options, gradual]: Parameters<typeof deployWorkerGraduallyCore>
+): ReturnType<typeof deployWorkerGraduallyCore> =>
+  deployWorkerGraduallyCore(
+    component,
+    {
+      readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
+      ...options,
+      workerScriptOwnership: testWorkerScriptOwnership,
+    },
+    gradual
+  );
+
+const deployAll = (
+  ...[options, components]: Parameters<typeof deployAllCore>
+): ReturnType<typeof deployAllCore> =>
+  deployAllCore(
+    {
+      readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
+      ...options,
+      workerScriptOwnership: testWorkerScriptOwnership,
+    },
+    components
+  );
+
+const deployUiWorkerComponent = (
+  ...[component, options]: Parameters<typeof deployUiWorkerComponentCore>
+): ReturnType<typeof deployUiWorkerComponentCore> =>
+  deployUiWorkerComponentCore(component, {
+    readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
+    ...options,
+    workerScriptOwnership: testWorkerScriptOwnership,
+  });
+
+const deployUiWorkerBindingTargets = (
+  ...[options, targets]: Parameters<typeof deployUiWorkerBindingTargetsCore>
+): ReturnType<typeof deployUiWorkerBindingTargetsCore> =>
+  deployUiWorkerBindingTargetsCore(
+    {
+      readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
+      ...options,
+      workerScriptOwnership: testWorkerScriptOwnership,
+    },
+    targets
+  );
 
 function createTempRoot(): string {
   const dir = mkdtempSync(join(tmpdir(), 'authrim-deploy-test-'));
@@ -104,6 +181,11 @@ function createUiPackage(rootDir: string, component: string): void {
   );
 }
 
+async function acquireManagedDeployProof(rootDir: string, env = 'test'): Promise<DeployConfigLock> {
+  mkdirSync(join(rootDir, '.authrim', env), { recursive: true });
+  return acquireDeployConfigLock({ baseDir: rootDir, env, operation: 'deploy-test' });
+}
+
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -117,7 +199,7 @@ function createDeferred<T>() {
 function successfulCommandResult(): Awaited<ReturnType<typeof execa>> {
   return {
     exitCode: 0,
-    stdout: '',
+    stdout: JSON.stringify({ type: 'deploy', version_id: TEST_CLOUDFLARE_VERSION_ID }),
     stderr: '',
   } as Awaited<ReturnType<typeof execa>>;
 }
@@ -228,8 +310,10 @@ describe('hasBlockingDeploymentFailures', () => {
     workerFailedCount: 0,
     migrationsSuccess: true,
     initialTenantSuccess: true,
+    initialNotificationProviderSuccess: true,
     initialAdminRolesSuccess: true,
     setupMachineAccessSuccess: true,
+    setupMachineAccessCleanupSuccess: true,
     adminUiBffMachineAccessSuccess: true,
     defaultCanonicalCatalogSeedSuccess: true,
     runtimeProfileSeedSuccess: true,
@@ -252,8 +336,10 @@ describe('hasBlockingDeploymentFailures', () => {
   it.each([
     'migrationsSuccess',
     'initialTenantSuccess',
+    'initialNotificationProviderSuccess',
     'initialAdminRolesSuccess',
     'setupMachineAccessSuccess',
+    'setupMachineAccessCleanupSuccess',
     'adminUiBffMachineAccessSuccess',
     'defaultCanonicalCatalogSeedSuccess',
     'runtimeProfileSeedSuccess',
@@ -332,6 +418,7 @@ describe('buildApiPackages', () => {
       rootDir,
       components: ['ar-auth'],
       onProgress: (message) => progressMessages.push(message),
+      readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
     });
 
     expect(result.success).toBe(true);
@@ -341,6 +428,66 @@ describe('buildApiPackages', () => {
       ['exec', 'turbo', 'run', 'build', '--filter=@authrim/ar-auth'],
       expect.objectContaining({ cwd: rootDir })
     );
+  });
+
+  it('stops before turbo when local disk space is insufficient', async () => {
+    const rootDir = createTempRoot();
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+
+    const result = await buildApiPackages({
+      rootDir,
+      components: ['ar-auth'],
+      readAvailableDiskBytes: async () => 144 * 1024 * 1024,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      errorCode: 'insufficient_local_disk_space',
+      error: expect.stringContaining('144 MiB available'),
+    });
+    expect(
+      vi
+        .mocked(execa)
+        .mock.calls.some(([command, args]) => command === 'pnpm' && args.includes('turbo'))
+    ).toBe(false);
+  });
+
+  it('stops before Worker mutations when the build consumes the remaining disk reserve', async () => {
+    const rootDir = createTempRoot();
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+    const observations = [2 * 1024 * 1024 * 1024, 144 * 1024 * 1024];
+
+    const result = await buildApiPackages({
+      rootDir,
+      components: ['ar-auth'],
+      readAvailableDiskBytes: async () => observations.shift() ?? 0,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      errorCode: 'insufficient_local_disk_space',
+      error: expect.stringContaining('Worker deployment'),
+    });
+    expect(
+      vi
+        .mocked(execa)
+        .mock.calls.some(([command, args]) => command === 'pnpm' && args.includes('turbo'))
+    ).toBe(true);
+  });
+});
+
+describe('isLocalDiskExhaustionError', () => {
+  it.each([
+    'ENOSPC: write failed',
+    'no space left on device',
+    'Insufficient local disk space for package build',
+    'insufficient_local_disk_space',
+  ])('recognizes %s', (message) => {
+    expect(isLocalDiskExhaustionError(new Error(message))).toBe(true);
+  });
+
+  it('does not classify an ordinary Wrangler failure as disk exhaustion', () => {
+    expect(isLocalDiskExhaustionError(new Error('authentication failed'))).toBe(false);
   });
 });
 
@@ -380,6 +527,156 @@ describe('deployWorker', () => {
     expect(result.version).toBe('9.9.9');
     expect(progressMessages).toContain('[1/3] Deploying test-ar-auth...');
     expect(progressMessages).toContain('  [DRY RUN] Would deploy ar-auth with --env test');
+  });
+
+  it('requires an issued workspace capability for a managed environment', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    mkdirSync(join(rootDir, '.authrim', 'test'), { recursive: true });
+
+    await expect(
+      deployWorker('ar-auth', { env: 'test', rootDir, deploymentStrategy: 'direct' })
+    ).rejects.toThrow('managed_worker_deploy_config_lock_proof_required:test');
+    expect(execa).not.toHaveBeenCalled();
+  });
+
+  it('rejects forged, cross-environment, and cross-workspace capabilities', async () => {
+    const rootDir = createTempRoot();
+    const otherRootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    const fakeProof = {
+      assertOwned: vi.fn(async () => undefined),
+    } as unknown as DeployConfigLockProof;
+
+    await expect(
+      deployWorker('ar-auth', {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        deployConfigLockProof: fakeProof,
+      })
+    ).rejects.toThrow('deploy_config_lock_proof_invalid');
+
+    const wrongEnvironment = await acquireManagedDeployProof(rootDir, 'scaleout');
+    try {
+      await expect(
+        deployWorker('ar-auth', {
+          env: 'test',
+          rootDir,
+          deploymentStrategy: 'direct',
+          deployConfigLockProof: wrongEnvironment.proof,
+        })
+      ).rejects.toThrow('deploy_config_lock_proof_environment_mismatch');
+    } finally {
+      await wrongEnvironment.release();
+    }
+
+    const wrongWorkspace = await acquireManagedDeployProof(otherRootDir, 'test');
+    try {
+      await expect(
+        deployWorker('ar-auth', {
+          env: 'test',
+          rootDir,
+          deploymentStrategy: 'direct',
+          deployConfigLockProof: wrongWorkspace.proof,
+        })
+      ).rejects.toThrow('deploy_config_lock_proof_workspace_mismatch');
+    } finally {
+      await wrongWorkspace.release();
+    }
+    expect(execa).not.toHaveBeenCalled();
+  });
+
+  it('rejects released capability before configuration refresh or provider mutation', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    const deployConfigLock = await acquireManagedDeployProof(rootDir);
+    await deployConfigLock.release();
+
+    await expect(
+      deployWorker('ar-auth', {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        deployConfigLockProof: deployConfigLock.proof,
+      })
+    ).rejects.toThrow('deploy_config_lock_proof_released');
+    expect(execa).not.toHaveBeenCalled();
+  });
+
+  it('revalidates the same capability after generated configuration refresh', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    const deployConfigLock = await acquireManagedDeployProof(rootDir);
+
+    await expect(
+      deployWorker('ar-auth', {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        deployConfigLockProof: deployConfigLock.proof,
+        beforeWorkerMutations: () => deployConfigLock.release(),
+      })
+    ).rejects.toThrow('deploy_config_lock_proof_released');
+    expect(execa).not.toHaveBeenCalled();
+  });
+
+  it('does not allow managed proof enforcement to be downgraded after entry', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    const deployConfigLock = await acquireManagedDeployProof(rootDir);
+    const options: DeployOptions = {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      deployConfigLockProof: deployConfigLock.proof,
+      workerScriptOwnership: testWorkerScriptOwnership,
+      beforeWorkerMutations: async () => {
+        options.dryRun = true;
+        options.deployConfigLockProof = undefined;
+      },
+    };
+
+    try {
+      await expect(deployWorkerCore('ar-auth', options)).rejects.toThrow(
+        'managed_worker_deploy_config_lock_proof_changed:test'
+      );
+      expect(execa).not.toHaveBeenCalled();
+    } finally {
+      await deployConfigLock.release();
+    }
+  });
+
+  it('does not replay when capability ownership is lost after direct deploy returns', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    const deployConfigLock = await acquireManagedDeployProof(rootDir);
+    let deployCalls = 0;
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      if (args.includes('deploy')) {
+        deployCalls++;
+        await deployConfigLock.release();
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      maxRetries: 3,
+      sleep: async () => undefined,
+      deployConfigLockProof: deployConfigLock.proof,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        trafficCommitted: true,
+        error: 'Direct deployment state became unverifiable for test-ar-auth',
+      })
+    );
+    expect(deployCalls).toBe(1);
   });
 
   it('passes only the Worker allow-list through a temporary secrets file and cleans it up', async () => {
@@ -465,15 +762,17 @@ describe('deployWorker', () => {
     );
   });
 
-  it('retries transient Cloudflare 503 failures', async () => {
+  it('fails closed without replaying an ambiguous Cloudflare 503 deployment', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-25T00:00:00.000Z'));
     const rootDir = createTempRoot();
     createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
     const sleep = vi.fn(async () => undefined);
-    vi.mocked(execa)
-      .mockRejectedValueOnce(commandError('503 Service Unavailable'))
-      .mockResolvedValueOnce(successfulCommandResult());
+    let deployAttempts = 0;
+    vi.mocked(execa).mockImplementation(async (_command, _args) => {
+      deployAttempts++;
+      throw commandError('503 Service Unavailable');
+    });
 
     const result = await deployWorker('ar-auth', {
       env: 'test',
@@ -485,9 +784,310 @@ describe('deployWorker', () => {
       sleep,
     });
 
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        error: 'Direct deployment outcome is ambiguous for test-ar-auth',
+      })
+    );
+    expect(deployAttempts).toBe(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('reconciles and retries a transient Wrangler authentication code 10000 failure', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    const sleep = vi.fn(async () => undefined);
+    let deployAttempts = 0;
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          exitCode: 1,
+          stderr: 'Worker not found [code: 10007]',
+        };
+      }
+      deployAttempts++;
+      if (deployAttempts === 1) {
+        throw commandError('Authentication error [code: 10000]');
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      maxRetries: 3,
+      retryDelayMs: 1,
+      random: () => 0.5,
+      sleep,
+    });
+
     expect(result.success).toBe(true);
-    expect(vi.mocked(execa)).toHaveBeenCalledTimes(2);
+    expect(deployAttempts).toBe(2);
     expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it('rechecks immutable ownership before a retried provider mutation', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    let deployAttempts = 0;
+    let ownershipChecks = 0;
+    const racedOwnership: WorkerScriptOwnershipGuard = {
+      ...testWorkerScriptOwnership,
+      assertBeforeMutation: async () => {
+        ownershipChecks++;
+        if (ownershipChecks >= 3) {
+          throw new Error('worker_script_immutable_tag_mismatch:test-ar-auth:tag-a:tag-b');
+        }
+      },
+    };
+    vi.mocked(execa).mockImplementation(async () => {
+      deployAttempts++;
+      throw commandError('Authentication error [code: 10000]');
+    });
+
+    const result = await deployWorkerCore('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      maxRetries: 3,
+      retryDelayMs: 1,
+      sleep: async () => undefined,
+      workerScriptOwnership: racedOwnership,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      error: 'worker_script_immutable_tag_mismatch:test-ar-auth:tag-a:tag-b',
+    });
+    expect(deployAttempts).toBe(1);
+    expect(ownershipChecks).toBe(3);
+  });
+
+  it('journals a fresh direct version before tag readback and can be retried safely', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    const checkpointCommittedVersion = vi.fn(async () => undefined);
+    const firstOwnership: WorkerScriptOwnershipGuard = {
+      ...testWorkerScriptOwnership,
+      checkpointCommittedVersion,
+      captureAfterMutation: async () => {
+        throw new Error(
+          'worker_script_identity_readback_timeout:test-ar-auth:temporary inventory outage'
+        );
+      },
+      getEvidence: (workerName) => ({ workerName, state: 'absent' }),
+    };
+
+    const first = await deployWorkerCore('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      workerScriptOwnership: firstOwnership,
+    });
+    expect(first).toMatchObject({
+      success: false,
+      trafficCommitted: true,
+      cloudflareVersionId: TEST_CLOUDFLARE_VERSION_ID,
+    });
+    expect(checkpointCommittedVersion).toHaveBeenCalledWith(
+      'test-ar-auth',
+      TEST_CLOUDFLARE_VERSION_ID
+    );
+
+    const recovered = await deployWorkerCore('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      existingComponents: ['ar-auth'],
+      workerScriptOwnership: testWorkerScriptOwnership,
+    });
+    expect(recovered).toMatchObject({
+      success: true,
+      cloudflareVersionId: TEST_CLOUDFLARE_VERSION_ID,
+      cloudflareScriptTag: TEST_CLOUDFLARE_SCRIPT_TAG,
+    });
+  });
+
+  it('adopts structured direct-deploy output after a lost 503 response without replaying', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    writeFileSync(
+      join(rootDir, 'packages', 'ar-auth', 'wrangler.toml'),
+      'name = "test-ar-auth"\n\n[[migrations]]\ntag = "v1"\nnew_classes = ["Store"]\n'
+    );
+    const versionId = '33333333-3333-4333-8333-333333333333';
+    let deployAttempts = 0;
+
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deploy') && !commandArgs.includes('deployments')) {
+        deployAttempts++;
+        writeFileSync(
+          join(String(options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY), 'wrangler-output.ndjson'),
+          `${JSON.stringify({ type: 'deploy', version_id: versionId })}\n`
+        );
+        throw commandError('503 Service Unavailable');
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      existingComponents: ['ar-auth'],
+      maxRetries: 3,
+      sleep: async () => undefined,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: true,
+        cloudflareVersionId: versionId,
+      })
+    );
+    expect(deployAttempts).toBe(1);
+  });
+
+  it('fails closed when a lost direct-deploy response changed remote state without a version ID', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    const sleep = vi.fn(async () => undefined);
+    let deployAttempts = 0;
+
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'deployment-after-response-loss',
+              versions: [{ version_id: 'version-after-response-loss', percentage: 100 }],
+            },
+          ]),
+        };
+      }
+      deployAttempts++;
+      throw commandError('503 Service Unavailable');
+    });
+
+    const result = await deployWorker('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      maxRetries: 3,
+      retryDelayMs: 1,
+      sleep,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        error: 'Direct deployment outcome is ambiguous for test-ar-auth',
+      })
+    );
+    expect(deployAttempts).toBe(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('does not replay an existing Durable Object migration deploy when its outcome is unknown', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    writeFileSync(
+      join(rootDir, 'packages', 'ar-auth', 'wrangler.toml'),
+      'name = "test-ar-auth"\n\n[[migrations]]\ntag = "v1"\nnew_classes = ["Store"]\n'
+    );
+    const sleep = vi.fn(async () => undefined);
+    let deployAttempts = 0;
+    vi.mocked(execa).mockImplementation(async () => {
+      deployAttempts++;
+      throw commandError('503 Service Unavailable');
+    });
+
+    const result = await deployWorker('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'staged',
+      existingComponents: ['ar-auth'],
+      maxRetries: 3,
+      retryDelayMs: 1,
+      sleep,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        error: 'Direct deployment outcome is ambiguous for test-ar-auth',
+      })
+    );
+    expect(deployAttempts).toBe(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('does not replay a leased Durable Object migration after an ambiguous response', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    writeFileSync(
+      join(rootDir, 'packages', 'ar-auth', 'wrangler.toml'),
+      'name = "test-ar-auth"\n\n[[migrations]]\ntag = "v1"\nnew_classes = ["Store"]\n'
+    );
+    const sleep = vi.fn(async () => undefined);
+    const leaseCalls: string[] = [];
+    let deployAttempts = 0;
+    let trafficReads = 0;
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        trafficReads++;
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'deployment-source',
+              versions: [{ version_id: 'version-source', percentage: 100 }],
+            },
+          ]),
+        };
+      }
+      deployAttempts++;
+      if (deployAttempts === 1) {
+        throw commandError('503 Service Unavailable');
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'staged',
+      existingComponents: ['ar-auth'],
+      deploymentLease: {
+        controlDatabaseId: '11111111-1111-1111-1111-111111111111',
+        environmentId: 'test',
+        actorId: 'setup:test',
+        required: true,
+        coordinator: fakeDeploymentLeaseCoordinator(leaseCalls),
+      },
+      maxRetries: 3,
+      retryDelayMs: 1,
+      sleep,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        error: 'Direct deployment outcome is ambiguous for test-ar-auth',
+      })
+    );
+    expect(deployAttempts).toBe(1);
+    expect(trafficReads).toBe(2);
+    expect(sleep).not.toHaveBeenCalled();
+    expect(leaseCalls).toContain('acquire:test-ar-auth:version-source');
   });
 
   it('retries traffic promotion while an uploaded Worker version becomes visible', async () => {
@@ -544,17 +1144,20 @@ describe('deployWorker', () => {
     createManagedWorkerPackage(rootDir, 'ar-auth', '1.0.0', databaseId);
     const versionId = '22222222-2222-4222-8222-222222222222';
     const commands: string[][] = [];
+    const events: string[] = [];
 
     vi.mocked(execa).mockImplementation(async (_command, args, options) => {
       const commandArgs = [...(args ?? [])];
       commands.push(commandArgs);
       if (commandArgs.includes('upload')) {
+        events.push('upload');
         consumeManagedDeployTicket(options);
         writeFileSync(
           join(String(options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY), 'wrangler-output.ndjson'),
           `${JSON.stringify({ type: 'version-upload', version_id: versionId })}\n`
         );
       } else if (commandArgs.includes('view')) {
+        events.push('binding-readback');
         return {
           ...successfulCommandResult(),
           stdout: JSON.stringify({
@@ -562,14 +1165,25 @@ describe('deployWorker', () => {
           }),
         };
       }
+      if (commandArgs.includes('deploy')) events.push('promote');
       return successfulCommandResult();
     });
 
-    const result = await deployWorker('ar-auth', {
+    const result = await deployWorkerCore('ar-auth', {
       env: 'test',
       rootDir,
       deploymentStrategy: 'staged',
       existingComponents: ['ar-auth'],
+      workerScriptOwnership: {
+        ...testWorkerScriptOwnership,
+        checkpointCommittedVersion: async () => {
+          events.push('checkpoint-version');
+        },
+        captureAfterMutation: async () => {
+          events.push('capture-tag');
+          return TEST_CLOUDFLARE_SCRIPT_TAG;
+        },
+      },
     });
 
     expect(result).toEqual(
@@ -581,6 +1195,55 @@ describe('deployWorker', () => {
     );
     expect(viewIndex).toBeGreaterThan(-1);
     expect(promoteIndex).toBeGreaterThan(viewIndex);
+    expect(events.indexOf('checkpoint-version')).toBeLessThan(events.indexOf('capture-tag'));
+    expect(events.indexOf('capture-tag')).toBeLessThan(events.indexOf('binding-readback'));
+    const viewCall = vi.mocked(execa).mock.calls.find(([, args]) => (args ?? []).includes('view'));
+    expect(viewCall?.[2]?.env).toMatchObject({ WRANGLER_LOG: 'log' });
+  });
+
+  it('retries an empty uploaded-version binding readback before staged promotion', async () => {
+    const rootDir = createTempRoot();
+    const databaseId = '11111111-1111-4111-8111-111111111111';
+    createManagedWorkerPackage(rootDir, 'ar-auth', '1.0.0', databaseId);
+    const versionId = '22222222-2222-4222-8222-222222222222';
+    let viewAttempts = 0;
+
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('upload')) {
+        consumeManagedDeployTicket(options);
+        writeFileSync(
+          join(String(options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY), 'wrangler-output.ndjson'),
+          `${JSON.stringify({ type: 'version-upload', version_id: versionId })}\n`
+        );
+      } else if (commandArgs.includes('view')) {
+        viewAttempts++;
+        return {
+          ...successfulCommandResult(),
+          stdout:
+            viewAttempts === 1
+              ? ''
+              : JSON.stringify({
+                  resources: { bindings: [{ name: 'DB', type: 'd1', id: databaseId }] },
+                }),
+        };
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-auth', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'staged',
+      existingComponents: ['ar-auth'],
+      maxRetries: 2,
+      retryDelayMs: 0,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({ success: true, cloudflareVersionId: versionId })
+    );
+    expect(viewAttempts).toBe(2);
   });
 
   it.each([
@@ -750,6 +1413,17 @@ describe('loadDeploySecretsFromKeys', () => {
 });
 
 describe('cleanupLegacyStaticSecrets', () => {
+  it('requires the workspace capability before managed secret cleanup', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    mkdirSync(join(rootDir, '.authrim', 'test'), { recursive: true });
+
+    await expect(cleanupLegacyStaticSecrets({ env: 'test', rootDir }, ['ar-auth'])).rejects.toThrow(
+      'managed_worker_deploy_config_lock_proof_required:test'
+    );
+    expect(execa).not.toHaveBeenCalled();
+  });
+
   it('deletes only retired secret names that still exist on successfully deployed workers', async () => {
     const rootDir = createTempRoot();
     createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
@@ -800,6 +1474,49 @@ describe('cleanupLegacyStaticSecrets', () => {
     expect(listCall?.[2]).toMatchObject({
       env: { WRANGLER_LOG: 'log' },
     });
+  });
+
+  it('reconciles the active version when a previous secret-bulk response was lost', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    const deployConfigLock = await acquireManagedDeployProof(rootDir);
+    const activeVersionId = 'cleanup-response-lost-version';
+
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      if (args.includes('secret') && args.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: '[]',
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (args.includes('deployments') && args.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'cleanup-response-lost-deployment',
+              versions: [{ version_id: activeVersionId, percentage: 100 }],
+            },
+          ]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      return successfulCommandResult();
+    });
+
+    try {
+      await expect(
+        cleanupLegacyStaticSecrets(
+          { env: 'test', rootDir, deployConfigLockProof: deployConfigLock.proof },
+          ['ar-auth']
+        )
+      ).resolves.toEqual({
+        failures: [],
+        activeVersionIds: { 'ar-auth': activeVersionId },
+      });
+      expect(vi.mocked(execa).mock.calls.some(([, args]) => args.includes('bulk'))).toBe(false);
+    } finally {
+      await deployConfigLock.release();
+    }
   });
 
   it('reports a clear failure when Wrangler suppresses secret list JSON output', async () => {
@@ -1191,6 +1908,63 @@ describe('deployWorkerGradually', () => {
     expect(trafficCommands).toHaveLength(1);
     expect(trafficCommands[0]).toContain(`${newVersionId}@100%`);
   });
+
+  it('does not attempt gradual rollback after capability loss following traffic promotion', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
+    const deployConfigLock = await acquireManagedDeployProof(rootDir);
+    const oldVersionId = '91919191-9191-4191-8191-919191919191';
+    const newVersionId = '92929292-9292-4292-8292-929292929292';
+    const trafficCommands: string[][] = [];
+
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      const commandArgs = [...args];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'baseline-deployment',
+              versions: [{ version_id: oldVersionId, percentage: 100 }],
+            },
+          ]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (commandArgs.includes('versions') && commandArgs.includes('upload')) {
+        writeFileSync(
+          join(String(options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY), 'wrangler-output.ndjson'),
+          `${JSON.stringify({ type: 'version-upload', version_id: newVersionId })}\n`
+        );
+      } else if (commandArgs.includes('versions') && commandArgs.includes('deploy')) {
+        trafficCommands.push(commandArgs);
+        await deployConfigLock.release();
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorkerGradually(
+      'ar-auth',
+      {
+        env: 'test',
+        rootDir,
+        sleep: async () => undefined,
+        deployConfigLockProof: deployConfigLock.proof,
+      },
+      { stages: [100], stabilizationDelayMs: 0 }
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        trafficCommitted: true,
+        cloudflareVersionId: newVersionId,
+      })
+    );
+    expect(result.error).toContain('rollback skipped because the deploy-config lock was lost');
+    expect(trafficCommands).toHaveLength(1);
+    expect(trafficCommands[0]).toContain(`${newVersionId}@100%`);
+    expect(trafficCommands[0]).not.toContain(`${oldVersionId}@100%`);
+  });
 });
 
 describe('deployUiWorkerComponent', () => {
@@ -1256,6 +2030,223 @@ describe('deployUiWorkerComponent', () => {
       })
     );
     expect(vi.mocked(execa)).not.toHaveBeenCalled();
+  });
+
+  it('stops before UI provider mutation when the workspace capability is lost during build', async () => {
+    const rootDir = createTempRoot();
+    createUiPackage(rootDir, 'ar-login-ui');
+    const deployConfigLock = await acquireManagedDeployProof(rootDir);
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      if (args.includes('build')) {
+        await deployConfigLock.release();
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployUiWorkerComponent('ar-login-ui', {
+      env: 'test',
+      rootDir,
+      deployConfigLockProof: deployConfigLock.proof,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        error: 'deploy_config_lock_proof_released',
+      })
+    );
+    expect(
+      vi
+        .mocked(execa)
+        .mock.calls.some(([, args]) => args.includes('wrangler') && args.includes('deploy'))
+    ).toBe(false);
+  });
+
+  it('reports committed ambiguity without retry when the UI capability is lost after deploy', async () => {
+    const rootDir = createTempRoot();
+    createUiPackage(rootDir, 'ar-login-ui');
+    const deployConfigLock = await acquireManagedDeployProof(rootDir);
+    let providerDeployCalls = 0;
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      if (args.includes('deployments') && args.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: '[]',
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (args.includes('wrangler') && args.includes('deploy')) {
+        providerDeployCalls++;
+        await deployConfigLock.release();
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployUiWorkerComponent('ar-login-ui', {
+      env: 'test',
+      rootDir,
+      skipBuild: true,
+      maxRetries: 3,
+      sleep: async () => undefined,
+      deployConfigLockProof: deployConfigLock.proof,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        trafficCommitted: true,
+        error: 'managed_worker_deploy_config_lock_proof_lost_after_mutation',
+      })
+    );
+    expect(providerDeployCalls).toBe(1);
+  });
+
+  it('checkpoints a response-lost placeholder deploy and converges safely on retry', async () => {
+    const rootDir = createTempRoot();
+    createUiPackage(rootDir, 'ar-login-ui');
+    const deployConfigLock = await acquireManagedDeployProof(rootDir);
+    const committedVersionId = '81818181-8181-4181-8181-818181818181';
+    const retryVersionId = '82828282-8282-4282-8282-828282828282';
+    const scriptTag = 'ui-placeholder-immutable-script-tag';
+    let deploymentListCalls = 0;
+    let directDeployCalls = 0;
+    let captureCalls = 0;
+    const checkpointCommittedVersion = vi.fn(async () => undefined);
+    const workerScriptOwnership: WorkerScriptOwnershipGuard = {
+      assertBeforeMutation: async () => undefined,
+      checkpointCommittedVersion,
+      captureAfterMutation: async () => {
+        captureCalls++;
+        if (captureCalls === 1) {
+          throw new Error('worker_script_tag_visibility_timeout');
+        }
+        return scriptTag;
+      },
+      getEvidence: (workerName) => ({ workerName, state: 'fresh' }),
+    };
+
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        deploymentListCalls++;
+        return {
+          ...successfulCommandResult(),
+          stdout:
+            deploymentListCalls === 1 ? '[]' : JSON.stringify([{ id: 'existing-ui-deployment' }]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (
+        commandArgs[0] === 'exec' &&
+        commandArgs[1] === 'wrangler' &&
+        commandArgs[2] === 'deploy'
+      ) {
+        directDeployCalls++;
+        writeFileSync(
+          join(String(options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY), 'wrangler-output.ndjson'),
+          `${JSON.stringify({ type: 'deploy', version_id: committedVersionId })}\n`
+        );
+        throw new Error('socket hang up after provider commit');
+      }
+      if (commandArgs.includes('versions') && commandArgs.includes('upload')) {
+        writeFileSync(
+          join(String(options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY), 'wrangler-output.ndjson'),
+          `${JSON.stringify({ type: 'version-upload', version_id: retryVersionId })}\n`
+        );
+      }
+      return successfulCommandResult();
+    });
+
+    let firstAttempt!: Awaited<ReturnType<typeof deployUiWorkerBindingTargetsCore>>;
+    let retryAttempt!: Awaited<ReturnType<typeof deployUiWorkerBindingTargetsCore>>;
+    try {
+      firstAttempt = await deployUiWorkerBindingTargetsCore(
+        {
+          env: 'test',
+          rootDir,
+          deployConfigLockProof: deployConfigLock.proof,
+          workerScriptOwnership,
+          maxRetries: 3,
+          sleep: async () => undefined,
+          readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
+        },
+        { loginUi: true, adminUi: false }
+      );
+      retryAttempt = await deployUiWorkerBindingTargetsCore(
+        {
+          env: 'test',
+          rootDir,
+          deployConfigLockProof: deployConfigLock.proof,
+          workerScriptOwnership,
+          maxRetries: 3,
+          sleep: async () => undefined,
+          readAvailableDiskBytes: async () => 2 * 1024 * 1024 * 1024,
+        },
+        { loginUi: true, adminUi: false }
+      );
+    } finally {
+      await deployConfigLock.release();
+    }
+
+    expect(firstAttempt.results[0]).toEqual(
+      expect.objectContaining({
+        success: false,
+        trafficCommitted: true,
+        cloudflareVersionId: committedVersionId,
+        error: 'worker_script_tag_visibility_timeout',
+      })
+    );
+    expect(retryAttempt.results[0]).toEqual(
+      expect.objectContaining({
+        success: true,
+        cloudflareVersionId: retryVersionId,
+        cloudflareScriptTag: scriptTag,
+      })
+    );
+    expect(checkpointCommittedVersion.mock.calls).toEqual([
+      ['test-ar-login-ui', committedVersionId],
+      ['test-ar-login-ui', retryVersionId],
+    ]);
+    expect(directDeployCalls).toBe(1);
+  });
+
+  it('does not replay an ambiguous fresh UI deploy without a structured version ID', async () => {
+    const rootDir = createTempRoot();
+    createUiPackage(rootDir, 'ar-login-ui');
+    let directDeployCalls = 0;
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: '[]',
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (
+        commandArgs[0] === 'exec' &&
+        commandArgs[1] === 'wrangler' &&
+        commandArgs[2] === 'deploy'
+      ) {
+        directDeployCalls++;
+        throw new Error('socket hang up without structured output');
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployUiWorkerComponent('ar-login-ui', {
+      env: 'test',
+      rootDir,
+      skipBuild: true,
+      maxRetries: 3,
+      sleep: async () => undefined,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: false,
+        error: 'Direct UI deployment outcome is ambiguous for test-ar-login-ui',
+      })
+    );
+    expect(result.trafficCommitted).toBeUndefined();
+    expect(directDeployCalls).toBe(1);
   });
 
   it('deploys Admin UI BFF secrets in one temporary secrets file and cleans it up', async () => {
@@ -1393,15 +2384,32 @@ describe('deployUiWorkerComponent', () => {
 });
 
 describe('deployUiWorkerBindingTargets', () => {
+  it('requires the workspace capability before creating managed placeholder Workers', async () => {
+    const rootDir = createTempRoot();
+    createUiPackage(rootDir, 'ar-login-ui');
+    mkdirSync(join(rootDir, '.authrim', 'test'), { recursive: true });
+
+    await expect(
+      deployUiWorkerBindingTargets({ env: 'test', rootDir }, { loginUi: true, adminUi: false })
+    ).rejects.toThrow('managed_worker_deploy_config_lock_proof_required:test');
+    expect(execa).not.toHaveBeenCalled();
+  });
+
   it('pre-deploys UI Workers without service bindings or custom routes before router deploy', async () => {
     const rootDir = createTempRoot();
     createUiPackage(rootDir, 'ar-login-ui');
     createUiPackage(rootDir, 'ar-admin-ui');
+    const deployConfigLock = await acquireManagedDeployProof(rootDir);
     vi.mocked(execa).mockImplementation(
       async (_command, args) =>
         ({
           exitCode: 0,
-          stdout: args?.includes('deployments') ? '[]' : '',
+          stdout: args?.includes('deployments')
+            ? '[]'
+            : JSON.stringify({
+                type: 'deploy',
+                version_id: TEST_CLOUDFLARE_VERSION_ID,
+              }),
           stderr: '',
         }) as Awaited<ReturnType<typeof execa>>
     );
@@ -1411,12 +2419,14 @@ describe('deployUiWorkerBindingTargets', () => {
         env: 'test',
         rootDir,
         apiBaseUrl: 'https://test.example.com',
+        deployConfigLockProof: deployConfigLock.proof,
       },
       {
         loginUi: true,
         adminUi: true,
       }
     );
+    await deployConfigLock.release();
 
     expect(result.failedCount).toBe(0);
     const loginWrangler = readFileSync(
@@ -1439,7 +2449,192 @@ describe('deployUiWorkerBindingTargets', () => {
   });
 });
 
+describe('updateLockWithDeployments', () => {
+  const sourceLock = () =>
+    AuthrimLockSchema.parse({
+      version: '1.0.0',
+      productVersion: '1.0.0',
+      createdAt: '2026-08-31T00:00:00.000Z',
+      env: 'test',
+      d1: {},
+      kv: {},
+      workers: {
+        'ar-control': {
+          name: 'test-ar-control',
+          version: '1.0.0',
+          deployedAt: '2026-08-31T00:00:00.000Z',
+          cloudflareVersionId: '00000000-0000-4000-8000-000000000001',
+        },
+      },
+    });
+
+  it('does not advance a Worker whose post-traffic reconciliation failed', () => {
+    const lock = sourceLock();
+    const updated = updateLockWithDeployments(lock, [
+      {
+        component: 'ar-control',
+        workerName: 'test-ar-control',
+        success: false,
+        trafficCommitted: true,
+        error: 'trigger synchronization failed',
+        version: '1.1.0',
+        deployedAt: '2026-08-31T00:01:00.000Z',
+        cloudflareVersionId: '00000000-0000-4000-8000-000000000002',
+        cloudflareScriptTag: TEST_CLOUDFLARE_SCRIPT_TAG,
+      },
+    ]);
+    expect(updated.workers?.['ar-control']).toEqual(lock.workers?.['ar-control']);
+  });
+
+  it('persists exact successful versions and rejects incomplete evidence', () => {
+    const lock = sourceLock();
+    const updated = updateLockWithDeployments(lock, [
+      {
+        component: 'ar-control',
+        workerName: 'test-ar-control',
+        success: true,
+        version: '1.1.0',
+        deployedAt: '2026-08-31T00:01:00.000Z',
+        cloudflareVersionId: '00000000-0000-4000-8000-000000000002',
+        cloudflareScriptTag: TEST_CLOUDFLARE_SCRIPT_TAG,
+      },
+    ]);
+    expect(updated.workers?.['ar-control']).toMatchObject({
+      version: '1.1.0',
+      cloudflareVersionId: '00000000-0000-4000-8000-000000000002',
+      cloudflareScriptTag: TEST_CLOUDFLARE_SCRIPT_TAG,
+    });
+    expect(() =>
+      updateLockWithDeployments(lock, [
+        {
+          component: 'ar-control',
+          workerName: 'test-ar-control',
+          success: true,
+          version: '1.1.0',
+          deployedAt: '2026-08-31T00:01:00.000Z',
+        },
+      ])
+    ).toThrow('worker_deployment_exact_version_unavailable:ar-control');
+  });
+});
+
 describe('deployAll', () => {
+  it('rejects insufficient disk capacity before any Worker command starts', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-bridge', '1.0.0');
+
+    await expect(
+      deployAll(
+        {
+          env: 'test',
+          rootDir,
+          deploymentStrategy: 'direct',
+          readAvailableDiskBytes: async () => 144 * 1024 * 1024,
+        },
+        ['ar-bridge']
+      )
+    ).rejects.toMatchObject({ code: 'insufficient_local_disk_space' });
+    expect(vi.mocked(execa)).not.toHaveBeenCalled();
+  });
+
+  it('stops scheduling independent Workers after local disk exhaustion', async () => {
+    const rootDir = createTempRoot();
+    for (const component of ['ar-bridge', 'ar-userinfo', 'ar-vc']) {
+      createWorkerPackage(rootDir, component, '1.0.0');
+    }
+    const deployedComponents: string[] = [];
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      if (args.includes('deploy')) {
+        const component = basename(String(options?.cwd));
+        deployedComponents.push(component);
+        if (component === 'ar-bridge') {
+          throw commandError('ENOSPC: no space left on device, write');
+        }
+      }
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        concurrency: 1,
+        maxRetries: 0,
+      },
+      ['ar-bridge', 'ar-userinfo', 'ar-vc']
+    );
+
+    expect(deployedComponents).toEqual(['ar-bridge']);
+    expect(summary.failedCount).toBe(3);
+    expect(summary.results.find((result) => result.component === 'ar-bridge')?.error).toContain(
+      'no space left on device'
+    );
+    expect(summary.results.find((result) => result.component === 'ar-userinfo')?.error).toContain(
+      'local disk space was exhausted'
+    );
+    expect(summary.results.find((result) => result.component === 'ar-vc')?.error).toContain(
+      'local disk space was exhausted'
+    );
+  });
+
+  it('does not issue staged rollback after the workspace capability is lost post-promotion', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-lib-core', '1.0.0');
+    const deployConfigLock = await acquireManagedDeployProof(rootDir);
+    const oldVersionId = '93939393-9393-4393-8393-939393939393';
+    const newVersionId = '94949494-9494-4494-8494-949494949494';
+    const trafficCommands: string[][] = [];
+
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      const commandArgs = [...args];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'staged-baseline',
+              versions: [{ version_id: oldVersionId, percentage: 100 }],
+            },
+          ]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (commandArgs.includes('versions') && commandArgs.includes('upload')) {
+        writeFileSync(
+          join(String(options?.env?.WRANGLER_OUTPUT_FILE_DIRECTORY), 'wrangler-output.ndjson'),
+          `${JSON.stringify({ type: 'version-upload', version_id: newVersionId })}\n`
+        );
+      } else if (commandArgs.includes('versions') && commandArgs.includes('deploy')) {
+        trafficCommands.push(commandArgs);
+        await deployConfigLock.release();
+      }
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'staged',
+        existingComponents: ['ar-lib-core'],
+        maxRetries: 3,
+        sleep: async () => undefined,
+        deployConfigLockProof: deployConfigLock.proof,
+      },
+      ['ar-lib-core']
+    );
+
+    expect(summary.results[0]).toEqual(
+      expect.objectContaining({ success: false, trafficCommitted: true })
+    );
+    expect(summary.results[0].error).toContain(
+      'rollback skipped because the deploy-config lock was lost'
+    );
+    expect(trafficCommands).toHaveLength(1);
+    expect(trafficCommands[0]).toContain(`${newVersionId}@100%`);
+    expect(trafficCommands[0]).not.toContain(`${oldVersionId}@100%`);
+  });
+
   it('holds the shared Control DB lease around every existing Worker mutation', async () => {
     const rootDir = createTempRoot();
     createWorkerPackage(rootDir, 'ar-lib-core', '1.0.0');
@@ -1557,19 +2752,25 @@ describe('deployAll', () => {
       )
     );
 
-    const summary = await deployAll(
-      {
-        env: 'test',
-        rootDir,
-        deploymentStrategy: 'direct',
-        existingComponents: [],
-      },
-      ['ar-lib-core']
-    );
+    const deployConfigLock = await acquireManagedDeployProof(rootDir);
+    try {
+      const summary = await deployAll(
+        {
+          env: 'test',
+          rootDir,
+          deploymentStrategy: 'direct',
+          existingComponents: [],
+          deployConfigLockProof: deployConfigLock.proof,
+        },
+        ['ar-lib-core']
+      );
 
-    expect(summary.failedCount).toBe(1);
-    expect(summary.results[0].error).toContain('managed_worker_deploy_config_mismatch');
-    expect(execa).not.toHaveBeenCalled();
+      expect(summary.failedCount).toBe(1);
+      expect(summary.results[0].error).toContain('managed_worker_deploy_config_mismatch');
+      expect(execa).not.toHaveBeenCalled();
+    } finally {
+      await deployConfigLock.release();
+    }
   });
 
   it('leases an absent Worker during a non-bootstrap deployment', async () => {

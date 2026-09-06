@@ -144,7 +144,7 @@ export async function getAvailableTags(repository: string = DEFAULT_REPOSITORY):
  */
 export async function isDegitAvailable(): Promise<boolean> {
   try {
-    await execa('npx', ['degit', '--help']);
+    await execa('npx', ['degit', '--help'], { timeout: 30_000 });
     return true;
   } catch {
     return false;
@@ -441,13 +441,13 @@ export async function getRemoteVersion(
     }
 
     // Fall back to main branch package.json
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `https://raw.githubusercontent.com/${repository}/main/package.json`
     );
     if (!response.ok) {
       return null;
     }
-    const pkg = (await response.json()) as { version?: string };
+    const pkg = await readResponseJsonWithLimit<{ version?: string }>(response);
     return pkg.version ? { version: pkg.version, gitRef: 'main' } : null;
   } catch {
     return null;

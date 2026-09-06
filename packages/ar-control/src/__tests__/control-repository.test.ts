@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { D1ControlRepository } from '../repository';
+import { D1ControlRepository, type ProvisioningLease } from '../repository';
 import { D1WorkerBindingRepository } from '../worker-binding-repository';
 import type { TenantShardPlan } from '../types';
 
@@ -126,6 +126,9 @@ function plan(suffix: string): TenantShardPlan {
     databaseName: `authrim-test-users-jp-${suffix}`,
     bindingRef: `TDB_USERS_${suffix.toUpperCase()}`,
     ownershipFingerprint: `fingerprint-${suffix}`,
+    providerCreateState: 'not_started',
+    providerResourceId: null,
+    providerIdentityCheckpointedAt: null,
     allocationScope: 'shared_pool',
     ownerTenantId: null,
     locationHint: 'apac',
@@ -133,6 +136,47 @@ function plan(suffix: string): TenantShardPlan {
     migrationStreamId: 'd1-core',
     idempotencyKey: `idempotency-${suffix}`,
   };
+}
+
+async function checkpointAndMarkDatabaseCreated(
+  repository: D1ControlRepository,
+  lease: ProvisioningLease,
+  shardPlan: TenantShardPlan,
+  databaseId: string,
+  observedReplicationMode: 'enabled' | 'disabled',
+  now: number
+) {
+  await repository.markD1CreateIssued(lease, shardPlan, now - 2);
+  await repository.checkpointD1ProviderIdentity(lease, shardPlan, databaseId, now - 1);
+  return repository.markDatabaseCreated(lease, shardPlan, databaseId, observedReplicationMode, now);
+}
+
+async function startMigrationForTest(
+  repository: D1ControlRepository,
+  shardPlan: TenantShardPlan,
+  now: number
+) {
+  await repository.createShardPlan(shardPlan, now, 'scheduler');
+  const createLease = required(
+    await repository.tryStartProvisioning(shardPlan.operationId, 'create-owner', now + 1)
+  );
+  await checkpointAndMarkDatabaseCreated(
+    repository,
+    createLease,
+    shardPlan,
+    `database-${shardPlan.shardId}`,
+    'disabled',
+    now + 2
+  );
+  const migrationPlan = required(
+    (await repository.listPendingMigrationPlans(100)).find(
+      (candidate) => candidate.operationId === shardPlan.operationId
+    )
+  );
+  const migrationLease = required(
+    await repository.tryStartMigration(shardPlan.operationId, 'migration-owner', now + 3)
+  );
+  return { migrationLease, migrationPlan };
 }
 
 function insertRollbackFailedBinding(
@@ -282,6 +326,12 @@ describe('D1ControlRepository lease and budget integration', () => {
     database.exec(
       readFileSync(
         resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
+        'utf8'
+      )
+    );
+    database.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
         'utf8'
       )
     );
@@ -458,14 +508,6 @@ describe('D1ControlRepository lease and budget integration', () => {
       .run(exclusiveSpare.shardId);
     database
       .prepare(
-        `UPDATE control_desired_resources
-            SET desired_state = 'present', provisioning_state = 'ready',
-                observed_resource_id = ?
-          WHERE desired_resource_id = ?`
-      )
-      .run('observed-low-water-exclusive-spare', exclusiveSpare.desiredResourceId);
-    database
-      .prepare(
         `INSERT INTO control_observed_resources (
            observed_resource_id, environment_id, desired_resource_id, provider_resource_id,
            provider_name, resource_kind, ownership_fingerprint, observed_state,
@@ -479,6 +521,14 @@ describe('D1ControlRepository lease and budget integration', () => {
         exclusiveSpare.databaseName,
         exclusiveSpare.ownershipFingerprint
       );
+    database
+      .prepare(
+        `UPDATE control_desired_resources
+            SET desired_state = 'present', provisioning_state = 'ready',
+                observed_resource_id = ?
+          WHERE desired_resource_id = ?`
+      )
+      .run('observed-low-water-exclusive-spare', exclusiveSpare.desiredResourceId);
     expect(
       (await repository.listLowWatermarkRequests(20, 'env-test')).find(
         (request) =>
@@ -754,14 +804,18 @@ describe('D1ControlRepository lease and budget integration', () => {
       INSERT INTO control_desired_resources (
         desired_resource_id, environment_id, resource_kind, logical_shard_id, resource_scope,
         tenant_id, deterministic_name, ownership_fingerprint, provisioning_state,
-        origin_operation_id, created_at, updated_at
+        origin_operation_id, provider_create_state, provider_resource_id,
+        provider_identity_checkpointed_at, created_at, updated_at
       ) VALUES
         ('desired-route-default', 'env-test', 'd1', 'route-default', 'tenant', 'tenant-route',
-         'route-default', 'fp-default', 'active', 'tenant-create-route', 10, 10),
+         'route-default', 'fp-default', 'active', 'tenant-create-route', 'identified',
+         'database-route-default', 10, 10, 10),
         ('desired-route-users', 'env-test', 'd1', 'route-users', 'tenant', 'tenant-route',
-         'route-users', 'fp-users', 'active', 'tenant-create-route', 10, 10),
+         'route-users', 'fp-users', 'active', 'tenant-create-route', 'identified',
+         'database-route-users', 10, 10, 10),
         ('desired-route-pii', 'env-test', 'd1', 'route-pii', 'tenant', 'tenant-route',
-         'route-pii', 'fp-pii', 'active', 'tenant-create-route', 10, 10);
+         'route-pii', 'fp-pii', 'active', 'tenant-create-route', 'identified',
+         'database-route-pii', 10, 10, 10);
       INSERT INTO control_tenant_shards (
         shard_id, environment_id, data_role, residency_policy_id, residency_partition,
         generation, logical_shard_id, binding_ref, d1_desired_resource_id, location_hint,
@@ -1027,7 +1081,8 @@ describe('D1ControlRepository lease and budget integration', () => {
       101
     );
     if (!createLease) throw new Error('expected_lookup_create_lease');
-    await repository.markDatabaseCreated(
+    await checkpointAndMarkDatabaseCreated(
+      repository,
       createLease,
       lookupPlan,
       'lookup-database-id',
@@ -1378,13 +1433,14 @@ describe('D1ControlRepository lease and budget integration', () => {
       INSERT INTO control_desired_resources (
         desired_resource_id, environment_id, resource_kind, logical_shard_id,
         deterministic_name, ownership_fingerprint, provisioning_state,
-        origin_operation_id, desired_spec_json, created_at, updated_at
+        origin_operation_id, desired_spec_json, provider_create_state,
+        provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
       ) VALUES (
         'resource-lookup-drift', 'env-test', 'd1', 'lookup-drift',
         'authrim-test-lookup-drift', 'fingerprint-lookup-drift', 'active',
         'op-release',
         '{"residency_policy_id":"default","lookup_capacity_domain_id":"lookup:stale:jp"}',
-        2, 2
+        'identified', 'database-lookup-drift', 2, 2, 2
       );
       INSERT INTO control_lookup_physical_shards (
         lookup_shard_id, environment_id, residency_partition, binding_ref,
@@ -1895,7 +1951,14 @@ describe('D1ControlRepository lease and budget integration', () => {
           WHERE operation_id = ? AND step_key = 'create_d1'`
       )
       .run(shardPlan.operationId);
-    await repository.markDatabaseCreated(createLease, shardPlan, 'database-id', 'disabled', 110);
+    await checkpointAndMarkDatabaseCreated(
+      repository,
+      createLease,
+      shardPlan,
+      'database-id',
+      'disabled',
+      110
+    );
     expect(
       database
         .prepare(
@@ -1992,7 +2055,14 @@ describe('D1ControlRepository lease and budget integration', () => {
       100
     );
     if (!createLease) throw new Error('expected_create_lease');
-    await repository.markDatabaseCreated(createLease, shardPlan, 'database-id', 'disabled', 110);
+    await checkpointAndMarkDatabaseCreated(
+      repository,
+      createLease,
+      shardPlan,
+      'database-id',
+      'disabled',
+      110
+    );
     const migrationLease = await repository.tryStartMigration(
       shardPlan.operationId,
       'migration-owner',
@@ -2571,7 +2641,14 @@ describe('D1ControlRepository lease and budget integration', () => {
       100
     );
     if (!createLease) throw new Error('expected_create_lease');
-    await repository.markDatabaseCreated(createLease, shardPlan, 'database-id', 'disabled', 110);
+    await checkpointAndMarkDatabaseCreated(
+      repository,
+      createLease,
+      shardPlan,
+      'database-id',
+      'disabled',
+      110
+    );
     const [migrationPlan] = await repository.listPendingMigrationPlans(10);
     if (!migrationPlan) throw new Error('expected_migration_plan');
     const migrationLease = await repository.tryStartMigration(
@@ -2628,7 +2705,14 @@ describe('D1ControlRepository lease and budget integration', () => {
       100
     );
     if (!createLease) throw new Error('expected_create_lease');
-    await repository.markDatabaseCreated(createLease, shardPlan, 'database-id', 'disabled', 110);
+    await checkpointAndMarkDatabaseCreated(
+      repository,
+      createLease,
+      shardPlan,
+      'database-id',
+      'disabled',
+      110
+    );
     const [migrationPlan] = await repository.listPendingMigrationPlans(10);
     if (!migrationPlan) throw new Error('expected_migration_plan');
     const migrationLease = await repository.tryStartMigration(
@@ -2825,7 +2909,14 @@ describe('D1ControlRepository lease and budget integration', () => {
       100
     );
     if (!createLease) throw new Error('expected_create_lease');
-    await repository.markDatabaseCreated(createLease, shardPlan, 'database-id', 'disabled', 110);
+    await checkpointAndMarkDatabaseCreated(
+      repository,
+      createLease,
+      shardPlan,
+      'database-id',
+      'disabled',
+      110
+    );
 
     database.exec(`UPDATE control_migration_release_catalog
       SET state = 'retired', active_stream_key = 'release:' || release_id
@@ -3528,7 +3619,8 @@ describe('D1ControlRepository lease and budget integration', () => {
       101
     );
     if (!createLease) throw new Error('expected_create_lease');
-    await repository.markDatabaseCreated(
+    await checkpointAndMarkDatabaseCreated(
+      repository,
       createLease,
       shardPlan,
       'exclusive-database-id',
@@ -3652,6 +3744,234 @@ describe('D1ControlRepository lease and budget integration', () => {
     expect(audit.redacted_payload_json).not.toContain('stale_owner_must_not_win');
   });
 
+  it('rolls a provisioning lease acquisition back when its required create step is missing', async () => {
+    const shardPlan = plan('missing-create-step');
+    await repository.createShardPlan(shardPlan, 100, 'scheduler');
+    database
+      .prepare(
+        `DELETE FROM control_operation_steps
+          WHERE operation_id = ? AND step_key = 'create_d1'`
+      )
+      .run(shardPlan.operationId);
+    const snapshot = () => ({
+      operation: database
+        .prepare(
+          `SELECT status, attempt_count, lock_owner, lock_expires_at, fencing_token, updated_at
+             FROM control_operations WHERE operation_id = ?`
+        )
+        .get(shardPlan.operationId),
+      desired: database
+        .prepare(
+          `SELECT provisioning_state, create_started_at, updated_at
+             FROM control_desired_resources WHERE desired_resource_id = ?`
+        )
+        .get(shardPlan.desiredResourceId),
+      shard: database
+        .prepare(`SELECT status, updated_at FROM control_tenant_shards WHERE shard_id = ?`)
+        .get(shardPlan.shardId),
+    });
+    const before = snapshot();
+
+    await expect(
+      repository.tryStartProvisioning(shardPlan.operationId, 'provider-owner', 101)
+    ).rejects.toThrow('control_operation_transition_mismatch');
+    expect(snapshot()).toEqual(before);
+  });
+
+  it('rolls a migration lease acquisition back when its required migration step is missing', async () => {
+    const shardPlan = plan('missing-migration-step');
+    await repository.createShardPlan(shardPlan, 100, 'scheduler');
+    const createLease = await repository.tryStartProvisioning(
+      shardPlan.operationId,
+      'create-owner',
+      101
+    );
+    if (!createLease) throw new Error('expected_create_lease');
+    await checkpointAndMarkDatabaseCreated(
+      repository,
+      createLease,
+      shardPlan,
+      'database-id',
+      'disabled',
+      102
+    );
+    database
+      .prepare(
+        `DELETE FROM control_operation_steps
+          WHERE operation_id = ? AND step_key = 'apply_migrations'`
+      )
+      .run(shardPlan.operationId);
+    const snapshot = () => ({
+      operation: database
+        .prepare(
+          `SELECT status, attempt_count, lock_owner, lock_expires_at, fencing_token, updated_at
+             FROM control_operations WHERE operation_id = ?`
+        )
+        .get(shardPlan.operationId),
+      migration: database
+        .prepare(
+          `SELECT state, started_at, updated_at
+             FROM control_tenant_database_migration_state WHERE operation_id = ?`
+        )
+        .get(shardPlan.operationId),
+    });
+    const before = snapshot();
+
+    await expect(
+      repository.tryStartMigration(shardPlan.operationId, 'migration-owner', 103)
+    ).rejects.toThrow('control_operation_transition_mismatch');
+    expect(snapshot()).toEqual(before);
+  });
+
+  it('rolls a create retry transition back when its required create step is missing', async () => {
+    const shardPlan = plan('missing-create-retry-step');
+    await repository.createShardPlan(shardPlan, 100, 'scheduler');
+    const lease = await repository.tryStartProvisioning(shardPlan.operationId, 'create-owner', 101);
+    if (!lease) throw new Error('expected_create_lease');
+    database
+      .prepare(
+        `DELETE FROM control_operation_steps
+          WHERE operation_id = ? AND step_key = 'create_d1'`
+      )
+      .run(shardPlan.operationId);
+    const snapshot = () =>
+      database
+        .prepare(
+          `SELECT status, next_attempt_at, last_error_code, lock_owner, lock_expires_at,
+                  fencing_token, updated_at
+             FROM control_operations WHERE operation_id = ?`
+        )
+        .get(shardPlan.operationId);
+    const before = snapshot();
+
+    await expect(
+      repository.markOperationRetry(lease, 'cloudflare_d1_request_failed', 200, 102)
+    ).rejects.toThrow('control_operation_transition_mismatch');
+    expect(snapshot()).toEqual(before);
+  });
+
+  it('rolls a create blocked transition back when its required create step is missing', async () => {
+    const shardPlan = plan('missing-create-blocked-step');
+    await repository.createShardPlan(shardPlan, 100, 'scheduler');
+    const lease = required(
+      await repository.tryStartProvisioning(shardPlan.operationId, 'create-owner', 101)
+    );
+    database
+      .prepare(
+        `DELETE FROM control_operation_steps
+          WHERE operation_id = ? AND step_key = 'create_d1'`
+      )
+      .run(shardPlan.operationId);
+    const snapshot = () =>
+      database
+        .prepare(
+          `SELECT status, next_attempt_at, last_error_code, lock_owner, lock_expires_at,
+                  fencing_token, updated_at
+             FROM control_operations WHERE operation_id = ?`
+        )
+        .get(shardPlan.operationId);
+    const before = snapshot();
+
+    await expect(
+      repository.markOperationBlocked(lease, 'cloudflare_d1_request_rejected', 102)
+    ).rejects.toThrow('control_operation_transition_mismatch');
+    expect(snapshot()).toEqual(before);
+  });
+
+  it('rolls migration completion back when its required shard projection is missing', async () => {
+    const shardPlan = plan('missing-ready-shard');
+    const { migrationLease, migrationPlan } = await startMigrationForTest(
+      repository,
+      shardPlan,
+      100
+    );
+    database.prepare('DELETE FROM control_tenant_shards WHERE shard_id = ?').run(shardPlan.shardId);
+    const snapshot = () => ({
+      operation: database
+        .prepare(
+          `SELECT status, next_attempt_at, last_error_code, lock_owner, lock_expires_at,
+                  fencing_token, updated_at
+             FROM control_operations WHERE operation_id = ?`
+        )
+        .get(shardPlan.operationId),
+      migration: database
+        .prepare(
+          `SELECT state, expected_file_count, applied_file_count, completed_at, updated_at
+             FROM control_tenant_database_migration_state WHERE operation_id = ?`
+        )
+        .get(shardPlan.operationId),
+      desired: database
+        .prepare(
+          `SELECT provisioning_state, updated_at FROM control_desired_resources
+            WHERE desired_resource_id = ?`
+        )
+        .get(shardPlan.desiredResourceId),
+      step: database
+        .prepare(
+          `SELECT status, progress_current, progress_total, completed_at, updated_at
+             FROM control_operation_steps
+            WHERE operation_id = ? AND step_key = 'apply_migrations'`
+        )
+        .get(shardPlan.operationId),
+    });
+    const before = snapshot();
+
+    await expect(
+      repository.markMigrationReady(
+        migrationLease,
+        migrationPlan,
+        {
+          totalFiles: 1,
+          appliedFiles: 1,
+          skippedFiles: 0,
+          responseLossRecoveries: 0,
+          lastFilename: '001_schema.sql',
+        },
+        104
+      )
+    ).rejects.toThrow('control_operation_transition_mismatch');
+    expect(snapshot()).toEqual(before);
+  });
+
+  it.each(['retry', 'blocked'] as const)(
+    'rolls a malformed migration %s transition back atomically',
+    async (transition) => {
+      const shardPlan = plan(`missing-migration-${transition}`);
+      const { migrationLease } = await startMigrationForTest(repository, shardPlan, 100);
+      database
+        .prepare('DELETE FROM control_tenant_database_migration_state WHERE operation_id = ?')
+        .run(shardPlan.operationId);
+      const snapshot = () => ({
+        operation: database
+          .prepare(
+            `SELECT status, next_attempt_at, last_error_code, lock_owner, lock_expires_at,
+                    fencing_token, updated_at
+               FROM control_operations WHERE operation_id = ?`
+          )
+          .get(shardPlan.operationId),
+        step: database
+          .prepare(
+            `SELECT status, next_attempt_at, last_error_code, updated_at
+               FROM control_operation_steps
+              WHERE operation_id = ? AND step_key = 'apply_migrations'`
+          )
+          .get(shardPlan.operationId),
+      });
+      const before = snapshot();
+
+      const action =
+        transition === 'retry'
+          ? repository.markMigrationRetry(migrationLease, 'migration_d1_batch_failed', 200, 104)
+          : repository.markMigrationBlocked(
+              migrationLease,
+              'migration_release_manifest_missing',
+              104
+            );
+      await expect(action).rejects.toThrow('control_operation_transition_mismatch');
+      expect(snapshot()).toEqual(before);
+    }
+  );
+
   it('fences migration retries and records only redacted failure evidence', async () => {
     const shardPlan = plan('migration-retry');
     await repository.createShardPlan(shardPlan, 100, 'scheduler');
@@ -3661,7 +3981,14 @@ describe('D1ControlRepository lease and budget integration', () => {
       100
     );
     if (!createLease) throw new Error('expected_create_lease');
-    await repository.markDatabaseCreated(createLease, shardPlan, 'database-id', 'disabled', 110);
+    await checkpointAndMarkDatabaseCreated(
+      repository,
+      createLease,
+      shardPlan,
+      'database-id',
+      'disabled',
+      110
+    );
     const first = await repository.tryStartMigration(shardPlan.operationId, 'migration-a', 120);
     if (!first) throw new Error('expected_migration_lease');
     await repository.markMigrationRetry(first, 'migration_d1_batch_failed', 200, 130);
@@ -3727,6 +4054,150 @@ describe('D1ControlRepository lease and budget integration', () => {
         )
         .get()
     ).toEqual({ actor_type: 'scheduler' });
+  });
+
+  it('durably fences D1 create issuance and checkpoints the immutable provider UUID', async () => {
+    const shardPlan = plan('identity-checkpoint');
+    await repository.createShardPlan(shardPlan, 100, 'scheduler');
+    const lease = await repository.tryStartProvisioning(
+      shardPlan.operationId,
+      'provider-owner',
+      101
+    );
+    if (!lease) throw new Error('expected_identity_checkpoint_lease');
+
+    await repository.markD1CreateIssued(lease, shardPlan, 102);
+    expect(
+      database
+        .prepare(
+          `SELECT provider_create_state, provider_resource_id,
+                  provider_identity_checkpointed_at
+             FROM control_desired_resources WHERE desired_resource_id = ?`
+        )
+        .get(shardPlan.desiredResourceId)
+    ).toEqual({
+      provider_create_state: 'issued',
+      provider_resource_id: null,
+      provider_identity_checkpointed_at: null,
+    });
+    await expect(repository.markD1CreateIssued(lease, shardPlan, 103)).rejects.toThrow(
+      'control_d1_create_issue_checkpoint_failed'
+    );
+
+    await repository.checkpointD1ProviderIdentity(lease, shardPlan, 'database-uuid', 104);
+    expect(
+      database
+        .prepare(
+          `SELECT provider_create_state, provider_resource_id,
+                  provider_identity_checkpointed_at
+             FROM control_desired_resources WHERE desired_resource_id = ?`
+        )
+        .get(shardPlan.desiredResourceId)
+    ).toEqual({
+      provider_create_state: 'identified',
+      provider_resource_id: 'database-uuid',
+      provider_identity_checkpointed_at: 104,
+    });
+    await expect(
+      repository.markDatabaseCreated(lease, shardPlan, 'replacement-uuid', 'disabled', 105)
+    ).rejects.toThrow('control_d1_provider_identity_projection_mismatch');
+    expect(
+      database
+        .prepare(
+          `SELECT COUNT(*) AS count FROM control_observed_resources
+            WHERE desired_resource_id = ?`
+        )
+        .get(shardPlan.desiredResourceId)
+    ).toEqual({ count: 0 });
+    await expect(
+      repository.checkpointD1ProviderIdentity(lease, shardPlan, 'replacement-uuid', 106)
+    ).rejects.toThrow('control_d1_provider_identity_checkpoint_failed');
+  });
+
+  it('rolls every provider projection back when one required shard record is missing', async () => {
+    const shardPlan = plan('projection-rollback');
+    await repository.createShardPlan(shardPlan, 100, 'scheduler');
+    const lease = await repository.tryStartProvisioning(
+      shardPlan.operationId,
+      'provider-owner',
+      101
+    );
+    if (!lease) throw new Error('expected_projection_rollback_lease');
+    await repository.markD1CreateIssued(lease, shardPlan, 102);
+    await repository.checkpointD1ProviderIdentity(lease, shardPlan, 'database-uuid', 103);
+
+    database.prepare('DELETE FROM control_tenant_shards WHERE shard_id = ?').run(shardPlan.shardId);
+    const projectionSnapshot = () => ({
+      observed: database
+        .prepare(
+          `SELECT observed_resource_id, provider_resource_id
+             FROM control_observed_resources WHERE desired_resource_id = ?`
+        )
+        .all(shardPlan.desiredResourceId),
+      migration: database
+        .prepare(
+          `SELECT provider_database_id, state, updated_at
+             FROM control_tenant_database_migration_state WHERE desired_resource_id = ?`
+        )
+        .get(shardPlan.desiredResourceId),
+      desired: database
+        .prepare(
+          `SELECT observed_resource_id, provisioning_state, updated_at
+             FROM control_desired_resources WHERE desired_resource_id = ?`
+        )
+        .get(shardPlan.desiredResourceId),
+      steps: database
+        .prepare(
+          `SELECT step_key, status, observed_resource_id, completed_at, updated_at
+             FROM control_operation_steps WHERE operation_id = ? ORDER BY display_order`
+        )
+        .all(shardPlan.operationId),
+      operation: database
+        .prepare(
+          `SELECT status, lock_owner, lock_expires_at, fencing_token, updated_at
+             FROM control_operations WHERE operation_id = ?`
+        )
+        .get(shardPlan.operationId),
+      auditCount: database
+        .prepare(
+          `SELECT COUNT(*) AS count FROM control_audit_events
+            WHERE operation_id = ? AND event_type = 'control.d1.create'`
+        )
+        .get(shardPlan.operationId),
+      assertionCount: database
+        .prepare(
+          `SELECT COUNT(*) AS count FROM control_provider_identity_projection_assertions
+            WHERE desired_resource_id = ?`
+        )
+        .get(shardPlan.desiredResourceId),
+    });
+    const before = projectionSnapshot();
+
+    await expect(
+      repository.markDatabaseCreated(lease, shardPlan, 'database-uuid', 'disabled', 104)
+    ).rejects.toThrow('control_d1_provider_identity_projection_mismatch');
+    expect(projectionSnapshot()).toEqual(before);
+  });
+
+  it('returns a definitely rejected create checkpoint to retryable not-started state', async () => {
+    const shardPlan = plan('identity-rejection');
+    await repository.createShardPlan(shardPlan, 100, 'scheduler');
+    const lease = await repository.tryStartProvisioning(
+      shardPlan.operationId,
+      'provider-owner',
+      101
+    );
+    if (!lease) throw new Error('expected_identity_rejection_lease');
+    await repository.markD1CreateIssued(lease, shardPlan, 102);
+    await repository.markD1CreateDefinitelyRejected(lease, shardPlan, 103);
+    expect(
+      database
+        .prepare(
+          `SELECT provider_create_state, provider_resource_id
+             FROM control_desired_resources WHERE desired_resource_id = ?`
+        )
+        .get(shardPlan.desiredResourceId)
+    ).toEqual({ provider_create_state: 'not_started', provider_resource_id: null });
   });
 
   it('returns only active desired Workers in the requested environment', async () => {

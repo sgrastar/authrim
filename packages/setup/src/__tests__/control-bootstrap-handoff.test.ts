@@ -81,6 +81,9 @@ function database(manifestDigest: string): DatabaseSync {
     readFileSync(resolve(ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'), 'utf8')
   );
   db.exec(
+    readFileSync(resolve(ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'), 'utf8')
+  );
+  db.exec(
     `INSERT INTO control_environments (
        environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
      ) VALUES ('test', 'test', 'urn:authrim:control:test', 'creating', 1, 1);
@@ -345,6 +348,25 @@ describe('initial Control topology handoff registration', () => {
         )
         .get()
     ).toEqual({ capacity_domain: 'lookup:builtin:residency:default:default' });
+    expect(
+      db
+        .prepare(
+          `SELECT deterministic_name, provider_create_state, provider_resource_id,
+                  provider_identity_checkpointed_at
+             FROM control_desired_resources ORDER BY deterministic_name`
+        )
+        .all()
+    ).toEqual(
+      Object.values(lock().d1)
+        .filter((resource) => resource.id !== 'control-id')
+        .map((resource) => ({
+          deterministic_name: resource.name,
+          provider_create_state: 'identified',
+          provider_resource_id: resource.id,
+          provider_identity_checkpointed_at: 100,
+        }))
+        .sort((left, right) => left.deterministic_name.localeCompare(right.deterministic_name))
+    );
     expect(
       db
         .prepare(

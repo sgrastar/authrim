@@ -29,7 +29,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 // =============================================================================
 // Types
@@ -51,6 +51,16 @@ export interface EnvironmentPaths {
   config: string;
   /** Lock file with resource IDs: .authrim/{env}/lock.json */
   lock: string;
+  /** Fresh-provisioning journal: .authrim/{env}/provisioning-intent.json */
+  provisioningIntent: string;
+  /** Email secrets staged until the atomic key bundle is published. */
+  pendingEmailSecrets: string;
+  /** One-use Control bootstrap credential retained only until cutover reaches ready. */
+  pendingControlBootstrap: string;
+  /** Durable exact-ID checkpoint used while revoking setup-managed Control tokens on delete. */
+  controlTokenCleanup: string;
+  /** Durable proof that no setup-managed Control token revocation was required on delete. */
+  controlTokenCleanupConclusion: string;
   /** Version tracking file: .authrim/{env}/version.txt */
   version: string;
   /** Keys directory: .authrim/{env}/keys/ */
@@ -132,6 +142,15 @@ export const CONFIG_FILE = 'config.json';
 
 /** New structure lock file name */
 export const LOCK_FILE = 'lock.json';
+
+/** Durable journal for an interrupted fresh-environment provisioning attempt. */
+export const PROVISIONING_INTENT_FILE = 'provisioning-intent.json';
+
+/** Durable email-secret staging artifact used only during fresh provisioning. */
+export const PENDING_EMAIL_SECRETS_FILE = 'pending-email-secrets.json';
+
+/** Durable private recovery artifact for an interrupted Control token cutover. */
+export const PENDING_CONTROL_BOOTSTRAP_FILE = 'pending-control-bootstrap.json';
 
 /** Version tracking file name */
 export const VERSION_FILE = 'version.txt';
@@ -262,6 +281,11 @@ export function getEnvironmentPaths(config: PathConfig): EnvironmentPaths {
     root,
     config: join(root, CONFIG_FILE),
     lock: join(root, LOCK_FILE),
+    provisioningIntent: join(root, PROVISIONING_INTENT_FILE),
+    pendingEmailSecrets: join(root, PENDING_EMAIL_SECRETS_FILE),
+    pendingControlBootstrap: join(root, PENDING_CONTROL_BOOTSTRAP_FILE),
+    controlTokenCleanup: join(root, 'control-token-cleanup.json'),
+    controlTokenCleanupConclusion: join(root, 'control-token-cleanup-conclusion.json'),
     version: join(root, VERSION_FILE),
     keys: keysDir,
     wrangler: wranglerDir,
@@ -450,6 +474,20 @@ export function needsMigration(baseDir: string): boolean {
   return structure.type === 'legacy';
 }
 
+function hasMatchingEnvironmentConfig(envPath: string, env: string): boolean {
+  const configPath = join(envPath, CONFIG_FILE);
+  if (!existsSync(configPath)) {
+    return false;
+  }
+
+  try {
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+    return config?.environment?.prefix === env;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * List all available environments
  *
@@ -487,7 +525,7 @@ export function listEnvironments(baseDir: string, keysBaseDir?: string): string[
         .filter((d) => {
           const envPath = join(authrimDir, d.name);
           return (
-            existsSync(join(envPath, CONFIG_FILE)) ||
+            hasMatchingEnvironmentConfig(envPath, d.name) ||
             existsSync(join(envPath, LOCK_FILE)) ||
             existsSync(join(envPath, KEYS_DIR))
           );
@@ -634,6 +672,17 @@ export function getExternalKeysDir(env: string, keysBaseDir: string): string {
 export function getExternalKeysPathForConfig(env: string, keysBaseDir: string): string {
   validateEnvForPath(env);
   return resolve(keysBaseDir, AUTHRIM_KEYS_DIR, env) + '/';
+}
+
+export function deriveExternalKeysBaseDirFromConfigPath(env: string, secretsPath: string): string {
+  validateEnvForPath(env);
+  if (!secretsPath.trim()) throw new Error('external_keys_config_path_required');
+  const normalizedPath = resolve(secretsPath);
+  const candidateBaseDir = dirname(dirname(normalizedPath));
+  if (getExternalKeysDir(env, candidateBaseDir) !== normalizedPath) {
+    throw new Error('external_keys_config_path_mismatch');
+  }
+  return candidateBaseDir;
 }
 
 export type KeysLocation = 'external' | 'internal' | 'legacy';

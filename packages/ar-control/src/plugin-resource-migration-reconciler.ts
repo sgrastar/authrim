@@ -92,6 +92,13 @@ export class PluginResourceMigrationReconciler {
             AND catalog.manifest_digest = migration.manifest_digest
           WHERE resource.resource_kind = 'd1' AND resource.status = 'ready'
             AND resource.provider_resource_id IS NOT NULL
+            AND (
+              resource.lifecycle_mode = 'existing' OR (
+                resource.lifecycle_mode = 'managed'
+                AND resource.provider_create_state = 'identified'
+                AND resource.provider_identity_checkpointed_at IS NOT NULL
+              )
+            )
             AND migration.state IN ('requested', 'applying', 'waiting_retry')
             AND operation.status IN ('queued', 'running', 'waiting_retry')
             AND (operation.next_attempt_at IS NULL OR operation.next_attempt_at <= ?)

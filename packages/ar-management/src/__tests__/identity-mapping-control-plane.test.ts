@@ -3527,8 +3527,27 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
         displayName: 'eduGAIN pilot',
         lifecycleState: 'active',
         protocolPayload: {
+          metadataUrl: 'https://metadata.example.test/federation.xml',
           metadataUrlPatterns: ['https://metadata.example.test/*.xml'],
           policy: 'strict',
+          polling: { mode: 'automatic', intervalSeconds: 21_600 },
+          runtimeResolution: {
+            mode: 'automatic',
+            roles: ['saml_sp'],
+            priority: 10,
+            spFieldMappingSetId: 'mapping-sp',
+            defaultAttributePresetId: 'basic.v1',
+            entityCategoryPolicy: {
+              defaultDecision: 'deny',
+              rules: [
+                {
+                  entityCategory: 'http://refeds.org/category/research-and-scholarship',
+                  decision: 'allow',
+                  attributePresetId: 'research_federation.v1',
+                },
+              ],
+            },
+          },
         },
         anchors: [
           {
@@ -3552,6 +3571,385 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
       expect.stringContaining('INSERT INTO federation_trust_context_snapshots'),
     ]);
     expect(String(adapter.executes[3].params[4])).toContain('sourceKey');
+  });
+
+  it('removes aggregate runtime entities before deleting their trust source', async () => {
+    const adapter = createAdapter({ queryOneRows: [{ id: 'trust-source-1' }] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.deleteFederationTrustSource('tenant_a', 'trust-source-1')
+    ).resolves.toEqual({ success: true });
+
+    const statements = adapter.executes.map((item) => item.sql);
+    const runtimeIndex = statements.findIndex((sql) =>
+      sql.includes('DELETE FROM federation_saml_runtime_entities')
+    );
+    const sourceIndex = statements.findIndex((sql) =>
+      sql.includes('DELETE FROM federation_trust_sources')
+    );
+    expect(
+      statements.some((sql) => sql.includes('DELETE FROM federation_metadata_refresh_jobs'))
+    ).toBe(true);
+    expect(
+      statements.some((sql) => sql.includes('DELETE FROM federation_selected_entity_import_events'))
+    ).toBe(true);
+    expect(statements.some((sql) => sql.includes('DELETE FROM federation_entity_statements'))).toBe(
+      true
+    );
+    expect(statements.some((sql) => sql.includes('DELETE FROM federation_trust_chains'))).toBe(
+      true
+    );
+    expect(runtimeIndex).toBeGreaterThanOrEqual(0);
+    expect(sourceIndex).toBeGreaterThan(runtimeIndex);
+  });
+
+  it('does not delete federation state while a metadata refresh lease is active', async () => {
+    const adapter = createAdapter({ queryOneRows: [{ id: 'trust-source-1' }] });
+    const originalExecute = adapter.execute.bind(adapter);
+    adapter.execute = async (sql, params = []) => {
+      if (sql.includes("SET lifecycle_state = 'retired'")) {
+        adapter.executes.push({ sql, params });
+        return { rowsAffected: 0, success: true };
+      }
+      return originalExecute(sql, params);
+    };
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1_000);
+
+    await expect(
+      repository.deleteFederationTrustSource('tenant_a', 'trust-source-1')
+    ).rejects.toMatchObject({ status: 409 });
+    expect(adapter.executes).toHaveLength(1);
+    expect(adapter.executes[0]?.sql).toContain('refresh_operation_expires_at');
+  });
+
+  it('invalidates aggregate runtime entities when the trust context changes', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ updated_at: 999, snapshot_hash: 'old-snapshot' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await repository.updateFederationTrustSource('tenant_a', 'trust-source-1', {
+      expectedUpdatedAt: 999,
+      sourceType: 'saml_aggregate',
+      sourceKey: 'research-federation',
+      displayName: 'Research Federation',
+      lifecycleState: 'active',
+      protocolPayload: {
+        metadataUrl: 'https://metadata.example.test/federation.xml',
+        polling: { mode: 'automatic', intervalSeconds: 21_600 },
+        runtimeResolution: { mode: 'inventory_only', roles: [] },
+      },
+      anchors: [],
+      scopeBindings: [],
+    });
+
+    expect(
+      adapter.executes.some((item) =>
+        item.sql.includes('DELETE FROM federation_saml_runtime_entities')
+      )
+    ).toBe(true);
+  });
+
+  it('requires the source revision before replacing federation trust state', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1_000);
+
+    await expect(
+      repository.updateFederationTrustSource('tenant_a', 'trust-source-1', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'research-federation',
+        displayName: 'Research Federation',
+        anchors: [],
+        scopeBindings: [],
+      } as never)
+    ).rejects.toMatchObject({ status: 400 });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects a stale federation trust source update before writing dependent state', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ updated_at: 2_000, snapshot_hash: 'current-snapshot' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 3_000);
+
+    await expect(
+      repository.updateFederationTrustSource('tenant_a', 'trust-source-1', {
+        expectedUpdatedAt: 1_999,
+        sourceType: 'saml_aggregate',
+        sourceKey: 'research-federation',
+        displayName: 'Research Federation',
+        anchors: [],
+        scopeBindings: [],
+      })
+    ).rejects.toMatchObject({ status: 409 });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('stops before dependent federation writes when the source CAS loses', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ updated_at: 2_000, snapshot_hash: 'current-snapshot' }],
+    });
+    const originalExecute = adapter.execute.bind(adapter);
+    adapter.execute = async (sql, params = []) => {
+      if (sql.includes('UPDATE federation_trust_sources')) {
+        adapter.executes.push({ sql, params });
+        return { rowsAffected: 0, success: true };
+      }
+      return originalExecute(sql, params);
+    };
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 3_000);
+
+    await expect(
+      repository.updateFederationTrustSource('tenant_a', 'trust-source-1', {
+        expectedUpdatedAt: 2_000,
+        sourceType: 'saml_aggregate',
+        sourceKey: 'research-federation',
+        displayName: 'Research Federation',
+        anchors: [],
+        scopeBindings: [],
+      })
+    ).rejects.toMatchObject({ status: 409 });
+    expect(adapter.executes).toHaveLength(1);
+    expect(adapter.executes[0]?.sql).toContain('updated_at = ?');
+  });
+
+  it('keeps the trust generation for display and polling-state-only source edits', async () => {
+    const createAdapterInstance = createAdapter({});
+    const createRepository = new IdentityMappingControlPlaneRepository(
+      createAdapterInstance,
+      () => 1_000
+    );
+    const created = await createRepository.createFederationTrustSource('tenant_a', {
+      sourceType: 'saml_aggregate',
+      sourceKey: 'research-federation',
+      displayName: 'Old display name',
+      lifecycleState: 'active',
+      protocolPayload: {
+        description: 'Old description',
+        metadataUrl: 'https://metadata.example.test/federation.xml',
+        polling: {
+          mode: 'automatic',
+          intervalSeconds: 21_600,
+          etag: 'old-etag',
+          lastSuccessAt: 500,
+        },
+        runtimeResolution: { mode: 'inventory_only', roles: [] },
+        certificates: [
+          {
+            id: 'certificate-old-id',
+            name: 'Old label',
+            certificate: 'CERTIFICATE',
+            fingerprintSha256: 'sha256:abc',
+            createdAt: 1,
+          },
+        ],
+      },
+      anchors: [
+        {
+          anchorType: 'x509_sha256',
+          anchorHash: 'sha256:abc',
+          anchorRef: 'certificate-old-id',
+        },
+      ],
+      scopeBindings: [{ scopeType: 'tenant', priority: 0 }],
+    });
+
+    const adapter = createAdapter({
+      queryOneRows: [{ updated_at: 1_000, snapshot_hash: created.snapshotHash }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 2_000);
+    const updated = await repository.updateFederationTrustSource('tenant_a', 'trust-source-1', {
+      expectedUpdatedAt: 1_000,
+      sourceType: 'saml_aggregate',
+      sourceKey: 'research-federation',
+      displayName: 'New display name',
+      lifecycleState: 'active',
+      protocolPayload: {
+        description: 'New description',
+        metadataUrl: 'https://metadata.example.test/federation.xml',
+        polling: {
+          mode: 'automatic',
+          intervalSeconds: 21_600,
+          etag: 'client-replayed-etag',
+          lastSuccessAt: 1_500,
+        },
+        runtimeResolution: { mode: 'inventory_only', roles: [] },
+        certificates: [
+          {
+            id: 'certificate-new-id',
+            name: 'New label',
+            certificate: 'CERTIFICATE',
+            fingerprintSha256: 'sha256:abc',
+            createdAt: 2,
+          },
+        ],
+      },
+      anchors: [
+        {
+          anchorType: 'x509_sha256',
+          anchorHash: 'sha256:abc',
+          anchorRef: 'certificate-new-id',
+        },
+      ],
+      scopeBindings: [{ scopeType: 'tenant', priority: 0 }],
+    });
+
+    expect(updated.snapshotHash).toBe(created.snapshotHash);
+    expect(updated.updatedAt).toBe(2_000);
+    expect(
+      adapter.executes.some((item) =>
+        item.sql.includes('DELETE FROM federation_saml_runtime_entities')
+      )
+    ).toBe(false);
+    expect(
+      adapter.executes.some((item) => item.sql.includes("SET lifecycle_state = 'retired'"))
+    ).toBe(true);
+    const sourceUpdate = adapter.executes.find((item) =>
+      item.sql.includes('UPDATE federation_trust_sources')
+    );
+    const persistedPayload = JSON.parse(String(sourceUpdate?.params[4])) as {
+      polling: Record<string, unknown>;
+    };
+    expect(persistedPayload.polling).toEqual({
+      mode: 'automatic',
+      intervalSeconds: 21_600,
+      consecutiveFailures: 0,
+      sourceState: 'stale',
+    });
+  });
+
+  it('rejects unsafe URLs and invalid polling intervals for SAML federation sources', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'unsafe-source',
+        displayName: 'Unsafe source',
+        protocolPayload: {
+          metadataUrl: 'http://127.0.0.1/metadata.xml',
+          polling: { mode: 'automatic', intervalSeconds: 21_600 },
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'unsafe-query-pattern-source',
+        displayName: 'Unsafe query pattern source',
+        protocolPayload: {
+          metadataUrlPatterns: ['https://127.0.0.1/metadata.xml?feed=research'],
+          polling: { mode: 'automatic', intervalSeconds: 21_600 },
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'unsafe-exact-pattern-source',
+        displayName: 'Unsafe exact pattern source',
+        protocolPayload: {
+          metadataUrlPatterns: ['https://127.0.0.1/metadata.xml'],
+          polling: { mode: 'automatic', intervalSeconds: 21_600 },
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'too-fast-source',
+        displayName: 'Too fast source',
+        protocolPayload: {
+          metadataUrl: 'https://metadata.example.test/federation.xml',
+          polling: { mode: 'automatic', intervalSeconds: 60 },
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'missing-url-source',
+        displayName: 'Missing URL source',
+        protocolPayload: {
+          metadataUrlPatterns: ['https://metadata.example.test/*'],
+          polling: { mode: 'automatic', intervalSeconds: 21_600 },
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'missing-mapping-source',
+        displayName: 'Missing mapping source',
+        protocolPayload: {
+          metadataUrl: 'https://metadata.example.test/federation.xml',
+          runtimeResolution: {
+            mode: 'automatic',
+            roles: ['saml_idp'],
+          },
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('accepts an exact legacy metadata URL pattern containing a query string', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'query-url-source',
+        displayName: 'Query URL source',
+        protocolPayload: {
+          metadataUrlPatterns: ['https://metadata.example.test/federation.xml?feed=research'],
+          polling: { mode: 'automatic', intervalSeconds: 21_600 },
+        },
+      })
+    ).resolves.toMatchObject({ sourceKey: 'query-url-source' });
+  });
+
+  it('rejects duplicate Entity Category policy rules', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'duplicate-category-source',
+        displayName: 'Duplicate category source',
+        protocolPayload: {
+          metadataUrl: 'https://metadata.example.test/federation.xml',
+          runtimeResolution: {
+            mode: 'automatic',
+            roles: ['saml_sp'],
+            spFieldMappingSetId: 'mapping-sp',
+            entityCategoryPolicy: {
+              defaultDecision: 'deny',
+              rules: [
+                {
+                  entityCategory: 'http://refeds.org/category/research-and-scholarship',
+                  decision: 'allow',
+                },
+                {
+                  entityCategory: ' http://refeds.org/category/research-and-scholarship ',
+                  decision: 'deny',
+                },
+              ],
+            },
+          },
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+    expect(adapter.executes).toHaveLength(0);
   });
 
   it('rejects unsupported federation trust source lifecycle states', async () => {
@@ -3635,6 +4033,21 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
       expect.stringContaining('INSERT INTO federation_metadata_entity_summaries'),
     ]);
     expect(String(adapter.executes[2].params[6])).toContain('requestedAttributes');
+  });
+
+  it('rejects the document type reserved for managed SAML runtime snapshots', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.registerFederationMetadataDocument('tenant_a', {
+        trustSourceId: 'trust-source-1',
+        documentType: 'saml_aggregate_runtime_snapshot',
+        documentHash: 'sha256:metadata',
+        validationState: 'valid',
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+    expect(adapter.executes).toHaveLength(0);
   });
 
   it('lists federation metadata documents with normalized entity summaries', async () => {

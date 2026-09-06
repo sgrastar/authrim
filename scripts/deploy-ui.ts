@@ -17,9 +17,12 @@ import {
   getWorkersSubdomain,
 } from '../packages/setup/src/core/cloudflare.js';
 import {
+  acquireDeployConfigLock,
   acquireEnvironmentOperationForEnvironment,
+  clearProvisionalWorkerScriptOwnership,
   loadLockFileAuto,
   saveLockFile,
+  type DeployConfigLockProof,
 } from '../packages/setup/src/core/lock.js';
 import {
   UI_WORKER_COMPONENTS,
@@ -163,6 +166,9 @@ async function loadConfig(
 
   const content = await readFile(configPath, 'utf-8');
   const config = AuthrimConfigSchema.parse(JSON.parse(content));
+  if (config.environment.prefix !== env) {
+    throw new Error(`deployment_config_environment_mismatch:${env}`);
+  }
   return { config, resolved };
 }
 
@@ -239,7 +245,8 @@ async function deployComponent(
   config: AuthrimConfig,
   resolved: ReturnType<typeof resolvePaths>,
   component: UiWorkerComponent,
-  keysDir: string
+  keysDir: string,
+  deployConfigLockProof: DeployConfigLockProof
 ): Promise<void> {
   const loginUiClientId =
     component === 'ar-login-ui'
@@ -278,37 +285,25 @@ async function deployComponent(
     workersDev: uiSettings.workersDev,
     routes: uiSettings.routes,
     adminUiBffSecrets,
+    deployConfigLockProof,
     onProgress: (message) => console.log(message),
   });
-
-  if (result.deployedAt && (result.success || result.trafficCommitted)) {
-    const { lock, path: lockPath } = await loadLockFileAuto(rootDir, env);
-    if (lock && lockPath) {
-      const version = await getPackageVersion(join(rootDir, 'packages', component));
-      await saveLockFile(
-        {
-          ...lock,
-          workers: {
-            ...lock.workers,
-            [component]: {
-              name: result.projectName,
-              deployedAt: result.deployedAt,
-              version: version ?? undefined,
-            },
-          },
-          updatedAt: new Date().toISOString(),
-        },
-        lockPath
-      );
-    }
-  }
 
   if (!result.success) {
     throw new Error(`${component}: ${result.error || 'Worker deployment failed'}`);
   }
+  if (!result.deployedAt || !result.cloudflareVersionId || !result.cloudflareScriptTag) {
+    throw new Error(`${component}: exact Cloudflare Worker identity was not returned`);
+  }
 
   const visibility = await waitForWorkerDeploymentsReady({
-    targets: [{ workerName: result.projectName, deployedAt: result.deployedAt }],
+    targets: [
+      {
+        workerName: result.projectName,
+        deployedAt: result.deployedAt,
+        expectedVersionId: result.cloudflareVersionId,
+      },
+    ],
     onProgress: console.log,
   });
   if (!visibility.ready) {
@@ -330,6 +325,32 @@ async function deployComponent(
       `${component}: HTTP readiness failed: ${httpReadiness.error ?? 'unknown error'}`
     );
   }
+
+  const { lock: latestLock, path: lockPath } = await loadLockFileAuto(rootDir, env);
+  if (!latestLock || !lockPath) {
+    throw new Error(`${component}: environment lock became unavailable after readiness checks`);
+  }
+  const version = await getPackageVersion(join(rootDir, 'packages', component));
+  await saveLockFile(
+    clearProvisionalWorkerScriptOwnership(
+      {
+        ...latestLock,
+        workers: {
+          ...latestLock.workers,
+          [component]: {
+            name: result.projectName,
+            deployedAt: result.deployedAt,
+            version: version ?? undefined,
+            cloudflareVersionId: result.cloudflareVersionId,
+            cloudflareScriptTag: result.cloudflareScriptTag,
+          },
+        },
+        updatedAt: new Date().toISOString(),
+      },
+      [component]
+    ),
+    lockPath
+  );
 
   console.log(`Deployed ${component} to ${result.projectName}`);
 }
@@ -394,12 +415,19 @@ async function main(): Promise<void> {
       await operationLock.release();
       throw new Error('config_changed_while_waiting_for_deploy_ui_lock');
     }
+    let deployConfigLock: Awaited<ReturnType<typeof acquireDeployConfigLock>> | undefined;
     try {
+      deployConfigLock = await acquireDeployConfigLock({
+        baseDir: rootDir,
+        env: options.env,
+        operation: 'deploy-ui:binding-targets',
+      });
       const summary = await deployUiWorkerBindingTargets(
         {
           env: options.env,
           rootDir,
           apiBaseUrl: getApiBaseUrl(config),
+          deployConfigLockProof: deployConfigLock.proof,
           onProgress: console.log,
         },
         missing
@@ -413,7 +441,11 @@ async function main(): Promise<void> {
         );
       }
     } finally {
-      await operationLock.release();
+      try {
+        await deployConfigLock?.release();
+      } finally {
+        await operationLock.release();
+      }
     }
     return;
   }
@@ -446,7 +478,13 @@ async function main(): Promise<void> {
     await operationLock.release();
     throw new Error('config_changed_while_waiting_for_deploy_ui_lock');
   }
+  let deployConfigLock: Awaited<ReturnType<typeof acquireDeployConfigLock>> | undefined;
   try {
+    deployConfigLock = await acquireDeployConfigLock({
+      baseDir: rootDir,
+      env: options.env,
+      operation: 'deploy-ui',
+    });
     const keysDir = await resolveKeysDir(rootDir, options.env, config, resolved, options.keysDir);
     if (!keysDir) {
       throw new Error(
@@ -456,10 +494,22 @@ async function main(): Promise<void> {
     await ensureSupplementalKeyFiles(keysDir);
 
     for (const component of components) {
-      await deployComponent(rootDir, options.env, config, resolved, component, keysDir);
+      await deployComponent(
+        rootDir,
+        options.env,
+        config,
+        resolved,
+        component,
+        keysDir,
+        deployConfigLock.proof
+      );
     }
   } finally {
-    await operationLock.release();
+    try {
+      await deployConfigLock?.release();
+    } finally {
+      await operationLock.release();
+    }
   }
 }
 

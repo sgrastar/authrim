@@ -10,6 +10,8 @@ import { SaxesParser, type SaxesTagNS } from 'saxes';
 import { ExclusiveCanonicalization } from 'xml-crypto';
 import {
   parseXml,
+  findDirectChildElement,
+  findDirectChildElements,
   findElement,
   findElements,
   getAttribute,
@@ -35,6 +37,11 @@ const AGGREGATE_SIGNATURE_LIMITS = {
   maxElements: 512,
   maxAttributes: 1024,
 } as const;
+
+const SAML_ENTITY_CATEGORY_ATTRIBUTE = 'http://macedir.org/entity-category';
+const SAML_ENTITY_CATEGORY_SUPPORT_ATTRIBUTE = 'http://macedir.org/entity-category-support';
+const SAML_METADATA_ATTRIBUTE_NAMESPACE = 'urn:oasis:names:tc:SAML:metadata:attribute';
+const SAML_METADATA_RPI_NAMESPACE = 'urn:oasis:names:tc:SAML:metadata:rpi';
 
 export interface ParsedAggregateMetadata {
   metadataXml: string;
@@ -176,20 +183,24 @@ export async function verifyAggregateMetadata(
   policy: SAMLMetadataVerificationPolicy
 ): Promise<VerifiedAggregateMetadata> {
   const scan = scanAggregateMetadata(xml, undefined, false);
+  const matchingProfiles = trustProfiles.filter(
+    (profile) => profile.enabled && metadataUrlMatchesProfile(metadataUrl, profile)
+  );
   if (policy === 'disabled') {
+    const profile = matchingProfiles.length === 1 ? matchingProfiles[0] : undefined;
     return {
       aggregate: parseAggregateMetadata(xml),
       verification: {
         status: 'skipped',
         policy,
+        trustProfileId: profile?.id,
+        trustProfileName: profile?.name,
+        trustContextSnapshotHash: profile?.trustContextSnapshotHash,
         warnings: ['Aggregate metadata signature verification is disabled.'],
       },
     };
   }
 
-  const matchingProfiles = trustProfiles.filter(
-    (profile) => profile.enabled && metadataUrlMatchesProfile(metadataUrl, profile)
-  );
   const warnings: string[] = [];
 
   if (matchingProfiles.length === 0) {
@@ -213,6 +224,7 @@ export async function verifyAggregateMetadata(
       signedElementId: scan.rootId,
       trustProfileId: matchingProfiles[0]?.id,
       trustProfileName: matchingProfiles[0]?.name,
+      trustContextSnapshotHash: matchingProfiles[0]?.trustContextSnapshotHash,
       warnings: ['Aggregate metadata root is not signed.'],
       error: 'Aggregate metadata root is not signed',
     };
@@ -240,6 +252,7 @@ export async function verifyAggregateMetadata(
       signedElementId: scan.rootId,
       trustProfileId: matchingProfiles[0]?.id,
       trustProfileName: matchingProfiles[0]?.name,
+      trustContextSnapshotHash: matchingProfiles[0]?.trustContextSnapshotHash,
       warnings: [
         'Aggregate metadata signature must contain exactly one Reference to the root EntitiesDescriptor ID.',
       ],
@@ -274,6 +287,7 @@ export async function verifyAggregateMetadata(
             policy,
             trustProfileId: profile.id,
             trustProfileName: profile.name,
+            trustContextSnapshotHash: profile.trustContextSnapshotHash,
             certificateFingerprintSha256: certificate.fingerprintSha256,
             signedElementId: scan.rootId,
             verifiedAt: Date.now(),
@@ -291,6 +305,7 @@ export async function verifyAggregateMetadata(
     signedElementId: scan.rootId,
     trustProfileId: matchingProfiles[0]?.id,
     trustProfileName: matchingProfiles[0]?.name,
+    trustContextSnapshotHash: matchingProfiles[0]?.trustContextSnapshotHash,
     warnings: warnings.slice(0, 5),
     error: 'Aggregate metadata signature could not be verified with matching trust profiles',
   };
@@ -363,7 +378,48 @@ function summarizeEntityDescriptor(entity: Element): SAMLMetadataEntitySummary {
     validUntil: getAttribute(entity, 'validUntil') || undefined,
     keywords: getKeywords(entity),
     logoUrl: getLogoUrl(entity),
+    entityCategories: getEntityAttributeValues(entity, SAML_ENTITY_CATEGORY_ATTRIBUTE),
+    entityCategorySupport: getEntityAttributeValues(entity, SAML_ENTITY_CATEGORY_SUPPORT_ATTRIBUTE),
+    registrationAuthority: getRegistrationAuthority(entity),
   };
+}
+
+function getEntityAttributeValues(entity: Element, attributeName: string): string[] | undefined {
+  const extensions = findDirectChildElement(entity, SAML_NAMESPACES.MD, 'Extensions');
+  if (!extensions) return undefined;
+  const entityAttributes = findDirectChildElements(
+    extensions,
+    SAML_METADATA_ATTRIBUTE_NAMESPACE,
+    'EntityAttributes'
+  );
+  const values = entityAttributes
+    .flatMap((container) => findDirectChildElements(container, SAML_NAMESPACES.SAML2, 'Attribute'))
+    .filter((attribute) => getAttribute(attribute, 'Name') === attributeName)
+    .flatMap((attribute) =>
+      findDirectChildElements(attribute, SAML_NAMESPACES.SAML2, 'AttributeValue')
+    )
+    .map((value) => getTextContent(value)?.trim() ?? '')
+    .filter(Boolean);
+  const uniqueValues = Array.from(new Set(values));
+  return uniqueValues.length > 0 ? uniqueValues : undefined;
+}
+
+function getRegistrationAuthority(entity: Element): string | undefined {
+  const extensions = findDirectChildElement(entity, SAML_NAMESPACES.MD, 'Extensions');
+  if (!extensions) return undefined;
+  const registrationInfo = findDirectChildElements(
+    extensions,
+    SAML_METADATA_RPI_NAMESPACE,
+    'RegistrationInfo'
+  );
+  if (registrationInfo.length > 1) {
+    throw new SAMLMetadataValidationError(
+      'Invalid aggregate metadata: multiple mdrpi RegistrationInfo elements'
+    );
+  }
+  return registrationInfo[0]
+    ? getAttribute(registrationInfo[0], 'registrationAuthority') || undefined
+    : undefined;
 }
 
 function metadataUrlMatchesProfile(
@@ -730,6 +786,15 @@ function buildParsedAggregateMetadata(
       'Invalid aggregate metadata: no EntityDescriptor entries'
     );
   }
+  const entityIds = new Set<string>();
+  for (const entity of entities) {
+    if (!entity.entityId || entityIds.has(entity.entityId)) {
+      throw new SAMLMetadataValidationError(
+        'Invalid aggregate metadata: entityID values must be present and unique'
+      );
+    }
+    entityIds.add(entity.entityId);
+  }
   return {
     metadataXml: xml,
     rootId: scan.rootId,
@@ -778,6 +843,7 @@ function scanAggregateMetadata(
   let rootSignatureXml: string | undefined;
   const entityXml: string[] = [];
   const namespaceStack: Array<Record<string, string>> = [];
+  const entitiesDescriptorValidityStack: Array<string | undefined> = [];
   const parser = new SaxesParser({ xmlns: true });
 
   const appendSignatureChunk = (chunk: string): void => {
@@ -808,6 +874,7 @@ function scanAggregateMetadata(
     throw new SAMLMetadataValidationError('SAML metadata processing instructions are not allowed');
   });
   parser.on('opentag', (tag) => {
+    let entityValidUntilOverride: string | undefined;
     depth++;
     const inScopeNamespaces = {
       ...(namespaceStack[namespaceStack.length - 1] ?? {}),
@@ -840,7 +907,9 @@ function scanAggregateMetadata(
       validUntil = getSaxesAttribute(tag, 'validUntil');
     }
     if (tag.uri === SAML_NAMESPACES.MD && tag.local === 'EntitiesDescriptor') {
-      assertAggregateMetadataIsCurrent(getSaxesAttribute(tag, 'validUntil'));
+      const descriptorValidUntil = getSaxesAttribute(tag, 'validUntil');
+      assertAggregateMetadataIsCurrent(descriptorValidUntil);
+      entitiesDescriptorValidityStack.push(descriptorValidUntil);
     }
     if (id === rootId && rootId) {
       rootIdOccurrences++;
@@ -856,6 +925,12 @@ function scanAggregateMetadata(
         throw new SAMLMetadataValidationError('Aggregate metadata exceeds maximum entity count');
       }
       const entityId = getSaxesAttribute(tag, 'entityID') ?? '';
+      const entityValidUntil = getSaxesAttribute(tag, 'validUntil');
+      assertAggregateMetadataIsCurrent(entityValidUntil);
+      entityValidUntilOverride = earliestValidUntil([
+        ...entitiesDescriptorValidityStack,
+        entityValidUntil,
+      ]);
       captureEntity = captureEntities && (!requestedEntityIds || requestedEntityIds.has(entityId));
       captureEntityDepth = depth;
       entityBuffer = [];
@@ -869,7 +944,13 @@ function scanAggregateMetadata(
 
     if (captureEntity && captureEntityDepth !== undefined) {
       entityBuffer.push(
-        serializeSaxesOpenTag(tag, depth === captureEntityDepth ? inScopeNamespaces : undefined)
+        serializeSaxesOpenTag(
+          tag,
+          depth === captureEntityDepth ? inScopeNamespaces : undefined,
+          depth === captureEntityDepth && entityValidUntilOverride
+            ? { validUntil: entityValidUntilOverride }
+            : undefined
+        )
       );
     }
 
@@ -927,6 +1008,9 @@ function scanAggregateMetadata(
       captureSignatureDepth = undefined;
       signatureBuffer = [];
     }
+    if (tag.uri === SAML_NAMESPACES.MD && tag.local === 'EntitiesDescriptor') {
+      entitiesDescriptorValidityStack.pop();
+    }
     namespaceStack.pop();
     depth--;
   });
@@ -950,13 +1034,23 @@ function scanAggregateMetadata(
 
 function serializeSaxesOpenTag(
   tag: SaxesTagNS,
-  inScopeNamespaces?: Readonly<Record<string, string>>
+  inScopeNamespaces?: Readonly<Record<string, string>>,
+  attributeOverrides?: Readonly<Record<string, string>>
 ): string {
   const attributes = Object.values(tag.attributes);
   const existingNames = new Set(attributes.map((attribute) => attribute.name));
   const serializedAttributes = attributes.map(
-    (attribute) => ` ${attribute.name}="${escapeXmlAttribute(attribute.value)}"`
+    (attribute) =>
+      ` ${attribute.name}="${escapeXmlAttribute(
+        attributeOverrides?.[attribute.name] ?? attribute.value
+      )}"`
   );
+
+  for (const [name, value] of Object.entries(attributeOverrides ?? {})) {
+    if (!existingNames.has(name)) {
+      serializedAttributes.push(` ${name}="${escapeXmlAttribute(value)}"`);
+    }
+  }
 
   if (inScopeNamespaces) {
     for (const [prefix, uri] of Object.entries(inScopeNamespaces)) {
@@ -968,6 +1062,19 @@ function serializeSaxesOpenTag(
     }
   }
   return `<${tag.name}${serializedAttributes.join('')}>`;
+}
+
+function earliestValidUntil(values: Array<string | undefined>): string | undefined {
+  let earliest: { value: string; expiresAt: number } | undefined;
+  for (const value of values) {
+    if (!value) continue;
+    const expiresAt = Date.parse(value);
+    if (!Number.isFinite(expiresAt)) {
+      throw new SAMLMetadataValidationError('Invalid aggregate metadata: invalid validUntil');
+    }
+    if (!earliest || expiresAt < earliest.expiresAt) earliest = { value, expiresAt };
+  }
+  return earliest?.value;
 }
 
 function getSaxesAttribute(tag: SaxesTagNS, name: string): string | undefined {

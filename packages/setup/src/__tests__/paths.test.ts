@@ -6,6 +6,7 @@ import {
   getEnvironmentPaths,
   getExternalKeysDir,
   getExternalKeysPathForConfig,
+  deriveExternalKeysBaseDirFromConfigPath,
   findKeysDirectory,
   getLegacyPaths,
   detectStructure,
@@ -48,6 +49,7 @@ describe('paths module', () => {
       expect(paths.root).toBe('/project/.authrim/dev');
       expect(paths.config).toBe('/project/.authrim/dev/config.json');
       expect(paths.lock).toBe('/project/.authrim/dev/lock.json');
+      expect(paths.pendingEmailSecrets).toBe('/project/.authrim/dev/pending-email-secrets.json');
       expect(paths.version).toBe('/project/.authrim/dev/version.txt');
       expect(paths.keys).toBe('/project/.authrim/dev/keys');
       expect(paths.uiEnv).toBe('/project/.authrim/dev/ui.env');
@@ -243,7 +245,10 @@ describe('paths module', () => {
       for (const env of ['alpha', 'beta']) {
         const envDir = join(testDir, AUTHRIM_DIR, env);
         mkdirSync(envDir, { recursive: true });
-        writeFileSync(join(envDir, 'config.json'), '{}');
+        writeFileSync(
+          join(envDir, 'config.json'),
+          JSON.stringify({ environment: { prefix: env } })
+        );
       }
 
       const envs = listEnvironments(testDir);
@@ -259,6 +264,35 @@ describe('paths module', () => {
       writeFileSync(join(envDir, 'lock.json'), '{}');
 
       expect(listEnvironments(testDir)).toContain('retry-env');
+    });
+
+    it('should ignore a non-environment harness config stored under .authrim', () => {
+      const harnessDir = join(testDir, AUTHRIM_DIR, 'phase1-exclusive-1k-r1');
+      mkdirSync(harnessDir, { recursive: true });
+      writeFileSync(
+        join(harnessDir, 'config.json'),
+        JSON.stringify({
+          environment: {
+            environmentId: 'scaleout',
+            tenantId: 'phase1-exclusive-1k-r1',
+          },
+          schemaVersion: 1,
+        })
+      );
+
+      expect(listEnvironments(testDir)).not.toContain('phase1-exclusive-1k-r1');
+    });
+
+    it('should ignore a config whose environment prefix does not match its directory', () => {
+      const envDir = join(testDir, AUTHRIM_DIR, 'wrong-directory');
+      mkdirSync(envDir, { recursive: true });
+      writeFileSync(
+        join(envDir, 'config.json'),
+        JSON.stringify({ environment: { prefix: 'actual-environment' } })
+      );
+
+      expect(listEnvironments(testDir)).not.toContain('wrong-directory');
+      expect(listEnvironments(testDir)).not.toContain('actual-environment');
     });
 
     it('should include environments from env-specific legacy config filenames', () => {
@@ -289,7 +323,10 @@ describe('paths module', () => {
       // New structure
       const newEnvDir = join(testDir, AUTHRIM_DIR, 'new-env');
       mkdirSync(newEnvDir, { recursive: true });
-      writeFileSync(join(newEnvDir, 'config.json'), '{}');
+      writeFileSync(
+        join(newEnvDir, 'config.json'),
+        JSON.stringify({ environment: { prefix: 'new-env' } })
+      );
 
       // Legacy structure
       const legacyKeysDir = join(testDir, LEGACY_KEYS_DIR, 'legacy-env');
@@ -306,7 +343,10 @@ describe('paths module', () => {
       for (const env of ['zebra', 'alpha', 'beta']) {
         const envDir = join(testDir, AUTHRIM_DIR, env);
         mkdirSync(envDir, { recursive: true });
-        writeFileSync(join(envDir, 'config.json'), '{}');
+        writeFileSync(
+          join(envDir, 'config.json'),
+          JSON.stringify({ environment: { prefix: env } })
+        );
       }
 
       const envs = listEnvironments(testDir);
@@ -484,6 +524,23 @@ describe('paths module', () => {
     });
   });
 
+  describe('deriveExternalKeysBaseDirFromConfigPath', () => {
+    it('recovers the exact key base from a persisted external path', () => {
+      expect(
+        deriveExternalKeysBaseDirFromConfigPath('prod', '/srv/authrim/.authrim-keys/prod/')
+      ).toBe('/srv/authrim');
+    });
+
+    it('rejects a path for another environment or storage layout', () => {
+      expect(() =>
+        deriveExternalKeysBaseDirFromConfigPath('prod', '/srv/authrim/.authrim-keys/test/')
+      ).toThrow('external_keys_config_path_mismatch');
+      expect(() =>
+        deriveExternalKeysBaseDirFromConfigPath('prod', '/srv/authrim/keys/prod/')
+      ).toThrow('external_keys_config_path_mismatch');
+    });
+  });
+
   describe('getEnvironmentPaths with keysBaseDir', () => {
     it('should use external keys directory when keysBaseDir is provided', () => {
       const paths = getEnvironmentPaths({ baseDir: '/project', env: 'dev', keysBaseDir: '/cwd' });
@@ -601,7 +658,10 @@ describe('paths module', () => {
       // Internal
       const internalDir = join(testDir, AUTHRIM_DIR, 'int-env');
       mkdirSync(internalDir, { recursive: true });
-      writeFileSync(join(internalDir, 'config.json'), '{}');
+      writeFileSync(
+        join(internalDir, 'config.json'),
+        JSON.stringify({ environment: { prefix: 'int-env' } })
+      );
 
       // Legacy
       mkdirSync(join(testDir, LEGACY_KEYS_DIR, 'leg-env'), { recursive: true });
@@ -619,7 +679,10 @@ describe('paths module', () => {
       mkdirSync(join(testDir, AUTHRIM_KEYS_DIR, 'shared-env'), { recursive: true });
       const internalDir = join(testDir, AUTHRIM_DIR, 'shared-env');
       mkdirSync(internalDir, { recursive: true });
-      writeFileSync(join(internalDir, 'config.json'), '{}');
+      writeFileSync(
+        join(internalDir, 'config.json'),
+        JSON.stringify({ environment: { prefix: 'shared-env' } })
+      );
 
       const envs = listEnvironments(testDir, testDir);
 

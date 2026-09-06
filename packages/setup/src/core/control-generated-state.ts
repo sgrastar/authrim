@@ -491,16 +491,16 @@ export async function refreshLockFromControlGeneratedState(input: {
   changed: string[];
   keyStateChanged: boolean;
 }> {
-  const controlDatabaseName = input.lock.d1.CONTROL_DB?.name;
-  if (!controlDatabaseName) throw new Error('control_database_name_required');
+  const controlDatabaseId = input.lock.d1.CONTROL_DB?.id;
+  if (!controlDatabaseId) throw new Error('control_database_id_required');
   const bindings = await loadControlGeneratedD1Bindings({
-    controlDatabaseName,
+    controlDatabaseName: controlDatabaseId,
     environmentId: input.environmentId,
     query: input.query,
   });
   const projected = projectControlGeneratedD1Bindings(input.lock, bindings);
   const keyState = await loadControlGeneratedKeyState({
-    controlDatabaseName,
+    controlDatabaseName: controlDatabaseId,
     environmentId: input.environmentId,
     query: input.query,
   });

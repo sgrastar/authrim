@@ -12,8 +12,7 @@ import {
 } from '../../core/control-generated-state.js';
 import { reconcileLocalControlKeyFiles } from '../../core/control-key-state.js';
 import {
-  acquireEnvironmentOperationLock,
-  loadLockFileAuto,
+  acquireEnvironmentOperationForEnvironment,
   saveLockFile,
   type AuthrimLock,
   type ControlKeyState,
@@ -23,12 +22,10 @@ import { resolveDownstreamIntrospectionKeysDir } from '../../core/downstream-int
 import { fetchWithTimeout, readResponseJsonWithLimit } from '../../core/http-limits.js';
 import { requestAdminMachineAccessToken } from '../../core/admin-machine-access.js';
 import { SECRET_UPLOAD_PLAN } from '../../core/deploy.js';
-import {
-  cleanupSetupMachineAccessInD1,
-  ensureSetupMachineAccessInD1,
-  type SetupMachineAccessBootstrapResult,
-} from '../../core/cloudflare.js';
+import { listD1Databases } from '../../core/cloudflare.js';
+import { assertFixedD1ResourceIdentities } from '../../core/fixed-d1-identity.js';
 import { CORE_WORKER_COMPONENTS, type WorkerComponent } from '../../core/naming.js';
+import { runEphemeralSetupMachineAccess } from '../../core/setup-machine-access-lifecycle.js';
 import { resolveIssuerUrl } from '../../core/url-config.js';
 import { deployCommand, getDeployKeysDirHint } from './deploy.js';
 
@@ -104,63 +101,6 @@ interface EnvironmentContext {
   keysDir: string;
   config: AuthrimConfig;
   apiBaseUrl: string;
-}
-
-export async function runWithEphemeralSetupMachineAccess<T>(
-  input: {
-    env: string;
-    config: AuthrimConfig;
-    keysDir: string;
-    ensure?: (
-      env: string,
-      config: AuthrimConfig,
-      keysDir: string
-    ) => Promise<SetupMachineAccessBootstrapResult>;
-    cleanup?: (env: string, keysDir: string) => Promise<SetupMachineAccessBootstrapResult>;
-  },
-  action: () => Promise<T>
-): Promise<T> {
-  const ensure = input.ensure ?? ensureSetupMachineAccessInD1;
-  const cleanup = input.cleanup ?? cleanupSetupMachineAccessInD1;
-  const bootstrap = await ensure(input.env, input.config, input.keysDir);
-  if (!bootstrap.success) {
-    throw new Error(`lookup_hmac_setup_machine_bootstrap_failed:${bootstrap.error ?? 'unknown'}`);
-  }
-
-  let result: T | undefined;
-  let actionError: unknown;
-  try {
-    result = await action();
-  } catch (error) {
-    actionError = error;
-  }
-
-  let cleanupResult: SetupMachineAccessBootstrapResult;
-  try {
-    cleanupResult = await cleanup(input.env, input.keysDir);
-  } catch (error) {
-    cleanupResult = {
-      success: false,
-      error: error instanceof Error ? error.message : 'cleanup_threw_non_error',
-    };
-  }
-  if (!cleanupResult.success) {
-    const cleanupError = new Error(
-      `lookup_hmac_setup_machine_cleanup_failed:${cleanupResult.error ?? 'unknown'}`
-    );
-    if (actionError) {
-      throw new AggregateError(
-        [actionError, cleanupError],
-        'lookup_hmac_rotation_and_machine_cleanup_failed'
-      );
-    }
-    throw cleanupError;
-  }
-  if (actionError) {
-    if (actionError instanceof Error) throw actionError;
-    throw new Error('lookup_hmac_rotation_failed', { cause: actionError });
-  }
-  return result as T;
 }
 
 function pendingMetadataPath(keysDir: string): string {
@@ -343,6 +283,9 @@ async function loadEnvironment(options: LookupHmacRotateOptions): Promise<Enviro
   const paths = getEnvironmentPaths({ baseDir, env });
   if (!existsSync(paths.config)) throw new Error(`environment_config_not_found:${env}`);
   const config = AuthrimConfigSchema.parse(JSON.parse(await readFile(paths.config, 'utf8')));
+  if (config.environment.prefix !== env) {
+    throw new Error('lookup_hmac_config_environment_mismatch');
+  }
   const keysDir = resolveDownstreamIntrospectionKeysDir({
     env,
     rootDir: baseDir,
@@ -366,19 +309,84 @@ async function loadEnvironment(options: LookupHmacRotateOptions): Promise<Enviro
   };
 }
 
+async function withLockedLookupHmacMachineAccess<T>(
+  context: EnvironmentContext,
+  operation: string,
+  action: (input: {
+    context: EnvironmentContext;
+    lock: AuthrimLock;
+    client: ReturnType<typeof createAdminClient>;
+  }) => Promise<T>
+): Promise<T> {
+  const operationLock = await acquireEnvironmentOperationForEnvironment({
+    baseDir: context.environmentBaseDir,
+    env: context.env,
+    operation,
+    requireExisting: true,
+  });
+  try {
+    if (!operationLock.lock) {
+      throw new Error(`environment_lock_not_found:${context.env}`);
+    }
+    if (operationLock.lock.env !== context.env) {
+      throw new Error('lookup_hmac_lock_environment_mismatch');
+    }
+    const lockedConfig = AuthrimConfigSchema.parse(
+      JSON.parse(await readFile(context.configPath, 'utf8'))
+    );
+    if (lockedConfig.environment.prefix !== context.env) {
+      throw new Error('lookup_hmac_config_environment_mismatch_after_operation_lock');
+    }
+    if (JSON.stringify(lockedConfig) !== JSON.stringify(context.config)) {
+      throw new Error(`config_changed_during_lookup_hmac_rotation:${context.env}`);
+    }
+    assertFixedD1ResourceIdentities({
+      environment: context.env,
+      lock: operationLock.lock,
+      databases: await listD1Databases(),
+    });
+    const adminDatabaseIdentifier = operationLock.lock.d1.DB_ADMIN?.id;
+    if (!adminDatabaseIdentifier) {
+      throw new Error('admin_database_required_for_lookup_hmac_rotation');
+    }
+    const lockedContext: EnvironmentContext = {
+      ...context,
+      config: lockedConfig,
+      lockPath: operationLock.lockFilePath,
+      apiBaseUrl: resolveIssuerUrl(lockedConfig, { env: context.env }),
+    };
+    return await runEphemeralSetupMachineAccess({
+      env: context.env,
+      config: lockedConfig,
+      keysDir: context.keysDir,
+      databaseIdentifier: adminDatabaseIdentifier,
+      action: () =>
+        action({
+          context: lockedContext,
+          lock: operationLock.lock!,
+          client: createAdminClient(lockedContext),
+        }),
+    });
+  } finally {
+    await operationLock.release();
+  }
+}
+
 async function refreshKeyState(
   context: EnvironmentContext,
   lock: AuthrimLock
 ): Promise<{ lock: AuthrimLock; keyState: ControlKeyState }> {
-  const controlDatabaseName = lock.d1.CONTROL_DB?.name;
-  if (!controlDatabaseName) throw new Error('control_database_required_for_lookup_hmac_rotation');
+  const controlDatabaseIdentifier = lock.d1.CONTROL_DB?.id;
+  if (!controlDatabaseIdentifier) {
+    throw new Error('control_database_required_for_lookup_hmac_rotation');
+  }
   const keyState = await loadControlGeneratedKeyState({
-    controlDatabaseName,
+    controlDatabaseName: controlDatabaseIdentifier,
     environmentId: context.env,
   });
   if (!keyState) throw new Error('control_generated_key_state_missing');
   const stagedSigningKeys = await loadControlStagedSigningKeys({
-    controlDatabaseName,
+    controlDatabaseName: controlDatabaseIdentifier,
     environmentId: context.env,
   });
   await reconcileLocalControlKeyFiles({
@@ -610,119 +618,111 @@ export async function rotateLookupHmacKeyCommand(options: LookupHmacRotateOption
     }
   }
 
-  await runWithEphemeralSetupMachineAccess(
-    { env: context.env, config: context.config, keysDir: context.keysDir },
-    async () => {
-      const client = createAdminClient(context);
+  let rotation = await withLockedLookupHmacMachineAccess(
+    context,
+    'rotate-lookup-hmac:prepare',
+    async ({ context: lockedContext, lock, client }) => {
       let pending: PendingLookupHmacRotation;
-      let rotation: LookupHmacRotation;
-      const prepareLock = await acquireEnvironmentOperationLock(
-        context.lockPath,
-        'rotate-lookup-hmac:prepare'
-      );
-      try {
-        const loaded = await loadLockFileAuto(context.environmentBaseDir, context.env);
-        if (!loaded.lock) throw new Error(`environment_lock_not_found:${context.env}`);
-        const refreshed = await refreshKeyState(context, loaded.lock);
-        const existingPending = await loadPending(context);
-        if (existingPending) {
-          pending = existingPending;
-          assertPendingLookupHmacState(pending, refreshed.keyState.lookupHmac);
-        } else {
-          const current = refreshed.keyState.lookupHmac;
-          if (current.previousSlot || current.previousKeyId || current.previousFingerprint) {
-            throw new Error('lookup_hmac_rotation_already_active');
-          }
-          const candidateSlot = current.activeSlot === 'A' ? 'B' : 'A';
-          const secret = randomBytes(32).toString('base64url');
-          const keyId = `lookup-hmac-${current.activeGeneration + 1}-${randomBytes(4).toString('hex')}`;
-          pending = {
-            schemaVersion: 1,
-            environmentId: context.env,
-            idempotencyKey: `lookup-hmac-${current.activeGeneration + 1}-${keyId}`,
-            source: {
-              generation: current.activeGeneration,
-              keyId: current.activeKeyId,
-              slot: current.activeSlot,
-              fingerprint: current.activeFingerprint,
-            },
-            candidate: {
-              generation: current.activeGeneration + 1,
-              keyId,
-              slot: candidateSlot,
-              fingerprint: fingerprint(secret),
-            },
-            operationId: null,
-          };
-          await writeSensitive(pendingSecretPath(context.keysDir, pending.candidate), secret);
-          await savePending(context, pending);
+      const refreshed = await refreshKeyState(lockedContext, lock);
+      const existingPending = await loadPending(context);
+      if (existingPending) {
+        pending = existingPending;
+        assertPendingLookupHmacState(pending, refreshed.keyState.lookupHmac);
+      } else {
+        const current = refreshed.keyState.lookupHmac;
+        if (current.previousSlot || current.previousKeyId || current.previousFingerprint) {
+          throw new Error('lookup_hmac_rotation_already_active');
         }
-        rotation = await client.start(pending);
-        assertLookupHmacRotationMatchesPending(rotation, pending);
-        if (pending.operationId !== rotation.operationId) {
-          pending = { ...pending, operationId: rotation.operationId };
-          await savePending(context, pending);
-        }
-        await promoteLookupHmacCandidateSecret(context.keysDir, pending);
-      } finally {
-        await prepareLock.release();
+        const candidateSlot = current.activeSlot === 'A' ? 'B' : 'A';
+        const secret = randomBytes(32).toString('base64url');
+        const keyId = `lookup-hmac-${current.activeGeneration + 1}-${randomBytes(4).toString('hex')}`;
+        pending = {
+          schemaVersion: 1,
+          environmentId: context.env,
+          idempotencyKey: `lookup-hmac-${current.activeGeneration + 1}-${keyId}`,
+          source: {
+            generation: current.activeGeneration,
+            keyId: current.activeKeyId,
+            slot: current.activeSlot,
+            fingerprint: current.activeFingerprint,
+          },
+          candidate: {
+            generation: current.activeGeneration + 1,
+            keyId,
+            slot: candidateSlot,
+            fingerprint: fingerprint(secret),
+          },
+          operationId: null,
+        };
+        await writeSensitive(pendingSecretPath(context.keysDir, pending.candidate), secret);
+        await savePending(context, pending);
       }
-
-      if (rotation.state === 'blocked') throw new Error('lookup_hmac_rotation_blocked');
-      if (rotation.state === 'distributing') {
-        console.log(chalk.cyan('Deploying the inactive candidate slot...'));
-        await deployRotationState(context, options);
-        console.log(chalk.cyan('Waiting for candidate HMAC verification on every target...'));
-        await waitForVerification(client, rotation.operationId, 'distribution');
-        const activationLock = await acquireEnvironmentOperationLock(
-          context.lockPath,
-          'rotate-lookup-hmac:activate'
-        );
-        try {
-          rotation = await client.mutate(rotation, 'activate');
-          const loaded = await loadLockFileAuto(context.environmentBaseDir, context.env);
-          if (!loaded.lock) throw new Error(`environment_lock_not_found:${context.env}`);
-          await refreshKeyState(context, loaded.lock);
-        } finally {
-          await activationLock.release();
-        }
+      const rotation = await client.start(pending);
+      assertLookupHmacRotationMatchesPending(rotation, pending);
+      if (pending.operationId !== rotation.operationId) {
+        pending = { ...pending, operationId: rotation.operationId };
+        await savePending(context, pending);
       }
-
-      if (rotation.state === 'activation_dual_write') {
-        console.log(
-          chalk.cyan('Deploying the signed active generation with dual-write enabled...')
-        );
-        await deployRotationState(context, options);
-        console.log(
-          chalk.cyan('Waiting for every target to observe the signed active generation...')
-        );
-        await waitForVerification(client, rotation.operationId, 'generation');
-        const observeLock = await acquireEnvironmentOperationLock(
-          context.lockPath,
-          'rotate-lookup-hmac:observe-generation'
-        );
-        try {
-          rotation = await client.mutate(rotation, 'observe-generation');
-          const loaded = await loadLockFileAuto(context.environmentBaseDir, context.env);
-          if (!loaded.lock) throw new Error(`environment_lock_not_found:${context.env}`);
-          await refreshKeyState(context, loaded.lock);
-        } finally {
-          await observeLock.release();
-        }
-      }
-
-      if (!['dual_read', 'reindexing', 'verifying', 'grace', 'complete'].includes(rotation.state)) {
-        rotation = await client.get(rotation.operationId);
-      }
-      if (!['dual_read', 'reindexing', 'verifying', 'grace', 'complete'].includes(rotation.state)) {
-        throw new Error(`lookup_hmac_rotation_handoff_incomplete:${rotation.state}`);
-      }
-      await unlink(pendingMetadataPath(context.keysDir)).catch(() => undefined);
-      console.log(
-        chalk.green(
-          `Lookup HMAC rotation handed off to the resumable reindex (${rotation.operationId}, ${rotation.state}).`
-        )
-      );
+      await promoteLookupHmacCandidateSecret(context.keysDir, pending);
+      return rotation;
     }
+  );
+
+  if (rotation.state === 'blocked') throw new Error('lookup_hmac_rotation_blocked');
+  if (rotation.state === 'distributing') {
+    console.log(chalk.cyan('Deploying the inactive candidate slot...'));
+    await deployRotationState(context, options);
+    console.log(chalk.cyan('Waiting for candidate HMAC verification on every target...'));
+    await withLockedLookupHmacMachineAccess(
+      context,
+      'rotate-lookup-hmac:verify-distribution',
+      async ({ client }) => waitForVerification(client, rotation.operationId, 'distribution')
+    );
+    rotation = await withLockedLookupHmacMachineAccess(
+      context,
+      'rotate-lookup-hmac:activate',
+      async ({ context: lockedContext, lock, client }) => {
+        const activated = await client.mutate(rotation, 'activate');
+        await refreshKeyState(lockedContext, lock);
+        return activated;
+      }
+    );
+  }
+
+  if (rotation.state === 'activation_dual_write') {
+    console.log(chalk.cyan('Deploying the signed active generation with dual-write enabled...'));
+    await deployRotationState(context, options);
+    console.log(chalk.cyan('Waiting for every target to observe the signed active generation...'));
+    await withLockedLookupHmacMachineAccess(
+      context,
+      'rotate-lookup-hmac:verify-generation',
+      async ({ client }) => waitForVerification(client, rotation.operationId, 'generation')
+    );
+    rotation = await withLockedLookupHmacMachineAccess(
+      context,
+      'rotate-lookup-hmac:observe-generation',
+      async ({ context: lockedContext, lock, client }) => {
+        const observed = await client.mutate(rotation, 'observe-generation');
+        await refreshKeyState(lockedContext, lock);
+        return observed;
+      }
+    );
+  }
+
+  if (!['dual_read', 'reindexing', 'verifying', 'grace', 'complete'].includes(rotation.state)) {
+    rotation = await withLockedLookupHmacMachineAccess(
+      context,
+      'rotate-lookup-hmac:read-handoff',
+      async ({ client }) => client.get(rotation.operationId)
+    );
+  }
+  if (!['dual_read', 'reindexing', 'verifying', 'grace', 'complete'].includes(rotation.state)) {
+    throw new Error(`lookup_hmac_rotation_handoff_incomplete:${rotation.state}`);
+  }
+  await unlink(pendingMetadataPath(context.keysDir)).catch(() => undefined);
+  console.log(
+    chalk.green(
+      `Lookup HMAC rotation handed off to the resumable reindex (${rotation.operationId}, ${rotation.state}).`
+    )
   );
 }

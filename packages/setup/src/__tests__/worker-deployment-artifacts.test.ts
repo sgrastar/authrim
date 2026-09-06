@@ -14,6 +14,12 @@ const mocks = vi.hoisted(() => ({
   registerExternal: vi.fn(),
   sync: vi.fn(),
   checkStatus: vi.fn(),
+  assertR2Use: vi.fn(),
+}));
+
+vi.mock('../core/cloudflare.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../core/cloudflare.js')>()),
+  assertR2BucketOwnershipForUse: mocks.assertR2Use,
 }));
 
 vi.mock('../core/control-generated-state.js', () => ({
@@ -51,7 +57,15 @@ function lock(): AuthrimLock {
       CONTROL_DB: { name: 'test-control', id: 'control-id' },
       PLUGIN_RUNNER_DB: { name: 'test-plugin-runner', id: 'plugin-id' },
     },
-    r2: { PLUGIN_BUNDLES: { name: 'test-plugin-bundles' } },
+    r2: {
+      PLUGIN_BUNDLES: {
+        name: 'test-plugin-bundles',
+        creationDate: '2026-08-31T00:00:00.000Z',
+        ownershipMarkerKey:
+          '__authrim_setup__/ownership-v1-11111111-1111-4111-8111-111111111111.json',
+        ownershipId: '11111111-1111-4111-8111-111111111111',
+      },
+    },
   } as AuthrimLock;
 }
 
@@ -116,7 +130,7 @@ describe('Worker deployment artifact refresh', () => {
     );
     expect(mocks.registerInventory).toHaveBeenCalledWith(
       expect.objectContaining({
-        controlDatabaseName: 'test-control',
+        controlDatabaseName: 'control-id',
         registeredBy: 'setup:upgrade',
         disableMissing: false,
       })
@@ -125,7 +139,7 @@ describe('Worker deployment artifact refresh', () => {
       expect.objectContaining({
         enabled: true,
         bucketName: 'test-plugin-bundles',
-        pluginRunnerDatabaseName: 'test-plugin-runner',
+        pluginRunnerDatabaseId: 'plugin-id',
       })
     );
     expect(mocks.sync).toHaveBeenCalledWith(
@@ -137,6 +151,42 @@ describe('Worker deployment artifact refresh', () => {
     expect(mocks.registerInventory.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.sync.mock.invocationCallOrder[0]!
     );
+  });
+
+  it('fails before any persisted or provider mutation when a required database ID is absent', async () => {
+    const missingControlId = lock();
+    delete (missingControlId.d1.CONTROL_DB as { id?: string }).id;
+    await expect(
+      refreshWorkerDeploymentArtifacts({
+        baseDir: '/repo',
+        env: 'test',
+        config: createDefaultConfig('test'),
+        lock: missingControlId,
+        lockPath: '/repo/.authrim/test/lock.json',
+        components: ['ar-plugin-runner'],
+        registeredBy: 'setup:upgrade',
+      })
+    ).rejects.toThrow('control_database_required_for_worker_inventory');
+
+    const missingPluginId = lock();
+    delete (missingPluginId.d1.PLUGIN_RUNNER_DB as { id?: string }).id;
+
+    await expect(
+      refreshWorkerDeploymentArtifacts({
+        baseDir: '/repo',
+        env: 'test',
+        config: createDefaultConfig('test'),
+        lock: missingPluginId,
+        lockPath: '/repo/.authrim/test/lock.json',
+        components: ['ar-plugin-runner'],
+        registeredBy: 'setup:upgrade',
+      })
+    ).rejects.toThrow('plugin_runner_database_required');
+
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    expect(mocks.saveLock).not.toHaveBeenCalled();
+    expect(mocks.registerInventory).not.toHaveBeenCalled();
+    expect(mocks.publishBundles).not.toHaveBeenCalled();
   });
 
   it('fails closed when the generated and package deployment configs differ after sync', async () => {

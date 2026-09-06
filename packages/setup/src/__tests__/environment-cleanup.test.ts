@@ -9,6 +9,7 @@ import {
   extractEnvironmentSectionFromToml,
   mergeEnvironmentSectionIntoToml,
   removeEnvironmentSectionFromToml,
+  writeWranglerFileAtomically,
 } from '../core/wrangler-sync.js';
 
 const tempDirs: string[] = [];
@@ -221,6 +222,232 @@ name = "single-ar-saml"
     ]);
     expect(existsSync(envDir)).toBe(true);
     await expect(readFile(join(envDir, 'lock.json'), 'utf-8')).resolves.toContain('"test"');
+  });
+
+  it('keeps the original wrangler bytes and environment inventory when atomic publication fails', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'authrim-cleanup-atomic-failure-'));
+    tempDirs.push(baseDir);
+
+    const envDir = join(baseDir, '.authrim', 'test');
+    const samlDir = join(baseDir, 'packages', 'ar-saml');
+    const wranglerPath = join(samlDir, 'wrangler.toml');
+    const original = `main = "src/index.ts"
+
+# Environment: test
+[env.test]
+name = "test-ar-saml"
+
+# Environment: single
+[env.single]
+name = "single-ar-saml"
+`;
+    await mkdir(envDir, { recursive: true });
+    await mkdir(samlDir, { recursive: true });
+    await writeFile(join(envDir, 'lock.json'), '{"env":"test"}', 'utf-8');
+    await writeFile(wranglerPath, original, 'utf-8');
+
+    const failed = await cleanupLocalEnvironmentArtifacts(
+      {
+        baseDir,
+        env: 'test',
+        packagesDir: join(baseDir, 'packages'),
+      },
+      {
+        writeWranglerFile: async () => {
+          throw new Error('simulated_atomic_publication_failure');
+        },
+      }
+    );
+
+    expect(failed.errors).toEqual([
+      expect.stringContaining('simulated_atomic_publication_failure'),
+    ]);
+    await expect(readFile(wranglerPath, 'utf-8')).resolves.toBe(original);
+    expect(existsSync(envDir)).toBe(true);
+
+    const retried = await cleanupLocalEnvironmentArtifacts({
+      baseDir,
+      env: 'test',
+      packagesDir: join(baseDir, 'packages'),
+    });
+    expect(retried.errors).toEqual([]);
+    const reflected = await readFile(wranglerPath, 'utf-8');
+    expect(reflected).not.toContain('[env.test]');
+    expect(reflected).toContain('[env.single]');
+    expect(existsSync(envDir)).toBe(false);
+  });
+
+  it('resumes safely when an atomic rename committed before the writer reported failure', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'authrim-cleanup-atomic-ambiguous-'));
+    tempDirs.push(baseDir);
+
+    const envDir = join(baseDir, '.authrim', 'test');
+    const samlDir = join(baseDir, 'packages', 'ar-saml');
+    const wranglerPath = join(samlDir, 'wrangler.toml');
+    await mkdir(envDir, { recursive: true });
+    await mkdir(samlDir, { recursive: true });
+    await writeFile(join(envDir, 'lock.json'), '{"env":"test"}', 'utf-8');
+    await writeFile(
+      wranglerPath,
+      `main = "src/index.ts"
+
+# Environment: test
+[env.test]
+name = "test-ar-saml"
+
+# Environment: single
+[env.single]
+name = "single-ar-saml"
+`,
+      'utf-8'
+    );
+
+    const first = await cleanupLocalEnvironmentArtifacts(
+      {
+        baseDir,
+        env: 'test',
+        packagesDir: join(baseDir, 'packages'),
+      },
+      {
+        writeWranglerFile: async (path, content) => {
+          await writeWranglerFileAtomically(path, content);
+          throw new Error('simulated_post_commit_ack_loss');
+        },
+      }
+    );
+    expect(first.errors).toEqual([expect.stringContaining('simulated_post_commit_ack_loss')]);
+    expect(existsSync(envDir)).toBe(true);
+    await expect(readFile(wranglerPath, 'utf-8')).resolves.not.toContain('[env.test]');
+    await expect(readFile(wranglerPath, 'utf-8')).resolves.toContain('[env.single]');
+
+    const retried = await cleanupLocalEnvironmentArtifacts({
+      baseDir,
+      env: 'test',
+      packagesDir: join(baseDir, 'packages'),
+    });
+    expect(retried.errors).toEqual([]);
+    expect(existsSync(envDir)).toBe(false);
+    await expect(readFile(wranglerPath, 'utf-8')).resolves.toContain('[env.single]');
+  });
+
+  it('removes the external key directory pinned by config instead of the current cwd default', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'authrim-cleanup-pinned-keys-'));
+    const pinnedBaseDir = await mkdtemp(join(tmpdir(), 'authrim-cleanup-pinned-base-'));
+    const unrelatedBaseDir = await mkdtemp(join(tmpdir(), 'authrim-cleanup-unrelated-base-'));
+    tempDirs.push(baseDir, pinnedBaseDir, unrelatedBaseDir);
+
+    const envDir = join(baseDir, '.authrim', 'test');
+    const pinnedKeysDir = join(pinnedBaseDir, '.authrim-keys', 'test');
+    const unrelatedKeysDir = join(unrelatedBaseDir, '.authrim-keys', 'test');
+    await mkdir(envDir, { recursive: true });
+    await mkdir(pinnedKeysDir, { recursive: true });
+    await mkdir(unrelatedKeysDir, { recursive: true });
+    await writeFile(join(pinnedKeysDir, 'private.pem'), 'pinned', 'utf-8');
+    await writeFile(join(unrelatedKeysDir, 'private.pem'), 'unrelated', 'utf-8');
+    await writeFile(
+      join(envDir, 'config.json'),
+      JSON.stringify({
+        keys: {
+          storageType: 'external',
+          secretsPath: `${pinnedKeysDir}/`,
+        },
+      }),
+      'utf-8'
+    );
+
+    const result = await cleanupLocalEnvironmentArtifacts({
+      baseDir,
+      env: 'test',
+      keysBaseDir: unrelatedBaseDir,
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(existsSync(pinnedKeysDir)).toBe(false);
+    expect(existsSync(unrelatedKeysDir)).toBe(true);
+    expect(existsSync(envDir)).toBe(false);
+  });
+
+  it.each(['./keys/', 'keys/'])(
+    'maps the historical external-key placeholder %s to the environment-scoped key bundle',
+    async (secretsPath) => {
+      const baseDir = await mkdtemp(join(tmpdir(), 'authrim-cleanup-placeholder-keys-'));
+      tempDirs.push(baseDir);
+      const envDir = join(baseDir, '.authrim', 'conformance');
+      const selectedKeysDir = join(baseDir, '.authrim-keys', 'conformance');
+      const unrelatedKeysDir = join(baseDir, '.authrim-keys', 'scaleout');
+      await mkdir(envDir, { recursive: true });
+      await mkdir(selectedKeysDir, { recursive: true });
+      await mkdir(unrelatedKeysDir, { recursive: true });
+      await writeFile(
+        join(envDir, 'config.json'),
+        JSON.stringify({ keys: { storageType: 'external', secretsPath } }),
+        'utf-8'
+      );
+      await writeFile(join(selectedKeysDir, 'private.pem'), 'selected', 'utf-8');
+      await writeFile(join(unrelatedKeysDir, 'private.pem'), 'unrelated', 'utf-8');
+
+      const result = await cleanupLocalEnvironmentArtifacts({
+        baseDir,
+        env: 'conformance',
+        keysBaseDir: baseDir,
+      });
+
+      expect(result.errors).toEqual([]);
+      expect(existsSync(envDir)).toBe(false);
+      expect(existsSync(selectedKeysDir)).toBe(false);
+      expect(existsSync(unrelatedKeysDir)).toBe(true);
+    }
+  );
+
+  it('does not remove a same-name external key bundle for an internal-key environment', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'authrim-cleanup-internal-keys-'));
+    tempDirs.push(baseDir);
+
+    const envDir = join(baseDir, '.authrim', 'test');
+    const unrelatedExternalKeysDir = join(baseDir, '.authrim-keys', 'test');
+    await mkdir(envDir, { recursive: true });
+    await mkdir(unrelatedExternalKeysDir, { recursive: true });
+    await writeFile(
+      join(envDir, 'config.json'),
+      `${JSON.stringify({ keys: { storageType: 'internal' } })}\n`,
+      'utf-8'
+    );
+    await writeFile(join(unrelatedExternalKeysDir, 'private.pem'), 'unrelated-secret', 'utf-8');
+
+    const result = await cleanupLocalEnvironmentArtifacts({
+      baseDir,
+      env: 'test',
+      keysBaseDir: baseDir,
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(existsSync(envDir)).toBe(false);
+    expect(existsSync(unrelatedExternalKeysDir)).toBe(true);
+    await expect(readFile(join(unrelatedExternalKeysDir, 'private.pem'), 'utf-8')).resolves.toBe(
+      'unrelated-secret'
+    );
+  });
+
+  it('preserves config when its pinned external key path is invalid', async () => {
+    const baseDir = await mkdtemp(join(tmpdir(), 'authrim-cleanup-invalid-keys-'));
+    tempDirs.push(baseDir);
+    const envDir = join(baseDir, '.authrim', 'test');
+    await mkdir(envDir, { recursive: true });
+    await writeFile(
+      join(envDir, 'config.json'),
+      JSON.stringify({
+        keys: {
+          storageType: 'external',
+          secretsPath: join(baseDir, '.authrim-keys', 'another-environment'),
+        },
+      }),
+      'utf-8'
+    );
+
+    const result = await cleanupLocalEnvironmentArtifacts({ baseDir, env: 'test' });
+
+    expect(result.errors).toEqual([expect.stringContaining('external_keys_config_path_mismatch')]);
+    expect(existsSync(envDir)).toBe(true);
   });
 });
 

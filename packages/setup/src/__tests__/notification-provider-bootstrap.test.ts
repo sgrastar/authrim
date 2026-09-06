@@ -96,6 +96,7 @@ describe('initial notification provider bootstrap', () => {
       executedSql.push(sql);
       return { stdout: '', stderr: '' };
     });
+    const query = reflectedQuery(executedSql);
     const putKv = vi.fn(async () => undefined);
     await expect(
       ensureInitialNotificationProviderConfiguration({
@@ -105,7 +106,7 @@ describe('initial notification provider bootstrap', () => {
         keysDir: '/not-used',
         now: 1_000,
         execute: execute as never,
-        query: reflectedQuery(executedSql) as never,
+        query: query as never,
         putKv,
       })
     ).resolves.toEqual({
@@ -113,12 +114,42 @@ describe('initial notification provider bootstrap', () => {
       namespaces: ['authrim-platform', 'tenant-a'],
     });
     expect(executedSql).toHaveLength(2);
+    expect(
+      execute.mock.calls.every(([databaseIdentifier]) => databaseIdentifier === 'database-a')
+    ).toBe(true);
+    expect(
+      query.mock.calls.every(([databaseIdentifier]) => databaseIdentifier === 'database-a')
+    ).toBe(true);
     expect(executedSql.every((sql) => sql.includes("'disabled'"))).toBe(true);
     expect(putKv).toHaveBeenCalledWith(
       'config-kv-a',
       'settings:tenant:tenant-a:email-settings',
       JSON.stringify({ strategy: 'priority_failover', providerOrder: [] })
     );
+  });
+
+  it('fails closed before mutation when the plugin-runner lock has no immutable ID', async () => {
+    const missingId = lock();
+    delete (missingId.d1.PLUGIN_RUNNER_DB as { id?: string }).id;
+    const execute = vi.fn();
+    const query = vi.fn();
+    const putKv = vi.fn();
+
+    await expect(
+      ensureInitialNotificationProviderConfiguration({
+        environmentId: 'test',
+        config: config('none'),
+        lock: missingId,
+        keysDir: '/not-used',
+        now: 1_000,
+        execute: execute as never,
+        query: query as never,
+        putKv: putKv as never,
+      })
+    ).rejects.toThrow('notification_provider_bootstrap_database_id_missing');
+    expect(execute).not.toHaveBeenCalled();
+    expect(query).not.toHaveBeenCalled();
+    expect(putKv).not.toHaveBeenCalled();
   });
 
   it('encrypts Resend credentials before D1 and KV projection', async () => {

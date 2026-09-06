@@ -500,10 +500,14 @@ export async function registerControlWorkerInventory(input: {
   const plan = buildControlWorkerInventoryRegistrationPlan(input);
   if (input.dryRun) return plan;
   const execute = input.execute ?? executeD1Command;
-  await execute(input.controlDatabaseName, plan.bootstrapSql);
+  await execute(input.controlDatabaseName, plan.bootstrapSql, {
+    onProgress: input.onProgress,
+  });
   for (const worker of plan.workerSql) {
     input.onProgress?.(`Registering desired inventory for ${worker.workerScriptName}`);
-    await execute(input.controlDatabaseName, worker.sql);
+    await execute(input.controlDatabaseName, worker.sql, {
+      onProgress: input.onProgress,
+    });
   }
   return plan;
 }

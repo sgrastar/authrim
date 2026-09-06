@@ -843,7 +843,7 @@ const zhTW: Translations = {
     '此臨時 token 讓 Authrim 能自動建立租戶資料庫。它需要建立和編輯 API token 的權限：帳戶所有的 token 需要 Account API Tokens: Write/Edit，使用者所有的 token 需要 API Tokens: Write/Edit。Setup 會依需要建立 D1、Workers、KV 和 R2 的範圍受限 API token，將其註冊到 Control Worker，然後撤銷臨時 token。',
   'web.deploy.manualDnsSectionTitle': 'DNS 設定',
   'web.deploy.bootstrapTokenCreateStatus':
-    '請在 Cloudflare Dashboard 建立臨時 token，然後在下方輸入。',
+    '請在 Cloudflare Dashboard 將 End Date 設為 {{endDate}}（UTC），建立臨時 token，然後在下方輸入。',
   'web.deploy.bootstrapPopupBlocked': '瀏覽器封鎖了新分頁。請允許彈出視窗後再次選取此按鈕。',
   'web.deploy.bootstrapTokenRequired': '部署前請建立並輸入臨時 Cloudflare token。',
   'web.envDetail.automaticProvisioningTitle': '自動佈建',
@@ -852,7 +852,8 @@ const zhTW: Translations = {
   'web.envDetail.createOneTimeCloudflareToken': '建立一次性 Cloudflare token',
   'web.envDetail.oneTimeBootstrapTokenPlaceholder': '一次性 bootstrap token',
   'web.envDetail.enableAutomaticProvisioning': '啟用',
-  'web.envDetail.enterOneTimeTokenThenEnable': '輸入一次性 token，然後選取「啟用」。',
+  'web.envDetail.enterOneTimeTokenThenEnable':
+    '將 End Date 設為 {{endDate}}（UTC），建立並輸入一次性 token，然後選取「啟用」。',
   'web.envDetail.bootstrapPopupBlocked': '瀏覽器封鎖了 Cloudflare Dashboard 分頁。',
   'web.envDetail.enterOneTimeTokenFirst': '請先輸入一次性 Cloudflare token。',
   'web.envDetail.preparingControlAuthority': '正在準備 Control 佈建權限...',
@@ -865,6 +866,8 @@ const zhTW: Translations = {
   'web.envDetail.automaticProvisioningBlocked': '自動佈建已被封鎖。',
   'web.envDetail.automaticProvisioningMissing': '（缺少：{{missing}}）',
   'web.envDetail.automaticProvisioningRepairHint': '請輸入新的一次性 token 進行修復。',
+  'web.envDetail.bootstrapRetainedForRetry':
+    'Cloudflare 發生暫時性錯誤。Bootstrap token 仍然有效；請重新輸入相同 token 並選擇「啟用」以繼續。',
   'web.envDetail.revokeTokensBeforeRetry':
     '重試前，請在 Cloudflare Dashboard 撤銷列出的 Authrim bootstrap token 與子 token。',
   'web.envDetail.bootstrapRevokedPendingReset': 'Bootstrap token 已撤銷，但無法重設待處理狀態。',

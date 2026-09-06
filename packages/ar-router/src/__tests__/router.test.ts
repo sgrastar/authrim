@@ -869,6 +869,24 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route federation source refreshes to OP_SAML', async () => {
+        const envWithAdminOrigin = {
+          ...mockEnv,
+          ALLOWED_ORIGINS: 'https://admin.example.com',
+        };
+        const req = new Request(
+          'https://example.com/api/admin/saml-federation-sources/source-a/refresh-metadata',
+          {
+            method: 'POST',
+            headers: { Origin: 'https://admin.example.com', 'X-Tenant-Id': 'default' },
+          }
+        );
+        await app.fetch(req, envWithAdminOrigin);
+
+        expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
+      });
+
       it('should return 404 when OP_SAML is not bound', async () => {
         const req = new Request('https://example.com/saml/sp/metadata');
         const env = { ...mockEnv, OP_SAML: undefined };

@@ -323,6 +323,7 @@ describe('generateRoutes', () => {
     expect(managementConfig.triggers).toEqual({
       crons: ['* * * * *', '*/2 * * * *', '*/5 * * * *', '0 */6 * * *'],
     });
+    expect(samlConfig.triggers).toEqual({ crons: ['*/5 * * * *'] });
 
     expect(tokenConfig.durable_objects?.bindings).toEqual(
       expect.arrayContaining([

@@ -313,6 +313,57 @@ class FakeRepository implements ControlRepository {
     return this.allowBudget;
   }
 
+  async markD1CreateIssued(
+    _lease: ProvisioningLease,
+    plan: TenantShardPlan,
+    now: number
+  ): Promise<void> {
+    plan.providerCreateState = 'issued';
+    plan.providerResourceId = null;
+    plan.providerIdentityCheckpointedAt = null;
+    const stored = this.plans.get(plan.operationId);
+    if (stored && stored !== plan) {
+      stored.providerCreateState = 'issued';
+      stored.providerResourceId = null;
+      stored.providerIdentityCheckpointedAt = null;
+    }
+    void now;
+  }
+
+  async markD1CreateDefinitelyRejected(
+    _lease: ProvisioningLease,
+    plan: TenantShardPlan,
+    now: number
+  ): Promise<void> {
+    plan.providerCreateState = 'not_started';
+    plan.providerResourceId = null;
+    plan.providerIdentityCheckpointedAt = null;
+    const stored = this.plans.get(plan.operationId);
+    if (stored && stored !== plan) {
+      stored.providerCreateState = 'not_started';
+      stored.providerResourceId = null;
+      stored.providerIdentityCheckpointedAt = null;
+    }
+    void now;
+  }
+
+  async checkpointD1ProviderIdentity(
+    _lease: ProvisioningLease,
+    plan: TenantShardPlan,
+    databaseId: string,
+    now: number
+  ): Promise<void> {
+    plan.providerCreateState = 'identified';
+    plan.providerResourceId = databaseId;
+    plan.providerIdentityCheckpointedAt = now;
+    const stored = this.plans.get(plan.operationId);
+    if (stored && stored !== plan) {
+      stored.providerCreateState = 'identified';
+      stored.providerResourceId = databaseId;
+      stored.providerIdentityCheckpointedAt = now;
+    }
+  }
+
   async markDatabaseCreated(
     _lease: ProvisioningLease,
     plan: TenantShardPlan
@@ -454,6 +505,7 @@ function controlApi(
   'listD1Databases' | 'getD1Database' | 'createD1Database' | 'updateD1Database'
 > {
   const modes = new Map<string, 'auto' | 'disabled'>();
+  const names = new Map<string, string>();
   return {
     listD1Databases: async () => {
       const databases = await input.listD1Databases();
@@ -461,6 +513,7 @@ function controlApi(
         if (database.uuid && database.read_replication?.mode) {
           modes.set(database.uuid, database.read_replication.mode);
         }
+        if (database.uuid) names.set(database.uuid, database.name);
       }
       return databases;
     },
@@ -469,11 +522,12 @@ function controlApi(
       if (database.uuid && database.read_replication?.mode) {
         modes.set(database.uuid, database.read_replication.mode);
       }
+      if (database.uuid) names.set(database.uuid, database.name);
       return database;
     },
     getD1Database: vi.fn(async (databaseId: string) => ({
       uuid: databaseId,
-      name: 'database',
+      name: names.get(databaseId) ?? 'database',
       read_replication: { mode: modes.get(databaseId) ?? 'disabled' },
     })),
     updateD1Database: vi.fn(
@@ -481,7 +535,7 @@ function controlApi(
         modes.set(databaseId, update.read_replication.mode);
         return {
           uuid: databaseId,
-          name: 'database',
+          name: names.get(databaseId) ?? 'database',
           read_replication: update.read_replication,
         };
       }
@@ -1543,7 +1597,7 @@ describe('ControlService tenant shard provisioning', () => {
     expect(repository.operations.size).toBe(0);
   });
 
-  it('creates once and reuses the deterministic provider database on retry', async () => {
+  it('creates once and reuses the exact provider checkpoint on retry', async () => {
     const repository = new FakeRepository();
     let providerDatabase: { uuid: string; name: string } | undefined;
     const createD1Database = vi.fn(async ({ name }: { name: string }) => {
@@ -1710,9 +1764,10 @@ describe('ControlService tenant shard provisioning', () => {
       })
     );
     let reflectedMode: 'auto' | 'disabled' = 'disabled';
+    let reflectedName = 'database';
     const getD1Database = vi.fn(async (databaseId: string) => ({
       uuid: databaseId,
-      name: 'database',
+      name: reflectedName,
       read_replication: { mode: reflectedMode },
     }));
     const service = new ControlService({
@@ -1721,11 +1776,14 @@ describe('ControlService tenant shard provisioning', () => {
       now: () => NOW,
       createApiClient: () => ({
         listD1Databases: async () => [],
-        createD1Database: async ({ name }) => ({
-          uuid: 'database-1',
-          name,
-          read_replication: { mode: 'disabled' },
-        }),
+        createD1Database: async ({ name }) => {
+          reflectedName = name;
+          return {
+            uuid: 'database-1',
+            name,
+            read_replication: { mode: 'disabled' },
+          };
+        },
         updateD1Database: async (databaseId, update) => {
           reflectedMode = update.read_replication.mode;
           return updateD1Database(databaseId, update);

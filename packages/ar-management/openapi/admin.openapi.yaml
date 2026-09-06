@@ -9612,7 +9612,8 @@ paths:
       summary: Delete a federation trust source.
       description: >-
         Deletes a federation trust source by id. The response is wrapped in the field-mapping
-        mutation `result` envelope.
+        mutation `result` envelope. Returns 409 while the source owns an active metadata refresh
+        lease.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingSuccessResult'
@@ -9646,7 +9647,9 @@ paths:
       summary: Update a federation trust source.
       description: >-
         Updates federation trust source metadata, lifecycle state, protocol payload, anchors, and
-        scope bindings.
+        scope bindings. Only polling mode and interval are operator-controlled; HTTP validators,
+        timestamps, failure counters, and lifecycle observations are reset and maintained by the
+        metadata poller.
       responses:
         '200':
           $ref: '#/components/responses/FieldMappingFederationTrustSourceMutation'
@@ -9671,7 +9674,7 @@ paths:
             type: string
           description: Federation trust source identifier.
       requestBody:
-        $ref: '#/components/requestBodies/FieldMappingFederationTrustSourceUpsert'
+        $ref: '#/components/requestBodies/FieldMappingFederationTrustSourceUpdate'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -32054,7 +32057,33 @@ components:
             displayName: Partner IdP metadata
             lifecycleState: active
             protocolPayload:
-              entityId: 'https://idp.example.com/metadata'
+              metadataUrl: 'https://idp.example.com/metadata'
+              metadataUrlPatterns:
+                - 'https://idp.example.com/metadata'
+              policy: strict
+              polling:
+                mode: automatic
+                intervalSeconds: 21600
+    FieldMappingFederationTrustSourceUpdate:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FieldMappingFederationTrustSourceUpdateRequest'
+          example:
+            expectedUpdatedAt: 1788249600000
+            sourceType: saml_metadata
+            sourceKey: partner-idp
+            displayName: Partner IdP metadata
+            lifecycleState: active
+            protocolPayload:
+              metadataUrl: 'https://idp.example.com/metadata'
+              metadataUrlPatterns:
+                - 'https://idp.example.com/metadata'
+              policy: strict
+              polling:
+                mode: automatic
+                intervalSeconds: 21600
     FieldMappingSetCreate:
       required: true
       content:
@@ -54446,10 +54475,9 @@ components:
         lifecycleState:
           type: string
         protocolPayload:
-          type:
-            - object
-            - 'null'
-          additionalProperties: true
+          anyOf:
+            - $ref: '#/components/schemas/SAMLFederationTrustSourceProtocolPayload'
+            - type: 'null'
         createdAt:
           type: integer
         updatedAt:
@@ -54491,8 +54519,7 @@ components:
             - active
             - retired
         protocolPayload:
-          type: object
-          additionalProperties: true
+          $ref: '#/components/schemas/SAMLFederationTrustSourceProtocolPayload'
         anchors:
           type: array
           items:
@@ -54503,6 +54530,16 @@ components:
           items:
             type: object
             additionalProperties: true
+        expectedUpdatedAt:
+          type: integer
+          minimum: 0
+          description: Required on update; the last observed source revision in Unix milliseconds.
+    FieldMappingFederationTrustSourceUpdateRequest:
+      allOf:
+        - $ref: '#/components/schemas/FieldMappingFederationTrustSourceUpsertRequest'
+        - type: object
+          required:
+            - expectedUpdatedAt
     FieldMappingFederationTrustSourceMutationResponse:
       type: object
       additionalProperties: false
@@ -54511,6 +54548,182 @@ components:
       properties:
         result:
           $ref: '#/components/schemas/FieldMappingFederationTrustSource'
+    SAMLFederationMetadataPollingPolicy:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - intervalSeconds
+      properties:
+        mode:
+          type: string
+          enum:
+            - automatic
+            - manual
+        intervalSeconds:
+          type: integer
+          minimum: 900
+          maximum: 604800
+        nextRefreshAt:
+          type: integer
+          readOnly: true
+        lastAttemptAt:
+          type: integer
+          readOnly: true
+        lastSuccessAt:
+          type: integer
+          readOnly: true
+        consecutiveFailures:
+          type: integer
+          minimum: 0
+          readOnly: true
+        sourceState:
+          type: string
+          enum:
+            - healthy
+            - stale
+            - error
+            - expired
+            - missing
+            - identity_change_pending
+          readOnly: true
+        lastErrorCode:
+          type: string
+          readOnly: true
+        etag:
+          type: string
+          readOnly: true
+        lastModified:
+          type: string
+          readOnly: true
+        validatorSourceUrl:
+          type: string
+          format: uri
+          readOnly: true
+        acceptedValidUntil:
+          type: string
+          format: date-time
+          readOnly: true
+        suspendedByMetadataSync:
+          type: boolean
+          readOnly: true
+          description: True when metadata lifecycle automation disabled the provider.
+    SAMLFederationTrustSourceProtocolPayload:
+      type: object
+      additionalProperties: true
+      properties:
+        description:
+          type:
+            - string
+            - 'null'
+        metadataUrl:
+          type:
+            - string
+            - 'null'
+          format: uri
+        metadataUrlPatterns:
+          type: array
+          items:
+            type: string
+        policy:
+          type: string
+          enum:
+            - strict
+            - warn
+            - disabled
+        polling:
+          $ref: '#/components/schemas/SAMLFederationMetadataPollingPolicy'
+        runtimeResolution:
+          $ref: '#/components/schemas/SAMLFederationRuntimeResolutionPolicy'
+        certificates:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    SAMLFederationRuntimeResolutionPolicy:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+        - roles
+      properties:
+        mode:
+          type: string
+          enum:
+            - inventory_only
+            - automatic
+          description: >-
+            inventory_only stores verified entities without using them for authentication.
+            automatic permits runtime entityID resolution subject to this policy.
+        roles:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - saml_idp
+              - saml_sp
+        priority:
+          type: integer
+          minimum: -1000
+          maximum: 1000
+          default: 0
+        idpFieldMappingSetId:
+          type: string
+          description: Required when automatic resolution includes saml_idp.
+        spFieldMappingSetId:
+          type: string
+          description: Required when automatic resolution includes saml_sp.
+        defaultAttributePresetId:
+          $ref: '#/components/schemas/SAMLBuiltinAttributePresetId'
+        registrationAuthorities:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items:
+            type: string
+        entityCategoryPolicy:
+          $ref: '#/components/schemas/SAMLFederationEntityCategoryPolicy'
+    SAMLFederationEntityCategoryPolicy:
+      type: object
+      additionalProperties: false
+      required:
+        - defaultDecision
+        - rules
+      properties:
+        defaultDecision:
+          type: string
+          enum:
+            - allow
+            - deny
+        rules:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/SAMLFederationEntityCategoryRule'
+    SAMLFederationEntityCategoryRule:
+      type: object
+      additionalProperties: false
+      required:
+        - entityCategory
+        - decision
+      properties:
+        entityCategory:
+          type: string
+        decision:
+          type: string
+          enum:
+            - allow
+            - deny
+        attributePresetId:
+          $ref: '#/components/schemas/SAMLBuiltinAttributePresetId'
+    SAMLBuiltinAttributePresetId:
+      type: string
+      enum:
+        - basic.v1
+        - academic_publisher.v1
+        - enterprise_saas.v1
+        - research_federation.v1
     FieldMappingFederationMetadataDocumentCreateRequest:
       type: object
       additionalProperties: false
@@ -54523,6 +54736,7 @@ components:
           type: string
         documentType:
           type: string
+          description: Document classification. `saml_aggregate_runtime_snapshot` is reserved for Authrim-managed polling snapshots.
         sourceUrl:
           type:
             - string

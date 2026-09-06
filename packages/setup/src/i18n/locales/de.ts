@@ -893,7 +893,7 @@ const de: Translations = {
     'Dieses temporäre Token ermöglicht Authrim, Tenant-Datenbanken automatisch zu erstellen. Es benötigt die Berechtigung zum Erstellen und Bearbeiten von API-Tokens: Account API Tokens: Write/Edit für ein kontobasiertes Token oder API Tokens: Write/Edit für ein benutzerbasiertes Token. Setup erstellt damit bei Bedarf eingeschränkte API-Tokens für D1, Workers, KV und R2, registriert sie beim Control Worker und widerruft anschließend das temporäre Token.',
   'web.deploy.manualDnsSectionTitle': 'DNS-Einstellungen',
   'web.deploy.bootstrapTokenCreateStatus':
-    'Erstellen Sie ein temporäres Token im Cloudflare Dashboard und geben Sie es anschließend unten ein.',
+    'Setzen Sie End Date im Cloudflare Dashboard auf {{endDate}} (UTC), erstellen Sie das temporäre Token und geben Sie es unten ein.',
   'web.deploy.bootstrapPopupBlocked':
     'Der Browser hat den neuen Tab blockiert. Erlauben Sie Pop-ups und wählen Sie die Schaltfläche erneut.',
   'web.deploy.bootstrapTokenRequired':
@@ -905,7 +905,7 @@ const de: Translations = {
   'web.envDetail.oneTimeBootstrapTokenPlaceholder': 'Einmaliges Bootstrap-Token',
   'web.envDetail.enableAutomaticProvisioning': 'Aktivieren',
   'web.envDetail.enterOneTimeTokenThenEnable':
-    'Geben Sie das einmalige Token ein und wählen Sie Aktivieren.',
+    'Setzen Sie End Date auf {{endDate}} (UTC), erstellen und geben Sie das einmalige Token ein und wählen Sie Aktivieren.',
   'web.envDetail.bootstrapPopupBlocked':
     'Der Cloudflare-Dashboard-Tab wurde vom Browser blockiert.',
   'web.envDetail.enterOneTimeTokenFirst': 'Geben Sie zuerst das einmalige Cloudflare-Token ein.',
@@ -921,6 +921,8 @@ const de: Translations = {
   'web.envDetail.automaticProvisioningMissing': '(fehlend: {{missing}})',
   'web.envDetail.automaticProvisioningRepairHint':
     'Geben Sie zur Reparatur ein neues einmaliges Token ein.',
+  'web.envDetail.bootstrapRetainedForRetry':
+    'Cloudflare hat einen vorübergehenden Fehler zurückgegeben. Das Bootstrap-Token bleibt aktiv; geben Sie dasselbe Token erneut ein und wählen Sie Aktivieren, um fortzufahren.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Widerrufen Sie die genannten Authrim-Bootstrap- und Child-Tokens im Cloudflare Dashboard vor dem erneuten Versuch.',
   'web.envDetail.bootstrapRevokedPendingReset':

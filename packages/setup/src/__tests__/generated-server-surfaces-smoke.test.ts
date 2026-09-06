@@ -30,6 +30,18 @@ describe('generated server-surface smoke', () => {
     };
 
     await writeFile(join(envDir, 'config.json'), JSON.stringify(config, null, 2));
+    await writeFile(
+      join(envDir, 'lock.json'),
+      JSON.stringify({
+        version: '1.0.0',
+        env,
+        createdAt: '2026-08-31T00:00:00.000Z',
+        d1: {
+          DB_ADMIN: { id: 'admin-immutable-id', name: `${env}-authrim-admin-db` },
+        },
+        kv: {},
+      })
+    );
 
     const schemas: Array<Record<string, unknown>> = [];
     const routingRules: Array<Record<string, unknown>> = [];

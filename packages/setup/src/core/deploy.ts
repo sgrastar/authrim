@@ -18,7 +18,13 @@ import {
   WORKER_DEPLOYMENT_DEPENDENCIES,
   type WorkerComponent,
 } from './naming.js';
-import type { AuthrimLock, WorkerEntry } from './lock.js';
+import {
+  assertDeployConfigLockProofOwned,
+  loadLockFileAuto,
+  type AuthrimLock,
+  type DeployConfigLockProof,
+  type WorkerEntry,
+} from './lock.js';
 import {
   saveUiEnv,
   copyUiEnvToPackage,
@@ -46,6 +52,18 @@ import {
   hasManagedWorkerDeployGuard,
 } from './managed-worker-deploy.js';
 import { checkWranglerStatus } from './wrangler-sync.js';
+import { writePrivateFileAtomically } from './atomic-file.js';
+import {
+  prepareManagedWorkerScriptOwnership,
+  type WorkerScriptOwnershipGuard,
+} from './worker-script-ownership.js';
+import {
+  assertLocalDeploymentCapacity,
+  isInsufficientLocalDiskSpaceError,
+  MINIMUM_BUILD_FREE_BYTES,
+  MINIMUM_WORKER_DEPLOY_FREE_BYTES,
+  type ReadAvailableDiskBytes,
+} from './local-deployment-capacity.js';
 
 export {
   DEFAULT_SECRET_TARGET_WORKERS,
@@ -274,6 +292,8 @@ export interface DeployOptions {
   sleep?: (delayMs: number) => Promise<void>;
   /** Test hook for deterministic full-jitter retry behavior. */
   random?: () => number;
+  /** Test/embedding hook for deterministic local capacity checks. */
+  readAvailableDiskBytes?: ReadAvailableDiskBytes;
   /** Optional cancellation signal. Gradual rollouts use it to roll traffic back on interruption. */
   signal?: AbortSignal;
   /** Remove retired static bearer secrets after the replacement Worker code is live. */
@@ -295,6 +315,10 @@ export interface DeployOptions {
   beforeWorkerMutations?: () => Promise<void>;
   /** Require the generated .authrim/<env> config to still match the package config at mutation time. */
   requireManagedArtifactVerification?: boolean;
+  /** Opaque runtime proof returned by the currently held workspace deploy-config lock. */
+  deployConfigLockProof?: DeployConfigLockProof;
+  /** Exact immutable Worker script ownership established and durably checkpointed by Setup. */
+  workerScriptOwnership?: WorkerScriptOwnershipGuard;
 }
 
 export interface DeployResult {
@@ -306,6 +330,8 @@ export interface DeployResult {
   version?: string;
   /** Cloudflare Version ID; deliberately separate from the package semver in version. */
   cloudflareVersionId?: string;
+  /** Cloudflare's immutable script identity, read back after the provider mutation. */
+  cloudflareScriptTag?: string;
   /** The new code is live even though a post-traffic step (normally trigger sync) failed. */
   trafficCommitted?: boolean;
   duration?: number;
@@ -321,12 +347,100 @@ export interface DeploymentSummary {
   duration: number;
 }
 
+async function ensureWorkerScriptOwnershipGuard(
+  options: DeployOptions,
+  targets: readonly { component: string; workerName: string }[]
+): Promise<void> {
+  if (options.dryRun || options.workerScriptOwnership) return;
+  const lockState = await loadLockFileAuto(options.rootDir, options.env);
+  if (!lockState.lock || !lockState.path) {
+    throw new Error(`worker_script_ownership_lock_unavailable:${options.env}`);
+  }
+  const prepared = await prepareManagedWorkerScriptOwnership({
+    lock: lockState.lock,
+    lockPath: lockState.path,
+    targets,
+  });
+  options.workerScriptOwnership = prepared.guard;
+}
+
 const LEGACY_STATIC_SECRET_CLEANUP_PLAN: Partial<Record<WorkerComponent, readonly string[]>> = {
   'ar-lib-core': ['KEY_MANAGER_SECRET', 'VERSION_MANAGER_SECRET'],
   'ar-auth': ['ADMIN_API_SECRET', 'KEY_MANAGER_SECRET'],
   'ar-token': ['ADMIN_API_SECRET', 'KEY_MANAGER_SECRET'],
   'ar-management': ['KEY_MANAGER_SECRET', 'VERSION_MANAGER_SECRET'],
 };
+
+interface LatchedDeployConfigLockRequirement {
+  proof: DeployConfigLockProof;
+  rootDir: string;
+  env: string;
+}
+
+// Once a non-dry-run operation is identified as managed, latch the exact capability and scope.
+// Later filesystem deletion or option mutation must not downgrade or swap its ownership proof.
+const DEPLOY_CONFIG_LOCK_REQUIREMENTS = new WeakMap<
+  DeployOptions,
+  LatchedDeployConfigLockRequirement
+>();
+
+function requiresDeployConfigLockProof(options: DeployOptions): boolean {
+  if (DEPLOY_CONFIG_LOCK_REQUIREMENTS.has(options)) return true;
+  if (options.dryRun === true) return false;
+  return (
+    options.deployConfigLockProof !== undefined ||
+    options.requireManagedArtifactVerification === true ||
+    existsSync(join(options.rootDir, '.authrim', options.env))
+  );
+}
+
+async function assertDeployConfigLockProof(options: DeployOptions): Promise<void> {
+  if (!requiresDeployConfigLockProof(options)) return;
+  const latched = DEPLOY_CONFIG_LOCK_REQUIREMENTS.get(options);
+  if (latched) {
+    if (
+      options.deployConfigLockProof !== latched.proof ||
+      resolve(options.rootDir) !== latched.rootDir ||
+      options.env !== latched.env
+    ) {
+      throw new Error(`managed_worker_deploy_config_lock_proof_changed:${latched.env}`);
+    }
+    await assertDeployConfigLockProofOwned(latched.proof, {
+      baseDir: latched.rootDir,
+      env: latched.env,
+    });
+    return;
+  }
+  if (!options.deployConfigLockProof) {
+    throw new Error(`managed_worker_deploy_config_lock_proof_required:${options.env}`);
+  }
+  const requirement = {
+    proof: options.deployConfigLockProof,
+    rootDir: resolve(options.rootDir),
+    env: options.env,
+  };
+  await assertDeployConfigLockProofOwned(requirement.proof, {
+    baseDir: requirement.rootDir,
+    env: requirement.env,
+  });
+  DEPLOY_CONFIG_LOCK_REQUIREMENTS.set(options, requirement);
+}
+
+class DeployConfigLockProofLostAfterMutationError extends Error {
+  constructor(cause: unknown) {
+    super('managed_worker_deploy_config_lock_proof_lost_after_mutation', { cause });
+    this.name = 'DeployConfigLockProofLostAfterMutationError';
+  }
+}
+
+async function assertDeployConfigLockProofAfterMutation(options: DeployOptions): Promise<void> {
+  try {
+    await assertDeployConfigLockProof(options);
+  } catch (error) {
+    if (error instanceof DeployConfigLockProofLostAfterMutationError) throw error;
+    throw new DeployConfigLockProofLostAfterMutationError(error);
+  }
+}
 
 export interface LegacyStaticSecretCleanupFailure {
   component: WorkerComponent;
@@ -427,12 +541,23 @@ async function cleanupLegacyStaticSecretsWithoutLease(
       );
       const existingNames = parseWranglerSecretNames(listed.stdout);
       const namesToDelete = retiredNames.filter((name) => existingNames.has(name));
-      if (namesToDelete.length === 0) {
-        return;
-      }
       const context = await getWorkerDeploymentContext(component, options);
       if (isDeployResult(context)) {
         throw new Error(context.error || 'Failed to resolve Worker deployment context');
+      }
+
+      if (namesToDelete.length === 0) {
+        // A prior secret-bulk response may have been lost after Cloudflare committed it. On the
+        // next operation, held under a fresh exact deploy-config capability, reconcile the current
+        // active version even though there is no remaining secret name to delete.
+        const snapshot = await readWorkerTrafficSnapshot(context, options, throttle);
+        if (snapshot.specs.length !== 1 || !snapshot.specs[0].endsWith('@100%')) {
+          throw new Error(
+            `Legacy secret cleanup reconciliation did not find one active version: ${snapshot.specs.join(', ')}`
+          );
+        }
+        activeVersionIds[component] = snapshot.specs[0].split('@')[0];
+        return;
       }
 
       await runWithAdaptiveRetry(
@@ -490,6 +615,7 @@ export async function cleanupLegacyStaticSecrets(
   options: DeployOptions,
   components: readonly WorkerComponent[]
 ): Promise<LegacyStaticSecretCleanupResult> {
+  await assertDeployConfigLockProof(options);
   if (options.deploymentLeaseSession || options.dryRun || !options.deploymentLease) {
     return cleanupLegacyStaticSecretsWithoutLease(options, components);
   }
@@ -517,8 +643,10 @@ export interface DeploymentCompletionState {
   workerFailedCount: number;
   migrationsSuccess: boolean;
   initialTenantSuccess: boolean;
+  initialNotificationProviderSuccess: boolean;
   initialAdminRolesSuccess: boolean;
   setupMachineAccessSuccess: boolean;
+  setupMachineAccessCleanupSuccess: boolean;
   adminUiBffMachineAccessSuccess: boolean;
   defaultCanonicalCatalogSeedSuccess: boolean;
   runtimeProfileSeedSuccess: boolean;
@@ -529,11 +657,14 @@ export interface BuildOptions {
   rootDir: string;
   components?: WorkerComponent[];
   onProgress?: (message: string) => void;
+  /** Test/embedding hook for deterministic local capacity checks. */
+  readAvailableDiskBytes?: ReadAvailableDiskBytes;
 }
 
 export interface BuildResult {
   success: boolean;
   error?: string;
+  errorCode?: 'insufficient_local_disk_space';
 }
 
 export const DEFAULT_INTER_DEPLOY_DELAY_MS = 0;
@@ -544,8 +675,10 @@ export function hasBlockingDeploymentFailures(state: DeploymentCompletionState):
     state.workerFailedCount > 0 ||
     !state.migrationsSuccess ||
     !state.initialTenantSuccess ||
+    !state.initialNotificationProviderSuccess ||
     !state.initialAdminRolesSuccess ||
     !state.setupMachineAccessSuccess ||
+    !state.setupMachineAccessCleanupSuccess ||
     !state.adminUiBffMachineAccessSuccess ||
     !state.defaultCanonicalCatalogSeedSuccess ||
     !state.runtimeProfileSeedSuccess ||
@@ -610,7 +743,23 @@ export async function buildApiPackages(options: BuildOptions): Promise<BuildResu
       return { success: false, error };
     }
 
-    // Check if node_modules exists
+    // Clear turbo cache to ensure fresh builds
+    onProgress?.('Clearing build cache...');
+    await execa('rm', ['-rf', '.turbo', 'node_modules/.cache'], {
+      cwd: rootDir,
+      reject: false, // Don't fail if directories don't exist
+    });
+
+    onProgress?.('Checking local disk space before package build...');
+    await assertLocalDeploymentCapacity({
+      rootDir,
+      phase: 'package build',
+      minimumFreeBytes: MINIMUM_BUILD_FREE_BYTES,
+      readAvailableBytes: options.readAvailableDiskBytes,
+    });
+
+    // Check if node_modules exists only after the capacity preflight. Dependency installation can
+    // consume substantially more space than a normal incremental build.
     const nodeModulesPath = join(rootDir, 'node_modules');
     if (!existsSync(nodeModulesPath)) {
       onProgress?.('Installing dependencies (node_modules not found)...');
@@ -619,14 +768,14 @@ export async function buildApiPackages(options: BuildOptions): Promise<BuildResu
         stdio: 'pipe',
       });
       onProgress?.('Dependencies installed');
+      onProgress?.('Rechecking local disk space after dependency installation...');
+      await assertLocalDeploymentCapacity({
+        rootDir,
+        phase: 'package build',
+        minimumFreeBytes: MINIMUM_BUILD_FREE_BYTES,
+        readAvailableBytes: options.readAvailableDiskBytes,
+      });
     }
-
-    // Clear turbo cache to ensure fresh builds
-    onProgress?.('Clearing build cache...');
-    await execa('rm', ['-rf', '.turbo', 'node_modules/.cache'], {
-      cwd: rootDir,
-      reject: false, // Don't fail if directories don't exist
-    });
 
     const filters =
       components && components.length > 0
@@ -644,10 +793,24 @@ export async function buildApiPackages(options: BuildOptions): Promise<BuildResu
       stdio: 'pipe',
     });
 
+    onProgress?.('Checking local disk space before Worker deployment...');
+    await assertLocalDeploymentCapacity({
+      rootDir,
+      phase: 'Worker deployment',
+      minimumFreeBytes: MINIMUM_WORKER_DEPLOY_FREE_BYTES,
+      readAvailableBytes: options.readAvailableDiskBytes,
+    });
+
     return { success: true };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
-    return { success: false, error: errorMsg };
+    return {
+      success: false,
+      error: errorMsg,
+      ...(isInsufficientLocalDiskSpaceError(error)
+        ? { errorCode: 'insufficient_local_disk_space' as const }
+        : {}),
+    };
   }
 }
 
@@ -694,6 +857,13 @@ interface TemporarySecretFile {
 }
 
 type RetryKind = 'rate-limit' | 'transient' | 'fatal';
+
+class NonRetryableDeploymentError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NonRetryableDeploymentError';
+  }
+}
 
 const DEPLOYMENT_PRIORITY: readonly WorkerComponent[] = [
   'ar-lib-core',
@@ -889,10 +1059,31 @@ function getErrorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+export function isLocalDiskExhaustionError(error: unknown): boolean {
+  return /\bENOSPC\b|no space left on device|insufficient[ _]local[ _]disk[ _]space/i.test(
+    getErrorText(error)
+  );
+}
+
 function classifyRetry(error: unknown): RetryKind {
+  if (
+    error instanceof NonRetryableDeploymentError ||
+    error instanceof DeployConfigLockProofLostAfterMutationError
+  ) {
+    return 'fatal';
+  }
   const message = getErrorText(error);
   if (/\b429\b|rate[ -]?limit|too many requests/i.test(message)) {
     return 'rate-limit';
+  }
+  // Wrangler OAuth can briefly return Cloudflare code 10000 even though the same session is
+  // accepted moments later. Direct deploys still reconcile remote traffic before replaying, so
+  // classifying this exact authentication response as transient does not permit a blind retry.
+  if (/authentication error\s*\[code:\s*10000\]/i.test(message)) {
+    return 'transient';
+  }
+  if (/worker_version_(?:d1_)?binding_readback_(?:empty|invalid|invalid_json)/u.test(message)) {
+    return 'transient';
   }
   if (
     /\b5\d{2}\b|\b7010\b|\b100146\b|requested Worker version could not be found|service unavailable|internal server error|fetch failed|network error|econnreset|econnrefused|etimedout|enotfound|eai_again|socket hang up|connection reset|timed out|und_err/i.test(
@@ -902,6 +1093,10 @@ function classifyRetry(error: unknown): RetryKind {
     return 'transient';
   }
   return 'fatal';
+}
+
+function isProvenPreMutationDeploymentFailure(error: unknown): boolean {
+  return /authentication error\s*\[code:\s*10000\]/i.test(getErrorText(error));
 }
 
 function getRetryAfterMs(error: unknown): number | undefined {
@@ -1043,6 +1238,7 @@ async function runManagedWranglerBuild<T>(
   wranglerCommand: 'deploy' | 'versions upload',
   operation: (managedEnv: Readonly<Record<string, string>>) => Promise<T>
 ): Promise<T> {
+  await assertDeployConfigLockProof(options);
   const managedEnvironmentExists = existsSync(
     join(options.rootDir, '.authrim', options.env, 'config.json')
   );
@@ -1066,11 +1262,16 @@ async function runManagedWranglerBuild<T>(
     configFile: options.configFile,
   });
   if (!ticket) {
-    return operation({});
+    await assertDeployConfigLockProof(options);
+    const result = await operation({});
+    await assertDeployConfigLockProofAfterMutation(options);
+    return result;
   }
 
   try {
+    await assertDeployConfigLockProof(options);
     const result = await operation(ticket.env);
+    await assertDeployConfigLockProofAfterMutation(options);
     await ticket.assertConsumed();
     return result;
   } finally {
@@ -1088,9 +1289,12 @@ function parseWranglerVersionD1Bindings(output: unknown): Record<string, string>
   if (typeof output !== 'string' || output.trim().length === 0) {
     throw new Error('worker_version_binding_readback_empty');
   }
-  const parsed = JSON.parse(output) as {
-    resources?: { bindings?: WranglerVersionBinding[] };
-  };
+  let parsed: { resources?: { bindings?: WranglerVersionBinding[] } };
+  try {
+    parsed = JSON.parse(output) as typeof parsed;
+  } catch {
+    throw new Error('worker_version_binding_readback_invalid_json');
+  }
   if (!Array.isArray(parsed.resources?.bindings)) {
     throw new Error('worker_version_binding_readback_invalid');
   }
@@ -1133,12 +1337,12 @@ async function verifyUploadedWorkerD1Bindings(
     'utf8'
   );
   const expected = parseWranglerToml(configContent, options.env).d1;
-  const commandResult = await runWithAdaptiveRetry(
+  const actual = await runWithAdaptiveRetry(
     `Verifying D1 bindings for ${context.workerName} version`,
     options,
     throttle,
-    () =>
-      execa(
+    async () => {
+      const commandResult = await execa(
         'pnpm',
         [
           'exec',
@@ -1155,11 +1359,17 @@ async function verifyUploadedWorkerD1Bindings(
           cwd: context.packageDir,
           reject: true,
           cancelSignal: options.signal,
-          env: { WRANGLER_LOG: 'warn' },
+          // Wrangler emits `versions view --json` through its `logRaw` channel. `warn`
+          // suppresses that channel and makes a successful readback look like empty stdout.
+          env: { WRANGLER_LOG: 'log' },
         }
-      )
+      );
+      // A successful Wrangler process can still yield a temporarily empty or incomplete JSON
+      // readback. Parse inside the bounded retry so only transport/readback failures retry;
+      // the actual binding contract mismatch below remains immediately fatal.
+      return parseWranglerVersionD1Bindings(commandResult.stdout);
+    }
   );
-  const actual = parseWranglerVersionD1Bindings(commandResult.stdout);
   const mismatch = describeD1BindingMismatch(expected, actual);
   if (mismatch) {
     throw new Error(`worker_version_d1_binding_mismatch:${mismatch}`);
@@ -1252,8 +1462,10 @@ async function deployWorkerDirect(
   let secretFile: TemporarySecretFile | undefined;
   let outputDirectory: string | undefined;
   let deployedVersionId: string | undefined;
+  let cloudflareScriptTag: string | undefined;
   let deploymentMayBeLive = false;
   try {
+    await options.workerScriptOwnership?.assertBeforeMutation(context.workerName);
     secretFile = await createTemporarySecretFile(
       getSecretsForWorker(context.component, options.secrets)
     );
@@ -1262,47 +1474,103 @@ async function deployWorkerDirect(
       `Deploying ${context.workerName}`,
       options,
       throttle,
-      async () =>
-        runAuthorizedWorkerMutation(context, options, throttle, () =>
-          runManagedWranglerBuild(context, options, 'deploy', async (managedEnv) => {
-            const result = await execa(
-              'pnpm',
-              [
-                'exec',
-                'wrangler',
-                'deploy',
-                ...WORKER_BUNDLE_UPLOAD_ARGS,
-                ...getConfigArgs(options),
-                '--env',
-                options.env,
-                ...getVarArgs(context.component, options),
-                ...(secretFile ? ['--secrets-file', secretFile.path] : []),
-              ],
-              {
-                cwd: context.packageDir,
-                reject: true,
-                cancelSignal: options.signal,
-                env: {
-                  ...managedEnv,
-                  WRANGLER_OUTPUT_FILE_DIRECTORY: outputDirectory,
-                },
+      async () => {
+        let commandError: unknown;
+        try {
+          const result = await runAuthorizedWorkerMutation(context, options, throttle, () =>
+            runManagedWranglerBuild(context, options, 'deploy', async (managedEnv) => {
+              try {
+                const deployed = await execa(
+                  'pnpm',
+                  [
+                    'exec',
+                    'wrangler',
+                    'deploy',
+                    ...WORKER_BUNDLE_UPLOAD_ARGS,
+                    ...getConfigArgs(options),
+                    '--env',
+                    options.env,
+                    ...getVarArgs(context.component, options),
+                    ...(secretFile ? ['--secrets-file', secretFile.path] : []),
+                  ],
+                  {
+                    cwd: context.packageDir,
+                    reject: true,
+                    cancelSignal: options.signal,
+                    env: {
+                      ...managedEnv,
+                      WRANGLER_OUTPUT_FILE_DIRECTORY: outputDirectory,
+                    },
+                  }
+                );
+                // Wrangler deploy is atomic: once the command returns, its version may already
+                // be serving traffic even if capability-consumption verification fails next.
+                deploymentMayBeLive = true;
+                return deployed;
+              } catch (error) {
+                commandError = error;
+                throw error;
               }
+            })
+          );
+          return {
+            stdout: String(result.stdout),
+            adoptedVersionId: undefined as string | undefined,
+          };
+        } catch (error) {
+          // An authorization/fencing/ticket error is not evidence that the provider mutation was
+          // rejected. Never let the generic transient classifier replay a direct deployment here.
+          if (commandError !== error) {
+            if (commandError === undefined && !deploymentMayBeLive) {
+              // Configuration, authorization, or build preparation failed before Wrangler began
+              // the provider mutation. Preserve its exact error and normal retry classification.
+              throw error;
+            }
+            throw new NonRetryableDeploymentError(
+              `Direct deployment state became unverifiable for ${context.workerName}`
             );
-            // Wrangler deploy is atomic: once the command returns, its version may already
-            // be serving traffic even if capability-consumption verification fails next.
+          }
+
+          const structuredVersionId = await readVersionIdFromStructuredOutput(outputDirectory!, '');
+          if (structuredVersionId) {
             deploymentMayBeLive = true;
-            return result;
-          })
-        )
+            options.onProgress?.(
+              `  ✓ Adopted committed ${context.workerName} deployment ${structuredVersionId} after response loss`
+            );
+            return { stdout: '', adoptedVersionId: structuredVersionId };
+          }
+
+          // An explicit authentication rejection is evidence that Cloudflare did not begin the
+          // Worker mutation. It is safe to replay after the bounded OAuth backoff above. A 5xx,
+          // timeout, or connection loss is not: deployment visibility can lag, so an immediate
+          // unchanged readback cannot prove that a deploy (especially a DO migration) did not
+          // commit. Those ambiguous outcomes fail closed and resume only after operator readback.
+          if (isProvenPreMutationDeploymentFailure(error)) {
+            throw error;
+          }
+          if (classifyRetry(error) === 'fatal') {
+            throw error;
+          }
+          throw new NonRetryableDeploymentError(
+            `Direct deployment outcome is ambiguous for ${context.workerName}`
+          );
+        }
+      }
     );
-    deployedVersionId = await readVersionIdFromStructuredOutput(
-      outputDirectory,
-      commandResult.stdout
+    deployedVersionId =
+      commandResult.adoptedVersionId ??
+      (await readVersionIdFromStructuredOutput(outputDirectory, commandResult.stdout));
+    if (!deployedVersionId) {
+      throw new Error('Wrangler did not report the deployed Cloudflare Version ID');
+    }
+    await options.workerScriptOwnership?.checkpointCommittedVersion(
+      context.workerName,
+      deployedVersionId
+    );
+    cloudflareScriptTag = await options.workerScriptOwnership?.captureAfterMutation(
+      context.workerName
     );
     if (await hasManagedWorkerDeployGuard(context.packageDir, options.configFile)) {
-      if (!deployedVersionId) {
-        throw new Error('managed_worker_deploy_version_id_missing');
-      }
       await verifyUploadedWorkerD1Bindings(context, deployedVersionId, options, throttle);
     }
     options.onProgress?.(`  ✓ ${context.workerName} deployed successfully`);
@@ -1313,13 +1581,18 @@ async function deployWorkerDirect(
       deployedAt: new Date().toISOString(),
       version: context.packageVersion,
       cloudflareVersionId: deployedVersionId,
+      cloudflareScriptTag,
       duration: Date.now() - context.startedAt,
     };
   } catch (error) {
     return {
       ...deploymentFailure(context, error),
       ...(deploymentMayBeLive
-        ? { trafficCommitted: true, cloudflareVersionId: deployedVersionId }
+        ? {
+            trafficCommitted: true,
+            cloudflareVersionId: deployedVersionId,
+            cloudflareScriptTag,
+          }
         : {}),
     };
   } finally {
@@ -1374,6 +1647,7 @@ async function uploadWorkerVersion(
   let secretFile: TemporarySecretFile | undefined;
   let outputDirectory: string | undefined;
   try {
+    await options.workerScriptOwnership?.assertBeforeMutation(context.workerName);
     secretFile = await createTemporarySecretFile(
       getSecretsForWorker(context.component, options.secrets)
     );
@@ -1419,6 +1693,10 @@ async function uploadWorkerVersion(
     if (!versionId) {
       throw new Error('Wrangler did not report the uploaded Cloudflare Version ID');
     }
+    await options.workerScriptOwnership?.checkpointCommittedVersion(context.workerName, versionId);
+    const cloudflareScriptTag = await options.workerScriptOwnership?.captureAfterMutation(
+      context.workerName
+    );
     await verifyUploadedWorkerD1Bindings(context, versionId, options, throttle);
     options.onProgress?.(`  ✓ ${context.workerName} version uploaded`);
     return {
@@ -1427,6 +1705,7 @@ async function uploadWorkerVersion(
       success: true,
       version: context.packageVersion,
       cloudflareVersionId: versionId,
+      cloudflareScriptTag,
       duration: Date.now() - context.startedAt,
     };
   } catch (error) {
@@ -1490,6 +1769,8 @@ async function deployWorkerTraffic(
   throttle: DeploymentThrottle,
   label = `Promoting ${context.workerName} version`
 ): Promise<DeployResult> {
+  let trafficCommitted = false;
+  const promotedVersionId = trafficSpecs.length === 1 ? trafficSpecs[0].split('@')[0] : undefined;
   try {
     await runWithAdaptiveRetry(label, options, throttle, () =>
       runAuthorizedWorkerMutation(context, options, throttle, () =>
@@ -1510,6 +1791,16 @@ async function deployWorkerTraffic(
         )
       )
     );
+    trafficCommitted = true;
+    if (promotedVersionId) {
+      await options.workerScriptOwnership?.checkpointCommittedVersion(
+        context.workerName,
+        promotedVersionId
+      );
+    }
+    const cloudflareScriptTag = await options.workerScriptOwnership?.captureAfterMutation(
+      context.workerName
+    );
     options.onProgress?.(`  ✓ ${context.workerName} traffic updated successfully`);
     return {
       component: context.component,
@@ -1517,11 +1808,21 @@ async function deployWorkerTraffic(
       success: true,
       deployedAt: new Date().toISOString(),
       version: context.packageVersion,
-      cloudflareVersionId: trafficSpecs.length === 1 ? trafficSpecs[0].split('@')[0] : undefined,
+      cloudflareVersionId: promotedVersionId,
+      cloudflareScriptTag,
       duration: Date.now() - context.startedAt,
     };
   } catch (error) {
-    return deploymentFailure(context, error);
+    return {
+      ...deploymentFailure(context, error),
+      ...(trafficCommitted || error instanceof DeployConfigLockProofLostAfterMutationError
+        ? {
+            trafficCommitted: true,
+            deployedAt: new Date().toISOString(),
+            cloudflareVersionId: promotedVersionId,
+          }
+        : {}),
+    };
   }
 }
 
@@ -1694,15 +1995,12 @@ async function runDependencyScheduler(
   >();
   const results = new Map<WorkerComponent, DeployResult>();
   let halted = false;
+  let haltReason = 'Skipped because another staged promotion failed';
 
   while (pending.size > 0 || active.size > 0) {
     if (halted) {
       for (const component of pending) {
-        const result = makeSkippedResult(
-          component,
-          options,
-          'Skipped because another staged promotion failed'
-        );
+        const result = makeSkippedResult(component, options, haltReason);
         results.set(component, result);
         options.onError?.(component, new Error(result.error));
       }
@@ -1770,7 +2068,11 @@ async function runDependencyScheduler(
     results.set(settled.component, settled.result);
     if (!settled.result.success) {
       options.onError?.(settled.component, new Error(settled.result.error));
-      if (schedulerOptions.stopOnFailure) {
+      if (isLocalDiskExhaustionError(settled.result.error)) {
+        halted = true;
+        haltReason =
+          'Skipped because Worker deployment stopped after local disk space was exhausted';
+      } else if (schedulerOptions.stopOnFailure) {
         halted = true;
       }
     }
@@ -1785,8 +2087,28 @@ async function runSingleWorkerWithDeploymentLease<T>(
   succeeded: (result: T) => boolean
 ): Promise<T> {
   const existingSession = options.deploymentLeaseSession;
-  if (existingSession || options.dryRun) return operation();
+  if (options.dryRun) return operation();
+  if (!existingSession) {
+    options.onProgress?.('Checking local disk space before Worker deployment...');
+    await assertLocalDeploymentCapacity({
+      rootDir: options.rootDir,
+      phase: 'Worker deployment',
+      minimumFreeBytes: MINIMUM_WORKER_DEPLOY_FREE_BYTES,
+      readAvailableBytes: options.readAvailableDiskBytes,
+    });
+  }
+  await assertDeployConfigLockProof(options);
+  if (existingSession) {
+    if (!options.workerScriptOwnership) {
+      throw new Error(`worker_script_ownership_guard_missing:${component}`);
+    }
+    return operation();
+  }
   await options.beforeWorkerMutations?.();
+  await assertDeployConfigLockProof(options);
+  await ensureWorkerScriptOwnershipGuard(options, [
+    { component, workerName: getWorkerName(options.env, component) },
+  ]);
   if (!options.deploymentLease) {
     return operation();
   }
@@ -1860,6 +2182,10 @@ export async function deployWorker(
   component: WorkerComponent,
   options: DeployOptions
 ): Promise<DeployResult> {
+  // Input validation is read-only and should remain observable even when no ownership lock exists.
+  if (!isValidEnv(options.env)) {
+    return deployWorkerWithoutLease(component, options);
+  }
   return runSingleWorkerWithDeploymentLease(
     component,
     options,
@@ -2184,18 +2510,39 @@ async function runAuthorizedWorkerMutation<T>(
   let result: T | undefined;
   let mutationError: unknown;
   try {
+    // Revalidate the exact lock inode/token immediately before every provider mutation. The
+    // capability is not caller-constructible and fails after release or cross-env reuse.
+    await assertDeployConfigLockProof(options);
+    // A Worker name is mutable account namespace, not ownership proof. Re-read the immutable
+    // Cloudflare script tag at the last possible point before every provider mutation.
+    await options.workerScriptOwnership?.assertBeforeMutation(context.workerName);
     result = await mutation();
+    await assertDeployConfigLockProofAfterMutation(options);
   } catch (error) {
     mutationError = error;
   }
   if (timer) clearInterval(timer);
   await renewal;
+  let currentLeaseError: unknown;
+  if (held) {
+    try {
+      await coordinator!.assertCurrent(held.lease);
+    } catch (error) {
+      currentLeaseError = error;
+    }
+  }
+  // Preserve a post-mutation capability failure even when lease readback also fails. Otherwise a
+  // transient lease error could mask committed traffic and let the adaptive retry replay it.
+  if (mutationError) {
+    throw mutationError instanceof Error ? mutationError : new Error(getErrorText(mutationError));
+  }
   if (renewalError) {
     throw renewalError instanceof Error ? renewalError : new Error(getErrorText(renewalError));
   }
-  if (held) await coordinator!.assertCurrent(held.lease);
-  if (mutationError) {
-    throw mutationError instanceof Error ? mutationError : new Error(getErrorText(mutationError));
+  if (currentLeaseError) {
+    throw currentLeaseError instanceof Error
+      ? currentLeaseError
+      : new Error(getErrorText(currentLeaseError));
   }
   return result as T;
 }
@@ -2314,6 +2661,14 @@ async function deployWorkerGraduallyWithoutLease(
         `Rolling out ${context.workerName} at ${stage}%`
       );
       if (!trafficResult.success) {
+        if (trafficResult.trafficCommitted) {
+          return {
+            ...trafficResult,
+            cloudflareVersionId: newVersionId,
+            trafficCommitted: true,
+            error: `${trafficResult.error || `Traffic update failed at ${stage}%`}; rollback skipped because the deploy-config lock was lost after the provider mutation`,
+          };
+        }
         throw new Error(trafficResult.error || `Traffic update failed at ${stage}%`);
       }
       options.onProgress?.(`  ✓ ${context.workerName}: ${stage}% traffic on new version`);
@@ -2429,6 +2784,15 @@ export async function deployAll(
   const startTime = Date.now();
   const components = resolvePlannedComponents(enabledComponents, options.existingComponents);
   const existingComponents = new Set(options.existingComponents ?? []);
+  if (!options.dryRun && components.length > 0) {
+    options.onProgress?.('Checking local disk space before Worker deployment...');
+    await assertLocalDeploymentCapacity({
+      rootDir: options.rootDir,
+      phase: 'Worker deployment',
+      minimumFreeBytes: MINIMUM_WORKER_DEPLOY_FREE_BYTES,
+      readAvailableBytes: options.readAvailableDiskBytes,
+    });
+  }
   if (
     !options.dryRun &&
     components.includes('ar-control') &&
@@ -2457,7 +2821,16 @@ export async function deployAll(
   );
 
   if (!options.dryRun) {
+    await assertDeployConfigLockProof(options);
     await options.beforeWorkerMutations?.();
+    await assertDeployConfigLockProof(options);
+    await ensureWorkerScriptOwnershipGuard(
+      options,
+      components.map((component) => ({
+        component,
+        workerName: getWorkerName(options.env, component),
+      }))
+    );
   }
 
   const contexts = new Map<WorkerComponent, WorkerDeploymentContext>();
@@ -2629,55 +3002,72 @@ export async function deployAll(
             (component) => resultMap.get(component)?.success === false
           );
           if (trafficFailure) {
-            const recoveryOptions: DeployOptions = {
-              ...options,
-              signal: undefined,
-              concurrency: 1,
-            };
-            const recoveryThrottle = makeThrottle(recoveryOptions);
-            const rollbackFailures = new Map<WorkerComponent, string>();
-            for (const component of [...attemptedVersionPromotions].reverse()) {
-              const snapshot = commitPreflight.get(component)?.snapshot;
-              if (!snapshot) {
-                continue;
+            const failedTrafficResult = resultMap.get(trafficFailure)!;
+            if (failedTrafficResult.trafficCommitted) {
+              // The exact workspace capability was lost after Cloudflare accepted a promotion.
+              // Its outcome is committed/ambiguous and the same invalid capability must never be
+              // used to issue rollback mutations. Preserve evidence for every promotion that may
+              // already be serving so resume can reconcile from provider state.
+              for (const component of attemptedVersionPromotions) {
+                const previous = resultMap.get(component)!;
+                resultMap.set(component, {
+                  ...previous,
+                  success: false,
+                  trafficCommitted: previous.success || previous.trafficCommitted === true,
+                  error: `${previous.error ? `${previous.error}; ` : ''}rollback skipped because the deploy-config lock was lost after a provider mutation in ${trafficFailure}`,
+                });
               }
-              const newVersionId = prepared.get(component)!.cloudflareVersionId!;
-              try {
-                await assertWorkerTrafficOwnedForRollback(
+            } else {
+              const recoveryOptions: DeployOptions = {
+                ...options,
+                signal: undefined,
+                concurrency: 1,
+              };
+              const recoveryThrottle = makeThrottle(recoveryOptions);
+              const rollbackFailures = new Map<WorkerComponent, string>();
+              for (const component of [...attemptedVersionPromotions].reverse()) {
+                const snapshot = commitPreflight.get(component)?.snapshot;
+                if (!snapshot) {
+                  continue;
+                }
+                const newVersionId = prepared.get(component)!.cloudflareVersionId!;
+                try {
+                  await assertWorkerTrafficOwnedForRollback(
+                    contexts.get(component)!,
+                    snapshot,
+                    newVersionId,
+                    recoveryOptions,
+                    recoveryThrottle
+                  );
+                } catch (error) {
+                  rollbackFailures.set(component, getErrorText(error));
+                  continue;
+                }
+                const rollback = await deployWorkerTraffic(
                   contexts.get(component)!,
-                  snapshot,
-                  newVersionId,
+                  snapshot.specs,
                   recoveryOptions,
-                  recoveryThrottle
+                  recoveryThrottle,
+                  `Rolling back ${getWorkerName(options.env, component)}`
                 );
-              } catch (error) {
-                rollbackFailures.set(component, getErrorText(error));
-                continue;
+                if (!rollback.success) {
+                  rollbackFailures.set(component, rollback.error || 'unknown rollback error');
+                }
               }
-              const rollback = await deployWorkerTraffic(
-                contexts.get(component)!,
-                snapshot.specs,
-                recoveryOptions,
-                recoveryThrottle,
-                `Rolling back ${getWorkerName(options.env, component)}`
-              );
-              if (!rollback.success) {
-                rollbackFailures.set(component, rollback.error || 'unknown rollback error');
-              }
-            }
 
-            for (const component of attemptedVersionPromotions) {
-              const previous = resultMap.get(component)!;
-              const rollbackError = rollbackFailures.get(component);
-              resultMap.set(component, {
-                ...previous,
-                success: false,
-                deployedAt: undefined,
-                trafficCommitted: false,
-                error: rollbackError
-                  ? `${previous.error || `Staged deployment failed in ${trafficFailure}`}; rollback failed: ${rollbackError}`
-                  : `${previous.error ? `${previous.error}; ` : ''}Rolled back because staged deployment failed in ${trafficFailure}`,
-              });
+              for (const component of attemptedVersionPromotions) {
+                const previous = resultMap.get(component)!;
+                const rollbackError = rollbackFailures.get(component);
+                resultMap.set(component, {
+                  ...previous,
+                  success: false,
+                  deployedAt: rollbackError ? previous.deployedAt : undefined,
+                  trafficCommitted: rollbackError ? true : false,
+                  error: rollbackError
+                    ? `${previous.error || `Staged deployment failed in ${trafficFailure}`}; rollback failed: ${rollbackError}`
+                    : `${previous.error ? `${previous.error}; ` : ''}Rolled back because staged deployment failed in ${trafficFailure}`,
+                });
+              }
             }
           } else {
             // All version traffic is now committed. Synchronize non-versioned
@@ -2977,21 +3367,30 @@ export async function deployAll(
  */
 export function updateLockWithDeployments(lock: AuthrimLock, results: DeployResult[]): AuthrimLock {
   const workers: Record<string, WorkerEntry> = { ...lock.workers };
+  const workerScriptOwnership = { ...lock.workerScriptOwnership };
 
   for (const result of results) {
-    if ((result.success || result.trafficCommitted) && result.deployedAt) {
-      workers[result.component] = {
-        name: result.workerName,
-        deployedAt: result.deployedAt,
-        version: result.version,
-        ...(result.cloudflareVersionId ? { cloudflareVersionId: result.cloudflareVersionId } : {}),
-      };
+    // A post-traffic trigger/cleanup failure remains an incomplete deployment. Do not advance its
+    // recorded product version, otherwise a resume can skip the reconciliation that failed.
+    if (!result.success) continue;
+    if (!result.deployedAt || !result.cloudflareVersionId || !result.cloudflareScriptTag) {
+      throw new Error(`worker_deployment_exact_version_unavailable:${result.component}`);
     }
+    workers[result.component] = {
+      name: result.workerName,
+      deployedAt: result.deployedAt,
+      version: result.version,
+      cloudflareVersionId: result.cloudflareVersionId,
+      cloudflareScriptTag: result.cloudflareScriptTag,
+    };
+    delete workerScriptOwnership[result.component];
   }
 
   return {
     ...lock,
     workers,
+    workerScriptOwnership:
+      Object.keys(workerScriptOwnership).length > 0 ? workerScriptOwnership : undefined,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -3122,6 +3521,7 @@ export async function uploadSecrets(
   options: DeployOptions,
   workers?: WorkerComponent[]
 ): Promise<{ success: boolean; errors: string[] }> {
+  await assertDeployConfigLockProof(options);
   const components = getSecretTargetWorkers(workers);
   if (options.deploymentLeaseSession || options.dryRun || !options.deploymentLease) {
     return uploadSecretsWithoutLease(secrets, options, workers);
@@ -3266,6 +3666,7 @@ export interface UiWorkerDeployResult {
   error?: string;
   deployedAt?: string;
   cloudflareVersionId?: string;
+  cloudflareScriptTag?: string;
   trafficCommitted?: boolean;
   duration?: number;
 }
@@ -3405,12 +3806,28 @@ export async function deployUiWorkerComponent(
   // Track if we copied ui.env so we know to clean up
   let copiedUiEnv = false;
   let wrotePackageEnv = false;
+  let uiTrafficCommitted = false;
+  let uiCommittedVersionId: string | undefined;
 
   try {
+    await assertDeployConfigLockProof(options);
+    if (!dryRun) {
+      onProgress?.('Checking local disk space before UI Worker deployment...');
+      await assertLocalDeploymentCapacity({
+        rootDir,
+        phase: skipBuild ? 'Worker deployment' : 'package build',
+        minimumFreeBytes: skipBuild ? MINIMUM_WORKER_DEPLOY_FREE_BYTES : MINIMUM_BUILD_FREE_BYTES,
+        readAvailableBytes: options.readAvailableDiskBytes,
+      });
+    }
     // Build the UI first
     onProgress?.(`Building ${component}...`);
 
     if (!dryRun) {
+      // A killed earlier build can leave another environment's package-level .env behind.
+      // Remove it before preparing this build; every supported source is republished below.
+      await assertDeployConfigLockProof(options);
+      await cleanupPackageEnv(uiDir);
       const generatedUiEnv = uiEnvConfig;
       const runtimeSecretValue = serviceBindingName
         ? DISABLED_API_BACKEND_URL
@@ -3430,7 +3847,8 @@ export async function deployUiWorkerComponent(
           API_BACKEND_URL: runtimeSecretValue,
         },
       });
-      await writeFile(join(uiDir, 'wrangler.toml'), wranglerContent, 'utf-8');
+      await assertDeployConfigLockProof(options);
+      await writePrivateFileAtomically(join(uiDir, 'wrangler.toml'), wranglerContent, 0o644);
       if (serviceBindingName) {
         onProgress?.(`  Generated wrangler.toml with Service Binding: ${serviceBindingName}`);
       } else {
@@ -3439,27 +3857,19 @@ export async function deployUiWorkerComponent(
 
       // Prefer a component-specific env generated from config at deploy time.
       if (uiEnvConfig) {
-        try {
-          await saveUiEnv(join(uiDir, '.env'), uiEnvConfig);
-          wrotePackageEnv = true;
-          onProgress?.(`  Using generated env for ${component}`);
-        } catch (writeError) {
-          onProgress?.(`  ⚠️  Warning: Could not write generated env: ${writeError}`);
-          onProgress?.(`  Falling back to file/environment variable approach`);
-        }
+        await assertDeployConfigLockProof(options);
+        await saveUiEnv(join(uiDir, '.env'), uiEnvConfig);
+        wrotePackageEnv = true;
+        onProgress?.(`  Using generated env for ${component}`);
       }
 
       // Copy ui.env to package's .env for Vite to read during build
       // Priority: generated config > uiEnvPath (file) > apiBaseUrl (legacy env var approach)
       if (!wrotePackageEnv && uiEnvPath && (await uiEnvExists(uiEnvPath))) {
-        try {
-          await copyUiEnvToPackage(uiEnvPath, uiDir);
-          copiedUiEnv = true;
-          onProgress?.(`  Using env from: ${uiEnvPath}`);
-        } catch (copyError) {
-          onProgress?.(`  ⚠️  Warning: Could not copy ui.env: ${copyError}`);
-          onProgress?.(`  Falling back to environment variable approach`);
-        }
+        await assertDeployConfigLockProof(options);
+        await copyUiEnvToPackage(uiEnvPath, uiDir);
+        copiedUiEnv = true;
+        onProgress?.(`  Using env from: ${uiEnvPath}`);
       } else if (uiEnvPath) {
         // ui.env path specified but file doesn't exist
         onProgress?.(`  ⚠️  ui.env not found at: ${uiEnvPath}`);
@@ -3483,6 +3893,7 @@ export async function deployUiWorkerComponent(
         if (skipBuild) {
           onProgress?.(`  Skipping ${component} build; using existing output`);
         } else {
+          await assertDeployConfigLockProof(options);
           await execa('pnpm', ['run', 'build'], {
             cwd: uiDir,
             // Strip conflicting PUBLIC_* vars when a generated/copied .env exists.
@@ -3493,10 +3904,12 @@ export async function deployUiWorkerComponent(
       } finally {
         // Always clean up .env after build (success or failure)
         if (copiedUiEnv || wrotePackageEnv) {
+          await assertDeployConfigLockProof(options);
           await cleanupPackageEnv(uiDir);
         }
       }
 
+      await assertDeployConfigLockProof(options);
       // Browser source maps are intentionally disabled. Fail closed if stale or
       // misconfigured build output would publish source through Static Assets.
       assertNoPublicUiSourceMaps(uiDir);
@@ -3520,6 +3933,7 @@ export async function deployUiWorkerComponent(
     }
 
     const uiWorkerName = projectName || `${env}-${component}`;
+    await ensureWorkerScriptOwnershipGuard(options, [{ component, workerName: uiWorkerName }]);
 
     let uiSecretFile: TemporarySecretFile | undefined;
     let outputDirectory: string | undefined;
@@ -3532,6 +3946,7 @@ export async function deployUiWorkerComponent(
     const throttle = makeThrottle(uiDeployOptions);
 
     try {
+      await uiDeployOptions.workerScriptOwnership?.assertBeforeMutation(uiWorkerName);
       uiSecretFile =
         component === 'ar-admin-ui' && adminUiBffSecrets
           ? await createTemporarySecretFile({ ...adminUiBffSecrets })
@@ -3541,46 +3956,118 @@ export async function deployUiWorkerComponent(
         (await cloudflareWorkerHasActiveDeployment(uiWorkerName, uiDir, uiDeployOptions, throttle));
 
       if (!knownExisting) {
-        await runWithAdaptiveRetry(
+        outputDirectory = await mkdtemp(join(tmpdir(), 'authrim-ui-wrangler-output-'));
+        const directResult = await runWithAdaptiveRetry(
           `Deploying UI Worker ${uiWorkerName}`,
           uiDeployOptions,
           throttle,
           async () => {
-            const result = await execa(
-              'pnpm',
-              [
-                'exec',
-                'wrangler',
-                'deploy',
-                ...WORKER_BUNDLE_UPLOAD_ARGS,
-                '--config',
-                'wrangler.toml',
-                ...(uiSecretFile ? ['--secrets-file', uiSecretFile.path] : []),
-              ],
-              {
-                cwd: uiDir,
-                reject: false,
-                cancelSignal: options.signal,
+            await assertDeployConfigLockProof(uiDeployOptions);
+            await uiDeployOptions.workerScriptOwnership?.assertBeforeMutation(uiWorkerName);
+            let result: Awaited<ReturnType<typeof execa>>;
+            try {
+              result = await execa(
+                'pnpm',
+                [
+                  'exec',
+                  'wrangler',
+                  'deploy',
+                  ...WORKER_BUNDLE_UPLOAD_ARGS,
+                  '--config',
+                  'wrangler.toml',
+                  ...(uiSecretFile ? ['--secrets-file', uiSecretFile.path] : []),
+                ],
+                {
+                  cwd: uiDir,
+                  reject: false,
+                  cancelSignal: options.signal,
+                  env: { WRANGLER_OUTPUT_FILE_DIRECTORY: outputDirectory },
+                }
+              );
+            } catch (error) {
+              const structuredVersionId = await readVersionIdFromStructuredOutput(
+                outputDirectory!,
+                ''
+              );
+              if (structuredVersionId) {
+                uiTrafficCommitted = true;
+                uiCommittedVersionId = structuredVersionId;
+                await uiDeployOptions.workerScriptOwnership?.checkpointCommittedVersion(
+                  uiWorkerName,
+                  structuredVersionId
+                );
+                onProgress?.(
+                  `  ✓ Adopted committed ${uiWorkerName} deployment ${structuredVersionId} after response loss`
+                );
+                return { stdout: '', adoptedVersionId: structuredVersionId };
               }
-            );
+              if (isProvenPreMutationDeploymentFailure(error) || classifyRetry(error) === 'fatal') {
+                throw error;
+              }
+              throw new NonRetryableDeploymentError(
+                `Direct UI deployment outcome is ambiguous for ${uiWorkerName}`
+              );
+            }
             if (result.exitCode !== 0) {
               const commandError = new Error(
                 String(result.stderr || result.stdout || 'Unknown error')
               ) as Error & { stderr?: unknown; stdout?: unknown };
               commandError.stderr = result.stderr;
               commandError.stdout = result.stdout;
-              throw commandError;
+              const structuredVersionId = await readVersionIdFromStructuredOutput(
+                outputDirectory!,
+                result.stdout
+              );
+              if (structuredVersionId) {
+                uiTrafficCommitted = true;
+                uiCommittedVersionId = structuredVersionId;
+                await uiDeployOptions.workerScriptOwnership?.checkpointCommittedVersion(
+                  uiWorkerName,
+                  structuredVersionId
+                );
+                onProgress?.(
+                  `  ✓ Adopted committed ${uiWorkerName} deployment ${structuredVersionId} after response loss`
+                );
+                return { stdout: '', adoptedVersionId: structuredVersionId };
+              }
+              if (
+                isProvenPreMutationDeploymentFailure(commandError) ||
+                classifyRetry(commandError) === 'fatal'
+              ) {
+                throw commandError;
+              }
+              throw new NonRetryableDeploymentError(
+                `Direct UI deployment outcome is ambiguous for ${uiWorkerName}`
+              );
             }
+            uiTrafficCommitted = true;
+            await assertDeployConfigLockProofAfterMutation(uiDeployOptions);
+            return { stdout: String(result.stdout), adoptedVersionId: undefined };
           }
         );
+        deployedVersionId =
+          directResult.adoptedVersionId ??
+          (await readVersionIdFromStructuredOutput(outputDirectory, directResult.stdout));
+        if (!deployedVersionId) {
+          throw new Error('Wrangler did not report the deployed UI Cloudflare Version ID');
+        }
+        if (uiCommittedVersionId !== deployedVersionId) {
+          uiCommittedVersionId = deployedVersionId;
+          await uiDeployOptions.workerScriptOwnership?.checkpointCommittedVersion(
+            uiWorkerName,
+            deployedVersionId
+          );
+        }
       } else {
         outputDirectory = await mkdtemp(join(tmpdir(), 'authrim-ui-wrangler-output-'));
         const uploadResult = await runWithAdaptiveRetry(
           `Uploading UI Worker version ${uiWorkerName}`,
           uiDeployOptions,
           throttle,
-          () =>
-            execa(
+          async () => {
+            await assertDeployConfigLockProof(uiDeployOptions);
+            await uiDeployOptions.workerScriptOwnership?.assertBeforeMutation(uiWorkerName);
+            const result = await execa(
               'pnpm',
               [
                 'exec',
@@ -3598,7 +4085,10 @@ export async function deployUiWorkerComponent(
                 cancelSignal: options.signal,
                 env: { WRANGLER_OUTPUT_FILE_DIRECTORY: outputDirectory },
               }
-            )
+            );
+            await assertDeployConfigLockProofAfterMutation(uiDeployOptions);
+            return result;
+          }
         );
         const versionId = await readVersionIdFromStructuredOutput(
           outputDirectory,
@@ -3608,24 +4098,32 @@ export async function deployUiWorkerComponent(
           throw new Error('Wrangler did not report the uploaded UI Cloudflare Version ID');
         }
         deployedVersionId = versionId;
+        await uiDeployOptions.workerScriptOwnership?.checkpointCommittedVersion(
+          uiWorkerName,
+          versionId
+        );
 
         await runWithAdaptiveRetry(
           `Validating UI Worker triggers ${uiWorkerName}`,
           uiDeployOptions,
           throttle,
-          () =>
-            execa(
+          async () => {
+            await assertDeployConfigLockProof(uiDeployOptions);
+            return execa(
               'pnpm',
               ['exec', 'wrangler', 'triggers', 'deploy', '--dry-run', '--config', 'wrangler.toml'],
               { cwd: uiDir, reject: true, cancelSignal: options.signal }
-            )
+            );
+          }
         );
         await runWithAdaptiveRetry(
           `Promoting UI Worker version ${uiWorkerName}`,
           uiDeployOptions,
           throttle,
-          () =>
-            execa(
+          async () => {
+            await assertDeployConfigLockProof(uiDeployOptions);
+            await uiDeployOptions.workerScriptOwnership?.assertBeforeMutation(uiWorkerName);
+            const result = await execa(
               'pnpm',
               [
                 'exec',
@@ -3638,19 +4136,29 @@ export async function deployUiWorkerComponent(
                 'wrangler.toml',
               ],
               { cwd: uiDir, reject: true, cancelSignal: options.signal }
-            )
+            );
+            uiTrafficCommitted = true;
+            uiCommittedVersionId = versionId;
+            await assertDeployConfigLockProofAfterMutation(uiDeployOptions);
+            return result;
+          }
         );
         try {
           await runWithAdaptiveRetry(
             `Applying UI Worker triggers ${uiWorkerName}`,
             uiDeployOptions,
             throttle,
-            () =>
-              execa(
+            async () => {
+              await assertDeployConfigLockProof(uiDeployOptions);
+              await uiDeployOptions.workerScriptOwnership?.assertBeforeMutation(uiWorkerName);
+              const result = await execa(
                 'pnpm',
                 ['exec', 'wrangler', 'triggers', 'deploy', '--config', 'wrangler.toml'],
                 { cwd: uiDir, reject: true, cancelSignal: options.signal }
-              )
+              );
+              await assertDeployConfigLockProofAfterMutation(uiDeployOptions);
+              return result;
+            }
           );
         } catch (error) {
           const errorOutput = sanitizeDeploymentErrorMessage(getErrorText(error));
@@ -3676,6 +4184,13 @@ export async function deployUiWorkerComponent(
         component,
         projectName: uiWorkerName,
         success: false,
+        ...(uiTrafficCommitted
+          ? {
+              trafficCommitted: true,
+              deployedAt: new Date().toISOString(),
+              cloudflareVersionId: uiCommittedVersionId,
+            }
+          : {}),
         error: `${errorOutput}${hint}`,
         duration: Date.now() - startTime,
       };
@@ -3686,6 +4201,8 @@ export async function deployUiWorkerComponent(
       ]);
     }
 
+    const cloudflareScriptTag =
+      await uiDeployOptions.workerScriptOwnership?.captureAfterMutation(uiWorkerName);
     onProgress?.(`✓ ${component} deployed as UI Worker: ${uiWorkerName}`);
 
     return {
@@ -3694,6 +4211,7 @@ export async function deployUiWorkerComponent(
       success: true,
       deployedAt: new Date().toISOString(),
       cloudflareVersionId: deployedVersionId,
+      cloudflareScriptTag,
       duration: Date.now() - startTime,
     };
   } catch (error) {
@@ -3704,6 +4222,13 @@ export async function deployUiWorkerComponent(
       component,
       projectName: projectName || `${env}-${component}`,
       success: false,
+      ...(uiTrafficCommitted
+        ? {
+            trafficCommitted: true,
+            deployedAt: new Date().toISOString(),
+            cloudflareVersionId: uiCommittedVersionId,
+          }
+        : {}),
       error: sanitizedError,
       duration: Date.now() - startTime,
     };
@@ -3744,6 +4269,7 @@ export async function deployAllUiWorkers(
   },
   enabledComponents: { loginUi: boolean; adminUi: boolean }
 ): Promise<UiWorkersDeploymentSummary> {
+  await assertDeployConfigLockProof(options);
   const results: UiWorkerDeployResult[] = [];
 
   if (enabledComponents.loginUi) {
@@ -3752,6 +4278,23 @@ export async function deployAllUiWorkers(
       ...(options.perComponent?.['ar-login-ui'] || {}),
     });
     results.push(loginResult);
+    if (!loginResult.success && isLocalDiskExhaustionError(loginResult.error)) {
+      if (enabledComponents.adminUi) {
+        results.push({
+          component: 'ar-admin-ui',
+          projectName:
+            options.perComponent?.['ar-admin-ui']?.projectName ?? `${options.env}-ar-admin-ui`,
+          success: false,
+          error: 'Skipped because UI deployment stopped after local disk space was exhausted',
+          duration: 0,
+        });
+      }
+      return {
+        results,
+        successCount: 0,
+        failedCount: results.length,
+      };
+    }
   }
 
   if (enabledComponents.adminUi) {

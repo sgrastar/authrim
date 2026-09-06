@@ -119,7 +119,7 @@ function seed(database: DatabaseSync): void {
       tenant_id, deterministic_name, ownership_fingerprint, provisioning_state,
       origin_operation_id, created_at, updated_at
     ) VALUES ('desired-a', 'env-test', 'd1', 'logical-a', 'tenant', 'tenant-a',
-      'authrim-test-tenant-a-core', '${HASH}', 'active', 'seed-op', 1, 1);
+      'authrim-test-tenant-a-core', '${HASH}', 'creating', 'seed-op', 1, 1);
     INSERT INTO control_tenant_shards (
       shard_id, environment_id, data_role, residency_policy_id, residency_partition,
       generation, logical_shard_id, binding_ref, d1_desired_resource_id, location_hint,
@@ -133,6 +133,9 @@ function seed(database: DatabaseSync): void {
     ) VALUES ('observed-a', 'env-test', 'desired-a',
       '11111111-1111-4111-8111-111111111111', 'authrim-test-tenant-a-core', 'd1',
       '${HASH}', 'present', 1);
+    UPDATE control_desired_resources
+       SET observed_resource_id = 'observed-a', provisioning_state = 'active'
+     WHERE desired_resource_id = 'desired-a';
     INSERT INTO control_tenant_shard_assignments (
       environment_id, tenant_id, data_role, residency_policy_id, residency_partition,
       shard_id, assignment_generation, assignment_state, source_operation_id,

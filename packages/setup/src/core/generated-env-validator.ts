@@ -1301,14 +1301,14 @@ async function validateLiveControlPlaneBootstrap(
   }
 
   const controlDb = lock.d1.CONTROL_DB;
-  if (!controlDb?.name) {
+  if (!controlDb?.id) {
     pushDetail(check, 'fail', 'CONTROL_DB is missing from lock.json');
     return finishCheck(check, 'CONTROL_DB is required for bootstrap handoff validation');
   }
 
   try {
     const rows = await queryD1Rows<{ state: string }>(
-      controlDb.name,
+      controlDb.id,
       `SELECT state FROM control_bootstrap_handoffs WHERE environment_id = ${sqlString(config.environment.prefix)};`
     );
     if (rows[0]?.state !== 'accepted') {
@@ -1341,7 +1341,7 @@ async function validateLiveRuntimeD1Schema(
     binding: resolveBootstrapBinding(entry.binding, env),
   }))) {
     const database = lock.d1[requirement.binding];
-    if (!database?.name) {
+    if (!database?.id) {
       pushDetail(check, 'fail', `${requirement.binding}: missing from lock.json`);
       continue;
     }
@@ -1349,7 +1349,7 @@ async function validateLiveRuntimeD1Schema(
     try {
       const tableList = requirement.tables.map(sqlString).join(', ');
       const rows = await queryD1Rows<{ name: string }>(
-        database.name,
+        database.id,
         `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${tableList}) ORDER BY name;`
       );
       const existingTables = new Set(
@@ -1381,10 +1381,10 @@ async function validateLiveRuntimeD1Schema(
 
   const usersBootstrapBinding = bootstrapBindingForRole(env, 'users');
   const coreDatabase = lock.d1[usersBootstrapBinding];
-  if (coreDatabase?.name) {
+  if (coreDatabase?.id) {
     try {
       const foreignKeys = await queryD1Rows<{ table?: string; from?: string; to?: string }>(
-        coreDatabase.name,
+        coreDatabase.id,
         'PRAGMA foreign_key_list(user_custom_fields);'
       );
       const legacyUsersCoreReferences = foreignKeys.filter(

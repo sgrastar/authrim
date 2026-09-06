@@ -26,6 +26,7 @@ import {
   saveKeysToDirectory,
   generateKeyId,
   keysExistForEnvironment,
+  loadKeysFromDirectory,
 } from '../../core/keys.js';
 import { isRunningFromSource, getCommandPrefix } from '../../core/source-context.js';
 import {
@@ -36,15 +37,31 @@ import {
   getAccountId,
   detectEnvironments,
   getWorkersSubdomain,
+  getRequiredR2Buckets,
+  getRequiredQueues,
   checkZoneExists,
   extractZoneName,
   type ZoneCheckResult,
+  type EnvironmentInventoryResource,
+  assertR2BucketOwnershipForUse,
 } from '../../core/cloudflare.js';
 import {
+  D1_DATABASES,
+  KV_NAMESPACES,
+  getD1DatabaseName,
+  getEnabledComponents,
+  getKVNamespaceName,
+  getWorkerName,
+} from '../../core/naming.js';
+import {
+  acquireDeployConfigLock,
   acquireEnvironmentOperationForEnvironment,
   createLockFile,
+  hasPostProvisioningLockState,
+  mergeProvisionedResourcesIntoLock,
   saveLockFile,
   loadLockFile,
+  type AuthrimLock,
 } from '../../core/lock.js';
 import {
   environmentOperationBlockMessage,
@@ -55,6 +72,7 @@ import {
   getEnvironmentPaths,
   getExternalKeysDir,
   getExternalKeysPathForConfig,
+  deriveExternalKeysBaseDirFromConfigPath,
   AUTHRIM_DIR,
   LEGACY_CONFIG_FILE,
   LEGACY_LOCK_FILE,
@@ -77,6 +95,32 @@ import { uiCustomDomainRequiresOwnRoute } from '../../core/ui-deployment.js';
 import { generateRandomTenantId, isValidTenantId } from '../../core/tenant-id.js';
 import { printCliCapabilitySummary } from '../capability-summary.js';
 import { inspectLocalEnvironmentState } from '../../core/local-environment-state.js';
+import { writePrivateFileAtomically } from '../../core/atomic-file.js';
+import {
+  promotePendingEmailSecrets,
+  recoverLegacyPreBundleEmailSecrets,
+  stagePendingEmailSecrets,
+  type PendingEmailSecretsInput,
+} from '../../core/pending-email-secrets.js';
+import { checkWranglerStatus } from '../../core/wrangler-sync.js';
+import {
+  assertLocalDeploymentCapacity,
+  MINIMUM_PROVISIONING_FREE_BYTES,
+} from '../../core/local-deployment-capacity.js';
+import {
+  beginOrResumeProvisioningIntent,
+  calculateProvisioningResourceSpecDigest,
+  completeProvisioningIntent,
+  hasExactProvisioningResourceIdentity,
+  loadProvisioningIntent,
+  recordProvisionedResource,
+  recordProvisioningResourceCreateIssued,
+  recordProvisioningResourceCreateRejected,
+  recordProvisioningResourceIdentified,
+  recordProvisioningKeyId,
+  type ProvisioningIntent,
+  type ProvisioningResourceSpec,
+} from '../../core/provisioning-intent.js';
 import {
   isValidCustomDomain,
   validateSetupDomainInputs,
@@ -94,6 +138,25 @@ interface ZoneDomainConfig {
 
 let cliCapabilitySummaryShown = false;
 
+type PendingEmailSecretFiles = PendingEmailSecretsInput;
+
+interface ExecuteSetupOptions {
+  /**
+   * The caller entered through the canonical interrupted-provisioning recovery path. Re-read
+   * that config only after both setup operation locks are held so a pre-lock snapshot can never
+   * overwrite a concurrent, completed local mutation.
+   */
+  requireCanonicalConfigAfterLock?: boolean;
+}
+
+const PROVISIONING_COLLISION_INVENTORY: readonly EnvironmentInventoryResource[] = [
+  'Workers',
+  'D1 databases',
+  'KV namespaces',
+  'Queues',
+  'R2 buckets',
+];
+
 async function confirm(config: Parameters<typeof inquirerConfirm>[0]): Promise<boolean> {
   return inquirerConfirm({
     ...config,
@@ -106,11 +169,19 @@ async function ensureNewEnvironmentNameIsAvailable(input: {
   baseDir: string;
 }): Promise<boolean> {
   const checkSpinner = ora(t('env.checking')).start();
+  const provisioningIntent = await loadProvisioningIntent({
+    baseDir: input.baseDir,
+    environment: input.environment,
+  });
   const localState = inspectLocalEnvironmentState({
     baseDir: input.baseDir,
     environment: input.environment,
   });
-  if (localState.exists) {
+  const pendingEmailOnly =
+    localState.paths.length === 1 &&
+    localState.paths[0] ===
+      getEnvironmentPaths({ baseDir: input.baseDir, env: input.environment }).pendingEmailSecrets;
+  if (localState.exists && !provisioningIntent && !pendingEmailOnly) {
     checkSpinner.fail(t('env.alreadyExists', { env: input.environment }));
     console.log('');
     console.log(chalk.yellow('  ' + t('env.existingResources')));
@@ -121,26 +192,285 @@ async function ensureNewEnvironmentNameIsAvailable(input: {
   }
 
   try {
-    const existingEnvironments = await detectEnvironments();
+    const existingEnvironments = await detectEnvironments(undefined, {
+      requiredResources: PROVISIONING_COLLISION_INVENTORY,
+      includeControlManagedResourcesForEnvironment: input.environment,
+    });
     const existingEnvironment = existingEnvironments.find(
       (candidate) => candidate.env === input.environment
     );
-    if (existingEnvironment) {
+    if (existingEnvironment && !provisioningIntent) {
       checkSpinner.fail(t('env.alreadyExists', { env: input.environment }));
       console.log('');
       console.log(chalk.yellow('  ' + t('env.existingResources')));
-      console.log(`    ${t('env.workers', { count: String(existingEnvironment.workers.length) })}`);
-      console.log(`    ${t('env.d1Databases', { count: String(existingEnvironment.d1.length) })}`);
-      console.log(`    ${t('env.kvNamespaces', { count: String(existingEnvironment.kv.length) })}`);
+      console.log(
+        `    ${t('env.workers', { count: String(existingEnvironment?.workers.length ?? 0) })}`
+      );
+      console.log(
+        `    ${t('env.d1Databases', { count: String(existingEnvironment?.d1.length ?? 0) })}`
+      );
+      console.log(
+        `    ${t('env.kvNamespaces', { count: String(existingEnvironment?.kv.length ?? 0) })}`
+      );
       console.log('');
       console.log(chalk.yellow('  ' + t('env.chooseAnother', { command: getCommandPrefix() })));
       return false;
     }
-    checkSpinner.succeed(t('env.available'));
-  } catch {
-    checkSpinner.warn(t('env.checkFailed'));
+    checkSpinner.succeed(
+      provisioningIntent
+        ? 'Interrupted provisioning attempt found; resuming safely'
+        : t('env.available')
+    );
+  } catch (error) {
+    checkSpinner.fail(t('env.checkFailed'));
+    throw new Error('cloudflare_environment_inventory_unavailable', { cause: error });
   }
   return true;
+}
+
+export function buildProvisioningResourceSpec(config: AuthrimConfig): ProvisioningResourceSpec {
+  const environment = config.environment.prefix;
+  const { createdAt: _createdAt, updatedAt: _updatedAt, ...stableConfig } = config;
+  const normalizedConfig = {
+    ...stableConfig,
+    keys: {
+      ...stableConfig.keys,
+      keyId: undefined,
+      publicKeyJwk: undefined,
+    },
+  };
+  return JSON.parse(
+    JSON.stringify({
+      config: normalizedConfig,
+      resources: {
+        d1: D1_DATABASES.map((database) => ({
+          binding: database.binding,
+          name: getD1DatabaseName(environment, database.dbType),
+        })),
+        kv: KV_NAMESPACES.map((binding) => ({
+          binding,
+          name: getKVNamespaceName(environment, binding),
+        })),
+        queues: config.features.queue?.enabled === true ? getRequiredQueues(environment) : [],
+        r2: getRequiredR2Buckets(environment, {
+          includeFeatureBuckets: config.features.r2?.enabled === true,
+        }),
+        workers: Array.from(getEnabledComponents(config.components)).map((component) => ({
+          binding: component,
+          name: getWorkerName(environment, component),
+        })),
+      },
+    })
+  ) as ProvisioningResourceSpec;
+}
+
+export function resolveProvisioningKeysBaseDir(input: {
+  environment: string;
+  secretsPath: string;
+  resuming: boolean;
+  currentWorkingDirectory?: string;
+}): string {
+  return input.resuming
+    ? deriveExternalKeysBaseDirFromConfigPath(input.environment, input.secretsPath)
+    : resolve(input.currentWorkingDirectory ?? process.cwd());
+}
+
+async function persistProvisioningConfig(config: AuthrimConfig, configPath: string): Promise<void> {
+  config.updatedAt = new Date().toISOString();
+  await writePrivateFileAtomically(configPath, `${JSON.stringify(config, null, 2)}\n`);
+}
+
+async function hasCompleteProvisioningArtifacts(input: {
+  baseDir: string;
+  environment: string;
+  config: AuthrimConfig;
+  lock: AuthrimLock;
+  intent?: ProvisioningIntent;
+}): Promise<boolean> {
+  const paths = getEnvironmentPaths({ baseDir: input.baseDir, env: input.environment });
+  if (
+    !existsSync(paths.config) ||
+    !input.config.keys.keyId ||
+    hasPostProvisioningLockState(input.lock) ||
+    (input.intent && input.intent.keyId !== input.config.keys.keyId)
+  ) {
+    return false;
+  }
+  const expectedResources = [
+    ...D1_DATABASES.map((database) => ({
+      kind: 'd1' as const,
+      binding: database.binding,
+      name: getD1DatabaseName(input.environment, database.dbType),
+      lock: input.lock.d1[database.binding],
+    })),
+    ...KV_NAMESPACES.map((binding) => ({
+      kind: 'kv' as const,
+      binding,
+      name: getKVNamespaceName(input.environment, binding),
+      lock: input.lock.kv[binding],
+    })),
+    ...(input.config.features.queue?.enabled === true
+      ? getRequiredQueues(input.environment).map((resource) => ({
+          kind: 'queue' as const,
+          ...resource,
+          lock: input.lock.queues?.[resource.binding],
+        }))
+      : []),
+    ...getRequiredR2Buckets(input.environment, {
+      includeFeatureBuckets: input.config.features.r2?.enabled === true,
+    }).map((resource) => ({
+      kind: 'r2' as const,
+      ...resource,
+      lock: input.lock.r2?.[resource.binding],
+    })),
+  ];
+  for (const resource of expectedResources) {
+    const checkpoint = input.intent?.resources[`${resource.kind}:${resource.binding}`];
+    if (
+      !hasExactProvisioningResourceIdentity({
+        kind: resource.kind,
+        binding: resource.binding,
+        expectedName: resource.name,
+        lock: resource.lock,
+        checkpoint,
+        requireCheckpoint: input.intent !== undefined,
+      })
+    ) {
+      return false;
+    }
+    if (resource.kind === 'r2') {
+      try {
+        await assertR2BucketOwnershipForUse({
+          ...resource.lock!,
+          environment: input.environment,
+          binding: resource.binding,
+        });
+      } catch {
+        return false;
+      }
+    }
+  }
+  const expectedBindingsByKind = {
+    d1: expectedResources
+      .filter((resource) => resource.kind === 'd1')
+      .map((resource) => resource.binding),
+    kv: expectedResources
+      .filter((resource) => resource.kind === 'kv')
+      .map((resource) => resource.binding),
+    queue: expectedResources
+      .filter((resource) => resource.kind === 'queue')
+      .map((resource) => resource.binding),
+    r2: expectedResources
+      .filter((resource) => resource.kind === 'r2')
+      .map((resource) => resource.binding),
+  };
+  const hasExactBindings = (actual: string[], expected: string[]): boolean =>
+    actual.length === expected.length && expected.every((binding) => actual.includes(binding));
+  if (
+    !hasExactBindings(Object.keys(input.lock.d1), expectedBindingsByKind.d1) ||
+    !hasExactBindings(Object.keys(input.lock.kv), expectedBindingsByKind.kv) ||
+    !hasExactBindings(Object.keys(input.lock.queues ?? {}), expectedBindingsByKind.queue) ||
+    !hasExactBindings(Object.keys(input.lock.r2 ?? {}), expectedBindingsByKind.r2)
+  ) {
+    return false;
+  }
+  const wranglerStatuses = await checkWranglerStatus({
+    baseDir: input.baseDir,
+    env: input.environment,
+    packagesDir: join(input.baseDir, 'packages'),
+    components: Array.from(getEnabledComponents(input.config.components)),
+  });
+  if (
+    wranglerStatuses.some(
+      (status) => !status.masterExists || !status.deployExists || !status.inSync
+    )
+  ) {
+    return false;
+  }
+  const remoteEnvironment = (
+    await detectEnvironments(undefined, {
+      requiredResources: ['D1 databases', 'KV namespaces', 'Queues', 'R2 buckets'],
+    })
+  ).find((candidate) => candidate.env === input.environment);
+  if (!remoteEnvironment) return false;
+  const expectedNamesByKind = {
+    d1: expectedResources
+      .filter((resource) => resource.kind === 'd1')
+      .map((resource) => resource.name),
+    kv: expectedResources
+      .filter((resource) => resource.kind === 'kv')
+      .map((resource) => resource.name),
+    queue: expectedResources
+      .filter((resource) => resource.kind === 'queue')
+      .map((resource) => resource.name),
+    r2: expectedResources
+      .filter((resource) => resource.kind === 'r2')
+      .map((resource) => resource.name),
+  };
+  const hasExactRemoteNames = (actual: Array<{ name: string }>, expected: string[]): boolean =>
+    actual.length === expected.length &&
+    expected.every((name) => actual.some((item) => item.name === name));
+  if (
+    !hasExactRemoteNames(remoteEnvironment.d1, expectedNamesByKind.d1) ||
+    !hasExactRemoteNames(remoteEnvironment.kv, expectedNamesByKind.kv) ||
+    !hasExactRemoteNames(remoteEnvironment.queues, expectedNamesByKind.queue) ||
+    !hasExactRemoteNames(remoteEnvironment.r2, expectedNamesByKind.r2)
+  ) {
+    return false;
+  }
+  for (const resource of expectedResources) {
+    const remote =
+      resource.kind === 'd1'
+        ? remoteEnvironment.d1.find((candidate) => candidate.name === resource.name)
+        : resource.kind === 'kv'
+          ? remoteEnvironment.kv.find((candidate) => candidate.name === resource.name)
+          : resource.kind === 'queue'
+            ? remoteEnvironment.queues.find((candidate) => candidate.name === resource.name)
+            : remoteEnvironment.r2.find((candidate) => candidate.name === resource.name);
+    if (!remote) return false;
+    if (
+      !hasExactProvisioningResourceIdentity({
+        kind: resource.kind,
+        binding: resource.binding,
+        expectedName: resource.name,
+        lock: resource.lock,
+        checkpoint: input.intent?.resources[`${resource.kind}:${resource.binding}`],
+        requireCheckpoint: input.intent !== undefined,
+        remote,
+      })
+    ) {
+      return false;
+    }
+  }
+  try {
+    const persisted = parseConfig(JSON.parse(await readFile(paths.config, 'utf-8')));
+    if (
+      persisted.environment.prefix !== input.environment ||
+      persisted.cloudflare?.accountId !== input.config.cloudflare?.accountId ||
+      persisted.keys.keyId !== input.config.keys.keyId
+    ) {
+      return false;
+    }
+    if (
+      input.intent &&
+      calculateProvisioningResourceSpecDigest(buildProvisioningResourceSpec(persisted)) !==
+        input.intent.resourceSpecDigest
+    ) {
+      return false;
+    }
+    const keysBaseDir = deriveExternalKeysBaseDirFromConfigPath(
+      input.environment,
+      persisted.keys.secretsPath
+    );
+    const keys = await loadKeysFromDirectory({
+      baseDir: input.baseDir,
+      env: input.environment,
+      keysBaseDir,
+    });
+    return keys.keyPair?.keyId === persisted.keys.keyId;
+  } catch {
+    return false;
+  }
 }
 
 function formatSetupDomainValidationIssue(issue: SetupDomainValidationIssue): string {
@@ -925,6 +1255,14 @@ export async function initCommand(options: InitOptions): Promise<void> {
   if (options.cli) {
     const sourceDir = await ensureAuthrimSource(options);
     process.chdir(sourceDir);
+    if (
+      await resumeInterruptedProvisioningForEnvironment({
+        baseDir: sourceDir,
+        environment: options.env ?? 'prod',
+      })
+    ) {
+      return;
+    }
     await runCliSetup(options);
     return;
   }
@@ -1663,30 +2001,8 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
     return;
   }
 
-  // Save email secrets if configured
-  if (emailConfig.provider !== 'none' && emailConfig.fromAddress) {
-    // Save to external keys directory: {cwd}/.authrim-keys/{env}/
-    const keysDir = getExternalKeysDir(envPrefix, process.cwd());
-    await import('node:fs/promises').then(async (fs) => {
-      await fs.mkdir(keysDir, { recursive: true, mode: 0o700 });
-      const emailFromPath = join(keysDir, 'email_from.txt');
-      await fs.writeFile(emailFromPath, emailConfig.fromAddress!.trim());
-      await fs.chmod(emailFromPath, 0o600);
-      if (emailConfig.fromName) {
-        const emailFromNamePath = join(keysDir, 'email_from_name.txt');
-        await fs.writeFile(emailFromNamePath, emailConfig.fromName.trim());
-        await fs.chmod(emailFromNamePath, 0o600);
-      }
-      if (emailConfig.provider === 'resend' && emailConfig.apiKey) {
-        const resendApiKeyPath = join(keysDir, 'resend_api_key.txt');
-        await fs.writeFile(resendApiKeyPath, emailConfig.apiKey.trim());
-        await fs.chmod(resendApiKeyPath, 0o600);
-      }
-    });
-    console.log(chalk.gray(`📧 ${t('deploy.emailSecretsSaved', { path: `${keysDir}/` })}`));
-  }
   // Run setup
-  await executeSetup(config, options.keep);
+  await executeSetup(config, options.keep, emailConfig);
 }
 
 // =============================================================================
@@ -2327,36 +2643,19 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     return;
   }
 
-  // Save email secrets if configured
-  if (emailConfigNormal.provider !== 'none' && emailConfigNormal.fromAddress) {
-    // Save to external keys directory: {cwd}/.authrim-keys/{env}/
-    const keysDir = getExternalKeysDir(envPrefix, process.cwd());
-    await import('node:fs/promises').then(async (fs) => {
-      await fs.mkdir(keysDir, { recursive: true, mode: 0o700 });
-      const emailFromPath = join(keysDir, 'email_from.txt');
-      await fs.writeFile(emailFromPath, emailConfigNormal.fromAddress!.trim());
-      await fs.chmod(emailFromPath, 0o600);
-      if (emailConfigNormal.fromName) {
-        const emailFromNamePath = join(keysDir, 'email_from_name.txt');
-        await fs.writeFile(emailFromNamePath, emailConfigNormal.fromName.trim());
-        await fs.chmod(emailFromNamePath, 0o600);
-      }
-      if (emailConfigNormal.provider === 'resend' && emailConfigNormal.apiKey) {
-        const resendApiKeyPath = join(keysDir, 'resend_api_key.txt');
-        await fs.writeFile(resendApiKeyPath, emailConfigNormal.apiKey.trim());
-        await fs.chmod(resendApiKeyPath, 0o600);
-      }
-    });
-    console.log(chalk.gray(`📧 ${t('deploy.emailSecretsSaved', { path: `${keysDir}/` })}`));
-  }
-  await executeSetup(config, options.keep);
+  await executeSetup(config, options.keep, emailConfigNormal);
 }
 
 // =============================================================================
 // Execute Setup
 // =============================================================================
 
-async function executeSetup(config: AuthrimConfig, keepPath?: string): Promise<void> {
+async function executeSetup(
+  config: AuthrimConfig,
+  keepPath?: string,
+  pendingEmailSecrets?: PendingEmailSecretFiles,
+  options: ExecuteSetupOptions = {}
+): Promise<void> {
   const outputDir = resolve(keepPath || '.');
   const env = config.environment.prefix;
   let secrets: ReturnType<typeof generateAllSecrets> | null = null;
@@ -2378,7 +2677,7 @@ async function executeSetup(config: AuthrimConfig, keepPath?: string): Promise<v
       console.log('');
       console.log(chalk.cyan('    npm install -g wrangler'));
       console.log('');
-      return;
+      throw new Error('wrangler_not_installed');
     }
 
     const auth = await checkAuth();
@@ -2389,7 +2688,7 @@ async function executeSetup(config: AuthrimConfig, keepPath?: string): Promise<v
       console.log('');
       console.log(chalk.cyan('    wrangler login'));
       console.log('');
-      return;
+      throw new Error('cloudflare_authentication_required');
     }
 
     wranglerCheck.succeed(
@@ -2398,9 +2697,11 @@ async function executeSetup(config: AuthrimConfig, keepPath?: string): Promise<v
 
     // Get account ID and workers subdomain
     const accountId = await getAccountId();
-    if (accountId) {
-      config.cloudflare = { accountId };
+    if (!accountId) throw new Error('cloudflare_account_id_required_for_provisioning');
+    if (config.cloudflare?.accountId && config.cloudflare.accountId !== accountId) {
+      throw new Error('cloudflare_config_account_id_mismatch');
     }
+    config.cloudflare = { accountId };
 
     // Get workers.dev subdomain for correct URL generation
     workersSubdomain = await getWorkersSubdomain();
@@ -2412,7 +2713,7 @@ async function executeSetup(config: AuthrimConfig, keepPath?: string): Promise<v
   } catch (error) {
     wranglerCheck.fail(t('prereq.checkFailed'));
     console.error(error);
-    return;
+    throw error;
   }
 
   const environmentOperation = await acquireEnvironmentOperationForEnvironment({
@@ -2420,47 +2721,242 @@ async function executeSetup(config: AuthrimConfig, keepPath?: string): Promise<v
     env,
     operation: 'init-provision',
   });
-  const provisionDecision = evaluateEnvironmentOperation({
-    operation: 'provision',
-    lock: environmentOperation.lock,
-  });
-  if (!provisionDecision.allowed) {
-    await environmentOperation.release();
-    throw new Error(environmentOperationBlockMessage(provisionDecision));
-  }
-
+  let deployConfigLock: Awaited<ReturnType<typeof acquireDeployConfigLock>> | undefined;
   try {
+    // Package-level wrangler.toml files are shared by every environment in this checkout.
+    // Serialize the complete provisioning projection so another environment cannot replace the
+    // config between generation and the final durable provisioning checkpoint.
+    deployConfigLock = await acquireDeployConfigLock({
+      baseDir: outputDir,
+      env,
+      operation: 'init-provision',
+    });
+    const authenticatedAccountId = config.cloudflare?.accountId;
+    if (!authenticatedAccountId) {
+      throw new Error('cloudflare_account_id_required_for_provisioning');
+    }
+    const existingIntent = await loadProvisioningIntent({
+      baseDir: outputDir,
+      environment: env,
+    });
+    if (options.requireCanonicalConfigAfterLock) {
+      const canonicalConfigPath = getEnvironmentPaths({ baseDir: outputDir, env }).config;
+      if (!existsSync(canonicalConfigPath)) {
+        throw new Error('canonical_provisioning_config_missing_after_operation_lock');
+      }
+      const persistedConfig = parseConfig(JSON.parse(await readFile(canonicalConfigPath, 'utf-8')));
+      config = reconcileCanonicalProvisioningConfigAfterLock({
+        environment: env,
+        authenticatedAccountId,
+        persistedConfig,
+        intent: existingIntent,
+      });
+    }
+    const accountId = config.cloudflare?.accountId;
+    if (!accountId) {
+      throw new Error('cloudflare_account_id_required_for_provisioning');
+    }
+    const provisioningOnlyLock =
+      environmentOperation.lock && !hasPostProvisioningLockState(environmentOperation.lock)
+        ? environmentOperation.lock
+        : null;
+    const keysBaseDir = resolveProvisioningKeysBaseDir({
+      environment: env,
+      secretsPath: config.keys.secretsPath,
+      resuming: existingIntent !== null || provisioningOnlyLock !== null,
+    });
+    config.keys = {
+      ...config.keys,
+      secretsPath: getExternalKeysPathForConfig(env, keysBaseDir),
+      includeSecrets: false,
+      storageType: 'external',
+    };
+    const resourceSpec = buildProvisioningResourceSpec(config);
+    let provisioningAttempt = existingIntent
+      ? await beginOrResumeProvisioningIntent({
+          baseDir: outputDir,
+          environment: env,
+          accountId,
+          resourceSpec,
+        })
+      : undefined;
+    let repairingIncompleteProvisioningLock = false;
+    if (environmentOperation.lock && (provisioningAttempt || provisioningOnlyLock)) {
+      const complete = await hasCompleteProvisioningArtifacts({
+        baseDir: outputDir,
+        environment: env,
+        config,
+        lock: environmentOperation.lock,
+        intent: provisioningAttempt?.intent,
+      });
+      if (complete) {
+        if (pendingEmailSecrets) {
+          await stagePendingEmailSecrets({
+            baseDir: outputDir,
+            environment: env,
+            email: pendingEmailSecrets,
+          });
+        }
+        const emailPromotion = await promotePendingEmailSecrets({
+          baseDir: outputDir,
+          environment: env,
+          keysDir: getExternalKeysDir(env, keysBaseDir),
+          configuredEmail: config.features.email,
+        });
+        if (emailPromotion.promoted) {
+          console.log(
+            chalk.gray(
+              `📧 ${t('deploy.emailSecretsSaved', {
+                path: `${getExternalKeysDir(env, keysBaseDir)}/`,
+              })}`
+            )
+          );
+        }
+        if (provisioningAttempt) {
+          await completeProvisioningIntent({
+            baseDir: outputDir,
+            environment: env,
+            expectedIntentId: provisioningAttempt.intent.id,
+          });
+        }
+        console.log(
+          chalk.green(
+            provisioningAttempt
+              ? 'Provisioning was already complete; finalized the interrupted journal.'
+              : 'Provisioning was already complete; recovered the interrupted success acknowledgement.'
+          )
+        );
+        return;
+      }
+      if (hasPostProvisioningLockState(environmentOperation.lock)) {
+        throw new Error('stale_provisioning_intent_after_environment_activation');
+      }
+      if (!provisioningAttempt) {
+        throw new Error('provisioning_completion_evidence_mismatch');
+      }
+      repairingIncompleteProvisioningLock = true;
+    }
+    const provisionDecision = evaluateEnvironmentOperation({
+      operation: 'provision',
+      lock: repairingIncompleteProvisioningLock ? null : environmentOperation.lock,
+    });
+    if (!provisionDecision.allowed) {
+      throw new Error(environmentOperationBlockMessage(provisionDecision));
+    }
+
+    await assertLocalDeploymentCapacity({
+      rootDir: outputDir,
+      phase: 'environment provisioning',
+      minimumFreeBytes: MINIMUM_PROVISIONING_FREE_BYTES,
+    });
+
+    if (!existingIntent) {
+      const remoteEnvironments = await detectEnvironments(undefined, {
+        requiredResources: PROVISIONING_COLLISION_INVENTORY,
+        includeControlManagedResourcesForEnvironment: env,
+      });
+      if (remoteEnvironments.some((candidate) => candidate.env === env)) {
+        throw new Error('cloudflare_environment_already_exists');
+      }
+    }
+    const envPaths = getEnvironmentPaths({ baseDir: outputDir, env });
+    if (pendingEmailSecrets) {
+      await stagePendingEmailSecrets({
+        baseDir: outputDir,
+        environment: env,
+        email: pendingEmailSecrets,
+      });
+    }
+    // Publish the journal before the config. If setup stops between these writes, the intent pins
+    // the exact account and resource plan and a retry can safely recreate the same config without
+    // treating a config-only directory as an unrelated environment.
+    provisioningAttempt ??= await beginOrResumeProvisioningIntent({
+      baseDir: outputDir,
+      environment: env,
+      accountId,
+      resourceSpec,
+    });
+    await persistProvisioningConfig(config, envPaths.config);
+    console.log(
+      chalk.gray(
+        provisioningAttempt.resumed
+          ? `Resuming provisioning attempt ${provisioningAttempt.intent.id}`
+          : `Provisioning attempt recorded: ${provisioningAttempt.intent.id}`
+      )
+    );
+
     // Step 1: Generate keys (external directory: .authrim-keys/{env}/)
     // Check if keys already exist for this environment
-    const cwdDir = process.cwd();
-    if (keysExistForEnvironment(outputDir, env, cwdDir)) {
+    const externalKeysDir = getExternalKeysDir(env, keysBaseDir);
+    await recoverLegacyPreBundleEmailSecrets({
+      baseDir: outputDir,
+      environment: env,
+      keysDir: externalKeysDir,
+      configuredProvider: config.features.email?.provider,
+    });
+    const existingKeys = keysExistForEnvironment(outputDir, env, keysBaseDir);
+    if (existingKeys) {
       console.log(chalk.yellow(`⚠️  ${t('keys.existing', { env })}`));
-      console.log(chalk.yellow(`   ${t('keys.existingWarning')}`));
+      console.log(chalk.yellow('   Existing environment keys will be reused for this retry.'));
       console.log('');
     }
 
     const keysSpinner = ora(t('keys.generating')).start();
     try {
-      const keyId = generateKeyId(env);
-      secrets = generateAllSecrets(keyId);
-
-      // Save to external structure: {cwd}/.authrim-keys/{env}/
-      const externalKeysDir = getExternalKeysDir(env, cwdDir);
-      await saveKeysToDirectory(secrets, { keysBaseDir: cwdDir, env });
-
-      config.keys = {
-        keyId: secrets.keyPair.keyId,
-        publicKeyJwk: secrets.keyPair.publicKeyJwk as Record<string, unknown>,
-        secretsPath: getExternalKeysPathForConfig(env, cwdDir),
-        includeSecrets: false,
-        storageType: 'external',
-      };
-
-      keysSpinner.succeed(t('keys.generated', { path: externalKeysDir }));
+      if (existingKeys) {
+        const loaded = await loadKeysFromDirectory({
+          baseDir: outputDir,
+          env,
+          keysBaseDir,
+        });
+        if (!loaded.keyPair?.keyId || !loaded.keyPair.publicKeyJwk) {
+          throw new Error('existing_environment_keys_incomplete');
+        }
+        config.keys = {
+          keyId: loaded.keyPair.keyId,
+          publicKeyJwk: loaded.keyPair.publicKeyJwk as Record<string, unknown>,
+          secretsPath: getExternalKeysPathForConfig(env, keysBaseDir),
+          includeSecrets: false,
+          storageType: 'external',
+        };
+        keysSpinner.succeed(`Existing environment keys reused (${externalKeysDir})`);
+      } else {
+        const keyId = generateKeyId(env);
+        secrets = generateAllSecrets(keyId);
+        await saveKeysToDirectory(secrets, { keysBaseDir, env });
+        config.keys = {
+          keyId: secrets.keyPair.keyId,
+          publicKeyJwk: secrets.keyPair.publicKeyJwk as Record<string, unknown>,
+          secretsPath: getExternalKeysPathForConfig(env, keysBaseDir),
+          includeSecrets: false,
+          storageType: 'external',
+        };
+        keysSpinner.succeed(t('keys.generated', { path: externalKeysDir }));
+      }
+      const emailPromotion = await promotePendingEmailSecrets({
+        baseDir: outputDir,
+        environment: env,
+        keysDir: externalKeysDir,
+        configuredEmail: config.features.email,
+      });
+      if (emailPromotion.promoted) {
+        console.log(
+          chalk.gray(`📧 ${t('deploy.emailSecretsSaved', { path: `${externalKeysDir}/` })}`)
+        );
+      }
     } catch (error) {
       keysSpinner.fail(t('keys.error'));
       throw error;
     }
+    if (!config.keys.keyId) throw new Error('environment_key_id_required_for_provisioning');
+    await recordProvisioningKeyId({
+      baseDir: outputDir,
+      environment: env,
+      expectedIntentId: provisioningAttempt.intent.id,
+      keyId: config.keys.keyId,
+    });
+    // Persist generated/reloaded public key metadata before the first remote resource mutation.
+    await persistProvisioningConfig(config, envPaths.config);
 
     // Step 2: Provision Cloudflare resources
     console.log('');
@@ -2475,8 +2971,37 @@ async function executeSetup(config: AuthrimConfig, keepPath?: string): Promise<v
         createKV: true,
         createQueues: config.features.queue?.enabled,
         createR2: config.features.r2?.enabled,
+        provisioningIntentResources: provisioningAttempt.intent.resources,
         databaseConfig: config.database,
         onProgress: (msg) => console.log(`  ${msg}`),
+        onResourceCreateIssued: (resource) =>
+          recordProvisioningResourceCreateIssued({
+            baseDir: outputDir,
+            environment: env,
+            expectedIntentId: provisioningAttempt.intent.id,
+            resource,
+          }),
+        onResourceCreateRejected: (resource) =>
+          recordProvisioningResourceCreateRejected({
+            baseDir: outputDir,
+            environment: env,
+            expectedIntentId: provisioningAttempt.intent.id,
+            resource,
+          }),
+        onResourceIdentified: (resource) =>
+          recordProvisioningResourceIdentified({
+            baseDir: outputDir,
+            environment: env,
+            expectedIntentId: provisioningAttempt.intent.id,
+            resource,
+          }),
+        onResourceProvisioned: (resource) =>
+          recordProvisionedResource({
+            baseDir: outputDir,
+            environment: env,
+            expectedIntentId: provisioningAttempt.intent.id,
+            resource,
+          }),
       });
     } catch (error) {
       console.log(chalk.red(`  ✗ ${t('deploy.resourcesFailed')}`));
@@ -2484,18 +3009,12 @@ async function executeSetup(config: AuthrimConfig, keepPath?: string): Promise<v
       throw new Error(t('deploy.initialProvisioningFailed'), { cause: error });
     }
 
-    // Step 3: Create lock file (save to new structure: .authrim/{env}/lock.json)
-    const envPaths = getEnvironmentPaths({ baseDir: outputDir, env });
-    const lockSpinner = ora(t('resource.provisioning', { resource: 'lock.json' })).start();
-    try {
-      const lockFile = createLockFile(env, provisionedResources);
-      await saveLockFile(lockFile, { baseDir: outputDir, env });
-      lockSpinner.succeed(t('resource.provisioned', { resource: `lock.json (${envPaths.lock})` }));
-    } catch (error) {
-      lockSpinner.fail(t('resource.failed', { resource: 'lock.json' }));
-      console.error(error);
-      throw error;
-    }
+    // Keep the final lock in memory until every required local deployment artifact is durable.
+    // If setup stops before then, a retry can safely rediscover the deterministic remote names.
+    const provisionedLock = createLockFile(env, provisionedResources);
+    const lockFile = environmentOperation.lock
+      ? mergeProvisionedResourcesIntoLock(environmentOperation.lock, provisionedLock)
+      : provisionedLock;
 
     // Step 4: Save configuration (save to new structure: .authrim/{env}/config.json)
     const configSpinner = ora(t('config.saving')).start();
@@ -2504,12 +3023,11 @@ async function executeSetup(config: AuthrimConfig, keepPath?: string): Promise<v
       await mkdir(envPaths.root, { recursive: true });
 
       const configPath = envPaths.config;
-      config.updatedAt = new Date().toISOString();
-      await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+      await persistProvisioningConfig(config, configPath);
 
       // Also save version.txt
       const setupVersion = getVersion();
-      await writeFile(envPaths.version, setupVersion, 'utf-8');
+      await writePrivateFileAtomically(envPaths.version, `${setupVersion}\n`);
 
       configSpinner.succeed(t('config.saved', { path: configPath }));
     } catch (error) {
@@ -2531,13 +3049,13 @@ async function executeSetup(config: AuthrimConfig, keepPath?: string): Promise<v
     } catch (error) {
       uiEnvSpinner.fail(t('resource.failed', { resource: 'ui.env' }));
       console.error(error);
-      // Non-fatal: continue with setup
+      throw error;
     }
 
     // Step 5: Generate wrangler.toml files
     const resourceIds = toResourceIds(provisionedResources);
     const packagesDir = join(outputDir, 'packages');
-    const baseDir = process.cwd();
+    const baseDir = outputDir;
 
     // Step 5a: Save master wrangler configs to .authrim/{env}/wrangler/
     const wranglerSpinner = ora(t('resource.provisioning', { resource: 'wrangler.toml' })).start();
@@ -2559,10 +3077,13 @@ async function executeSetup(config: AuthrimConfig, keepPath?: string): Promise<v
           t('config.wranglerConfigsSaved', { count: masterResult.files.length })
         );
       } else {
-        wranglerSpinner.warn(t('config.wranglerConfigsPartial'));
+        wranglerSpinner.fail(t('config.wranglerConfigsPartial'));
         for (const error of masterResult.errors) {
-          console.log(chalk.yellow(`  • ${error}`));
+          console.log(chalk.red(`  • ${error}`));
         }
+        throw new Error(
+          `master_wrangler_config_generation_failed:${masterResult.errors.join(';')}`
+        );
       }
 
       // Step 5b: Sync to deployment locations (if packages directory exists)
@@ -2592,11 +3113,30 @@ async function executeSetup(config: AuthrimConfig, keepPath?: string): Promise<v
           for (const error of syncResult.errors) {
             console.log(chalk.red(`  • ${error}`));
           }
+          throw new Error(`wrangler_config_sync_failed:${syncResult.errors.join(';')}`);
         }
       }
     } catch (error) {
       wranglerSpinner.fail(t('resource.failed', { resource: 'wrangler.toml' }));
       console.error(error);
+      throw error;
+    }
+
+    // The lock is the local declaration that provisioning completed. Persist it last so a
+    // partially generated environment remains safely retryable instead of looking complete.
+    const lockSpinner = ora(t('resource.provisioning', { resource: 'lock.json' })).start();
+    try {
+      await saveLockFile(lockFile, { baseDir: outputDir, env });
+      await completeProvisioningIntent({
+        baseDir: outputDir,
+        environment: env,
+        expectedIntentId: provisioningAttempt.intent.id,
+      });
+      lockSpinner.succeed(t('resource.provisioned', { resource: `lock.json (${envPaths.lock})` }));
+    } catch (error) {
+      lockSpinner.fail(t('resource.failed', { resource: 'lock.json' }));
+      console.error(error);
+      throw error;
     }
 
     // Summary
@@ -2657,7 +3197,11 @@ async function executeSetup(config: AuthrimConfig, keepPath?: string): Promise<v
     }
     console.log('');
   } finally {
-    await environmentOperation.release();
+    try {
+      await deployConfigLock?.release();
+    } finally {
+      await environmentOperation.release();
+    }
   }
 }
 
@@ -2685,6 +3229,129 @@ export function buildSetupCompletionNextSteps(input: {
   ];
 }
 
+type ProvisioningResumeRunner = (config: AuthrimConfig, baseDir: string) => Promise<void>;
+
+/**
+ * Select the durable config as the sole authority after the operation locks are acquired.
+ *
+ * A config-only interrupted setup has no journal digest to compare, so adopting the freshly read
+ * canonical file is what prevents a stale pre-lock snapshot from overwriting another actor's
+ * completed config mutation. Journal-backed retries additionally require the canonical plan to
+ * remain byte-semantically pinned by the intent digest.
+ */
+export function reconcileCanonicalProvisioningConfigAfterLock(input: {
+  environment: string;
+  authenticatedAccountId: string;
+  persistedConfig: AuthrimConfig;
+  intent: ProvisioningIntent | null;
+}): AuthrimConfig {
+  if (input.persistedConfig.environment.prefix !== input.environment) {
+    throw new Error('provisioning_config_environment_mismatch_after_operation_lock');
+  }
+  const persistedAccountId = input.persistedConfig.cloudflare?.accountId;
+  if (!persistedAccountId || persistedAccountId !== input.authenticatedAccountId) {
+    throw new Error('provisioning_config_account_id_mismatch_after_operation_lock');
+  }
+  if (input.intent) {
+    if (
+      input.intent.environment !== input.environment ||
+      input.intent.accountId !== input.authenticatedAccountId
+    ) {
+      throw new Error('provisioning_intent_authority_mismatch_after_operation_lock');
+    }
+    if (
+      calculateProvisioningResourceSpecDigest(
+        buildProvisioningResourceSpec(input.persistedConfig)
+      ) !== input.intent.resourceSpecDigest
+    ) {
+      throw new Error('provisioning_intent_resource_spec_mismatch_after_operation_lock');
+    }
+  }
+  return input.persistedConfig;
+}
+
+/**
+ * Resume a fresh-install attempt from its durable config and provisioning journal.
+ *
+ * Only the canonical `.authrim/<env>/config.json` path is eligible. A copied config or a
+ * completed environment must continue through the ordinary existing-config flow instead of
+ * inheriting another environment's retry authority.
+ */
+export async function resumeInterruptedProvisioningFromConfig(input: {
+  config: AuthrimConfig;
+  configPath: string;
+  runProvisioning?: ProvisioningResumeRunner;
+}): Promise<boolean> {
+  const configPath = resolve(input.configPath);
+  const baseDir = dirname(dirname(dirname(configPath)));
+  const paths = getEnvironmentPaths({
+    baseDir,
+    env: input.config.environment.prefix,
+  });
+  if (resolve(paths.config) !== configPath) return false;
+
+  const intent = await loadProvisioningIntent({
+    baseDir,
+    environment: input.config.environment.prefix,
+  });
+  const lock = await loadLockFile({ baseDir, env: input.config.environment.prefix });
+  if (!intent && lock && hasPostProvisioningLockState(lock)) return false;
+
+  const accountId = input.config.cloudflare?.accountId;
+  if (!accountId) throw new Error('cloudflare_account_id_required_for_provisioning_resume');
+
+  if (intent) {
+    // Validate the persisted account and complete resource plan locally before any Cloudflare
+    // prerequisite check or mutation. executeSetup repeats this check under the operation lock.
+    await beginOrResumeProvisioningIntent({
+      baseDir,
+      environment: input.config.environment.prefix,
+      accountId,
+      resourceSpec: buildProvisioningResourceSpec(input.config),
+    });
+  }
+
+  console.log(chalk.yellow('Interrupted provisioning attempt found; resuming safely.'));
+  if (input.runProvisioning) {
+    await input.runProvisioning(input.config, baseDir);
+  } else {
+    await executeSetup(input.config, baseDir, undefined, {
+      requireCanonicalConfigAfterLock: true,
+    });
+  }
+  return true;
+}
+
+type ExistingConfigHandler = (configPath: string) => Promise<void>;
+
+/** Route `init --cli --env` directly to the canonical interrupted-provisioning recovery path. */
+export async function resumeInterruptedProvisioningForEnvironment(input: {
+  baseDir: string;
+  environment: string;
+  handleConfig?: ExistingConfigHandler;
+}): Promise<boolean> {
+  const paths = getEnvironmentPaths({ baseDir: input.baseDir, env: input.environment });
+  if (!existsSync(paths.config)) return false;
+  const intent = await loadProvisioningIntent({
+    baseDir: input.baseDir,
+    environment: input.environment,
+  });
+  const lock = await loadLockFile({ baseDir: input.baseDir, env: input.environment });
+  if (!intent && lock && hasPostProvisioningLockState(lock)) {
+    return false;
+  }
+
+  // A journal under one environment must never authorize a copied or misfiled config belonging
+  // to another environment. handleExistingConfig performs the complete digest/account validation.
+  const config = parseConfig(JSON.parse(await readFile(paths.config, 'utf-8')));
+  if (config.environment.prefix !== input.environment) {
+    throw new Error('provisioning_config_environment_mismatch');
+  }
+
+  await (input.handleConfig ?? handleExistingConfig)(paths.config);
+  return true;
+}
+
 // =============================================================================
 // Handle Existing Config
 // =============================================================================
@@ -2696,6 +3363,8 @@ async function handleExistingConfig(configPath: string): Promise<void> {
     const content = await readFile(configPath, 'utf-8');
     const config = parseConfig(JSON.parse(content));
     spinner.succeed('Configuration loaded');
+
+    if (await resumeInterruptedProvisioningFromConfig({ config, configPath })) return;
 
     console.log('');
     console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
@@ -2738,6 +3407,7 @@ async function handleExistingConfig(configPath: string): Promise<void> {
   } catch (error) {
     spinner.fail('Failed to load configuration');
     console.error(error);
+    throw error;
   }
 }
 
@@ -2961,7 +3631,7 @@ async function handleEditConfig(config: AuthrimConfig, configPath: string): Prom
           );
         }
 
-        await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
+        await writePrivateFileAtomically(configPath, `${JSON.stringify(config, null, 2)}\n`);
         console.log(chalk.green(`\n✓ Configuration saved: ${configPath}`));
       } finally {
         await operation.release();

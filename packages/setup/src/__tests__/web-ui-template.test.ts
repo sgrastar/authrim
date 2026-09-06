@@ -50,6 +50,41 @@ function extractInlineScripts(html: string): string[] {
   return scripts;
 }
 
+function extractInlineObject(
+  html: string,
+  variableName: string
+): Record<string, Record<string, string> | string[]> {
+  const marker = `const ${variableName} = `;
+  const markerIndex = html.indexOf(marker);
+  const objectStart = html.indexOf('{', markerIndex);
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+
+  expect(markerIndex, `${variableName} declaration`).toBeGreaterThanOrEqual(0);
+  expect(objectStart, `${variableName} object`).toBeGreaterThanOrEqual(0);
+
+  for (let index = objectStart; index < html.length; index += 1) {
+    const character = html[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === quote) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === '`') {
+      quote = character;
+      continue;
+    }
+    if (character === '{') depth += 1;
+    else if (character === '}' && --depth === 0) {
+      return vm.runInNewContext(`(${html.slice(objectStart, index + 1)})`);
+    }
+  }
+
+  throw new Error(`Could not extract ${variableName}`);
+}
+
 describe('getHtmlTemplate', () => {
   const localeCases = [
     { locale: 'en', translations: en, expected: 'Choose How to Start' },
@@ -128,6 +163,57 @@ describe('getHtmlTemplate', () => {
     }
   });
 
+  it('provides explicit environment-management copy instead of English fallback', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const base = extractInlineObject(html, 'envManagementCopyByLocale');
+    const dynamic = extractInlineObject(html, 'envDynamicCopyByLocale');
+    const rows = extractInlineObject(html, 'envManagementSupplementalRows') as Record<
+      string,
+      string[]
+    >;
+    const supplementalLocales = SUPPORTED_LOCALES.map(({ code }) => code).filter(
+      (locale) => locale !== 'en' && locale !== 'ja'
+    );
+    const english = {
+      ...(base.en as Record<string, string>),
+      ...(dynamic.en as Record<string, string>),
+    };
+
+    for (const [localeIndex, locale] of supplementalLocales.entries()) {
+      const baseLocale = (base[locale] ?? {}) as Record<string, string>;
+      const dynamicLocale = (dynamic[locale] ?? {}) as Record<string, string>;
+      const supplemental = Object.fromEntries(
+        Object.entries(rows).map(([key, translations]) => {
+          expect(translations, `${key} translations`).toHaveLength(supplementalLocales.length);
+          expect(translations[localeIndex], `${locale} ${key}`).toBeTruthy();
+          return [key, translations[localeIndex]];
+        })
+      );
+      const keysRequiringExplicitTranslation = Object.keys(english).filter(
+        (key) => !(key in baseLocale) && !(key in dynamicLocale)
+      );
+
+      expect(
+        keysRequiringExplicitTranslation.filter((key) => !(key in supplemental)),
+        `${locale} environment-management English fallbacks`
+      ).toEqual([]);
+
+      for (const key of keysRequiringExplicitTranslation) {
+        const expectedPlaceholders = english[key].match(/{{[a-zA-Z0-9_-]+}}/g) ?? [];
+        const actualPlaceholders = supplemental[key].match(/{{[a-zA-Z0-9_-]+}}/g) ?? [];
+        expect(actualPlaceholders.sort(), `${locale} ${key} placeholders`).toEqual(
+          expectedPlaceholders.sort()
+        );
+      }
+    }
+  });
+
   it('localizes setup-operation conflicts from their stable API error code', () => {
     const html = getHtmlTemplate(
       'session-token',
@@ -154,6 +240,7 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain("result?.errorCode === 'environment_inventory_unavailable'");
     expect(html).toContain("result.error = t('web.delete.inventoryUnavailable')");
     expect(html).toContain('function apiErrorMessages(result)');
+    expect(html).toContain("summary !== messages.join(', ')");
     expect(html).toContain("messages.length > 0 ? messages : [t('web.status.unknownError')]");
     expect(html).not.toContain("(deleteResult.errors || []).join(', ')");
   });
@@ -172,6 +259,62 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('環境と残りのローカル状態は保持されています。');
   });
 
+  it('finishes an empty environment without making unobserved legacy Pages inventory strict', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    for (const resourceType of ['queues', 'r2']) {
+      expect(html).toContain(`document.getElementById('delete-${resourceType}').checked = true;`);
+    }
+    expect(html).toContain(
+      "document.getElementById('delete-pages').checked = (env.pages || []).length > 0;"
+    );
+    expect(html).toContain('finalizeEnvironment: true,');
+    expect(html).not.toContain(
+      "document.getElementById('delete-queues').checked = env.queues.length > 0;"
+    );
+    expect(html).not.toContain("document.getElementById('delete-r2').checked = env.r2.length > 0;");
+  });
+
+  it('renders R2 and DNS deletion manual actions independently with dashboard links', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('function appendManualR2CleanupNotice(parent, targets)');
+    expect(html).toContain('function appendManualDnsCleanupNotice(parent, issues)');
+    expect(html).toContain('function appendManualControlTokenCleanupNotice(parent, targets)');
+    expect(html).toContain(
+      "item.textContent = t('web.delete.manualControlTokenId', { tokenId: String(tokenId) });"
+    );
+    expect(html).toContain('if (manualR2Targets.length > 0)');
+    expect(html).toContain('if (manualDnsIssues.length > 0)');
+    expect(html).toContain('const environmentDeleted = deleteResult.environmentDeleted === true;');
+    expect(html).toContain(
+      "t(environmentDeleted ? 'web.delete.complete' : 'web.delete.manualActionRequired')"
+    );
+    expect(html).toContain('appendManualR2CleanupNotice(result, manualR2Targets)');
+    expect(html).toContain('appendManualDnsCleanupNotice(result, manualDnsIssues)');
+    expect(html).toContain(
+      'appendManualControlTokenCleanupNotice(result, manualControlTokenTargets)'
+    );
+    expect(html).toContain('if (environmentDeleted) {');
+    expect(html).toContain('await loadEnvironments();');
+    expect(html).toContain('if (target.dashboardUrl)');
+    expect(html).toContain('link.href = target.dashboardUrl');
+    expect(html).toContain("t('web.deploy.openCloudflareDns')");
+    expect(html).toContain("'https://dash.cloudflare.com/'");
+  });
+
   it('reports key replacement only after guarded generation succeeds', () => {
     const html = getHtmlTemplate(
       'session-token',
@@ -181,8 +324,8 @@ describe('getHtmlTemplate', () => {
       SUPPORTED_LOCALES
     );
 
-    expect(html).toContain('keyResult.replacedExistingKeys === true');
-    expect(html).toContain("t('keys.replaced')");
+    expect(html).toContain('keyResult.reusedExistingKeys === true');
+    expect(html).toContain('Existing environment keys reused');
     expect(html).not.toContain("output.textContent += '   Existing keys will be overwritten.");
   });
 
@@ -894,6 +1037,9 @@ describe('getHtmlTemplate', () => {
       SUPPORTED_LOCALES.length + 1
     );
     expect(html.match(/'web.delete.manualR2Summary'/gu)).toHaveLength(SUPPORTED_LOCALES.length + 1);
+    expect(html.match(/'web.delete.manualActionRequired'/gu)).toHaveLength(
+      SUPPORTED_LOCALES.length + 1
+    );
   });
 
   it('keeps provisioning progress complete after trailing log messages and polling races', () => {
@@ -1059,10 +1205,21 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain("api('/control/automatic-provisioning/cleanup-bootstrap'");
     expect(html).toContain("api('/control/automatic-provisioning/cancel-pending'");
     expect(html).toContain('error.cleanupRequired === false');
+    expect(html).toContain('completionError.bootstrapRetainedForRetry =');
+    expect(html).toContain('completionError.cutoverPending = completed.cutoverPending === true');
+    expect(html).toContain("const recoveringCutover = envControlBootstrapPhase !== 'none'");
+    expect(html).toContain('if (!recoveringCutover) {');
+    expect(html).toContain('if (recoveringCutover || error.cutoverPending === true)');
+    expect(html).toContain('if (error.bootstrapRetainedForRetry === true)');
+    expect(html).toContain("t('web.envDetail.bootstrapRetainedForRetry')");
+    expect(html.indexOf('if (error.bootstrapRetainedForRetry === true)')).toBeLessThan(
+      html.indexOf("api('/control/automatic-provisioning/cleanup-bootstrap'")
+    );
     expect(html).toContain('Automatic provisioning returned to Off.');
     expect(html).toContain("api('/control/automatic-provisioning/status?env='");
-    expect(html).toContain('if (!bootstrapToken) {');
+    expect(html).toContain('if (!bootstrapToken && !recoveringCutover) {');
     expect(html).not.toContain('if (!bootstrapToken || !envControlBootstrapOwnership)');
+    expect(html).toContain('if (error.recoveryTokenRequired === true)');
     expect(html.indexOf("api('/deploy/component/ar-control'")).toBeLessThan(
       html.indexOf("api('/control/automatic-provisioning/complete'")
     );
@@ -1088,6 +1245,28 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('let inFlightMutationRequests = 0;');
     expect(html).toContain('inFlightMutationRequests === 0');
     expect(html).not.toContain('pending.tenantId =');
+  });
+
+  it('stops provisioning and keeps deploy blocked when key generation fails', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    const keyRequest = html.indexOf("api('/keys/generate'");
+    const keyGuard = html.indexOf('if (!keyResult.success)', keyRequest);
+    const keySuccessOutput = html.indexOf('RSA key pair generated', keyRequest);
+    const provisionRequest = html.indexOf("api('/provision'", keyRequest);
+
+    expect(keyRequest).toBeGreaterThanOrEqual(0);
+    expect(keyGuard).toBeGreaterThan(keyRequest);
+    expect(keySuccessOutput).toBeGreaterThan(keyGuard);
+    expect(provisionRequest).toBeGreaterThan(keyGuard);
+    expect(html).toContain("throw new Error(apiErrorMessages(keyResult).join('; '))");
+    expect(html).toContain('btnGotoDeploy.disabled = !provisioningCompleted;');
   });
 
   it('offers the same server-owned capacity profiles without raw D1 inputs', () => {

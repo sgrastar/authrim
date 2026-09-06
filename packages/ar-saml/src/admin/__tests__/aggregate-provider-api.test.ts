@@ -104,6 +104,10 @@ const aggregateXml = `<?xml version="1.0" encoding="UTF-8"?>
   </md:EntityDescriptor>
 </md:EntitiesDescriptor>`;
 
+const providerUpdatedAt = 1_700_000_000_000;
+const providerUpdatedAtIso = new Date(providerUpdatedAt).toISOString();
+const trustContextSnapshotHash = 'sha256:current-trust-context';
+
 const mixedAggregateXml = aggregateXml.replace(
   '</md:EntitiesDescriptor>',
   `<md:EntityDescriptor entityID="https://idp.example.test/idp">
@@ -584,6 +588,7 @@ describe('SAML aggregate provider API', () => {
       name: 'Draft SP',
       provider_type: 'saml_sp',
       enabled: 0,
+      updated_at: providerUpdatedAt,
       config_json: JSON.stringify({
         entityId: 'https://sp.example.test/sp',
         acsUrl: 'https://sp.example.test/acs',
@@ -593,7 +598,10 @@ describe('SAML aggregate provider API', () => {
     mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
 
     const response = await handleUpdateProvider(
-      createContext({ params: { id: 'draft-sp' }, body: { enabled: true } })
+      createContext({
+        params: { id: 'draft-sp' },
+        body: { enabled: true, expectedUpdatedAt: providerUpdatedAtIso },
+      })
     );
 
     expect(response.status).toBe(400);
@@ -607,6 +615,7 @@ describe('SAML aggregate provider API', () => {
       name: 'Broken SP',
       provider_type: 'saml_sp',
       enabled: 1,
+      updated_at: providerUpdatedAt,
       config_json: JSON.stringify({
         entityId: 'https://sp.example.test/sp',
         acsUrl: 'https://sp.example.test/acs',
@@ -622,7 +631,10 @@ describe('SAML aggregate provider API', () => {
     mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
 
     const response = await handleUpdateProvider(
-      createContext({ params: { id: 'broken-sp' }, body: { enabled: false } })
+      createContext({
+        params: { id: 'broken-sp' },
+        body: { enabled: false, expectedUpdatedAt: providerUpdatedAtIso },
+      })
     );
 
     expect(response.status).toBe(200);
@@ -650,6 +662,7 @@ describe('SAML aggregate provider API', () => {
       name: 'Repairable SP',
       provider_type: 'saml_sp',
       enabled: 0,
+      updated_at: providerUpdatedAt,
       config_json: JSON.stringify({
         entityId: 'https://sp.example.test/sp',
         acsUrl: 'https://sp.example.test/acs',
@@ -663,7 +676,10 @@ describe('SAML aggregate provider API', () => {
     mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
 
     const response = await handleUpdateProvider(
-      createContext({ params: { id: 'repairable-sp' }, body: { enabled: true } })
+      createContext({
+        params: { id: 'repairable-sp' },
+        body: { enabled: true, expectedUpdatedAt: providerUpdatedAtIso },
+      })
     );
 
     expect(response.status).toBe(400);
@@ -704,6 +720,7 @@ describe('SAML aggregate provider API', () => {
       name: 'Example IdP',
       provider_type: 'saml_idp',
       enabled: 1,
+      updated_at: providerUpdatedAt,
       config_json: JSON.stringify({
         entityId: 'https://idp.example.test/idp',
         ssoUrl: 'https://idp.example.test/sso',
@@ -720,6 +737,7 @@ describe('SAML aggregate provider API', () => {
       createContext({
         params: { id: 'idp-1' },
         body: {
+          expectedUpdatedAt: providerUpdatedAtIso,
           config: {
             jitEmailLinkingPolicy: 'unsafe_email_takeover',
           },
@@ -738,6 +756,7 @@ describe('SAML aggregate provider API', () => {
       name: 'Example IdP',
       provider_type: 'saml_idp',
       enabled: 1,
+      updated_at: providerUpdatedAt,
       config_json: JSON.stringify({
         entityId: 'https://idp.example.test/idp',
         ssoUrl: 'https://idp.example.test/sso',
@@ -754,6 +773,7 @@ describe('SAML aggregate provider API', () => {
       createContext({
         params: { id: 'idp-1' },
         body: {
+          expectedUpdatedAt: providerUpdatedAtIso,
           config: {
             jitEmailLinkingPolicy: 'disabled',
             allowSyntheticEmailFallback: true,
@@ -786,6 +806,10 @@ describe('SAML aggregate provider API', () => {
     async () => {
       const coreAdapter = createMockAdapter();
       const adminAdapter = createMockAdapter();
+      adminAdapter.queryOne.mockResolvedValue({
+        id: 'trust-source-1',
+        snapshot_hash: trustContextSnapshotHash,
+      });
       const waitUntil: Array<Promise<unknown>> = [];
       mocks.resolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue(coreAdapter);
       const previewId = 'preview-1';
@@ -810,6 +834,7 @@ describe('SAML aggregate provider API', () => {
               status: 'skipped',
               policy: 'disabled',
               trustProfileId: 'trust-source-1',
+              trustContextSnapshotHash,
             },
           },
         }) as never,

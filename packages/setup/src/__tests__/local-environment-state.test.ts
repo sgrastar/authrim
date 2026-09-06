@@ -44,4 +44,33 @@ describe('local environment state inspection', () => {
       paths: [configPath],
     });
   });
+
+  it.each([
+    'pending-control-bootstrap.json',
+    'control-token-cleanup.json',
+    'control-token-cleanup-conclusion.json',
+  ])('blocks a checkpoint-only environment containing %s', async (filename) => {
+    directory = await mkdtemp(join(tmpdir(), 'authrim-env-state-'));
+    const environmentDirectory = join(directory, '.authrim', 'test');
+    await mkdir(environmentDirectory, { recursive: true });
+    const checkpointPath = join(environmentDirectory, filename);
+    await writeFile(checkpointPath, '{}');
+
+    expect(inspectLocalEnvironmentState({ baseDir: directory, environment: 'test' })).toEqual({
+      exists: true,
+      paths: [checkpointPath],
+    });
+  });
+
+  it('blocks an environment directory containing an unknown future checkpoint', async () => {
+    directory = await mkdtemp(join(tmpdir(), 'authrim-env-state-'));
+    const environmentDirectory = join(directory, '.authrim', 'test');
+    await mkdir(environmentDirectory, { recursive: true });
+    await writeFile(join(environmentDirectory, 'future-recovery.json'), '{}');
+
+    expect(inspectLocalEnvironmentState({ baseDir: directory, environment: 'test' })).toEqual({
+      exists: true,
+      paths: [environmentDirectory],
+    });
+  });
 });

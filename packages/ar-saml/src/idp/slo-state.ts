@@ -57,6 +57,7 @@ export interface SAMLIdPLogoutFanoutObservationResult {
   scanned: number;
   updated: number;
   timedOutTransactions: SAMLIdPLogoutFanoutTransactionRecord[];
+  nextCursor?: string;
 }
 
 export const SAML_IDP_LOGOUT_FANOUT_TRANSACTION_PREFIX = 'saml:logout-fanout:tenant:';
@@ -320,24 +321,33 @@ export async function observeExpiredSAMLIdPLogoutFanoutTransactions(
   options: {
     now?: number;
     limit?: number;
+    maxRecords?: number;
+    cursor?: string;
   } = {}
 ): Promise<SAMLIdPLogoutFanoutObservationResult> {
   const now = options.now ?? Date.now();
-  const limit = options.limit ?? 100;
-  let cursor: string | undefined;
+  const limit = Math.max(1, Math.min(options.limit ?? 100, 1000));
+  const maxRecords = Math.max(1, options.maxRecords ?? 100);
+  let cursor = options.cursor;
   let scanned = 0;
+  let inspected = 0;
   let updated = 0;
   const timedOutTransactions: SAMLIdPLogoutFanoutTransactionRecord[] = [];
 
   do {
+    const remaining = maxRecords - inspected;
+    if (remaining <= 0) {
+      return { scanned, updated, timedOutTransactions, nextCursor: cursor };
+    }
     const page = await store.list({
       prefix: SAML_IDP_LOGOUT_FANOUT_TRANSACTION_PREFIX,
       cursor,
-      limit,
+      limit: Math.min(limit, remaining),
     });
     cursor = page.cursor;
 
     for (const key of page.keys) {
+      inspected += 1;
       const stored = await store.get(key.name);
       if (!stored) {
         continue;
@@ -361,6 +371,9 @@ export async function observeExpiredSAMLIdPLogoutFanoutTransactions(
 
     if (page.list_complete) {
       break;
+    }
+    if (inspected >= maxRecords) {
+      return { scanned, updated, timedOutTransactions, nextCursor: cursor };
     }
   } while (cursor);
 

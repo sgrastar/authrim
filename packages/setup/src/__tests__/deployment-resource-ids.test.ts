@@ -34,8 +34,14 @@ describe('buildWorkerDeploymentResourceIds', () => {
       .mockResolvedValueOnce([
         {
           resource_kind: 'd1',
+          lifecycle_mode: 'managed',
           provider_resource_id: 'plugin-db-id',
           provider_name: 'test-plugin-db',
+          provider_create_state: 'identified',
+          provider_creation_date: null,
+          provider_ownership_marker_key: null,
+          provider_ownership_id: null,
+          provider_identity_checkpointed_at: 100,
           ownership_fingerprint: 'a'.repeat(64),
         },
       ]);
@@ -51,6 +57,7 @@ describe('buildWorkerDeploymentResourceIds', () => {
     });
 
     expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls.every((call) => call[0] === 'control-id')).toBe(true);
     expect(result.pluginRunnerResources).toEqual([
       {
         binding: expect.stringMatching(/^PRES_D1_[A-F0-9]+$/u),
@@ -64,12 +71,45 @@ describe('buildWorkerDeploymentResourceIds', () => {
     );
   });
 
+  it('rejects a managed Plugin Runner resource without an exact provider checkpoint', async () => {
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce([{ name: 'control_plugin_desired_resources' }])
+      .mockResolvedValueOnce([
+        {
+          resource_kind: 'd1',
+          lifecycle_mode: 'managed',
+          provider_resource_id: 'plugin-db-id',
+          provider_name: 'test-plugin-db',
+          provider_create_state: 'not_started',
+          provider_creation_date: null,
+          provider_ownership_marker_key: null,
+          provider_ownership_id: null,
+          provider_identity_checkpointed_at: null,
+          ownership_fingerprint: 'a'.repeat(64),
+        },
+      ]);
+
+    await expect(
+      buildWorkerDeploymentResourceIds({
+        lock,
+        config,
+        environmentId: 'test',
+        components: ['ar-plugin-runner'],
+        query,
+      })
+    ).rejects.toThrow('plugin_resource_projection_row_invalid');
+  });
+
   it('fails closed when Plugin Runner is deployed without the Control DB projection source', async () => {
     const query = vi.fn();
 
     await expect(
       buildWorkerDeploymentResourceIds({
-        lock: { d1: {}, kv: {} } as AuthrimLock,
+        lock: {
+          d1: { CONTROL_DB: { name: 'test-authrim-control-db' } },
+          kv: {},
+        } as AuthrimLock,
         config,
         environmentId: 'test',
         components: ['ar-plugin-runner'],

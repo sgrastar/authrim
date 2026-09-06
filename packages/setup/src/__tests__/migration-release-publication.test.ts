@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { D1BatchExecutionResult, D1BatchStatement } from '../core/cloudflare.js';
 import {
   buildMigrationReleaseArtifactPlan,
@@ -189,6 +189,7 @@ describe('migration release artifact publication', () => {
     const fixture = temporaryRelease();
     const expectedArtifact = buildMigrationReleaseArtifactPlan(fixture);
     const uploaded: string[] = [];
+    const verifyBucketOwnership = vi.fn(async () => undefined);
     let registrationStarted = false;
     const result = await publishAndActivateMigrationRelease({
       ...fixture,
@@ -197,6 +198,7 @@ describe('migration release artifact publication', () => {
       environmentId: 'env-test',
       actorId: 'setup:test',
       now: 100,
+      verifyBucketOwnership,
       upload: async ({ objectKey }) => {
         expect(registrationStarted).toBe(false);
         uploaded.push(objectKey);
@@ -224,6 +226,7 @@ describe('migration release artifact publication', () => {
     const resultArtifact = result.artifact;
     expect(registrationStarted).toBe(true);
     expect(uploaded).toHaveLength(resultArtifact.objects.length);
+    expect(verifyBucketOwnership).toHaveBeenCalledTimes(resultArtifact.objects.length + 1);
   });
 
   it('does not register a partially uploaded bundle', async () => {
@@ -255,6 +258,7 @@ describe('migration release artifact publication', () => {
     const attempts = new Map<string, number>();
     const delays: number[] = [];
     const progress: string[] = [];
+    const verifyBucketOwnership = vi.fn(async () => undefined);
     const database = controlDatabase();
     try {
       await expect(
@@ -264,6 +268,7 @@ describe('migration release artifact publication', () => {
           controlDatabaseId: '11111111-1111-1111-1111-111111111111',
           environmentId: 'env-test',
           actorId: 'setup:test',
+          verifyBucketOwnership,
           upload: async ({ objectKey }) => {
             const attempt = (attempts.get(objectKey) ?? 0) + 1;
             attempts.set(objectKey, attempt);
@@ -287,6 +292,7 @@ describe('migration release artifact publication', () => {
       expectedArtifact.objects.slice(1).every((object) => attempts.get(object.objectKey) === 1)
     ).toBe(true);
     expect(delays).toEqual([1_000]);
+    expect(verifyBucketOwnership).toHaveBeenCalledTimes(expectedArtifact.objects.length + 2);
     expect(progress).toContain(
       `Retrying migration release object ${expectedArtifact.objects[0]!.objectKey} (2/4)`
     );

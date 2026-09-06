@@ -36,8 +36,14 @@ interface CandidateRow {
   resource_kind: ResourceKind;
   logical_resource_id: string;
   binding_name: string;
+  lifecycle_mode: 'managed' | 'existing';
   provider_resource_id: string | null;
   provider_name: string | null;
+  provider_create_state: 'not_started' | 'issued' | 'identified' | 'legacy_unverified';
+  provider_creation_date: string | null;
+  provider_ownership_marker_key: string | null;
+  provider_ownership_id: string | null;
+  provider_identity_checkpointed_at: number | null;
   desired_spec_json: string;
   status: string;
   migration_state: string | null;
@@ -388,7 +394,11 @@ class PluginResourceBindingRepository implements WorkerBindingPatchState<
         `SELECT resource.operation_id, resource.environment_id, environment.environment_name,
                 operation.status AS operation_status, resource.plugin_installation_id,
                 resource.tenant_id, resource.resource_kind, resource.logical_resource_id,
-                resource.binding_name, resource.provider_resource_id, resource.provider_name,
+                resource.binding_name, resource.lifecycle_mode,
+                resource.provider_resource_id, resource.provider_name,
+                resource.provider_create_state, resource.provider_creation_date,
+                resource.provider_ownership_marker_key, resource.provider_ownership_id,
+                resource.provider_identity_checkpointed_at,
                 resource.desired_spec_json, resource.status,
                 migration.state AS migration_state,
                 migration.provider_database_id AS migration_provider_database_id
@@ -433,6 +443,21 @@ class PluginResourceBindingRepository implements WorkerBindingPatchState<
     for (const rows of groups.values()) {
       const first = rows[0];
       if (!first || rows.length > MAX_RESOURCES) continue;
+      if (
+        rows.some(
+          (row) =>
+            row.lifecycle_mode === 'managed' &&
+            (row.provider_create_state !== 'identified' ||
+              row.provider_identity_checkpointed_at === null ||
+              (row.resource_kind === 'r2_bucket' &&
+                (!row.provider_creation_date ||
+                  !row.provider_ownership_marker_key ||
+                  !row.provider_ownership_id)))
+        )
+      ) {
+        await this.blockOperation(first, 'plugin_resource_provider_checkpoint_invalid', now);
+        continue;
+      }
       if (
         rows.some(
           (row) =>

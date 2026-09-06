@@ -33,7 +33,9 @@ import { rotateLookupHmacKeyCommand } from './cli/commands/lookup-hmac-rotate.js
 import { controlProvisionCommand } from './cli/commands/control-provision.js';
 import {
   resolveApiBaseUrlCandidates,
+  resolveAdminUiEntryUrl,
   resolveIssuerUrl,
+  resolveLoginUiEntryUrl,
   resolveLoginUiExecutionOrigin,
 } from './core/url-config.js';
 import { formatFatalError } from './core/fatal-error.js';
@@ -114,6 +116,14 @@ program
     '--cloudflare-bootstrap-token-file <path>',
     'Read and delete a one-time Cloudflare bootstrap token from a mode 0600 regular file'
   )
+  .option(
+    '--adopt-legacy-queue-identities',
+    'Explicitly replace historical Queue id==name sentinels with verified Cloudflare Queue IDs'
+  )
+  .option(
+    '--recover-legacy-worker-deployments',
+    'Recover exact Worker ownership after an interrupted initial deployment'
+  )
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(deployCommand);
 
@@ -156,6 +166,10 @@ program
   .command('r2-provision')
   .description('Create dedicated R2 buckets for an existing environment and deploy bindings')
   .option('--env <name>', 'Environment name', 'prod')
+  .option(
+    '--adopt-legacy-r2-ownership',
+    'Only adopt all existing lock-recorded legacy R2 buckets with exact ownership markers'
+  )
   .option('--dry-run', 'Show what would be created without changing Cloudflare or local files')
   .option('-y, --yes', 'Skip confirmation prompts')
   .action(r2ProvisionCommand);
@@ -209,7 +223,9 @@ program
     const { existsSync } = await import('node:fs');
     const { readFile } = await import('node:fs/promises');
 
-    const { isWranglerInstalled, checkAuth } = await import('./core/cloudflare.js');
+    const { isWranglerInstalled, checkAuth, getWorkersSubdomain, listD1Databases } =
+      await import('./core/cloudflare.js');
+    const { assertFixedD1ResourceIdentities } = await import('./core/fixed-d1-identity.js');
     const { WORKER_COMPONENTS } = await import('./core/naming.js');
     const {
       deployAll,
@@ -222,7 +238,19 @@ program
       updateLockWithDeployments,
       UI_WORKER_COMPONENTS,
     } = await import('./core/deploy.js');
-    const { loadLockFileAuto, saveLockFile } = await import('./core/lock.js');
+    const {
+      acquireDeployConfigLock,
+      acquireEnvironmentOperationForEnvironment,
+      loadLockFileAuto,
+      saveLockFile,
+      clearProvisionalWorkerScriptOwnership,
+    } = await import('./core/lock.js');
+    const {
+      buildWorkerHttpReadinessTargets,
+      waitForRouterWorkerReady,
+      waitForWorkerDeploymentsReady,
+      waitForWorkerHttpReady,
+    } = await import('./core/worker-readiness.js');
     const { findAuthrimBaseDir, getEnvironmentPaths, resolvePaths, findKeysDirectory } =
       await import('./core/paths.js');
     const { resolveUiDeploymentSettings } = await import('./core/ui-deployment.js');
@@ -275,7 +303,7 @@ program
 
     const baseDir = findAuthrimBaseDir(process.cwd());
     const componentType = isUiWorkerComponent ? 'UI Worker' : 'Worker';
-    const { lock: upgradeLock, path: upgradeLockPath } = await loadLockFileAuto(baseDir, env);
+    let { lock: upgradeLock, path: upgradeLockPath } = await loadLockFileAuto(baseDir, env);
     if (!upgradeLock) {
       spinner.fail(`Environment "${env}" does not have a lock file`);
       process.exit(1);
@@ -310,391 +338,507 @@ program
       }
     }
 
-    // Load config for API URL (needed for UI Worker deployment)
-    const resolved = resolvePaths({ baseDir, env });
-    let cfg: AuthrimConfig | null = null;
-    try {
-      const configPath =
-        resolved.type === 'new'
-          ? (resolved.paths as { config: string }).config
-          : (resolved.paths as { config: string }).config;
-      if (existsSync(configPath)) {
-        const configContent = await readFile(configPath, 'utf-8');
-        const { AuthrimConfigSchema } = await import('./core/config.js');
-        cfg = AuthrimConfigSchema.parse(JSON.parse(configContent));
+    let operationLock:
+      | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
+      | undefined;
+    let deployConfigLock: Awaited<ReturnType<typeof acquireDeployConfigLock>> | undefined;
+    let lockedAdminDatabaseIdentifier: string | undefined;
+    const requireLockedAdminDatabaseIdentifier = (): string => {
+      if (!lockedAdminDatabaseIdentifier) {
+        throw new Error('admin_database_required_for_upgrade');
       }
-    } catch {
-      // Config is optional for worker deployment
-    }
-
-    if (isUiWorkerComponent) {
-      // Deploy UI Worker component.
+      return lockedAdminDatabaseIdentifier;
+    };
+    try {
       if (!dryRun) {
-        const buildSpinner = ora(`Preparing ${componentName}...`).start();
-        const uiDir = join(baseDir, 'packages', componentName);
-
-        if (!existsSync(uiDir)) {
-          buildSpinner.fail(`Package not found: ${componentName}`);
-          process.exit(1);
-        }
-
-        // Get API base URL
-        if (!cfg) {
-          buildSpinner.fail('Environment config is required for UI deployment');
-          process.exit(1);
-        }
-        const apiBaseUrl = resolveIssuerUrl(cfg, { env });
-        const foundUiKeys = findKeysDirectory({
+        operationLock = await acquireEnvironmentOperationForEnvironment({
+          baseDir,
           env,
-          sourceDir: baseDir,
-          keysBaseDir: process.cwd(),
+          operation: `upgrade:${componentName}`,
+          requireExisting: true,
         });
-        const uiKeysDir = foundUiKeys
-          ? foundUiKeys.path
-          : getEnvironmentPaths({ baseDir, env, keysBaseDir: process.cwd() }).keys;
-        await ensureSupplementalKeyFiles(uiKeysDir);
-
-        let loginUiClientId: string | undefined;
-        if (componentName === 'ar-login-ui' && resolved.type === 'new' && !dryRun) {
-          const loginUiUrl = resolveLoginUiExecutionOrigin(cfg, { env });
-          const keysDir = uiKeysDir;
-
-          const { waitForRouterWorkerReady } = await import('./core/worker-readiness.js');
-          const readinessResult = await waitForRouterWorkerReady({
-            apiBaseUrl,
-            onProgress: (msg) => {
-              buildSpinner.text = msg;
-            },
-          });
-          if (!readinessResult.ready) {
-            buildSpinner.fail(
-              `API router did not become reachable at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
-            );
-            process.exit(1);
-          }
-
-          const { ensureSetupMachineAccessInD1, cleanupSetupMachineAccessInD1 } =
-            await import('./core/cloudflare.js');
-          const setupMachineResult = await ensureSetupMachineAccessInD1(
-            env,
-            cfg as AuthrimConfig,
-            keysDir,
-            (msg) => {
-              buildSpinner.text = msg;
-            }
+        deployConfigLock = await acquireDeployConfigLock({
+          baseDir,
+          env,
+          operation: `upgrade:${componentName}`,
+        });
+        upgradeLock = operationLock.lock;
+        upgradeLockPath = operationLock.lockFilePath;
+        if (!upgradeLock) {
+          throw new Error('environment_disappeared_while_acquiring_upgrade_lock');
+        }
+        const lockedDeploymentGuard = evaluateReleaseDeploymentGuard(
+          upgradeLock,
+          targetProductVersion,
+          'worker_redeploy'
+        );
+        if (!lockedDeploymentGuard.allowed) {
+          throw new Error(
+            releaseDeploymentGuardMessage(lockedDeploymentGuard, targetProductVersion)
           );
-          if (!setupMachineResult.success) {
-            buildSpinner.fail(
-              `Setup machine access bootstrap failed: ${setupMachineResult.error || 'unknown error'}`
-            );
-            process.exit(1);
+        }
+        assertFixedD1ResourceIdentities({
+          environment: env,
+          lock: upgradeLock,
+          databases: await listD1Databases(),
+        });
+        lockedAdminDatabaseIdentifier = upgradeLock.d1.DB_ADMIN?.id;
+        if (!lockedAdminDatabaseIdentifier) {
+          throw new Error('admin_database_required_for_upgrade');
+        }
+      }
+
+      // Load config for API URL (needed for UI Worker deployment)
+      const resolved = resolvePaths({ baseDir, env });
+      let cfg: AuthrimConfig | null = null;
+      try {
+        const configPath =
+          resolved.type === 'new'
+            ? (resolved.paths as { config: string }).config
+            : (resolved.paths as { config: string }).config;
+        if (existsSync(configPath)) {
+          const configContent = await readFile(configPath, 'utf-8');
+          const { AuthrimConfigSchema } = await import('./core/config.js');
+          cfg = AuthrimConfigSchema.parse(JSON.parse(configContent));
+        }
+      } catch {
+        // Config is optional for worker deployment
+      }
+
+      if (isUiWorkerComponent && skipBuild && !dryRun) {
+        throw new Error(
+          'UI builds contain environment-specific configuration and cannot be reused across environments.'
+        );
+      }
+
+      if (isUiWorkerComponent) {
+        // Deploy UI Worker component.
+        if (!dryRun) {
+          const buildSpinner = ora(`Preparing ${componentName}...`).start();
+          const uiDir = join(baseDir, 'packages', componentName);
+
+          if (!existsSync(uiDir)) {
+            buildSpinner.fail(`Package not found: ${componentName}`);
+            throw new Error(`ui_package_not_found:${componentName}`);
           }
 
-          let loginUiClientError: string | undefined;
-          try {
-            const { ensureLoginUiClient } = await import('./core/login-ui-client.js');
-            const clientResult = await ensureLoginUiClient({
+          // Get API base URL
+          if (!cfg) {
+            buildSpinner.fail('Environment config is required for UI deployment');
+            throw new Error('environment_config_required_for_ui_deployment');
+          }
+          const apiBaseUrl = resolveIssuerUrl(cfg, { env });
+          const foundUiKeys = findKeysDirectory({
+            env,
+            sourceDir: baseDir,
+            keysBaseDir: process.cwd(),
+          });
+          const uiKeysDir = foundUiKeys
+            ? foundUiKeys.path
+            : getEnvironmentPaths({ baseDir, env, keysBaseDir: process.cwd() }).keys;
+          await ensureSupplementalKeyFiles(uiKeysDir);
+
+          let loginUiClientId: string | undefined;
+          if (componentName === 'ar-login-ui' && resolved.type === 'new' && !dryRun) {
+            const loginUiUrl = resolveLoginUiExecutionOrigin(cfg, { env });
+            const keysDir = uiKeysDir;
+
+            const { waitForRouterWorkerReady } = await import('./core/worker-readiness.js');
+            const readinessResult = await waitForRouterWorkerReady({
               apiBaseUrl,
-              apiBaseUrls: resolveApiBaseUrlCandidates(cfg as AuthrimConfig, {
-                env,
-                purpose: 'tenant-scoped-admin',
-              }),
-              loginUiUrl,
-              keysDir,
-              tenantId: (cfg as AuthrimConfig | null)?.tenant?.name,
               onProgress: (msg) => {
                 buildSpinner.text = msg;
               },
             });
-
-            if (clientResult.success && clientResult.clientId) {
-              loginUiClientId = clientResult.clientId;
-            } else {
-              loginUiClientError = clientResult.error || 'unknown error';
-            }
-          } finally {
-            await cleanupSetupMachineAccessInD1(env, keysDir);
-          }
-          if (loginUiClientError) {
-            buildSpinner.fail(`Login UI client creation failed: ${loginUiClientError}`);
-            process.exit(1);
-          }
-        }
-
-        buildSpinner.succeed(`${componentName} ready for deployment`);
-
-        const deploySpinner = ora(`Deploying ${componentName}...`).start();
-        const uiSettings = resolveUiDeploymentSettings({
-          component: componentName as 'ar-admin-ui' | 'ar-login-ui',
-          config: cfg as AuthrimConfig,
-          apiBaseUrl,
-          loginUiClientId,
-        });
-        if (componentName === 'ar-login-ui' && resolved.type === 'new' && loginUiClientId) {
-          await mergeAndSaveUiEnv((resolved.paths as { uiEnv: string }).uiEnv, uiSettings.uiEnv);
-        }
-
-        const adminUiBffSecrets =
-          componentName === 'ar-admin-ui'
-            ? await prepareAdminUiBffDeployment({
-                env,
-                config: cfg,
-                keysDir: uiKeysDir,
-                onProgress: (message) => {
-                  buildSpinner.text = message;
-                },
-              })
-            : undefined;
-
-        const result = await deployUiWorkerComponent(
-          componentName as 'ar-admin-ui' | 'ar-login-ui',
-          {
-            env,
-            rootDir: resolve(baseDir),
-            dryRun: dryRun || false,
-            apiBaseUrl: uiSettings.apiBaseUrl,
-            runtimeApiBackendUrl: uiSettings.runtimeApiBackendUrl,
-            uiEnvConfig: uiSettings.uiEnv,
-            serviceBindingName: uiSettings.serviceBindingName,
-            workersDev: uiSettings.workersDev,
-            routes: uiSettings.routes,
-            adminUiBffSecrets,
-            skipBuild,
-            onProgress: (msg) => {
-              deploySpinner.text = msg;
-            },
-          }
-        );
-
-        if (
-          !dryRun &&
-          result.trafficCommitted &&
-          result.deployedAt &&
-          upgradeLock &&
-          upgradeLockPath
-        ) {
-          await saveLockFile(
-            {
-              ...upgradeLock,
-              workers: {
-                ...upgradeLock.workers,
-                [componentName]: {
-                  name: result.projectName,
-                  deployedAt: result.deployedAt,
-                  version:
-                    (await getPackageVersion(join(baseDir, 'packages', componentName))) ??
-                    undefined,
-                },
-              },
-              updatedAt: new Date().toISOString(),
-            },
-            upgradeLockPath
-          );
-        }
-
-        if (result.success) {
-          if (!dryRun) {
-            const controlDatabaseName = upgradeLock.d1.CONTROL_DB?.name;
-            if (!controlDatabaseName) {
-              throw new Error('control_database_required_for_ui_worker_inventory');
-            }
-            const { registerUiWorkerInventoryFromArtifacts } =
-              await import('./core/control-worker-inventory.js');
-            await registerUiWorkerInventoryFromArtifacts({
-              baseDir,
-              environmentId: env,
-              environmentName: env,
-              controlDatabaseName,
-              components: [componentName as 'ar-admin-ui' | 'ar-login-ui'],
-              environmentBootstrap: {
-                defaultResidencyPolicyId: cfg.profiles.defaults.residency,
-                automaticProvisioning: cfg.controlPlane?.automaticProvisioning === true,
-              },
-              registeredBy: 'setup:upgrade-ui',
-              disableMissing: false,
-            });
-          }
-          deploySpinner.succeed(`${componentName} deployed successfully`);
-          if (!dryRun && upgradeLock && upgradeLockPath && result.deployedAt) {
-            const updatedLock = {
-              ...upgradeLock,
-              workers: {
-                ...upgradeLock.workers,
-                [componentName]: {
-                  name: result.projectName,
-                  deployedAt: result.deployedAt,
-                  version:
-                    (await getPackageVersion(join(baseDir, 'packages', componentName))) ??
-                    undefined,
-                },
-              },
-              updatedAt: new Date().toISOString(),
-            };
-            await saveLockFile(updatedLock, upgradeLockPath);
-          }
-          console.log(chalk.green(`\n✓ ${componentName} upgraded to ${env}`));
-          console.log(chalk.gray(`  Project: ${result.projectName}`));
-          console.log(chalk.gray(`  Deployed at: ${result.deployedAt}`));
-        } else {
-          deploySpinner.fail(`${componentName} deployment failed`);
-          console.error(chalk.red(`\nError: ${result.error}`));
-          process.exit(1);
-        }
-      } else if (dryRun) {
-        console.log(chalk.bold('\n[DRY RUN] Would upgrade:'));
-        console.log(`  • ${componentName} (${componentType})`);
-        console.log(chalk.gray('\nNo changes made.'));
-      }
-    } else {
-      // Deploy Worker component
-      if (!dryRun) {
-        if (!cfg) {
-          spinner.fail('A valid environment config is required for Worker deployment');
-          process.exit(1);
-        }
-        const artifactSpinner = ora('Refreshing generated Worker configuration...').start();
-        try {
-          const { refreshWorkerDeploymentArtifacts } =
-            await import('./core/worker-deployment-artifacts.js');
-          const refreshed = await refreshWorkerDeploymentArtifacts({
-            baseDir,
-            env,
-            config: cfg,
-            lock: upgradeLock,
-            lockPath: upgradeLockPath,
-            components: [componentName as (typeof WORKER_COMPONENTS)[number]],
-            registeredBy: 'setup:upgrade',
-            onProgress: (message) => {
-              artifactSpinner.text = message;
-            },
-          });
-          Object.assign(upgradeLock, refreshed.lock);
-          artifactSpinner.succeed(`Refreshed ${componentName} Worker configuration`);
-        } catch (error) {
-          artifactSpinner.fail('Worker configuration refresh failed');
-          console.error(chalk.red(error instanceof Error ? error.message : String(error)));
-          process.exit(1);
-        }
-      }
-
-      if (!skipBuild && !dryRun) {
-        const buildSpinner = ora('Building packages...').start();
-
-        const buildResult = await buildApiPackages({
-          rootDir: resolve(baseDir),
-          onProgress: (msg) => {
-            buildSpinner.text = msg;
-          },
-        });
-
-        if (!buildResult.success) {
-          buildSpinner.fail('Build failed');
-          console.error(chalk.red(`\nError: ${buildResult.error}`));
-          process.exit(1);
-        }
-
-        buildSpinner.succeed('Build complete');
-      }
-
-      if (!dryRun) {
-        const deploySpinner = ora(`Deploying ${componentName}...`).start();
-        const workerComponent = componentName as (typeof WORKER_COMPONENTS)[number];
-        const keysDirectory = findKeysDirectory({
-          env,
-          sourceDir: baseDir,
-          keysBaseDir: process.cwd(),
-        });
-        if (keysDirectory) {
-          await ensureSupplementalKeyFiles(keysDirectory.path);
-        }
-        const secrets = keysDirectory
-          ? await loadDeploySecretsFromKeys(keysDirectory.path, [workerComponent])
-          : {};
-        const deployOptions = {
-          env,
-          rootDir: resolve(baseDir),
-          deploymentStrategy: 'auto' as const,
-          existingComponents: WORKER_COMPONENTS.filter(
-            (component) => upgradeLock?.workers?.[component] !== undefined
-          ),
-          secrets,
-          cleanupLegacyStaticSecrets: true,
-          concurrency: 2,
-          onProgress: (msg: string) => {
-            deploySpinner.text = msg;
-          },
-        };
-        deployOptions.existingComponents = await resolveExistingWorkerComponents(
-          deployOptions,
-          WORKER_COMPONENTS
-        );
-
-        if (workerComponent === 'ar-router') {
-          const missingUiBindingTargets = await resolveMissingUiWorkerBindingTargets(
-            {
-              ...deployOptions,
-            },
-            {
-              loginUi: (cfg as AuthrimConfig | null)?.components?.loginUi ?? true,
-              adminUi: (cfg as AuthrimConfig | null)?.components?.adminUi ?? true,
-            }
-          );
-          if (missingUiBindingTargets.loginUi || missingUiBindingTargets.adminUi) {
-            const placeholder = await deployUiWorkerBindingTargets(
-              {
-                env,
-                rootDir: resolve(baseDir),
-                apiBaseUrl: resolveIssuerUrl(cfg, { env }),
-                onProgress: (msg) => {
-                  deploySpinner.text = msg;
-                },
-              },
-              missingUiBindingTargets
-            );
-            if (placeholder.failedCount > 0) {
-              deploySpinner.fail('UI Worker binding-target deployment failed');
-              process.exit(1);
-            }
-          }
-        }
-
-        const summary = await deployAll(deployOptions, [workerComponent]);
-        const result = summary.results.find((candidate) => candidate.component === workerComponent);
-
-        if (summary.results.some((candidate) => candidate.success || candidate.trafficCommitted)) {
-          try {
-            if (upgradeLock && upgradeLockPath) {
-              await saveLockFile(
-                updateLockWithDeployments(upgradeLock, summary.results),
-                upgradeLockPath
+            if (!readinessResult.ready) {
+              buildSpinner.fail(
+                `API router did not become reachable at ${readinessResult.checkedUrl}: ${readinessResult.error || 'unknown readiness error'}`
               );
-              console.log(chalk.gray(`  Lock file updated`));
+              throw new Error(
+                `api_router_not_ready:${readinessResult.error || readinessResult.checkedUrl}`
+              );
             }
-          } catch {
-            console.log(chalk.yellow('  Warning: Could not update lock file'));
+
+            const { runEphemeralSetupMachineAccess } =
+              await import('./core/setup-machine-access-lifecycle.js');
+            try {
+              loginUiClientId = await runEphemeralSetupMachineAccess({
+                env,
+                config: cfg as AuthrimConfig,
+                keysDir,
+                databaseIdentifier: requireLockedAdminDatabaseIdentifier(),
+                onProgress: (msg) => {
+                  buildSpinner.text = msg;
+                },
+                action: async () => {
+                  const { ensureLoginUiClient } = await import('./core/login-ui-client.js');
+                  const clientResult = await ensureLoginUiClient({
+                    apiBaseUrl,
+                    apiBaseUrls: resolveApiBaseUrlCandidates(cfg as AuthrimConfig, {
+                      env,
+                      purpose: 'tenant-scoped-admin',
+                    }),
+                    loginUiUrl,
+                    keysDir,
+                    tenantId: (cfg as AuthrimConfig | null)?.tenant?.name,
+                    onProgress: (msg) => {
+                      buildSpinner.text = msg;
+                    },
+                  });
+
+                  if (!clientResult.success || !clientResult.clientId) {
+                    throw new Error(
+                      `Login UI client creation failed: ${clientResult.error || 'unknown error'}`
+                    );
+                  }
+                  return clientResult.clientId;
+                },
+              });
+            } catch (error) {
+              buildSpinner.fail(error instanceof Error ? error.message : 'Login UI setup failed');
+              throw error;
+            }
           }
-        }
 
-        if (summary.failedCount === 0 && result?.success) {
-          deploySpinner.succeed(`${componentName} deployed successfully`);
+          buildSpinner.succeed(`${componentName} ready for deployment`);
 
-          console.log(chalk.green(`\n✓ ${componentName} upgraded to ${env}`));
-          console.log(chalk.gray(`  Worker: ${result.workerName}`));
-          console.log(chalk.gray(`  Version: ${result.version || 'unknown'}`));
-          console.log(chalk.gray(`  Deployed at: ${result.deployedAt}`));
-        } else {
-          deploySpinner.fail(`${componentName} deployment failed`);
-          console.error(chalk.red(`\nError: ${result?.error || 'dependency deployment failed'}`));
-          process.exit(1);
+          const deploySpinner = ora(`Deploying ${componentName}...`).start();
+          const uiSettings = resolveUiDeploymentSettings({
+            component: componentName as 'ar-admin-ui' | 'ar-login-ui',
+            config: cfg as AuthrimConfig,
+            apiBaseUrl,
+            loginUiClientId,
+          });
+          if (componentName === 'ar-login-ui' && resolved.type === 'new' && loginUiClientId) {
+            await mergeAndSaveUiEnv((resolved.paths as { uiEnv: string }).uiEnv, uiSettings.uiEnv);
+          }
+
+          const adminUiBffSecrets =
+            componentName === 'ar-admin-ui'
+              ? await prepareAdminUiBffDeployment({
+                  env,
+                  config: cfg,
+                  keysDir: uiKeysDir,
+                  databaseIdentifier: requireLockedAdminDatabaseIdentifier(),
+                  onProgress: (message) => {
+                    buildSpinner.text = message;
+                  },
+                })
+              : undefined;
+
+          const result = await deployUiWorkerComponent(
+            componentName as 'ar-admin-ui' | 'ar-login-ui',
+            {
+              env,
+              rootDir: resolve(baseDir),
+              dryRun: dryRun || false,
+              apiBaseUrl: uiSettings.apiBaseUrl,
+              runtimeApiBackendUrl: uiSettings.runtimeApiBackendUrl,
+              uiEnvConfig: uiSettings.uiEnv,
+              serviceBindingName: uiSettings.serviceBindingName,
+              workersDev: uiSettings.workersDev,
+              routes: uiSettings.routes,
+              adminUiBffSecrets,
+              skipBuild,
+              deployConfigLockProof: deployConfigLock?.proof,
+              onProgress: (msg) => {
+                deploySpinner.text = msg;
+              },
+            }
+          );
+
+          if (result.success) {
+            if (!dryRun) {
+              if (
+                !result.deployedAt ||
+                !result.cloudflareVersionId ||
+                !result.cloudflareScriptTag ||
+                !upgradeLock ||
+                !upgradeLockPath
+              ) {
+                throw new Error(`ui_worker_deployment_exact_identity_unavailable:${componentName}`);
+              }
+              const visibility = await waitForWorkerDeploymentsReady({
+                targets: [
+                  {
+                    workerName: result.projectName,
+                    deployedAt: result.deployedAt,
+                    expectedVersionId: result.cloudflareVersionId,
+                  },
+                ],
+              });
+              if (!visibility.ready) {
+                throw new Error(
+                  `UI Worker deployment did not become visible: ${visibility.error ?? 'unknown'}`
+                );
+              }
+              const workersSubdomain = await getWorkersSubdomain();
+              const entryUrl =
+                componentName === 'ar-login-ui'
+                  ? resolveLoginUiEntryUrl(cfg, { env, workersSubdomain })
+                  : resolveAdminUiEntryUrl(cfg, { env, workersSubdomain });
+              const httpReadiness = await waitForWorkerHttpReady({
+                targets: [{ workerName: result.projectName, url: entryUrl }],
+              });
+              if (!httpReadiness.ready) {
+                throw new Error(
+                  `UI Worker HTTP readiness failed: ${httpReadiness.error ?? 'unknown'}`
+                );
+              }
+              upgradeLock = clearProvisionalWorkerScriptOwnership(
+                {
+                  ...upgradeLock,
+                  workers: {
+                    ...upgradeLock.workers,
+                    [componentName]: {
+                      name: result.projectName,
+                      deployedAt: result.deployedAt,
+                      version:
+                        (await getPackageVersion(join(baseDir, 'packages', componentName))) ??
+                        undefined,
+                      cloudflareVersionId: result.cloudflareVersionId,
+                      cloudflareScriptTag: result.cloudflareScriptTag,
+                    },
+                  },
+                  updatedAt: new Date().toISOString(),
+                },
+                [componentName]
+              );
+              await saveLockFile(upgradeLock, upgradeLockPath);
+
+              const controlDatabaseId = upgradeLock.d1.CONTROL_DB?.id;
+              if (!controlDatabaseId) {
+                throw new Error('control_database_required_for_ui_worker_inventory');
+              }
+              const { registerUiWorkerInventoryFromArtifacts } =
+                await import('./core/control-worker-inventory.js');
+              await registerUiWorkerInventoryFromArtifacts({
+                baseDir,
+                environmentId: env,
+                environmentName: env,
+                controlDatabaseName: controlDatabaseId,
+                components: [componentName as 'ar-admin-ui' | 'ar-login-ui'],
+                environmentBootstrap: {
+                  defaultResidencyPolicyId: cfg.profiles.defaults.residency,
+                  automaticProvisioning: cfg.controlPlane?.automaticProvisioning === true,
+                },
+                registeredBy: 'setup:upgrade-ui',
+                disableMissing: false,
+              });
+            }
+            deploySpinner.succeed(`${componentName} deployed successfully`);
+            console.log(chalk.green(`\n✓ ${componentName} upgraded to ${env}`));
+            console.log(chalk.gray(`  Project: ${result.projectName}`));
+            console.log(chalk.gray(`  Deployed at: ${result.deployedAt}`));
+          } else {
+            deploySpinner.fail(`${componentName} deployment failed`);
+            console.error(chalk.red(`\nError: ${result.error}`));
+            throw new Error(result.error || `ui_worker_deployment_failed:${componentName}`);
+          }
+        } else if (dryRun) {
+          console.log(chalk.bold('\n[DRY RUN] Would upgrade:'));
+          console.log(`  • ${componentName} (${componentType})`);
+          console.log(chalk.gray('\nNo changes made.'));
         }
       } else {
-        console.log(chalk.bold('\n[DRY RUN] Would upgrade:'));
-        console.log(`  • ${componentName} (${componentType})`);
-        console.log(chalk.gray('\nNo changes made.'));
+        // Deploy Worker component
+        if (!dryRun) {
+          if (!cfg) {
+            spinner.fail('A valid environment config is required for Worker deployment');
+            throw new Error('environment_config_required_for_worker_deployment');
+          }
+          const artifactSpinner = ora('Refreshing generated Worker configuration...').start();
+          try {
+            const { refreshWorkerDeploymentArtifacts } =
+              await import('./core/worker-deployment-artifacts.js');
+            const refreshed = await refreshWorkerDeploymentArtifacts({
+              baseDir,
+              env,
+              config: cfg,
+              lock: upgradeLock,
+              lockPath: upgradeLockPath,
+              components: [componentName as (typeof WORKER_COMPONENTS)[number]],
+              registeredBy: 'setup:upgrade',
+              onProgress: (message) => {
+                artifactSpinner.text = message;
+              },
+            });
+            upgradeLock = refreshed.lock;
+            artifactSpinner.succeed(`Refreshed ${componentName} Worker configuration`);
+          } catch (error) {
+            artifactSpinner.fail('Worker configuration refresh failed');
+            console.error(chalk.red(error instanceof Error ? error.message : String(error)));
+            throw error;
+          }
+        }
+
+        if (!skipBuild && !dryRun) {
+          const buildSpinner = ora('Building packages...').start();
+
+          const buildResult = await buildApiPackages({
+            rootDir: resolve(baseDir),
+            onProgress: (msg) => {
+              buildSpinner.text = msg;
+            },
+          });
+
+          if (!buildResult.success) {
+            buildSpinner.fail('Build failed');
+            console.error(chalk.red(`\nError: ${buildResult.error}`));
+            throw new Error(buildResult.error || 'worker_build_failed');
+          }
+
+          buildSpinner.succeed('Build complete');
+        }
+
+        if (!dryRun) {
+          const deploySpinner = ora(`Deploying ${componentName}...`).start();
+          const workerComponent = componentName as (typeof WORKER_COMPONENTS)[number];
+          const keysDirectory = findKeysDirectory({
+            env,
+            sourceDir: baseDir,
+            keysBaseDir: process.cwd(),
+          });
+          if (keysDirectory) {
+            await ensureSupplementalKeyFiles(keysDirectory.path);
+          }
+          const secrets = keysDirectory
+            ? await loadDeploySecretsFromKeys(keysDirectory.path, [workerComponent])
+            : {};
+          const deployOptions = {
+            env,
+            rootDir: resolve(baseDir),
+            deploymentStrategy: 'auto' as const,
+            existingComponents: WORKER_COMPONENTS.filter(
+              (component) => upgradeLock?.workers?.[component] !== undefined
+            ),
+            secrets,
+            cleanupLegacyStaticSecrets: true,
+            deployConfigLockProof: deployConfigLock?.proof,
+            concurrency: 2,
+            onProgress: (msg: string) => {
+              deploySpinner.text = msg;
+            },
+          };
+          deployOptions.existingComponents = await resolveExistingWorkerComponents(
+            deployOptions,
+            WORKER_COMPONENTS
+          );
+
+          if (workerComponent === 'ar-router') {
+            const missingUiBindingTargets = await resolveMissingUiWorkerBindingTargets(
+              {
+                ...deployOptions,
+              },
+              {
+                loginUi: (cfg as AuthrimConfig | null)?.components?.loginUi ?? true,
+                adminUi: (cfg as AuthrimConfig | null)?.components?.adminUi ?? true,
+              }
+            );
+            if (missingUiBindingTargets.loginUi || missingUiBindingTargets.adminUi) {
+              const placeholder = await deployUiWorkerBindingTargets(
+                {
+                  env,
+                  rootDir: resolve(baseDir),
+                  apiBaseUrl: resolveIssuerUrl(cfg, { env }),
+                  deployConfigLockProof: deployConfigLock?.proof,
+                  onProgress: (msg) => {
+                    deploySpinner.text = msg;
+                  },
+                },
+                missingUiBindingTargets
+              );
+              if (placeholder.failedCount > 0) {
+                deploySpinner.fail('UI Worker binding-target deployment failed');
+                throw new Error('ui_worker_binding_target_deployment_failed');
+              }
+            }
+          }
+
+          const summary = await deployAll(deployOptions, [workerComponent]);
+          const result = summary.results.find(
+            (candidate) => candidate.component === workerComponent
+          );
+
+          if (summary.failedCount === 0 && result?.success) {
+            if (
+              !result.deployedAt ||
+              !result.cloudflareVersionId ||
+              !result.cloudflareScriptTag ||
+              !upgradeLockPath
+            ) {
+              throw new Error(`worker_deployment_exact_identity_unavailable:${componentName}`);
+            }
+            const visibility = await waitForWorkerDeploymentsReady({
+              targets: [
+                {
+                  workerName: result.workerName,
+                  deployedAt: result.deployedAt,
+                  expectedVersionId: result.cloudflareVersionId,
+                },
+              ],
+            });
+            if (!visibility.ready) {
+              throw new Error(
+                `Worker deployment did not become visible: ${visibility.error ?? 'unknown'}`
+              );
+            }
+            const workersSubdomain = await getWorkersSubdomain();
+            const httpTargets = buildWorkerHttpReadinessTargets([result], workersSubdomain, {
+              workersDevEnabled: !(cfg as AuthrimConfig).urls?.api?.custom,
+            });
+            if (httpTargets.length > 0) {
+              const httpReadiness = await waitForWorkerHttpReady({ targets: httpTargets });
+              if (!httpReadiness.ready) {
+                throw new Error(
+                  `Worker HTTP readiness failed: ${httpReadiness.error ?? 'unknown'}`
+                );
+              }
+            }
+            if (workerComponent === 'ar-router') {
+              const routerReadiness = await waitForRouterWorkerReady({
+                apiBaseUrl: resolveIssuerUrl(cfg, { env }),
+              });
+              if (!routerReadiness.ready) {
+                throw new Error(
+                  `Router readiness failed: ${routerReadiness.error ?? routerReadiness.checkedUrl}`
+                );
+              }
+            }
+            const latestLockState = await loadLockFileAuto(baseDir, env);
+            if (!latestLockState.lock) {
+              throw new Error('worker_deployment_lock_unavailable');
+            }
+            upgradeLock = updateLockWithDeployments(latestLockState.lock, summary.results);
+            await saveLockFile(upgradeLock, upgradeLockPath);
+            console.log(chalk.gray(`  Lock file updated after identity and health checks`));
+
+            deploySpinner.succeed(`${componentName} deployed successfully`);
+
+            console.log(chalk.green(`\n✓ ${componentName} upgraded to ${env}`));
+            console.log(chalk.gray(`  Worker: ${result.workerName}`));
+            console.log(chalk.gray(`  Version: ${result.version || 'unknown'}`));
+            console.log(chalk.gray(`  Deployed at: ${result.deployedAt}`));
+          } else {
+            deploySpinner.fail(`${componentName} deployment failed`);
+            console.error(chalk.red(`\nError: ${result?.error || 'dependency deployment failed'}`));
+            throw new Error(result?.error || `worker_deployment_failed:${componentName}`);
+          }
+        } else {
+          console.log(chalk.bold('\n[DRY RUN] Would upgrade:'));
+          console.log(`  • ${componentName} (${componentType})`);
+          console.log(chalk.gray('\nNo changes made.'));
+        }
+      }
+
+      console.log('');
+    } finally {
+      try {
+        await deployConfigLock?.release();
+      } finally {
+        await operationLock?.release();
       }
     }
-
-    console.log('');
   });
 
 program

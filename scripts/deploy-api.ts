@@ -13,6 +13,7 @@ import {
   type DeploymentSummary,
 } from '../packages/setup/src/core/deploy.js';
 import {
+  acquireDeployConfigLock,
   acquireEnvironmentOperationForEnvironment,
   loadLockFileAuto,
   saveLockFile,
@@ -27,7 +28,13 @@ import { ensureSupplementalKeyFiles } from '../packages/setup/src/core/keys.js';
 import { getMissingRequiredDeploySecrets } from '../packages/setup/src/core/secrets.js';
 import { getRootProductVersion } from '../packages/setup/src/core/version.js';
 import { AuthrimConfigSchema } from '../packages/setup/src/core/config.js';
+import { getWorkersSubdomain } from '../packages/setup/src/core/cloudflare.js';
 import { refreshWorkerDeploymentArtifacts } from '../packages/setup/src/core/worker-deployment-artifacts.js';
+import {
+  buildWorkerHttpReadinessTargets,
+  waitForWorkerDeploymentsReady,
+  waitForWorkerHttpReady,
+} from '../packages/setup/src/core/worker-readiness.js';
 import {
   evaluateReleaseDeploymentGuard,
   releaseDeploymentGuardMessage,
@@ -263,6 +270,17 @@ function buildVersionVars(options: CliOptions): DeployOptions['varsByComponent']
   );
 }
 
+async function loadEnvironmentConfig(rootDir: string, env: string) {
+  const environmentPaths = getEnvironmentPaths({ baseDir: rootDir, env });
+  const config = AuthrimConfigSchema.parse(
+    JSON.parse(await readFile(environmentPaths.config, 'utf-8'))
+  );
+  if (config.environment.prefix !== env) {
+    throw new Error(`deployment_config_environment_mismatch:${env}`);
+  }
+  return config;
+}
+
 async function main(): Promise<void> {
   const options = parseOptions(process.argv.slice(2));
   const rootDir = resolve(process.cwd());
@@ -297,7 +315,13 @@ async function main(): Promise<void> {
       await cleanupOperationLock.release();
       throw new Error('environment_changed_while_waiting_for_deploy_api_cleanup_lock');
     }
+    let cleanupDeployConfigLock: Awaited<ReturnType<typeof acquireDeployConfigLock>> | undefined;
     try {
+      cleanupDeployConfigLock = await acquireDeployConfigLock({
+        baseDir: rootDir,
+        env: options.env,
+        operation: 'deploy-api:legacy-secret-cleanup',
+      });
       const cleanupResult = await cleanupLegacyStaticSecrets(
         {
           env: options.env,
@@ -305,6 +329,7 @@ async function main(): Promise<void> {
           concurrency: options.concurrency,
           maxRetries: 4,
           retryDelayMs: 1000,
+          deployConfigLockProof: cleanupDeployConfigLock.proof,
           onProgress: console.log,
         },
         ['ar-lib-core', 'ar-auth', 'ar-token', 'ar-management']
@@ -329,7 +354,11 @@ async function main(): Promise<void> {
       }
       console.log('Legacy static secret cleanup finalized.');
     } finally {
-      await cleanupOperationLock.release();
+      try {
+        await cleanupDeployConfigLock?.release();
+      } finally {
+        await cleanupOperationLock.release();
+      }
     }
     return;
   }
@@ -369,6 +398,7 @@ async function main(): Promise<void> {
   let operationLock:
     | Awaited<ReturnType<typeof acquireEnvironmentOperationForEnvironment>>
     | undefined;
+  let deployConfigLock: Awaited<ReturnType<typeof acquireDeployConfigLock>> | undefined;
 
   try {
     operationLock =
@@ -380,6 +410,13 @@ async function main(): Promise<void> {
             operation: 'deploy-api',
             requireExisting: true,
           });
+    if (operationLock) {
+      deployConfigLock = await acquireDeployConfigLock({
+        baseDir: rootDir,
+        env: options.env,
+        operation: 'deploy-api',
+      });
+    }
     if (operationLock && JSON.stringify(operationLock.lock) !== JSON.stringify(lock)) {
       throw new Error('environment_changed_while_waiting_for_deploy_api_lock');
     }
@@ -404,6 +441,7 @@ async function main(): Promise<void> {
       secrets,
       cleanupLegacyStaticSecrets: true,
       requireManagedArtifactVerification: true,
+      deployConfigLockProof: deployConfigLock?.proof,
       ...(workingLock.d1.CONTROL_DB
         ? {
             deploymentLease: {
@@ -425,13 +463,7 @@ async function main(): Promise<void> {
       ...(!options.dryRun && !options.preflight
         ? {
             beforeWorkerMutations: async () => {
-              const environmentPaths = getEnvironmentPaths({
-                baseDir: rootDir,
-                env: options.env,
-              });
-              const config = AuthrimConfigSchema.parse(
-                JSON.parse(await readFile(environmentPaths.config, 'utf-8'))
-              );
+              const config = await loadEnvironmentConfig(rootDir, options.env);
               const refreshed = await refreshWorkerDeploymentArtifacts({
                 baseDir: rootDir,
                 env: options.env,
@@ -511,13 +543,64 @@ async function main(): Promise<void> {
       summary = await deployAll(deployOptions, selected);
     }
 
-    if (
-      !options.dryRun &&
-      lockPath &&
-      summary.results.some((result) => result.success || result.trafficCommitted)
-    ) {
-      await saveLockFile(updateLockWithDeployments(workingLock, summary.results), lockPath);
-      console.log(`Lock file updated: ${lockPath}`);
+    if (!options.dryRun && lockPath && summary.failedCount === 0) {
+      for (const result of summary.results) {
+        if (
+          !result.success ||
+          !result.deployedAt ||
+          !result.cloudflareVersionId ||
+          !result.cloudflareScriptTag
+        ) {
+          throw new Error(`worker_deployment_exact_identity_unavailable:${result.component}`);
+        }
+      }
+      const visibility = await waitForWorkerDeploymentsReady({
+        targets: summary.results.map((result) => ({
+          workerName: result.workerName,
+          deployedAt: result.deployedAt,
+          expectedVersionId: result.cloudflareVersionId,
+        })),
+        onProgress: console.log,
+      });
+      if (!visibility.ready) {
+        throw new Error(
+          `Worker deployment did not become visible: ${visibility.error ?? 'unknown error'}`
+        );
+      }
+
+      if (options.healthUrl) {
+        const health = await checkOidcHealth(options.healthUrl);
+        if (!health.success) {
+          throw new Error(
+            `Post-deployment health check failed: ${health.error ?? 'unknown error'}`
+          );
+        }
+      } else {
+        const config = await loadEnvironmentConfig(rootDir, options.env);
+        const workersSubdomain = await getWorkersSubdomain();
+        const healthTargets = buildWorkerHttpReadinessTargets(summary.results, workersSubdomain, {
+          workersDevEnabled: !config.urls?.api?.custom,
+        });
+        if (healthTargets.length > 0) {
+          const health = await waitForWorkerHttpReady({
+            targets: healthTargets,
+            onProgress: console.log,
+          });
+          if (!health.ready) {
+            throw new Error(`Worker HTTP readiness failed: ${health.error ?? 'unknown error'}`);
+          }
+        }
+      }
+
+      const latestLockState = await loadLockFileAuto(rootDir, options.env);
+      if (!latestLockState.lock) {
+        throw new Error('worker_deployment_lock_unavailable_after_readiness');
+      }
+      await saveLockFile(
+        updateLockWithDeployments(latestLockState.lock, summary.results),
+        lockPath
+      );
+      console.log(`Lock file updated after identity and health checks: ${lockPath}`);
     }
     if (controller.signal.aborted) {
       process.exitCode = 130;
@@ -525,7 +608,11 @@ async function main(): Promise<void> {
       process.exitCode = 1;
     }
   } finally {
-    await operationLock?.release();
+    try {
+      await deployConfigLock?.release();
+    } finally {
+      await operationLock?.release();
+    }
     process.off('SIGINT', handleInterrupt);
     process.off('SIGTERM', handleInterrupt);
   }

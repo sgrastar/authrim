@@ -6,6 +6,7 @@ const deployWithRetryPath = fileURLToPath(
   new URL('../../../../scripts/deploy-with-retry.sh', import.meta.url)
 );
 const deployApiPath = fileURLToPath(new URL('../../../../scripts/deploy-api.ts', import.meta.url));
+const deployUiPath = fileURLToPath(new URL('../../../../scripts/deploy-ui.ts', import.meta.url));
 const controlWranglerJsoncPath = fileURLToPath(
   new URL('../../../ar-control/wrangler.jsonc', import.meta.url)
 );
@@ -48,7 +49,40 @@ describe('deployment script version safety', () => {
     expect(refreshIndex).toBeGreaterThan(leaseHookIndex);
     expect(refreshIndex).toBeGreaterThan(-1);
     expect(deploymentIndex).toBeGreaterThan(refreshIndex);
-    expect(apiSource).toContain('updateLockWithDeployments(workingLock, summary.results)');
+    expect(apiSource).toContain('updateLockWithDeployments(latestLockState.lock, summary.results)');
+  });
+
+  it('rejects a canonical config copied under another environment name', () => {
+    const apiSource = readFileSync(deployApiPath, 'utf-8');
+    const uiSource = readFileSync(deployUiPath, 'utf-8');
+
+    expect(apiSource).toContain('config.environment.prefix !== env');
+    expect(apiSource).toContain('deployment_config_environment_mismatch:${env}');
+    expect(uiSource).toContain('config.environment.prefix !== env');
+    expect(uiSource).toContain('deployment_config_environment_mismatch:${env}');
+  });
+
+  it('advances script locks only after exact Worker identity and readiness checks', () => {
+    const apiSource = readFileSync(deployApiPath, 'utf-8');
+    const uiSource = readFileSync(deployUiPath, 'utf-8');
+
+    const apiIdentityIndex = apiSource.indexOf('!result.cloudflareScriptTag');
+    const apiVisibilityIndex = apiSource.indexOf('await waitForWorkerDeploymentsReady({');
+    const apiSaveIndex = apiSource.indexOf(
+      'updateLockWithDeployments(latestLockState.lock, summary.results)'
+    );
+    expect(apiIdentityIndex).toBeGreaterThan(-1);
+    expect(apiVisibilityIndex).toBeGreaterThan(apiIdentityIndex);
+    expect(apiSaveIndex).toBeGreaterThan(apiVisibilityIndex);
+
+    const uiIdentityIndex = uiSource.indexOf('!result.cloudflareScriptTag');
+    const uiVisibilityIndex = uiSource.indexOf('await waitForWorkerDeploymentsReady({');
+    const uiSaveIndex = uiSource.indexOf('await saveLockFile(');
+    expect(uiIdentityIndex).toBeGreaterThan(-1);
+    expect(uiVisibilityIndex).toBeGreaterThan(uiIdentityIndex);
+    expect(uiSaveIndex).toBeGreaterThan(uiVisibilityIndex);
+    expect(uiSource).toContain('cloudflareVersionId: result.cloudflareVersionId');
+    expect(uiSource).toContain('cloudflareScriptTag: result.cloudflareScriptTag');
   });
 
   it('blocks unmanaged deploys through the tracked Wrangler JSONC fallback', () => {

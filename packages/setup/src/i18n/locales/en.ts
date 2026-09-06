@@ -878,7 +878,7 @@ const en: Translations = {
     'This temporary token lets Authrim create tenant databases automatically. It needs permission to create and edit API tokens: Account API Tokens: Write/Edit for an account-owned token, or API Tokens: Write/Edit for a user-owned token. Setup uses it to create narrowly scoped API tokens for D1, Workers, KV, and R2 as needed, registers them with the Control Worker, and then revokes the temporary token.',
   'web.deploy.manualDnsSectionTitle': 'DNS settings',
   'web.deploy.bootstrapTokenCreateStatus':
-    'Create a temporary token in Cloudflare Dashboard, then enter it below.',
+    'Set End Date to {{endDate}} (UTC) in Cloudflare Dashboard, create the temporary token, then enter it below.',
   'web.deploy.bootstrapPopupBlocked':
     'The browser blocked the new tab. Allow popups and select this button again.',
   'web.deploy.bootstrapTokenRequired':
@@ -889,7 +889,8 @@ const en: Translations = {
   'web.envDetail.createOneTimeCloudflareToken': 'Create one-time Cloudflare token',
   'web.envDetail.oneTimeBootstrapTokenPlaceholder': 'One-time bootstrap token',
   'web.envDetail.enableAutomaticProvisioning': 'Enable',
-  'web.envDetail.enterOneTimeTokenThenEnable': 'Enter the one-time token, then select Enable.',
+  'web.envDetail.enterOneTimeTokenThenEnable':
+    'Set End Date to {{endDate}} (UTC), create and enter the one-time token, then select Enable.',
   'web.envDetail.bootstrapPopupBlocked': 'The browser blocked the Cloudflare Dashboard tab.',
   'web.envDetail.enterOneTimeTokenFirst': 'Enter the one-time Cloudflare token first.',
   'web.envDetail.preparingControlAuthority': 'Preparing Control provisioning authority...',
@@ -902,6 +903,8 @@ const en: Translations = {
   'web.envDetail.automaticProvisioningBlocked': 'Automatic provisioning is blocked.',
   'web.envDetail.automaticProvisioningMissing': '(missing: {{missing}})',
   'web.envDetail.automaticProvisioningRepairHint': 'Enter a new one-time token to repair it.',
+  'web.envDetail.bootstrapRetainedForRetry':
+    'Cloudflare returned a temporary error. The bootstrap token is still active; re-enter the same token and select Enable to resume.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Revoke the named Authrim bootstrap and child tokens in Cloudflare Dashboard before retrying.',
   'web.envDetail.bootstrapRevokedPendingReset':

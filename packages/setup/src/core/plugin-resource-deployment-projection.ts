@@ -16,8 +16,14 @@ export interface ActivePluginRunnerResourceBinding {
 
 interface ActivePluginResourceRow extends Record<string, unknown> {
   resource_kind: string;
+  lifecycle_mode: string;
   provider_resource_id: string | null;
   provider_name: string | null;
+  provider_create_state: string;
+  provider_creation_date: string | null;
+  provider_ownership_marker_key: string | null;
+  provider_ownership_id: string | null;
+  provider_identity_checkpointed_at: number | null;
   ownership_fingerprint: string | null;
 }
 
@@ -41,7 +47,10 @@ export async function loadPluginRunnerResourceBindingsForDeployment(input: {
   }
   const rows = await query<ActivePluginResourceRow>(
     input.controlDatabaseName,
-    `SELECT resource_kind, provider_resource_id, provider_name,
+    `SELECT resource_kind, lifecycle_mode, provider_resource_id, provider_name,
+            provider_create_state, provider_creation_date,
+            provider_ownership_marker_key, provider_ownership_id,
+            provider_identity_checkpointed_at,
             json_extract(desired_spec_json, '$.ownershipFingerprint') AS ownership_fingerprint
        FROM control_plugin_desired_resources
       WHERE environment_id = '${input.environmentId}' AND status IN ('ready', 'active')
@@ -54,13 +63,22 @@ export async function loadPluginRunnerResourceBindingsForDeployment(input: {
   const bindings = rows.map((row): ActivePluginRunnerResourceBinding => {
     if (
       !['d1', 'kv_namespace', 'r2_bucket'].includes(row.resource_kind) ||
+      !['managed', 'existing'].includes(row.lifecycle_mode) ||
       !row.provider_resource_id ||
       !SAFE_PROVIDER_ID.test(row.provider_resource_id) ||
       !row.provider_name ||
       !SAFE_PROVIDER_NAME.test(row.provider_name) ||
       !row.ownership_fingerprint ||
       !SHA256.test(row.ownership_fingerprint) ||
-      (row.resource_kind === 'r2_bucket' && row.provider_resource_id !== row.provider_name)
+      (row.resource_kind === 'r2_bucket' && row.provider_resource_id !== row.provider_name) ||
+      (row.lifecycle_mode === 'managed' &&
+        (row.provider_create_state !== 'identified' ||
+          !Number.isSafeInteger(row.provider_identity_checkpointed_at) ||
+          Number(row.provider_identity_checkpointed_at) < 1 ||
+          (row.resource_kind === 'r2_bucket' &&
+            (!row.provider_creation_date ||
+              !row.provider_ownership_marker_key ||
+              !row.provider_ownership_id))))
     ) {
       throw new Error('plugin_resource_projection_row_invalid');
     }

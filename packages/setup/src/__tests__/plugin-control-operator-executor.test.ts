@@ -87,7 +87,10 @@ function client(database: DatabaseSync, tenantDatabase?: DatabaseSync) {
     listKvNamespaces: vi.fn(async () => []),
     createKvNamespace: vi.fn(async (title: string) => ({ id: 'namespace-a', title })),
     listR2Buckets: vi.fn(async () => []),
-    createR2Bucket: vi.fn(async (name: string) => ({ name })),
+    createR2Bucket: vi.fn(async (name: string) => ({
+      name,
+      creation_date: '2026-08-01T00:00:00.000Z',
+    })),
     listWorkerDeployments: vi.fn(async () => [
       patched
         ? {
@@ -126,6 +129,11 @@ function resource(
     lifecycleMode: 'managed',
     providerResourceId: null,
     providerName: null,
+    providerCreateState: 'not_started',
+    providerCreationDate: null,
+    providerOwnershipMarkerKey: null,
+    providerOwnershipId: null,
+    providerIdentityCheckpointedAt: null,
     ownershipFingerprint: FINGERPRINT,
     deterministicName: `authrim-test-${FINGERPRINT.slice(0, 32)}-${suffix}`,
     hostBindingRef: `PRES_${hostPrefix}_${FINGERPRINT.slice(0, 24).toUpperCase()}`,
@@ -187,6 +195,12 @@ describe('setup plugin Control operator executor', () => {
     database.exec(
       readFileSync(
         resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
+        'utf8'
+      )
+    );
+    database.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
         'utf8'
       )
     );
@@ -284,9 +298,16 @@ describe('setup plugin Control operator executor', () => {
     target.value.listKvNamespaces
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ id: 'namespace-a', title: resources[1]!.deterministicName }]);
-    target.value.listR2Buckets
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([{ name: resources[2]!.deterministicName }]);
+    target.value.listR2Buckets.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        name: resources[2]!.deterministicName,
+        creation_date: '2026-08-01T00:00:00.000Z',
+      },
+    ]);
+    const r2Ownership = {
+      assert: vi.fn(async () => undefined),
+      writeAndVerify: vi.fn(async () => undefined),
+    };
 
     await expect(
       executeSetupPluginControlOperator({
@@ -294,6 +315,7 @@ describe('setup plugin Control operator executor', () => {
         migrationReleaseBucketName: 'migration-releases',
         operation: operation('provider', resources),
         client: target.value as never,
+        r2Ownership,
         now: () => 100,
       })
     ).resolves.toMatchObject({ state: 'awaiting_migration' });
@@ -301,16 +323,19 @@ describe('setup plugin Control operator executor', () => {
     expect(target.value.createD1Database).toHaveBeenCalledTimes(1);
     expect(target.value.createKvNamespace).toHaveBeenCalledTimes(1);
     expect(target.value.createR2Bucket).toHaveBeenCalledTimes(1);
+    expect(r2Ownership.writeAndVerify).toHaveBeenCalledTimes(1);
+    expect(r2Ownership.assert).toHaveBeenCalledTimes(1);
     expect(
       database
         .prepare(
-          `SELECT resource_kind, status FROM control_plugin_desired_resources ORDER BY resource_kind`
+          `SELECT resource_kind, provider_create_state, status
+             FROM control_plugin_desired_resources ORDER BY resource_kind`
         )
         .all()
     ).toEqual([
-      { resource_kind: 'd1', status: 'ready' },
-      { resource_kind: 'kv_namespace', status: 'ready' },
-      { resource_kind: 'r2_bucket', status: 'ready' },
+      { resource_kind: 'd1', provider_create_state: 'identified', status: 'ready' },
+      { resource_kind: 'kv_namespace', provider_create_state: 'identified', status: 'ready' },
+      { resource_kind: 'r2_bucket', provider_create_state: 'identified', status: 'ready' },
     ]);
     expect(
       database.prepare(`SELECT status, last_error_code FROM control_operations`).get()
@@ -320,7 +345,7 @@ describe('setup plugin Control operator executor', () => {
     });
   });
 
-  it('adopts a deterministically named D1 after a create response is lost', async () => {
+  it('blocks an ambiguous D1 create response without adopting by deterministic name', async () => {
     const item = resource('d1');
     database
       .prepare(
@@ -354,13 +379,7 @@ describe('setup plugin Control operator executor', () => {
       .run(OPERATION_ID, migrationStep(item), OPERATION_ID, bindingStep(item));
 
     const target = client(database);
-    target.value.listD1Databases.mockResolvedValueOnce([]).mockResolvedValueOnce([
-      {
-        uuid: 'database-a',
-        name: item.deterministicName,
-        read_replication: { mode: 'disabled' },
-      },
-    ]);
+    target.value.listD1Databases.mockResolvedValueOnce([]);
     target.value.createD1Database.mockRejectedValueOnce(new Error('response_lost'));
 
     await expect(
@@ -371,22 +390,35 @@ describe('setup plugin Control operator executor', () => {
         client: target.value as never,
         now: () => 100,
       })
-    ).resolves.toMatchObject({ state: 'awaiting_migration' });
+    ).rejects.toThrow('plugin_resource_create_outcome_ambiguous');
 
     expect(target.value.createD1Database).toHaveBeenCalledTimes(1);
-    expect(target.value.listD1Databases).toHaveBeenCalledTimes(2);
+    expect(target.value.listD1Databases).toHaveBeenCalledTimes(1);
     expect(
       database
         .prepare(
-          `SELECT provider_resource_id, provider_name, status
+          `SELECT provider_create_state, provider_resource_id, provider_name, status
              FROM control_plugin_desired_resources WHERE plugin_resource_id = ?`
         )
         .get(item.pluginResourceId)
     ).toEqual({
-      provider_resource_id: 'database-a',
-      provider_name: item.deterministicName,
-      status: 'ready',
+      provider_create_state: 'issued',
+      provider_resource_id: null,
+      provider_name: null,
+      status: 'provisioning',
     });
+    await expect(
+      executeSetupPluginControlOperator({
+        controlDatabaseId: 'control-id',
+        migrationReleaseBucketName: 'migration-releases',
+        operation: operation('provider', [
+          { ...item, providerCreateState: 'issued', status: 'provisioning' },
+        ]),
+        client: target.value as never,
+        now: () => 200,
+      })
+    ).rejects.toThrow('plugin_resource_create_outcome_ambiguous');
+    expect(target.value.createD1Database).toHaveBeenCalledTimes(1);
   });
 
   it('applies the pinned plugin D1 migration before making bindings eligible', async () => {
@@ -420,6 +452,8 @@ describe('setup plugin Control operator executor', () => {
     const item = resource('d1', {
       providerResourceId: 'database-a',
       providerName: 'database-a-name',
+      providerCreateState: 'identified',
+      providerIdentityCheckpointedAt: 10,
       status: 'ready',
       migration: {
         streamId: 'plugin/plugin-a/state',
@@ -450,9 +484,9 @@ describe('setup plugin Control operator executor', () => {
            plugin_resource_id, environment_id, operation_id, plugin_installation_id,
            tenant_id, resource_kind, logical_resource_id, binding_name, lifecycle_mode,
            provider_resource_id, provider_name, injection_policy_json, desired_spec_json,
-           status, updated_at
+           provider_create_state, provider_identity_checkpointed_at, status, updated_at
          ) VALUES (?, 'test', ?, ?, 'tenant-a', 'd1', 'state', 'PLUGIN_STATE', 'managed',
-           'database-a', 'database-a-name', '{}', '{}', 'ready', 10)`
+           'database-a', 'database-a-name', '{}', '{}', 'identified', 10, 'ready', 10)`
       )
       .run(item.pluginResourceId, OPERATION_ID, INSTALLATION_ID);
     database
@@ -513,6 +547,8 @@ describe('setup plugin Control operator executor', () => {
     const item = resource('kv_namespace', {
       providerResourceId: 'namespace-a',
       providerName: 'namespace-a-name',
+      providerCreateState: 'identified',
+      providerIdentityCheckpointedAt: 10,
       status: 'ready',
       migration: null,
     });
@@ -535,8 +571,9 @@ describe('setup plugin Control operator executor', () => {
            plugin_resource_id, environment_id, operation_id, plugin_installation_id,
            tenant_id, resource_kind, logical_resource_id, binding_name, lifecycle_mode,
            provider_resource_id, provider_name, injection_policy_json, desired_spec_json,
-           status, updated_at
-         ) VALUES (?, 'test', ?, ?, 'tenant-a', ?, ?, ?, 'managed', ?, ?, '{}', '{}', 'ready', 10)`
+           provider_create_state, provider_identity_checkpointed_at, status, updated_at
+         ) VALUES (?, 'test', ?, ?, 'tenant-a', ?, ?, ?, 'managed', ?, ?, '{}', '{}',
+           ?, ?, 'ready', 10)`
       )
       .run(
         item.pluginResourceId,
@@ -546,7 +583,9 @@ describe('setup plugin Control operator executor', () => {
         item.logicalResourceId,
         item.binding,
         item.providerResourceId,
-        item.providerName
+        item.providerName,
+        item.providerCreateState,
+        item.providerIdentityCheckpointedAt
       );
     database
       .prepare(

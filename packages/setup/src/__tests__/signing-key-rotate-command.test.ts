@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { createLockFile } from '../core/lock.js';
 import {
@@ -63,6 +64,29 @@ function lockWithDeployments(input: {
 }
 
 describe('signing-key rotation command state', () => {
+  it('validates canonical config and every loaded lock against the requested environment', async () => {
+    const source = await readFile(
+      new URL('../cli/commands/signing-key-rotate.ts', import.meta.url),
+      'utf8'
+    );
+    const configLoad = source.indexOf('async function loadEnvironment(');
+    const configIdentity = source.indexOf('if (config.environment.prefix !== env)', configLoad);
+    const lockIdentityHelper = source.indexOf('function assertSigningKeyEnvironmentLock(');
+    const initialLock = source.indexOf(
+      'const initial = await loadLockFileAuto(context.environmentBaseDir, context.env)'
+    );
+    const initialIdentity = source.indexOf(
+      'assertSigningKeyEnvironmentLock(initial.lock, context.env)',
+      initialLock
+    );
+
+    expect(configIdentity).toBeGreaterThan(configLoad);
+    expect(lockIdentityHelper).toBeGreaterThan(-1);
+    expect(initialIdentity).toBeGreaterThan(initialLock);
+    expect(source).toContain('assertSigningKeyEnvironmentLock(input.lock, input.context.env)');
+    expect(source).toContain('assertSigningKeyEnvironmentLock(finalLock.lock, context.env)');
+  });
+
   it('derives the target set from the secret allow-list and includes the signer', () => {
     const registry = signingRotationTargetComponents('runtime_registry');
     const smoke = signingRotationTargetComponents('smoke_rpc');

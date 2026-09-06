@@ -1,4 +1,9 @@
 import type { AuthrimLock } from './lock.js';
+import type {
+  ReleaseMigrationManifest,
+  ReleaseMigrationPhysicalTarget,
+} from './release-migrations.js';
+import { evaluateAppendOnlyInitialDraftResume } from './release-state.js';
 import {
   environmentOperationBlockMessage,
   evaluateEnvironmentOperation,
@@ -8,6 +13,7 @@ import {
 export interface ReleaseDeploymentGuardResult {
   allowed: boolean;
   currentVersion?: string;
+  appendOnlyInitialDraftResume?: boolean;
   reason?:
     | 'mixed_worker_versions'
     | 'unknown_worker_version'
@@ -30,15 +36,38 @@ export function evaluateReleaseDeploymentGuard(
   operation: Exclude<EnvironmentOperationKind, 'provision' | 'delete' | 'release_update'>,
   options: {
     releaseManifestChecksum?: string;
+    initialDraft?: {
+      manifest: ReleaseMigrationManifest;
+      targets: readonly ReleaseMigrationPhysicalTarget[];
+    };
+    explicitLegacyInitialRecoveryVerified?: boolean;
   } = {}
 ): ReleaseDeploymentGuardResult {
+  const appendOnlyInitialDraftResume =
+    operation === 'initial_deploy' && options.releaseManifestChecksum && options.initialDraft
+      ? evaluateAppendOnlyInitialDraftResume({
+          lock,
+          currentManifest: options.initialDraft.manifest,
+          currentManifestChecksum: options.releaseManifestChecksum,
+          currentTargets: options.initialDraft.targets,
+          currentManifestIsDraft: true,
+        }).allowed
+      : false;
   const decision = evaluateEnvironmentOperation({
     operation,
     lock,
     targetVersion,
-    ...options,
+    releaseManifestChecksum: options.releaseManifestChecksum,
+    appendOnlyInitialDraftResumeVerified: appendOnlyInitialDraftResume,
+    explicitLegacyInitialRecoveryVerified: options.explicitLegacyInitialRecoveryVerified,
   });
-  if (decision.allowed) return { allowed: true, currentVersion: decision.currentVersion };
+  if (decision.allowed) {
+    return {
+      allowed: true,
+      currentVersion: decision.currentVersion,
+      ...(appendOnlyInitialDraftResume ? { appendOnlyInitialDraftResume: true } : {}),
+    };
+  }
   const reason =
     decision.reason === 'release_update_in_progress'
       ? 'release_update_in_progress'

@@ -83,15 +83,26 @@ export function evaluateEnvironmentOperation(input: {
   lock?: AuthrimLock | null;
   targetVersion?: string;
   releaseManifestChecksum?: string;
+  appendOnlyInitialDraftResumeVerified?: boolean;
+  explicitLegacyInitialRecoveryVerified?: boolean;
   environmentObservedRemotely?: boolean;
+  environmentKnownLocally?: boolean;
 }): EnvironmentOperationDecision {
-  const { operation, lock, targetVersion, releaseManifestChecksum, environmentObservedRemotely } =
-    input;
+  const {
+    operation,
+    lock,
+    targetVersion,
+    releaseManifestChecksum,
+    appendOnlyInitialDraftResumeVerified,
+    explicitLegacyInitialRecoveryVerified,
+    environmentObservedRemotely,
+    environmentKnownLocally,
+  } = input;
   const lifecycle = classifyEnvironmentLifecycle(lock);
   const currentVersion = lock?.productVersion;
 
   if (operation === 'delete') {
-    return lifecycle === 'absent' && !environmentObservedRemotely
+    return lifecycle === 'absent' && !environmentObservedRemotely && !environmentKnownLocally
       ? denied(operation, lifecycle, 'environment_not_found')
       : { allowed: true, lifecycle, operation, ...(currentVersion ? { currentVersion } : {}) };
   }
@@ -149,7 +160,7 @@ export function evaluateEnvironmentOperation(input: {
       (release?.manifestChecksum !== releaseManifestChecksum ||
         release?.initialWorkerRedeployRequired === true) &&
       !releaseUpdateTerminal(release);
-    if (initialManifestChanged) {
+    if (initialManifestChanged && !appendOnlyInitialDraftResumeVerified) {
       return denied(operation, lifecycle, 'initial_manifest_changed');
     }
     const resumableInitialDeploy =
@@ -158,7 +169,8 @@ export function evaluateEnvironmentOperation(input: {
       Boolean(targetVersion) &&
       Boolean(releaseManifestChecksum) &&
       release?.targetVersion === targetVersion &&
-      release?.manifestChecksum === releaseManifestChecksum &&
+      (release?.manifestChecksum === releaseManifestChecksum ||
+        appendOnlyInitialDraftResumeVerified === true) &&
       !releaseUpdateTerminal(release) &&
       workers.every((worker) => worker.version === targetVersion);
     if (resumableInitialDeploy) {
@@ -182,6 +194,13 @@ export function evaluateEnvironmentOperation(input: {
   }
 
   if (lifecycle === 'legacy') {
+    if (
+      operation === 'initial_deploy' &&
+      !currentVersion &&
+      explicitLegacyInitialRecoveryVerified === true
+    ) {
+      return { allowed: true, lifecycle, operation };
+    }
     return operation === 'release_update'
       ? { allowed: true, lifecycle, operation }
       : denied(operation, lifecycle, 'legacy_reconciliation_required');

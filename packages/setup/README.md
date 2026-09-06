@@ -499,6 +499,14 @@ The server automatically tries another port and prints the URL. For environment 
 
 Use `manage` to inspect or delete it, or choose a different environment name. Loading a config with an existing environment name will warn before continuing.
 
+**Setup reports insufficient local disk space**
+
+Free local disk space and retry the same operation. Setup requires at least 1 GiB before resource
+provisioning, package builds, and release deployment, then keeps a 512 MiB reserve before each Worker
+mutation. The preflight stops before the next Cloudflare mutation. If a previous run exhausted the
+disk during deployment, Setup preserves its checkpoints and resumes the remaining Worker work after
+capacity is restored.
+
 **Generated files should not be committed**
 
 Do not commit `.authrim/`, generated `wrangler` files, keys, secrets, local databases, or `.dev.vars`.

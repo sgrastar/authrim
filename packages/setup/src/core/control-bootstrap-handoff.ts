@@ -362,14 +362,15 @@ function resourceSql(
        desired_resource_id, environment_id, resource_kind, logical_shard_id,
        resource_scope, tenant_id, deterministic_name, ownership_fingerprint, desired_state,
        provisioning_state, origin_operation_id, observed_resource_id,
-       desired_spec_json, created_at, updated_at
+       desired_spec_json, provider_create_state, provider_resource_id,
+       provider_identity_checkpointed_at, created_at, updated_at
      ) VALUES (
        ${sqlString(plan.desiredResourceId)}, ${sqlString(environmentId)}, 'd1',
        ${sqlString(plan.logicalShardId)}, ${plan.role === 'lookup' || !tenantExclusive ? "'platform'" : "'tenant'"},
        ${plan.role === 'lookup' || !tenantExclusive ? 'NULL' : sqlString(tenantId)}, ${sqlString(plan.databaseName)},
        ${sqlString(plan.ownershipFingerprint)}, 'present', 'ready',
        ${sqlString(plan.operationId)}, ${sqlString(plan.observedResourceId)},
-       ${sqlString(spec)}, ${now}, ${now}
+       ${sqlString(spec)}, 'identified', ${sqlString(plan.databaseId)}, ${now}, ${now}, ${now}
      );`,
     `INSERT OR IGNORE INTO control_observed_resources (
        observed_resource_id, environment_id, desired_resource_id, provider_resource_id,

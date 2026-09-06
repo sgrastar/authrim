@@ -1,10 +1,11 @@
 import type { Context } from 'hono';
-import type { Env, DatabaseAdapter } from '@authrim/ar-lib-core';
+import type { Env, DatabaseAdapter, PreparedStatement } from '@authrim/ar-lib-core';
 import {
   createAuthContextFromHono,
   getTenantIdFromContext,
   requireDedicatedAdminDatabaseAdapter,
   transitionAccountAuthenticationState,
+  validateExternalUrl,
 } from '@authrim/ar-lib-core';
 import {
   isProtectedIdentityMappingDestinationClaim,
@@ -52,6 +53,8 @@ const POLICY_RULE_MAX_RELEASE_RULES = 250;
 const POLICY_RULE_MAX_CONFLICT_RULES = 100;
 const POLICY_SYMBOL_MAX_CHARS = 128;
 const POLICY_SYMBOL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:\-]{0,127}$/;
+const SAML_METADATA_POLLING_MIN_INTERVAL_SECONDS = 15 * 60;
+const SAML_METADATA_POLLING_MAX_INTERVAL_SECONDS = 7 * 24 * 60 * 60;
 const SUPPORTED_POLICY_TRANSFORM_OPERATIONS = new Set([
   'copy',
   'concat',
@@ -1145,7 +1148,9 @@ interface CreateFederationTrustSourceRequest {
   }>;
 }
 
-interface UpdateFederationTrustSourceRequest extends CreateFederationTrustSourceRequest {}
+interface UpdateFederationTrustSourceRequest extends CreateFederationTrustSourceRequest {
+  expectedUpdatedAt: number;
+}
 
 interface RegisterFederationMetadataDocumentRequest {
   trustSourceId: string;
@@ -1213,6 +1218,7 @@ const FEDERATION_TRUST_SOURCE_TYPES = new Set([
   'saml_metadata',
   'saml_federation',
 ]);
+const INTERNAL_SAML_RUNTIME_DOCUMENT_TYPE = 'saml_aggregate_runtime_snapshot';
 const SOURCE_PROFILE_TYPES = new Set(['csv', 'scim', 'saml', 'directory']);
 const SOURCE_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
 const DESTINATION_PROFILE_TYPES = new Set(['oidc', 'csv', 'saml', 'resource_server']);
@@ -1379,6 +1385,272 @@ class IdentityMappingControlPlaneError extends Error {
     readonly code: string
   ) {
     super(message);
+  }
+}
+
+function validateSAMLFederationProtocolPayload(payload: Record<string, unknown>): void {
+  const metadataUrl = payload.metadataUrl;
+  if (metadataUrl !== undefined && metadataUrl !== null) {
+    if (typeof metadataUrl !== 'string' || validateExternalUrl(metadataUrl)) {
+      throw badRequest('protocolPayload.metadataUrl must be an external HTTPS URL');
+    }
+  }
+  const patterns = payload.metadataUrlPatterns;
+  if (
+    patterns !== undefined &&
+    (!Array.isArray(patterns) || patterns.some((pattern) => typeof pattern !== 'string'))
+  ) {
+    throw badRequest('protocolPayload.metadataUrlPatterns must be an array of strings');
+  }
+  if (Array.isArray(patterns)) {
+    for (const pattern of patterns as string[]) {
+      const normalizedPattern = pattern.trim();
+      if (!normalizedPattern || !/^https:\/\//i.test(normalizedPattern)) {
+        throw badRequest('protocolPayload.metadataUrlPatterns must contain HTTPS URL patterns');
+      }
+      if (!normalizedPattern.includes('*') && validateExternalUrl(normalizedPattern)) {
+        throw badRequest(
+          'protocolPayload.metadataUrlPatterns cannot contain an internal exact URL'
+        );
+      }
+    }
+  }
+  if (
+    payload.policy !== undefined &&
+    payload.policy !== 'strict' &&
+    payload.policy !== 'warn' &&
+    payload.policy !== 'disabled'
+  ) {
+    throw badRequest('protocolPayload.policy is not supported');
+  }
+  const exactPatternUrls = Array.isArray(patterns)
+    ? patterns.filter(
+        (pattern): pattern is string =>
+          typeof pattern === 'string' &&
+          /^https:\/\//i.test(pattern.trim()) &&
+          !pattern.includes('*')
+      )
+    : [];
+  if (payload.polling !== undefined) {
+    if (!payload.polling || typeof payload.polling !== 'object' || Array.isArray(payload.polling)) {
+      throw badRequest('protocolPayload.polling must be an object');
+    }
+    const polling = payload.polling as Record<string, unknown>;
+    if (polling.mode !== 'automatic' && polling.mode !== 'manual') {
+      throw badRequest('protocolPayload.polling.mode must be automatic or manual');
+    }
+    if (
+      typeof polling.intervalSeconds !== 'number' ||
+      !Number.isInteger(polling.intervalSeconds) ||
+      polling.intervalSeconds < SAML_METADATA_POLLING_MIN_INTERVAL_SECONDS ||
+      polling.intervalSeconds > SAML_METADATA_POLLING_MAX_INTERVAL_SECONDS
+    ) {
+      throw badRequest('protocolPayload.polling.intervalSeconds is outside the supported range');
+    }
+    if (
+      polling.mode === 'automatic' &&
+      !(typeof metadataUrl === 'string' && metadataUrl.trim()) &&
+      exactPatternUrls.length !== 1
+    ) {
+      throw badRequest('automatic SAML federation polling requires one exact metadata URL');
+    }
+  }
+  validateSAMLFederationRuntimeResolutionPayload(
+    payload.runtimeResolution,
+    metadataUrl,
+    exactPatternUrls
+  );
+}
+
+function resetSAMLFederationPollingRuntimeState(
+  payload: Record<string, unknown>
+): Record<string, unknown> {
+  const polling = payload.polling;
+  if (!polling || typeof polling !== 'object' || Array.isArray(polling)) return { ...payload };
+  const value = polling as Record<string, unknown>;
+  return {
+    ...payload,
+    polling: {
+      mode: value.mode,
+      intervalSeconds: value.intervalSeconds,
+      consecutiveFailures: 0,
+      sourceState: 'stale',
+    },
+  };
+}
+
+function buildSAMLFederationTrustContext(
+  input: CreateFederationTrustSourceRequest,
+  protocolPayload: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  const trustPayload = { ...(protocolPayload ?? {}) };
+  const certificates = trustPayload.certificates;
+  delete trustPayload.description;
+  delete trustPayload.polling;
+  delete trustPayload.certificates;
+  const trustCertificates = Array.isArray(certificates)
+    ? certificates
+        .flatMap((entry) => {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+          const value = entry as Record<string, unknown>;
+          const certificate = typeof value.certificate === 'string' ? value.certificate : null;
+          const fingerprintSha256 =
+            typeof value.fingerprintSha256 === 'string' ? value.fingerprintSha256 : null;
+          return [
+            {
+              certificate,
+              fingerprintSha256,
+            },
+          ];
+        })
+        .sort((left, right) =>
+          (left.fingerprintSha256 ?? '').localeCompare(right.fingerprintSha256 ?? '')
+        )
+    : undefined;
+  return {
+    sourceType: input.sourceType,
+    sourceKey: input.sourceKey,
+    protocolPayload: protocolPayload
+      ? {
+          ...trustPayload,
+          ...(trustCertificates ? { certificates: trustCertificates } : {}),
+        }
+      : null,
+    anchors: [...(input.anchors ?? [])]
+      .map((anchor) => ({
+        anchorType: anchor.anchorType,
+        anchorHash: anchor.anchorHash,
+        notBefore: anchor.notBefore ?? null,
+        notAfter: anchor.notAfter ?? null,
+      }))
+      .sort((left, right) =>
+        `${left.anchorType}:${left.anchorHash}`.localeCompare(
+          `${right.anchorType}:${right.anchorHash}`
+        )
+      ),
+    scopeBindings: [...(input.scopeBindings ?? [])]
+      .map((binding) => ({
+        scopeType: binding.scopeType,
+        scopeId: binding.scopeId ?? null,
+        priority: binding.priority ?? 0,
+      }))
+      .sort((left, right) =>
+        `${left.scopeType}:${left.scopeId ?? ''}:${left.priority}`.localeCompare(
+          `${right.scopeType}:${right.scopeId ?? ''}:${right.priority}`
+        )
+      ),
+  };
+}
+
+function validateSAMLFederationRuntimeResolutionPayload(
+  input: unknown,
+  metadataUrl: unknown,
+  exactPatternUrls: string[]
+): void {
+  if (input === undefined) return;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw badRequest('protocolPayload.runtimeResolution must be an object');
+  }
+  const policy = input as Record<string, unknown>;
+  if (policy.mode !== 'inventory_only' && policy.mode !== 'automatic') {
+    throw badRequest('protocolPayload.runtimeResolution.mode is not supported');
+  }
+  if (
+    !Array.isArray(policy.roles) ||
+    policy.roles.some((role) => role !== 'saml_idp' && role !== 'saml_sp') ||
+    new Set(policy.roles).size !== policy.roles.length
+  ) {
+    throw badRequest('protocolPayload.runtimeResolution.roles is invalid');
+  }
+  if (
+    policy.priority !== undefined &&
+    (typeof policy.priority !== 'number' ||
+      !Number.isInteger(policy.priority) ||
+      policy.priority < -1000 ||
+      policy.priority > 1000)
+  ) {
+    throw badRequest('protocolPayload.runtimeResolution.priority is invalid');
+  }
+  for (const field of ['idpFieldMappingSetId', 'spFieldMappingSetId'] as const) {
+    if (
+      policy[field] !== undefined &&
+      (typeof policy[field] !== 'string' || !policy[field].trim())
+    ) {
+      throw badRequest(`protocolPayload.runtimeResolution.${field} is invalid`);
+    }
+  }
+  const presetIds = new Set([
+    'basic.v1',
+    'academic_publisher.v1',
+    'enterprise_saas.v1',
+    'research_federation.v1',
+  ]);
+  if (
+    policy.defaultAttributePresetId !== undefined &&
+    (typeof policy.defaultAttributePresetId !== 'string' ||
+      !presetIds.has(policy.defaultAttributePresetId))
+  ) {
+    throw badRequest('protocolPayload.runtimeResolution.defaultAttributePresetId is invalid');
+  }
+  if (
+    policy.registrationAuthorities !== undefined &&
+    (!Array.isArray(policy.registrationAuthorities) ||
+      policy.registrationAuthorities.length > 100 ||
+      policy.registrationAuthorities.some(
+        (authority) => typeof authority !== 'string' || !authority.trim()
+      ))
+  ) {
+    throw badRequest('protocolPayload.runtimeResolution.registrationAuthorities is invalid');
+  }
+  if (policy.entityCategoryPolicy !== undefined) {
+    const categoryPolicy = policy.entityCategoryPolicy;
+    if (!categoryPolicy || typeof categoryPolicy !== 'object' || Array.isArray(categoryPolicy)) {
+      throw badRequest('protocolPayload.runtimeResolution.entityCategoryPolicy is invalid');
+    }
+    const category = categoryPolicy as Record<string, unknown>;
+    if (category.defaultDecision !== 'allow' && category.defaultDecision !== 'deny') {
+      throw badRequest(
+        'protocolPayload.runtimeResolution.entityCategoryPolicy.defaultDecision is invalid'
+      );
+    }
+    if (!Array.isArray(category.rules) || category.rules.length > 100) {
+      throw badRequest('protocolPayload.runtimeResolution.entityCategoryPolicy.rules is invalid');
+    }
+    const seenEntityCategories = new Set<string>();
+    for (const item of category.rules) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        throw badRequest('protocolPayload.runtimeResolution entity category rule is invalid');
+      }
+      const rule = item as Record<string, unknown>;
+      if (
+        typeof rule.entityCategory !== 'string' ||
+        !rule.entityCategory.trim() ||
+        (rule.decision !== 'allow' && rule.decision !== 'deny') ||
+        (rule.attributePresetId !== undefined &&
+          (typeof rule.attributePresetId !== 'string' || !presetIds.has(rule.attributePresetId)))
+      ) {
+        throw badRequest('protocolPayload.runtimeResolution entity category rule is invalid');
+      }
+      const normalizedEntityCategory = rule.entityCategory.trim();
+      if (seenEntityCategories.has(normalizedEntityCategory)) {
+        throw badRequest('protocolPayload.runtimeResolution entity category rules must be unique');
+      }
+      seenEntityCategories.add(normalizedEntityCategory);
+    }
+  }
+  if (policy.mode === 'automatic') {
+    if (policy.roles.length === 0) {
+      throw badRequest('automatic federation runtime resolution requires at least one role');
+    }
+    if (policy.roles.includes('saml_idp') && !policy.idpFieldMappingSetId) {
+      throw badRequest('automatic saml_idp runtime resolution requires idpFieldMappingSetId');
+    }
+    if (policy.roles.includes('saml_sp') && !policy.spFieldMappingSetId) {
+      throw badRequest('automatic saml_sp runtime resolution requires spFieldMappingSetId');
+    }
+    if (!(typeof metadataUrl === 'string' && metadataUrl.trim()) && exactPatternUrls.length !== 1) {
+      throw badRequest('automatic federation runtime resolution requires one exact metadata URL');
+    }
   }
 }
 
@@ -5335,7 +5607,11 @@ export class IdentityMappingControlPlaneRepository {
     }
     if (input.protocolPayload) {
       assertNoSensitiveMetadata(input.protocolPayload, 'protocolPayload');
+      validateSAMLFederationProtocolPayload(input.protocolPayload);
     }
+    const protocolPayload = input.protocolPayload
+      ? resetSAMLFederationPollingRuntimeState(input.protocolPayload)
+      : undefined;
     if (input.anchors !== undefined && !Array.isArray(input.anchors)) {
       throw badRequest('anchors must be an array');
     }
@@ -5344,14 +5620,7 @@ export class IdentityMappingControlPlaneRepository {
     }
     const now = this.now();
     const sourceId = createId('federation_trust_source');
-    const trustContext = {
-      sourceType: input.sourceType,
-      sourceKey: input.sourceKey,
-      displayName: input.displayName,
-      protocolPayload: input.protocolPayload ?? null,
-      anchors: input.anchors ?? [],
-      scopeBindings: input.scopeBindings ?? [],
-    };
+    const trustContext = buildSAMLFederationTrustContext(input, protocolPayload);
     const snapshotHash = await hashStableJson(trustContext);
     await this.adapter.transaction(async (tx) => {
       await tx.execute(
@@ -5366,7 +5635,7 @@ export class IdentityMappingControlPlaneRepository {
           input.sourceKey,
           input.displayName,
           lifecycleState,
-          input.protocolPayload ? stableJson(input.protocolPayload) : null,
+          protocolPayload ? stableJson(protocolPayload) : null,
           now,
           now,
         ]
@@ -5459,46 +5728,92 @@ export class IdentityMappingControlPlaneRepository {
     }
     if (input.protocolPayload) {
       assertNoSensitiveMetadata(input.protocolPayload, 'protocolPayload');
+      validateSAMLFederationProtocolPayload(input.protocolPayload);
     }
+    const protocolPayload = input.protocolPayload
+      ? resetSAMLFederationPollingRuntimeState(input.protocolPayload)
+      : undefined;
     if (input.anchors !== undefined && !Array.isArray(input.anchors)) {
       throw badRequest('anchors must be an array');
     }
     if (input.scopeBindings !== undefined && !Array.isArray(input.scopeBindings)) {
       throw badRequest('scopeBindings must be an array');
     }
-    await this.ensureFederationTrustSource(tenantId, trustSourceId);
+    if (!Number.isSafeInteger(input.expectedUpdatedAt) || input.expectedUpdatedAt < 0) {
+      throw badRequest('expectedUpdatedAt must be a non-negative integer');
+    }
+    for (const anchor of input.anchors ?? []) {
+      validateRequiredString(anchor.anchorType, 'anchor.anchorType');
+      validateRequiredString(anchor.anchorHash, 'anchor.anchorHash');
+    }
+    for (const binding of input.scopeBindings ?? []) {
+      validateRequiredString(binding.scopeType, 'scopeBinding.scopeType');
+    }
 
     const now = this.now();
-    const trustContext = {
-      sourceType: input.sourceType,
-      sourceKey: input.sourceKey,
-      displayName: input.displayName,
-      protocolPayload: input.protocolPayload ?? null,
-      anchors: input.anchors ?? [],
-      scopeBindings: input.scopeBindings ?? [],
-    };
+    const trustContext = buildSAMLFederationTrustContext(input, protocolPayload);
     const snapshotHash = await hashStableJson(trustContext);
+    const current = await this.adapter.queryOne<{
+      updated_at: number;
+      snapshot_hash: string | null;
+    }>(
+      `SELECT source.updated_at,
+              (
+                SELECT snapshot.snapshot_hash
+                  FROM federation_trust_context_snapshots snapshot
+                 WHERE snapshot.tenant_id = source.tenant_id
+                   AND snapshot.trust_source_id = source.id
+                 ORDER BY snapshot.created_at DESC, snapshot.id DESC
+                 LIMIT 1
+              ) AS snapshot_hash
+         FROM federation_trust_sources source
+        WHERE source.tenant_id = ? AND source.id = ?`,
+      [tenantId, trustSourceId]
+    );
+    if (!current) throw notFound('federation trust source not found');
+    if (current.updated_at !== input.expectedUpdatedAt) {
+      throw conflict('federation trust source was modified by another operation');
+    }
+    const trustContextChanged = current.snapshot_hash !== snapshotHash;
+    const writeTime = Math.max(now, input.expectedUpdatedAt + 1);
     await this.adapter.transaction(async (tx) => {
-      await tx.execute(
+      const sourceUpdate = await tx.execute(
         `UPDATE federation_trust_sources
             SET source_type = ?,
                 source_key = ?,
                 display_name = ?,
                 lifecycle_state = ?,
                 protocol_payload_json = ?,
+                active_metadata_document_id = CASE WHEN ? = 1 THEN NULL
+                                                   ELSE active_metadata_document_id END,
                 updated_at = ?
-          WHERE tenant_id = ? AND id = ?`,
+          WHERE tenant_id = ? AND id = ? AND updated_at = ?
+            AND (refresh_operation_token IS NULL OR refresh_operation_expires_at <= ?)`,
         [
           input.sourceType,
           input.sourceKey,
           input.displayName,
           lifecycleState,
-          input.protocolPayload ? stableJson(input.protocolPayload) : null,
-          now,
+          protocolPayload ? stableJson(protocolPayload) : null,
+          trustContextChanged ? 1 : 0,
+          writeTime,
           tenantId,
           trustSourceId,
+          input.expectedUpdatedAt,
+          now,
         ]
       );
+      if (sourceUpdate.rowsAffected !== 1) {
+        throw conflict('federation trust source was modified by another operation');
+      }
+      if (trustContextChanged) {
+        // A changed URL, trust anchor, or runtime policy must never inherit entities verified
+        // under the previous trust context. A successful refresh repopulates this directory.
+        await tx.execute(
+          'DELETE FROM federation_saml_runtime_entities WHERE tenant_id = ? AND trust_source_id = ?',
+          [tenantId, trustSourceId]
+        );
+      }
       await tx.execute(
         'DELETE FROM federation_trust_anchors WHERE tenant_id = ? AND trust_source_id = ?',
         [tenantId, trustSourceId]
@@ -5507,9 +5822,14 @@ export class IdentityMappingControlPlaneRepository {
         'DELETE FROM federation_trust_scope_bindings WHERE tenant_id = ? AND trust_source_id = ?',
         [tenantId, trustSourceId]
       );
+      await tx.execute(
+        `UPDATE federation_trust_context_snapshots
+            SET lifecycle_state = 'retired'
+          WHERE tenant_id = ? AND trust_source_id = ?
+            AND lifecycle_state IN ('active', 'draft')`,
+        [tenantId, trustSourceId]
+      );
       for (const anchor of input.anchors ?? []) {
-        validateRequiredString(anchor.anchorType, 'anchor.anchorType');
-        validateRequiredString(anchor.anchorHash, 'anchor.anchorHash');
         await tx.execute(
           `INSERT INTO federation_trust_anchors (
             id, tenant_id, trust_source_id, anchor_type, anchor_hash, anchor_ref,
@@ -5531,7 +5851,6 @@ export class IdentityMappingControlPlaneRepository {
         );
       }
       for (const binding of input.scopeBindings ?? []) {
-        validateRequiredString(binding.scopeType, 'scopeBinding.scopeType');
         await tx.execute(
           `INSERT INTO federation_trust_scope_bindings (
             id, tenant_id, trust_source_id, scope_type, scope_id, priority,
@@ -5575,13 +5894,29 @@ export class IdentityMappingControlPlaneRepository {
       sourceKey: input.sourceKey,
       lifecycleState,
       snapshotHash,
+      updatedAt: writeTime,
     };
   }
 
   async deleteFederationTrustSource(tenantId: string, trustSourceId: string) {
     validateRequiredString(trustSourceId, 'trustSourceId');
     await this.ensureFederationTrustSource(tenantId, trustSourceId);
+    const now = this.now();
     await this.adapter.transaction(async (tx) => {
+      const retirement = await tx.execute(
+        `UPDATE federation_trust_sources
+            SET lifecycle_state = 'retired',
+                active_metadata_document_id = NULL,
+                refresh_operation_token = NULL,
+                refresh_operation_expires_at = NULL,
+                updated_at = ?
+          WHERE tenant_id = ? AND id = ?
+            AND (refresh_operation_token IS NULL OR refresh_operation_expires_at <= ?)`,
+        [now, tenantId, trustSourceId, now]
+      );
+      if (retirement.rowsAffected !== 1) {
+        throw conflict('federation trust source refresh is in progress');
+      }
       await tx.execute(
         'DELETE FROM federation_trust_anchors WHERE tenant_id = ? AND trust_source_id = ?',
         [tenantId, trustSourceId]
@@ -5595,7 +5930,27 @@ export class IdentityMappingControlPlaneRepository {
         [tenantId, trustSourceId]
       );
       await tx.execute(
+        'DELETE FROM federation_metadata_refresh_jobs WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute(
+        'DELETE FROM federation_selected_entity_import_events WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute(
+        'DELETE FROM federation_entity_statements WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute(
+        'DELETE FROM federation_trust_chains WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute(
         'DELETE FROM federation_metadata_validation_events WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute(
+        'DELETE FROM federation_saml_runtime_entities WHERE tenant_id = ? AND trust_source_id = ?',
         [tenantId, trustSourceId]
       );
       await tx.execute(
@@ -5653,6 +6008,9 @@ export class IdentityMappingControlPlaneRepository {
   ) {
     validateRequiredString(input.trustSourceId, 'trustSourceId');
     validateRequiredString(input.documentType, 'documentType');
+    if (input.documentType === INTERNAL_SAML_RUNTIME_DOCUMENT_TYPE) {
+      throw badRequest('documentType is reserved for managed SAML runtime snapshots');
+    }
     validateRequiredString(input.documentHash, 'documentHash');
     const validationState = input.validationState ?? 'pending';
     if (!FEDERATION_METADATA_VALIDATION_STATES.has(validationState)) {

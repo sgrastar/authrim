@@ -30,6 +30,53 @@ const adminSaml = {
 	admin_saml_metadata_not_checked: '未確認',
 	admin_saml_metadata_changed: '変更あり',
 	admin_saml_metadata_current: '最新',
+	admin_saml_metadata_source_url: 'メタデータ配布元URL',
+	admin_saml_federation_source_url_hint:
+		'Authrimが取得するaggregateメタデータの正確なURLです。URL patternはtrust scopeの制限として使用します。',
+	admin_saml_metadata_auto_polling: 'メタデータの自動更新',
+	admin_saml_metadata_auto_polling_desc:
+		'配布元を定期取得して検証します。オフの場合は「今すぐ更新」でのみ更新します。',
+	admin_saml_metadata_polling: 'ポーリング',
+	admin_saml_metadata_polling_interval: '正常更新時の間隔',
+	admin_saml_metadata_interval_1h: '1時間ごと',
+	admin_saml_metadata_interval_6h: '6時間ごと',
+	admin_saml_metadata_interval_12h: '12時間ごと',
+	admin_saml_metadata_interval_24h: '24時間ごと',
+	admin_saml_metadata_refresh_now: '今すぐ更新',
+	admin_saml_metadata_refreshing: '更新中...',
+	admin_saml_metadata_refresh_failed: 'SAMLメタデータを更新できませんでした',
+	admin_saml_metadata_refreshed_changed: 'メタデータを更新し、変更を反映しました。',
+	admin_saml_metadata_refreshed_unchanged: 'メタデータを更新しました。変更はありません。',
+	admin_saml_metadata_last_success: '最終成功',
+	admin_saml_metadata_next_refresh: '次回更新',
+	admin_saml_metadata_last_error: '最終エラー',
+	admin_saml_metadata_never: '未実行',
+	admin_saml_metadata_manual_mode: '手動',
+	admin_saml_metadata_automatic_mode: '自動',
+	admin_saml_federation_runtime_automatic: '検証済みaggregateをruntimeで利用',
+	admin_saml_federation_runtime_automatic_desc:
+		'最新の有効なaggregateからentityIDを解決します。オフの場合はインベントリとしてのみ保持します。',
+	admin_saml_federation_runtime_roles: 'Runtimeロール',
+	admin_saml_federation_runtime_idp_role: '上流IdPを解決',
+	admin_saml_federation_runtime_sp_role: '下流SPを解決',
+	admin_saml_federation_runtime_idp_mapping: 'IdP用Field Mapping Set ID',
+	admin_saml_federation_runtime_sp_mapping: 'SP用Field Mapping Set ID',
+	admin_saml_federation_runtime_priority: 'ソース優先度',
+	admin_saml_federation_runtime_default_preset: 'SP属性のデフォルトプリセット',
+	admin_saml_federation_runtime_default_decision: 'Entity Categoryのデフォルト判定',
+	admin_saml_federation_runtime_authorities: '許可するRegistration Authority',
+	admin_saml_federation_runtime_authorities_hint:
+		'任意の許可リストです。Registration Authority URIを1行に1件入力します。',
+	admin_saml_federation_runtime_category_rules: 'Entity Categoryルール',
+	admin_saml_federation_runtime_category_rules_hint:
+		'1行に1ルールを、allow|deny、Category URI、任意のSP属性プリセットIDの順で入力します。',
+	admin_saml_federation_runtime_mapping_error:
+		'Runtimeロールを1つ以上選択し、対応するField Mapping Set IDを入力してください。',
+	admin_saml_federation_runtime_category_rule_error:
+		'Entity Categoryルールが不正です。allow|deny category-uri [preset-id] の形式で入力してください。',
+	admin_saml_actions: '操作',
+	admin_saml_federation_refresh_complete:
+		'フェデレーションメタデータを更新しました: エンティティ {entities} 件、更新 {updated} 件、未検出 {missing} 件、失敗 {failed} 件。',
 	admin_saml_federation_trust_profiles: 'フェデレーション信頼プロファイル',
 	admin_saml_federation_trust_desc:
 		'フェデレーションエンティティをインポートする前に、署名済みaggregateメタデータを検証するための信頼アンカーです。',

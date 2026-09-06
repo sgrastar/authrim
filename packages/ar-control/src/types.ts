@@ -154,6 +154,9 @@ export interface TenantShardPlan {
   databaseName: string;
   bindingRef: string;
   ownershipFingerprint: string;
+  providerCreateState: 'not_started' | 'issued' | 'identified';
+  providerResourceId: string | null;
+  providerIdentityCheckpointedAt: number | null;
   allocationScope: ControlTenantShardAllocationScope;
   ownerTenantId: string | null;
   jurisdiction?: 'eu' | 'fedramp';

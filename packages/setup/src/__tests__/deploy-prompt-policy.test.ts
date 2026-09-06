@@ -51,13 +51,30 @@ describe('deploy prompt policy', () => {
     expect(promptIndex).toBeGreaterThan(readinessIndex);
   });
 
+  it('selects a file-backed bootstrap before rejecting a non-interactive terminal', () => {
+    const source = readFileSync(new URL('../cli/commands/deploy.ts', import.meta.url), 'utf8');
+    const plannerIndex = source.indexOf(
+      'const planMissingControlProvisioningCredentials = async (): Promise<void> => {'
+    );
+    const tokenFileIndex = source.indexOf(
+      'if (options.cloudflareBootstrapTokenFile) {',
+      plannerIndex
+    );
+    const terminalGuardIndex = source.indexOf(
+      'if (!process.stdin.isTTY || !process.stdout.isTTY) {',
+      plannerIndex
+    );
+
+    expect(plannerIndex).toBeGreaterThan(-1);
+    expect(tokenFileIndex).toBeGreaterThan(plannerIndex);
+    expect(terminalGuardIndex).toBeGreaterThan(tokenFileIndex);
+  });
+
   it('detects bootstrap token ownership after receiving the secret', () => {
     const source = readFileSync(new URL('../cli/commands/deploy.ts', import.meta.url), 'utf8');
     const tokenInputIndex = source.indexOf('bootstrapToken = options.cloudflareBootstrapTokenFile');
-    const ownershipDetectionIndex = source.indexOf(
-      'const detectedOwnership = await detectCloudflareTokenOwnership({'
-    );
-    const bootstrapIndex = source.indexOf('await completeControlTokenBootstrap({');
+    const ownershipDetectionIndex = source.indexOf(': await detectCloudflareTokenOwnership({');
+    const bootstrapIndex = source.indexOf('completeControlTokenBootstrap({');
 
     expect(tokenInputIndex).toBeGreaterThan(-1);
     expect(ownershipDetectionIndex).toBeGreaterThan(tokenInputIndex);
@@ -65,6 +82,68 @@ describe('deploy prompt policy', () => {
     expect(source.slice(bootstrapIndex, bootstrapIndex + 500)).toContain(
       'ownership: detectedOwnership'
     );
+    expect(source).toContain("bootstrapPhase !== 'none'");
+    expect(source).toContain('if (!recoveringBootstrap) {');
+    expect(source).toContain('...(token ? { bootstrapToken: token } : {})');
+  });
+
+  it('securely loads a pre-authority artifact only after taking the environment lock', () => {
+    const source = readFileSync(new URL('../cli/commands/deploy.ts', import.meta.url), 'utf8');
+    const lockIndex = source.indexOf("await acquireEnvironmentOperationLock(lockPath, 'deploy')");
+    const artifactLoadIndex = source.indexOf(
+      'loadPendingControlBootstrap({ baseDir: rootDir, environment: env })',
+      lockIndex
+    );
+    const recoveryDecisionIndex = source.indexOf(
+      'recoverWithoutBootstrapToken: true',
+      artifactLoadIndex
+    );
+    const tokenPromptIndex = source.indexOf(
+      'bootstrapToken = options.cloudflareBootstrapTokenFile',
+      recoveryDecisionIndex
+    );
+
+    expect(lockIndex).toBeGreaterThan(-1);
+    expect(artifactLoadIndex).toBeGreaterThan(lockIndex);
+    expect(recoveryDecisionIndex).toBeGreaterThan(artifactLoadIndex);
+    expect(tokenPromptIndex).toBeGreaterThan(recoveryDecisionIndex);
+  });
+
+  it('surfaces a retained bootstrap token as retryable instead of requesting cleanup', () => {
+    const source = readFileSync(new URL('../cli/commands/deploy.ts', import.meta.url), 'utf8');
+    const retainedCheck = source.indexOf('error.bootstrapRetainedForRetry');
+    const retryMessage = source.indexOf(
+      'The staged bootstrap transaction remains available for an automatic retry'
+    );
+    const manualCleanupMessage = source.indexOf('Cloudflare token cleanup could not be confirmed.');
+
+    expect(retainedCheck).toBeGreaterThan(-1);
+    expect(retryMessage).toBeGreaterThan(retainedCheck);
+    expect(manualCleanupMessage).toBeGreaterThan(retryMessage);
+  });
+
+  it('re-reads ready authority and the exact active secret generation after taking the lock', () => {
+    const source = readFileSync(new URL('../cli/commands/deploy.ts', import.meta.url), 'utf8');
+    const lockIndex = source.indexOf("await acquireEnvironmentOperationLock(lockPath, 'deploy')");
+    const lockedReadIndex = source.indexOf(
+      'const [lockedAuthority, lockedPendingArtifact] = await Promise.all([',
+      lockIndex
+    );
+    const authorityReadIndex = source.indexOf(
+      'readControlProvisioningAuthority({',
+      lockedReadIndex
+    );
+    const lockedGenerationIndex = source.indexOf(
+      'const lockedReady = await hasReadyControlTokenBootstrap({',
+      authorityReadIndex
+    );
+    const skipIndex = source.indexOf('pendingControlTokenBootstrap = null;', lockedGenerationIndex);
+
+    expect(lockIndex).toBeGreaterThan(-1);
+    expect(lockedReadIndex).toBeGreaterThan(lockIndex);
+    expect(authorityReadIndex).toBeGreaterThan(lockedReadIndex);
+    expect(lockedGenerationIndex).toBeGreaterThan(authorityReadIndex);
+    expect(skipIndex).toBeGreaterThan(lockedGenerationIndex);
   });
 
   it('requires Control token bootstrap only for the initial automatic deployment', () => {

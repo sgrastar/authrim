@@ -18,11 +18,23 @@ import {
   deleteEnvironment,
 } from '../../core/cloudflare.js';
 import { cleanupLocalEnvironmentArtifacts } from '../../core/environment-cleanup.js';
-import { findAuthrimBaseDir } from '../../core/paths.js';
+import { cleanupSetupManagedControlTokens } from '../../core/control-token-environment-cleanup.js';
 import {
+  buildControlTokenManualCleanupTarget,
+  type ControlTokenManualCleanupTarget,
+} from '../../core/control-token-manual-action.js';
+import { inspectLocalEnvironmentState } from '../../core/local-environment-state.js';
+import { findAuthrimBaseDir } from '../../core/paths.js';
+import { readPrivateFileSecurely } from '../../core/atomic-file.js';
+import { AuthrimConfigSchema } from '../../core/config.js';
+import { reconcileLegacyQueueIdentitiesForDeletion } from '../../core/legacy-queue-identity-deletion.js';
+import {
+  acquireDeployConfigLock,
   acquireEnvironmentOperationForEnvironment,
+  collectWorkerDeletionIdentities,
   reconcileLockAfterResourceDeletion,
   saveLockFile,
+  withBackfilledWorkerDeletionIdentities,
 } from '../../core/lock.js';
 import {
   environmentOperationBlockMessage,
@@ -178,9 +190,20 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     requireExisting: false,
   });
   let result: Awaited<ReturnType<typeof deleteEnvironment>>;
+  let manualControlTokenTargets: ControlTokenManualCleanupTarget[] = [];
   let deleteSpinner: ReturnType<typeof ora> | undefined;
+  let deployConfigLock: Awaited<ReturnType<typeof acquireDeployConfigLock>> | undefined;
   try {
-    const lock = operationLock.lock;
+    deployConfigLock = await acquireDeployConfigLock({
+      baseDir,
+      env,
+      operation: 'delete',
+    });
+    let lock = operationLock.lock;
+    const localEnvironmentState = inspectLocalEnvironmentState({
+      baseDir,
+      environment: env,
+    });
     if (!lock) {
       const detectSpinner = ora('Confirming remote environment resources...').start();
       try {
@@ -216,17 +239,104 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
       operation: 'delete',
       lock,
       environmentObservedRemotely,
+      environmentKnownLocally: localEnvironmentState.exists,
     });
     if (!decision.allowed) {
       throw new Error(environmentOperationBlockMessage(decision));
     }
-    const knownD1Names = lock ? Object.values(lock.d1).map((entry) => entry.name) : [];
-    const knownWorkerNames = lock
-      ? Object.values(lock.workers ?? {}).map((entry) => entry.name)
+    const unfinishedWorkerOwnershipCount = Object.keys(lock?.workerScriptOwnership ?? {}).length;
+    if (deleteWorkers && unfinishedWorkerOwnershipCount > 0) {
+      console.log(
+        chalk.yellow(
+          `Using ${unfinishedWorkerOwnershipCount} unfinished Worker ownership checkpoint(s) for verified deletion recovery.`
+        )
+      );
+    }
+    const localConfigPath = localEnvironmentState.paths.find((path) =>
+      /\/(?:config|authrim(?:-[^/]+)?-config)\.json$/u.test(path)
+    );
+    const localConfigText = localConfigPath
+      ? await readPrivateFileSecurely(localConfigPath, {
+          maxBytes: 1024 * 1024,
+          invalidError: 'environment_config_invalid',
+          permissionsError: 'environment_config_permissions_invalid',
+          repairLegacyPublicReadPermissions: true,
+        })
+      : null;
+    const parsedLocalConfig = localConfigText
+      ? AuthrimConfigSchema.safeParse(JSON.parse(localConfigText))
+      : null;
+    if (
+      localConfigText &&
+      parsedLocalConfig &&
+      !parsedLocalConfig.success &&
+      lock &&
+      deleteWorkers &&
+      deleteD1 &&
+      deleteKV &&
+      deleteQueues &&
+      deleteR2 &&
+      deletePages
+    ) {
+      throw new Error('environment_config_invalid_for_dns_cleanup');
+    }
+    const localConfig = parsedLocalConfig?.success ? parsedLocalConfig.data : null;
+    if (localConfig && localConfig.environment.prefix !== env) {
+      throw new Error('environment_config_identity_mismatch');
+    }
+    if (lock && (deleteQueues || deleteWorkers)) {
+      const queueIdentity = await reconcileLegacyQueueIdentitiesForDeletion({
+        lock,
+        environment: env,
+        config: localConfig,
+        lockFilePath: operationLock.lockFilePath,
+      });
+      lock = queueIdentity.lock;
+      if (queueIdentity.adopted.length > 0) {
+        console.log(
+          chalk.gray(
+            `Verified legacy Queue identities: ${queueIdentity.adopted
+              .map((queue) => queue.name)
+              .join(', ')}`
+          )
+        );
+      }
+    }
+    const knownWorkerResources = lock ? collectWorkerDeletionIdentities(lock) : [];
+    const knownD1Resources = lock ? Object.values(lock.d1) : [];
+    const knownKVResources = lock ? Object.values(lock.kv) : [];
+    const knownQueueResources = lock?.queues ? Object.values(lock.queues) : [];
+    const knownR2Resources = lock?.r2
+      ? Object.entries(lock.r2).map(([binding, resource]) => ({
+          ...resource,
+          environment: env,
+          binding,
+        }))
       : [];
-    const knownQueueNames = lock?.queues
-      ? Object.values(lock.queues).map((entry) => entry.name)
-      : [];
+    const knownPagesResources = lock?.pages ? Object.values(lock.pages) : [];
+    const dnsCleanupRequired = Boolean(
+      localConfig?.tenant.multiTenant && localConfig.tenant.baseDomain?.trim()
+    );
+    const requiredDnsRoles: Array<'api_base' | 'tenant_wildcard'> = [];
+    const dnsBaseDomain = localConfig?.tenant.baseDomain?.trim();
+    if (localConfig?.tenant.multiTenant && dnsBaseDomain) {
+      requiredDnsRoles.push('tenant_wildcard');
+      let apiAutoHostname: string | null = null;
+      try {
+        apiAutoHostname = localConfig.urls?.api.auto
+          ? new URL(localConfig.urls.api.auto).hostname
+          : null;
+      } catch {
+        apiAutoHostname = null;
+      }
+      if (
+        apiAutoHostname &&
+        apiAutoHostname !== dnsBaseDomain &&
+        localConfig.urls?.api.customDomainBinding !== true
+      ) {
+        requiredDnsRoles.push('api_base');
+      }
+    }
 
     deleteSpinner = ora('Deleting environment resources...').start();
     const updateDeleteSpinner = (message: string) => {
@@ -238,16 +348,53 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     };
     result = await deleteEnvironment({
       env,
-      environmentKnownLocally: Boolean(lock),
+      environmentKnownLocally: Boolean(lock) || localEnvironmentState.exists,
       deleteWorkers,
       deleteD1,
       deleteKV,
       deleteQueues,
       deleteR2,
       deletePages,
-      knownWorkerNames,
-      knownD1Names,
-      knownQueueNames,
+      knownWorkerResources,
+      knownD1Resources,
+      knownKVResources,
+      knownQueueResources,
+      knownR2Resources,
+      knownPagesResources,
+      ...(lock
+        ? {
+            onWorkerIdentityBackfill: async (
+              resources: ReadonlyArray<{
+                name: string;
+                cloudflareScriptTag?: string;
+                cloudflareVersionId?: string;
+              }>
+            ) => {
+              if (!lock) throw new Error('Worker identity lock is unavailable');
+              lock = withBackfilledWorkerDeletionIdentities(lock, resources);
+              await saveLockFile(lock, operationLock.lockFilePath);
+            },
+          }
+        : {}),
+      knownDnsOwnership: lock?.dns,
+      dnsCleanupRequired,
+      requiredDnsRoles,
+      ...(deleteD1
+        ? {
+            beforeD1Deletion: ({ observedD1Resources }) => {
+              const controlDatabaseId = lock?.d1.CONTROL_DB?.id;
+              return cleanupSetupManagedControlTokens({
+                baseDir,
+                environment: env,
+                controlDatabaseIdentifier:
+                  controlDatabaseId &&
+                  observedD1Resources.some((resource) => resource.id === controlDatabaseId)
+                    ? controlDatabaseId
+                    : null,
+              }).then(() => undefined);
+            },
+          }
+        : {}),
       onProgress: updateDeleteSpinner,
       onResourceProgress: ({ current, total }) => {
         if (deleteSpinner) {
@@ -258,13 +405,21 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
         }
       },
     });
+    manualControlTokenTargets = (result.manualControlTokens ?? []).map((issue) =>
+      buildControlTokenManualCleanupTarget({
+        issue,
+        accountId: localConfig?.cloudflare.accountId,
+        environment: env,
+      })
+    );
 
     const deletedLockResourceCount =
       result.deleted.workers.length +
       result.deleted.d1.length +
       result.deleted.kv.length +
       result.deleted.queues.length +
-      result.deleted.r2.length;
+      result.deleted.r2.length +
+      (result.deleted.dns?.length ?? 0);
     if (lock && deletedLockResourceCount > 0) {
       await saveLockFile(
         reconcileLockAfterResourceDeletion(lock, result.deleted),
@@ -291,7 +446,9 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     }
     result.success = result.errors.length === 0;
     result.completion = result.success
-      ? result.manualR2.length > 0
+      ? result.manualR2.length > 0 ||
+        (result.manualDns?.length ?? 0) > 0 ||
+        manualControlTokenTargets.length > 0
         ? 'manual_action_required'
         : 'complete'
       : 'failed';
@@ -300,7 +457,22 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
         environmentEmpty ? 'Environment resources deleted' : t('delete.partialSuccess')
       );
     } else if (result.completion === 'manual_action_required') {
-      deleteSpinner.warn('Cloud resources deleted; R2 cleanup requires a manual action');
+      const hasManualR2 = result.manualR2.length > 0;
+      const hasManualDns = (result.manualDns?.length ?? 0) > 0;
+      const hasManualControlTokens = manualControlTokenTargets.length > 0;
+      const manualReviewMessage =
+        hasManualControlTokens && !hasManualR2 && !hasManualDns
+          ? environmentEmpty
+            ? 'Environment deleted; manual Cloudflare token review remains'
+            : 'Cloud resources deleted; manual Cloudflare token review is required'
+          : hasManualR2 && !hasManualDns && !hasManualControlTokens
+            ? 'Cloud resources deleted; R2 cleanup requires a manual action'
+            : hasManualDns && !hasManualR2 && !hasManualControlTokens
+              ? environmentEmpty
+                ? 'Environment deleted; manual DNS review remains'
+                : 'Cloud resources deleted; manual DNS review is required'
+              : 'Cloud resources deleted; manual Cloudflare review is required';
+      deleteSpinner.warn(manualReviewMessage);
     } else {
       deleteSpinner.fail('Environment deletion encountered errors');
     }
@@ -317,7 +489,11 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     );
     throw error;
   } finally {
-    await operationLock.release();
+    try {
+      await deployConfigLock?.release();
+    } finally {
+      await operationLock.release();
+    }
   }
 
   // Summary
@@ -341,6 +517,9 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
   if (result.deleted.pages.length > 0) {
     console.log(chalk.green(`Pages projects deleted: ${result.deleted.pages.length}`));
   }
+  if ((result.deleted.dns?.length ?? 0) > 0) {
+    console.log(chalk.green(`DNS ownership records reconciled: ${result.deleted.dns.length}`));
+  }
 
   if (result.manualR2.length > 0) {
     console.log(chalk.yellow('\nR2 buckets requiring manual cleanup:'));
@@ -352,6 +531,35 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     }
   }
 
+  if ((result.manualDns?.length ?? 0) > 0) {
+    console.log(chalk.yellow('\nDNS records requiring manual review:'));
+    for (const issue of result.manualDns ?? []) {
+      console.log(chalk.yellow(`  • ${issue.name}: ${issue.reason}`));
+    }
+  }
+
+  if (manualControlTokenTargets.length > 0) {
+    console.log(chalk.yellow('\nControl API tokens requiring manual review:'));
+    for (const target of manualControlTokenTargets) {
+      console.log(chalk.yellow(`  Reason: ${target.reason}`));
+      for (const tokenId of target.targetTokenIds ?? []) {
+        console.log(chalk.yellow(`  • Exact token ID: ${tokenId}`));
+      }
+      if (target.expectedTokenNames.length > 0) {
+        for (const tokenName of target.expectedTokenNames) {
+          console.log(chalk.yellow(`  • ${tokenName}`));
+        }
+      } else {
+        console.log(chalk.yellow(`  • ${target.reason}`));
+      }
+      console.log(chalk.cyan(`    Account tokens: ${target.accountTokensDashboardUrl}`));
+      console.log(chalk.cyan(`    User tokens: ${target.userTokensDashboardUrl}`));
+    }
+    console.log(
+      chalk.gray('  Review matching tokens manually; token names alone are not deletion evidence.')
+    );
+  }
+
   if (result.errors.length > 0) {
     console.log(chalk.yellow(`\nErrors (${result.errors.length}):`));
     for (const error of result.errors) {
@@ -359,10 +567,20 @@ export async function deleteCommand(options: DeleteCommandOptions): Promise<void
     }
   }
 
+  if (result.retryable) {
+    console.log(
+      chalk.yellow(
+        '\nCloudflare deletion is not yet verified. Local recovery state was preserved; retry the same delete command.'
+      )
+    );
+  }
+
   if (result.completion === 'manual_action_required') {
     console.log(
       chalk.yellow(
-        '\n⚠️  Environment resources were deleted. Complete the R2 actions above to finish cleanup.'
+        result.environmentEmpty
+          ? '\n⚠️  Environment deletion is complete. Review the Cloudflare items above separately.'
+          : '\n⚠️  Environment cleanup requires the manual actions above before it can finish.'
       )
     );
   } else if (result.success && result.environmentEmpty === true) {

@@ -257,7 +257,6 @@ async function pollActivation(input: {
 
 async function executeOperatorProvisioning(input: {
   controlDatabaseId: string;
-  controlDatabaseName: string;
   migrationReleaseBucketName: string;
   operationId: string;
   expectedAccountId: string;
@@ -265,7 +264,8 @@ async function executeOperatorProvisioning(input: {
   const states: string[] = [];
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const pending = await listPendingPluginControlOperatorOperations({
-      controlDatabaseName: input.controlDatabaseName,
+      // The setup API retains its historical property name, but accepts the immutable D1 ID.
+      controlDatabaseName: input.controlDatabaseId,
       operationId: input.operationId,
     });
     const operation = pending[0];
@@ -290,12 +290,12 @@ async function executeOperatorProvisioning(input: {
 }
 
 async function findSucceededProvisioningOperation(input: {
-  controlDatabaseName: string;
+  controlDatabaseId: string;
   tenantId: string;
   pluginInstallationId: string;
 }): Promise<string> {
   const operations = await queryD1Rows<{ operation_id: string }>(
-    input.controlDatabaseName,
+    input.controlDatabaseId,
     `SELECT DISTINCT operation.operation_id
        FROM control_operations operation
        JOIN control_plugin_desired_resources resource
@@ -345,16 +345,12 @@ async function main(): Promise<void> {
   const lock = JSON.parse(
     await readFile(resolve(REPO_ROOT, '.authrim/test/lock.json'), 'utf8')
   ) as LockFile;
-  const controlDatabaseName = requiredName(
-    lock.d1?.CONTROL_DB?.name,
-    'phase2_plugin_resource_live_control_database_missing'
-  );
   const controlDatabaseId = requiredName(
     lock.d1?.CONTROL_DB?.id,
     'phase2_plugin_resource_live_control_database_missing'
   );
-  const pluginRunnerDatabaseName = requiredName(
-    lock.d1?.PLUGIN_RUNNER_DB?.name,
+  const pluginRunnerDatabaseId = requiredName(
+    lock.d1?.PLUGIN_RUNNER_DB?.id,
     'phase2_plugin_resource_live_plugin_database_missing'
   );
   const bucketName = requiredName(
@@ -372,13 +368,13 @@ async function main(): Promise<void> {
     enabled: true,
     sources,
     bucketName,
-    pluginRunnerDatabaseName,
+    pluginRunnerDatabaseId,
   });
   if (publication.published.length !== 1 || publication.published[0]?.pluginId !== PLUGIN_ID) {
     throw new Error('phase2_plugin_resource_live_publication_invalid');
   }
   const registration = await registerExternalCapabilities({
-    controlDatabaseName,
+    controlDatabaseName: controlDatabaseId,
     environmentId: options.environment,
     sources,
     registeredBy: 'phase2-plugin-resource-live',
@@ -416,7 +412,7 @@ async function main(): Promise<void> {
         }
         return {
           operationId: await findSucceededProvisioningOperation({
-            controlDatabaseName,
+            controlDatabaseId,
             tenantId: options.tenantId,
             pluginInstallationId,
           }),
@@ -437,7 +433,6 @@ async function main(): Promise<void> {
         options.mode === 'off'
           ? await executeOperatorProvisioning({
               controlDatabaseId,
-              controlDatabaseName,
               migrationReleaseBucketName,
               operationId,
               expectedAccountId,
@@ -461,7 +456,7 @@ async function main(): Promise<void> {
     provider_name: string | null;
     status: string;
   }>(
-    controlDatabaseName,
+    controlDatabaseId,
     `SELECT logical_resource_id, resource_kind, lifecycle_mode, provider_resource_id,
             provider_name, status
        FROM control_plugin_desired_resources
@@ -474,7 +469,7 @@ async function main(): Promise<void> {
     attempt_count: number;
     last_error_code: string | null;
   }>(
-    controlDatabaseName,
+    controlDatabaseId,
     `SELECT status, attempt_count, last_error_code FROM control_operations
       WHERE operation_id = '${activation.operationId}' AND environment_id = 'test'`
   );
@@ -485,7 +480,7 @@ async function main(): Promise<void> {
     consecutive_smoke_successes: number;
     completed_at: number | null;
   }>(
-    controlDatabaseName,
+    controlDatabaseId,
     `SELECT worker_script_name, state, desired_bindings_json,
             consecutive_smoke_successes, completed_at
        FROM control_plugin_resource_binding_reconciliations

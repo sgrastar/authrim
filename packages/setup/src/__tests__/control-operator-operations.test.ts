@@ -26,6 +26,9 @@ const row = {
   deterministic_name: 'authrim-test-users-default-1234',
   desired_resource_id: 'desired-1',
   ownership_fingerprint: 'a'.repeat(64),
+  provider_create_state: 'not_started',
+  provider_resource_id_checkpoint: null,
+  provider_identity_checkpointed_at: null,
   shard_id: 'shard-1',
   binding_ref: 'TEST_TDB_USERS_1234_CORE',
   jurisdiction: null,
@@ -353,6 +356,7 @@ describe('setup pending tenant disaster recovery operations', () => {
 
 const pluginFingerprint = 'b'.repeat(64);
 const pluginDigest = 'c'.repeat(64);
+const pluginDatabaseName = `authrim-test-${pluginFingerprint.slice(0, 32)}-d1`;
 const pluginRow = {
   operation_id: 'op_plugin_resources_1',
   environment_id: 'test',
@@ -370,6 +374,11 @@ const pluginRow = {
   lifecycle_mode: 'managed',
   provider_resource_id: null,
   provider_name: null,
+  provider_create_state: 'not_started',
+  provider_creation_date: null,
+  provider_ownership_marker_key: null,
+  provider_ownership_id: null,
+  provider_identity_checkpointed_at: null,
   desired_spec_json: JSON.stringify({
     pluginId: 'plugin-a',
     binding: 'PLUGIN_STATE',
@@ -417,7 +426,9 @@ describe('setup pending plugin resource operations', () => {
         {
           ...pluginRow,
           provider_resource_id: 'database-1',
-          provider_name: 'managed-state',
+          provider_name: pluginDatabaseName,
+          provider_create_state: 'identified',
+          provider_identity_checkpointed_at: 120,
           resource_status: 'ready',
           migration_provider_database_id: 'database-1',
         },
@@ -431,7 +442,9 @@ describe('setup pending plugin resource operations', () => {
         {
           ...pluginRow,
           provider_resource_id: 'database-1',
-          provider_name: 'managed-state',
+          provider_name: pluginDatabaseName,
+          provider_create_state: 'identified',
+          provider_identity_checkpointed_at: 120,
           resource_status: 'ready',
           migration_state: 'ready',
           migration_provider_database_id: 'database-1',

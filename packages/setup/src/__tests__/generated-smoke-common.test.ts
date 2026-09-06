@@ -3,9 +3,11 @@ import {
   addFail,
   addPass,
   addWarn,
+  cleanupGeneratedValidationMachineAccess,
   createTemporaryInitialAccessToken,
   deleteTemporarySmokeClient,
   ensureTemporaryDcrEnabled,
+  executeGeneratedValidationMachineSql,
   fetchJsonWithTimeout,
   finalizeCheck,
   getTenantDcrSettings,
@@ -18,8 +20,10 @@ import {
   restoreTemporaryDcrEnabled,
   revokeTemporaryInitialAccessToken,
   resolveSmokeClientRegistrationDefaults,
+  resolveGeneratedValidationAdminDatabaseIdentifier,
   withTenantHeader,
 } from '../core/generated-smoke-common.js';
+import { createLockFile, saveLockFile } from '../core/lock.js';
 
 function response(status: number, payload: unknown, contentType = 'application/json') {
   const body =
@@ -123,6 +127,106 @@ describe('generated smoke common contracts', () => {
     await expect(readGeneratedAdminApiSecret({ baseDir: dir, env: 'test' })).rejects.toThrow(
       'validation_machine_access_requires_base_url_and_config'
     );
+  });
+
+  it('resolves and executes validation-machine SQL only by the DB_ADMIN UUID', async () => {
+    const { mkdtemp, rm } = await import('node:fs/promises');
+    const dir = await mkdtemp('/tmp/authrim-smoke-admin-db-');
+    try {
+      await saveLockFile(
+        createLockFile('test', {
+          d1: [
+            {
+              binding: 'DB_ADMIN',
+              name: 'test-authrim-admin-db',
+              id: 'admin-immutable-id',
+            },
+          ],
+          kv: [],
+          queues: [],
+          r2: [],
+        }),
+        { baseDir: dir, env: 'test' }
+      );
+      await expect(
+        resolveGeneratedValidationAdminDatabaseIdentifier({ baseDir: dir, env: 'test' })
+      ).resolves.toBe('admin-immutable-id');
+
+      const execute = vi.fn(async () => ({ stdout: '', stderr: '' }));
+      await executeGeneratedValidationMachineSql(
+        'admin-immutable-id',
+        'SELECT 1',
+        execute as never
+      );
+      expect(execute).toHaveBeenCalledWith('admin-immutable-id', 'SELECT 1', {
+        timeout: 30_000,
+      });
+      expect(execute).not.toHaveBeenCalledWith('test-authrim-admin-db', expect.anything());
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed when no immutable DB_ADMIN identity is checkpointed', async () => {
+    const { mkdtemp, rm } = await import('node:fs/promises');
+    const dir = await mkdtemp('/tmp/authrim-smoke-admin-db-missing-');
+    try {
+      await expect(
+        resolveGeneratedValidationAdminDatabaseIdentifier({ baseDir: dir, env: 'test' })
+      ).rejects.toThrow('validation_machine_admin_database_id_missing');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails verification after bounded cleanup retries while still removing local keys', async () => {
+    const { access, mkdtemp, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const keysDir = await mkdtemp('/tmp/authrim-smoke-cleanup-failure-');
+    await writeFile(join(keysDir, 'private.pem'), 'private key');
+    const execute = vi.fn(async () => {
+      throw new Error('D1 unavailable');
+    });
+    const wait = vi.fn(async () => undefined);
+
+    await expect(
+      cleanupGeneratedValidationMachineAccess({
+        databaseIdentifier: 'admin-immutable-id',
+        cleanupSql: 'DELETE FROM principals',
+        keysDir,
+        execute: execute as never,
+        wait,
+      })
+    ).rejects.toThrow('validation_machine_cleanup_failed');
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(wait).toHaveBeenCalledTimes(2);
+    await expect(access(keysDir)).rejects.toThrow();
+  });
+
+  it('accepts a bounded retry that eventually revokes validation-machine access', async () => {
+    const { access, mkdtemp, writeFile } = await import('node:fs/promises');
+    const { join } = await import('node:path');
+    const keysDir = await mkdtemp('/tmp/authrim-smoke-cleanup-retry-');
+    await writeFile(join(keysDir, 'private.pem'), 'private key');
+    const execute = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('D1 unavailable'))
+      .mockRejectedValueOnce(new Error('D1 unavailable'))
+      .mockResolvedValueOnce({ stdout: '', stderr: '' });
+    const wait = vi.fn(async () => undefined);
+
+    await expect(
+      cleanupGeneratedValidationMachineAccess({
+        databaseIdentifier: 'admin-immutable-id',
+        cleanupSql: 'DELETE FROM principals',
+        keysDir,
+        execute: execute as never,
+        wait,
+      })
+    ).resolves.toBeUndefined();
+    expect(execute).toHaveBeenCalledTimes(3);
+    expect(wait).toHaveBeenCalledTimes(2);
+    await expect(access(keysDir)).rejects.toThrow();
   });
 
   it('gets, patches, enables, and restores tenant DCR settings', async () => {

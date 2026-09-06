@@ -297,7 +297,7 @@ describe('waitForWorkerDeploymentsReady', () => {
     expect(result.error).toContain('stale: dev-ar-router');
   });
 
-  it('treats existing workers as visible by default even when deployment timestamps are older', async () => {
+  it('requires fresh evidence by default when the target has a deployment timestamp', async () => {
     mocks.getWorkerDeployments.mockResolvedValue({
       exists: true,
       lastDeployedAt: '2026-05-17T23:00:00.000Z',
@@ -305,6 +305,44 @@ describe('waitForWorkerDeploymentsReady', () => {
 
     const result = await waitForWorkerDeploymentsReady({
       targets: [{ workerName: 'dev-ar-router', deployedAt: '2026-05-18T00:00:00.000Z' }],
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(false);
+    expect(result.staleWorkers).toEqual(['dev-ar-router']);
+  });
+
+  it('requires the exact Cloudflare version when deployment returned one', async () => {
+    mocks.getWorkerDeployments.mockResolvedValue({
+      exists: true,
+      lastDeployedAt: '2026-05-18T00:01:00.000Z',
+      versionId: 'old-version-id',
+    });
+
+    const result = await waitForWorkerDeploymentsReady({
+      targets: [
+        {
+          workerName: 'dev-ar-router',
+          deployedAt: '2026-05-18T00:00:00.000Z',
+          expectedVersionId: 'new-version-id',
+        },
+      ],
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(false);
+    expect(result.staleWorkers).toEqual(['dev-ar-router']);
+  });
+
+  it('allows pure existence inspection to opt out of freshness', async () => {
+    mocks.getWorkerDeployments.mockResolvedValue({
+      exists: true,
+      lastDeployedAt: '2026-05-17T23:00:00.000Z',
+    });
+
+    const result = await waitForWorkerDeploymentsReady({
+      targets: [{ workerName: 'dev-ar-router', deployedAt: '2026-05-18T00:00:00.000Z' }],
+      requireFreshDeployment: false,
       maxWaitMs: 0,
     });
 

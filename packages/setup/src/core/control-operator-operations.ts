@@ -32,6 +32,9 @@ interface PendingOperatorOperationRow extends Record<string, unknown> {
   deterministic_name: string;
   desired_resource_id: string;
   ownership_fingerprint: string;
+  provider_create_state: 'not_started' | 'issued' | 'identified';
+  provider_resource_id_checkpoint: string | null;
+  provider_identity_checkpointed_at: number | null;
   shard_id: string;
   binding_ref: string;
   jurisdiction: 'eu' | 'fedramp' | null;
@@ -84,6 +87,9 @@ export interface PendingControlOperatorOperation {
   databaseName: string;
   desiredResourceId: string;
   ownershipFingerprint: string;
+  providerCreateState: 'not_started' | 'issued' | 'identified';
+  providerResourceId: string | null;
+  providerIdentityCheckpointedAt: number | null;
   shardId: string;
   bindingRef: string;
   jurisdiction: 'eu' | 'fedramp' | null;
@@ -157,6 +163,16 @@ function parseRow(row: PendingOperatorOperationRow): PendingControlOperatorOpera
     !SAFE_DATABASE_NAME.test(row.deterministic_name) ||
     !SAFE_ID.test(row.desired_resource_id) ||
     !/^[a-f0-9]{64}$/u.test(row.ownership_fingerprint) ||
+    !['not_started', 'issued', 'identified'].includes(row.provider_create_state) ||
+    (row.provider_create_state === 'identified') !==
+      (row.provider_resource_id_checkpoint !== null) ||
+    (row.provider_create_state === 'identified') !==
+      (row.provider_identity_checkpointed_at !== null) ||
+    (row.provider_resource_id_checkpoint !== null &&
+      !SAFE_ID.test(row.provider_resource_id_checkpoint)) ||
+    (row.provider_identity_checkpointed_at !== null &&
+      (!Number.isSafeInteger(row.provider_identity_checkpointed_at) ||
+        row.provider_identity_checkpointed_at < 1)) ||
     !SAFE_ID.test(row.shard_id) ||
     !SAFE_BINDING.test(row.binding_ref) ||
     (row.jurisdiction !== null && !['eu', 'fedramp'].includes(row.jurisdiction)) ||
@@ -203,6 +219,9 @@ function parseRow(row: PendingOperatorOperationRow): PendingControlOperatorOpera
     databaseName: row.deterministic_name,
     desiredResourceId: row.desired_resource_id,
     ownershipFingerprint: row.ownership_fingerprint,
+    providerCreateState: row.provider_create_state,
+    providerResourceId: row.provider_resource_id_checkpoint,
+    providerIdentityCheckpointedAt: row.provider_identity_checkpointed_at,
     shardId: row.shard_id,
     bindingRef: row.binding_ref,
     jurisdiction: row.jurisdiction,
@@ -267,7 +286,10 @@ export async function listPendingControlOperatorOperations(input: {
             shard.allocation_scope, shard.owner_tenant_id, shard.data_role,
             shard.residency_policy_id, shard.residency_partition,
             desired.deterministic_name, desired.desired_resource_id,
-            desired.ownership_fingerprint, shard.shard_id, shard.binding_ref,
+            desired.ownership_fingerprint, desired.provider_create_state,
+            desired.provider_resource_id AS provider_resource_id_checkpoint,
+            desired.provider_identity_checkpointed_at,
+            shard.shard_id, shard.binding_ref,
             shard.jurisdiction, shard.location_hint, shard.read_replication_mode,
             migration.provider_database_id, migration.stream_id AS migration_stream_id,
             migration.release_id, migration.manifest_digest,
@@ -540,6 +562,11 @@ interface PendingPluginOperatorRow extends Record<string, unknown> {
   lifecycle_mode: 'managed' | 'existing';
   provider_resource_id: string | null;
   provider_name: string | null;
+  provider_create_state: 'not_started' | 'issued' | 'identified' | 'legacy_unverified';
+  provider_creation_date: string | null;
+  provider_ownership_marker_key: string | null;
+  provider_ownership_id: string | null;
+  provider_identity_checkpointed_at: number | null;
   desired_spec_json: string;
   resource_status: string;
   migration_stream_id: string | null;
@@ -559,6 +586,11 @@ export interface PendingPluginControlOperatorResource {
   lifecycleMode: 'managed' | 'existing';
   providerResourceId: string | null;
   providerName: string | null;
+  providerCreateState: 'not_started' | 'issued' | 'identified' | 'legacy_unverified';
+  providerCreationDate: string | null;
+  providerOwnershipMarkerKey: string | null;
+  providerOwnershipId: string | null;
+  providerIdentityCheckpointedAt: number | null;
   ownershipFingerprint: string;
   deterministicName: string;
   hostBindingRef: string;
@@ -634,6 +666,14 @@ function parsePluginResource(row: PendingPluginOperatorRow): {
   resource: PendingPluginControlOperatorResource;
 } {
   const spec = parsePluginDesiredSpec(row);
+  const managed = row.lifecycle_mode === 'managed';
+  const identified = row.provider_create_state === 'identified';
+  const r2 = row.resource_kind === 'r2_bucket';
+  const deterministicName = managedPluginResourceName(
+    row.environment_id,
+    spec.ownershipFingerprint,
+    row.resource_kind
+  );
   if (
     !SAFE_ID.test(row.plugin_resource_id) ||
     !SAFE_ID.test(row.plugin_installation_id) ||
@@ -642,6 +682,9 @@ function parsePluginResource(row: PendingPluginOperatorRow): {
     !SAFE_ID.test(row.logical_resource_id) ||
     !/^[A-Z][A-Z0-9_]{0,127}$/u.test(row.binding_name) ||
     !['managed', 'existing'].includes(row.lifecycle_mode) ||
+    !['not_started', 'issued', 'identified', 'legacy_unverified'].includes(
+      row.provider_create_state
+    ) ||
     !['pending', 'provisioning', 'ready', 'failed'].includes(row.resource_status) ||
     (row.lifecycle_mode === 'existing' &&
       (!row.provider_resource_id ||
@@ -649,7 +692,52 @@ function parsePluginResource(row: PendingPluginOperatorRow): {
         !row.provider_name ||
         !SAFE_ID.test(row.provider_name))) ||
     (row.provider_resource_id !== null && !SAFE_ID.test(row.provider_resource_id)) ||
-    (row.provider_name !== null && !SAFE_ID.test(row.provider_name))
+    (row.provider_name !== null && !SAFE_ID.test(row.provider_name)) ||
+    (managed && row.provider_name !== null && row.provider_name !== deterministicName) ||
+    (row.provider_identity_checkpointed_at !== null &&
+      (!Number.isSafeInteger(row.provider_identity_checkpointed_at) ||
+        row.provider_identity_checkpointed_at < 1)) ||
+    (row.provider_creation_date !== null &&
+      (!Number.isFinite(Date.parse(row.provider_creation_date)) ||
+        row.provider_creation_date.length > 64)) ||
+    (row.provider_ownership_id !== null && !/^[a-f0-9-]{36}$/u.test(row.provider_ownership_id)) ||
+    (row.provider_ownership_marker_key !== null &&
+      !/^__authrim_setup__\/ownership-v1-[a-f0-9-]{36}\.json$/u.test(
+        row.provider_ownership_marker_key
+      )) ||
+    (row.provider_ownership_marker_key !== null &&
+      row.provider_ownership_id !== null &&
+      row.provider_ownership_marker_key !==
+        `__authrim_setup__/ownership-v1-${row.provider_ownership_id}.json`) ||
+    (managed &&
+      identified &&
+      (!row.provider_resource_id ||
+        !row.provider_name ||
+        row.provider_identity_checkpointed_at === null)) ||
+    (managed &&
+      identified &&
+      r2 &&
+      (!row.provider_creation_date ||
+        !row.provider_ownership_marker_key ||
+        !row.provider_ownership_id)) ||
+    (managed &&
+      !r2 &&
+      (row.provider_creation_date !== null ||
+        row.provider_ownership_marker_key !== null ||
+        row.provider_ownership_id !== null)) ||
+    (managed &&
+      row.provider_create_state === 'issued' &&
+      (row.provider_resource_id !== null ||
+        row.provider_name !== null ||
+        row.provider_creation_date !== null ||
+        row.provider_identity_checkpointed_at !== null)) ||
+    (managed &&
+      row.provider_create_state === 'issued' &&
+      r2 &&
+      (row.provider_ownership_marker_key === null) !== (row.provider_ownership_id === null)) ||
+    (managed &&
+      row.provider_create_state === 'legacy_unverified' &&
+      (!r2 || row.resource_status !== 'failed' || !row.provider_resource_id || !row.provider_name))
   ) {
     throw new Error('control_plugin_operator_operation_invalid');
   }
@@ -682,12 +770,13 @@ function parsePluginResource(row: PendingPluginOperatorRow): {
       lifecycleMode: row.lifecycle_mode,
       providerResourceId: row.provider_resource_id,
       providerName: row.provider_name,
+      providerCreateState: row.provider_create_state,
+      providerCreationDate: row.provider_creation_date,
+      providerOwnershipMarkerKey: row.provider_ownership_marker_key,
+      providerOwnershipId: row.provider_ownership_id,
+      providerIdentityCheckpointedAt: row.provider_identity_checkpointed_at,
       ownershipFingerprint: spec.ownershipFingerprint,
-      deterministicName: managedPluginResourceName(
-        row.environment_id,
-        spec.ownershipFingerprint,
-        row.resource_kind
-      ),
+      deterministicName,
       hostBindingRef: pluginResourceHostBindingRef(row.resource_kind, spec.ownershipFingerprint),
       status: row.resource_status as PendingPluginControlOperatorResource['status'],
       migration: hasMigration
@@ -723,6 +812,9 @@ export async function listPendingPluginControlOperatorOperations(input: {
             resource.plugin_resource_id, resource.plugin_installation_id, resource.tenant_id,
             resource.resource_kind, resource.logical_resource_id, resource.binding_name,
             resource.lifecycle_mode, resource.provider_resource_id, resource.provider_name,
+            resource.provider_create_state, resource.provider_creation_date,
+            resource.provider_ownership_marker_key, resource.provider_ownership_id,
+            resource.provider_identity_checkpointed_at,
             resource.desired_spec_json, resource.status AS resource_status,
             migration.stream_id AS migration_stream_id, migration.release_id,
             migration.manifest_digest, catalog.manifest_r2_object_key,
@@ -788,7 +880,11 @@ export async function listPendingPluginControlOperatorOperations(input: {
       throw new Error('control_plugin_operator_operation_invalid');
     }
     const resources = parsed.map(({ resource }) => resource);
-    const currentStep = resources.some((resource) => resource.status !== 'ready')
+    const currentStep = resources.some(
+      (resource) =>
+        resource.status !== 'ready' ||
+        (resource.lifecycleMode === 'managed' && resource.providerCreateState !== 'identified')
+    )
       ? 'provider'
       : resources.some((resource) => resource.migration && resource.migration.state !== 'ready')
         ? 'migration'

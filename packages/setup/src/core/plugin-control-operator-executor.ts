@@ -13,7 +13,12 @@ import {
   type WorkerBindingPatchLease,
   type WorkerBindingPatchState,
 } from '@authrim/ar-lib-core/control-plane';
-import { getR2ObjectBytes } from './cloudflare.js';
+import {
+  assertR2OwnershipMarker,
+  buildR2OwnershipMarkerKey,
+  getR2ObjectBytes,
+  writeAndVerifyR2OwnershipMarker,
+} from './cloudflare.js';
 import {
   createSetupOperatorD1Client,
   type SetupOperatorExecutionResult,
@@ -49,10 +54,36 @@ interface PluginDeploymentLease extends WorkerBindingPatchLease {
   leaseExpiresAt: number;
 }
 
+interface PluginR2OwnershipOperations {
+  assert(input: {
+    bucketName: string;
+    markerKey: string;
+    ownershipId: string;
+    environment?: string;
+    binding?: string;
+  }): Promise<void>;
+  writeAndVerify(input: {
+    environment: string;
+    binding: string;
+    bucketName: string;
+    markerKey: string;
+    ownershipId: string;
+  }): Promise<void>;
+}
+
+const DEFAULT_R2_OWNERSHIP: PluginR2OwnershipOperations = {
+  assert: assertR2OwnershipMarker,
+  writeAndVerify: writeAndVerifyR2OwnershipMarker,
+};
+
 class SetupPluginReleaseArtifactStore implements ReleaseArtifactStore {
-  constructor(private readonly bucketName: string) {}
+  constructor(
+    private readonly bucketName: string,
+    private readonly verifyBucketOwnership?: () => Promise<void>
+  ) {}
 
   async get(key: string): Promise<ReleaseArtifactObject | null> {
+    await this.verifyBucketOwnership?.();
     const bytes = await getR2ObjectBytes({
       bucketName: this.bucketName,
       objectKey: key,
@@ -143,105 +174,521 @@ function migrationStep(resource: PendingPluginControlOperatorResource): string {
   return `plugin_resource_${resource.ownershipFingerprint.slice(0, 20)}_migration`;
 }
 
-async function ensureProviderResource(
+function pluginCreateWasDefinitelyRejected(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || Array.isArray(error)) return false;
+  const status = (error as { status?: unknown }).status;
+  if (!Number.isSafeInteger(status)) return false;
+  const code = status as number;
+  return (
+    code === 401 || code === 403 || code === 429 || (code >= 400 && code < 500 && code !== 408)
+  );
+}
+
+async function markPluginCreateIssued(input: {
+  client: PluginOperatorClient;
+  controlDatabaseId: string;
+  operation: PendingPluginControlOperatorOperation;
+  lease: PluginOperationLease;
+  resource: PendingPluginControlOperatorResource;
+  markerKey: string | null;
+  ownershipId: string | null;
+  now: number;
+}): Promise<void> {
+  const results = await batch(input.client, input.controlDatabaseId, [
+    {
+      sql: `UPDATE control_plugin_desired_resources
+               SET provider_create_state = 'issued', provider_ownership_marker_key = ?,
+                   provider_ownership_id = ?, status = 'provisioning', updated_at = ?
+             WHERE plugin_resource_id = ? AND environment_id = ? AND operation_id = ?
+               AND lifecycle_mode = 'managed' AND provider_create_state = 'not_started'
+               AND provider_resource_id IS NULL AND provider_name IS NULL
+               AND provider_creation_date IS NULL
+               AND provider_identity_checkpointed_at IS NULL
+               AND EXISTS (
+                 SELECT 1 FROM control_operations operation
+                  WHERE operation.operation_id = ? AND operation.environment_id = ?
+                    AND operation.lock_owner = ? AND operation.fencing_token = ?
+               )`,
+      params: [
+        input.markerKey,
+        input.ownershipId,
+        input.now,
+        input.resource.pluginResourceId,
+        input.operation.environmentId,
+        input.operation.operationId,
+        input.operation.operationId,
+        input.operation.environmentId,
+        input.lease.ownerId,
+        input.lease.fencingToken,
+      ],
+    },
+  ]);
+  if (Number(results[0]?.meta?.changes ?? 0) !== 1) {
+    throw new Error('plugin_resource_create_issue_checkpoint_failed');
+  }
+}
+
+async function markPluginCreateDefinitelyRejected(input: {
+  client: PluginOperatorClient;
+  controlDatabaseId: string;
+  operation: PendingPluginControlOperatorOperation;
+  lease: PluginOperationLease;
+  resource: PendingPluginControlOperatorResource;
+  now: number;
+}): Promise<void> {
+  const results = await batch(input.client, input.controlDatabaseId, [
+    {
+      sql: `UPDATE control_plugin_desired_resources
+               SET provider_create_state = 'not_started', provider_ownership_marker_key = NULL,
+                   provider_ownership_id = NULL, status = 'pending', updated_at = ?
+             WHERE plugin_resource_id = ? AND environment_id = ? AND operation_id = ?
+               AND lifecycle_mode = 'managed' AND provider_create_state = 'issued'
+               AND provider_resource_id IS NULL AND provider_name IS NULL
+               AND provider_creation_date IS NULL
+               AND provider_identity_checkpointed_at IS NULL
+               AND EXISTS (
+                 SELECT 1 FROM control_operations operation
+                  WHERE operation.operation_id = ? AND operation.environment_id = ?
+                    AND operation.lock_owner = ? AND operation.fencing_token = ?
+               )`,
+      params: [
+        input.now,
+        input.resource.pluginResourceId,
+        input.operation.environmentId,
+        input.operation.operationId,
+        input.operation.operationId,
+        input.operation.environmentId,
+        input.lease.ownerId,
+        input.lease.fencingToken,
+      ],
+    },
+  ]);
+  if (Number(results[0]?.meta?.changes ?? 0) !== 1) {
+    throw new Error('plugin_resource_create_rejection_checkpoint_failed');
+  }
+}
+
+async function checkpointPluginProviderIdentity(input: {
+  client: PluginOperatorClient;
+  controlDatabaseId: string;
+  operation: PendingPluginControlOperatorOperation;
+  lease: PluginOperationLease;
+  resource: PendingPluginControlOperatorResource;
+  identity: { id: string; name: string };
+  creationDate: string | null;
+  markerKey: string | null;
+  ownershipId: string | null;
+  now: number;
+}): Promise<void> {
+  const results = await batch(input.client, input.controlDatabaseId, [
+    {
+      sql: `UPDATE control_plugin_desired_resources
+               SET provider_create_state = 'identified', provider_resource_id = ?,
+                   provider_name = ?, provider_creation_date = ?,
+                   provider_ownership_marker_key = ?, provider_ownership_id = ?,
+                   provider_identity_checkpointed_at = COALESCE(
+                     provider_identity_checkpointed_at, ?
+                   ), updated_at = ?
+             WHERE plugin_resource_id = ? AND environment_id = ? AND operation_id = ?
+               AND lifecycle_mode = 'managed'
+               AND (provider_create_state = 'issued' OR
+                    (provider_create_state = 'not_started' AND provider_resource_id = ?
+                     AND provider_name = ?) OR
+                    (provider_create_state = 'identified' AND provider_resource_id = ?
+                     AND provider_name = ?))
+               AND EXISTS (
+                 SELECT 1 FROM control_operations operation
+                  WHERE operation.operation_id = ? AND operation.environment_id = ?
+                    AND operation.lock_owner = ? AND operation.fencing_token = ?
+               )`,
+      params: [
+        input.identity.id,
+        input.identity.name,
+        input.creationDate,
+        input.markerKey,
+        input.ownershipId,
+        input.now,
+        input.now,
+        input.resource.pluginResourceId,
+        input.operation.environmentId,
+        input.operation.operationId,
+        input.identity.id,
+        input.identity.name,
+        input.identity.id,
+        input.identity.name,
+        input.operation.operationId,
+        input.operation.environmentId,
+        input.lease.ownerId,
+        input.lease.fencingToken,
+      ],
+    },
+  ]);
+  if (Number(results[0]?.meta?.changes ?? 0) !== 1) {
+    throw new Error('plugin_resource_provider_identity_checkpoint_failed');
+  }
+}
+
+async function markLegacyR2Unverified(input: {
+  client: PluginOperatorClient;
+  controlDatabaseId: string;
+  operation: PendingPluginControlOperatorOperation;
+  lease: PluginOperationLease;
+  resource: PendingPluginControlOperatorResource;
+  now: number;
+}): Promise<void> {
+  const results = await batch(input.client, input.controlDatabaseId, [
+    {
+      sql: `UPDATE control_plugin_desired_resources
+               SET provider_create_state = 'legacy_unverified', status = 'failed', updated_at = ?
+             WHERE plugin_resource_id = ? AND environment_id = ? AND operation_id = ?
+               AND lifecycle_mode = 'managed' AND resource_kind = 'r2_bucket'
+               AND provider_create_state = 'not_started'
+               AND provider_resource_id = ? AND provider_name = ?
+               AND EXISTS (
+                 SELECT 1 FROM control_operations operation
+                  WHERE operation.operation_id = ? AND operation.environment_id = ?
+                    AND operation.lock_owner = ? AND operation.fencing_token = ?
+               )`,
+      params: [
+        input.now,
+        input.resource.pluginResourceId,
+        input.operation.environmentId,
+        input.operation.operationId,
+        input.resource.providerResourceId,
+        input.resource.providerName,
+        input.operation.operationId,
+        input.operation.environmentId,
+        input.lease.ownerId,
+        input.lease.fencingToken,
+      ],
+    },
+  ]);
+  if (Number(results[0]?.meta?.changes ?? 0) !== 1) {
+    throw new Error('plugin_resource_legacy_r2_checkpoint_failed');
+  }
+}
+
+async function verifyExistingProviderResource(
   client: PluginOperatorClient,
-  operation: PendingPluginControlOperatorOperation,
   resource: PendingPluginControlOperatorResource
 ): Promise<{ id: string; name: string }> {
-  if (resource.lifecycleMode === 'existing') {
-    if (!resource.providerResourceId || !resource.providerName) {
-      throw new Error('plugin_resource_existing_identity_missing');
-    }
-    if (resource.kind === 'd1') {
-      const value = await client.getD1Database(resource.providerResourceId);
-      if (value.uuid !== resource.providerResourceId || value.name !== resource.providerName) {
-        throw new Error('plugin_resource_existing_identity_mismatch');
-      }
-      return { id: value.uuid, name: value.name };
-    }
-    if (resource.kind === 'kv_namespace') {
-      const value = (await client.listKvNamespaces()).find(
-        (candidate) => candidate.id === resource.providerResourceId
-      );
-      if (!value || value.title !== resource.providerName) {
-        throw new Error('plugin_resource_existing_identity_mismatch');
-      }
-      return { id: value.id, name: value.title };
-    }
-    if (resource.providerResourceId !== resource.providerName) {
+  if (!resource.providerResourceId || !resource.providerName) {
+    throw new Error('plugin_resource_existing_identity_missing');
+  }
+  if (resource.kind === 'd1') {
+    const value = await client.getD1Database(resource.providerResourceId);
+    if (value.uuid !== resource.providerResourceId || value.name !== resource.providerName) {
       throw new Error('plugin_resource_existing_identity_mismatch');
     }
-    const value = (await client.listR2Buckets()).find(
-      (candidate) => candidate.name === resource.providerName
-    );
-    if (!value) throw new Error('plugin_resource_existing_identity_mismatch');
-    return { id: value.name, name: value.name };
-  }
-
-  if (resource.kind === 'd1') {
-    let created = (await client.listD1Databases()).find(
-      (candidate) => candidate.name === resource.deterministicName
-    );
-    if (!created) {
-      try {
-        created = await client.createD1Database({ name: resource.deterministicName });
-      } catch (error) {
-        created = (await client.listD1Databases()).find(
-          (candidate) => candidate.name === resource.deterministicName
-        );
-        if (!created) throw error;
-      }
-    }
-    if (!created.uuid || created.name !== resource.deterministicName) {
-      throw new Error('plugin_resource_provider_reflection_mismatch');
-    }
-    if (created.read_replication?.mode !== 'disabled') {
-      await client.updateD1Database(created.uuid, { read_replication: { mode: 'disabled' } });
-    }
-    const reflected = await client.getD1Database(created.uuid);
-    if (reflected.uuid !== created.uuid || reflected.name !== resource.deterministicName) {
-      throw new Error('plugin_resource_provider_reflection_mismatch');
-    }
-    return { id: reflected.uuid, name: reflected.name };
+    return { id: value.uuid, name: value.name };
   }
   if (resource.kind === 'kv_namespace') {
-    let created = (await client.listKvNamespaces()).find(
-      (candidate) => candidate.title === resource.deterministicName
+    const value = (await client.listKvNamespaces()).find(
+      (candidate) => candidate.id === resource.providerResourceId
     );
-    if (!created) {
-      try {
-        created = await client.createKvNamespace(resource.deterministicName);
-      } catch (error) {
-        created = (await client.listKvNamespaces()).find(
-          (candidate) => candidate.title === resource.deterministicName
-        );
-        if (!created) throw error;
-      }
+    if (!value || value.title !== resource.providerName) {
+      throw new Error('plugin_resource_existing_identity_mismatch');
     }
-    const reflected = (await client.listKvNamespaces()).find(
-      (candidate) => candidate.id === created.id && candidate.title === resource.deterministicName
-    );
-    if (!reflected) throw new Error('plugin_resource_provider_reflection_mismatch');
-    return { id: reflected.id, name: reflected.title };
+    return { id: value.id, name: value.title };
   }
-  let created = (await client.listR2Buckets()).find(
+  if (resource.providerResourceId !== resource.providerName) {
+    throw new Error('plugin_resource_existing_identity_mismatch');
+  }
+  const value = (await client.listR2Buckets()).find(
+    (candidate) => candidate.name === resource.providerName
+  );
+  if (!value) throw new Error('plugin_resource_existing_identity_mismatch');
+  return { id: value.name, name: value.name };
+}
+
+async function ensureManagedD1(input: {
+  client: PluginOperatorClient;
+  controlDatabaseId: string;
+  operation: PendingPluginControlOperatorOperation;
+  lease: PluginOperationLease;
+  resource: PendingPluginControlOperatorResource;
+  now: number;
+}): Promise<{ id: string; name: string }> {
+  const resource = input.resource;
+  if (resource.providerCreateState === 'legacy_unverified') {
+    throw new Error('plugin_resource_provider_checkpoint_invalid');
+  }
+  let database;
+  if (resource.providerCreateState === 'identified') {
+    if (
+      !resource.providerResourceId ||
+      resource.providerName !== resource.deterministicName ||
+      resource.providerIdentityCheckpointedAt === null
+    ) {
+      throw new Error('plugin_resource_provider_checkpoint_invalid');
+    }
+    database = await input.client.getD1Database(resource.providerResourceId);
+  } else if (resource.providerCreateState === 'issued') {
+    throw new Error('plugin_resource_create_outcome_ambiguous');
+  } else if (resource.providerResourceId && resource.providerName) {
+    database = await input.client.getD1Database(resource.providerResourceId);
+    if (database.uuid !== resource.providerResourceId || database.name !== resource.providerName) {
+      throw new Error('plugin_resource_provider_reflection_mismatch');
+    }
+    await checkpointPluginProviderIdentity({
+      ...input,
+      identity: { id: database.uuid, name: database.name },
+      creationDate: null,
+      markerKey: null,
+      ownershipId: null,
+    });
+  } else {
+    if (
+      (await input.client.listD1Databases()).some(
+        (candidate) => candidate.name === resource.deterministicName
+      )
+    ) {
+      throw new Error('plugin_resource_provider_name_conflict');
+    }
+    await markPluginCreateIssued({ ...input, markerKey: null, ownershipId: null });
+    try {
+      database = await input.client.createD1Database({ name: resource.deterministicName });
+    } catch (error) {
+      if (pluginCreateWasDefinitelyRejected(error)) {
+        await markPluginCreateDefinitelyRejected(input);
+        throw error;
+      }
+      throw new Error('plugin_resource_create_outcome_ambiguous');
+    }
+    if (!database.uuid) throw new Error('plugin_resource_create_outcome_ambiguous');
+    await checkpointPluginProviderIdentity({
+      ...input,
+      identity: { id: database.uuid, name: database.name },
+      creationDate: null,
+      markerKey: null,
+      ownershipId: null,
+    });
+  }
+  if (
+    !database.uuid ||
+    (resource.providerResourceId !== null && database.uuid !== resource.providerResourceId) ||
+    database.name !== resource.deterministicName
+  ) {
+    throw new Error('plugin_resource_provider_reflection_mismatch');
+  }
+  if (database.read_replication?.mode !== 'disabled') {
+    await input.client.updateD1Database(database.uuid, {
+      read_replication: { mode: 'disabled' },
+    });
+  }
+  const reflected = await input.client.getD1Database(database.uuid);
+  if (reflected.uuid !== database.uuid || reflected.name !== resource.deterministicName) {
+    throw new Error('plugin_resource_provider_reflection_mismatch');
+  }
+  return { id: reflected.uuid, name: reflected.name };
+}
+
+async function ensureManagedKv(input: {
+  client: PluginOperatorClient;
+  controlDatabaseId: string;
+  operation: PendingPluginControlOperatorOperation;
+  lease: PluginOperationLease;
+  resource: PendingPluginControlOperatorResource;
+  now: number;
+}): Promise<{ id: string; name: string }> {
+  const resource = input.resource;
+  if (resource.providerCreateState === 'legacy_unverified') {
+    throw new Error('plugin_resource_provider_checkpoint_invalid');
+  }
+  let namespace;
+  if (resource.providerCreateState === 'identified') {
+    if (
+      !resource.providerResourceId ||
+      resource.providerName !== resource.deterministicName ||
+      resource.providerIdentityCheckpointedAt === null
+    ) {
+      throw new Error('plugin_resource_provider_checkpoint_invalid');
+    }
+    namespace = (await input.client.listKvNamespaces()).find(
+      (candidate) => candidate.id === resource.providerResourceId
+    );
+  } else if (resource.providerCreateState === 'issued') {
+    throw new Error('plugin_resource_create_outcome_ambiguous');
+  } else if (resource.providerResourceId && resource.providerName) {
+    namespace = (await input.client.listKvNamespaces()).find(
+      (candidate) => candidate.id === resource.providerResourceId
+    );
+    if (!namespace || namespace.title !== resource.providerName) {
+      throw new Error('plugin_resource_provider_reflection_mismatch');
+    }
+    await checkpointPluginProviderIdentity({
+      ...input,
+      identity: { id: namespace.id, name: namespace.title },
+      creationDate: null,
+      markerKey: null,
+      ownershipId: null,
+    });
+  } else {
+    if (
+      (await input.client.listKvNamespaces()).some(
+        (candidate) => candidate.title === resource.deterministicName
+      )
+    ) {
+      throw new Error('plugin_resource_provider_name_conflict');
+    }
+    await markPluginCreateIssued({ ...input, markerKey: null, ownershipId: null });
+    try {
+      namespace = await input.client.createKvNamespace(resource.deterministicName);
+    } catch (error) {
+      if (pluginCreateWasDefinitelyRejected(error)) {
+        await markPluginCreateDefinitelyRejected(input);
+        throw error;
+      }
+      throw new Error('plugin_resource_create_outcome_ambiguous');
+    }
+    if (!namespace.id) throw new Error('plugin_resource_create_outcome_ambiguous');
+    await checkpointPluginProviderIdentity({
+      ...input,
+      identity: { id: namespace.id, name: namespace.title },
+      creationDate: null,
+      markerKey: null,
+      ownershipId: null,
+    });
+  }
+  if (
+    !namespace ||
+    (resource.providerResourceId !== null && namespace.id !== resource.providerResourceId) ||
+    namespace.title !== resource.deterministicName
+  ) {
+    throw new Error('plugin_resource_provider_reflection_mismatch');
+  }
+  const reflected = (await input.client.listKvNamespaces()).find(
+    (candidate) => candidate.id === namespace.id
+  );
+  if (!reflected || reflected.title !== resource.deterministicName) {
+    throw new Error('plugin_resource_provider_reflection_mismatch');
+  }
+  return { id: reflected.id, name: reflected.title };
+}
+
+async function ensureManagedR2(input: {
+  client: PluginOperatorClient;
+  controlDatabaseId: string;
+  operation: PendingPluginControlOperatorOperation;
+  lease: PluginOperationLease;
+  resource: PendingPluginControlOperatorResource;
+  r2Ownership: PluginR2OwnershipOperations;
+  now: number;
+}): Promise<{ id: string; name: string }> {
+  const resource = input.resource;
+  if (resource.providerCreateState === 'legacy_unverified') {
+    throw new Error('plugin_resource_legacy_r2_identity_unverified');
+  }
+  if (
+    resource.providerCreateState === 'not_started' &&
+    resource.providerResourceId &&
+    resource.providerName
+  ) {
+    await markLegacyR2Unverified(input);
+    throw new Error('plugin_resource_legacy_r2_identity_unverified');
+  }
+
+  let markerKey = resource.providerOwnershipMarkerKey;
+  let ownershipId = resource.providerOwnershipId;
+  let expectedCreationDate = resource.providerCreationDate;
+  if (resource.providerCreateState === 'identified') {
+    if (
+      !resource.providerResourceId ||
+      resource.providerResourceId !== resource.deterministicName ||
+      resource.providerName !== resource.deterministicName ||
+      !expectedCreationDate ||
+      !markerKey ||
+      !ownershipId ||
+      resource.providerIdentityCheckpointedAt === null
+    ) {
+      throw new Error('plugin_resource_provider_checkpoint_invalid');
+    }
+  } else if (resource.providerCreateState === 'issued') {
+    if (!markerKey || !ownershipId) {
+      throw new Error('plugin_resource_create_outcome_ambiguous');
+    }
+  } else {
+    if (
+      (await input.client.listR2Buckets()).some(
+        (candidate) => candidate.name === resource.deterministicName
+      )
+    ) {
+      throw new Error('plugin_resource_provider_name_conflict');
+    }
+    ownershipId = crypto.randomUUID().toLowerCase();
+    markerKey = buildR2OwnershipMarkerKey(ownershipId);
+    await markPluginCreateIssued({ ...input, markerKey, ownershipId });
+    try {
+      const created = await input.client.createR2Bucket(resource.deterministicName);
+      if (created.name !== resource.deterministicName) {
+        throw new Error('plugin_resource_provider_reflection_mismatch');
+      }
+      expectedCreationDate = created.creation_date ?? null;
+    } catch (error) {
+      if (pluginCreateWasDefinitelyRejected(error)) {
+        await markPluginCreateDefinitelyRejected(input);
+        throw error;
+      }
+      throw new Error('plugin_resource_create_outcome_ambiguous');
+    }
+    try {
+      await input.r2Ownership.writeAndVerify({
+        environment: input.operation.environmentId,
+        binding: resource.hostBindingRef,
+        bucketName: resource.deterministicName,
+        markerKey,
+        ownershipId,
+      });
+    } catch {
+      throw new Error('plugin_resource_create_outcome_ambiguous');
+    }
+  }
+
+  const reflected = (await input.client.listR2Buckets()).find(
     (candidate) => candidate.name === resource.deterministicName
   );
-  if (!created) {
-    try {
-      created = await client.createR2Bucket(resource.deterministicName);
-    } catch (error) {
-      created = (await client.listR2Buckets()).find(
-        (candidate) => candidate.name === resource.deterministicName
-      );
-      if (!created) throw error;
-    }
+  if (
+    !reflected?.creation_date ||
+    (expectedCreationDate !== null && reflected.creation_date !== expectedCreationDate) ||
+    !markerKey ||
+    !ownershipId
+  ) {
+    throw new Error('plugin_resource_create_outcome_ambiguous');
   }
-  const reflected = (await client.listR2Buckets()).find(
-    (candidate) => candidate.name === created.name && candidate.name === resource.deterministicName
-  );
-  if (!reflected) throw new Error('plugin_resource_provider_reflection_mismatch');
+  await input.r2Ownership.assert({
+    environment: input.operation.environmentId,
+    binding: resource.hostBindingRef,
+    bucketName: resource.deterministicName,
+    markerKey,
+    ownershipId,
+  });
+  if (resource.providerCreateState !== 'identified') {
+    await checkpointPluginProviderIdentity({
+      ...input,
+      identity: { id: reflected.name, name: reflected.name },
+      creationDate: reflected.creation_date,
+      markerKey,
+      ownershipId,
+    });
+  }
   return { id: reflected.name, name: reflected.name };
+}
+
+async function ensureProviderResource(input: {
+  client: PluginOperatorClient;
+  controlDatabaseId: string;
+  operation: PendingPluginControlOperatorOperation;
+  lease: PluginOperationLease;
+  resource: PendingPluginControlOperatorResource;
+  r2Ownership: PluginR2OwnershipOperations;
+  now: number;
+}): Promise<{ id: string; name: string }> {
+  if (input.resource.lifecycleMode === 'existing') {
+    return verifyExistingProviderResource(input.client, input.resource);
+  }
+  if (input.resource.kind === 'd1') return ensureManagedD1(input);
+  if (input.resource.kind === 'kv_namespace') return ensureManagedKv(input);
+  return ensureManagedR2(input);
 }
 
 async function handoffNextStage(input: {
@@ -340,6 +787,7 @@ async function executeProviderStage(input: {
   controlDatabaseId: string;
   operation: PendingPluginControlOperatorOperation;
   lease: PluginOperationLease;
+  r2Ownership: PluginR2OwnershipOperations;
   now: number;
 }): Promise<SetupOperatorExecutionResult> {
   await batch(input.client, input.controlDatabaseId, [
@@ -354,14 +802,23 @@ async function executeProviderStage(input: {
     },
   ]);
   for (const resource of input.operation.resources) {
-    if (resource.status === 'ready') continue;
-    const identity = await ensureProviderResource(input.client, input.operation, resource);
+    if (
+      resource.status === 'ready' &&
+      (resource.lifecycleMode === 'existing' || resource.providerCreateState === 'identified')
+    ) {
+      continue;
+    }
+    const identity = await ensureProviderResource({ ...input, resource });
+    const assertionId = `plugin-provider-setup:${resource.pluginResourceId}:${input.lease.fencingToken}`;
     const results = await batch(input.client, input.controlDatabaseId, [
       {
         sql: `UPDATE control_plugin_desired_resources
                  SET provider_resource_id = ?, provider_name = ?, status = 'ready', updated_at = ?
                WHERE plugin_resource_id = ? AND environment_id = ? AND operation_id = ?
-                 AND status IN ('pending', 'provisioning', 'failed')
+                 AND status IN ('pending', 'provisioning', 'ready', 'failed')
+                 AND (lifecycle_mode = 'existing' OR
+                      (provider_create_state = 'identified' AND provider_resource_id = ?
+                       AND provider_name = ? AND provider_identity_checkpointed_at IS NOT NULL))
                  AND NOT EXISTS (
                    SELECT 1 FROM control_plugin_desired_resources conflicting
                     WHERE conflicting.environment_id = ?
@@ -381,6 +838,8 @@ async function executeProviderStage(input: {
           resource.pluginResourceId,
           input.operation.environmentId,
           input.operation.operationId,
+          identity.id,
+          identity.name,
           input.operation.environmentId,
           resource.kind,
           resource.pluginResourceId,
@@ -414,6 +873,63 @@ async function executeProviderStage(input: {
           identity.name,
         ],
       },
+      {
+        sql: `INSERT INTO control_plugin_provider_projection_assertions (
+                assertion_id, environment_id, plugin_resource_id, valid, created_at
+              ) VALUES (?, ?, ?, CASE WHEN
+                EXISTS (
+                  SELECT 1 FROM control_plugin_desired_resources projected
+                   WHERE projected.plugin_resource_id = ? AND projected.environment_id = ?
+                     AND projected.operation_id = ? AND projected.status = 'ready'
+                     AND projected.provider_resource_id = ? AND projected.provider_name = ?
+                     AND (
+                       projected.lifecycle_mode = 'existing' OR (
+                         projected.lifecycle_mode = 'managed'
+                         AND projected.provider_create_state = 'identified'
+                         AND projected.provider_identity_checkpointed_at IS NOT NULL
+                         AND (
+                           projected.resource_kind <> 'r2_bucket' OR (
+                             projected.provider_creation_date IS NOT NULL
+                             AND projected.provider_ownership_marker_key IS NOT NULL
+                             AND projected.provider_ownership_id IS NOT NULL
+                           )
+                         )
+                       )
+                     )
+                ) AND EXISTS (
+                  SELECT 1 FROM control_operation_steps step
+                   WHERE step.operation_id = ? AND step.step_key = ?
+                     AND step.status = 'succeeded' AND step.observed_resource_id = ?
+                ) AND EXISTS (
+                  SELECT 1 FROM control_operations operation
+                   WHERE operation.operation_id = ? AND operation.environment_id = ?
+                     AND operation.status = 'running' AND operation.lock_owner = ?
+                     AND operation.fencing_token = ?
+                ) THEN 1 ELSE 0 END, ?)`,
+        params: [
+          assertionId,
+          input.operation.environmentId,
+          resource.pluginResourceId,
+          resource.pluginResourceId,
+          input.operation.environmentId,
+          input.operation.operationId,
+          identity.id,
+          identity.name,
+          input.operation.operationId,
+          providerStep(resource),
+          identity.id,
+          input.operation.operationId,
+          input.operation.environmentId,
+          input.lease.ownerId,
+          input.lease.fencingToken,
+          input.now,
+        ],
+      },
+      {
+        sql: `DELETE FROM control_plugin_provider_projection_assertions
+               WHERE assertion_id = ? AND environment_id = ? AND plugin_resource_id = ?`,
+        params: [assertionId, input.operation.environmentId, resource.pluginResourceId],
+      },
     ]);
     if (Number(results[0]?.meta?.changes ?? 0) !== 1) {
       throw new Error('control_plugin_operator_provider_reflection_failed');
@@ -438,6 +954,7 @@ async function executeMigrationStage(input: {
   operation: PendingPluginControlOperatorOperation;
   lease: PluginOperationLease;
   artifactStore?: ReleaseArtifactStore;
+  verifyMigrationReleaseBucketOwnership?: () => Promise<void>;
   now: number;
 }): Promise<SetupOperatorExecutionResult> {
   await batch(input.client, input.controlDatabaseId, [
@@ -453,14 +970,23 @@ async function executeMigrationStage(input: {
   ]);
   const engine = new ApiMigrationEngine(
     new MigrationReleaseArtifactReader(
-      input.artifactStore ?? new SetupPluginReleaseArtifactStore(input.migrationReleaseBucketName)
+      input.artifactStore ??
+        new SetupPluginReleaseArtifactStore(
+          input.migrationReleaseBucketName,
+          input.verifyMigrationReleaseBucketOwnership
+        )
     ),
     input.client,
     () => input.now
   );
   for (const resource of input.operation.resources) {
     if (!resource.migration || resource.migration.state === 'ready') continue;
-    if (!resource.providerResourceId) {
+    if (
+      !resource.providerResourceId ||
+      (resource.lifecycleMode === 'managed' &&
+        (resource.providerCreateState !== 'identified' ||
+          resource.providerIdentityCheckpointedAt === null))
+    ) {
       throw new Error('control_plugin_operator_migration_database_missing');
     }
     const applied = await engine.apply({
@@ -544,6 +1070,17 @@ async function executeMigrationStage(input: {
 function desiredBinding(resource: PendingPluginControlOperatorResource): CloudflareWorkerBinding {
   if (!resource.providerResourceId || !resource.providerName) {
     throw new Error('control_plugin_operator_binding_identity_missing');
+  }
+  if (
+    resource.lifecycleMode === 'managed' &&
+    (resource.providerCreateState !== 'identified' ||
+      resource.providerIdentityCheckpointedAt === null ||
+      (resource.kind === 'r2_bucket' &&
+        (!resource.providerCreationDate ||
+          !resource.providerOwnershipMarkerKey ||
+          !resource.providerOwnershipId)))
+  ) {
+    throw new Error('control_plugin_operator_binding_identity_unverified');
   }
   if (resource.kind === 'd1') {
     return { name: resource.hostBindingRef, type: 'd1', database_id: resource.providerResourceId };
@@ -980,6 +1517,8 @@ export async function executeSetupPluginControlOperator(input: {
   client?: PluginOperatorClient;
   expectedAccountId?: string;
   artifactStore?: ReleaseArtifactStore;
+  verifyMigrationReleaseBucketOwnership?: () => Promise<void>;
+  r2Ownership?: PluginR2OwnershipOperations;
   executionId?: string;
   now?: () => number;
 }): Promise<SetupOperatorExecutionResult> {
@@ -1019,6 +1558,7 @@ export async function executeSetupPluginControlOperator(input: {
               controlDatabaseId: input.controlDatabaseId,
               operation: input.operation,
               lease,
+              r2Ownership: input.r2Ownership ?? DEFAULT_R2_OWNERSHIP,
               now: timestamp,
             })
           : await executeMigrationStage({
@@ -1028,6 +1568,7 @@ export async function executeSetupPluginControlOperator(input: {
               operation: input.operation,
               lease,
               artifactStore: input.artifactStore,
+              verifyMigrationReleaseBucketOwnership: input.verifyMigrationReleaseBucketOwnership,
               now: timestamp,
             });
     assertControlPlaneRecordIsSecretFree(result);

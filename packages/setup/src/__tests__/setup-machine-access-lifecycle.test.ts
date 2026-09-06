@@ -11,7 +11,10 @@ vi.mock('../core/lock.js', () => ({
   withEnvironmentOperationForEnvironment: withEnvironmentOperation,
 }));
 
-import { withEphemeralSetupMachineAccess } from '../core/setup-machine-access-lifecycle.js';
+import {
+  runEphemeralSetupMachineAccess,
+  withEphemeralSetupMachineAccess,
+} from '../core/setup-machine-access-lifecycle.js';
 
 const config = { env: 'test' } as never;
 
@@ -137,5 +140,86 @@ describe('ephemeral setup machine access lifecycle', () => {
     ).rejects.toThrow('environment_operation_in_progress:update:123');
     expect(ensure).not.toHaveBeenCalled();
     expect(cleanup).not.toHaveBeenCalled();
+  });
+
+  it('uses one exact DB_ADMIN identifier for bootstrap and cleanup when the lock is external', async () => {
+    await expect(
+      runEphemeralSetupMachineAccess({
+        env: 'test',
+        config,
+        keysDir: '/keys',
+        databaseIdentifier: 'admin-d1-uuid',
+        action: async () => 'result',
+      })
+    ).resolves.toBe('result');
+
+    expect(withEnvironmentOperation).not.toHaveBeenCalled();
+    expect(ensure).toHaveBeenCalledWith('test', config, '/keys', undefined, {
+      databaseIdentifier: 'admin-d1-uuid',
+    });
+    expect(cleanup).toHaveBeenCalledWith('test', '/keys', undefined, {
+      databaseIdentifier: 'admin-d1-uuid',
+    });
+  });
+
+  it('cleans up the same exact DB_ADMIN identifier after an action failure', async () => {
+    await expect(
+      runEphemeralSetupMachineAccess({
+        env: 'test',
+        config,
+        keysDir: '/keys',
+        databaseIdentifier: 'admin-d1-uuid',
+        action: async () => {
+          throw new Error('action_failed');
+        },
+      })
+    ).rejects.toThrow('action_failed');
+
+    expect(cleanup).toHaveBeenCalledWith('test', '/keys', undefined, {
+      databaseIdentifier: 'admin-d1-uuid',
+    });
+  });
+
+  it('cleans up the same exact DB_ADMIN identifier when bootstrap throws after mutation', async () => {
+    ensure.mockRejectedValue(new Error('bootstrap_response_lost'));
+
+    await expect(
+      runEphemeralSetupMachineAccess({
+        env: 'test',
+        config,
+        keysDir: '/keys',
+        databaseIdentifier: 'admin-d1-uuid',
+        action: async () => 'unused',
+      })
+    ).rejects.toThrow('control_setup_machine_bootstrap_failed:bootstrap_response_lost');
+
+    expect(cleanup).toHaveBeenCalledWith('test', '/keys', undefined, {
+      databaseIdentifier: 'admin-d1-uuid',
+    });
+  });
+
+  it('preserves an action failure when exact-ID cleanup throws', async () => {
+    const actionError = new Error('action_failed');
+    cleanup.mockRejectedValue(new Error('cleanup_response_lost'));
+
+    await expect(
+      runEphemeralSetupMachineAccess({
+        env: 'test',
+        config,
+        keysDir: '/keys',
+        databaseIdentifier: 'admin-d1-uuid',
+        action: async () => {
+          throw actionError;
+        },
+      })
+    ).rejects.toMatchObject({
+      name: 'AggregateError',
+      errors: [
+        actionError,
+        expect.objectContaining({
+          message: 'control_setup_machine_cleanup_failed:cleanup_response_lost',
+        }),
+      ],
+    });
   });
 });

@@ -1,6 +1,8 @@
 import { resolve } from 'node:path';
 import { getWorkersSubdomain } from './cloudflare.js';
 import { deployWorker, type DeployOptions, type DeployResult } from './deploy.js';
+import type { WorkerScriptOwnershipGuard } from './worker-script-ownership.js';
+import type { DeployConfigLockProof } from './lock.js';
 import {
   ensureDownstreamIntrospectionClient,
   loadDownstreamIntrospectionClientSecrets,
@@ -27,6 +29,8 @@ export interface ConfigureDownstreamIntrospectionDeploymentOptions {
   readinessBudgetMs?: number;
   tenantId?: string;
   dryRun?: boolean;
+  deployConfigLockProof?: DeployConfigLockProof;
+  workerScriptOwnership?: WorkerScriptOwnershipGuard;
   onProgress?: (message: string) => void;
   /** Raw readiness and provider errors for persisted detailed logs only. */
   onDetail?: (message: string) => void;
@@ -284,6 +288,8 @@ export async function configureDownstreamIntrospectionDeployment(
       deploymentStrategy: 'staged',
       existingComponents: ['ar-userinfo'],
       secrets: introspectionSecrets,
+      deployConfigLockProof: options.deployConfigLockProof,
+      workerScriptOwnership: options.workerScriptOwnership,
       onProgress,
     } satisfies DeployOptions);
 

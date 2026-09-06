@@ -41,6 +41,18 @@ describe('generated admin api smoke', () => {
     };
 
     await writeFile(join(envDir, 'config.json'), JSON.stringify(config, null, 2));
+    await writeFile(
+      join(envDir, 'lock.json'),
+      JSON.stringify({
+        version: '1.0.0',
+        env,
+        createdAt: '2026-08-31T00:00:00.000Z',
+        d1: {
+          DB_ADMIN: { id: 'admin-immutable-id', name: `${env}-authrim-admin-db` },
+        },
+        kv: {},
+      })
+    );
     await saveKeysToDirectory(generateAllSecrets('admin-smoke-setup-key'), { targetDir: keysDir });
 
     const fetchMock = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>();

@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultConfig } from '../core/config.js';
-import { saveKeysToDirectory, type GeneratedSecrets, type KeyPair } from '../core/keys.js';
+import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
 import { createLockFile } from '../core/lock.js';
 import { getEnvironmentPaths } from '../core/paths.js';
 import { KV_NAMESPACES, WORKER_COMPONENTS, getKVNamespaceName } from '../core/naming.js';
@@ -47,107 +47,10 @@ async function createFixtureRoot() {
   return root;
 }
 
-function createFixtureKeyPair(keyId: string, alg: string = 'RS256'): KeyPair {
-  return {
-    privateKeyPem: `-----BEGIN PRIVATE KEY-----\n${keyId}\n-----END PRIVATE KEY-----\n`,
-    publicKeyJwk: {
-      kty: alg === 'ES256' ? 'EC' : 'RSA',
-      kid: keyId,
-      use: 'sig',
-      alg,
-    },
-    keyId,
-    createdAt: '2026-01-01T00:00:00.000Z',
-  };
-}
-
-function createFixtureSecrets(keyId: string): GeneratedSecrets {
-  return {
-    keyPair: createFixtureKeyPair(keyId),
-    setupMachineKeyPair: createFixtureKeyPair(`${keyId}-setup`, 'ES256'),
-    adminUiBffMachineKeyPair: createFixtureKeyPair(`${keyId}-admin-ui-bff`, 'ES256'),
-    tenantRuntimeRegistryKeyPair: {
-      privateJwk: {
-        kty: 'OKP',
-        crv: 'Ed25519',
-        kid: `${keyId}-tenant-runtime-registry`,
-        d: 'fixture-private',
-        x: 'fixture-public',
-        use: 'sig',
-        alg: 'EdDSA',
-      },
-      publicJwk: {
-        kty: 'OKP',
-        crv: 'Ed25519',
-        kid: `${keyId}-tenant-runtime-registry`,
-        x: 'fixture-public',
-        use: 'sig',
-        alg: 'EdDSA',
-      },
-      keyId: `${keyId}-tenant-runtime-registry`,
-      createdAt: '2026-01-01T00:00:00.000Z',
-    },
-    controlSmokeKeyPair: {
-      privateJwk: {
-        kty: 'OKP',
-        crv: 'Ed25519',
-        kid: `${keyId}-control-smoke`,
-        d: 'fixture-private',
-        x: 'fixture-public',
-        use: 'sig',
-        alg: 'EdDSA',
-      },
-      publicJwk: {
-        kty: 'OKP',
-        crv: 'Ed25519',
-        kid: `${keyId}-control-smoke`,
-        x: 'fixture-public',
-        use: 'sig',
-        alg: 'EdDSA',
-      },
-      keyId: `${keyId}-control-smoke`,
-      createdAt: '2026-01-01T00:00:00.000Z',
-    },
-    notificationPayloadKeyPair: {
-      privateJwk: {
-        kty: 'RSA',
-        kid: `${keyId}-notification-payload`,
-        n: 'fixture-modulus',
-        e: 'AQAB',
-        d: 'fixture-private',
-        use: 'enc',
-        alg: 'RSA-OAEP-256',
-        key_ops: ['decrypt'],
-      },
-      publicJwk: {
-        kty: 'RSA',
-        kid: `${keyId}-notification-payload`,
-        n: 'fixture-modulus',
-        e: 'AQAB',
-        use: 'enc',
-        alg: 'RSA-OAEP-256',
-        key_ops: ['encrypt'],
-      },
-      keyId: `${keyId}-notification-payload`,
-      createdAt: '2026-01-01T00:00:00.000Z',
-    },
-    rpTokenEncryptionKey: 'a'.repeat(64),
-    piiEncryptionKey: 'd'.repeat(64),
-    objectEncryptionRootKey: 'b'.repeat(64),
-    otpHmacSecret: 'fixture_otp_hmac_secret_1234567890',
-    loggingCursorHmacSecret: 'fixture_logging_cursor_secret_123',
-    lookupHmacKeySlotA: 'fixture_lookup_hmac_key_slot_a_1234567890',
-    flowRuntimeHmacSecret: 'fixture_flow_runtime_secret_123',
-    vcTransactionCodeHmacSecret: 't'.repeat(43),
-    vcEvidenceHmacSecret: 'e'.repeat(43),
-    vcProfileContractHmacSecret: 'p'.repeat(43),
-    pluginEncryptionKey: 'c'.repeat(64),
-    pluginMutationHmacKey: 'm'.repeat(43),
-    notificationIntentHmacKey: 'n'.repeat(43),
-    agentElevationEncryptionKey: 'd'.repeat(64),
-    setupToken: 'fixture_setup_token_1234567890',
-  };
-}
+// The production writer now validates every cryptographic relationship before publishing a
+// bundle. Reuse one genuinely valid bundle across isolated fixture directories instead of
+// relying on PEM/JWK-shaped placeholders that could mask validation regressions.
+const fixtureSecrets = generateAllSecrets('portable-test-key');
 
 async function writeGeneratedEnvironment(
   root: string,
@@ -277,7 +180,7 @@ async function writeGeneratedEnvironment(
     ],
   });
 
-  await saveKeysToDirectory(createFixtureSecrets(`${env}-test-key`), {
+  await saveKeysToDirectory(fixtureSecrets, {
     baseDir: root,
     env,
     keysBaseDir: options?.externalKeys ? root : undefined,
@@ -302,7 +205,7 @@ async function writeGeneratedEnvironment(
 }
 
 function mockLiveRuntimeSchema(
-  env: string,
+  _env: string,
   options?: {
     missingPlatformCoreTables?: string[];
     missingPlatformPiiTables?: string[];
@@ -314,20 +217,20 @@ function mockLiveRuntimeSchema(
 ) {
   const schemaTablesByDatabase = new Map<string, string[]>([
     [
-      `${env}-authrim-core-db`,
+      'db-core-id',
       ['tenants', 'profile_registry', 'audit_log', 'event_log'].filter(
         (table) => !(options?.missingPlatformCoreTables ?? []).includes(table)
       ),
     ],
     [
-      `${env}-authrim-pii-db`,
+      'db-pii-id',
       ['audit_log_pii', 'user_anonymization_map', 'pii_log'].filter(
         (table) => !(options?.missingPlatformPiiTables ?? []).includes(table)
       ),
     ],
-    [`${env}-authrim-admin-db`, ['admin_users', 'admin_machine_principals', 'field_mapping_sets']],
+    ['db-admin-id', ['admin_users', 'admin_machine_principals', 'field_mapping_sets']],
     [
-      `${env}-authrim-control-db`,
+      'db-control-id',
       [
         'control_environments',
         'control_operations',
@@ -382,7 +285,7 @@ function mockLiveRuntimeSchema(
       ],
     ],
     [
-      `${env}-authrim-lookup-db`,
+      'db-lookup-id',
       [
         'lookup_schema_metadata',
         'lookup_identifiers',
@@ -396,7 +299,7 @@ function mockLiveRuntimeSchema(
       ],
     ],
     [
-      `${env}-authrim-plugin-runner-db`,
+      'db-plugin-runner-id',
       [
         'plugin_runner_shard_cursors',
         'plugin_runner_full_sweep_state',
@@ -407,13 +310,13 @@ function mockLiveRuntimeSchema(
       ],
     ],
     [
-      `${env}-authrim-tenant-default-bootstrap-db`,
+      'bootstrap-default-core-id',
       ['tenants', 'tenant_domain_mappings', 'oauth_clients', 'flows', 'profile_registry'].filter(
         (table) => !(options?.missingTenantDefaultTables ?? []).includes(table)
       ),
     ],
     [
-      `${env}-authrim-tenant-users-bootstrap-db`,
+      'bootstrap-users-core-id',
       [
         'identity_subjects',
         'identity_accounts',
@@ -424,7 +327,7 @@ function mockLiveRuntimeSchema(
       ].filter((table) => !(options?.missingTenantCoreTables ?? []).includes(table)),
     ],
     [
-      `${env}-authrim-tenant-pii-bootstrap-db`,
+      'bootstrap-pii-id',
       ['identity_sensitive_values', 'users_pii', 'users_pii_tombstone'].filter(
         (table) => !(options?.missingTenantPiiTables ?? []).includes(table)
       ),
@@ -1091,7 +994,7 @@ describe('validateGeneratedEnvironment', () => {
       expect.arrayContaining([expect.stringContaining('bootstrap handoff state: accepted')])
     );
     expect(queryD1RowsMock).toHaveBeenLastCalledWith(
-      `${env}-authrim-control-db`,
+      'db-control-id',
       "SELECT state FROM control_bootstrap_handoffs WHERE environment_id = 'portable';"
     );
   });

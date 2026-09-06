@@ -361,10 +361,12 @@ async function reflectNamespace(input: {
 export async function ensureInitialNotificationProviderConfiguration(
   input: InitialNotificationProviderBootstrapInput
 ): Promise<InitialNotificationProviderBootstrapResult> {
-  const databaseName = input.lock.d1.PLUGIN_RUNNER_DB?.name;
+  const databaseIdentifier = input.lock.d1.PLUGIN_RUNNER_DB?.id?.trim();
   const authrimConfigNamespaceId = input.lock.kv.AUTHRIM_CONFIG?.id;
   const settingsNamespaceId = input.lock.kv.SETTINGS?.id;
-  if (!databaseName) throw new Error('notification_provider_bootstrap_database_missing');
+  if (!databaseIdentifier) {
+    throw new Error('notification_provider_bootstrap_database_id_missing');
+  }
   if (!authrimConfigNamespaceId || !settingsNamespaceId) {
     throw new Error('notification_provider_bootstrap_kv_missing');
   }
@@ -413,9 +415,9 @@ export async function ensureInitialNotificationProviderConfiguration(
       mutationHmacKey,
       now,
     });
-    await execute(databaseName, plan.sql);
+    await execute(databaseIdentifier, plan.sql);
     await reflectNamespace({
-      databaseName,
+      databaseName: databaseIdentifier,
       namespaceId,
       providerId: selectedProviderId,
       operationId: plan.operationId,

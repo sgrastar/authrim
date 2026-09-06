@@ -18,6 +18,7 @@ export async function prepareAdminUiBffDeployment(options: {
   env: string;
   config: AuthrimConfig;
   keysDir: string;
+  databaseIdentifier?: string;
   onProgress?: (message: string) => void;
 }): Promise<AdminUiBffWorkerSecrets> {
   if (!existsSync(options.keysDir)) {
@@ -25,12 +26,20 @@ export async function prepareAdminUiBffDeployment(options: {
   }
 
   await ensureSupplementalKeyFiles(options.keysDir);
-  const machineAccess = await ensureAdminUiBffMachineAccessInD1(
-    options.env,
-    options.config,
-    options.keysDir,
-    options.onProgress
-  );
+  const machineAccess = options.databaseIdentifier
+    ? await ensureAdminUiBffMachineAccessInD1(
+        options.env,
+        options.config,
+        options.keysDir,
+        options.onProgress,
+        { databaseIdentifier: options.databaseIdentifier }
+      )
+    : await ensureAdminUiBffMachineAccessInD1(
+        options.env,
+        options.config,
+        options.keysDir,
+        options.onProgress
+      );
   if (!machineAccess.success) {
     throw new Error(
       `Admin UI BFF machine access bootstrap failed: ${machineAccess.error || 'unknown error'}`

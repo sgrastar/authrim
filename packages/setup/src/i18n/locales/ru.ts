@@ -879,7 +879,7 @@ const ru: Translations = {
     'Этот временный токен позволяет Authrim автоматически создавать базы данных тенантов. Нужны права на создание и изменение API-токенов: Account API Tokens: Write/Edit для токена аккаунта или API Tokens: Write/Edit для пользовательского токена. Setup использует его для создания при необходимости API-токенов с ограниченной областью для D1, Workers, KV и R2, регистрирует их в Control Worker и затем отзывает временный токен.',
   'web.deploy.manualDnsSectionTitle': 'Настройки DNS',
   'web.deploy.bootstrapTokenCreateStatus':
-    'Создайте временный токен в Cloudflare Dashboard и введите его ниже.',
+    'Установите End Date на {{endDate}} (UTC) в Cloudflare Dashboard, создайте временный токен и введите его ниже.',
   'web.deploy.bootstrapPopupBlocked':
     'Браузер заблокировал новую вкладку. Разрешите всплывающие окна и нажмите кнопку снова.',
   'web.deploy.bootstrapTokenRequired':
@@ -890,7 +890,8 @@ const ru: Translations = {
   'web.envDetail.createOneTimeCloudflareToken': 'Создать одноразовый токен Cloudflare',
   'web.envDetail.oneTimeBootstrapTokenPlaceholder': 'Одноразовый bootstrap-токен',
   'web.envDetail.enableAutomaticProvisioning': 'Включить',
-  'web.envDetail.enterOneTimeTokenThenEnable': 'Введите одноразовый токен и выберите «Включить».',
+  'web.envDetail.enterOneTimeTokenThenEnable':
+    'Установите End Date на {{endDate}} (UTC), создайте и введите одноразовый токен, затем выберите «Включить».',
   'web.envDetail.bootstrapPopupBlocked': 'Браузер заблокировал вкладку Cloudflare Dashboard.',
   'web.envDetail.enterOneTimeTokenFirst': 'Сначала введите одноразовый токен Cloudflare.',
   'web.envDetail.preparingControlAuthority': 'Подготовка полномочий провижининга Control...',
@@ -904,6 +905,8 @@ const ru: Translations = {
   'web.envDetail.automaticProvisioningMissing': '(отсутствует: {{missing}})',
   'web.envDetail.automaticProvisioningRepairHint':
     'Введите новый одноразовый токен для исправления.',
+  'web.envDetail.bootstrapRetainedForRetry':
+    'Cloudflare вернул временную ошибку. Bootstrap-токен остаётся активным; повторно введите тот же токен и выберите «Включить», чтобы продолжить.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Перед повторной попыткой отзовите указанные bootstrap- и дочерние токены Authrim в Cloudflare Dashboard.',
   'web.envDetail.bootstrapRevokedPendingReset':

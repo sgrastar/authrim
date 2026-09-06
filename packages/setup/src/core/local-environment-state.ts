@@ -18,7 +18,20 @@ export function inspectLocalEnvironmentState(input: {
 }): LocalEnvironmentState {
   const current = getEnvironmentPaths({ baseDir: input.baseDir, env: input.environment });
   const legacy = getLegacyPaths(input.baseDir, input.environment);
-  const candidates = [current.config, current.lock, legacy.config, legacy.lock];
+  const candidates = [
+    current.config,
+    current.lock,
+    current.provisioningIntent,
+    current.pendingEmailSecrets,
+    current.pendingControlBootstrap,
+    current.controlTokenCleanup,
+    current.controlTokenCleanupConclusion,
+    legacy.config,
+    legacy.lock,
+  ];
   const paths = [...new Set(candidates.filter((path) => existsSync(path)))];
+  // An otherwise unknown or future checkpoint inside the setup-owned environment directory must
+  // not be silently inherited by a new environment with the same name.
+  if (paths.length === 0 && existsSync(current.root)) paths.push(current.root);
   return { exists: paths.length > 0, paths };
 }

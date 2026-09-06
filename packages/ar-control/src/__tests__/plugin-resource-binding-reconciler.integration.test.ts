@@ -119,6 +119,12 @@ describe('PluginResourceBindingReconciler', () => {
         'utf8'
       )
     );
+    database.exec(
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
+        'utf8'
+      )
+    );
     now = 100;
     database.exec(`
       INSERT INTO control_environments (
@@ -195,8 +201,11 @@ describe('PluginResourceBindingReconciler', () => {
              plugin_resource_id, environment_id, operation_id, plugin_installation_id,
              tenant_id, resource_kind, logical_resource_id, binding_name, lifecycle_mode,
              provider_resource_id, provider_name, injection_policy_json,
-             desired_spec_json, status, updated_at
-           ) VALUES (?, 'test', ?, ?, 'tenant-a', ?, ?, ?, 'managed', ?, ?, '{}', ?, 'ready', 1)`
+             desired_spec_json, status, updated_at, provider_create_state,
+             provider_creation_date, provider_ownership_marker_key, provider_ownership_id,
+             provider_identity_checkpointed_at
+           ) VALUES (?, 'test', ?, ?, 'tenant-a', ?, ?, ?, 'managed', ?, ?, '{}', ?, 'ready', 1,
+                     'identified', ?, ?, ?, 1)`
         )
         .run(
           resource.id,
@@ -214,7 +223,10 @@ describe('PluginResourceBindingReconciler', () => {
             access: resource.access,
             ownershipFingerprint: fingerprint,
             capabilityManifestDigest: '9'.repeat(64),
-          })
+          }),
+          resource.kind === 'r2_bucket' ? '2026-08-31T00:00:00.000Z' : null,
+          resource.kind === 'r2_bucket' ? '.authrim/ownership/test' : null,
+          resource.kind === 'r2_bucket' ? 'ownership-test' : null
         );
       for (const [suffix, order, status] of [
         ['provider', 0, 'succeeded'],
@@ -346,6 +358,54 @@ describe('PluginResourceBindingReconciler', () => {
     expect(serializedSmoke).not.toContain('database-a');
     expect(serializedSmoke).not.toContain('namespace-a');
     expect(serializedSmoke).not.toContain('bucket-a-name');
+  });
+
+  it('blocks an old-writer R2 row that lacks immutable ownership evidence', async () => {
+    database
+      .prepare(
+        `INSERT INTO control_plugin_desired_resources (
+           plugin_resource_id, environment_id, operation_id, plugin_installation_id,
+           tenant_id, resource_kind, logical_resource_id, binding_name, lifecycle_mode,
+           provider_resource_id, provider_name, injection_policy_json,
+           desired_spec_json, status, updated_at
+         ) VALUES (
+           'resource-r2-unverified', 'test', ?, ?, 'tenant-a', 'r2_bucket',
+           'legacy-objects', 'PLUGIN_LEGACY_OBJECTS', 'managed',
+           'legacy-bucket-name', 'legacy-bucket-name', '{}', ?, 'provisioning', 1
+         )`
+      )
+      .run(
+        OPERATION_ID,
+        INSTALLATION_ID,
+        JSON.stringify({
+          pluginId: 'plugin-a',
+          binding: 'PLUGIN_LEGACY_OBJECTS',
+          kind: 'r2_bucket',
+          access: 'read_write',
+          ownershipFingerprint: '4'.repeat(64),
+          capabilityManifestDigest: '9'.repeat(64),
+        })
+      );
+    const api = {
+      listWorkerDeployments: vi.fn(),
+      getWorkerSettings: vi.fn(),
+      patchWorkerSettings: vi.fn(),
+    };
+    const reconciler = new PluginResourceBindingReconciler(d1(database), api, env(), () => now);
+
+    await expect(reconciler.reconcile()).resolves.toEqual({
+      attempted: 0,
+      succeeded: 0,
+      deferred: 0,
+      blocked: 0,
+    });
+    expect(
+      database.prepare(`SELECT status, last_error_code FROM control_operations`).get()
+    ).toEqual({
+      status: 'blocked',
+      last_error_code: 'plugin_resource_provider_checkpoint_invalid',
+    });
+    expect(api.patchWorkerSettings).not.toHaveBeenCalled();
   });
 
   it('patches D1, KV, and R2 bindings together while preserving existing settings', async () => {
@@ -564,7 +624,7 @@ describe('PluginResourceBindingReconciler', () => {
     database
       .prepare(
         `UPDATE control_plugin_desired_resources
-            SET status = 'pending', provider_resource_id = NULL, provider_name = NULL
+            SET status = 'pending'
           WHERE plugin_resource_id = 'resource-kv'`
       )
       .run();

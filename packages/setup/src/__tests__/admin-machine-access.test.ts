@@ -1,11 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   ADMIN_MACHINE_AUDIENCE,
   ADMIN_UI_BFF_CLIENT_ID,
   ADMIN_UI_BFF_SCOPES,
   SETUP_MACHINE_CLIENT_ID,
+  SETUP_MACHINE_CREDENTIAL_LEASE_SECONDS,
   SETUP_MACHINE_DEFAULT_SCOPES,
   adminUiBffKeyFilesExist,
   buildAdminUiBffMachineAccessBootstrapSql,
@@ -99,6 +100,46 @@ describe('Admin Machine Access setup bootstrap', () => {
     expect(sql).toContain("'allow'");
     expect(sql).toContain("'acme'");
     expect(sql).not.toContain('INSERT OR IGNORE');
+    expect(SETUP_MACHINE_CREDENTIAL_LEASE_SECONDS).toBe(30 * 60);
+    expect(SETUP_MACHINE_CREDENTIAL_LEASE_SECONDS).toBeGreaterThan(600);
+    expect(sql.match(/expires_at = \(\(unixepoch\(\) \* 1000\) \+ 1800000\)/g)).toHaveLength(1);
+    expect(sql).toContain("'active',\n  NULL,\n  ((unixepoch() * 1000) + 1800000),");
+  });
+
+  it('renews the same setup credential into a fresh bounded lease', () => {
+    const config = createDefaultConfig('prod');
+    const secrets = generateAllSecrets('setup-renew-test');
+    const sql = buildSetupMachineAccessBootstrapSql(
+      config,
+      secrets.setupMachineKeyPair.publicKeyJwk
+    );
+
+    expect(sql).toContain(
+      "WHERE principal_id = 'amp_authrim_setup'\n  AND kid = 'setup-renew-test-setup'"
+    );
+    expect(sql).toContain('not_before = NULL');
+    expect(sql).toContain('expires_at = ((unixepoch() * 1000) + 1800000)');
+    expect(sql).toContain('revoked_at = NULL');
+    expect(sql).toContain("WHEN status IN ('active', 'rotating') THEN 'expired'");
+    expect(sql).toContain('expires_at = (unixepoch() * 1000)');
+    expect(sql.indexOf('UPDATE admin_machine_credentials')).toBeLessThan(
+      sql.indexOf('INSERT INTO admin_machine_principals')
+    );
+    expect(sql).toContain("WHERE principal_id = 'amp_authrim_setup';");
+  });
+
+  it('leaves a bounded credential after a crash-equivalent missing cleanup', () => {
+    const config = createDefaultConfig('prod');
+    const secrets = generateAllSecrets('setup-crash-test');
+    const bootstrapSql = buildSetupMachineAccessBootstrapSql(
+      config,
+      secrets.setupMachineKeyPair.publicKeyJwk
+    );
+
+    // A terminated setup process cannot run cleanup, so the bootstrap SQL itself
+    // must contain the fail-closed expiry for both create and retry paths.
+    expect(bootstrapSql).toContain("'active',\n  NULL,\n  ((unixepoch() * 1000) + 1800000),");
+    expect(bootstrapSql).toContain('expires_at = ((unixepoch() * 1000) + 1800000)');
   });
 
   it('builds setup machine cleanup SQL without touching Admin UI BFF principal', () => {
@@ -140,6 +181,21 @@ describe('Admin Machine Access setup bootstrap', () => {
     expect(publicJwk.kid).toBe('authrim-rp-evidence-unique');
   });
 
+  it('recovers an interrupted partial setup-machine key generation', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'interrupted-setup');
+    mkdirSync(keysDir, { recursive: true, mode: 0o700 });
+    writeFileSync(getSetupMachinePrivateKeyPath(keysDir), 'partial', { mode: 0o600 });
+
+    await expect(ensureSetupMachineKeyFiles(keysDir, 'authrim-recovered-setup')).resolves.toEqual({
+      created: true,
+    });
+    expect(setupMachineKeyFilesExist(keysDir)).toBe(true);
+    await expect(loadSetupMachinePublicJwk(keysDir)).resolves.toMatchObject({
+      kid: 'authrim-recovered-setup',
+      alg: 'ES256',
+    });
+  });
+
   it('builds idempotent DB_ADMIN bootstrap SQL for admin_ui_bff principal', async () => {
     const config = createDefaultConfig('prod');
     config.tenant.name = 'acme';
@@ -163,6 +219,8 @@ describe('Admin Machine Access setup bootstrap', () => {
     expect(sql).toContain("'acme'");
     expect(sql).not.toContain("'*'");
     expect(sql).not.toContain('INSERT OR IGNORE');
+    expect(sql).toContain("'active',\n  NULL,\n  NULL,");
+    expect(sql).not.toContain('expires_at = ((unixepoch() * 1000) + 1800000)');
   });
 
   it('creates a private_key_jwt client assertion for token issuance', async () => {

@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   adapter: null as ReturnType<typeof createAdapter> | null,
   audit: vi.fn(async () => undefined),
   safeFetchText: vi.fn(),
+  refreshFederationSource: vi.fn(),
   runtimeBinding: {
     fieldMappingSetId: 'saml-sp',
     fieldMappingVersionId: 'version-1',
@@ -25,6 +26,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.adapter })),
     requireAdminDatabaseAdapter: vi.fn(() => mocks.adapter),
+    requireDedicatedAdminDatabaseAdapter: vi.fn(() => mocks.adapter),
     resolveRuntimeIdentityMappingBinding: vi.fn(async () => mocks.runtimeBinding),
     loadDestinationProfileConsentDescriptor: vi.fn(async () => mocks.destinationDescriptor),
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(async () => mocks.adapter),
@@ -35,6 +37,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     }),
   };
 });
+
+vi.mock('../metadata-polling', () => ({
+  refreshFederationMetadataSource: mocks.refreshFederationSource,
+}));
 
 import {
   getIdPConfig,
@@ -49,6 +55,7 @@ import {
   handleListAttributePresets,
   handleListProviders,
   handleRefreshMetadata,
+  handleRefreshFederationMetadataSource,
   handleUpdateProvider,
   listIdPConfigs,
   listSPConfigs,
@@ -80,7 +87,11 @@ function context(
     req: {
       json: vi.fn(async () => options.body),
       param: vi.fn((name: string) => (name === 'id' ? options.id : undefined)),
-      header: vi.fn(() => undefined),
+      header: vi.fn((name: string) =>
+        options.body !== undefined && name.toLowerCase() === 'content-type'
+          ? 'application/json'
+          : undefined
+      ),
     },
     get: vi.fn((name: string) => {
       if (name === 'tenantId') return options.tenantId ?? 'tenant-a';
@@ -135,6 +146,7 @@ describe('SAML provider CRUD boundaries', () => {
     vi.clearAllMocks();
     mocks.adapter = createAdapter();
     mocks.safeFetchText.mockReset();
+    mocks.refreshFederationSource.mockReset();
     mocks.runtimeBinding = {
       fieldMappingSetId: 'saml-sp',
       fieldMappingVersionId: 'version-1',
@@ -587,17 +599,132 @@ describe('SAML provider CRUD boundaries', () => {
     expect((await handleUpdateProvider(context({ id: 'missing', body: {} }))).status).toBe(404);
   });
 
+  it('requires the current updatedAt value and rejects stale provider edits', async () => {
+    mocks.adapter!.queryOne.mockResolvedValue(providerRow());
+    expect(
+      (await handleUpdateProvider(context({ id: 'provider-a', body: { name: 'Next' } }))).status
+    ).toBe(400);
+
+    const stale = await handleUpdateProvider(
+      context({
+        id: 'provider-a',
+        body: { expectedUpdatedAt: new Date(1_700_000_000_000).toISOString(), name: 'Next' },
+      })
+    );
+    expect(stale.status).toBe(409);
+    expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+  });
+
+  it('does not accept client replay of metadata lifecycle state during provider update', async () => {
+    mocks.adapter!.queryOne.mockResolvedValue(
+      providerRow({
+        enabled: 0,
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+          metadataUrl: 'https://metadata.example.test/sp.xml',
+          identityMapping: {
+            fieldMappingSetId: 'saml-sp',
+            destinationFieldPolicies: {
+              mail: 'optional',
+              displayName: 'optional',
+              eduPersonAffiliation: 'optional',
+            },
+          },
+          metadataRefreshPolicy: {
+            mode: 'automatic',
+            intervalSeconds: 21_600,
+            sourceState: 'missing',
+            lastErrorCode: 'federation_entity_missing',
+            suspendedByMetadataSync: true,
+          },
+        }),
+      })
+    );
+
+    const response = await handleUpdateProvider(
+      context({
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+          enabled: false,
+          config: {
+            metadataRefreshPolicy: {
+              mode: 'manual',
+              intervalSeconds: 3_600,
+              sourceState: 'healthy',
+              suspendedByMetadataSync: false,
+            },
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      enabled: false,
+      config: {
+        metadataRefreshPolicy: {
+          mode: 'manual',
+          intervalSeconds: 3_600,
+          sourceState: 'missing',
+          lastErrorCode: 'federation_entity_missing',
+          suspendedByMetadataSync: true,
+        },
+      },
+    });
+  });
+
   it('updates an SP while retaining omitted name and enabled state', async () => {
     mocks.adapter!.queryOne.mockResolvedValue(providerRow());
     const response = await handleUpdateProvider(
       context({
         id: 'provider-a',
-        body: { config: { acsUrl: 'https://sp.example.test/new-acs' } },
+        body: {
+          expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+          config: { acsUrl: 'https://sp.example.test/new-acs' },
+        },
       })
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ name: 'Provider A', enabled: true });
     expect(mocks.adapter!.execute).toHaveBeenCalled();
+  });
+
+  it('persists manual polling mode for a URL-backed provider', async () => {
+    mocks.adapter!.queryOne.mockResolvedValue(
+      providerRow({
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+          metadataUrl: 'https://metadata.example.test/sp.xml',
+          identityMapping: {
+            fieldMappingSetId: 'saml-sp',
+            destinationFieldPolicies: {
+              mail: 'optional',
+              displayName: 'optional',
+              eduPersonAffiliation: 'optional',
+            },
+          },
+        }),
+      })
+    );
+    const response = await handleUpdateProvider(
+      context({
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+          config: {
+            metadataRefreshPolicy: { mode: 'manual', intervalSeconds: 3_600 },
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      config: { metadataRefreshPolicy: { mode: 'manual', intervalSeconds: 3_600 } },
+    });
   });
 
   it('updates an IdP and honors explicit name and disabled state', async () => {
@@ -614,7 +741,14 @@ describe('SAML provider CRUD boundaries', () => {
       })
     );
     const response = await handleUpdateProvider(
-      context({ id: 'provider-a', body: { name: 'Next', enabled: false } })
+      context({
+        id: 'provider-a',
+        body: {
+          expectedUpdatedAt: new Date(1_700_000_001_000).toISOString(),
+          name: 'Next',
+          enabled: false,
+        },
+      })
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ name: 'Next', enabled: false });
@@ -623,7 +757,16 @@ describe('SAML provider CRUD boundaries', () => {
   it('returns internal error when update storage fails', async () => {
     mocks.adapter!.queryOne.mockResolvedValue(providerRow());
     mocks.adapter!.execute.mockRejectedValue(new Error('database unavailable'));
-    expect((await handleUpdateProvider(context({ id: 'provider-a', body: {} }))).status).toBe(500);
+    expect(
+      (
+        await handleUpdateProvider(
+          context({
+            id: 'provider-a',
+            body: { expectedUpdatedAt: new Date(1_700_000_001_000).toISOString() },
+          })
+        )
+      ).status
+    ).toBe(500);
   });
 
   it('distinguishes a missing provider from a successful deletion', async () => {
@@ -641,8 +784,11 @@ describe('SAML provider CRUD boundaries', () => {
 
   it('loads provider configs only from tenant-scoped enabled rows', async () => {
     mocks.adapter!.query.mockResolvedValue([
-      { config_json: JSON.stringify({ entityId: 'other' }) },
-      { config_json: JSON.stringify({ entityId: 'target', acsUrl: 'https://sp/acs' }) },
+      { enabled: 1, config_json: JSON.stringify({ entityId: 'other' }) },
+      {
+        enabled: 1,
+        config_json: JSON.stringify({ entityId: 'target', acsUrl: 'https://sp/acs' }),
+      },
     ]);
     expect(await getSPConfig({} as never, 'tenant-a', 'target')).toMatchObject({
       entityId: 'target',
@@ -655,6 +801,342 @@ describe('SAML provider CRUD boundaries', () => {
       entityId: 'target',
     });
     expect(await getIdPConfigByEntityId({} as never, 'tenant-a', 'missing')).toBeNull();
+  });
+
+  it('resolves an opted-in aggregate SP and applies its Entity Category preset', async () => {
+    mocks.adapter!.query.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        trust_source_id: 'source-a',
+        trust_context_snapshot_hash: 'trust-hash-a',
+        source_url: 'https://metadata.example.test/federation.xml',
+        protocol_payload_json: JSON.stringify({
+          runtimeResolution: {
+            mode: 'automatic',
+            roles: ['saml_sp'],
+            priority: 10,
+            spFieldMappingSetId: 'mapping-sp',
+            entityCategoryPolicy: {
+              defaultDecision: 'deny',
+              rules: [
+                {
+                  entityCategory: 'http://refeds.org/category/research-and-scholarship',
+                  decision: 'allow',
+                  attributePresetId: 'research_federation.v1',
+                },
+              ],
+            },
+          },
+        }),
+        metadata_xml: validSpMetadata(),
+        entity_categories_json: JSON.stringify([
+          'http://refeds.org/category/research-and-scholarship',
+        ]),
+        registration_authority: 'https://federation.example.test',
+        valid_until: '2099-01-01T00:00:00Z',
+        validated_at: 1_700_000_000_000,
+      },
+    ]);
+
+    await expect(
+      getSPConfig({ DB_ADMIN: {} } as never, 'tenant-a', 'https://sp.example.test')
+    ).resolves.toMatchObject({
+      entityId: 'https://sp.example.test',
+      identityMapping: { fieldMappingSetId: 'mapping-sp' },
+      attributePresetId: 'research_federation.v1',
+      aggregateImport: {
+        federationTrustProfileId: 'source-a',
+        verification: { status: 'verified' },
+      },
+    });
+    const runtimeQuery = String(mocks.adapter!.query.mock.calls[1]?.[0]);
+    expect(runtimeQuery).toContain("s.lifecycle_state = 'active'");
+    expect(runtimeQuery).toContain("d.validation_state = 'valid'");
+    expect(runtimeQuery).toContain("d.document_type = 'saml_aggregate_runtime_snapshot'");
+    expect(runtimeQuery).toContain('r.trust_context_snapshot_hash');
+    expect(runtimeQuery).toContain("current.lifecycle_state = 'active'");
+    expect(runtimeQuery).toContain('d.id = s.active_metadata_document_id');
+  });
+
+  it('does not treat Entity Category Support as Entity Category membership', async () => {
+    mocks.adapter!.query.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        trust_source_id: 'source-a',
+        source_url: 'https://metadata.example.test/federation.xml',
+        protocol_payload_json: JSON.stringify({
+          runtimeResolution: {
+            mode: 'automatic',
+            roles: ['saml_sp'],
+            spFieldMappingSetId: 'mapping-sp',
+            entityCategoryPolicy: {
+              defaultDecision: 'deny',
+              rules: [
+                {
+                  entityCategory: 'http://refeds.org/category/research-and-scholarship',
+                  decision: 'allow',
+                },
+              ],
+            },
+          },
+        }),
+        metadata_xml: validSpMetadata(),
+        entity_categories_json: '[]',
+        entity_category_support_json: JSON.stringify([
+          'http://refeds.org/category/research-and-scholarship',
+        ]),
+        registration_authority: 'https://federation.example.test',
+        valid_until: '2099-01-01T00:00:00Z',
+        validated_at: 1_700_000_000_000,
+      },
+    ]);
+
+    await expect(
+      getSPConfig({ DB_ADMIN: {} } as never, 'tenant-a', 'https://sp.example.test')
+    ).resolves.toBeNull();
+  });
+
+  it('fails closed for a malformed persisted Entity Category policy', async () => {
+    mocks.adapter!.query.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        trust_source_id: 'source-a',
+        source_url: 'https://metadata.example.test/federation.xml',
+        protocol_payload_json: JSON.stringify({
+          runtimeResolution: {
+            mode: 'automatic',
+            roles: ['saml_sp'],
+            spFieldMappingSetId: 'mapping-sp',
+            entityCategoryPolicy: {
+              defaultDecision: 'allow',
+              rules: [null],
+            },
+          },
+        }),
+        metadata_xml: validSpMetadata(),
+        entity_categories_json: '[]',
+        registration_authority: null,
+        valid_until: '2099-01-01T00:00:00Z',
+        validated_at: 1_700_000_000_000,
+      },
+    ]);
+
+    await expect(
+      getSPConfig({ DB_ADMIN: {} } as never, 'tenant-a', 'https://sp.example.test')
+    ).resolves.toBeNull();
+  });
+
+  it('does not fall back to an aggregate when an explicit provider trust is expired', async () => {
+    mocks.adapter!.query.mockResolvedValueOnce([
+      {
+        enabled: 1,
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+          metadataRefreshPolicy: {
+            mode: 'automatic',
+            intervalSeconds: 21_600,
+            sourceState: 'expired',
+            suspendedByMetadataSync: true,
+          },
+        }),
+      },
+    ]);
+
+    await expect(
+      getSPConfig({ DB_ADMIN: {} } as never, 'tenant-a', 'https://sp.example.test')
+    ).resolves.toBeNull();
+    expect(mocks.adapter!.query).toHaveBeenCalledOnce();
+  });
+
+  it('parses legacy persisted metadata validity when refresh snapshots are absent', async () => {
+    mocks.adapter!.query.mockResolvedValueOnce([
+      {
+        enabled: 1,
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+          metadataXml: validSpMetadata().replace(
+            'entityID="https://sp.example.test"',
+            'entityID="https://sp.example.test" validUntil="2020-01-01T00:00:00Z"'
+          ),
+        }),
+      },
+    ]);
+
+    await expect(
+      getSPConfig({ DB_ADMIN: {} } as never, 'tenant-a', 'https://sp.example.test')
+    ).resolves.toBeNull();
+    expect(mocks.adapter!.query).toHaveBeenCalledOnce();
+  });
+
+  it('does not fall back to an aggregate when an explicit provider is disabled', async () => {
+    mocks.adapter!.query.mockResolvedValueOnce([
+      {
+        enabled: 0,
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+        }),
+      },
+    ]);
+
+    await expect(
+      getSPConfig({ DB_ADMIN: {} } as never, 'tenant-a', 'https://sp.example.test')
+    ).resolves.toBeNull();
+    expect(mocks.adapter!.query).toHaveBeenCalledOnce();
+  });
+
+  it('rejects an explicit aggregate-linked provider after its source is deleted', async () => {
+    mocks.adapter!.query.mockResolvedValueOnce([
+      {
+        enabled: 1,
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+          aggregateImport: {
+            aggregateSourceUrl: 'https://metadata.example.test/federation.xml',
+            aggregateEntityId: 'https://sp.example.test',
+            federationTrustProfileId: 'deleted-source',
+            verification: { status: 'verified', policy: 'strict' },
+            importedAt: 1,
+          },
+        }),
+      },
+    ]);
+    mocks.adapter!.queryOne.mockResolvedValueOnce(null);
+
+    await expect(
+      getSPConfig({ DB_ADMIN: {} } as never, 'tenant-a', 'https://sp.example.test')
+    ).resolves.toBeNull();
+  });
+
+  it('requires an explicit aggregate-linked provider to match the active trust snapshot', async () => {
+    const config = {
+      entityId: 'https://sp.example.test',
+      acsUrl: 'https://sp.example.test/acs',
+      aggregateImport: {
+        aggregateSourceUrl: 'https://metadata.example.test/federation.xml',
+        aggregateEntityId: 'https://sp.example.test',
+        federationTrustProfileId: 'source-a',
+        verification: {
+          status: 'verified',
+          policy: 'strict',
+          trustProfileId: 'source-a',
+          trustContextSnapshotHash: 'trust-hash-old',
+        },
+        importedAt: 1,
+      },
+    };
+    mocks.adapter!.query.mockResolvedValue([{ enabled: 1, config_json: JSON.stringify(config) }]);
+    mocks.adapter!.queryOne.mockResolvedValue({ id: 'source-a', snapshot_hash: 'trust-hash-new' });
+
+    await expect(
+      getSPConfig({ DB_ADMIN: {} } as never, 'tenant-a', 'https://sp.example.test')
+    ).resolves.toBeNull();
+
+    mocks.adapter!.queryOne.mockResolvedValue({ id: 'source-a', snapshot_hash: 'trust-hash-old' });
+    await expect(
+      getSPConfig({ DB_ADMIN: {} } as never, 'tenant-a', 'https://sp.example.test')
+    ).resolves.toMatchObject({ entityId: 'https://sp.example.test' });
+  });
+
+  it('fails closed when duplicate explicit providers share one role and entityID', async () => {
+    const config = JSON.stringify({
+      entityId: 'https://sp.example.test',
+      acsUrl: 'https://sp.example.test/acs',
+    });
+    mocks.adapter!.query.mockResolvedValue([
+      { enabled: 1, config_json: config },
+      { enabled: 1, config_json: config },
+    ]);
+
+    await expect(
+      getSPConfig({ DB_ADMIN: {} } as never, 'tenant-a', 'https://sp.example.test')
+    ).resolves.toBeNull();
+    expect(mocks.adapter!.query).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when two aggregate sources have the same highest priority', async () => {
+    const runtimeRow = {
+      source_url: 'https://metadata.example.test/federation.xml',
+      protocol_payload_json: JSON.stringify({
+        runtimeResolution: {
+          mode: 'automatic',
+          roles: ['saml_sp'],
+          priority: 10,
+          spFieldMappingSetId: 'mapping-sp',
+        },
+      }),
+      metadata_xml: validSpMetadata(),
+      entity_categories_json: '[]',
+      registration_authority: null,
+      valid_until: '2099-01-01T00:00:00Z',
+      validated_at: 1_700_000_000_000,
+    };
+    mocks.adapter!.query.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      { ...runtimeRow, trust_source_id: 'source-a' },
+      { ...runtimeRow, trust_source_id: 'source-b' },
+    ]);
+
+    await expect(
+      getSPConfig({ DB_ADMIN: {} } as never, 'tenant-a', 'https://sp.example.test')
+    ).resolves.toBeNull();
+  });
+
+  it('fails closed before filtering when the runtime candidate bound is exceeded', async () => {
+    const runtimeRow = {
+      trust_source_id: 'source-a',
+      trust_context_snapshot_hash: 'trust-hash-a',
+      source_url: 'https://metadata.example.test/federation.xml',
+      protocol_payload_json: JSON.stringify({
+        runtimeResolution: {
+          mode: 'automatic',
+          roles: ['saml_sp'],
+          priority: 10,
+          spFieldMappingSetId: 'mapping-sp',
+        },
+      }),
+      metadata_xml: validSpMetadata(),
+      entity_categories_json: '[]',
+      registration_authority: null,
+      valid_until: '2099-01-01T00:00:00Z',
+      validated_at: 1_700_000_000_000,
+    };
+    mocks
+      .adapter!.query.mockResolvedValueOnce([])
+      .mockResolvedValueOnce(Array.from({ length: 101 }, () => runtimeRow));
+
+    await expect(
+      getSPConfig({ DB_ADMIN: {} } as never, 'tenant-a', 'https://sp.example.test')
+    ).resolves.toBeNull();
+  });
+
+  it('does not resolve entities after the accepted aggregate validity expires', async () => {
+    mocks.adapter!.query.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        trust_source_id: 'source-a',
+        source_url: 'https://metadata.example.test/federation.xml',
+        protocol_payload_json: JSON.stringify({
+          polling: {
+            mode: 'automatic',
+            intervalSeconds: 21_600,
+            acceptedValidUntil: '2020-01-01T00:00:00Z',
+          },
+          runtimeResolution: {
+            mode: 'automatic',
+            roles: ['saml_sp'],
+            spFieldMappingSetId: 'mapping-sp',
+          },
+        }),
+        metadata_xml: validSpMetadata(),
+        entity_categories_json: '[]',
+        registration_authority: null,
+        valid_until: null,
+        validated_at: 1_700_000_000_000,
+      },
+    ]);
+
+    await expect(
+      getSPConfig({ DB_ADMIN: {} } as never, 'tenant-a', 'https://sp.example.test')
+    ).resolves.toBeNull();
   });
 
   it('gets and lists normalized provider summaries', async () => {
@@ -716,6 +1198,9 @@ describe('SAML provider CRUD boundaries', () => {
       })
     );
     expect(response.status).toBe(200);
+    expect(await response.clone().json()).toMatchObject({
+      config: { metadataRefreshPolicy: { mode: 'automatic', intervalSeconds: 21_600 } },
+    });
     const fetchCalls = mocks.safeFetchText.mock.calls as unknown as Array<
       [string, { maxResponseSize?: number }]
     >;
@@ -787,6 +1272,232 @@ describe('SAML provider CRUD boundaries', () => {
     expect(mocks.adapter!.execute).toHaveBeenCalled();
   });
 
+  it('keeps configured-URL refresh available to a refresh-only administrator', async () => {
+    mocks.adapter!.queryOne.mockResolvedValue(
+      providerRow({
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/old-acs',
+          metadataUrl: 'https://metadata.example.test/sp.xml',
+          identityMapping: { fieldMappingSetId: 'saml-sp' },
+        }),
+      })
+    );
+    mocks.safeFetchText.mockResolvedValue(validSpMetadata());
+
+    const response = await handleRefreshMetadata(
+      context({
+        id: 'provider-a',
+        body: {},
+        permissions: [ADMIN_PERMISSIONS.SAML_PROVIDERS_METADATA_REFRESH],
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.safeFetchText).toHaveBeenCalledOnce();
+  });
+
+  it('requires provider-update permission before fetching a different metadata URL', async () => {
+    mocks.adapter!.queryOne.mockResolvedValue(
+      providerRow({
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+          metadataUrl: 'https://metadata.example.test/original.xml',
+          identityMapping: { fieldMappingSetId: 'saml-sp' },
+        }),
+      })
+    );
+
+    const response = await handleRefreshMetadata(
+      context({
+        id: 'provider-a',
+        body: { metadataUrl: 'https://metadata.example.test/rebound.xml' },
+        permissions: [ADMIN_PERMISSIONS.SAML_PROVIDERS_METADATA_REFRESH],
+      })
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.safeFetchText).not.toHaveBeenCalled();
+    expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+  });
+
+  it('requires provider-update permission before approving an entityID rebind', async () => {
+    mocks.adapter!.queryOne.mockResolvedValue(
+      providerRow({
+        config_json: JSON.stringify({
+          entityId: 'https://old-sp.example.test',
+          acsUrl: 'https://old-sp.example.test/acs',
+          metadataUrl: 'https://metadata.example.test/sp.xml',
+          identityMapping: { fieldMappingSetId: 'saml-sp' },
+        }),
+      })
+    );
+    mocks.safeFetchText.mockResolvedValue(validSpMetadata());
+
+    const response = await handleRefreshMetadata(
+      context({
+        id: 'provider-a',
+        body: { allowEntityIdChange: true },
+        permissions: [ADMIN_PERMISSIONS.SAML_PROVIDERS_METADATA_REFRESH],
+      })
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.adapter!.execute).not.toHaveBeenCalled();
+  });
+
+  it('allows an explicitly approved entityID rebind with both permissions', async () => {
+    mocks.adapter!.queryOne.mockResolvedValue(
+      providerRow({
+        config_json: JSON.stringify({
+          entityId: 'https://old-sp.example.test',
+          acsUrl: 'https://old-sp.example.test/acs',
+          metadataUrl: 'https://metadata.example.test/sp.xml',
+          identityMapping: { fieldMappingSetId: 'saml-sp' },
+        }),
+      })
+    );
+    mocks.safeFetchText.mockResolvedValue(validSpMetadata());
+
+    const response = await handleRefreshMetadata(
+      context({
+        id: 'provider-a',
+        body: { allowEntityIdChange: true },
+        permissions: [
+          ADMIN_PERMISSIONS.SAML_PROVIDERS_METADATA_REFRESH,
+          ADMIN_PERMISSIONS.SAML_PROVIDERS_UPDATE,
+        ],
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.adapter!.execute).toHaveBeenCalledOnce();
+  });
+
+  it('does not overwrite a provider edited while manual metadata refresh is in progress', async () => {
+    mocks.adapter!.queryOne.mockResolvedValue(
+      providerRow({
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/old-acs',
+          metadataUrl: 'https://metadata.example.test/sp.xml',
+          identityMapping: { fieldMappingSetId: 'saml-sp' },
+        }),
+      })
+    );
+    mocks.safeFetchText.mockResolvedValue(validSpMetadata());
+    mocks.adapter!.execute.mockResolvedValue({ rowsAffected: 0, insertId: undefined });
+
+    const response = await handleRefreshMetadata(context({ id: 'provider-a', body: {} }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.adapter!.execute).toHaveBeenCalledTimes(1);
+    expect(String(mocks.adapter!.execute.mock.calls[0]?.[0])).toContain('AND updated_at = ?');
+    expect(mocks.adapter!.execute.mock.calls[0]?.[1]?.at(-1)).toBe(1_700_000_001_000);
+  });
+
+  it('keeps last-known-good metadata when a manual refresh returns expired metadata', async () => {
+    mocks.adapter!.queryOne.mockResolvedValue(
+      providerRow({
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/old-acs',
+          metadataUrl: 'https://metadata.example.test/sp.xml',
+          metadataXml: '<old-metadata/>',
+          identityMapping: { fieldMappingSetId: 'saml-sp' },
+        }),
+      })
+    );
+    mocks.safeFetchText.mockResolvedValue(
+      validSpMetadata().replace(
+        'entityID="https://sp.example.test"',
+        'entityID="https://sp.example.test" validUntil="2020-01-01T00:00:00Z"'
+      )
+    );
+
+    const response = await handleRefreshMetadata(context({ id: 'provider-a', body: {} }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ success: true, expired: true, enabled: false });
+    const persisted = JSON.parse(String(mocks.adapter!.execute.mock.calls.at(-1)?.[1]?.[0])) as {
+      metadataXml: string;
+      metadataRefreshPolicy: {
+        sourceState: string;
+        lastErrorCode: string;
+        suspendedByMetadataSync: boolean;
+      };
+    };
+    expect(persisted.metadataXml).toBe('<old-metadata/>');
+    expect(persisted.metadataRefreshPolicy).toMatchObject({
+      sourceState: 'expired',
+      lastErrorCode: 'metadata_expired',
+      suspendedByMetadataSync: true,
+    });
+    expect(mocks.adapter!.execute.mock.calls.at(-1)?.[1]?.[1]).toBe(0);
+  });
+
+  it('rejects and records an unexpected entityID change during manual refresh', async () => {
+    mocks.adapter!.queryOne.mockResolvedValue(
+      providerRow({
+        config_json: JSON.stringify({
+          entityId: 'https://old-sp.example.test',
+          acsUrl: 'https://old-sp.example.test/acs',
+          metadataUrl: 'https://metadata.example.test/sp.xml',
+          identityMapping: { fieldMappingSetId: 'saml-sp' },
+        }),
+      })
+    );
+    mocks.safeFetchText.mockResolvedValue(validSpMetadata());
+
+    const response = await handleRefreshMetadata(context({ id: 'provider-a', body: {} }));
+
+    expect(response.status).toBe(400);
+    const persisted = JSON.parse(String(mocks.adapter!.execute.mock.calls.at(-1)?.[1]?.[0])) as {
+      entityId: string;
+      metadataRefreshPolicy: { sourceState: string; lastErrorCode: string };
+    };
+    expect(persisted.entityId).toBe('https://old-sp.example.test');
+    expect(persisted.metadataRefreshPolicy).toMatchObject({
+      sourceState: 'identity_change_pending',
+      lastErrorCode: 'entity_id_change_pending',
+    });
+  });
+
+  it('manually refreshes a federation source with the metadata refresh permission', async () => {
+    mocks.refreshFederationSource.mockResolvedValue({
+      sourceId: 'source-a',
+      changed: true,
+      entityCount: 2,
+      providersUpdated: 1,
+      providersMissing: 0,
+      providersFailed: 0,
+      verificationStatus: 'verified',
+    });
+
+    const response = await handleRefreshFederationMetadataSource(
+      context({ id: 'source-a', tenantId: 'tenant-a' })
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.refreshFederationSource).toHaveBeenCalledWith(
+      expect.anything(),
+      'source-a',
+      'tenant-a',
+      'manual'
+    );
+  });
+
+  it('returns conflict when another federation refresh owns the source lease', async () => {
+    mocks.refreshFederationSource.mockRejectedValue(new Error('metadata_refresh_conflict'));
+
+    const response = await handleRefreshFederationMetadataSource(
+      context({ id: 'source-a', tenantId: 'tenant-a' })
+    );
+
+    expect(response.status).toBe(409);
+  });
+
   it('rejects aggregate refresh without the stored aggregate entity snapshot', async () => {
     mocks.adapter!.queryOne.mockResolvedValue(
       providerRow({
@@ -801,6 +1512,43 @@ describe('SAML provider CRUD boundaries', () => {
     mocks.safeFetchText.mockResolvedValue(aggregateMetadata());
     const response = await handleRefreshMetadata(context({ id: 'provider-a', body: {} }));
     expect(response.status).toBe(400);
+  });
+
+  it('rejects a single-entity downgrade when refreshing an aggregate-linked provider', async () => {
+    mocks.adapter!.queryOne.mockResolvedValue(
+      providerRow({
+        config_json: JSON.stringify({
+          entityId: 'https://sp.example.test',
+          acsUrl: 'https://sp.example.test/acs',
+          metadataUrl: 'https://metadata.example.test/aggregate.xml',
+          identityMapping: { fieldMappingSetId: 'saml-sp' },
+          aggregateImport: {
+            aggregateSourceUrl: 'https://metadata.example.test/aggregate.xml',
+            aggregateEntityId: 'https://sp.example.test',
+            verification: {
+              status: 'verified',
+              policy: 'strict',
+              trustProfileId: 'source-a',
+              trustContextSnapshotHash: 'trust-hash-a',
+            },
+            importedAt: 1,
+          },
+        }),
+      })
+    );
+    mocks.safeFetchText.mockResolvedValue(validSpMetadata());
+
+    const response = await handleRefreshMetadata(context({ id: 'provider-a', body: {} }));
+
+    expect(response.status).toBe(400);
+    expect(mocks.adapter!.execute).toHaveBeenCalledOnce();
+    const persisted = JSON.parse(String(mocks.adapter!.execute.mock.calls[0]?.[1]?.[0])) as {
+      metadataRefreshPolicy: { sourceState: string; lastErrorCode: string };
+    };
+    expect(persisted.metadataRefreshPolicy).toMatchObject({
+      sourceState: 'error',
+      lastErrorCode: 'metadata_validation_failed',
+    });
   });
 });
 

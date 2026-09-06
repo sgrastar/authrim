@@ -1,7 +1,6 @@
-import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import {
   buildPolicyConstrainedRegionShardConfig,
   buildRegionShardConfigKvKey,
@@ -26,7 +25,7 @@ import {
   type ControlRegionShardLocationHint,
 } from '@authrim/ar-lib-core/control-plane';
 import type { AuthrimConfig } from './config.js';
-import type { AuthrimLock } from './lock.js';
+import { loadLockFileAuto, saveLockFile, type AuthrimLock } from './lock.js';
 import {
   buildAssignmentReleaseMigrationTarget,
   calculateReleaseManifestChecksum,
@@ -43,7 +42,19 @@ import {
   putKVKeyByNamespaceId,
   queryD1Rows,
   runD1Migrations,
+  getProvisioningResourceAdoptionPolicy,
 } from './cloudflare.js';
+import {
+  beginOrResumeProvisioningIntent,
+  completeProvisioningIntent,
+  loadProvisioningIntent,
+  recordProvisionedResource,
+  recordProvisioningResourceCreateIssued,
+  recordProvisioningResourceCreateRejected,
+  recordProvisioningResourceIdentified,
+  type ProvisioningIntent,
+  type ProvisioningResourceIdentity,
+} from './provisioning-intent.js';
 import {
   buildTenantDatabaseRegistrySql,
   getLatestMigrationVersionFromDirectory,
@@ -51,9 +62,28 @@ import {
   signTenantDatabaseRegistryResources,
   type TenantDatabaseRegistryResourceInput,
 } from './tenant-database.js';
+import { withPrivateTemporaryTextFile } from './private-temporary-file.js';
 
 const RUNTIME_REGISTRY_SNAPSHOT_TTL_SECONDS = 30 * 60;
 const RUNTIME_REGISTRY_GENERATION_TTL_SECONDS = 7 * 24 * 60 * 60;
+const INITIAL_RUNTIME_REGISTRY_VERIFY_RETRY_DELAYS_MS = [
+  250, 500, 1_000, 2_000, 4_000, 8_000, 16_000, 30_000,
+] as const;
+
+interface RuntimeGenerationPointer {
+  runtimeGeneration: number;
+  routeStatus: string;
+  quarantineDenyGeneration: number;
+  publishedAt: string;
+  expiresAt: string;
+}
+
+interface RuntimeRegistryVerificationOptions {
+  /** Deterministic test override. Production callers use the bounded exponential schedule above. */
+  retryDelaysMs?: readonly number[];
+  /** Deterministic test override. Production callers use a real timer. */
+  wait?: (milliseconds: number) => Promise<void>;
+}
 
 function isRecoverableInitialHandoffError(errorCode: unknown): boolean {
   return (
@@ -839,38 +869,177 @@ function buildRuntimeSnapshot(input: {
 }
 
 async function executeAdminSql(input: {
-  adminDbName: string;
+  adminDatabaseId: string;
   tenantId: string;
   sql: string;
 }): Promise<void> {
-  const sqlPath = join(
-    tmpdir(),
-    `authrim-initial-control-plane-${input.tenantId.replace(/[^A-Za-z0-9_-]+/g, '-')}-${Date.now()}.sql`
+  await withPrivateTemporaryTextFile(
+    input.sql,
+    async (sqlPath) => {
+      const result = await executeD1Migration(input.adminDatabaseId, sqlPath);
+      if (!result.success) {
+        throw new Error(result.error ?? 'Failed to write initial tenant database registry rows');
+      }
+    },
+    { directoryPrefix: 'authrim-control-bootstrap-', filename: 'admin.sql' }
   );
-  await writeFile(sqlPath, input.sql, 'utf-8');
-  try {
-    const result = await executeD1Migration(input.adminDbName, sqlPath);
-    if (!result.success) {
-      throw new Error(result.error ?? 'Failed to write initial tenant database registry rows');
-    }
-  } finally {
-    await unlink(sqlPath).catch(() => {});
+}
+
+class RuntimeRegistryTransientReadError extends Error {}
+
+class RuntimeRegistryMalformedError extends Error {}
+
+function isJsonRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseRuntimeSnapshotObservation(text: string): RuntimeSnapshot {
+  if (text.trim().length === 0) {
+    throw new RuntimeRegistryTransientReadError('initial_control_plane_runtime_snapshot_missing');
   }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    throw new RuntimeRegistryMalformedError('initial_control_plane_runtime_snapshot_malformed', {
+      cause: error,
+    });
+  }
+  if (
+    !isJsonRecord(value) ||
+    typeof value.version !== 'number' ||
+    typeof value.tenantId !== 'string' ||
+    typeof value.snapshotScope !== 'string' ||
+    typeof value.deploymentTarget !== 'string' ||
+    !Number.isSafeInteger(value.runtimeGeneration) ||
+    typeof value.routeStatus !== 'string' ||
+    !Number.isSafeInteger(value.quarantineDenyGeneration) ||
+    !isJsonRecord(value.backend) ||
+    !isJsonRecord(value.placement) ||
+    typeof value.publishedAt !== 'string' ||
+    !Number.isFinite(Date.parse(value.publishedAt)) ||
+    typeof value.expiresAt !== 'string' ||
+    !Number.isFinite(Date.parse(value.expiresAt)) ||
+    !Array.isArray(value.stores) ||
+    value.stores.some((store) => !isJsonRecord(store)) ||
+    !isJsonRecord(value.metadata)
+  ) {
+    throw new RuntimeRegistryMalformedError('initial_control_plane_runtime_snapshot_malformed');
+  }
+  return value as unknown as RuntimeSnapshot;
+}
+
+function parseRuntimeGenerationObservation(text: string): RuntimeGenerationPointer {
+  if (text.trim().length === 0) {
+    throw new RuntimeRegistryTransientReadError('initial_control_plane_runtime_generation_missing');
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    throw new RuntimeRegistryMalformedError('initial_control_plane_runtime_generation_malformed', {
+      cause: error,
+    });
+  }
+  if (
+    !isJsonRecord(value) ||
+    !Number.isSafeInteger(value.runtimeGeneration) ||
+    typeof value.routeStatus !== 'string' ||
+    !Number.isSafeInteger(value.quarantineDenyGeneration) ||
+    typeof value.publishedAt !== 'string' ||
+    !Number.isFinite(Date.parse(value.publishedAt)) ||
+    typeof value.expiresAt !== 'string' ||
+    !Number.isFinite(Date.parse(value.expiresAt))
+  ) {
+    throw new RuntimeRegistryMalformedError('initial_control_plane_runtime_generation_malformed');
+  }
+  return value as unknown as RuntimeGenerationPointer;
+}
+
+async function waitForRuntimeRegistryVerification(milliseconds: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function readExpectedRuntimeRegistryPublication(input: {
+  runtimeRegistryNamespaceId: string;
+  tenantId: string;
+  expectedSnapshot: RuntimeSnapshot;
+  expectedGeneration: RuntimeGenerationPointer;
+  verification?: RuntimeRegistryVerificationOptions;
+  onProgress?: (message: string) => void;
+}): Promise<{ snapshot: RuntimeSnapshot; generation: RuntimeGenerationPointer }> {
+  const retryDelaysMs =
+    input.verification?.retryDelaysMs ?? INITIAL_RUNTIME_REGISTRY_VERIFY_RETRY_DELAYS_MS;
+  if (
+    retryDelaysMs.length > INITIAL_RUNTIME_REGISTRY_VERIFY_RETRY_DELAYS_MS.length ||
+    retryDelaysMs.some((delay) => !Number.isSafeInteger(delay) || delay < 0 || delay > 30_000)
+  ) {
+    throw new Error('initial_control_plane_runtime_verification_retry_schedule_invalid');
+  }
+  const wait = input.verification?.wait ?? waitForRuntimeRegistryVerification;
+  const expectedSnapshotCanonical = canonicalizeJson(input.expectedSnapshot);
+  const expectedGenerationCanonical = canonicalizeJson(input.expectedGeneration);
+  let lastReadError: unknown = null;
+  let lastObservationWasReadError = false;
+
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    try {
+      const snapshotText = await getKVKeyByNamespaceId(
+        input.runtimeRegistryNamespaceId,
+        buildSnapshotKey(input.tenantId)
+      );
+      const snapshot = parseRuntimeSnapshotObservation(snapshotText);
+      const generationText = await getKVKeyByNamespaceId(
+        input.runtimeRegistryNamespaceId,
+        buildGenerationKey(input.tenantId)
+      );
+      const generation = parseRuntimeGenerationObservation(generationText);
+      lastObservationWasReadError = false;
+      if (
+        canonicalizeJson(snapshot) === expectedSnapshotCanonical &&
+        canonicalizeJson(generation) === expectedGenerationCanonical
+      ) {
+        return { snapshot, generation };
+      }
+    } catch (error) {
+      if (error instanceof RuntimeRegistryMalformedError) throw error;
+      lastObservationWasReadError = true;
+      lastReadError = error;
+    }
+
+    const delayMs = retryDelaysMs[attempt];
+    if (delayMs === undefined) break;
+    input.onProgress?.(
+      `  ⏳ Runtime registry KV has not converged yet; retrying verification ` +
+        `(${attempt + 2}/${retryDelaysMs.length + 1})...`
+    );
+    await wait(delayMs);
+  }
+
+  if (lastObservationWasReadError) {
+    throw new Error('initial_control_plane_runtime_snapshot_read_failed', {
+      cause: lastReadError,
+    });
+  }
+  throw new Error('initial_control_plane_runtime_snapshot_smoke_failed');
 }
 
 async function verifyInitialControlPlaneBootstrap(input: {
-  adminDbName: string;
-  lookupDatabaseName: string;
+  adminDatabaseId: string;
+  lookupDatabaseId: string;
   runtimeRegistryNamespaceId: string;
   tenantId: string;
-  coreDatabaseName: string;
+  coreDatabaseId: string;
   resources: readonly InitialControlPlaneBootstrapResource[];
   expectedSnapshot: RuntimeSnapshot;
+  expectedGeneration: RuntimeGenerationPointer;
   expectedAliases: InitialTenantAliasBootstrap;
+  verification?: RuntimeRegistryVerificationOptions;
+  onProgress?: (message: string) => void;
 }): Promise<void> {
   const tenantIdSql = sqlString(input.tenantId);
   const [pointerRow] = await queryD1Rows<CountRow>(
-    input.adminDbName,
+    input.adminDatabaseId,
     `SELECT COUNT(*) AS count
        FROM tenant_database_active_pointers
       WHERE tenant_id = ${tenantIdSql}
@@ -883,7 +1052,7 @@ async function verifyInitialControlPlaneBootstrap(input: {
   }
 
   const [tenantRow] = await queryD1Rows<CountRow>(
-    input.coreDatabaseName,
+    input.coreDatabaseId,
     `SELECT COUNT(*) AS count
       FROM tenants
       WHERE id = ${tenantIdSql}
@@ -901,7 +1070,7 @@ async function verifyInitialControlPlaneBootstrap(input: {
     )
     .join(' OR ');
   const [aliasRow] = await queryD1Rows<CountRow>(
-    input.lookupDatabaseName,
+    input.lookupDatabaseId,
     `SELECT COUNT(*) AS count
        FROM lookup_tenant_aliases
       WHERE tenant_id = ${tenantIdSql}
@@ -916,22 +1085,14 @@ async function verifyInitialControlPlaneBootstrap(input: {
     throw new Error('initial_control_plane_tenant_alias_verification_failed');
   }
 
-  const snapshotText = await getKVKeyByNamespaceId(
-    input.runtimeRegistryNamespaceId,
-    buildSnapshotKey(input.tenantId)
-  );
-  const snapshot = JSON.parse(snapshotText) as Partial<RuntimeSnapshot>;
-  const generationText = await getKVKeyByNamespaceId(
-    input.runtimeRegistryNamespaceId,
-    buildGenerationKey(input.tenantId)
-  );
-  const generation = JSON.parse(generationText) as {
-    runtimeGeneration?: unknown;
-    routeStatus?: unknown;
-    quarantineDenyGeneration?: unknown;
-    publishedAt?: unknown;
-    expiresAt?: unknown;
-  };
+  const { snapshot } = await readExpectedRuntimeRegistryPublication({
+    runtimeRegistryNamespaceId: input.runtimeRegistryNamespaceId,
+    tenantId: input.tenantId,
+    expectedSnapshot: input.expectedSnapshot,
+    expectedGeneration: input.expectedGeneration,
+    verification: input.verification,
+    onProgress: input.onProgress,
+  });
   const expectedStores = new Map(
     input.resources.map((resource) => [`${resource.role}:${resource.shardGroup}`, resource])
   );
@@ -948,17 +1109,6 @@ async function verifyInitialControlPlaneBootstrap(input: {
     !Array.isArray(snapshot.stores) ||
     snapshot.stores.length !== expectedStores.size ||
     snapshot.metadata?.storeCount !== expectedStores.size
-  ) {
-    throw new Error('initial_control_plane_runtime_snapshot_smoke_failed');
-  }
-  if (
-    canonicalizeJson(snapshot) !== canonicalizeJson(input.expectedSnapshot) ||
-    generation.runtimeGeneration !== input.expectedSnapshot.runtimeGeneration ||
-    generation.routeStatus !== input.expectedSnapshot.routeStatus ||
-    generation.quarantineDenyGeneration !== input.expectedSnapshot.quarantineDenyGeneration ||
-    generation.publishedAt !== input.expectedSnapshot.publishedAt ||
-    typeof generation.expiresAt !== 'string' ||
-    Date.parse(generation.expiresAt) <= Date.parse(input.expectedSnapshot.publishedAt)
   ) {
     throw new Error('initial_control_plane_runtime_snapshot_smoke_failed');
   }
@@ -1001,6 +1151,109 @@ async function verifyInitialControlPlaneBootstrap(input: {
   }
 }
 
+type InitialTenantShardDefinition = ReturnType<typeof initialTenantShardDefinitions>[number];
+
+function assertLockedShardMatchesIntentCheckpoint(input: {
+  intent: ProvisioningIntent;
+  definition: InitialTenantShardDefinition;
+  environment: string;
+  locked: { id: string; name: string };
+}): void {
+  const checkpoint = input.intent.resources[`d1:${input.definition.binding}`];
+  if (!checkpoint) return;
+  const expectedName = bootstrapDatabaseName(input.environment, input.definition.nameRole);
+  if (
+    checkpoint.kind !== 'd1' ||
+    checkpoint.binding !== input.definition.binding ||
+    checkpoint.name !== expectedName ||
+    checkpoint.state !== 'created' ||
+    checkpoint.id !== input.locked.id ||
+    input.locked.name !== expectedName
+  ) {
+    throw new Error(`initial_control_plane_intent_lock_mismatch:${input.definition.binding}`);
+  }
+}
+
+function assertInitialControlPlaneIntentCoveredByLock(input: {
+  intent: ProvisioningIntent;
+  definitions: readonly InitialTenantShardDefinition[];
+  environment: string;
+  lock: AuthrimLock;
+}): void {
+  const definitions = new Map<string, InitialTenantShardDefinition>(
+    input.definitions.map((definition) => [`d1:${definition.binding}`, definition] as const)
+  );
+  for (const checkpointKey of Object.keys(input.intent.resources)) {
+    const definition = definitions.get(checkpointKey);
+    if (!definition) {
+      throw new Error(`initial_control_plane_intent_resource_unexpected:${checkpointKey}`);
+    }
+    const locked = input.lock.d1[definition.binding];
+    if (!locked) {
+      throw new Error(`initial_control_plane_intent_lock_missing:${definition.binding}`);
+    }
+    assertLockedShardMatchesIntentCheckpoint({
+      intent: input.intent,
+      definition,
+      environment: input.environment,
+      locked,
+    });
+  }
+}
+
+function lockWithoutD1Binding(lock: AuthrimLock, binding: string): AuthrimLock {
+  const d1 = { ...lock.d1 };
+  delete d1[binding];
+  return { ...lock, d1 };
+}
+
+/** Replace a caller-owned lock object without retaining keys absent from the durable checkpoint. */
+function replaceLockContents(target: AuthrimLock, source: AuthrimLock): void {
+  const mutableTarget = target as unknown as Record<string, unknown>;
+  for (const key of Object.keys(mutableTarget)) {
+    if (!Reflect.deleteProperty(mutableTarget, key)) {
+      throw new Error(`initial_control_plane_lock_replacement_failed:${key}`);
+    }
+  }
+  Object.assign(mutableTarget, source);
+}
+
+async function persistInitialControlPlaneLockCheckpoint(input: {
+  rootDir: string;
+  environment: string;
+  lock: AuthrimLock;
+  binding: string;
+  resource: { id: string; name: string };
+}): Promise<void> {
+  const current = await loadLockFileAuto(input.rootDir, input.environment);
+  if (!current.lock || !current.path) {
+    throw new Error('initial_control_plane_lock_checkpoint_target_missing');
+  }
+  const alreadyPersisted = current.lock.d1[input.binding];
+  if (alreadyPersisted) {
+    if (
+      alreadyPersisted.id !== input.resource.id ||
+      alreadyPersisted.name !== input.resource.name
+    ) {
+      throw new Error(`initial_control_plane_lock_checkpoint_conflict:${input.binding}`);
+    }
+    replaceLockContents(input.lock, current.lock);
+    return;
+  }
+  if (
+    canonicalizeJson(current.lock) !==
+    canonicalizeJson(lockWithoutD1Binding(input.lock, input.binding))
+  ) {
+    throw new Error(`initial_control_plane_lock_changed_before_checkpoint:${input.binding}`);
+  }
+  const checkpointed: AuthrimLock = {
+    ...current.lock,
+    d1: { ...current.lock.d1, [input.binding]: input.resource },
+  };
+  await saveLockFile(checkpointed, current.path);
+  replaceLockContents(input.lock, checkpointed);
+}
+
 export async function ensureInitialControlPlaneResources(input: {
   env: string;
   config: AuthrimConfig;
@@ -1008,20 +1261,64 @@ export async function ensureInitialControlPlaneResources(input: {
   rootDir: string;
   release?: { manifest: ReleaseMigrationManifest; draft: boolean };
   onProgress?: (message: string) => void;
+  /** Test override; production persists every newly-created shard into the environment lock. */
+  persistLockCheckpoint?: (lock: AuthrimLock) => Promise<void>;
 }): Promise<ControlPlaneBootstrapResult> {
   let createdCount = 0;
 
   try {
     if (!input.release) throw new Error('initial_control_plane_release_required');
-    const controlDatabaseName = input.lock.d1.CONTROL_DB?.name;
-    if (!controlDatabaseName) throw new Error('control_database_name_required');
+    const controlDatabaseId = input.lock.d1.CONTROL_DB?.id;
+    if (!controlDatabaseId) throw new Error('control_database_id_required');
     const [handoff] = await queryD1Rows<{ state: string; verification_error_code: string | null }>(
-      controlDatabaseName,
+      controlDatabaseId,
       `SELECT state, verification_error_code
          FROM control_bootstrap_handoffs
         WHERE environment_id = ${sqlString(input.env)}`
     );
+    const shardDefinitions = initialTenantShardDefinitions(input.env);
+    const shardResourceSpec = {
+      purpose: 'initial_control_plane_tenant_shards',
+      resources: shardDefinitions.map((definition) => ({
+        kind: 'd1',
+        binding: definition.binding,
+        name: bootstrapDatabaseName(input.env, definition.nameRole),
+      })),
+    } as const;
+    const existingProvisioningIntent = await loadProvisioningIntent({
+      baseDir: input.rootDir,
+      environment: input.env,
+    });
     if (handoff?.state === 'accepted') {
+      const incompleteBinding = shardDefinitions.find((definition) => {
+        const locked = input.lock.d1[definition.binding];
+        return !locked || locked.name !== bootstrapDatabaseName(input.env, definition.nameRole);
+      });
+      if (incompleteBinding) {
+        throw new Error(
+          `initial_control_plane_accepted_lock_incomplete:${incompleteBinding.binding}`
+        );
+      }
+      if (existingProvisioningIntent) {
+        const provisioningAttempt = await beginOrResumeProvisioningIntent({
+          baseDir: input.rootDir,
+          environment: input.env,
+          accountId:
+            input.config.cloudflare?.accountId?.trim() || existingProvisioningIntent.accountId,
+          resourceSpec: shardResourceSpec,
+        });
+        assertInitialControlPlaneIntentCoveredByLock({
+          intent: provisioningAttempt.intent,
+          definitions: shardDefinitions,
+          environment: input.env,
+          lock: input.lock,
+        });
+        await completeProvisioningIntent({
+          baseDir: input.rootDir,
+          environment: input.env,
+          expectedIntentId: provisioningAttempt.intent.id,
+        });
+      }
       return { success: true, skipped: true };
     }
     if (
@@ -1031,27 +1328,160 @@ export async function ensureInitialControlPlaneResources(input: {
       throw new Error(`initial_control_plane_handoff_${handoff.state}`);
     }
 
+    const missingShard = shardDefinitions.some(
+      (definition) => input.lock.d1[definition.binding] === undefined
+    );
+    const accountId = input.config.cloudflare?.accountId?.trim();
+    if (missingShard && !accountId && !existingProvisioningIntent) {
+      throw new Error('cloudflare_account_id_required_for_initial_control_plane_provisioning');
+    }
+    const provisioningAttempt =
+      missingShard || existingProvisioningIntent
+        ? await beginOrResumeProvisioningIntent({
+            baseDir: input.rootDir,
+            environment: input.env,
+            accountId: accountId || existingProvisioningIntent!.accountId,
+            resourceSpec: shardResourceSpec,
+          })
+        : null;
+
     input.onProgress?.('🔧 Ensuring initial Control-plane tenant shards exist (3 D1)...');
-    for (const definition of initialTenantShardDefinitions(input.env)) {
+    for (const definition of shardDefinitions) {
       const existing = input.lock.d1[definition.binding];
+      const currentIntent = provisioningAttempt
+        ? await loadProvisioningIntent({
+            baseDir: input.rootDir,
+            environment: input.env,
+          })
+        : null;
+      if (
+        provisioningAttempt &&
+        (!currentIntent || currentIntent.id !== provisioningAttempt.intent.id)
+      ) {
+        throw new Error('initial_control_plane_provisioning_intent_changed');
+      }
       if (existing) {
         const expectedName = bootstrapDatabaseName(input.env, definition.nameRole);
         if (existing.name !== expectedName) {
           throw new Error(`initial_control_plane_binding_conflict:${definition.binding}`);
         }
+        if (currentIntent) {
+          assertLockedShardMatchesIntentCheckpoint({
+            intent: currentIntent,
+            definition,
+            environment: input.env,
+            locked: existing,
+          });
+        }
         input.onProgress?.(`  ✓ ${definition.binding} already locked`);
         continue;
       }
+      if (!provisioningAttempt || !currentIntent) {
+        throw new Error('initial_control_plane_provisioning_intent_missing');
+      }
+      const resource: ProvisioningResourceIdentity = {
+        kind: 'd1',
+        binding: definition.binding,
+        name: bootstrapDatabaseName(input.env, definition.nameRole),
+      };
+      const adoption = getProvisioningResourceAdoptionPolicy(currentIntent.resources, resource);
+      if (adoption.recordedState === 'create_issued') {
+        throw new Error(
+          `initial_control_plane_resource_create_ambiguous:${resource.binding}:${resource.name}:` +
+            'Cloudflare D1 create outcome is unknown and automatic recovery is unavailable; ' +
+            `inspect the exact name "${resource.name}" in Cloudflare, then run ` +
+            `"pnpm run setup delete --env ${input.env} --all --yes"; if deletion stops because ` +
+            `its immutable identity is missing, manually delete only that exact ambiguous name in ` +
+            `Cloudflare and rerun the same setup delete command to clean local state; verify the ` +
+            `environment is empty, then run "pnpm run setup init --env ${input.env}"`
+        );
+      }
       const database = await createD1Database(
-        bootstrapDatabaseName(input.env, definition.nameRole),
-        definition.role === 'tenant_pii' ? input.config.database?.pii : input.config.database?.core
+        resource.name,
+        definition.role === 'tenant_pii' ? input.config.database?.pii : input.config.database?.core,
+        {
+          ...adoption,
+          onCreateIssued: () =>
+            recordProvisioningResourceCreateIssued({
+              baseDir: input.rootDir,
+              environment: input.env,
+              expectedIntentId: provisioningAttempt.intent.id,
+              resource,
+            }),
+          onCreateRejected: () =>
+            recordProvisioningResourceCreateRejected({
+              baseDir: input.rootDir,
+              environment: input.env,
+              expectedIntentId: provisioningAttempt.intent.id,
+              resource,
+            }),
+          onProviderIdentityIdentified: ({ id }) => {
+            if (!id) {
+              throw new Error(
+                `initial_control_plane_provider_identity_missing:${definition.binding}`
+              );
+            }
+            return recordProvisioningResourceIdentified({
+              baseDir: input.rootDir,
+              environment: input.env,
+              expectedIntentId: provisioningAttempt.intent.id,
+              resource: { ...resource, state: 'identified', id },
+            });
+          },
+        }
       );
+      if (!database.id || database.name !== resource.name) {
+        throw new Error(`initial_control_plane_provider_identity_mismatch:${definition.binding}`);
+      }
+      await recordProvisionedResource({
+        baseDir: input.rootDir,
+        environment: input.env,
+        expectedIntentId: provisioningAttempt.intent.id,
+        resource: {
+          ...resource,
+          state: 'created',
+          id: database.id,
+        },
+      });
       input.lock.d1[definition.binding] = { id: database.id, name: database.name };
+      if (input.persistLockCheckpoint) {
+        await input.persistLockCheckpoint(input.lock);
+      } else {
+        await persistInitialControlPlaneLockCheckpoint({
+          rootDir: input.rootDir,
+          environment: input.env,
+          lock: input.lock,
+          binding: definition.binding,
+          resource: { id: database.id, name: database.name },
+        });
+      }
       createdCount += 1;
       input.onProgress?.(`  ✓ ${definition.binding} -> ${database.name}`);
     }
+    if (provisioningAttempt) {
+      const completedIntent = await loadProvisioningIntent({
+        baseDir: input.rootDir,
+        environment: input.env,
+      });
+      if (!completedIntent || completedIntent.id !== provisioningAttempt.intent.id) {
+        throw new Error('initial_control_plane_provisioning_intent_changed');
+      }
+      assertInitialControlPlaneIntentCoveredByLock({
+        intent: completedIntent,
+        definitions: shardDefinitions,
+        environment: input.env,
+        lock: input.lock,
+      });
+      await completeProvisioningIntent({
+        baseDir: input.rootDir,
+        environment: input.env,
+        expectedIntentId: provisioningAttempt.intent.id,
+      });
+    }
 
-    const migrationsRoot = await findMigrationsRoot(input.rootDir, input.onProgress);
+    const migrationsRoot = await findMigrationsRoot(input.rootDir, input.onProgress, {
+      strictRoot: true,
+    });
     if (!migrationsRoot.path) {
       throw new Error(
         `Migrations directory not found. Searched: ${migrationsRoot.searchPaths.join(', ')}`
@@ -1067,7 +1497,7 @@ export async function ensureInitialControlPlaneResources(input: {
     for (const plan of plans.filter((candidate) => candidate.role !== 'lookup')) {
       const migrationPath =
         plan.role === 'tenant_pii' ? join(migrationsRoot.path, 'pii') : migrationsRoot.path;
-      const result = await runD1Migrations(plan.databaseName, migrationPath, input.onProgress, {
+      const result = await runD1Migrations(plan.databaseId, migrationPath, input.onProgress, {
         manifestFiles: plan.migrationFiles,
         releaseVersion: plan.releaseId,
         backfillLegacyChecksums: input.release.draft === false,
@@ -1080,7 +1510,7 @@ export async function ensureInitialControlPlaneResources(input: {
       const lastFilename = plan.migrationFiles.at(-1)?.path;
       if (!lastFilename) throw new Error('initial_control_plane_migration_files_empty');
       await executeD1Command(
-        plan.databaseName,
+        plan.databaseId,
         `INSERT INTO authrim_control_plane_shard_metadata (
            singleton_id, binding_ref, data_role, residency_partition, migration_generation,
            release_id, manifest_digest, expected_file_count, last_filename, updated_at
@@ -1123,23 +1553,25 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
   keysDir: string;
   release?: ReleaseMigrationManifest;
   onProgress?: (message: string) => void;
+  /** Deterministic verification hooks for tests; production callers must omit this. */
+  runtimeRegistryVerification?: RuntimeRegistryVerificationOptions;
 }): Promise<ControlPlaneBootstrapResult> {
   const tenantId = tenantIdForConfig(input.config);
-  const adminDbName = input.lock.d1.DB_ADMIN?.name;
-  const controlDatabaseName = input.lock.d1.CONTROL_DB?.name;
-  const lookupDatabaseName = input.lock.d1.LOOKUP_DB?.name;
+  const adminDatabaseId = input.lock.d1.DB_ADMIN?.id;
+  const controlDatabaseId = input.lock.d1.CONTROL_DB?.id;
+  const lookupDatabaseId = input.lock.d1.LOOKUP_DB?.id;
   const configNamespaceId = input.lock.kv.AUTHRIM_CONFIG?.id;
   const runtimeRegistryNamespaceId = input.lock.kv.TENANT_RUNTIME_REGISTRY?.id;
-  if (!adminDbName) {
+  if (!adminDatabaseId) {
     return { success: false, error: 'DB_ADMIN is missing from the lock file' };
   }
   if (!runtimeRegistryNamespaceId) {
     return { success: false, error: 'TENANT_RUNTIME_REGISTRY KV is missing from the lock file' };
   }
-  if (!controlDatabaseName) {
+  if (!controlDatabaseId) {
     return { success: false, error: 'CONTROL_DB is missing from the lock file' };
   }
-  if (!lookupDatabaseName) {
+  if (!lookupDatabaseId) {
     return { success: false, error: 'LOOKUP_DB is missing from the lock file' };
   }
   if (!configNamespaceId) {
@@ -1150,10 +1582,12 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
     await ensureInitialTenantRegionShardConfig({
       environmentId: input.env,
       tenantId,
-      controlDatabaseName,
+      controlDatabaseName: controlDatabaseId,
       configNamespaceId,
     });
-    const migrationsRoot = await findMigrationsRoot(input.rootDir, input.onProgress);
+    const migrationsRoot = await findMigrationsRoot(input.rootDir, input.onProgress, {
+      strictRoot: true,
+    });
     if (!migrationsRoot.path) {
       throw new Error(
         `Migrations directory not found. Searched: ${migrationsRoot.searchPaths.join(', ')}`
@@ -1194,7 +1628,7 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
       `🔧 Ensuring initial tenant exists in ${defaultCoreResource.databaseName}...`
     );
     await executeD1Command(
-      defaultCoreResource.databaseName,
+      defaultCoreResource.databaseId,
       buildInitialTenantBootstrapSql(input.config)
     );
     const registryResources = signTenantDatabaseRegistryResources({
@@ -1211,7 +1645,7 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
     });
     input.onProgress?.(`🔧 Publishing initial Control Plane runtime snapshot (${tenantId})...`);
     await executeAdminSql({
-      adminDbName,
+      adminDatabaseId,
       tenantId,
       sql: registrySql,
     });
@@ -1233,7 +1667,7 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
           }
         : undefined
     );
-    const generation = {
+    const generation: RuntimeGenerationPointer = {
       runtimeGeneration: snapshot.runtimeGeneration,
       routeStatus: snapshot.routeStatus,
       quarantineDenyGeneration: snapshot.quarantineDenyGeneration,
@@ -1267,18 +1701,21 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
       defaultStore,
     });
     input.onProgress?.(`🔧 Ensuring initial tenant discovery aliases (${tenantId})...`);
-    await executeD1Command(lookupDatabaseName, aliases.sql);
+    await executeD1Command(lookupDatabaseId, aliases.sql);
 
     input.onProgress?.(`🔎 Verifying initial Control Plane bootstrap (${tenantId})...`);
     await verifyInitialControlPlaneBootstrap({
-      adminDbName,
-      lookupDatabaseName,
+      adminDatabaseId,
+      lookupDatabaseId,
       runtimeRegistryNamespaceId,
       tenantId,
-      coreDatabaseName: defaultCoreResource.databaseName,
+      coreDatabaseId: defaultCoreResource.databaseId,
       resources,
       expectedSnapshot: snapshot,
+      expectedGeneration: generation,
       expectedAliases: aliases,
+      verification: input.runtimeRegistryVerification,
+      onProgress: input.onProgress,
     });
 
     input.onProgress?.(`  ✅ Initial Control Plane runtime snapshot published: ${tenantId}`);

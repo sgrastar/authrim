@@ -43,6 +43,13 @@ describe('wildcard DNS manual action guidance', () => {
         new Error('Token lacks dns:edit permission to create wildcard DNS record')
       )
     ).toBe(true);
+    expect(
+      isWildcardDnsPermissionError(
+        new Error(
+          'Token lacks zone:read or dns:edit permission to verify the exact proxied CNAME target for *.test.authrim.com'
+        )
+      )
+    ).toBe(true);
     expect(isWildcardDnsPermissionError(new Error('Some other error'))).toBe(false);
   });
 

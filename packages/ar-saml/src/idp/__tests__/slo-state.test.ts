@@ -419,4 +419,35 @@ describe('SAML SLO state', () => {
         ?.expirationTtl
     ).toBeGreaterThan(60);
   });
+
+  it('bounds one observation run and returns a cursor for the remaining records', async () => {
+    const listedLimits: number[] = [];
+    const store = {
+      async put() {},
+      async get() {
+        return null;
+      },
+      async delete() {},
+      async list(options?: { cursor?: string; limit?: number }) {
+        listedLimits.push(options?.limit ?? 0);
+        return {
+          keys: Array.from({ length: options?.limit ?? 0 }, (_, index) => ({
+            name: `missing-${options?.cursor ?? 'first'}-${index}`,
+          })),
+          list_complete: false,
+          cursor: options?.cursor ? 'cursor-2' : 'cursor-1',
+        };
+      },
+    };
+
+    const result = await observeExpiredSAMLIdPLogoutFanoutTransactions(store, {
+      now: 1_000,
+      limit: 75,
+      maxRecords: 100,
+    });
+
+    expect(result.scanned).toBe(0);
+    expect(result.nextCursor).toBe('cursor-2');
+    expect(listedLimits).toEqual([75, 25]);
+  });
 });

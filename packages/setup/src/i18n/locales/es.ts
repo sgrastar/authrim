@@ -893,7 +893,7 @@ const es: Translations = {
     'Este token temporal permite que Authrim cree automáticamente las bases de datos de los tenants. Necesita permiso para crear y editar tokens de API: Account API Tokens: Write/Edit para un token de cuenta o API Tokens: Write/Edit para un token de usuario. Setup lo usa para crear, según sea necesario, tokens de API con alcance limitado para D1, Workers, KV y R2, registrarlos en el Control Worker y revocar después el token temporal.',
   'web.deploy.manualDnsSectionTitle': 'Configuración DNS',
   'web.deploy.bootstrapTokenCreateStatus':
-    'Crea un token temporal en el Dashboard de Cloudflare y escríbelo abajo.',
+    'Establece End Date en {{endDate}} (UTC) en el Dashboard de Cloudflare, crea el token temporal y escríbelo abajo.',
   'web.deploy.bootstrapPopupBlocked':
     'El navegador bloqueó la nueva pestaña. Permite las ventanas emergentes y vuelve a seleccionar el botón.',
   'web.deploy.bootstrapTokenRequired':
@@ -905,7 +905,7 @@ const es: Translations = {
   'web.envDetail.oneTimeBootstrapTokenPlaceholder': 'Token bootstrap de un solo uso',
   'web.envDetail.enableAutomaticProvisioning': 'Activar',
   'web.envDetail.enterOneTimeTokenThenEnable':
-    'Introduce el token de un solo uso y selecciona Activar.',
+    'Establece End Date en {{endDate}} (UTC), crea e introduce el token de un solo uso y selecciona Activar.',
   'web.envDetail.bootstrapPopupBlocked':
     'El navegador bloqueó la pestaña del Dashboard de Cloudflare.',
   'web.envDetail.enterOneTimeTokenFirst':
@@ -922,6 +922,8 @@ const es: Translations = {
   'web.envDetail.automaticProvisioningMissing': '(faltan: {{missing}})',
   'web.envDetail.automaticProvisioningRepairHint':
     'Introduce un nuevo token de un solo uso para repararlo.',
+  'web.envDetail.bootstrapRetainedForRetry':
+    'Cloudflare devolvió un error temporal. El token de bootstrap sigue activo; vuelve a introducir el mismo token y selecciona Habilitar para reanudar.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Revoca los tokens bootstrap y secundarios de Authrim indicados en el Dashboard de Cloudflare antes de reintentar.',
   'web.envDetail.bootstrapRevokedPendingReset':
