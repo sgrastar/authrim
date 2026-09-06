@@ -396,14 +396,13 @@ describe('Cloudflare Control token bootstrap', () => {
         fetcher,
       })
     ).resolves.toBe('user');
-    await expect(
-      validateDirectControlTokensWithEvidence({
-        accountId: ACCOUNT_ID,
-        d1Token: 'direct-d1',
-        workersToken: 'direct-workers',
-        fetcher,
-      })
-    ).resolves.toMatchObject({
+    const evidence = await validateDirectControlTokensWithEvidence({
+      accountId: ACCOUNT_ID,
+      d1Token: 'direct-d1',
+      workersToken: 'direct-workers',
+      fetcher,
+    });
+    expect(evidence).toMatchObject({
       ownership: 'user',
       childTokens: [
         {
@@ -418,6 +417,13 @@ describe('Cloudflare Control token bootstrap', () => {
         },
       ],
     });
+    expect(evidence.childTokens.map((child) => child.tokenFingerprint)).toEqual([
+      'add76d08e6b0a64b31d1805e60dcb5ca97cb048251c00836b2c5a2cad8ebcc94',
+      'abd3f7a9b112ce8f7eab78fa291bb6e60e8eaac8c996e0a88588656cf4a6f000',
+    ]);
+    expect(new Set(evidence.childTokens.map((child) => child.tokenFingerprint)).size).toBe(2);
+    expect(JSON.stringify(evidence)).not.toContain('direct-d1');
+    expect(JSON.stringify(evidence)).not.toContain('direct-workers');
     await expect(
       validateDirectControlTokens({
         accountId: ACCOUNT_ID,

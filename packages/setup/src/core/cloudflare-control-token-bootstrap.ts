@@ -291,6 +291,9 @@ function requiredEnvironment(environment: string): string {
 }
 
 function fingerprintToken(token: string): string {
+  // This is an equality-only fingerprint of a provider-generated, high-entropy API token. It is
+  // not a password verifier, and changing the digest would invalidate durable recovery evidence.
+  // codeql[js/insufficient-password-hash] -- API-token identity fingerprint, not password storage.
   return createHash('sha256').update(token, 'utf8').digest('hex');
 }
 
