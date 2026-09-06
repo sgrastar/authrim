@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, scryptSync } from 'node:crypto';
 import { execa } from 'execa';
 
 const API_BASE = 'https://api.cloudflare.com/client/v4';
@@ -18,6 +18,8 @@ const DEFAULT_WRANGLER_SECRET_OPERATION_TIMEOUT_MS = 300_000;
 const TOKEN_INVENTORY_PAGE_SIZE = 50;
 const MAX_TOKEN_INVENTORY_PAGES = 100;
 const MAX_TOKEN_INVENTORY_RECORDS = TOKEN_INVENTORY_PAGE_SIZE * MAX_TOKEN_INVENTORY_PAGES;
+const CONTROL_CHILD_TOKEN_FINGERPRINT_SALT =
+  'authrim/cloudflare-control-child-token-fingerprint/v1';
 
 interface OperationDeadline {
   readonly expiresAt: number;
@@ -291,10 +293,7 @@ function requiredEnvironment(environment: string): string {
 }
 
 function fingerprintToken(token: string): string {
-  // This is an equality-only fingerprint of a provider-generated, high-entropy API token. It is
-  // not a password verifier, and changing the digest would invalidate durable recovery evidence.
-  // codeql[js/insufficient-password-hash] -- API-token identity fingerprint, not password storage.
-  return createHash('sha256').update(token, 'utf8').digest('hex');
+  return scryptSync(token, CONTROL_CHILD_TOKEN_FINGERPRINT_SALT, 32).toString('hex');
 }
 
 function deterministicTokenName(accountId: string, environment: string, suffix: string): string {

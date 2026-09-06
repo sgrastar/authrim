@@ -418,8 +418,8 @@ describe('Cloudflare Control token bootstrap', () => {
       ],
     });
     expect(evidence.childTokens.map((child) => child.tokenFingerprint)).toEqual([
-      'add76d08e6b0a64b31d1805e60dcb5ca97cb048251c00836b2c5a2cad8ebcc94',
-      'abd3f7a9b112ce8f7eab78fa291bb6e60e8eaac8c996e0a88588656cf4a6f000',
+      '2817b436fdf93fc1d96cd804be1dbf7abe21a1ec5819d9e050bd4911ddae701a',
+      'd36d9e3588e6831d903979d7573fe39c3fef498699e2a43bc6d2cd16e3fb51f8',
     ]);
     expect(new Set(evidence.childTokens.map((child) => child.tokenFingerprint)).size).toBe(2);
     expect(JSON.stringify(evidence)).not.toContain('direct-d1');
