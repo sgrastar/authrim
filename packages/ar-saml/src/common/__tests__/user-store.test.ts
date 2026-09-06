@@ -393,6 +393,29 @@ describe('SAML user-store helpers', () => {
               updated_at: 1_700_000_000,
               deleted_at: null,
             },
+            ...[
+              ['given_name', 1],
+              ['family_name', 2],
+              ['preferred_username', 3],
+              ['picture', 4],
+            ].map(([field, displayOrder]) => ({
+              id: `profile-attribute:${field}`,
+              tenant_id: 'tenant-d',
+              profile_id: 'profile:user-4',
+              catalog_entry_id: `field.canonical.${field}`,
+              value_type: 'reference',
+              value_json: null,
+              value_storage_ref: `canonical-sensitive://tenant-d/user-4/${field}`,
+              value_hash: null,
+              classification: 'sensitive',
+              purpose: 'profile',
+              is_primary: 0,
+              display_order: displayOrder,
+              lifecycle_state: 'active',
+              created_at: 1_700_000_000,
+              updated_at: 1_700_000_000,
+              deleted_at: null,
+            })),
             {
               id: 'profile-attribute:custom',
               tenant_id: 'tenant-d',
@@ -444,6 +467,10 @@ describe('SAML user-store helpers', () => {
           const values: Record<string, string> = {
             email: JSON.stringify('canonical@example.com'),
             name: JSON.stringify('Canonical User'),
+            given_name: JSON.stringify('Canonical'),
+            family_name: JSON.stringify('User'),
+            preferred_username: JSON.stringify('canonical-user'),
+            picture: JSON.stringify('https://example.test/canonical-user.png'),
           };
           return { value_json: values[field as string] ?? null };
         }
@@ -459,6 +486,10 @@ describe('SAML user-store helpers', () => {
       email_verified: true,
       name: 'Canonical User',
       display_name: 'Canonical User',
+      given_name: 'Canonical',
+      family_name: 'User',
+      preferred_username: 'canonical-user',
+      picture_url: 'https://example.test/canonical-user.png',
       locale: 'ja-JP',
       customClaims: {},
       customFields: {
