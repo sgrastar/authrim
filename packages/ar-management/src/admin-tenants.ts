@@ -120,7 +120,6 @@ export const TENANT_TABLES_TO_DELETE = [
   'admin_jobs',
   // Attributes
   'attribute_verifications',
-  'verified_attributes',
   'user_verified_attributes',
   // Audit
   'audit_log',
@@ -165,9 +164,7 @@ export const TENANT_TABLES_TO_DELETE = [
   'vp_requests',
   // Identity
   'identity_providers',
-  'linked_identities',
   'passkeys',
-  'subject_identifiers',
   'upstream_providers',
   // Clients
   'oauth_clients',

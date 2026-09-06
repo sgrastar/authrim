@@ -24,7 +24,10 @@ describe('control worker desired inventory registration', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(resolve(ROOT_DIR, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
+      readFileSync(
+        resolve(ROOT_DIR, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
+        'utf8'
+      )
     );
   });
 

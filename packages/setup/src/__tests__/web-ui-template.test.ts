@@ -566,7 +566,7 @@ describe('getHtmlTemplate', () => {
     expect(html).not.toContain('<em data-i18n="web.envDetail.verified">verified ✓</em>');
   });
 
-  it('keeps setup prelude sections dismissed after deployment starts', () => {
+  it('restores credential prerequisites when a DNS preflight pauses deployment', () => {
     const html = getHtmlTemplate(
       'session-token',
       false,
@@ -575,10 +575,10 @@ describe('getHtmlTemplate', () => {
       SUPPORTED_LOCALES
     );
 
-    expect(html).toContain("restoreSetupProgressPreludes(['deploy-manual-wildcard-warning'])");
-    expect(html).not.toContain(
-      "restoreSetupProgressPreludes([\n          'control-token-bootstrap-row'"
+    expect(html).toContain(
+      "restoreSetupProgressPreludes([\n            'control-token-bootstrap-row',\n            'deploy-manual-wildcard-warning'"
     );
+    expect(html).toContain('DNS validation happens before Control token consumption.');
   });
 
   it('renders the Classic setup chrome from the extracted stylesheet', () => {
@@ -649,6 +649,10 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain("spinner.className = 'check-spinner'");
     expect(html).toContain('updateEnvCardIssuerFromConfig');
     expect(html).toContain('resolveEnvDetailIssuerUrl(env, configResponse.config)');
+    expect(html).toContain('getEnvironmentModePreview(env, configResponse.config)');
+    expect(html).toContain("'e-kv-mode'");
+    expect(html).toContain('getEnvironmentModePreview(env, config)');
+    expect(html).not.toContain('const hasLogin = (env.workers || [])');
     expect(html).toContain('class="env-loading-indicator"');
     expect(html).toContain("row.className = 'e-kv e-kv-issuer'");
     expect(html).not.toContain("className = 'e-st");
@@ -943,6 +947,10 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('id="deploy-current-message"');
     expect(html).toContain('currentMessage.textContent = oraMessage');
     expect(html).toContain('oraText.textContent = oraMessage');
+    expect(html).toContain('deployedWorkerNames.clear()');
+    expect(html).toContain('updateDeployedWorkerCount(progress)');
+    expect(html).toContain('deployedWorkerNames.size +');
+    expect(html).not.toContain("'<b>0</b> / 14'");
     expect(html).toContain("const finalStatus = await api('/deploy/status')");
     expect(html).toContain('renderDeploymentSnapshot(finalStatus.deploymentProgress)');
     expect(html).toContain('if (!renderedServerSnapshot)');
@@ -1028,7 +1036,9 @@ describe('getHtmlTemplate', () => {
     expect(element.dataset.setupProgressPreludeWasVisible).toBeUndefined();
 
     expect(html).toContain('function restoreSetupProgressPreludes(ids)');
-    expect(html).toContain("restoreSetupProgressPreludes(['deploy-manual-wildcard-warning'])");
+    expect(html).toContain(
+      "restoreSetupProgressPreludes([\n            'control-token-bootstrap-row',\n            'deploy-manual-wildcard-warning'"
+    );
   });
 
   it('uses monotonic phase-based deployment progress instead of log-count percentages', () => {
@@ -1232,6 +1242,64 @@ describe('getHtmlTemplate', () => {
     expect(progressUpdates.at(-1)?.current).not.toBe(4);
   });
 
+  it('labels provisioning milestones as tasks instead of Cloudflare resources', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain("else if (prefix === 'provision')");
+    expect(html).toContain("progressText.textContent = t('web.provision.runningTasks'");
+    expect(html).toContain('const totalProvisionTasks = 8;');
+    expect(html).not.toContain('current: 0, total: 5');
+  });
+
+  it('previews every fixed D1 database and the initial tenant shards', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    for (const dbType of [
+      'core-db',
+      'pii-db',
+      'admin-db',
+      'control-db',
+      'lookup-db',
+      'plugin-runner-db',
+    ]) {
+      expect(html).toContain(`"${dbType}"`);
+    }
+    expect(html).toContain('String(resources.d1.length + 3)');
+    expect(html).toContain(
+      "appendPreviewRow(d1List, 'Control Plane bootstrap tenant shards', '3 D1')"
+    );
+  });
+
+  it('stores the validated environment before rendering the domain step header', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const configureHandler = html.match(
+      /document\.getElementById\('btn-configure'\)[\s\S]*?(?=document\.getElementById\('btn-back-domain')/u
+    )?.[0];
+
+    expect(configureHandler).toBeTruthy();
+    expect(configureHandler?.indexOf('config = { ...(config || {}), env };')).toBeLessThan(
+      configureHandler?.indexOf('setStep(4);') ?? -1
+    );
+  });
+
   it('renders prerequisite capability list styles and client-side renderer', () => {
     const html = getHtmlTemplate(
       'session-token',
@@ -1314,11 +1382,16 @@ describe('getHtmlTemplate', () => {
     }
     expect(html).toContain('WILDCARD_DNS_MANUAL_COPY_DATA');
     expect(html).toContain('CLOUDFLARE_DNS_RECORDS_DOCS');
+    const warningRenderer = html.match(
+      /function renderDeployManualWildcardWarning\(\) \{[\s\S]*?(?=\n\s{4}\/\/ Step navigation)/u
+    )?.[0];
+    expect(warningRenderer).toContain('const target = config?.manualAction?.target || baseDomain;');
+    expect(warningRenderer).not.toContain("envName + '-ar-router.' + workersSubdomain");
     expect(html).toContain("status.textContent = t('web.deploy.manualWildcardTitle');");
     expect(html).toContain(
       "document.getElementById('deploy-manual-wildcard-recheck').addEventListener('click'"
     );
-    expect(html).toContain('recheckButton.disabled = true;');
+    expect(html).not.toContain('recheckButton.disabled = true;');
     expect(html).toContain('deployButton.click();');
   });
 
@@ -1357,6 +1430,7 @@ describe('getHtmlTemplate', () => {
     );
     expect(html).toContain("api('/control/automatic-provisioning/prepare'");
     expect(html).toContain("api('/deploy/component/ar-control'");
+    expect(html).toContain('initialControlBootstrap: true');
     expect(html).toContain("api('/control/automatic-provisioning/complete'");
     expect(html).toContain("api('/control/automatic-provisioning/cleanup-bootstrap'");
     expect(html).toContain("api('/control/automatic-provisioning/cancel-pending'");
@@ -1367,6 +1441,8 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('if (!recoveringCutover) {');
     expect(html).toContain('if (recoveringCutover || error.cutoverPending === true)');
     expect(html).toContain('if (error.bootstrapRetainedForRetry === true)');
+    expect(html).toContain('if (!bootstrapSubmitted && bootstrapToken)');
+    expect(html).toContain("t('web.envDetail.bootstrapNotSubmittedForRetry')");
     expect(html).toContain("t('web.envDetail.bootstrapRetainedForRetry')");
     expect(html.indexOf('if (error.bootstrapRetainedForRetry === true)')).toBeLessThan(
       html.indexOf("api('/control/automatic-provisioning/cleanup-bootstrap'")

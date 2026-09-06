@@ -35,7 +35,7 @@ const row = {
   location_hint: 'apac',
   read_replication_mode: 'disabled',
   provider_database_id: null,
-  migration_stream_id: 'd1-core',
+  migration_stream_id: 'core-d1',
   release_id: '0.4.0-draft.aaaaaaaaaaaa',
   manifest_digest: 'a'.repeat(64),
   manifest_r2_object_key: `releases/0.4.0-draft.aaaaaaaaaaaa/${'a'.repeat(64)}/manifest.json`,
@@ -74,7 +74,7 @@ describe('setup pending Control operations', () => {
           shard_id: 'lookup-shard-1',
           binding_ref: 'TEST_TDB_LOOKUP_1234_LOOKUP',
           provider_database_id: 'lookup-database-id',
-          migration_stream_id: 'd1-lookup',
+          migration_stream_id: 'lookup-d1',
           manifest_digest: lookupDigest,
           manifest_r2_object_key: `releases/0.4.0-draft.aaaaaaaaaaaa/${lookupDigest}/manifest.json`,
         },
@@ -86,7 +86,7 @@ describe('setup pending Control operations', () => {
       scope: 'shared_pool',
       tenantId: null,
       dataRole: 'lookup',
-      migration: { streamId: 'd1-lookup' },
+      migration: { streamId: 'lookup-d1' },
     });
   });
 
@@ -111,7 +111,7 @@ describe('setup pending Control operations', () => {
       ...row,
       current_step: 'apply_migrations',
       provider_database_id: 'database-id',
-      migration_stream_id: 'd1-core',
+      migration_stream_id: 'core-d1',
       release_id: '0.4.0',
       manifest_digest: digest,
       manifest_r2_object_key: `releases/0.4.0/${digest}/manifest.json`,
@@ -123,7 +123,7 @@ describe('setup pending Control operations', () => {
     });
     expect(operation?.migration).toEqual({
       databaseId: 'database-id',
-      streamId: 'd1-core',
+      streamId: 'core-d1',
       releaseId: '0.4.0',
       manifestDigest: digest,
       manifestObjectKey: `releases/0.4.0/${digest}/manifest.json`,
@@ -141,7 +141,7 @@ describe('setup pending Control operations', () => {
     await expect(
       listPendingControlOperatorOperations({
         controlDatabaseName: 'test-control',
-        query: vi.fn(async () => [{ ...migrationRow, migration_stream_id: 'd1-lookup' }]),
+        query: vi.fn(async () => [{ ...migrationRow, migration_stream_id: 'lookup-d1' }]),
       })
     ).rejects.toThrow('control_operator_operation_invalid');
   });

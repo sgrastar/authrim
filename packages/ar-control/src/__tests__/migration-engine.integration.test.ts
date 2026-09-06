@@ -1,10 +1,14 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import type { CloudflareD1QueryResult } from '@authrim/ar-lib-core/control-plane';
+import {
+  migrationStreamContract,
+  type CloudflareD1QueryResult,
+  type MigrationStreamId,
+} from '@authrim/ar-lib-core/control-plane';
 import {
   ApiMigrationEngine,
   type MigrationD1Executor,
@@ -19,30 +23,14 @@ import {
 
 const ROOT_DIR = fileURLToPath(new URL('../../../../', import.meta.url));
 const MIGRATIONS_ROOT = join(ROOT_DIR, 'migrations');
-const STREAM_DIRECTORIES: Readonly<Record<string, string>> = {
-  'd1-core': MIGRATIONS_ROOT,
-  'd1-pii': join(MIGRATIONS_ROOT, 'pii'),
-  'd1-lookup': join(MIGRATIONS_ROOT, 'lookup'),
-  'd1-plugin-runner': join(MIGRATIONS_ROOT, 'plugin-runner'),
-};
+const STREAM_DIRECTORIES = {
+  'core-d1': join(MIGRATIONS_ROOT, 'core', 'd1'),
+  'pii-d1': join(MIGRATIONS_ROOT, 'pii', 'd1'),
+  'lookup-d1': join(MIGRATIONS_ROOT, 'lookup', 'd1'),
+  'plugin-runner-d1': join(MIGRATIONS_ROOT, 'plugin-runner', 'd1'),
+} as const satisfies Partial<Record<MigrationStreamId, string>>;
 
 type SqlValue = string | number | bigint | null | Uint8Array;
-
-interface ManifestFile {
-  path: string;
-  checksum: string;
-}
-
-interface ManifestStream {
-  id: string;
-  dialect: string;
-  files: ManifestFile[];
-}
-
-interface ManifestFixture {
-  productVersion: string;
-  streams: ManifestStream[];
-}
 
 function digest(value: Uint8Array | string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -119,42 +107,52 @@ function releaseFixture(streamId: keyof typeof STREAM_DIRECTORIES): {
   store: ByteStore;
   expectedFiles: number;
 } {
-  const manifestBytes = new Uint8Array(
-    readFileSync(join(MIGRATIONS_ROOT, 'release-manifest.draft.json'))
-  );
-  const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as ManifestFixture;
-  const stream = manifest.streams.find((candidate) => candidate.id === streamId);
-  if (!stream || stream.dialect !== 'sqlite')
-    throw new Error(`missing fixture stream: ${streamId}`);
-  const manifestDigest = digest(manifestBytes);
-  const manifestObjectKey = `releases/${manifest.productVersion}/${manifestDigest}/manifest.json`;
-  const objects = new Map<string, Uint8Array>([[manifestObjectKey, manifestBytes]]);
   const directory = STREAM_DIRECTORIES[streamId];
-  for (const file of stream.files) {
-    const bytes = new TextEncoder().encode(
-      renderSql(readFileSync(join(directory, file.path), 'utf8'))
-    );
-    if (digest(bytes) !== file.checksum) throw new Error(`fixture checksum mismatch: ${file.path}`);
-    objects.set(
-      `releases/${manifest.productVersion}/${manifestDigest}/streams/${streamId}/${file.path}`,
-      bytes
-    );
+  const contract = migrationStreamContract(streamId);
+  const files = readdirSync(directory)
+    .filter((file) => /^\d+_.*\.sql$/u.test(file))
+    .sort()
+    .map((path) => {
+      const sql = renderSql(readFileSync(join(directory, path), 'utf8'));
+      return { path, checksum: digest(sql), sql };
+    });
+  const manifest = `${JSON.stringify({
+    formatVersion: 2,
+    productVersion: '0.4.0',
+    streams: [
+      {
+        id: contract.id,
+        schemaFamily: contract.schemaFamily,
+        dialect: contract.dialect,
+        targetKind: contract.targetKind,
+        logicalRoles: contract.logicalRoles,
+        files: files.map(({ path, checksum }) => ({ path, checksum })),
+      },
+    ],
+  })}\n`;
+  const manifestBytes = new TextEncoder().encode(manifest);
+  const manifestDigest = digest(manifestBytes);
+  const manifestObjectKey = `releases/0.4.0/${manifestDigest}/manifest.json`;
+  const objects = new Map<string, Uint8Array>([[manifestObjectKey, manifestBytes]]);
+  for (const file of files) {
+    const bytes = new TextEncoder().encode(file.sql);
+    objects.set(`releases/0.4.0/${manifestDigest}/streams/${streamId}/${file.path}`, bytes);
   }
   return {
     pin: {
       environmentId: 'env-test',
       streamId,
-      releaseId: manifest.productVersion,
+      releaseId: '0.4.0',
       manifestDigest,
       manifestObjectKey,
     },
     store: new ByteStore(objects),
-    expectedFiles: stream.files.length,
+    expectedFiles: files.length,
   };
 }
 
 describe('ApiMigrationEngine current release integration', () => {
-  for (const streamId of ['d1-core', 'd1-pii', 'd1-lookup', 'd1-plugin-runner'] as const) {
+  for (const streamId of ['core-d1', 'pii-d1', 'lookup-d1', 'plugin-runner-d1'] as const) {
     it(`applies and idempotently resumes the complete ${streamId} stream`, async () => {
       const fixture = releaseFixture(streamId);
       const database = new DatabaseSync(':memory:');

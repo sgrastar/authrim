@@ -1,5 +1,5 @@
 -- Authrim 0.4.0 semantic fresh-install baseline.
--- Logical stream: d1-plugin-runner.
+-- Logical stream: plugin-runner-d1.
 -- Generated from the final database state; do not append historical migration SQL here.
 -- Fresh-install baselines must never be applied to upgrade an existing database.
 PRAGMA foreign_keys = OFF;

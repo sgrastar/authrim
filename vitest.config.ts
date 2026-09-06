@@ -36,8 +36,39 @@ export default defineConfig({
     },
   },
   resolve: {
-    alias: {
-      '@authrim/ar-lib-core': path.resolve(__dirname, 'packages/ar-lib-core/src'),
-    },
+    alias: [
+      {
+        find: '@authrim/ar-lib-core/services/control-plane/migration-stream-contract',
+        replacement: path.resolve(
+          __dirname,
+          'packages/ar-lib-core/src/services/control-plane/migration-stream-contract.ts'
+        ),
+      },
+      {
+        find: '@authrim/ar-lib-core/control-plane',
+        replacement: path.resolve(
+          __dirname,
+          'packages/ar-lib-core/src/services/control-plane/index.ts'
+        ),
+      },
+      {
+        find: '@authrim/ar-lib-core/services/lookup-directory/contract',
+        replacement: path.resolve(
+          __dirname,
+          'packages/ar-lib-core/src/services/lookup-directory/contract.ts'
+        ),
+      },
+      {
+        find: '@authrim/ar-lib-core/services/lookup-directory/seed-sql',
+        replacement: path.resolve(
+          __dirname,
+          'packages/ar-lib-core/src/services/lookup-directory/seed-sql.ts'
+        ),
+      },
+      {
+        find: '@authrim/ar-lib-core',
+        replacement: path.resolve(__dirname, 'packages/ar-lib-core/src'),
+      },
+    ],
   },
 });

@@ -16,7 +16,7 @@ export interface DownstreamIntrospectionClientConfig {
   adminBearerToken?: string;
   tenantId?: string;
   onProgress?: (message: string) => void;
-  /** Raw provider/router errors for persisted detailed logs only. */
+  /** Secret-free provider/router diagnostics for persisted detailed logs only. */
   onDetail?: (message: string) => void;
   retryDelayMs?: number;
   maxRetries?: number;
@@ -32,6 +32,10 @@ export interface DownstreamIntrospectionClientResult {
   alreadyExists?: boolean;
   rotatedSecret?: boolean;
   error?: string;
+  /** Stable, secret-free reason retained when a retry window expires. */
+  diagnosticCode?: string;
+  /** Whether retrying the same logical operation may succeed. */
+  retryable?: boolean;
 }
 
 interface AdminClientListResponse {
@@ -155,6 +159,7 @@ function isRetryableDownstreamIntrospectionError(error?: string | null): boolean
     normalized.includes('gateway timeout') ||
     normalized.includes('admin_machine_token_failed:404') ||
     normalized.includes('tenant not found') ||
+    normalized.includes('tenant_not_found') ||
     normalized.includes('lookup_registry_snapshot_unavailable') ||
     normalized.includes('missing_snapshot') ||
     normalized.includes('missing_generation') ||
@@ -164,6 +169,52 @@ function isRetryableDownstreamIntrospectionError(error?: string | null): boolean
     normalized.includes('eai_again') ||
     normalized.includes('network connection lost')
   );
+}
+
+function toSafeDownstreamIntrospectionDiagnostic(error: string): string {
+  const normalized = error.trim().toLowerCase();
+  const adminMachineStatus = normalized.match(/admin_machine_token_failed:(\d{3})/u)?.[1];
+  if (adminMachineStatus) {
+    if (normalized.includes('tenant not found') || normalized.includes('tenant_not_found')) {
+      return `admin_machine_token_failed:${adminMachineStatus}:tenant_not_found`;
+    }
+    if (normalized.includes('workers_dev_script_not_found')) {
+      return `admin_machine_token_failed:${adminMachineStatus}:workers_dev_script_not_found`;
+    }
+    return `admin_machine_token_failed:${adminMachineStatus}`;
+  }
+
+  const httpStatus = normalized.match(/\((\d{3})\)/u)?.[1];
+  if (httpStatus) {
+    if (normalized.includes('tenant_not_found') || normalized.includes('tenant not found')) {
+      return `http_${httpStatus}:tenant_not_found`;
+    }
+    if (normalized.includes('lookup_registry_snapshot_unavailable')) {
+      return `http_${httpStatus}:lookup_registry_snapshot_unavailable`;
+    }
+    if (normalized.includes('workers_dev_script_not_found')) {
+      return `http_${httpStatus}:workers_dev_script_not_found`;
+    }
+    return `http_${httpStatus}`;
+  }
+
+  if (
+    normalized.includes('fetch failed') ||
+    normalized.includes('connection reset') ||
+    normalized.includes('econnreset') ||
+    normalized.includes('enotfound') ||
+    normalized.includes('eai_again') ||
+    normalized.includes('network connection lost')
+  ) {
+    return 'network_error';
+  }
+  if (normalized.includes('timeout') || normalized.includes('timed out')) {
+    return 'request_timeout';
+  }
+  if (normalized.includes('lookup_registry_snapshot_unavailable')) {
+    return 'lookup_registry_snapshot_unavailable';
+  }
+  return 'downstream_introspection_operation_failed';
 }
 
 function describeReadinessWait(error: string): string {
@@ -468,6 +519,7 @@ export async function ensureDownstreamIntrospectionClient(
   try {
     const startedAt = Date.now();
     let adminBearerToken: string | null = providedAdminBearerToken?.trim() || null;
+    let lastDiagnosticCode: string | undefined;
     const createIdempotencyKey = `setup-downstream-client-${randomBytes(18).toString('base64url')}`;
     const httpOptions: DownstreamIntrospectionHttpOptions = {
       deadlineAt,
@@ -481,6 +533,7 @@ export async function ensureDownstreamIntrospectionClient(
         return {
           success: false,
           error: 'optional_integration_deadline_exceeded',
+          ...(lastDiagnosticCode ? { diagnosticCode: lastDiagnosticCode, retryable: true } : {}),
         };
       }
       try {
@@ -581,21 +634,26 @@ export async function ensureDownstreamIntrospectionClient(
         };
       } catch (error) {
         const message = describeOperationError(error);
+        const retryable = isRetryableDownstreamIntrospectionError(message);
+        lastDiagnosticCode = toSafeDownstreamIntrospectionDiagnostic(message);
         if (getRemainingDeadlineMs(deadlineAt) <= 0 || signal?.aborted) {
-          onDetail?.(`Downstream introspection setup deadline reached: ${message}`);
+          onDetail?.(`Downstream introspection setup deadline reached: ${lastDiagnosticCode}`);
           return {
             success: false,
             error: 'optional_integration_deadline_exceeded',
+            diagnosticCode: lastDiagnosticCode,
+            retryable,
           };
         }
-        const shouldRetry =
-          attempt < maxRetries && isRetryableDownstreamIntrospectionError(message);
+        const shouldRetry = attempt < maxRetries && retryable;
 
         if (!shouldRetry) {
-          onDetail?.(`Downstream introspection setup failed: ${message}`);
+          onDetail?.(`Downstream introspection setup failed: ${lastDiagnosticCode}`);
           return {
             success: false,
-            error: message,
+            error: message.startsWith('admin_machine_token_failed:') ? lastDiagnosticCode : message,
+            diagnosticCode: lastDiagnosticCode,
+            retryable,
           };
         }
 
@@ -607,7 +665,7 @@ export async function ensureDownstreamIntrospectionClient(
         );
         const elapsedSeconds = Math.max(1, Math.ceil((Date.now() - startedAt) / 1000));
         onDetail?.(
-          `Downstream introspection readiness attempt ${attempt}/${maxRetries} failed: ${message}`
+          `Downstream introspection readiness attempt ${attempt}/${maxRetries} failed: ${lastDiagnosticCode}`
         );
         onProgress?.(
           `${describeReadinessWait(message)} (${elapsedSeconds}s elapsed, attempt ${attempt}/${maxRetries}). Retrying in ${Math.ceil(delayMs / 1000)}s...`
@@ -616,6 +674,8 @@ export async function ensureDownstreamIntrospectionClient(
           return {
             success: false,
             error: 'optional_integration_deadline_exceeded',
+            diagnosticCode: lastDiagnosticCode,
+            retryable: true,
           };
         }
       }
@@ -625,6 +685,8 @@ export async function ensureDownstreamIntrospectionClient(
       success: false,
       error:
         'Downstream introspection client setup timed out while waiting for the router to become reachable',
+      diagnosticCode: lastDiagnosticCode,
+      retryable: true,
     };
   } catch (error) {
     return {

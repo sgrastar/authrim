@@ -520,11 +520,11 @@ setup_d1_databases() {
     fi
 
     # Run manifest-aware migrations when present.
-    if ls migrations/[0-9][0-9][0-9]_*.sql >/dev/null 2>&1; then
+    if ls migrations/core/d1/[0-9][0-9][0-9]_*.sql >/dev/null 2>&1; then
       log_info "  Running migrations..."
       pnpm exec tsx scripts/run-d1-migrations.ts \
         --database "$DB_NAME" \
-        --directory migrations \
+        --directory migrations/core/d1 \
         --role core
     fi
 

@@ -6,6 +6,7 @@ import {
   filterKnownD1NamesForEnvironment,
   filterKnownQueueNamesForEnvironment,
   getObjectCatalogR2BucketName,
+  getProvisioningResourceCount,
   getRequiredR2Buckets,
   getR2BucketName,
   isZoneReadPermissionError,
@@ -44,6 +45,32 @@ describe('Cloudflare pure resource contracts', () => {
       { binding: 'EXPORT_ARTIFACTS', name: 'prod-export-artifacts' },
       { binding: 'SENSITIVE_DETAILS', name: 'prod-sensitive-details' },
     ]);
+  });
+
+  it('counts every resource that provisioning will actually create', () => {
+    expect(
+      getProvisioningResourceCount({
+        env: 'prod',
+        createQueues: true,
+        createR2: true,
+      })
+    ).toBe(27);
+    expect(
+      getProvisioningResourceCount({
+        env: 'prod',
+        createQueues: false,
+        createR2: true,
+      })
+    ).toBe(23);
+    expect(
+      getProvisioningResourceCount({
+        env: 'prod',
+        createD1: false,
+        createKV: false,
+        createQueues: false,
+        createR2: false,
+      })
+    ).toBe(1);
   });
 
   it('distinguishes configured, stale, and unrecorded required R2 buckets', () => {

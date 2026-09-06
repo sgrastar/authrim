@@ -20,7 +20,7 @@
         "defaultMode": "managed",
         "allowExisting": true
       },
-      "migrationStream": "d1-plugin-runner"
+      "migrationStream": "plugin-runner-d1"
     },
     {
       "schemaVersion": 1,

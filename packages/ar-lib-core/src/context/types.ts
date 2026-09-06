@@ -81,7 +81,7 @@ export interface PIIRepositories {
   /** GDPR deletion tracking */
   tombstone: TombstoneRepository;
 
-  /** Pairwise subject identifiers (OIDC) */
+  /** General and destination-scoped subject identifiers */
   identifier: SubjectIdentifierRepository;
 
   /** External IdP linked identities */

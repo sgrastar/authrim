@@ -87,11 +87,11 @@ describe('Control runtime smoke wrangler topology', () => {
       smokeConfig(),
       { d1: {}, kv: {} },
       undefined,
-      { includeControlSmokeBindings: false }
+      { includeControlSmokeBindings: false, includeControlCronTriggers: false }
     );
 
     expect(generated.services).toBeUndefined();
-    expect(generated.triggers).toEqual({ crons: ['* * * * *'] });
+    expect(generated.triggers).toBeUndefined();
     expect(generated.vars).toMatchObject({
       AUTHRIM_ENVIRONMENT_NAME: 'smoke-test',
       SMOKE_RPC_SIGNING_ACTIVE_SLOT: 'A',

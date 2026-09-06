@@ -350,7 +350,12 @@ describe('generic admin job executor', () => {
           policy: 'deletion_before_purge',
           tables: {
             core: ['identity_accounts'],
-            pii: ['identity_sensitive_values', 'subject_identifiers', 'audit_log_pii'],
+            pii: [
+              'identity_sensitive_values',
+              'subject_identifiers',
+              'pairwise_subject_identifiers',
+              'audit_log_pii',
+            ],
           },
           reason: 'tenant deletion pre-purge backup',
         }),
@@ -364,7 +369,15 @@ describe('generic admin job executor', () => {
       { tenant_id: 'tenant-a', user_id: 'user-1', email: 'user@example.test' },
     ]);
     mockTenantPiiAdapter.query.mockResolvedValueOnce([
-      { id: 'subject-1', user_id: 'user-1', subject: 'pairwise-subject' },
+      { id: 'identifier-1', tenant_id: 'tenant-a', subject_id: 'user-1' },
+    ]);
+    mockTenantPiiAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'subject-1',
+        tenant_id: 'tenant-a',
+        user_id: 'user-1',
+        subject: 'pairwise-subject',
+      },
     ]);
     mockTenantPiiAdapter.query.mockResolvedValueOnce([
       { id: 'audit-1', tenant_id: 'tenant-a', action: 'pii_accessed' },
@@ -389,10 +402,14 @@ describe('generic admin job executor', () => {
       ['tenant-a', 50001]
     );
     expect(mockTenantPiiAdapter.query).toHaveBeenCalledWith(
-      `SELECT scoped.* FROM subject_identifiers AS scoped
-           INNER JOIN users_pii AS tenant_parent ON tenant_parent.id = scoped.user_id
-           WHERE tenant_parent.tenant_id = ? LIMIT ?`,
+      'SELECT * FROM subject_identifiers WHERE tenant_id = ? LIMIT ?',
       ['tenant-a', 50001]
+    );
+    expect(mockTenantPiiAdapter.query).toHaveBeenCalledWith(
+      `SELECT scoped.* FROM pairwise_subject_identifiers AS scoped
+           INNER JOIN users_pii AS tenant_parent ON tenant_parent.id = scoped.user_id
+           WHERE scoped.tenant_id = ? AND tenant_parent.tenant_id = ? LIMIT ?`,
+      ['tenant-a', 'tenant-a', 50001]
     );
     expect(mockTenantPiiAdapter.query).toHaveBeenCalledWith(
       'SELECT * FROM audit_log_pii WHERE tenant_id = ? LIMIT ?',
@@ -417,8 +434,8 @@ describe('generic admin job executor', () => {
     const resultJson = (finalUpdate?.[1] as unknown[])[2] as string;
     expect(JSON.parse(resultJson)).toMatchObject({
       summary: {
-        total_tables: 4,
-        total_rows: 4,
+        total_tables: 5,
+        total_rows: 5,
         policy: 'deletion_before_purge',
         consistency: 'maintenance_read_only',
       },
@@ -429,6 +446,11 @@ describe('generic admin job executor', () => {
         expect.objectContaining({ plane: 'core', table: 'identity_accounts', row_count: 1 }),
         expect.objectContaining({ plane: 'pii', table: 'identity_sensitive_values', row_count: 1 }),
         expect.objectContaining({ plane: 'pii', table: 'subject_identifiers', row_count: 1 }),
+        expect.objectContaining({
+          plane: 'pii',
+          table: 'pairwise_subject_identifiers',
+          row_count: 1,
+        }),
         expect.objectContaining({ plane: 'pii', table: 'audit_log_pii', row_count: 1 }),
       ],
     });

@@ -119,6 +119,8 @@ export interface GenerateWranglerConfigOptions {
   placementMode?: 'off' | 'smart';
   /** Initial-deploy escape hatch for Control smoke bindings whose targets do not exist yet. */
   includeControlSmokeBindings?: boolean;
+  /** Keep Control cron reconciliation inactive until the initial Worker inventory is deployed. */
+  includeControlCronTriggers?: boolean;
   /** Initial-deploy escape hatch for the Auth -> Management -> Auth bootstrap cycle. */
   includeAuthAccountProvisioner?: boolean;
   /** Initial-deploy escape hatch for the Bridge -> Management -> Bridge bootstrap cycle. */
@@ -670,7 +672,7 @@ export function generateWranglerConfig(
     };
   }
 
-  if (component === 'ar-control') {
+  if (component === 'ar-control' && options.includeControlCronTriggers !== false) {
     wranglerConfig.triggers = {
       crons: ['* * * * *'],
     };

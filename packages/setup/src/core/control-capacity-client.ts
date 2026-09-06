@@ -130,11 +130,11 @@ function parsePreview(
       typeof target.bindingRef !== 'string' ||
       !SAFE_BINDING.test(target.bindingRef) ||
       !['enabled', 'disabled'].includes(String(target.readReplicationMode)) ||
-      !['d1-core', 'd1-pii', 'd1-lookup'].includes(String(target.migrationStreamId)) ||
-      (target.dataRole === 'tenant_pii' && target.migrationStreamId !== 'd1-pii') ||
-      (target.dataRole === 'lookup' && target.migrationStreamId !== 'd1-lookup') ||
+      !['core-d1', 'pii-d1', 'lookup-d1'].includes(String(target.migrationStreamId)) ||
+      (target.dataRole === 'tenant_pii' && target.migrationStreamId !== 'pii-d1') ||
+      (target.dataRole === 'lookup' && target.migrationStreamId !== 'lookup-d1') ||
       (!['tenant_pii', 'lookup'].includes(String(target.dataRole)) &&
-        target.migrationStreamId !== 'd1-core')
+        target.migrationStreamId !== 'core-d1')
     ) {
       throw new Error('control_capacity_preview_invalid');
     }

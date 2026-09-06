@@ -16,6 +16,13 @@ export default defineConfig({
   resolve: {
     alias: [
       {
+        find: '@authrim/ar-lib-core/services/control-plane/migration-stream-contract',
+        replacement: path.resolve(
+          import.meta.dirname,
+          '../ar-lib-core/src/services/control-plane/migration-stream-contract.ts'
+        ),
+      },
+      {
         find: '@authrim/ar-lib-core/control-plane',
         replacement: path.resolve(
           import.meta.dirname,
@@ -27,6 +34,13 @@ export default defineConfig({
         replacement: path.resolve(
           import.meta.dirname,
           '../ar-lib-core/src/services/custom-claims/schema-catalog.ts'
+        ),
+      },
+      {
+        find: '@authrim/ar-lib-core/repositories/admin/internal-notification-event',
+        replacement: path.resolve(
+          import.meta.dirname,
+          '../ar-lib-core/src/repositories/admin/internal-notification-event.ts'
         ),
       },
     ],

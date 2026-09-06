@@ -63,31 +63,33 @@ version whose tag is reachable from remote `main`.
 
 ## Layout
 
-| Path                                 | Target database             | Notes                                                                                             |
-| ------------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------- |
-| `migrations/*.sql`                   | D1 core database            | Runtime protocol, identity, consent, flow, directory auth, and end-user auth state.               |
-| `migrations/pii/*.sql`               | D1 PII database             | Personal data, linked identities, sensitive values, and PII audit rows.                           |
-| `migrations/admin/*.sql`             | D1 admin database           | Admin users, RBAC, approvals, jobs, logging, storage, identity mapping, and admin object catalog. |
-| `migrations/control/*.sql`           | D1 control database         | Durable fleet inventory, rollout coordination, provisioning, and recovery state.                  |
-| `migrations/lookup/*.sql`            | D1 lookup database          | Identifier lookup, routing, bucket state, and retention controls.                                 |
-| `migrations/plugin-runner/*.sql`     | D1 plugin-runner database   | Plugin registry, activation, runtime resources, and delivery controls.                            |
-| `migrations/external/postgres/*.sql` | External PostgreSQL profile | Durable external core/PII schemas.                                                                |
+| Path                                | Stream / target    | Notes                                                                                             |
+| ----------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------- |
+| `migrations/core/d1/*.sql`          | `core-d1`          | Runtime protocol, identity, consent, flow, directory auth, and end-user auth state.               |
+| `migrations/pii/d1/*.sql`           | `pii-d1`           | Personal data, linked identities, sensitive values, and PII audit rows.                           |
+| `migrations/admin/d1/*.sql`         | `admin-d1`         | Admin users, RBAC, approvals, jobs, logging, storage, identity mapping, and admin object catalog. |
+| `migrations/control/d1/*.sql`       | `control-d1`       | Durable fleet inventory, rollout coordination, provisioning, and recovery state.                  |
+| `migrations/lookup/d1/*.sql`        | `lookup-d1`        | Identifier lookup, routing, bucket state, and retention controls.                                 |
+| `migrations/plugin-runner/d1/*.sql` | `plugin-runner-d1` | Plugin registry, activation, runtime resources, and delivery controls.                            |
+| `migrations/core/postgresql/*.sql`  | `core-postgresql`  | PostgreSQL core, custom-claim, and policy schema.                                                 |
+| `migrations/pii/postgresql/*.sql`   | `pii-postgresql`   | PostgreSQL PII schema.                                                                            |
 
-Top-level core migrations intentionally exclude the `admin`, `archive`,
-`external`, and `pii` directories when the D1 core runner walks this directory.
+The schema family is always the first path component. `external` is an execution/profile property,
+not a schema identity. Release manifest format 2 records `schemaFamily`, `dialect`, `targetKind`, and
+`logicalRoles`; consumers reject metadata that differs from the shared canonical stream contract.
 
 ## Authrim 0.4 fresh-install baseline files
 
-| Stream                   | File                                                              |
-| ------------------------ | ----------------------------------------------------------------- |
-| D1 core                  | `001_0_4_0_core_baseline.sql`                                     |
-| D1 PII                   | `pii/001_0_4_0_pii_baseline.sql`                                  |
-| D1 Admin                 | `admin/001_0_4_0_admin_baseline.sql`                              |
-| D1 Control               | `control/001_0_4_0_control_baseline.sql`                          |
-| D1 Lookup                | `lookup/001_0_4_0_lookup_baseline.sql`                            |
-| D1 Plugin Runner         | `plugin-runner/001_0_4_0_plugin_runner_baseline.sql`              |
-| External PostgreSQL core | `external/postgres/001_0_4_0_external_postgres_core_baseline.sql` |
-| External PostgreSQL PII  | `external/postgres/002_0_4_0_external_postgres_pii_baseline.sql`  |
+| Stream           | File                                                    |
+| ---------------- | ------------------------------------------------------- |
+| D1 core          | `core/d1/001_0_4_0_core_baseline.sql`                   |
+| D1 PII           | `pii/d1/001_0_4_0_pii_baseline.sql`                     |
+| D1 Admin         | `admin/d1/001_0_4_0_admin_baseline.sql`                 |
+| D1 Control       | `control/d1/001_0_4_0_control_baseline.sql`             |
+| D1 Lookup        | `lookup/d1/001_0_4_0_lookup_baseline.sql`               |
+| D1 Plugin Runner | `plugin-runner/d1/001_0_4_0_plugin_runner_baseline.sql` |
+| PostgreSQL core  | `core/postgresql/001_0_4_0_core_baseline.sql`           |
+| PostgreSQL PII   | `pii/postgresql/001_0_4_0_pii_baseline.sql`             |
 
 The version token in each filename is generated from the root product version (`0.4.0` becomes
 `0_4_0`). These files are new-install-only. Once 0.4.0 is published, they stay locked for the entire
@@ -197,9 +199,9 @@ contract independent of tenant count and allows one tenant to span multiple D1 d
 plan, but must currently be applied with operator-managed PostgreSQL/MySQL tooling because Hyperdrive
 bindings do not expose database credentials to the local setup process.
 
-New PostgreSQL PII migrations must be placed under `migrations/external/postgres/pii/`. Existing PII
-files at the PostgreSQL migration root are classified through their legacy names. Core and custom
-schema migrations remain at `migrations/external/postgres/`. MySQL and external audit databases are
+New PostgreSQL PII migrations must be placed under `migrations/pii/postgresql/`; core, custom, and
+policy migrations remain at `migrations/core/postgresql/`. No filename-based classification or
+legacy PostgreSQL root is used. MySQL and external audit databases are
 rejected until corresponding logical streams exist; `--external-schema-ready` cannot bypass a missing
 stream.
 

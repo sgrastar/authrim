@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,15 @@ const DIGEST = 'a'.repeat(64);
 const RELEASE_ID = '0.5.0';
 const OBJECT_KEY = `releases/${RELEASE_ID}/${DIGEST}/manifest.json`;
 const OPERATION_ID = `op_release_rollout_${'b'.repeat(32)}`;
+
+function applyControlMigrations(database: DatabaseSync): void {
+  const directory = resolve(REPO_ROOT, 'migrations/control/d1');
+  for (const file of readdirSync(directory)
+    .filter((name) => name.endsWith('.sql'))
+    .sort()) {
+    database.exec(readFileSync(resolve(directory, file), 'utf8'));
+  }
+}
 
 class BoundStatement {
   constructor(
@@ -125,11 +134,11 @@ function seed(database: DatabaseSync): void {
       environment_id, stream_id, release_id, manifest_digest, manifest_r2_object_key,
       state, active_stream_key, registered_by_operation_id, registered_at, activated_at
     ) VALUES
-      ('env-test', 'd1-core', '${RELEASE_ID}', '${DIGEST}', '${OBJECT_KEY}',
+      ('env-test', 'core-d1', '${RELEASE_ID}', '${DIGEST}', '${OBJECT_KEY}',
        'active', 'active', 'op-release', 1, 1),
-      ('env-test', 'd1-pii', '${RELEASE_ID}', '${DIGEST}', '${OBJECT_KEY}',
+      ('env-test', 'pii-d1', '${RELEASE_ID}', '${DIGEST}', '${OBJECT_KEY}',
        'active', 'active', 'op-release', 1, 1),
-      ('env-test', 'd1-lookup', '${RELEASE_ID}', '${DIGEST}', '${OBJECT_KEY}',
+      ('env-test', 'lookup-d1', '${RELEASE_ID}', '${DIGEST}', '${OBJECT_KEY}',
        'active', 'active', 'op-release', 1, 1);
     INSERT INTO control_release_migration_rollouts (
       operation_id, environment_id, source_version, target_version, release_id,
@@ -149,9 +158,9 @@ function seed(database: DatabaseSync): void {
     INSERT INTO control_operation_release_pins (
       operation_id, environment_id, stream_id, release_id, manifest_digest, pinned_at
     ) VALUES
-      ('${OPERATION_ID}', 'env-test', 'd1-core', '${RELEASE_ID}', '${DIGEST}', 10),
-      ('${OPERATION_ID}', 'env-test', 'd1-pii', '${RELEASE_ID}', '${DIGEST}', 10),
-      ('${OPERATION_ID}', 'env-test', 'd1-lookup', '${RELEASE_ID}', '${DIGEST}', 10);
+      ('${OPERATION_ID}', 'env-test', 'core-d1', '${RELEASE_ID}', '${DIGEST}', 10),
+      ('${OPERATION_ID}', 'env-test', 'pii-d1', '${RELEASE_ID}', '${DIGEST}', 10),
+      ('${OPERATION_ID}', 'env-test', 'lookup-d1', '${RELEASE_ID}', '${DIGEST}', 10);
   `);
   addTenantTarget(database, 'core', 'tenant_core/default', 'CORE_TDB_1', 'db-core');
   addTenantTarget(database, 'pii', 'tenant_pii', 'PII_TDB_1', 'db-pii');
@@ -251,9 +260,7 @@ describe('ReleaseMigrationRolloutReconciler', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec('PRAGMA foreign_keys = ON');
-    database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
-    );
+    applyControlMigrations(database);
     currentTime = 100;
     seed(database);
   });

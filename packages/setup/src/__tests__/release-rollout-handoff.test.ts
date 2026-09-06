@@ -67,7 +67,7 @@ function fixture(): {
   artifact: MigrationReleaseArtifactPlan;
 } {
   const manifest: ReleaseMigrationManifest = {
-    formatVersion: 1,
+    formatVersion: 2,
     productVersion: RELEASE_ID,
     rollout: {
       databaseExecution: 'setup_then_control',
@@ -76,15 +76,19 @@ function fixture(): {
     },
     streams: [
       {
-        id: 'd1-core',
+        id: 'core-d1',
+        schemaFamily: 'core',
         dialect: 'sqlite',
-        logicalRoles: ['core'],
+        targetKind: 'cloudflare-d1',
+        logicalRoles: ['core', 'tenant_core'],
         files: [{ path: '001.sql', checksum: 'b'.repeat(64) }],
       },
       {
-        id: 'd1-pii',
+        id: 'pii-d1',
+        schemaFamily: 'pii',
         dialect: 'sqlite',
-        logicalRoles: ['pii'],
+        targetKind: 'cloudflare-d1',
+        logicalRoles: ['pii', 'tenant_pii'],
         files: [{ path: '001.sql', checksum: 'c'.repeat(64) }],
       },
     ],
@@ -95,7 +99,7 @@ function fixture(): {
       releaseId: RELEASE_ID,
       manifestDigest: DIGEST,
       manifestObjectKey: OBJECT_KEY,
-      streamIds: ['d1-core', 'd1-pii'],
+      streamIds: ['core-d1', 'pii-d1'],
       objects: [],
     },
   };
@@ -109,7 +113,10 @@ describe('release rollout handoff', () => {
     database = new DatabaseSync(':memory:');
     database.exec('PRAGMA foreign_keys = ON');
     database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
+        'utf8'
+      )
     );
     database.exec(`
       INSERT INTO control_environments (
@@ -126,9 +133,9 @@ describe('release rollout handoff', () => {
         environment_id, stream_id, release_id, manifest_digest, manifest_r2_object_key,
         state, active_stream_key, registered_by_operation_id, registered_at, activated_at
       ) VALUES
-        ('env-test', 'd1-core', '${RELEASE_ID}', '${DIGEST}', '${OBJECT_KEY}',
+        ('env-test', 'core-d1', '${RELEASE_ID}', '${DIGEST}', '${OBJECT_KEY}',
          'active', 'active', 'op-release', 1, 1),
-        ('env-test', 'd1-pii', '${RELEASE_ID}', '${DIGEST}', '${OBJECT_KEY}',
+        ('env-test', 'pii-d1', '${RELEASE_ID}', '${DIGEST}', '${OBJECT_KEY}',
          'active', 'active', 'op-release', 1, 1);
     `);
     executeBatch = sqliteBatch(database);
@@ -144,11 +151,11 @@ describe('release rollout handoff', () => {
       targetVersion: RELEASE_ID,
       artifact,
       manifest,
-      managedStreamIds: ['d1-pii', 'd1-core'],
+      managedStreamIds: ['pii-d1', 'core-d1'],
       actorId: 'setup:update',
       now: 10,
     });
-    expect(plan.streamIds).toEqual(['d1-core', 'd1-pii']);
+    expect(plan.streamIds).toEqual(['core-d1', 'pii-d1']);
     expect(plan.operationId).toMatch(/^op_release_rollout_[a-f0-9]{32}$/u);
 
     const create = () =>
@@ -159,7 +166,7 @@ describe('release rollout handoff', () => {
         targetVersion: RELEASE_ID,
         artifact,
         manifest,
-        managedStreamIds: ['d1-core', 'd1-pii'],
+        managedStreamIds: ['core-d1', 'pii-d1'],
         actorId: 'setup:update',
         now: 10,
         executeBatch,
@@ -189,7 +196,10 @@ describe('release rollout handoff', () => {
   it('returns no active rollout before the handoff schema exists or before a handoff is created', async () => {
     const legacyDatabase = new DatabaseSync(':memory:');
     legacyDatabase.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
+        'utf8'
+      )
     );
     await expect(
       getActiveReleaseRolloutHandoffStatus({
@@ -213,7 +223,7 @@ describe('release rollout handoff', () => {
     const { manifest, artifact } = fixture();
     database.exec(
       `DELETE FROM control_migration_release_catalog
-        WHERE environment_id = 'env-test' AND stream_id = 'd1-pii'`
+        WHERE environment_id = 'env-test' AND stream_id = 'pii-d1'`
     );
 
     await expect(
@@ -224,7 +234,7 @@ describe('release rollout handoff', () => {
         targetVersion: RELEASE_ID,
         artifact,
         manifest,
-        managedStreamIds: ['d1-core', 'd1-pii'],
+        managedStreamIds: ['core-d1', 'pii-d1'],
         actorId: 'setup:update',
         now: 10,
         executeBatch,
@@ -279,7 +289,7 @@ describe('release rollout handoff', () => {
         targetVersion: RELEASE_ID,
         artifact,
         manifest,
-        managedStreamIds: ['d1-core'],
+        managedStreamIds: ['core-d1'],
         actorId: 'setup:update',
         now: 10,
         executeBatch,
@@ -315,7 +325,7 @@ describe('release rollout handoff', () => {
       targetVersion: RELEASE_ID,
       artifact,
       manifest,
-      managedStreamIds: ['d1-core'],
+      managedStreamIds: ['core-d1'],
       actorId: 'setup:update',
       now: 10,
       executeBatch,
@@ -347,7 +357,7 @@ describe('release rollout handoff', () => {
       targetVersion: RELEASE_ID,
       artifact,
       manifest,
-      managedStreamIds: ['d1-core', 'd1-pii'],
+      managedStreamIds: ['core-d1', 'pii-d1'],
       actorId: 'setup:update',
       now: 10,
       executeBatch,
@@ -443,7 +453,7 @@ describe('release rollout handoff', () => {
       targetVersion: RELEASE_ID,
       artifact,
       manifest,
-      managedStreamIds: ['d1-core'],
+      managedStreamIds: ['core-d1'],
       actorId: 'setup:update',
       now: 10,
       executeBatch,

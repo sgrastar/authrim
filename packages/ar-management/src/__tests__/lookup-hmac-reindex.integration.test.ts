@@ -133,7 +133,7 @@ describe('Lookup HMAC reindex processor', () => {
     core = new DatabaseSync(':memory:');
     lookup = new DatabaseSync(':memory:');
     lookup.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_0_4_0_lookup_baseline.sql'), 'utf8')
+      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/d1/001_0_4_0_lookup_baseline.sql'), 'utf8')
         .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
         .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );

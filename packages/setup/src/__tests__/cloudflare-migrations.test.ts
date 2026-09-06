@@ -13,6 +13,7 @@ import {
   listD1MigrationSqlFiles,
 } from '../core/cloudflare.js';
 import { createDefaultConfig } from '../core/config.js';
+import { generateReleaseMigrationManifest } from '../core/release-migrations.js';
 import { renderPortableMigrationSql } from '../core/sql-portability.js';
 import { BUILTIN_PROFILE_CLAIM_SCHEMAS } from '@authrim/ar-lib-core/services/custom-claims/schema-catalog';
 
@@ -46,35 +47,27 @@ function readSqliteJson<T>(sqlite3Path: string, dbPath: string, sql: string): T 
 
 const rootMigrationsDir = fileURLToPath(new URL('../../../../migrations', import.meta.url));
 const docsTestingDir = fileURLToPath(new URL('../../../../docs/testing', import.meta.url));
-const coreMigrationExclusions = new Set([
-  'admin',
-  'archive',
-  'control',
-  'external',
-  'lookup',
-  'pii',
-  'plugin-runner',
-  'releases',
-]);
 const sqliteMigrationApplyTimeoutMs = 20_000;
 
 function activeCoreMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(rootMigrationsDir, {
-    excludeTopLevelDirectories: coreMigrationExclusions,
-  });
+  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'core/d1')).map(
+    (file) => `core/d1/${file}`
+  );
 }
 
 function activeAdminMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'admin')).map((file) => `admin/${file}`);
+  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'admin/d1')).map(
+    (file) => `admin/d1/${file}`
+  );
 }
 
 function activePiiMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'pii')).map((file) => `pii/${file}`);
+  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'pii/d1')).map((file) => `pii/d1/${file}`);
 }
 
 function activePluginRunnerMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'plugin-runner')).map(
-    (file) => `plugin-runner/${file}`
+  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'plugin-runner/d1')).map(
+    (file) => `plugin-runner/d1/${file}`
   );
 }
 
@@ -281,7 +274,7 @@ describe('Control plane drift notification migration', () => {
       return;
     }
 
-    const migrationPath = 'admin/001_0_4_0_admin_baseline.sql';
+    const migrationPath = 'admin/d1/001_0_4_0_admin_baseline.sql';
     const tempDir = mkdtempSync(join(tmpdir(), 'authrim-control-drift-notification-'));
     const dbPath = join(tempDir, 'test.db');
 
@@ -333,8 +326,8 @@ describe('Control plane drift notification migration', () => {
 describe('calculateD1MigrationChecksum', () => {
   it('keeps the current 0.4.0 core baseline candidate checksum stable', () => {
     expect(
-      calculateD1MigrationChecksum(join(rootMigrationsDir, '001_0_4_0_core_baseline.sql'))
-    ).toBe('9892b05789becbebc7c8627cb1a3d3ef2a5d35ec5df1b4c8ab59974ed77d7bcf');
+      calculateD1MigrationChecksum(join(rootMigrationsDir, 'core/d1/001_0_4_0_core_baseline.sql'))
+    ).toBe('11a7eeb61266e9386e2fac051508d403231cf81be9a4a7cc9eadb83bec8808d0');
   });
 
   it('changes when rendered migration SQL changes', () => {
@@ -459,10 +452,8 @@ describe('migration seed SQL portability', () => {
   );
 
   it('includes credential-profile Flow assignment targets in both final baselines', () => {
-    const coreBaseline = readMigration('001_0_4_0_core_baseline.sql');
-    const postgresBaseline = readMigration(
-      'external/postgres/001_0_4_0_external_postgres_core_baseline.sql'
-    );
+    const coreBaseline = readMigration('core/d1/001_0_4_0_core_baseline.sql');
+    const postgresBaseline = readMigration('core/postgresql/001_0_4_0_core_baseline.sql');
 
     expect(coreBaseline).toContain("'credential_profile'");
     expect(postgresBaseline).toContain("'credential_profile'");
@@ -494,7 +485,7 @@ describe('migration seed SQL portability', () => {
   });
 
   it('does not auto-seed OIDC custom claim schemas from core migrations', () => {
-    const sql = readMigration('001_0_4_0_core_baseline.sql');
+    const sql = readMigration('core/d1/001_0_4_0_core_baseline.sql');
 
     expect(sql).not.toContain('Seed default OIDC claim schemas');
     expect(sql).not.toContain("'system_claim_' || t.id || '_name'");
@@ -607,14 +598,14 @@ describe('migration seed SQL portability', () => {
   it('seeds the eight built-ins during a manifest-based fresh install before the draft is finalized', () => {
     const sqlite3Path = findSqlite3();
     if (!sqlite3Path) return;
-    const manifest = JSON.parse(
-      readFileSync(join(rootMigrationsDir, 'release-manifest.draft.json'), 'utf-8')
-    ) as {
-      streams: Array<{ id: string; files: Array<{ path: string }> }>;
-    };
+    const manifest = generateReleaseMigrationManifest({
+      migrationsRoot: rootMigrationsDir,
+      productVersion: '0.4.0',
+      semanticBaselineSource: true,
+    });
     const coreFiles = manifest.streams
-      .find((stream) => stream.id === 'd1-core')
-      ?.files.map((file) => file.path);
+      .find((stream) => stream.id === 'core-d1')
+      ?.files.map((file) => `core/d1/${file.path}`);
     expect(coreFiles?.length).toBeGreaterThan(0);
 
     const tempDir = mkdtempSync(join(tmpdir(), 'authrim-manifest-builtin-profile-schema-'));
@@ -655,7 +646,7 @@ describe('migration seed SQL portability', () => {
   });
 
   it('uses triggers instead of the removed plugin rollout partial index', () => {
-    const baselineSql = readMigration('plugin-runner/001_0_4_0_plugin_runner_baseline.sql');
+    const baselineSql = readMigration('plugin-runner/d1/001_0_4_0_plugin_runner_baseline.sql');
     expect(baselineSql).not.toContain('idx_plugin_runner_dynamic_rollout_active_plugin');
     expect(baselineSql).toContain('trg_plugin_runner_dynamic_rollout_running_insert');
     expect(baselineSql).toContain('trg_plugin_runner_dynamic_rollout_running_update');
@@ -1227,9 +1218,7 @@ INSERT INTO screens (
   );
 
   it('keeps external Postgres linked identities compatible with the PII schema', () => {
-    const postgresMigration = readMigration(
-      'external/postgres/002_0_4_0_external_postgres_pii_baseline.sql'
-    );
+    const postgresMigration = readMigration('pii/postgresql/001_0_4_0_pii_baseline.sql');
 
     for (const column of [
       'email_verified',

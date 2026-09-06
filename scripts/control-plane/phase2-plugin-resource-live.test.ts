@@ -130,7 +130,7 @@ describe('Phase 2 plugin resource live fixture', () => {
             logicalResourceId: 'plugin_state',
             binding: 'PLUGIN_STATE',
             kind: 'd1',
-            migrationStream: 'd1-plugin-runner',
+            migrationStream: 'plugin-runner-d1',
           },
           {
             logicalResourceId: 'plugin_cache',

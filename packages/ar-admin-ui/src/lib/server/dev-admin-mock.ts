@@ -11011,7 +11011,7 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 			databaseName: `authrim-development-${roleName}-jp-dev-${index + 1}`,
 			bindingRef: `DEVELOPMENT_TDB_${roleName.toUpperCase()}_DEV_${index + 1}_CORE`,
 			readReplicationMode: 'disabled',
-			migrationStreamId: 'd1-core'
+			migrationStreamId: 'core-d1'
 		}));
 		const preview = {
 			dryRun: true,

@@ -10,9 +10,14 @@ import {
   type ControlBootstrapOwnershipResource,
 } from '@authrim/ar-lib-core/control-plane';
 import {
+  LOOKUP_MAX_VIRTUAL_BUCKET,
+  LOOKUP_VIRTUAL_BUCKET_COUNT,
+} from '@authrim/ar-lib-core/services/lookup-directory/contract';
+import {
   BootstrapHandoffVerifier,
   D1BootstrapHandoffRepository,
 } from '@authrim/ar-control/bootstrap-handoff';
+import { D1WorkerBindingRepository } from '@authrim/ar-control/worker-binding-repository';
 import type { AuthrimLock } from './lock.js';
 import {
   executeSetupControlOperatorWorkerBindings,
@@ -85,6 +90,10 @@ class OperatorD1PreparedStatement {
       results: (result.results ?? []) as T[],
       meta: result.meta ?? {},
     };
+  }
+
+  async run(): Promise<{ success: true; results: unknown[]; meta: unknown }> {
+    return this.all<unknown>();
   }
 }
 
@@ -226,6 +235,7 @@ export async function reconcileInitialBootstrapHandoffAsOperator(input: {
   onProgress?: (message: string) => void;
 }): Promise<{ attempted: number; accepted: number; blocked: number; retrying: number }> {
   const { accountId, client } = await createInitialBootstrapOperatorClient(input);
+  const now = input.now ?? (() => Math.floor(Date.now() / 1000));
   if (input.executeWorkerBindings) {
     if (!input.controlDatabaseName || !input.environmentId) {
       throw new Error('control_bootstrap_operator_binding_context_missing');
@@ -240,6 +250,12 @@ export async function reconcileInitialBootstrapHandoffAsOperator(input: {
     });
   }
   const repository = createOperatorBootstrapHandoffRepository(input.controlDatabaseId, client);
+  const bindingRepository = new D1WorkerBindingRepository(
+    new OperatorD1Database(input.controlDatabaseId, client) as unknown as ConstructorParameters<
+      typeof D1WorkerBindingRepository
+    >[0]
+  );
+  await bindingRepository.recoverCompletedOperations(input.environmentId ?? null, now());
   return new BootstrapHandoffVerifier(
     repository,
     {
@@ -248,7 +264,7 @@ export async function reconcileInitialBootstrapHandoffAsOperator(input: {
       getWorkerSettings: (scriptName) => client.getWorkerSettings(scriptName),
       listWorkerDeployments: (scriptName) => client.listWorkerDeployments(scriptName),
     },
-    input.now ?? (() => Math.floor(Date.now() / 1000))
+    now
   ).reconcile(1);
 }
 
@@ -413,7 +429,8 @@ function resourceSql(
          ${sqlString(plan.binding)}, ${sqlString(plan.desiredResourceId)}, 'ready', ${now}, ${now}
        );`,
       `WITH RECURSIVE buckets(virtual_bucket) AS (
-         SELECT 0 UNION ALL SELECT virtual_bucket + 1 FROM buckets WHERE virtual_bucket < 4095
+         SELECT 0 UNION ALL SELECT virtual_bucket + 1 FROM buckets
+          WHERE virtual_bucket < ${LOOKUP_MAX_VIRTUAL_BUCKET}
        )
        INSERT OR IGNORE INTO control_lookup_bucket_assignments (
          environment_id, virtual_bucket, lookup_shard_id, assignment_generation,
@@ -435,14 +452,24 @@ function resourceSql(
          ${sqlString(plan.binding)}, ${sqlString(plan.desiredResourceId)},
          'disabled', 'disabled', 'ready', ${sqlString(placementPolicy)}, ${tenantExclusive ? sqlString(tenantId) : 'NULL'}, ${now}, ${now}
        );`,
-      `INSERT OR IGNORE INTO control_tenant_shard_assignments (
+      `INSERT INTO control_tenant_shard_assignments (
          environment_id, tenant_id, data_role, residency_policy_id, residency_partition,
          shard_id, assignment_generation, assignment_state, source_operation_id,
          created_at, activated_at, updated_at
-       ) VALUES (
+       ) SELECT
          ${sqlString(environmentId)}, ${sqlString(tenantId)}, ${sqlString(plan.role)},
          'builtin:residency:default', 'default', ${sqlString(plan.shardId!)}, 1, 'active',
          ${sqlString(plan.operationId)}, ${now}, ${now}, ${now}
+       WHERE NOT EXISTS (
+         SELECT 1 FROM control_tenant_shard_assignments existing
+          WHERE existing.environment_id = ${sqlString(environmentId)}
+            AND existing.tenant_id = ${sqlString(tenantId)}
+            AND existing.data_role = ${sqlString(plan.role)}
+            AND existing.residency_policy_id = 'builtin:residency:default'
+            AND existing.residency_partition = 'default'
+            AND existing.shard_id = ${sqlString(plan.shardId!)}
+            AND existing.assignment_generation = 1
+            AND existing.assignment_state = 'active'
        );`
     );
   }
@@ -720,7 +747,7 @@ export async function registerInitialControlTopology(input: {
     count(row.active_assignment_count) !== 3 ||
     count(row.default_route_count) !== 1 ||
     count(row.lookup_count) !== 1 ||
-    count(row.bucket_count) !== 4096
+    count(row.bucket_count) !== LOOKUP_VIRTUAL_BUCKET_COUNT
   ) {
     throw new Error('control_bootstrap_topology_registration_mismatch');
   }
@@ -817,6 +844,7 @@ export async function listInitialBootstrapReconciledWorkerVersions(input: {
     `SELECT DISTINCT worker_script_name, patch_result_version_id
        FROM control_worker_binding_reconciliations
       WHERE environment_id = ${sqlString(input.environmentId)}
+        AND operation_id GLOB 'op_bootstrap_*'
         AND state IN ('settings_patched', 'smoke_verifying', 'stabilizing', 'succeeded')
         AND patch_result_version_id IS NOT NULL`
   );
@@ -882,6 +910,7 @@ export async function recordInitialBootstrapWorkerEvidence(input: {
         `SELECT worker_script_name, patch_result_deployment_id, patch_result_version_id
            FROM control_worker_binding_reconciliations
           WHERE environment_id = ${sqlString(input.environmentId)}
+            AND operation_id GLOB 'op_bootstrap_*'
             AND state = 'succeeded'
             AND patch_result_deployment_id IS NOT NULL
             AND patch_result_version_id IS NOT NULL`
@@ -972,7 +1001,16 @@ export async function recordInitialBootstrapWorkerEvidence(input: {
          verification_error_code = NULL,
          observed_at = NULL,
          updated_at = excluded.updated_at
-       WHERE EXISTS (
+       WHERE (
+         control_bootstrap_worker_evidence.expected_deployment_id <>
+           excluded.expected_deployment_id
+         OR control_bootstrap_worker_evidence.expected_version_id <>
+           excluded.expected_version_id
+         OR control_bootstrap_worker_evidence.expected_settings_digest <>
+           excluded.expected_settings_digest
+         OR control_bootstrap_worker_evidence.state NOT IN ('pending', 'verified')
+       )
+       AND EXISTS (
          SELECT 1 FROM control_bootstrap_handoffs handoff
           WHERE handoff.environment_id = excluded.environment_id
             AND (
@@ -987,10 +1025,101 @@ export async function recordInitialBootstrapWorkerEvidence(input: {
        );`
     )
     .join('\n');
+  const recoverablePredeployOperation = `operation.environment_id = ${sqlString(input.environmentId)}
+          AND operation.operation_kind = 'provision_shard'
+          AND operation.operation_id GLOB 'op_bootstrap_*'
+          AND operation.status = 'blocked'
+          AND operation.last_error_code = 'control_worker_settings_request_rejected'
+          AND EXISTS (
+            SELECT 1 FROM control_worker_binding_reconciliations target
+             WHERE target.operation_id = operation.operation_id
+               AND target.last_error_code = 'control_worker_settings_request_rejected'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM control_worker_binding_reconciliations target
+             WHERE target.operation_id = operation.operation_id
+               AND (
+                 target.state <> 'pending'
+                 OR target.expected_source_version_id IS NOT NULL
+                 OR target.previous_deployment_id IS NOT NULL
+                 OR target.patch_result_version_id IS NOT NULL
+                 OR target.patch_result_deployment_id IS NOT NULL
+                 OR target.previous_restore_settings_json IS NOT NULL
+                 OR target.last_error_code NOT IN ('control_worker_settings_request_rejected')
+               )
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM control_worker_binding_reconciliations target
+             LEFT JOIN control_bootstrap_worker_evidence evidence
+               ON evidence.environment_id = target.environment_id
+              AND evidence.worker_script_name = target.worker_script_name
+              AND evidence.state IN ('pending', 'verified')
+            WHERE target.operation_id = operation.operation_id
+              AND evidence.worker_script_name IS NULL
+          )`;
+  const selectedPredeployOperation = `operation.environment_id = ${sqlString(input.environmentId)}
+          AND operation.operation_kind = 'provision_shard'
+          AND operation.operation_id GLOB 'op_bootstrap_*'
+          AND operation.status = 'blocked'
+          AND operation.last_error_code = 'control_worker_settings_request_rejected'
+          AND EXISTS (
+            SELECT 1 FROM control_audit_events recovery
+             WHERE recovery.event_id =
+                   'audit:' || operation.operation_id || ':predeploy-worker-retry'
+               AND recovery.environment_id = operation.environment_id
+               AND recovery.operation_id = operation.operation_id
+               AND recovery.event_type = 'control.bootstrap.predeploy_worker_retry'
+               AND recovery.outcome = 'succeeded'
+          )`;
+  const recoverPredeployBindings = `
+     INSERT OR IGNORE INTO control_audit_events (
+       event_id, environment_id, operation_id, event_type, actor_type, actor_id,
+       resource_kind, resource_id, outcome, redacted_payload_json, created_at
+     )
+     SELECT 'audit:' || operation.operation_id || ':predeploy-worker-retry',
+            operation.environment_id, operation.operation_id,
+            'control.bootstrap.predeploy_worker_retry', 'setup', 'setup:deploy',
+            'worker_binding', operation.operation_id, 'succeeded',
+            json_object('reason_code', 'worker_became_available_after_initial_deploy'), ${now}
+       FROM control_operations operation
+      WHERE ${recoverablePredeployOperation};
+
+     UPDATE control_tenant_shards
+        SET status = 'ready', updated_at = ${now}
+      WHERE status = 'failed'
+        AND d1_desired_resource_id IN (
+          SELECT migration.desired_resource_id
+            FROM control_tenant_database_migration_state migration
+            JOIN control_operations operation ON operation.operation_id = migration.operation_id
+           WHERE ${selectedPredeployOperation}
+             AND migration.state = 'ready'
+        );
+
+     UPDATE control_operation_steps
+        SET status = 'running', last_error_code = NULL, last_error_redacted = NULL,
+            next_attempt_at = NULL, updated_at = ${now}
+      WHERE step_key = 'reconcile_worker_bindings' AND status = 'blocked'
+        AND operation_id IN (
+          SELECT operation.operation_id FROM control_operations operation
+           WHERE ${selectedPredeployOperation}
+        );
+
+     UPDATE control_worker_binding_reconciliations
+        SET last_error_code = NULL, updated_at = ${now}
+      WHERE state = 'pending'
+        AND operation_id IN (
+          SELECT operation.operation_id FROM control_operations operation
+           WHERE ${selectedPredeployOperation}
+        );
+
+     UPDATE control_operations AS operation
+        SET status = 'running', last_error_code = NULL, last_error_redacted = NULL,
+            next_attempt_at = NULL, lock_owner = NULL, lock_expires_at = NULL, updated_at = ${now}
+      WHERE ${selectedPredeployOperation};`;
   const execute = input.execute ?? executeD1Command;
   await execute(
     input.controlDatabaseName,
-    `${statements}
+    `${statements}${recoverPredeployBindings}
      UPDATE control_bootstrap_handoffs
         SET state = 'pending_verification', observed_deployment_id = ${sqlString(control.deploymentId)},
             observed_version_id = ${sqlString(control.versionId)}, verification_error_code = NULL,
@@ -1150,9 +1279,9 @@ export async function waitForInitialBootstrapHandoff(input: {
   const deadline = startedAt + timeoutMs;
   let stallDeadline = startedAt + stallTimeoutMs;
   let lastProgressIdentity = '';
+  let evidenceProgressIdentity = '';
   let completedBindingCountAwaitingConfirmation: number | null = null;
   while (now() <= deadline) {
-    await input.advanceBindings?.();
     const [row] = await query<{
       state: string;
       verification_error_code: string | null;
@@ -1167,47 +1296,69 @@ export async function waitForInitialBootstrapHandoff(input: {
       smoke_verifying_bindings: number | string;
       stabilizing_bindings: number | string;
       succeeded_bindings: number | string;
+      total_worker_evidence: number | string;
+      verified_worker_evidence: number | string;
+      latest_worker_evidence_update: number | string | null;
     }>(
       input.controlDatabaseName,
       `SELECT handoff.state, handoff.verification_error_code, handoff.accepted_at,
               (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
-                WHERE reconciliation.environment_id = handoff.environment_id) AS total_bindings,
+                WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.operation_id GLOB 'op_bootstrap_*') AS total_bindings,
               (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
                 WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.operation_id GLOB 'op_bootstrap_*'
                   AND reconciliation.state NOT IN ('succeeded', 'blocked', 'rolled_back'))
                 AS pending_bindings,
               (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
                 WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.operation_id GLOB 'op_bootstrap_*'
                   AND reconciliation.state IN ('blocked', 'rolled_back')) AS failed_bindings,
               (SELECT reconciliation.last_error_code
                  FROM control_worker_binding_reconciliations reconciliation
                 WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.operation_id GLOB 'op_bootstrap_*'
                   AND reconciliation.state IN ('blocked', 'rolled_back')
                 ORDER BY reconciliation.updated_at DESC LIMIT 1) AS failed_binding_error_code,
               (SELECT MAX(reconciliation.updated_at)
                  FROM control_worker_binding_reconciliations reconciliation
-                WHERE reconciliation.environment_id = handoff.environment_id)
+                WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.operation_id GLOB 'op_bootstrap_*')
                 AS latest_binding_update,
               (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
                 WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.operation_id GLOB 'op_bootstrap_*'
                   AND reconciliation.state IN ('pending', 'rollback_required'))
                 AS patch_pending_bindings,
               (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
                 WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.operation_id GLOB 'op_bootstrap_*'
                   AND reconciliation.state = 'settings_patched')
                 AS patched_bindings,
               (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
                 WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.operation_id GLOB 'op_bootstrap_*'
                   AND reconciliation.state = 'smoke_verifying')
                 AS smoke_verifying_bindings,
               (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
                 WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.operation_id GLOB 'op_bootstrap_*'
                   AND reconciliation.state = 'stabilizing')
                 AS stabilizing_bindings,
               (SELECT COUNT(*) FROM control_worker_binding_reconciliations reconciliation
                 WHERE reconciliation.environment_id = handoff.environment_id
+                  AND reconciliation.operation_id GLOB 'op_bootstrap_*'
                   AND reconciliation.state = 'succeeded')
-                AS succeeded_bindings
+                AS succeeded_bindings,
+              (SELECT COUNT(*) FROM control_bootstrap_worker_evidence evidence
+                WHERE evidence.environment_id = handoff.environment_id)
+                AS total_worker_evidence,
+              (SELECT COUNT(*) FROM control_bootstrap_worker_evidence evidence
+                WHERE evidence.environment_id = handoff.environment_id
+                  AND evidence.state = 'verified') AS verified_worker_evidence,
+              (SELECT MAX(evidence.updated_at) FROM control_bootstrap_worker_evidence evidence
+                WHERE evidence.environment_id = handoff.environment_id)
+                AS latest_worker_evidence_update
          FROM control_bootstrap_handoffs handoff
         WHERE handoff.environment_id = ${sqlString(input.environmentId)}`
     );
@@ -1243,18 +1394,36 @@ export async function waitForInitialBootstrapHandoff(input: {
     const smokeVerifyingBindings = Math.max(0, Number(row.smoke_verifying_bindings) || 0);
     const stabilizingBindings = Math.max(0, Number(row.stabilizing_bindings) || 0);
     const succeededBindings = Math.max(0, Number(row.succeeded_bindings) || 0);
-    const progressIdentity = `${totalBindings}:${completedBindings}:${patchPendingBindings}:${patchedBindings}:${smokeVerifyingBindings}:${stabilizingBindings}:${succeededBindings}:${String(
+    const totalWorkerEvidence = Math.max(0, Number(row.total_worker_evidence) || 0);
+    const verifiedWorkerEvidence = Math.max(0, Number(row.verified_worker_evidence) || 0);
+    const bindingProgressIdentity = `${totalBindings}:${completedBindings}:${patchPendingBindings}:${patchedBindings}:${smokeVerifyingBindings}:${stabilizingBindings}:${succeededBindings}:${String(
       row.latest_binding_update ?? ''
+    )}`;
+    const progressIdentity = `${bindingProgressIdentity}:${totalWorkerEvidence}:${verifiedWorkerEvidence}:${String(
+      row.latest_worker_evidence_update ?? ''
     )}`;
     const progressChanged = progressIdentity !== lastProgressIdentity;
     if (progressChanged) {
       lastProgressIdentity = progressIdentity;
       stallDeadline = Math.min(deadline, now() + stallTimeoutMs);
       input.onProgress?.(
-        pendingBindings === 0 && totalBindings > 0
-          ? `Worker bindings complete: ${totalBindings}/${totalBindings}; confirming stable inventory...`
-          : `Worker binding progress: ${patchPendingBindings} awaiting PATCH, ${patchedBindings} PATCHed, ${smokeVerifyingBindings} smoke checking, ${stabilizingBindings} stabilizing, ${succeededBindings} complete (${totalBindings} total)`
+        pendingBindings === 0 && totalBindings > 0 && verifiedWorkerEvidence > 0
+          ? `Worker evidence verification: ${verifiedWorkerEvidence}/${totalWorkerEvidence} verified after ${totalBindings}/${totalBindings} bindings`
+          : pendingBindings === 0 && totalBindings > 0
+            ? `Worker bindings complete: ${totalBindings}/${totalBindings}; confirming stable inventory...`
+            : `Worker binding progress: ${patchPendingBindings} awaiting PATCH, ${patchedBindings} PATCHed, ${smokeVerifyingBindings} smoke checking, ${stabilizingBindings} stabilizing, ${succeededBindings} complete (${totalBindings} total)`
       );
+    }
+    if (!progressChanged && now() > stallDeadline) {
+      throw new Error('control_bootstrap_handoff_stalled');
+    }
+    if (totalBindings === 0 || pendingBindings > 0) {
+      // The signed accelerator is only for binding progress. Once bindings are quiescent, avoid
+      // starting a second provider-wide handoff verifier in Control while Setup performs the same
+      // bounded final verification with its operator credentials.
+      await input.advanceBindings?.();
+      await sleep(pollIntervalMs);
+      continue;
     }
     const bindingsAreQuiescent =
       pendingBindings === 0 &&
@@ -1263,13 +1432,24 @@ export async function waitForInitialBootstrapHandoff(input: {
     completedBindingCountAwaitingConfirmation =
       pendingBindings === 0 && totalBindings > 0 ? totalBindings : null;
     if (bindingsAreQuiescent) {
-      await input.refreshEvidence?.();
+      let evidenceRefreshed = false;
+      if (evidenceProgressIdentity !== bindingProgressIdentity) {
+        await input.refreshEvidence?.();
+        evidenceProgressIdentity = bindingProgressIdentity;
+        evidenceRefreshed = true;
+        input.onProgress?.('Worker binding evidence refreshed; confirming Control acceptance...');
+      }
       await input.reconcile?.();
+      // Evidence collection reads every Worker deployment and settings document and can
+      // legitimately take longer than the binding-progress stall window. A completed refresh is
+      // forward progress; repeated reconciliation calls with unchanged durable state are not.
+      if (evidenceRefreshed) {
+        stallDeadline = Math.min(deadline, now() + stallTimeoutMs);
+      }
+      await sleep(pollIntervalMs);
+      continue;
     }
     await sleep(pollIntervalMs);
-    if (now() > stallDeadline && now() <= deadline) {
-      throw new Error('control_bootstrap_handoff_stalled');
-    }
   }
   throw new Error('control_bootstrap_handoff_timeout');
 }

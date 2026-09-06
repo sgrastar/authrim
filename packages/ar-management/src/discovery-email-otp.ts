@@ -11,6 +11,7 @@ import {
   type LookupIdentifierRow,
   type ResolvedLookupMembership,
 } from '@authrim/ar-lib-core';
+import { LOOKUP_MAX_VIRTUAL_BUCKET } from '@authrim/ar-lib-core/services/lookup-directory/contract';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
 import { loadLookupHmacRuntimeKeys } from './lookup-hmac-runtime';
 
@@ -132,7 +133,7 @@ function challengeRoute(challengeId: string): {
   if (
     !Number.isSafeInteger(bucket) ||
     bucket < 0 ||
-    bucket > 4095 ||
+    bucket > LOOKUP_MAX_VIRTUAL_BUCKET ||
     !Number.isSafeInteger(generation) ||
     generation < 1
   ) {

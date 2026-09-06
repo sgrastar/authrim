@@ -10,6 +10,7 @@ import {
   AUTHRIM_MIGRATIONS_COLUMN_ALTERS,
   AUTHRIM_MIGRATIONS_TABLE_SQL,
   AUTHRIM_MIGRATION_HISTORY_SQL,
+  requireMigrationStreamId,
   validateAuthrimMigrationHistoryRows,
   type AuthrimMigrationHistoryRow,
 } from '@authrim/ar-lib-core/control-plane';
@@ -36,6 +37,7 @@ import { getPortableSqlExpressions, renderPortableMigrationSql } from './sql-por
 import {
   discoverReleaseMigrationStream,
   loadTargetReleaseMigrationManifest,
+  streamDirectory,
   type ReleaseMigrationManifest,
 } from './release-migrations.js';
 import {
@@ -73,6 +75,20 @@ export function getRequiredQueues(env: string): Array<{ binding: string; name: s
     binding: definition.binding,
     name: getQueueName(env, definition.nameSuffix),
   }));
+}
+
+export function getProvisioningResourceCount(
+  options: Pick<ProvisionOptions, 'env' | 'createD1' | 'createKV' | 'createQueues' | 'createR2'>
+): number {
+  validateEnvName(options.env);
+  return (
+    (options.createD1 === false ? 0 : D1_DATABASES.length) +
+    (options.createKV === false ? 0 : KV_NAMESPACES.length) +
+    (options.createQueues ? QUEUE_PROVISIONING_DEFINITIONS.length : 0) +
+    getRequiredR2Buckets(options.env, {
+      includeFeatureBuckets: options.createR2 !== false,
+    }).length
+  );
 }
 const QUEUE_CONSUMER_DETACH_PROPAGATION_DELAY_MS = 15_000;
 const WORKER_DELETE_PROPAGATION_DELAY_MS = 20_000;
@@ -4772,8 +4788,6 @@ export function calculateD1MigrationChecksum(sqlFilePath: string): string {
   return createHash('sha256').update(renderedSql).digest('hex');
 }
 
-const CORE_DB_EXCLUDED_MIGRATION_DIRS = new Set(['admin', 'archive', 'external', 'pii']);
-
 export interface ListD1MigrationOptions {
   excludeTopLevelDirectories?: ReadonlySet<string>;
   manifestFiles?: ReadonlyArray<{
@@ -6522,7 +6536,6 @@ export async function runMigrationsForEnvironment(
   admin: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
 }> {
   const { existsSync } = await import('node:fs');
-  const { join } = await import('node:path');
 
   // Database names for this environment
   const coreDbName = getD1DatabaseName(env, 'core-db');
@@ -6595,9 +6608,10 @@ export async function runMigrationsForEnvironment(
 
   // Run core database migrations
   onProgress?.(`📜 Running migrations for ${coreDbName}...`);
-  const coreResult = await runD1Migrations(coreDbIdentifier, migrationsRoot, onProgress, {
-    ...releaseOptionsFor('d1-core'),
-    excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS,
+  const coreMigrationsDir = streamDirectory(migrationsRoot, 'core-d1');
+  if (!coreMigrationsDir) throw new Error('release_migration_stream_not_found:core-d1');
+  const coreResult = await runD1Migrations(coreDbIdentifier, coreMigrationsDir, onProgress, {
+    ...releaseOptionsFor('core-d1'),
   });
   if (!coreResult.success) {
     onProgress?.(`  ❌ Core migration failed: ${coreResult.error}`);
@@ -6608,7 +6622,8 @@ export async function runMigrationsForEnvironment(
   }
 
   // Run PII database migrations
-  const piiMigrationsDir = join(migrationsRoot, 'pii');
+  const piiMigrationsDir = streamDirectory(migrationsRoot, 'pii-d1');
+  if (!piiMigrationsDir) throw new Error('release_migration_stream_not_found:pii-d1');
   onProgress?.(`📜 Running migrations for ${piiDbName}...`);
 
   let piiResult: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
@@ -6617,7 +6632,7 @@ export async function runMigrationsForEnvironment(
     piiResult = { success: true, appliedCount: 0, skippedCount: 0 };
   } else {
     piiResult = await runD1Migrations(piiDbIdentifier, piiMigrationsDir, onProgress, {
-      ...releaseOptionsFor('d1-pii'),
+      ...releaseOptionsFor('pii-d1'),
     });
     if (!piiResult.success) {
       onProgress?.(`  ❌ PII migration failed: ${piiResult.error}`);
@@ -6629,7 +6644,8 @@ export async function runMigrationsForEnvironment(
   }
 
   // Run Admin database migrations
-  const adminMigrationsDir = join(migrationsRoot, 'admin');
+  const adminMigrationsDir = streamDirectory(migrationsRoot, 'admin-d1');
+  if (!adminMigrationsDir) throw new Error('release_migration_stream_not_found:admin-d1');
   onProgress?.(`📜 Running migrations for ${adminDbName}...`);
 
   let adminResult: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
@@ -6638,7 +6654,7 @@ export async function runMigrationsForEnvironment(
     adminResult = { success: true, appliedCount: 0, skippedCount: 0 };
   } else {
     adminResult = await runD1Migrations(adminDbIdentifier, adminMigrationsDir, onProgress, {
-      ...releaseOptionsFor('d1-admin'),
+      ...releaseOptionsFor('admin-d1'),
     });
     if (!adminResult.success) {
       onProgress?.(`  ❌ Admin migration failed: ${adminResult.error}`);
@@ -6678,7 +6694,6 @@ export async function getD1MigrationStatusForEnvironment(
   onProgress?: (message: string) => void,
   release?: EnvironmentReleaseMigrationOptions
 ): Promise<D1MigrationEnvironmentStatus> {
-  const { join } = await import('node:path');
   const root = await resolveMigrationRootOrError(rootDir, onProgress, {
     strictRoot: release?.strictMigrationsRoot === true,
   });
@@ -6706,31 +6721,30 @@ export async function getD1MigrationStatusForEnvironment(
       role: 'core' as const,
       name: coreDbName,
       identifier: resolveEnvironmentMigrationDatabaseIdentifier({ env, role: 'core', release }),
-      migrationsDir: root.migrationsRoot,
+      migrationsDir: streamDirectory(root.migrationsRoot, 'core-d1')!,
       options: {
-        excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS,
         materializeSuperseded: true,
-        manifestFiles: manifestFilesFor('d1-core'),
+        manifestFiles: manifestFilesFor('core-d1'),
       },
     },
     {
       role: 'pii' as const,
       name: piiDbName,
       identifier: resolveEnvironmentMigrationDatabaseIdentifier({ env, role: 'pii', release }),
-      migrationsDir: join(root.migrationsRoot, 'pii'),
+      migrationsDir: streamDirectory(root.migrationsRoot, 'pii-d1')!,
       options: {
         materializeSuperseded: true,
-        manifestFiles: manifestFilesFor('d1-pii'),
+        manifestFiles: manifestFilesFor('pii-d1'),
       },
     },
     {
       role: 'admin' as const,
       name: adminDbName,
       identifier: resolveEnvironmentMigrationDatabaseIdentifier({ env, role: 'admin', release }),
-      migrationsDir: join(root.migrationsRoot, 'admin'),
+      migrationsDir: streamDirectory(root.migrationsRoot, 'admin-d1')!,
       options: {
         materializeSuperseded: true,
-        manifestFiles: manifestFilesFor('d1-admin'),
+        manifestFiles: manifestFilesFor('admin-d1'),
       },
     },
   ];
@@ -6770,7 +6784,6 @@ export async function runD1MigrationsForEnvironmentSelection(input: {
   error?: string;
 }> {
   const { existsSync } = await import('node:fs');
-  const { join } = await import('node:path');
   const onlyFiles = input.filenames?.length ? new Set(input.filenames) : undefined;
 
   if (!input.role && !onlyFiles) {
@@ -6809,13 +6822,18 @@ export async function runD1MigrationsForEnvironmentSelection(input: {
       role,
       release: input.release,
     });
-    const migrationsDir = role === 'core' ? root.migrationsRoot : join(root.migrationsRoot, role);
+    const streamId = requireMigrationStreamId({
+      logicalRole: role,
+      targetKind: 'cloudflare-d1',
+    });
+    const migrationsDir = streamDirectory(root.migrationsRoot, streamId);
+    if (!migrationsDir) {
+      return { success: false, error: `release_migration_stream_not_found:${streamId}` };
+    }
     const options: RunD1MigrationOptions = {
       onlyFiles,
-      ...(role === 'core' ? { excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS } : {}),
     };
     if (exactManifest && input.release) {
-      const streamId = role === 'core' ? 'd1-core' : role === 'pii' ? 'd1-pii' : 'd1-admin';
       const stream = exactManifest.streams.find((candidate) => candidate.id === streamId);
       if (!stream) {
         return { success: false, error: `release_migration_stream_not_found:${streamId}` };
@@ -8633,10 +8651,11 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     r2: [],
   };
 
-  // Calculate totals for progress tracking
-  const d1Count = D1_DATABASES.length;
-  const kvCount = KV_NAMESPACES.length;
-  const totalResources = d1Count + kvCount;
+  // Calculate the same resource set this operation will actually provision. R2 baseline
+  // infrastructure is always present, while feature buckets and Queues follow their options.
+  const d1Count = options.createD1 === false ? 0 : D1_DATABASES.length;
+  const kvCount = options.createKV === false ? 0 : KV_NAMESPACES.length;
+  const totalResources = getProvisioningResourceCount(options);
   let _completedResources = 0;
 
   onProgress(`📦 Provisioning ${totalResources} resources...`);

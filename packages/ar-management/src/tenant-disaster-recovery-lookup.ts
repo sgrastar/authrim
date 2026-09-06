@@ -17,6 +17,10 @@ import {
   type LookupShardRegistryRange,
   type ResolvedLookupMembership,
 } from '@authrim/ar-lib-core';
+import {
+  LOOKUP_MAX_VIRTUAL_BUCKET,
+  LOOKUP_VIRTUAL_BUCKET_COUNT,
+} from '@authrim/ar-lib-core/services/lookup-directory/contract';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
 import { loadLookupHmacRuntimeKeys } from './lookup-hmac-runtime';
 
@@ -105,7 +109,7 @@ async function sha256(value: string): Promise<string> {
 }
 
 function canonicalRanges(ranges: LookupShardRegistryRange[]): LookupShardRegistryRange[] {
-  if (ranges.length < 1 || ranges.length > 4096) {
+  if (ranges.length < 1 || ranges.length > LOOKUP_VIRTUAL_BUCKET_COUNT) {
     throw new Error('tenant_dr_lookup_ranges_invalid');
   }
   let nextBucket = 0;
@@ -114,7 +118,7 @@ function canonicalRanges(ranges: LookupShardRegistryRange[]): LookupShardRegistr
       range.startBucket !== nextBucket ||
       !Number.isSafeInteger(range.endBucket) ||
       range.endBucket < range.startBucket ||
-      range.endBucket > 4095 ||
+      range.endBucket > LOOKUP_MAX_VIRTUAL_BUCKET ||
       !SAFE_ID.test(range.lookupShardId) ||
       !SAFE_BINDING.test(range.bindingRef) ||
       !Number.isSafeInteger(range.assignmentGeneration) ||
@@ -123,7 +127,7 @@ function canonicalRanges(ranges: LookupShardRegistryRange[]): LookupShardRegistr
       throw new Error('tenant_dr_lookup_ranges_invalid');
     }
     nextBucket = range.endBucket + 1;
-    if (index === ranges.length - 1 && range.endBucket !== 4095) {
+    if (index === ranges.length - 1 && range.endBucket !== LOOKUP_MAX_VIRTUAL_BUCKET) {
       throw new Error('tenant_dr_lookup_ranges_invalid');
     }
     return { ...range };
@@ -661,7 +665,8 @@ function validateVerificationRow(
   if (
     row.tenant_id !== work.tenantId ||
     !/^[a-f0-9]{64}$/u.test(row.identifier_blind_digest) ||
-    integer(row.virtual_bucket, 0, 'tenant_dr_lookup_verification_row_invalid') > 4095 ||
+    integer(row.virtual_bucket, 0, 'tenant_dr_lookup_verification_row_invalid') >
+      LOOKUP_MAX_VIRTUAL_BUCKET ||
     integer(row.normalization_version, 1, 'tenant_dr_lookup_verification_row_invalid') < 1 ||
     integer(row.hmac_key_generation, 1, 'tenant_dr_lookup_verification_row_invalid') < 1 ||
     row.tenant_lifecycle_state !== 'active' ||

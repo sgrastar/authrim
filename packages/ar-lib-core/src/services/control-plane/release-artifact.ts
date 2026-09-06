@@ -1,4 +1,17 @@
 import type { R2Bucket } from '@cloudflare/workers-types';
+import {
+  MIGRATION_LOGICAL_ROLES,
+  MIGRATION_MANIFEST_DIALECTS,
+  MIGRATION_SCHEMA_FAMILIES,
+  MIGRATION_TARGET_KINDS,
+  isMigrationStreamId,
+  migrationStreamContract,
+  type MigrationLogicalRole,
+  type MigrationManifestDialect,
+  type MigrationSchemaFamily,
+  type MigrationStreamId,
+  type MigrationTargetKind,
+} from './migration-stream-contract.js';
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const STREAM_ID_SEGMENT_PATTERN = /^[a-z0-9][a-z0-9.-]{0,63}$/u;
@@ -68,12 +81,15 @@ interface ManifestFile {
 
 interface ManifestStream {
   id: string;
-  dialect: 'sqlite' | 'postgres' | 'mysql';
+  schemaFamily: MigrationSchemaFamily;
+  dialect: MigrationManifestDialect;
+  targetKind: MigrationTargetKind;
+  logicalRoles: MigrationLogicalRole[];
   files: ManifestFile[];
 }
 
 interface MigrationManifest {
-  formatVersion: 1;
+  formatVersion: 2;
   productVersion: string;
   rollout: MigrationReleaseRolloutPolicy;
   streams: ManifestStream[];
@@ -91,16 +107,20 @@ const DEFAULT_ROLLOUT_POLICY: MigrationReleaseRolloutPolicy = {
   adminMutationMode: 'read_only',
 };
 
-function isValidStreamId(value: string): boolean {
-  if (value.length === 0 || value.length > MAX_STREAM_ID_BYTES) return false;
-  const segments = value.split('/');
-  return (
-    segments.length <= 4 && segments.every((segment) => STREAM_ID_SEGMENT_PATTERN.test(segment))
-  );
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isNamespacedPluginStreamId(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_STREAM_ID_BYTES) {
+    return false;
+  }
+  const segments = value.split('/');
+  return (
+    segments.length === 3 &&
+    segments[0] === 'plugin' &&
+    segments.every((segment) => STREAM_ID_SEGMENT_PATTERN.test(segment))
+  );
 }
 
 function assertSafeObjectKey(value: string): void {
@@ -153,14 +173,41 @@ function parseManifestFile(value: unknown): ManifestFile {
 }
 
 function parseManifestStream(value: unknown): ManifestStream {
-  if (!isRecord(value) || typeof value.id !== 'string' || !isValidStreamId(value.id)) {
+  if (
+    !isRecord(value) ||
+    (!isMigrationStreamId(value.id) && !isNamespacedPluginStreamId(value.id))
+  ) {
     throw new Error('migration_artifact_manifest_invalid');
   }
+  const contract = isMigrationStreamId(value.id)
+    ? migrationStreamContract(value.id)
+    : {
+        id: value.id,
+        schemaFamily: 'plugin_runner' as const,
+        dialect: 'sqlite' as const,
+        targetKind: 'cloudflare-d1' as const,
+        logicalRoles: ['plugin_runner'] as const,
+      };
   if (
-    !['sqlite', 'postgres', 'mysql'].includes(String(value.dialect)) ||
+    !MIGRATION_SCHEMA_FAMILIES.includes(value.schemaFamily as MigrationSchemaFamily) ||
+    !MIGRATION_MANIFEST_DIALECTS.includes(value.dialect as MigrationManifestDialect) ||
+    !MIGRATION_TARGET_KINDS.includes(value.targetKind as MigrationTargetKind) ||
+    !Array.isArray(value.logicalRoles) ||
+    value.logicalRoles.some(
+      (role) => !MIGRATION_LOGICAL_ROLES.includes(role as MigrationLogicalRole)
+    ) ||
     !Array.isArray(value.files)
   ) {
     throw new Error('migration_artifact_manifest_invalid');
+  }
+  if (
+    value.schemaFamily !== contract.schemaFamily ||
+    value.dialect !== contract.dialect ||
+    value.targetKind !== contract.targetKind ||
+    value.logicalRoles.length !== contract.logicalRoles.length ||
+    value.logicalRoles.some((role, index) => role !== contract.logicalRoles[index])
+  ) {
+    throw new Error('migration_artifact_manifest_stream_contract_mismatch');
   }
   if (value.files.length > MAX_FILES_PER_STREAM) {
     throw new Error('migration_artifact_manifest_limit_exceeded');
@@ -171,7 +218,10 @@ function parseManifestStream(value: unknown): ManifestStream {
   }
   return {
     id: value.id,
-    dialect: value.dialect as ManifestStream['dialect'],
+    schemaFamily: contract.schemaFamily,
+    dialect: contract.dialect,
+    targetKind: contract.targetKind,
+    logicalRoles: [...contract.logicalRoles],
     files,
   };
 }
@@ -197,7 +247,7 @@ function parseManifest(bytes: Uint8Array): MigrationManifest {
   }
   if (
     !isRecord(value) ||
-    value.formatVersion !== 1 ||
+    value.formatVersion !== 2 ||
     typeof value.productVersion !== 'string' ||
     !RELEASE_ID_PATTERN.test(value.productVersion) ||
     !Array.isArray(value.streams)
@@ -272,7 +322,7 @@ function parseManifest(bytes: Uint8Array): MigrationManifest {
     rollout = value.rollout as unknown as MigrationReleaseRolloutPolicy;
   }
   return {
-    formatVersion: 1,
+    formatVersion: 2,
     productVersion: value.productVersion,
     rollout,
     streams,
@@ -321,7 +371,9 @@ export class MigrationReleaseArtifactReader {
   ) {}
 
   async load(pin: MigrationReleasePin): Promise<LoadedMigrationRelease> {
-    if (!isValidStreamId(pin.streamId)) throw new Error('migration_release_stream_invalid');
+    if (!isMigrationStreamId(pin.streamId) && !isNamespacedPluginStreamId(pin.streamId)) {
+      throw new Error('migration_release_stream_invalid');
+    }
     if (!RELEASE_ID_PATTERN.test(pin.releaseId)) throw new Error('migration_release_id_invalid');
     if (!SHA256_PATTERN.test(pin.manifestDigest)) {
       throw new Error('migration_release_manifest_digest_invalid');

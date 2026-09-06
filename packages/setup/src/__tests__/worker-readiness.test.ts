@@ -422,6 +422,69 @@ describe('Worker HTTP readiness helpers', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('treats a browser-entry redirect as reachable without following a redirect loop', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { Location: 'https://default.dev.example.com/login' },
+      })
+    );
+
+    const result = await waitForWorkerHttpReady({
+      targets: [
+        {
+          workerName: 'dev-ar-login-ui',
+          url: 'https://login.dev.example.com',
+          allowRedirectResponse: true,
+        },
+      ],
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://login.dev.example.com',
+      expect.objectContaining({ redirect: 'manual' })
+    );
+  });
+
+  it('does not accept a redirect from an API health target by default', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 302 }));
+
+    const result = await waitForWorkerHttpReady({
+      targets: [
+        {
+          workerName: 'dev-ar-auth',
+          url: 'https://dev-ar-auth.example.workers.dev/api/auth/health',
+        },
+      ],
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(false);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://dev-ar-auth.example.workers.dev/api/auth/health',
+      expect.objectContaining({ redirect: 'follow' })
+    );
+  });
+
+  it('does not treat a non-redirect 3xx response as browser-entry readiness', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 304 }));
+
+    const result = await waitForWorkerHttpReady({
+      targets: [
+        {
+          workerName: 'dev-ar-login-ui',
+          url: 'https://login.dev.example.com',
+          allowRedirectResponse: true,
+        },
+      ],
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(false);
+  });
+
   it('reports failed worker health endpoints after timeout', async () => {
     fetchMock.mockResolvedValue(textResponse(JSON.stringify({ status: 'starting' }), 503));
 

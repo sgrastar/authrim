@@ -47,7 +47,7 @@ const TENANT_SCOPED_UNIQUE_CONSTRAINTS = [
  * Parse CREATE TABLE statements from migration files
  */
 function extractTables(): string[] {
-  const migrationsDir = join(process.cwd(), 'migrations');
+  const migrationsDir = join(process.cwd(), 'migrations', 'core', 'd1');
   const tables = new Set<string>();
 
   const files = readdirSync(migrationsDir)

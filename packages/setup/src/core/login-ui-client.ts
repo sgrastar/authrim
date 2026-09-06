@@ -164,7 +164,10 @@ function normalizeApiBaseUrl(url: string): string | null {
 
 function buildApiBaseUrlCandidates(primary: string, candidates?: string[]): string[] {
   const seen = new Set<string>();
-  return [primary, ...(candidates ?? [])].reduce<string[]>((list, candidate) => {
+  // Purpose-aware tenant candidates must be attempted before a legacy/environment fallback.
+  // The fallback remains available because this flow verifies token issuance and the Admin API
+  // end to end before accepting a candidate.
+  return [...(candidates ?? []), primary].reduce<string[]>((list, candidate) => {
     const normalized = normalizeApiBaseUrl(candidate);
     if (!normalized || seen.has(normalized)) {
       return list;

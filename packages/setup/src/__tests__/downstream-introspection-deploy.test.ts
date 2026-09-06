@@ -237,7 +237,7 @@ describe('configureDownstreamIntrospectionDeployment', () => {
     expect(vi.mocked(deployWorker)).not.toHaveBeenCalled();
   });
 
-  it('falls back to the next API base URL candidate when readiness fails', async () => {
+  it('falls back to the next explicit API base URL candidate when readiness fails', async () => {
     const rootDir = createTempRoot();
     const keysDir = join(rootDir, '.authrim-keys', 'single');
     const redeployResult: DeployResult = {
@@ -289,12 +289,89 @@ describe('configureDownstreamIntrospectionDeployment', () => {
       })
     );
     const routerCalls = vi.mocked(waitForRouterWorkerReady).mock.calls;
-    expect(routerCalls).toHaveLength(3);
+    expect(routerCalls).toHaveLength(2);
     expect(new Set(routerCalls.map(([options]) => options.deadlineAt)).size).toBe(1);
     expect(routerCalls[0]?.[0]).toMatchObject({
       maxWaitMs: 60_000,
       allowPublicDnsFallback: true,
     });
+    expect(vi.mocked(getWorkersSubdomain)).not.toHaveBeenCalled();
+  });
+
+  it('does not re-add an environment fallback to an authoritative tenant candidate list', async () => {
+    const rootDir = createTempRoot();
+    const keysDir = join(rootDir, '.authrim-keys', 'multi');
+
+    vi.mocked(ensureDownstreamIntrospectionClient).mockResolvedValue({
+      success: true,
+      clientId: 'client-tenant',
+      clientSecret: 'secret-tenant',
+    });
+    vi.mocked(loadDownstreamIntrospectionClientSecrets).mockResolvedValue({
+      DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_ID: 'client-tenant',
+      DOWNSTREAM_GRANT_INTROSPECTION_CLIENT_SECRET: 'secret-tenant',
+    });
+    vi.mocked(deployWorker).mockResolvedValue({
+      component: 'ar-userinfo',
+      workerName: 'multi-ar-userinfo',
+      success: true,
+      deployedAt: new Date().toISOString(),
+    });
+
+    await expect(
+      configureDownstreamIntrospectionDeployment({
+        env: 'multi',
+        rootDir,
+        keysDir,
+        apiBaseUrl: 'https://environment.example.com',
+        apiBaseUrls: ['https://tenant.environment.example.com'],
+        knownRouterReadyBaseUrls: ['https://environment.example.com'],
+        tenantId: 'tenant',
+      })
+    ).resolves.toMatchObject({ success: true });
+
+    expect(vi.mocked(waitForRouterWorkerReady)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(waitForRouterWorkerReady)).toHaveBeenCalledWith(
+      expect.objectContaining({ apiBaseUrl: 'https://tenant.environment.example.com' })
+    );
+    expect(vi.mocked(ensureDownstreamIntrospectionClient)).toHaveBeenCalledWith(
+      expect.objectContaining({ apiBaseUrl: 'https://tenant.environment.example.com' })
+    );
+    expect(vi.mocked(getWorkersSubdomain)).not.toHaveBeenCalled();
+  });
+
+  it('reserves a separate client provisioning budget after routing becomes ready', async () => {
+    const rootDir = createTempRoot();
+    const keysDir = join(rootDir, '.authrim-keys', 'single');
+
+    vi.mocked(ensureDownstreamIntrospectionClient).mockResolvedValue({
+      success: false,
+      error: 'optional_integration_deadline_exceeded',
+      diagnosticCode: 'admin_machine_token_failed:404:tenant_not_found',
+      retryable: true,
+    });
+
+    const result = await configureDownstreamIntrospectionDeployment({
+      env: 'single',
+      rootDir,
+      keysDir,
+      apiBaseUrls: ['https://tenant.example.com'],
+      readinessBudgetMs: 1_000,
+      clientBudgetMs: 9_000,
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      deferred: true,
+      diagnosticCode: 'admin_machine_token_failed:404:tenant_not_found',
+      retryable: true,
+    });
+    const routerDeadline = vi.mocked(waitForRouterWorkerReady).mock.calls[0]?.[0].deadlineAt;
+    const clientDeadline = vi.mocked(ensureDownstreamIntrospectionClient).mock.calls[0]?.[0]
+      .deadlineAt;
+    expect(routerDeadline).toEqual(expect.any(Number));
+    expect(clientDeadline).toEqual(expect.any(Number));
+    expect(clientDeadline! - routerDeadline!).toBeGreaterThan(7_000);
   });
 
   it('does not wait for a slow candidate after another candidate becomes ready', async () => {

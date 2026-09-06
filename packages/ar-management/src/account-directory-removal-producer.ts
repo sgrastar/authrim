@@ -289,13 +289,18 @@ export async function eraseAccountPiiAfterDirectoryRemovalPrepared(
       params: [input.tenantId, input.userId],
     },
     {
-      sql: `DELETE FROM subject_identifiers
-        WHERE user_id = ? AND EXISTS (
+      sql: `DELETE FROM pairwise_subject_identifiers
+        WHERE tenant_id = ? AND user_id = ? AND EXISTS (
           SELECT 1 FROM users_pii AS tenant_parent
-           WHERE tenant_parent.id = subject_identifiers.user_id
+           WHERE tenant_parent.id = pairwise_subject_identifiers.user_id
              AND tenant_parent.tenant_id = ?
         )`,
-      params: [input.userId, input.tenantId],
+      params: [input.tenantId, input.userId, input.tenantId],
+    },
+    {
+      sql: `DELETE FROM subject_identifiers
+        WHERE tenant_id = ? AND subject_id = ?`,
+      params: [input.tenantId, input.userId],
     },
   ];
   const results = await pii.batch(statements);

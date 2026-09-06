@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   adapter: { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn() },
+  piiAdapter: { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn() },
   audit: vi.fn(),
   generateId: vi.fn(() => 'attr-new'),
+  findCanonicalUser: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -12,6 +14,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.adapter })),
+    createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: mocks.piiAdapter })),
+    CanonicalRuntimeUserStore: class {
+      findById = mocks.findCanonicalUser;
+    },
     generateId: mocks.generateId,
     createAuditLogFromContext: mocks.audit,
     createErrorResponse: vi.fn((c, code) =>
@@ -58,13 +64,26 @@ describe('admin attributes APIs', () => {
     mocks.adapter.query.mockResolvedValue([]);
     mocks.adapter.queryOne.mockResolvedValue(null);
     mocks.adapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
+    mocks.piiAdapter.query.mockResolvedValue([]);
+    mocks.piiAdapter.queryOne.mockResolvedValue(null);
+    mocks.piiAdapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mocks.audit.mockResolvedValue(undefined);
+    mocks.findCanonicalUser.mockResolvedValue({
+      id: 'user-1',
+      email: 'user@example.com',
+      name: null,
+    });
   });
 
   it('lists active attributes with filters, escaped search, and pagination', async () => {
     mocks.adapter.query
       .mockResolvedValueOnce([{ count: 51 }])
-      .mockResolvedValueOnce([{ id: 'attr-1', user_id: 'user-1' }]);
+      .mockResolvedValueOnce([{ id: 'attr-1', user_id: 'user-1' }])
+      .mockResolvedValueOnce([{ legacy_user_id: 'user-1' }]);
+    mocks.piiAdapter.query.mockResolvedValueOnce([
+      { owner_id: 'user-1', value_key: 'email', value_json: '"user@example.com"' },
+      { owner_id: 'user-1', value_key: 'name', value_json: '"User One"' },
+    ]);
     const response = await adminAttributesListHandler(
       context({
         query: {
@@ -78,12 +97,28 @@ describe('admin attributes APIs', () => {
       })
     );
     await expect(response.json()).resolves.toMatchObject({
-      attributes: [{ id: 'attr-1' }],
+      attributes: [
+        {
+          id: 'attr-1',
+          user_email: 'user@example.com',
+          user_name: 'User One',
+        },
+      ],
       pagination: { page: 2, limit: 25, total: 51, total_pages: 3 },
     });
-    expect(mocks.adapter.query).toHaveBeenLastCalledWith(
+    expect(mocks.adapter.query).toHaveBeenNthCalledWith(
+      2,
       expect.stringContaining('a.source_type = ?'),
       expect.arrayContaining(['user-1', 'department', 'manual', '%100\\%\\_admin%', 25, 25])
+    );
+    expect(mocks.adapter.query).toHaveBeenNthCalledWith(
+      3,
+      expect.stringContaining('FROM identity_accounts'),
+      ['tenant-a', 'user-1']
+    );
+    expect(mocks.piiAdapter.query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM identity_sensitive_values'),
+      ['tenant-a', 'user-1']
     );
   });
 
@@ -96,6 +131,19 @@ describe('admin attributes APIs', () => {
     expect(mocks.adapter.query.mock.calls[0][0]).not.toContain('expires_at IS NULL');
   });
 
+  it('normalizes invalid pagination and caps lookup batches at 100 users', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([{ count: 0 }]).mockResolvedValueOnce([]);
+    const body = (await (
+      await adminAttributesListHandler(context({ query: { page: '-2', limit: '10000' } }))
+    ).json()) as { pagination: { page: number; limit: number } };
+    expect(body.pagination).toMatchObject({ page: 1, limit: 100 });
+    expect(mocks.adapter.query).toHaveBeenNthCalledWith(
+      2,
+      expect.any(String),
+      expect.arrayContaining([100, 0])
+    );
+  });
+
   it('returns internal_error when listing fails', async () => {
     mocks.adapter.query.mockRejectedValueOnce(new Error('D1 unavailable'));
     expect((await adminAttributesListHandler(context())).status).toBe(500);
@@ -104,9 +152,7 @@ describe('admin attributes APIs', () => {
   it.each([false, true])(
     'gets a user and attributes (include expired=%s)',
     async (includeExpired) => {
-      mocks.adapter.query
-        .mockResolvedValueOnce([{ id: 'attr-1' }])
-        .mockResolvedValueOnce([{ id: 'user-1', email: 'user@example.com', name: null }]);
+      mocks.adapter.query.mockResolvedValueOnce([{ id: 'attr-1' }]);
       const body = (await (
         await adminUserAttributesHandler(
           context({
@@ -116,6 +162,7 @@ describe('admin attributes APIs', () => {
         )
       ).json()) as { user: unknown };
       expect(body.user).toEqual(expect.objectContaining({ id: 'user-1' }));
+      expect(body.user).toEqual({ id: 'user-1', email: 'user@example.com', name: null });
       expect(mocks.adapter.query.mock.calls[0][0].includes('expires_at IS NULL')).toBe(
         !includeExpired
       );
@@ -123,7 +170,8 @@ describe('admin attributes APIs', () => {
   );
 
   it('returns null for a missing user and handles query errors', async () => {
-    mocks.adapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    mocks.adapter.query.mockResolvedValueOnce([]);
+    mocks.findCanonicalUser.mockResolvedValueOnce(null);
     await expect((await adminUserAttributesHandler(context())).json()).resolves.toMatchObject({
       user: null,
     });
@@ -141,6 +189,7 @@ describe('admin attributes APIs', () => {
   });
 
   it('does not create an attribute for a missing user', async () => {
+    mocks.findCanonicalUser.mockResolvedValueOnce(null);
     expect(
       (
         await adminAttributeCreateHandler(
@@ -152,8 +201,16 @@ describe('admin attributes APIs', () => {
     ).toBe(404);
   });
 
+  it('requires the target user to be active when creating an attribute', async () => {
+    await adminAttributeCreateHandler(
+      context({
+        body: { user_id: 'user-1', attribute_name: 'department', attribute_value: 'eng' },
+      })
+    );
+    expect(mocks.findCanonicalUser).toHaveBeenCalledWith('user-1');
+  });
+
   it('creates and audits a new manual attribute', async () => {
-    mocks.adapter.query.mockResolvedValueOnce([{ id: 'user-1' }]);
     const response = await adminAttributeCreateHandler(
       context({
         body: {
@@ -179,7 +236,6 @@ describe('admin attributes APIs', () => {
   });
 
   it('updates an existing attribute instead of creating a duplicate', async () => {
-    mocks.adapter.query.mockResolvedValueOnce([{ id: 'user-1' }]);
     mocks.adapter.queryOne.mockResolvedValueOnce({ id: 'attr-existing', created_at: 1 });
     const body = (await (
       await adminAttributeCreateHandler(
@@ -196,7 +252,6 @@ describe('admin attributes APIs', () => {
   });
 
   it('resolves a concurrent unique-key race by updating the winning row', async () => {
-    mocks.adapter.query.mockResolvedValueOnce([{ id: 'user-1' }]);
     mocks.adapter.queryOne
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce({ id: 'attr-raced', created_at: 1 });
@@ -218,7 +273,6 @@ describe('admin attributes APIs', () => {
     [new Error('write failure'), null],
     [new Error('UNIQUE constraint failed'), null],
   ])('returns internal_error for unresolved create failure %#', async (error, raced) => {
-    mocks.adapter.query.mockResolvedValueOnce([{ id: 'user-1' }]);
     mocks.adapter.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce(raced);
     mocks.adapter.execute.mockRejectedValueOnce(error);
     expect(

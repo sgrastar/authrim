@@ -1,5 +1,5 @@
 {
-  "formatVersion": 1,
+  "formatVersion": 2,
   "productVersion": "0.4.0",
   "databaseCompatibility": "fresh_install_only",
   "freshInstallBaseline": {
@@ -12,8 +12,10 @@
   },
   "streams": [
     {
-      "id": "d1-core",
+      "id": "core-d1",
+      "schemaFamily": "core",
       "dialect": "sqlite",
+      "targetKind": "cloudflare-d1",
       "logicalRoles": [
         "core",
         "tenant_core"
@@ -21,13 +23,15 @@
       "files": [
         {
           "path": "001_0_4_0_core_baseline.sql",
-          "checksum": "9892b05789becbebc7c8627cb1a3d3ef2a5d35ec5df1b4c8ab59974ed77d7bcf"
+          "checksum": "11a7eeb61266e9386e2fac051508d403231cf81be9a4a7cc9eadb83bec8808d0"
         }
       ]
     },
     {
-      "id": "d1-pii",
+      "id": "pii-d1",
+      "schemaFamily": "pii",
       "dialect": "sqlite",
+      "targetKind": "cloudflare-d1",
       "logicalRoles": [
         "pii",
         "tenant_pii"
@@ -35,65 +39,75 @@
       "files": [
         {
           "path": "001_0_4_0_pii_baseline.sql",
-          "checksum": "852db3aa0e7e2e83d60565c564d01c183dfc401c90a41035c0106627dd448057"
+          "checksum": "53918709e01fbb3cb54cb914c1f6634c8bb91af91cdb3a817788c73bb0b601be"
         }
       ]
     },
     {
-      "id": "d1-admin",
+      "id": "admin-d1",
+      "schemaFamily": "admin",
       "dialect": "sqlite",
+      "targetKind": "cloudflare-d1",
       "logicalRoles": [
         "admin"
       ],
       "files": [
         {
           "path": "001_0_4_0_admin_baseline.sql",
-          "checksum": "ae4f4c136d304a0b356bde7f8fc7f9c86e86efccbbb4d4970b3b8c9cce647c0a"
+          "checksum": "f355399d9f525911798feb51981b9ee31c5f969844b59a369709014b3abf062d"
         }
       ]
     },
     {
-      "id": "d1-control",
+      "id": "control-d1",
+      "schemaFamily": "control",
       "dialect": "sqlite",
+      "targetKind": "cloudflare-d1",
       "logicalRoles": [
         "control"
       ],
       "files": [
         {
           "path": "001_0_4_0_control_baseline.sql",
-          "checksum": "3be25d594f29170323f13870588bae939d9778536fd2f53a40b7d6eff9f5dd61"
+          "checksum": "bd84e1ac53d2da9d09ec7500760ace5a9d45aabdd63c16433e6b919222a1e20c"
         }
       ]
     },
     {
-      "id": "d1-lookup",
+      "id": "lookup-d1",
+      "schemaFamily": "lookup",
       "dialect": "sqlite",
+      "targetKind": "cloudflare-d1",
       "logicalRoles": [
         "lookup"
       ],
       "files": [
         {
           "path": "001_0_4_0_lookup_baseline.sql",
-          "checksum": "176d121b776b77efe881ebddc29725013509880d0d5d354ccec5ac505fd4cd84"
+          "checksum": "296bc48e57a1185111a8fdded551d54dfcb9b19e426e396eb34c753bf3299a65"
         }
       ]
     },
     {
-      "id": "d1-plugin-runner",
+      "id": "plugin-runner-d1",
+      "schemaFamily": "plugin_runner",
       "dialect": "sqlite",
+      "targetKind": "cloudflare-d1",
       "logicalRoles": [
         "plugin_runner"
       ],
       "files": [
         {
           "path": "001_0_4_0_plugin_runner_baseline.sql",
-          "checksum": "8c0567c4266a15d1f38baba0ba00c3299a22da027440c0be9ac5a5165566031f"
+          "checksum": "004ea4f613321692f39ebc16fabb34aa82673c5e5beb2a186d8150933e427a78"
         }
       ]
     },
     {
-      "id": "external-postgres-core",
-      "dialect": "postgres",
+      "id": "core-postgresql",
+      "schemaFamily": "core",
+      "dialect": "postgresql",
+      "targetKind": "postgresql-connection",
       "logicalRoles": [
         "core",
         "custom",
@@ -101,21 +115,23 @@
       ],
       "files": [
         {
-          "path": "001_0_4_0_external_postgres_core_baseline.sql",
-          "checksum": "6051346e9e18709f9eddcb81b23d750c1a2e22c2a70c770f59eba6ab29aeb686"
+          "path": "001_0_4_0_core_baseline.sql",
+          "checksum": "ead973bb194468efc15226076c56e4e8ea544993bf2bddcb42672279f46f86a2"
         }
       ]
     },
     {
-      "id": "external-postgres-pii",
-      "dialect": "postgres",
+      "id": "pii-postgresql",
+      "schemaFamily": "pii",
+      "dialect": "postgresql",
+      "targetKind": "postgresql-connection",
       "logicalRoles": [
         "pii"
       ],
       "files": [
         {
-          "path": "002_0_4_0_external_postgres_pii_baseline.sql",
-          "checksum": "0a0aeba068ad2b81a13eb4fd102ecf4397e29d83038fdfc8e3992bd886fbdef4"
+          "path": "001_0_4_0_pii_baseline.sql",
+          "checksum": "278050d1fe0bbfb31ac188fd70b047329b101cde322cac5767bb84509053771c"
         }
       ]
     }

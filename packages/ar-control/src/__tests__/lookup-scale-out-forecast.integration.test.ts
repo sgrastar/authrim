@@ -101,7 +101,10 @@ describe('LookupScaleOutForecastService', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
+        'utf8'
+      )
     );
     database.exec(
       `INSERT INTO control_environments (
@@ -854,7 +857,7 @@ describe('LookupScaleOutForecastService', () => {
          state, active_stream_key, registered_by_operation_id, registered_by_actor_id,
          registered_at, activated_at
        ) VALUES (
-         'test', 'd1-lookup', '0.4.0', '${'b'.repeat(64)}',
+         'test', 'lookup-d1', '0.4.0', '${'b'.repeat(64)}',
          'releases/0.4.0/${'b'.repeat(64)}/manifest.json', 'active', 'active',
          'seed', 'setup:test', 1, 1
        )`

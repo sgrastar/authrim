@@ -15,10 +15,12 @@ import {
   type ReleaseMigrationManifest,
 } from './release-migrations.js';
 import { renderPortableMigrationSql } from './sql-portability.js';
+import { migrationRendererDialect } from '@authrim/ar-lib-core/control-plane';
 
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_SQL_OBJECT_BYTES = 1024 * 1024;
 const MAX_STREAM_SQL_BYTES = 16 * 1024 * 1024;
+const MAX_RELEASE_SQL_BYTES = 16 * 1024 * 1024;
 const MAX_STREAMS = 32;
 const MAX_FILES_PER_STREAM = 512;
 const SAFE_ENVIRONMENT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
@@ -202,6 +204,7 @@ export function buildMigrationReleaseArtifactPlan(input: {
   const manifestObjectKey = `${objectRoot}/manifest.json`;
   const objects: MigrationReleaseArtifactObject[] = [];
   const streamIds: string[] = [];
+  let releaseSqlBytes = 0;
 
   const artifactStreams = manifest.streams.map((stream) => {
     const files = new Map(stream.files.map((file) => [file.path, file] as const));
@@ -219,7 +222,7 @@ export function buildMigrationReleaseArtifactPlan(input: {
   });
 
   for (const stream of artifactStreams) {
-    if (stream.dialect !== 'sqlite' || stream.files.length === 0) continue;
+    if (stream.files.length === 0) continue;
     if (stream.files.length > MAX_FILES_PER_STREAM) {
       throw new Error(`migration_release_file_limit_exceeded:${stream.id}`);
     }
@@ -229,15 +232,19 @@ export function buildMigrationReleaseArtifactPlan(input: {
     for (const file of stream.files) {
       const rendered = renderPortableMigrationSql(
         readFileSync(join(directory, file.path), 'utf8'),
-        stream.dialect
+        migrationRendererDialect(stream.dialect)
       );
       const bytes = new TextEncoder().encode(rendered);
       if (bytes.byteLength === 0 || bytes.byteLength > MAX_SQL_OBJECT_BYTES) {
         throw new Error(`migration_release_sql_size_invalid:${stream.id}:${file.path}`);
       }
       streamBytes += bytes.byteLength;
+      releaseSqlBytes += bytes.byteLength;
       if (streamBytes > MAX_STREAM_SQL_BYTES) {
         throw new Error(`migration_release_stream_size_exceeded:${stream.id}`);
+      }
+      if (releaseSqlBytes > MAX_RELEASE_SQL_BYTES) {
+        throw new Error('migration_release_sql_size_exceeded');
       }
       if (sha256(bytes) !== file.checksum) {
         throw new Error(`migration_release_sql_checksum_mismatch:${stream.id}:${file.path}`);
@@ -248,7 +255,9 @@ export function buildMigrationReleaseArtifactPlan(input: {
         contentType: 'application/sql',
       });
     }
-    streamIds.push(stream.id);
+    if (stream.dialect === 'sqlite' && stream.targetKind === 'cloudflare-d1') {
+      streamIds.push(stream.id);
+    }
   }
   if (streamIds.length === 0) throw new Error('migration_release_sqlite_stream_required');
   objects.push({

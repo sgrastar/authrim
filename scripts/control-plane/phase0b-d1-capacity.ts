@@ -12,6 +12,7 @@ import {
   type CloudflareD1Query,
   type CloudflareD1QueryResult,
 } from '../../packages/ar-lib-core/src/services/control-plane/index.js';
+import { LOOKUP_VIRTUAL_BUCKET_COUNT } from '../../packages/ar-lib-core/src/services/lookup-directory/contract.js';
 import { splitMigrationSql } from '../../packages/ar-control/src/migration-sql.js';
 import {
   RELEASE_MIGRATION_STREAM_DEFINITIONS,
@@ -30,7 +31,7 @@ const DEFAULT_OUTPUT_DIR = resolve(
   'private/docs/implementation/unified-control-plane/performance'
 );
 const RESOURCE_PREFIX = 'authrim-phase0b-capacity-test';
-const REQUIRED_STREAMS = ['d1-core', 'd1-pii', 'd1-lookup'] as const;
+const REQUIRED_STREAMS = ['core-d1', 'pii-d1', 'lookup-d1'] as const;
 const MINIMUM_MAX_ACCOUNTS = 200_000;
 const MAXIMUM_MAX_ACCOUNTS = 10_000_000;
 const SEED_CHUNK_SIZE = 5_000;
@@ -346,9 +347,9 @@ export function buildPhase0bSeedBatches(
         params,
       },
       {
-        sql: `${sequence} INSERT INTO subject_identifiers (
-          id, user_id, client_id, sector_identifier, subject, created_at
-        ) SELECT 'pairwise-' || ${id}, ${account}, 'benchmark-client', 'benchmark.invalid',
+        sql: `${sequence} INSERT INTO pairwise_subject_identifiers (
+          id, tenant_id, user_id, client_id, sector_identifier, subject, created_at
+        ) SELECT 'pairwise-' || ${id}, 'benchmark-tenant', ${account}, 'benchmark-client', 'benchmark.invalid',
           'pairwise-subject-' || ${id}, ${now} FROM benchmark_seq`,
         params,
       },
@@ -367,7 +368,7 @@ export function buildPhase0bSeedBatches(
         account_route_generation, required_binding_route_generation, residency_policy_id,
         route_projection_json, tenant_lifecycle_state, runtime_route_status, lifecycle_state,
         created_at, updated_at
-      ) SELECT n % 4096,
+      ) SELECT n % ${LOOKUP_VIRTUAL_BUCKET_COUNT},
         CASE ${offset} WHEN 0 THEN 'account_id' WHEN 1 THEN 'email_exact' ELSE 'external_subject' END,
         1, 1, ${digest(offset)}, 'benchmark-tenant', ${account}, 1, 1, 1, 'default',
         json_object('tenant_id', 'benchmark-tenant', 'account_id', ${account},
@@ -489,7 +490,7 @@ async function benchmarkAtCount(
           WHERE virtual_bucket = ? AND index_kind = 'account_id'
             AND normalization_version = 1 AND hmac_key_generation = 1
             AND identifier_blind_digest = ? AND lifecycle_state = 'active'`,
-        [number % 4096, digestFor(number, 0)]
+        [number % LOOKUP_VIRTUAL_BUCKET_COUNT, digestFor(number, 0)]
       )
     );
   });
@@ -503,7 +504,7 @@ async function benchmarkAtCount(
           WHERE virtual_bucket = ? AND index_kind = 'email_exact'
             AND normalization_version = 1 AND hmac_key_generation = 1
             AND identifier_blind_digest = ? AND lifecycle_state = 'active'`,
-        [number % 4096, digestFor(number, 1)]
+        [number % LOOKUP_VIRTUAL_BUCKET_COUNT, digestFor(number, 1)]
       )
     );
   });
@@ -517,7 +518,7 @@ async function benchmarkAtCount(
           WHERE virtual_bucket = ? AND index_kind = 'external_subject'
             AND normalization_version = 1 AND hmac_key_generation = 1
             AND identifier_blind_digest = ? AND lifecycle_state = 'active'`,
-        [number % 4096, digestFor(number, 2)]
+        [number % LOOKUP_VIRTUAL_BUCKET_COUNT, digestFor(number, 2)]
       )
     );
   });
@@ -731,9 +732,9 @@ export async function runPhase0bCapacity(
     ) as Record<'core' | 'pii' | 'lookup', string>;
     const migrationResults: Record<string, unknown> = {};
     const streamRole: Record<BenchmarkStream, 'core' | 'pii' | 'lookup'> = {
-      'd1-core': 'core',
-      'd1-pii': 'pii',
-      'd1-lookup': 'lookup',
+      'core-d1': 'core',
+      'pii-d1': 'pii',
+      'lookup-d1': 'lookup',
     };
     for (const stream of loaded.streams) {
       migrationResults[stream.id] = await applyMigrationStream(

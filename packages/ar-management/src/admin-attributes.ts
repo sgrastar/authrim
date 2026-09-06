@@ -15,6 +15,8 @@ import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   getTenantIdFromContext,
   createAuthContextFromHono,
+  createPIIContextFromHono,
+  CanonicalRuntimeUserStore,
   type DatabaseAdapter,
   escapeLikePattern,
   createErrorResponse,
@@ -48,8 +50,90 @@ function createAdapterFromContext(c: AdminContext): DatabaseAdapter {
   return createAuthContextFromHono(asBaseContext(c), tenantId).coreAdapter;
 }
 
+function createCanonicalUserStore(c: AdminContext, tenantId: string): CanonicalRuntimeUserStore {
+  const authContext = createAuthContextFromHono(asBaseContext(c), tenantId);
+  const piiContext = createPIIContextFromHono(asBaseContext(c), tenantId);
+  return new CanonicalRuntimeUserStore({
+    coreAdapter: authContext.coreAdapter,
+    piiAdapter: piiContext.defaultPiiAdapter,
+    tenantId,
+  });
+}
+
+interface CanonicalAttributeUserSummary {
+  id: string;
+  email: string | null;
+  name: string | null;
+}
+
+function parseCanonicalString(value: string | null): string | null {
+  if (value === null) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return typeof parsed === 'string' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveCanonicalAttributeUsers(
+  c: AdminContext,
+  tenantId: string,
+  userIds: readonly string[]
+): Promise<Map<string, CanonicalAttributeUserSummary>> {
+  const uniqueUserIds = Array.from(new Set(userIds));
+  if (uniqueUserIds.length === 0) return new Map();
+
+  const authContext = createAuthContextFromHono(asBaseContext(c), tenantId);
+  const piiContext = createPIIContextFromHono(asBaseContext(c), tenantId);
+  const placeholders = uniqueUserIds.map(() => '?').join(', ');
+  const accounts = await authContext.coreAdapter.query<{ legacy_user_id: string }>(
+    `SELECT legacy_user_id
+       FROM identity_accounts
+      WHERE tenant_id = ?
+        AND legacy_user_id IN (${placeholders})`,
+    [tenantId, ...uniqueUserIds]
+  );
+  const existingUserIds = accounts.map(({ legacy_user_id }) => legacy_user_id);
+  if (existingUserIds.length === 0) return new Map();
+
+  const valuePlaceholders = existingUserIds.map(() => '?').join(', ');
+  const values = await piiContext.defaultPiiAdapter.query<{
+    owner_id: string;
+    value_key: string;
+    value_json: string | null;
+  }>(
+    `SELECT owner_id, value_key, value_json
+       FROM identity_sensitive_values
+      WHERE tenant_id = ?
+        AND owner_type = 'runtime_user'
+        AND owner_id IN (${valuePlaceholders})
+        AND value_key IN ('email', 'name')
+        AND lifecycle_state = 'active'`,
+    [tenantId, ...existingUserIds]
+  );
+  const summaries = new Map<string, CanonicalAttributeUserSummary>();
+  for (const id of existingUserIds) {
+    summaries.set(id, { id, email: null, name: null });
+  }
+  for (const value of values) {
+    const summary = summaries.get(value.owner_id);
+    if (!summary) continue;
+    const parsed = parseCanonicalString(value.value_json);
+    if (value.value_key === 'email') summary.email = parsed;
+    if (value.value_key === 'name') summary.name = parsed;
+  }
+  return summaries;
+}
+
 function isUniqueConstraintError(error: unknown): boolean {
   return String(error).includes('UNIQUE constraint');
+}
+
+function parsePositiveInteger(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 // =============================================================================
@@ -64,8 +148,9 @@ export async function adminAttributesListHandler(c: AdminContext) {
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
-    const page = parseInt(c.req.query('page') || '1');
-    const limit = parseInt(c.req.query('limit') || '50');
+    const page = parsePositiveInteger(c.req.query('page'), 1);
+    // Keep both the result set and the two canonical-user lookup batches below D1's bind limit.
+    const limit = Math.min(parsePositiveInteger(c.req.query('limit'), 50), 100);
     const offset = (page - 1) * limit;
 
     // Filter parameters
@@ -114,8 +199,7 @@ export async function adminAttributesListHandler(c: AdminContext) {
     );
     const total = countResult[0]?.count || 0;
 
-    // Get attributes with user info
-    const attributes = await adapter.query<{
+    const attributeRows = await adapter.query<{
       id: string;
       tenant_id: string;
       user_id: string;
@@ -126,15 +210,11 @@ export async function adminAttributesListHandler(c: AdminContext) {
       verification_id: string | null;
       verified_at: number;
       expires_at: number | null;
-      user_email: string | null;
-      user_name: string | null;
     }>(
       `SELECT
         a.id, a.tenant_id, a.user_id, a.attribute_name, a.attribute_value,
-        a.source_type, a.issuer_did, a.verification_id, a.verified_at, a.expires_at,
-        u.email as user_email, u.name as user_name
+        a.source_type, a.issuer_did, a.verification_id, a.verified_at, a.expires_at
        FROM user_verified_attributes a
-       LEFT JOIN users u ON a.user_id = u.id AND a.tenant_id = u.tenant_id
        WHERE ${whereClause
          .replace(/tenant_id/g, 'a.tenant_id')
          .replace(/user_id/g, 'a.user_id')
@@ -146,6 +226,19 @@ export async function adminAttributesListHandler(c: AdminContext) {
        LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     );
+    const users = await resolveCanonicalAttributeUsers(
+      c,
+      tenantId,
+      attributeRows.map(({ user_id }) => user_id)
+    );
+    const attributes = attributeRows.map((attribute) => {
+      const user = users.get(attribute.user_id);
+      return {
+        ...attribute,
+        user_email: user?.email ?? null,
+        user_name: user?.name ?? null,
+      };
+    });
 
     return c.json({
       attributes,
@@ -201,15 +294,15 @@ export async function adminUserAttributesHandler(c: AdminContext) {
       expires_at: number | null;
     }>(query, params);
 
-    // Get user info
-    const userResult = await adapter.query<{
-      id: string;
-      email: string;
-      name: string | null;
-    }>('SELECT id, email, name FROM users WHERE tenant_id = ? AND id = ?', [tenantId, userId]);
+    const canonicalUser = await createCanonicalUserStore(c, tenantId).findById(userId, {
+      includeInactive: true,
+    });
+    const user = canonicalUser
+      ? { id: canonicalUser.id, email: canonicalUser.email, name: canonicalUser.name }
+      : null;
 
     return c.json({
-      user: userResult[0] || null,
+      user,
       attributes,
     });
   } catch (error) {
@@ -240,13 +333,8 @@ export async function adminAttributeCreateHandler(c: AdminContext) {
       });
     }
 
-    // Check if user exists
-    const userExists = await adapter.query<{ id: string }>(
-      'SELECT id FROM users WHERE tenant_id = ? AND id = ?',
-      [tenantId, body.user_id]
-    );
-
-    if (userExists.length === 0) {
+    const user = await createCanonicalUserStore(c, tenantId).findById(body.user_id);
+    if (!user) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 

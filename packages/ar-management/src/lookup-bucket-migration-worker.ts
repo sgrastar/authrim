@@ -1,5 +1,6 @@
 import type { D1Database, D1PreparedStatement } from '@cloudflare/workers-types';
 import type { ControlLookupBucketMigrationView } from '@authrim/ar-lib-core';
+import { LOOKUP_MAX_VIRTUAL_BUCKET } from '@authrim/ar-lib-core/services/lookup-directory/contract';
 
 const MAX_BATCH_ROWS = 100;
 const ZERO_DIGEST = '0'.repeat(64);
@@ -323,7 +324,7 @@ function assertRunnableMigration(view: ControlLookupBucketMigrationView): void {
     !view ||
     !Number.isSafeInteger(view.virtualBucket) ||
     view.virtualBucket < 0 ||
-    view.virtualBucket > 4095 ||
+    view.virtualBucket > LOOKUP_MAX_VIRTUAL_BUCKET ||
     !['backfilling', 'verifying', 'grace'].includes(view.state)
   ) {
     throw new Error('lookup_bucket_migration_view_invalid');

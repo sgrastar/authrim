@@ -1030,7 +1030,7 @@ export type NativeSSOTokenTypeURN = TokenTypeURN | typeof DEVICE_SECRET_TOKEN_TY
  * Represents a device secret stored in the database.
  * Non-PII data: only secret_hash is stored, no personal information.
  *
- * @see migrations/001_0_4_0_core_baseline.sql
+ * @see migrations/core/d1/001_0_4_0_core_baseline.sql
  */
 export interface DeviceSecret {
   /** Primary key (UUID) */

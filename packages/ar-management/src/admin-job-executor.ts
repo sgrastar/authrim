@@ -57,6 +57,7 @@ const TENANT_BACKUP_CORE_TABLES = [
 const TENANT_BACKUP_PII_TABLES = [
   'identity_sensitive_values',
   'subject_identifiers',
+  'pairwise_subject_identifiers',
   'linked_identities',
   'audit_log_pii',
   'users_pii_tombstone',
@@ -982,15 +983,19 @@ async function exportTenantTableToArtifact(input: {
   chunk_count: number;
 }> {
   const tenantScopedQuery =
-    input.plane === 'pii' && input.table === 'subject_identifiers'
-      ? `SELECT scoped.* FROM subject_identifiers AS scoped
+    input.plane === 'pii' && input.table === 'pairwise_subject_identifiers'
+      ? `SELECT scoped.* FROM pairwise_subject_identifiers AS scoped
            INNER JOIN users_pii AS tenant_parent ON tenant_parent.id = scoped.user_id
-           WHERE tenant_parent.tenant_id = ? LIMIT ?`
+           WHERE scoped.tenant_id = ? AND tenant_parent.tenant_id = ? LIMIT ?`
       : `SELECT * FROM ${input.table} WHERE tenant_id = ? LIMIT ?`;
-  const rows = await input.adapter.query<Record<string, unknown>>(tenantScopedQuery, [
-    input.job.tenant_id,
-    TENANT_BACKUP_TABLE_ROW_LIMIT + 1,
-  ]);
+  const tenantScopedParams =
+    input.plane === 'pii' && input.table === 'pairwise_subject_identifiers'
+      ? [input.job.tenant_id, input.job.tenant_id, TENANT_BACKUP_TABLE_ROW_LIMIT + 1]
+      : [input.job.tenant_id, TENANT_BACKUP_TABLE_ROW_LIMIT + 1];
+  const rows = await input.adapter.query<Record<string, unknown>>(
+    tenantScopedQuery,
+    tenantScopedParams
+  );
   if (rows.length > TENANT_BACKUP_TABLE_ROW_LIMIT) {
     throw new Error(
       `tenant_backup_table_row_limit_exceeded:${input.plane}:${input.table}:${TENANT_BACKUP_TABLE_ROW_LIMIT}`

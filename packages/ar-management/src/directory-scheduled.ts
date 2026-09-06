@@ -12,6 +12,7 @@ import {
   type PreparedStatement,
   USER_EVENTS,
 } from '@authrim/ar-lib-core';
+import { LOOKUP_VIRTUAL_BUCKET_COUNT } from '@authrim/ar-lib-core/services/lookup-directory/contract';
 import type { D1Database, D1DatabaseSession } from '@cloudflare/workers-types';
 import { AccountDirectoryCoordinator } from './account-directory-coordinator';
 import { activatePublishedAccountAuthenticationState } from './account-authentication-activation';
@@ -24,7 +25,6 @@ export const DIRECTORY_SCHEDULED_CRON = '*/2 * * * *';
 
 const DIRECTORY_INVOCATION_WALL_CLOCK_MS = 20_000;
 const DIRECTORY_LEASE_SECONDS = 120;
-const LOOKUP_BUCKET_COUNT = 4096;
 
 export const DIRECTORY_JOB_CLASSES = [
   'routing_outbox',
@@ -1183,10 +1183,10 @@ export const reconcileLookupBucketCounters: DirectoryJobProcessor = async (input
     input.cursor.next_bucket,
     'directory_counter_cursor_invalid'
   );
-  if (nextBucket < 0 || nextBucket >= LOOKUP_BUCKET_COUNT) {
+  if (nextBucket < 0 || nextBucket >= LOOKUP_VIRTUAL_BUCKET_COUNT) {
     throw new Error('directory_counter_cursor_invalid');
   }
-  const endBucket = Math.min(LOOKUP_BUCKET_COUNT - 1, nextBucket + input.rowLimit - 1);
+  const endBucket = Math.min(LOOKUP_VIRTUAL_BUCKET_COUNT - 1, nextBucket + input.rowLimit - 1);
   const rows = await input.adapter.query<BucketCountRow>(
     `WITH RECURSIVE buckets(virtual_bucket) AS (
        SELECT ?
@@ -1250,7 +1250,9 @@ export const reconcileLookupBucketCounters: DirectoryJobProcessor = async (input
   });
   await input.adapter.batch(statements);
   return {
-    cursor: { next_bucket: endBucket === LOOKUP_BUCKET_COUNT - 1 ? 0 : endBucket + 1 },
+    cursor: {
+      next_bucket: endBucket === LOOKUP_VIRTUAL_BUCKET_COUNT - 1 ? 0 : endBucket + 1,
+    },
     processedRows: rows.length,
   };
 };

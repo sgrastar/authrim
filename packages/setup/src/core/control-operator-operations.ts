@@ -41,7 +41,7 @@ interface PendingOperatorOperationRow extends Record<string, unknown> {
   location_hint: 'wnam' | 'enam' | 'weur' | 'eeur' | 'apac' | 'oc' | null;
   read_replication_mode: 'enabled' | 'disabled';
   provider_database_id: string | null;
-  migration_stream_id: 'd1-core' | 'd1-pii' | 'd1-lookup' | null;
+  migration_stream_id: 'core-d1' | 'pii-d1' | 'lookup-d1' | null;
   release_id: string | null;
   manifest_digest: string | null;
   manifest_r2_object_key: string | null;
@@ -50,7 +50,7 @@ interface PendingOperatorOperationRow extends Record<string, unknown> {
 
 export interface PendingControlOperatorMigration {
   databaseId: string;
-  streamId: 'd1-core' | 'd1-pii' | 'd1-lookup';
+  streamId: 'core-d1' | 'pii-d1' | 'lookup-d1';
   releaseId: string;
   manifestDigest: string;
   manifestObjectKey: string;
@@ -185,10 +185,10 @@ function parseRow(row: PendingOperatorOperationRow): PendingControlOperatorOpera
     (row.location_hint !== null &&
       !['wnam', 'enam', 'weur', 'eeur', 'apac', 'oc'].includes(row.location_hint)) ||
     (row.read_replication_mode !== 'enabled' && row.read_replication_mode !== 'disabled') ||
-    !['d1-core', 'd1-pii', 'd1-lookup'].includes(String(row.migration_stream_id)) ||
-    (row.data_role === 'tenant_pii' && row.migration_stream_id !== 'd1-pii') ||
-    (row.data_role === 'lookup' && row.migration_stream_id !== 'd1-lookup') ||
-    (!['tenant_pii', 'lookup'].includes(row.data_role) && row.migration_stream_id !== 'd1-core') ||
+    !['core-d1', 'pii-d1', 'lookup-d1'].includes(String(row.migration_stream_id)) ||
+    (row.data_role === 'tenant_pii' && row.migration_stream_id !== 'pii-d1') ||
+    (row.data_role === 'lookup' && row.migration_stream_id !== 'lookup-d1') ||
+    (!['tenant_pii', 'lookup'].includes(row.data_role) && row.migration_stream_id !== 'core-d1') ||
     row.release_id === null ||
     !SAFE_ID.test(row.release_id) ||
     row.manifest_digest === null ||
@@ -236,7 +236,7 @@ function parseRow(row: PendingOperatorOperationRow): PendingControlOperatorOpera
     migration: hasMigration
       ? {
           databaseId: row.provider_database_id as string,
-          streamId: row.migration_stream_id as 'd1-core' | 'd1-pii' | 'd1-lookup',
+          streamId: row.migration_stream_id as 'core-d1' | 'pii-d1' | 'lookup-d1',
           releaseId: row.release_id as string,
           manifestDigest: row.manifest_digest as string,
           manifestObjectKey: row.manifest_r2_object_key as string,

@@ -107,7 +107,7 @@ const capacityPreview: ControlCapacityProvisioningPreview = {
       databaseName: 'test-authrim-tenant-users-jp-capacity-1-db',
       bindingRef: 'TEST_TDB_USERS_CAPACITY_1_CORE',
       readReplicationMode: 'disabled',
-      migrationStreamId: 'd1-core',
+      migrationStreamId: 'core-d1',
     },
   ],
 };
@@ -407,7 +407,7 @@ const tenantRecovery: ControlTenantDisasterRecoveryView = {
       shardGeneration: 7,
       bindingRef: 'TEST_TDB_USERS_1234_CORE',
       providerDatabaseId: '11111111-1111-4111-8111-111111111111',
-      migrationStreamId: 'd1-core',
+      migrationStreamId: 'core-d1',
       releaseId: '0.4.0',
       manifestDigest: 'd'.repeat(64),
       restoreConfirmedAt: 1_800_001_900,

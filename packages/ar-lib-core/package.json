@@ -37,6 +37,11 @@
       "types": "./dist/db/adapter.d.ts",
       "default": "./src/db/adapter.ts"
     },
+    "./repositories/admin/internal-notification-event": {
+      "import": "./dist/repositories/admin/internal-notification-event.js",
+      "types": "./src/repositories/admin/internal-notification-event.ts",
+      "default": "./src/repositories/admin/internal-notification-event.ts"
+    },
     "./middleware/*": {
       "import": "./dist/middleware/*.js",
       "default": "./src/middleware/*.ts"
@@ -52,6 +57,21 @@
     "./services/*": {
       "import": "./dist/services/*.js",
       "default": "./src/services/*.ts"
+    },
+    "./services/lookup-directory/contract": {
+      "import": "./dist/services/lookup-directory/contract.js",
+      "types": "./src/services/lookup-directory/contract.ts",
+      "default": "./src/services/lookup-directory/contract.ts"
+    },
+    "./services/lookup-directory/seed-sql": {
+      "import": "./dist/services/lookup-directory/seed-sql.js",
+      "types": "./src/services/lookup-directory/seed-sql.ts",
+      "default": "./src/services/lookup-directory/seed-sql.ts"
+    },
+    "./services/control-plane/migration-stream-contract": {
+      "import": "./dist/services/control-plane/migration-stream-contract.js",
+      "types": "./src/services/control-plane/migration-stream-contract.ts",
+      "default": "./src/services/control-plane/migration-stream-contract.ts"
     },
     "./rebac/rebac-service": {
       "import": "./dist/rebac/rebac-service.js",

@@ -6,6 +6,10 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createLookupBlindIndex } from '../../packages/ar-lib-core/src/services/lookup-directory/blind-index.js';
 import {
+  LOOKUP_MAX_VIRTUAL_BUCKET,
+  LOOKUP_VIRTUAL_BUCKET_COUNT,
+} from '../../packages/ar-lib-core/src/services/lookup-directory/contract.js';
+import {
   validateAccountRouteProjection,
   type AccountRouteProjection,
 } from '../../packages/ar-lib-core/src/services/control-plane/control-plane-contracts.js';
@@ -687,7 +691,7 @@ async function runtimeState(input: {
     if (
       !Number.isSafeInteger(bucket) ||
       bucket < 0 ||
-      bucket > 4095 ||
+      bucket > LOOKUP_MAX_VIRTUAL_BUCKET ||
       !Number.isSafeInteger(generation) ||
       generation < 1 ||
       !resource
@@ -701,7 +705,9 @@ async function runtimeState(input: {
       databaseId: resource.id,
     });
   }
-  if (assignments.size !== 4096) throw new Error('phase0c_lookup_assignment_coverage_incomplete');
+  if (assignments.size !== LOOKUP_VIRTUAL_BUCKET_COUNT) {
+    throw new Error('phase0c_lookup_assignment_coverage_incomplete');
+  }
   return {
     ...runtime,
     assignments,

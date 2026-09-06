@@ -25,6 +25,7 @@ import {
   deriveControlRegionShardAllowedRegions,
   getTenantDatabaseBindingPrefix,
   getTenantDatabaseResourcePrefix,
+  migrationStreamIdForControlDataRole,
 } from '@authrim/ar-lib-core/control-plane';
 import type { ControlRepository } from './repository';
 import type { LookupScaleOutCapacityRequest } from './lookup-scale-out-forecast';
@@ -596,12 +597,7 @@ async function buildPlan(
     jurisdiction: partition.jurisdiction ?? undefined,
     locationHint: partition.location_hint ?? undefined,
     readReplicationMode,
-    migrationStreamId:
-      request.dataRole === 'tenant_pii'
-        ? 'd1-pii'
-        : request.dataRole === 'lookup'
-          ? 'd1-lookup'
-          : 'd1-core',
+    migrationStreamId: migrationStreamIdForControlDataRole(request.dataRole),
     idempotencyKey: request.idempotencyKey,
   };
   assertControlPlaneRecordIsSecretFree(plan);

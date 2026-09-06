@@ -430,7 +430,7 @@ describe('control-provision CLI command', () => {
       currentStep: 'apply_migrations',
       migration: {
         databaseId: 'database-id',
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         releaseId: '0.4.0',
         manifestDigest: digest,
         manifestObjectKey: `releases/0.4.0/${digest}/manifest.json`,
@@ -460,7 +460,7 @@ describe('control-provision CLI command', () => {
       currentStep: 'reconcile_worker_bindings',
       migration: {
         databaseId: 'database-id',
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         releaseId: '0.4.0',
         manifestDigest: 'b'.repeat(64),
         manifestObjectKey: `releases/0.4.0/${'b'.repeat(64)}/manifest.json`,
@@ -489,7 +489,7 @@ describe('control-provision CLI command', () => {
       lastErrorCode: 'control_worker_settings_request_rejected',
       migration: {
         databaseId: 'database-id',
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         releaseId: '0.4.0',
         manifestDigest: 'b'.repeat(64),
         manifestObjectKey: `releases/0.4.0/${'b'.repeat(64)}/manifest.json`,

@@ -1,5 +1,5 @@
 -- Authrim 0.4.0 semantic fresh-install baseline.
--- Logical stream: external-postgres-pii.
+-- Logical stream: pii-postgresql.
 -- Generated from the final database state; do not append historical migration SQL here.
 -- Fresh-install baselines must never be applied to upgrade an existing database.
 --
@@ -85,6 +85,20 @@ CREATE TABLE public.linked_identities (
 );
 
 --
+-- Name: pairwise_subject_identifiers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pairwise_subject_identifiers (
+    id text NOT NULL,
+    tenant_id text DEFAULT 'default'::text NOT NULL,
+    user_id text NOT NULL,
+    client_id text NOT NULL,
+    sector_identifier text NOT NULL,
+    subject text NOT NULL,
+    created_at bigint NOT NULL
+);
+
+--
 -- Name: schema_migrations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -103,12 +117,20 @@ CREATE TABLE public.schema_migrations (
 
 CREATE TABLE public.subject_identifiers (
     id text NOT NULL,
-    tenant_id text DEFAULT 'default'::text NOT NULL,
-    user_id text NOT NULL,
-    client_id text NOT NULL,
-    sector_identifier text NOT NULL,
-    subject text NOT NULL,
-    created_at bigint NOT NULL
+    tenant_id text NOT NULL,
+    subject_id text NOT NULL,
+    identifier_type text NOT NULL,
+    identifier_value text NOT NULL,
+    is_primary boolean DEFAULT false NOT NULL,
+    verified_at bigint,
+    verification_method text,
+    destination_type text DEFAULT 'global'::text NOT NULL,
+    destination_id text DEFAULT 'default'::text NOT NULL,
+    identifier_value_hash text,
+    identifier_storage_ref text,
+    lifecycle_state text DEFAULT 'active'::text NOT NULL,
+    created_at bigint NOT NULL,
+    updated_at bigint NOT NULL
 );
 
 --
@@ -219,6 +241,10 @@ CREATE TABLE public.users_pii_tombstone (
 --
 
 --
+-- Data for Name: pairwise_subject_identifiers; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+--
 -- Data for Name: schema_migrations; Type: TABLE DATA; Schema: public; Owner: -
 --
 
@@ -278,6 +304,20 @@ ALTER TABLE ONLY public.linked_identities
     ADD CONSTRAINT linked_identities_unique_provider UNIQUE (tenant_id, provider_id, provider_user_id);
 
 --
+-- Name: pairwise_subject_identifiers pairwise_subject_identifiers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pairwise_subject_identifiers
+    ADD CONSTRAINT pairwise_subject_identifiers_pkey PRIMARY KEY (id);
+
+--
+-- Name: pairwise_subject_identifiers pairwise_subject_identifiers_unique_sector; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pairwise_subject_identifiers
+    ADD CONSTRAINT pairwise_subject_identifiers_unique_sector UNIQUE (tenant_id, user_id, sector_identifier);
+
+--
 -- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -292,11 +332,11 @@ ALTER TABLE ONLY public.subject_identifiers
     ADD CONSTRAINT subject_identifiers_pkey PRIMARY KEY (id);
 
 --
--- Name: subject_identifiers subject_identifiers_unique_sector; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: subject_identifiers subject_identifiers_unique_value; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.subject_identifiers
-    ADD CONSTRAINT subject_identifiers_unique_sector UNIQUE (tenant_id, user_id, sector_identifier);
+    ADD CONSTRAINT subject_identifiers_unique_value UNIQUE (tenant_id, identifier_type, identifier_value);
 
 --
 -- Name: totp_backup_codes totp_backup_codes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
@@ -400,16 +440,46 @@ CREATE INDEX idx_linked_identities_provisioning ON public.linked_identities USIN
 CREATE INDEX idx_linked_identities_user ON public.linked_identities USING btree (tenant_id, user_id);
 
 --
--- Name: idx_subject_identifiers_client; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_pairwise_subject_identifiers_client; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_subject_identifiers_client ON public.subject_identifiers USING btree (tenant_id, client_id);
+CREATE INDEX idx_pairwise_subject_identifiers_client ON public.pairwise_subject_identifiers USING btree (tenant_id, client_id);
 
 --
--- Name: idx_subject_identifiers_subject; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_pairwise_subject_identifiers_subject; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_subject_identifiers_subject ON public.subject_identifiers USING btree (tenant_id, subject);
+CREATE INDEX idx_pairwise_subject_identifiers_subject ON public.pairwise_subject_identifiers USING btree (tenant_id, subject);
+
+--
+-- Name: idx_pairwise_subject_identifiers_user; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pairwise_subject_identifiers_user ON public.pairwise_subject_identifiers USING btree (tenant_id, user_id);
+
+--
+-- Name: idx_subject_identifiers_destination; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_subject_identifiers_destination ON public.subject_identifiers USING btree (tenant_id, subject_id, destination_type, lifecycle_state);
+
+--
+-- Name: idx_subject_identifiers_hash; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_subject_identifiers_hash ON public.subject_identifiers USING btree (tenant_id, identifier_type, identifier_value_hash, lifecycle_state);
+
+--
+-- Name: idx_subject_identifiers_primary; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_subject_identifiers_primary ON public.subject_identifiers USING btree (tenant_id, subject_id, is_primary);
+
+--
+-- Name: idx_subject_identifiers_tenant_subject; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_subject_identifiers_tenant_subject ON public.subject_identifiers USING btree (tenant_id, subject_id);
 
 --
 -- Name: idx_totp_backup_codes_unused; Type: INDEX; Schema: public; Owner: -

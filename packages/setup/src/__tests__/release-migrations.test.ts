@@ -103,18 +103,18 @@ describe('manifest-aware repository D1 runner', () => {
 function temporaryMigrations(): string {
   const root = mkdtempSync(join(tmpdir(), 'authrim-release-manifest-'));
   temporaryDirectories.push(root);
-  for (const directory of ['admin', 'pii', 'external/postgres']) {
+  for (const directory of ['core/d1', 'pii/d1', 'admin/d1', 'core/postgresql', 'pii/postgresql']) {
     mkdirSync(join(root, directory), { recursive: true });
   }
-  writeFileSync(join(root, '001_core.sql'), 'CREATE TABLE core_record (id TEXT);\n');
-  writeFileSync(join(root, 'pii/001_pii.sql'), 'CREATE TABLE pii_record (id TEXT);\n');
-  writeFileSync(join(root, 'admin/001_admin.sql'), 'CREATE TABLE admin_record (id TEXT);\n');
+  writeFileSync(join(root, 'core/d1/001_core.sql'), 'CREATE TABLE core_record (id TEXT);\n');
+  writeFileSync(join(root, 'pii/d1/001_pii.sql'), 'CREATE TABLE pii_record (id TEXT);\n');
+  writeFileSync(join(root, 'admin/d1/001_admin.sql'), 'CREATE TABLE admin_record (id TEXT);\n');
   writeFileSync(
-    join(root, 'external/postgres/001_external.sql'),
+    join(root, 'core/postgresql/001_external.sql'),
     'CREATE TABLE external_record (id TEXT);\n'
   );
   writeFileSync(
-    join(root, 'external/postgres/002_external_durable_pii.sql'),
+    join(root, 'pii/postgresql/001_external_durable_pii.sql'),
     'CREATE TABLE external_pii_record (id TEXT);\n'
   );
   return root;
@@ -124,17 +124,19 @@ function managedCoreMigrations(): string {
   const root = mkdtempSync(join(tmpdir(), 'authrim-managed-release-manifest-'));
   temporaryDirectories.push(root);
   for (const directory of [
-    'admin',
-    'control',
-    'lookup',
-    'pii',
-    'plugin-runner',
-    'external/postgres',
+    'core/d1',
+    'admin/d1',
+    'control/d1',
+    'lookup/d1',
+    'pii/d1',
+    'plugin-runner/d1',
+    'core/postgresql',
+    'pii/postgresql',
   ]) {
     mkdirSync(join(root, directory), { recursive: true });
   }
   writeFileSync(
-    join(root, '001_0_4_0_core_baseline.sql'),
+    join(root, 'core/d1/001_0_4_0_core_baseline.sql'),
     'CREATE TABLE core_record (id TEXT PRIMARY KEY);\n'
   );
   return root;
@@ -161,7 +163,7 @@ describe('release migration manifests', () => {
     expect(baseline.upgradePaths).toBeUndefined();
     writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), baseline);
     writeFileSync(
-      join(migrationsRoot, '002_add_name.sql'),
+      join(migrationsRoot, 'core/d1', '002_add_name.sql'),
       'ALTER TABLE core_record ADD COLUMN name TEXT;\n'
     );
 
@@ -173,11 +175,11 @@ describe('release migration manifests', () => {
     });
     expect(patch.freshInstallBaseline).toEqual({ productVersion: '0.4.0' });
     expect(
-      patch.streams.find((stream) => stream.id === 'd1-core')?.files.map((file) => file.path)
+      patch.streams.find((stream) => stream.id === 'core-d1')?.files.map((file) => file.path)
     ).toEqual(['001_0_4_0_core_baseline.sql', '002_add_name.sql']);
     expect(
       patch.upgradePaths?.[0]?.streams
-        .find((stream) => stream.id === 'd1-core')
+        .find((stream) => stream.id === 'core-d1')
         ?.files.map((file) => file.path)
     ).toEqual(['002_add_name.sql']);
   });
@@ -190,7 +192,7 @@ describe('release migration manifests', () => {
     });
     writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), baseline);
     writeFileSync(
-      join(migrationsRoot, '002_unpublished_change.sql'),
+      join(migrationsRoot, 'core/d1', '002_unpublished_change.sql'),
       'ALTER TABLE core_record ADD COLUMN label TEXT;\n'
     );
 
@@ -210,7 +212,7 @@ describe('release migration manifests', () => {
         previousManifests: [baseline],
         semanticBaselineSource: true,
       })
-        .streams.find((stream) => stream.id === 'd1-core')
+        .streams.find((stream) => stream.id === 'core-d1')
         ?.files.map((file) => file.path)
     ).toEqual(['001_0_4_0_core_baseline.sql', '002_unpublished_change.sql']);
   });
@@ -222,19 +224,22 @@ describe('release migration manifests', () => {
       productVersion: '0.4.0',
     });
     writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), baseline);
-    const legacyPath = join(migrationsRoot, '001_published_legacy.sql');
+    const legacyPath = join(migrationsRoot, 'core/d1', '001_published_legacy.sql');
     writeFileSync(legacyPath, 'CREATE TABLE legacy_record (id TEXT PRIMARY KEY);\n');
-    const baselineFile = baseline.streams.find((stream) => stream.id === 'd1-core')!.files[0]!;
+    const baselineFile = baseline.streams.find((stream) => stream.id === 'core-d1')!.files[0]!;
     writeFileSync(
       join(migrationsRoot, 'semantic-baseline.evidence.json'),
       `${JSON.stringify({
-        formatVersion: 1,
+        formatVersion: 2,
         productVersion: '0.4.0',
         compatibility: 'fresh_install_only',
         streams: [
           {
-            id: 'd1-core',
+            id: 'core-d1',
+            schemaFamily: 'core',
             dialect: 'sqlite',
+            targetKind: 'cloudflare-d1',
+            logicalRoles: ['core', 'tenant_core'],
             path: baselineFile.path,
             checksum: baselineFile.checksum,
             schemaChecksum: 'a'.repeat(64),
@@ -257,8 +262,8 @@ describe('release migration manifests', () => {
       previousManifest: baseline,
       previousManifests: [baseline],
     });
-    expect(normal.streams.find((stream) => stream.id === 'd1-core')?.files).toEqual(
-      baseline.streams.find((stream) => stream.id === 'd1-core')?.files
+    expect(normal.streams.find((stream) => stream.id === 'core-d1')?.files).toEqual(
+      baseline.streams.find((stream) => stream.id === 'core-d1')?.files
     );
     expect(
       generateReleaseMigrationManifest({
@@ -268,7 +273,7 @@ describe('release migration manifests', () => {
         previousManifests: [baseline],
         semanticBaselineSource: true,
       })
-        .streams.find((stream) => stream.id === 'd1-core')
+        .streams.find((stream) => stream.id === 'core-d1')
         ?.files.map((file) => file.path)
     ).toEqual(['001_0_4_0_core_baseline.sql']);
   });
@@ -277,9 +282,11 @@ describe('release migration manifests', () => {
     const stream = (
       files: Array<{ path: string; checksum: string }>
     ): ReleaseMigrationManifest['streams'][number] => ({
-      id: 'd1-core',
+      id: 'core-d1',
+      schemaFamily: 'core',
       dialect: 'sqlite',
-      logicalRoles: ['core'],
+      targetKind: 'cloudflare-d1',
+      logicalRoles: ['core', 'tenant_core'],
       files,
     });
     const baseline040 = { path: '001_0_4_0_core_baseline.sql', checksum: 'a'.repeat(64) };
@@ -288,27 +295,27 @@ describe('release migration manifests', () => {
     const baseline050 = { path: '001_0_5_0_core_baseline.sql', checksum: 'd'.repeat(64) };
     const bridge050 = { path: '004_0_5_0_core_delta.sql', checksum: 'e'.repeat(64) };
     const release040 = ReleaseMigrationManifestSchema.parse({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       freshInstallBaseline: { productVersion: '0.4.0' },
       streams: [stream([baseline040])],
     });
     const release041 = ReleaseMigrationManifestSchema.parse({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.1',
       freshInstallBaseline: { productVersion: '0.4.0' },
       streams: [stream([baseline040, delta041])],
       upgradePaths: [{ fromProductVersion: '0.4.0', kind: 'delta', streams: [stream([delta041])] }],
     });
     const release042 = ReleaseMigrationManifestSchema.parse({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.2',
       freshInstallBaseline: { productVersion: '0.4.0' },
       streams: [stream([baseline040, delta041, delta042])],
       upgradePaths: [{ fromProductVersion: '0.4.1', kind: 'delta', streams: [stream([delta042])] }],
     });
     const release050 = ReleaseMigrationManifestSchema.parse({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.5.0',
       freshInstallBaseline: { productVersion: '0.5.0' },
       streams: [stream([baseline050])],
@@ -356,20 +363,22 @@ describe('release migration manifests', () => {
       supersedes: [draft],
     };
     const stream = (files: ReleaseMigrationManifest['streams'][number]['files']) => ({
-      id: 'd1-core',
-      dialect: 'sqlite' as const,
-      logicalRoles: ['core'],
+      id: 'core-d1',
+      schemaFamily: 'core',
+      dialect: 'sqlite',
+      targetKind: 'cloudflare-d1',
+      logicalRoles: ['core', 'tenant_core'],
       files,
     });
     const release = ReleaseMigrationManifestSchema.parse({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.1',
       freshInstallBaseline: { productVersion: '0.4.0' },
       streams: [stream([baseline, delta])],
       upgradePaths: [{ fromProductVersion: '0.4.0', kind: 'delta', streams: [stream([delta])] }],
     });
     const future = ReleaseMigrationManifestSchema.parse({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.2',
       streams: [stream([{ path: '003_0_4_2_core_delta.sql', checksum: 'd'.repeat(64) }])],
     });
@@ -397,21 +406,24 @@ describe('release migration manifests', () => {
   it('validates executable SQL without requiring superseded accepted-history files', () => {
     const root = mkdtempSync(join(tmpdir(), 'authrim-release-history-'));
     temporaryDirectories.push(root);
+    mkdirSync(join(root, 'core/d1'), { recursive: true });
     const sql = 'CREATE TABLE example (id TEXT PRIMARY KEY);\n';
-    const path = join(root, '001_0_4_0_core_baseline.sql');
+    const path = join(root, 'core/d1/001_0_4_0_core_baseline.sql');
     writeFileSync(path, sql);
     const baseline = {
       path: '001_0_4_0_core_baseline.sql',
       checksum: calculateReleaseMigrationChecksum(path, 'sqlite'),
     };
     const stream = (files: ReleaseMigrationManifest['streams'][number]['files']) => ({
-      id: 'd1-core',
-      dialect: 'sqlite' as const,
-      logicalRoles: ['core'],
+      id: 'core-d1',
+      schemaFamily: 'core',
+      dialect: 'sqlite',
+      targetKind: 'cloudflare-d1',
+      logicalRoles: ['core', 'tenant_core'],
       files,
     });
     const manifest = ReleaseMigrationManifestSchema.parse({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       freshInstallBaseline: { productVersion: '0.4.0' },
       streams: [stream([baseline])],
@@ -430,13 +442,13 @@ describe('release migration manifests', () => {
   });
 
   it('preserves prior per-target migration evidence when recording an upgrade delta', () => {
-    const targetId = 'd1:core-id:d1-core';
+    const targetId = 'd1:core-id:core-d1';
     const initial = lock({ DB: { id: 'core-id', name: 'core' } });
     initial.schemaTargets = {
       [targetId]: {
         productVersion: '0.4.0',
         manifestChecksum: 'a'.repeat(64),
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         files: [{ path: '001_0_4_0_core_baseline.sql', checksum: 'b'.repeat(64) }],
         appliedBy: 'automatic',
         updatedAt: '2026-09-01T00:00:00.000Z',
@@ -447,15 +459,17 @@ describe('release migration manifests', () => {
       manualTargetIds: new Set(),
       productVersion: '0.4.1',
       manifestChecksum: 'c'.repeat(64),
-      targetStreamIds: new Map([[targetId, 'd1-core']]),
+      targetStreamIds: new Map([[targetId, 'core-d1']]),
       manifest: ReleaseMigrationManifestSchema.parse({
-        formatVersion: 1,
+        formatVersion: 2,
         productVersion: '0.4.1',
         streams: [
           {
-            id: 'd1-core',
+            id: 'core-d1',
+            schemaFamily: 'core',
             dialect: 'sqlite',
-            logicalRoles: ['core'],
+            targetKind: 'cloudflare-d1',
+            logicalRoles: ['core', 'tenant_core'],
             files: [{ path: '002_0_4_1_core_delta.sql', checksum: 'd'.repeat(64) }],
           },
         ],
@@ -490,24 +504,52 @@ describe('release migration manifests', () => {
 
   it('rejects duplicate streams and migration paths outside their stream directory', () => {
     const stream = {
-      id: 'd1-core',
-      dialect: 'sqlite' as const,
-      logicalRoles: ['core'],
+      id: 'core-d1',
+      schemaFamily: 'core',
+      dialect: 'sqlite',
+      targetKind: 'cloudflare-d1',
+      logicalRoles: ['core', 'tenant_core'],
       files: [{ path: '../escape.sql', checksum: 'a'.repeat(64) }],
     };
     expect(() =>
       ReleaseMigrationManifestSchema.parse({
-        formatVersion: 1,
+        formatVersion: 2,
         productVersion: '1.0.0',
         streams: [stream, stream],
       })
     ).toThrow();
   });
 
-  it('rejects a fresh baseline from another release series', () => {
+  it('rejects manifest v1 and canonical IDs with mismatched backend metadata', () => {
     expect(() =>
       ReleaseMigrationManifestSchema.parse({
         formatVersion: 1,
+        productVersion: '0.4.0',
+        streams: [{ id: 'd1-core', dialect: 'sqlite', files: [] }],
+      })
+    ).toThrow();
+    expect(() =>
+      ReleaseMigrationManifestSchema.parse({
+        formatVersion: 2,
+        productVersion: '0.4.0',
+        streams: [
+          {
+            id: 'core-d1',
+            schemaFamily: 'core',
+            dialect: 'postgresql',
+            targetKind: 'postgresql-connection',
+            logicalRoles: ['core', 'custom', 'policy'],
+            files: [],
+          },
+        ],
+      })
+    ).toThrow('Migration stream metadata does not match the canonical contract: core-d1');
+  });
+
+  it('rejects a fresh baseline from another release series', () => {
+    expect(() =>
+      ReleaseMigrationManifestSchema.parse({
+        formatVersion: 2,
         productVersion: '1.2.1',
         freshInstallBaseline: { productVersion: '1.1.0' },
         streams: [],
@@ -518,12 +560,14 @@ describe('release migration manifests', () => {
   it('rejects migration files whose manifest order differs from execution order', () => {
     expect(() =>
       ReleaseMigrationManifestSchema.parse({
-        formatVersion: 1,
+        formatVersion: 2,
         productVersion: '1.0.0',
         streams: [
           {
-            id: 'd1-control',
+            id: 'control-d1',
+            schemaFamily: 'control',
             dialect: 'sqlite',
+            targetKind: 'cloudflare-d1',
             logicalRoles: ['control'],
             files: [
               { path: '002_second.sql', checksum: 'b'.repeat(64) },
@@ -537,7 +581,7 @@ describe('release migration manifests', () => {
 
   it('requires an explicit exact Worker compatibility contract for database-only updates', () => {
     const manifest = ReleaseMigrationManifestSchema.parse({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '1.1.0',
       rollout: {
         databaseExecution: 'setup_then_control',
@@ -572,7 +616,7 @@ describe('release migration manifests', () => {
   it('generates cumulative checksummed streams and preserves published supersedes metadata', () => {
     const migrationsRoot = temporaryMigrations();
     const initial = generateReleaseMigrationManifest({ migrationsRoot, productVersion: '1.0.0' });
-    const core = initial.streams.find((stream) => stream.id === 'd1-core');
+    const core = initial.streams.find((stream) => stream.id === 'core-d1');
     expect(core?.files).toHaveLength(1);
     expect(core?.files[0].checksum).toMatch(/^[a-f0-9]{64}$/u);
     expect(initial.rollout).toEqual({
@@ -585,7 +629,7 @@ describe('release migration manifests', () => {
     const previous: ReleaseMigrationManifest = {
       ...initial,
       streams: initial.streams.map((stream) =>
-        stream.id === 'd1-core'
+        stream.id === 'core-d1'
           ? {
               ...stream,
               files: stream.files.map((file) => ({
@@ -601,7 +645,7 @@ describe('release migration manifests', () => {
       productVersion: '1.1.0',
       previousManifest: previous,
     });
-    expect(next.streams.find((stream) => stream.id === 'd1-core')?.files[0].supersedes).toEqual([
+    expect(next.streams.find((stream) => stream.id === 'core-d1')?.files[0].supersedes).toEqual([
       { path: '001_draft.sql', checksum: 'a'.repeat(64) },
     ]);
     expect(next.databaseCompatibility).toBe('fresh_and_forward');
@@ -649,9 +693,9 @@ describe('release migration manifests', () => {
       productVersion: '0.9.0',
     });
     const previousChecksum = calculateReleaseManifestChecksum(previous);
-    const previousCoreFiles = previous.streams.find((stream) => stream.id === 'd1-core')!.files;
+    const previousCoreFiles = previous.streams.find((stream) => stream.id === 'core-d1')!.files;
     writeFileSync(
-      join(migrationsRoot, '002_core_append.sql'),
+      join(migrationsRoot, 'core/d1', '002_core_append.sql'),
       'ALTER TABLE core_record ADD value TEXT;\n'
     );
     const current = generateReleaseMigrationManifest({
@@ -659,12 +703,12 @@ describe('release migration manifests', () => {
       productVersion: '0.9.0',
     });
     const currentChecksum = calculateReleaseManifestChecksum(current);
-    const targetId = 'd1:core-id:d1-core';
+    const targetId = 'd1:core-id:core-d1';
     const installedSchemaTargets: NonNullable<AuthrimLock['schemaTargets']> = {
       [targetId]: {
         productVersion: '0.9.0',
         manifestChecksum: previousChecksum,
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         files: previousCoreFiles.map(({ path, checksum }) => ({ path, checksum })),
         appliedBy: 'automatic',
         updatedAt: '2026-08-31T00:00:00.000Z',
@@ -674,7 +718,7 @@ describe('release migration manifests', () => {
       installedProductVersion: '0.9.0',
       installedSchemaManifestChecksums: [previousChecksum],
       installedSchemaTargets,
-      currentTargets: [{ id: targetId, streamId: 'd1-core' }],
+      currentTargets: [{ id: targetId, streamId: 'core-d1' }],
       targetManifestIsDraft: true,
     } as const;
 
@@ -687,7 +731,7 @@ describe('release migration manifests', () => {
     ).not.toThrow();
 
     const changed = structuredClone(current);
-    changed.streams.find((stream) => stream.id === 'd1-core')!.files[0]!.checksum = 'f'.repeat(64);
+    changed.streams.find((stream) => stream.id === 'core-d1')!.files[0]!.checksum = 'f'.repeat(64);
     expect(() =>
       assertReleaseDatabaseCompatibility({
         ...compatibilityInput,
@@ -697,7 +741,7 @@ describe('release migration manifests', () => {
     ).toThrow('fresh_install_required:0.9.0:0.9.0');
 
     const removed = structuredClone(current);
-    removed.streams.find((stream) => stream.id === 'd1-core')!.files = [];
+    removed.streams.find((stream) => stream.id === 'core-d1')!.files = [];
     expect(() =>
       assertReleaseDatabaseCompatibility({
         ...compatibilityInput,
@@ -740,8 +784,14 @@ describe('release migration manifests', () => {
       productVersion: '1.0.0',
     });
     writeReleaseMigrationManifest(join(migrationsRoot, 'releases/1.0.0.json'), previous);
-    writeFileSync(join(migrationsRoot, '002_draft_a.sql'), 'CREATE TABLE draft_a (id TEXT);\n');
-    writeFileSync(join(migrationsRoot, '003_draft_b.sql'), 'CREATE TABLE draft_b (id TEXT);\n');
+    writeFileSync(
+      join(migrationsRoot, 'core/d1', '002_draft_a.sql'),
+      'CREATE TABLE draft_a (id TEXT);\n'
+    );
+    writeFileSync(
+      join(migrationsRoot, 'core/d1', '003_draft_b.sql'),
+      'CREATE TABLE draft_b (id TEXT);\n'
+    );
 
     prepareRelease({
       migrationsRoot,
@@ -756,13 +806,13 @@ describe('release migration manifests', () => {
       previousManifest: previous,
     });
     expect(
-      released.streams.find((stream) => stream.id === 'd1-core')?.files.map((file) => file.path)
+      released.streams.find((stream) => stream.id === 'core-d1')?.files.map((file) => file.path)
     ).toEqual(['001_core.sql', '002_1_1_0_core_delta.sql']);
     const releaseManifest = JSON.parse(
       readFileSync(join(migrationsRoot, 'releases/1.1.0.json'), 'utf-8')
     ) as ReleaseMigrationManifest;
     expect(
-      releaseManifest.streams.find((stream) => stream.id === 'd1-core')?.files[1].supersedes
+      releaseManifest.streams.find((stream) => stream.id === 'core-d1')?.files[1].supersedes
     ).toEqual([
       expect.objectContaining({ path: '002_draft_a.sql' }),
       expect.objectContaining({ path: '003_draft_b.sql' }),
@@ -778,37 +828,37 @@ describe('release migration manifests', () => {
     });
     writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), baseline);
     writeFileSync(
-      join(migrationsRoot, '002_add_label.sql'),
+      join(migrationsRoot, 'core/d1', '002_add_label.sql'),
       'ALTER TABLE core_record ADD COLUMN label TEXT;\n'
     );
     writeFileSync(
-      join(migrationsRoot, '003_add_label_index.sql'),
+      join(migrationsRoot, 'core/d1', '003_add_label_index.sql'),
       'CREATE INDEX core_record_label_idx ON core_record(label);\n'
     );
 
     prepareRelease({ migrationsRoot, version: '0.4.1', write: true });
-    expect(existsSync(join(migrationsRoot, '002_0_4_1_core_delta.sql'))).toBe(true);
+    expect(existsSync(join(migrationsRoot, 'core/d1', '002_0_4_1_core_delta.sql'))).toBe(true);
     const release041 = readReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.1.json'));
     expect(
       release041.streams
-        .find((stream) => stream.id === 'd1-core')
+        .find((stream) => stream.id === 'core-d1')
         ?.files.find((file) => file.path === '002_0_4_1_core_delta.sql')?.semanticEvidence
     ).toMatchObject({ objectCount: 2 });
 
     writeFileSync(
-      join(migrationsRoot, '003_add_state.sql'),
+      join(migrationsRoot, 'core/d1', '003_add_state.sql'),
       "ALTER TABLE core_record ADD COLUMN state TEXT NOT NULL DEFAULT 'active';\n"
     );
     writeFileSync(
-      join(migrationsRoot, '004_add_state_index.sql'),
+      join(migrationsRoot, 'core/d1', '004_add_state_index.sql'),
       'CREATE INDEX core_record_state_idx ON core_record(state);\n'
     );
 
     prepareRelease({ migrationsRoot, version: '0.4.2', write: true });
-    expect(existsSync(join(migrationsRoot, '003_0_4_2_core_delta.sql'))).toBe(true);
+    expect(existsSync(join(migrationsRoot, 'core/d1', '003_0_4_2_core_delta.sql'))).toBe(true);
     const release042 = readReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.2.json'));
     expect(
-      release042.streams.find((stream) => stream.id === 'd1-core')?.files.map((file) => file.path)
+      release042.streams.find((stream) => stream.id === 'core-d1')?.files.map((file) => file.path)
     ).toEqual([
       '001_0_4_0_core_baseline.sql',
       '002_0_4_1_core_delta.sql',
@@ -816,7 +866,7 @@ describe('release migration manifests', () => {
     ]);
     expect(
       release042.upgradePaths?.[0]?.streams
-        .find((stream) => stream.id === 'd1-core')
+        .find((stream) => stream.id === 'core-d1')
         ?.files.map((file) => file.path)
     ).toEqual(['003_0_4_2_core_delta.sql']);
 
@@ -833,7 +883,7 @@ describe('release migration manifests', () => {
       productVersion: '0.4.0',
     });
     writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), baseline);
-    const deltaPath = join(migrationsRoot, '002_0_4_1_core_delta.sql');
+    const deltaPath = join(migrationsRoot, 'core/d1', '002_0_4_1_core_delta.sql');
     writeFileSync(deltaPath, 'ALTER TABLE core_record ADD COLUMN label TEXT;\n');
 
     prepareRelease({ migrationsRoot, version: '0.4.1', write: true });
@@ -841,7 +891,7 @@ describe('release migration manifests', () => {
     expect(existsSync(deltaPath)).toBe(true);
     const release = readReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.1.json'));
     const delta = release.upgradePaths?.[0]?.streams
-      .find((stream) => stream.id === 'd1-core')
+      .find((stream) => stream.id === 'core-d1')
       ?.files.at(0);
     expect(delta).toMatchObject({
       path: '002_0_4_1_core_delta.sql',
@@ -859,23 +909,23 @@ describe('release migration manifests', () => {
     writeReleaseMigrationManifest(join(migrationsRoot, 'releases/1.0.0.json'), previous);
     const draftA = 'CREATE TABLE interrupted_a (id TEXT);\n';
     const draftB = 'CREATE TABLE interrupted_b (id TEXT);\n';
-    writeFileSync(join(migrationsRoot, '002_interrupted_a.sql'), draftA);
-    writeFileSync(join(migrationsRoot, '003_interrupted_b.sql'), draftB);
+    writeFileSync(join(migrationsRoot, 'core/d1', '002_interrupted_a.sql'), draftA);
+    writeFileSync(join(migrationsRoot, 'core/d1', '003_interrupted_b.sql'), draftB);
     prepareRelease({ migrationsRoot, version: '1.1.0', write: true });
 
     const releasePath = join(migrationsRoot, 'releases/1.1.0.json');
     const manifest = JSON.parse(readFileSync(releasePath, 'utf-8')) as ReleaseMigrationManifest;
     const bundle = manifest.streams
-      .find((stream) => stream.id === 'd1-core')
+      .find((stream) => stream.id === 'core-d1')
       ?.files.find((file) => file.supersedes?.length);
     expect(bundle?.supersedes).toHaveLength(2);
     if (!bundle?.supersedes) throw new Error('Expected consolidated core bundle');
 
-    rmSync(join(migrationsRoot, bundle.path));
+    rmSync(join(migrationsRoot, 'core/d1', bundle.path));
     rmSync(releasePath);
     rmSync(join(migrationsRoot, 'release-manifest.draft.json'));
-    writeFileSync(join(migrationsRoot, '002_interrupted_a.sql'), draftA);
-    writeFileSync(join(migrationsRoot, '003_interrupted_b.sql'), draftB);
+    writeFileSync(join(migrationsRoot, 'core/d1', '002_interrupted_a.sql'), draftA);
+    writeFileSync(join(migrationsRoot, 'core/d1', '003_interrupted_b.sql'), draftB);
     const journalPath = join(migrationsRoot, 'releases/.1.1.0.prepare-state');
     writeFileSync(
       journalPath,
@@ -886,7 +936,7 @@ describe('release migration manifests', () => {
           manifest,
           operations: [
             {
-              streamId: 'd1-core',
+              streamId: 'core-d1',
               dialect: 'sqlite',
               sources: bundle.supersedes,
               bundlePath: bundle.path,
@@ -902,11 +952,11 @@ describe('release migration manifests', () => {
     prepareRelease({ migrationsRoot, version: '1.1.0', write: true });
 
     expect(existsSync(journalPath)).toBe(false);
-    expect(existsSync(join(migrationsRoot, bundle.path))).toBe(true);
+    expect(existsSync(join(migrationsRoot, 'core/d1', bundle.path))).toBe(true);
     expect(existsSync(releasePath)).toBe(true);
     expect(existsSync(join(migrationsRoot, 'release-manifest.draft.json'))).toBe(true);
-    expect(existsSync(join(migrationsRoot, '002_interrupted_a.sql'))).toBe(false);
-    expect(existsSync(join(migrationsRoot, '003_interrupted_b.sql'))).toBe(false);
+    expect(existsSync(join(migrationsRoot, 'core/d1', '002_interrupted_a.sql'))).toBe(false);
+    expect(existsSync(join(migrationsRoot, 'core/d1', '003_interrupted_b.sql'))).toBe(false);
   });
 
   it('resumes a major/minor bridge whose delta is outside the fresh plan', () => {
@@ -917,26 +967,26 @@ describe('release migration manifests', () => {
     });
     writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), previous);
     writeFileSync(
-      join(migrationsRoot, '001_0_5_0_core_baseline.sql'),
+      join(migrationsRoot, 'core/d1', '001_0_5_0_core_baseline.sql'),
       'CREATE TABLE core_record (id TEXT PRIMARY KEY, label TEXT);\n'
     );
     const bridgeSql = 'ALTER TABLE core_record ADD COLUMN label TEXT;\n';
-    writeFileSync(join(migrationsRoot, '002_bridge_to_0_5.sql'), bridgeSql);
+    writeFileSync(join(migrationsRoot, 'core/d1', '002_bridge_to_0_5.sql'), bridgeSql);
     prepareRelease({ migrationsRoot, version: '0.5.0', write: true });
 
     const releasePath = join(migrationsRoot, 'releases/0.5.0.json');
     const manifest = readReleaseMigrationManifest(releasePath);
     const bundle = manifest.upgradePaths?.[0]?.streams
-      .find((stream) => stream.id === 'd1-core')
+      .find((stream) => stream.id === 'core-d1')
       ?.files.at(0);
     expect(bundle?.path).toBe('002_0_5_0_core_delta.sql');
     expect(bundle?.semanticEvidence).toBeDefined();
     if (!bundle?.supersedes) throw new Error('Expected consolidated bridge provenance');
 
-    rmSync(join(migrationsRoot, bundle.path));
+    rmSync(join(migrationsRoot, 'core/d1', bundle.path));
     rmSync(releasePath);
     rmSync(join(migrationsRoot, 'release-manifest.draft.json'));
-    writeFileSync(join(migrationsRoot, '002_bridge_to_0_5.sql'), bridgeSql);
+    writeFileSync(join(migrationsRoot, 'core/d1', '002_bridge_to_0_5.sql'), bridgeSql);
     const journalPath = join(migrationsRoot, 'releases/.0.5.0.prepare-state');
     writeFileSync(
       journalPath,
@@ -947,7 +997,7 @@ describe('release migration manifests', () => {
           manifest,
           operations: [
             {
-              streamId: 'd1-core',
+              streamId: 'core-d1',
               dialect: 'sqlite',
               sources: bundle.supersedes,
               bundlePath: bundle.path,
@@ -962,7 +1012,7 @@ describe('release migration manifests', () => {
 
     prepareRelease({ migrationsRoot, version: '0.5.0', write: true });
     expect(existsSync(journalPath)).toBe(false);
-    expect(existsSync(join(migrationsRoot, bundle.path))).toBe(true);
+    expect(existsSync(join(migrationsRoot, 'core/d1', bundle.path))).toBe(true);
     expect(readReleaseMigrationManifest(releasePath)).toEqual(manifest);
   });
 
@@ -984,7 +1034,10 @@ describe('release migration manifests', () => {
       })
     ).not.toThrow();
 
-    writeFileSync(join(migrationsRoot, '002_too_late.sql'), 'CREATE TABLE too_late (id TEXT);\n');
+    writeFileSync(
+      join(migrationsRoot, 'core/d1', '002_too_late.sql'),
+      'CREATE TABLE too_late (id TEXT);\n'
+    );
     expect(() =>
       syncDraftReleaseMigrationManifest({ migrationsRoot, productVersion: '1.0.0' })
     ).not.toThrow();
@@ -1038,20 +1091,23 @@ describe('release migration manifests', () => {
     execFileSync('git', ['config', 'user.name', 'Authrim Migration Test'], { cwd: repository });
     mkdirSync(join(migrationsRoot, 'releases'), { recursive: true });
     mkdirSync(join(migrationsRoot, 'evidence'), { recursive: true });
-    const baselinePath = join(migrationsRoot, '001_0_4_0_core_baseline.sql');
+    mkdirSync(join(migrationsRoot, 'core/d1'), { recursive: true });
+    const baselinePath = join(migrationsRoot, 'core/d1', '001_0_4_0_core_baseline.sql');
     const baselineSql = 'CREATE TABLE core_record (id TEXT PRIMARY KEY);\n';
     writeFileSync(baselinePath, baselineSql);
     const manifestPath = join(migrationsRoot, 'releases/0.4.0.json');
     const manifest = ReleaseMigrationManifestSchema.parse({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       databaseCompatibility: 'fresh_install_only',
       freshInstallBaseline: { productVersion: '0.4.0' },
       streams: [
         {
-          id: 'd1-core',
+          id: 'core-d1',
+          schemaFamily: 'core',
           dialect: 'sqlite',
-          logicalRoles: ['core'],
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
           files: [
             {
               path: '001_0_4_0_core_baseline.sql',
@@ -1121,19 +1177,29 @@ describe('release migration manifests', () => {
     const migrationsRoot = mkdtempSync(join(tmpdir(), 'authrim-main-release-check-'));
     temporaryDirectories.push(migrationsRoot);
     mkdirSync(join(migrationsRoot, 'releases'), { recursive: true });
+    mkdirSync(join(migrationsRoot, 'core/d1'), { recursive: true });
     const baselinePath = '001_0_4_0_core_baseline.sql';
-    const fullPath = join(migrationsRoot, baselinePath);
+    const fullPath = join(migrationsRoot, 'core/d1', baselinePath);
     writeFileSync(fullPath, 'CREATE TABLE core_record (id TEXT PRIMARY KEY);\n');
     const baseline = {
       path: baselinePath,
       checksum: calculateReleaseMigrationChecksum(fullPath, 'sqlite'),
     };
     const manifest = ReleaseMigrationManifestSchema.parse({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       databaseCompatibility: 'fresh_install_only',
       freshInstallBaseline: { productVersion: '0.4.0' },
-      streams: [{ id: 'd1-core', dialect: 'sqlite', logicalRoles: ['core'], files: [baseline] }],
+      streams: [
+        {
+          id: 'core-d1',
+          schemaFamily: 'core',
+          dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
+          files: [baseline],
+        },
+      ],
     });
     writeReleaseMigrationManifest(join(migrationsRoot, 'release-manifest.draft.json'), manifest);
     expect(() =>
@@ -1142,13 +1208,16 @@ describe('release migration manifests', () => {
 
     writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.0.json'), manifest);
     const evidence = `${JSON.stringify({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       compatibility: 'fresh_install_only',
       streams: [
         {
-          id: 'd1-core',
+          id: 'core-d1',
+          schemaFamily: 'core',
           dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
           ...baseline,
           schemaChecksum: 'a'.repeat(64),
           seedChecksum: 'b'.repeat(64),
@@ -1181,20 +1250,30 @@ describe('release migration manifests', () => {
     const migrationsRoot = mkdtempSync(join(tmpdir(), 'authrim-main-patch-check-'));
     temporaryDirectories.push(migrationsRoot);
     mkdirSync(join(migrationsRoot, 'releases'), { recursive: true });
+    mkdirSync(join(migrationsRoot, 'core/d1'), { recursive: true });
     const baselinePath = '001_0_4_0_core_baseline.sql';
     const deltaPath = '002_0_4_1_core_delta.sql';
-    writeFileSync(join(migrationsRoot, baselinePath), 'CREATE TABLE core_record (id TEXT);\n');
     writeFileSync(
-      join(migrationsRoot, deltaPath),
+      join(migrationsRoot, 'core/d1', baselinePath),
+      'CREATE TABLE core_record (id TEXT);\n'
+    );
+    writeFileSync(
+      join(migrationsRoot, 'core/d1', deltaPath),
       'ALTER TABLE core_record ADD COLUMN name TEXT;\n'
     );
     const baseline = {
       path: baselinePath,
-      checksum: calculateReleaseMigrationChecksum(join(migrationsRoot, baselinePath), 'sqlite'),
+      checksum: calculateReleaseMigrationChecksum(
+        join(migrationsRoot, 'core/d1', baselinePath),
+        'sqlite'
+      ),
     };
     const delta = {
       path: deltaPath,
-      checksum: calculateReleaseMigrationChecksum(join(migrationsRoot, deltaPath), 'sqlite'),
+      checksum: calculateReleaseMigrationChecksum(
+        join(migrationsRoot, 'core/d1', deltaPath),
+        'sqlite'
+      ),
       semanticEvidence: {
         schemaChecksum: 'a'.repeat(64),
         seedChecksum: 'b'.repeat(64),
@@ -1202,19 +1281,21 @@ describe('release migration manifests', () => {
       },
     };
     const stream = (files: ReleaseMigrationManifest['streams'][number]['files']) => ({
-      id: 'd1-core',
-      dialect: 'sqlite' as const,
-      logicalRoles: ['core'],
+      id: 'core-d1',
+      schemaFamily: 'core',
+      dialect: 'sqlite',
+      targetKind: 'cloudflare-d1',
+      logicalRoles: ['core', 'tenant_core'],
       files,
     });
     const baselineManifest = ReleaseMigrationManifestSchema.parse({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       freshInstallBaseline: { productVersion: '0.4.0' },
       streams: [stream([baseline])],
     });
     const patchManifest = ReleaseMigrationManifestSchema.parse({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.1',
       freshInstallBaseline: { productVersion: '0.4.0' },
       streams: [stream([baseline, delta])],
@@ -1243,7 +1324,7 @@ describe('release migration manifests', () => {
       ],
     };
     writeFileSync(
-      join(migrationsRoot, '002_add_name.sql'),
+      join(migrationsRoot, 'core/d1', '002_add_name.sql'),
       'ALTER TABLE core_record ADD COLUMN name TEXT;\n'
     );
     writeReleaseMigrationManifest(join(migrationsRoot, 'releases/0.4.1.json'), unconsolidated);
@@ -1270,7 +1351,7 @@ describe('release migration manifests', () => {
       },
     });
     writeFileSync(
-      join(migrationsRoot, '002_next.sql'),
+      join(migrationsRoot, 'core/d1', '002_next.sql'),
       'ALTER TABLE sample ADD COLUMN name TEXT;\n'
     );
 
@@ -1292,7 +1373,10 @@ describe('release migration manifests', () => {
       productVersion: '1.1.0',
     });
     writeReleaseMigrationManifest(candidatePath, candidate);
-    writeFileSync(join(migrationsRoot, '002_next.sql'), 'CREATE TABLE next_record (id TEXT);\n');
+    writeFileSync(
+      join(migrationsRoot, 'core/d1', '002_next.sql'),
+      'CREATE TABLE next_record (id TEXT);\n'
+    );
 
     const refreshed = syncDraftReleaseMigrationManifest({
       migrationsRoot,
@@ -1321,7 +1405,7 @@ describe('release migration manifests', () => {
     writeReleaseMigrationManifest(join(migrationsRoot, 'release-manifest.draft.json'), {
       ...published,
       streams: published.streams.map((stream) =>
-        stream.id === 'd1-core'
+        stream.id === 'core-d1'
           ? {
               ...stream,
               files: [...stream.files, { path: '999_divergent.sql', checksum: 'f'.repeat(64) }],
@@ -1348,13 +1432,13 @@ describe('release migration manifests', () => {
     });
     writeReleaseMigrationManifest(join(migrationsRoot, 'releases/1.0.0.json'), published);
     writeFileSync(
-      join(migrationsRoot, 'external/postgres/001_external.sql'),
+      join(migrationsRoot, 'core/postgresql/001_external.sql'),
       'CREATE TABLE changed_external_record (id TEXT);\n'
     );
 
     expect(() =>
       loadTargetReleaseMigrationManifest({ migrationsRoot, productVersion: '1.0.0' })
-    ).toThrow('Release migration checksum changed: 1.0.0/external-postgres-core');
+    ).toThrow('Release migration checksum changed: 1.0.0/core-postgresql');
   });
 
   it('discovers the latest published manifest when the draft file is absent', () => {
@@ -1365,10 +1449,10 @@ describe('release migration manifests', () => {
     });
     writeReleaseMigrationManifest(join(migrationsRoot, 'releases/1.0.0.json'), published);
 
-    const discovered = discoverReleaseMigrationStream(migrationsRoot);
+    const discovered = discoverReleaseMigrationStream(join(migrationsRoot, 'core/d1'));
     expect(discovered).toMatchObject({ draft: false });
     expect(discovered?.manifest.productVersion).toBe('1.0.0');
-    expect(discovered?.stream.id).toBe('d1-core');
+    expect(discovered?.stream.id).toBe('core-d1');
   });
 
   it('blocks a new release while another version has an incomplete preparation journal', () => {
@@ -1388,12 +1472,18 @@ describe('release migration manifests', () => {
       productVersion: '1.1.0',
     });
     writeReleaseMigrationManifest(join(migrationsRoot, 'releases/1.1.0.json'), previous);
-    writeFileSync(join(migrationsRoot, '002_draft_a.sql'), 'CREATE TABLE draft_a (id TEXT);\n');
-    writeFileSync(join(migrationsRoot, '003_draft_b.sql'), 'CREATE TABLE draft_b (id TEXT);\n');
+    writeFileSync(
+      join(migrationsRoot, 'core/d1', '002_draft_a.sql'),
+      'CREATE TABLE draft_a (id TEXT);\n'
+    );
+    writeFileSync(
+      join(migrationsRoot, 'core/d1', '003_draft_b.sql'),
+      'CREATE TABLE draft_b (id TEXT);\n'
+    );
 
     expect(() => prepareRelease({ migrationsRoot, version: '1.1.0', write: true })).not.toThrow();
-    expect(existsSync(join(migrationsRoot, '002_draft_a.sql'))).toBe(true);
-    expect(existsSync(join(migrationsRoot, '003_draft_b.sql'))).toBe(true);
+    expect(existsSync(join(migrationsRoot, 'core/d1', '002_draft_a.sql'))).toBe(true);
+    expect(existsSync(join(migrationsRoot, 'core/d1', '003_draft_b.sql'))).toBe(true);
   });
 
   it('rejects published manifest filename/version mismatches and changed published SQL', () => {
@@ -1412,7 +1502,10 @@ describe('release migration manifests', () => {
 
     rmSync(join(migrationsRoot, 'releases'), { recursive: true });
     writeReleaseMigrationManifest(join(migrationsRoot, 'releases/1.0.0.json'), manifest);
-    writeFileSync(join(migrationsRoot, '001_core.sql'), 'CREATE TABLE changed (id TEXT);\n');
+    writeFileSync(
+      join(migrationsRoot, 'core/d1', '001_core.sql'),
+      'CREATE TABLE changed (id TEXT);\n'
+    );
     expect(() => validatePublishedReleaseMigrationManifests(migrationsRoot)).toThrow(
       'Published migration checksum changed'
     );
@@ -1439,33 +1532,33 @@ describe('release migration topology', () => {
 
     expect(targets).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ binding: 'DB', streamId: 'd1-core', scope: 'deployment' }),
+        expect.objectContaining({ binding: 'DB', streamId: 'core-d1', scope: 'deployment' }),
         expect.objectContaining({
           binding: 'CONTROL_DB',
           databaseId: 'db-control',
-          streamId: 'd1-control',
+          streamId: 'control-d1',
           logicalRoles: ['control'],
         }),
         expect.objectContaining({
           binding: 'LOOKUP_DB',
           databaseId: 'db-lookup',
-          streamId: 'd1-lookup',
+          streamId: 'lookup-d1',
           logicalRoles: ['lookup'],
         }),
         expect.objectContaining({
           binding: 'PLUGIN_RUNNER_DB',
           databaseId: 'db-plugin-runner',
-          streamId: 'd1-plugin-runner',
+          streamId: 'plugin-runner-d1',
           logicalRoles: ['plugin_runner'],
         }),
         expect.objectContaining({
           binding: 'TEST_TDB_SLOT_0001_CORE',
-          streamId: 'd1-core',
+          streamId: 'core-d1',
           scope: 'tenant',
         }),
         expect.objectContaining({
           binding: 'TEST_TDB_ACME_CORE_S1',
-          streamId: 'd1-core',
+          streamId: 'core-d1',
           shard: '1',
         }),
       ])
@@ -1512,7 +1605,7 @@ describe('release migration topology', () => {
       targets
         .filter((target) => ['DB', 'DB_PII'].includes(target.binding ?? ''))
         .map((target) => target.streamId)
-    ).toEqual(expect.arrayContaining(['d1-core', 'd1-pii']));
+    ).toEqual(expect.arrayContaining(['core-d1', 'pii-d1']));
   });
 
   it('does not activate user-store migration targets from Hyperdrive references alone', () => {
@@ -1577,8 +1670,8 @@ describe('release schema update plans', () => {
     const current = generateReleaseMigrationManifest({ migrationsRoot, productVersion: '1.0.0' });
     const target = { ...current, productVersion: '1.1.0' };
     const d1Target = {
-      id: 'd1:core:d1-core',
-      streamId: 'd1-core',
+      id: 'd1:core:core-d1',
+      streamId: 'core-d1',
       driver: 'd1' as const,
       scope: 'deployment' as const,
       logicalRoles: ['core'],
@@ -1606,11 +1699,11 @@ describe('release schema update plans', () => {
       productVersion: '1.1.0',
     });
     target.streams = target.streams.map((stream) =>
-      stream.id === 'd1-core' ? { ...stream, files: [] } : stream
+      stream.id === 'core-d1' ? { ...stream, files: [] } : stream
     );
     const d1Target = {
-      id: 'd1:new-core:d1-core',
-      streamId: 'd1-core',
+      id: 'd1:new-core:core-d1',
+      streamId: 'core-d1',
       driver: 'd1' as const,
       scope: 'deployment' as const,
       logicalRoles: ['core'],
@@ -1635,13 +1728,13 @@ describe('release schema update plans', () => {
       productVersion: '1.1.0',
     });
     target.streams = target.streams.map((stream) =>
-      stream.id === 'd1-core'
+      stream.id === 'core-d1'
         ? { ...stream, files: [{ path: '002_1_1_0_core_delta.sql', checksum: 'a'.repeat(64) }] }
         : stream
     );
     const d1Target = {
-      id: 'd1:unknown-core:d1-core',
-      streamId: 'd1-core',
+      id: 'd1:unknown-core:core-d1',
+      streamId: 'core-d1',
       driver: 'd1' as const,
       scope: 'deployment' as const,
       logicalRoles: ['core'],
@@ -1660,7 +1753,7 @@ describe('release schema update plans', () => {
     expect(plan.blockedTargets[0]).toMatchObject({
       changedFiles: ['002_1_1_0_core_delta.sql'],
       requiresAction: true,
-      blockedReason: 'release_migration_target_history_required:d1:unknown-core:d1-core',
+      blockedReason: 'release_migration_target_history_required:d1:unknown-core:core-d1',
     });
   });
 
@@ -1676,8 +1769,8 @@ describe('release schema update plans', () => {
       requireCurrentManifestForTargets: true,
       targets: [
         {
-          id: 'd1:unknown-core:d1-core',
-          streamId: 'd1-core',
+          id: 'd1:unknown-core:core-d1',
+          streamId: 'core-d1',
           driver: 'd1',
           scope: 'deployment',
           logicalRoles: ['core'],
@@ -1697,7 +1790,7 @@ describe('release schema update plans', () => {
     const target = { ...current, productVersion: '1.1.0' };
     const externalTarget = {
       id: 'external:postgres:core-primary',
-      streamId: 'external-postgres-core',
+      streamId: 'core-postgresql',
       driver: 'postgres' as const,
       scope: 'external' as const,
       logicalRoles: ['core'],
@@ -1715,7 +1808,7 @@ describe('release schema update plans', () => {
     const changed: ReleaseMigrationManifest = {
       ...target,
       streams: target.streams.map((stream) =>
-        stream.id === 'external-postgres-core'
+        stream.id === 'core-postgresql'
           ? {
               ...stream,
               files: [...stream.files, { path: '002_new.sql', checksum: 'b'.repeat(64) }],
@@ -1740,7 +1833,7 @@ describe('release schema update plans', () => {
     });
     const postgresTarget = {
       id: 'external:postgres:new-core',
-      streamId: 'external-postgres-core',
+      streamId: 'core-postgresql',
       driver: 'postgres' as const,
       scope: 'external' as const,
       logicalRoles: ['core'],
@@ -1777,11 +1870,11 @@ describe('release schema update plans', () => {
     });
     const withoutExternalCore = {
       ...manifest,
-      streams: manifest.streams.filter((stream) => stream.id !== 'external-postgres-core'),
+      streams: manifest.streams.filter((stream) => stream.id !== 'core-postgresql'),
     };
     const target = {
-      id: 'external:postgres:tenant-primary:external-postgres-core',
-      streamId: 'external-postgres-core',
+      id: 'external:postgres:tenant-primary:core-postgresql',
+      streamId: 'core-postgresql',
       driver: 'postgres' as const,
       scope: 'external' as const,
       logicalRoles: ['core'],
@@ -1794,7 +1887,7 @@ describe('release schema update plans', () => {
     });
     expect(updatePlan.blockedTargets).toHaveLength(1);
     expect(updatePlan.blockedTargets[0].blockedReason).toBe(
-      'release_migration_stream_not_found:external-postgres-core'
+      'release_migration_stream_not_found:core-postgresql'
     );
 
     expect(() =>
@@ -1812,25 +1905,29 @@ describe('release schema update plans', () => {
     const sourceA = { path: '008_draft.sql', checksum: 'a'.repeat(64) };
     const sourceB = { path: '009_draft.sql', checksum: 'b'.repeat(64) };
     const current: ReleaseMigrationManifest = {
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '1.1.0',
       streams: [
         {
-          id: 'external-postgres-core',
-          dialect: 'postgres',
-          logicalRoles: ['core'],
+          id: 'core-postgresql',
+          schemaFamily: 'core',
+          dialect: 'postgresql',
+          targetKind: 'postgresql-connection',
+          logicalRoles: ['core', 'custom', 'policy'],
           files: [sourceA, sourceB],
         },
       ],
     };
     const published: ReleaseMigrationManifest = {
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '1.1.0',
       streams: [
         {
-          id: 'external-postgres-core',
-          dialect: 'postgres',
-          logicalRoles: ['core'],
+          id: 'core-postgresql',
+          schemaFamily: 'core',
+          dialect: 'postgresql',
+          targetKind: 'postgresql-connection',
+          logicalRoles: ['core', 'custom', 'policy'],
           files: [
             {
               path: '009_release_1_1_0_external_postgres_core.sql',
@@ -1842,8 +1939,8 @@ describe('release schema update plans', () => {
       ],
     };
     const target = {
-      id: 'external:postgres:shared:external-postgres-core',
-      streamId: 'external-postgres-core',
+      id: 'external:postgres:shared:core-postgresql',
+      streamId: 'core-postgresql',
       driver: 'postgres' as const,
       scope: 'external' as const,
       logicalRoles: ['core'],
@@ -1871,14 +1968,14 @@ describe('release update lock state', () => {
       manifestChecksum: 'a'.repeat(64),
       startedAt: '2026-07-21T00:00:00.000Z',
       updatedAt: '2026-07-21T00:00:00.000Z',
-      appliedTargets: ['d1:core-id:d1-core'],
+      appliedTargets: ['d1:core-id:core-d1'],
       manualTargets: [],
     };
     installed.schemaTargets = {
-      'd1:core-id:d1-core': {
+      'd1:core-id:core-d1': {
         productVersion: '1.0.0',
         manifestChecksum: 'a'.repeat(64),
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         files: [],
         appliedBy: 'automatic',
         updatedAt: '2026-07-21T00:00:00.000Z',
@@ -1886,12 +1983,12 @@ describe('release update lock state', () => {
     };
 
     expect(resolveRegisteredSchemaReferences({ lock: installed, config })).toEqual([
-      'binding:DB:d1-core',
+      'binding:DB:core-d1',
     ]);
-    installed.schemaTargets['d1:core-id:d1-core'].productVersion = '0.9.0';
+    installed.schemaTargets['d1:core-id:core-d1'].productVersion = '0.9.0';
     expect(resolveRegisteredSchemaReferences({ lock: installed, config })).toEqual([]);
-    installed.schemaTargets['d1:core-id:d1-core'].productVersion = '1.0.0';
-    installed.schemaTargets['d1:core-id:d1-core'].manifestChecksum = 'b'.repeat(64);
+    installed.schemaTargets['d1:core-id:core-d1'].productVersion = '1.0.0';
+    installed.schemaTargets['d1:core-id:core-d1'].manifestChecksum = 'b'.repeat(64);
     expect(resolveRegisteredSchemaReferences({ lock: installed, config })).toEqual([]);
   });
 
@@ -1910,17 +2007,17 @@ describe('release update lock state', () => {
       startedAt: '2026-07-21T00:00:00.000Z',
       updatedAt: '2026-07-21T00:00:00.000Z',
       appliedTargets: [
-        'd1:core-id:d1-core',
-        'd1:tenant-core-id:d1-core',
-        'd1:tenant-pii-id:d1-pii',
+        'd1:core-id:core-d1',
+        'd1:tenant-core-id:core-d1',
+        'd1:tenant-pii-id:pii-d1',
       ],
       manualTargets: [],
     };
     installed.schemaTargets = Object.fromEntries(
       [
-        ['d1:core-id:d1-core', 'd1-core'],
-        ['d1:tenant-core-id:d1-core', 'd1-core'],
-        ['d1:tenant-pii-id:d1-pii', 'd1-pii'],
+        ['d1:core-id:core-d1', 'core-d1'],
+        ['d1:tenant-core-id:core-d1', 'core-d1'],
+        ['d1:tenant-pii-id:pii-d1', 'pii-d1'],
       ].map(([id, streamId]) => [
         id,
         {
@@ -1935,7 +2032,7 @@ describe('release update lock state', () => {
     );
 
     expect(resolveRegisteredSchemaReferences({ lock: installed, config })).toEqual([
-      'binding:DB:d1-core',
+      'binding:DB:core-d1',
     ]);
   });
 
@@ -1985,17 +2082,19 @@ describe('release update lock state', () => {
       initialWorkerRedeployRequired: true,
     };
     const manifest: ReleaseMigrationManifest = {
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '1.0.0',
       streams: [
         {
-          id: 'd1-core',
+          id: 'core-d1',
+          schemaFamily: 'core',
           dialect: 'sqlite',
-          logicalRoles: ['core'],
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
           files: [{ path: '001.sql', checksum: 'a'.repeat(64) }],
         },
         {
-          id: 'external-postgres-core',
+          id: 'core-postgresql',
           dialect: 'postgresql',
           logicalRoles: ['core'],
           files: [{ path: '001.sql', checksum: 'b'.repeat(64) }],
@@ -2008,8 +2107,8 @@ describe('release update lock state', () => {
       manifest,
       targets: [
         {
-          id: 'd1:core-id:d1-core',
-          streamId: 'd1-core',
+          id: 'd1:core-id:core-d1',
+          streamId: 'core-d1',
           driver: 'd1',
           scope: 'deployment',
           logicalRoles: ['core'],
@@ -2018,8 +2117,8 @@ describe('release update lock state', () => {
           databaseName: 'prod-core',
         },
         {
-          id: 'external:postgres:primary:external-postgres-core',
-          streamId: 'external-postgres-core',
+          id: 'external:postgres:primary:core-postgresql',
+          streamId: 'core-postgresql',
           driver: 'postgres',
           scope: 'external',
           logicalRoles: ['core'],
@@ -2027,17 +2126,17 @@ describe('release update lock state', () => {
           connectionRef: 'primary',
         },
       ],
-      acknowledgedManualTargetIds: new Set(['external:postgres:primary:external-postgres-core']),
+      acknowledgedManualTargetIds: new Set(['external:postgres:primary:core-postgresql']),
     });
 
     expect(result.productVersion).toBe('1.0.0');
     expect(result.releaseUpdate?.phase).toBe('verified');
     expect(result.releaseUpdate?.initialWorkerRedeployRequired).toBeUndefined();
     expect(result.releaseUpdate?.appliedTargets).toHaveLength(2);
-    expect(result.schemaTargets?.['d1:core-id:d1-core']?.appliedBy).toBe('automatic');
-    expect(
-      result.schemaTargets?.['external:postgres:primary:external-postgres-core']?.appliedBy
-    ).toBe('operator');
+    expect(result.schemaTargets?.['d1:core-id:core-d1']?.appliedBy).toBe('automatic');
+    expect(result.schemaTargets?.['external:postgres:primary:core-postgresql']?.appliedBy).toBe(
+      'operator'
+    );
   });
 
   it('rejects initial verification while a Control release rollout is recorded', () => {
@@ -2053,7 +2152,7 @@ describe('release update lock state', () => {
       controlOperationId: `op_release_rollout_${'b'.repeat(32)}`,
     };
     const manifest: ReleaseMigrationManifest = {
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       streams: [],
     };

@@ -428,12 +428,15 @@ describe('setup canonical Control operator executor', () => {
     const sql = 'CREATE TABLE example (id TEXT PRIMARY KEY);';
     const checksum = createHash('sha256').update(sql).digest('hex');
     const manifest = `${JSON.stringify({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       streams: [
         {
-          id: 'd1-core',
+          id: 'core-d1',
+          schemaFamily: 'core',
           dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
           files: [{ path: '001_example.sql', checksum }],
         },
       ],
@@ -442,7 +445,7 @@ describe('setup canonical Control operator executor', () => {
     const manifestObjectKey = `releases/0.4.0/${manifestDigest}/manifest.json`;
     const objects = new Map([
       [manifestObjectKey, manifest],
-      [`releases/0.4.0/${manifestDigest}/streams/d1-core/001_example.sql`, sql],
+      [`releases/0.4.0/${manifestDigest}/streams/core-d1/001_example.sql`, sql],
     ]);
     const artifactStore: ReleaseArtifactStore = {
       get: async (key) => {
@@ -457,7 +460,7 @@ describe('setup canonical Control operator executor', () => {
       currentStep: 'apply_migrations',
       migration: {
         databaseId: 'database-id',
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         releaseId: '0.4.0',
         manifestDigest,
         manifestObjectKey,
@@ -557,7 +560,7 @@ describe('setup canonical Control operator executor', () => {
             success: true,
             results: [
               {
-                stream_id: 'd1-core',
+                stream_id: 'core-d1',
                 release_id: '0.4.0',
                 manifest_digest: manifestDigest,
                 applied_file_count: 1,
@@ -608,7 +611,7 @@ describe('setup canonical Control operator executor', () => {
       currentStep: 'reconcile_worker_bindings',
       migration: {
         databaseId: 'database-id',
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         releaseId: '0.4.0',
         manifestDigest: digest,
         manifestObjectKey: `releases/0.4.0/${digest}/manifest.json`,
@@ -1138,7 +1141,7 @@ describe('setup canonical Control operator executor', () => {
       currentStep: 'reconcile_worker_bindings',
       migration: {
         databaseId: 'database-id',
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         releaseId: '0.4.0',
         manifestDigest: 'c'.repeat(64),
         manifestObjectKey: `releases/0.4.0/${'c'.repeat(64)}/manifest.json`,

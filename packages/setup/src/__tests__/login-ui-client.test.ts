@@ -270,20 +270,11 @@ describe('ensureLoginUiClient', () => {
     );
   });
 
-  it('falls back to a tenant-scoped API candidate for setup machine provisioning', async () => {
+  it('prefers a tenant-scoped API candidate for setup machine provisioning', async () => {
     const secrets = generateAllSecrets('login-ui-test-key');
     await saveKeysToDirectory(secrets, { targetDir: tempDir });
 
     fetchMock
-      .mockResolvedValueOnce(
-        textResponse(
-          JSON.stringify({
-            error: 'not_found',
-            error_description: 'Tenant not found',
-          }),
-          404
-        )
-      )
       .mockResolvedValueOnce(
         jsonResponse({
           access_token: 'tenant-machine-admin-token',
@@ -316,17 +307,16 @@ describe('ensureLoginUiClient', () => {
       clientId: 'tenant-login-ui-client',
       alreadyExists: false,
     });
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://base.example.test/token');
-    expect(String(fetchMock.mock.calls[1]?.[0])).toBe('https://first.example.test/token');
-    expect(String(fetchMock.mock.calls[2]?.[0])).toBe(
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://first.example.test/token');
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
       'https://first.example.test/api/admin/clients?search=Login%20UI&limit=10'
     );
-    const listHeaders = fetchMock.mock.calls[2]?.[1]?.headers as Record<string, string>;
+    const listHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
     expect(listHeaders.Authorization).toBe('Bearer tenant-machine-admin-token');
     expect(listHeaders['X-Tenant-Id']).toBe('first');
   });
 
-  it('falls back to a tenant-scoped API candidate when legacy admin calls hit the wrong host', async () => {
+  it('falls back to the legacy primary when a tenant-scoped Admin API candidate fails', async () => {
     fetchMock
       .mockResolvedValueOnce(
         textResponse(
@@ -363,10 +353,10 @@ describe('ensureLoginUiClient', () => {
       alreadyExists: false,
     });
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      'https://base.example.test/api/admin/clients?search=Login%20UI&limit=10'
+      'https://first.example.test/api/admin/clients?search=Login%20UI&limit=10'
     );
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
-      'https://first.example.test/api/admin/clients?search=Login%20UI&limit=10'
+      'https://base.example.test/api/admin/clients?search=Login%20UI&limit=10'
     );
   });
 

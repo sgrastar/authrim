@@ -127,6 +127,7 @@ import {
   resolveDownstreamIntrospectionKeysDir,
   type ConfigureDownstreamIntrospectionDeploymentResult,
 } from '../../core/downstream-introspection-deploy.js';
+import { runEphemeralSetupMachineAccess } from '../../core/setup-machine-access-lifecycle.js';
 import { describeAdminUiApiMode, resolveUiDeploymentSettings } from '../../core/ui-deployment.js';
 import { mergeAndSaveUiEnv } from '../../core/ui-env.js';
 import {
@@ -135,6 +136,7 @@ import {
   resolveIssuerUrl,
   resolveLoginUiEntryUrl,
   resolveLoginUiExecutionOrigin,
+  resolveOperationalApiBaseUrl,
 } from '../../core/url-config.js';
 import { ensureSupplementalKeyFiles } from '../../core/keys.js';
 import { promotePendingEmailSecrets } from '../../core/pending-email-secrets.js';
@@ -201,6 +203,7 @@ import {
 } from '../../core/control-provisioning-authority.js';
 import { loadPendingControlBootstrap } from '../../core/pending-control-bootstrap.js';
 import {
+  advanceReadyControlTokenGeneration,
   completeControlTokenBootstrap,
   hasReadyControlTokenBootstrap,
   reconcileControlSecretGenerationWorkerLock,
@@ -1094,6 +1097,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           workerName: `${env}-ar-control`,
           cwd: rootDir,
         }),
+        allowRestorableGeneration: true,
       });
     }
     const directD1 = process.env.CLOUDFLARE_D1_API_TOKEN?.trim();
@@ -1255,6 +1259,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     currentLock.releaseUpdate.manifestChecksum === initialManifestChecksum;
   let redeployingCompletedInitialWorkerCheckpoint =
     currentLock.releaseUpdate?.initialWorkerRedeployRequired === true;
+  let acceptedInitialHandoff = false;
   if (options.operationKind === 'topology_change') {
     try {
       assertPendingTopologyUpdate(currentLock, {
@@ -1547,7 +1552,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             ? resolveLoginUiEntryUrl(config, { env, workersSubdomain })
             : resolveAdminUiEntryUrl(config, { env, workersSubdomain });
         const httpReadiness = await waitForWorkerHttpReady({
-          targets: [{ workerName: result.projectName, url: entryUrl }],
+          targets: [{ workerName: result.projectName, url: entryUrl, allowRedirectResponse: true }],
           allowPublicDnsFallback: Boolean(
             uiComponent === 'ar-login-ui'
               ? config.urls?.loginUi?.custom
@@ -1803,6 +1808,35 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       ) {
         throw new Error('release_manifest_changed_while_waiting_for_deploy_lock');
       }
+      const acceptedControlDatabaseId = currentLock.d1.CONTROL_DB?.id;
+      if (
+        isInitialDeployment &&
+        !resumeInitialHandoff &&
+        currentLock.releaseUpdate?.initialWorkerRedeployRequired !== true &&
+        currentLock.releaseUpdate?.targetVersion === targetProductVersion &&
+        currentLock.releaseUpdate.manifestChecksum === initialManifestChecksum &&
+        initialManifestChecksum !== undefined &&
+        acceptedControlDatabaseId
+      ) {
+        acceptedInitialHandoff = await isInitialBootstrapHandoffAccepted({
+          environmentId: env,
+          controlDatabaseName: acceptedControlDatabaseId,
+        });
+        if (acceptedInitialHandoff) {
+          // Control acceptance plus the complete local Worker identity set is durable proof that
+          // schema, publication, and API Worker deployment already completed. Restore a stale
+          // local phase instead of repeating those mutations after an interrupted Web/CLI retry.
+          buildInitialHandoffResumeSummary({ lock: currentLock });
+          currentLock = withReleaseUpdateState(currentLock, {
+            targetVersion: targetProductVersion,
+            phase: 'workers_deployed',
+            manifestChecksum: initialManifestChecksum,
+            initialWorkerRedeployRequired: false,
+          });
+          await saveLockFile(currentLock, lockPath);
+          resumeInitialHandoff = true;
+        }
+      }
       if (configPersistenceRequired) {
         const persistedConfig = AuthrimConfigSchema.parse({
           ...config,
@@ -1905,14 +1939,16 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           lockedAuthority?.automaticProvisioningEnabled === true &&
           lockedAuthority.capabilityState === 'ready'
         ) {
+          const lockedSecretSink = new WranglerControlSecretSink({
+            workerName: `${env}-ar-control`,
+            cwd: rootDir,
+          });
           const lockedReady = await hasReadyControlTokenBootstrap({
             environmentId: env,
             controlDatabaseName: lockedControlDatabaseId,
             resourceClasses: resolveControlTokenResourceClasses(config),
-            secretSink: new WranglerControlSecretSink({
-              workerName: `${env}-ar-control`,
-              cwd: rootDir,
-            }),
+            secretSink: lockedSecretSink,
+            restoreGenerationOnMismatch: true,
           });
           if (!lockedReady) {
             throw new Error('control_token_bootstrap_ready_generation_mismatch');
@@ -1927,6 +1963,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           }
           pendingControlTokenBootstrap = null;
           existingControlTokenBootstrapReady = true;
+          checkpointedControlTokenAuthority = lockedAuthority;
         } else if (
           lockedAuthority?.bootstrapPhase === 'pending_revocation' ||
           lockedAuthority?.bootstrapPhase === 'cutover_verified'
@@ -1980,7 +2017,10 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           console.log(chalk.gray(message));
         },
         {
-          includeSetupMachineKeyPair: !focusedDeployment,
+          includeSetupMachineKeyPair:
+            !focusedDeployment ||
+            options.component === 'ar-userinfo' ||
+            options.components?.includes('ar-userinfo') === true,
           baseDir,
           environment: env,
           configuredEmail: config.features.email,
@@ -2505,7 +2545,18 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
               updateOraSpinner(inventorySpinner, message);
             },
           });
-          if (isInitialDeployment && !redeployingCompletedInitialWorkerCheckpoint) {
+          acceptedInitialHandoff =
+            isInitialDeployment &&
+            (await isInitialBootstrapHandoffAccepted({
+              environmentId: env,
+              controlDatabaseName: controlDatabaseId,
+            }));
+          if (
+            isInitialDeployment &&
+            !acceptedInitialHandoff &&
+            !resumeInitialHandoff &&
+            !redeployingCompletedInitialWorkerCheckpoint
+          ) {
             await registerInitialControlTopology({
               environmentId: env,
               tenantId: config.tenant?.name?.trim() || 'default',
@@ -2745,7 +2796,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           config,
           resourceIds,
           workersSubdomain ?? undefined,
-          { includeControlSmokeBindings: false }
+          { includeControlSmokeBindings: false, includeControlCronTriggers: false }
         );
         await writePrivateFileAtomically(
           join(controlDir, 'wrangler.bootstrap.toml'),
@@ -3012,7 +3063,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
     // Re-resolve workers.dev URLs with the current account subdomain. Init may have run while
     // Wrangler OAuth was expired and therefore persisted the unsuffixed fallback URL.
     const deploymentWorkersSubdomain = await getWorkersSubdomain();
-    let deploymentApiBaseUrl = resolveIssuerUrl(config, {
+    let deploymentApiBaseUrl = resolveOperationalApiBaseUrl(config, {
       env,
       workersSubdomain: deploymentWorkersSubdomain,
     });
@@ -3042,6 +3093,30 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
 
       if (!resumeInitialHandoff && summary.results.some((result) => result.success)) {
         currentLock = updateLockWithDeployments(currentLock, summary.results);
+      }
+
+      if (
+        automaticProvisioning &&
+        existingControlTokenBootstrapReady &&
+        checkpointedControlTokenAuthority?.secretGeneration
+      ) {
+        const controlDatabaseId = currentLock.d1.CONTROL_DB?.id;
+        const controlDeployment = summary.results.find(
+          (result) => result.component === 'ar-control' && result.success
+        );
+        if (controlDatabaseId && controlDeployment?.cloudflareVersionId) {
+          await advanceReadyControlTokenGeneration({
+            environmentId: env,
+            controlDatabaseName: controlDatabaseId,
+            resourceClasses: resolveControlTokenResourceClasses(config),
+            previousVersionId: checkpointedControlTokenAuthority.secretGeneration.versionId,
+            deployedVersionId: controlDeployment.cloudflareVersionId,
+            secretSink: new WranglerControlSecretSink({
+              workerName: `${env}-ar-control`,
+              cwd: rootDir,
+            }),
+          });
+        }
       }
 
       if (
@@ -3344,11 +3419,12 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
         );
         try {
           const alreadyAccepted =
-            (resumeInitialHandoff || redeployingCompletedInitialWorkerCheckpoint) &&
-            (await isInitialBootstrapHandoffAccepted({
-              environmentId: env,
-              controlDatabaseName: controlDatabaseId,
-            }));
+            acceptedInitialHandoff ||
+            ((resumeInitialHandoff || redeployingCompletedInitialWorkerCheckpoint) &&
+              (await isInitialBootstrapHandoffAccepted({
+                environmentId: env,
+                controlDatabaseName: controlDatabaseId,
+              })));
           if (alreadyAccepted) {
             handoffSpinner.succeed('[6/10] Initial D1 topology was already accepted by Control');
           } else {
@@ -3363,6 +3439,20 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             );
             let acceleratorFallbackReported = false;
             const smokeKeyState = currentLock.controlKeyState?.smokeRpc;
+            const refreshInitialWorkerEvidence = () =>
+              recordInitialBootstrapWorkerEvidence({
+                environmentId: env,
+                controlDatabaseName: controlDatabaseId,
+                deployments: summary.results,
+                allowSecretTriggeredVersionAdvanceFor:
+                  config.controlPlane?.automaticProvisioning === true
+                    ? [`${env}-ar-control`]
+                    : undefined,
+              });
+            // A resumable pre-deploy binding failure is reopened only after the new Worker
+            // identities have been proven. Do this before polling so recovery cannot depend on
+            // the very binding completion it is intended to unblock.
+            await refreshInitialWorkerEvidence();
             await waitForInitialBootstrapHandoff({
               environmentId: env,
               controlDatabaseName: controlDatabaseId,
@@ -3426,19 +3516,11 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
                         }
                       }
                     },
-              refreshEvidence: () =>
-                recordInitialBootstrapWorkerEvidence({
-                  environmentId: env,
-                  controlDatabaseName: controlDatabaseId,
-                  deployments: summary.results,
-                  allowSecretTriggeredVersionAdvanceFor:
-                    config.controlPlane?.automaticProvisioning === true
-                      ? [`${env}-ar-control`]
-                      : undefined,
-                }),
+              refreshEvidence: refreshInitialWorkerEvidence,
               reconcile: () =>
                 reconcileInitialBootstrapHandoffAsOperator({
                   controlDatabaseId,
+                  environmentId: env,
                   executeWorkerBindings: false,
                 }),
             });
@@ -3808,29 +3890,54 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       let downstreamProgress: DeploymentProgressSnapshot | null = null;
       let downstreamSetupResult: ConfigureDownstreamIntrospectionDeploymentResult;
       try {
-        downstreamSetupResult = await configureDownstreamIntrospectionDeployment({
+        const downstreamApiBaseUrls = resolveApiBaseUrlCandidates(config, {
           env,
-          rootDir,
-          keysDir,
-          apiBaseUrl: deploymentApiBaseUrl,
-          apiBaseUrls: resolveApiBaseUrlCandidates(config, {
-            env,
-            purpose: 'tenant-scoped-admin',
-          }),
-          knownRouterReadyBaseUrls: deploymentApiBaseUrl ? [deploymentApiBaseUrl] : undefined,
-          tenantId: config.tenant?.name,
-          dryRun: options.dryRun,
-          deployConfigLockProof: deployConfigLock?.proof,
-          workerScriptOwnership: deployOptions.workerScriptOwnership,
-          onProgress: (msg) => {
-            downstreamProgress = updateDeploymentProgress(downstreamProgress, msg);
-            updateOraSpinner(
-              downstreamSpinner,
-              `[${downstreamProgress.step}/${downstreamProgress.totalSteps}] ${msg}`
-            );
-          },
+          purpose: 'tenant-scoped-admin',
+          workersSubdomain: deploymentWorkersSubdomain,
         });
+        const downstreamApiBaseUrl =
+          downstreamApiBaseUrls[0] ??
+          resolveIssuerUrl(config, { env, workersSubdomain: deploymentWorkersSubdomain });
+        const configureDownstream = () =>
+          configureDownstreamIntrospectionDeployment({
+            env,
+            rootDir,
+            keysDir,
+            apiBaseUrl: downstreamApiBaseUrl,
+            apiBaseUrls: downstreamApiBaseUrls,
+            knownRouterReadyBaseUrls:
+              deploymentApiBaseUrl === downstreamApiBaseUrl ? [deploymentApiBaseUrl] : undefined,
+            tenantId: config.tenant?.name,
+            dryRun: options.dryRun,
+            deployConfigLockProof: deployConfigLock?.proof,
+            workerScriptOwnership: deployOptions.workerScriptOwnership,
+            onProgress: (msg) => {
+              downstreamProgress = updateDeploymentProgress(downstreamProgress, msg);
+              updateOraSpinner(
+                downstreamSpinner,
+                `[${downstreamProgress.step}/${downstreamProgress.totalSteps}] ${msg}`
+              );
+            },
+            onDetail: (msg) => console.log(chalk.gray(`  ${msg}`)),
+          });
+
+        // A focused retry skips the full bootstrap phase, so its short-lived Setup machine
+        // principal has already been removed by the completed initial deployment. Restore it
+        // only for client reconciliation and always remove it before returning.
+        downstreamSetupResult = focusedDeployment
+          ? await runEphemeralSetupMachineAccess({
+              env,
+              config,
+              keysDir,
+              databaseIdentifier: requireLockedAdminDatabaseIdentifier(),
+              onProgress: (msg) => console.log(chalk.gray(`  ${msg}`)),
+              action: configureDownstream,
+            })
+          : await configureDownstream();
       } catch (error) {
+        if (focusedDeployment) {
+          setupMachineAccessSuccess = false;
+        }
         downstreamSetupResult = createDownstreamIntrospectionFailure(
           error instanceof Error ? error.message : String(error)
         );
@@ -3859,6 +3966,9 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
             `  Reason: ${downstreamSetupResult.error ?? 'Unknown optional integration error'}`
           )
         );
+        if (downstreamSetupResult.diagnosticCode) {
+          console.log(chalk.gray(`  Diagnostic: ${downstreamSetupResult.diagnosticCode}`));
+        }
         console.log(
           chalk.gray(
             `  ${downstreamSetupResult.nextAction ?? 'Rerun deploy to retry the optional integration.'}`
@@ -4023,6 +4133,7 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
           const httpReadiness = await waitForWorkerHttpReady({
             targets: uiWorkersResult.results.map((result) => ({
               workerName: result.projectName,
+              allowRedirectResponse: true,
               url:
                 result.component === 'ar-login-ui'
                   ? resolveLoginUiEntryUrl(config, { env, workersSubdomain })

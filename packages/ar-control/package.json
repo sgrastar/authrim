@@ -7,6 +7,10 @@
     "./bootstrap-handoff": {
       "types": "./src/bootstrap-handoff.ts",
       "default": "./src/bootstrap-handoff.ts"
+    },
+    "./worker-binding-repository": {
+      "types": "./src/worker-binding-repository.ts",
+      "default": "./src/worker-binding-repository.ts"
     }
   },
   "scripts": {

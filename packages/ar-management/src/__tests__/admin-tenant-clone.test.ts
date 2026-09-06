@@ -246,7 +246,10 @@ describe('admin tenant clone', () => {
 
   it('keeps the cloned OAuth client fields aligned with the current schema', () => {
     const migrationsUrl = new URL('../../../../migrations/', import.meta.url);
-    const migration = readFileSync(new URL('001_0_4_0_core_baseline.sql', migrationsUrl), 'utf8');
+    const migration = readFileSync(
+      new URL('core/d1/001_0_4_0_core_baseline.sql', migrationsUrl),
+      'utf8'
+    );
     const definition = migration.match(
       /CREATE TABLE oauth_clients \(([\s\S]*?)\);\nCREATE TABLE web_origin_registry/u
     )?.[1];

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -13,29 +13,22 @@ import {
 const ROOT_DIR = fileURLToPath(new URL('../../../../', import.meta.url));
 const MIGRATIONS_ROOT = join(ROOT_DIR, 'migrations');
 
-interface ManifestStream {
-  id: string;
-  files: Array<{ path: string }>;
-}
-
 function renderSql(sql: string): string {
   return sql
     .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
     .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()');
 }
 
-function currentStreamSchema(streamId: 'd1-core' | 'd1-pii'): TenantMigrationTableSchema[] {
-  const manifest = JSON.parse(
-    readFileSync(join(MIGRATIONS_ROOT, 'release-manifest.draft.json'), 'utf8')
-  ) as { streams: ManifestStream[] };
-  const stream = manifest.streams.find((candidate) => candidate.id === streamId);
-  if (!stream) throw new Error(`missing stream: ${streamId}`);
+function currentStreamSchema(streamId: 'core-d1' | 'pii-d1'): TenantMigrationTableSchema[] {
   const database = new DatabaseSync(':memory:');
   try {
     database.exec('PRAGMA foreign_keys = OFF');
-    const directory = streamId === 'd1-core' ? MIGRATIONS_ROOT : join(MIGRATIONS_ROOT, 'pii');
-    for (const file of stream.files) {
-      database.exec(renderSql(readFileSync(join(directory, file.path), 'utf8')));
+    const directory = join(MIGRATIONS_ROOT, streamId === 'core-d1' ? 'core' : 'pii', 'd1');
+    const files = readdirSync(directory)
+      .filter((file) => /^\d+_.*\.sql$/u.test(file))
+      .sort();
+    for (const file of files) {
+      database.exec(renderSql(readFileSync(join(directory, file), 'utf8')));
     }
     const tables = database
       .prepare(
@@ -79,7 +72,7 @@ describe('tenant placement migration inventory', () => {
   it('classifies every table in the current core migration stream', () => {
     const result = classifyTenantMigrationSchema(
       'tenant_core/users',
-      currentStreamSchema('d1-core')
+      currentStreamSchema('core-d1')
     );
 
     expect(result).toMatchObject({ state: 'ready', blockedReasons: [] });
@@ -103,7 +96,7 @@ describe('tenant placement migration inventory', () => {
   }, 15_000);
 
   it('classifies every table in the current PII migration stream', () => {
-    const result = classifyTenantMigrationSchema('tenant_pii', currentStreamSchema('d1-pii'));
+    const result = classifyTenantMigrationSchema('tenant_pii', currentStreamSchema('pii-d1'));
 
     expect(result).toMatchObject({ state: 'ready', blockedReasons: [] });
     expect(result.tables.find((table) => table.table === 'users_pii')?.ownership).toEqual({
@@ -112,13 +105,19 @@ describe('tenant placement migration inventory', () => {
     });
     expect(result.tables.find((table) => table.table === 'subject_identifiers')?.ownership).toEqual(
       {
-        kind: 'parent',
-        foreignKeyColumn: 'user_id',
-        parentTable: 'users_pii',
-        parentKeyColumn: 'id',
-        parentTenantColumn: 'tenant_id',
+        kind: 'tenant_column',
+        column: 'tenant_id',
       }
     );
+    expect(
+      result.tables.find((table) => table.table === 'pairwise_subject_identifiers')?.ownership
+    ).toEqual({
+      kind: 'parent',
+      foreignKeyColumn: 'user_id',
+      parentTable: 'users_pii',
+      parentKeyColumn: 'id',
+      parentTenantColumn: 'tenant_id',
+    });
   }, 15_000);
 
   it('blocks an unclassified table and a broken indirect ownership rule', () => {
@@ -135,7 +134,7 @@ describe('tenant placement migration inventory', () => {
 
     const missingParent = classifyTenantMigrationSchema('tenant_pii', [
       {
-        name: 'subject_identifiers',
+        name: 'pairwise_subject_identifiers',
         columns: [
           { name: 'id', primaryKeyPosition: 1 },
           { name: 'user_id', primaryKeyPosition: 0 },
@@ -144,7 +143,7 @@ describe('tenant placement migration inventory', () => {
     ]);
     expect(missingParent).toMatchObject({
       state: 'blocked',
-      blockedReasons: ['tenant_migration_table_parent_missing:subject_identifiers'],
+      blockedReasons: ['tenant_migration_table_parent_missing:pairwise_subject_identifiers'],
     });
   });
 
@@ -160,6 +159,29 @@ describe('tenant placement migration inventory', () => {
       'tenant_migration_schema_identifier_invalid'
     );
     expect(executor.queryD1Batch).not.toHaveBeenCalled();
+  });
+
+  it('accepts the D1 column limit and rejects a table above it', async () => {
+    const inspect = (columnCount: number) =>
+      inspectTenantMigrationSchema(
+        {
+          queryD1: vi.fn(async () => [{ success: true, results: [{ name: 'wide_table' }] }]),
+          queryD1Batch: vi.fn(async () => [
+            {
+              success: true,
+              results: Array.from({ length: columnCount }, (_, index) => ({
+                name: `column_${index}`,
+                pk: index === 0 ? 1 : 0,
+              })),
+            },
+            { success: true, results: [] },
+          ]),
+        },
+        'database-a'
+      );
+
+    await expect(inspect(100)).resolves.toHaveLength(1);
+    await expect(inspect(101)).rejects.toThrow('tenant_migration_schema_columns_invalid');
   });
 
   it('rejects a dependency cycle instead of using an unsafe backfill order', () => {

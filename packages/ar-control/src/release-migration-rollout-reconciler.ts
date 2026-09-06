@@ -32,7 +32,7 @@ interface TargetCandidate extends Record<string, unknown> {
   environment_id: string;
   target_id: string;
   provider_database_id: string;
-  stream_id: 'd1-core' | 'd1-pii' | 'd1-lookup';
+  stream_id: 'core-d1' | 'pii-d1' | 'lookup-d1';
   release_id: string;
   manifest_digest: string;
   manifest_r2_object_key: string;
@@ -233,7 +233,7 @@ export class ReleaseMigrationRolloutReconciler {
            SELECT rollout.operation_id, rollout.environment_id, 'tenant:' || shard.shard_id,
                   'tenant_shard', shard.shard_id, desired.desired_resource_id,
                   observed.provider_resource_id, shard.binding_ref,
-                  CASE WHEN shard.data_role = 'tenant_pii' THEN 'd1-pii' ELSE 'd1-core' END,
+                  CASE WHEN shard.data_role = 'tenant_pii' THEN 'pii-d1' ELSE 'core-d1' END,
                   pin.release_id, pin.manifest_digest,
                   CASE WHEN observed.provider_resource_id IS NULL
                     THEN 'waiting_retry' ELSE 'queued' END,
@@ -256,7 +256,7 @@ export class ReleaseMigrationRolloutReconciler {
              JOIN control_operation_release_pins pin
                ON pin.operation_id = rollout.operation_id
               AND pin.stream_id = CASE WHEN shard.data_role = 'tenant_pii'
-                THEN 'd1-pii' ELSE 'd1-core' END
+                THEN 'pii-d1' ELSE 'core-d1' END
             WHERE rollout.operation_id = ? AND rollout.environment_id = ? AND ${guarded}`
         )
         .bind(
@@ -282,7 +282,7 @@ export class ReleaseMigrationRolloutReconciler {
            SELECT rollout.operation_id, rollout.environment_id,
                   'lookup:' || shard.lookup_shard_id, 'lookup_shard', shard.lookup_shard_id,
                   desired.desired_resource_id, observed.provider_resource_id,
-                  shard.binding_ref, 'd1-lookup', pin.release_id, pin.manifest_digest,
+                  shard.binding_ref, 'lookup-d1', pin.release_id, pin.manifest_digest,
                   CASE WHEN observed.provider_resource_id IS NULL
                     THEN 'waiting_retry' ELSE 'queued' END,
                   0, ?, CASE WHEN observed.provider_resource_id IS NULL THEN ? ELSE NULL END,
@@ -302,7 +302,7 @@ export class ReleaseMigrationRolloutReconciler {
               AND observed.environment_id = desired.environment_id
               AND observed.resource_kind = 'd1' AND observed.observed_state = 'present'
              JOIN control_operation_release_pins pin
-               ON pin.operation_id = rollout.operation_id AND pin.stream_id = 'd1-lookup'
+               ON pin.operation_id = rollout.operation_id AND pin.stream_id = 'lookup-d1'
             WHERE rollout.operation_id = ? AND rollout.environment_id = ? AND ${guarded}`
         )
         .bind(

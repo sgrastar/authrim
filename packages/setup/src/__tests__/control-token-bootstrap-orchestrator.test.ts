@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { CloudflareTokenBootstrapError } from '../core/cloudflare-control-token-bootstrap.js';
 import {
+  advanceReadyControlTokenGeneration,
+  checkpointReadyControlTokenGenerationForRedeploy,
   classifyControlTokenBootstrapFailure,
   completeControlTokenBootstrap,
   findMissingControlTokenResourceClasses,
@@ -162,6 +164,175 @@ describe('Control token resource classes', () => {
         query,
       })
     ).resolves.toBe(true);
+  });
+
+  it('reports and restores an exact checkpointed generation after a code redeploy', async () => {
+    const row = {
+      environment_id: 'test',
+      automatic_provisioning_enabled: 1,
+      provisioning_token_ownership: 'user',
+      provisioning_token_management: 'setup',
+      provisioning_capability_state: 'ready',
+      provisioning_capability_checked_at: 100,
+      provisioning_bootstrap_phase: 'none',
+      provisioning_bootstrap_token_ownership: 'none',
+      provisioning_bootstrap_token_id: null,
+      provisioning_bootstrap_token_fingerprint: null,
+      provisioning_child_tokens_json: JSON.stringify(CHILD_TOKENS),
+      provisioning_secret_generation_deployment_id: SECRET_GENERATION.deploymentId,
+      provisioning_secret_generation_version_id: SECRET_GENERATION.versionId,
+      updated_at: 100,
+    };
+    const activateGeneration = vi.fn(async () => ({
+      deploymentId: 'deployment-restored',
+      versionId: SECRET_GENERATION.versionId,
+    }));
+    const sink = {
+      listNames: async () => ['CLOUDFLARE_D1_API_TOKEN', 'CLOUDFLARE_WORKERS_API_TOKEN'],
+      has: async () => false,
+      readActiveGeneration: async () => ({
+        deploymentId: 'deployment-code',
+        versionId: 'version-code',
+      }),
+      canActivateGeneration: vi.fn(async () => true),
+      activateGeneration,
+    };
+
+    await expect(
+      hasReadyControlTokenBootstrap({
+        environmentId: 'test',
+        controlDatabaseName: 'control',
+        resourceClasses: ['d1', 'workers'],
+        secretSink: sink,
+        allowRestorableGeneration: true,
+        query: async () => [row],
+      })
+    ).resolves.toBe(true);
+    expect(activateGeneration).not.toHaveBeenCalled();
+
+    await expect(
+      hasReadyControlTokenBootstrap({
+        environmentId: 'test',
+        controlDatabaseName: 'control',
+        resourceClasses: ['d1', 'workers'],
+        secretSink: sink,
+        restoreGenerationOnMismatch: true,
+        query: async () => [row],
+      })
+    ).resolves.toBe(true);
+    expect(activateGeneration).toHaveBeenCalledWith(SECRET_GENERATION);
+  });
+
+  it('checkpoints a ready Control generation only after restoring its exact version', async () => {
+    const config = createDefaultConfig('test');
+    config.controlPlane.automaticProvisioning = true;
+    let activeVersionId = 'version-from-interrupted-redeploy';
+    const activateGeneration = vi.fn(async () => {
+      activeVersionId = SECRET_GENERATION.versionId;
+      return { deploymentId: 'deployment-restored', versionId: activeVersionId };
+    });
+    const secretSink = {
+      listNames: async () => ['CLOUDFLARE_D1_API_TOKEN', 'CLOUDFLARE_WORKERS_API_TOKEN'],
+      has: async () => false,
+      readActiveGeneration: async () => ({
+        deploymentId: 'active-deployment',
+        versionId: activeVersionId,
+      }),
+      canActivateGeneration: async () => true,
+      activateGeneration,
+    };
+    const authorityRow = {
+      environment_id: 'test',
+      automatic_provisioning_enabled: 1,
+      provisioning_token_ownership: 'account',
+      provisioning_token_management: 'setup',
+      provisioning_capability_state: 'ready',
+      provisioning_capability_checked_at: 100,
+      provisioning_bootstrap_phase: 'none',
+      provisioning_bootstrap_token_ownership: 'none',
+      provisioning_bootstrap_token_id: null,
+      provisioning_bootstrap_token_fingerprint: null,
+      provisioning_child_tokens_json: JSON.stringify(CHILD_TOKENS),
+      provisioning_secret_generation_deployment_id: SECRET_GENERATION.deploymentId,
+      provisioning_secret_generation_version_id: SECRET_GENERATION.versionId,
+      updated_at: 100,
+    };
+
+    await expect(
+      checkpointReadyControlTokenGenerationForRedeploy({
+        environmentId: 'test',
+        rootDir: '/repo',
+        config,
+        lock: {
+          version: '1.0.0',
+          env: 'test',
+          createdAt: '2026-09-06T00:00:00.000Z',
+          d1: { CONTROL_DB: { id: 'control-id', name: 'test-control' } },
+          kv: {},
+        },
+        query: async () => [authorityRow],
+        secretSink,
+      })
+    ).resolves.toMatchObject({
+      controlDatabaseName: 'control-id',
+      previousVersionId: SECRET_GENERATION.versionId,
+      resourceClasses: ['d1', 'workers'],
+      secretSink,
+    });
+    expect(activateGeneration).toHaveBeenCalledOnce();
+  });
+
+  it('advances ready authority only to the exact verified managed deployment', async () => {
+    const oldRow = {
+      environment_id: 'test',
+      automatic_provisioning_enabled: 1,
+      provisioning_token_ownership: 'user',
+      provisioning_token_management: 'setup',
+      provisioning_capability_state: 'ready',
+      provisioning_capability_checked_at: 100,
+      provisioning_bootstrap_phase: 'none',
+      provisioning_bootstrap_token_ownership: 'none',
+      provisioning_bootstrap_token_id: null,
+      provisioning_bootstrap_token_fingerprint: null,
+      provisioning_child_tokens_json: JSON.stringify(CHILD_TOKENS),
+      provisioning_secret_generation_deployment_id: SECRET_GENERATION.deploymentId,
+      provisioning_secret_generation_version_id: SECRET_GENERATION.versionId,
+      updated_at: 100,
+    };
+    const newRow = {
+      ...oldRow,
+      provisioning_capability_checked_at: 200,
+      provisioning_secret_generation_deployment_id: 'deployment-code',
+      provisioning_secret_generation_version_id: 'version-code',
+      updated_at: 200,
+    };
+    const query = vi.fn().mockResolvedValueOnce([oldRow]).mockResolvedValueOnce([newRow]);
+    const execute = vi.fn(async () => undefined);
+
+    await expect(
+      advanceReadyControlTokenGeneration({
+        environmentId: 'test',
+        controlDatabaseName: 'control',
+        resourceClasses: ['d1', 'workers'],
+        previousVersionId: SECRET_GENERATION.versionId,
+        deployedVersionId: 'version-code',
+        secretSink: {
+          listNames: async () => ['CLOUDFLARE_D1_API_TOKEN', 'CLOUDFLARE_WORKERS_API_TOKEN'],
+          has: async () => false,
+          readActiveGeneration: async () => ({
+            deploymentId: 'deployment-code',
+            versionId: 'version-code',
+          }),
+        },
+        now: 200,
+        query,
+        execute,
+      })
+    ).resolves.toMatchObject({
+      capabilityState: 'ready',
+      secretGeneration: { deploymentId: 'deployment-code', versionId: 'version-code' },
+    });
+    expect(execute).toHaveBeenCalledOnce();
   });
 
   it('requests separate KV and R2 tokens when Dynamic Workers are enabled', () => {

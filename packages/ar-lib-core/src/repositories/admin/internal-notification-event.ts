@@ -1,22 +1,26 @@
 import type { DatabaseAdapter } from '../../db/adapter';
 
+export const INTERNAL_NOTIFICATION_EVENT_CATEGORIES = [
+  'identity_mapping_signal',
+  'identity_mapping_manual_review',
+  'identity_mapping_propagation_failure',
+  'identity_mapping_bulk_impact',
+  'storage_registry_security',
+  'storage_registry_health',
+  'tenant_database_stats',
+  'tenant_database_health',
+  'control_plane_drift',
+  'logging_destination_health',
+  'logging_delivery_failure',
+  'logging_fallback_used',
+  'logging_dlq_backlog',
+  'logging_quota_warning',
+  'logging_repair_job_status',
+  'notification_delivery_failure',
+] as const;
+
 export type InternalNotificationEventCategory =
-  | 'identity_mapping_signal'
-  | 'identity_mapping_manual_review'
-  | 'identity_mapping_propagation_failure'
-  | 'identity_mapping_bulk_impact'
-  | 'storage_registry_security'
-  | 'storage_registry_health'
-  | 'tenant_database_stats'
-  | 'tenant_database_health'
-  | 'control_plane_drift'
-  | 'logging_destination_health'
-  | 'logging_delivery_failure'
-  | 'logging_fallback_used'
-  | 'logging_dlq_backlog'
-  | 'logging_quota_warning'
-  | 'logging_repair_job_status'
-  | 'notification_delivery_failure';
+  (typeof INTERNAL_NOTIFICATION_EVENT_CATEGORIES)[number];
 
 export type InternalNotificationEventSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
