@@ -14,7 +14,7 @@ function migration(path: string): string {
 
 function controlDatabase(): DatabaseSync {
   const db = new DatabaseSync(':memory:');
-  db.exec(migration('migrations/control/001_0_4_0_control_baseline.sql'));
+  db.exec(migration('migrations/control/d1/001_0_4_0_control_baseline.sql'));
   db.exec(
     `INSERT INTO control_environments (
        environment_id, environment_name, issuer, created_at, updated_at
@@ -463,7 +463,7 @@ describe('Control D1 schema', () => {
       `INSERT INTO control_migration_release_catalog (
          environment_id, stream_id, release_id, manifest_digest, manifest_r2_object_key,
          state, active_stream_key, registered_by_operation_id, registered_at
-       ) VALUES ('env-1', 'd1-control', 'release-1', '${'a'.repeat(64)}',
+       ) VALUES ('env-1', 'control-d1', 'release-1', '${'a'.repeat(64)}',
                  'releases/release-1/${'a'.repeat(64)}/manifest.json',
                  'active', 'active', 'op-1', 1);`
     );
@@ -472,7 +472,7 @@ describe('Control D1 schema', () => {
         `INSERT INTO control_migration_release_catalog (
            environment_id, stream_id, release_id, manifest_digest, manifest_r2_object_key,
            state, active_stream_key, registered_by_operation_id, registered_at
-         ) VALUES ('env-1', 'd1-control', 'release-2', '${'b'.repeat(64)}',
+         ) VALUES ('env-1', 'control-d1', 'release-2', '${'b'.repeat(64)}',
                    'releases/release-2/${'b'.repeat(64)}/manifest.json',
                    'active', 'active', 'op-1', 1);`
       )
@@ -481,18 +481,18 @@ describe('Control D1 schema', () => {
       db.exec(
         `UPDATE control_migration_release_catalog
             SET manifest_digest = '${'c'.repeat(64)}'
-          WHERE environment_id = 'env-1' AND stream_id = 'd1-control' AND release_id = 'release-1';`
+          WHERE environment_id = 'env-1' AND stream_id = 'control-d1' AND release_id = 'release-1';`
       )
     ).toThrow('control_release_catalog_immutable');
     db.exec(
       `INSERT INTO control_operation_release_pins (
          operation_id, environment_id, stream_id, release_id, manifest_digest, pinned_at
-       ) VALUES ('op-1', 'env-1', 'd1-control', 'release-1', '${'a'.repeat(64)}', 1);`
+       ) VALUES ('op-1', 'env-1', 'control-d1', 'release-1', '${'a'.repeat(64)}', 1);`
     );
     expect(() =>
       db.exec(
         `UPDATE control_operation_release_pins SET release_id = 'release-2'
-          WHERE operation_id = 'op-1' AND stream_id = 'd1-control';`
+          WHERE operation_id = 'op-1' AND stream_id = 'control-d1';`
       )
     ).toThrow('control_operation_release_pin_immutable');
 
@@ -702,7 +702,7 @@ describe('Control D1 schema', () => {
 describe('Lookup D1 schema', () => {
   it('enforces the three-state activation gate and tenant-scoped uniqueness authority', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/lookup/001_0_4_0_lookup_baseline.sql'));
+    db.exec(migration('migrations/lookup/d1/001_0_4_0_lookup_baseline.sql'));
     const identifierSql = `INSERT INTO lookup_identifiers (
       virtual_bucket, index_kind, normalization_version, hmac_key_generation,
       identifier_blind_digest, tenant_id, account_id, route_schema_version,
@@ -733,7 +733,7 @@ describe('Lookup D1 schema', () => {
 
   it('allows only one live tenant alias owner per exact alias digest', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/lookup/001_0_4_0_lookup_baseline.sql'));
+    db.exec(migration('migrations/lookup/d1/001_0_4_0_lookup_baseline.sql'));
     const insert = (tenantId: string, lifecycleState: 'pending' | 'active' | 'disabled') =>
       db
         .prepare(
@@ -756,7 +756,7 @@ describe('Lookup D1 schema', () => {
 
   it('stores discovery challenges without raw email or domain indexes', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/lookup/001_0_4_0_lookup_baseline.sql'));
+    db.exec(migration('migrations/lookup/d1/001_0_4_0_lookup_baseline.sql'));
     const schema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table'").all() as Array<{
       sql: string;
     }>;
@@ -779,7 +779,7 @@ describe('Lookup D1 schema', () => {
     const oldDigest = 'f'.repeat(64);
     const newDigest = '0'.repeat(64);
     const pii = new DatabaseSync(':memory:');
-    pii.exec(migration('migrations/pii/001_0_4_0_pii_baseline.sql'));
+    pii.exec(migration('migrations/pii/d1/001_0_4_0_pii_baseline.sql'));
     const insertChallenge = (reauthenticatedAt: number) =>
       pii
         .prepare(
@@ -850,7 +850,7 @@ describe('Lookup D1 schema', () => {
     pii.close();
 
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/lookup/001_0_4_0_lookup_baseline.sql'));
+    db.exec(migration('migrations/lookup/d1/001_0_4_0_lookup_baseline.sql'));
     db.exec(
       `INSERT INTO lookup_identifier_replacements (
          replacement_id, tenant_id, account_id, index_kind, normalization_version,
@@ -962,7 +962,7 @@ describe('Lookup D1 schema', () => {
 describe('tenant and plugin outbox schemas', () => {
   it('keeps account routing and plugin delivery separate and fixes retention periods', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/001_0_4_0_core_baseline.sql'));
+    db.exec(migration('migrations/core/d1/001_0_4_0_core_baseline.sql'));
     db.exec(
       `INSERT INTO plugin_hook_outbox (
          outbox_id, tenant_id, plugin_installation_id, capability, event_type,
@@ -1006,13 +1006,13 @@ describe('tenant and plugin outbox schemas', () => {
     );
     expect(outboxes.has('account_routing_outbox')).toBe(true);
     expect(outboxes.has('plugin_hook_outbox')).toBe(true);
-    expect(outboxes.has('identifier_change_notification_outbox')).toBe(true);
+    expect(outboxes.has('identifier_change_notification_outbox')).toBe(false);
     db.close();
   });
 
   it('enforces plugin outbox claim fencing and state transitions', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/001_0_4_0_core_baseline.sql'));
+    db.exec(migration('migrations/core/d1/001_0_4_0_core_baseline.sql'));
     db.exec(
       `INSERT INTO plugin_hook_outbox (
          outbox_id, tenant_id, plugin_installation_id, capability, event_type,
@@ -1080,7 +1080,7 @@ describe('tenant and plugin outbox schemas', () => {
 
   it('rejects overly broad plugin egress suffix wildcards', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/plugin-runner/001_0_4_0_plugin_runner_baseline.sql'));
+    db.exec(migration('migrations/plugin-runner/d1/001_0_4_0_plugin_runner_baseline.sql'));
     expect(() =>
       db.exec(
         `INSERT INTO plugin_runner_egress_allowed_hosts (
@@ -1098,7 +1098,7 @@ describe('tenant and plugin outbox schemas', () => {
 
   it('allows only one pending or running plugin sweep', () => {
     const db = new DatabaseSync(':memory:');
-    db.exec(migration('migrations/plugin-runner/001_0_4_0_plugin_runner_baseline.sql'));
+    db.exec(migration('migrations/plugin-runner/d1/001_0_4_0_plugin_runner_baseline.sql'));
     db.exec(
       `INSERT INTO plugin_runner_full_sweep_state (
          sweep_id, state, active_sweep_key, created_at, updated_at

@@ -285,6 +285,12 @@ export interface DeployOptions {
   secrets?: Readonly<Record<string, string>>;
   /** Whether ar-control must receive scoped Cloudflare provisioning tokens. */
   automaticProvisioning?: boolean;
+  /**
+   * Keep a new or incompletely bootstrapped Control Worker on its bootstrap config until the caller
+   * provisions its scoped credentials. This is only valid for an initial, direct, Control-only
+   * deployment or its explicit retry.
+   */
+  deferInitialControlSmokeBindingRestore?: boolean;
   /** Optional non-secret CLI vars, scoped per Worker. */
   varsByComponent?: Partial<Record<WorkerComponent, Readonly<Record<string, string>>>>;
   onProgress?: (message: string) => void;
@@ -914,7 +920,6 @@ function initialControlBootstrapConfig(
     strategy !== 'direct' ||
     !components.includes('ar-control') ||
     options.existingComponents === undefined ||
-    existing.has('ar-control') ||
     CONTROL_SMOKE_TARGET_COMPONENTS.every((component) => existing.has(component))
   ) {
     return undefined;
@@ -2944,6 +2949,17 @@ export async function deployAll(
   }
   const strategy = resolveDeploymentStrategy(options, components);
   const controlBootstrapConfig = initialControlBootstrapConfig(options, components, strategy);
+  if (
+    options.deferInitialControlSmokeBindingRestore &&
+    (strategy !== 'direct' ||
+      components.length !== 1 ||
+      components[0] !== 'ar-control' ||
+      options.existingComponents === undefined ||
+      options.automaticProvisioning !== false ||
+      !controlBootstrapConfig)
+  ) {
+    throw new Error('initial_control_bootstrap_only_contract_invalid');
+  }
   const authBootstrapConfig = initialAuthBootstrapConfig(options, components, strategy);
   const bridgeBootstrapConfig = initialBridgeBootstrapConfig(options, components, strategy);
   const throttle = makeThrottle(options);
@@ -3345,49 +3361,64 @@ export async function deployAll(
         return result;
       });
       if (controlBootstrapConfig) {
-        const existing = new Set(options.existingComponents ?? []);
-        const unavailableTarget = CONTROL_SMOKE_TARGET_COMPONENTS.find((component) =>
-          components.includes(component)
-            ? resultMap.get(component)?.success !== true
-            : !existing.has(component)
-        );
-        if (bootstrapControlResult?.success && !unavailableTarget) {
-          options.onProgress?.(
-            'Redeploying ar-control with authenticated runtime smoke bindings...'
-          );
-          const fullControlResult = await deployWorkerDirect(
-            contexts.get('ar-control')!,
-            options,
-            throttle
-          );
-          resultMap.set(
-            'ar-control',
-            fullControlResult.success
-              ? fullControlResult
-              : {
-                  ...fullControlResult,
-                  success: false,
-                  trafficCommitted: true,
-                  deployedAt: bootstrapControlResult.deployedAt,
-                  error: `Initial Control bootstrap is still active; full Control redeploy failed: ${fullControlResult.error || 'unknown error'}`,
-                }
-          );
+        if (options.deferInitialControlSmokeBindingRestore) {
+          if (!bootstrapControlResult?.success) {
+            resultMap.set(
+              'ar-control',
+              bootstrapControlResult ??
+                makeSkippedResult(
+                  'ar-control',
+                  options,
+                  'Initial Control bootstrap did not complete',
+                  contexts.get('ar-control')
+                )
+            );
+          }
         } else {
-          resultMap.set('ar-control', {
-            ...(bootstrapControlResult ??
-              makeSkippedResult(
-                'ar-control',
-                options,
-                'Initial Control bootstrap did not complete',
-                contexts.get('ar-control')
-              )),
-            success: false,
-            trafficCommitted: bootstrapControlResult?.success === true,
-            error:
-              bootstrapControlResult?.success === true
-                ? `Initial Control bootstrap is active, but smoke target ${unavailableTarget || 'unknown'} is unavailable`
-                : bootstrapControlResult?.error || 'Initial Control bootstrap did not complete',
-          });
+          const existing = new Set(options.existingComponents ?? []);
+          const unavailableTarget = CONTROL_SMOKE_TARGET_COMPONENTS.find((component) =>
+            components.includes(component)
+              ? resultMap.get(component)?.success !== true
+              : !existing.has(component)
+          );
+          if (bootstrapControlResult?.success && !unavailableTarget) {
+            options.onProgress?.(
+              'Redeploying ar-control with authenticated runtime smoke bindings...'
+            );
+            const fullControlResult = await deployWorkerDirect(
+              contexts.get('ar-control')!,
+              options,
+              throttle
+            );
+            resultMap.set(
+              'ar-control',
+              fullControlResult.success
+                ? fullControlResult
+                : {
+                    ...fullControlResult,
+                    success: false,
+                    trafficCommitted: true,
+                    deployedAt: bootstrapControlResult.deployedAt,
+                    error: `Initial Control bootstrap is still active; full Control redeploy failed: ${fullControlResult.error || 'unknown error'}`,
+                  }
+            );
+          } else {
+            resultMap.set('ar-control', {
+              ...(bootstrapControlResult ??
+                makeSkippedResult(
+                  'ar-control',
+                  options,
+                  'Initial Control bootstrap did not complete',
+                  contexts.get('ar-control')
+                )),
+              success: false,
+              trafficCommitted: bootstrapControlResult?.success === true,
+              error:
+                bootstrapControlResult?.success === true
+                  ? `Initial Control bootstrap is active, but smoke target ${unavailableTarget || 'unknown'} is unavailable`
+                  : bootstrapControlResult?.error || 'Initial Control bootstrap did not complete',
+            });
+          }
         }
       }
       if (authBootstrapConfig) {

@@ -175,7 +175,7 @@ describe('AccountDirectoryCoordinator', () => {
     tenantDatabase = new DatabaseSync(':memory:');
     lookupDatabase = new DatabaseSync(':memory:');
     tenantDatabase.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/001_0_4_0_core_baseline.sql'), 'utf8')
+      readFileSync(resolve(REPO_ROOT, 'migrations/core/d1/001_0_4_0_core_baseline.sql'), 'utf8')
         .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
         .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );
@@ -187,7 +187,7 @@ describe('AccountDirectoryCoordinator', () => {
          ('account-b', 'tenant-a', 'person', 'active', 1, 1);`
     );
     lookupDatabase.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_0_4_0_lookup_baseline.sql'), 'utf8')
+      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/d1/001_0_4_0_lookup_baseline.sql'), 'utf8')
         .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
         .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );

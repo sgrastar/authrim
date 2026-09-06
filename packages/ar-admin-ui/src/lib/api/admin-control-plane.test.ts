@@ -99,7 +99,7 @@ const capacityPreview = {
 			databaseName: 'authrim-test-users-jp-capacity-1',
 			bindingRef: 'TEST_TDB_USERS_CAPACITY_1_CORE',
 			readReplicationMode: 'disabled',
-			migrationStreamId: 'd1-core'
+			migrationStreamId: 'core-d1'
 		}
 	]
 } as const;
@@ -239,7 +239,7 @@ const tenantRecovery = {
 			shardGeneration: 2,
 			bindingRef: 'TEST_TDB_DEFAULT_TENANT_1',
 			providerDatabaseId: 'database-tenant-1',
-			migrationStreamId: 'd1-core',
+			migrationStreamId: 'core-d1',
 			releaseId: 'draft-2026-08-02',
 			manifestDigest: 'a'.repeat(64),
 			restoreConfirmedAt: null,

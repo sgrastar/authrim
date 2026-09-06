@@ -1,16 +1,18 @@
 {
-  "formatVersion": 1,
+  "formatVersion": 2,
   "productVersion": "0.4.0",
   "compatibility": "fresh_install_only",
   "streams": [
     {
-      "id": "d1-core",
+      "id": "core-d1",
+      "schemaFamily": "core",
       "dialect": "sqlite",
+      "targetKind": "cloudflare-d1",
       "path": "001_0_4_0_core_baseline.sql",
-      "checksum": "9892b05789becbebc7c8627cb1a3d3ef2a5d35ec5df1b4c8ab59974ed77d7bcf",
-      "schemaChecksum": "3a5faf64b393a371a64b860a9631b5f9928432190f86578fdcabb6b4f802eb86",
+      "checksum": "11a7eeb61266e9386e2fac051508d403231cf81be9a4a7cc9eadb83bec8808d0",
+      "schemaChecksum": "4ca54094d67682f73bcedc0de4f734b0fbe087f539999c2731f87f68b6c1bcfb",
       "seedChecksum": "aa8cd63e9f4f378da66e5a5f6da733f6620d3270005b84842282a4fb94e10d74",
-      "objectCount": 633,
+      "objectCount": 603,
       "generatedFrom": [
         {
           "path": "001_core_foundation.sql",
@@ -231,17 +233,31 @@
         {
           "path": "002_align_builtin_profile_claim_defaults.sql",
           "checksum": "e79902cda94be1838078e89205babd0a6e10be089d647461dfdc1c0cbe0b5f96"
+        },
+        {
+          "path": "002_0_4_0_core_deferred_schema_cleanup.sql",
+          "checksum": "576b9470374f2f3352e90e9ecbbaac53284adc9f88f111de95c9f235c601bd00"
+        },
+        {
+          "path": "003_0_4_0_core_object_catalog_contract.sql",
+          "checksum": "9891c3b3bf5aec572c208c6606f62c158fff1c923f36854ab41a02d31547c584"
+        },
+        {
+          "path": "004_0_4_0_core_notification_category_contract.sql",
+          "checksum": "90a5a622fbba95dc6f50add1d8d987f0f18c8f4ceef2d96e621589cc6ecd0339"
         }
       ]
     },
     {
-      "id": "d1-pii",
+      "id": "pii-d1",
+      "schemaFamily": "pii",
       "dialect": "sqlite",
+      "targetKind": "cloudflare-d1",
       "path": "001_0_4_0_pii_baseline.sql",
-      "checksum": "852db3aa0e7e2e83d60565c564d01c183dfc401c90a41035c0106627dd448057",
-      "schemaChecksum": "73bf75aac0c268d4c94a868df8828cf09588329ad76f778773d30a9298cce73e",
+      "checksum": "53918709e01fbb3cb54cb914c1f6634c8bb91af91cdb3a817788c73bb0b601be",
+      "schemaChecksum": "ea9ab25998bd88f00b82b821b426751abe731496cd4c73151d5c144fe68104cc",
       "seedChecksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "objectCount": 63,
+      "objectCount": 69,
       "generatedFrom": [
         {
           "path": "001_pii_schema.sql",
@@ -282,17 +298,23 @@
         {
           "path": "012_identifier_replacement_addition_mode.sql",
           "checksum": "6a653f4c5c0f009d7326f37879fa085e6d93e3240f2c10ba21e1334909a4bcfa"
+        },
+        {
+          "path": "002_0_4_0_pii_identity_ownership.sql",
+          "checksum": "273e287c3206ea23483b8d2ee780bae2ac26a75e67d12a5062ea234b37bfd8d1"
         }
       ]
     },
     {
-      "id": "d1-admin",
+      "id": "admin-d1",
+      "schemaFamily": "admin",
       "dialect": "sqlite",
+      "targetKind": "cloudflare-d1",
       "path": "001_0_4_0_admin_baseline.sql",
-      "checksum": "ae4f4c136d304a0b356bde7f8fc7f9c86e86efccbbb4d4970b3b8c9cce647c0a",
-      "schemaChecksum": "d0e34a58ecf603e68d23665cb5595d1b518fc9b3d7fea3d1c0df971cff3ddca1",
+      "checksum": "f355399d9f525911798feb51981b9ee31c5f969844b59a369709014b3abf062d",
+      "schemaChecksum": "04738f8b2e992495cff8e7bf7860e6655582d645743d7fbc30adc2668c39ecc8",
       "seedChecksum": "eb08176dd89bdb8305b8ae5b8b25b5e6ee147b85deae548d78a91df36a786d53",
-      "objectCount": 464,
+      "objectCount": 443,
       "generatedFrom": [
         {
           "path": "001_admin_users_rbac_security.sql",
@@ -449,17 +471,31 @@
         {
           "path": "002_saml_federation_runtime_directory.sql",
           "checksum": "be3f440ba3c465dd74674eebfaf888467c21ff8b0064e280dfeb32db000c2fbe"
+        },
+        {
+          "path": "002_0_4_0_admin_deferred_schema_cleanup.sql",
+          "checksum": "a0dba831559078894223bfb01fbf58c21df5d6a1332d33951f189e849b5a8181"
+        },
+        {
+          "path": "003_0_4_0_admin_object_catalog_contract.sql",
+          "checksum": "ad89017acce4c4d58142fafca326d73f4900ead40fe294c93e8138227d28f92f"
+        },
+        {
+          "path": "004_0_4_0_admin_notification_category_contract.sql",
+          "checksum": "209308207c83695ed08ec00d13349e69fff62e902d82162aa7b2e7831cd1c3f4"
         }
       ]
     },
     {
-      "id": "d1-control",
+      "id": "control-d1",
+      "schemaFamily": "control",
       "dialect": "sqlite",
+      "targetKind": "cloudflare-d1",
       "path": "001_0_4_0_control_baseline.sql",
-      "checksum": "3be25d594f29170323f13870588bae939d9778536fd2f53a40b7d6eff9f5dd61",
-      "schemaChecksum": "b937f2eeffe72266f168548813d813152168dc4ec9a00eb02125d11e6f63b335",
+      "checksum": "bd84e1ac53d2da9d09ec7500760ace5a9d45aabdd63c16433e6b919222a1e20c",
+      "schemaChecksum": "6dc296ecd94c03e44f1df8501a1715ba9d24b18ecefadb4de9426335838d9a47",
       "seedChecksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "objectCount": 230,
+      "objectCount": 221,
       "generatedFrom": [
         {
           "path": "001_control_plane.sql",
@@ -592,14 +628,24 @@
         {
           "path": "009_provider_identity_checkpoint.sql",
           "checksum": "3724af53350f2466843ebbe62685e186f7b9382ef5bd2f9512b26039194e321d"
+        },
+        {
+          "path": "002_0_4_0_control_deferred_schema_cleanup.sql",
+          "checksum": "5daeb720068ce66eb91c461db846602c310ee3ee1bddbc9e4a54a1332898a716"
+        },
+        {
+          "path": "003_0_4_0_control_migration_stream_taxonomy.sql",
+          "checksum": "67ffb559f87eb9b6e302ab567b85c5f4f74fbf7a4251def18b88ccf4af26bfba"
         }
       ]
     },
     {
-      "id": "d1-lookup",
+      "id": "lookup-d1",
+      "schemaFamily": "lookup",
       "dialect": "sqlite",
+      "targetKind": "cloudflare-d1",
       "path": "001_0_4_0_lookup_baseline.sql",
-      "checksum": "176d121b776b77efe881ebddc29725013509880d0d5d354ccec5ac505fd4cd84",
+      "checksum": "296bc48e57a1185111a8fdded551d54dfcb9b19e426e396eb34c753bf3299a65",
       "schemaChecksum": "749b567b804fd5839546a9cde9b7d06ef2a57b82ef3b02eeb9b2a2295cd013b0",
       "seedChecksum": "e9f0001c009905283e7076618853932c50357741b7ccd5f4835f4bb32ef10954",
       "objectCount": 38,
@@ -627,10 +673,12 @@
       ]
     },
     {
-      "id": "d1-plugin-runner",
+      "id": "plugin-runner-d1",
+      "schemaFamily": "plugin_runner",
       "dialect": "sqlite",
+      "targetKind": "cloudflare-d1",
       "path": "001_0_4_0_plugin_runner_baseline.sql",
-      "checksum": "8c0567c4266a15d1f38baba0ba00c3299a22da027440c0be9ac5a5165566031f",
+      "checksum": "004ea4f613321692f39ebc16fabb34aa82673c5e5beb2a186d8150933e427a78",
       "schemaChecksum": "fdd1cd8ff36354912997aab6ba36f5275b05b29c0945a4855a3a0ad0ad673c7b",
       "seedChecksum": "044189a43eb672fa9475e5b482138b9d808b5fbb8b2b5da8369043406aa432fe",
       "objectCount": 51,
@@ -678,13 +726,15 @@
       ]
     },
     {
-      "id": "external-postgres-core",
-      "dialect": "postgres",
-      "path": "001_0_4_0_external_postgres_core_baseline.sql",
-      "checksum": "6051346e9e18709f9eddcb81b23d750c1a2e22c2a70c770f59eba6ab29aeb686",
-      "schemaChecksum": "183aaad2fda22c688df34af9e7db72d4cdc7a2d31e38e38192c8cb2e9a99f437",
-      "seedChecksum": "fa30e5a54481e56847d7e64aff5fae286bc7bb572f8aaccfddb19f52c3c6fe3b",
-      "objectCount": 63,
+      "id": "core-postgresql",
+      "schemaFamily": "core",
+      "dialect": "postgresql",
+      "targetKind": "postgresql-connection",
+      "path": "001_0_4_0_core_baseline.sql",
+      "checksum": "ead973bb194468efc15226076c56e4e8ea544993bf2bddcb42672279f46f86a2",
+      "schemaChecksum": "238bce54939fca62d6033079212e2f41758f00f27c090160a9acfe394e9ffd47",
+      "seedChecksum": "3fe8bf50662d8bf75d7c86d0fd047cd275f2389318aed20243ff90827180b43b",
+      "objectCount": 62,
       "generatedFrom": [
         {
           "path": "001_external_durable_core.sql",
@@ -761,17 +811,23 @@
         {
           "path": "003_seed_builtin_profile_claim_schemas.sql",
           "checksum": "d64b390779edb8ac8259070b1f0639384f133a4b0ab1169eb47fd21ad75c4b1a"
+        },
+        {
+          "path": "002_0_4_0_core_deferred_schema_cleanup.sql",
+          "checksum": "e69f6029fd4c8a84169d0eeafd55f535c4ad4d24724369ceae639a4267d788d1"
         }
       ]
     },
     {
-      "id": "external-postgres-pii",
-      "dialect": "postgres",
-      "path": "002_0_4_0_external_postgres_pii_baseline.sql",
-      "checksum": "0a0aeba068ad2b81a13eb4fd102ecf4397e29d83038fdfc8e3992bd886fbdef4",
-      "schemaChecksum": "abc5e7f9ca35123f3bf9879c7256e58a40f2ba20babc45d1e15c0ec328581106",
-      "seedChecksum": "ef678a2a893b7e287c189c9ba4d1e2686e08cc4464bb24d65a67a2c3e1e0302b",
-      "objectCount": 9,
+      "id": "pii-postgresql",
+      "schemaFamily": "pii",
+      "dialect": "postgresql",
+      "targetKind": "postgresql-connection",
+      "path": "001_0_4_0_pii_baseline.sql",
+      "checksum": "278050d1fe0bbfb31ac188fd70b047329b101cde322cac5767bb84509053771c",
+      "schemaChecksum": "bc12ed2e9065511f2d35afaed951ad82253711720935cb5577a24114070c812c",
+      "seedChecksum": "e16b28cdd6b51288f7a88c15dab7b3a56b34c202fd902712a76235b4ed8393ed",
+      "objectCount": 10,
       "generatedFrom": [
         {
           "path": "002_external_durable_pii.sql",
@@ -792,6 +848,10 @@
         {
           "path": "022_external_custom_claim_field_values.sql",
           "checksum": "a30a99406b2b97950a0a4b34527f435c78431f82c286cffbc9037ddc98203685"
+        },
+        {
+          "path": "002_0_4_0_pii_identity_ownership.sql",
+          "checksum": "7deb0afedfda45a2cf7983cc795a28ff6bdc6111d63b86cb58b426f41a3ef37b"
         }
       ]
     }

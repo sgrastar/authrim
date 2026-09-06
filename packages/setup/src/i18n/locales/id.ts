@@ -906,6 +906,8 @@ const id: Translations = {
     'Masukkan token sekali pakai baru untuk memperbaikinya.',
   'web.envDetail.bootstrapRetainedForRetry':
     'Cloudflare mengembalikan kesalahan sementara. Token bootstrap masih aktif; masukkan kembali token yang sama lalu pilih Aktifkan untuk melanjutkan.',
+  'web.envDetail.bootstrapNotSubmittedForRetry':
+    'Setup berhenti sebelum mengirim token bootstrap. Token tetap berada di kolom input dan dapat dicoba kembali.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Cabut token bootstrap dan token turunan Authrim yang disebutkan di Cloudflare Dashboard sebelum mencoba lagi.',
   'web.envDetail.bootstrapRevokedPendingReset':

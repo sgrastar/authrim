@@ -65,7 +65,6 @@ const coreTables = [
   'user_custom_fields',
   'custom_claim_schemas',
   'custom_claim_schema_history',
-  'verified_attributes',
 ] as const;
 
 const piiTables = [
@@ -79,9 +78,7 @@ const piiTables = [
 
 describe('external durable postgres schema', () => {
   it('keeps every shared durable core table explicitly tenant-scoped', () => {
-    const coreSql = readMigration(
-      'migrations/external/postgres/001_0_4_0_external_postgres_core_baseline.sql'
-    );
+    const coreSql = readMigration('migrations/core/postgresql/001_0_4_0_core_baseline.sql');
 
     for (const tableName of coreTables) {
       const tableBlock = extractCreateTableBlock(coreSql, tableName);
@@ -90,9 +87,7 @@ describe('external durable postgres schema', () => {
   });
 
   it('keeps every shared durable PII table explicitly tenant-scoped', () => {
-    const piiSql = readMigration(
-      'migrations/external/postgres/002_0_4_0_external_postgres_pii_baseline.sql'
-    );
+    const piiSql = readMigration('migrations/pii/postgresql/001_0_4_0_pii_baseline.sql');
 
     for (const tableName of piiTables) {
       const tableBlock = extractCreateTableBlock(piiSql, tableName);
@@ -102,8 +97,8 @@ describe('external durable postgres schema', () => {
 
   it('does not use D1-only SQLite syntax in postgres migrations', () => {
     const combinedSql = [
-      readMigration('migrations/external/postgres/001_0_4_0_external_postgres_core_baseline.sql'),
-      readMigration('migrations/external/postgres/002_0_4_0_external_postgres_pii_baseline.sql'),
+      readMigration('migrations/core/postgresql/001_0_4_0_core_baseline.sql'),
+      readMigration('migrations/pii/postgresql/001_0_4_0_pii_baseline.sql'),
     ].join('\n');
 
     expect(combinedSql).not.toMatch(/\bAUTOINCREMENT\b/i);
@@ -112,10 +107,29 @@ describe('external durable postgres schema', () => {
     expect(combinedSql).not.toMatch(/\bINTEGER PRIMARY KEY AUTOINCREMENT\b/i);
   });
 
-  it('keeps passkeys bound to canonical runtime user ids instead of users_core rows', () => {
-    const coreSql = readMigration(
-      'migrations/external/postgres/001_0_4_0_external_postgres_core_baseline.sql'
+  it('separates pairwise subjects from the canonical PII identifier registry', () => {
+    const piiSql = readMigration('migrations/pii/postgresql/001_0_4_0_pii_baseline.sql');
+
+    expect(piiSql).toMatch(/CREATE TABLE public\.pairwise_subject_identifiers\s*\(/i);
+    expect(piiSql).toMatch(/CREATE TABLE public\.subject_identifiers\s*\(/i);
+    expect(extractCreateTableBlock(piiSql, 'pairwise_subject_identifiers')).toMatch(
+      /\btenant_id text\b[^\n]*\bNOT NULL\b[\s\S]*\buser_id text NOT NULL\b/i
     );
+    expect(extractCreateTableBlock(piiSql, 'subject_identifiers')).toMatch(
+      /\btenant_id text NOT NULL\b[\s\S]*\bsubject_id text NOT NULL\b/i
+    );
+  });
+
+  it('removes the superseded verified-attribute compatibility table from the final core schema', () => {
+    const coreSql = readMigration('migrations/core/postgresql/001_0_4_0_core_baseline.sql');
+
+    expect(coreSql).not.toMatch(/CREATE TABLE public\.verified_attributes\s*\(/i);
+    expect(coreSql).toMatch(/CREATE TABLE public\.user_verified_attributes\s*\(/i);
+    expect(coreSql).toMatch(/CREATE TABLE public\.attribute_verifications\s*\(/i);
+  });
+
+  it('keeps passkeys bound to canonical runtime user ids instead of users_core rows', () => {
+    const coreSql = readMigration('migrations/core/postgresql/001_0_4_0_core_baseline.sql');
     const passkeysBlock = extractCreateTableBlock(coreSql, 'passkeys');
 
     expect(passkeysBlock).toMatch(/\buser_id text NOT NULL\b/i);
@@ -126,9 +140,7 @@ describe('external durable postgres schema', () => {
   });
 
   it('uses the canonical optional profile catalog without tenant-specific baseline rows', () => {
-    const profileSql = readMigration(
-      'migrations/external/postgres/001_0_4_0_external_postgres_core_baseline.sql'
-    );
+    const profileSql = readMigration('migrations/core/postgresql/001_0_4_0_core_baseline.sql');
     const expectedKeys = [
       'email',
       'email_verified',

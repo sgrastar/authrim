@@ -1,5 +1,5 @@
 -- Authrim 0.4.0 semantic fresh-install baseline.
--- Logical stream: d1-control.
+-- Logical stream: control-d1.
 -- Generated from the final database state; do not append historical migration SQL here.
 -- Fresh-install baselines must never be applied to upgrade an existing database.
 PRAGMA foreign_keys = OFF;
@@ -1688,40 +1688,6 @@ CREATE TABLE control_tenant_disaster_recovery_operations (
     (lookup_reprojection_registry_digest IS NOT NULL AND lookup_reprojection_shard_count IS NOT NULL)
   )
 );
-CREATE TABLE control_tenant_disaster_recovery_targets (
-  operation_id TEXT NOT NULL,
-  environment_id TEXT NOT NULL,
-  tenant_id TEXT NOT NULL,
-  shard_id TEXT NOT NULL,
-  data_role TEXT NOT NULL
-    CHECK (data_role IN ('tenant_core/default', 'tenant_core/users', 'tenant_pii')),
-  residency_partition TEXT NOT NULL,
-  assignment_generation INTEGER NOT NULL CHECK (assignment_generation >= 1),
-  shard_generation INTEGER NOT NULL CHECK (shard_generation >= 1),
-  binding_ref TEXT NOT NULL CHECK (
-    length(binding_ref) BETWEEN 1 AND 128 AND binding_ref NOT GLOB '*[^A-Z0-9_]*'
-  ),
-  provider_database_id TEXT NOT NULL,
-  migration_stream_id TEXT NOT NULL CHECK (migration_stream_id IN ('d1-core', 'd1-pii')),
-  release_id TEXT NOT NULL,
-  manifest_digest TEXT NOT NULL CHECK (
-    length(manifest_digest) = 64 AND manifest_digest NOT GLOB '*[^0-9a-f]*'
-  ),
-  restore_confirmed_at INTEGER,
-  migration_verified_at INTEGER,
-  lookup_reprojected_at INTEGER,
-  binding_smoke_verified_at INTEGER,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (operation_id, shard_id),
-  UNIQUE (operation_id, data_role, residency_partition, shard_id),
-  FOREIGN KEY (operation_id, environment_id)
-    REFERENCES control_tenant_disaster_recovery_operations(operation_id, environment_id)
-      ON DELETE CASCADE,
-  FOREIGN KEY (shard_id, environment_id)
-    REFERENCES control_tenant_shards(shard_id, environment_id),
-  CHECK (migration_stream_id = CASE WHEN data_role = 'tenant_pii' THEN 'd1-pii' ELSE 'd1-core' END)
-);
 CREATE TABLE IF NOT EXISTS "control_worker_binding_reconciliations" (
   operation_id TEXT NOT NULL,
   environment_id TEXT NOT NULL,
@@ -1818,58 +1784,6 @@ CREATE TABLE control_release_migration_rollouts (
       active_environment_key = environment_id)
   )
 );
-CREATE TABLE control_release_migration_targets (
-  operation_id TEXT NOT NULL,
-  environment_id TEXT NOT NULL,
-  target_id TEXT NOT NULL,
-  target_kind TEXT NOT NULL CHECK (target_kind IN ('tenant_shard', 'lookup_shard')),
-  shard_id TEXT NOT NULL,
-  desired_resource_id TEXT NOT NULL,
-  provider_database_id TEXT,
-  binding_ref TEXT NOT NULL,
-  stream_id TEXT NOT NULL CHECK (stream_id IN ('d1-core', 'd1-pii', 'd1-lookup')),
-  release_id TEXT NOT NULL,
-  manifest_digest TEXT NOT NULL
-    CHECK (length(manifest_digest) = 64 AND manifest_digest NOT GLOB '*[^0-9a-f]*'),
-  state TEXT NOT NULL DEFAULT 'queued'
-    CHECK (state IN ('queued', 'running', 'waiting_retry', 'succeeded', 'blocked')),
-  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
-  retry_budget_started_at INTEGER NOT NULL,
-  next_attempt_at INTEGER,
-  lease_owner TEXT,
-  lease_expires_at INTEGER,
-  fencing_token INTEGER NOT NULL DEFAULT 0 CHECK (fencing_token >= 0),
-  expected_file_count INTEGER CHECK (expected_file_count IS NULL OR expected_file_count >= 0),
-  applied_file_count INTEGER NOT NULL DEFAULT 0 CHECK (applied_file_count >= 0),
-  skipped_file_count INTEGER NOT NULL DEFAULT 0 CHECK (skipped_file_count >= 0),
-  response_loss_recoveries INTEGER NOT NULL DEFAULT 0
-    CHECK (response_loss_recoveries >= 0),
-  last_filename TEXT,
-  last_error_code TEXT,
-  started_at INTEGER,
-  completed_at INTEGER,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (operation_id, target_id),
-  UNIQUE (operation_id, desired_resource_id),
-  FOREIGN KEY (operation_id, environment_id)
-    REFERENCES control_release_migration_rollouts(operation_id, environment_id) ON DELETE CASCADE,
-  FOREIGN KEY (operation_id, stream_id)
-    REFERENCES control_operation_release_pins(operation_id, stream_id),
-  FOREIGN KEY (desired_resource_id, environment_id)
-    REFERENCES control_desired_resources(desired_resource_id, environment_id),
-  CHECK (applied_file_count <= COALESCE(expected_file_count, applied_file_count)),
-  CHECK (
-    (state = 'succeeded' AND provider_database_id IS NOT NULL AND completed_at IS NOT NULL AND
-      expected_file_count IS NOT NULL AND
-      applied_file_count + skipped_file_count = expected_file_count) OR
-    state <> 'succeeded'
-  ),
-  CHECK (
-    (state = 'running' AND lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL) OR
-    state <> 'running'
-  )
-);
 CREATE TABLE control_lookup_retention_policy_projections (
   environment_id TEXT NOT NULL,
   tenant_id TEXT NOT NULL,
@@ -1898,119 +1812,6 @@ CREATE TABLE control_account_legal_hold_projections (
   UNIQUE (environment_id, source_operation_id),
   FOREIGN KEY (environment_id) REFERENCES control_environments(environment_id) ON DELETE CASCADE,
   CHECK (projected_at >= source_updated_at)
-);
-CREATE TABLE control_lookup_rebalance_batches (
-  operation_id TEXT PRIMARY KEY,
-  environment_id TEXT NOT NULL,
-  residency_partition TEXT NOT NULL,
-  state TEXT NOT NULL DEFAULT 'queued'
-    CHECK (state IN (
-      'queued', 'dual_write', 'exact_verifying', 'registry_pending', 'grace',
-      'source_cleanup', 'completed', 'blocked'
-    )),
-  planner_version INTEGER NOT NULL DEFAULT 1 CHECK (planner_version >= 1),
-  policy_generation INTEGER NOT NULL CHECK (policy_generation >= 1),
-  load_snapshot_digest TEXT NOT NULL
-    CHECK (length(load_snapshot_digest) = 64 AND load_snapshot_digest NOT GLOB '*[^0-9a-f]*'),
-  binding_readiness_generation INTEGER NOT NULL CHECK (binding_readiness_generation >= 1),
-  registry_generation_before INTEGER NOT NULL CHECK (registry_generation_before >= 1),
-  registry_generation_after INTEGER CHECK (registry_generation_after IS NULL OR registry_generation_after >= 1),
-  registry_serialized_bytes INTEGER CHECK (registry_serialized_bytes IS NULL OR registry_serialized_bytes >= 1),
-  concurrency_limit INTEGER NOT NULL DEFAULT 1 CHECK (concurrency_limit BETWEEN 1 AND 4),
-  grace_expires_at INTEGER,
-  last_error_code TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  completed_at INTEGER,
-  FOREIGN KEY (operation_id, environment_id)
-    REFERENCES control_operations(operation_id, environment_id) ON DELETE CASCADE,
-  CHECK ((state = 'completed' AND completed_at IS NOT NULL) OR state <> 'completed'),
-  CHECK ((state IN ('grace', 'source_cleanup', 'completed') AND
-          registry_generation_after IS NOT NULL AND grace_expires_at IS NOT NULL) OR
-         state NOT IN ('grace', 'source_cleanup', 'completed'))
-);
-CREATE TABLE control_lookup_rebalance_bucket_targets (
-  operation_id TEXT NOT NULL,
-  virtual_bucket INTEGER NOT NULL CHECK (virtual_bucket BETWEEN 0 AND 4095),
-  source_lookup_shard_id TEXT NOT NULL,
-  target_lookup_shard_id TEXT NOT NULL,
-  source_assignment_generation INTEGER NOT NULL CHECK (source_assignment_generation >= 1),
-  target_assignment_generation INTEGER NOT NULL CHECK (target_assignment_generation >= 2),
-  classification TEXT NOT NULL CHECK (classification IN ('empty', 'populated')),
-  state TEXT NOT NULL DEFAULT 'planned'
-    CHECK (state IN (
-      'planned', 'dual_write', 'exact_verified', 'copying', 'verifying',
-      'publishable', 'published', 'quarantined', 'completed', 'blocked'
-    )),
-  source_active_row_count INTEGER CHECK (source_active_row_count IS NULL OR source_active_row_count >= 0),
-  target_active_row_count INTEGER CHECK (target_active_row_count IS NULL OR target_active_row_count >= 0),
-  exact_verification_digest TEXT
-    CHECK (exact_verification_digest IS NULL OR
-           (length(exact_verification_digest) = 64 AND
-            exact_verification_digest NOT GLOB '*[^0-9a-f]*')),
-  cursor_json TEXT NOT NULL DEFAULT '{}',
-  last_error_code TEXT,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (operation_id, virtual_bucket),
-  FOREIGN KEY (operation_id) REFERENCES control_lookup_rebalance_batches(operation_id)
-    ON DELETE CASCADE,
-  CHECK (source_lookup_shard_id <> target_lookup_shard_id),
-  CHECK (target_assignment_generation = source_assignment_generation + 1)
-);
-CREATE TABLE control_lookup_retention_operations (
-  operation_id TEXT PRIMARY KEY,
-  environment_id TEXT NOT NULL,
-  tenant_id TEXT NOT NULL,
-  policy_generation INTEGER NOT NULL CHECK (policy_generation >= 1),
-  retention_days INTEGER NOT NULL CHECK (retention_days BETWEEN 30 AND 3650),
-  policy_source_updated_at INTEGER NOT NULL,
-  frozen_inventory_digest TEXT NOT NULL
-    CHECK (length(frozen_inventory_digest) = 64 AND
-           frozen_inventory_digest NOT GLOB '*[^0-9a-f]*'),
-  execution_mode TEXT NOT NULL DEFAULT 'dry_run'
-    CHECK (execution_mode IN ('dry_run', 'delete', 'verified_erasure')),
-  state TEXT NOT NULL DEFAULT 'queued'
-    CHECK (state IN ('queued', 'running', 'waiting_retry', 'completed', 'blocked', 'canceled')),
-  attempted_count INTEGER NOT NULL DEFAULT 0 CHECK (attempted_count >= 0),
-  deleted_count INTEGER NOT NULL DEFAULT 0 CHECK (deleted_count >= 0),
-  held_count INTEGER NOT NULL DEFAULT 0 CHECK (held_count >= 0),
-  raced_count INTEGER NOT NULL DEFAULT 0 CHECK (raced_count >= 0),
-  skipped_count INTEGER NOT NULL DEFAULT 0 CHECK (skipped_count >= 0),
-  last_error_code TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  completed_at INTEGER,
-  FOREIGN KEY (operation_id, environment_id)
-    REFERENCES control_operations(operation_id, environment_id) ON DELETE CASCADE,
-  CHECK (deleted_count <= attempted_count),
-  CHECK ((state = 'completed' AND completed_at IS NOT NULL) OR state <> 'completed')
-);
-CREATE TABLE control_lookup_retention_targets (
-  operation_id TEXT NOT NULL,
-  lookup_shard_id TEXT NOT NULL,
-  artifact_kind TEXT NOT NULL
-    CHECK (artifact_kind IN ('identifier', 'tenant_alias', 'reservation', 'replacement_gate')),
-  state TEXT NOT NULL DEFAULT 'queued'
-    CHECK (state IN ('queued', 'running', 'waiting_retry', 'completed', 'blocked')),
-  cursor_json TEXT NOT NULL DEFAULT '{}',
-  lease_owner TEXT,
-  fencing_token INTEGER NOT NULL DEFAULT 0 CHECK (fencing_token >= 0),
-  lease_expires_at INTEGER,
-  attempted_count INTEGER NOT NULL DEFAULT 0 CHECK (attempted_count >= 0),
-  deleted_count INTEGER NOT NULL DEFAULT 0 CHECK (deleted_count >= 0),
-  held_count INTEGER NOT NULL DEFAULT 0 CHECK (held_count >= 0),
-  raced_count INTEGER NOT NULL DEFAULT 0 CHECK (raced_count >= 0),
-  skipped_count INTEGER NOT NULL DEFAULT 0 CHECK (skipped_count >= 0),
-  last_error_code TEXT,
-  updated_at INTEGER NOT NULL,
-  completed_at INTEGER,
-  PRIMARY KEY (operation_id, lookup_shard_id, artifact_kind),
-  FOREIGN KEY (operation_id) REFERENCES control_lookup_retention_operations(operation_id)
-    ON DELETE CASCADE,
-  CHECK ((lease_owner IS NULL AND lease_expires_at IS NULL) OR
-         (lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)),
-  CHECK (deleted_count <= attempted_count),
-  CHECK ((state = 'completed' AND completed_at IS NOT NULL) OR state <> 'completed')
 );
 CREATE TABLE control_r2_bucket_metric_reports (
   environment_id TEXT NOT NULL,
@@ -2177,6 +1978,93 @@ CREATE TABLE control_plugin_provider_projection_assertions (
   FOREIGN KEY (plugin_resource_id)
     REFERENCES control_plugin_desired_resources(plugin_resource_id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS "control_tenant_disaster_recovery_targets" (
+  operation_id TEXT NOT NULL,
+  environment_id TEXT NOT NULL,
+  tenant_id TEXT NOT NULL,
+  shard_id TEXT NOT NULL,
+  data_role TEXT NOT NULL
+    CHECK (data_role IN ('tenant_core/default', 'tenant_core/users', 'tenant_pii')),
+  residency_partition TEXT NOT NULL,
+  assignment_generation INTEGER NOT NULL CHECK (assignment_generation >= 1),
+  shard_generation INTEGER NOT NULL CHECK (shard_generation >= 1),
+  binding_ref TEXT NOT NULL CHECK (
+    length(binding_ref) BETWEEN 1 AND 128 AND binding_ref NOT GLOB '*[^A-Z0-9_]*'
+  ),
+  provider_database_id TEXT NOT NULL,
+  migration_stream_id TEXT NOT NULL CHECK (migration_stream_id IN ('core-d1', 'pii-d1')),
+  release_id TEXT NOT NULL,
+  manifest_digest TEXT NOT NULL CHECK (
+    length(manifest_digest) = 64 AND manifest_digest NOT GLOB '*[^0-9a-f]*'
+  ),
+  restore_confirmed_at INTEGER,
+  migration_verified_at INTEGER,
+  lookup_reprojected_at INTEGER,
+  binding_smoke_verified_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (operation_id, shard_id),
+  UNIQUE (operation_id, data_role, residency_partition, shard_id),
+  FOREIGN KEY (operation_id, environment_id)
+    REFERENCES control_tenant_disaster_recovery_operations(operation_id, environment_id)
+      ON DELETE CASCADE,
+  FOREIGN KEY (shard_id, environment_id)
+    REFERENCES control_tenant_shards(shard_id, environment_id),
+  CHECK (
+    migration_stream_id = CASE WHEN data_role = 'tenant_pii' THEN 'pii-d1' ELSE 'core-d1' END
+  )
+);
+CREATE TABLE IF NOT EXISTS "control_release_migration_targets" (
+  operation_id TEXT NOT NULL,
+  environment_id TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL CHECK (target_kind IN ('tenant_shard', 'lookup_shard')),
+  shard_id TEXT NOT NULL,
+  desired_resource_id TEXT NOT NULL,
+  provider_database_id TEXT,
+  binding_ref TEXT NOT NULL,
+  stream_id TEXT NOT NULL CHECK (stream_id IN ('core-d1', 'pii-d1', 'lookup-d1')),
+  release_id TEXT NOT NULL,
+  manifest_digest TEXT NOT NULL
+    CHECK (length(manifest_digest) = 64 AND manifest_digest NOT GLOB '*[^0-9a-f]*'),
+  state TEXT NOT NULL DEFAULT 'queued'
+    CHECK (state IN ('queued', 'running', 'waiting_retry', 'succeeded', 'blocked')),
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  retry_budget_started_at INTEGER NOT NULL,
+  next_attempt_at INTEGER,
+  lease_owner TEXT,
+  lease_expires_at INTEGER,
+  fencing_token INTEGER NOT NULL DEFAULT 0 CHECK (fencing_token >= 0),
+  expected_file_count INTEGER CHECK (expected_file_count IS NULL OR expected_file_count >= 0),
+  applied_file_count INTEGER NOT NULL DEFAULT 0 CHECK (applied_file_count >= 0),
+  skipped_file_count INTEGER NOT NULL DEFAULT 0 CHECK (skipped_file_count >= 0),
+  response_loss_recoveries INTEGER NOT NULL DEFAULT 0 CHECK (response_loss_recoveries >= 0),
+  last_filename TEXT,
+  last_error_code TEXT,
+  started_at INTEGER,
+  completed_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (operation_id, target_id),
+  UNIQUE (operation_id, desired_resource_id),
+  FOREIGN KEY (operation_id, environment_id)
+    REFERENCES control_release_migration_rollouts(operation_id, environment_id) ON DELETE CASCADE,
+  FOREIGN KEY (operation_id, stream_id)
+    REFERENCES control_operation_release_pins(operation_id, stream_id),
+  FOREIGN KEY (desired_resource_id, environment_id)
+    REFERENCES control_desired_resources(desired_resource_id, environment_id),
+  CHECK (applied_file_count <= COALESCE(expected_file_count, applied_file_count)),
+  CHECK (
+    (state = 'succeeded' AND provider_database_id IS NOT NULL AND completed_at IS NOT NULL AND
+      expected_file_count IS NOT NULL AND
+      applied_file_count + skipped_file_count = expected_file_count) OR
+    state <> 'succeeded'
+  ),
+  CHECK (
+    (state = 'running' AND lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL) OR
+    state <> 'running'
+  )
+);
 CREATE VIEW control_generated_lock_resources AS
 SELECT
   d.environment_id,
@@ -2289,12 +2177,6 @@ WHEN OLD.status <> NEW.status AND NOT (
 BEGIN
   SELECT RAISE(ABORT, 'invalid_control_operation_step_status_transition');
 END;
-CREATE TRIGGER trg_control_release_catalog_immutable
-BEFORE UPDATE OF environment_id, stream_id, release_id, manifest_digest, manifest_r2_object_key
-ON control_migration_release_catalog
-BEGIN
-  SELECT RAISE(ABORT, 'control_release_catalog_immutable');
-END;
 CREATE TRIGGER trg_control_release_catalog_conflicting_insert
 BEFORE INSERT ON control_migration_release_catalog
 WHEN EXISTS (
@@ -2310,17 +2192,6 @@ WHEN EXISTS (
 )
 BEGIN
   SELECT RAISE(ABORT, 'control_release_catalog_immutable');
-END;
-CREATE TRIGGER trg_control_operation_release_pin_immutable
-BEFORE UPDATE ON control_operation_release_pins
-BEGIN
-  SELECT RAISE(ABORT, 'control_operation_release_pin_immutable');
-END;
-CREATE TRIGGER trg_control_tenant_database_migration_pin_immutable
-BEFORE UPDATE OF operation_id, environment_id, stream_id, release_id, manifest_digest
-ON control_tenant_database_migration_state
-BEGIN
-  SELECT RAISE(ABORT, 'control_tenant_database_migration_pin_immutable');
 END;
 CREATE TRIGGER trg_control_directory_rewrite_cross_operation_takeover
 BEFORE UPDATE OF operation_id ON control_directory_rewrite_leases
@@ -2366,12 +2237,6 @@ BEFORE UPDATE OF source_kind, package_name ON control_desired_worker_inventory
 WHEN OLD.source_kind <> NEW.source_kind OR OLD.package_name <> NEW.package_name
 BEGIN
   SELECT RAISE(ABORT, 'control_worker_inventory_source_ownership_immutable');
-END;
-CREATE TRIGGER trg_control_plugin_resource_migration_pin_immutable
-BEFORE UPDATE OF operation_id, environment_id, stream_id, release_id, manifest_digest
-ON control_plugin_resource_migration_state
-BEGIN
-  SELECT RAISE(ABORT, 'control_plugin_resource_migration_pin_immutable');
 END;
 CREATE TRIGGER trg_control_lookup_bucket_migration_transition
 BEFORE UPDATE OF state ON control_lookup_bucket_migrations
@@ -3268,14 +3133,6 @@ WHEN OLD.lookup_reprojection_stage <> NEW.lookup_reprojection_stage AND NOT (
 BEGIN
   SELECT RAISE(ABORT, 'control_tenant_dr_reprojection_stage_transition_invalid');
 END;
-CREATE TRIGGER trg_control_tenant_dr_target_identity_immutable
-BEFORE UPDATE OF operation_id, environment_id, tenant_id, shard_id, data_role,
-                 residency_partition, assignment_generation, shard_generation, binding_ref,
-                 provider_database_id, migration_stream_id, release_id, manifest_digest, created_at
-ON control_tenant_disaster_recovery_targets
-BEGIN
-  SELECT RAISE(ABORT, 'control_tenant_dr_target_identity_immutable');
-END;
 CREATE TRIGGER trg_control_tenant_dr_state_transition
 BEFORE UPDATE OF recovery_state ON control_tenant_disaster_recovery_operations
 WHEN NOT (
@@ -3302,38 +3159,6 @@ WHEN NEW.recovery_state = 'canceled'
   AND (OLD.recovery_state <> 'publishing_deny' OR OLD.deny_observed_at IS NOT NULL)
 BEGIN
   SELECT RAISE(ABORT, 'control_tenant_dr_cancel_after_deny_forbidden');
-END;
-CREATE TRIGGER trg_control_tenant_dr_target_insert_guard
-BEFORE INSERT ON control_tenant_disaster_recovery_targets
-WHEN NOT EXISTS (
-  SELECT 1
-    FROM control_tenant_disaster_recovery_operations recovery
-    JOIN control_tenant_shard_assignments assignment
-      ON assignment.environment_id = recovery.environment_id
-     AND assignment.tenant_id = recovery.tenant_id
-     AND assignment.shard_id = NEW.shard_id
-     AND assignment.data_role = NEW.data_role
-     AND assignment.residency_partition = NEW.residency_partition
-     AND assignment.assignment_generation = NEW.assignment_generation
-     AND assignment.assignment_state = 'active'
-    JOIN control_tenant_shards shard
-      ON shard.environment_id = assignment.environment_id
-     AND shard.shard_id = assignment.shard_id
-     AND shard.generation = NEW.shard_generation
-     AND shard.binding_ref = NEW.binding_ref
-     AND shard.status IN ('ready', 'active', 'degraded')
-    JOIN control_observed_resources observed
-      ON observed.environment_id = shard.environment_id
-     AND observed.desired_resource_id = shard.d1_desired_resource_id
-     AND observed.resource_kind = 'd1'
-     AND observed.provider_resource_id = NEW.provider_database_id
-     AND observed.observed_state = 'present'
-   WHERE recovery.operation_id = NEW.operation_id
-     AND recovery.environment_id = NEW.environment_id
-     AND recovery.tenant_id = NEW.tenant_id
-)
-BEGIN
-  SELECT RAISE(ABORT, 'control_tenant_dr_target_identity_mismatch');
 END;
 CREATE TRIGGER trg_control_tenant_dr_allocation_guard
 BEFORE INSERT ON control_tenant_shard_allocations
@@ -3426,20 +3251,6 @@ ON control_release_migration_rollouts
 BEGIN
   SELECT RAISE(ABORT, 'control_release_migration_rollout_immutable');
 END;
-CREATE TRIGGER trg_control_release_migration_target_pin_immutable
-BEFORE UPDATE OF operation_id, environment_id, target_id, target_kind, shard_id,
-  desired_resource_id, binding_ref, stream_id, release_id,
-  manifest_digest, created_at
-ON control_release_migration_targets
-BEGIN
-  SELECT RAISE(ABORT, 'control_release_migration_target_immutable');
-END;
-CREATE TRIGGER trg_control_release_migration_target_provider_immutable
-BEFORE UPDATE OF provider_database_id ON control_release_migration_targets
-WHEN OLD.provider_database_id IS NOT NULL AND NEW.provider_database_id IS NOT OLD.provider_database_id
-BEGIN
-  SELECT RAISE(ABORT, 'control_release_migration_target_provider_immutable');
-END;
 CREATE TRIGGER trg_control_lookup_retention_policy_projection_monotonic
 BEFORE UPDATE ON control_lookup_retention_policy_projections
 WHEN NEW.policy_generation <= OLD.policy_generation OR
@@ -3453,28 +3264,6 @@ WHEN NEW.projection_generation <= OLD.projection_generation OR
      NEW.source_updated_at < OLD.source_updated_at
 BEGIN
   SELECT RAISE(ABORT, 'control_account_legal_hold_projection_stale');
-END;
-CREATE TRIGGER trg_control_lookup_rebalance_one_active_insert
-BEFORE INSERT ON control_lookup_rebalance_batches
-WHEN NEW.state NOT IN ('completed', 'blocked') AND EXISTS (
-  SELECT 1 FROM control_lookup_rebalance_batches batch
-   WHERE batch.environment_id = NEW.environment_id
-     AND batch.state NOT IN ('completed', 'blocked')
-     AND batch.operation_id <> NEW.operation_id
-)
-BEGIN
-  SELECT RAISE(ABORT, 'control_lookup_rebalance_active_conflict');
-END;
-CREATE TRIGGER trg_control_lookup_rebalance_one_active_update
-BEFORE UPDATE OF environment_id, state ON control_lookup_rebalance_batches
-WHEN NEW.state NOT IN ('completed', 'blocked') AND EXISTS (
-  SELECT 1 FROM control_lookup_rebalance_batches batch
-   WHERE batch.environment_id = NEW.environment_id
-     AND batch.state NOT IN ('completed', 'blocked')
-     AND batch.operation_id <> OLD.operation_id
-)
-BEGIN
-  SELECT RAISE(ABORT, 'control_lookup_rebalance_active_conflict');
 END;
 CREATE TRIGGER trg_control_account_capacity_assigns_ready_spare
 AFTER UPDATE OF allocated_account_count ON control_shard_capacity
@@ -4087,6 +3876,82 @@ BEGIN
      AND environment_id = NEW.environment_id
      AND provider_create_state = 'not_started';
 END;
+CREATE TRIGGER trg_control_release_catalog_immutable
+BEFORE UPDATE OF environment_id, stream_id, release_id, manifest_digest, manifest_r2_object_key
+ON control_migration_release_catalog
+BEGIN
+  SELECT RAISE(ABORT, 'control_release_catalog_immutable');
+END;
+CREATE TRIGGER trg_control_operation_release_pin_immutable
+BEFORE UPDATE ON control_operation_release_pins
+BEGIN
+  SELECT RAISE(ABORT, 'control_operation_release_pin_immutable');
+END;
+CREATE TRIGGER trg_control_tenant_database_migration_pin_immutable
+BEFORE UPDATE OF operation_id, environment_id, stream_id, release_id, manifest_digest
+ON control_tenant_database_migration_state
+BEGIN
+  SELECT RAISE(ABORT, 'control_tenant_database_migration_pin_immutable');
+END;
+CREATE TRIGGER trg_control_plugin_resource_migration_pin_immutable
+BEFORE UPDATE OF operation_id, environment_id, stream_id, release_id, manifest_digest
+ON control_plugin_resource_migration_state
+BEGIN
+  SELECT RAISE(ABORT, 'control_plugin_resource_migration_pin_immutable');
+END;
+CREATE TRIGGER trg_control_tenant_dr_target_identity_immutable
+BEFORE UPDATE OF operation_id, environment_id, tenant_id, shard_id, data_role,
+                 residency_partition, assignment_generation, shard_generation, binding_ref,
+                 provider_database_id, migration_stream_id, release_id, manifest_digest, created_at
+ON control_tenant_disaster_recovery_targets
+BEGIN
+  SELECT RAISE(ABORT, 'control_tenant_dr_target_identity_immutable');
+END;
+CREATE TRIGGER trg_control_tenant_dr_target_insert_guard
+BEFORE INSERT ON control_tenant_disaster_recovery_targets
+WHEN NOT EXISTS (
+  SELECT 1
+    FROM control_tenant_disaster_recovery_operations recovery
+    JOIN control_tenant_shard_assignments assignment
+      ON assignment.environment_id = recovery.environment_id
+     AND assignment.tenant_id = recovery.tenant_id
+     AND assignment.shard_id = NEW.shard_id
+     AND assignment.data_role = NEW.data_role
+     AND assignment.residency_partition = NEW.residency_partition
+     AND assignment.assignment_generation = NEW.assignment_generation
+     AND assignment.assignment_state = 'active'
+    JOIN control_tenant_shards shard
+      ON shard.environment_id = assignment.environment_id
+     AND shard.shard_id = assignment.shard_id
+     AND shard.generation = NEW.shard_generation
+     AND shard.binding_ref = NEW.binding_ref
+     AND shard.status IN ('ready', 'active', 'degraded')
+    JOIN control_observed_resources observed
+      ON observed.environment_id = shard.environment_id
+     AND observed.desired_resource_id = shard.d1_desired_resource_id
+     AND observed.resource_kind = 'd1'
+     AND observed.provider_resource_id = NEW.provider_database_id
+     AND observed.observed_state = 'present'
+   WHERE recovery.operation_id = NEW.operation_id
+     AND recovery.environment_id = NEW.environment_id
+     AND recovery.tenant_id = NEW.tenant_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'control_tenant_dr_target_identity_mismatch');
+END;
+CREATE TRIGGER trg_control_release_migration_target_pin_immutable
+BEFORE UPDATE OF operation_id, environment_id, target_id, target_kind, shard_id,
+  desired_resource_id, binding_ref, stream_id, release_id, manifest_digest, created_at
+ON control_release_migration_targets
+BEGIN
+  SELECT RAISE(ABORT, 'control_release_migration_target_immutable');
+END;
+CREATE TRIGGER trg_control_release_migration_target_provider_immutable
+BEFORE UPDATE OF provider_database_id ON control_release_migration_targets
+WHEN OLD.provider_database_id IS NOT NULL AND NEW.provider_database_id IS NOT OLD.provider_database_id
+BEGIN
+  SELECT RAISE(ABORT, 'control_release_migration_target_provider_immutable');
+END;
 CREATE INDEX idx_control_operations_runnable
   ON control_operations(status, next_attempt_at, created_at);
 CREATE INDEX idx_control_operations_environment
@@ -4190,18 +4055,8 @@ CREATE INDEX idx_control_worker_binding_reconciliation_due
   ON control_worker_binding_reconciliations(state, stabilization_not_before, updated_at);
 CREATE INDEX idx_control_bootstrap_accelerator_proofs_expiry
   ON control_bootstrap_accelerator_proofs(environment_id, expires_at);
-CREATE INDEX idx_control_release_migration_targets_runnable
-  ON control_release_migration_targets(state, next_attempt_at, updated_at);
-CREATE INDEX idx_control_release_migration_targets_operation
-  ON control_release_migration_targets(operation_id, state, target_id);
 CREATE INDEX idx_control_account_legal_hold_active
   ON control_account_legal_hold_projections(environment_id, projection_state, tenant_id, account_id);
-CREATE INDEX idx_control_lookup_rebalance_batch_state
-  ON control_lookup_rebalance_batches(environment_id, state, operation_id);
-CREATE INDEX idx_control_lookup_rebalance_bucket_runnable
-  ON control_lookup_rebalance_bucket_targets(state, updated_at, operation_id, virtual_bucket);
-CREATE INDEX idx_control_lookup_retention_target_runnable
-  ON control_lookup_retention_targets(state, lease_expires_at, updated_at, operation_id);
 CREATE INDEX idx_control_lookup_scale_out_forecasts_state
   ON control_lookup_scale_out_forecasts(environment_id, decision_state, updated_at);
 CREATE INDEX idx_control_account_scale_out_forecasts_state
@@ -4216,5 +4071,9 @@ CREATE INDEX idx_control_desired_resources_provider_create_state
   ON control_desired_resources(environment_id, provider_create_state, updated_at);
 CREATE INDEX idx_control_plugin_resources_provider_create_state
   ON control_plugin_desired_resources(environment_id, provider_create_state, updated_at);
+CREATE INDEX idx_control_release_migration_targets_runnable
+  ON control_release_migration_targets(state, next_attempt_at, updated_at);
+CREATE INDEX idx_control_release_migration_targets_operation
+  ON control_release_migration_targets(operation_id, state, target_id);
 
 PRAGMA foreign_keys = ON;

@@ -930,6 +930,8 @@ const fr: Translations = {
     'Saisissez un nouveau token à usage unique pour réparer.',
   'web.envDetail.bootstrapRetainedForRetry':
     'Cloudflare a renvoyé une erreur temporaire. Le token bootstrap reste actif ; saisissez à nouveau le même token et sélectionnez Activer pour reprendre.',
+  'web.envDetail.bootstrapNotSubmittedForRetry':
+    'Setup s’est arrêté avant d’envoyer le token bootstrap. Il reste dans le champ et peut être réutilisé.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Révoquez les tokens bootstrap et enfants Authrim indiqués dans le Dashboard Cloudflare avant de réessayer.',
   'web.envDetail.bootstrapRevokedPendingReset':

@@ -905,6 +905,8 @@ const en: Translations = {
   'web.envDetail.automaticProvisioningRepairHint': 'Enter a new one-time token to repair it.',
   'web.envDetail.bootstrapRetainedForRetry':
     'Cloudflare returned a temporary error. The bootstrap token is still active; re-enter the same token and select Enable to resume.',
+  'web.envDetail.bootstrapNotSubmittedForRetry':
+    'Setup stopped before submitting the bootstrap token. It remains in the input and can be retried.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Revoke the named Authrim bootstrap and child tokens in Cloudflare Dashboard before retrying.',
   'web.envDetail.bootstrapRevokedPendingReset':

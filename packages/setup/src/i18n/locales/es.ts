@@ -924,6 +924,8 @@ const es: Translations = {
     'Introduce un nuevo token de un solo uso para repararlo.',
   'web.envDetail.bootstrapRetainedForRetry':
     'Cloudflare devolvió un error temporal. El token de bootstrap sigue activo; vuelve a introducir el mismo token y selecciona Habilitar para reanudar.',
+  'web.envDetail.bootstrapNotSubmittedForRetry':
+    'Setup se detuvo antes de enviar el token de bootstrap. Permanece en el campo y se puede reintentar.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Revoca los tokens bootstrap y secundarios de Authrim indicados en el Dashboard de Cloudflare antes de reintentar.',
   'web.envDetail.bootstrapRevokedPendingReset':

@@ -15,6 +15,7 @@ import {
 import { basename, dirname, join } from 'node:path';
 import {
   DRAFT_RELEASE_MANIFEST_FILENAME,
+  RELEASE_MIGRATION_MANIFEST_FORMAT_VERSION,
   RELEASE_MIGRATION_STREAM_DEFINITIONS,
   ReleaseMigrationFileSchema,
   ReleaseMigrationManifestSchema,
@@ -38,9 +39,12 @@ import {
   type ReleaseMigrationStream,
 } from '../packages/setup/src/core/release-migrations.js';
 import {
-  renderPortableMigrationSql,
-  type MigrationSqlDialect,
-} from '../packages/setup/src/core/sql-portability.js';
+  migrationRendererDialect,
+  isMigrationStreamId,
+  migrationStreamContract,
+  type MigrationManifestDialect,
+} from '../packages/ar-lib-core/src/services/control-plane/migration-stream-contract.js';
+import { renderPortableMigrationSql } from '../packages/setup/src/core/sql-portability.js';
 import { verifySemanticMigrationComposition } from './semantic-baseline-migrations.js';
 
 type Command = 'baseline' | 'draft' | 'check' | 'prepare';
@@ -97,14 +101,6 @@ function generateManifestFromGitRef(input: {
     const files = listFiles(prefix)
       .flatMap((path) => {
         const relativePath = path.slice(prefix.length);
-        const topLevelDirectory = relativePath.split('/', 1)[0];
-        if (
-          definition.directory === '.' &&
-          ['admin', 'archive', 'external', 'pii', 'releases'].includes(topLevelDirectory)
-        ) {
-          return [];
-        }
-        if (definition.includePath && !definition.includePath(relativePath)) return [];
         const sql = execFileSync('git', ['show', `${input.gitRef}:${path}`], {
           cwd: input.rootDir,
           encoding: 'utf-8',
@@ -114,13 +110,15 @@ function generateManifestFromGitRef(input: {
       .sort((a, b) => a.path.localeCompare(b.path));
     return {
       id: definition.id,
+      schemaFamily: definition.schemaFamily,
       dialect: definition.dialect,
+      targetKind: definition.targetKind,
       logicalRoles: [...definition.logicalRoles],
       files,
     };
   });
   return {
-    formatVersion: 1,
+    formatVersion: RELEASE_MIGRATION_MANIFEST_FORMAT_VERSION,
     productVersion: input.productVersion,
     streams,
   };
@@ -164,8 +162,10 @@ function checkWorkspaceVersions(rootDir: string, expectedVersion: string): void 
   }
 }
 
-function checksumSql(sql: string, dialect: MigrationSqlDialect): string {
-  return createHash('sha256').update(renderPortableMigrationSql(sql, dialect)).digest('hex');
+function checksumSql(sql: string, dialect: MigrationManifestDialect): string {
+  return createHash('sha256')
+    .update(renderPortableMigrationSql(sql, migrationRendererDialect(dialect)))
+    .digest('hex');
 }
 
 function migrationNumber(path: string): number {
@@ -180,7 +180,8 @@ function releaseBundlePath(
 ): string {
   const next = Math.max(0, ...previousFiles.map((file) => migrationNumber(file.path))) + 1;
   const prefix = String(next).padStart(3, '0');
-  const streamSuffix = streamId.replace(/^d1-/u, '').replaceAll('-', '_');
+  if (!isMigrationStreamId(streamId)) throw new Error(`Unknown migration stream: ${streamId}`);
+  const streamSuffix = migrationStreamContract(streamId).schemaFamily.replaceAll('-', '_');
   return `${prefix}_${version.replaceAll(/[^0-9A-Za-z]+/gu, '_')}_${streamSuffix}_delta.sql`;
 }
 
@@ -199,7 +200,7 @@ function streamMap(manifest: ReleaseMigrationManifest): Map<string, ReleaseMigra
 interface ConsolidationOperation {
   streamId: string;
   streamRoot: string;
-  dialect: MigrationSqlDialect;
+  dialect: MigrationManifestDialect;
   sources: ReleaseMigrationFile[];
   bundlePath: string;
   bundleSql: string;
@@ -213,7 +214,7 @@ interface ReleasePreparationJournal {
   manifest: ReleaseMigrationManifest;
   operations: Array<{
     streamId: string;
-    dialect: MigrationSqlDialect;
+    dialect: MigrationManifestDialect;
     sources: ReleaseMigrationFile[];
     bundlePath: string;
     bundleChecksum: string;
@@ -258,7 +259,7 @@ function readPreparationJournal(path: string): ReleasePreparationJournal {
     if (
       !operation ||
       typeof operation.streamId !== 'string' ||
-      !['sqlite', 'postgres', 'mysql'].includes(operation.dialect) ||
+      !['sqlite', 'postgresql'].includes(operation.dialect) ||
       typeof operation.bundlePath !== 'string' ||
       typeof operation.bundleChecksum !== 'string' ||
       !Array.isArray(operation.sources) ||
@@ -287,7 +288,7 @@ function readPreparationJournal(path: string): ReleasePreparationJournal {
     }
     return {
       streamId: operation.streamId,
-      dialect: operation.dialect as MigrationSqlDialect,
+      dialect: operation.dialect as MigrationManifestDialect,
       sources,
       bundlePath: operation.bundlePath,
       bundleChecksum: operation.bundleChecksum,
@@ -419,7 +420,7 @@ function buildReleaseManifest(input: {
     );
   }
   const upgradeByStream = streamMap({
-    formatVersion: 1,
+    formatVersion: RELEASE_MIGRATION_MANIFEST_FORMAT_VERSION,
     productVersion: input.version,
     streams: directUpgrade.streams,
   });
@@ -523,7 +524,7 @@ function buildReleaseManifest(input: {
 
   return {
     manifest: {
-      formatVersion: 1,
+      formatVersion: RELEASE_MIGRATION_MANIFEST_FORMAT_VERSION,
       productVersion: input.version,
       ...(input.minimumVersion ? { minimumProductVersion: input.minimumVersion } : {}),
       ...(input.current.databaseCompatibility
@@ -589,7 +590,7 @@ function verifyConsolidationOperations(input: {
       readFileSync(join(operation.streamRoot, file.path), 'utf-8');
     const evidence = verifySemanticMigrationComposition({
       streamId: operation.streamId,
-      dialect: operation.dialect,
+      dialect: migrationRendererDialect(operation.dialect),
       baseSql: baseFiles.map(readSql),
       sourceSql: operation.sources.map(readSql),
       consolidatedSql: operation.bundleSql,
@@ -774,7 +775,7 @@ function validateSemanticBaselineEvidence(input: {
     streams?: unknown;
   };
   if (
-    raw.formatVersion !== 1 ||
+    raw.formatVersion !== RELEASE_MIGRATION_MANIFEST_FORMAT_VERSION ||
     raw.productVersion !== input.manifest.productVersion ||
     raw.compatibility !== 'fresh_install_only' ||
     !Array.isArray(raw.streams)
@@ -786,6 +787,9 @@ function validateSemanticBaselineEvidence(input: {
   const evidenceByStream = new Map<
     string,
     {
+      schemaFamily?: unknown;
+      dialect?: unknown;
+      targetKind?: unknown;
       path?: unknown;
       checksum?: unknown;
       schemaChecksum?: unknown;
@@ -798,6 +802,9 @@ function validateSemanticBaselineEvidence(input: {
     if (!entry || typeof entry !== 'object') continue;
     const record = entry as {
       id?: unknown;
+      schemaFamily?: unknown;
+      dialect?: unknown;
+      targetKind?: unknown;
       path?: unknown;
       checksum?: unknown;
       schemaChecksum?: unknown;
@@ -817,6 +824,9 @@ function validateSemanticBaselineEvidence(input: {
     const evidence = evidenceByStream.get(stream.id);
     if (
       !baseline ||
+      evidence?.schemaFamily !== stream.schemaFamily ||
+      evidence.dialect !== stream.dialect ||
+      evidence.targetKind !== stream.targetKind ||
       evidence?.path !== baseline.path ||
       evidence.checksum !== baseline.checksum ||
       typeof evidence.schemaChecksum !== 'string' ||

@@ -35,15 +35,15 @@ fi
 case "$ROLE" in
     core)
         DB_SUFFIX="core"
-        MIGRATIONS_DIR="migrations"
+        MIGRATIONS_DIR="migrations/core/d1"
         ;;
     pii)
         DB_SUFFIX="pii"
-        MIGRATIONS_DIR="migrations/pii"
+        MIGRATIONS_DIR="migrations/pii/d1"
         ;;
     admin)
         DB_SUFFIX="admin"
-        MIGRATIONS_DIR="migrations/admin"
+        MIGRATIONS_DIR="migrations/admin/d1"
         ;;
     *)
         echo "Error: --role must be core, pii, or admin" >&2

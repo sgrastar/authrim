@@ -3,6 +3,10 @@ import type {
   ControlLookupBucketLoadSnapshotRequest,
   ControlLookupScaleOutForecastView,
 } from '@authrim/ar-lib-core/control-plane';
+import {
+  LOOKUP_MAX_VIRTUAL_BUCKET,
+  LOOKUP_VIRTUAL_BUCKET_COUNT,
+} from '@authrim/ar-lib-core/services/lookup-directory/contract';
 import { planLookupScaleOut } from './lookup-scale-out-planner';
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
@@ -182,7 +186,7 @@ export class LookupScaleOutForecastService {
       input.observedAt < now - 5 * 60 ||
       input.observedAt > now + 5 ||
       !Array.isArray(input.buckets) ||
-      input.buckets.length !== 4096
+      input.buckets.length !== LOOKUP_VIRTUAL_BUCKET_COUNT
     ) {
       throw new Error('lookup_scale_out_snapshot_invalid');
     }
@@ -424,7 +428,9 @@ export class LookupScaleOutForecastService {
         0,
         'lookup_scale_out_assignment_invalid'
       );
-      if (virtualBucket > 4095) throw new Error('lookup_scale_out_assignment_invalid');
+      if (virtualBucket > LOOKUP_MAX_VIRTUAL_BUCKET) {
+        throw new Error('lookup_scale_out_assignment_invalid');
+      }
       const observation = observations.get(virtualBucket);
       const shardId = safeId(assignment.lookup_shard_id, 'lookup_scale_out_assignment_invalid');
       const shard = shardById.get(shardId);

@@ -123,6 +123,9 @@ function classifyError(error: unknown): { code: string; permanent: boolean } {
     if (error.status === 401 || error.status === 403) {
       return { code: 'control_workers_capability_rejected', permanent: true };
     }
+    if (error.status === 404) {
+      return { code: 'control_worker_active_deployment_missing', permanent: false };
+    }
     if (error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) {
       return { code: 'control_worker_settings_request_rejected', permanent: true };
     }

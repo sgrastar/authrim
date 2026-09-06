@@ -3,12 +3,28 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { z } from 'zod';
+import {
+  MIGRATION_LOGICAL_ROLES,
+  MIGRATION_MANIFEST_DIALECTS,
+  MIGRATION_SCHEMA_FAMILIES,
+  MIGRATION_STREAM_CONTRACTS,
+  MIGRATION_STREAM_IDS,
+  MIGRATION_TARGET_KINDS,
+  isMigrationLogicalRole,
+  migrationRendererDialect,
+  migrationStreamContract,
+  resolveMigrationStreamId,
+  type MigrationManifestDialect,
+  type MigrationLogicalRole,
+  type MigrationStreamContract,
+  type MigrationStreamId,
+} from '@authrim/ar-lib-core/services/control-plane/migration-stream-contract';
 import type { AuthrimConfig } from './config.js';
 import type { AuthrimLock } from './lock.js';
 import { getTenantDatabaseRoleFromBinding, isTenantDatabaseBinding } from './tenant-database.js';
-import { renderPortableMigrationSql, type MigrationSqlDialect } from './sql-portability.js';
+import { renderPortableMigrationSql } from './sql-portability.js';
 
-export const RELEASE_MIGRATION_MANIFEST_FORMAT_VERSION = 1 as const;
+export const RELEASE_MIGRATION_MANIFEST_FORMAT_VERSION = 2 as const;
 export const DRAFT_RELEASE_MANIFEST_FILENAME = 'release-manifest.draft.json';
 const PRODUCT_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
 const ProductVersionSchema = z.string().regex(PRODUCT_VERSION_PATTERN);
@@ -26,13 +42,15 @@ export const ReleaseMigrationSupersededFileSchema = z.object({
 
 const SemanticBaselineEvidenceSchema = z
   .object({
-    formatVersion: z.literal(1),
+    formatVersion: z.literal(RELEASE_MIGRATION_MANIFEST_FORMAT_VERSION),
     productVersion: ProductVersionSchema,
     compatibility: z.literal('fresh_install_only'),
     streams: z.array(
       z.object({
-        id: z.string().min(1),
-        dialect: z.enum(['sqlite', 'postgres', 'mysql']),
+        id: z.enum(MIGRATION_STREAM_IDS),
+        schemaFamily: z.enum(MIGRATION_SCHEMA_FAMILIES),
+        dialect: z.enum(MIGRATION_MANIFEST_DIALECTS),
+        targetKind: z.enum(MIGRATION_TARGET_KINDS),
         path: MigrationPathSchema,
         checksum: z.string().regex(/^[a-f0-9]{64}$/u),
         schemaChecksum: z.string().regex(/^[a-f0-9]{64}$/u),
@@ -70,10 +88,27 @@ export const ReleaseMigrationFileSchema = z.object({
 
 export const ReleaseMigrationStreamSchema = z
   .object({
-    id: z.string().min(1),
-    dialect: z.enum(['sqlite', 'postgres', 'mysql']),
-    logicalRoles: z.array(z.string().min(1)).min(1),
+    id: z.enum(MIGRATION_STREAM_IDS),
+    schemaFamily: z.enum(MIGRATION_SCHEMA_FAMILIES),
+    dialect: z.enum(MIGRATION_MANIFEST_DIALECTS),
+    targetKind: z.enum(MIGRATION_TARGET_KINDS),
+    logicalRoles: z.array(z.enum(MIGRATION_LOGICAL_ROLES)).min(1),
     files: z.array(ReleaseMigrationFileSchema),
+  })
+  .superRefine((stream, context) => {
+    const contract = migrationStreamContract(stream.id);
+    if (
+      stream.schemaFamily !== contract.schemaFamily ||
+      stream.dialect !== contract.dialect ||
+      stream.targetKind !== contract.targetKind ||
+      stream.logicalRoles.length !== contract.logicalRoles.length ||
+      stream.logicalRoles.some((role, index) => role !== contract.logicalRoles[index])
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: `Migration stream metadata does not match the canonical contract: ${stream.id}`,
+      });
+    }
   })
   .refine((stream) => new Set(stream.files.map((file) => file.path)).size === stream.files.length, {
     message: 'Migration paths must be unique within a stream',
@@ -309,90 +344,22 @@ export function assertReleaseDatabaseCompatibility(input: {
   );
 }
 
-export interface MigrationStreamDefinition {
-  id: string;
-  dialect: MigrationSqlDialect;
-  directory: string;
-  logicalRoles: string[];
-  excludeTopLevelDirectories?: ReadonlySet<string>;
-  includePath?: (path: string) => boolean;
-}
+export type MigrationStreamDefinition = MigrationStreamContract;
 
-const CORE_EXCLUDED_DIRECTORIES = new Set([
-  'admin',
-  'archive',
-  'control',
-  'external',
-  'lookup',
-  'pii',
-  'plugin-runner',
-  'releases',
-]);
-const EXTERNAL_POSTGRES_PII_MIGRATION_PATTERN =
-  /_(?:durable_pii|totp_credentials|linked_identity|idp_jit_provisioning_state|custom_claim_field_values|external_postgres_pii)(?:_|\.)/u;
+export const RELEASE_MIGRATION_STREAM_DEFINITIONS = MIGRATION_STREAM_CONTRACTS;
 
-function isExternalPostgresPiiMigration(path: string): boolean {
-  return path.startsWith('pii/') || EXTERNAL_POSTGRES_PII_MIGRATION_PATTERN.test(path);
-}
+const LEGACY_MIGRATION_STREAM_IDS: Readonly<Record<string, MigrationStreamId>> = {
+  'd1-core': 'core-d1',
+  'd1-pii': 'pii-d1',
+  'd1-admin': 'admin-d1',
+  'd1-control': 'control-d1',
+  'd1-lookup': 'lookup-d1',
+  'd1-plugin-runner': 'plugin-runner-d1',
+  'external-postgres-core': 'core-postgresql',
+  'external-postgres-pii': 'pii-postgresql',
+};
 
-export const RELEASE_MIGRATION_STREAM_DEFINITIONS: readonly MigrationStreamDefinition[] = [
-  {
-    id: 'd1-core',
-    dialect: 'sqlite',
-    directory: '.',
-    logicalRoles: ['core', 'tenant_core'],
-    excludeTopLevelDirectories: CORE_EXCLUDED_DIRECTORIES,
-  },
-  {
-    id: 'd1-pii',
-    dialect: 'sqlite',
-    directory: 'pii',
-    logicalRoles: ['pii', 'tenant_pii'],
-  },
-  {
-    id: 'd1-admin',
-    dialect: 'sqlite',
-    directory: 'admin',
-    logicalRoles: ['admin'],
-  },
-  {
-    id: 'd1-control',
-    dialect: 'sqlite',
-    directory: 'control',
-    logicalRoles: ['control'],
-  },
-  {
-    id: 'd1-lookup',
-    dialect: 'sqlite',
-    directory: 'lookup',
-    logicalRoles: ['lookup'],
-  },
-  {
-    id: 'd1-plugin-runner',
-    dialect: 'sqlite',
-    directory: 'plugin-runner',
-    logicalRoles: ['plugin_runner'],
-  },
-  {
-    id: 'external-postgres-core',
-    dialect: 'postgres',
-    directory: 'external/postgres',
-    logicalRoles: ['core', 'custom', 'policy'],
-    includePath: (path) => !isExternalPostgresPiiMigration(path),
-  },
-  {
-    id: 'external-postgres-pii',
-    dialect: 'postgres',
-    directory: 'external/postgres',
-    logicalRoles: ['pii'],
-    includePath: isExternalPostgresPiiMigration,
-  },
-] as const;
-
-function listSqlFiles(
-  root: string,
-  options: { excludeTopLevelDirectories?: ReadonlySet<string> } = {}
-): string[] {
+function listSqlFiles(root: string): string[] {
   if (!existsSync(root)) return [];
   const files: string[] = [];
 
@@ -404,7 +371,6 @@ function listSqlFiles(
       const absolutePath = join(root, relativePath);
       const stat = statSync(absolutePath);
       if (stat.isDirectory()) {
-        if (!relativeDirectory && options.excludeTopLevelDirectories?.has(entry)) continue;
         walk(relativePath);
       } else if (stat.isFile() && entry.endsWith('.sql')) {
         files.push(relativePath);
@@ -418,9 +384,12 @@ function listSqlFiles(
 
 export function calculateReleaseMigrationChecksum(
   filePath: string,
-  dialect: MigrationSqlDialect
+  dialect: MigrationManifestDialect
 ): string {
-  const rendered = renderPortableMigrationSql(readFileSync(filePath, 'utf-8'), dialect);
+  const rendered = renderPortableMigrationSql(
+    readFileSync(filePath, 'utf-8'),
+    migrationRendererDialect(dialect)
+  );
   return createHash('sha256').update(rendered).digest('hex');
 }
 
@@ -447,9 +416,33 @@ function previousFileByStreamAndPath(
 function semanticBaselineProvenancePaths(migrationsRoot: string): ReadonlyMap<string, Set<string>> {
   const evidencePath = join(migrationsRoot, 'semantic-baseline.evidence.json');
   if (!existsSync(evidencePath)) return new Map();
-  const evidence = SemanticBaselineEvidenceSchema.parse(
-    JSON.parse(readFileSync(evidencePath, 'utf-8'))
-  );
+  const raw = JSON.parse(readFileSync(evidencePath, 'utf-8')) as unknown;
+  if (
+    raw &&
+    typeof raw === 'object' &&
+    !Array.isArray(raw) &&
+    (raw as { formatVersion?: unknown }).formatVersion === 1
+  ) {
+    const streams = (raw as { streams?: unknown }).streams;
+    if (!Array.isArray(streams)) throw new Error('Legacy semantic baseline evidence is invalid');
+    return new Map(
+      streams.map((entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          throw new Error('Legacy semantic baseline evidence stream is invalid');
+        }
+        const record = entry as { id?: unknown; generatedFrom?: unknown };
+        const id =
+          typeof record.id === 'string' ? LEGACY_MIGRATION_STREAM_IDS[record.id] : undefined;
+        if (!id)
+          throw new Error(`Legacy semantic baseline stream is unknown: ${String(record.id)}`);
+        const generatedFrom = z
+          .array(ReleaseMigrationSupersededFileSchema)
+          .parse(record.generatedFrom);
+        return [id, new Set(generatedFrom.map((file) => file.path))] as const;
+      })
+    );
+  }
+  const evidence = SemanticBaselineEvidenceSchema.parse(raw);
   return new Map(
     evidence.streams.map((stream) => [
       stream.id,
@@ -523,12 +516,12 @@ export function generateReleaseMigrationManifest(input: {
       : undefined);
   const discoveredStreams = RELEASE_MIGRATION_STREAM_DEFINITIONS.map((definition) => {
     const streamRoot = join(input.migrationsRoot, definition.directory);
-    const paths = listSqlFiles(streamRoot, {
-      excludeTopLevelDirectories: definition.excludeTopLevelDirectories,
-    }).filter((path) => definition.includePath?.(path) ?? true);
+    const paths = listSqlFiles(streamRoot);
     return {
       id: definition.id,
+      schemaFamily: definition.schemaFamily,
       dialect: definition.dialect,
+      targetKind: definition.targetKind,
       logicalRoles: [...definition.logicalRoles],
       files: paths.map((path) => {
         const checksum = calculateReleaseMigrationChecksum(
@@ -729,7 +722,9 @@ export function resolveReleaseMigrationExecutionManifest(input: {
   const selected: ReleaseMigrationStream[] = RELEASE_MIGRATION_STREAM_DEFINITIONS.map(
     (definition) => ({
       id: definition.id,
+      schemaFamily: definition.schemaFamily,
       dialect: definition.dialect,
+      targetKind: definition.targetKind,
       logicalRoles: [...definition.logicalRoles],
       files: [],
     })
@@ -797,7 +792,9 @@ export function buildReleaseMigrationArtifactManifest(input: {
     }
     return {
       id: definition.id,
+      schemaFamily: definition.schemaFamily,
       dialect: definition.dialect,
+      targetKind: definition.targetKind,
       logicalRoles: [...definition.logicalRoles],
       files,
     };
@@ -1301,7 +1298,7 @@ export type MigrationTargetScope = 'deployment' | 'tenant' | 'external';
 
 export interface ReleaseMigrationPhysicalTarget {
   id: string;
-  streamId: string | null;
+  streamId: MigrationStreamId | null;
   driver: MigrationTargetDriver;
   scope: MigrationTargetScope;
   logicalRoles: string[];
@@ -1324,7 +1321,11 @@ export function buildAssignmentReleaseMigrationTarget(input: {
   databaseName: string;
   role: 'tenant_core' | 'tenant_pii';
 }): ReleaseMigrationPhysicalTarget {
-  const streamId = input.role === 'tenant_core' ? 'd1-core' : 'd1-pii';
+  const streamId = resolveMigrationStreamId({
+    logicalRole: input.role,
+    targetKind: 'cloudflare-d1',
+  });
+  if (!streamId) throw new Error(`release_migration_stream_not_available:${input.role}`);
   return {
     id: `d1:${input.databaseId}:${streamId}`,
     streamId,
@@ -1382,12 +1383,11 @@ function addExternalTarget(
   const driver = reference?.driver ?? input.driver;
   const connectionRef = reference?.connectionRef ?? input.ref;
   const streamId =
-    driver === 'postgres'
-      ? input.logicalRole === 'pii'
-        ? 'external-postgres-pii'
-        : ['core', 'custom', 'policy'].includes(input.logicalRole)
-          ? 'external-postgres-core'
-          : null
+    driver === 'postgres' && isMigrationLogicalRole(input.logicalRole)
+      ? resolveMigrationStreamId({
+          logicalRole: input.logicalRole,
+          targetKind: 'postgresql-connection',
+        })
       : null;
   const targetStreamKey = streamId ?? input.logicalRole;
   pushUniqueTarget(targets, {
@@ -1410,15 +1410,19 @@ export function resolveReleaseMigrationTargets(input: {
   config: AuthrimConfig;
 }): ReleaseMigrationPhysicalTarget[] {
   const targets: ReleaseMigrationPhysicalTarget[] = [];
-  const sharedBindings: Array<{ binding: string; streamId: string; logicalRole: string }> = [
-    { binding: 'DB', streamId: 'd1-core', logicalRole: 'core' },
-    { binding: 'DB_PII', streamId: 'd1-pii', logicalRole: 'pii' },
-    { binding: 'DB_ADMIN', streamId: 'd1-admin', logicalRole: 'admin' },
-    { binding: 'CONTROL_DB', streamId: 'd1-control', logicalRole: 'control' },
-    { binding: 'LOOKUP_DB', streamId: 'd1-lookup', logicalRole: 'lookup' },
+  const sharedBindings: Array<{
+    binding: string;
+    streamId: MigrationStreamId;
+    logicalRole: MigrationLogicalRole;
+  }> = [
+    { binding: 'DB', streamId: 'core-d1', logicalRole: 'core' },
+    { binding: 'DB_PII', streamId: 'pii-d1', logicalRole: 'pii' },
+    { binding: 'DB_ADMIN', streamId: 'admin-d1', logicalRole: 'admin' },
+    { binding: 'CONTROL_DB', streamId: 'control-d1', logicalRole: 'control' },
+    { binding: 'LOOKUP_DB', streamId: 'lookup-d1', logicalRole: 'lookup' },
     {
       binding: 'PLUGIN_RUNNER_DB',
-      streamId: 'd1-plugin-runner',
+      streamId: 'plugin-runner-d1',
       logicalRole: 'plugin_runner',
     },
   ];

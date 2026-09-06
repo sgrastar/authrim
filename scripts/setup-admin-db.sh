@@ -403,7 +403,7 @@ if [ "$SKIP_MIGRATIONS" = false ] && [ "$BINDING_ONLY" = false ]; then
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 
-    ADMIN_MIGRATION_DIR="migrations/admin"
+    ADMIN_MIGRATION_DIR="migrations/admin/d1"
 
     if [ ! -d "$ADMIN_MIGRATION_DIR" ]; then
         echo -e "${RED}❌ Migration directory not found: $ADMIN_MIGRATION_DIR${NC}"

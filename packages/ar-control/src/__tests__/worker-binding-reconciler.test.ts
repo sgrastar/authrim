@@ -399,6 +399,35 @@ describe('WorkerBindingReconciler', () => {
     expect(repository.recordTransientError).not.toHaveBeenCalled();
   });
 
+  it('treats a not-yet-deployed Worker as retryable initial deployment progress', async () => {
+    const pending = target();
+    const repository = repositoryMock([pending]);
+    const api = {
+      listWorkerDeployments: vi
+        .fn()
+        .mockRejectedValue(new CloudflareControlApiError('workers.deployment.list', 404, [])),
+      getWorkerSettings: vi.fn(),
+      patchWorkerSettings: vi.fn(),
+      createWorkerDeployment: vi.fn(),
+    };
+    const reconciler = new WorkerBindingReconciler(
+      repository,
+      inventoryMock(),
+      api,
+      await controlEnv(),
+      () => 1_800_000_000
+    );
+
+    await expect(reconciler.reconcile()).resolves.toMatchObject({ blocked: 0, deferred: 1 });
+    expect(repository.recordTransientError).toHaveBeenCalledWith(
+      pending,
+      'control_worker_active_deployment_missing',
+      1_800_000_015,
+      1_800_000_000
+    );
+    expect(repository.markBlocked).not.toHaveBeenCalled();
+  });
+
   it('retries a temporarily unavailable smoke Service Binding', async () => {
     const patched = target({
       state: 'settings_patched',

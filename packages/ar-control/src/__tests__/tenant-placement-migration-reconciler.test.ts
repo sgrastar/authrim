@@ -191,7 +191,10 @@ describe('tenant placement migration verification and write fence', () => {
   beforeEach(async () => {
     control = new DatabaseSync(':memory:');
     control.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
+        'utf8'
+      )
     );
     control.exec(`
       INSERT INTO control_environments (

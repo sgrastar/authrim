@@ -104,7 +104,7 @@ export function buildReleaseSchemaUpdatePlan(input: {
   };
 }
 
-const CONTROL_MANAGED_RELEASE_STREAMS = ['d1-core', 'd1-pii', 'd1-lookup'] as const;
+const CONTROL_MANAGED_RELEASE_STREAMS = ['core-d1', 'pii-d1', 'lookup-d1'] as const;
 
 export function getControlManagedReleaseStreamIds(input: {
   targetManifest: ReleaseMigrationManifest;

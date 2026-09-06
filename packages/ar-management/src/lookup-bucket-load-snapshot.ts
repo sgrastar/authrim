@@ -5,6 +5,10 @@ import {
   type ControlLookupBucketLoadSnapshotRequest,
   type Env,
 } from '@authrim/ar-lib-core';
+import {
+  LOOKUP_MAX_VIRTUAL_BUCKET,
+  LOOKUP_VIRTUAL_BUCKET_COUNT,
+} from '@authrim/ar-lib-core/services/lookup-directory/contract';
 
 const SAFE_BINDING = /^[A-Z][A-Z0-9_]{0,127}$/u;
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
@@ -47,13 +51,13 @@ async function counters(
   bindingRef: string,
   assignedBuckets: readonly number[]
 ): Promise<Map<number, CounterRow>> {
-  if (assignedBuckets.length < 1 || assignedBuckets.length > 4096) {
+  if (assignedBuckets.length < 1 || assignedBuckets.length > LOOKUP_VIRTUAL_BUCKET_COUNT) {
     throw new Error('lookup_bucket_load_assignment_invalid');
   }
   const uniqueBuckets = new Set<number>();
   for (const virtualBucket of assignedBuckets) {
     integer(virtualBucket, 0, 'lookup_bucket_load_assignment_invalid');
-    if (virtualBucket > 4095 || uniqueBuckets.has(virtualBucket)) {
+    if (virtualBucket > LOOKUP_MAX_VIRTUAL_BUCKET || uniqueBuckets.has(virtualBucket)) {
       throw new Error('lookup_bucket_load_assignment_invalid');
     }
     uniqueBuckets.add(virtualBucket);
@@ -84,7 +88,11 @@ async function counters(
   for (const result of results) {
     for (const row of result.results) {
       const virtualBucket = integer(row.virtual_bucket, 0, 'lookup_bucket_load_counter_invalid');
-      if (virtualBucket > 4095 || !uniqueBuckets.has(virtualBucket) || rows.has(virtualBucket)) {
+      if (
+        virtualBucket > LOOKUP_MAX_VIRTUAL_BUCKET ||
+        !uniqueBuckets.has(virtualBucket) ||
+        rows.has(virtualBucket)
+      ) {
         throw new Error('lookup_bucket_load_counter_invalid');
       }
       rows.set(virtualBucket, {
@@ -162,7 +170,9 @@ export async function collectLookupBucketLoadSnapshot(
       });
     }
   }
-  if (assignments.size !== 4096) throw new Error('lookup_bucket_load_registry_incomplete');
+  if (assignments.size !== LOOKUP_VIRTUAL_BUCKET_COUNT) {
+    throw new Error('lookup_bucket_load_registry_incomplete');
+  }
 
   const bucketsByBinding = new Map<string, number[]>();
   for (const [virtualBucket, assignment] of assignments) {
@@ -185,7 +195,7 @@ export async function collectLookupBucketLoadSnapshot(
   }
 
   const buckets: ControlLookupBucketLoadObservation[] = [];
-  for (let virtualBucket = 0; virtualBucket < 4096; virtualBucket += 1) {
+  for (let virtualBucket = 0; virtualBucket < LOOKUP_VIRTUAL_BUCKET_COUNT; virtualBucket += 1) {
     const assignment = assignments.get(virtualBucket);
     const row = assignment
       ? countersByBinding.get(assignment.bindingRef)?.get(virtualBucket)

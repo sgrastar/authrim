@@ -80,7 +80,7 @@ function d1(database: DatabaseSync): D1Database {
 }
 
 function schema(): string {
-  return readFileSync(resolve(REPO_ROOT, 'migrations/001_0_4_0_core_baseline.sql'), 'utf8')
+  return readFileSync(resolve(REPO_ROOT, 'migrations/core/d1/001_0_4_0_core_baseline.sql'), 'utf8')
     .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
     .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()');
 }

@@ -1,5 +1,5 @@
 -- Authrim 0.4.0 semantic fresh-install baseline.
--- Logical stream: d1-admin.
+-- Logical stream: admin-d1.
 -- Generated from the final database state; do not append historical migration SQL here.
 -- Fresh-install baselines must never be applied to upgrade an existing database.
 PRAGMA foreign_keys = OFF;
@@ -921,106 +921,6 @@ CREATE TABLE internal_notification_delivery_attempts (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
-CREATE TABLE tenant_database_migration_jobs (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  source_storage_profile_id TEXT NOT NULL,
-  target_storage_profile_id TEXT NOT NULL,
-  migration_method TEXT NOT NULL CHECK (
-    migration_method IN (
-      'export_import',
-      'batch_copy',
-      'dual_write_read_compare',
-      'cdc_style'
-    )
-  ),
-  status TEXT NOT NULL DEFAULT 'requested' CHECK (
-    status IN (
-      'requested',
-      'approved',
-      'preparing',
-      'validating',
-      'ready_for_cutover',
-      'cutting_over',
-      'completed',
-      'failed',
-      'rolled_back'
-    )
-  ),
-  write_policy TEXT NOT NULL DEFAULT 'maintenance_read_only' CHECK (
-    write_policy IN (
-      'maintenance_read_only',
-      'affected_data_class_freeze',
-      'online_dual_write'
-    )
-  ),
-  source_of_truth TEXT NOT NULL DEFAULT 'source_before_cutover' CHECK (
-    source_of_truth IN (
-      'source_before_cutover',
-      'target_after_cutover'
-    )
-  ),
-  scheduled_window_not_before TEXT,
-  scheduled_window_not_after TEXT,
-  validation_policy_json TEXT,
-  validation_result_json TEXT,
-  cache_cutover_generation INTEGER,
-  rollback_plan_json TEXT,
-  approval_mode TEXT NOT NULL DEFAULT 'system_admin_break_glass' CHECK (
-    approval_mode IN (
-      'system_admin_break_glass',
-      'two_person_approval',
-      'storage_operator_approval'
-    )
-  ),
-  dangerous_operation_confirmation TEXT,
-  break_glass_reason TEXT,
-  impact_summary_json TEXT,
-  two_person_approval_required INTEGER NOT NULL DEFAULT 0,
-  requested_by TEXT,
-  approved_by TEXT,
-  started_at TEXT,
-  cutover_at TEXT,
-  completed_at TEXT,
-  last_error TEXT,
-  metadata_json TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE tenant_database_migration_job_targets (
-  job_id TEXT NOT NULL,
-  tenant_id TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (
-    role IN ('tenant_core', 'tenant_pii', 'tenant_audit', 'tenant_custom')
-  ),
-  shard_group TEXT NOT NULL DEFAULT 'default',
-  shard_index INTEGER NOT NULL DEFAULT 0,
-  source_generation INTEGER,
-  target_generation INTEGER,
-  source_schema_version INTEGER,
-  target_schema_version INTEGER,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (
-    status IN (
-      'pending',
-      'copying',
-      'validating',
-      'ready_for_cutover',
-      'cutting_over',
-      'completed',
-      'failed',
-      'rolled_back'
-    )
-  ),
-  row_count_source INTEGER,
-  row_count_target INTEGER,
-  checksum_sample_json TEXT,
-  validation_result_json TEXT,
-  last_error TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (job_id, tenant_id, role, shard_group, shard_index),
-  FOREIGN KEY (job_id) REFERENCES tenant_database_migration_jobs(id) ON DELETE CASCADE
-);
 CREATE TABLE admin_jobs (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -1044,45 +944,6 @@ CREATE TABLE admin_jobs (
   max_attempts INTEGER NOT NULL DEFAULT 3,
   next_run_at INTEGER,
   dead_lettered_at INTEGER
-);
-CREATE TABLE tenant_database_slots (
-  slot_id TEXT PRIMARY KEY,
-  slot_number INTEGER NOT NULL UNIQUE,
-  core_binding_ref TEXT NOT NULL UNIQUE,
-  pii_binding_ref TEXT NOT NULL UNIQUE,
-  core_database_name TEXT NOT NULL,
-  pii_database_name TEXT NOT NULL,
-  core_database_id TEXT NOT NULL,
-  pii_database_id TEXT NOT NULL,
-  state TEXT NOT NULL CHECK (
-    state IN (
-      'available',
-      'reserved',
-      'assigned',
-      'pending_binding',
-      'unavailable',
-      'reset_required',
-      'retired'
-    )
-  ),
-  assigned_tenant_id TEXT,
-  reserved_by TEXT,
-  reserved_at INTEGER,
-  assigned_at INTEGER,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-CREATE TABLE tenant_database_slot_audit_events (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT,
-  slot_id TEXT,
-  stage TEXT NOT NULL,
-  actor TEXT,
-  result TEXT NOT NULL CHECK (result IN ('started', 'succeeded', 'failed', 'skipped')),
-  error_code TEXT,
-  request_id TEXT,
-  metadata_json TEXT,
-  created_at INTEGER NOT NULL
 );
 CREATE TABLE admin_destinations (
   id TEXT PRIMARY KEY,
@@ -2132,61 +1993,6 @@ CREATE TABLE rewrap_jobs (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
-CREATE TABLE recovery_sets (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  recovery_key TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'reserved',
-  manifest_json TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-CREATE TABLE recovery_set_artifacts (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  recovery_set_id TEXT NOT NULL,
-  artifact_type TEXT NOT NULL,
-  artifact_ref TEXT NOT NULL,
-  checksum TEXT,
-  created_at INTEGER NOT NULL,
-  FOREIGN KEY (recovery_set_id) REFERENCES recovery_sets(id) ON DELETE CASCADE
-);
-CREATE TABLE restore_validation_jobs (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  recovery_set_id TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'queued',
-  result_json TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
-CREATE TABLE quota_policies (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  artifact_class TEXT NOT NULL,
-  quota_json TEXT NOT NULL,
-  lifecycle_state TEXT NOT NULL DEFAULT 'reserved',
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  UNIQUE (tenant_id, artifact_class)
-);
-CREATE TABLE quota_usage_snapshots (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  artifact_class TEXT NOT NULL,
-  usage_json TEXT NOT NULL,
-  snapshot_at INTEGER NOT NULL,
-  created_at INTEGER NOT NULL
-);
-CREATE TABLE retention_cleanup_jobs (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  retention_scope_json TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'reserved',
-  cursor_json TEXT,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
 CREATE TABLE federation_trust_sources (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -2282,26 +2088,6 @@ CREATE TABLE federation_trust_context_snapshots (
   lifecycle_state TEXT NOT NULL DEFAULT 'draft',
   created_at INTEGER NOT NULL,
   activated_at INTEGER
-);
-CREATE TABLE federation_trust_rank_profiles (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  profile_key TEXT NOT NULL,
-  rank_model_json TEXT NOT NULL,
-  lifecycle_state TEXT NOT NULL DEFAULT 'active',
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  UNIQUE (tenant_id, profile_key)
-);
-CREATE TABLE federation_trust_fail_policies (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  policy_key TEXT NOT NULL,
-  state_policy_json TEXT NOT NULL,
-  lifecycle_state TEXT NOT NULL DEFAULT 'active',
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  UNIQUE (tenant_id, policy_key)
 );
 CREATE TABLE federation_trust_scope_bindings (
   id TEXT PRIMARY KEY,
@@ -2464,40 +2250,6 @@ CREATE TABLE persistent_identifier_profiles (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   UNIQUE (tenant_id, profile_key)
-);
-CREATE TABLE persistent_identifier_values (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  profile_id TEXT NOT NULL,
-  subject_key TEXT NOT NULL,
-  audience_key TEXT NOT NULL,
-  identifier_value TEXT NOT NULL,
-  value_source TEXT NOT NULL DEFAULT 'imported',
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  UNIQUE (tenant_id, profile_id, subject_key, audience_key),
-  FOREIGN KEY (profile_id) REFERENCES persistent_identifier_profiles(id) ON DELETE CASCADE
-);
-CREATE TABLE object_catalog (
-  id TEXT PRIMARY KEY,
-  public_artifact_id TEXT NOT NULL UNIQUE,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  object_class TEXT NOT NULL CHECK (
-    object_class IN (
-      'admin_audit_detail',
-      'webhook_delivery_payload',
-      'operational_log_detail',
-      'user_export',
-      'user_import_input',
-      'user_import_result',
-      'directory_auth_evidence_export',
-      'directory_auth_support_bundle',
-      'approval_transport_detail'
-    )
-  ),
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  deleted_at INTEGER
 );
 CREATE TABLE object_catalog_objects (
   id TEXT PRIMARY KEY,
@@ -3245,39 +2997,6 @@ CREATE TABLE admin_agent_mcp_sessions (
   CHECK (expires_at > created_at),
   CHECK (absolute_expires_at >= expires_at)
 );
-CREATE TABLE IF NOT EXISTS "internal_notification_events" (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  category TEXT NOT NULL CHECK (
-    category IN (
-      'storage_registry_security',
-      'storage_registry_health',
-      'tenant_database_stats',
-      'tenant_database_health',
-      'control_plane_drift',
-      'logging_destination_health',
-      'logging_delivery_failure',
-      'logging_fallback_used',
-      'logging_dlq_backlog',
-      'logging_quota_warning',
-      'logging_repair_job_status',
-      'notification_delivery_failure'
-    )
-  ),
-  event_type TEXT NOT NULL,
-  severity TEXT NOT NULL CHECK (severity IN ('critical', 'high', 'medium', 'low', 'info')),
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (
-    status IN ('pending', 'delivered', 'failed', 'dead_letter', 'suppressed')
-  ),
-  deduplication_key TEXT,
-  payload_json TEXT NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  last_error TEXT,
-  next_attempt_at TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  delivered_at TEXT
-);
 CREATE TABLE provider_reprojection_jobs (
   job_id TEXT PRIMARY KEY,
   plugin_id TEXT NOT NULL,
@@ -3565,6 +3284,68 @@ CREATE TABLE federation_saml_runtime_entities (
   FOREIGN KEY (trust_source_id) REFERENCES federation_trust_sources(id) ON DELETE CASCADE,
   FOREIGN KEY (metadata_document_id) REFERENCES federation_metadata_documents(id) ON DELETE CASCADE
 );
+CREATE TABLE IF NOT EXISTS "object_catalog" (
+  id TEXT PRIMARY KEY,
+  public_artifact_id TEXT NOT NULL UNIQUE,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  object_class TEXT NOT NULL CHECK (
+    object_class IN (
+      'admin_audit_detail',
+      'event_log_detail',
+      'pii_log_values',
+      'webhook_delivery_payload',
+      'operational_log_detail',
+      'user_export',
+      'user_import_input',
+      'user_import_result',
+      'admin_job_result',
+      'directory_auth_evidence_export',
+      'directory_auth_support_bundle',
+      'approval_transport_detail',
+      'dr_bundle'
+    )
+  ),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS "internal_notification_events" (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (
+    category IN (
+      'identity_mapping_signal',
+      'identity_mapping_manual_review',
+      'identity_mapping_propagation_failure',
+      'identity_mapping_bulk_impact',
+      'storage_registry_security',
+      'storage_registry_health',
+      'tenant_database_stats',
+      'tenant_database_health',
+      'control_plane_drift',
+      'logging_destination_health',
+      'logging_delivery_failure',
+      'logging_fallback_used',
+      'logging_dlq_backlog',
+      'logging_quota_warning',
+      'logging_repair_job_status',
+      'notification_delivery_failure'
+    )
+  ),
+  event_type TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('critical', 'high', 'medium', 'low', 'info')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (
+    status IN ('pending', 'delivered', 'failed', 'dead_letter', 'suppressed')
+  ),
+  deduplication_key TEXT,
+  payload_json TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  next_attempt_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  delivered_at TEXT
+);
 CREATE TRIGGER trg_admin_agent_grants_require_snapshot_insert
 BEFORE INSERT ON admin_agent_grants
 FOR EACH ROW
@@ -3794,12 +3575,6 @@ CREATE INDEX idx_internal_notification_delivery_attempts_event
   ON internal_notification_delivery_attempts(event_id, provider, status);
 CREATE INDEX idx_internal_notification_delivery_attempts_retry
   ON internal_notification_delivery_attempts(status, next_attempt_at, updated_at);
-CREATE INDEX idx_tenant_database_migration_jobs_tenant_status
-  ON tenant_database_migration_jobs(tenant_id, status, created_at DESC);
-CREATE INDEX idx_tenant_database_migration_jobs_status_window
-  ON tenant_database_migration_jobs(status, scheduled_window_not_before, scheduled_window_not_after);
-CREATE INDEX idx_tenant_database_migration_job_targets_status
-  ON tenant_database_migration_job_targets(status, role);
 CREATE INDEX idx_admin_jobs_cleanup
   ON admin_jobs(status, completed_at);
 CREATE INDEX idx_admin_jobs_status
@@ -3812,14 +3587,6 @@ CREATE INDEX idx_admin_jobs_object_catalog
   ON admin_jobs(object_catalog_id);
 CREATE INDEX idx_admin_jobs_next_run
   ON admin_jobs(status, next_run_at, updated_at);
-CREATE INDEX idx_tenant_database_slots_state
-  ON tenant_database_slots(state, slot_number);
-CREATE INDEX idx_tenant_database_slots_assigned_tenant
-  ON tenant_database_slots(assigned_tenant_id);
-CREATE INDEX idx_tenant_database_slot_audit_tenant
-  ON tenant_database_slot_audit_events(tenant_id, created_at);
-CREATE INDEX idx_tenant_database_slot_audit_slot
-  ON tenant_database_slot_audit_events(slot_id, created_at);
 CREATE INDEX idx_admin_destinations_scope_name_active
   ON admin_destinations(scope_type, scope_id, name, deleted_at);
 CREATE INDEX idx_admin_destinations_scope_status
@@ -4013,12 +3780,6 @@ CREATE UNIQUE INDEX ux_attribute_field_registry_key
   );
 CREATE INDEX idx_persistent_identifier_profiles_tenant_state
   ON persistent_identifier_profiles(tenant_id, lifecycle_state, updated_at);
-CREATE INDEX idx_persistent_identifier_values_lookup
-  ON persistent_identifier_values(tenant_id, profile_id, subject_key, audience_key);
-CREATE INDEX idx_object_catalog_tenant_class_created
-  ON object_catalog(tenant_id, object_class, created_at DESC);
-CREATE INDEX idx_object_catalog_deleted_at
-  ON object_catalog(deleted_at);
 CREATE INDEX idx_object_catalog_objects_catalog_repr
   ON object_catalog_objects(catalog_id, representation, object_index);
 CREATE INDEX idx_object_catalog_objects_bucket_key
@@ -4178,12 +3939,6 @@ CREATE INDEX idx_admin_agent_mcp_sessions_admission
   ON admin_agent_mcp_sessions(tenant_id, grant_id, client_id, expires_at);
 CREATE INDEX idx_admin_agent_mcp_sessions_expiration
   ON admin_agent_mcp_sessions(expires_at, absolute_expires_at);
-CREATE UNIQUE INDEX idx_internal_notification_events_dedup
-  ON internal_notification_events(deduplication_key);
-CREATE INDEX idx_internal_notification_events_pending
-  ON internal_notification_events(status, severity, created_at);
-CREATE INDEX idx_internal_notification_events_tenant_created
-  ON internal_notification_events(tenant_id, created_at DESC);
 CREATE INDEX idx_provider_reprojection_jobs_due
   ON provider_reprojection_jobs(status, next_run_at, updated_at);
 CREATE INDEX idx_provider_reprojection_jobs_plugin
@@ -4254,5 +4009,15 @@ CREATE INDEX idx_federation_metadata_validation_events_source_created
   ON federation_metadata_validation_events(tenant_id, trust_source_id, created_at DESC);
 CREATE INDEX idx_federation_metadata_refresh_jobs_source_created
   ON federation_metadata_refresh_jobs(tenant_id, trust_source_id, created_at DESC);
+CREATE INDEX idx_object_catalog_tenant_class_created
+  ON object_catalog(tenant_id, object_class, created_at DESC);
+CREATE INDEX idx_object_catalog_deleted_at
+  ON object_catalog(deleted_at);
+CREATE UNIQUE INDEX idx_internal_notification_events_dedup
+  ON internal_notification_events(deduplication_key);
+CREATE INDEX idx_internal_notification_events_pending
+  ON internal_notification_events(status, severity, created_at);
+CREATE INDEX idx_internal_notification_events_tenant_created
+  ON internal_notification_events(tenant_id, created_at DESC);
 
 PRAGMA foreign_keys = ON;

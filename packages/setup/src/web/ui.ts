@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Locale, LocaleInfo } from '../i18n/types.js';
-import { D1_DATABASES, KV_NAMESPACES } from '../core/naming.js';
+import { D1_DATABASES, KV_NAMESPACES, WORKER_COMPONENTS } from '../core/naming.js';
 import { SETUP_CAPABILITY_COPY } from '../core/setup-capability-copy.js';
 import {
   CLOUDFLARE_DNS_RECORDS_DOCS_URL,
@@ -5841,7 +5841,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           <div id="resource-preview" class="provision-resource-preview">
             <div class="resgrid">
               <div class="bigtable">
-                <div class="cap"><span data-i18n="web.provision.d1Databases">D1 Databases:</span><em id="preview-d1-count">3</em></div>
+                <div class="cap"><span data-i18n="web.provision.d1Databases">D1 Databases:</span><em id="preview-d1-count">${D1_DATABASES.length + 3}</em></div>
                 <table><tbody id="preview-d1"></tbody></table>
               </div>
 
@@ -6755,10 +6755,34 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     syncAutomaticProvisioningUi();
 
     function getConfiguredWorkerCount() {
-      const apiWorkers = 12;
+      const apiWorkers = ${WORKER_COMPONENTS.length};
       const loginUi = config?.components?.loginUi !== false ? 1 : 0;
       const adminUi = config?.components?.adminUi !== false ? 1 : 0;
       return apiWorkers + loginUi + adminUi;
+    }
+
+    const deployedWorkerNames = new Set();
+
+    function updateDeployedWorkerCount(messages) {
+      for (const message of Array.isArray(messages) ? messages : []) {
+        const apiMatch = message.match(
+          /(?:^|\\s)✓\\s+([a-z0-9-]+-ar-[a-z0-9-]+)\\s+(?:re)?deployed successfully\\b/iu
+        );
+        const uiMatch = message.match(
+          /(?:^|\\s)✓\\s+(ar-(?:admin|login)-ui)\\s+deployed as UI Worker:/iu
+        );
+        const workerName = apiMatch?.[1] || uiMatch?.[1];
+        if (workerName) deployedWorkerNames.add(workerName);
+      }
+
+      const status = document.getElementById('deploy-status');
+      if (!status) return;
+      status.innerHTML =
+        escapeHtml(t('web.envDetail.workers')) +
+        ' <b>' +
+        deployedWorkerNames.size +
+        '</b> / ' +
+        getConfiguredWorkerCount();
     }
 
     function getCompleteWorkerSummary() {
@@ -7115,10 +7139,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const zoneName = getManualWildcardDnsZoneName(baseDomain);
       const dashboardRecordName = getManualWildcardDnsRecordName(baseDomain, zoneName);
       const dashboardUrl = getManualWildcardDnsDashboardUrl();
-      const envName = config?.env || config?.environment?.prefix || 'prod';
-      const target = workersSubdomain
-        ? envName + '-ar-router.' + workersSubdomain + '.workers.dev'
-        : envName + '-ar-router.workers.dev';
+      // The canonical manual action aliases the wildcard to the API base custom domain. Do not
+      // show the router workers.dev hostname here: that disagrees with deploy/CLI validation and
+      // can leave the operator with a record the retry path will reject.
+      const target = config?.manualAction?.target || baseDomain;
       document.getElementById('deploy-manual-wildcard-title').textContent =
         t('web.deploy.manualWildcardTitle') || copy.title;
       const summaryEl = document.getElementById('deploy-manual-wildcard-summary');
@@ -7786,10 +7810,18 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         if (!isIndeterminate && percentEl) percentEl.textContent = String(percent);
       }
       if (progressText) {
-        // For deploy, show percentage; for others, show count
+        // Deploy is percentage-based, provisioning tracks logical tasks, and deletion tracks
+        // concrete resources. Keep those units explicit so an 8-step provisioning operation is
+        // never presented as though the environment only contained eight Cloudflare resources.
         if (prefix === 'deploy') {
           const percent = Math.min(Math.round((current / total) * 100), 100);
           progressText.textContent = t('web.status.percentComplete', { percent });
+        } else if (prefix === 'provision') {
+          const displayCurrent = Math.min(current, total);
+          progressText.textContent = t('web.provision.runningTasks', {
+            current: displayCurrent,
+            total,
+          });
         } else {
           const displayCurrent = Math.min(current, total);
           progressText.textContent = t('web.status.resourceProgress', {
@@ -10345,6 +10377,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         configureBtn.disabled = false;
       }
 
+      // The step 4 header already shows the chosen environment. Store the validated name before
+      // changing steps so the generic placeholder is never flashed while the full config is built.
+      config = { ...(config || {}), env };
       setStep(4);
       showSection('domain');
       updateBaseDomainUI();
@@ -10735,7 +10770,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       btnSaveConfig.classList.remove('hidden');
       btnGotoDeploy.classList.remove('hidden');
       btnGotoDeploy.disabled = true;
-      status.textContent = t('web.provision.runningTasks', { current: 0, total: 5 });
+      const totalProvisionTasks = 8;
+      status.textContent = t('web.provision.runningTasks', {
+        current: 0,
+        total: totalProvisionTasks,
+      });
       status.className = '';
       progressUI.classList.remove('hidden');
       dismissSetupProgressPreludes(['provision-preflight-row']);
@@ -10744,9 +10783,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       keysSavedInfo.classList.add('hidden');
       output.textContent = '';
 
-      const totalResources = 8; // D1 Core, D1 PII, KV Settings, KV Cache, KV Tokens, R2 (optional), Queues (optional), Keys
-      const provisionProgress = createProvisionProgressTracker(totalResources);
-      updateProgressUI('provision', 0, totalResources, t('web.status.initializing'));
+      const provisionProgress = createProvisionProgressTracker(totalProvisionTasks);
+      updateProgressUI('provision', 0, totalProvisionTasks, t('web.status.initializing'));
 
       // Start polling for progress
       let lastProgressLength = 0;
@@ -10946,13 +10984,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         const button = document.getElementById('btn-env-enable-control-automatic');
         const status = document.getElementById('env-control-automatic-message');
         let bootstrapToken = input.value.trim();
+        let bootstrapSubmitted = false;
         const recoveringCutover = envControlBootstrapPhase !== 'none';
         if (!bootstrapToken && !recoveringCutover) {
           status.textContent = t('web.envDetail.enterOneTimeTokenFirst');
           input.focus();
           return;
         }
-        input.value = '';
         button.disabled = true;
         status.textContent = t('web.envDetail.preparingControlAuthority');
         try {
@@ -10970,11 +11008,18 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             status.textContent = t('web.envDetail.deployingControlWorker');
             const deployed = await api('/deploy/component/ar-control', {
               method: 'POST',
-              body: { env: envName, dryRun: false, skipBuild: false },
+              body: {
+                env: envName,
+                dryRun: false,
+                skipBuild: false,
+                initialControlBootstrap: true,
+              },
             });
             if (!deployed.success) throw new Error(deployed.error || t('web.control.deploymentFailed'));
           }
           status.textContent = t('web.envDetail.registeringScopedCredentials');
+          bootstrapSubmitted = true;
+          input.value = '';
           const completed = await api('/control/automatic-provisioning/complete', {
             method: 'POST',
             body: {
@@ -10999,6 +11044,15 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           envControlBootstrapOwnership = null;
           await loadEnvControlAutomaticProvisioning(envName);
         } catch (error) {
+          if (!bootstrapSubmitted && bootstrapToken) {
+            input.value = bootstrapToken;
+            status.textContent =
+              (error.message || t('web.control.automaticProvisioningPaused')) +
+              ' ' +
+              t('web.envDetail.bootstrapNotSubmittedForRetry');
+            input.focus();
+            return;
+          }
           if (error.recoveryTokenRequired === true) {
             envControlBootstrapOwnership = null;
             document
@@ -11090,6 +11144,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       ) {
         document.getElementById('control-bootstrap-token-status').textContent =
           t('web.deploy.bootstrapTokenRequired');
+        // A wildcard-DNS preflight can return before the one-time Control token is consumed.
+        // Keep the credential step reachable on retry instead of leaving the operator on a
+        // re-check button that silently returns because its hidden prerequisite is missing.
+        restoreSetupProgressPreludes([
+          'control-token-bootstrap-row',
+          'deploy-manual-wildcard-warning',
+        ]);
+        syncAutomaticProvisioningUi();
         bootstrapTokenInput.focus();
         return;
       }
@@ -11098,7 +11160,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       btn.classList.add('hidden');
       btnBack.classList.add('hidden');
       btnGotoComplete.disabled = true;
-      status.innerHTML = escapeHtml(t('web.envDetail.workers')) + ' <b>0</b> / 14';
+      deployedWorkerNames.clear();
+      updateDeployedWorkerCount([]);
       status.className = '';
       readyText.classList.add('hidden');
       progressUI.classList.remove('hidden');
@@ -11153,6 +11216,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
               lastProgressLength = progress.length;
               scrollToBottom(log);
             }
+            updateDeployedWorkerCount(progress);
             if (statusResult.deploymentProgress) {
               renderDeploymentSnapshot(statusResult.deploymentProgress);
             }
@@ -11175,7 +11239,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
               : {}),
           },
         });
-        bootstrapTokenInput.value = '';
 
         if (pollInterval) {
           clearInterval(pollInterval);
@@ -11183,6 +11246,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
 
         if (result.success) {
+          bootstrapTokenInput.value = '';
           // Final progress update
           renderDeploymentSnapshot({
             operation: 'deploy',
@@ -11274,7 +11338,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         } else if (result.manualAction?.kind === 'wildcard-dns' && result.manualAction.baseDomain) {
           config.manualAction = result.manualAction;
           renderDeployManualWildcardWarning();
-          restoreSetupProgressPreludes(['deploy-manual-wildcard-warning']);
+          // DNS validation happens before Control token consumption. Preserve the one-time token
+          // in this page and keep both prerequisites visible so a DNS retry is a single explicit
+          // action rather than an invisible-token failure.
+          restoreSetupProgressPreludes([
+            'control-token-bootstrap-row',
+            'deploy-manual-wildcard-warning',
+          ]);
+          syncAutomaticProvisioningUi();
           output.textContent += '\\n' + buildWildcardDnsManualMessage(result.manualAction.baseDomain) + '\\n';
           if (result.logPath) {
             output.textContent += '\\nLog: ' + result.logPath + '\\n';
@@ -11385,10 +11456,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     });
 
     document.getElementById('deploy-manual-wildcard-recheck').addEventListener('click', () => {
-      const recheckButton = document.getElementById('deploy-manual-wildcard-recheck');
       const deployButton = document.getElementById('btn-deploy');
       if (deployButton.disabled) return;
-      recheckButton.disabled = true;
       deployButton.click();
     });
 
@@ -11570,11 +11639,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     function getResourceNames(env) {
       const kvPrefix = env.toUpperCase();
       return {
-        d1: [
-          env + '-authrim-core-db',
-          env + '-authrim-pii-db',
-          env + '-authrim-admin-db'
-        ],
+        d1: ${JSON.stringify(D1_DATABASES.map((database) => database.dbType))}.map(
+          dbType => env + '-authrim-' + dbType
+        ),
         kv: [
           kvPrefix + '-SETTINGS',
           kvPrefix + '-CLIENTS_CACHE',
@@ -11625,17 +11692,22 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const coreRegion = config.database?.core || { location: 'apac', jurisdiction: 'none' };
       const piiRegion = config.database?.pii || { location: 'apac', jurisdiction: 'none' };
 
-      // D1 databases with region info
-      const coreDbName = env + '-authrim-core-db';
-      const piiDbName = env + '-authrim-pii-db';
-      const adminDbName = env + '-authrim-admin-db';
-      // admin-db uses the same region as pii-db (both contain sensitive data)
-      const adminRegion = piiRegion;
-
-      appendDatabasePreviewItem(d1List, coreDbName, getRegionLabel(coreRegion.location, coreRegion.jurisdiction));
-      appendDatabasePreviewItem(d1List, piiDbName, getRegionLabel(piiRegion.location, piiRegion.jurisdiction));
-      appendDatabasePreviewItem(d1List, adminDbName, getRegionLabel(adminRegion.location, adminRegion.jurisdiction));
-      if (d1Count) d1Count.textContent = '3';
+      // Fixed D1 databases use the same canonical inventory as provisioning.
+      const d1LocationProfiles = ${JSON.stringify(
+        Object.fromEntries(
+          D1_DATABASES.map((database) => [database.dbType, database.locationProfile])
+        )
+      )};
+      resources.d1.forEach(dbName => {
+        const dbType = dbName.slice((env + '-authrim-').length);
+        const region = d1LocationProfiles[dbType] === 'pii' ? piiRegion : coreRegion;
+        appendDatabasePreviewItem(
+          d1List,
+          dbName,
+          getRegionLabel(region.location, region.jurisdiction)
+        );
+      });
+      if (d1Count) d1Count.textContent = String(resources.d1.length + 3);
       appendPreviewRow(d1List, 'Control Plane bootstrap tenant shards', '3 D1');
 
       for (let i = 0; i < resources.kv.length; i += 2) {
@@ -11972,13 +12044,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       return env.env + '-ar-router.workers.dev';
     }
 
-    function getEnvironmentModePreview(env) {
-      const hasLogin = (env.workers || []).some((worker) => worker?.name === env.env + '-ar-login-ui');
-      const hasAdmin = (env.workers || []).some((worker) => worker?.name === env.env + '-ar-admin-ui');
-      if (!hasLogin && !hasAdmin) {
-        return t('web.env.modeSingle');
-      }
-      return t('web.env.modeMulti');
+    function getEnvironmentModePreview(env, config = null) {
+      const multiTenant = config?.tenant?.multiTenant ?? env?.multiTenant;
+      return multiTenant === true ? t('web.env.modeMulti') : t('web.env.modeSingle');
     }
 
     function appendEnvCardKv(body, key, value, className, rowClassName) {
@@ -12013,7 +12081,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     async function updateEnvCardIssuerFromConfig(env, generation) {
       const card = document.getElementById('env-card-' + env.env.replace(/[^a-zA-Z0-9-]/g, '_'));
       const issuerValue = card?.querySelector('.e-kv-issuer .v');
-      if (!issuerValue) return;
+      const modeValue = card?.querySelector('.e-kv-mode .v');
+      if (!issuerValue && !modeValue) return;
 
       try {
         const configResponse = await api('/config?env=' + encodeURIComponent(env.env));
@@ -12021,8 +12090,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         if (!configResponse.exists || !configResponse.config) return;
 
         const issuer = stripProtocol(resolveEnvDetailIssuerUrl(env, configResponse.config));
-        if (issuer) {
+        if (issuer && issuerValue) {
           issuerValue.textContent = issuer;
+        }
+        if (modeValue) {
+          modeValue.textContent = getEnvironmentModePreview(env, configResponse.config);
         }
       } catch (error) {
         console.warn('Failed to load config issuer for ' + env.env + ':', error);
@@ -12074,7 +12146,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         const body = document.createElement('div');
         body.className = 'e-body';
         appendEnvCardIssuer(body, getEnvironmentIssuerPreview(env));
-        appendEnvCardKv(body, t('web.env.cardMode'), getEnvironmentModePreview(env));
+        appendEnvCardKv(
+          body,
+          t('web.env.cardMode'),
+          getEnvironmentModePreview(env),
+          undefined,
+          'e-kv-mode'
+        );
         appendEnvCardKv(body, 'Workers', String(env.workers.length));
         appendEnvCardKv(body, 'D1 / KV', env.d1.length + ' / ' + env.kv.length);
         appendEnvCardKv(
@@ -12925,7 +13003,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (!aside) return;
 
       const issuer = stripProtocol(resolveEnvDetailIssuerUrl(env, config || null));
-      const mode = getEnvironmentModePreview(env);
+      const mode = getEnvironmentModePreview(env, config);
       aside.innerHTML = t('web.env.heroDetailAside', {
         mode: escapeHtml(mode),
         issuer: escapeHtml(issuer),

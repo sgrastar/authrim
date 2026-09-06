@@ -8,8 +8,8 @@ import { listD1MigrationSqlFiles } from '../core/cloudflare.js';
 import { renderPortableMigrationSql } from '../core/sql-portability.js';
 
 const migrationsDir = fileURLToPath(new URL('../../../../migrations', import.meta.url));
-const d1Migration = '001_0_4_0_core_baseline.sql';
-const postgresMigration = 'external/postgres/001_0_4_0_external_postgres_core_baseline.sql';
+const d1Migration = 'core/d1/001_0_4_0_core_baseline.sql';
+const postgresMigration = 'core/postgresql/001_0_4_0_core_baseline.sql';
 
 function findSqlite3(): string | null {
   try {
@@ -30,18 +30,9 @@ describe('SAML SP/OIDC RP Flow migrations', () => {
     const directory = mkdtempSync(join(tmpdir(), 'authrim-saml-oidc-flow-'));
     const database = join(directory, 'core.db');
     try {
-      const migrations = listD1MigrationSqlFiles(migrationsDir, {
-        excludeTopLevelDirectories: new Set([
-          'admin',
-          'archive',
-          'control',
-          'external',
-          'lookup',
-          'pii',
-          'plugin-runner',
-          'releases',
-        ]),
-      });
+      const migrations = listD1MigrationSqlFiles(join(migrationsDir, 'core/d1')).map(
+        (migration) => `core/d1/${migration}`
+      );
       for (const migration of migrations) {
         execFileSync(sqlite3, [database], {
           input: `PRAGMA foreign_keys = ON;\n${renderPortableMigrationSql(

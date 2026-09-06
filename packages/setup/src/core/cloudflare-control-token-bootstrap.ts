@@ -222,6 +222,12 @@ export interface ControlSecretSink {
   has(secretName: string): Promise<boolean>;
   delete(secretName: string): Promise<void>;
   readActiveGeneration?(): Promise<ControlSecretGenerationReceipt>;
+  /** Read-only proof that a checkpointed immutable version is still deployable. */
+  canActivateGeneration?(generation: ControlSecretGenerationReceipt): Promise<boolean>;
+  /** Restore one exact checkpointed immutable version and confirm it is serving 100% traffic. */
+  activateGeneration?(
+    generation: ControlSecretGenerationReceipt
+  ): Promise<ControlSecretGenerationReceipt>;
 }
 
 export interface ControlSecretGenerationReceipt {
@@ -2304,6 +2310,62 @@ export class WranglerControlSecretSink implements ControlSecretSink {
 
   async readActiveGeneration(): Promise<ControlSecretGenerationReceipt> {
     return this.readActiveGenerationWithin(this.createDeadline());
+  }
+
+  async canActivateGeneration(generation: ControlSecretGenerationReceipt): Promise<boolean> {
+    if (
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(generation.deploymentId) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(generation.versionId)
+    ) {
+      throw new Error('cloudflare_control_secret_generation_receipt_invalid');
+    }
+    const deadline = this.createDeadline();
+    try {
+      const result = await this.run(
+        [
+          'exec',
+          'wrangler',
+          'versions',
+          'view',
+          generation.versionId,
+          '--name',
+          this.input.workerName,
+          '--json',
+        ],
+        undefined,
+        'log',
+        deadline
+      );
+      const parsed = JSON.parse(result.stdout) as unknown;
+      return (
+        parsed !== null &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed) &&
+        (parsed as { id?: unknown }).id === generation.versionId
+      );
+    } catch (error) {
+      if (isWranglerSecretCommandTimeout(error)) throw error;
+      return false;
+    }
+  }
+
+  async activateGeneration(
+    generation: ControlSecretGenerationReceipt
+  ): Promise<ControlSecretGenerationReceipt> {
+    if (!(await this.canActivateGeneration(generation))) {
+      throw new CloudflareTokenBootstrapError(
+        'cloudflare_control_secret_generation_restore_unavailable',
+        true
+      );
+    }
+    const restored = await this.deployGeneration(generation.versionId, this.createDeadline());
+    if (restored.versionId !== generation.versionId) {
+      throw new CloudflareTokenBootstrapError(
+        'cloudflare_control_secret_generation_restore_mismatch',
+        true
+      );
+    }
+    return restored;
   }
 
   async has(secretName: string): Promise<boolean> {

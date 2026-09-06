@@ -107,24 +107,30 @@ function lock() {
 
 function release(): ReleaseMigrationManifest {
   return {
-    formatVersion: 1,
+    formatVersion: 2,
     productVersion: '1.0.0',
     streams: [
       {
-        id: 'd1-core',
+        id: 'core-d1',
+        schemaFamily: 'core',
         dialect: 'sqlite',
-        logicalRoles: ['core'],
+        targetKind: 'cloudflare-d1',
+        logicalRoles: ['core', 'tenant_core'],
         files: [{ path: '001_core.sql', checksum: '1'.repeat(64) }],
       },
       {
-        id: 'd1-pii',
+        id: 'pii-d1',
+        schemaFamily: 'pii',
         dialect: 'sqlite',
-        logicalRoles: ['pii'],
+        targetKind: 'cloudflare-d1',
+        logicalRoles: ['pii', 'tenant_pii'],
         files: [{ path: '001_pii.sql', checksum: '2'.repeat(64) }],
       },
       {
-        id: 'd1-lookup',
+        id: 'lookup-d1',
+        schemaFamily: 'lookup',
         dialect: 'sqlite',
+        targetKind: 'cloudflare-d1',
         logicalRoles: ['lookup'],
         files: [{ path: '001_lookup.sql', checksum: '3'.repeat(64) }],
       },
@@ -281,7 +287,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
     });
     expect(mocks.runD1Migrations).toHaveBeenCalledWith(
       'prod-authrim-tenant-default-bootstrap-db-id',
-      join(root, 'migrations'),
+      join(root, 'migrations', 'core', 'd1'),
       expect.any(Function),
       expect.objectContaining({
         releaseVersion: expect.stringMatching(/^1\.0\.0-draft\.[a-f0-9]{12}$/u),
@@ -289,7 +295,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
     );
     expect(mocks.runD1Migrations).toHaveBeenCalledWith(
       'prod-authrim-tenant-users-bootstrap-db-id',
-      join(root, 'migrations'),
+      join(root, 'migrations', 'core', 'd1'),
       expect.any(Function),
       expect.objectContaining({
         releaseVersion: expect.stringMatching(/^1\.0\.0-draft\.[a-f0-9]{12}$/u),
@@ -297,7 +303,7 @@ describe('initial Control Plane bootstrap orchestration', () => {
     );
     expect(mocks.runD1Migrations).toHaveBeenCalledWith(
       'prod-authrim-tenant-pii-bootstrap-db-id',
-      join(root, 'migrations', 'pii'),
+      join(root, 'migrations', 'pii', 'd1'),
       expect.any(Function),
       expect.objectContaining({
         releaseVersion: expect.stringMatching(/^1\.0\.0-draft\.[a-f0-9]{12}$/u),
@@ -585,12 +591,12 @@ describe('initial Control Plane bootstrap orchestration', () => {
       {
         binding: 'PROD_TDB_DEFAULT_BOOTSTRAP_CORE',
         reason: 'schema_not_registered',
-        targetId: 'd1:default-id:d1-core',
+        targetId: 'd1:default-id:core-d1',
       },
       {
         binding: 'PROD_TDB_USERS_BOOTSTRAP_CORE',
         reason: 'schema_not_registered',
-        targetId: 'd1:users-id:d1-core',
+        targetId: 'd1:users-id:core-d1',
       },
       { binding: 'PROD_TDB_PII_BOOTSTRAP_PII', reason: 'missing_binding' },
     ]);
@@ -602,24 +608,24 @@ describe('initial Control Plane bootstrap orchestration', () => {
     };
     const manifestChecksum = calculateReleaseManifestChecksum(manifest);
     currentLock.schemaTargets = {
-      'd1:default-id:d1-core': {
+      'd1:default-id:core-d1': {
         productVersion: '1.0.0',
         manifestChecksum,
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         appliedBy: 'automatic',
         updatedAt: new Date().toISOString(),
       },
-      'd1:users-id:d1-core': {
+      'd1:users-id:core-d1': {
         productVersion: '1.0.0',
         manifestChecksum,
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         appliedBy: 'automatic',
         updatedAt: new Date().toISOString(),
       },
-      'd1:pii-id:d1-pii': {
+      'd1:pii-id:pii-d1': {
         productVersion: '1.0.0',
         manifestChecksum,
-        streamId: 'd1-pii',
+        streamId: 'pii-d1',
         appliedBy: 'automatic',
         updatedAt: new Date().toISOString(),
       },

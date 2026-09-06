@@ -13,10 +13,13 @@ import {
 } from '@authrim/ar-lib-core/control-plane';
 
 const MAX_PENDING_HANDOFFS = 5;
+const MAX_WORKERS_PER_RECONCILE = 2;
+const PROVIDER_READ_CONCURRENCY = 2;
+const VERIFICATION_FRESHNESS_SECONDS = 10 * 60;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const SAFE_ERROR = /^control_bootstrap_[a-z0-9_]{1,96}$/u;
 const TRANSIENT_NOT_READY_ERROR = 'control_bootstrap_not_ready';
-const EXPECTED_STREAMS = ['d1-core', 'd1-pii', 'd1-lookup'] as const;
+const EXPECTED_STREAMS = ['core-d1', 'pii-d1', 'lookup-d1'] as const;
 
 export interface BootstrapHandoff {
   environmentId: string;
@@ -64,6 +67,9 @@ export interface BootstrapWorkerEvidence {
   expectedDeploymentId: string | null;
   expectedVersionId: string | null;
   expectedSettingsDigest: string | null;
+  observedSettingsDigest: string | null;
+  observedAt: number | null;
+  verificationState: string;
   requiredDataRoles: ControlBootstrapResourceRole[];
 }
 
@@ -88,6 +94,11 @@ export interface BootstrapHandoffRepository {
     manifestDigest: string
   ): Promise<BootstrapReleaseStream[]>;
   accept(
+    handoff: BootstrapHandoff,
+    observations: readonly BootstrapWorkerObservation[],
+    now: number
+  ): Promise<void>;
+  recordWorkerObservations(
     handoff: BootstrapHandoff,
     observations: readonly BootstrapWorkerObservation[],
     now: number
@@ -337,6 +348,27 @@ function d1BindingDatabaseId(binding: Record<string, unknown>): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  operation: (value: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, concurrency), values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        results[index] = await operation(values[index]);
+      }
+    }
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 export class BootstrapHandoffVerifier {
   constructor(
     private readonly repository: BootstrapHandoffRepository,
@@ -356,9 +388,18 @@ export class BootstrapHandoffVerifier {
     let retrying = 0;
     for (const handoff of handoffs) {
       try {
-        const observations = await this.verify(handoff);
-        await this.repository.accept(handoff, observations, this.now());
-        accepted += 1;
+        const verification = await this.verify(handoff);
+        if (verification.remainingWorkerCount > verification.observations.length) {
+          await this.repository.recordWorkerObservations(
+            handoff,
+            verification.observations,
+            this.now()
+          );
+          retrying += 1;
+        } else {
+          await this.repository.accept(handoff, verification.observations, this.now());
+          accepted += 1;
+        }
       } catch (error) {
         if (permanentError(error)) {
           await this.repository.block(handoff, errorCode(error), this.now());
@@ -371,7 +412,10 @@ export class BootstrapHandoffVerifier {
     return { attempted: handoffs.length, accepted, blocked, retrying };
   }
 
-  private async verify(handoff: BootstrapHandoff): Promise<BootstrapWorkerObservation[]> {
+  private async verify(handoff: BootstrapHandoff): Promise<{
+    observations: BootstrapWorkerObservation[];
+    remainingWorkerCount: number;
+  }> {
     if (
       !SHA256.test(handoff.ownershipFingerprint) ||
       !SHA256.test(handoff.releaseManifestDigest) ||
@@ -420,11 +464,6 @@ export class BootstrapHandoffVerifier {
     if (fingerprint !== handoff.ownershipFingerprint) {
       throw new Error('control_bootstrap_ownership_fingerprint_mismatch');
     }
-    const resourceByRole = new Map(resources.map((resource) => [resource.role, resource]));
-    for (const resource of resources) {
-      await this.verifyResource(resource, handoff.releaseManifestDigest);
-    }
-
     if (workers.length === 0) throw new Error('control_bootstrap_worker_evidence_missing');
     const controlWorker = workers.find(
       (worker) => worker.workerScriptName === `${handoff.environmentName}-ar-control`
@@ -437,7 +476,6 @@ export class BootstrapHandoffVerifier {
       throw new Error('control_bootstrap_control_deployment_mismatch');
     }
 
-    const observations: BootstrapWorkerObservation[] = [];
     for (const worker of workers) {
       if (
         !worker.expectedDeploymentId ||
@@ -447,45 +485,81 @@ export class BootstrapHandoffVerifier {
       ) {
         throw new Error('control_bootstrap_worker_evidence_missing');
       }
-      const [settings, deployments] = await Promise.all([
-        this.api.getWorkerSettings(worker.workerScriptName),
-        this.api.listWorkerDeployments(worker.workerScriptName),
-      ]);
-      const active = activeDeployment(deployments);
       if (
-        active.deploymentId !== worker.expectedDeploymentId ||
-        active.versionId !== worker.expectedVersionId
+        worker.verificationState !== 'pending' &&
+        !(
+          worker.verificationState === 'verified' &&
+          worker.observedSettingsDigest === worker.expectedSettingsDigest &&
+          Number.isSafeInteger(worker.observedAt) &&
+          (worker.observedAt ?? 0) > 0
+        )
       ) {
-        throw new Error('control_bootstrap_worker_deployment_mismatch');
+        throw new Error('control_bootstrap_worker_evidence_invalid');
       }
-      let settingsDigest: string;
-      try {
-        settingsDigest = await digestCloudflareWorkerSettings(settings);
-      } catch {
-        throw new Error('control_bootstrap_worker_settings_invalid');
-      }
-      if (settingsDigest !== worker.expectedSettingsDigest) {
-        throw new Error('control_bootstrap_worker_settings_mismatch');
-      }
-      const bindings = Array.isArray(settings.bindings) ? settings.bindings : [];
-      for (const role of worker.requiredDataRoles) {
-        const resource = resourceByRole.get(role);
-        if (!resource) throw new Error('control_bootstrap_resource_set_incomplete');
-        const binding = bindings.find((candidate) => candidate.name === resource.bindingRef);
-        if (
-          !binding ||
-          binding.type !== 'd1' ||
-          d1BindingDatabaseId(binding) !== resource.providerDatabaseId
-        ) {
-          throw new Error('control_bootstrap_worker_binding_mismatch');
-        }
-      }
-      observations.push({ workerScriptName: worker.workerScriptName, settingsDigest });
     }
-    return observations;
+    const verificationNow = this.now();
+    const requiresVerification = (worker: BootstrapWorkerEvidence): boolean =>
+      worker.verificationState === 'pending' ||
+      (worker.observedAt ?? 0) < verificationNow - VERIFICATION_FRESHNESS_SECONDS;
+    const hasFreshVerifiedWorkerEvidence = workers.some(
+      (worker) => worker.verificationState === 'verified' && !requiresVerification(worker)
+    );
+    const resourceByRole = new Map(resources.map((resource) => [resource.role, resource]));
+    await mapWithConcurrency(resources, PROVIDER_READ_CONCURRENCY, (resource) =>
+      this.verifyResource(resource, handoff.releaseManifestDigest, !hasFreshVerifiedWorkerEvidence)
+    );
+    const pendingWorkers = workers.filter(requiresVerification).slice(0, MAX_WORKERS_PER_RECONCILE);
+    const observations = await mapWithConcurrency(
+      pendingWorkers,
+      PROVIDER_READ_CONCURRENCY,
+      async (worker): Promise<BootstrapWorkerObservation> => {
+        const [settings, deployments] = await Promise.all([
+          this.api.getWorkerSettings(worker.workerScriptName),
+          this.api.listWorkerDeployments(worker.workerScriptName),
+        ]);
+        const active = activeDeployment(deployments);
+        if (
+          active.deploymentId !== worker.expectedDeploymentId ||
+          active.versionId !== worker.expectedVersionId
+        ) {
+          throw new Error('control_bootstrap_worker_deployment_mismatch');
+        }
+        let settingsDigest: string;
+        try {
+          settingsDigest = await digestCloudflareWorkerSettings(settings);
+        } catch {
+          throw new Error('control_bootstrap_worker_settings_invalid');
+        }
+        if (settingsDigest !== worker.expectedSettingsDigest) {
+          throw new Error('control_bootstrap_worker_settings_mismatch');
+        }
+        const bindings = Array.isArray(settings.bindings) ? settings.bindings : [];
+        for (const role of worker.requiredDataRoles) {
+          const resource = resourceByRole.get(role);
+          if (!resource) throw new Error('control_bootstrap_resource_set_incomplete');
+          const binding = bindings.find((candidate) => candidate.name === resource.bindingRef);
+          if (
+            !binding ||
+            binding.type !== 'd1' ||
+            d1BindingDatabaseId(binding) !== resource.providerDatabaseId
+          ) {
+            throw new Error('control_bootstrap_worker_binding_mismatch');
+          }
+        }
+        return { workerScriptName: worker.workerScriptName, settingsDigest };
+      }
+    );
+    return {
+      observations,
+      remainingWorkerCount: workers.filter(requiresVerification).length,
+    };
   }
 
-  private async verifyResource(resource: BootstrapResource, manifestDigest: string): Promise<void> {
+  private async verifyResource(
+    resource: BootstrapResource,
+    manifestDigest: string,
+    verifyProvider: boolean
+  ): Promise<void> {
     const spec = parseDesiredSpec(resource);
     if (
       resource.manifestDigest !== manifestDigest ||
@@ -547,6 +621,8 @@ export class BootstrapHandoffVerifier {
         throw new Error('control_bootstrap_resource_state_mismatch');
       }
     }
+
+    if (!verifyProvider) return;
 
     const actual = await this.api.getD1Database(resource.providerDatabaseId);
     if (actual.uuid !== resource.providerDatabaseId || actual.name !== resource.providerName) {
@@ -614,6 +690,9 @@ interface WorkerRow {
   expected_deployment_id: string | null;
   expected_version_id: string | null;
   expected_settings_digest: string | null;
+  observed_settings_digest: string | null;
+  observed_at: number | null;
+  verification_state: string;
   required_roles_json: string;
 }
 
@@ -779,6 +858,8 @@ export class D1BootstrapHandoffRepository implements BootstrapHandoffRepository 
       .prepare(
         `SELECT inventory.worker_script_name, evidence.expected_deployment_id,
                 evidence.expected_version_id, evidence.expected_settings_digest,
+                evidence.observed_settings_digest, evidence.observed_at,
+                COALESCE(evidence.state, 'missing') AS verification_state,
                 COALESCE((
                   SELECT json_group_array(role.data_role)
                     FROM control_worker_required_data_roles role
@@ -820,6 +901,9 @@ export class D1BootstrapHandoffRepository implements BootstrapHandoffRepository 
         expectedDeploymentId: row.expected_deployment_id,
         expectedVersionId: row.expected_version_id,
         expectedSettingsDigest: row.expected_settings_digest,
+        observedSettingsDigest: row.observed_settings_digest,
+        observedAt: row.observed_at,
+        verificationState: row.verification_state,
         requiredDataRoles,
       };
     });
@@ -834,7 +918,7 @@ export class D1BootstrapHandoffRepository implements BootstrapHandoffRepository 
         `SELECT stream_id, release_id, manifest_digest, state
            FROM control_migration_release_catalog
           WHERE environment_id = ? AND manifest_digest = ? AND state IN ('active', 'retired')
-            AND stream_id IN ('d1-core', 'd1-pii', 'd1-lookup')
+            AND stream_id IN ('core-d1', 'pii-d1', 'lookup-d1')
           ORDER BY stream_id`
       )
       .bind(environmentId, manifestDigest)
@@ -863,7 +947,8 @@ export class D1BootstrapHandoffRepository implements BootstrapHandoffRepository 
           `UPDATE control_bootstrap_worker_evidence
               SET state = 'verified', observed_settings_digest = ?, observed_at = ?,
                   verification_error_code = NULL, updated_at = ?
-            WHERE environment_id = ? AND worker_script_name = ? AND state = 'pending'
+            WHERE environment_id = ? AND worker_script_name = ?
+              AND state IN ('pending', 'verified')
               AND expected_settings_digest = ?`
         )
         .bind(
@@ -948,7 +1033,85 @@ export class D1BootstrapHandoffRepository implements BootstrapHandoffRepository 
     ]);
     const handoffResult = results[updates.length + 1];
     if ((handoffResult?.meta.changes ?? 0) !== 1) {
+      const reflected = await this.db
+        .prepare(
+          `SELECT handoff.state, handoff.ownership_fingerprint,
+                  handoff.release_manifest_digest,
+                  EXISTS (
+                    SELECT 1 FROM control_environments environment
+                     WHERE environment.environment_id = handoff.environment_id
+                       AND environment.lifecycle_state = 'active'
+                  ) AS environment_active,
+                  EXISTS (
+                    SELECT 1 FROM control_bootstrap_worker_evidence evidence
+                     WHERE evidence.environment_id = handoff.environment_id
+                       AND evidence.state <> 'verified'
+                  ) AS invalid_evidence
+             FROM control_bootstrap_handoffs handoff
+            WHERE handoff.environment_id = ?`
+        )
+        .bind(handoff.environmentId)
+        .all<{
+          state: string;
+          ownership_fingerprint: string;
+          release_manifest_digest: string;
+          environment_active: number;
+          invalid_evidence: number;
+        }>();
+      const [current] = reflected.results;
+      if (
+        current?.state === 'accepted' &&
+        current.ownership_fingerprint === handoff.ownershipFingerprint &&
+        current.release_manifest_digest === handoff.releaseManifestDigest &&
+        current.environment_active === 1 &&
+        current.invalid_evidence === 0
+      ) {
+        return;
+      }
       throw new Error('control_bootstrap_accept_conflict');
+    }
+  }
+
+  async recordWorkerObservations(
+    handoff: BootstrapHandoff,
+    observations: readonly BootstrapWorkerObservation[],
+    now: number
+  ): Promise<void> {
+    if (observations.length === 0) throw new Error(TRANSIENT_NOT_READY_ERROR);
+    const results = await this.db.batch(
+      observations.map((observation) =>
+        this.db
+          .prepare(
+            `UPDATE control_bootstrap_worker_evidence
+                SET state = 'verified', observed_settings_digest = ?, observed_at = ?,
+                    verification_error_code = NULL, updated_at = ?
+              WHERE environment_id = ? AND worker_script_name = ?
+                AND state IN ('pending', 'verified')
+                AND expected_settings_digest = ?
+                AND EXISTS (
+                  SELECT 1 FROM control_bootstrap_handoffs handoff
+                   WHERE handoff.environment_id = control_bootstrap_worker_evidence.environment_id
+                     AND handoff.state = 'pending_verification'
+                     AND handoff.ownership_fingerprint = ?
+                     AND handoff.release_manifest_digest = ?
+                )`
+          )
+          .bind(
+            observation.settingsDigest,
+            now,
+            now,
+            handoff.environmentId,
+            observation.workerScriptName,
+            observation.settingsDigest,
+            handoff.ownershipFingerprint,
+            handoff.releaseManifestDigest
+          )
+      )
+    );
+    if (results.some((result) => (result.meta.changes ?? 0) !== 1)) {
+      // Another scheduled or operator reconciler may have persisted the same observation first.
+      // Re-read durable state on the next bounded pass instead of treating that race as corruption.
+      throw new Error(TRANSIENT_NOT_READY_ERROR);
     }
   }
 

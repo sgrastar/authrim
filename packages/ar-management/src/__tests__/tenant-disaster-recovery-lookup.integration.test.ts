@@ -149,7 +149,7 @@ const targets: ControlTenantDisasterRecoveryTarget[] = [
     shardGeneration: 3,
     bindingRef: 'USERS_A',
     providerDatabaseId: '11111111-1111-4111-8111-111111111111',
-    migrationStreamId: 'd1-core',
+    migrationStreamId: 'core-d1',
     releaseId: 'test-release',
     manifestDigest: 'a'.repeat(64),
     restoreConfirmedAt: 1,
@@ -165,7 +165,7 @@ const targets: ControlTenantDisasterRecoveryTarget[] = [
     shardGeneration: 4,
     bindingRef: 'PII_A',
     providerDatabaseId: '22222222-2222-4222-8222-222222222222',
-    migrationStreamId: 'd1-pii',
+    migrationStreamId: 'pii-d1',
     releaseId: 'test-release',
     manifestDigest: 'b'.repeat(64),
     restoreConfirmedAt: 1,
@@ -293,7 +293,7 @@ describe('tenant disaster recovery Lookup reprojection', () => {
     users = new DatabaseSync(':memory:');
     pii = new DatabaseSync(':memory:');
     lookup.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_0_4_0_lookup_baseline.sql'), 'utf8')
+      readFileSync(resolve(REPO_ROOT, 'migrations/lookup/d1/001_0_4_0_lookup_baseline.sql'), 'utf8')
         .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
         .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );

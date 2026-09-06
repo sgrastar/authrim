@@ -26,24 +26,30 @@ const checksum = (value: string) => value.repeat(64);
 
 function release(): ReleaseMigrationManifest {
   return {
-    formatVersion: 1,
+    formatVersion: 2,
     productVersion: '0.4.0',
     streams: [
       {
-        id: 'd1-core',
+        id: 'core-d1',
+        schemaFamily: 'core',
         dialect: 'sqlite',
-        logicalRoles: ['core'],
+        targetKind: 'cloudflare-d1',
+        logicalRoles: ['core', 'tenant_core'],
         files: [{ path: '001_core.sql', checksum: checksum('1') }],
       },
       {
-        id: 'd1-pii',
+        id: 'pii-d1',
+        schemaFamily: 'pii',
         dialect: 'sqlite',
-        logicalRoles: ['pii'],
+        targetKind: 'cloudflare-d1',
+        logicalRoles: ['pii', 'tenant_pii'],
         files: [{ path: '001_pii.sql', checksum: checksum('2') }],
       },
       {
-        id: 'd1-lookup',
+        id: 'lookup-d1',
+        schemaFamily: 'lookup',
         dialect: 'sqlite',
+        targetKind: 'cloudflare-d1',
         logicalRoles: ['lookup'],
         files: [{ path: '001_lookup.sql', checksum: checksum('3') }],
       },
@@ -77,7 +83,9 @@ function lock(): AuthrimLock {
 
 function database(manifestDigest: string): DatabaseSync {
   const db = new DatabaseSync(':memory:');
-  db.exec(readFileSync(resolve(ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8'));
+  db.exec(
+    readFileSync(resolve(ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'), 'utf8')
+  );
   db.exec(
     `INSERT INTO control_environments (
        environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
@@ -119,11 +127,11 @@ function database(manifestDigest: string): DatabaseSync {
        environment_id, stream_id, release_id, manifest_digest, manifest_r2_object_key,
        state, active_stream_key, registered_by_operation_id, registered_at, activated_at
      ) VALUES
-       ('test', 'd1-core', '0.4.0', '${manifestDigest}',
+       ('test', 'core-d1', '0.4.0', '${manifestDigest}',
         'releases/0.4.0/${manifestDigest}/manifest.json', 'active', 'active', 'release-op', 1, 1),
-       ('test', 'd1-pii', '0.4.0', '${manifestDigest}',
+       ('test', 'pii-d1', '0.4.0', '${manifestDigest}',
         'releases/0.4.0/${manifestDigest}/manifest.json', 'active', 'active', 'release-op', 1, 1),
-       ('test', 'd1-lookup', '0.4.0', '${manifestDigest}',
+       ('test', 'lookup-d1', '0.4.0', '${manifestDigest}',
         'releases/0.4.0/${manifestDigest}/manifest.json', 'active', 'active', 'release-op', 1, 1);`
   );
   return db;
@@ -499,6 +507,43 @@ describe('initial Control topology handoff registration', () => {
     ).rejects.toThrow('control_tenant_shard_owner_policy_invalid');
   });
 
+  it('idempotently re-registers an exact assignment even when later binding work failed', async () => {
+    const plan = await buildInitialControlTopologyRegistration({
+      environmentId: 'test',
+      tenantId: 'default',
+      placementPolicy: 'tenant_exclusive',
+      lock: lock(),
+      release: release(),
+      automaticProvisioning: true,
+      now: 100,
+    });
+    const db = database(plan.manifestDigest);
+    openDatabases.push(db);
+    db.exec(plan.sql);
+    db.exec(`UPDATE control_tenant_shards SET status = 'failed' WHERE data_role = 'tenant_pii'`);
+
+    await expect(
+      registerInitialControlTopology({
+        environmentId: 'test',
+        tenantId: 'default',
+        placementPolicy: 'tenant_exclusive',
+        controlDatabaseName: 'control',
+        lock: lock(),
+        release: release(),
+        automaticProvisioning: true,
+        now: 101,
+        execute: async (_name, sql) => {
+          db.exec(sql);
+          return { success: true } as never;
+        },
+        query: async (_name, sql) => db.prepare(sql).all() as never,
+      })
+    ).resolves.toMatchObject({ manifestDigest: plan.manifestDigest });
+    expect(
+      db.prepare(`SELECT COUNT(*) AS count FROM control_tenant_shard_assignments`).get()
+    ).toEqual({ count: 3 });
+  });
+
   it('queues initial binding reconciliation when Automatic provisioning is enabled', async () => {
     const plan = await buildInitialControlTopologyRegistration({
       environmentId: 'test',
@@ -642,6 +687,12 @@ describe('initial Control topology handoff registration', () => {
       controlDeploymentId: 'test-ar-control-deployment-v1',
       controlVersionId: 'control-v1',
     });
+    db.prepare(
+      `UPDATE control_bootstrap_worker_evidence
+          SET state = 'verified', observed_settings_digest = expected_settings_digest,
+              observed_at = 102, updated_at = 102
+        WHERE worker_script_name = 'test-ar-control'`
+    ).run();
     await expect(recordInitialBootstrapWorkerEvidence(input)).resolves.toEqual({
       workerCount: 2,
       controlDeploymentId: 'test-ar-control-deployment-v1',
@@ -658,7 +709,7 @@ describe('initial Control topology handoff registration', () => {
       {
         worker_script_name: 'test-ar-control',
         expected_version_id: 'control-v1',
-        state: 'pending',
+        state: 'verified',
       },
       {
         worker_script_name: 'test-ar-management',
@@ -666,6 +717,122 @@ describe('initial Control topology handoff registration', () => {
         state: 'pending',
       },
     ]);
+  });
+
+  it('requeues only untouched bootstrap binding targets rejected before Workers existed', async () => {
+    const plan = await buildInitialControlTopologyRegistration({
+      environmentId: 'test',
+      tenantId: 'default',
+      placementPolicy: 'tenant_exclusive',
+      lock: lock(),
+      release: release(),
+      automaticProvisioning: true,
+      now: 100,
+    });
+    const db = database(plan.manifestDigest);
+    openDatabases.push(db);
+    db.exec(plan.sql);
+    const operation = db
+      .prepare(
+        `SELECT operation.operation_id, shard.shard_id, shard.binding_ref,
+                shard.data_role, shard.residency_partition, migration.provider_database_id
+           FROM control_operations operation
+           JOIN control_tenant_database_migration_state migration
+             ON migration.operation_id = operation.operation_id
+           JOIN control_tenant_shards shard
+             ON shard.d1_desired_resource_id = migration.desired_resource_id
+          WHERE operation.operation_id GLOB 'op_bootstrap_*'
+            AND operation.operation_kind = 'provision_shard'
+          ORDER BY operation.operation_id LIMIT 1`
+      )
+      .get() as Record<string, string>;
+    db.prepare(
+      `UPDATE control_operations SET status = 'running'
+        WHERE operation_id = ? AND status = 'waiting_retry'`
+    ).run(operation.operation_id);
+    db.prepare(
+      `UPDATE control_operation_steps SET status = 'running'
+        WHERE operation_id = ? AND step_key = 'reconcile_worker_bindings' AND status = 'queued'`
+    ).run(operation.operation_id);
+    db.prepare(
+      `INSERT INTO control_worker_binding_reconciliations (
+         operation_id, environment_id, worker_script_name, shard_id, binding_ref,
+         data_role, residency_partition, migration_generation, provider_database_id,
+         state, last_error_code, created_at, updated_at
+       ) VALUES (?, 'test', 'test-ar-management', ?, ?, ?, ?, 1, ?, 'pending',
+                 'control_worker_settings_request_rejected', 100, 100)`
+    ).run(
+      operation.operation_id,
+      operation.shard_id,
+      operation.binding_ref,
+      operation.data_role,
+      operation.residency_partition,
+      operation.provider_database_id
+    );
+    db.prepare(
+      `UPDATE control_operation_steps
+          SET status = 'blocked', last_error_code = 'control_worker_settings_request_rejected'
+        WHERE operation_id = ? AND step_key = 'reconcile_worker_bindings'`
+    ).run(operation.operation_id);
+    db.prepare(
+      `UPDATE control_operations
+          SET status = 'blocked', last_error_code = 'control_worker_settings_request_rejected'
+        WHERE operation_id = ?`
+    ).run(operation.operation_id);
+    db.prepare(`UPDATE control_tenant_shards SET status = 'failed' WHERE shard_id = ?`).run(
+      operation.shard_id
+    );
+
+    await recordInitialBootstrapWorkerEvidence({
+      environmentId: 'test',
+      controlDatabaseName: 'control',
+      deployments: deploymentResults(),
+      now: 101,
+      accountId: 'account-id',
+      token: 'workers-token',
+      createClient: () => bootstrapClient(),
+      execute: async (_name, sql) => {
+        db.exec(sql);
+        return { success: true } as never;
+      },
+      query: async (_name, sql) => db.prepare(sql).all() as never,
+    });
+
+    expect(
+      db
+        .prepare(
+          `SELECT operation.status, operation.last_error_code, step.status AS step_status,
+                  shard.status AS shard_status, target.state AS target_state,
+                  target.last_error_code AS target_error
+             FROM control_operations operation
+             JOIN control_operation_steps step
+               ON step.operation_id = operation.operation_id
+              AND step.step_key = 'reconcile_worker_bindings'
+             JOIN control_tenant_database_migration_state migration
+               ON migration.operation_id = operation.operation_id
+             JOIN control_tenant_shards shard
+               ON shard.d1_desired_resource_id = migration.desired_resource_id
+             JOIN control_worker_binding_reconciliations target
+               ON target.operation_id = operation.operation_id
+            WHERE operation.operation_id = ?`
+        )
+        .get(operation.operation_id)
+    ).toEqual({
+      status: 'running',
+      last_error_code: null,
+      step_status: 'running',
+      shard_status: 'ready',
+      target_state: 'pending',
+      target_error: null,
+    });
+    expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM control_audit_events
+            WHERE event_type = 'control.bootstrap.predeploy_worker_retry'`
+        )
+        .get()
+    ).toEqual({ count: 1 });
   });
 
   it('uses the Setup operator client instead of a Control Worker child token for evidence', async () => {
@@ -947,6 +1114,7 @@ describe('initial Control topology handoff registration', () => {
   it('waits for Control acceptance and surfaces a stable blocked result', async () => {
     let time = 0;
     const progress: string[] = [];
+    const queries: string[] = [];
     const states = [
       {
         state: 'pending_verification',
@@ -967,7 +1135,10 @@ describe('initial Control topology handoff registration', () => {
       waitForInitialBootstrapHandoff({
         environmentId: 'test',
         controlDatabaseName: 'control',
-        query: async () => [states.shift()!] as never,
+        query: async (_database, sql) => {
+          queries.push(sql);
+          return [states.shift()!] as never;
+        },
         now: () => time,
         sleep: async (milliseconds) => {
           time += milliseconds;
@@ -980,6 +1151,7 @@ describe('initial Control topology handoff registration', () => {
     expect(progress).toEqual([
       'Worker binding progress: 0 awaiting PATCH, 0 PATCHed, 0 smoke checking, 0 stabilizing, 0 complete (2 total)',
     ]);
+    expect(queries[0]).toContain("reconciliation.operation_id GLOB 'op_bootstrap_*'");
 
     await expect(
       waitForInitialBootstrapHandoff({
@@ -1113,7 +1285,7 @@ describe('initial Control topology handoff registration', () => {
     ).resolves.toEqual(new Set(['test-ar-auth\0version-reconciled']));
   });
 
-  it('advances bindings first and verifies only after every binding succeeds', async () => {
+  it('advances only pending bindings and verifies after every binding succeeds', async () => {
     const events: string[] = [];
     let time = 0;
     const states = [
@@ -1174,20 +1346,155 @@ describe('initial Control topology handoff registration', () => {
       })
     ).resolves.toEqual({ state: 'accepted', acceptedAt: 200 });
     expect(events).toEqual([
+      'query',
       'advance',
+      'sleep',
       'query',
       'sleep',
-      'advance',
-      'query',
-      'sleep',
-      'advance',
       'query',
       'refresh',
       'reconcile',
       'sleep',
-      'advance',
       'query',
     ]);
+  });
+
+  it('does not treat a successful slow evidence refresh as a stalled handoff', async () => {
+    let time = 0;
+    const progress: string[] = [];
+    const refreshEvidence = vi.fn(async () => {
+      time += 750;
+    });
+    const states = [
+      {
+        state: 'pending_verification',
+        verification_error_code: null,
+        accepted_at: null,
+        total_bindings: 2,
+        pending_bindings: 0,
+        latest_binding_update: 100,
+      },
+      {
+        state: 'pending_verification',
+        verification_error_code: null,
+        accepted_at: null,
+        total_bindings: 2,
+        pending_bindings: 0,
+        latest_binding_update: 100,
+      },
+      {
+        state: 'pending_verification',
+        verification_error_code: null,
+        accepted_at: null,
+        total_bindings: 2,
+        pending_bindings: 0,
+        latest_binding_update: 100,
+      },
+      {
+        state: 'accepted',
+        verification_error_code: null,
+        accepted_at: 300,
+        total_bindings: 2,
+        pending_bindings: 0,
+        latest_binding_update: 200,
+      },
+    ];
+
+    await expect(
+      waitForInitialBootstrapHandoff({
+        environmentId: 'test',
+        controlDatabaseName: 'control',
+        query: async () => [states.shift()!] as never,
+        refreshEvidence,
+        reconcile: async () => {
+          time += 100;
+        },
+        now: () => time,
+        sleep: async (milliseconds) => {
+          time += milliseconds;
+        },
+        onProgress: (message) => progress.push(message),
+        timeoutMs: 2_000,
+        stallTimeoutMs: 500,
+        pollIntervalMs: 250,
+      })
+    ).resolves.toEqual({ state: 'accepted', acceptedAt: 300 });
+    expect(progress).toContain(
+      'Worker binding evidence refreshed; confirming Control acceptance...'
+    );
+    expect(refreshEvidence).toHaveBeenCalledOnce();
+  });
+
+  it('reports durable Worker evidence progress and does not refresh it back to pending', async () => {
+    let time = 0;
+    const progress: string[] = [];
+    const refreshEvidence = vi.fn(async () => undefined);
+    const states = [
+      {
+        state: 'pending_verification',
+        verification_error_code: null,
+        accepted_at: null,
+        total_bindings: 34,
+        pending_bindings: 0,
+        latest_binding_update: 100,
+        total_worker_evidence: 15,
+        verified_worker_evidence: 0,
+        latest_worker_evidence_update: 100,
+      },
+      {
+        state: 'pending_verification',
+        verification_error_code: null,
+        accepted_at: null,
+        total_bindings: 34,
+        pending_bindings: 0,
+        latest_binding_update: 100,
+        total_worker_evidence: 15,
+        verified_worker_evidence: 0,
+        latest_worker_evidence_update: 100,
+      },
+      {
+        state: 'pending_verification',
+        verification_error_code: null,
+        accepted_at: null,
+        total_bindings: 34,
+        pending_bindings: 0,
+        latest_binding_update: 100,
+        total_worker_evidence: 15,
+        verified_worker_evidence: 2,
+        latest_worker_evidence_update: 101,
+      },
+      {
+        state: 'accepted',
+        verification_error_code: null,
+        accepted_at: 200,
+        total_bindings: 34,
+        pending_bindings: 0,
+        latest_binding_update: 100,
+        total_worker_evidence: 15,
+        verified_worker_evidence: 15,
+        latest_worker_evidence_update: 108,
+      },
+    ];
+
+    await expect(
+      waitForInitialBootstrapHandoff({
+        environmentId: 'test',
+        controlDatabaseName: 'control',
+        query: async () => [states.shift()!] as never,
+        refreshEvidence,
+        reconcile: async () => undefined,
+        now: () => time,
+        sleep: async (milliseconds) => {
+          time += milliseconds;
+        },
+        onProgress: (message) => progress.push(message),
+        timeoutMs: 2_000,
+        stallTimeoutMs: 1_000,
+        pollIntervalMs: 250,
+      })
+    ).resolves.toEqual({ state: 'accepted', acceptedAt: 200 });
+    expect(refreshEvidence).toHaveBeenCalledOnce();
+    expect(progress).toContain('Worker evidence verification: 2/15 verified after 34/34 bindings');
   });
 
   it('uses the Wrangler OAuth operator client for handoff reconciliation without a direct token', async () => {

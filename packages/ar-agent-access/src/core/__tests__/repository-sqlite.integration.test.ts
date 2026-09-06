@@ -1745,10 +1745,10 @@ describeWithSqlite('AgentBulkRepository SQLite lifecycle', () => {
     const databasePath = path.join(temporaryDirectory, 'test.db');
     adapter = new SqliteCliAdapter(sqlite3Path!, databasePath);
     repository = new AgentBulkRepository(adapter);
-    const rootCandidate = path.resolve(process.cwd(), 'migrations/admin');
+    const rootCandidate = path.resolve(process.cwd(), 'migrations/admin/d1');
     const migrationDirectory = existsSync(rootCandidate)
       ? rootCandidate
-      : path.resolve(process.cwd(), '../../migrations/admin');
+      : path.resolve(process.cwd(), '../../migrations/admin/d1');
     const migrationSql = readdirSync(migrationDirectory)
       .filter((name) => /^\d{3}_.*\.sql$/u.test(name))
       .sort()

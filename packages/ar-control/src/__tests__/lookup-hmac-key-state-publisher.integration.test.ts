@@ -88,7 +88,10 @@ describe('LookupHmacKeyStatePublisher', () => {
     failGenerationWrite = false;
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
+      readFileSync(
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
+        'utf8'
+      )
     );
     database.exec(
       `INSERT INTO control_environments (

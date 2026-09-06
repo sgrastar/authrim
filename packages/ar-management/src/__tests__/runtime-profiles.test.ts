@@ -163,8 +163,8 @@ describe('runtime profile admin handlers', () => {
     env.DB_PII = {} as D1Database;
     env.DB_ADMIN = {} as D1Database;
     env.AUTHRIM_REGISTERED_SCHEMA_REFS = JSON.stringify([
-      'binding:DB_PII:d1-pii',
-      'binding:DB_ADMIN:d1-admin',
+      'binding:DB_PII:pii-d1',
+      'binding:DB_ADMIN:admin-d1',
     ]);
 
     for (const profileId of ['pii-d1-audit', 'admin-d1-audit']) {

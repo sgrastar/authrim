@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { renderLookupBucketCounterSeed } from '@authrim/ar-lib-core/services/lookup-directory/seed-sql';
 import { splitMigrationSql } from '../migration-sql.js';
 
 describe('splitMigrationSql', () => {
@@ -29,6 +30,19 @@ describe('splitMigrationSql', () => {
     expect(statements).toHaveLength(4);
     expect(statements[2]).toContain('UPDATE source');
     expect(statements[2]).toMatch(/END;$/u);
+  });
+
+  it('keeps a recursive seed CTE as one executable statement', () => {
+    const generated = renderLookupBucketCounterSeed({
+      dialect: 'sqlite',
+      nowExpression: 'unixepoch()',
+    });
+    const statements = splitMigrationSql(generated);
+
+    expect(statements).toHaveLength(1);
+    expect(statements[0]).toContain('INSERT INTO lookup_bucket_counters');
+    expect(statements[0]).toMatch(/lookup_bucket_seed;$/u);
+    expect(new TextEncoder().encode(statements[0]).byteLength).toBeLessThan(100_000);
   });
 
   it('fails closed for explicit transaction control and malformed input', () => {

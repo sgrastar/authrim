@@ -73,6 +73,8 @@ export interface WorkerDeploymentReadinessResult {
 export interface WorkerHttpReadinessTarget {
   workerName: string;
   url: string;
+  /** Treat an explicit HTTP redirect as proof that a browser-entry Worker is reachable. */
+  allowRedirectResponse?: boolean;
 }
 
 export interface WorkerHttpReadinessResult {
@@ -83,6 +85,8 @@ export interface WorkerHttpReadinessResult {
   failedWorkers: Array<{ workerName: string; url: string; error: string }>;
   error?: string;
 }
+
+const BROWSER_ENTRY_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 const APP_WORKER_HEALTH_PATHS: Record<string, string> = {
   'ar-auth': '/api/auth/health',
@@ -641,6 +645,7 @@ export async function waitForWorkerHttpReady(options: {
         try {
           const requestInit = {
             method: 'GET',
+            redirect: target.allowRedirectResponse ? ('manual' as const) : ('follow' as const),
             headers: {
               Accept: 'application/json',
               'Cache-Control': 'no-cache',
@@ -653,7 +658,10 @@ export async function waitForWorkerHttpReady(options: {
             if (!options.allowPublicDnsFallback || !isDnsResolutionError(error)) throw error;
             response = await fetchWithPublicDns(target.url, requestInit, requestTimeoutMs);
           }
-          if (response.ok) {
+          if (
+            response.ok ||
+            (target.allowRedirectResponse && BROWSER_ENTRY_REDIRECT_STATUSES.has(response.status))
+          ) {
             return null;
           }
           if (

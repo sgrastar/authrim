@@ -350,9 +350,7 @@ describe('setup-managed Control token environment cleanup', () => {
         controlDatabaseName: 'test-authrim-control-db',
         dependencies: dependencies({ authority: fake.authority, readAuthority }),
       })
-    ).rejects.toThrow(
-      'control_token_cleanup_authority_unavailable_manual_recovery_required'
-    );
+    ).rejects.toThrow('control_token_cleanup_authority_unavailable_manual_recovery_required');
     expect(readAuthority).toHaveBeenCalledOnce();
     expectNoProviderAccess(fake);
   });

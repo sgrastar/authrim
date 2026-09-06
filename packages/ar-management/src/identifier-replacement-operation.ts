@@ -1,5 +1,6 @@
 import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 import type { LookupBlindIndex } from '@authrim/ar-lib-core';
+import { LOOKUP_MAX_VIRTUAL_BUCKET } from '@authrim/ar-lib-core/services/lookup-directory/contract';
 
 const SAFE_ID = /^[a-zA-Z0-9_-][a-zA-Z0-9._:-]{0,127}$/u;
 const HEX_64 = /^[a-f0-9]{64}$/u;
@@ -72,7 +73,7 @@ function exactIndexes(
       index.hmacKeyGeneration < 1 ||
       !Number.isSafeInteger(index.virtualBucket) ||
       index.virtualBucket < 0 ||
-      index.virtualBucket > 4095 ||
+      index.virtualBucket > LOOKUP_MAX_VIRTUAL_BUCKET ||
       !HEX_64.test(index.digest) ||
       generations.has(index.hmacKeyGeneration)
     ) {

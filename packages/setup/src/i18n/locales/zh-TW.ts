@@ -868,6 +868,8 @@ const zhTW: Translations = {
   'web.envDetail.automaticProvisioningRepairHint': '請輸入新的一次性 token 進行修復。',
   'web.envDetail.bootstrapRetainedForRetry':
     'Cloudflare 發生暫時性錯誤。Bootstrap token 仍然有效；請重新輸入相同 token 並選擇「啟用」以繼續。',
+  'web.envDetail.bootstrapNotSubmittedForRetry':
+    'Setup 在提交 Bootstrap token 前停止。Token 仍保留在輸入欄中，可直接重試。',
   'web.envDetail.revokeTokensBeforeRetry':
     '重試前，請在 Cloudflare Dashboard 撤銷列出的 Authrim bootstrap token 與子 token。',
   'web.envDetail.bootstrapRevokedPendingReset': 'Bootstrap token 已撤銷，但無法重設待處理狀態。',

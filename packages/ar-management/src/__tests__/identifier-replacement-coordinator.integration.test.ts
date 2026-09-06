@@ -109,10 +109,15 @@ describe('IdentifierReplacementCoordinator', () => {
     pii = new DatabaseSync(':memory:');
     oldLookup = new DatabaseSync(':memory:');
     newLookup = new DatabaseSync(':memory:');
-    pii.exec(readFileSync(resolve(REPO_ROOT, 'migrations/pii/001_0_4_0_pii_baseline.sql'), 'utf8'));
+    pii.exec(
+      readFileSync(resolve(REPO_ROOT, 'migrations/pii/d1/001_0_4_0_pii_baseline.sql'), 'utf8')
+    );
     for (const database of [oldLookup, newLookup]) {
       database.exec(
-        readFileSync(resolve(REPO_ROOT, 'migrations/lookup/001_0_4_0_lookup_baseline.sql'), 'utf8')
+        readFileSync(
+          resolve(REPO_ROOT, 'migrations/lookup/d1/001_0_4_0_lookup_baseline.sql'),
+          'utf8'
+        )
           .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
           .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
       );

@@ -15,11 +15,11 @@ import {
 const oldManifestChecksum = 'a'.repeat(64);
 const firstChecksum = '1'.repeat(64);
 const secondChecksum = '2'.repeat(64);
-const targetId = 'd1:core-id:d1-core';
+const targetId = 'd1:core-id:core-d1';
 
 const target: ReleaseMigrationPhysicalTarget = {
   id: targetId,
-  streamId: 'd1-core',
+  streamId: 'core-d1',
   driver: 'd1',
   scope: 'deployment',
   logicalRoles: ['core'],
@@ -31,9 +31,18 @@ const target: ReleaseMigrationPhysicalTarget = {
 
 function manifest(files: Array<{ path: string; checksum: string }>): ReleaseMigrationManifest {
   return {
-    formatVersion: 1,
+    formatVersion: 2,
     productVersion: '0.4.0',
-    streams: [{ id: 'd1-core', dialect: 'sqlite', logicalRoles: ['core'], files }],
+    streams: [
+      {
+        id: 'core-d1',
+        schemaFamily: 'core',
+        dialect: 'sqlite',
+        targetKind: 'cloudflare-d1',
+        logicalRoles: ['core', 'tenant_core'],
+        files,
+      },
+    ],
   };
 }
 
@@ -58,7 +67,7 @@ function interruptedLock(): AuthrimLock {
       [targetId]: {
         productVersion: '0.4.0',
         manifestChecksum: oldManifestChecksum,
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         files: [{ path: '001.sql', checksum: firstChecksum }],
         appliedBy: 'automatic',
         updatedAt: '2026-08-31T00:01:00.000Z',
@@ -99,7 +108,7 @@ describe('append-only initial draft resume', () => {
       manualTargetIds: new Set(),
       productVersion: '0.4.0',
       manifestChecksum: currentManifestChecksum,
-      targetStreamIds: new Map([[targetId, 'd1-core']]),
+      targetStreamIds: new Map([[targetId, 'core-d1']]),
       manifest: current,
     });
     const advanced = withReleaseUpdateState(withTargets, {
@@ -144,7 +153,7 @@ describe('append-only initial draft resume', () => {
       reason: 'target_evidence_missing',
     });
     const unknownAppliedTarget = interruptedLock();
-    unknownAppliedTarget.releaseUpdate!.appliedTargets = [targetId, 'd1:unknown:d1-core'];
+    unknownAppliedTarget.releaseUpdate!.appliedTargets = [targetId, 'd1:unknown:core-d1'];
     expect(assess(unknownAppliedTarget, current)).toEqual({
       allowed: false,
       reason: 'target_evidence_missing',
@@ -154,7 +163,7 @@ describe('append-only initial draft resume', () => {
         lock: interruptedLock(),
         currentManifest: current,
         currentManifestChecksum: calculateReleaseManifestChecksum(current),
-        currentTargets: [{ ...target, id: 'd1:other-id:d1-core' }],
+        currentTargets: [{ ...target, id: 'd1:other-id:core-d1' }],
         currentManifestIsDraft: true,
       }).allowed
     ).toBe(false);

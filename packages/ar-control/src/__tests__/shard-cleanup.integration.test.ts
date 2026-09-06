@@ -92,7 +92,7 @@ function d1(database: DatabaseSync): D1Database {
 }
 
 function applyControlMigrations(database: DatabaseSync): void {
-  const directory = resolve(REPO_ROOT, 'migrations/control');
+  const directory = resolve(REPO_ROOT, 'migrations/control/d1');
   for (const filename of readdirSync(directory)
     .filter((name) => name.endsWith('.sql'))
     .sort()) {

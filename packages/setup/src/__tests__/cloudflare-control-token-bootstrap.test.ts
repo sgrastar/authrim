@@ -2373,6 +2373,42 @@ describe('Cloudflare Control token bootstrap', () => {
     });
   });
 
+  it('restores one exact immutable secret generation before a managed code redeploy', async () => {
+    const calls: string[][] = [];
+    let activeVersion = 'version-code';
+    const sink = new WranglerControlSecretSink({
+      workerName: 'test-ar-control',
+      cwd: '/workspace',
+      runner: async (_command, args) => {
+        calls.push([...args]);
+        if (args.includes('view')) {
+          return { stdout: JSON.stringify({ id: 'version-secret' }) };
+        }
+        if (args.includes('deploy') && args.includes('version-secret@100%')) {
+          activeVersion = 'version-secret';
+          return { stdout: 'Deployed version-secret' };
+        }
+        if (args.includes('deployments') && args.includes('status')) {
+          return {
+            stdout: JSON.stringify({
+              id: activeVersion === 'version-secret' ? 'deployment-restored' : 'deployment-code',
+              versions: [{ version_id: activeVersion, percentage: 100 }],
+            }),
+          };
+        }
+        return { stdout: '' };
+      },
+    });
+
+    await expect(
+      sink.activateGeneration({ deploymentId: 'deployment-secret', versionId: 'version-secret' })
+    ).resolves.toEqual({ deploymentId: 'deployment-restored', versionId: 'version-secret' });
+    expect(calls.some((args) => args.includes('view') && args.includes('version-secret'))).toBe(
+      true
+    );
+    expect(calls.some((args) => args.includes('version-secret@100%'))).toBe(true);
+  });
+
   it('uses a visible Wrangler log level for JSON secret-list output', async () => {
     const sink = new WranglerControlSecretSink({
       workerName: 'test-ar-control',

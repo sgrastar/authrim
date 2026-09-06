@@ -2610,6 +2610,12 @@ function setupWorkerBindingFailure(error: unknown): {
   if (status === 401 || status === 403) {
     return { code: 'control_workers_capability_rejected', permanent: true };
   }
+  // A desired Worker can legitimately be absent while an initial deployment is still placing the
+  // dependency graph. Treat provider 404 as propagation/deployment progress, not a permanent
+  // settings rejection; the exact post-deploy evidence gate still prevents accepting it early.
+  if (status === 404) {
+    return { code: 'control_worker_active_deployment_missing', permanent: false };
+  }
   if (
     typeof status === 'number' &&
     status >= 400 &&

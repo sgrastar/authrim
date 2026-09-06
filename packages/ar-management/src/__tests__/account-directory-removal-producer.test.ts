@@ -238,16 +238,23 @@ describe('account directory removal producer', () => {
         expect.stringContaining("normalized_value_json = 'null'"),
         expect.stringContaining('value_json = NULL'),
         expect.stringContaining('DELETE FROM linked_identities'),
+        expect.stringContaining('DELETE FROM pairwise_subject_identifiers'),
         expect.stringContaining('DELETE FROM subject_identifiers'),
       ])
     );
+    const pairwiseSubjectDelete = calls.find((call) =>
+      call.sql.includes('DELETE FROM pairwise_subject_identifiers')
+    );
+    expect(pairwiseSubjectDelete).toEqual({
+      sql: expect.stringContaining('tenant_parent.tenant_id = ?'),
+      params: ['tenant-a', 'user-a', 'tenant-a'],
+    });
     const subjectDelete = calls.find((call) =>
       call.sql.includes('DELETE FROM subject_identifiers')
     );
     expect(subjectDelete).toEqual({
-      sql: expect.stringContaining('tenant_parent.tenant_id = ?'),
-      params: ['user-a', 'tenant-a'],
+      sql: expect.stringContaining('tenant_id = ? AND subject_id = ?'),
+      params: ['tenant-a', 'user-a'],
     });
-    expect(subjectDelete?.sql).not.toContain('subject_identifiers.tenant_id');
   });
 });

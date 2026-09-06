@@ -31,6 +31,7 @@ import type {
   ControlTenantShardAllocationScope,
   ControlWorkerInventoryDriftReviewRequest,
 } from '@authrim/ar-lib-core/control-plane';
+import { migrationStreamIdForControlDataRole } from '@authrim/ar-lib-core/control-plane';
 
 export interface EnvironmentRow {
   environment_id: string;
@@ -200,7 +201,7 @@ interface PendingMigrationRow {
   shard_id: string;
   environment_id: string;
   provider_database_id: string;
-  stream_id: 'd1-core' | 'd1-pii' | 'd1-lookup';
+  stream_id: 'core-d1' | 'pii-d1' | 'lookup-d1';
   release_id: string;
   manifest_digest: string;
   manifest_r2_object_key: string;
@@ -530,12 +531,7 @@ function planFromPendingRow(row: PendingPlanRow): TenantShardPlan {
     locationHint: row.location_hint ?? undefined,
     idempotencyKey: row.idempotency_key,
     readReplicationMode: row.read_replication_mode,
-    migrationStreamId:
-      row.data_role === 'tenant_pii'
-        ? 'd1-pii'
-        : row.data_role === 'lookup'
-          ? 'd1-lookup'
-          : 'd1-core',
+    migrationStreamId: migrationStreamIdForControlDataRole(row.data_role),
   };
 }
 
@@ -1764,7 +1760,7 @@ export class D1ControlRepository implements ControlRepository {
         .bind(operation.operation_id)
         .all<{
           target_id: string;
-          stream_id: 'd1-core' | 'd1-pii' | 'd1-lookup';
+          stream_id: 'core-d1' | 'pii-d1' | 'lookup-d1';
           attempt_count: number;
           last_error_code: string;
           updated_at: number;

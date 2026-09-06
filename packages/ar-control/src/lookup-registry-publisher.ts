@@ -4,6 +4,7 @@ import {
   signLookupShardRegistry,
   type LookupShardRegistryRange,
 } from '@authrim/ar-lib-core';
+import { LOOKUP_VIRTUAL_BUCKET_COUNT } from '@authrim/ar-lib-core/services/lookup-directory/contract';
 import type { JWK } from 'jose';
 import type { ControlEnv } from './types';
 
@@ -72,7 +73,9 @@ export function runtimeRegistryPrivateJwk(env: ControlEnv): JWK {
 }
 
 function ranges(rows: AssignmentRow[]): LookupShardRegistryRange[] {
-  if (rows.length !== 4096) throw new Error('lookup_registry_assignment_coverage_incomplete');
+  if (rows.length !== LOOKUP_VIRTUAL_BUCKET_COUNT) {
+    throw new Error('lookup_registry_assignment_coverage_incomplete');
+  }
   const result: LookupShardRegistryRange[] = [];
   for (let bucket = 0; bucket < rows.length; bucket += 1) {
     const row = rows[bucket];
@@ -131,8 +134,8 @@ export class LookupRegistryPublisher {
          LEFT JOIN control_lookup_registry_publications publication
            ON publication.environment_id = assignment.environment_id
         GROUP BY assignment.environment_id
-        HAVING COUNT(*) = 4096
-           AND SUM(CASE WHEN shard.status = 'active' THEN 1 ELSE 0 END) = 4096
+        HAVING COUNT(*) = ${LOOKUP_VIRTUAL_BUCKET_COUNT}
+           AND SUM(CASE WHEN shard.status = 'active' THEN 1 ELSE 0 END) = ${LOOKUP_VIRTUAL_BUCKET_COUNT}
         ORDER BY CASE
                    WHEN publication.environment_id IS NULL THEN 0
                    WHEN publication.status = 'publishing' THEN 1

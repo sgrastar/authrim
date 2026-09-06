@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { createLogger } from '@authrim/ar-lib-core';
+import { LOOKUP_MAX_VIRTUAL_BUCKET } from '@authrim/ar-lib-core/services/lookup-directory/contract';
 import {
   assertControlPlaneRecordIsSecretFree,
   ApiMigrationEngine,
@@ -1026,7 +1027,7 @@ function lookupBucket(input: unknown): number {
   if (
     !Number.isSafeInteger(value.virtualBucket) ||
     (value.virtualBucket as number) < 0 ||
-    (value.virtualBucket as number) > 4095
+    (value.virtualBucket as number) > LOOKUP_MAX_VIRTUAL_BUCKET
   ) {
     throw new Error('invalid_lookup_bucket_route_request');
   }

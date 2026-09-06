@@ -11,11 +11,18 @@ import { writeFileSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import {
   assertProductVersionOpenForNewMigrations,
+  streamDirectory,
   syncDraftReleaseMigrationManifest,
 } from '../packages/setup/src/core/release-migrations.js';
+import {
+  isMigrationStreamId,
+  migrationStreamContract,
+} from '../packages/ar-lib-core/src/services/control-plane/migration-stream-contract.js';
 
 function main() {
   const description = process.argv[2];
+  const streamIndex = process.argv.indexOf('--stream');
+  const streamId = streamIndex >= 0 ? process.argv[streamIndex + 1] : 'core-d1';
 
   if (!description) {
     console.error('❌ Error: Migration description required\n');
@@ -33,11 +40,18 @@ function main() {
     process.exit(1);
   }
 
-  const migrationsDir = join(process.cwd(), 'migrations');
+  if (!isMigrationStreamId(streamId)) {
+    console.error(`❌ Error: Unknown migration stream: ${String(streamId)}`);
+    process.exit(1);
+  }
+  const stream = migrationStreamContract(streamId);
+  const migrationsRoot = join(process.cwd(), 'migrations');
+  const migrationsDir = streamDirectory(migrationsRoot, stream.id);
+  if (!migrationsDir) throw new Error(`Unknown migration stream: ${stream.id}`);
   const rootPackage = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf-8')) as {
     version: string;
   };
-  assertProductVersionOpenForNewMigrations(migrationsDir, rootPackage.version, {
+  assertProductVersionOpenForNewMigrations(migrationsRoot, rootPackage.version, {
     repositoryRoot: process.cwd(),
   });
 
@@ -101,10 +115,10 @@ function main() {
   try {
     writeFileSync(filepath, template, 'utf-8');
     syncDraftReleaseMigrationManifest({
-      migrationsRoot: migrationsDir,
+      migrationsRoot,
       productVersion: rootPackage.version,
     });
-    console.log(`✅ Created migration: ${filename}\n`);
+    console.log(`✅ Created migration: ${stream.id}/${filename}\n`);
     console.log('📝 Next steps:');
     console.log(`   1. Edit: ${filepath}`);
     console.log('   2. Add SQL statements in "Up Migration" section');

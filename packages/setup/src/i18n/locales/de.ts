@@ -923,6 +923,8 @@ const de: Translations = {
     'Geben Sie zur Reparatur ein neues einmaliges Token ein.',
   'web.envDetail.bootstrapRetainedForRetry':
     'Cloudflare hat einen vorübergehenden Fehler zurückgegeben. Das Bootstrap-Token bleibt aktiv; geben Sie dasselbe Token erneut ein und wählen Sie Aktivieren, um fortzufahren.',
+  'web.envDetail.bootstrapNotSubmittedForRetry':
+    'Setup wurde vor dem Senden des Bootstrap-Tokens angehalten. Es bleibt im Eingabefeld und kann erneut verwendet werden.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Widerrufen Sie die genannten Authrim-Bootstrap- und Child-Tokens im Cloudflare Dashboard vor dem erneuten Versuch.',
   'web.envDetail.bootstrapRevokedPendingReset':

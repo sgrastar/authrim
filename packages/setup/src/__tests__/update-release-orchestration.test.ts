@@ -32,8 +32,8 @@ import {
 function plan(): ReleaseSchemaUpdatePlan {
   const automatic = {
     target: {
-      id: 'd1:core:d1-core',
-      streamId: 'd1-core',
+      id: 'd1:core:core-d1',
+      streamId: 'core-d1',
       driver: 'd1' as const,
       scope: 'deployment' as const,
       logicalRoles: ['core'],
@@ -46,7 +46,7 @@ function plan(): ReleaseSchemaUpdatePlan {
   const postgres = {
     target: {
       id: 'external:postgres:core-primary',
-      streamId: 'external-postgres-core',
+      streamId: 'core-postgresql',
       driver: 'postgres' as const,
       scope: 'external' as const,
       logicalRoles: ['core'],
@@ -156,6 +156,25 @@ describe('release update orchestration', () => {
     expect(lockedConfigIdentity).toBeGreaterThan(operationLock);
     expect(source).toContain('loginUi: lockedConfig.components.loginUi ?? true');
     expect(source).toContain('const workersDevEnabled = !lockedConfig.urls?.api?.custom;');
+  });
+
+  it('checkpoints and advances Control token generations around coordinator redeploys', async () => {
+    const source = await readFile(new URL('../cli/commands/update.ts', import.meta.url), 'utf-8');
+    const checkpoint = source.indexOf('checkpointReadyControlTokenGenerationForRedeploy({');
+    const deploy = source.indexOf(
+      'await deployAll(deployOptions, deploymentGroups.coordinator)',
+      checkpoint
+    );
+    const commit = source.indexOf('commitReadyControlTokenGenerationRedeploy({', deploy);
+    const lockAdvance = source.indexOf(
+      'workingLock = updateLockWithDeploymentsAndVersions(',
+      commit
+    );
+
+    expect(checkpoint).toBeGreaterThan(0);
+    expect(deploy).toBeGreaterThan(checkpoint);
+    expect(commit).toBeGreaterThan(deploy);
+    expect(lockAdvance).toBeGreaterThan(commit);
   });
 
   it('requires exact immutable Cloudflare identities before a release mutation', () => {
@@ -279,15 +298,15 @@ describe('release update orchestration', () => {
 
   it('redeploys Control when managed schema work exists even at the same product version', () => {
     expect(
-      includeRequiredReleaseControlCoordinator(['ar-management'], ['d1-core', 'd1-pii'], false)
+      includeRequiredReleaseControlCoordinator(['ar-management'], ['core-d1', 'pii-d1'], false)
     ).toEqual(['ar-management', 'ar-control']);
     expect(
-      includeRequiredReleaseControlCoordinator(['ar-control', 'ar-management'], ['d1-core'], false)
+      includeRequiredReleaseControlCoordinator(['ar-control', 'ar-management'], ['core-d1'], false)
     ).toEqual(['ar-control', 'ar-management']);
     expect(includeRequiredReleaseControlCoordinator(['ar-management'], [], false)).toEqual([
       'ar-management',
     ]);
-    expect(includeRequiredReleaseControlCoordinator(['ar-management'], ['d1-core'], true)).toEqual([
+    expect(includeRequiredReleaseControlCoordinator(['ar-management'], ['core-d1'], true)).toEqual([
       'ar-management',
     ]);
   });
@@ -307,8 +326,8 @@ describe('release update orchestration', () => {
   it('applies the Control schema before other setup-owned schemas and excludes tenant targets', () => {
     const control = {
       target: {
-        id: 'd1:control:d1-control',
-        streamId: 'd1-control',
+        id: 'd1:control:control-d1',
+        streamId: 'control-d1',
         driver: 'd1' as const,
         scope: 'deployment' as const,
         logicalRoles: ['control'],
@@ -322,8 +341,8 @@ describe('release update orchestration', () => {
       ...control,
       target: {
         ...control.target,
-        id: 'd1:admin:d1-admin',
-        streamId: 'd1-admin',
+        id: 'd1:admin:admin-d1',
+        streamId: 'admin-d1',
         logicalRoles: ['admin'],
         databaseName: 'admin',
       },
@@ -332,8 +351,8 @@ describe('release update orchestration', () => {
       ...control,
       target: {
         ...control.target,
-        id: 'tenant:core:d1-core',
-        streamId: 'd1-core',
+        id: 'tenant:core:core-d1',
+        streamId: 'core-d1',
         scope: 'tenant' as const,
         logicalRoles: ['core'],
         databaseName: 'tenant-core',
@@ -489,7 +508,7 @@ describe('release update orchestration', () => {
         manifestChecksum: 'a'.repeat(64),
         startedAt: '2026-07-21T00:00:00.000Z',
         updatedAt: '2026-07-21T00:01:00.000Z',
-        appliedTargets: ['d1:core:d1-core'],
+        appliedTargets: ['d1:core:core-d1'],
         manualTargets: ['external:postgres:core-primary'],
       },
       acknowledgeExternal: false,
@@ -675,9 +694,9 @@ describe('release update orchestration', () => {
         ...plan().blockedTargets[1].target,
         id: 'external:postgres:missing-stream',
         driver: 'postgres' as const,
-        streamId: 'external-postgres-core',
+        streamId: 'core-postgresql',
       },
-      blockedReason: 'release_migration_stream_not_found:external-postgres-core',
+      blockedReason: 'release_migration_stream_not_found:core-postgresql',
     };
     const missingStreamPlan: ReleaseSchemaUpdatePlan = {
       productVersion: '1.1.0',
@@ -697,36 +716,40 @@ describe('release update orchestration', () => {
   it('persists schema target versions and advances productVersion only after verification', () => {
     const checksum = 'b'.repeat(64);
     const manifest = {
-      formatVersion: 1 as const,
+      formatVersion: 2 as const,
       productVersion: '1.1.0',
       streams: [
         {
-          id: 'd1-core',
-          dialect: 'sqlite' as const,
-          logicalRoles: ['core'],
+          id: 'core-d1',
+          schemaFamily: 'core',
+          dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
           files: [{ path: '002_next.sql', checksum: 'c'.repeat(64) }],
         },
         {
-          id: 'external-postgres-core',
-          dialect: 'postgres' as const,
-          logicalRoles: ['core'],
+          id: 'core-postgresql',
+          schemaFamily: 'core',
+          dialect: 'postgresql',
+          targetKind: 'postgresql-connection',
+          logicalRoles: ['core', 'custom', 'policy'],
           files: [{ path: '002_next.sql', checksum: 'd'.repeat(64) }],
         },
       ],
     };
     const schemaApplied = withSchemaTargetStates(lock(), {
-      targetIds: ['d1:core:d1-core', 'external:postgres:core-primary'],
+      targetIds: ['d1:core:core-d1', 'external:postgres:core-primary'],
       manualTargetIds: new Set(['external:postgres:core-primary']),
       productVersion: '1.1.0',
       manifestChecksum: checksum,
       targetStreamIds: new Map([
-        ['d1:core:d1-core', 'd1-core'],
-        ['external:postgres:core-primary', 'external-postgres-core'],
+        ['d1:core:core-d1', 'core-d1'],
+        ['external:postgres:core-primary', 'core-postgresql'],
       ]),
       manifest,
     });
     expect(schemaApplied.productVersion).toBe('1.0.0');
-    expect(schemaApplied.schemaTargets?.['d1:core:d1-core']?.appliedBy).toBe('automatic');
+    expect(schemaApplied.schemaTargets?.['d1:core:core-d1']?.appliedBy).toBe('automatic');
     expect(schemaApplied.schemaTargets?.['external:postgres:core-primary']?.appliedBy).toBe(
       'operator'
     );

@@ -421,7 +421,7 @@ Apply every external PostgreSQL SQL file shown by `--dry-run` to its target data
 
 ```sh
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -f migrations/external/postgres/001_0_4_0_external_postgres_core_baseline.sql
+  -f migrations/core/postgresql/001_0_4_0_core_baseline.sql
 ```
 
 Use the actual file shown by `--dry-run`. If Core and PII use different databases, apply each SQL file
@@ -587,9 +587,11 @@ next product version before adding SQL. New SQL cannot be added to a published v
 | Root `package.json`                      | Authrim product version           |
 | `packages/*/package.json`                | Package versions                  |
 | `migrations/*.sql`                       | Core D1 SQL                       |
-| `migrations/pii/*.sql`                   | PII D1 SQL                        |
-| `migrations/admin/*.sql`                 | Admin D1 SQL                      |
-| `migrations/external/postgres/*.sql`     | External PostgreSQL SQL           |
+| `migrations/core/d1/*.sql`               | Core D1 SQL                       |
+| `migrations/pii/d1/*.sql`                | PII D1 SQL                        |
+| `migrations/admin/d1/*.sql`              | Admin D1 SQL                      |
+| `migrations/core/postgresql/*.sql`       | Core PostgreSQL SQL               |
+| `migrations/pii/postgresql/*.sql`        | PII PostgreSQL SQL                |
 | `migrations/release-manifest.draft.json` | Development SQL file list         |
 | `migrations/releases/<version>.json`     | Fixed SQL file list for a release |
 

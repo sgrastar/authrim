@@ -25,14 +25,16 @@ export interface ConfigureDownstreamIntrospectionDeploymentOptions {
   apiBaseUrls?: string[];
   /** Router origins already verified earlier in this deployment operation. */
   knownRouterReadyBaseUrls?: string[];
-  /** One shared budget for every optional-integration readiness candidate and phase. */
+  /** One shared budget for all routing-readiness candidates. */
   readinessBudgetMs?: number;
+  /** Separate budget reserved for Admin token and client provisioning after routing is ready. */
+  clientBudgetMs?: number;
   tenantId?: string;
   dryRun?: boolean;
   deployConfigLockProof?: DeployConfigLockProof;
   workerScriptOwnership?: WorkerScriptOwnershipGuard;
   onProgress?: (message: string) => void;
-  /** Raw readiness and provider errors for persisted detailed logs only. */
+  /** Secret-free readiness and provider diagnostics for persisted detailed logs only. */
   onDetail?: (message: string) => void;
 }
 
@@ -47,6 +49,8 @@ export interface ConfigureDownstreamIntrospectionDeploymentResult {
   impact?: string;
   retryable?: boolean;
   nextAction?: string;
+  /** Stable, secret-free diagnostic retained when the retry deadline is reached. */
+  diagnosticCode?: string;
 }
 
 const DOWNSTREAM_INTROSPECTION_IMPACT =
@@ -54,6 +58,7 @@ const DOWNSTREAM_INTROSPECTION_IMPACT =
 const DOWNSTREAM_INTROSPECTION_NEXT_ACTION =
   'Rerun deploy to retry the optional integration after routing propagation completes.';
 const DEFAULT_DOWNSTREAM_READINESS_BUDGET_MS = 60_000;
+const DEFAULT_DOWNSTREAM_CLIENT_BUDGET_MS = 60_000;
 
 export function createDownstreamIntrospectionFailure(
   error: string,
@@ -120,8 +125,16 @@ async function resolveDownstreamIntrospectionApiBaseUrlCandidates(
   explicitApiBaseUrl?: string,
   explicitApiBaseUrls?: string[]
 ): Promise<string[]> {
-  const fallbackBaseUrl = await resolveDownstreamIntrospectionApiBaseUrl(env, explicitApiBaseUrl);
-  const candidates = [...(explicitApiBaseUrls ?? []), fallbackBaseUrl];
+  const configuredCandidates = (explicitApiBaseUrls ?? []).filter(
+    (candidate) => candidate.trim().length > 0
+  );
+  // A purpose-aware candidate list is authoritative. In particular, tenant-scoped resolution
+  // deliberately excludes an environment-level custom domain when the host selects the tenant.
+  // Re-appending the generic fallback here makes that safety decision ineffective.
+  const candidates =
+    configuredCandidates.length > 0
+      ? configuredCandidates
+      : [await resolveDownstreamIntrospectionApiBaseUrl(env, explicitApiBaseUrl)];
   const seen = new Set<string>();
 
   return candidates
@@ -160,6 +173,7 @@ export async function configureDownstreamIntrospectionDeployment(
     options.readinessBudgetMs ?? DEFAULT_DOWNSTREAM_READINESS_BUDGET_MS,
     0
   );
+  const clientBudgetMs = Math.max(options.clientBudgetMs ?? DEFAULT_DOWNSTREAM_CLIENT_BUDGET_MS, 0);
   const readinessDeadlineAt = Date.now() + readinessBudgetMs;
   const readinessController = new AbortController();
 
@@ -252,12 +266,15 @@ export async function configureDownstreamIntrospectionDeployment(
   if (readyApiBaseUrl) {
     const apiBaseUrl = readyApiBaseUrl;
     onProgress?.('Configuring downstream grant introspection...');
+    // Routing propagation must not consume the budget needed for setup-machine authentication
+    // and Admin API client reconciliation. Both phases remain bounded independently.
+    const clientDeadlineAt = Date.now() + clientBudgetMs;
     const introspectionClientResult = await ensureDownstreamIntrospectionClient({
       apiBaseUrl,
       keysDir,
       tenantId,
       maxRetries: 24,
-      deadlineAt: readinessDeadlineAt,
+      deadlineAt: clientDeadlineAt,
       allowPublicDnsFallback: true,
       onProgress,
       onDetail,
@@ -267,7 +284,10 @@ export async function configureDownstreamIntrospectionDeployment(
       const detail = `${apiBaseUrl}: ${introspectionClientResult.error ?? 'Unknown downstream introspection client error'}`;
       errors.push(detail);
       onDetail?.(detail);
-      return createDownstreamIntrospectionFailure(detail);
+      return createDownstreamIntrospectionFailure(detail, {
+        diagnosticCode: introspectionClientResult.diagnosticCode,
+        retryable: introspectionClientResult.retryable ?? true,
+      });
     }
 
     const introspectionSecrets = await loadDownstreamIntrospectionClientSecrets(keysDir);

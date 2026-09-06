@@ -256,7 +256,7 @@ export type ConditionType =
 
 /**
  * Verified attribute for ABAC evaluation
- * Stored in verified_attributes table, populated by manual entry or VC (Phase 4+)
+ * Supplied from the canonical user_verified_attributes model for policy evaluation.
  */
 export interface VerifiedAttribute {
   /** Attribute name (e.g., 'age_over_18', 'subscription_tier') */

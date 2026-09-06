@@ -10,6 +10,7 @@ import {
   type LookupBlindIndex,
   type LookupIdentifierKind,
 } from './blind-index';
+import { LOOKUP_MAX_VIRTUAL_BUCKET } from './contract.js';
 
 const HEX_DIGEST = /^[a-f0-9]{64}$/u;
 const KINDS = new Set<LookupIdentifierKind>(['email_exact', 'external_subject', 'account_id']);
@@ -245,7 +246,7 @@ export async function validateAccountDirectoryPublication(
       !HEX_DIGEST.test(index.digest) ||
       !Number.isSafeInteger(index.virtualBucket) ||
       index.virtualBucket < 0 ||
-      index.virtualBucket > 4095 ||
+      index.virtualBucket > LOOKUP_MAX_VIRTUAL_BUCKET ||
       (await lookupVirtualBucket(index.indexKind, index.digest)) !== index.virtualBucket
     ) {
       throw new Error('invalid_directory_publication_index');
@@ -324,7 +325,7 @@ export async function validateAccountDirectoryRemovalPublication(
       !HEX_DIGEST.test(index.digest) ||
       !Number.isSafeInteger(index.virtualBucket) ||
       index.virtualBucket < 0 ||
-      index.virtualBucket > 4095 ||
+      index.virtualBucket > LOOKUP_MAX_VIRTUAL_BUCKET ||
       (await lookupVirtualBucket(index.indexKind, index.digest)) !== index.virtualBucket
     ) {
       throw new Error('invalid_directory_removal_index');

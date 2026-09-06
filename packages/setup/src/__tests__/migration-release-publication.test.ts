@@ -29,22 +29,24 @@ function temporaryRelease(): { migrationsRoot: string; manifestPath: string } {
   const migrationsRoot = mkdtempSync(join(tmpdir(), 'authrim-release-publication-'));
   temporaryDirectories.push(migrationsRoot);
   for (const directory of [
-    'admin',
-    'control',
-    'lookup',
-    'pii',
-    'plugin-runner',
-    'external/postgres',
+    'core/d1',
+    'core/postgresql',
+    'admin/d1',
+    'control/d1',
+    'lookup/d1',
+    'pii/d1',
+    'pii/postgresql',
+    'plugin-runner/d1',
   ]) {
     mkdirSync(join(migrationsRoot, directory), { recursive: true });
   }
   writeFileSync(
-    join(migrationsRoot, '001_core.sql'),
+    join(migrationsRoot, 'core/d1/001_core.sql'),
     'CREATE TABLE core_record (created_at INTEGER DEFAULT __AUTHRIM_NOW_EPOCH_SECONDS__);\n'
   );
-  writeFileSync(join(migrationsRoot, 'pii/001_pii.sql'), 'CREATE TABLE pii_record (id TEXT);\n');
+  writeFileSync(join(migrationsRoot, 'pii/d1/001_pii.sql'), 'CREATE TABLE pii_record (id TEXT);\n');
   writeFileSync(
-    join(migrationsRoot, 'external/postgres/001_external.sql'),
+    join(migrationsRoot, 'core/postgresql/001_external.sql'),
     'CREATE TABLE external_record (id TEXT);\n'
   );
   const manifest = generateReleaseMigrationManifest({
@@ -69,7 +71,7 @@ function catalogArtifact(
     releaseId,
     manifestDigest,
     manifestObjectKey: input.objectKey ?? `releases/${releaseId}/${manifestDigest}/manifest.json`,
-    streamIds: ['d1-core', 'd1-pii'],
+    streamIds: ['core-d1', 'pii-d1'],
     objects: [],
   };
 }
@@ -118,7 +120,7 @@ function sqliteBatchExecutor(database: DatabaseSync) {
 function controlDatabase(): DatabaseSync {
   const database = new DatabaseSync(':memory:');
   database.exec(
-    readFileSync(resolve(ROOT_DIR, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
+    readFileSync(resolve(ROOT_DIR, 'migrations/control/d1/001_0_4_0_control_baseline.sql'), 'utf8')
   );
   database.exec(`INSERT INTO control_environments (
     environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at
@@ -137,9 +139,9 @@ describe('migration release artifact publication', () => {
     expect(plan.manifestObjectKey).toBe(
       `releases/${plan.releaseId}/${plan.manifestDigest}/manifest.json`
     );
-    expect(plan.streamIds).toEqual(['d1-core', 'd1-pii']);
-    expect(plan.objects.map((object) => object.objectKey)).not.toContain(
-      expect.stringContaining('external-postgres-core')
+    expect(plan.streamIds).toEqual(['core-d1', 'pii-d1']);
+    expect(plan.objects.map((object) => object.objectKey)).toContainEqual(
+      expect.stringContaining('core-postgresql')
     );
     const coreSql = plan.objects.find((object) => object.objectKey.endsWith('/001_core.sql'));
     expect(new TextDecoder().decode(coreSql?.bytes)).toContain('unixepoch()');
@@ -167,9 +169,9 @@ describe('migration release artifact publication', () => {
 
   it('rejects changed SQL before any object can be published', () => {
     const fixture = temporaryRelease();
-    writeFileSync(join(fixture.migrationsRoot, '001_core.sql'), 'SELECT 1;\n');
+    writeFileSync(join(fixture.migrationsRoot, 'core/d1/001_core.sql'), 'SELECT 1;\n');
     expect(() => buildMigrationReleaseArtifactPlan(fixture)).toThrow(
-      'migration_release_sql_checksum_mismatch:d1-core:001_core.sql'
+      'migration_release_sql_checksum_mismatch:core-d1:001_core.sql'
     );
   });
 
@@ -407,7 +409,7 @@ describe('migration release catalog activation', () => {
     expect(() =>
       buildMigrationReleaseCatalogPlan({
         environmentId: 'env-test',
-        artifact: { ...catalogArtifact(), streamIds: ['d1-core', '../pii'] },
+        artifact: { ...catalogArtifact(), streamIds: ['core-d1', '../pii'] },
         actorId: 'setup:test',
       })
     ).toThrow('migration_release_streams_invalid');
@@ -436,13 +438,13 @@ describe('migration release catalog activation', () => {
           .all()
       ).toEqual([
         {
-          stream_id: 'd1-core',
+          stream_id: 'core-d1',
           release_id: '0.4.0',
           manifest_digest: 'a'.repeat(64),
           state: 'active',
         },
         {
-          stream_id: 'd1-pii',
+          stream_id: 'pii-d1',
           release_id: '0.4.0',
           manifest_digest: 'a'.repeat(64),
           state: 'active',
@@ -459,7 +461,10 @@ describe('migration release catalog activation', () => {
   it('creates the minimum environment row before the first release registration', async () => {
     const database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(resolve(ROOT_DIR, 'migrations/control/001_0_4_0_control_baseline.sql'), 'utf8')
+      readFileSync(
+        resolve(ROOT_DIR, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
+        'utf8'
+      )
     );
     try {
       const plan = buildMigrationReleaseCatalogPlan({

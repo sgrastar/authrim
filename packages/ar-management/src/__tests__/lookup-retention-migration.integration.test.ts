@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 
 function migration(name: string): string {
-  return readFileSync(resolve(REPO_ROOT, 'migrations/lookup', name), 'utf8')
+  return readFileSync(resolve(REPO_ROOT, 'migrations/lookup/d1', name), 'utf8')
     .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
     .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()');
 }

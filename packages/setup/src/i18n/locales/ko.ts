@@ -892,6 +892,8 @@ const ko: Translations = {
   'web.envDetail.automaticProvisioningRepairHint': '복구하려면 새 일회용 토큰을 입력하세요.',
   'web.envDetail.bootstrapRetainedForRetry':
     'Cloudflare에서 일시적인 오류가 발생했습니다. Bootstrap token은 계속 활성 상태입니다. 같은 token을 다시 입력하고 활성화를 선택하여 재개하세요.',
+  'web.envDetail.bootstrapNotSubmittedForRetry':
+    'Bootstrap token을 제출하기 전에 Setup이 중지되었습니다. 입력란에 그대로 남아 있어 다시 시도할 수 있습니다.',
   'web.envDetail.revokeTokensBeforeRetry':
     '재시도 전에 Cloudflare Dashboard에서 표시된 Authrim bootstrap 및 하위 토큰을 폐기하세요.',
   'web.envDetail.bootstrapRevokedPendingReset':

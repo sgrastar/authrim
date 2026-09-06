@@ -17,6 +17,7 @@ import {
   type ResolvedLookupMembership,
   type AccountRouteProjection,
 } from '@authrim/ar-lib-core';
+import { LOOKUP_MAX_VIRTUAL_BUCKET } from '@authrim/ar-lib-core/services/lookup-directory/contract';
 import type { DirectoryJobProcessor } from './directory-scheduled';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
 import { loadLookupHmacRuntimeKeys } from './lookup-hmac-runtime';
@@ -843,7 +844,7 @@ async function verifyCurrentRow(input: {
     ? Math.max(...projection.targets.map((target) => target.requiredBindingRouteGeneration))
     : -1;
   if (
-    rowBucket > 4095 ||
+    rowBucket > LOOKUP_MAX_VIRTUAL_BUCKET ||
     !digestValid ||
     expectedBucket !== rowBucket ||
     !SAFE_ID.test(input.row.tenant_id) ||

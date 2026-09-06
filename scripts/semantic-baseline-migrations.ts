@@ -34,6 +34,19 @@ import {
   renderPortableMigrationSql,
   type MigrationSqlDialect,
 } from '../packages/setup/src/core/sql-portability.js';
+import {
+  assertCanonicalLookupBucketCounterSeed,
+  LOOKUP_VIRTUAL_BUCKET_COUNT,
+  type LookupBucketCounterSeedRow,
+} from '../packages/ar-lib-core/src/services/lookup-directory/contract.js';
+import { renderLookupBucketCounterSeed } from '../packages/ar-lib-core/src/services/lookup-directory/seed-sql.js';
+import {
+  migrationRendererDialect,
+  type MigrationManifestDialect,
+  type MigrationSchemaFamily,
+  type MigrationStreamId,
+  type MigrationTargetKind,
+} from '../packages/ar-lib-core/src/services/control-plane/migration-stream-contract.js';
 
 const POSTGRES_IMAGE = 'postgres:17-alpine';
 const MAX_SUBPROCESS_BUFFER = 128 * 1024 * 1024;
@@ -66,12 +79,14 @@ export interface SemanticMigrationCompositionEvidence {
 }
 
 interface SemanticBaselineEvidence {
-  formatVersion: 1;
+  formatVersion: 2;
   productVersion: string;
   compatibility: 'fresh_install_only';
   streams: Array<{
-    id: string;
-    dialect: MigrationSqlDialect;
+    id: MigrationStreamId;
+    schemaFamily: MigrationSchemaFamily;
+    dialect: MigrationManifestDialect;
+    targetKind: MigrationTargetKind;
     path: string;
     checksum: string;
     schemaChecksum: string;
@@ -82,14 +97,25 @@ interface SemanticBaselineEvidence {
 }
 
 const BASELINE_FILENAME_PARTS: Readonly<Record<string, readonly [string, string]>> = {
-  'd1-core': ['001', 'core_baseline.sql'],
-  'd1-pii': ['001', 'pii_baseline.sql'],
-  'd1-admin': ['001', 'admin_baseline.sql'],
-  'd1-control': ['001', 'control_baseline.sql'],
-  'd1-lookup': ['001', 'lookup_baseline.sql'],
-  'd1-plugin-runner': ['001', 'plugin_runner_baseline.sql'],
-  'external-postgres-core': ['001', 'external_postgres_core_baseline.sql'],
-  'external-postgres-pii': ['002', 'external_postgres_pii_baseline.sql'],
+  'core-d1': ['001', 'core_baseline.sql'],
+  'pii-d1': ['001', 'pii_baseline.sql'],
+  'admin-d1': ['001', 'admin_baseline.sql'],
+  'control-d1': ['001', 'control_baseline.sql'],
+  'lookup-d1': ['001', 'lookup_baseline.sql'],
+  'plugin-runner-d1': ['001', 'plugin_runner_baseline.sql'],
+  'core-postgresql': ['001', 'core_baseline.sql'],
+  'pii-postgresql': ['001', 'pii_baseline.sql'],
+};
+
+const LEGACY_STREAM_IDS: Readonly<Record<string, MigrationStreamId>> = {
+  'd1-core': 'core-d1',
+  'd1-pii': 'pii-d1',
+  'd1-admin': 'admin-d1',
+  'd1-control': 'control-d1',
+  'd1-lookup': 'lookup-d1',
+  'd1-plugin-runner': 'plugin-runner-d1',
+  'external-postgres-core': 'core-postgresql',
+  'external-postgres-pii': 'pii-postgresql',
 };
 
 export function semanticBaselinePath(productVersion: string, streamId: string): string {
@@ -176,7 +202,7 @@ function renderSourceSql(
 ): string {
   return renderDeterministicMigrationSql(
     readFileSync(join(streamRoot, file.path), 'utf8'),
-    stream.dialect
+    migrationRendererDialect(stream.dialect)
   );
 }
 
@@ -255,8 +281,104 @@ export function normalizePostgresDump(dump: string): string {
     .replaceAll(/\n{3,}/gu, '\n\n');
 }
 
+const LOOKUP_BUCKET_COUNTER_COLUMNS = [
+  'virtual_bucket',
+  'estimated_active_identifier_count',
+  'estimated_active_alias_count',
+  'exact_count_checked_at',
+  'reconciliation_cursor',
+  'reconciliation_error_code',
+  'updated_at',
+  'successful_route_publication_count',
+  'publication_counter_updated_at',
+] as const;
+
+function isLookupMigrationStream(stream: ReleaseMigrationStream): boolean {
+  return stream.logicalRoles.includes('lookup');
+}
+
+function lookupBucketCounterSeedSelect(dialect: MigrationSqlDialect): string {
+  const table = dialect === 'postgres' ? 'public.lookup_bucket_counters' : 'lookup_bucket_counters';
+  return `SELECT ${LOOKUP_BUCKET_COUNTER_COLUMNS.join(', ')} FROM ${table} ORDER BY virtual_bucket`;
+}
+
+function lookupSeedStatementPattern(dialect: MigrationSqlDialect): RegExp {
+  if (dialect === 'sqlite') {
+    return /^INSERT INTO lookup_bucket_counters VALUES\([^\r\n]*\);$/gmu;
+  }
+  if (dialect === 'postgres') {
+    return /^INSERT INTO public\.lookup_bucket_counters VALUES\s*\([^\r\n]*\);$/gmu;
+  }
+  throw new Error(`lookup_bucket_seed_dialect_unsupported:${String(dialect)}`);
+}
+
+export function replaceLookupBucketCounterSeedStatements(input: {
+  dump: string;
+  dialect: MigrationSqlDialect;
+  rows: readonly unknown[];
+  nowValue: number;
+  nowExpression: string;
+  bucketCount?: number;
+}): string {
+  if (input.dialect !== 'sqlite' && input.dialect !== 'postgres') {
+    throw new Error(`lookup_bucket_seed_dialect_unsupported:${String(input.dialect)}`);
+  }
+  const bucketCount = input.bucketCount ?? LOOKUP_VIRTUAL_BUCKET_COUNT;
+  assertCanonicalLookupBucketCounterSeed({
+    rows: input.rows,
+    bucketCount,
+    nowValue: input.nowValue,
+  });
+  const pattern = lookupSeedStatementPattern(input.dialect);
+  const statements = [...input.dump.matchAll(pattern)];
+  if (statements.length !== bucketCount) {
+    throw new Error(
+      `lookup_bucket_seed_statement_count_invalid:expected=${bucketCount}:actual=${statements.length}`
+    );
+  }
+  const first = statements[0]!;
+  const last = statements.at(-1)!;
+  const start = first.index!;
+  const end = last.index! + last[0].length;
+  const seedRegion = input.dump.slice(start, end);
+  if (seedRegion.replaceAll(lookupSeedStatementPattern(input.dialect), '').trim().length !== 0) {
+    throw new Error('lookup_bucket_seed_statements_not_contiguous');
+  }
+  const replacement = renderLookupBucketCounterSeed({
+    dialect: input.dialect,
+    bucketCount,
+    nowExpression: input.nowExpression,
+  });
+  return `${input.dump.slice(0, start)}${replacement}${input.dump.slice(end)}`;
+}
+
+function optimizeLookupSeed(input: {
+  stream: ReleaseMigrationStream;
+  dump: string;
+  rows: readonly LookupBucketCounterSeedRow[];
+}): string {
+  if (!isLookupMigrationStream(input.stream)) return input.dump;
+  return replaceLookupBucketCounterSeedStatements({
+    dump: input.dump,
+    dialect: migrationRendererDialect(input.stream.dialect),
+    rows: input.rows,
+    nowValue: Number(DETERMINISTIC_EPOCH_SECONDS),
+    nowExpression: PORTABLE_SQL_NOW_EPOCH_SECONDS,
+  });
+}
+
 function sqliteDump(dbPath: string): string {
   return normalizeSqliteDump(run({ executable: 'sqlite3', args: ['-bail', dbPath, '.dump'] }));
+}
+
+function sqliteLookupBucketCounterRows(dbPath: string): LookupBucketCounterSeedRow[] {
+  const output = run({
+    executable: 'sqlite3',
+    args: ['-bail', '-json', dbPath, lookupBucketCounterSeedSelect('sqlite')],
+  }).trim();
+  const parsed = JSON.parse(output || '[]') as unknown;
+  if (!Array.isArray(parsed)) throw new Error('lookup_bucket_seed_query_result_invalid');
+  return parsed as LookupBucketCounterSeedRow[];
 }
 
 function sqliteSchemaAndSeedEvidence(dbPath: string): {
@@ -313,13 +435,21 @@ function generateSqliteBaseline(input: {
   }
 
   const sourceDump = sqliteDump(sourceDb);
-  const body = restorePortableSeedExpressions(sourceDump, input.stream.dialect);
+  const portableDump = restorePortableSeedExpressions(
+    sourceDump,
+    migrationRendererDialect(input.stream.dialect)
+  );
+  const body = optimizeLookupSeed({
+    stream: input.stream,
+    dump: portableDump,
+    rows: isLookupMigrationStream(input.stream) ? sqliteLookupBucketCounterRows(sourceDb) : [],
+  });
   const sql = `${baselineHeader(input.productVersion, input.stream.id)}PRAGMA foreign_keys = OFF;\n\n${body}\n\nPRAGMA foreign_keys = ON;\n`;
   const verifyDb = join(input.tempDir, `${input.stream.id}-verify.sqlite`);
   run({
     executable: 'sqlite3',
     args: ['-bail', verifyDb],
-    stdin: renderDeterministicMigrationSql(sql, input.stream.dialect),
+    stdin: renderDeterministicMigrationSql(sql, migrationRendererDialect(input.stream.dialect)),
   });
   const verifyDump = sqliteDump(verifyDb);
   if (sourceDump !== verifyDump) {
@@ -426,6 +556,29 @@ class PostgresBaselineContainer {
       }
     }
     throw lastError;
+  }
+
+  queryJson(database: string, sql: string): unknown {
+    const output = run({
+      executable: 'docker',
+      args: [
+        'exec',
+        this.name,
+        'psql',
+        '--no-psqlrc',
+        '--tuples-only',
+        '--no-align',
+        '--set',
+        'ON_ERROR_STOP=1',
+        '--username',
+        'postgres',
+        '--dbname',
+        database,
+        '--command',
+        `SELECT COALESCE(json_agg(row_to_json(seed) ORDER BY virtual_bucket), '[]'::json) FROM (${sql}) seed;`,
+      ],
+    }).trim();
+    return JSON.parse(output || '[]') as unknown;
   }
 
   dump(database: string): string {
@@ -611,12 +764,24 @@ function generatePostgresBaseline(input: {
     input.container.execute(sourceDatabase, renderSourceSql(input.streamRoot, input.stream, file));
   }
   const sourceDump = input.container.dump(sourceDatabase);
-  const body = restorePortableSeedExpressions(sourceDump, input.stream.dialect);
+  const portableDump = restorePortableSeedExpressions(
+    sourceDump,
+    migrationRendererDialect(input.stream.dialect)
+  );
+  const queriedRows = isLookupMigrationStream(input.stream)
+    ? input.container.queryJson(sourceDatabase, lookupBucketCounterSeedSelect('postgres'))
+    : [];
+  if (!Array.isArray(queriedRows)) throw new Error('lookup_bucket_seed_query_result_invalid');
+  const body = optimizeLookupSeed({
+    stream: input.stream,
+    dump: portableDump,
+    rows: queriedRows as LookupBucketCounterSeedRow[],
+  });
   const sql = `${baselineHeader(input.productVersion, input.stream.id)}${body}\n`;
   input.container.createDatabase(verifyDatabase);
   input.container.execute(
     verifyDatabase,
-    renderDeterministicMigrationSql(sql, input.stream.dialect)
+    renderDeterministicMigrationSql(sql, migrationRendererDialect(input.stream.dialect))
   );
   if (input.container.dump(verifyDatabase) !== sourceDump) {
     throw new Error(`PostgreSQL semantic baseline verification failed for ${input.stream.id}`);
@@ -667,7 +832,10 @@ function existingGeneratedFrom(
           Array.isArray(stream.generatedFrom) &&
           stream.generatedFrom.length > 0
       )
-      .map((stream) => [stream.id, { path: stream.path, generatedFrom: stream.generatedFrom }])
+      .map((stream) => [
+        LEGACY_STREAM_IDS[stream.id] ?? stream.id,
+        { path: stream.path, generatedFrom: stream.generatedFrom },
+      ])
   );
 }
 
@@ -708,12 +876,14 @@ function applySemanticRewrite(input: {
 }): void {
   const priorProvenance = existingGeneratedFrom(input.migrationsRoot);
   const evidence: SemanticBaselineEvidence = {
-    formatVersion: 1,
+    formatVersion: 2,
     productVersion: input.productVersion,
     compatibility: 'fresh_install_only',
     streams: input.generated.map((baseline) => ({
       id: baseline.stream.id,
+      schemaFamily: baseline.stream.schemaFamily,
       dialect: baseline.stream.dialect,
+      targetKind: baseline.stream.targetKind,
       path: baseline.path,
       checksum: baselineChecksum(baseline),
       schemaChecksum: baseline.schemaChecksum,
@@ -836,7 +1006,9 @@ export function runSemanticBaselineMigrations(input: {
       );
     }
 
-    const postgresStreams = current.streams.filter((candidate) => candidate.dialect === 'postgres');
+    const postgresStreams = current.streams.filter(
+      (candidate) => candidate.dialect === 'postgresql'
+    );
     if (postgresStreams.length > 0) {
       postgres = new PostgresBaselineContainer();
       postgres.start();

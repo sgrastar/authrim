@@ -38,20 +38,22 @@ function releaseFixture() {
     { path: '002_index.sql', sql: 'CREATE INDEX idx_account_id ON account(id);' },
   ];
   const manifest = `${JSON.stringify({
-    formatVersion: 1,
+    formatVersion: 2,
     productVersion: '0.4.0',
     streams: [
       {
-        id: 'd1-core',
+        id: 'core-d1',
+        schemaFamily: 'core',
         dialect: 'sqlite',
-        logicalRoles: ['tenant_core'],
+        targetKind: 'cloudflare-d1',
+        logicalRoles: ['core', 'tenant_core'],
         files: files.map((file) => ({ path: file.path, checksum: digest(file.sql) })),
       },
     ],
   })}\n`;
   const pin: MigrationReleasePin = {
     environmentId: 'env-test',
-    streamId: 'd1-core',
+    streamId: 'core-d1',
     releaseId: '0.4.0',
     manifestDigest: digest(manifest),
     manifestObjectKey: `releases/0.4.0/${digest(manifest)}/manifest.json`,
@@ -59,7 +61,7 @@ function releaseFixture() {
   const objects = new Map<string, string>([[pin.manifestObjectKey, manifest]]);
   const base = pin.manifestObjectKey.slice(0, pin.manifestObjectKey.lastIndexOf('/') + 1);
   for (const file of files) {
-    objects.set(`${base}streams/d1-core/${file.path}`, file.sql);
+    objects.set(`${base}streams/core-d1/${file.path}`, file.sql);
   }
   return { files, manifest, objects, pin };
 }
@@ -74,17 +76,29 @@ function supersededReleaseFixture() {
     sql: 'ALTER TABLE account ADD COLUMN name TEXT; CREATE INDEX idx_name ON account(name);',
   };
   const manifest = `${JSON.stringify({
-    formatVersion: 1,
+    formatVersion: 2,
     productVersion: '0.4.1',
-    streams: [{ id: 'd1-core', dialect: 'sqlite', files: [] }],
+    streams: [
+      {
+        id: 'core-d1',
+        schemaFamily: 'core',
+        dialect: 'sqlite',
+        targetKind: 'cloudflare-d1',
+        logicalRoles: ['core', 'tenant_core'],
+        files: [],
+      },
+    ],
     upgradePaths: [
       {
         fromProductVersion: '0.4.0',
         kind: 'delta',
         streams: [
           {
-            id: 'd1-core',
+            id: 'core-d1',
+            schemaFamily: 'core',
             dialect: 'sqlite',
+            targetKind: 'cloudflare-d1',
+            logicalRoles: ['core', 'tenant_core'],
             files: [
               {
                 path: bundle.path,
@@ -98,8 +112,11 @@ function supersededReleaseFixture() {
     ],
     acceptedMigrationHistory: [
       {
-        id: 'd1-core',
+        id: 'core-d1',
+        schemaFamily: 'core',
         dialect: 'sqlite',
+        targetKind: 'cloudflare-d1',
+        logicalRoles: ['core', 'tenant_core'],
         files: [...sourceFiles, { path: bundle.path, checksum: digest(bundle.sql) }],
       },
     ],
@@ -108,7 +125,7 @@ function supersededReleaseFixture() {
   const base = `releases/0.4.1/${manifestDigest}/`;
   const pin: MigrationReleasePin = {
     environmentId: 'env-test',
-    streamId: 'd1-core',
+    streamId: 'core-d1',
     releaseId: '0.4.1',
     manifestDigest,
     manifestObjectKey: `${base}manifest.json`,
@@ -120,7 +137,7 @@ function supersededReleaseFixture() {
     pin,
     objects: new Map<string, string>([
       [pin.manifestObjectKey, manifest],
-      [`${base}streams/d1-core/${bundle.path}`, bundle.sql],
+      [`${base}streams/core-d1/${bundle.path}`, bundle.sql],
     ]),
   };
 }
@@ -207,7 +224,7 @@ describe('ApiMigrationEngine', () => {
     );
 
     await expect(engine.apply({ databaseId: 'db-id', pin: fixture.pin })).resolves.toEqual({
-      streamId: 'd1-core',
+      streamId: 'core-d1',
       releaseId: '0.4.0',
       manifestDigest: fixture.pin.manifestDigest,
       totalFiles: 2,

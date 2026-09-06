@@ -53,8 +53,9 @@ draft automatically:
 pnpm migrate:create <snake_case_name>
 ```
 
-For Admin, PII, or external PostgreSQL streams, add the next sequential SQL file in the appropriate
-directory and then run `pnpm migrate:manifest`. Do not renumber existing migrations.
+For any stream, add the next sequential SQL file under its schema-family/target directory (for
+example `migrations/admin/d1` or `migrations/core/postgresql`) and then run
+`pnpm migrate:manifest`. Do not renumber existing migrations.
 
 Preview and apply the current development draft to an existing test environment with:
 
@@ -88,6 +89,11 @@ database backend.
 
 ### Permanent baseline and delta policy
 
+- Migration stream identity is schema-family first and target specific: `core-d1`, `pii-d1`,
+  `admin-d1`, `control-d1`, `lookup-d1`, `plugin-runner-d1`, `core-postgresql`, and
+  `pii-postgresql`. Keep files under `migrations/<schema-family>/<target>/`; do not restore the old
+  root-core or `external/postgres` layout. Manifest metadata (`schemaFamily`, `dialect`,
+  `targetKind`, and `logicalRoles`) must match the shared canonical stream contract exactly.
 - Apply this policy independently to every migration stream, including core, PII, Admin, Control,
   Lookup, Plugin Runner, and external PostgreSQL.
 - Create a complete fresh-install baseline at each major or minor boundary (`x.y.0`). Patch releases
