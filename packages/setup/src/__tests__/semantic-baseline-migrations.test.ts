@@ -142,11 +142,13 @@ describe('semantic Lookup bucket seed generation', () => {
         streamId: 'lookup-sqlite',
         dialect: 'sqlite',
         baseSql: [table],
-        sourceSql: [rows],
+        // Preserve the legacy row-by-row shape while avoiding one durable
+        // autocommit per row on slower CI filesystems.
+        sourceSql: [`BEGIN TRANSACTION;\n${rows}\nCOMMIT;`],
         consolidatedSql: compacted,
       }).seedChecksum
     ).toMatch(/^[a-f0-9]{64}$/u);
-  });
+  }, 60_000);
 
   it('rejects 4,095 rows, duplicate or out-of-range buckets, and noncanonical values', () => {
     expect(() =>
@@ -250,11 +252,13 @@ describe('semantic Lookup bucket seed generation', () => {
         streamId: 'lookup-postgres-contract',
         dialect: 'postgres',
         baseSql: [postgresTable],
-        sourceSql: [sourceSql],
+        // Keep the legacy statements intact but execute them as one atomic
+        // seed operation so PostgreSQL fsync latency cannot dominate the test.
+        sourceSql: [`BEGIN;\n${sourceSql}\nCOMMIT;`],
         consolidatedSql: generated,
       }).seedChecksum
     ).toMatch(/^[a-f0-9]{64}$/u);
-  });
+  }, 60_000);
 });
 
 describe('semantic baseline release immutability', () => {
