@@ -328,8 +328,18 @@ jobs:
           echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env
           echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-admin-ui/.env
 
-      - name: Build project
-        run: pnpm run build
+      - name: Build API, Setup, and shared packages
+        run: pnpm run build:api
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Build Login UI
+        run: pnpm run build:login-ui
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Build Admin UI
+        run: pnpm run build:admin-ui
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
 
