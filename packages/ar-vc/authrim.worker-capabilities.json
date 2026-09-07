@@ -2,8 +2,10 @@
   "schemaVersion": 1,
   "packageName": "@authrim/ar-vc",
   "worker": "ar-vc",
-  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii"],
+  "lookupBlindIndex": true,
+  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
   "bindings": [
+    { "name": "LOOKUP_DB", "kind": "d1", "required": true, "dataRole": "lookup" },
     { "name": "DB_ADMIN", "kind": "d1", "required": true, "capability": "vc_metadata" },
     { "name": "AUTHRIM_CONFIG", "kind": "kv_namespace", "required": true },
     { "name": "TENANT_RUNTIME_REGISTRY", "kind": "kv_namespace", "required": true },
@@ -21,6 +23,8 @@
     { "name": "CONTROL_SMOKE_VERSION", "kind": "version_metadata", "required": true }
   ],
   "secrets": [
+    { "name": "LOOKUP_HMAC_KEY_SLOT_A", "capability": "lookup_blind_index", "required": true },
+    { "name": "LOOKUP_HMAC_KEY_SLOT_B", "capability": "lookup_blind_index", "required": false },
     {
       "name": "OBJECT_ENCRYPTION_ROOT_KEY",
       "capability": "object_encryption.encrypt",

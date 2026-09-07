@@ -106,7 +106,9 @@ describe('Lookup HMAC rotation command state', () => {
       'ar-token',
       'ar-userinfo',
       'ar-management',
+      'ar-saml',
       'ar-bridge',
+      'ar-vc',
     ]);
   });
 

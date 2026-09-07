@@ -1,12 +1,8 @@
 name: Deploy Test Environments
 
-# Triggers: push to develop only (i.e. after a PR is merged).
-# Running on PRs is intentionally disabled to avoid deploying unreviewed code
-# with repository Cloudflare secrets.
+# Automatic deployment is temporarily paused while the test deployment is repaired.
+# Restore the push trigger for develop once deployment works reliably again.
 on:
-  push:
-    branches:
-      - develop
   workflow_dispatch:
 
 # Restrict GITHUB_TOKEN permissions (OpenSSF Scorecard)

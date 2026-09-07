@@ -194,6 +194,35 @@ describe('Lookup HMAC rotation state machine', () => {
     });
   });
 
+  it.each(['ar-saml', 'ar-bridge', 'ar-vc'])(
+    'blocks activation when only %s verification is missing',
+    async (component) => {
+      const started = await service.start('test', {
+        candidate: KEY_B,
+        idempotencyKey: `missing-${component}`,
+        ownerId: 'setup-owner',
+      });
+      recordCandidateVerification(started.operationId);
+      database
+        .prepare(
+          'DELETE FROM control_lookup_hmac_candidate_verifications WHERE worker_script_name = ?'
+        )
+        .run(`test-${component}`);
+      await expect(
+        service.activate('test', {
+          operationId: started.operationId,
+          ownerId: 'setup-owner',
+          fencingToken: 1,
+        })
+      ).rejects.toThrow('lookup_hmac_candidate_verification_incomplete');
+      await expect(service.get('test')).resolves.toMatchObject({
+        rotationState: 'stable',
+        current: KEY_A,
+        previous: null,
+      });
+    }
+  );
+
   it('moves from distribution through dual-write and dual-read into resumable reindex', async () => {
     const started = await service.start('test', {
       candidate: KEY_B,

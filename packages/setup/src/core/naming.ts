@@ -138,9 +138,9 @@ export const WORKER_REQUIRED_DATA_ROLES: Record<
   'ar-router': [],
   'ar-async': ['tenant_core/default', 'tenant_core/users', 'tenant_pii'],
   'ar-policy': ['tenant_core/default', 'tenant_core/users'],
-  'ar-saml': ['tenant_core/default', 'tenant_core/users', 'tenant_pii'],
+  'ar-saml': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
   'ar-bridge': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
-  'ar-vc': ['tenant_core/default', 'tenant_core/users', 'tenant_pii'],
+  'ar-vc': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
 };
 
 export function getRequiredDataRolesForComponent(
@@ -174,8 +174,8 @@ export function getBuiltinD1BindingsForComponent(
   // Registry context. It must not receive the deployment Core binding as a
   // fallback route.
   if (component === 'ar-policy') return [];
-  if (component === 'ar-saml') return ['DB', 'DB_PII', 'DB_ADMIN'];
-  if (component === 'ar-vc') return ['DB_ADMIN'];
+  if (component === 'ar-saml') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
+  if (component === 'ar-vc') return ['DB_ADMIN', 'LOOKUP_DB'];
   if (component === 'ar-async') return [];
   return [];
 }
