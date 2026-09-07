@@ -261,11 +261,7 @@ export class SigningKeyCandidateVerifier {
     );
     const token = await signRuntimeRegistrySnapshotPayloadJws({
       payload,
-      privateJwk: runtimeRegistryPrivateJwkForSlot(
-        this.env,
-        staged.slot,
-        staged.keyId
-      ),
+      privateJwk: runtimeRegistryPrivateJwkForSlot(this.env, staged.slot, staged.keyId),
       keyId: staged.keyId,
     });
     return binding.verifyControlKeyCandidate({
