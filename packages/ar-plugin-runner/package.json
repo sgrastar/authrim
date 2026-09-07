@@ -16,7 +16,7 @@
     "@authrim/ar-lib-plugin": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20251121.0",
+    "@cloudflare/workers-types": "^5.20260903.1",
     "@types/node": "^22.19.7",
     "jose": "^6.2.9",
     "typescript": "^5.9.3",
