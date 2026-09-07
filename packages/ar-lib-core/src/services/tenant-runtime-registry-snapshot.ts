@@ -142,7 +142,7 @@ export function hasPhysicalCorePiiDatabaseSeparation(
 }
 
 export interface RuntimeRegistrySnapshotSigningKey {
-  privateJwk: JsonWebKey | string;
+  privateJwk: JWK | string;
   keyId?: string | null;
 }
 
@@ -154,7 +154,7 @@ export interface RuntimeRegistrySnapshotExternalSigner {
 }
 
 export interface RuntimeRegistrySnapshotVerificationKey {
-  publicJwk: JsonWebKey;
+  publicJwk: JWK;
   keyId?: string | null;
 }
 
@@ -485,19 +485,19 @@ export async function reactivateTenantRuntimeRegistryRouteState(
   throw new Error('runtime_registry_route_state_reactivation_conflict');
 }
 
-function parseJsonWebKey(input: JsonWebKey | string): JsonWebKey {
+function parseJsonWebKey(input: JWK | string): JWK {
   if (typeof input === 'string') {
-    const parsed = JSON.parse(input) as JsonWebKey;
+    const parsed = JSON.parse(input) as JWK;
     return parsed;
   }
   return input;
 }
 
-function isEd25519Jwk(jwk: JsonWebKey): boolean {
+function isEd25519Jwk(jwk: JWK): boolean {
   return jwk.kty === 'OKP' && jwk.crv === 'Ed25519';
 }
 
-function getJwkKeyId(jwk: JsonWebKey): string | null {
+function getJwkKeyId(jwk: JWK): string | null {
   const kid = (jwk as unknown as Record<string, unknown>).kid;
   return typeof kid === 'string' && kid.length > 0 ? kid : null;
 }
@@ -610,7 +610,7 @@ function assertRuntimeRegistrySnapshotJwsEnvelope(
 
 export async function signRuntimeRegistrySnapshotPayloadJws(input: {
   payload: Uint8Array;
-  privateJwk: JsonWebKey | string;
+  privateJwk: JWK | string;
   keyId?: string | null;
 }): Promise<string> {
   const privateJwk = parseJsonWebKey(input.privateJwk);
@@ -743,7 +743,7 @@ export function loadTenantRuntimeRegistryVerificationKeysFromEnv(
       if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
         throw new Error('runtime_registry_snapshot_verification_jwk_invalid');
       }
-      const jwk = candidate as JsonWebKey;
+      const jwk = candidate as JWK;
       const record = jwk as unknown as Record<string, unknown>;
       const keyId = getJwkKeyId(jwk);
       if (

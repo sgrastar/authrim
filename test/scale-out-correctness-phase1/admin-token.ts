@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { importJWK, SignJWT, type JWK } from 'jose';
+import { base64url, importJWK, SignJWT, type JWK } from 'jose';
 import { resolvePhase1Secret, type Phase1HarnessConfig } from './schemas.js';
 
 export interface Phase1AdminTokenProvider {
@@ -15,7 +15,7 @@ interface MachineTokenResponse {
 function decodePrivateJwk(encoded: string): JWK {
   let value: unknown;
   try {
-    value = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8'));
+    value = JSON.parse(new TextDecoder().decode(base64url.decode(encoded)));
   } catch {
     throw new Error('phase1_admin_machine_private_jwk_invalid');
   }

@@ -1,36 +1,40 @@
 {
   "name": "@authrim/setup",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "CLI tool for setting up Authrim OIDC Provider on Cloudflare Workers",
   "type": "module",
   "bin": {
-    "authrim-setup": "./dist/index.js"
+    "authrim-setup": "./dist/bootstrap.js"
   },
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/bootstrap.js",
+  "types": "./dist/bootstrap.d.ts",
   "files": [
-    "dist",
-    "templates",
+    "dist/bootstrap.*",
+    "dist/core/npm-launcher.*",
+    "dist/core/source.*",
+    "dist/core/source-context.*",
+    "dist/core/http-limits.*",
     "README.md"
   ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
-    "start": "node dist/index.js",
+    "start": "node dist/bootstrap.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
     "test": "vitest run",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "build:launcher": "tsc -p tsconfig.launcher.json",
+    "prepack": "pnpm run build:launcher",
+    "test:package": "node scripts/check-package.mjs"
   },
   "dependencies": {
-    "@authrim/ar-control": "workspace:*",
-    "@authrim/ar-lib-core": "workspace:*",
     "@hono/node-server": "^1.19.13",
     "@inquirer/prompts": "^7.2.1",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "degit": "^2.8.6",
-    "execa": "^9.5.2",
+    "execa": "^10.0.1",
     "hono": "4.13.2",
     "ora": "^8.1.1",
     "tar": "^7.5.21",
@@ -43,7 +47,9 @@
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
     "vitest": "^4.1.8",
-    "yaml": "2.8.3"
+    "yaml": "2.8.3",
+    "@authrim/ar-control": "workspace:*",
+    "@authrim/ar-lib-core": "workspace:*"
   },
   "keywords": [
     "authrim",

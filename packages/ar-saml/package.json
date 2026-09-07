@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-saml",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "type": "module",
   "private": true,
   "scripts": {
@@ -24,7 +24,7 @@
     "xml-crypto": "^6.0.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20251121.0",
+    "@cloudflare/workers-types": "^5.20260903.1",
     "@types/pako": "^2.0.4",
     "@vitest/ui": "^4.1.8",
     "fast-check": "^4.5.3",

@@ -712,5 +712,12 @@ export function redactPhase1Config(config: Phase1HarnessConfig): Record<string, 
 
 export function equalDigest(left: string, right: string): boolean {
   if (!/^[a-f0-9]{64}$/u.test(left) || !/^[a-f0-9]{64}$/u.test(right)) return false;
-  return timingSafeEqual(Buffer.from(left, 'hex'), Buffer.from(right, 'hex'));
+  const decodeHex = (value: string): Uint8Array => {
+    const bytes = new Uint8Array(value.length / 2);
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
+    }
+    return bytes;
+  };
+  return timingSafeEqual(decodeHex(left), decodeHex(right));
 }

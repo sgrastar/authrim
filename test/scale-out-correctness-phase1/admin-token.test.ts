@@ -1,4 +1,4 @@
-import { exportJWK, generateKeyPair, importJWK, jwtVerify } from 'jose';
+import { base64url, exportJWK, generateKeyPair, importJWK, jwtVerify } from 'jose';
 import { describe, expect, it, vi } from 'vitest';
 import { createPhase1AdminTokenProvider } from './admin-token.js';
 import { PHASE1_EXECUTION_CONFIRMATION, parsePhase1HarnessConfig } from './schemas.js';
@@ -103,9 +103,9 @@ describe('Phase 1 Admin machine token provider', () => {
       environment: {
         AUTHRIM_PHASE1_ADMIN_MACHINE_CLIENT_ID: 'phase1-client',
         AUTHRIM_PHASE1_ADMIN_MACHINE_KID: 'phase1-kid',
-        AUTHRIM_PHASE1_ADMIN_MACHINE_PRIVATE_JWK_BASE64: Buffer.from(
+        AUTHRIM_PHASE1_ADMIN_MACHINE_PRIVATE_JWK_BASE64: base64url.encode(
           JSON.stringify(privateJwk)
-        ).toString('base64url'),
+        ),
       },
       fetcher: fetcher as typeof fetch,
       nowMs: () => nowMs,
