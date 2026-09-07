@@ -1820,10 +1820,24 @@ describe('resolveExistingWorkerComponents', () => {
     ).rejects.toThrow('401 authentication failed');
   });
 
+  it('does not treat successful but empty Wrangler inventory output as an absent Worker', async () => {
+    const rootDir = createTempRoot();
+    vi.mocked(execa).mockResolvedValue({
+      ...successfulCommandResult(),
+      stdout: '',
+    } as Awaited<ReturnType<typeof execa>>);
+
+    await expect(
+      resolveExistingWorkerComponents({ env: 'test', rootDir }, ['ar-auth'])
+    ).rejects.toThrow('invalid deployment JSON');
+  });
+
   it('uses the dedicated Workers token for inventory without exposing it in arguments', async () => {
     const rootDir = createTempRoot();
     const previousWorkersToken = process.env.CLOUDFLARE_WORKERS_API_TOKEN;
+    const previousWranglerLog = process.env.WRANGLER_LOG;
     process.env.CLOUDFLARE_WORKERS_API_TOKEN = 'dedicated-workers-token';
+    process.env.WRANGLER_LOG = 'warn';
     vi.mocked(execa).mockResolvedValue({
       ...successfulCommandResult(),
       stdout: JSON.stringify([{ id: 'active-auth' }]),
@@ -1836,9 +1850,12 @@ describe('resolveExistingWorkerComponents', () => {
       const [, args, commandOptions] = vi.mocked(execa).mock.calls[0]!;
       expect(args).not.toContain('dedicated-workers-token');
       expect(commandOptions?.env?.CLOUDFLARE_API_TOKEN).toBe('dedicated-workers-token');
+      expect(commandOptions?.env?.WRANGLER_LOG).toBe('log');
     } finally {
       if (previousWorkersToken === undefined) delete process.env.CLOUDFLARE_WORKERS_API_TOKEN;
       else process.env.CLOUDFLARE_WORKERS_API_TOKEN = previousWorkersToken;
+      if (previousWranglerLog === undefined) delete process.env.WRANGLER_LOG;
+      else process.env.WRANGLER_LOG = previousWranglerLog;
     }
   });
 
@@ -1978,6 +1995,9 @@ describe('deployWorkerGradually', () => {
     vi.mocked(execa).mockImplementation(async (_command, args, options) => {
       const commandArgs = [...(args ?? [])];
       if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        if (commandArgs.includes('--json')) {
+          expect(options?.env?.WRANGLER_LOG).toBe('log');
+        }
         return {
           ...successfulCommandResult(),
           stdout: JSON.stringify([

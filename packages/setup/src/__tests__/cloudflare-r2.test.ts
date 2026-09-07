@@ -1832,6 +1832,7 @@ Version(s):  (100%) 22222222-2222-4222-8222-222222222222
       versionId: '22222222-2222-4222-8222-222222222222',
       source: 'Upload',
     });
+    expect(execaMock.mock.calls[0]?.[2]?.env?.WRANGLER_LOG).toBe('log');
   });
 
   it('retries transient Worker deployment inventory failures', async () => {
