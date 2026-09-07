@@ -42,7 +42,7 @@
 		"@unocss/reset": "^66.5.9",
 		"@vitest/ui": "^4.1.8",
 		"eslint": "^9.39.1",
-		"eslint-plugin-svelte": "^3.13.0",
+		"eslint-plugin-svelte": "^3.23.0",
 		"globals": "^15.15.0",
 		"jsdom": "^27.2.0",
 		"prettier": "^3.6.2",
