@@ -21,6 +21,7 @@ describe('test environment Control Worker secret wiring', () => {
     expect(workflow).not.toContain(
       'CLOUDFLARE_WORKERS_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}'
     );
+    expect(workflow).not.toContain('WRANGLER_LOG:');
   });
 
   it('keeps the two runtime child tokens out of the generated environment archive', () => {

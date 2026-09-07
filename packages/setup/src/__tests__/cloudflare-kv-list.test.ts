@@ -112,8 +112,13 @@ describe('Cloudflare KV namespace listing', () => {
         'region_shard_config:tenant-a',
         '--remote',
       ],
-      expect.objectContaining({ reject: false, timeout: 60000 })
+      expect.objectContaining({
+        reject: false,
+        timeout: 60000,
+        env: expect.objectContaining({ WRANGLER_LOG: 'log' }),
+      })
     );
+    expect(execaMock.mock.calls[1]?.[2]?.env?.WRANGLER_LOG).toBe('log');
   });
 
   it('returns null without issuing a value read when the exact KV key is absent', async () => {
