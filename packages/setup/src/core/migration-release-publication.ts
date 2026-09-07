@@ -15,10 +15,12 @@ import {
   type ReleaseMigrationManifest,
 } from './release-migrations.js';
 import { renderPortableMigrationSql } from './sql-portability.js';
+import { migrationRendererDialect } from '@authrim/ar-lib-core/control-plane';
 
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const MAX_SQL_OBJECT_BYTES = 1024 * 1024;
 const MAX_STREAM_SQL_BYTES = 16 * 1024 * 1024;
+const MAX_RELEASE_SQL_BYTES = 16 * 1024 * 1024;
 const MAX_STREAMS = 32;
 const MAX_FILES_PER_STREAM = 512;
 const SAFE_ENVIRONMENT_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
@@ -167,13 +169,23 @@ function validateActor(actorId: string): void {
 
 export function buildMigrationReleaseArtifactPlan(input: {
   migrationsRoot: string;
-  manifestPath: string;
+  manifestPath?: string;
+  manifest?: ReleaseMigrationManifest;
+  draft?: boolean;
 }): MigrationReleaseArtifactPlan {
-  const manifestBuffer = readFileSync(input.manifestPath);
-  if (manifestBuffer.byteLength === 0 || manifestBuffer.byteLength > MAX_MANIFEST_BYTES) {
+  if (!input.manifestPath && !input.manifest) {
+    throw new Error('migration_release_manifest_required');
+  }
+  const manifestBuffer = input.manifestPath ? readFileSync(input.manifestPath) : undefined;
+  if (
+    manifestBuffer &&
+    (manifestBuffer.byteLength === 0 || manifestBuffer.byteLength > MAX_MANIFEST_BYTES)
+  ) {
     throw new Error('migration_release_manifest_size_invalid');
   }
-  const manifest = decodeManifest(new Uint8Array(manifestBuffer));
+  const manifest = input.manifest
+    ? ReleaseMigrationManifestSchema.parse(input.manifest)
+    : decodeManifest(new Uint8Array(manifestBuffer!));
   const manifestBytes = new TextEncoder().encode(serializeReleaseMigrationManifest(manifest));
   if (manifestBytes.byteLength > MAX_MANIFEST_BYTES) {
     throw new Error('migration_release_manifest_size_invalid');
@@ -183,7 +195,8 @@ export function buildMigrationReleaseArtifactPlan(input: {
   }
   const manifestDigest = calculateReleaseManifestChecksum(manifest);
   const releaseId =
-    basename(input.manifestPath) === 'release-manifest.draft.json'
+    input.draft === true ||
+    (input.manifestPath && basename(input.manifestPath) === 'release-manifest.draft.json')
       ? `${manifest.productVersion}-draft.${manifestDigest.slice(0, 12)}`
       : manifest.productVersion;
   if (!SAFE_RELEASE_ID.test(releaseId)) throw new Error('migration_release_id_invalid');
@@ -191,9 +204,25 @@ export function buildMigrationReleaseArtifactPlan(input: {
   const manifestObjectKey = `${objectRoot}/manifest.json`;
   const objects: MigrationReleaseArtifactObject[] = [];
   const streamIds: string[] = [];
+  let releaseSqlBytes = 0;
 
-  for (const stream of manifest.streams) {
-    if (stream.dialect !== 'sqlite' || stream.files.length === 0) continue;
+  const artifactStreams = manifest.streams.map((stream) => {
+    const files = new Map(stream.files.map((file) => [file.path, file] as const));
+    for (const upgradePath of manifest.upgradePaths ?? []) {
+      const upgradeStream = upgradePath.streams.find((candidate) => candidate.id === stream.id);
+      for (const file of upgradeStream?.files ?? []) {
+        const current = files.get(file.path);
+        if (current && current.checksum !== file.checksum) {
+          throw new Error(`migration_release_path_checksum_conflict:${stream.id}:${file.path}`);
+        }
+        files.set(file.path, file);
+      }
+    }
+    return { ...stream, files: [...files.values()].sort((a, b) => a.path.localeCompare(b.path)) };
+  });
+
+  for (const stream of artifactStreams) {
+    if (stream.files.length === 0) continue;
     if (stream.files.length > MAX_FILES_PER_STREAM) {
       throw new Error(`migration_release_file_limit_exceeded:${stream.id}`);
     }
@@ -203,15 +232,19 @@ export function buildMigrationReleaseArtifactPlan(input: {
     for (const file of stream.files) {
       const rendered = renderPortableMigrationSql(
         readFileSync(join(directory, file.path), 'utf8'),
-        stream.dialect
+        migrationRendererDialect(stream.dialect)
       );
       const bytes = new TextEncoder().encode(rendered);
       if (bytes.byteLength === 0 || bytes.byteLength > MAX_SQL_OBJECT_BYTES) {
         throw new Error(`migration_release_sql_size_invalid:${stream.id}:${file.path}`);
       }
       streamBytes += bytes.byteLength;
+      releaseSqlBytes += bytes.byteLength;
       if (streamBytes > MAX_STREAM_SQL_BYTES) {
         throw new Error(`migration_release_stream_size_exceeded:${stream.id}`);
+      }
+      if (releaseSqlBytes > MAX_RELEASE_SQL_BYTES) {
+        throw new Error('migration_release_sql_size_exceeded');
       }
       if (sha256(bytes) !== file.checksum) {
         throw new Error(`migration_release_sql_checksum_mismatch:${stream.id}:${file.path}`);
@@ -222,7 +255,9 @@ export function buildMigrationReleaseArtifactPlan(input: {
         contentType: 'application/sql',
       });
     }
-    streamIds.push(stream.id);
+    if (stream.dialect === 'sqlite' && stream.targetKind === 'cloudflare-d1') {
+      streamIds.push(stream.id);
+    }
   }
   if (streamIds.length === 0) throw new Error('migration_release_sqlite_stream_required');
   objects.push({
@@ -428,7 +463,9 @@ function verifyActiveCatalogRows(
 
 export async function publishAndActivateMigrationRelease(input: {
   migrationsRoot: string;
-  manifestPath: string;
+  manifestPath?: string;
+  manifest?: ReleaseMigrationManifest;
+  draft?: boolean;
   bucketName: string;
   controlDatabaseId: string;
   environmentId: string;

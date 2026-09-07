@@ -18,11 +18,10 @@ This directory contains the SQL schema migrations used by Authrim setup and CI.
 The D1 runner applies files in lexical order and records applied files in each
 database's `authrim_migrations` table.
 
-These files support fresh installs and, after 1.0.0, release-coupled in-place updates. From 1.0.0
-onward, published release manifests are the immutable contract for deciding which migrations apply to
-an existing physical database. Pre-1.0 manifests instead declare
-`databaseCompatibility: "fresh_install_only"`; they are new-install artifacts and may be replaced by
-a newly verified semantic baseline.
+These files support both fresh installs and release-coupled in-place updates. A release manifest keeps
+those two plans separate: `streams` is the fresh-install plan, `freshInstallBaseline` identifies its
+major/minor baseline, and `upgradePaths` contains only the delta or bridge from an explicit installed
+version. Setup resolves upgrade paths from the recorded installed product version.
 
 The manifest also carries a semantic rollout policy. It declares who executes managed database work,
 when schema-dependent Workers may activate, and whether Admin mutations remain compatible during the
@@ -39,12 +38,14 @@ A new major-version baseline may consolidate cumulative SQL for fresh installati
 replaces the tested bridge migrations used by existing installations. Baseline installation and
 in-place upgrade are separate artifacts with separate validation requirements.
 
-## Pre-1.0 semantic baseline
+## Semantic fresh-install baselines
 
-Authrim does not support retaining or upgrading a database created by an older pre-1.0 checkout. The
-setup lock, Workers, and databases must be recreated together. This permits the migration history to
-be reorganized semantically while the schema is unstable, instead of preserving transitional table
-rebuilds and obsolete columns in the 1.0.0 fresh-install path.
+Create a complete fresh-install baseline for every migration stream at each major or minor boundary
+(`x.y.0`). Patch releases reuse the series baseline and add release deltas only for changed streams.
+The 0.4.0 files listed below are the first designated baseline candidates. They remain semantically
+regenerable until the 0.4.0 tag reaches remote `main`, and become immutable at that publication point.
+Generation is never inferred from a version bump or branch name. Run the write command only after the
+repository owner explicitly requests the baseline.
 
 Preview and then write the rewrite with:
 
@@ -53,49 +54,66 @@ pnpm release:migrations:semantic
 pnpm release:migrations:semantic -- --write
 ```
 
-The command applies every current SQLite stream to an empty SQLite database and both external streams
-to isolated PostgreSQL 17 databases. It dumps the final schema and required seed state, applies each
-generated baseline to a second empty database, and requires the resulting dump to match. Only after
-that verification does `--write` replace the source SQL, remove obsolete 0.x release manifests,
-regenerate `release-manifest.draft.json`, and write `semantic-baseline.evidence.json`. Docker must be
-available for PostgreSQL verification. The command is forbidden after a 1.0.0-or-newer manifest has
-been published.
-
-Any test environment that used replaced files must be deleted and initialized again. Do not run a
-normal update against that environment; setup rejects a different installed pre-1.0 baseline with
-`fresh_install_required`.
+The command applies the prior fresh plan plus current unpublished changes to empty SQLite databases and
+isolated PostgreSQL 17 databases. It dumps the final schema and required seed state, reapplies each
+generated baseline to a second empty database, and requires equivalent schema and seed dumps. It adds
+the new baseline without deleting earlier baselines, deltas, release manifests, or provenance. Docker
+must be available for PostgreSQL verification. It is valid only for `x.y.0`, and refuses to rewrite a
+version whose tag is reachable from remote `main`.
 
 ## Layout
 
-| Path                                 | Target database             | Notes                                                                                             |
-| ------------------------------------ | --------------------------- | ------------------------------------------------------------------------------------------------- |
-| `migrations/*.sql`                   | D1 core database            | Runtime protocol, identity, consent, flow, directory auth, and end-user auth state.               |
-| `migrations/pii/*.sql`               | D1 PII database             | Personal data, linked identities, sensitive values, and PII audit rows.                           |
-| `migrations/admin/*.sql`             | D1 admin database           | Admin users, RBAC, approvals, jobs, logging, storage, identity mapping, and admin object catalog. |
-| `migrations/control/*.sql`           | D1 control database         | Durable fleet inventory, rollout coordination, provisioning, and recovery state.                  |
-| `migrations/lookup/*.sql`            | D1 lookup database          | Identifier lookup, routing, bucket state, and retention controls.                                 |
-| `migrations/plugin-runner/*.sql`     | D1 plugin-runner database   | Plugin registry, activation, runtime resources, and delivery controls.                            |
-| `migrations/external/postgres/*.sql` | External PostgreSQL profile | Durable external core/PII schemas.                                                                |
+| Path                                | Stream / target    | Notes                                                                                             |
+| ----------------------------------- | ------------------ | ------------------------------------------------------------------------------------------------- |
+| `migrations/core/d1/*.sql`          | `core-d1`          | Runtime protocol, identity, consent, flow, directory auth, and end-user auth state.               |
+| `migrations/pii/d1/*.sql`           | `pii-d1`           | Personal data, linked identities, sensitive values, and PII audit rows.                           |
+| `migrations/admin/d1/*.sql`         | `admin-d1`         | Admin users, RBAC, approvals, jobs, logging, storage, identity mapping, and admin object catalog. |
+| `migrations/control/d1/*.sql`       | `control-d1`       | Durable fleet inventory, rollout coordination, provisioning, and recovery state.                  |
+| `migrations/lookup/d1/*.sql`        | `lookup-d1`        | Identifier lookup, routing, bucket state, and retention controls.                                 |
+| `migrations/plugin-runner/d1/*.sql` | `plugin-runner-d1` | Plugin registry, activation, runtime resources, and delivery controls.                            |
+| `migrations/core/postgresql/*.sql`  | `core-postgresql`  | PostgreSQL core, custom-claim, and policy schema.                                                 |
+| `migrations/pii/postgresql/*.sql`   | `pii-postgresql`   | PostgreSQL PII schema.                                                                            |
 
-Top-level core migrations intentionally exclude the `admin`, `archive`,
-`external`, and `pii` directories when the D1 core runner walks this directory.
+The schema family is always the first path component. `external` is an execution/profile property,
+not a schema identity. Release manifest format 2 records `schemaFamily`, `dialect`, `targetKind`, and
+`logicalRoles`; consumers reject metadata that differs from the shared canonical stream contract.
 
-## Current pre-1.0 baseline files
+## Authrim 0.4 fresh-install baseline files
 
-| Stream                   | File                                                                |
-| ------------------------ | ------------------------------------------------------------------- |
-| D1 core                  | `001_pre_1_0_core_baseline.sql`                                     |
-| D1 PII                   | `pii/001_pre_1_0_pii_baseline.sql`                                  |
-| D1 Admin                 | `admin/001_pre_1_0_admin_baseline.sql`                              |
-| D1 Control               | `control/001_pre_1_0_control_baseline.sql`                          |
-| D1 Lookup                | `lookup/001_pre_1_0_lookup_baseline.sql`                            |
-| D1 Plugin Runner         | `plugin-runner/001_pre_1_0_plugin_runner_baseline.sql`              |
-| External PostgreSQL core | `external/postgres/001_pre_1_0_external_postgres_core_baseline.sql` |
-| External PostgreSQL PII  | `external/postgres/002_pre_1_0_external_postgres_pii_baseline.sql`  |
+| Stream           | File                                                    |
+| ---------------- | ------------------------------------------------------- |
+| D1 core          | `core/d1/001_0_4_0_core_baseline.sql`                   |
+| D1 PII           | `pii/d1/001_0_4_0_pii_baseline.sql`                     |
+| D1 Admin         | `admin/d1/001_0_4_0_admin_baseline.sql`                 |
+| D1 Control       | `control/d1/001_0_4_0_control_baseline.sql`             |
+| D1 Lookup        | `lookup/d1/001_0_4_0_lookup_baseline.sql`               |
+| D1 Plugin Runner | `plugin-runner/d1/001_0_4_0_plugin_runner_baseline.sql` |
+| PostgreSQL core  | `core/postgresql/001_0_4_0_core_baseline.sql`           |
+| PostgreSQL PII   | `pii/postgresql/001_0_4_0_pii_baseline.sql`             |
 
-The generated evidence file retains the paths and checksums of every source migration represented by
-each baseline. It is provenance and verification evidence, not an upgrade map for a retained 0.x
-database.
+The version token in each filename is generated from the root product version (`0.4.0` becomes
+`0_4_0`). These files are new-install-only. Once 0.4.0 is published, they stay locked for the entire
+0.4 series. A 0.4.x database is upgraded with release deltas; a 0.5.0 fresh install uses a new 0.5
+baseline instead.
+
+The generator writes the current evidence to `semantic-baseline.evidence.json` and preserves the
+release candidate copy as `evidence/<version>.json`. These files retain the paths and checksums of
+every source migration represented by each baseline. They are provenance and verification evidence,
+not an upgrade map for a retained database. Once the corresponding remote-main tag is published, the
+versioned evidence is immutable together with its baseline and manifest.
+
+## Version examples
+
+- `0.4.0`: fresh installs execute `001_0_4_0_*_baseline.sql`.
+- `0.4.1`: fresh installs execute the 0.4.0 baseline plus `002_0_4_1_*_delta.sql`; existing
+  0.4.0 databases execute only that delta.
+- `0.4.2`: fresh installs execute the 0.4.0 baseline plus the 0.4.1 and 0.4.2 deltas; upgrades
+  resolve only the deltas after their recorded source version.
+- `0.5.0`: fresh installs execute `001_0_5_0_*_baseline.sql`; existing 0.4.x databases execute
+  the validated 0.4.x-to-0.5.0 delta/bridge and never the 0.5 baseline.
+
+The same rule continues at `1.0.0`, `1.0.1`, `1.1.0`, and later versions. Every stream receives a
+new complete baseline at `x.y.0`; only changed streams receive a release delta.
 
 ## Commands
 
@@ -107,22 +125,31 @@ DEPLOY_ENV=test node scripts/ci-run-migrations.mjs
 pnpm --filter @authrim/setup test -- src/__tests__/cloudflare-migration-status.test.ts
 ```
 
-At and after 1.0.0, applied migration files are immutable because the setup runner verifies their
-recorded checksums. Before 1.0.0, add sequential development migrations while implementing a change,
-then regenerate the semantic fresh-install baseline and recreate disposable environments.
+Add sequential temporary migrations while developing an unpublished release. Before release,
+consolidate each changed stream into one semantically verified versioned delta only when the repository
+owner requests it. A version becomes published when its tag is reachable from remote `main`; every
+migration and checksum in that release is then immutable, including for 0.x releases. A version bump,
+branch name, or PR does not authorize baseline generation or delta consolidation.
 
 ## Release-coupled schema updates
 
-`migrations/release-manifest.draft.json` is the cumulative development view of every logical schema
-stream. It records exact paths and dialect-rendered checksums for D1 core, D1 PII, D1 Admin, external
-PostgreSQL core, and external PostgreSQL PII migrations. `pnpm migrate:create` refreshes the draft
-automatically, and the root typecheck gate runs `pnpm migrate:manifest:check` so manually added or
-edited SQL cannot be forgotten. At the 1.0.0 stability boundary and afterward, once
-`releases/<version>.json` exists that product version is closed: bump the root/workspace versions before
-creating another migration. A pre-1.0 semantic rewrite is the only exception and removes obsolete 0.x
-manifests because their databases are not retained. A same-version stable draft that differs from its
-published manifest is rejected instead of being selected silently. Draft generation and manifest
-checks also reject a root product version older than the latest published stable release.
+`migrations/release-manifest.draft.json` records exact paths and dialect-rendered checksums for every
+logical stream. Its fresh-install and upgrade plans are distinct. `pnpm migrate:create` refreshes the
+draft automatically, and the root typecheck gate runs `pnpm migrate:manifest:check`. Before changing an
+existing migration, fetch remote `main` and tags and verify that no matching version tag is reachable
+from remote `main`. The presence of a local manifest alone is not publication; a remote-main tag is.
+
+Before merging to `main`, run the read-only release gate. It reports a missing/stale baseline or
+per-release delta and never generates either artifact:
+
+```bash
+pnpm migrate:release:check
+```
+
+`pnpm migrate:manifest` refreshes only the development draft. It does not update an existing
+unpublished release candidate; preparing or replacing that candidate remains an explicit owner-directed
+release action. Initial development deployments may select the newer draft without mutating the
+candidate.
 
 Before a release, preview consolidation without changing files:
 
@@ -130,8 +157,8 @@ Before a release, preview consolidation without changing files:
 pnpm release:migrations -- --version 1.1.0 --minimum-version 1.0.0
 ```
 
-When adopting the forward-only workflow at or after 1.0.0 for a repository that already has stable
-releases, create the non-destructive baseline manifest from the last published tag once:
+When importing an older tagged release that predates the manifest workflow, create its non-destructive
+manifest from that tag once:
 
 ```bash
 pnpm release:migrations:baseline -- --version 1.0.0 --git-ref v1.0.0 --write
@@ -143,15 +170,19 @@ After reviewing the plan, explicitly write it:
 pnpm release:migrations -- --version 1.1.0 --minimum-version 1.0.0 --write
 ```
 
-The first release manifest establishes a baseline without rewriting existing files. For later
-releases, the command merges multiple unpublished files into at most one release bundle per logical
-stream. Published files and manifests are immutable. Each bundle records `supersedes` paths and
-checksums:
+When the repository owner requests release preparation, generate the fresh baseline first at `x.y.0`.
+For every release, the preparation command merges multiple unpublished files into at most one versioned
+delta per changed stream. It applies the prior
+fresh plan and earlier release deltas to two isolated databases, applies the source files to one and
+the consolidated delta to the other, and requires equivalent schema objects and seed/reference data
+on SQLite or PostgreSQL before writing. The manifest stores this semantic evidence together with the
+`supersedes` paths and checksums. Published files and manifests remain immutable:
 
-- when none of the unpublished files were applied, setup executes the bundle;
-- when all were applied with matching checksums, setup records the bundle without executing it again;
-- when only part was applied, or a checksum differs, setup stops and requires the pre-release database
-  to be completed or recreated.
+- when none of the unpublished files were applied, Setup or Control executes the bundle;
+- when all were applied with matching checksums, Setup or Control records the bundle without executing
+  it again;
+- when only part was applied, or a checksum differs, Setup or Control stops and requires the
+  pre-release database to be completed or recreated.
 
 `--write` first persists `migrations/releases/.<version>.prepare-state`, then writes bundles and the
 release manifest atomically, and only then removes superseded draft files. If the command is
@@ -168,9 +199,9 @@ contract independent of tenant count and allows one tenant to span multiple D1 d
 plan, but must currently be applied with operator-managed PostgreSQL/MySQL tooling because Hyperdrive
 bindings do not expose database credentials to the local setup process.
 
-New PostgreSQL PII migrations must be placed under `migrations/external/postgres/pii/`. Existing PII
-files at the PostgreSQL migration root are classified through their legacy names. Core and custom
-schema migrations remain at `migrations/external/postgres/`. MySQL and external audit databases are
+New PostgreSQL PII migrations must be placed under `migrations/pii/postgresql/`; core, custom, and
+policy migrations remain at `migrations/core/postgresql/`. No filename-based classification or
+legacy PostgreSQL root is used. MySQL and external audit databases are
 rejected until corresponding logical streams exist; `--external-schema-ready` cannot bypass a missing
 stream.
 

@@ -166,7 +166,7 @@ async function loadMappedCustomClaimSources(
   input: ApplyOIDCIdentityMappingInput,
   binding: RuntimeIdentityMappingBinding
 ): Promise<Record<string, unknown>> {
-  const claims = { ...input.claims };
+  const claims = withCanonicalProfileAliases(input.claims);
   if (!input.env) return claims;
   const subjectId = typeof input.claims.sub === 'string' ? input.claims.sub : '';
   if (!subjectId) return claims;
@@ -195,6 +195,17 @@ async function loadMappedCustomClaimSources(
   });
   const custom = await resolver.resolveFieldValues(input.tenantId, subjectId, referencedKeys);
   return { ...claims, ...custom.claims };
+}
+
+function withCanonicalProfileAliases(claims: Record<string, unknown>): Record<string, unknown> {
+  const aliased = { ...claims };
+  if (!Object.prototype.hasOwnProperty.call(aliased, 'display_name') && aliased.name != null) {
+    aliased.display_name = aliased.name;
+  }
+  if (!Object.prototype.hasOwnProperty.call(aliased, 'picture_url') && aliased.picture != null) {
+    aliased.picture_url = aliased.picture;
+  }
+  return aliased;
 }
 
 async function applyOIDCDestinationFieldConsent(

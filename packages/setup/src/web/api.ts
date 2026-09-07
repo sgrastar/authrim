@@ -58,6 +58,8 @@ import {
   listWorkers,
   assertR2BucketOwnershipIdentity,
   assertR2BucketOwnershipForUse,
+  hasExactR2BucketOwnership,
+  toResourceIds,
 } from '../core/cloudflare.js';
 import {
   getCloudflareDnsRecordsDashboardUrl,
@@ -130,6 +132,11 @@ import {
   prepareWorkerScriptOwnership,
   type WorkerScriptOwnershipGuard,
 } from '../core/worker-script-ownership.js';
+import {
+  adoptLegacyWorkerDeployments,
+  assertInterruptedInitialWorkerDeploymentEvidence,
+  assertLegacyWorkerDeploymentAdoptionPersisted,
+} from '../core/legacy-worker-deployment-adoption.js';
 import { readPrivateFileSecurely, writePrivateFileAtomically } from '../core/atomic-file.js';
 import { reconcileLegacyQueueIdentitiesForDeletion } from '../core/legacy-queue-identity-deletion.js';
 import {
@@ -159,6 +166,7 @@ import {
   resolveAdminUiEntryUrl,
   resolveApiBaseUrlCandidates,
   resolveIssuerUrl,
+  resolveOperationalApiBaseUrl,
   resolveLoginUiEntryUrl,
   resolveLoginUiExecutionOrigin,
   validateDomainRoutingConfig,
@@ -166,6 +174,7 @@ import {
 import { normalizeTenantConfigForApiDomain } from '../core/tenant-mode.js';
 import {
   ensureInitialControlPlaneResources,
+  ensureInitialTenantRegionShardConfig,
   inspectInitialControlPlaneTopology,
   publishInitialControlPlaneRuntimeSnapshot,
 } from '../core/control-plane-bootstrap.js';
@@ -180,6 +189,7 @@ import {
 } from '../core/control-generated-state.js';
 import {
   advanceInitialBootstrapWorkerBindingsAsOperator,
+  isInitialBootstrapHandoffAccepted,
   reconcileInitialBootstrapHandoffAsOperator,
   recordInitialBootstrapWorkerEvidence,
   registerInitialControlTopology,
@@ -214,11 +224,13 @@ import {
   deployUiWorkerBindingTargets,
   resolveMissingUiWorkerBindingTargets,
   resolveExistingWorkerComponents,
+  reconcileWorkerCronTriggers,
   deployUiWorkerComponent,
   deployWorker,
   loadDeploySecretsFromKeys,
   UI_WORKER_COMPONENTS,
   updateLockWithDeployments,
+  type DeployOptions,
   type DeployResult,
   type DeploymentSummary,
   type UiWorkerComponent,
@@ -297,6 +309,9 @@ import {
   type CloudflareTokenOwnership,
 } from '../core/cloudflare-control-token-bootstrap.js';
 import {
+  advanceReadyControlTokenGeneration,
+  checkpointReadyControlTokenGenerationForRedeploy,
+  commitReadyControlTokenGenerationRedeploy,
   completeControlTokenBootstrap,
   findMissingControlTokenResourceClasses,
   hasReadyControlTokenBootstrap,
@@ -322,6 +337,7 @@ import {
   listSetupExclusiveCapacityTenants,
   previewSetupControlCapacity,
   requestSetupControlCapacity,
+  retrySetupControlOperationStep,
 } from '../core/control-capacity-client.js';
 import { runEphemeralSetupMachineAccess } from '../core/setup-machine-access-lifecycle.js';
 import { assertFixedD1ResourceIdentities } from '../core/fixed-d1-identity.js';
@@ -330,6 +346,10 @@ import {
   executeSetupControlOperatorMigration,
   executeSetupControlOperatorWorkerBindings,
 } from '../core/control-operator-executor.js';
+import {
+  assertControlProvisionMutationState,
+  CONTROL_WORKER_BINDING_INTER_TARGET_DELAY_MS,
+} from '../core/control-provision-policy.js';
 import {
   buildWorkerHttpReadinessTargets,
   waitForRouterWorkerReady,
@@ -547,7 +567,7 @@ async function withLock<T>(operation: () => Promise<T>): Promise<T> {
 // =============================================================================
 
 interface SetupState {
-  status: 'idle' | 'configuring' | 'provisioning' | 'deploying' | 'complete' | 'error';
+  status: 'idle' | 'configuring' | 'provisioning' | 'deploying' | 'waiting' | 'complete' | 'error';
   config: Partial<AuthrimConfig> | null;
   auth: CloudflareAuth | null;
   progress: string[];
@@ -1241,8 +1261,12 @@ async function maybeConfigureDownstreamIntrospectionForWebDeploy(options: {
   config?: Partial<AuthrimConfig> | null;
   components: string[];
   knownRouterReadyBaseUrls?: string[];
+  workersSubdomain?: string | null;
   dryRun?: boolean;
   deployConfigLockProof?: DeployConfigLockProof;
+  /** Existing-environment component retries must recreate the temporary Setup principal. */
+  ephemeralSetupMachineAccess?: boolean;
+  adminDatabaseIdentifier?: string;
 }): Promise<void> {
   const { env, rootDir, config, components, knownRouterReadyBaseUrls, dryRun } = options;
   if (dryRun || !components.includes('ar-userinfo')) {
@@ -1250,31 +1274,61 @@ async function maybeConfigureDownstreamIntrospectionForWebDeploy(options: {
   }
 
   const keysDir = resolveWebDeploymentKeysDir(rootDir, env, config);
+  const configureDownstream = async () => {
+    try {
+      return await configureDownstreamIntrospectionDeployment({
+        env,
+        rootDir,
+        keysDir,
+        apiBaseUrl: resolveIssuerUrl(config, {
+          env,
+          workersSubdomain: options.workersSubdomain,
+        }),
+        apiBaseUrls: resolveApiBaseUrlCandidates(config, {
+          env,
+          purpose: 'tenant-scoped-admin',
+          workersSubdomain: options.workersSubdomain,
+        }),
+        knownRouterReadyBaseUrls,
+        tenantId: config?.tenant?.name,
+        dryRun,
+        deployConfigLockProof: options.deployConfigLockProof,
+        onProgress: addProgress,
+        onDetail: addDetailProgress,
+      });
+    } catch (error) {
+      const detail = sanitizeError(error);
+      addDetailProgress(`Downstream introspection setup failed unexpectedly: ${detail}`);
+      return createDownstreamIntrospectionFailure(detail);
+    }
+  };
+
   let downstreamSetupResult;
-  try {
-    downstreamSetupResult = await configureDownstreamIntrospectionDeployment({
+  if (options.ephemeralSetupMachineAccess) {
+    if (!config || !options.adminDatabaseIdentifier) {
+      throw new Error('downstream_introspection_setup_machine_context_missing');
+    }
+    downstreamSetupResult = await runEphemeralSetupMachineAccess({
       env,
-      rootDir,
+      config: AuthrimConfigSchema.parse(config),
       keysDir,
-      apiBaseUrl: resolveIssuerUrl(config, { env }),
-      apiBaseUrls: resolveApiBaseUrlCandidates(config, { env, purpose: 'tenant-scoped-admin' }),
-      knownRouterReadyBaseUrls,
-      tenantId: config?.tenant?.name,
-      dryRun,
-      deployConfigLockProof: options.deployConfigLockProof,
+      databaseIdentifier: options.adminDatabaseIdentifier,
       onProgress: addProgress,
-      onDetail: addDetailProgress,
+      action: configureDownstream,
     });
-  } catch (error) {
-    const detail = sanitizeError(error);
-    addDetailProgress(`Downstream introspection setup failed unexpectedly: ${detail}`);
-    downstreamSetupResult = createDownstreamIntrospectionFailure(detail);
+  } else {
+    downstreamSetupResult = await configureDownstream();
   }
 
   if (!downstreamSetupResult.success) {
     addDetailProgress(
       `Downstream introspection setup deferred: ${downstreamSetupResult.error ?? 'Unknown error'}`
     );
+    if (downstreamSetupResult.diagnosticCode) {
+      addDetailProgress(
+        `Downstream introspection diagnostic: ${downstreamSetupResult.diagnosticCode}`
+      );
+    }
     addProgress('⚠️ Optional downstream grant introspection was deferred.');
     addProgress(
       downstreamSetupResult.impact ?? 'Core login, Admin UI, and token issuance remain available.'
@@ -1334,6 +1388,8 @@ function markOperationError(message: string): string {
 }
 
 function markInitialDeploymentManualAction(): void {
+  state.status = 'waiting';
+  state.error = null;
   if (state.deploymentProgress) {
     state.deploymentProgress = { ...state.deploymentProgress, terminal: true };
   }
@@ -4039,7 +4095,7 @@ export function createApiRoutes(): Hono {
               resourceIds,
               workersSubdomain ?? undefined,
               component === 'ar-control'
-                ? { includeControlSmokeBindings: false }
+                ? { includeControlSmokeBindings: false, includeControlCronTriggers: false }
                 : component === 'ar-auth'
                   ? { includeAuthAccountProvisioner: false }
                   : { includeExternalIdpAccountProvisioner: false }
@@ -4106,6 +4162,7 @@ export function createApiRoutes(): Hono {
             externalSchemaReady: z.boolean().optional(),
             bootstrapToken: z.string().min(20).max(4096).regex(/^\S+$/u).optional(),
             tokenOwnership: z.enum(['account', 'user']).optional(),
+            recoverWorkerOwnership: z.boolean().optional(),
           })
           .strict()
           .safeParse(await c.req.json());
@@ -4138,6 +4195,7 @@ export function createApiRoutes(): Hono {
           skipBuild = false,
           runMigrations = true,
           externalSchemaReady = false,
+          recoverWorkerOwnership = false,
         } = body;
         const env = body.env;
         const resolvedRootDir = resolve(findAuthrimBaseDir(process.cwd()));
@@ -4376,6 +4434,7 @@ export function createApiRoutes(): Hono {
 
         const automaticProvisioning = releaseConfig.controlPlane?.automaticProvisioning === true;
         let existingControlTokenBootstrapReady = false;
+        let checkpointedReadyControlTokenVersionId: string | null = null;
         let recoveringControlTokenBootstrapOwnership: CloudflareTokenOwnership | null = null;
         if (automaticProvisioning && !bootstrapToken && interruptedInitialRelease) {
           const controlDatabaseId = existingDeploymentLock.d1.CONTROL_DB?.id;
@@ -4432,7 +4491,11 @@ export function createApiRoutes(): Hono {
                   workerName: `${env}-ar-control`,
                   cwd: resolvedRootDir,
                 }),
+                restoreGenerationOnMismatch: true,
               });
+              if (existingControlTokenBootstrapReady && lockedAuthority?.secretGeneration) {
+                checkpointedReadyControlTokenVersionId = lockedAuthority.secretGeneration.versionId;
+              }
             }
           }
         }
@@ -4470,6 +4533,58 @@ export function createApiRoutes(): Hono {
             policy: releaseConfig.components.policy,
           })
         );
+        const initialWorkerRecoveryTargets = [
+          ...enabledComponents.map((component) => ({
+            component,
+            workerName: getWorkerName(env, component),
+            expectedPackageVersion: productVersion,
+          })),
+          ...UI_WORKER_COMPONENTS.filter((component) =>
+            component === 'ar-login-ui'
+              ? releaseConfig.components.loginUi !== false
+              : releaseConfig.components.adminUi !== false
+          ).map((component) => ({
+            component,
+            workerName: `${env}-${component}`,
+            expectedPackageVersion: productVersion,
+          })),
+        ];
+        if (recoverWorkerOwnership) {
+          if (!interruptedInitialRelease || !initialLockPath) {
+            return c.json(
+              { success: false, error: 'Worker ownership recovery is not available.' },
+              409
+            );
+          }
+          const authenticatedAccountId = await getAccountId();
+          if (!authenticatedAccountId) {
+            throw new Error('cloudflare_account_verification_unavailable');
+          }
+          const recovery = await adoptLegacyWorkerDeployments({
+            lock: existingDeploymentLock,
+            environment: env,
+            authenticatedAccountId,
+            configuredAccountId: releaseConfig.cloudflare?.accountId,
+            productVersion,
+            targets: initialWorkerRecoveryTargets,
+            requireAllTargets: false,
+            allowNoop: true,
+          });
+          if (recovery.adopted.length > 0) {
+            assertInterruptedInitialWorkerDeploymentEvidence({
+              lock: existingDeploymentLock,
+              evidence: recovery.adopted,
+            });
+            await saveLockFile(recovery.lock, initialLockPath);
+            const persisted = (await loadLockFileAuto(resolvedRootDir, env)).lock;
+            assertLegacyWorkerDeploymentAdoptionPersisted(persisted, env, recovery.adopted);
+            if (!persisted) throw new Error('worker_ownership_recovery_checkpoint_missing');
+            existingDeploymentLock = persisted;
+            addProgress(
+              `Recovered exact Worker ownership for ${recovery.adopted.map((item) => item.component).join(', ')}; all enabled Workers will be redeployed and verified.`
+            );
+          }
+        }
         if (requestedComponents !== undefined) {
           if (
             !Array.isArray(requestedComponents) ||
@@ -4518,6 +4633,13 @@ export function createApiRoutes(): Hono {
           existingDeploymentLock.releaseUpdate?.initialWorkerRedeployRequired !== true &&
           existingDeploymentLock.releaseUpdate?.targetVersion === productVersion &&
           existingDeploymentLock.releaseUpdate.manifestChecksum === initialManifestChecksum;
+        const initialHandoffAlreadyAccepted =
+          canResumeExactInitialHandoff && existingDeploymentLock.d1.CONTROL_DB?.id
+            ? await isInitialBootstrapHandoffAccepted({
+                environmentId: env,
+                controlDatabaseName: existingDeploymentLock.d1.CONTROL_DB.id,
+              })
+            : false;
         const reconciledWorkerVersions =
           canResumeExactInitialHandoff &&
           existingDeploymentLock.releaseUpdate?.phase === 'workers_deployed' &&
@@ -4646,8 +4768,9 @@ export function createApiRoutes(): Hono {
           );
         }
 
-        let migrationsResult = null;
-        if (!dryRun) {
+        let migrationsResult: Awaited<ReturnType<typeof applyReleaseSchemaUpdatePlan>> | null =
+          initialHandoffResumeSummary ? { success: true, results: [] } : null;
+        if (!dryRun && !initialHandoffResumeSummary) {
           // The existing checkpoint is the proof that an interrupted initial deployment may
           // append to a draft manifest. Do not overwrite that proof until every appended migration
           // succeeds, otherwise a transient failure leaves the next retry permanently ineligible.
@@ -4766,26 +4889,32 @@ export function createApiRoutes(): Hono {
             if (!migrationReleaseBucket) {
               throw new Error('migration_release_bucket_required_for_release_publication');
             }
-            const verifyMigrationBucketOwnership = () =>
-              assertR2BucketOwnershipForUse({
-                ...migrationReleaseBucket,
-                environment: env,
-                binding: 'MIGRATION_RELEASES',
+            if (!initialHandoffResumeSummary) {
+              const verifyMigrationBucketOwnership = () =>
+                assertR2BucketOwnershipForUse({
+                  ...migrationReleaseBucket,
+                  environment: env,
+                  binding: 'MIGRATION_RELEASES',
+                });
+              await verifyMigrationBucketOwnership();
+              const publication = await publishAndActivateMigrationRelease({
+                migrationsRoot: migrationRootResult.path,
+                manifestPath: initialRelease.path,
+                bucketName: migrationReleaseBucket.name,
+                controlDatabaseId: controlDatabase.id,
+                environmentId: env,
+                actorId: 'setup:web-deploy',
+                verifyBucketOwnership: verifyMigrationBucketOwnership,
+                onProgress: addProgress,
               });
-            await verifyMigrationBucketOwnership();
-            const publication = await publishAndActivateMigrationRelease({
-              migrationsRoot: migrationRootResult.path,
-              manifestPath: initialRelease.path,
-              bucketName: migrationReleaseBucket.name,
-              controlDatabaseId: controlDatabase.id,
-              environmentId: env,
-              actorId: 'setup:web-deploy',
-              verifyBucketOwnership: verifyMigrationBucketOwnership,
-              onProgress: addProgress,
-            });
-            addProgress(
-              `✓ Migration release ${publication.artifact.releaseId} published and activated`
-            );
+              addProgress(
+                `✓ Migration release ${publication.artifact.releaseId} published and activated`
+              );
+            } else {
+              addProgress(
+                '✓ Preserved the completed migration release while resuming Worker verification'
+              );
+            }
 
             const controlPlaneBootstrapResult = await ensureInitialControlPlaneResources({
               env,
@@ -4894,7 +5023,7 @@ export function createApiRoutes(): Hono {
                   lockResourceIds,
                   workersSubdomain ?? undefined,
                   component === 'ar-control'
-                    ? { includeControlSmokeBindings: false }
+                    ? { includeControlSmokeBindings: false, includeControlCronTriggers: false }
                     : component === 'ar-auth'
                       ? { includeAuthAccountProvisioner: false }
                       : { includeExternalIdpAccountProvisioner: false }
@@ -4924,15 +5053,27 @@ export function createApiRoutes(): Hono {
               registeredBy: 'setup:web-deploy',
               onProgress: addProgress,
             });
-            await registerInitialControlTopology({
+            if (!initialHandoffAlreadyAccepted) {
+              await registerInitialControlTopology({
+                environmentId: env,
+                tenantId: config.tenant?.name?.trim() || 'default',
+                controlDatabaseName: controlDatabase.id,
+                lock,
+                release: initialRelease.manifest,
+                releaseDraft: initialRelease.draft,
+                automaticProvisioning: config.controlPlane?.automaticProvisioning === true,
+                placementPolicy: config.tenant.placementPolicy,
+              });
+            }
+            const configNamespaceId = lock.kv.AUTHRIM_CONFIG?.id;
+            if (!configNamespaceId) {
+              throw new Error('authrim_config_namespace_required_for_region_policy');
+            }
+            await ensureInitialTenantRegionShardConfig({
               environmentId: env,
               tenantId: config.tenant?.name?.trim() || 'default',
               controlDatabaseName: controlDatabase.id,
-              lock,
-              release: initialRelease.manifest,
-              releaseDraft: initialRelease.draft,
-              automaticProvisioning: config.controlPlane?.automaticProvisioning === true,
-              placementPolicy: config.tenant.placementPolicy,
+              configNamespaceId,
             });
             const externalSources = await discoverExternalCapabilities({
               baseDir: resolvedRootDir,
@@ -4990,20 +5131,18 @@ export function createApiRoutes(): Hono {
           } catch (error) {
             const manualAction = getWildcardDnsManualActionPayload(cfg);
             if (manualAction && isWildcardDnsPermissionError(error)) {
-              state.status = 'error';
-              state.error = 'Manual wildcard DNS setup required';
-              addProgress('⚠️ Automatic wildcard DNS setup is unavailable.');
-              addProgress('⚠️ Create the wildcard DNS record manually, then rerun deploy.');
+              addProgress('⚠️ Waiting for the user to configure wildcard DNS.');
+              addProgress('⚠️ Create the wildcard DNS record, then re-check DNS to continue.');
               markInitialDeploymentManualAction();
               await flushProgressLog();
               return c.json(
                 {
                   success: false,
-                  error: 'Manual wildcard DNS setup required',
+                  waitingForUser: true,
                   manualAction,
                   logPath: state.logPath,
                 },
-                409
+                202
               );
             }
             throw error;
@@ -5026,7 +5165,7 @@ export function createApiRoutes(): Hono {
           : { loginUi: false, adminUi: false };
 
         let initialWorkerOwnership: WorkerScriptOwnershipGuard | undefined;
-        if (!dryRun && !initialHandoffResumeSummary) {
+        if (!dryRun) {
           const ownershipLockState = await loadLockFileAuto(rootDir, env);
           if (!ownershipLockState.lock || !ownershipLockState.path) {
             throw new Error('worker_script_ownership_lock_unavailable');
@@ -5082,33 +5221,32 @@ export function createApiRoutes(): Hono {
           }
         }
 
+        const workerDeployOptions: DeployOptions = {
+          env,
+          rootDir: resolve(rootDir),
+          dryRun,
+          concurrency: 2,
+          deploymentStrategy: 'auto',
+          existingComponents,
+          secrets: deploymentSecrets,
+          automaticProvisioning: automaticProvisioning && !bootstrapToken,
+          cleanupLegacyStaticSecrets: true,
+          deployConfigLockProof: deployConfigLock?.proof,
+          workerScriptOwnership: initialWorkerOwnership,
+          cloudflareAccountId: cfg.cloudflare?.accountId,
+          onProgress: addProgress,
+          onError: (comp, error) => {
+            addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
+          },
+        };
         const resumeSummary = initialHandoffResumeSummary;
-        const summary =
-          resumeSummary ??
-          (await deployAll(
-            {
-              env,
-              rootDir: resolve(rootDir),
-              dryRun,
-              concurrency: 2,
-              deploymentStrategy: 'auto',
-              existingComponents,
-              secrets: deploymentSecrets,
-              automaticProvisioning: automaticProvisioning && !bootstrapToken,
-              cleanupLegacyStaticSecrets: true,
-              deployConfigLockProof: deployConfigLock?.proof,
-              workerScriptOwnership: initialWorkerOwnership,
-              onProgress: addProgress,
-              onError: (comp, error) => {
-                addProgress(`Error in ${comp}: ${sanitizeError(error)}`);
-              },
-            },
-            enabledComponents
-          ));
+        const summary = resumeSummary ?? (await deployAll(workerDeployOptions, enabledComponents));
         if (resumeSummary) {
           addProgress(
             `Resuming initial deployment from ${resumeSummary.results.length} active Worker version(s); no Worker traffic was changed.`
           );
+          addProgress('Verifying Worker Cron Triggers before continuing deployment...');
+          await reconcileWorkerCronTriggers(workerDeployOptions, enabledComponents);
         }
 
         state.deployResults = summary.results;
@@ -5153,7 +5291,8 @@ export function createApiRoutes(): Hono {
           return false;
         };
 
-        const apiBaseUrl = resolveIssuerUrl(cfg, { env });
+        let apiBaseUrl = resolveIssuerUrl(cfg, { env });
+        let deploymentWorkersSubdomain: string | null | undefined;
 
         if (workersSuccess && !dryRun) {
           const workerDeploymentResult = await waitForWorkerDeploymentsReady({
@@ -5188,6 +5327,26 @@ export function createApiRoutes(): Hono {
               initialWorkerRedeployRequired: false,
             }
           );
+
+          if (automaticProvisioning && checkpointedReadyControlTokenVersionId) {
+            const controlDatabaseId = verifiedWorkerLock.d1.CONTROL_DB?.id;
+            const controlDeployment = summary.results.find(
+              (result) => result.component === 'ar-control' && result.success
+            );
+            if (controlDatabaseId && controlDeployment?.cloudflareVersionId) {
+              await advanceReadyControlTokenGeneration({
+                environmentId: env,
+                controlDatabaseName: controlDatabaseId,
+                resourceClasses: resolveControlTokenResourceClasses(releaseConfig),
+                previousVersionId: checkpointedReadyControlTokenVersionId,
+                deployedVersionId: controlDeployment.cloudflareVersionId,
+                secretSink: new WranglerControlSecretSink({
+                  workerName: `${env}-ar-control`,
+                  cwd: resolvedRootDir,
+                }),
+              });
+            }
+          }
 
           if ((bootstrapToken && bootstrapOwnership) || recoveringControlTokenBootstrapOwnership) {
             const accountId = releaseConfig.cloudflare?.accountId ?? (await getAccountId());
@@ -5234,10 +5393,14 @@ export function createApiRoutes(): Hono {
             );
           }
 
-          const workersSubdomain = await getWorkersSubdomain();
+          deploymentWorkersSubdomain = await getWorkersSubdomain();
+          apiBaseUrl = resolveOperationalApiBaseUrl(cfg, {
+            env,
+            workersSubdomain: deploymentWorkersSubdomain,
+          });
           const workerHttpTargets = buildWorkerHttpReadinessTargets(
             summary.results.filter((result) => result.success),
-            workersSubdomain,
+            deploymentWorkersSubdomain,
             { workersDevEnabled: !cfg?.urls?.api?.custom }
           );
           if (workerHttpTargets.length > 0) {
@@ -5279,49 +5442,15 @@ export function createApiRoutes(): Hono {
           if (!controlDatabaseId) {
             throw new Error('control_database_required');
           }
-          const deployedWorkerCount = new Set(
-            summary.results.filter((result) => result.success).map((result) => result.workerName)
-          ).size;
-          addProgress(
-            `Waiting for Control bootstrap verification of ${deployedWorkerCount} Worker(s)...`
-          );
-          let acceleratorFallbackReported = false;
-          const smokeKeyState = handoffLock.controlKeyState?.smokeRpc;
-          await waitForInitialBootstrapHandoff({
-            environmentId: env,
-            controlDatabaseName: controlDatabaseId,
-            timeoutMs: 30 * 60_000,
-            stallTimeoutMs: 5 * 60_000,
-            pollIntervalMs: 2_000,
-            onProgress: addProgress,
-            advanceBindings: automaticProvisioning
-              ? smokeKeyState
-                ? async () => {
-                    try {
-                      await requestInitialBootstrapAcceleration({
-                        apiBaseUrl,
-                        environmentId: env,
-                        keysDir,
-                        activeSlot: smokeKeyState.activeSlot,
-                        activeKeyId: smokeKeyState.activeKeyId,
-                      });
-                    } catch {
-                      if (!acceleratorFallbackReported) {
-                        acceleratorFallbackReported = true;
-                        addProgress(
-                          'Control bootstrap acceleration unavailable; continuing with scheduled verification...'
-                        );
-                      }
-                    }
-                  }
-                : undefined
-              : () =>
-                  advanceInitialBootstrapWorkerBindingsAsOperator({
-                    controlDatabaseId,
-                    controlDatabaseName: controlDatabaseId,
-                    environmentId: env,
-                  }),
-            refreshEvidence: () =>
+          if (initialHandoffAlreadyAccepted) {
+            addProgress('✓ Initial D1 topology was already accepted by Control');
+          } else {
+            const deployedWorkerCount = new Set(
+              summary.results.filter((result) => result.success).map((result) => result.workerName)
+            ).size;
+            let acceleratorFallbackReported = false;
+            const smokeKeyState = handoffLock.controlKeyState?.smokeRpc;
+            const refreshInitialWorkerEvidence = () =>
               recordInitialBootstrapWorkerEvidence({
                 environmentId: env,
                 controlDatabaseName: controlDatabaseId,
@@ -5329,14 +5458,85 @@ export function createApiRoutes(): Hono {
                 allowSecretTriggeredVersionAdvanceFor: automaticProvisioning
                   ? [`${env}-ar-control`]
                   : undefined,
-              }),
-            reconcile: () =>
-              reconcileInitialBootstrapHandoffAsOperator({
-                controlDatabaseId,
-                executeWorkerBindings: false,
-              }),
-          });
-          addProgress('✓ Initial D1 topology accepted by Control');
+              });
+            // Recovery of a pre-deploy binding failure is intentionally gated by fresh evidence
+            // for every initial Worker. Record that evidence before waiting; doing it only after
+            // all bindings complete creates a circular wait and leaves operations blocked.
+            await refreshInitialWorkerEvidence();
+            addProgress(
+              'Refreshed initial Worker deployment evidence before binding reconciliation'
+            );
+            addProgress(
+              automaticProvisioning
+                ? `Control is verifying ${deployedWorkerCount} Worker deployment(s)...`
+                : `Setup operator is reconciling ${deployedWorkerCount} Worker deployment(s) with Wrangler OAuth...`
+            );
+            await waitForInitialBootstrapHandoff({
+              environmentId: env,
+              controlDatabaseName: controlDatabaseId,
+              timeoutMs: 30 * 60_000,
+              stallTimeoutMs: 5 * 60_000,
+              pollIntervalMs: 2_000,
+              onProgress: addProgress,
+              advanceBindings: automaticProvisioning
+                ? smokeKeyState
+                  ? async () => {
+                      try {
+                        await requestInitialBootstrapAcceleration({
+                          apiBaseUrl,
+                          environmentId: env,
+                          keysDir,
+                          activeSlot: smokeKeyState.activeSlot,
+                          activeKeyId: smokeKeyState.activeKeyId,
+                        });
+                      } catch (error) {
+                        if (!acceleratorFallbackReported) {
+                          acceleratorFallbackReported = true;
+                          const diagnostic = error instanceof Error ? ` (${error.message})` : '';
+                          addProgress(
+                            `Control bootstrap acceleration unavailable${diagnostic}; continuing with scheduled verification...`
+                          );
+                        }
+                      }
+                    }
+                  : undefined
+                : async () => {
+                    await advanceInitialBootstrapWorkerBindingsAsOperator({
+                      controlDatabaseId,
+                      controlDatabaseName: controlDatabaseId,
+                      environmentId: env,
+                      onProgress: addProgress,
+                    });
+                    if (smokeKeyState) {
+                      try {
+                        await requestInitialBootstrapAcceleration({
+                          apiBaseUrl,
+                          environmentId: env,
+                          keysDir,
+                          activeSlot: smokeKeyState.activeSlot,
+                          activeKeyId: smokeKeyState.activeKeyId,
+                        });
+                      } catch (error) {
+                        if (!acceleratorFallbackReported) {
+                          acceleratorFallbackReported = true;
+                          const diagnostic = error instanceof Error ? ` (${error.message})` : '';
+                          addProgress(
+                            `Immediate binding smoke unavailable${diagnostic}; continuing with scheduled verification...`
+                          );
+                        }
+                      }
+                    }
+                  },
+              refreshEvidence: refreshInitialWorkerEvidence,
+              reconcile: () =>
+                reconcileInitialBootstrapHandoffAsOperator({
+                  controlDatabaseId,
+                  environmentId: env,
+                  executeWorkerBindings: false,
+                }),
+            });
+            addProgress('✓ Initial D1 topology accepted by Control');
+          }
         }
 
         // Complete post-deploy bootstrap only after the schema-first step above.
@@ -5489,6 +5689,27 @@ export function createApiRoutes(): Hono {
               if (!controlPlaneSnapshotResult.skipped) {
                 addProgress('✅ Initial Control Plane runtime snapshot ready');
               }
+              const workersSubdomain = await getWorkersSubdomain();
+              const postBootstrapTargets = buildWorkerHttpReadinessTargets(
+                summary.results.filter((result) => result.success),
+                workersSubdomain,
+                { workersDevEnabled: !bootstrapConfig.urls?.api?.custom }
+              );
+              if (postBootstrapTargets.length > 0) {
+                addProgress('Verifying tenant-aware Worker health after runtime snapshot...');
+                const postBootstrapHealth = await waitForWorkerHttpReady({
+                  targets: postBootstrapTargets,
+                  onProgress: addProgress,
+                });
+                if (!postBootstrapHealth.ready) {
+                  throw new Error(
+                    `Tenant-aware Worker health checks failed after runtime snapshot: ${
+                      postBootstrapHealth.error || 'unknown health check error'
+                    }`
+                  );
+                }
+                addProgress('✅ Tenant-aware Worker health checks passed after runtime snapshot');
+              }
             } else {
               throw new Error(
                 `Initial Control Plane runtime snapshot failed: ${
@@ -5534,6 +5755,7 @@ export function createApiRoutes(): Hono {
             config: cfg,
             components: enabledComponents ?? [],
             knownRouterReadyBaseUrls: [apiBaseUrl],
+            workersSubdomain: deploymentWorkersSubdomain,
             dryRun,
             deployConfigLockProof: deployConfigLock?.proof,
           });
@@ -5554,6 +5776,11 @@ export function createApiRoutes(): Hono {
             const { ensureLoginUiClient } = await import('../core/login-ui-client.js');
             const clientResult = await ensureLoginUiClient({
               apiBaseUrl,
+              apiBaseUrls: resolveApiBaseUrlCandidates(cfg, {
+                env,
+                purpose: 'tenant-scoped-admin',
+                workersSubdomain: deploymentWorkersSubdomain,
+              }),
               loginUiUrl,
               keysDir,
               tenantId: cfg?.tenant?.name,
@@ -5675,6 +5902,7 @@ export function createApiRoutes(): Hono {
                 const httpReadiness = await waitForWorkerHttpReady({
                   targets: uiWorkersSummary.results.map((result) => ({
                     workerName: result.projectName,
+                    allowRedirectResponse: true,
                     url:
                       result.component === 'ar-login-ui'
                         ? resolveLoginUiEntryUrl(releaseConfig, { env, workersSubdomain })
@@ -6102,10 +6330,57 @@ export function createApiRoutes(): Hono {
       }
 
       const status = await checkAdminSetupStatus(kvNamespaceId);
+      let adminSetupCompleted = status.completed;
+      let statusError = status.error;
+
+      // Wrangler inventory/auth lookups can fail transiently even while the deployed
+      // environment is healthy. Confirm an apparent or unknown incomplete state through
+      // the environment's public, secret-free setup status contract before telling the
+      // operator that no administrator exists.
+      const parsedEnv = EnvNameSchema.safeParse(c.req.query('env'));
+      if (!adminSetupCompleted && parsedEnv.success) {
+        try {
+          const baseDir = findAuthrimBaseDir(process.cwd());
+          const resolved = resolvePaths({ baseDir, env: parsedEnv.data });
+          const configPath =
+            resolved.type === 'new'
+              ? (resolved.paths as EnvironmentPaths).config
+              : (resolved.paths as LegacyPaths).config;
+          if (existsSync(configPath)) {
+            const config = parseEnvironmentConfigForEnv(
+              JSON.parse(await readFile(configPath, 'utf-8')),
+              parsedEnv.data
+            );
+            const response = await fetch(
+              `${resolveIssuerUrl(config, { env: parsedEnv.data }).replace(/\/$/u, '')}/api/admin-init-setup/status`,
+              {
+                headers: { accept: 'application/json' },
+                redirect: 'manual',
+                signal: AbortSignal.timeout(10_000),
+              }
+            );
+            const body = (await response.json().catch(() => null)) as Record<
+              string,
+              unknown
+            > | null;
+            if (
+              body?.error === 'setup_completed' ||
+              body?.setup_disabled === true ||
+              body?.initialized === true
+            ) {
+              adminSetupCompleted = true;
+              statusError = undefined;
+            }
+          }
+        } catch (error) {
+          statusError ??= sanitizeError(error);
+        }
+      }
       return c.json({
         success: true,
-        adminSetupCompleted: status.completed,
-        error: status.error,
+        adminSetupCompleted,
+        statusKnown: adminSetupCompleted || !statusError,
+        error: statusError,
       });
     } catch (error) {
       return c.json({ success: false, error: sanitizeError(error) }, 500);
@@ -6485,12 +6760,45 @@ export function createApiRoutes(): Hono {
           baseDir,
           env: parsed.data.environmentId,
           operation: `web-control-operation:${parsed.data.operationId}`,
+          requireExisting: true,
+        });
+        deployConfigLock = await acquireDeployConfigLock({
+          baseDir,
+          env: parsed.data.environmentId,
+          operation: `web-control-operation:${parsed.data.operationId}`,
         });
         const { lock, path: lockPath } = await loadLockFileAuto(baseDir, parsed.data.environmentId);
         const controlDatabase = lock?.d1.CONTROL_DB;
-        if (!controlDatabase) {
-          return c.json({ success: false, error: 'Control database is not configured' }, 409);
+        const adminDatabase = lock?.d1.DB_ADMIN;
+        if (!lock || !controlDatabase || !adminDatabase || !lockPath) {
+          return c.json(
+            { success: false, error: 'Control and Admin databases are not configured' },
+            409
+          );
         }
+        if (lock.env !== parsed.data.environmentId) {
+          throw new Error('control_provision_lock_environment_mismatch');
+        }
+        if (JSON.stringify(lock) !== JSON.stringify(operationLock.lock)) {
+          throw new Error('environment_changed_while_waiting_for_control_provision_lock');
+        }
+        try {
+          assertControlProvisionMutationState(lock);
+        } catch (error) {
+          return c.json(
+            {
+              success: false,
+              error: sanitizeError(error),
+              errorCode: sanitizeError(error),
+            },
+            409
+          );
+        }
+        assertFixedD1ResourceIdentities({
+          environment: parsed.data.environmentId,
+          lock,
+          databases: await listD1Databases(),
+        });
         const [shardOperations, pluginOperations, pluginCleanupOperations, tenantDrOperations] =
           await Promise.all([
             listPendingControlOperatorOperations({ controlDatabaseName: controlDatabase.id }),
@@ -6545,6 +6853,9 @@ export function createApiRoutes(): Hono {
               parsed.data.environmentId
             )
           : null;
+        if (config && config.environment.prefix !== parsed.data.environmentId) {
+          throw new Error('control_provision_config_environment_mismatch');
+        }
         if (
           (operation.operationKind === 'provision_plugin_resources' ||
             operation.operationKind === 'cleanup_plugin_resources') &&
@@ -6555,14 +6866,29 @@ export function createApiRoutes(): Hono {
             409
           );
         }
-        const refreshesWorkerDeploymentArtifacts =
-          operation.operationKind === 'provision_plugin_resources' ||
-          operation.operationKind === 'cleanup_plugin_resources';
-        if (refreshesWorkerDeploymentArtifacts) {
-          deployConfigLock = await acquireDeployConfigLock({
-            baseDir,
+        if (
+          operation.operationKind === 'provision_shard' &&
+          operation.lastErrorCode === 'control_worker_settings_request_rejected'
+        ) {
+          if (!config) {
+            return c.json(
+              { success: false, error: 'Control environment config is unavailable' },
+              409
+            );
+          }
+          const keysDir = resolveWebDeploymentKeysDir(baseDir, parsed.data.environmentId, config);
+          await runEphemeralSetupMachineAccess({
             env: parsed.data.environmentId,
-            operation: `web-control-operation:${parsed.data.operationId}`,
+            config,
+            keysDir,
+            databaseIdentifier: adminDatabase.id,
+            action: () =>
+              retrySetupControlOperationStep({
+                apiBaseUrl: resolveIssuerUrl(config, { env: parsed.data.environmentId }),
+                keysDir,
+                operationId: operation.operationId,
+                stepKey: 'reconcile_worker_bindings',
+              }),
           });
         }
         const needsMigrationReleaseBucket =
@@ -6614,6 +6940,7 @@ export function createApiRoutes(): Hono {
                       controlDatabaseId: controlDatabase.id,
                       operation,
                       expectedAccountId: config?.cloudflare?.accountId,
+                      interTargetDelayMs: CONTROL_WORKER_BINDING_INTER_TARGET_DELAY_MS,
                     });
         if (
           operation.operationKind === 'cleanup_plugin_resources' ||
@@ -6863,8 +7190,8 @@ export function createApiRoutes(): Hono {
         ).map((component) => ({ component, workerName: `${env}-${component}` })),
       ];
 
+      let currentAccountId: string | null = null;
       if (releaseConfig.cloudflare?.accountId) {
-        let currentAccountId: string | null;
         try {
           currentAccountId = await getAccountId();
         } catch {
@@ -6905,6 +7232,7 @@ export function createApiRoutes(): Hono {
         });
       }
 
+      let recoverableWorkerOwnershipComponents: string[] = [];
       try {
         await prepareWorkerScriptOwnership({ lock, targets: recoveryWorkerTargets });
       } catch (error) {
@@ -6913,15 +7241,49 @@ export function createApiRoutes(): Hono {
           /^worker_script_(?:provisional_name_mismatch|pending_version_mismatch|immutable_tag_(?:mismatch|unavailable|invalid)|missing|fresh_name_conflict|locked_name_mismatch|legacy_identity_insufficient|legacy_version_mismatch|inventory_(?:invalid|duplicate))/u.test(
             message
           );
-        return c.json({
-          ...responseBase,
-          status: checkpointInvalid ? 'recreate_required' : 'blocked',
-          canResume: false,
-          requiresRecreate: checkpointInvalid,
-          reasonCode: checkpointInvalid
-            ? 'worker_ownership_checkpoint_mismatch'
-            : 'worker_ownership_verification_unavailable',
-        });
+        if (
+          checkpointInvalid &&
+          message.startsWith('worker_script_fresh_name_conflict:') &&
+          currentAccountId
+        ) {
+          try {
+            const preview = await adoptLegacyWorkerDeployments({
+              lock,
+              environment: env,
+              authenticatedAccountId: currentAccountId,
+              configuredAccountId: releaseConfig.cloudflare?.accountId,
+              productVersion,
+              targets: recoveryWorkerTargets.map((target) => ({
+                ...target,
+                expectedPackageVersion: productVersion,
+              })),
+              requireAllTargets: false,
+            });
+            assertInterruptedInitialWorkerDeploymentEvidence({
+              lock,
+              evidence: preview.adopted,
+            });
+            recoverableWorkerOwnershipComponents = preview.adopted.map((item) => item.component);
+          } catch {
+            return c.json({
+              ...responseBase,
+              status: 'recreate_required',
+              canResume: false,
+              requiresRecreate: true,
+              reasonCode: 'worker_ownership_checkpoint_mismatch',
+            });
+          }
+        } else {
+          return c.json({
+            ...responseBase,
+            status: checkpointInvalid ? 'recreate_required' : 'blocked',
+            canResume: false,
+            requiresRecreate: checkpointInvalid,
+            reasonCode: checkpointInvalid
+              ? 'worker_ownership_checkpoint_mismatch'
+              : 'worker_ownership_verification_unavailable',
+          });
+        }
       }
       const checkExistingControlCredentials = async (): Promise<boolean> => {
         if (releaseConfig.controlPlane?.automaticProvisioning !== true) return true;
@@ -6946,6 +7308,7 @@ export function createApiRoutes(): Hono {
               workerName: `${env}-ar-control`,
               cwd: baseDir,
             }),
+            allowRestorableGeneration: true,
           });
         } catch {
           return false;
@@ -6963,6 +7326,8 @@ export function createApiRoutes(): Hono {
           resumeFrom: 'database_migrations',
           resumeMode: 'continue',
           requiresBootstrapToken: !controlCredentialsReady,
+          requiresWorkerOwnershipRecovery: recoverableWorkerOwnershipComponents.length > 0,
+          workerOwnershipRecoveryComponents: recoverableWorkerOwnershipComponents,
           reasonCode: 'append_only_draft_schema_pending',
         });
       }
@@ -6977,6 +7342,8 @@ export function createApiRoutes(): Hono {
           resumeFrom: 'database_migrations',
           resumeMode: 'continue',
           requiresBootstrapToken: !controlCredentialsReady,
+          requiresWorkerOwnershipRecovery: recoverableWorkerOwnershipComponents.length > 0,
+          workerOwnershipRecoveryComponents: recoverableWorkerOwnershipComponents,
           reasonCode: 'release_planned',
         });
       }
@@ -7003,6 +7370,8 @@ export function createApiRoutes(): Hono {
           resumeFrom: controlPlaneReady ? 'worker_deployment' : 'control_plane_bootstrap',
           resumeMode: 'continue',
           requiresBootstrapToken: !controlCredentialsReady,
+          requiresWorkerOwnershipRecovery: recoverableWorkerOwnershipComponents.length > 0,
+          workerOwnershipRecoveryComponents: recoverableWorkerOwnershipComponents,
           reasonCode: controlPlaneReady
             ? 'schema_checkpoint_verified'
             : 'initial_control_plane_bootstrap_incomplete',
@@ -7099,6 +7468,7 @@ export function createApiRoutes(): Hono {
                     workerName: `${env}-ar-control`,
                     cwd: baseDir,
                   }),
+                  allowRestorableGeneration: true,
                 });
         } catch {
           return c.json({
@@ -7119,6 +7489,8 @@ export function createApiRoutes(): Hono {
         resumeFrom: 'post_deploy_verification',
         resumeMode: 'continue',
         requiresBootstrapToken: !controlCredentialsReady,
+        requiresWorkerOwnershipRecovery: recoverableWorkerOwnershipComponents.length > 0,
+        workerOwnershipRecoveryComponents: recoverableWorkerOwnershipComponents,
         reasonCode: controlCredentialsReady
           ? 'worker_checkpoint_verified'
           : 'control_credentials_repair_required',
@@ -7138,14 +7510,42 @@ export function createApiRoutes(): Hono {
       const env = parseResult.data;
       const baseDir = findAuthrimBaseDir(process.cwd());
       const { lock } = await loadLockFileAuto(baseDir, env);
-      const cloudflareBucketNames = new Set(
-        (await listR2Buckets({ throwOnError: true })).map((bucket) => bucket.name)
+      if (lock && lock.env !== env) {
+        throw new Error('r2_provision_lock_environment_mismatch');
+      }
+      const cloudflareBuckets = await listR2Buckets({
+        throwOnError: true,
+        requireIdentity: true,
+      });
+      const status = buildR2BucketProvisioningStatus(env, lock?.r2, cloudflareBuckets);
+      const legacyOwnershipBuckets = status.buckets.filter(
+        (bucket) => bucket.recorded && !bucket.exactOwnership
       );
-      const status = buildR2BucketProvisioningStatus(env, lock?.r2, cloudflareBucketNames);
+      const ownershipRecoveryRequired = legacyOwnershipBuckets.length;
+      const legacyOwnershipAdoptionAvailable =
+        ownershipRecoveryRequired > 0 &&
+        status.buckets.every((bucket) => bucket.recorded && bucket.exists);
+      const identityMismatchCount = status.buckets.filter(
+        (bucket) => bucket.state === 'identity_mismatch'
+      ).length;
 
       return c.json({
         success: true,
         ...status,
+        ownershipRecoveryRequired,
+        ownershipRecoveryMode:
+          ownershipRecoveryRequired === 0
+            ? null
+            : legacyOwnershipAdoptionAvailable
+              ? 'explicit_adoption'
+              : 'environment_recreation_required',
+        identityMismatchCount,
+        ...(legacyOwnershipAdoptionAvailable
+          ? {
+              requiredCommand:
+                `authrim-setup r2-provision --env ${env} ` + '--adopt-legacy-r2-ownership --yes',
+            }
+          : {}),
       });
     } catch (error) {
       return c.json({ success: false, error: sanitizeError(error) }, 500);
@@ -7176,6 +7576,7 @@ export function createApiRoutes(): Hono {
           baseDir,
           env,
           operation: 'web-r2-provision',
+          requireExisting: true,
         });
         const targetProductVersion = operationLock.lock
           ? await getRootProductVersion(baseDir)
@@ -7200,8 +7601,55 @@ export function createApiRoutes(): Hono {
         if (!lock || !lockPath) {
           return c.json({ success: false, error: `Lock file not found for ${env}` }, 404);
         }
+        if (lock.env !== env) {
+          throw new Error('r2_provision_lock_environment_mismatch');
+        }
+        if (lock.r2?.AVATARS) {
+          throw new Error(
+            'legacy_avatar_bucket_is_not_supported; recreate this pre-1.0 environment with PUBLIC_ASSETS'
+          );
+        }
 
         const config = await readEffectiveTopologyConfig(lock, envPaths.config);
+        if (config.environment.prefix !== env) {
+          throw new Error('r2_provision_config_environment_mismatch');
+        }
+        const legacyBuckets = getRequiredR2Buckets(env).filter((bucket) => {
+          const recorded = lock.r2?.[bucket.binding];
+          return recorded !== undefined && !hasExactR2BucketOwnership(recorded);
+        });
+        if (legacyBuckets.length > 0) {
+          const cloudflareBuckets = await listR2Buckets({
+            throwOnError: true,
+            requireIdentity: true,
+          });
+          const cloudflareBucketNames = new Set(cloudflareBuckets.map((bucket) => bucket.name));
+          const legacyOwnershipAdoptionAvailable = getRequiredR2Buckets(env).every((bucket) => {
+            const recorded = lock.r2?.[bucket.binding];
+            return recorded !== undefined && cloudflareBucketNames.has(recorded.name);
+          });
+          return c.json(
+            {
+              success: false,
+              errorCode: legacyOwnershipAdoptionAvailable
+                ? 'r2_legacy_ownership_requires_explicit_adoption'
+                : 'r2_legacy_ownership_requires_environment_recreation',
+              error: legacyOwnershipAdoptionAvailable
+                ? 'Legacy R2 ownership must be verified explicitly before Web provisioning can continue.'
+                : 'Incomplete legacy R2 ownership cannot be adopted safely. Recreate the environment before provisioning R2.',
+              bindings: legacyBuckets.map((bucket) => bucket.binding),
+              requiresRecreate: !legacyOwnershipAdoptionAvailable,
+              ...(legacyOwnershipAdoptionAvailable
+                ? {
+                    requiredCommand:
+                      `authrim-setup r2-provision --env ${env} ` +
+                      '--adopt-legacy-r2-ownership --yes',
+                  }
+                : {}),
+            },
+            409
+          );
+        }
         const resuming = lock.topologyUpdate !== undefined;
         if (resuming) {
           assertPendingTopologyUpdate(lock, {
@@ -7216,7 +7664,7 @@ export function createApiRoutes(): Hono {
           onProgress: addProgress,
         });
         const resourceLock = mergeLockFiles(lock, {
-          r2: Object.fromEntries(buckets.map((bucket) => [bucket.binding, { name: bucket.name }])),
+          r2: toResourceIds({ d1: [], kv: [], queues: [], r2: buckets }).r2 ?? {},
         });
 
         const updatedConfig: AuthrimConfig = resuming
@@ -8186,6 +8634,14 @@ export function createApiRoutes(): Hono {
             logPath: state.logPath,
           });
         }
+        const controlTokenGenerationCheckpoint = componentsToUpdate.includes('ar-control')
+          ? await checkpointReadyControlTokenGenerationForRedeploy({
+              environmentId: env,
+              rootDir,
+              config,
+              lock,
+            })
+          : null;
         const resourceIds = await buildWorkerDeploymentResourceIds({
           lock,
           config,
@@ -8387,6 +8843,15 @@ export function createApiRoutes(): Hono {
           onProgress: addProgress,
         });
 
+        const controlDeployment = successfulResults.find(
+          (result) => result.component === 'ar-control'
+        );
+        await commitReadyControlTokenGenerationRedeploy({
+          environmentId: env,
+          checkpoint: controlTokenGenerationCheckpoint,
+          deployedVersionId: controlDeployment?.cloudflareVersionId,
+        });
+
         // Persist only deployments that passed exact-version and health verification.
         if (successfulResults.length > 0) {
           const workers = { ...lock.workers };
@@ -8506,13 +8971,19 @@ export function createApiRoutes(): Hono {
             env: EnvNameSchema,
             skipBuild: z.boolean().optional(),
             dryRun: z.boolean().optional(),
+            initialControlBootstrap: z.boolean().optional(),
           })
           .strict()
           .safeParse(await c.req.json());
         if (!bodyResult.success) {
           return c.json({ success: false, error: 'Invalid deployment request' }, 400);
         }
-        const { env, skipBuild = false, dryRun = false } = bodyResult.data;
+        const {
+          env,
+          skipBuild = false,
+          dryRun = false,
+          initialControlBootstrap: initialControlBootstrapRequested = false,
+        } = bodyResult.data;
         const rootDir = findAuthrimBaseDir(process.cwd());
 
         state.status = 'deploying';
@@ -8560,12 +9031,92 @@ export function createApiRoutes(): Hono {
           });
           componentDeploymentLock = operationLock.lock!;
         }
+        // Load config for API URL (needed for UI Worker deployment)
+        const baseDir = findAuthrimBaseDir(process.cwd());
+        const resolved = resolvePaths({ baseDir, env });
+        let cfg = getStateConfigForEnv(env);
+        try {
+          const configPath =
+            resolved.type === 'new'
+              ? (resolved.paths as EnvironmentPaths).config
+              : (resolved.paths as LegacyPaths).config;
+          if (existsSync(configPath)) {
+            const configContent = await readFile(configPath, 'utf-8');
+            cfg = parseEnvironmentConfigForEnv(JSON.parse(configContent), env);
+            state.config = cfg;
+          }
+        } catch {
+          // Config is optional for worker deployment.
+        }
+
         const targetProductVersion = await getRootProductVersion(rootDir);
-        const deploymentGuard = evaluateReleaseDeploymentGuard(
-          componentDeploymentLock,
-          targetProductVersion,
-          'worker_redeploy'
-        );
+        const initialControlBootstrap =
+          initialControlBootstrapRequested ||
+          (componentName === 'ar-control' &&
+            !componentDeploymentLock.productVersion &&
+            ['schema_applied', 'workers_deployed'].includes(
+              componentDeploymentLock.releaseUpdate?.phase ?? ''
+            ) &&
+            cfg?.controlPlane?.automaticProvisioning === true);
+        let deploymentGuard: ReturnType<typeof evaluateReleaseDeploymentGuard>;
+        if (initialControlBootstrap) {
+          if (
+            componentName !== 'ar-control' ||
+            dryRun ||
+            !cfg ||
+            cfg.controlPlane?.automaticProvisioning !== true ||
+            componentDeploymentLock.productVersion ||
+            !['schema_applied', 'workers_deployed'].includes(
+              componentDeploymentLock.releaseUpdate?.phase ?? ''
+            )
+          ) {
+            return c.json(
+              {
+                success: false,
+                error:
+                  'Initial Control bootstrap is available only after initial schema migration and before release verification.',
+              },
+              409
+            );
+          }
+          const migrationsRoot = await findMigrationsRoot(rootDir, undefined, {
+            strictRoot: true,
+          });
+          if (!migrationsRoot.path) {
+            throw new Error('release_migrations_directory_missing');
+          }
+          const initialRelease = loadTargetReleaseMigrationManifest({
+            migrationsRoot: migrationsRoot.path,
+            productVersion: targetProductVersion,
+            allowDraft: true,
+          });
+          const initialConfig = AuthrimConfigSchema.parse(cfg);
+          deploymentGuard = evaluateReleaseDeploymentGuard(
+            componentDeploymentLock,
+            targetProductVersion,
+            'initial_deploy',
+            {
+              releaseManifestChecksum: calculateReleaseManifestChecksum(initialRelease.manifest),
+              ...(initialRelease.draft
+                ? {
+                    initialDraft: {
+                      manifest: initialRelease.manifest,
+                      targets: resolveReleaseMigrationTargets({
+                        lock: componentDeploymentLock,
+                        config: initialConfig,
+                      }),
+                    },
+                  }
+                : {}),
+            }
+          );
+        } else {
+          deploymentGuard = evaluateReleaseDeploymentGuard(
+            componentDeploymentLock,
+            targetProductVersion,
+            'worker_redeploy'
+          );
+        }
         if (!deploymentGuard.allowed) {
           const error = markOperationError(
             releaseDeploymentGuardMessage(deploymentGuard, targetProductVersion)
@@ -8574,30 +9125,12 @@ export function createApiRoutes(): Hono {
             {
               success: false,
               error,
-              requiredCommand: `authrim-setup update --env ${env}`,
+              requiredCommand: initialControlBootstrap
+                ? `authrim-setup deploy --env ${env}`
+                : `authrim-setup update --env ${env}`,
             },
             409
           );
-        }
-
-        // Load config for API URL (needed for UI Worker deployment)
-        const baseDir = findAuthrimBaseDir(process.cwd());
-        const resolved = resolvePaths({ baseDir, env });
-        let cfg = getStateConfigForEnv(env);
-        if (!cfg) {
-          try {
-            const configPath =
-              resolved.type === 'new'
-                ? (resolved.paths as EnvironmentPaths).config
-                : (resolved.paths as LegacyPaths).config;
-            if (existsSync(configPath)) {
-              const configContent = await readFile(configPath, 'utf-8');
-              cfg = parseEnvironmentConfigForEnv(JSON.parse(configContent), env);
-              state.config = cfg;
-            }
-          } catch {
-            // Config is optional for worker deployment
-          }
         }
 
         if (!dryRun) {
@@ -8616,6 +9149,20 @@ export function createApiRoutes(): Hono {
               : MINIMUM_BUILD_FREE_BYTES,
           });
         }
+
+        const controlTokenGenerationCheckpoint =
+          !dryRun &&
+          isWorkerComponent &&
+          componentName === 'ar-control' &&
+          !initialControlBootstrap &&
+          cfg
+            ? await checkpointReadyControlTokenGenerationForRedeploy({
+                environmentId: env,
+                rootDir,
+                config: AuthrimConfigSchema.parse(cfg),
+                lock: componentDeploymentLock,
+              })
+            : null;
 
         if (isUiWorkerComponent) {
           // Deploy UI Worker component (ar-admin-ui or ar-login-ui).
@@ -8864,7 +9411,9 @@ export function createApiRoutes(): Hono {
                   ? resolveLoginUiEntryUrl(cfg, { env, workersSubdomain })
                   : resolveAdminUiEntryUrl(cfg, { env, workersSubdomain });
               const httpReadiness = await waitForWorkerHttpReady({
-                targets: [{ workerName: result.projectName, url: entryUrl }],
+                targets: [
+                  { workerName: result.projectName, url: entryUrl, allowRedirectResponse: true },
+                ],
                 onProgress: addProgress,
               });
               if (!httpReadiness.ready) {
@@ -9026,9 +9575,7 @@ export function createApiRoutes(): Hono {
             addProgress('Building packages...');
             const buildResult = await buildApiPackages({
               rootDir,
-              components: componentLock?.workers?.[componentName]
-                ? [componentName as WorkerComponent]
-                : undefined,
+              components: [componentName as WorkerComponent],
               onProgress: addProgress,
             });
 
@@ -9055,7 +9602,13 @@ export function createApiRoutes(): Hono {
             rootDir,
             dryRun,
             concurrency: 2,
-            deploymentStrategy: 'auto' as const,
+            deploymentStrategy: initialControlBootstrap ? ('direct' as const) : ('auto' as const),
+            // During the one-time initial cutover, Control is first deployed without durable
+            // provisioning credentials. The completion step creates scoped child tokens, writes
+            // them as Worker secrets, verifies the resulting version, and revokes the bootstrap
+            // token. Requiring those child tokens for this first deployment is circular.
+            automaticProvisioning: initialControlBootstrap ? false : undefined,
+            deferInitialControlSmokeBindingRestore: initialControlBootstrap || undefined,
             existingComponents: WORKER_COMPONENTS.filter(
               (component) => componentLock?.workers?.[component] !== undefined
             ),
@@ -9119,19 +9672,19 @@ export function createApiRoutes(): Hono {
             } catch (error) {
               const manualAction = getWildcardDnsManualActionPayload(cfg);
               if (manualAction && isWildcardDnsPermissionError(error)) {
-                state.status = 'error';
-                state.error = 'Manual wildcard DNS setup required';
-                addProgress('⚠️ Automatic wildcard DNS setup is unavailable.');
-                addProgress('⚠️ Create the wildcard DNS record manually, then rerun deploy.');
+                state.status = 'waiting';
+                state.error = null;
+                addProgress('⚠️ Waiting for the user to configure wildcard DNS.');
+                addProgress('⚠️ Create the wildcard DNS record, then re-check DNS to continue.');
                 return c.json(
                   {
                     success: false,
+                    waitingForUser: true,
                     component: componentName,
                     type: 'worker',
-                    error: 'Manual wildcard DNS setup required',
                     manualAction,
                   },
-                  409
+                  202
                 );
               }
               throw error;
@@ -9221,6 +9774,12 @@ export function createApiRoutes(): Hono {
                 }
               }
 
+              await commitReadyControlTokenGenerationRedeploy({
+                environmentId: env,
+                checkpoint: controlTokenGenerationCheckpoint,
+                deployedVersionId: result.cloudflareVersionId,
+              });
+
               if (!componentLock || !componentLockPath) {
                 throw new Error('worker_deployment_lock_unavailable');
               }
@@ -9237,6 +9796,8 @@ export function createApiRoutes(): Hono {
                 components: [componentName],
                 dryRun,
                 deployConfigLockProof: deployConfigLock?.proof,
+                ephemeralSetupMachineAccess: true,
+                adminDatabaseIdentifier: componentLock?.d1.DB_ADMIN?.id,
               });
             }
             state.status = 'complete';

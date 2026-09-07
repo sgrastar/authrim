@@ -13,7 +13,9 @@ import {
   listD1MigrationSqlFiles,
 } from '../core/cloudflare.js';
 import { createDefaultConfig } from '../core/config.js';
+import { generateReleaseMigrationManifest } from '../core/release-migrations.js';
 import { renderPortableMigrationSql } from '../core/sql-portability.js';
+import { BUILTIN_PROFILE_CLAIM_SCHEMAS } from '@authrim/ar-lib-core/services/custom-claims/schema-catalog';
 
 function findSqlite3(): string | null {
   try {
@@ -36,37 +38,36 @@ function readSqlite(sqlite3Path: string, dbPath: string, sql: string): string {
   return execFileSync(sqlite3Path, [dbPath, sql], { encoding: 'utf-8' }).trim();
 }
 
+function readSqliteJson<T>(sqlite3Path: string, dbPath: string, sql: string): T {
+  const output = execFileSync(sqlite3Path, ['-json', dbPath, sql], {
+    encoding: 'utf-8',
+  }).trim();
+  return JSON.parse(output || '[]') as T;
+}
+
 const rootMigrationsDir = fileURLToPath(new URL('../../../../migrations', import.meta.url));
 const docsTestingDir = fileURLToPath(new URL('../../../../docs/testing', import.meta.url));
-const coreMigrationExclusions = new Set([
-  'admin',
-  'archive',
-  'control',
-  'external',
-  'lookup',
-  'pii',
-  'plugin-runner',
-  'releases',
-]);
 const sqliteMigrationApplyTimeoutMs = 20_000;
 
 function activeCoreMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(rootMigrationsDir, {
-    excludeTopLevelDirectories: coreMigrationExclusions,
-  });
+  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'core/d1')).map(
+    (file) => `core/d1/${file}`
+  );
 }
 
 function activeAdminMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'admin')).map((file) => `admin/${file}`);
+  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'admin/d1')).map(
+    (file) => `admin/d1/${file}`
+  );
 }
 
 function activePiiMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'pii')).map((file) => `pii/${file}`);
+  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'pii/d1')).map((file) => `pii/d1/${file}`);
 }
 
 function activePluginRunnerMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'plugin-runner')).map(
-    (file) => `plugin-runner/${file}`
+  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'plugin-runner/d1')).map(
+    (file) => `plugin-runner/d1/${file}`
   );
 }
 
@@ -273,7 +274,7 @@ describe('Control plane drift notification migration', () => {
       return;
     }
 
-    const migrationPath = 'admin/001_pre_1_0_admin_baseline.sql';
+    const migrationPath = 'admin/d1/001_0_4_0_admin_baseline.sql';
     const tempDir = mkdtempSync(join(tmpdir(), 'authrim-control-drift-notification-'));
     const dbPath = join(tempDir, 'test.db');
 
@@ -323,10 +324,10 @@ describe('Control plane drift notification migration', () => {
 });
 
 describe('calculateD1MigrationChecksum', () => {
-  it('keeps the generated pre-1.0 core baseline checksum stable', () => {
+  it('keeps the current 0.4.0 core baseline candidate checksum stable', () => {
     expect(
-      calculateD1MigrationChecksum(join(rootMigrationsDir, '001_pre_1_0_core_baseline.sql'))
-    ).toBe('3891d1101810b9bafbbf33554641e26fa9d1dfafbec7c9c6c4f286c6e4219c4f');
+      calculateD1MigrationChecksum(join(rootMigrationsDir, 'core/d1/001_0_4_0_core_baseline.sql'))
+    ).toBe('11a7eeb61266e9386e2fac051508d403231cf81be9a4a7cc9eadb83bec8808d0');
   });
 
   it('changes when rendered migration SQL changes', () => {
@@ -451,10 +452,8 @@ describe('migration seed SQL portability', () => {
   );
 
   it('includes credential-profile Flow assignment targets in both final baselines', () => {
-    const coreBaseline = readMigration('001_pre_1_0_core_baseline.sql');
-    const postgresBaseline = readMigration(
-      'external/postgres/001_pre_1_0_external_postgres_core_baseline.sql'
-    );
+    const coreBaseline = readMigration('core/d1/001_0_4_0_core_baseline.sql');
+    const postgresBaseline = readMigration('core/postgresql/001_0_4_0_core_baseline.sql');
 
     expect(coreBaseline).toContain("'credential_profile'");
     expect(postgresBaseline).toContain("'credential_profile'");
@@ -486,15 +485,168 @@ describe('migration seed SQL portability', () => {
   });
 
   it('does not auto-seed OIDC custom claim schemas from core migrations', () => {
-    const sql = readMigration('001_pre_1_0_core_baseline.sql');
+    const sql = readMigration('core/d1/001_0_4_0_core_baseline.sql');
 
     expect(sql).not.toContain('Seed default OIDC claim schemas');
     expect(sql).not.toContain("'system_claim_' || t.id || '_name'");
     expect(sql).not.toContain("'system_claim_' || t.id || '_address_country'");
   });
 
+  it('installs exactly the eight optional built-in profile schemas for the default tenant', () => {
+    const sqlite3Path = findSqlite3();
+    if (!sqlite3Path) return;
+    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-builtin-profile-schema-'));
+    const dbPath = join(tempDir, 'test.db');
+    try {
+      runMigrationFiles(sqlite3Path, dbPath, activeCoreMigrationFiles());
+
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT group_concat(field_key, ',')
+             FROM (
+               SELECT field_key
+                 FROM custom_claim_schemas
+                WHERE tenant_id = 'default' AND is_system = 1
+                  AND id LIKE 'builtin:default:%'
+                ORDER BY field_key
+             );`
+        )
+      ).toBe(
+        'display_name,email,email_verified,family_name,given_name,locale,picture_url,preferred_username'
+      );
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT COUNT(*) FROM custom_claim_schemas
+            WHERE tenant_id = 'default' AND is_system = 1 AND is_required <> 0;`
+        )
+      ).toBe('0');
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT COUNT(*) FROM custom_claim_schemas
+            WHERE tenant_id = 'default' AND field_key = 'name';`
+        )
+      ).toBe('0');
+      const rows = readSqliteJson<
+        Array<{
+          field_key: string;
+          display_label: string;
+          field_type: string;
+          cardinality: string;
+          is_pii: number;
+          is_required: number;
+          is_active: number;
+          is_system: number;
+          is_searchable: number;
+          is_exportable: number;
+          include_in_id_token: number;
+          include_in_userinfo: number;
+          include_in_introspection: number;
+          display_order: number;
+          ui_group_key: string | null;
+          ui_group_label: string | null;
+          ui_group_order: number;
+          ui_field_order: number;
+          examples_json: string | null;
+        }>
+      >(
+        sqlite3Path,
+        dbPath,
+        `SELECT field_key, display_label, field_type, cardinality, is_pii, is_required,
+                is_active, is_system, is_searchable, is_exportable, include_in_id_token,
+                include_in_userinfo, include_in_introspection, display_order, ui_group_key,
+                ui_group_label, ui_group_order, ui_field_order, examples_json
+           FROM custom_claim_schemas
+          WHERE tenant_id = 'default'
+          ORDER BY field_key`
+      );
+      expect(rows).toEqual(
+        [...BUILTIN_PROFILE_CLAIM_SCHEMAS]
+          .sort((left, right) => left.field_key.localeCompare(right.field_key))
+          .map((schema) => ({
+            field_key: schema.field_key,
+            display_label: schema.display_label,
+            field_type: schema.field_type,
+            cardinality: schema.cardinality ?? 'single',
+            is_pii: schema.is_pii,
+            is_required: schema.is_required ?? 0,
+            is_active: 1,
+            is_system: schema.is_system ?? 1,
+            is_searchable: schema.is_searchable,
+            is_exportable: schema.is_exportable,
+            include_in_id_token: 0,
+            include_in_userinfo: 0,
+            include_in_introspection: 0,
+            display_order: schema.display_order,
+            ui_group_key: schema.ui_group_key ?? null,
+            ui_group_label: schema.ui_group_label ?? null,
+            ui_group_order: schema.ui_group_order ?? 0,
+            ui_field_order: schema.ui_field_order ?? schema.display_order,
+            examples_json: schema.examples_json ?? null,
+          }))
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('seeds the eight built-ins during a manifest-based fresh install before the draft is finalized', () => {
+    const sqlite3Path = findSqlite3();
+    if (!sqlite3Path) return;
+    const manifest = generateReleaseMigrationManifest({
+      migrationsRoot: rootMigrationsDir,
+      productVersion: '0.4.0',
+      semanticBaselineSource: true,
+    });
+    const coreFiles = manifest.streams
+      .find((stream) => stream.id === 'core-d1')
+      ?.files.map((file) => `core/d1/${file.path}`);
+    expect(coreFiles?.length).toBeGreaterThan(0);
+
+    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-manifest-builtin-profile-schema-'));
+    const dbPath = join(tempDir, 'test.db');
+    try {
+      runMigrationFiles(sqlite3Path, dbPath, coreFiles ?? []);
+      runSqlite(sqlite3Path, dbPath, buildInitialTenantBootstrapSql(createDefaultConfig('test')));
+
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT group_concat(field_key, ',')
+             FROM (
+               SELECT field_key
+                 FROM custom_claim_schemas
+                WHERE tenant_id = 'default'
+                  AND is_system = 1
+                  AND is_required = 0
+                  AND id LIKE 'builtin:default:%'
+                ORDER BY field_key
+             );`
+        )
+      ).toBe(
+        'display_name,email,email_verified,family_name,given_name,locale,picture_url,preferred_username'
+      );
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT COUNT(*) FROM custom_claim_schemas
+            WHERE tenant_id = 'default' AND field_key = 'name';`
+        )
+      ).toBe('0');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('uses triggers instead of the removed plugin rollout partial index', () => {
-    const baselineSql = readMigration('plugin-runner/001_pre_1_0_plugin_runner_baseline.sql');
+    const baselineSql = readMigration('plugin-runner/d1/001_0_4_0_plugin_runner_baseline.sql');
     expect(baselineSql).not.toContain('idx_plugin_runner_dynamic_rollout_active_plugin');
     expect(baselineSql).toContain('trg_plugin_runner_dynamic_rollout_running_insert');
     expect(baselineSql).toContain('trg_plugin_runner_dynamic_rollout_running_update');
@@ -845,6 +997,33 @@ INSERT INTO oauth_clients (
           readSqlite(
             sqlite3Path,
             dbPath,
+            `SELECT group_concat(field_key, ',')
+               FROM (
+                 SELECT field_key
+                   FROM custom_claim_schemas
+                  WHERE tenant_id = 'first'
+                    AND is_system = 1
+                    AND is_required = 0
+                    AND id LIKE 'builtin:first:%'
+                  ORDER BY field_key
+               );`
+          )
+        ).toBe(
+          'display_name,email,email_verified,family_name,given_name,locale,picture_url,preferred_username'
+        );
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+               FROM custom_claim_schemas
+              WHERE tenant_id = 'default' OR field_key = 'name';`
+          )
+        ).toBe('0');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
             `SELECT COUNT(*)
              FROM screens
              WHERE tenant_id = 'first'
@@ -1039,9 +1218,7 @@ INSERT INTO screens (
   );
 
   it('keeps external Postgres linked identities compatible with the PII schema', () => {
-    const postgresMigration = readMigration(
-      'external/postgres/002_pre_1_0_external_postgres_pii_baseline.sql'
-    );
+    const postgresMigration = readMigration('pii/postgresql/001_0_4_0_pii_baseline.sql');
 
     for (const column of [
       'email_verified',

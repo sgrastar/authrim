@@ -87,10 +87,10 @@ function d1(database: DatabaseSync): D1Database {
 }
 
 function seed(database: DatabaseSync): void {
-  for (const filename of readdirSync(resolve(REPO_ROOT, 'migrations/control'))
+  for (const filename of readdirSync(resolve(REPO_ROOT, 'migrations/control/d1'))
     .filter((name) => name.endsWith('.sql'))
     .sort()) {
-    database.exec(readFileSync(resolve(REPO_ROOT, 'migrations/control', filename), 'utf8'));
+    database.exec(readFileSync(resolve(REPO_ROOT, 'migrations/control/d1', filename), 'utf8'));
   }
   database.exec(`
     INSERT INTO control_environments (
@@ -152,7 +152,7 @@ function seed(database: DatabaseSync): void {
     INSERT INTO control_migration_release_catalog (
       environment_id, stream_id, release_id, manifest_digest, manifest_r2_object_key,
       state, active_stream_key, registered_by_operation_id, registered_at, activated_at
-    ) VALUES ('env-test', 'd1-core', '0.4.0-test', '${HASH}',
+    ) VALUES ('env-test', 'core-d1', '0.4.0-test', '${HASH}',
       'releases/0.4.0-test/${HASH}/manifest.json', 'active', 'active', 'seed-op', 1, 1);
     INSERT INTO control_desired_worker_inventory (
       environment_id, worker_script_name, package_name, deployment_target,

@@ -7,6 +7,10 @@ import {
   type Env,
   type LookupShardRegistryRange,
 } from '@authrim/ar-lib-core';
+import {
+  LOOKUP_MAX_VIRTUAL_BUCKET,
+  LOOKUP_VIRTUAL_BUCKET_COUNT,
+} from '@authrim/ar-lib-core/services/lookup-directory/contract';
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_BINDING_REF = /^[A-Z][A-Z0-9_]{0,127}$/u;
@@ -67,7 +71,7 @@ async function sha256(value: string): Promise<string> {
 }
 
 function canonicalRanges(ranges: LookupShardRegistryRange[]): LookupShardRegistryRange[] {
-  if (ranges.length < 1 || ranges.length > 4096) {
+  if (ranges.length < 1 || ranges.length > LOOKUP_VIRTUAL_BUCKET_COUNT) {
     throw new Error('tenant_placement_lookup_ranges_invalid');
   }
   let nextBucket = 0;
@@ -77,7 +81,7 @@ function canonicalRanges(ranges: LookupShardRegistryRange[]): LookupShardRegistr
         range.startBucket !== nextBucket ||
         !Number.isSafeInteger(range.endBucket) ||
         range.endBucket < range.startBucket ||
-        range.endBucket > 4095 ||
+        range.endBucket > LOOKUP_MAX_VIRTUAL_BUCKET ||
         !SAFE_ID.test(range.lookupShardId) ||
         !SAFE_BINDING_REF.test(range.bindingRef) ||
         !Number.isSafeInteger(range.assignmentGeneration) ||
@@ -89,7 +93,7 @@ function canonicalRanges(ranges: LookupShardRegistryRange[]): LookupShardRegistr
       return { ...range };
     })
     .map((range, index, all) => {
-      if (index === all.length - 1 && range.endBucket !== 4095) {
+      if (index === all.length - 1 && range.endBucket !== LOOKUP_MAX_VIRTUAL_BUCKET) {
         throw new Error('tenant_placement_lookup_ranges_invalid');
       }
       return range;

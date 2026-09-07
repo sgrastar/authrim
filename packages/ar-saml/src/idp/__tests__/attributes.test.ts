@@ -684,6 +684,7 @@ describe('buildSAMLAttributesFromMapping', () => {
       ['authrim.system', 'uid', 'user-123'],
       ['authrim.system', 'email', 'profile@example.test'],
       ['vendor.extension', 'name', 'Profile Name'],
+      ['authrim.profile', 'display_name', 'Display Alias'],
     ] as const;
     const entries: FieldCatalogBundle['entries'] = [];
     const edges = cases.map(([namespace, path], index) => {
@@ -722,6 +723,7 @@ describe('buildSAMLAttributesFromMapping', () => {
         id: 'user-123',
         email: 'profile@example.test',
         name: 'Profile Name',
+        display_name: 'Display Alias',
         claims: { department: 'engineering' },
         customClaims: { entitlement: 'licensed' },
         customFields: { employeeNumber: 42 },

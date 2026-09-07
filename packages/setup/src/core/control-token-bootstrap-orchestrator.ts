@@ -95,6 +95,87 @@ export function resolveControlTokenResourceClasses(
     : ['d1', 'workers'];
 }
 
+export interface ReadyControlTokenGenerationCheckpoint {
+  controlDatabaseName: string;
+  previousVersionId: string;
+  resourceClasses: readonly ControlTokenResourceClass[];
+  secretSink: Pick<
+    ControlSecretSink,
+    'has' | 'listNames' | 'readActiveGeneration' | 'canActivateGeneration' | 'activateGeneration'
+  >;
+}
+
+/**
+ * Restores and checkpoints the last verified immutable Control version before a managed redeploy.
+ * A retry therefore starts from the generation known to contain the setup-managed token values,
+ * even if an earlier attempt published a new version but stopped before committing authority.
+ */
+export async function checkpointReadyControlTokenGenerationForRedeploy(input: {
+  environmentId: string;
+  rootDir: string;
+  config: AuthrimConfig;
+  lock: AuthrimLock;
+  query?: Parameters<typeof readControlProvisioningAuthority>[0]['query'];
+  secretSink?: ReadyControlTokenGenerationCheckpoint['secretSink'];
+}): Promise<ReadyControlTokenGenerationCheckpoint | null> {
+  if (input.config.controlPlane?.automaticProvisioning !== true) return null;
+  const controlDatabaseName = input.lock.d1.CONTROL_DB?.id;
+  if (!controlDatabaseName) {
+    throw new Error('control_database_required_for_control_worker_redeploy');
+  }
+  const authority = await readControlProvisioningAuthority({
+    environmentId: input.environmentId,
+    controlDatabaseName,
+    query: input.query,
+  });
+  if (!authority?.secretGeneration) {
+    throw new Error('control_token_bootstrap_ready_generation_missing');
+  }
+  const resourceClasses = resolveControlTokenResourceClasses(input.config);
+  const secretSink =
+    input.secretSink ??
+    new WranglerControlSecretSink({
+      workerName: `${input.environmentId}-ar-control`,
+      cwd: input.rootDir,
+    });
+  const ready = await hasReadyControlTokenBootstrap({
+    environmentId: input.environmentId,
+    controlDatabaseName,
+    resourceClasses,
+    secretSink,
+    restoreGenerationOnMismatch: true,
+    query: input.query,
+  });
+  if (!ready) {
+    throw new Error('control_token_bootstrap_ready_generation_mismatch');
+  }
+  return {
+    controlDatabaseName,
+    previousVersionId: authority.secretGeneration.versionId,
+    resourceClasses,
+    secretSink,
+  };
+}
+
+export async function commitReadyControlTokenGenerationRedeploy(input: {
+  environmentId: string;
+  checkpoint: ReadyControlTokenGenerationCheckpoint | null;
+  deployedVersionId: string | undefined;
+}): Promise<void> {
+  if (!input.checkpoint) return;
+  if (!input.deployedVersionId) {
+    throw new Error('control_worker_redeploy_version_missing');
+  }
+  await advanceReadyControlTokenGeneration({
+    environmentId: input.environmentId,
+    controlDatabaseName: input.checkpoint.controlDatabaseName,
+    resourceClasses: input.checkpoint.resourceClasses,
+    previousVersionId: input.checkpoint.previousVersionId,
+    deployedVersionId: input.deployedVersionId,
+    secretSink: input.checkpoint.secretSink,
+  });
+}
+
 export async function findMissingControlTokenResourceClasses(input: {
   resourceClasses: readonly ControlTokenResourceClass[];
   secretSink: Pick<ControlSecretSink, 'has' | 'listNames'>;
@@ -118,9 +199,17 @@ export async function hasReadyControlTokenBootstrap(input: {
   environmentId: string;
   controlDatabaseName: string;
   resourceClasses: readonly ControlTokenResourceClass[];
-  secretSink: Pick<ControlSecretSink, 'has' | 'listNames' | 'readActiveGeneration'>;
+  secretSink: Pick<
+    ControlSecretSink,
+    'has' | 'listNames' | 'readActiveGeneration' | 'canActivateGeneration' | 'activateGeneration'
+  >;
+  allowRestorableGeneration?: boolean;
+  restoreGenerationOnMismatch?: boolean;
   query?: Parameters<typeof readControlProvisioningAuthority>[0]['query'];
 }): Promise<boolean> {
+  if (input.allowRestorableGeneration && input.restoreGenerationOnMismatch) {
+    throw new Error('control_secret_generation_recovery_mode_ambiguous');
+  }
   const authority = await readControlProvisioningAuthority({
     environmentId: input.environmentId,
     controlDatabaseName: input.controlDatabaseName,
@@ -158,7 +247,86 @@ export async function hasReadyControlTokenBootstrap(input: {
     return false;
   }
   const active = await input.secretSink.readActiveGeneration();
-  return active.versionId === authority.secretGeneration.versionId;
+  if (active.versionId === authority.secretGeneration.versionId) return true;
+  if (input.restoreGenerationOnMismatch) {
+    if (!input.secretSink.activateGeneration) return false;
+    const restored = await input.secretSink.activateGeneration(authority.secretGeneration);
+    return restored.versionId === authority.secretGeneration.versionId;
+  }
+  if (input.allowRestorableGeneration) {
+    return input.secretSink.canActivateGeneration
+      ? input.secretSink.canActivateGeneration(authority.secretGeneration)
+      : false;
+  }
+  return false;
+}
+
+/**
+ * Move ready authority evidence to the exact version produced by one verified Setup deployment.
+ * The caller supplies both sides of the transition so a concurrent or external deployment cannot
+ * be mistaken for the managed Control redeploy that preserved the checkpointed secrets.
+ */
+export async function advanceReadyControlTokenGeneration(input: {
+  environmentId: string;
+  controlDatabaseName: string;
+  resourceClasses: readonly ControlTokenResourceClass[];
+  previousVersionId: string;
+  deployedVersionId: string;
+  secretSink: Pick<ControlSecretSink, 'has' | 'listNames' | 'readActiveGeneration'>;
+  now?: number;
+  query?: Parameters<typeof readControlProvisioningAuthority>[0]['query'];
+  execute?: Parameters<typeof writeControlProvisioningAuthority>[0]['execute'];
+}): Promise<ControlProvisioningAuthorityState> {
+  const authority = await readControlProvisioningAuthority({
+    environmentId: input.environmentId,
+    controlDatabaseName: input.controlDatabaseName,
+    query: input.query,
+  });
+  if (
+    authority?.automaticProvisioningEnabled !== true ||
+    authority.capabilityState !== 'ready' ||
+    authority.tokenOwnership === 'none' ||
+    !['setup', 'operator'].includes(authority.tokenManagement) ||
+    authority.secretGeneration?.versionId !== input.previousVersionId ||
+    !input.secretSink.readActiveGeneration ||
+    input.resourceClasses.some((resourceClass) => {
+      const child = authority.childTokens.find(
+        (candidate) => candidate.resourceClass === resourceClass
+      );
+      return (
+        !child ||
+        child.secretName !== CONTROL_TOKEN_SECRET_BY_RESOURCE_CLASS[resourceClass] ||
+        typeof child.tokenFingerprint !== 'string' ||
+        !/^[0-9a-f]{64}$/u.test(child.tokenFingerprint)
+      );
+    })
+  ) {
+    throw new Error('control_secret_generation_advance_authority_invalid');
+  }
+  const missing = await findMissingControlTokenResourceClasses({
+    resourceClasses: input.resourceClasses,
+    secretSink: input.secretSink,
+  });
+  if (missing.length > 0) {
+    throw new Error(`control_secret_generation_advance_secrets_missing:${missing.join(',')}`);
+  }
+  const active = await input.secretSink.readActiveGeneration();
+  if (active.versionId !== input.deployedVersionId) {
+    throw new Error('control_secret_generation_advance_deployment_mismatch');
+  }
+  return writeControlProvisioningAuthority({
+    controlDatabaseName: input.controlDatabaseName,
+    environmentId: input.environmentId,
+    automaticProvisioningEnabled: true,
+    tokenOwnership: authority.tokenOwnership,
+    tokenManagement: authority.tokenManagement,
+    capabilityState: 'ready',
+    childTokens: authority.childTokens,
+    secretGeneration: active,
+    now: input.now,
+    execute: input.execute,
+    query: input.query,
+  });
 }
 
 export function classifyControlTokenBootstrapFailure(

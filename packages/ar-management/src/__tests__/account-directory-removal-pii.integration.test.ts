@@ -127,22 +127,28 @@ describe('account directory removal PII erasure', () => {
       CREATE TABLE users_pii (
         id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL
       );
+      CREATE TABLE pairwise_subject_identifiers (
+        id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL
+      );
       CREATE TABLE subject_identifiers (
-        id TEXT PRIMARY KEY, user_id TEXT NOT NULL
+        id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, subject_id TEXT NOT NULL
       );
       INSERT INTO users_pii (id, tenant_id) VALUES
         ('user-a', 'tenant-a'),
         ('user-b', 'tenant-b');
-      INSERT INTO subject_identifiers (id, user_id) VALUES
-        ('subject-a', 'user-a'),
-        ('subject-b', 'user-b');
+      INSERT INTO pairwise_subject_identifiers (id, tenant_id, user_id) VALUES
+        ('pairwise-a', 'tenant-a', 'user-a'),
+        ('pairwise-b', 'tenant-b', 'user-b');
+      INSERT INTO subject_identifiers (id, tenant_id, subject_id) VALUES
+        ('subject-a', 'tenant-a', 'user-a'),
+        ('subject-b', 'tenant-b', 'user-b');
     `);
     adapter = new SqliteAdapter(database);
   });
 
   afterEach(() => database.close());
 
-  it('deletes pairwise subjects only when the parent belongs to the requested tenant', async () => {
+  it('deletes both identifier models only for the requested tenant and user', async () => {
     await eraseAccountPiiAfterDirectoryRemovalPrepared(
       adapter,
       { tenantId: 'tenant-a', userId: 'user-a' },
@@ -151,6 +157,9 @@ describe('account directory removal PII erasure', () => {
     expect(database.prepare('SELECT id FROM subject_identifiers ORDER BY id').all()).toEqual([
       { id: 'subject-b' },
     ]);
+    expect(
+      database.prepare('SELECT id FROM pairwise_subject_identifiers ORDER BY id').all()
+    ).toEqual([{ id: 'pairwise-b' }]);
 
     await eraseAccountPiiAfterDirectoryRemovalPrepared(
       adapter,
@@ -160,5 +169,8 @@ describe('account directory removal PII erasure', () => {
     expect(database.prepare('SELECT id FROM subject_identifiers ORDER BY id').all()).toEqual([
       { id: 'subject-b' },
     ]);
+    expect(
+      database.prepare('SELECT id FROM pairwise_subject_identifiers ORDER BY id').all()
+    ).toEqual([{ id: 'pairwise-b' }]);
   });
 });

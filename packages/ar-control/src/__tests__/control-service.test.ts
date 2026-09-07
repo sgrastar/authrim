@@ -926,7 +926,7 @@ describe('ControlService tenant shard provisioning', () => {
       {
         allocationScope: 'shared_pool',
         ownerTenantId: null,
-        migrationStreamId: 'd1-lookup',
+        migrationStreamId: 'lookup-d1',
       }
     );
   });
@@ -1809,7 +1809,7 @@ describe('ControlService tenant shard provisioning', () => {
       shardId: 'lookup-shard',
       environmentId: 'env-test',
       databaseId: 'lookup-database',
-      streamId: 'd1-lookup',
+      streamId: 'lookup-d1',
       releaseId: '0.4.0',
       manifestDigest: 'a'.repeat(64),
       manifestObjectKey: `releases/0.4.0/${'a'.repeat(64)}/manifest.json`,
@@ -1842,7 +1842,7 @@ describe('ControlService tenant shard provisioning', () => {
   it('applies the server-pinned release and completes a pending migration', async () => {
     const repository = new FakeRepository();
     const apply = vi.fn().mockResolvedValue({
-      streamId: 'd1-core',
+      streamId: 'core-d1',
       releaseId: '0.4.0',
       manifestDigest: 'a'.repeat(64),
       totalFiles: 2,
@@ -1892,7 +1892,7 @@ describe('ControlService tenant shard provisioning', () => {
       databaseId: 'database-id',
       pin: {
         environmentId: 'env-test',
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         releaseId: '0.4.0',
         manifestDigest: 'a'.repeat(64),
         manifestObjectKey: `releases/0.4.0/${'a'.repeat(64)}/manifest.json`,
@@ -1922,7 +1922,7 @@ describe('ControlService tenant shard provisioning', () => {
         shardId: planned.plan.shardId,
         environmentId: planned.plan.environmentId,
         databaseId: 'database-id',
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         releaseId: '0.4.0',
         manifestDigest: 'a'.repeat(64),
         manifestObjectKey: `releases/0.4.0/${'a'.repeat(64)}/manifest.json`,

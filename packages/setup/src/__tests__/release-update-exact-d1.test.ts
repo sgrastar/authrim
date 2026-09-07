@@ -13,13 +13,15 @@ import {
 } from '../core/release-update.js';
 
 const manifest: ReleaseMigrationManifest = {
-  formatVersion: 1,
+  formatVersion: 2,
   productVersion: '1.1.0',
   streams: [
     {
-      id: 'd1-core',
+      id: 'core-d1',
+      schemaFamily: 'core',
       dialect: 'sqlite',
-      logicalRoles: ['core'],
+      targetKind: 'cloudflare-d1',
+      logicalRoles: ['core', 'tenant_core'],
       files: [{ path: '001_core.sql', checksum: 'a'.repeat(64) }],
     },
   ],
@@ -27,8 +29,8 @@ const manifest: ReleaseMigrationManifest = {
 
 function plan(databaseId?: string): ReleaseSchemaUpdatePlan {
   const target = {
-    id: 'd1:locked-core-id:d1-core',
-    streamId: 'd1-core',
+    id: 'd1:locked-core-id:core-d1',
+    streamId: 'core-d1',
     driver: 'd1' as const,
     scope: 'deployment' as const,
     logicalRoles: ['core'],
@@ -67,7 +69,7 @@ describe('release update exact D1 identity', () => {
     expect(runD1MigrationsMock).toHaveBeenCalledOnce();
     expect(runD1MigrationsMock).toHaveBeenCalledWith(
       'locked-core-id',
-      '/workspace/migrations',
+      '/workspace/migrations/core/d1',
       undefined,
       expect.objectContaining({ releaseVersion: '1.1.0' })
     );
@@ -86,11 +88,11 @@ describe('release update exact D1 identity', () => {
       success: false,
       results: [
         {
-          targetId: 'd1:locked-core-id:d1-core',
+          targetId: 'd1:locked-core-id:core-d1',
           success: false,
           appliedCount: 0,
           skippedCount: 0,
-          error: 'release_migration_target_database_id_required:d1:locked-core-id:d1-core',
+          error: 'release_migration_target_database_id_required:d1:locked-core-id:core-d1',
         },
       ],
     });

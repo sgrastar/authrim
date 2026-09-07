@@ -80,6 +80,12 @@ function registrationKeys(
   ];
 }
 
+const AUDIT_BACKEND_MIGRATION_STREAMS: Readonly<Record<string, string>> = {
+  'd1-core': 'core-d1',
+  'd1-pii': 'pii-d1',
+  'd1-admin': 'admin-d1',
+};
+
 function blockUnregisteredDatabaseTargets(
   env: Env,
   profile: RuntimeProfile,
@@ -99,10 +105,7 @@ function blockUnregisteredDatabaseTargets(
     for (const [path, target] of targets) {
       if (target.type !== 'd1' && target.type !== 'postgres' && target.type !== 'mysql') continue;
       const backendId = target.type === 'd1' ? targetToBackendId(target) : null;
-      const streamId =
-        backendId === 'd1-core' || backendId === 'd1-pii' || backendId === 'd1-admin'
-          ? backendId
-          : null;
+      const streamId = backendId ? (AUDIT_BACKEND_MIGRATION_STREAMS[backendId] ?? null) : null;
       requiredByPath.set(path, {
         streamId,
         keys: streamId ? registrationKeys(target, streamId) : [],

@@ -725,7 +725,7 @@ describe('generateRoutes', () => {
   });
 
   it('escapes JSON strings in environment variables for valid TOML', () => {
-    const registeredSchemas = JSON.stringify(['binding:DB:d1-core', 'binding:DB_ADMIN:d1-admin']);
+    const registeredSchemas = JSON.stringify(['binding:DB:core-d1', 'binding:DB_ADMIN:admin-d1']);
     const config = {
       main: 'src/index.ts',
       compatibility_date: '2026-07-21',
@@ -739,10 +739,10 @@ describe('generateRoutes', () => {
     const legacyToml = toToml(config);
 
     expect(scopedToml).toContain(
-      'AUTHRIM_REGISTERED_SCHEMA_REFS = "[\\"binding:DB:d1-core\\",\\"binding:DB_ADMIN:d1-admin\\"]"'
+      'AUTHRIM_REGISTERED_SCHEMA_REFS = "[\\"binding:DB:core-d1\\",\\"binding:DB_ADMIN:admin-d1\\"]"'
     );
     expect(legacyToml).toContain(
-      'AUTHRIM_REGISTERED_SCHEMA_REFS = "[\\"binding:DB:d1-core\\",\\"binding:DB_ADMIN:d1-admin\\"]"'
+      'AUTHRIM_REGISTERED_SCHEMA_REFS = "[\\"binding:DB:core-d1\\",\\"binding:DB_ADMIN:admin-d1\\"]"'
     );
   });
 
@@ -861,7 +861,7 @@ describe('generateRoutes', () => {
       updatedAt: '2026-04-21T00:00:00.000Z',
       env: 'single',
       d1: {
-        DB: { id: 'd1-core', name: 'single-core' },
+        DB: { id: 'core-d1', name: 'single-core' },
       },
       kv: {
         SETTINGS: { id: 'kv-settings', name: 'single-settings', previewId: 'preview-settings' },
@@ -877,7 +877,7 @@ describe('generateRoutes', () => {
 
     expect(buildResourceIdsFromLock(lock)).toEqual({
       d1: {
-        DB: { id: 'd1-core', name: 'single-core' },
+        DB: { id: 'core-d1', name: 'single-core' },
       },
       kv: {
         SETTINGS: { id: 'kv-settings', name: 'single-settings' },
@@ -1270,6 +1270,22 @@ id = "kv-id"
 
     expect(parseWranglerToml(toml, 'portable.prod').kv).toEqual({ SESSION_STORE: 'kv-id' });
     expect(parseWranglerToml(toml, 'portableXprod').kv).toEqual({});
+  });
+
+  it('parses the exact environment-scoped Cron Trigger intent', () => {
+    const toml = `
+[env.portable.triggers]
+crons = ["* * * * *", "*/5 * * * *", "0 */6 * * *"]
+
+[env.other.triggers]
+crons = ["*/15 * * * *"]
+`;
+
+    expect(parseWranglerToml(toml, 'portable').crons).toEqual([
+      '* * * * *',
+      '*/5 * * * *',
+      '0 */6 * * *',
+    ]);
   });
 
   it('assigns AUDIT_QUEUE producer bindings to auth/token and a consumer to management', () => {
@@ -2179,7 +2195,7 @@ describe('registered schema references', () => {
     const references = Array.from(
       { length: 200 },
       (_, index) =>
-        `connection:external-${index.toString().padStart(3, '0')}-${'x'.repeat(30)}:d1-core`
+        `connection:external-${index.toString().padStart(3, '0')}-${'x'.repeat(30)}:core-d1`
     );
 
     expect(() =>

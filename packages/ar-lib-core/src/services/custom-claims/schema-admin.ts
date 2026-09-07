@@ -35,11 +35,51 @@ function getAdapter(db: DatabaseSource) {
   return ensureDatabaseAdapter(db, 'custom-claims-schema-admin');
 }
 
+const CUSTOM_CLAIM_BOOLEAN_COLUMNS = new Set([
+  'is_pii',
+  'is_required',
+  'is_active',
+  'include_in_id_token',
+  'include_in_userinfo',
+  'include_in_introspection',
+  'is_searchable',
+  'is_exportable',
+  'is_vc_claim',
+  'is_system',
+  'show_on_registration',
+  'registration_required',
+]);
+
+function toDatabaseValue(adapterType: string, key: string, value: unknown): unknown {
+  if (!CUSTOM_CLAIM_BOOLEAN_COLUMNS.has(key)) return value;
+  if (adapterType === 'postgres') {
+    if (value === 0) return false;
+    if (value === 1) return true;
+  }
+  if (adapterType !== 'postgres') {
+    if (value === false) return 0;
+    if (value === true) return 1;
+  }
+  return value;
+}
+
+function normalizeSchemaRecord<TSchema extends CustomClaimSchemaRecord>(row: TSchema): TSchema {
+  const normalized: CustomClaimSchemaRecord = { ...row };
+  for (const key of CUSTOM_CLAIM_BOOLEAN_COLUMNS) {
+    if (normalized[key] === true) normalized[key] = 1;
+    if (normalized[key] === false) normalized[key] = 0;
+  }
+  return normalized as TSchema;
+}
+
 function normalizeActiveFieldKey(fieldKey: unknown, isActive: unknown): string | null {
   return typeof fieldKey === 'string' && (isActive === 1 || isActive === true) ? fieldKey : null;
 }
 
-function buildSchemaWhereClause(params: Omit<ListCustomClaimSchemasParams, 'limit' | 'offset'>): {
+function buildSchemaWhereClause(
+  params: Omit<ListCustomClaimSchemasParams, 'limit' | 'offset'>,
+  adapterType: string
+): {
   whereClause: string;
   queryParams: unknown[];
 } {
@@ -59,17 +99,17 @@ function buildSchemaWhereClause(params: Omit<ListCustomClaimSchemasParams, 'limi
 
   if (params.isPii === 0 || params.isPii === 1) {
     whereConditions.push('is_pii = ?');
-    queryParams.push(params.isPii);
+    queryParams.push(toDatabaseValue(adapterType, 'is_pii', params.isPii));
   }
 
   if (params.isActive === 0 || params.isActive === 1) {
     whereConditions.push('is_active = ?');
-    queryParams.push(params.isActive);
+    queryParams.push(toDatabaseValue(adapterType, 'is_active', params.isActive));
   }
 
   if (params.isSystem === 0 || params.isSystem === 1) {
     whereConditions.push('is_system = ?');
-    queryParams.push(params.isSystem);
+    queryParams.push(toDatabaseValue(adapterType, 'is_system', params.isSystem));
   }
 
   if (params.operationStatus) {
@@ -90,7 +130,7 @@ export async function listCustomClaimSchemas<
   params: ListCustomClaimSchemasParams
 ): Promise<ListCustomClaimSchemasResult<TSchema>> {
   const adapter = getAdapter(db);
-  const { whereClause, queryParams } = buildSchemaWhereClause(params);
+  const { whereClause, queryParams } = buildSchemaWhereClause(params, adapter.getType());
 
   const countResult = await adapter.query<{ count: number }>(
     `SELECT COUNT(*) as count FROM custom_claim_schemas WHERE ${whereClause}`,
@@ -104,7 +144,7 @@ export async function listCustomClaimSchemas<
   );
 
   return {
-    schemas,
+    schemas: schemas.map(normalizeSchemaRecord),
     total: countResult[0]?.count || 0,
   };
 }
@@ -117,7 +157,7 @@ export async function getCustomClaimSchemaById<
     'SELECT * FROM custom_claim_schemas WHERE id = ? AND tenant_id = ?',
     [schemaId, tenantId]
   );
-  return rows[0] ?? null;
+  return rows[0] ? normalizeSchemaRecord(rows[0]) : null;
 }
 
 export async function findActiveCustomClaimSchemaByFieldKey<
@@ -135,14 +175,14 @@ export async function findActiveCustomClaimSchemaByFieldKey<
       'SELECT * FROM custom_claim_schemas WHERE tenant_id = ? AND active_field_key = ? AND id != ?',
       [tenantId, fieldKey, options.excludeSchemaId]
     );
-    return rows[0] ?? null;
+    return rows[0] ? normalizeSchemaRecord(rows[0]) : null;
   }
 
   const rows = await adapter.query<TSchema>(
     'SELECT * FROM custom_claim_schemas WHERE tenant_id = ? AND active_field_key = ?',
     [tenantId, fieldKey]
   );
-  return rows[0] ?? null;
+  return rows[0] ? normalizeSchemaRecord(rows[0]) : null;
 }
 
 export async function insertCustomClaimSchema(
@@ -160,7 +200,8 @@ export async function insertCustomClaimSchema(
   const entries = Object.entries(normalizedSchema);
   const columns = entries.map(([key]) => key);
   const placeholders = columns.map(() => '?');
-  const values = entries.map(([, value]) => value);
+  const adapterType = adapter.getType();
+  const values = entries.map(([key, value]) => toDatabaseValue(adapterType, key, value));
 
   await adapter.execute(
     `INSERT INTO custom_claim_schemas (${columns.join(', ')}) VALUES (${placeholders.join(', ')})`,
@@ -196,7 +237,8 @@ export async function updateCustomClaimSchemaFields(
   }
   const updateEntries = Object.entries(normalizedUpdates);
   const setClauses = updateEntries.map(([key]) => `${key} = ?`);
-  const values = updateEntries.map(([, value]) => value);
+  const adapterType = adapter.getType();
+  const values = updateEntries.map(([key, value]) => toDatabaseValue(adapterType, key, value));
 
   if (incrementSchemaVersion) {
     setClauses.push('schema_version = schema_version + 1');

@@ -1,5 +1,7 @@
 import { CONTROL_ENSURE_WORKER_BINDING_TARGETS_SQL } from '@authrim/ar-lib-core/control-plane';
-import type { ProvisionedD1DataRole } from './types';
+import type { ControlTenantShardDataRole } from '@authrim/ar-lib-core/control-plane';
+
+type ProvisionedD1DataRole = ControlTenantShardDataRole | 'lookup';
 
 export type WorkerBindingReconciliationState =
   | 'pending'
@@ -88,6 +90,25 @@ interface WorkerDeploymentLeaseRow {
   patch_result_deployment_id: string | null;
 }
 
+interface WorkerBindingD1Result<T = unknown> {
+  results: T[];
+  meta: { changes?: number };
+}
+
+interface WorkerBindingD1PreparedStatement {
+  bind(...values: unknown[]): WorkerBindingD1PreparedStatement;
+  all<T>(): Promise<WorkerBindingD1Result<T>>;
+  first<T>(): Promise<T | null>;
+  run(): Promise<WorkerBindingD1Result>;
+}
+
+interface WorkerBindingD1Database {
+  prepare(query: string): WorkerBindingD1PreparedStatement;
+  batch<T = unknown>(
+    statements: readonly WorkerBindingD1PreparedStatement[]
+  ): Promise<WorkerBindingD1Result<T>[]>;
+}
+
 function targetFromRow(row: WorkerBindingTargetRow): WorkerBindingTarget {
   return {
     operationId: row.operation_id,
@@ -135,7 +156,7 @@ function safeLimit(limit: number): number {
 }
 
 export class D1WorkerBindingRepository {
-  constructor(private readonly db: D1Database) {}
+  constructor(private readonly db: WorkerBindingD1Database) {}
 
   async acquireReconcilerLease(input: {
     environmentId: string;
@@ -201,7 +222,11 @@ export class D1WorkerBindingRepository {
                   last_error_code = NULL, last_error_redacted = NULL,
                   next_attempt_at = NULL, updated_at = ?
             WHERE step_key = 'reconcile_worker_bindings' AND status = 'blocked'
-              AND last_error_code = 'operator_action_required' AND progress_total > 0
+              AND last_error_code IN (
+                'operator_action_required',
+                'control_worker_settings_request_rejected',
+                'control_worker_stabilization_smoke_failed'
+              ) AND progress_total > 0
               AND NOT EXISTS (
                 SELECT 1 FROM control_worker_binding_reconciliations target
                  WHERE target.operation_id = control_operation_steps.operation_id
@@ -236,7 +261,11 @@ export class D1WorkerBindingRepository {
                   next_attempt_at = NULL, updated_at = ?
             WHERE step_key = 'smoke_bindings' AND progress_total > 0
               AND (status = 'queued' OR
-                   (status = 'blocked' AND last_error_code = 'operator_action_required'))
+                   (status = 'blocked' AND last_error_code IN (
+                     'operator_action_required',
+                     'control_worker_settings_request_rejected',
+                     'control_worker_stabilization_smoke_failed'
+                   )))
               AND EXISTS (
                 SELECT 1 FROM control_operation_steps binding_step
                  WHERE binding_step.operation_id = control_operation_steps.operation_id
@@ -285,7 +314,11 @@ export class D1WorkerBindingRepository {
                   next_attempt_at = NULL, updated_at = ?
             WHERE step_key = 'stabilize_bindings' AND progress_total > 0
               AND (status = 'queued' OR
-                   (status = 'blocked' AND last_error_code = 'operator_action_required'))
+                   (status = 'blocked' AND last_error_code IN (
+                     'operator_action_required',
+                     'control_worker_settings_request_rejected',
+                     'control_worker_stabilization_smoke_failed'
+                   )))
               AND EXISTS (
                 SELECT 1 FROM control_operation_steps smoke_step
                  WHERE smoke_step.operation_id = control_operation_steps.operation_id
@@ -447,12 +480,131 @@ export class D1WorkerBindingRepository {
         .bind(),
     ]);
 
+    await this.recoverCompletedOperations(null, now);
+  }
+
+  /**
+   * Recover the narrow crash window where every binding passed smoke/stabilization but an older
+   * aggregate step error remained persisted. Individual succeeded rows are the durable evidence;
+   * incomplete, unobserved, or version-mismatched rows are deliberately excluded.
+   */
+  async recoverCompletedOperations(environmentId: string | null, now: number): Promise<number> {
+    await this.db
+      .prepare(
+        `UPDATE control_operation_steps
+            SET status = 'running', started_at = COALESCE(started_at, ?),
+                last_error_code = NULL, last_error_redacted = NULL,
+                next_attempt_at = NULL, updated_at = ?
+          WHERE step_key IN (
+                  'reconcile_worker_bindings', 'smoke_bindings', 'stabilize_bindings'
+                )
+            AND (status = 'queued' OR (status = 'blocked' AND last_error_code IN (
+              'operator_action_required',
+              'control_worker_settings_request_rejected',
+              'control_worker_stabilization_smoke_failed'
+            )))
+            AND EXISTS (
+              SELECT 1 FROM control_operations operation
+               WHERE operation.operation_id = control_operation_steps.operation_id
+                 AND operation.operation_kind = 'provision_shard'
+                 AND operation.status IN ('running', 'waiting_retry')
+                 AND (? IS NULL OR operation.environment_id = ?)
+            )
+            AND EXISTS (
+              SELECT 1 FROM control_worker_binding_reconciliations target
+               WHERE target.operation_id = control_operation_steps.operation_id
+            )
+            AND NOT EXISTS (
+              SELECT 1
+                FROM control_worker_binding_reconciliations target
+                LEFT JOIN control_worker_observed_bindings observed
+                  ON observed.environment_id = target.environment_id
+                 AND observed.worker_script_name = target.worker_script_name
+                 AND observed.binding_name = target.binding_ref
+               WHERE target.operation_id = control_operation_steps.operation_id
+                 AND (
+                   target.state <> 'succeeded' OR
+                   target.patch_result_version_id IS NULL OR
+                   target.patch_result_deployment_id IS NULL OR
+                   target.completed_at IS NULL OR
+                   target.consecutive_smoke_successes <> 3 OR
+                   target.stabilization_not_before IS NULL OR
+                   target.stabilization_not_before > target.completed_at OR
+                   target.last_error_code IS NOT NULL OR
+                   observed.binding_name IS NULL OR observed.binding_kind <> 'd1' OR
+                   observed.provider_resource_id <> target.provider_database_id OR
+                   observed.observed_version_id <> target.patch_result_version_id OR
+                   observed.observed_deployment_id <> target.patch_result_deployment_id
+                 )
+            )`
+      )
+      .bind(now, now, environmentId, environmentId)
+      .run();
+
+    await this.db
+      .prepare(
+        `UPDATE control_operation_steps
+            SET progress_total = (
+                  SELECT COUNT(*) FROM control_worker_binding_reconciliations target
+                   WHERE target.operation_id = control_operation_steps.operation_id
+                ),
+                progress_current = (
+                  SELECT COUNT(*) FROM control_worker_binding_reconciliations target
+                   WHERE target.operation_id = control_operation_steps.operation_id
+                     AND target.state = 'succeeded'
+                ),
+                status = 'succeeded', completed_at = COALESCE(completed_at, ?),
+                last_error_code = NULL, last_error_redacted = NULL,
+                next_attempt_at = NULL, updated_at = ?
+          WHERE step_key IN (
+                  'reconcile_worker_bindings', 'smoke_bindings', 'stabilize_bindings'
+                )
+            AND status = 'running'
+            AND EXISTS (
+              SELECT 1 FROM control_operations operation
+               WHERE operation.operation_id = control_operation_steps.operation_id
+                 AND operation.operation_kind = 'provision_shard'
+                 AND operation.status IN ('running', 'waiting_retry')
+                 AND (? IS NULL OR operation.environment_id = ?)
+            )
+            AND EXISTS (
+              SELECT 1 FROM control_worker_binding_reconciliations target
+               WHERE target.operation_id = control_operation_steps.operation_id
+            )
+            AND NOT EXISTS (
+              SELECT 1
+                FROM control_worker_binding_reconciliations target
+                LEFT JOIN control_worker_observed_bindings observed
+                  ON observed.environment_id = target.environment_id
+                 AND observed.worker_script_name = target.worker_script_name
+                 AND observed.binding_name = target.binding_ref
+               WHERE target.operation_id = control_operation_steps.operation_id
+                 AND (
+                   target.state <> 'succeeded' OR
+                   target.patch_result_version_id IS NULL OR
+                   target.patch_result_deployment_id IS NULL OR
+                   target.completed_at IS NULL OR
+                   target.consecutive_smoke_successes <> 3 OR
+                   target.stabilization_not_before IS NULL OR
+                   target.stabilization_not_before > target.completed_at OR
+                   target.last_error_code IS NOT NULL OR
+                   observed.binding_name IS NULL OR observed.binding_kind <> 'd1' OR
+                   observed.provider_resource_id <> target.provider_database_id OR
+                   observed.observed_version_id <> target.patch_result_version_id OR
+                   observed.observed_deployment_id <> target.patch_result_deployment_id
+                 )
+            )`
+      )
+      .bind(now, now, environmentId, environmentId)
+      .run();
+
     const completionCandidates = await this.db
       .prepare(
         `SELECT operation_id
            FROM control_operations operation
           WHERE operation.operation_kind = 'provision_shard'
             AND operation.status IN ('running', 'waiting_retry')
+            AND (? IS NULL OR operation.environment_id = ?)
             AND EXISTS (
               SELECT 1 FROM control_worker_binding_reconciliations target
                WHERE target.operation_id = operation.operation_id
@@ -470,11 +622,29 @@ export class D1WorkerBindingRepository {
           ORDER BY operation.updated_at, operation.operation_id
           LIMIT 100`
       )
-      .bind()
+      .bind(environmentId, environmentId)
       .all<{ operation_id: string }>();
+    let completed = 0;
     for (const candidate of completionCandidates.results) {
-      await this.completeOperationIfReady(candidate.operation_id, now);
+      if (await this.completeOperationIfReady(candidate.operation_id, now)) completed += 1;
     }
+    await this.db
+      .prepare(
+        `DELETE FROM control_worker_deployment_leases AS lease
+          WHERE (? IS NULL OR lease.environment_id = ?)
+            AND EXISTS (
+              SELECT 1 FROM control_worker_binding_reconciliations target
+               WHERE target.environment_id = lease.environment_id
+                 AND target.worker_script_name = lease.worker_script_name
+                 AND target.operation_id = lease.owner_operation_id
+                 AND target.state = 'succeeded'
+                 AND target.patch_result_version_id = lease.patch_result_version_id
+                 AND target.patch_result_deployment_id = lease.patch_result_deployment_id
+            )`
+      )
+      .bind(environmentId, environmentId)
+      .run();
+    return completed;
   }
 
   async listDueTargets(limit: number, now: number): Promise<WorkerBindingTarget[]> {
@@ -519,6 +689,77 @@ export class D1WorkerBindingRepository {
           LIMIT ?`
       )
       .bind(now, now, safeLimit(limit))
+      .all<WorkerBindingTargetRow>();
+    return result.results.map(targetFromRow);
+  }
+
+  async listDueTargetsForWorkers(workerLimit: number, now: number): Promise<WorkerBindingTarget[]> {
+    const result = await this.db
+      .prepare(
+        `WITH selected_workers AS (
+           SELECT r.environment_id, r.worker_script_name,
+                  MIN(CASE r.state
+                        WHEN 'stabilizing' THEN 0
+                        WHEN 'smoke_verifying' THEN 1
+                        WHEN 'settings_patched' THEN 2
+                        WHEN 'rollback_required' THEN 3
+                        ELSE 4
+                      END) AS state_priority,
+                  MIN(CASE WHEN r.state = 'stabilizing' THEN r.stabilization_not_before
+                           ELSE r.updated_at END) AS due_order
+             FROM control_worker_binding_reconciliations r
+             JOIN control_operations o
+               ON o.operation_id = r.operation_id AND o.environment_id = r.environment_id
+            WHERE r.state IN ('pending', 'settings_patched', 'smoke_verifying', 'stabilizing',
+                              'rollback_required')
+              AND o.status IN ('running', 'waiting_retry')
+              AND (o.next_attempt_at IS NULL OR o.next_attempt_at <= ?)
+              AND (r.state <> 'stabilizing' OR r.stabilization_not_before <= ?)
+            GROUP BY r.environment_id, r.worker_script_name
+            ORDER BY state_priority, due_order, r.environment_id, r.worker_script_name
+            LIMIT ?
+         )
+         SELECT r.operation_id, r.environment_id, e.environment_name, r.worker_script_name,
+                r.shard_id, r.binding_ref, r.data_role, r.residency_partition,
+                r.migration_generation, r.provider_database_id,
+                r.state, r.expected_source_version_id, r.previous_deployment_id,
+                r.patch_result_version_id, r.patch_result_deployment_id,
+                r.previous_restore_settings_json, r.smoke_attempt_count,
+                r.consecutive_smoke_successes, r.stabilization_not_before, r.last_error_code,
+                EXISTS (
+                    SELECT 1 FROM control_audit_events audit
+                     WHERE audit.operation_id = r.operation_id
+                       AND audit.environment_id = r.environment_id
+                       AND audit.event_type = 'control.operation.restore_previous_settings'
+                       AND audit.actor_type = 'admin'
+                       AND audit.resource_kind = 'operation'
+                       AND audit.resource_id = r.operation_id
+                       AND audit.outcome = 'succeeded'
+                  ) AS manual_settings_restore_requested
+           FROM control_worker_binding_reconciliations r
+           JOIN selected_workers selected
+             ON selected.environment_id = r.environment_id
+            AND selected.worker_script_name = r.worker_script_name
+           JOIN control_environments e ON e.environment_id = r.environment_id
+           JOIN control_operations o
+             ON o.operation_id = r.operation_id AND o.environment_id = r.environment_id
+          WHERE r.state IN ('pending', 'settings_patched', 'smoke_verifying', 'stabilizing',
+                            'rollback_required')
+            AND o.status IN ('running', 'waiting_retry')
+            AND (o.next_attempt_at IS NULL OR o.next_attempt_at <= ?)
+            AND (r.state <> 'stabilizing' OR r.stabilization_not_before <= ?)
+          ORDER BY selected.state_priority, selected.due_order,
+                   r.environment_id, r.worker_script_name,
+                   CASE r.state
+                     WHEN 'stabilizing' THEN 0
+                     WHEN 'smoke_verifying' THEN 1
+                     WHEN 'settings_patched' THEN 2
+                     WHEN 'rollback_required' THEN 3
+                     ELSE 4
+                   END,
+                   r.operation_id, r.binding_ref`
+      )
+      .bind(now, now, safeLimit(workerLimit), now, now)
       .all<WorkerBindingTargetRow>();
     return result.results.map(targetFromRow);
   }
@@ -952,6 +1193,9 @@ export class D1WorkerBindingRepository {
     errorCode?: string;
     now: number;
   }): Promise<void> {
+    if (!input.target.patchResultVersionId || !input.target.patchResultDeploymentId) {
+      throw new Error('control_worker_patch_result_missing');
+    }
     const state =
       input.stabilizationNotBefore === undefined && input.completeStabilizationCheck !== true
         ? 'smoke_verifying'
@@ -965,7 +1209,9 @@ export class D1WorkerBindingRepository {
                 stabilization_not_before = COALESCE(?, stabilization_not_before),
                 last_error_code = ?, updated_at = ?
           WHERE operation_id = ? AND worker_script_name = ? AND binding_ref = ?
-            AND state IN ('settings_patched', 'smoke_verifying', 'stabilizing')`
+            AND state IN ('settings_patched', 'smoke_verifying', 'stabilizing')
+            AND patch_result_version_id = ? AND patch_result_deployment_id = ?
+            AND smoke_attempt_count < ?`
         )
         .bind(
           state,
@@ -976,7 +1222,10 @@ export class D1WorkerBindingRepository {
           input.now,
           input.target.operationId,
           input.target.workerScriptName,
-          input.target.bindingRef
+          input.target.bindingRef,
+          input.target.patchResultVersionId,
+          input.target.patchResultDeploymentId,
+          input.attempt
         ),
       this.db
         .prepare(
@@ -993,6 +1242,9 @@ export class D1WorkerBindingRepository {
                    AND target.binding_ref = ?
                    AND target.patch_result_version_id = control_worker_deployment_leases.patch_result_version_id
                    AND target.patch_result_deployment_id = control_worker_deployment_leases.patch_result_deployment_id
+                   AND target.patch_result_version_id = ?
+                   AND target.patch_result_deployment_id = ?
+                   AND target.smoke_attempt_count = ? AND target.updated_at = ?
               )`
         )
         .bind(
@@ -1001,8 +1253,29 @@ export class D1WorkerBindingRepository {
           input.target.environmentId,
           input.target.workerScriptName,
           input.target.operationId,
-          input.target.bindingRef
+          input.target.bindingRef,
+          input.target.patchResultVersionId,
+          input.target.patchResultDeploymentId,
+          input.attempt,
+          input.now
         ),
+      this.db
+        .prepare(
+          `SELECT target.state, target.smoke_attempt_count,
+                  target.patch_result_version_id, target.patch_result_deployment_id,
+                  EXISTS (
+                    SELECT 1 FROM control_worker_deployment_leases lease
+                     WHERE lease.environment_id = target.environment_id
+                       AND lease.worker_script_name = target.worker_script_name
+                       AND lease.owner_operation_id = target.operation_id
+                       AND lease.patch_result_version_id = target.patch_result_version_id
+                       AND lease.patch_result_deployment_id = target.patch_result_deployment_id
+                  ) AS lease_exists
+             FROM control_worker_binding_reconciliations target
+            WHERE target.operation_id = ? AND target.worker_script_name = ?
+              AND target.binding_ref = ?`
+        )
+        .bind(input.target.operationId, input.target.workerScriptName, input.target.bindingRef),
     ];
     if (input.stabilizationNotBefore !== undefined) {
       statements.push(
@@ -1042,10 +1315,25 @@ export class D1WorkerBindingRepository {
       );
     }
     const results = await this.db.batch(statements);
-    if ((results[0]?.meta.changes ?? 0) !== 1) {
+    const reflected = results[2]?.results?.[0] as Record<string, unknown> | undefined;
+    const expectedStates =
+      input.stabilizationNotBefore !== undefined || input.completeStabilizationCheck === true
+        ? ['stabilizing', 'succeeded']
+        : ['smoke_verifying', 'stabilizing', 'succeeded'];
+    const reflectedAtOrBeyondCheckpoint =
+      reflected?.patch_result_version_id === input.target.patchResultVersionId &&
+      reflected.patch_result_deployment_id === input.target.patchResultDeploymentId &&
+      typeof reflected.smoke_attempt_count === 'number' &&
+      reflected.smoke_attempt_count >= input.attempt &&
+      expectedStates.includes(String(reflected.state));
+    if ((results[0]?.meta.changes ?? 0) !== 1 && !reflectedAtOrBeyondCheckpoint) {
       throw new Error('control_worker_binding_smoke_state_stale');
     }
-    if ((results[1]?.meta.changes ?? 0) !== 1) {
+    if (
+      (results[1]?.meta.changes ?? 0) !== 1 &&
+      reflected?.lease_exists !== 1 &&
+      reflected?.state !== 'succeeded'
+    ) {
       throw new Error('control_worker_binding_smoke_lease_stale');
     }
   }
@@ -1232,19 +1520,59 @@ export class D1WorkerBindingRepository {
       this.db
         .prepare(
           `UPDATE control_operation_steps
-              SET progress_current = MIN(progress_total, COALESCE(progress_current, 0) + 1),
-                  status = CASE
-                    WHEN COALESCE(progress_current, 0) + 1 >= progress_total THEN 'succeeded'
-                    ELSE status
-                  END,
-                  completed_at = CASE
-                    WHEN COALESCE(progress_current, 0) + 1 >= progress_total THEN ?
-                    ELSE completed_at
-                  END,
-                  updated_at = ?
+              SET progress_total = (
+                    SELECT COUNT(*) FROM control_worker_binding_reconciliations target
+                     WHERE target.operation_id = control_operation_steps.operation_id
+                  ),
+                  progress_current = (
+                    SELECT COUNT(*) FROM control_worker_binding_reconciliations target
+                     WHERE target.operation_id = control_operation_steps.operation_id
+                       AND target.state IN ('stabilizing', 'succeeded')
+                  ),
+                  status = CASE WHEN NOT EXISTS (
+                    SELECT 1 FROM control_worker_binding_reconciliations target
+                     WHERE target.operation_id = control_operation_steps.operation_id
+                       AND target.state NOT IN ('stabilizing', 'succeeded')
+                  ) THEN 'succeeded' ELSE 'running' END,
+                  completed_at = CASE WHEN NOT EXISTS (
+                    SELECT 1 FROM control_worker_binding_reconciliations target
+                     WHERE target.operation_id = control_operation_steps.operation_id
+                       AND target.state NOT IN ('stabilizing', 'succeeded')
+                  ) THEN COALESCE(completed_at, ?) ELSE completed_at END,
+                  last_error_code = NULL, last_error_redacted = NULL,
+                  next_attempt_at = NULL, updated_at = ?
+            WHERE operation_id = ?
+              AND step_key = 'smoke_bindings'
+              AND status NOT IN ('canceled', 'skipped')`
+        )
+        .bind(now, now, target.operationId),
+      this.db
+        .prepare(
+          `UPDATE control_operation_steps
+              SET progress_total = (
+                    SELECT COUNT(*) FROM control_worker_binding_reconciliations target
+                     WHERE target.operation_id = control_operation_steps.operation_id
+                  ),
+                  progress_current = (
+                    SELECT COUNT(*) FROM control_worker_binding_reconciliations target
+                     WHERE target.operation_id = control_operation_steps.operation_id
+                       AND target.state = 'succeeded'
+                  ),
+                  status = CASE WHEN NOT EXISTS (
+                    SELECT 1 FROM control_worker_binding_reconciliations target
+                     WHERE target.operation_id = control_operation_steps.operation_id
+                       AND target.state <> 'succeeded'
+                  ) THEN 'succeeded' ELSE 'running' END,
+                  completed_at = CASE WHEN NOT EXISTS (
+                    SELECT 1 FROM control_worker_binding_reconciliations target
+                     WHERE target.operation_id = control_operation_steps.operation_id
+                       AND target.state <> 'succeeded'
+                  ) THEN COALESCE(completed_at, ?) ELSE completed_at END,
+                  last_error_code = NULL, last_error_redacted = NULL,
+                  next_attempt_at = NULL, updated_at = ?
             WHERE operation_id = ?
               AND step_key IN ('stabilize_bindings', 'verify_runtime_bindings')
-              AND status IN ('running', 'succeeded')`
+              AND status NOT IN ('canceled', 'skipped')`
         )
         .bind(now, now, target.operationId),
       this.db
@@ -1300,7 +1628,10 @@ export class D1WorkerBindingRepository {
           now
         ),
     ]);
-    if (results.slice(0, 3).some((result) => (result.meta.changes ?? 0) !== 1)) {
+    if (
+      results.slice(0, 3).some((result) => (result.meta.changes ?? 0) !== 1) ||
+      (results[3]?.meta.changes ?? 0) < 1
+    ) {
       throw new Error('control_worker_binding_stabilization_incomplete');
     }
   }
@@ -1429,6 +1760,14 @@ export class D1WorkerBindingRepository {
               .prepare(
                 `UPDATE control_environments
                     SET provisioning_capability_state = 'blocked',
+                        provisioning_token_management = 'none',
+                        provisioning_bootstrap_phase = 'none',
+                        provisioning_bootstrap_token_ownership = 'none',
+                        provisioning_bootstrap_token_id = NULL,
+                        provisioning_bootstrap_token_fingerprint = NULL,
+                        provisioning_child_tokens_json = NULL,
+                        provisioning_secret_generation_deployment_id = NULL,
+                        provisioning_secret_generation_version_id = NULL,
                         provisioning_capability_checked_at = ?, updated_at = ?
                   WHERE environment_id = ?
                     AND automatic_provisioning_enabled = 1

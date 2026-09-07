@@ -113,7 +113,7 @@ describe('account route allocation', () => {
     database = new DatabaseSync(':memory:');
     database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
         'utf8'
       )
     );
@@ -140,13 +140,14 @@ describe('account route allocation', () => {
        INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          deterministic_name, ownership_fingerprint, provisioning_state,
-         origin_operation_id, desired_spec_json, created_at, updated_at
+         origin_operation_id, desired_spec_json, provider_create_state,
+         provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
        ) VALUES
-         ('resource-users-a', 'env-test', 'd1', 'users-a', 'users-a', 'fp-users-a', 'ready', 'op-seed', '{}', 1, 1),
-         ('resource-users-b', 'env-test', 'd1', 'users-b', 'users-b', 'fp-users-b', 'ready', 'op-seed', '{}', 1, 1),
-         ('resource-pii-a', 'env-test', 'd1', 'pii-a', 'pii-a', 'fp-pii-a', 'ready', 'op-seed', '{}', 1, 1),
-         ('resource-pii-b', 'env-test', 'd1', 'pii-b', 'pii-b', 'fp-pii-b', 'ready', 'op-seed', '{}', 1, 1),
-         ('resource-default-a', 'env-test', 'd1', 'default-a', 'default-a', 'fp-default-a', 'ready', 'op-seed', '{}', 1, 1);
+         ('resource-users-a', 'env-test', 'd1', 'users-a', 'users-a', 'fp-users-a', 'ready', 'op-seed', '{}', 'identified', 'database-users-a', 1, 1, 1),
+         ('resource-users-b', 'env-test', 'd1', 'users-b', 'users-b', 'fp-users-b', 'ready', 'op-seed', '{}', 'identified', 'database-users-b', 1, 1, 1),
+         ('resource-pii-a', 'env-test', 'd1', 'pii-a', 'pii-a', 'fp-pii-a', 'ready', 'op-seed', '{}', 'identified', 'database-pii-a', 1, 1, 1),
+         ('resource-pii-b', 'env-test', 'd1', 'pii-b', 'pii-b', 'fp-pii-b', 'ready', 'op-seed', '{}', 'identified', 'database-pii-b', 1, 1, 1),
+         ('resource-default-a', 'env-test', 'd1', 'default-a', 'default-a', 'fp-default-a', 'ready', 'op-seed', '{}', 'identified', 'database-default-a', 1, 1, 1);
 
        INSERT INTO control_observed_resources (
          observed_resource_id, environment_id, desired_resource_id, provider_resource_id,
@@ -368,17 +369,18 @@ describe('account route allocation', () => {
        INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          resource_scope, tenant_id, deterministic_name, ownership_fingerprint,
-         provisioning_state, origin_operation_id, desired_spec_json, created_at, updated_at
+         provisioning_state, origin_operation_id, desired_spec_json, provider_create_state,
+         provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
        ) VALUES
          ('resource-exclusive-users-a', 'env-test', 'd1', 'exclusive-users-a',
           'tenant', 'tenant-exclusive', 'exclusive-users-a', 'fp-exclusive-users-a',
-          'ready', 'op-seed', '{}', 1, 1),
+          'ready', 'op-seed', '{}', 'identified', 'database-exclusive-users-a', 1, 1, 1),
          ('resource-exclusive-users-b', 'env-test', 'd1', 'exclusive-users-b',
           'tenant', 'tenant-exclusive', 'exclusive-users-b', 'fp-exclusive-users-b',
-          'ready', 'op-seed', '{}', 1, 1),
+          'ready', 'op-seed', '{}', 'identified', 'database-exclusive-users-b', 1, 1, 1),
          ('resource-other-users', 'env-test', 'd1', 'other-users',
           'tenant', 'tenant-other', 'other-users', 'fp-other-users',
-          'ready', 'op-seed', '{}', 1, 1);
+          'ready', 'op-seed', '{}', 'identified', 'database-other-users', 1, 1, 1);
        INSERT INTO control_tenant_shards (
          shard_id, environment_id, data_role, residency_policy_id, residency_partition,
          generation, logical_shard_id, binding_ref, d1_desired_resource_id,
@@ -447,10 +449,11 @@ describe('account route allocation', () => {
        INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          resource_scope, tenant_id, deterministic_name, ownership_fingerprint,
-         provisioning_state, origin_operation_id, desired_spec_json, created_at, updated_at
+         provisioning_state, origin_operation_id, desired_spec_json, provider_create_state,
+         provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
        ) VALUES ('resource-exclusive-users', 'env-test', 'd1', 'exclusive-users',
                  'tenant', 'tenant-exclusive', 'exclusive-users', 'fp-exclusive-users',
-                 'ready', 'op-seed', '{}', 1, 1);
+                 'ready', 'op-seed', '{}', 'identified', 'database-exclusive-users', 1, 1, 1);
        INSERT INTO control_tenant_shards (
          shard_id, environment_id, data_role, residency_policy_id, residency_partition,
          generation, logical_shard_id, binding_ref, d1_desired_resource_id,

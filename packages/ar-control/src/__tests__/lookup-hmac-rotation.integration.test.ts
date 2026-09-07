@@ -95,14 +95,15 @@ function insertAuthoritativeShards(database: DatabaseSync): void {
      INSERT INTO control_desired_resources (
        desired_resource_id, environment_id, resource_kind, logical_shard_id,
        deterministic_name, ownership_fingerprint, provisioning_state,
-       origin_operation_id, created_at, updated_at
+       origin_operation_id, provider_create_state, provider_resource_id,
+       provider_identity_checkpointed_at, created_at, updated_at
      ) VALUES
        ('resource-core', 'test', 'd1', 'users-1', 'test-users-1', 'owner-core',
-        'active', 'bootstrap', 1, 1),
+        'active', 'bootstrap', 'identified', 'database-core', 1, 1, 1),
        ('resource-pii', 'test', 'd1', 'pii-1', 'test-pii-1', 'owner-pii',
-        'active', 'bootstrap', 1, 1),
+        'active', 'bootstrap', 'identified', 'database-pii', 1, 1, 1),
        ('resource-lookup', 'test', 'd1', 'lookup-1', 'test-lookup-1', 'owner-lookup',
-        'active', 'bootstrap', 1, 1);
+        'active', 'bootstrap', 'identified', 'database-lookup', 1, 1, 1);
      INSERT INTO control_tenant_shards (
        shard_id, environment_id, data_role, residency_policy_id, residency_partition,
        generation, logical_shard_id, binding_ref, d1_desired_resource_id,
@@ -132,7 +133,7 @@ describe('Lookup HMAC rotation state machine', () => {
     database = new DatabaseSync(':memory:');
     database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
         'utf8'
       )
     );

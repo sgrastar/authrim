@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,15 @@ const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const STREAM_ID = 'plugin/plugin-a/state';
 const RELEASE_ID = '0.4.0';
 const FINGERPRINT = 'a'.repeat(64);
+
+function applyControlMigrations(database: DatabaseSync): void {
+  const directory = resolve(REPO_ROOT, 'migrations/control/d1');
+  for (const file of readdirSync(directory)
+    .filter((name) => name.endsWith('.sql'))
+    .sort()) {
+    database.exec(readFileSync(resolve(directory, file), 'utf8'));
+  }
+}
 
 function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -83,13 +92,15 @@ function d1(database: DatabaseSync): D1Database {
 function artifact(sqlOverride?: string) {
   const sql = 'CREATE TABLE plugin_state (id TEXT PRIMARY KEY);';
   const manifest = `${JSON.stringify({
-    formatVersion: 1,
+    formatVersion: 2,
     productVersion: RELEASE_ID,
     streams: [
       {
         id: STREAM_ID,
+        schemaFamily: 'plugin_runner',
         dialect: 'sqlite',
-        logicalRoles: ['plugin_state'],
+        targetKind: 'cloudflare-d1',
+        logicalRoles: ['plugin_runner'],
         files: [{ path: '001_state.sql', checksum: digest(sql) }],
       },
     ],
@@ -162,18 +173,7 @@ describe('PluginResourceMigrationReconciler', () => {
 
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
-        'utf8'
-      )
-    );
+    applyControlMigrations(database);
   });
 
   afterEach(() => database.close());

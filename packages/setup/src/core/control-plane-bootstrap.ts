@@ -21,6 +21,7 @@ import {
 import {
   deriveControlRegionShardAllowedRegions,
   getTenantDatabaseBootstrapBinding,
+  migrationStreamIdForControlDataRole,
   type ControlRegionShardJurisdiction,
   type ControlRegionShardLocationHint,
 } from '@authrim/ar-lib-core/control-plane';
@@ -29,6 +30,7 @@ import { loadLockFileAuto, saveLockFile, type AuthrimLock } from './lock.js';
 import {
   buildAssignmentReleaseMigrationTarget,
   calculateReleaseManifestChecksum,
+  streamDirectory,
   type ReleaseMigrationManifest,
 } from './release-migrations.js';
 import {
@@ -119,7 +121,7 @@ export interface InitialControlPlaneResourcePlan {
   lookupShardId: string | null;
   logicalShardId: string;
   ownershipFingerprint: string;
-  migrationStreamId: 'd1-core' | 'd1-pii' | 'd1-lookup';
+  migrationStreamId: 'core-d1' | 'pii-d1' | 'lookup-d1';
   releaseId: string;
   manifestDigest: string;
   migrationFiles: Array<{ path: string; checksum: string }>;
@@ -131,19 +133,19 @@ function initialTenantShardDefinitions(env: string) {
       role: 'tenant_core/default' as const,
       binding: getTenantDatabaseBootstrapBinding(env, 'default'),
       nameRole: 'default',
-      streamId: 'd1-core' as const,
+      streamId: 'core-d1' as const,
     },
     {
       role: 'tenant_core/users' as const,
       binding: getTenantDatabaseBootstrapBinding(env, 'users'),
       nameRole: 'users',
-      streamId: 'd1-core' as const,
+      streamId: 'core-d1' as const,
     },
     {
       role: 'tenant_pii' as const,
       binding: getTenantDatabaseBootstrapBinding(env, 'pii'),
       nameRole: 'pii',
-      streamId: 'd1-pii' as const,
+      streamId: 'pii-d1' as const,
     },
   ];
 }
@@ -176,13 +178,13 @@ export function buildInitialControlPlaneResourcePlans(input: {
     role: InitialControlPlaneResourceRole;
     binding: string;
     databaseName: string;
-    streamId: 'd1-core' | 'd1-pii' | 'd1-lookup';
+    streamId: 'core-d1' | 'pii-d1' | 'lookup-d1';
   }> = [
     {
       role: 'lookup',
       binding: 'LOOKUP_DB',
       databaseName: input.lock.d1.LOOKUP_DB?.name ?? '',
-      streamId: 'd1-lookup',
+      streamId: 'lookup-d1',
     },
     ...initialTenantShardDefinitions(input.env).map((definition) => ({
       role: definition.role,
@@ -1495,8 +1497,12 @@ export async function ensureInitialControlPlaneResources(input: {
       releaseDraft: input.release.draft,
     });
     for (const plan of plans.filter((candidate) => candidate.role !== 'lookup')) {
-      const migrationPath =
-        plan.role === 'tenant_pii' ? join(migrationsRoot.path, 'pii') : migrationsRoot.path;
+      const migrationPath = streamDirectory(
+        migrationsRoot.path,
+        migrationStreamIdForControlDataRole(plan.role)
+      );
+      if (!migrationPath)
+        throw new Error(`initial_control_plane_migration_stream_missing:${plan.role}`);
       const result = await runD1Migrations(plan.databaseId, migrationPath, input.onProgress, {
         manifestFiles: plan.migrationFiles,
         releaseVersion: plan.releaseId,
@@ -1601,14 +1607,18 @@ export async function publishInitialControlPlaneRuntimeSnapshot(input: {
       lock: input.lock,
       release: input.release,
     }).filter((plan) => plan.role !== 'lookup');
-    const coreStream = input.release?.streams.find((stream) => stream.id === 'd1-core');
-    const piiStream = input.release?.streams.find((stream) => stream.id === 'd1-pii');
+    const coreStream = input.release?.streams.find((stream) => stream.id === 'core-d1');
+    const piiStream = input.release?.streams.find((stream) => stream.id === 'pii-d1');
     const coreSchemaVersion = coreStream
       ? getLatestMigrationVersionFromFilenames(coreStream.files.map((file) => file.path))
-      : getLatestMigrationVersionFromDirectory(migrationsRootPath);
+      : getLatestMigrationVersionFromDirectory(
+          streamDirectory(migrationsRootPath, 'core-d1') ?? migrationsRootPath
+        );
     const piiSchemaVersion = piiStream
       ? getLatestMigrationVersionFromFilenames(piiStream.files.map((file) => file.path))
-      : getLatestMigrationVersionFromDirectory(join(migrationsRootPath, 'pii'));
+      : getLatestMigrationVersionFromDirectory(
+          streamDirectory(migrationsRootPath, 'pii-d1') ?? migrationsRootPath
+        );
     const resources = plans.map((plan) =>
       registryResourceFromInitialPlan({
         plan,

@@ -18,7 +18,14 @@ import type {
 export interface SAMLAttributeSubject {
   id: string;
   email?: string;
+  email_verified?: boolean;
   name?: string;
+  display_name?: string;
+  given_name?: string;
+  family_name?: string;
+  preferred_username?: string;
+  picture_url?: string;
+  locale?: string;
   claims?: Record<string, unknown>;
   attributes?: Record<string, unknown>;
   customClaims?: Record<string, unknown>;

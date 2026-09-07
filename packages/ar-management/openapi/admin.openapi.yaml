@@ -5920,6 +5920,7 @@ paths:
           schema:
             type: integer
             minimum: 1
+            maximum: 100
             default: 50
         - name: user_id
           in: query
@@ -5958,8 +5959,8 @@ paths:
       operationId: postApiAdminAttributes
       summary: Create or replace a user attribute.
       description: >-
-        Creates a manual verified attribute for a user, or replaces the existing attribute value for
-        the same user and attribute name.
+        Creates a manual verified attribute for an active user, or replaces the existing attribute
+        value for the same user and attribute name.
       responses:
         '201':
           $ref: '#/components/responses/UserAttribute'
@@ -8103,7 +8104,8 @@ paths:
       summary: Update a custom claim schema.
       description: >-
         Updates mutable custom claim schema fields. Field key and PII classification are
-        intentionally immutable through this endpoint.
+        intentionally immutable through this endpoint. Built-in system profile schemas also keep
+        their display label, field type, and cardinality immutable.
       responses:
         '200':
           $ref: '#/components/responses/CustomClaimMutation'
@@ -14778,7 +14780,7 @@ paths:
                               type: string
                             streamId:
                               type: string
-                              enum: [d1-core, d1-pii, d1-lookup]
+                              enum: [core-d1, pii-d1, lookup-d1]
                             attemptCount:
                               type: integer
                               minimum: 0
@@ -44567,7 +44569,7 @@ components:
                 type: string
               streamId:
                 type: string
-                enum: [d1-core, d1-pii, d1-lookup]
+                enum: [core-d1, pii-d1, lookup-d1]
               attemptCount:
                 type: integer
                 minimum: 0
@@ -50854,7 +50856,22 @@ components:
           type:
             - object
             - 'null'
-          additionalProperties: true
+          additionalProperties: false
+          required:
+            - id
+            - email
+            - name
+          properties:
+            id:
+              type: string
+            email:
+              type:
+                - string
+                - 'null'
+            name:
+              type:
+                - string
+                - 'null'
         attributes:
           type: array
           items:
@@ -52260,6 +52277,12 @@ components:
           enum:
             - 0
             - 1
+        is_system:
+          type: integer
+          enum:
+            - 0
+            - 1
+          description: Built-in schemas cannot be renamed or deleted, and their identity fields are immutable.
         created_at:
           type: integer
           format: int64
@@ -57776,7 +57799,7 @@ components:
           enum: [enabled, disabled]
         migrationStreamId:
           type: string
-          enum: [d1-core, d1-pii, d1-lookup]
+          enum: [core-d1, pii-d1, lookup-d1]
     AdminControlStorageTopology:
       type: object
       additionalProperties: false
@@ -58264,7 +58287,7 @@ components:
         shardGeneration: { type: integer, minimum: 1 }
         bindingRef: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
         providerDatabaseId: { type: string }
-        migrationStreamId: { type: string, enum: [d1-core, d1-pii] }
+        migrationStreamId: { type: string, enum: [core-d1, pii-d1] }
         releaseId: { type: string }
         manifestDigest: { type: string, pattern: '^[a-f0-9]{64}$' }
         restoreConfirmedAt: { type: [integer, 'null'], format: int64 }

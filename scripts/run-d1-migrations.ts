@@ -27,8 +27,6 @@ interface Arguments {
   env: string;
 }
 
-const CORE_EXCLUDED_DIRECTORIES = new Set(['admin', 'archive', 'external', 'pii', 'releases']);
-
 function optionValue(argv: string[], name: string): string | undefined {
   const index = argv.indexOf(name);
   if (index >= 0) return argv[index + 1];
@@ -113,15 +111,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       lock: activeLock,
     });
     const streamId =
-      input.role === 'core' ? 'd1-core' : input.role === 'pii' ? 'd1-pii' : 'd1-admin';
+      input.role === 'core' ? 'core-d1' : input.role === 'pii' ? 'pii-d1' : 'admin-d1';
     const stream = release.manifest.streams.find((candidate) => candidate.id === streamId);
     if (!stream) throw new Error(`release_migration_stream_not_found:${streamId}`);
-    const inventoryOptions =
-      input.role === 'core' ? { excludeTopLevelDirectories: CORE_EXCLUDED_DIRECTORIES } : {};
-
     if (input.status) {
       const result = await getD1MigrationStatus(input.database, input.directory, input.role, {
-        ...inventoryOptions,
         manifestFiles: stream.files,
         materializeSuperseded: true,
       });
@@ -140,7 +134,6 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       input.directory,
       (message) => console.log(message),
       {
-        ...inventoryOptions,
         manifestFiles: stream.files,
         releaseVersion: productVersion,
         backfillLegacyChecksums: !release.draft,

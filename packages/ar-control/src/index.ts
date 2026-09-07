@@ -1,5 +1,6 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { createLogger } from '@authrim/ar-lib-core';
+import { LOOKUP_MAX_VIRTUAL_BUCKET } from '@authrim/ar-lib-core/services/lookup-directory/contract';
 import {
   assertControlPlaneRecordIsSecretFree,
   ApiMigrationEngine,
@@ -85,9 +86,11 @@ import { PluginResourceBindingReconciler } from './plugin-resource-binding-recon
 import { PluginResourceCleanupService } from './plugin-resource-cleanup';
 import { handoffPluginResourceOperationsToSetup } from './plugin-resource-operator-handoff';
 import { TenantDisasterRecoveryService } from './tenant-disaster-recovery';
+import { BoundedServiceBindingInvocationBudget } from './service-binding-invocation-budget';
 import {
   admitInitialBootstrapAcceleration,
   advanceInitialBootstrap,
+  bootstrapAcceleratorFailureCode,
   releaseInitialBootstrapAcceleration,
 } from './bootstrap-accelerator';
 import { ReleaseMigrationRolloutReconciler } from './release-migration-rollout-reconciler';
@@ -1024,7 +1027,7 @@ function lookupBucket(input: unknown): number {
   if (
     !Number.isSafeInteger(value.virtualBucket) ||
     (value.virtualBucket as number) < 0 ||
-    (value.virtualBucket as number) > 4095
+    (value.virtualBucket as number) > LOOKUP_MAX_VIRTUAL_BUCKET
   ) {
     throw new Error('invalid_lookup_bucket_route_request');
   }
@@ -1139,8 +1142,14 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
           // Keep the authenticated request open until this bounded batch finishes. Returning first
           // made overlapping polls contend on the accelerator lease and hid execution failures.
           await advanceInitialBootstrap({ env: this.env });
-        } catch {
-          return new Response(null, { status: 503, headers: { 'Cache-Control': 'no-store' } });
+        } catch (error) {
+          return new Response(null, {
+            status: 503,
+            headers: {
+              'Cache-Control': 'no-store',
+              'X-Authrim-Error-Code': bootstrapAcceleratorFailureCode(error),
+            },
+          });
         } finally {
           await releaseInitialBootstrapAcceleration({
             env: this.env,
@@ -2626,6 +2635,7 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
         throw new Error(`control_scheduled_${name}_failed`);
       });
     const repository = new D1ControlRepository(this.env.CONTROL_DB);
+    const serviceBindingBudget = new BoundedServiceBindingInvocationBudget();
     const control = new ControlService({
       repository,
       env: this.env,
@@ -2638,7 +2648,8 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
         new SigningKeyCandidateVerifier(
           new D1SigningKeyVerificationRepository(this.env.CONTROL_DB),
           this.env,
-          () => Math.floor(Date.now() / 1000)
+          () => Math.floor(Date.now() / 1000),
+          serviceBindingBudget
         ).reconcile()
       ),
       scheduledTask(
@@ -2646,7 +2657,8 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
         new LookupHmacCandidateVerifier(
           new D1LookupHmacCandidateVerificationRepository(this.env.CONTROL_DB),
           this.env,
-          () => Math.floor(Date.now() / 1000)
+          () => Math.floor(Date.now() / 1000),
+          serviceBindingBudget
         ).reconcile()
       ),
       scheduledTask(
@@ -2715,7 +2727,8 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
       apiClients.workers,
       this.env,
       () => Math.floor(Date.now() / 1000),
-      automaticProvisioningReady
+      automaticProvisioningReady,
+      serviceBindingBudget
     );
     tasks.push(
       scheduledTask(
@@ -2732,7 +2745,8 @@ export default class ControlWorker extends WorkerEntrypoint<ControlEnv, ControlR
           apiClients.workers,
           this.env,
           () => Math.floor(Date.now() / 1000),
-          automaticProvisioningReady
+          automaticProvisioningReady,
+          serviceBindingBudget
         ).reconcile()
       )
     );

@@ -164,6 +164,7 @@ export function withReleaseUpdateState(
     appliedTargets?: string[];
     manualTargets?: string[];
     controlOperationId?: string;
+    controlManifestDigest?: string;
     controlCompletedTargets?: number;
     controlTotalTargets?: number;
     initialWorkerRedeployRequired?: boolean;
@@ -178,6 +179,7 @@ export function withReleaseUpdateState(
   const initialWorkerRedeployRequired =
     input.initialWorkerRedeployRequired ?? existing?.initialWorkerRedeployRequired ?? false;
   const controlOperationId = input.controlOperationId ?? existing?.controlOperationId;
+  const controlManifestDigest = input.controlManifestDigest ?? existing?.controlManifestDigest;
   const controlCompletedTargets =
     input.controlCompletedTargets ?? existing?.controlCompletedTargets;
   const controlTotalTargets = input.controlTotalTargets ?? existing?.controlTotalTargets;
@@ -196,6 +198,7 @@ export function withReleaseUpdateState(
       appliedTargets: input.appliedTargets ?? existing?.appliedTargets ?? [],
       manualTargets: input.manualTargets ?? existing?.manualTargets ?? [],
       ...(controlOperationId ? { controlOperationId } : {}),
+      ...(controlManifestDigest ? { controlManifestDigest } : {}),
       ...(controlCompletedTargets !== undefined ? { controlCompletedTargets } : {}),
       ...(controlTotalTargets !== undefined ? { controlTotalTargets } : {}),
       ...(initialWorkerRedeployRequired ? { initialWorkerRedeployRequired: true } : {}),
@@ -218,9 +221,10 @@ export function withRecoveredReleaseUpdateState(
       `release_rollout_active_target_mismatch:${activeRollout.targetVersion}:${input.targetVersion}`
     );
   }
-  if (activeRollout.manifestDigest !== input.manifestChecksum) {
+  const expectedControlDigest = lock.releaseUpdate?.controlManifestDigest ?? input.manifestChecksum;
+  if (activeRollout.manifestDigest !== expectedControlDigest) {
     throw new Error(
-      `release_rollout_active_manifest_mismatch:${activeRollout.manifestDigest}:${input.manifestChecksum}`
+      `release_rollout_active_manifest_mismatch:${activeRollout.manifestDigest}:${expectedControlDigest}`
     );
   }
   const expectedSourceVersion =
@@ -248,6 +252,7 @@ export function withRecoveredReleaseUpdateState(
     phase,
     manifestChecksum: input.manifestChecksum,
     controlOperationId: activeRollout.operationId,
+    controlManifestDigest: activeRollout.manifestDigest,
     controlCompletedTargets: activeRollout.completedTargets,
     controlTotalTargets: activeRollout.totalTargets,
   });
@@ -262,6 +267,7 @@ export function withSchemaTargetStates(
     manifestChecksum: string;
     targetStreamIds: ReadonlyMap<string, string | null>;
     manifest: ReleaseMigrationManifest;
+    preserveExistingFiles?: boolean;
   }
 ): AuthrimLock {
   const updatedAt = new Date().toISOString();
@@ -275,11 +281,21 @@ export function withSchemaTargetStates(
     if (!stream) {
       throw new Error(`release_manifest_stream_missing:${targetId}:${streamId}`);
     }
+    const files = input.preserveExistingFiles
+      ? [
+          ...new Map(
+            [
+              ...(schemaTargets[targetId]?.files ?? []),
+              ...stream.files.map((file) => ({ path: file.path, checksum: file.checksum })),
+            ].map((file) => [file.path, file] as const)
+          ).values(),
+        ].sort((left, right) => left.path.localeCompare(right.path))
+      : stream.files.map((file) => ({ path: file.path, checksum: file.checksum }));
     schemaTargets[targetId] = {
       productVersion: input.productVersion,
       manifestChecksum: input.manifestChecksum,
       streamId,
-      files: stream.files.map((file) => ({ path: file.path, checksum: file.checksum })),
+      files,
       appliedBy: input.manualTargetIds.has(targetId) ? 'operator' : 'automatic',
       updatedAt,
     };
@@ -326,6 +342,12 @@ export function withVerifiedInitialReleaseState(
     acknowledgedManualTargetIds?: ReadonlySet<string>;
   }
 ): AuthrimLock {
+  if (lock.releaseUpdate?.controlOperationId) {
+    // Fresh-install databases are applied by Setup before Worker activation. A Control
+    // rollout on the same unfinished environment is contradictory state and must be
+    // reconciled explicitly instead of being hidden by a local verified marker.
+    throw new Error('initial_release_control_rollout_incomplete');
+  }
   const manualTargetIds = input.acknowledgedManualTargetIds ?? new Set<string>();
   const unreadyTargets = input.targets.filter(
     (target) => !target.streamId || (!target.automatic && !manualTargetIds.has(target.id))

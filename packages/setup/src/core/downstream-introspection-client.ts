@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { readResponseJsonWithLimit, readResponseTextWithLimit } from './http-limits.js';
+import { readResponseJsonWithLimit } from './http-limits.js';
 import { fetchWithDnsFallback, getRemainingDeadlineMs } from './dns-aware-fetch.js';
 import {
   requestAdminMachineAccessToken,
@@ -16,7 +16,7 @@ export interface DownstreamIntrospectionClientConfig {
   adminBearerToken?: string;
   tenantId?: string;
   onProgress?: (message: string) => void;
-  /** Raw provider/router errors for persisted detailed logs only. */
+  /** Secret-free provider/router diagnostics for persisted detailed logs only. */
   onDetail?: (message: string) => void;
   retryDelayMs?: number;
   maxRetries?: number;
@@ -32,6 +32,10 @@ export interface DownstreamIntrospectionClientResult {
   alreadyExists?: boolean;
   rotatedSecret?: boolean;
   error?: string;
+  /** Stable, secret-free reason retained when a retry window expires. */
+  diagnosticCode?: string;
+  /** Whether retrying the same logical operation may succeed. */
+  retryable?: boolean;
 }
 
 interface AdminClientListResponse {
@@ -63,6 +67,30 @@ const CLIENT_SECRET_FILE = 'downstream_grant_introspection_client_secret.txt';
 const DOWNSTREAM_INTROSPECTION_CLIENT_MAX_RETRIES = 24;
 const DOWNSTREAM_INTROSPECTION_CLIENT_RETRY_BASE_DELAY_MS = 2000;
 const DOWNSTREAM_INTROSPECTION_CLIENT_RETRY_MAX_DELAY_MS = 15000;
+const SAFE_API_ERROR_DIAGNOSTIC = /^[a-z][a-z0-9_:-]{0,127}$/u;
+
+async function safeApiFailureDiagnostic(response: Response): Promise<string | null> {
+  const body = await readResponseJsonWithLimit<unknown>(response, 4096).catch(() => null);
+  if (body && typeof body === 'object' && !Array.isArray(body)) {
+    const record = body as Record<string, unknown>;
+    for (const key of ['error_name', 'error', 'error_code'] as const) {
+      const value = record[key];
+      if (typeof value === 'number' && Number.isSafeInteger(value)) return `error_${value}`;
+      if (typeof value !== 'string') continue;
+      const normalized = value.trim().toLowerCase().replaceAll(' ', '_');
+      if (SAFE_API_ERROR_DIAGNOSTIC.test(normalized)) return normalized;
+    }
+  }
+  if (response.status === 502) return 'bad_gateway';
+  if (response.status === 503) return 'service_unavailable';
+  if (response.status === 504) return 'gateway_timeout';
+  return null;
+}
+
+async function apiFailureMessage(label: string, response: Response): Promise<string> {
+  const diagnostic = await safeApiFailureDiagnostic(response);
+  return `${label} (${response.status})${diagnostic ? `: ${diagnostic}` : ''}`;
+}
 
 async function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
   if (signal?.aborted) return false;
@@ -131,6 +159,7 @@ function isRetryableDownstreamIntrospectionError(error?: string | null): boolean
     normalized.includes('gateway timeout') ||
     normalized.includes('admin_machine_token_failed:404') ||
     normalized.includes('tenant not found') ||
+    normalized.includes('tenant_not_found') ||
     normalized.includes('lookup_registry_snapshot_unavailable') ||
     normalized.includes('missing_snapshot') ||
     normalized.includes('missing_generation') ||
@@ -140,6 +169,52 @@ function isRetryableDownstreamIntrospectionError(error?: string | null): boolean
     normalized.includes('eai_again') ||
     normalized.includes('network connection lost')
   );
+}
+
+function toSafeDownstreamIntrospectionDiagnostic(error: string): string {
+  const normalized = error.trim().toLowerCase();
+  const adminMachineStatus = normalized.match(/admin_machine_token_failed:(\d{3})/u)?.[1];
+  if (adminMachineStatus) {
+    if (normalized.includes('tenant not found') || normalized.includes('tenant_not_found')) {
+      return `admin_machine_token_failed:${adminMachineStatus}:tenant_not_found`;
+    }
+    if (normalized.includes('workers_dev_script_not_found')) {
+      return `admin_machine_token_failed:${adminMachineStatus}:workers_dev_script_not_found`;
+    }
+    return `admin_machine_token_failed:${adminMachineStatus}`;
+  }
+
+  const httpStatus = normalized.match(/\((\d{3})\)/u)?.[1];
+  if (httpStatus) {
+    if (normalized.includes('tenant_not_found') || normalized.includes('tenant not found')) {
+      return `http_${httpStatus}:tenant_not_found`;
+    }
+    if (normalized.includes('lookup_registry_snapshot_unavailable')) {
+      return `http_${httpStatus}:lookup_registry_snapshot_unavailable`;
+    }
+    if (normalized.includes('workers_dev_script_not_found')) {
+      return `http_${httpStatus}:workers_dev_script_not_found`;
+    }
+    return `http_${httpStatus}`;
+  }
+
+  if (
+    normalized.includes('fetch failed') ||
+    normalized.includes('connection reset') ||
+    normalized.includes('econnreset') ||
+    normalized.includes('enotfound') ||
+    normalized.includes('eai_again') ||
+    normalized.includes('network connection lost')
+  ) {
+    return 'network_error';
+  }
+  if (normalized.includes('timeout') || normalized.includes('timed out')) {
+    return 'request_timeout';
+  }
+  if (normalized.includes('lookup_registry_snapshot_unavailable')) {
+    return 'lookup_registry_snapshot_unavailable';
+  }
+  return 'downstream_introspection_operation_failed';
 }
 
 function describeReadinessWait(error: string): string {
@@ -221,9 +296,8 @@ async function findClientByName(
   );
 
   if (!response.ok) {
-    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(
-      `Failed to check downstream introspection client (${response.status}): ${errorBody}`
+      await apiFailureMessage('Failed to check downstream introspection client', response)
     );
   }
 
@@ -262,9 +336,11 @@ async function updateClientDescription(
   );
 
   if (!response.ok) {
-    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(
-      `Failed to update downstream introspection client description (${response.status}): ${errorBody}`
+      await apiFailureMessage(
+        'Failed to update downstream introspection client description',
+        response
+      )
     );
   }
 }
@@ -290,9 +366,8 @@ async function getClientById(
   }
 
   if (!response.ok) {
-    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(
-      `Failed to read downstream introspection client (${response.status}): ${errorBody}`
+      await apiFailureMessage('Failed to read downstream introspection client', response)
     );
   }
 
@@ -317,9 +392,11 @@ async function regenerateClientSecret(
   );
 
   if (!response.ok) {
-    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(
-      `Failed to regenerate downstream introspection client secret (${response.status}): ${errorBody}`
+      await apiFailureMessage(
+        'Failed to regenerate downstream introspection client secret',
+        response
+      )
     );
   }
 
@@ -367,9 +444,8 @@ async function createClient(
   );
 
   if (!response.ok) {
-    const errorBody = await readResponseTextWithLimit(response).catch(() => 'Unknown error');
     throw new Error(
-      `Failed to create downstream introspection client (${response.status}): ${errorBody}`
+      await apiFailureMessage('Failed to create downstream introspection client', response)
     );
   }
 
@@ -443,6 +519,7 @@ export async function ensureDownstreamIntrospectionClient(
   try {
     const startedAt = Date.now();
     let adminBearerToken: string | null = providedAdminBearerToken?.trim() || null;
+    let lastDiagnosticCode: string | undefined;
     const createIdempotencyKey = `setup-downstream-client-${randomBytes(18).toString('base64url')}`;
     const httpOptions: DownstreamIntrospectionHttpOptions = {
       deadlineAt,
@@ -456,6 +533,7 @@ export async function ensureDownstreamIntrospectionClient(
         return {
           success: false,
           error: 'optional_integration_deadline_exceeded',
+          ...(lastDiagnosticCode ? { diagnosticCode: lastDiagnosticCode, retryable: true } : {}),
         };
       }
       try {
@@ -492,7 +570,7 @@ export async function ensureDownstreamIntrospectionClient(
             httpOptions
           ).catch(() => false);
           if (exists) {
-            onProgress?.(`Downstream introspection client exists: ${stored.clientId}`);
+            onProgress?.('Downstream introspection client exists');
             return {
               success: true,
               clientId: stored.clientId,
@@ -519,7 +597,7 @@ export async function ensureDownstreamIntrospectionClient(
               httpOptions
             );
           }
-          onProgress?.(`Regenerating downstream introspection client secret: ${existing.clientId}`);
+          onProgress?.('Regenerating downstream introspection client secret');
           const clientSecret = await regenerateClientSecret(
             apiBaseUrl,
             adminBearerToken,
@@ -556,21 +634,26 @@ export async function ensureDownstreamIntrospectionClient(
         };
       } catch (error) {
         const message = describeOperationError(error);
+        const retryable = isRetryableDownstreamIntrospectionError(message);
+        lastDiagnosticCode = toSafeDownstreamIntrospectionDiagnostic(message);
         if (getRemainingDeadlineMs(deadlineAt) <= 0 || signal?.aborted) {
-          onDetail?.(`Downstream introspection setup deadline reached: ${message}`);
+          onDetail?.(`Downstream introspection setup deadline reached: ${lastDiagnosticCode}`);
           return {
             success: false,
             error: 'optional_integration_deadline_exceeded',
+            diagnosticCode: lastDiagnosticCode,
+            retryable,
           };
         }
-        const shouldRetry =
-          attempt < maxRetries && isRetryableDownstreamIntrospectionError(message);
+        const shouldRetry = attempt < maxRetries && retryable;
 
         if (!shouldRetry) {
-          onDetail?.(`Downstream introspection setup failed: ${message}`);
+          onDetail?.(`Downstream introspection setup failed: ${lastDiagnosticCode}`);
           return {
             success: false,
-            error: message,
+            error: message.startsWith('admin_machine_token_failed:') ? lastDiagnosticCode : message,
+            diagnosticCode: lastDiagnosticCode,
+            retryable,
           };
         }
 
@@ -582,7 +665,7 @@ export async function ensureDownstreamIntrospectionClient(
         );
         const elapsedSeconds = Math.max(1, Math.ceil((Date.now() - startedAt) / 1000));
         onDetail?.(
-          `Downstream introspection readiness attempt ${attempt}/${maxRetries} failed: ${message}`
+          `Downstream introspection readiness attempt ${attempt}/${maxRetries} failed: ${lastDiagnosticCode}`
         );
         onProgress?.(
           `${describeReadinessWait(message)} (${elapsedSeconds}s elapsed, attempt ${attempt}/${maxRetries}). Retrying in ${Math.ceil(delayMs / 1000)}s...`
@@ -591,6 +674,8 @@ export async function ensureDownstreamIntrospectionClient(
           return {
             success: false,
             error: 'optional_integration_deadline_exceeded',
+            diagnosticCode: lastDiagnosticCode,
+            retryable: true,
           };
         }
       }
@@ -600,6 +685,8 @@ export async function ensureDownstreamIntrospectionClient(
       success: false,
       error:
         'Downstream introspection client setup timed out while waiting for the router to become reachable',
+      diagnosticCode: lastDiagnosticCode,
+      retryable: true,
     };
   } catch (error) {
     return {

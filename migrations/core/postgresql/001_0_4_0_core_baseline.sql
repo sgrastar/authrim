@@ -1,7 +1,7 @@
--- Authrim 0.4.0 pre-1.0 semantic fresh-install baseline.
--- Logical stream: external-postgres-core.
+-- Authrim 0.4.0 semantic fresh-install baseline.
+-- Logical stream: core-postgresql.
 -- Generated from the final database state; do not append historical migration SQL here.
--- Pre-1.0 databases are not upgrade-compatible and must be recreated.
+-- Fresh-install baselines must never be applied to upgrade an existing database.
 --
 -- PostgreSQL database dump
 --
@@ -1610,26 +1610,6 @@ CREATE TABLE public.users_core (
 );
 
 --
--- Name: verified_attributes; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.verified_attributes (
-    id text NOT NULL,
-    tenant_id text DEFAULT 'default'::text NOT NULL,
-    subject_id text NOT NULL,
-    attribute_name text NOT NULL,
-    attribute_value text,
-    source text DEFAULT 'manual'::text NOT NULL,
-    issuer text,
-    credential_id text,
-    verified_at bigint NOT NULL,
-    expires_at bigint,
-    revoked_at bigint,
-    created_at bigint NOT NULL,
-    updated_at bigint NOT NULL
-);
-
---
 -- Data for Name: account_legal_hold_states; Type: TABLE DATA; Schema: public; Owner: -
 --
 
@@ -1896,10 +1876,6 @@ INSERT INTO public.screens VALUES ('screen-code-input-default', 'default', 'code
 
 --
 -- Data for Name: users_core; Type: TABLE DATA; Schema: public; Owner: -
---
-
---
--- Data for Name: verified_attributes; Type: TABLE DATA; Schema: public; Owner: -
 --
 
 --
@@ -2568,20 +2544,6 @@ ALTER TABLE ONLY public.users_core
     ADD CONSTRAINT users_core_pkey PRIMARY KEY (id);
 
 --
--- Name: verified_attributes verified_attributes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.verified_attributes
-    ADD CONSTRAINT verified_attributes_pkey PRIMARY KEY (id);
-
---
--- Name: verified_attributes verified_attributes_unique_name; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.verified_attributes
-    ADD CONSTRAINT verified_attributes_unique_name UNIQUE (tenant_id, subject_id, attribute_name);
-
---
 -- Name: idx_anonymous_devices_active_digest; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3216,18 +3178,6 @@ CREATE INDEX idx_users_core_tenant ON public.users_core USING btree (tenant_id);
 --
 
 CREATE INDEX idx_users_core_tenant_active ON public.users_core USING btree (tenant_id, is_active);
-
---
--- Name: idx_verified_attributes_name; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_verified_attributes_name ON public.verified_attributes USING btree (tenant_id, attribute_name);
-
---
--- Name: idx_verified_attributes_subject; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_verified_attributes_subject ON public.verified_attributes USING btree (tenant_id, subject_id);
 
 --
 -- Name: account_support_contexts trg_account_support_context_account_tenant_insert; Type: TRIGGER; Schema: public; Owner: -

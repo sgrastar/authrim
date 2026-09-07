@@ -85,6 +85,7 @@ export function evaluateEnvironmentOperation(input: {
   releaseManifestChecksum?: string;
   appendOnlyInitialDraftResumeVerified?: boolean;
   explicitLegacyInitialRecoveryVerified?: boolean;
+  explicitInitialWorkerRedeployRequested?: boolean;
   environmentObservedRemotely?: boolean;
   environmentKnownLocally?: boolean;
 }): EnvironmentOperationDecision {
@@ -95,6 +96,7 @@ export function evaluateEnvironmentOperation(input: {
     releaseManifestChecksum,
     appendOnlyInitialDraftResumeVerified,
     explicitLegacyInitialRecoveryVerified,
+    explicitInitialWorkerRedeployRequested,
     environmentObservedRemotely,
     environmentKnownLocally,
   } = input;
@@ -151,6 +153,13 @@ export function evaluateEnvironmentOperation(input: {
   if (lifecycle === 'updating') {
     const workers = Object.values(lock?.workers ?? {});
     const release = lock?.releaseUpdate;
+    // An interrupted first deployment is not a product update. Sending it through the
+    // update command can create a Control rollout for databases whose fresh baseline was
+    // already applied by Setup, leaving the initial deployment and mutation fence in
+    // contradictory states. Only the schema-first initial deploy may resume this state.
+    if (operation === 'release_update' && !currentVersion && release) {
+      return denied(operation, lifecycle, 'initial_deploy_required');
+    }
     const initialManifestChanged =
       operation === 'initial_deploy' &&
       !currentVersion &&
@@ -160,7 +169,15 @@ export function evaluateEnvironmentOperation(input: {
       (release?.manifestChecksum !== releaseManifestChecksum ||
         release?.initialWorkerRedeployRequired === true) &&
       !releaseUpdateTerminal(release);
-    if (initialManifestChanged && !appendOnlyInitialDraftResumeVerified) {
+    const exactExplicitInitialWorkerRedeploy =
+      explicitInitialWorkerRedeployRequested === true &&
+      release?.initialWorkerRedeployRequired === true &&
+      release.manifestChecksum === releaseManifestChecksum;
+    if (
+      initialManifestChanged &&
+      !appendOnlyInitialDraftResumeVerified &&
+      !exactExplicitInitialWorkerRedeploy
+    ) {
       return denied(operation, lifecycle, 'initial_manifest_changed');
     }
     const resumableInitialDeploy =

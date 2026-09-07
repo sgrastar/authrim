@@ -828,6 +828,47 @@ describe('adminAuthMiddleware', () => {
       });
     });
 
+    it('keeps session tenant authorization enforced when the BFF transport scope is global', async () => {
+      const fixture = await createMachineAccessFixture(['*'], {
+        principalType: 'admin_ui_bff',
+        principalId: 'amp_admin_ui_bff',
+        clientId: 'admin-ui-bff',
+        credentialId: 'amk_admin_ui_bff',
+      });
+      const db = createMockDB({
+        session: createValidSession(),
+        adminUser: createValidAdminUser(),
+        roles: createAdminRoles(['admin']),
+        machinePrincipal: fixture.machinePrincipal,
+        machineCredential: fixture.machineCredential,
+        machinePrincipalTenantScopes: [{ scope_mode: 'all', tenant_id: null }],
+      });
+      const app = createTestApp(
+        createMockEnv({
+          DB: db,
+          PUBLIC_JWK_JSON: JSON.stringify(fixture.publicJwk),
+          DEFAULT_TENANT_ID: 'default',
+        }),
+        {},
+        'acme'
+      );
+
+      const response = await app.fetch(
+        new Request('http://localhost/api/admin/test', {
+          headers: {
+            Authorization: `Bearer ${fixture.token}`,
+            Cookie: `authrim_admin_session=${VALID_SESSION_ID}`,
+            'X-Authrim-Admin-UI-Api-Mode': 'cross-site-proxy-bff',
+          },
+        })
+      );
+
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'access_denied',
+      });
+    });
+
     it('should reject Admin machine tokens outside their tenant scope', async () => {
       const fixture = await createMachineAccessFixture(['other']);
       const db = createMockDB({

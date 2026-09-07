@@ -28,7 +28,6 @@ import {
   acquireDeployConfigLock,
   acquireEnvironmentOperationForEnvironment,
   loadLockFileAuto,
-  type AuthrimLock,
 } from '../../core/lock.js';
 import { assertR2BucketOwnershipForUse, listD1Databases } from '../../core/cloudflare.js';
 import { assertFixedD1ResourceIdentities } from '../../core/fixed-d1-identity.js';
@@ -37,6 +36,10 @@ import { resolveDownstreamIntrospectionKeysDir } from '../../core/downstream-int
 import { runEphemeralSetupMachineAccess } from '../../core/setup-machine-access-lifecycle.js';
 import { resolveIssuerUrl } from '../../core/url-config.js';
 import { refreshWorkerDeploymentArtifacts } from '../../core/worker-deployment-artifacts.js';
+import {
+  assertControlProvisionMutationState,
+  CONTROL_WORKER_BINDING_INTER_TARGET_DELAY_MS,
+} from '../../core/control-provision-policy.js';
 
 interface ControlProvisionCommandOptions {
   env?: string;
@@ -47,19 +50,6 @@ interface ControlProvisionCommandOptions {
   keysDir?: string;
   dryRun?: boolean;
   yes?: boolean;
-}
-
-function assertControlProvisionMutationState(lock: AuthrimLock): void {
-  if (lock.topologyUpdate) {
-    throw new Error('control_provision_topology_update_in_progress');
-  }
-  const release = lock.releaseUpdate;
-  if (release && release.phase !== 'verified' && release.phase !== 'database_only_verified') {
-    throw new Error('control_provision_release_update_in_progress');
-  }
-  if (release?.phase === 'verified' && lock.productVersion !== release.targetVersion) {
-    throw new Error('control_provision_release_state_inconsistent');
-  }
 }
 
 async function loadLockedControlProvisionContext(baseDir: string, env: string) {
@@ -476,7 +466,7 @@ export async function controlProvisionCommand(
                       controlDatabaseId: locked.controlDatabase.id,
                       operation: current,
                       expectedAccountId: locked.config?.cloudflare?.accountId,
-                      interTargetDelayMs: 15_000,
+                      interTargetDelayMs: CONTROL_WORKER_BINDING_INTER_TARGET_DELAY_MS,
                     });
         if (
           current.operationKind === 'cleanup_plugin_resources' ||

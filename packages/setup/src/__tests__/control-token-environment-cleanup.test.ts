@@ -229,6 +229,22 @@ async function root(): Promise<string> {
   return path;
 }
 
+async function writeEnvironmentConfig(
+  baseDir: string,
+  automaticProvisioning: boolean
+): Promise<void> {
+  const environmentRoot = join(baseDir, '.authrim', ENVIRONMENT);
+  await mkdir(environmentRoot, { recursive: true });
+  await writeFile(
+    join(environmentRoot, 'config.json'),
+    `${JSON.stringify({
+      cloudflare: { accountId: ACCOUNT_ID },
+      controlPlane: { automaticProvisioning },
+    })}\n`,
+    { mode: 0o600 }
+  );
+}
+
 function dependencies(input: {
   authority: ReturnType<typeof fakeAuthority>['authority'];
   readAuthority?: () => Promise<ControlProvisioningAuthorityState | null>;
@@ -286,6 +302,59 @@ function expectNoProviderAccess(fake: ReturnType<typeof fakeAuthority>): void {
 }
 
 describe('setup-managed Control token environment cleanup', () => {
+  it('skips Control D1 access when automatic provisioning was explicitly disabled', async () => {
+    const baseDir = await root();
+    await writeEnvironmentConfig(baseDir, false);
+    const fake = fakeAuthority({});
+    const readAuthority = vi.fn(async () => {
+      throw new Error('schema was never initialized');
+    });
+    const deps = dependencies({ authority: fake.authority, readAuthority });
+
+    await expect(
+      cleanupSetupManagedControlTokens({
+        baseDir,
+        environment: ENVIRONMENT,
+        controlDatabaseName: 'test-authrim-control-db',
+        dependencies: deps,
+      })
+    ).resolves.toEqual({
+      status: 'not_required',
+      reason: 'automatic_provisioning_disabled',
+      revokedTokenIds: [],
+      alreadyAbsentTokenIds: [],
+    });
+    expect(readAuthority).not.toHaveBeenCalled();
+    expectNoProviderAccess(fake);
+    await expect(
+      loadControlTokenCleanupConclusion({ baseDir, environment: ENVIRONMENT })
+    ).resolves.toMatchObject({
+      status: 'not_required',
+      reason: 'automatic_provisioning_disabled',
+      accountId: ACCOUNT_ID,
+    });
+  });
+
+  it('does not bypass Control authority verification when automatic provisioning is enabled', async () => {
+    const baseDir = await root();
+    await writeEnvironmentConfig(baseDir, true);
+    const fake = fakeAuthority({});
+    const readAuthority = vi.fn(async () => {
+      throw new Error('authority unavailable');
+    });
+
+    await expect(
+      cleanupSetupManagedControlTokens({
+        baseDir,
+        environment: ENVIRONMENT,
+        controlDatabaseName: 'test-authrim-control-db',
+        dependencies: dependencies({ authority: fake.authority, readAuthority }),
+      })
+    ).rejects.toThrow('control_token_cleanup_authority_unavailable_manual_recovery_required');
+    expect(readAuthority).toHaveBeenCalledOnce();
+    expectNoProviderAccess(fake);
+  });
+
   it('queries Control authority through the immutable database identifier', async () => {
     const baseDir = await root();
     const fake = fakeAuthority({});

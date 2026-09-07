@@ -907,6 +907,8 @@ const ru: Translations = {
     'Введите новый одноразовый токен для исправления.',
   'web.envDetail.bootstrapRetainedForRetry':
     'Cloudflare вернул временную ошибку. Bootstrap-токен остаётся активным; повторно введите тот же токен и выберите «Включить», чтобы продолжить.',
+  'web.envDetail.bootstrapNotSubmittedForRetry':
+    'Setup остановился до отправки bootstrap-токена. Токен остался в поле ввода, и попытку можно повторить.',
   'web.envDetail.revokeTokensBeforeRetry':
     'Перед повторной попыткой отзовите указанные bootstrap- и дочерние токены Authrim в Cloudflare Dashboard.',
   'web.envDetail.bootstrapRevokedPendingReset':

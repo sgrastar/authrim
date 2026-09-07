@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Locale, LocaleInfo } from '../i18n/types.js';
-import { D1_DATABASES, KV_NAMESPACES } from '../core/naming.js';
+import { D1_DATABASES, KV_NAMESPACES, WORKER_COMPONENTS } from '../core/naming.js';
 import { SETUP_CAPABILITY_COPY } from '../core/setup-capability-copy.js';
 import {
   CLOUDFLARE_DNS_RECORDS_DOCS_URL,
@@ -35,6 +35,17 @@ function readSetupPackageVersion(): string {
 }
 
 const SETUP_PACKAGE_VERSION = readSetupPackageVersion();
+
+export const CONTROL_OPERATION_RESULT_TRANSLATION_KEYS = {
+  awaiting_migration: 'web.control.operationAwaitingMigration',
+  awaiting_worker_bindings: 'web.control.operationAwaitingWorkerBindings',
+  awaiting_smoke: 'web.control.operationAwaitingSmoke',
+  awaiting_quarantine: 'web.control.operationAwaitingQuarantine',
+  retry_required: 'web.control.operationRetryRequired',
+  lease_unavailable: 'web.control.operationLeaseUnavailable',
+  succeeded: 'web.control.operationSucceeded',
+  blocked: 'web.control.operationBlocked',
+} as const;
 
 interface SetupUiCopy {
   stepLabels: readonly string[];
@@ -952,6 +963,9 @@ export function getHtmlTemplate(
   // Safely stringify translations for embedding in JavaScript
   const translationsJson = JSON.stringify(translations);
   const availableLocalesJson = JSON.stringify(availableLocales);
+  const controlOperationResultTranslationKeysJson = JSON.stringify(
+    CONTROL_OPERATION_RESULT_TRANSLATION_KEYS
+  );
   const wildcardDnsManualCopyJson = JSON.stringify(
     Object.fromEntries(
       Object.entries(WILDCARD_DNS_MANUAL_COPY).map(([code, copy]) => [
@@ -3006,6 +3020,46 @@ ${SETUP_WEB_UI_STYLE}</style>
         'web.envDetail.migrationApplyConfirm': ['是否应用所有待处理的数据库迁移？', '是否套用所有待處理的資料庫移轉？', '¿Aplicar todas las migraciones de base de datos pendientes?', 'Aplicar todas as migrações de banco de dados pendentes?', 'Appliquer toutes les migrations de base de données en attente ?', 'Alle ausstehenden Datenbankmigrationen anwenden?', '대기 중인 데이터베이스 마이그레이션을 모두 적용할까요?', 'Применить все ожидающие миграции базы данных?', 'Terapkan semua migrasi database yang tertunda?'],
         'web.envDetail.migrationApplying': ['正在应用数据库迁移...', '正在套用資料庫移轉...', 'Aplicando migraciones de base de datos...', 'Aplicando migrações de banco de dados...', 'Application des migrations de base de données...', 'Datenbankmigrationen werden angewendet...', '데이터베이스 마이그레이션 적용 중...', 'Применение миграций базы данных...', 'Menerapkan migrasi database...'],
         'web.envDetail.migrationComplete': ['数据库迁移已完成。', '資料庫移轉已完成。', 'Las migraciones de base de datos se completaron.', 'As migrações de banco de dados foram concluídas.', 'Les migrations de base de données sont terminées.', 'Datenbankmigrationen abgeschlossen.', '데이터베이스 마이그레이션이 완료되었습니다.', 'Миграции базы данных завершены.', 'Migrasi database selesai.'],
+        'web.envDetail.r2OwnershipRecoverySummary': ['{{count}} 个 R2 存储桶绑定只有旧版名称所有权信息。继续前请显式验证：{{command}}', '{{count}} 個 R2 儲存桶繫結只有舊版名稱擁有權資訊。繼續前請明確驗證：{{command}}', '{{count}} binding(s) de R2 solo tienen propiedad heredada por nombre. Verifíquelos explícitamente antes de continuar: {{command}}', '{{count}} binding(s) R2 têm apenas propriedade legada por nome. Verifique-os explicitamente antes de continuar: {{command}}', '{{count}} liaison(s) R2 ne disposent que d’une propriété héritée basée sur le nom. Vérifiez-les explicitement avant de continuer : {{command}}', '{{count}} R2-Bindung(en) besitzen nur veraltete namensbasierte Eigentumsdaten. Prüfen Sie sie vor dem Fortfahren ausdrücklich: {{command}}', '{{count}}개의 R2 버킷 바인딩에 레거시 이름 기반 소유권 정보만 있습니다. 계속하기 전에 명시적으로 확인하세요: {{command}}', 'Для {{count}} привязок R2 сохранены только устаревшие данные владения по имени. Перед продолжением явно проверьте их: {{command}}', '{{count}} binding bucket R2 hanya memiliki kepemilikan lama berbasis nama. Verifikasi secara eksplisit sebelum melanjutkan: {{command}}'],
+        'web.envDetail.r2OwnershipRecreateSummary': ['{{count}} 个 R2 存储桶绑定的旧版所有权信息不完整，无法安全验证。请重新创建环境后再预配 R2。', '{{count}} 個 R2 儲存桶繫結的舊版擁有權資訊不完整，無法安全驗證。請重新建立環境後再佈建 R2。', 'La propiedad heredada de {{count}} binding(s) de R2 está incompleta y no se puede verificar con seguridad. Vuelva a crear el entorno antes de aprovisionar R2.', 'A propriedade legada de {{count}} binding(s) R2 está incompleta e não pode ser verificada com segurança. Recrie o ambiente antes de provisionar o R2.', 'Les données de propriété héritées de {{count}} liaison(s) R2 sont incomplètes et ne peuvent pas être vérifiées en toute sécurité. Recréez l’environnement avant de provisionner R2.', 'Die veralteten Eigentumsdaten für {{count}} R2-Bindung(en) sind unvollständig und können nicht sicher geprüft werden. Erstellen Sie die Umgebung vor der R2-Bereitstellung neu.', '{{count}}개의 R2 버킷 바인딩에 대한 레거시 소유권 정보가 불완전하여 안전하게 확인할 수 없습니다. R2를 프로비저닝하기 전에 환경을 다시 만드세요.', 'Устаревшие данные владения для {{count}} привязок R2 неполны, поэтому их нельзя безопасно проверить. Пересоздайте среду перед подготовкой R2.', 'Kepemilikan lama untuk {{count}} binding R2 tidak lengkap dan tidak dapat diverifikasi dengan aman. Buat ulang environment sebelum melakukan provisioning R2.'],
+        'web.envDetail.r2IdentityMismatchSummary': ['检测到 {{count}} 个 R2 存储桶身份不匹配。继续前请检查 Cloudflare 存储桶和环境锁。', '偵測到 {{count}} 個 R2 儲存桶身分不相符。繼續前請檢查 Cloudflare 儲存桶與環境鎖定。', 'Se detectaron {{count}} discrepancia(s) de identidad de R2. Revise el bucket de Cloudflare y el bloqueo del entorno antes de continuar.', 'Foram detectadas {{count}} divergência(s) de identidade R2. Revise o bucket da Cloudflare e o bloqueio do ambiente antes de continuar.', '{{count}} incohérence(s) d’identité R2 ont été détectées. Vérifiez le bucket Cloudflare et le verrou d’environnement avant de continuer.', '{{count}} R2-Identitätsabweichung(en) wurden erkannt. Prüfen Sie vor dem Fortfahren den Cloudflare-Bucket und die Umgebungssperre.', '{{count}}개의 R2 버킷 ID 불일치를 감지했습니다. 계속하기 전에 Cloudflare 버킷과 환경 잠금을 확인하세요.', 'Обнаружено несоответствий идентификаторов R2: {{count}}. Перед продолжением проверьте бакет Cloudflare и блокировку среды.', 'Terdeteksi {{count}} ketidakcocokan identitas R2. Tinjau bucket Cloudflare dan kunci environment sebelum melanjutkan.'],
+        'web.status.percentComplete': ['已完成 {{percent}}%', '已完成 {{percent}}%', '{{percent}} % completado', '{{percent}}% concluído', '{{percent}} % terminé', '{{percent}} % abgeschlossen', '{{percent}}% 완료', 'Выполнено {{percent}}%', '{{percent}}% selesai'],
+        'web.status.resourceProgress': ['{{current}} / {{total}} 个资源', '{{current}} / {{total}} 個資源', '{{current}} / {{total}} recursos', '{{current}} / {{total}} recursos', '{{current}} / {{total}} ressources', '{{current}} / {{total}} Ressourcen', '{{current}} / {{total}}개 리소스', '{{current}} / {{total}} ресурсов', '{{current}} / {{total}} resource'],
+        'web.status.ok': ['正常', '正常', 'Correcto', 'OK', 'OK', 'OK', '정상', 'Готово', 'OK'],
+        'web.status.checkRequired': ['需要检查', '需要檢查', 'Revisión necesaria', 'Verificação necessária', 'Vérification requise', 'Prüfung erforderlich', '확인 필요', 'Требуется проверка', 'Perlu diperiksa'],
+        'web.status.unknown': ['未知', '未知', 'Desconocido', 'Desconhecido', 'Inconnu', 'Unbekannt', '알 수 없음', 'Неизвестно', 'Tidak diketahui'],
+        'web.env.updateBadge': ['更新到 v{{version}}', '更新至 v{{version}}', 'Actualizar a v{{version}}', 'Atualizar para v{{version}}', 'Mettre à jour vers v{{version}}', 'Auf v{{version}} aktualisieren', 'v{{version}}(으)로 업데이트', 'Обновить до v{{version}}', 'Perbarui ke v{{version}}'],
+        'web.delete.manualReviewRequired': ['需要手动检查', '需要手動檢查', 'Se requiere revisión manual', 'Revisão manual necessária', 'Vérification manuelle requise', 'Manuelle Prüfung erforderlich', '수동 확인 필요', 'Требуется ручная проверка', 'Perlu peninjauan manual'],
+        'web.envDetail.capacityTargetsUnavailable': ['无法获取租户容量目标。', '無法取得租戶容量目標。', 'Los destinos de capacidad del tenant no están disponibles.', 'Os destinos de capacidade do tenant não estão disponíveis.', 'Les cibles de capacité du tenant ne sont pas disponibles.', 'Mandanten-Kapazitätsziele sind nicht verfügbar.', '테넌트 용량 대상을 가져올 수 없습니다.', 'Целевые ресурсы емкости тенанта недоступны.', 'Target kapasitas tenant tidak tersedia.'],
+        'web.control.pendingTenant': ['租户 {{tenantId}}', '租戶 {{tenantId}}', 'Tenant {{tenantId}}', 'Tenant {{tenantId}}', 'Tenant {{tenantId}}', 'Mandant {{tenantId}}', '테넌트 {{tenantId}}', 'Тенант {{tenantId}}', 'Tenant {{tenantId}}'],
+        'web.control.pendingDisasterRecovery': ['灾难恢复', '災難復原', 'Recuperación ante desastres', 'Recuperação de desastres', 'Reprise après sinistre', 'Notfallwiederherstellung', '재해 복구', 'Аварийное восстановление', 'Pemulihan bencana'],
+        'web.control.pendingVerifyRuntimeBindings': ['验证运行时绑定', '驗證執行階段繫結', 'Verificar bindings de runtime', 'Verificar bindings de runtime', 'Vérifier les liaisons d’exécution', 'Laufzeitbindungen prüfen', '런타임 바인딩 확인', 'Проверка привязок среды выполнения', 'Verifikasi binding runtime'],
+        'web.control.pendingSharedPool': ['共享池', '共用集區', 'Pool compartido', 'Pool compartilhado', 'Pool partagé', 'Gemeinsamer Pool', '공유 풀', 'Общий пул', 'Pool bersama'],
+        'web.control.pendingProvisioning': ['正在预配', '正在佈建', 'Aprovisionamiento', 'Provisionamento', 'Provisionnement', 'Bereitstellung', '프로비저닝', 'Подготовка ресурсов', 'Provisioning'],
+        'web.control.pendingTitle': ['待处理的预配操作', '待處理的佈建操作', 'Operaciones de aprovisionamiento pendientes', 'Operações de provisionamento pendentes', 'Opérations de provisionnement en attente', 'Ausstehende Bereitstellungsvorgänge', '대기 중인 프로비저닝 작업', 'Ожидающие операции подготовки', 'Operasi provisioning tertunda'],
+        'web.control.pendingDescription': ['Setup将执行需要操作员权限的步骤，并持续显示Control的验证进度。', 'Setup 將執行需要操作員權限的步驟，並持續顯示 Control 的驗證進度。', 'Setup ejecuta los pasos que requieren permisos de operador y sigue mostrando el progreso de verificación de Control.', 'O Setup executa as etapas que exigem permissões do operador e continua exibindo o progresso da verificação do Control.', 'Setup exécute les étapes nécessitant les droits de l’opérateur et continue d’afficher la progression de la vérification de Control.', 'Setup führt Schritte aus, die Operatorrechte erfordern, und zeigt den Prüfungsfortschritt von Control weiter an.', 'Setup은 운영자 권한이 필요한 단계를 실행하고 Control 검증 진행 상황을 계속 표시합니다.', 'Setup выполняет этапы, требующие прав оператора, и продолжает показывать ход проверки Control.', 'Setup menjalankan langkah yang memerlukan izin operator dan terus menampilkan progres verifikasi Control.'],
+        'web.control.pendingRun': ['运行待处理操作', '執行待處理操作', 'Ejecutar operación pendiente', 'Executar operação pendente', 'Exécuter l’opération en attente', 'Ausstehenden Vorgang ausführen', '대기 중인 작업 실행', 'Выполнить ожидающую операцию', 'Jalankan operasi tertunda'],
+        'web.control.pendingObserving': ['Control正在执行私有冒烟测试或稳定化。此状态将自动刷新。', 'Control 正在執行私有冒煙測試或穩定化。此狀態將自動重新整理。', 'Control está ejecutando la prueba privada o la estabilización. Este estado se actualizará automáticamente.', 'O Control está executando o smoke test privado ou a estabilização. Este status será atualizado automaticamente.', 'Control exécute le test privé ou la stabilisation. Cet état sera actualisé automatiquement.', 'Control führt den privaten Smoke-Test oder die Stabilisierung aus. Dieser Status wird automatisch aktualisiert.', 'Control이 비공개 스모크 테스트 또는 안정화를 실행 중입니다. 상태가 자동으로 새로 고쳐집니다.', 'Control выполняет закрытую проверку или стабилизацию. Состояние обновится автоматически.', 'Control sedang menjalankan smoke test privat atau stabilisasi. Status ini akan dimuat ulang secara otomatis.'],
+        'web.control.operationRunning': ['正在执行预配操作...', '正在執行佈建操作...', 'Ejecutando la operación de aprovisionamiento...', 'Executando a operação de provisionamento...', 'Exécution de l’opération de provisionnement...', 'Bereitstellungsvorgang wird ausgeführt...', '프로비저닝 작업 실행 중...', 'Выполняется операция подготовки ресурсов...', 'Menjalankan operasi provisioning...'],
+        'web.control.operationFailed': ['Control 操作失败。', 'Control 操作失敗。', 'La operación de Control falló.', 'A operação de Control falhou.', 'L’opération Control a échoué.', 'Control-Vorgang fehlgeschlagen.', 'Control 작업에 실패했습니다.', 'Операция Control завершилась ошибкой.', 'Operasi Control gagal.'],
+        'web.control.operationAwaitingMigration': ['D1 已创建。迁移已准备好进入下一操作步骤。', 'D1 已建立。移轉已可進入下一個操作步驟。', 'D1 creado. La migración está lista para el siguiente paso del operador.', 'D1 criado. A migração está pronta para a próxima etapa do operador.', 'D1 créé. La migration est prête pour l’étape opérateur suivante.', 'D1 erstellt. Die Migration ist für den nächsten Bedienerschritt bereit.', 'D1을 만들었습니다. 다음 운영자 단계에서 마이그레이션을 실행할 수 있습니다.', 'D1 создана. Миграция готова к следующему шагу оператора.', 'D1 dibuat. Migrasi siap untuk langkah operator berikutnya.'],
+        'web.control.operationAwaitingWorkerBindings': ['迁移已完成。Worker 绑定协调已准备好进入下一操作步骤。', '移轉已完成。Worker 繫結協調已可進入下一個操作步驟。', 'Migración completada. La conciliación de bindings de Worker está lista para el siguiente paso.', 'Migração concluída. A reconciliação de bindings do Worker está pronta para a próxima etapa.', 'Migration terminée. La réconciliation des liaisons Worker est prête pour l’étape suivante.', 'Migration abgeschlossen. Der Abgleich der Worker-Bindungen ist für den nächsten Schritt bereit.', '마이그레이션이 완료되었습니다. 다음 운영자 단계에서 Worker 바인딩을 조정할 수 있습니다.', 'Миграция завершена. Согласование привязок Worker готово к следующему шагу.', 'Migrasi selesai. Rekonsiliasi binding Worker siap untuk langkah berikutnya.'],
+        'web.control.operationAwaitingSmoke': ['Worker 绑定已修补。正在运行私有冒烟测试和稳定化。', 'Worker 繫結已修補。正在執行私有冒煙測試與穩定化。', 'Bindings de Worker actualizados. Se ejecutan las pruebas privadas y la estabilización.', 'Bindings do Worker atualizados. O smoke test privado e a estabilização estão em execução.', 'Liaisons Worker mises à jour. Le test privé et la stabilisation sont en cours.', 'Worker-Bindungen aktualisiert. Privater Smoke-Test und Stabilisierung laufen.', 'Worker 바인딩을 패치했습니다. 비공개 스모크 테스트와 안정화가 진행 중입니다.', 'Привязки Worker обновлены. Выполняются закрытая проверка и стабилизация.', 'Binding Worker diperbarui. Smoke test privat dan stabilisasi sedang berjalan.'],
+        'web.control.operationAwaitingQuarantine': ['资源清理正在等待隔离期结束。', '資源清理正在等待隔離期結束。', 'La limpieza de recursos espera a que termine el período de cuarentena.', 'A limpeza de recursos aguarda o fim do período de quarentena.', 'Le nettoyage des ressources attend la fin de la période de quarantaine.', 'Die Ressourcenbereinigung wartet auf das Ende der Quarantänefrist.', '리소스 정리가 격리 기간 종료를 기다리고 있습니다.', 'Очистка ресурсов ожидает окончания периода карантина.', 'Pembersihan resource menunggu periode karantina selesai.'],
+        'web.control.operationRetryRequired': ['预配需要重试。', '佈建需要重試。', 'El aprovisionamiento requiere un reintento.', 'O provisionamento requer nova tentativa.', 'Le provisionnement doit être relancé.', 'Die Bereitstellung muss wiederholt werden.', '프로비저닝을 다시 시도해야 합니다.', 'Требуется повторить подготовку ресурсов.', 'Provisioning perlu dicoba lagi.'],
+        'web.control.operationLeaseUnavailable': ['另一个执行器当前拥有此操作。', '另一個執行器目前擁有此操作。', 'Otro ejecutor controla actualmente esta operación.', 'Outro executor controla esta operação no momento.', 'Un autre exécuteur contrôle actuellement cette opération.', 'Ein anderer Executor besitzt diesen Vorgang derzeit.', '다른 실행자가 현재 이 작업을 처리 중입니다.', 'Операция сейчас принадлежит другому исполнителю.', 'Executor lain sedang menangani operasi ini.'],
+        'web.control.operationSucceeded': ['预配成功完成。', '佈建已成功完成。', 'El aprovisionamiento se completó correctamente.', 'O provisionamento foi concluído com sucesso.', 'Le provisionnement s’est terminé avec succès.', 'Die Bereitstellung wurde erfolgreich abgeschlossen.', '프로비저닝이 완료되었습니다.', 'Подготовка ресурсов успешно завершена.', 'Provisioning berhasil diselesaikan.'],
+        'web.control.operationBlocked': ['预配被阻止。请检查操作状态。', '佈建已被阻擋。請檢查操作狀態。', 'El aprovisionamiento está bloqueado. Revise el estado de la operación.', 'O provisionamento está bloqueado. Revise o status da operação.', 'Le provisionnement est bloqué. Vérifiez l’état de l’opération.', 'Die Bereitstellung ist blockiert. Prüfen Sie den Vorgangsstatus.', '프로비저닝이 차단되었습니다. 작업 상태를 확인하세요.', 'Подготовка ресурсов заблокирована. Проверьте состояние операции.', 'Provisioning diblokir. Tinjau status operasi.'],
+        'web.control.tokenLinkFailed': ['无法创建 Cloudflare 令牌链接。', '無法建立 Cloudflare 權杖連結。', 'No se pudo crear el enlace del token de Cloudflare.', 'Não foi possível criar o link do token da Cloudflare.', 'Impossible de créer le lien du jeton Cloudflare.', 'Der Cloudflare-Token-Link konnte nicht erstellt werden.', 'Cloudflare 토큰 링크를 만들 수 없습니다.', 'Не удалось создать ссылку для токена Cloudflare.', 'Tidak dapat membuat tautan token Cloudflare.'],
+        'web.control.preparationFailed': ['Control 准备失败。', 'Control 準備失敗。', 'La preparación de Control falló.', 'A preparação do Control falhou.', 'La préparation de Control a échoué.', 'Control-Vorbereitung fehlgeschlagen.', 'Control 준비에 실패했습니다.', 'Подготовка Control завершилась ошибкой.', 'Persiapan Control gagal.'],
+        'web.control.deploymentFailed': ['Control 部署失败。', 'Control 部署失敗。', 'El despliegue de Control falló.', 'A implantação do Control falhou.', 'Le déploiement de Control a échoué.', 'Control-Bereitstellung fehlgeschlagen.', 'Control 배포에 실패했습니다.', 'Развертывание Control завершилось ошибкой.', 'Deployment Control gagal.'],
+        'web.control.credentialBootstrapFailed': ['凭据引导失败。', '認證資訊啟動失敗。', 'La inicialización de credenciales falló.', 'A inicialização das credenciais falhou.', 'L’amorçage des identifiants a échoué.', 'Anmeldedaten-Bootstrap fehlgeschlagen.', '자격 증명 부트스트랩에 실패했습니다.', 'Инициализация учетных данных завершилась ошибкой.', 'Bootstrap kredensial gagal.'],
+        'web.control.revocationInterrupted': ['上一次撤销响应被中断。', '上次撤銷回應遭到中斷。', 'La respuesta de revocación anterior se interrumpió.', 'A resposta de revogação anterior foi interrompida.', 'La réponse de révocation précédente a été interrompue.', 'Die vorherige Widerrufsantwort wurde unterbrochen.', '이전 취소 응답이 중단되었습니다.', 'Предыдущий ответ на отзыв был прерван.', 'Respons pencabutan sebelumnya terputus.'],
+        'web.control.revocationRecoveryRequired': ['{{error}} 请创建新的一次性令牌，在此输入，然后选择“启用”以验证并完成清理。', '{{error}} 請建立新的單次權杖，在此輸入，然後選取「啟用」以驗證並完成清理。', '{{error}} Cree un nuevo token de un solo uso, introdúzcalo aquí y seleccione Activar para verificar y terminar la limpieza.', '{{error}} Crie um novo token de uso único, insira-o aqui e selecione Ativar para verificar e concluir a limpeza.', '{{error}} Créez un nouveau jeton à usage unique, saisissez-le ici, puis sélectionnez Activer pour vérifier et terminer le nettoyage.', '{{error}} Erstellen Sie ein neues Einmal-Token, geben Sie es hier ein und wählen Sie Aktivieren, um Prüfung und Bereinigung abzuschließen.', '{{error}} 새 일회용 토큰을 만들어 여기에 입력한 후 활성화를 선택하여 확인 및 정리를 완료하세요.', '{{error}} Создайте новый одноразовый токен, введите его здесь и выберите «Включить», чтобы проверить и завершить очистку.', '{{error}} Buat token sekali pakai baru, masukkan di sini, lalu pilih Aktifkan untuk memverifikasi dan menyelesaikan pembersihan.'],
+        'web.control.cutoverPaused': ['自动预配切换已暂停。', '自動佈建切換已暫停。', 'La transición del aprovisionamiento automático está pausada.', 'A transição do provisionamento automático está pausada.', 'Le basculement du provisionnement automatique est en pause.', 'Die Umschaltung der automatischen Bereitstellung wurde angehalten.', '자동 프로비저닝 전환이 일시 중지되었습니다.', 'Переключение автоматической подготовки ресурсов приостановлено.', 'Peralihan provisioning otomatis dijeda.'],
+        'web.control.cutoverResumeRequired': ['{{error}} 请再次选择“启用”以恢复持久化的切换。', '{{error}} 請再次選取「啟用」以繼續持久化的切換。', '{{error}} Seleccione Activar de nuevo para reanudar la transición persistente.', '{{error}} Selecione Ativar novamente para retomar a transição persistente.', '{{error}} Sélectionnez de nouveau Activer pour reprendre le basculement persistant.', '{{error}} Wählen Sie erneut Aktivieren, um die dauerhafte Umschaltung fortzusetzen.', '{{error}} 활성화를 다시 선택하여 영속 전환을 재개하세요.', '{{error}} Снова выберите «Включить», чтобы возобновить сохраненное переключение.', '{{error}} Pilih Aktifkan lagi untuk melanjutkan peralihan persisten.'],
+        'web.control.automaticProvisioningPaused': ['自动预配设置已暂停。', '自動佈建設定已暫停。', 'La configuración del aprovisionamiento automático está pausada.', 'A configuração do provisionamento automático está pausada.', 'La configuration du provisionnement automatique est en pause.', 'Die Einrichtung der automatischen Bereitstellung wurde angehalten.', '자동 프로비저닝 설정이 일시 중지되었습니다.', 'Настройка автоматической подготовки ресурсов приостановлена.', 'Penyiapan provisioning otomatis dijeda.'],
+        'web.control.automaticProvisioningFailed': ['自动预配设置失败。', '自動佈建設定失敗。', 'La configuración del aprovisionamiento automático falló.', 'A configuração do provisionamento automático falhou.', 'La configuration du provisionnement automatique a échoué.', 'Die Einrichtung der automatischen Bereitstellung ist fehlgeschlagen.', '자동 프로비저닝 설정에 실패했습니다.', 'Настройка автоматической подготовки ресурсов завершилась ошибкой.', 'Penyiapan provisioning otomatis gagal.'],
         'web.delete.manualControlTokensTitle': ['手动检查 Control API 令牌', '手動檢查 Control API 權杖', 'Revisión manual de tokens de la API de Control', 'Revisão manual dos tokens da API de Control', 'Vérification manuelle des jetons de l’API Control', 'Manuelle Prüfung der Control-API-Token', 'Control API 토큰 수동 확인', 'Ручная проверка токенов Control API', 'Pemeriksaan manual token Control API'],
         'web.delete.manualControlTokensSummary': ['Setup 无法自动撤销一个或多个由其管理的 Control API 令牌。已使用准确的所有权证据继续删除已验证的环境资源。如果显示了准确的令牌 ID，请同时在 Cloudflare 的两个令牌列表中核对它们和候选名称；切勿仅凭名称删除令牌。', 'Setup 無法自動撤銷一或多個由其管理的 Control API 權杖。已使用精確的擁有權證據繼續刪除已驗證的環境資源。如果顯示精確的權杖 ID，請同時在 Cloudflare 的兩個權杖清單中核對它們與候選名稱；切勿僅憑名稱刪除權杖。', 'Setup no pudo revocar automáticamente uno o más tokens de la API de Control administrados por Setup. La eliminación de recursos verificados continuó usando pruebas exactas de propiedad. Revise los ID exactos que se muestren y los nombres candidatos en ambas listas de tokens de Cloudflare; no elimine un token basándose solo en su nombre.', 'O Setup não conseguiu revogar automaticamente um ou mais tokens da API de Control gerenciados pelo Setup. A exclusão dos recursos verificados continuou usando evidências exatas de propriedade. Confira os IDs exatos exibidos e os nomes candidatos nas duas listas de tokens da Cloudflare; não exclua um token apenas pelo nome.', 'Setup n’a pas pu révoquer automatiquement un ou plusieurs jetons de l’API Control qu’il gère. La suppression des ressources vérifiées s’est poursuivie à partir de preuves de propriété exactes. Vérifiez les ID exacts affichés et les noms candidats dans les deux listes de jetons Cloudflare ; ne supprimez jamais un jeton d’après son seul nom.', 'Setup konnte mindestens ein von Setup verwaltetes Control-API-Token nicht automatisch widerrufen. Die Löschung verifizierter Umgebungsressourcen wurde anhand eindeutiger Eigentumsnachweise fortgesetzt. Prüfen Sie angezeigte exakte Token-IDs und mögliche Namen in beiden Cloudflare-Tokenlisten; löschen Sie ein Token nie allein anhand seines Namens.', 'Setup에서 관리하는 Control API 토큰 하나 이상을 자동으로 취소하지 못했습니다. 정확한 소유권 증거로 확인된 환경 리소스 삭제는 계속 진행했습니다. 표시된 정확한 토큰 ID와 후보 이름을 Cloudflare의 두 토큰 목록에서 모두 확인하세요. 이름만으로 토큰을 삭제하지 마세요.', 'Setup не удалось автоматически отозвать один или несколько управляемых им токенов Control API. Удаление проверенных ресурсов среды продолжилось на основе точных данных о владении. Сверьте показанные точные ID и возможные имена в обоих списках токенов Cloudflare; не удаляйте токен только по имени.', 'Setup tidak dapat mencabut otomatis satu atau beberapa token Control API yang dikelolanya. Penghapusan resource environment terverifikasi dilanjutkan berdasarkan bukti kepemilikan yang tepat. Cocokkan ID token persis yang ditampilkan dan nama kandidat di kedua daftar token Cloudflare; jangan hapus token hanya berdasarkan namanya.'],
         'web.delete.manualControlTokenId': ['令牌 ID：{{tokenId}}', '權杖 ID：{{tokenId}}', 'ID del token: {{tokenId}}', 'ID do token: {{tokenId}}', 'ID du jeton : {{tokenId}}', 'Token-ID: {{tokenId}}', '토큰 ID: {{tokenId}}', 'ID токена: {{tokenId}}', 'ID token: {{tokenId}}'],
@@ -3060,6 +3114,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2StatusLoadFailed': 'Failed to load R2 bucket status.',
           'web.envDetail.r2ConfiguredSummary': 'R2 buckets are configured: {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'R2 buckets need provisioning: {{configured}} / {{required}} configured.',
+          'web.envDetail.r2OwnershipRecoverySummary': '{{count}} R2 bucket binding(s) have legacy name-only ownership. Verify them explicitly before continuing: {{command}}',
+          'web.envDetail.r2OwnershipRecreateSummary': 'Legacy ownership for {{count}} R2 bucket binding(s) is incomplete and cannot be verified safely. Recreate the environment before provisioning R2.',
+          'web.envDetail.r2IdentityMismatchSummary': '{{count}} R2 bucket identity mismatch(es) were detected. Review the Cloudflare bucket and the environment lock before continuing.',
           'web.envDetail.provisionR2Confirm': 'This will create missing R2 buckets, refresh Worker bindings, and redeploy workers. Continue?',
           'web.envDetail.r2Provisioning': 'Provisioning R2 buckets...',
           'web.envDetail.r2ConfiguredBuckets': 'Configured buckets: {{count}}',
@@ -3100,6 +3157,43 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.inventoryUnavailable': 'Cloudflare resource inventory could not be verified, so deletion did not start. Check your connection and Cloudflare sign-in, then retry.',
           'web.status.errorWithMessage': 'Error: {{error}}',
           'web.status.unknownError': 'Unknown error',
+          'web.status.percentComplete': '{{percent}}% complete',
+          'web.status.resourceProgress': '{{current}} / {{total}} resources',
+          'web.status.ok': 'OK',
+          'web.status.checkRequired': 'Check required',
+          'web.status.unknown': 'Unknown',
+          'web.env.updateBadge': 'Update to v{{version}}',
+          'web.delete.manualReviewRequired': 'Manual review required',
+          'web.envDetail.capacityTargetsUnavailable': 'Tenant capacity targets are unavailable.',
+          'web.control.pendingTenant': 'Tenant {{tenantId}}',
+          'web.control.pendingDisasterRecovery': 'Disaster recovery',
+          'web.control.pendingVerifyRuntimeBindings': 'Verify runtime bindings',
+          'web.control.pendingSharedPool': 'Shared pool',
+          'web.control.pendingProvisioning': 'Provisioning',
+          'web.control.pendingTitle': 'Pending provisioning operations',
+          'web.control.pendingDescription': 'Setup runs steps that require operator permissions and continues to show Control verification progress.',
+          'web.control.pendingRun': 'Run pending operation',
+          'web.control.pendingObserving': 'Control is running private smoke or stabilization. This status refreshes automatically.',
+          'web.control.operationRunning': 'Running provisioning operation...',
+          'web.control.operationFailed': 'Control operation failed.',
+          'web.control.operationAwaitingMigration': 'D1 created. Migration is ready for the next operator step.',
+          'web.control.operationAwaitingWorkerBindings': 'Migration completed. Worker binding reconciliation is ready for the next operator step.',
+          'web.control.operationAwaitingSmoke': 'Worker bindings patched. Private smoke and stabilization are running.',
+          'web.control.operationAwaitingQuarantine': 'Resource cleanup is waiting for the quarantine period to finish.',
+          'web.control.operationRetryRequired': 'Provisioning requires a retry.',
+          'web.control.operationLeaseUnavailable': 'Another executor currently owns this operation.',
+          'web.control.operationSucceeded': 'Provisioning completed successfully.',
+          'web.control.operationBlocked': 'Provisioning is blocked. Review the operation status.',
+          'web.control.tokenLinkFailed': 'Could not create the Cloudflare token link.',
+          'web.control.preparationFailed': 'Control preparation failed.',
+          'web.control.deploymentFailed': 'Control deployment failed.',
+          'web.control.credentialBootstrapFailed': 'Credential bootstrap failed.',
+          'web.control.revocationInterrupted': 'The previous revocation response was interrupted.',
+          'web.control.revocationRecoveryRequired': '{{error}} Create a new one-time token, enter it here, and select Enable to verify and finish cleanup.',
+          'web.control.cutoverPaused': 'Automatic provisioning cutover paused.',
+          'web.control.cutoverResumeRequired': '{{error}} Select Enable again to resume the durable cutover.',
+          'web.control.automaticProvisioningPaused': 'Automatic provisioning setup paused.',
+          'web.control.automaticProvisioningFailed': 'Automatic provisioning setup failed.',
           'web.delete.confirmExact': 'To delete this environment, type <b>{{env}}</b> exactly.',
           'web.delete.countWorkers': '{{count}} Workers',
           'web.delete.countDatabases': '{{count}} D1',
@@ -3143,6 +3237,9 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2StatusLoadFailed': 'R2バケットの状態を読み込めませんでした。',
           'web.envDetail.r2ConfiguredSummary': 'R2バケットは設定済みです: {{configured}} / {{required}}。',
           'web.envDetail.r2NeedsProvisioningSummary': 'R2バケットの作成が必要です: {{configured}} / {{required}} 設定済み。',
+          'web.envDetail.r2OwnershipRecoverySummary': '{{count}}個のR2バケットが旧形式の名前のみの所有権情報です。続行前に明示的に検証してください: {{command}}',
+          'web.envDetail.r2OwnershipRecreateSummary': '{{count}}個のR2バケットについて旧形式の所有権情報が不足しており、安全に検証できません。環境を再作成してからR2をプロビジョニングしてください。',
+          'web.envDetail.r2IdentityMismatchSummary': '{{count}}個のR2バケットで所有権IDの不一致を検出しました。続行前にCloudflare上のバケットと環境ロックを確認してください。',
           'web.envDetail.provisionR2Confirm': '不足しているR2バケットを作成し、Workerバインディングを更新して再デプロイします。続行しますか？',
           'web.envDetail.r2Provisioning': 'R2バケットを作成中...',
           'web.envDetail.r2ConfiguredBuckets': '設定済みバケット: {{count}}',
@@ -3183,6 +3280,43 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.inventoryUnavailable': 'Cloudflareのリソース一覧を確認できなかったため、削除を開始しませんでした。接続とCloudflareへのログイン状態を確認して、再試行してください。',
           'web.status.errorWithMessage': 'エラー: {{error}}',
           'web.status.unknownError': '不明なエラー',
+          'web.status.percentComplete': '{{percent}}% 完了',
+          'web.status.resourceProgress': '{{current}} / {{total}} リソース',
+          'web.status.ok': '正常',
+          'web.status.checkRequired': '確認が必要',
+          'web.status.unknown': '不明',
+          'web.env.updateBadge': 'v{{version}}へ更新',
+          'web.delete.manualReviewRequired': '手動確認が必要です',
+          'web.envDetail.capacityTargetsUnavailable': 'テナント容量の対象を取得できません。',
+          'web.control.pendingTenant': 'テナント {{tenantId}}',
+          'web.control.pendingDisasterRecovery': '災害復旧',
+          'web.control.pendingVerifyRuntimeBindings': 'ランタイムバインディングを検証',
+          'web.control.pendingSharedPool': '共有プール',
+          'web.control.pendingProvisioning': 'プロビジョニング',
+          'web.control.pendingTitle': '保留中のプロビジョニング操作',
+          'web.control.pendingDescription': 'Setupはオペレーター権限が必要な手順を実行し、Controlによる検証の進捗も継続して表示します。',
+          'web.control.pendingRun': '保留中の操作を実行',
+          'web.control.pendingObserving': 'Controlが非公開スモークテストまたは安定化を実行中です。この状態は自動更新されます。',
+          'web.control.operationRunning': 'プロビジョニング操作を実行中...',
+          'web.control.operationFailed': 'Control操作に失敗しました。',
+          'web.control.operationAwaitingMigration': 'D1を作成しました。次のオペレーター操作でマイグレーションを実行できます。',
+          'web.control.operationAwaitingWorkerBindings': 'マイグレーションが完了しました。次のオペレーター操作でWorkerバインディングを調整できます。',
+          'web.control.operationAwaitingSmoke': 'Workerバインディングを更新しました。非公開スモークテストと安定化処理を実行中です。',
+          'web.control.operationAwaitingQuarantine': 'リソースのクリーンアップは隔離期間の終了を待っています。',
+          'web.control.operationRetryRequired': 'プロビジョニングを再試行する必要があります。',
+          'web.control.operationLeaseUnavailable': '別の実行者がこの操作を処理中です。',
+          'web.control.operationSucceeded': 'プロビジョニングが正常に完了しました。',
+          'web.control.operationBlocked': 'プロビジョニングがブロックされています。操作状態を確認してください。',
+          'web.control.tokenLinkFailed': 'Cloudflareトークン作成リンクを生成できませんでした。',
+          'web.control.preparationFailed': 'Controlの準備に失敗しました。',
+          'web.control.deploymentFailed': 'Controlのデプロイに失敗しました。',
+          'web.control.credentialBootstrapFailed': '認証情報のブートストラップに失敗しました。',
+          'web.control.revocationInterrupted': '前回の取消し応答が中断されました。',
+          'web.control.revocationRecoveryRequired': '{{error}} 新しいワンタイムトークンを作成してここに入力し、「有効化」を選択して検証とクリーンアップを完了してください。',
+          'web.control.cutoverPaused': '自動プロビジョニングの切替が一時停止しました。',
+          'web.control.cutoverResumeRequired': '{{error}} もう一度「有効化」を選択して、永続化された切替処理を再開してください。',
+          'web.control.automaticProvisioningPaused': '自動プロビジョニングの設定が一時停止しました。',
+          'web.control.automaticProvisioningFailed': '自動プロビジョニングの設定に失敗しました。',
           'web.delete.confirmExact': '削除を実行するには、環境名 <b>{{env}}</b> を正確に入力してください。',
           'web.delete.countWorkers': '{{count}} Workers',
           'web.delete.countDatabases': '{{count}} D1',
@@ -3932,6 +4066,107 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.countProjects': '{{count}} Pages',
         },
       };
+      const deleteProgressCopyByLocale = {
+        en: {
+          'web.delete.progress.preparing': 'Preparing deletion...',
+          'web.delete.progress.scanningResource': 'Scanning {{resource}}...',
+          'web.delete.progress.inventoryReady': 'Resource inventory verified.',
+          'web.delete.progress.deletingResource': 'Deleting {{resource}}...',
+          'web.delete.progress.reconcilingDns': 'Reconciling managed DNS records...',
+          'web.delete.progress.revokingTokens': 'Revoking managed Control API tokens...',
+          'web.delete.progress.verifyingInventory': 'Verifying Cloudflare inventory...',
+        },
+        ja: {
+          'web.delete.progress.preparing': '削除の準備中...',
+          'web.delete.progress.scanningResource': '{{resource}}をスキャン中...',
+          'web.delete.progress.inventoryReady': 'リソース一覧を確認しました。',
+          'web.delete.progress.deletingResource': '{{resource}}を削除中...',
+          'web.delete.progress.reconcilingDns': '管理対象DNSレコードを確認中...',
+          'web.delete.progress.revokingTokens': '管理対象Control APIトークンを取消中...',
+          'web.delete.progress.verifyingInventory': 'Cloudflareの残存リソースを確認中...',
+        },
+        'zh-CN': {
+          'web.delete.progress.preparing': '正在准备删除...',
+          'web.delete.progress.scanningResource': '正在扫描 {{resource}}...',
+          'web.delete.progress.inventoryReady': '资源清单已验证。',
+          'web.delete.progress.deletingResource': '正在删除 {{resource}}...',
+          'web.delete.progress.reconcilingDns': '正在核对托管的 DNS 记录...',
+          'web.delete.progress.revokingTokens': '正在撤销托管的 Control API 令牌...',
+          'web.delete.progress.verifyingInventory': '正在验证 Cloudflare 资源清单...',
+        },
+        'zh-TW': {
+          'web.delete.progress.preparing': '正在準備刪除...',
+          'web.delete.progress.scanningResource': '正在掃描 {{resource}}...',
+          'web.delete.progress.inventoryReady': '資源清單已驗證。',
+          'web.delete.progress.deletingResource': '正在刪除 {{resource}}...',
+          'web.delete.progress.reconcilingDns': '正在核對受管理的 DNS 記錄...',
+          'web.delete.progress.revokingTokens': '正在撤銷受管理的 Control API 權杖...',
+          'web.delete.progress.verifyingInventory': '正在驗證 Cloudflare 資源清單...',
+        },
+        es: {
+          'web.delete.progress.preparing': 'Preparando la eliminación...',
+          'web.delete.progress.scanningResource': 'Escaneando {{resource}}...',
+          'web.delete.progress.inventoryReady': 'Inventario de recursos verificado.',
+          'web.delete.progress.deletingResource': 'Eliminando {{resource}}...',
+          'web.delete.progress.reconcilingDns': 'Conciliando los registros DNS administrados...',
+          'web.delete.progress.revokingTokens': 'Revocando los tokens administrados de la API de Control...',
+          'web.delete.progress.verifyingInventory': 'Verificando el inventario de Cloudflare...',
+        },
+        pt: {
+          'web.delete.progress.preparing': 'Preparando a exclusão...',
+          'web.delete.progress.scanningResource': 'Escaneando {{resource}}...',
+          'web.delete.progress.inventoryReady': 'Inventário de recursos verificado.',
+          'web.delete.progress.deletingResource': 'Excluindo {{resource}}...',
+          'web.delete.progress.reconcilingDns': 'Reconciliando registros DNS gerenciados...',
+          'web.delete.progress.revokingTokens': 'Revogando tokens gerenciados da API de Control...',
+          'web.delete.progress.verifyingInventory': 'Verificando o inventário da Cloudflare...',
+        },
+        fr: {
+          'web.delete.progress.preparing': 'Préparation de la suppression...',
+          'web.delete.progress.scanningResource': 'Analyse de {{resource}}...',
+          'web.delete.progress.inventoryReady': 'Inventaire des ressources vérifié.',
+          'web.delete.progress.deletingResource': 'Suppression de {{resource}}...',
+          'web.delete.progress.reconcilingDns': 'Réconciliation des enregistrements DNS gérés...',
+          'web.delete.progress.revokingTokens': 'Révocation des jetons API Control gérés...',
+          'web.delete.progress.verifyingInventory': 'Vérification de l’inventaire Cloudflare...',
+        },
+        de: {
+          'web.delete.progress.preparing': 'Löschung wird vorbereitet...',
+          'web.delete.progress.scanningResource': '{{resource}} wird geprüft...',
+          'web.delete.progress.inventoryReady': 'Ressourcenbestand wurde geprüft.',
+          'web.delete.progress.deletingResource': '{{resource}} wird gelöscht...',
+          'web.delete.progress.reconcilingDns': 'Verwaltete DNS-Einträge werden abgeglichen...',
+          'web.delete.progress.revokingTokens': 'Verwaltete Control-API-Token werden widerrufen...',
+          'web.delete.progress.verifyingInventory': 'Cloudflare-Bestand wird überprüft...',
+        },
+        ko: {
+          'web.delete.progress.preparing': '삭제 준비 중...',
+          'web.delete.progress.scanningResource': '{{resource}} 스캔 중...',
+          'web.delete.progress.inventoryReady': '리소스 인벤토리를 확인했습니다.',
+          'web.delete.progress.deletingResource': '{{resource}} 삭제 중...',
+          'web.delete.progress.reconcilingDns': '관리되는 DNS 레코드를 조정하는 중...',
+          'web.delete.progress.revokingTokens': '관리되는 Control API 토큰을 취소하는 중...',
+          'web.delete.progress.verifyingInventory': 'Cloudflare 인벤토리를 확인하는 중...',
+        },
+        ru: {
+          'web.delete.progress.preparing': 'Подготовка к удалению...',
+          'web.delete.progress.scanningResource': 'Сканирование {{resource}}...',
+          'web.delete.progress.inventoryReady': 'Инвентаризация ресурсов проверена.',
+          'web.delete.progress.deletingResource': 'Удаление {{resource}}...',
+          'web.delete.progress.reconcilingDns': 'Согласование управляемых записей DNS...',
+          'web.delete.progress.revokingTokens': 'Отзыв управляемых токенов Control API...',
+          'web.delete.progress.verifyingInventory': 'Проверка ресурсов Cloudflare...',
+        },
+        id: {
+          'web.delete.progress.preparing': 'Menyiapkan penghapusan...',
+          'web.delete.progress.scanningResource': 'Memindai {{resource}}...',
+          'web.delete.progress.inventoryReady': 'Inventaris resource telah diverifikasi.',
+          'web.delete.progress.deletingResource': 'Menghapus {{resource}}...',
+          'web.delete.progress.reconcilingDns': 'Merekonsiliasi record DNS terkelola...',
+          'web.delete.progress.revokingTokens': 'Mencabut token Control API terkelola...',
+          'web.delete.progress.verifyingInventory': 'Memverifikasi inventaris Cloudflare...',
+        },
+      };
       const deployProgressCopyByLocale = {
         en: {
           'web.deploy.phase.preparation': 'Preparing deployment',
@@ -4155,6 +4390,8 @@ ${SETUP_WEB_UI_STYLE}</style>
         ...envDynamicCopyByLocale.en,
         ...(envDynamicCopyByLocale[language] || {}),
         ...(envManagementSupplementalCopyByLocale[language] || {}),
+        ...deleteProgressCopyByLocale.en,
+        ...(deleteProgressCopyByLocale[language] || {}),
         ...deployProgressCopyByLocale.en,
         ...(deployProgressCopyByLocale[language] || {}),
         ...(themeCopyByLocale[language] || themeCopyByLocale.en),
@@ -4979,11 +5216,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       </div>
 
       <section id="pending-control-operations" class="alert warn hidden" aria-live="polite">
-        <div class="a-head">Pending provisioning operations</div>
-        <p>Admin requests are ready for setup operator execution. Their tenant and placement plan are already fixed.</p>
+        <div class="a-head" data-i18n="web.control.pendingTitle">Pending provisioning operations</div>
+        <p data-i18n="web.control.pendingDescription">Setup runs steps that require operator permissions and continues to show Control verification progress.</p>
         <div id="pending-control-operation-items"></div>
         <p id="pending-control-operation-result" aria-live="polite"></p>
-        <button type="button" class="btn btn-next" id="btn-open-pending-operation">Run pending operation</button>
+        <button type="button" class="btn btn-next" id="btn-open-pending-operation" data-i18n="web.control.pendingRun">Run pending operation</button>
       </section>
 
       <div class="modegrid setup-modegrid">
@@ -5604,7 +5841,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           <div id="resource-preview" class="provision-resource-preview">
             <div class="resgrid">
               <div class="bigtable">
-                <div class="cap"><span data-i18n="web.provision.d1Databases">D1 Databases:</span><em id="preview-d1-count">3</em></div>
+                <div class="cap"><span data-i18n="web.provision.d1Databases">D1 Databases:</span><em id="preview-d1-count">${D1_DATABASES.length + 3}</em></div>
                 <table><tbody id="preview-d1"></tbody></table>
               </div>
 
@@ -5863,7 +6100,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       </div>
 
       <div class="actions setup-env-actions">
-        <span class="progress"><span data-i18n="web.env.detected">Detected</span> <b id="env-list-count">0</b> <span data-i18n="web.env.environments">environments</span></span>
+        <span class="progress" id="env-list-progress-summary"><span data-i18n="web.env.detected">Detected</span> <b id="env-list-count">0</b> <span data-i18n="web.env.environments">environments</span></span>
         <span class="spacer"></span>
         <button class="btn btn-back" id="btn-back-env-list"><span class="setup-action-icon" aria-hidden="true">←</span><span data-i18n="web.env.start">Start</span></button>
         <button class="btn btn-ghost" id="btn-refresh-env-list"><span class="setup-action-icon" aria-hidden="true">↻</span><span data-i18n="web.env.rescan">Rescan</span></button>
@@ -6306,7 +6543,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         <div class="progress-bar-wrapper setup-progress-track" role="progressbar" aria-labelledby="delete-current-task" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
           <div id="delete-progress-bar" class="progress-bar setup-progress-fill" style="width: 0%"></div>
         </div>
-        <div class="progress-text" id="delete-progress-text">0 / 0 resources</div>
+        <div class="progress-text" id="delete-progress-text" data-i18n="web.status.resourceProgress" data-i18n-params='{"current":0,"total":0}'>0 / 0 resources</div>
 
         <div class="log-toggle" id="delete-log-toggle">
           <span class="arrow">▶</span>
@@ -6327,7 +6564,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       <div class="actions setup-env-actions">
         <span class="progress" id="delete-progress-summary"><span data-i18n="web.delete.deleteTarget">Delete target</span> <b id="delete-total-count">0</b> <span data-i18n="web.delete.resourcesLabel">resources</span></span>
         <span class="spacer"></span>
-        <button class="btn btn-back" id="btn-back-env-delete">← <span data-i18n="common.cancel">Cancel</span></button>
+        <button class="btn btn-back" id="btn-back-env-delete">← <span id="delete-back-label" data-i18n="common.cancel">Cancel</span></button>
         <button class="btn-danger-solid" id="btn-confirm-delete" disabled><span data-i18n="web.delete.deletePermanently">Delete permanently</span></button>
       </div>
     </div>
@@ -6458,6 +6695,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     // ========================================
     // Session token for API authentication (embedded by server)
     const SESSION_TOKEN = '${safeToken}';
+    const CONTROL_OPERATION_RESULT_TRANSLATION_KEYS = ${controlOperationResultTranslationKeysJson};
     const MANAGE_ONLY = ${manageOnlyFlag};
 
     // State
@@ -6490,6 +6728,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     let resumeControlBootstrapReady = false;
+    let resumeWorkerOwnershipRecovery = false;
 
     function automaticProvisioningEnabled() {
       return document.querySelector('input[name="automatic-provisioning"]:checked')?.value !== 'off';
@@ -6516,10 +6755,34 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     syncAutomaticProvisioningUi();
 
     function getConfiguredWorkerCount() {
-      const apiWorkers = 12;
+      const apiWorkers = ${WORKER_COMPONENTS.length};
       const loginUi = config?.components?.loginUi !== false ? 1 : 0;
       const adminUi = config?.components?.adminUi !== false ? 1 : 0;
       return apiWorkers + loginUi + adminUi;
+    }
+
+    const deployedWorkerNames = new Set();
+
+    function updateDeployedWorkerCount(messages) {
+      for (const message of Array.isArray(messages) ? messages : []) {
+        const apiMatch = message.match(
+          /(?:^|\\s)✓\\s+([a-z0-9-]+-ar-[a-z0-9-]+)\\s+(?:re)?deployed successfully\\b/iu
+        );
+        const uiMatch = message.match(
+          /(?:^|\\s)✓\\s+(ar-(?:admin|login)-ui)\\s+deployed as UI Worker:/iu
+        );
+        const workerName = apiMatch?.[1] || uiMatch?.[1];
+        if (workerName) deployedWorkerNames.add(workerName);
+      }
+
+      const status = document.getElementById('deploy-status');
+      if (!status) return;
+      status.innerHTML =
+        escapeHtml(t('web.envDetail.workers')) +
+        ' <b>' +
+        deployedWorkerNames.size +
+        '</b> / ' +
+        getConfiguredWorkerCount();
     }
 
     function getCompleteWorkerSummary() {
@@ -6669,6 +6932,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     // Environment management state
     let detectedEnvironments = [];
     let pendingControlOperations = [];
+    let pendingControlPollTimer = null;
     let selectedEnvForDetail = null;
     let selectedEnvDetailConfig = null;
     let selectedEnvRecoveryStatus = null;
@@ -6677,6 +6941,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     let controlCapacityPreview = null;
     let selectedEnvForDelete = null;
     let envCardRenderGeneration = 0;
+    let environmentScanState = 'idle';
+    let environmentScanGeneration = 0;
     let migrationStatusLoadGeneration = 0;
     let migrationApplyInProgress = false;
     let inFlightMutationRequests = 0;
@@ -6706,6 +6972,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         if (result?.errorCode === 'environment_inventory_unavailable') {
           result.error = t('web.delete.inventoryUnavailable');
           result.errors = [result.error];
+        }
+        if (result?.errorCode === 'r2_legacy_ownership_requires_explicit_adoption') {
+          result.error = t('web.envDetail.r2OwnershipRecoverySummary', {
+            count: Array.isArray(result.bindings) ? result.bindings.length : 0,
+            command: result.requiredCommand || '',
+          });
+        }
+        if (result?.errorCode === 'r2_legacy_ownership_requires_environment_recreation') {
+          result.error = t('web.envDetail.r2OwnershipRecreateSummary', {
+            count: Array.isArray(result.bindings) ? result.bindings.length : 0,
+          });
         }
         return result;
       } finally {
@@ -6862,10 +7139,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const zoneName = getManualWildcardDnsZoneName(baseDomain);
       const dashboardRecordName = getManualWildcardDnsRecordName(baseDomain, zoneName);
       const dashboardUrl = getManualWildcardDnsDashboardUrl();
-      const envName = config?.env || config?.environment?.prefix || 'prod';
-      const target = workersSubdomain
-        ? envName + '-ar-router.' + workersSubdomain + '.workers.dev'
-        : envName + '-ar-router.workers.dev';
+      // The canonical manual action aliases the wildcard to the API base custom domain. Do not
+      // show the router workers.dev hostname here: that disagrees with deploy/CLI validation and
+      // can leave the operator with a record the retry path will reject.
+      const target = config?.manualAction?.target || baseDomain;
       document.getElementById('deploy-manual-wildcard-title').textContent =
         t('web.deploy.manualWildcardTitle') || copy.title;
       const summaryEl = document.getElementById('deploy-manual-wildcard-summary');
@@ -6906,6 +7183,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       const recheckButton = document.getElementById('deploy-manual-wildcard-recheck');
       recheckButton.textContent = '↻ ' + t('web.deploy.recheckDns');
+      recheckButton.disabled = false;
 
       warning.classList.remove('hidden');
     }
@@ -7094,8 +7372,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         sections.envDelete &&
         !sections.envDelete.classList.contains('hidden')
       ) {
-        showDeleteConfirmation(selectedEnvForDelete);
+        showDeleteConfirmation(selectedEnvForDelete, false);
       }
+
+      renderEnvironmentListSummary(
+        environmentScanState === 'complete' ? detectedEnvironments.length : null,
+        environmentScanState
+      );
     }
 
     function setLoadConfigHero() {
@@ -7146,11 +7429,18 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       document.getElementById('step-indicator')?.classList.add('hidden');
       const primaryMeta = document.getElementById('setup-primary-meta');
       if (primaryMeta) {
-        const account =
+        const directAccount =
           lastPrerequisitesResult?.auth?.email ||
           lastPrerequisitesResult?.auth?.accountEmail ||
-          document.getElementById('setup-recap-account')?.textContent ||
+          lastPrerequisitesResult?.auth?.accountId ||
           '';
+        const recapAccount = document.getElementById('setup-recap-account')?.textContent?.trim() || '';
+        const unknownAccountValues = new Set(
+          Object.values(_setupUiCopy || {})
+            .map((entry) => entry?.startUnknown)
+            .filter(Boolean)
+        );
+        const account = directAccount || (unknownAccountValues.has(recapAccount) ? '' : recapAccount);
         primaryMeta.innerHTML = account
           ? t('web.env.accountMeta', { account: escapeHtml(String(account).toUpperCase()) })
           : t('web.env.accountMeta', { account: 'Cloudflare' });
@@ -7231,6 +7521,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     function showSection(name) {
+      if (name !== 'topMenu' && pendingControlPollTimer !== null) {
+        clearTimeout(pendingControlPollTimer);
+        pendingControlPollTimer = null;
+      }
       Object.values(sections).forEach(s => {
         s.classList.add('hidden');
         s.classList.remove('setup-section-enter');
@@ -7516,13 +7810,24 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         if (!isIndeterminate && percentEl) percentEl.textContent = String(percent);
       }
       if (progressText) {
-        // For deploy, show percentage; for others, show count
+        // Deploy is percentage-based, provisioning tracks logical tasks, and deletion tracks
+        // concrete resources. Keep those units explicit so an 8-step provisioning operation is
+        // never presented as though the environment only contained eight Cloudflare resources.
         if (prefix === 'deploy') {
           const percent = Math.min(Math.round((current / total) * 100), 100);
-          progressText.textContent = percent + '% complete';
+          progressText.textContent = t('web.status.percentComplete', { percent });
+        } else if (prefix === 'provision') {
+          const displayCurrent = Math.min(current, total);
+          progressText.textContent = t('web.provision.runningTasks', {
+            current: displayCurrent,
+            total,
+          });
         } else {
           const displayCurrent = Math.min(current, total);
-          progressText.textContent = displayCurrent + ' / ' + total + ' resources';
+          progressText.textContent = t('web.status.resourceProgress', {
+            current: displayCurrent,
+            total,
+          });
         }
       }
       if (currentTaskEl && currentTask) {
@@ -7587,6 +7892,64 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       if (message.includes('Uploading')) return 'Uploading secrets...';
       if (message.toLowerCase().includes('building')) return 'Building packages...';
+
+      return null;
+    }
+
+    function getDeleteProgressTask(message) {
+      const normalized = String(message || '')
+        .trimStart()
+        .replace(/^[⚠️✕✓✅⏳🧹🌐📊🗄️🔎]+/u, '')
+        .trim();
+      if (!normalized) return null;
+
+      if (
+        normalized.startsWith('Preparing to delete environment:') ||
+        normalized.startsWith('Using ')
+      ) {
+        return t('web.delete.progress.preparing');
+      }
+
+      const scanningResources = [
+        ['Scanning Workers', 'Workers'],
+        ['Scanning D1 databases', 'D1'],
+        ['Scanning KV namespaces', 'KV'],
+        ['Scanning Queues', 'Queues'],
+        ['Scanning R2 buckets', 'R2'],
+        ['Scanning legacy Pages projects', 'Legacy Pages'],
+      ];
+      for (const [prefix, resource] of scanningResources) {
+        if (normalized.startsWith(prefix)) {
+          return t('web.delete.progress.scanningResource', { resource });
+        }
+      }
+
+      if (normalized.startsWith('Found ') && normalized.includes(' environment(s)')) {
+        return t('web.delete.progress.inventoryReady');
+      }
+      if (normalized.startsWith('Reconciling Setup-managed DNS records')) {
+        return t('web.delete.progress.reconcilingDns');
+      }
+      if (normalized.startsWith('Revoking setup-managed Control API tokens')) {
+        return t('web.delete.progress.revokingTokens');
+      }
+      if (normalized.startsWith('Verifying Cloudflare inventory after deletion')) {
+        return t('web.delete.progress.verifyingInventory');
+      }
+
+      const deletingResources = [
+        ['Deleting Workers', 'Workers'],
+        ['Deleting D1 Databases', 'D1'],
+        ['Deleting KV Namespaces', 'KV'],
+        ['Deleting Queues', 'Queues'],
+        ['Deleting R2 Buckets', 'R2'],
+        ['Deleting legacy Pages Projects', 'Legacy Pages'],
+      ];
+      for (const [prefix, resource] of deletingResources) {
+        if (normalized.startsWith(prefix)) {
+          return t('web.delete.progress.deletingResource', { resource });
+        }
+      }
 
       return null;
     }
@@ -7695,7 +8058,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const list = document.createElement('ul');
       for (const issue of issues) {
         const item = document.createElement('li');
-        item.textContent = String(issue.name || issue.role || 'DNS') + ': ' + String(issue.reason || 'manual review required');
+        item.textContent =
+          String(issue.name || issue.role || 'DNS') +
+          ': ' +
+          String(issue.reason || t('web.delete.manualReviewRequired'));
         list.appendChild(item);
       }
       content.appendChild(list);
@@ -7842,7 +8208,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       if (progressText) {
         progressText.textContent =
-          prefix === 'deploy' ? '0% complete' : '0 / 0 resources';
+          prefix === 'deploy'
+            ? t('web.status.percentComplete', { percent: 0 })
+            : t('web.status.resourceProgress', { current: 0, total: 0 });
       }
     }
 
@@ -8131,8 +8499,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       document.getElementById('delete-options-section').classList.remove('hidden');
       document.getElementById('btn-confirm-delete').classList.remove('hidden');
       document.getElementById('btn-confirm-delete').disabled = false;
+      const backLabel = document.getElementById('delete-back-label');
+      if (backLabel) backLabel.textContent = t('common.cancel');
       resetProgressContainer('delete');
       resetLogToggle('delete-log-toggle', 'delete-log');
+    }
+
+    function markDeleteNavigationComplete() {
+      const backLabel = document.getElementById('delete-back-label');
+      if (backLabel) {
+        backLabel.textContent = t('web.env.backToList').replace(/^←[ ]*/u, '');
+      }
     }
 
     async function resetSetupFlowState() {
@@ -8591,6 +8968,15 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       content.appendChild(alert);
     }
 
+    async function loadRuntimeContext() {
+      const result = await api('/prerequisites');
+      lastPrerequisitesResult = result;
+      workingDirectory = result.cwd || '';
+      workersSubdomain = result.workersSubdomain || '';
+      updateStartRecap();
+      return result;
+    }
+
     // Check prerequisites
     async function checkPrerequisites() {
       setStep(1);
@@ -8607,11 +8993,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       );
 
       try {
-        const result = await api('/prerequisites');
-        lastPrerequisitesResult = result;
-
-        workingDirectory = result.cwd || '';
-        workersSubdomain = result.workersSubdomain || '';
+        const result = await loadRuntimeContext();
         renderPrereqCheckRows(result);
 
         if (!result.wranglerInstalled) {
@@ -8636,32 +9018,76 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     async function loadPendingControlOperations() {
       const panel = document.getElementById('pending-control-operations');
       const items = document.getElementById('pending-control-operation-items');
+      const button = document.getElementById('btn-open-pending-operation');
+      const status = document.getElementById('pending-control-operation-result');
       if (!panel || !items) return [];
-      panel.classList.add('hidden');
-      items.replaceChildren();
+      if (pendingControlPollTimer !== null) {
+        clearTimeout(pendingControlPollTimer);
+        pendingControlPollTimer = null;
+      }
       try {
         const result = await api('/control/pending-operations');
         const operations = result.success && Array.isArray(result.operations) ? result.operations : [];
-        if (operations.length === 0) return [];
+        if (operations.length === 0) {
+          panel.classList.add('hidden');
+          items.replaceChildren();
+          if (button) button.classList.remove('hidden');
+          if (status) status.textContent = '';
+          return [];
+        }
+        items.replaceChildren();
         for (const operation of operations.slice(0, 5)) {
           const row = document.createElement('p');
           if (operation.operationKind === 'tenant_disaster_recovery') {
-            row.textContent = operation.environmentId + ' / Tenant ' + operation.tenantId +
-              ' / Disaster recovery / ' + (operation.currentStep || 'verify_runtime_bindings');
+            row.textContent = operation.environmentId + ' / ' +
+              t('web.control.pendingTenant', { tenantId: operation.tenantId }) + ' / ' +
+              t('web.control.pendingDisasterRecovery') + ' / ' +
+              (operation.currentStep || t('web.control.pendingVerifyRuntimeBindings'));
           } else {
             const owner = operation.scope === 'tenant_exclusive'
-              ? 'Tenant ' + operation.tenantId
-              : 'Shared pool';
+              ? t('web.control.pendingTenant', { tenantId: operation.tenantId })
+              : t('web.control.pendingSharedPool');
             row.textContent = operation.environmentId + ' / ' + owner + ' / ' +
-              operation.dataRole + ' / ' + (operation.currentStep || 'provisioning');
+              operation.dataRole + ' / ' +
+              (operation.currentStep || t('web.control.pendingProvisioning'));
           }
           items.appendChild(row);
         }
+        const executable = operations.find(isPendingControlOperationExecutable);
+        if (button) button.classList.toggle('hidden', !executable);
+        if (status) status.textContent = executable ? '' : t('web.control.pendingObserving');
         panel.classList.remove('hidden');
+        if (!sections.topMenu.classList.contains('hidden')) {
+          pendingControlPollTimer = setTimeout(async () => {
+            pendingControlPollTimer = null;
+            if (!sections.topMenu.classList.contains('hidden')) {
+              pendingControlOperations = await loadPendingControlOperations();
+            }
+          }, 5000);
+        }
         return operations;
       } catch {
-        return [];
+        if (!sections.topMenu.classList.contains('hidden')) {
+          pendingControlPollTimer = setTimeout(async () => {
+            pendingControlPollTimer = null;
+            if (!sections.topMenu.classList.contains('hidden')) {
+              pendingControlOperations = await loadPendingControlOperations();
+            }
+          }, 5000);
+        }
+        return pendingControlOperations;
       }
+    }
+
+    function isPendingControlOperationExecutable(operation) {
+      if (!operation || typeof operation !== 'object') return false;
+      if (
+        operation.operationKind === 'provision_plugin_resources' ||
+        operation.operationKind === 'cleanup_plugin_resources'
+      ) return true;
+      return ['create_d1', 'apply_migrations', 'reconcile_worker_bindings'].includes(
+        operation.currentStep
+      );
     }
 
     async function showTopMenu() {
@@ -8685,7 +9111,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       const wrangler = document.getElementById('setup-recap-wrangler');
       if (wrangler) {
-        wrangler.textContent = result?.wranglerInstalled ? 'ok' : 'check';
+        wrangler.textContent = result?.wranglerInstalled
+          ? t('web.status.ok')
+          : t('web.status.checkRequired');
       }
     }
 
@@ -8698,12 +9126,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     const menuManageEnv = document.getElementById('menu-manage-env');
 
     document.getElementById('btn-open-pending-operation')?.addEventListener('click', async () => {
-      const pending = pendingControlOperations[0];
+      const pending = pendingControlOperations.find(isPendingControlOperationExecutable);
       if (!pending) return;
       const button = document.getElementById('btn-open-pending-operation');
       const status = document.getElementById('pending-control-operation-result');
       if (button) button.disabled = true;
-      if (status) status.textContent = 'Running provisioning operation...';
+      if (status) status.textContent = t('web.control.operationRunning');
       try {
         const result = await api('/control/pending-operations/execute', {
           method: 'POST',
@@ -8712,30 +9140,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             operationId: pending.operationId,
           },
         });
-        if (!result.success) throw new Error(result.error || 'Control operation failed');
+        if (!result.success) throw new Error(result.error || t('web.control.operationFailed'));
         pendingControlOperations = await loadPendingControlOperations();
-        if (result.result?.state === 'awaiting_migration') {
-          if (status) status.textContent = 'D1 created. Migration is ready for the next operator step.';
-        } else if (result.result?.state === 'awaiting_worker_bindings') {
-          if (status) {
-            status.textContent =
-              'Migration completed. Worker binding reconciliation is ready for the next operator step.';
-          }
-        } else if (result.result?.state === 'awaiting_smoke') {
-          if (status) {
-            status.textContent =
-              'Worker bindings patched. Private smoke and stabilization are running.';
-          }
-        } else if (result.result?.state === 'retry_required') {
-          if (status) status.textContent = 'Provisioning requires a retry.';
-        } else if (result.result?.state === 'lease_unavailable') {
-          if (status) status.textContent = 'Another executor currently owns this operation.';
-        } else {
-          if (status) status.textContent = 'Provisioning is blocked. Review the operation status.';
+        if (status) {
+          const resultKey =
+            CONTROL_OPERATION_RESULT_TRANSLATION_KEYS[result.result?.state] ||
+            CONTROL_OPERATION_RESULT_TRANSLATION_KEYS.blocked;
+          status.textContent = t(resultKey);
         }
       } catch (error) {
         if (status) {
-          status.textContent = error instanceof Error ? error.message : 'Control operation failed';
+          status.textContent = error instanceof Error ? error.message : t('web.control.operationFailed');
         }
       } finally {
         if (button) button.disabled = false;
@@ -9962,6 +10377,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         configureBtn.disabled = false;
       }
 
+      // The step 4 header already shows the chosen environment. Store the validated name before
+      // changing steps so the generic placeholder is never flashed while the full config is built.
+      config = { ...(config || {}), env };
       setStep(4);
       showSection('domain');
       updateBaseDomainUI();
@@ -10352,7 +10770,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       btnSaveConfig.classList.remove('hidden');
       btnGotoDeploy.classList.remove('hidden');
       btnGotoDeploy.disabled = true;
-      status.textContent = t('web.provision.runningTasks', { current: 0, total: 5 });
+      const totalProvisionTasks = 8;
+      status.textContent = t('web.provision.runningTasks', {
+        current: 0,
+        total: totalProvisionTasks,
+      });
       status.className = '';
       progressUI.classList.remove('hidden');
       dismissSetupProgressPreludes(['provision-preflight-row']);
@@ -10361,9 +10783,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       keysSavedInfo.classList.add('hidden');
       output.textContent = '';
 
-      const totalResources = 8; // D1 Core, D1 PII, KV Settings, KV Cache, KV Tokens, R2 (optional), Queues (optional), Keys
-      const provisionProgress = createProvisionProgressTracker(totalResources);
-      updateProgressUI('provision', 0, totalResources, t('web.status.initializing'));
+      const provisionProgress = createProvisionProgressTracker(totalProvisionTasks);
+      updateProgressUI('provision', 0, totalProvisionTasks, t('web.status.initializing'));
 
       // Start polling for progress
       let lastProgressLength = 0;
@@ -10520,7 +10941,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         });
         if (!result.success || !result.url || !result.expiresOnDate) {
           dashboardWindow?.close();
-          status.textContent = result.error || 'Could not create the Cloudflare token link.';
+          status.textContent = result.error || t('web.control.tokenLinkFailed');
           return;
         }
         resumeControlBootstrapReady = false;
@@ -10544,7 +10965,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         });
         if (!result.success || !result.url || !result.expiresOnDate) {
           dashboardWindow?.close();
-          status.textContent = result.error || 'Could not create the Cloudflare token link.';
+          status.textContent = result.error || t('web.control.tokenLinkFailed');
           return;
         }
         envControlBootstrapOwnership = result.ownership;
@@ -10563,13 +10984,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         const button = document.getElementById('btn-env-enable-control-automatic');
         const status = document.getElementById('env-control-automatic-message');
         let bootstrapToken = input.value.trim();
+        let bootstrapSubmitted = false;
         const recoveringCutover = envControlBootstrapPhase !== 'none';
         if (!bootstrapToken && !recoveringCutover) {
           status.textContent = t('web.envDetail.enterOneTimeTokenFirst');
           input.focus();
           return;
         }
-        input.value = '';
         button.disabled = true;
         status.textContent = t('web.envDetail.preparingControlAuthority');
         try {
@@ -10583,15 +11004,22 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
                   : {}),
               },
             });
-            if (!prepared.success) throw new Error(prepared.error || 'Preparation failed');
+            if (!prepared.success) throw new Error(prepared.error || t('web.control.preparationFailed'));
             status.textContent = t('web.envDetail.deployingControlWorker');
             const deployed = await api('/deploy/component/ar-control', {
               method: 'POST',
-              body: { env: envName, dryRun: false, skipBuild: false },
+              body: {
+                env: envName,
+                dryRun: false,
+                skipBuild: false,
+                initialControlBootstrap: true,
+              },
             });
-            if (!deployed.success) throw new Error(deployed.error || 'Control deployment failed');
+            if (!deployed.success) throw new Error(deployed.error || t('web.control.deploymentFailed'));
           }
           status.textContent = t('web.envDetail.registeringScopedCredentials');
+          bootstrapSubmitted = true;
+          input.value = '';
           const completed = await api('/control/automatic-provisioning/complete', {
             method: 'POST',
             body: {
@@ -10603,7 +11031,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             },
           });
           if (!completed.success) {
-            const completionError = new Error(completed.error || 'Credential bootstrap failed');
+            const completionError = new Error(
+              completed.error || t('web.control.credentialBootstrapFailed')
+            );
             completionError.cleanupRequired = completed.cleanupRequired === true;
             completionError.bootstrapRetainedForRetry =
               completed.bootstrapRetainedForRetry === true;
@@ -10614,26 +11044,35 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           envControlBootstrapOwnership = null;
           await loadEnvControlAutomaticProvisioning(envName);
         } catch (error) {
+          if (!bootstrapSubmitted && bootstrapToken) {
+            input.value = bootstrapToken;
+            status.textContent =
+              (error.message || t('web.control.automaticProvisioningPaused')) +
+              ' ' +
+              t('web.envDetail.bootstrapNotSubmittedForRetry');
+            input.focus();
+            return;
+          }
           if (error.recoveryTokenRequired === true) {
             envControlBootstrapOwnership = null;
             document
               .getElementById('btn-env-create-control-bootstrap-token')
               .classList.remove('hidden');
-            status.textContent =
-              (error.message || 'The previous revocation response was interrupted.') +
-              ' Create a new one-time token, enter it here, and select Enable to verify and finish cleanup.';
+            status.textContent = t('web.control.revocationRecoveryRequired', {
+              error: error.message || t('web.control.revocationInterrupted'),
+            });
             input.focus();
             return;
           }
           if (recoveringCutover || error.cutoverPending === true) {
-            status.textContent =
-              (error.message || 'Automatic provisioning cutover paused.') +
-              ' Select Enable again to resume the durable cutover.';
+            status.textContent = t('web.control.cutoverResumeRequired', {
+              error: error.message || t('web.control.cutoverPaused'),
+            });
             return;
           }
           if (error.bootstrapRetainedForRetry === true) {
             status.textContent =
-              (error.message || 'Automatic provisioning setup paused.') +
+              (error.message || t('web.control.automaticProvisioningPaused')) +
               ' ' +
               t('web.envDetail.bootstrapRetainedForRetry');
             input.focus();
@@ -10671,12 +11110,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             }
           }
           status.textContent = manualCleanup
-            ? (error.message || 'Automatic provisioning setup failed.') +
+            ? (error.message || t('web.control.automaticProvisioningFailed')) +
               ' ' + t('web.envDetail.revokeTokensBeforeRetry')
             : !pendingCanceled
-              ? (error.message || 'Automatic provisioning setup failed.') +
+              ? (error.message || t('web.control.automaticProvisioningFailed')) +
                 ' ' + t('web.envDetail.bootstrapRevokedPendingReset')
-              : (error.message || 'Automatic provisioning setup failed.') +
+              : (error.message || t('web.control.automaticProvisioningFailed')) +
                 ' ' + t('web.envDetail.bootstrapRevokedDisabled');
         } finally {
           bootstrapToken = '';
@@ -10705,6 +11144,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       ) {
         document.getElementById('control-bootstrap-token-status').textContent =
           t('web.deploy.bootstrapTokenRequired');
+        // A wildcard-DNS preflight can return before the one-time Control token is consumed.
+        // Keep the credential step reachable on retry instead of leaving the operator on a
+        // re-check button that silently returns because its hidden prerequisite is missing.
+        restoreSetupProgressPreludes([
+          'control-token-bootstrap-row',
+          'deploy-manual-wildcard-warning',
+        ]);
+        syncAutomaticProvisioningUi();
         bootstrapTokenInput.focus();
         return;
       }
@@ -10713,7 +11160,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       btn.classList.add('hidden');
       btnBack.classList.add('hidden');
       btnGotoComplete.disabled = true;
-      status.innerHTML = escapeHtml(t('web.envDetail.workers')) + ' <b>0</b> / 14';
+      deployedWorkerNames.clear();
+      updateDeployedWorkerCount([]);
       status.className = '';
       readyText.classList.add('hidden');
       progressUI.classList.remove('hidden');
@@ -10768,6 +11216,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
               lastProgressLength = progress.length;
               scrollToBottom(log);
             }
+            updateDeployedWorkerCount(progress);
             if (statusResult.deploymentProgress) {
               renderDeploymentSnapshot(statusResult.deploymentProgress);
             }
@@ -10781,6 +11230,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           body: {
             env: config.env,
             dryRun: false,
+            ...(resumeWorkerOwnershipRecovery ? { recoverWorkerOwnership: true } : {}),
             ...(automaticProvisioningEnabled() && !resumeControlBootstrapReady
               ? {
                   bootstrapToken,
@@ -10789,7 +11239,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
               : {}),
           },
         });
-        bootstrapTokenInput.value = '';
 
         if (pollInterval) {
           clearInterval(pollInterval);
@@ -10797,6 +11246,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
 
         if (result.success) {
+          bootstrapTokenInput.value = '';
           // Final progress update
           renderDeploymentSnapshot({
             operation: 'deploy',
@@ -10888,17 +11338,23 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         } else if (result.manualAction?.kind === 'wildcard-dns' && result.manualAction.baseDomain) {
           config.manualAction = result.manualAction;
           renderDeployManualWildcardWarning();
-          restoreSetupProgressPreludes(['deploy-manual-wildcard-warning']);
+          // DNS validation happens before Control token consumption. Preserve the one-time token
+          // in this page and keep both prerequisites visible so a DNS retry is a single explicit
+          // action rather than an invisible-token failure.
+          restoreSetupProgressPreludes([
+            'control-token-bootstrap-row',
+            'deploy-manual-wildcard-warning',
+          ]);
+          syncAutomaticProvisioningUi();
           output.textContent += '\\n' + buildWildcardDnsManualMessage(result.manualAction.baseDomain) + '\\n';
           if (result.logPath) {
             output.textContent += '\\nLog: ' + result.logPath + '\\n';
           }
           scrollToBottom(log);
-          status.textContent = t('web.status.error');
+          status.textContent = t('web.deploy.manualWildcardTitle');
           status.className = '';
           btn.disabled = false;
-          btn.textContent = t('web.deploy.retryDeploy');
-          btn.classList.remove('hidden');
+          btn.classList.add('hidden');
           btnBack.classList.remove('hidden');
           btnCancel.classList.add('hidden');
           btnGotoComplete.classList.add('hidden');
@@ -10997,6 +11453,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         btnCancel.classList.add('hidden');
         btnGotoComplete.classList.add('hidden');
       }
+    });
+
+    document.getElementById('deploy-manual-wildcard-recheck').addEventListener('click', () => {
+      const deployButton = document.getElementById('btn-deploy');
+      if (deployButton.disabled) return;
+      deployButton.click();
     });
 
     function buildCompleteUrls(env, config) {
@@ -11177,11 +11639,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     function getResourceNames(env) {
       const kvPrefix = env.toUpperCase();
       return {
-        d1: [
-          env + '-authrim-core-db',
-          env + '-authrim-pii-db',
-          env + '-authrim-admin-db'
-        ],
+        d1: ${JSON.stringify(D1_DATABASES.map((database) => database.dbType))}.map(
+          dbType => env + '-authrim-' + dbType
+        ),
         kv: [
           kvPrefix + '-SETTINGS',
           kvPrefix + '-CLIENTS_CACHE',
@@ -11232,17 +11692,22 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const coreRegion = config.database?.core || { location: 'apac', jurisdiction: 'none' };
       const piiRegion = config.database?.pii || { location: 'apac', jurisdiction: 'none' };
 
-      // D1 databases with region info
-      const coreDbName = env + '-authrim-core-db';
-      const piiDbName = env + '-authrim-pii-db';
-      const adminDbName = env + '-authrim-admin-db';
-      // admin-db uses the same region as pii-db (both contain sensitive data)
-      const adminRegion = piiRegion;
-
-      appendDatabasePreviewItem(d1List, coreDbName, getRegionLabel(coreRegion.location, coreRegion.jurisdiction));
-      appendDatabasePreviewItem(d1List, piiDbName, getRegionLabel(piiRegion.location, piiRegion.jurisdiction));
-      appendDatabasePreviewItem(d1List, adminDbName, getRegionLabel(adminRegion.location, adminRegion.jurisdiction));
-      if (d1Count) d1Count.textContent = '3';
+      // Fixed D1 databases use the same canonical inventory as provisioning.
+      const d1LocationProfiles = ${JSON.stringify(
+        Object.fromEntries(
+          D1_DATABASES.map((database) => [database.dbType, database.locationProfile])
+        )
+      )};
+      resources.d1.forEach(dbName => {
+        const dbType = dbName.slice((env + '-authrim-').length);
+        const region = d1LocationProfiles[dbType] === 'pii' ? piiRegion : coreRegion;
+        appendDatabasePreviewItem(
+          d1List,
+          dbName,
+          getRegionLabel(region.location, region.jurisdiction)
+        );
+      });
+      if (d1Count) d1Count.textContent = String(resources.d1.length + 3);
       appendPreviewRow(d1List, 'Control Plane bootstrap tenant shards', '3 D1');
 
       for (let i = 0; i < resources.kv.length; i += 2) {
@@ -11489,43 +11954,63 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       showSection('envList');
     });
 
+    function renderEnvironmentListSummary(count, scanState = environmentScanState) {
+      const summary = document.getElementById('env-list-progress-summary');
+      if (!summary) return;
+
+      summary.replaceChildren();
+      if (scanState === 'scanning') {
+        summary.textContent = t('web.env.scanningEnvironments');
+        summary.setAttribute('aria-busy', 'true');
+        return;
+      }
+      summary.removeAttribute('aria-busy');
+      if (scanState === 'error') {
+        summary.textContent = t('web.status.error');
+        return;
+      }
+
+      const detectedLabel = document.createElement('span');
+      detectedLabel.textContent = t('web.env.detected');
+      const countElement = document.createElement('b');
+      countElement.id = 'env-list-count';
+      countElement.textContent = String(Math.max(0, Number(count) || 0));
+      const environmentLabel = document.createElement('span');
+      environmentLabel.textContent = t('web.env.environments');
+      summary.append(detectedLabel, document.createTextNode(' '), countElement);
+      summary.append(document.createTextNode(' '), environmentLabel);
+    }
+
     // Load environments
     async function loadEnvironments() {
+      const scanGeneration = ++environmentScanGeneration;
       const status = document.getElementById('env-list-status');
       const loading = document.getElementById('env-list-loading');
       const content = document.getElementById('env-list-content');
       const output = document.getElementById('env-scan-output');
       const noEnvsMessage = document.getElementById('no-envs-message');
+      const refreshButton = document.getElementById('btn-refresh-env-list');
 
       status.textContent = t('web.status.scanning');
       status.className = 'env-scan-status status-running';
       loading.classList.remove('hidden');
       content.classList.add('hidden');
       output.textContent = '';
-
-      // Poll for progress
-      let lastProgressLength = 0;
-      const pollInterval = setInterval(async () => {
-        try {
-          const statusResult = await api('/deploy/status');
-          if (statusResult.progress && statusResult.progress.length > lastProgressLength) {
-            const newMessages = statusResult.progress.slice(lastProgressLength);
-            newMessages.forEach(msg => {
-              output.textContent += formatProgressMessageForDisplay(msg) + '\\n';
-            });
-            lastProgressLength = statusResult.progress.length;
-          }
-        } catch (e) {}
-      }, 500);
+      environmentScanState = 'scanning';
+      renderEnvironmentListSummary(null, environmentScanState);
+      if (refreshButton) refreshButton.disabled = true;
 
       try {
         const result = await api('/environments');
-        clearInterval(pollInterval);
+        if (scanGeneration !== environmentScanGeneration) return;
 
         if (result.success) {
+          if (Array.isArray(result.progress)) {
+            output.textContent = result.progress.map(formatProgressMessageForDisplay).join('\\n');
+          }
           detectedEnvironments = result.environments || [];
-          const countEl = document.getElementById('env-list-count');
-          if (countEl) countEl.textContent = String(detectedEnvironments.length);
+          environmentScanState = 'complete';
+          renderEnvironmentListSummary(detectedEnvironments.length, environmentScanState);
 
           status.textContent = t('web.status.found', { count: detectedEnvironments.length });
           status.className = 'env-scan-status status-success';
@@ -11537,10 +12022,16 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           throw new Error(result.error);
         }
       } catch (error) {
-        clearInterval(pollInterval);
+        if (scanGeneration !== environmentScanGeneration) return;
+        environmentScanState = 'error';
+        renderEnvironmentListSummary(null, environmentScanState);
         status.textContent = t('web.status.error');
         status.className = 'env-scan-status status-error';
         output.textContent += '\\nError: ' + error.message;
+      } finally {
+        if (scanGeneration === environmentScanGeneration && refreshButton) {
+          refreshButton.disabled = false;
+        }
       }
     }
 
@@ -11553,13 +12044,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       return env.env + '-ar-router.workers.dev';
     }
 
-    function getEnvironmentModePreview(env) {
-      const hasLogin = (env.workers || []).some((worker) => worker?.name === env.env + '-ar-login-ui');
-      const hasAdmin = (env.workers || []).some((worker) => worker?.name === env.env + '-ar-admin-ui');
-      if (!hasLogin && !hasAdmin) {
-        return t('web.env.modeSingle');
-      }
-      return t('web.env.modeMulti');
+    function getEnvironmentModePreview(env, config = null) {
+      const multiTenant = config?.tenant?.multiTenant ?? env?.multiTenant;
+      return multiTenant === true ? t('web.env.modeMulti') : t('web.env.modeSingle');
     }
 
     function appendEnvCardKv(body, key, value, className, rowClassName) {
@@ -11594,7 +12081,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     async function updateEnvCardIssuerFromConfig(env, generation) {
       const card = document.getElementById('env-card-' + env.env.replace(/[^a-zA-Z0-9-]/g, '_'));
       const issuerValue = card?.querySelector('.e-kv-issuer .v');
-      if (!issuerValue) return;
+      const modeValue = card?.querySelector('.e-kv-mode .v');
+      if (!issuerValue && !modeValue) return;
 
       try {
         const configResponse = await api('/config?env=' + encodeURIComponent(env.env));
@@ -11602,8 +12090,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         if (!configResponse.exists || !configResponse.config) return;
 
         const issuer = stripProtocol(resolveEnvDetailIssuerUrl(env, configResponse.config));
-        if (issuer) {
+        if (issuer && issuerValue) {
           issuerValue.textContent = issuer;
+        }
+        if (modeValue) {
+          modeValue.textContent = getEnvironmentModePreview(env, configResponse.config);
         }
       } catch (error) {
         console.warn('Failed to load config issuer for ' + env.env + ':', error);
@@ -11644,7 +12135,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         if (env.release?.canUpdate) {
           const releaseBadge = document.createElement('span');
           releaseBadge.className = 'env-release-badge';
-          releaseBadge.textContent = 'v' + env.release.targetVersion + ' update';
+          releaseBadge.textContent = t('web.env.updateBadge', {
+            version: env.release.targetVersion,
+          });
           head.appendChild(releaseBadge);
         }
 
@@ -11653,7 +12146,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         const body = document.createElement('div');
         body.className = 'e-body';
         appendEnvCardIssuer(body, getEnvironmentIssuerPreview(env));
-        appendEnvCardKv(body, t('web.env.cardMode'), getEnvironmentModePreview(env));
+        appendEnvCardKv(
+          body,
+          t('web.env.cardMode'),
+          getEnvironmentModePreview(env),
+          undefined,
+          'e-kv-mode'
+        );
         appendEnvCardKv(body, 'Workers', String(env.workers.length));
         appendEnvCardKv(body, 'D1 / KV', env.d1.length + ' / ' + env.kv.length);
         appendEnvCardKv(
@@ -11810,7 +12309,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       if (configKv && configKv.id) {
         // Check admin setup status asynchronously
-        checkAndShowAdminSetup(configKv.id);
+        checkAndShowAdminSetup(configKv.id, env.env);
       }
 
       document.getElementById('env-r2-provision-progress').classList.add('hidden');
@@ -12204,6 +12703,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         config = buildSetupConfigFromSavedConfig(response.config);
         controlBootstrapOwnership = null;
         resumeControlBootstrapReady = false;
+        resumeWorkerOwnershipRecovery =
+          recoveryStatus.requiresWorkerOwnershipRecovery === true;
         if (config.controlPlane?.automaticProvisioning === true) {
           resumeControlBootstrapReady = recoveryStatus.requiresBootstrapToken !== true;
         }
@@ -12502,7 +13003,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (!aside) return;
 
       const issuer = stripProtocol(resolveEnvDetailIssuerUrl(env, config || null));
-      const mode = getEnvironmentModePreview(env);
+      const mode = getEnvironmentModePreview(env, config);
       aside.innerHTML = t('web.env.heroDetailAside', {
         mode: escapeHtml(mode),
         issuer: escapeHtml(issuer),
@@ -12715,6 +13216,28 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (!response || !response.success) {
         summaryEl.textContent = response?.error || t('web.envDetail.r2StatusLoadFailed');
         provisionBtn.disabled = false;
+        return;
+      }
+
+      if (response.identityMismatchCount > 0) {
+        summaryEl.textContent = t('web.envDetail.r2IdentityMismatchSummary', {
+          count: response.identityMismatchCount,
+        });
+        provisionBtn.disabled = true;
+        return;
+      }
+
+      if (response.ownershipRecoveryRequired > 0) {
+        summaryEl.textContent =
+          response.ownershipRecoveryMode === 'explicit_adoption'
+            ? t('web.envDetail.r2OwnershipRecoverySummary', {
+                count: response.ownershipRecoveryRequired,
+                command: response.requiredCommand || '',
+              })
+            : t('web.envDetail.r2OwnershipRecreateSummary', {
+                count: response.ownershipRecoveryRequired,
+              });
+        provisionBtn.disabled = true;
         return;
       }
 
@@ -13546,17 +14069,16 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
           // Refresh version table
           await loadWorkerVersionComparison(currentEnvForUpdate);
+        } else if (response.manualAction?.kind === 'wildcard-dns' && response.manualAction.baseDomain) {
+          addLog('');
+          buildWildcardDnsManualMessage(response.manualAction.baseDomain)
+            .split('\\n')
+            .forEach((line) => addLog(line));
         } else {
           addLog('');
           addLog(t('web.envDetail.updateFailedWithMessage', {
             error: response.error || t('web.status.unknownError'),
           }));
-          if (response.manualAction?.kind === 'wildcard-dns' && response.manualAction.baseDomain) {
-            addLog('');
-            buildWildcardDnsManualMessage(response.manualAction.baseDomain)
-              .split('\\n')
-              .forEach((line) => addLog(line));
-          }
         }
       } catch (error) {
         addLog(t('web.status.errorWithMessage', { error: error.message }));
@@ -13761,6 +14283,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
           // Refresh version table from the lock file after the deploy endpoint saves it.
           await loadWorkerVersionComparison(currentEnvForUpdate);
+        } else if (response.manualAction?.kind === 'wildcard-dns' && response.manualAction.baseDomain) {
+          addLog('');
+          buildWildcardDnsManualMessage(response.manualAction.baseDomain)
+            .split('\\n')
+            .forEach((line) => addLog(line));
         } else {
           addLog('');
           addLog(t('web.envDetail.updateFailedWithMessage', {
@@ -13875,15 +14402,25 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     // ===========================================
 
     // Check admin setup status and show section if needed
-    async function checkAndShowAdminSetup(kvNamespaceId) {
+    async function checkAndShowAdminSetup(kvNamespaceId, envName) {
       try {
-        const response = await api('/admin/status/' + encodeURIComponent(kvNamespaceId));
+        const response = await api(
+          '/admin/status/' + encodeURIComponent(kvNamespaceId) +
+          '?env=' + encodeURIComponent(envName)
+        );
         if (!response.success) return;
 
         const section = document.getElementById('admin-setup-section');
         const heading = section.querySelector('.a-head');
         const description = section.querySelector('p');
         const button = document.getElementById('btn-start-admin-setup');
+
+        if (response.statusKnown === false) {
+          // Do not turn a transient Cloudflare/namespace status failure into a false
+          // "not configured" instruction that invites another setup-token operation.
+          section.classList.add('hidden');
+          return;
+        }
 
         if (response.adminSetupCompleted) {
           section.className = 'alert ok';
@@ -13952,7 +14489,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
         const nameDiv = document.createElement('td');
         nameDiv.className = 'resource-item-name';
-        nameDiv.textContent = resource[nameKey] || resource.title || resource.id || 'Unknown';
+        nameDiv.textContent =
+          resource[nameKey] || resource.title || resource.id || t('web.status.unknown');
         item.appendChild(nameDiv);
 
         // Add loading placeholder for D1 and Workers
@@ -14085,15 +14623,18 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     // Show delete confirmation
-    function showDeleteConfirmation(env) {
+    function showDeleteConfirmation(env, resetState = true) {
       selectedEnvForDelete = env;
+      if (resetState) {
+        resetDeleteSection();
+      }
       const resourceCount = (count, key) => t(key, { count });
       const setDeleteOption = (optionId, inputId, countId, count, key) => {
         const option = document.getElementById(optionId);
         const input = document.getElementById(inputId);
         const countEl = document.getElementById(countId);
         if (countEl) countEl.textContent = resourceCount(count, key);
-        if (input) input.checked = count > 0;
+        if (input && resetState) input.checked = count > 0;
         if (option) option.classList.toggle('hidden', count === 0);
       };
 
@@ -14118,28 +14659,22 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         confirmCopy.innerHTML = t('web.delete.confirmExact', { env: escapeHtml(env.env) });
       }
       const confirmInput = document.getElementById('delete-confirm-input');
-      if (confirmInput) {
+      if (confirmInput && resetState) {
         confirmInput.value = '';
         confirmInput.placeholder = env.env;
       }
 
-      // Reset checkboxes
-      document.getElementById('delete-workers').checked = true;
-      document.getElementById('delete-d1').checked = true;
-      document.getElementById('delete-kv').checked = true;
-      // Current resource inventories remain strict even at zero. Legacy Pages is selected only
-      // when observed; the API separately records that this flow intends to finish the environment.
-      document.getElementById('delete-queues').checked = true;
-      document.getElementById('delete-r2').checked = true;
-      document.getElementById('delete-pages').checked = (env.pages || []).length > 0;
-
-      // Reset UI state
-      document.getElementById('delete-options-section').classList.remove('hidden');
-      document.getElementById('delete-log').classList.add('hidden');
-      document.getElementById('delete-result').classList.add('hidden');
-      document.getElementById('delete-result').textContent = '';
-      document.getElementById('btn-confirm-delete').classList.remove('hidden');
-      document.getElementById('btn-confirm-delete').disabled = true;
+      if (resetState) {
+        // Current resource inventories remain strict even at zero. Legacy Pages is selected only
+        // when observed; the API separately records that this flow intends to finish the environment.
+        document.getElementById('delete-workers').checked = true;
+        document.getElementById('delete-d1').checked = true;
+        document.getElementById('delete-kv').checked = true;
+        document.getElementById('delete-queues').checked = true;
+        document.getElementById('delete-r2').checked = true;
+        document.getElementById('delete-pages').checked = (env.pages || []).length > 0;
+        document.getElementById('btn-confirm-delete').disabled = true;
+      }
 
       showSection('envDelete');
     }
@@ -14202,7 +14737,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
       } catch (error) {
         const status = document.getElementById('control-capacity-status');
-        if (status) status.textContent = error.message || 'Tenant capacity targets are unavailable.';
+        if (status) {
+          status.textContent =
+            error.message || t('web.envDetail.capacityTargetsUnavailable');
+        }
       }
     }
 
@@ -14581,7 +15119,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             newMessages.forEach(msg => {
               output.textContent += formatProgressMessageForDisplay(msg) + '\\n';
               // Update progress UI based on message content
-              const taskInfo = parseProgressMessage(msg);
+              const taskInfo = getDeleteProgressTask(msg) || parseProgressMessage(msg);
               if (taskInfo) {
                 updateProgressUI('delete', deleteCompleted, totalToDelete, taskInfo);
               }
@@ -14643,6 +15181,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           }
           appendManualControlTokenCleanupNotice(result, manualControlTokenTargets);
           if (environmentDeleted) {
+            markDeleteNavigationComplete();
             // Keep the follow-up guidance visible while refreshing the hidden environment list so
             // navigating back cannot resurrect an entry whose local recovery state was removed.
             setTimeout(async () => {
@@ -14657,6 +15196,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           updateProgressUI('delete', totalToDelete, totalToDelete, t('web.delete.complete'));
           result.textContent = '';
           const environmentDeleted = deleteResult.environmentDeleted === true;
+          if (environmentDeleted) markDeleteNavigationComplete();
           result.appendChild(createAlert(
             environmentDeleted ? 'success' : 'warning',
             t(environmentDeleted ? 'web.delete.success' : 'web.delete.partialSuccess')
@@ -14695,12 +15235,23 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     });
 
+    async function initializeManageOnly() {
+      showSection('envList');
+      const runtimeContextPromise = loadRuntimeContext()
+        .then(() => {
+          setEnvManagementHero('envList');
+        })
+        .catch((error) => {
+          console.warn('Failed to load Cloudflare account context:', error);
+        });
+      await Promise.allSettled([runtimeContextPromise, loadEnvironments()]);
+    }
+
     // Initialize
     if (MANAGE_ONLY) {
-      // Skip prerequisites UI and go directly to environment management
-      // Prerequisites were already checked by CLI
-      loadEnvironments();
-      showSection('envList');
+      // The CLI already enforced prerequisites, but the browser still needs the same read-only
+      // context so account and workers.dev metadata do not remain as placeholders.
+      initializeManageOnly();
     } else {
       checkPrerequisites();
     }

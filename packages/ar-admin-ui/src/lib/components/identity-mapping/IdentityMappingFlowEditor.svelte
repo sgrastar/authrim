@@ -8,6 +8,12 @@
 	} from '$lib/api/admin-identity-mapping';
 	import { suggestAutoMapConnections } from './auto-map-candidates';
 	import {
+		missingMappingRequiredSourceNodes,
+		selectDraftDirectionGraph,
+		sourceProfileIdsForDraft
+	} from './draft-direction';
+	import { profileReferencesMatch } from './profile-reference';
+	import {
 		type MappingAdapter,
 		type MappingDraftPayload,
 		type MappingDraftRuleInput,
@@ -473,7 +479,6 @@
 	let selectedDestinationProfileId = $state<string | null>(null);
 	let selectedSourcePolicyId = $state<string | null>(null);
 	let selectedDestinationPolicyId = $state<string | null>(null);
-	let appliedInitialPolicyOptionId = $state<string | null>(null);
 	let activeRuleId = $state(emptySample.activeRuleId);
 	let activeTab = $state<'rule' | 'dryrun' | 'diff'>('rule');
 	let viewMode = $state<ViewMode>('overview');
@@ -563,17 +568,31 @@
 			(option: SelectorOption) => option.direction === 'destination' || option.direction === 'both'
 		)
 	);
+	const resolvedSourcePolicyId = $derived(
+		selectedSourcePolicyId ??
+			(sourcePolicyOptions.some((option: SelectorOption) => option.id === initialPolicyOptionId)
+				? initialPolicyOptionId
+				: null)
+	);
+	const resolvedDestinationPolicyId = $derived(
+		selectedDestinationPolicyId ??
+			(destinationPolicyOptions.some(
+				(option: SelectorOption) => option.id === initialPolicyOptionId
+			)
+				? initialPolicyOptionId
+				: null)
+	);
 	const selectedSourcePolicy = $derived(
-		sourcePolicyOptions.find((option: SelectorOption) => option.id === selectedSourcePolicyId) ??
+		sourcePolicyOptions.find((option: SelectorOption) => option.id === resolvedSourcePolicyId) ??
 			null
 	);
 	const selectedDestinationPolicy = $derived(
 		destinationPolicyOptions.find(
-			(option: SelectorOption) => option.id === selectedDestinationPolicyId
+			(option: SelectorOption) => option.id === resolvedDestinationPolicyId
 		) ?? null
 	);
 	const policyModeHasSelection = $derived(
-		laneSelectorMode !== 'policy' || Boolean(selectedSourcePolicyId || selectedDestinationPolicyId)
+		laneSelectorMode !== 'policy' || Boolean(resolvedSourcePolicyId || resolvedDestinationPolicyId)
 	);
 	const visibleNodes = $derived(
 		policyModeHasSelection
@@ -732,11 +751,11 @@
 
 	$effect(() => {
 		if (
-			selectedViewMode === 'source' &&
+			(selectedViewMode === 'source' || selectedViewMode === 'destination') &&
 			selectedProfileId &&
 			selectedProfileId !== selectedSampleId
 		) {
-			animateNextSampleSourceNodes = true;
+			animateNextSampleSourceNodes = selectedViewMode === 'source';
 			selectedSampleId = selectedProfileId;
 		}
 		const next =
@@ -751,36 +770,37 @@
 	});
 
 	$effect(() => {
-		if (
-			laneSelectorMode !== 'policy' ||
-			!initialPolicyOptionId ||
-			appliedInitialPolicyOptionId === initialPolicyOptionId
-		) {
+		if (laneSelectorMode !== 'policy' || !initialPolicyOptionId) {
 			return;
 		}
 		const option = policySelectorOptions.find(
 			(candidate: SelectorOption) => candidate.id === initialPolicyOptionId
 		);
 		if (!option) return;
-		appliedInitialPolicyOptionId = initialPolicyOptionId;
-		if (option.direction === 'source') {
+		if (option.direction === 'source' && selectedSourcePolicyId !== option.id) {
 			applySourcePolicySelection(option.id);
-		} else if (option.direction === 'destination') {
+		} else if (option.direction === 'destination' && selectedDestinationPolicyId !== option.id) {
 			applyDestinationPolicySelection(option.id);
 		}
 	});
 
 	$effect(() => {
 		if (laneSelectorMode === 'policy') {
-			if (!selectedDestinationPolicyId) {
+			if (!resolvedDestinationPolicyId) {
 				selectedDestinationProfileId = null;
 				return;
 			}
 			const destinationProfileId = selectedDestinationPolicy?.destinationProfileIds?.find(
-				(id: string) => destinationProfileOptions.some((option) => option.id === id)
+				(id: string) =>
+					destinationProfileOptions.some((option) =>
+						profileReferencesMatch(id, option.id, 'destination')
+					)
 			);
 			if (destinationProfileId) {
-				selectedDestinationProfileId = destinationProfileId;
+				selectedDestinationProfileId =
+					destinationProfileOptions.find((option) =>
+						profileReferencesMatch(destinationProfileId, option.id, 'destination')
+					)?.id ?? null;
 				return;
 			}
 		}
@@ -982,7 +1002,9 @@
 			return targetNodes.filter((node) => !node.locked);
 		}
 		return sourceNodes.filter((node) =>
-			node.profileId ? node.profileId === sample.id : node.adapter === sourceAdapter
+			node.profileId
+				? profileReferencesMatch(node.profileId, sample.id, 'source')
+				: node.adapter === sourceAdapter
 		);
 	}
 
@@ -990,7 +1012,10 @@
 		if (viewMode === 'destination') {
 			return destinationNodes.filter((node) =>
 				node.profileId
-					? node.profileId === selectedDestinationProfileId
+					? Boolean(
+							selectedDestinationProfileId &&
+							profileReferencesMatch(node.profileId, selectedDestinationProfileId, 'destination')
+						)
 					: node.adapter === destinationAdapter
 			);
 		}
@@ -1148,7 +1173,7 @@
 		};
 
 		for (const option of sourcePolicyOptions) {
-			if (option.id === selectedSourcePolicyId) continue;
+			if (option.id === resolvedSourcePolicyId) continue;
 			for (const rule of rulesForPolicyOption(option, 'source')) {
 				for (const edge of rule.edges) {
 					for (const profileId of sourceProfileIdsForPolicyEdge(option, edge)) {
@@ -1166,7 +1191,7 @@
 		}
 
 		for (const option of destinationPolicyOptions) {
-			if (option.id === selectedDestinationPolicyId) continue;
+			if (option.id === resolvedDestinationPolicyId) continue;
 			for (const rule of rulesForPolicyOption(option, 'destination')) {
 				for (const edge of rule.edges) {
 					const sourceNode = nodeFromPolicyRef(nodes, edge.sourceRef);
@@ -1401,12 +1426,19 @@
 		const role = stringRef(ref, 'role');
 		const profileId = stringRef(ref, 'profileId');
 		const label = stringRef(ref, 'label');
+		const namespace = stringRef(ref, 'namespace');
 		const path = stringRef(ref, 'path');
 		return candidates.find((node) => {
 			if (role && node.role !== role) return false;
-			if (profileId && node.profileId !== profileId) return false;
+			if (profileId) {
+				if (!node.profileId) return false;
+				const profileSide = node.role === 'destination' ? 'destination' : 'source';
+				if (!profileReferencesMatch(profileId, node.profileId, profileSide)) return false;
+			}
+			if (namespace && node.fieldRef?.namespace && node.fieldRef.namespace !== namespace)
+				return false;
 			if (label && node.label === label) return true;
-			if (path && node.caption === path) return true;
+			if (path && (node.fieldRef?.path === path || node.caption === path)) return true;
 			return false;
 		});
 	}
@@ -1609,10 +1641,10 @@
 
 		const sourceLayout = sourceNodes.map((node) => {
 			const selected =
-				laneSelectorMode === 'policy' && !selectedSourcePolicyId
+				laneSelectorMode === 'policy' && !resolvedSourcePolicyId
 					? false
 					: node.profileId
-						? node.profileId === sample.id
+						? profileReferencesMatch(node.profileId, sample.id, 'source')
 						: node.adapter === sourceAdapter;
 			const profileKey = node.profileId ?? node.adapter ?? 'source';
 			const visibleOffset = selected ? visibleSourceOffset++ : 0;
@@ -1676,10 +1708,13 @@
 
 		const destinationLayout = destinationNodes.map((node) => {
 			const selected =
-				laneSelectorMode === 'policy' && !selectedDestinationPolicyId
+				laneSelectorMode === 'policy' && !resolvedDestinationPolicyId
 					? false
 					: node.profileId
-						? node.profileId === selectedDestinationProfileId
+						? Boolean(
+								selectedDestinationProfileId &&
+								profileReferencesMatch(node.profileId, selectedDestinationProfileId, 'destination')
+							)
 						: node.adapter === destinationAdapter;
 			const profileKey = node.profileId ?? node.adapter ?? 'destination';
 			const visibleOffset = selected ? visibleDestinationOffset++ : 0;
@@ -2880,14 +2915,19 @@
 			(option: SelectorOption) => option.id === selectedSourcePolicyId
 		);
 		const sourceProfileId = selectedPolicy?.sourceProfileIds?.find((id: string) =>
-			samples.some((candidate: MappingSample) => candidate.id === id)
+			samples.some((candidate: MappingSample) => profileReferencesMatch(id, candidate.id, 'source'))
 		);
-		const sampleWillChange = Boolean(sourceProfileId && activeSampleRef?.id !== sourceProfileId);
+		const sourceSampleId = sourceProfileId
+			? (samples.find((candidate: MappingSample) =>
+					profileReferencesMatch(sourceProfileId, candidate.id, 'source')
+				)?.id ?? null)
+			: null;
+		const sampleWillChange = Boolean(sourceSampleId && activeSampleRef?.id !== sourceSampleId);
 		if (sampleWillChange) {
 			animateNextSampleSourceNodes = true;
 		}
-		selectedSampleId = sourceProfileId ?? null;
-		if (activeSampleRef && (!sourceProfileId || activeSampleRef.id === sourceProfileId)) {
+		selectedSampleId = sourceSampleId;
+		if (activeSampleRef && (!sourceSampleId || activeSampleRef.id === sourceSampleId)) {
 			applyPolicyGraph(activeSampleRef);
 		}
 		if (!sampleWillChange) {
@@ -2906,9 +2946,15 @@
 			(option: SelectorOption) => option.id === selectedDestinationPolicyId
 		);
 		const destinationProfileId = selectedPolicy?.destinationProfileIds?.find((id: string) =>
-			destinationProfileOptions.some((option) => option.id === id)
+			destinationProfileOptions.some((option) =>
+				profileReferencesMatch(id, option.id, 'destination')
+			)
 		);
-		selectedDestinationProfileId = destinationProfileId ?? null;
+		selectedDestinationProfileId = destinationProfileId
+			? (destinationProfileOptions.find((option) =>
+					profileReferencesMatch(destinationProfileId, option.id, 'destination')
+				)?.id ?? null)
+			: null;
 		if (activeSampleRef) {
 			applyPolicyGraph(activeSampleRef);
 		}
@@ -3397,9 +3443,12 @@
 		} satisfies MappingDraftRuleInput;
 	}
 
-	function transformDraftRules(transformNode: MappingNode): MappingDraftRuleInput[] {
-		const incoming = edges.filter((edge) => edge.to === transformNode.id);
-		const outgoing = edges.filter((edge) => edge.from === transformNode.id);
+	function transformDraftRules(
+		transformNode: MappingNode,
+		draftEdges: MappingEdge[]
+	): MappingDraftRuleInput[] {
+		const incoming = draftEdges.filter((edge) => edge.to === transformNode.id);
+		const outgoing = draftEdges.filter((edge) => edge.from === transformNode.id);
 		const operation = activeTransformOperation(transformNode);
 		const parameters = sanitizeTransformParameters(operation, transformNode.transformParameters);
 		return outgoing.flatMap((outEdge) => {
@@ -3439,29 +3488,34 @@
 	}
 
 	function buildDraftPayload(): MappingDraftPayload {
-		const transformIds = new Set(
-			nodes.filter((node) => node.role === 'transform').map((node) => node.id)
+		const { nodes: draftNodes, edges: draftEdges } = selectDraftDirectionGraph(
+			nodes,
+			edges,
+			viewMode
 		);
-		const directRules = edges.flatMap((edge) => {
+		const transformIds = new Set(
+			draftNodes.filter((node) => node.role === 'transform').map((node) => node.id)
+		);
+		const directRules = draftEdges.flatMap((edge) => {
 			if (transformIds.has(edge.from) || transformIds.has(edge.to)) return [];
 			const fromNode = nodeById(edge.from);
 			const toNode = nodeById(edge.to);
 			if (!fromNode || !toNode) return [];
 			return [directDraftRule(edge, fromNode, toNode)];
 		});
-		const transformRules = nodes
+		const transformRules = draftNodes
 			.filter((node) => node.role === 'transform')
-			.flatMap((node) => transformDraftRules(node));
+			.flatMap((node) => transformDraftRules(node, draftEdges));
 		return {
 			versionLabel: `ui-draft-${new Date().toISOString()}`,
 			compatibilityRange: '>=0.2.0',
-			sourceProfileIds: sample.id.startsWith('source-profile-') ? [sample.id] : [],
+			sourceProfileIds: sourceProfileIdsForDraft(sample, draftNodes, viewMode),
 			rules: [...directRules, ...transformRules],
 			metadata: {
 				sampleId: sample.id,
 				sampleTitle: sample.title,
 				viewMode,
-				edgeCount: edges.length,
+				edgeCount: draftEdges.length,
 				transformCount: transformRules.length
 			}
 		};
@@ -3469,13 +3523,7 @@
 
 	async function submitDraftForCompile() {
 		if (!editable || draftSubmitStatus === 'saving') return;
-		const connectedSourceNodeIds = new Set(edges.map((edge) => edge.from));
-		const missingMappingRequiredFields = nodes.filter(
-			(node) =>
-				node.role === 'source' &&
-				node.mappingRequired === true &&
-				!connectedSourceNodeIds.has(node.id)
-		);
+		const missingMappingRequiredFields = missingMappingRequiredSourceNodes(nodes, edges, viewMode);
 		if (missingMappingRequiredFields.length > 0) {
 			draftSubmitStatus = 'error';
 			draftSubmitMessage = $LL.admin_identity_mapping_flow_mapping_required_not_connected({
@@ -4153,7 +4201,7 @@
 						{#if showLaneProfileSelectors}
 							{#if laneSelectorMode === 'policy'}
 								<select
-									value={selectedSourcePolicyId ?? ''}
+									value={resolvedSourcePolicyId ?? ''}
 									disabled={sourcePolicyOptions.length === 0}
 									onchange={selectSourcePolicy}
 								>
@@ -4215,7 +4263,7 @@
 						{#if showLaneProfileSelectors}
 							{#if laneSelectorMode === 'policy'}
 								<select
-									value={selectedDestinationPolicyId ?? ''}
+									value={resolvedDestinationPolicyId ?? ''}
 									disabled={destinationPolicyOptions.length === 0}
 									onchange={selectDestinationPolicy}
 								>

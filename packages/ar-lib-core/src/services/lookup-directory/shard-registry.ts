@@ -1,4 +1,5 @@
 import { CompactSign, compactVerify, decodeProtectedHeader, importJWK, type JWK } from 'jose';
+import { LOOKUP_MAX_VIRTUAL_BUCKET, LOOKUP_VIRTUAL_BUCKET_COUNT } from './contract.js';
 import type { ActiveLookupBucketAssignment, LookupBucketAssignmentProvider } from './resolver';
 
 export const LOOKUP_SHARD_REGISTRY_JWS_TYPE = 'authrim-lookup-shard-registry+jws';
@@ -57,7 +58,7 @@ function safeId(value: unknown, code: string): string {
 }
 
 function validateRanges(value: unknown): LookupShardRegistryRange[] {
-  if (!Array.isArray(value) || value.length < 1 || value.length > 4096) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > LOOKUP_VIRTUAL_BUCKET_COUNT) {
     throw new Error('lookup_registry_ranges_invalid');
   }
   let expectedStart = 0;
@@ -81,8 +82,18 @@ function validateRanges(value: unknown): LookupShardRegistryRange[] {
       ) {
         throw new Error('lookup_registry_range_unknown_claim');
       }
-      const startBucket = integer(range.startBucket, 0, 4095, 'lookup_registry_bucket_invalid');
-      const endBucket = integer(range.endBucket, 0, 4095, 'lookup_registry_bucket_invalid');
+      const startBucket = integer(
+        range.startBucket,
+        0,
+        LOOKUP_MAX_VIRTUAL_BUCKET,
+        'lookup_registry_bucket_invalid'
+      );
+      const endBucket = integer(
+        range.endBucket,
+        0,
+        LOOKUP_MAX_VIRTUAL_BUCKET,
+        'lookup_registry_bucket_invalid'
+      );
       if (startBucket !== expectedStart || endBucket < startBucket) {
         throw new Error('lookup_registry_bucket_coverage_invalid');
       }
@@ -105,7 +116,7 @@ function validateRanges(value: unknown): LookupShardRegistryRange[] {
       };
     })
     .map((range, index, ranges) => {
-      if (index === ranges.length - 1 && range.endBucket !== 4095) {
+      if (index === ranges.length - 1 && range.endBucket !== LOOKUP_MAX_VIRTUAL_BUCKET) {
         throw new Error('lookup_registry_bucket_coverage_invalid');
       }
       return range;
@@ -333,7 +344,7 @@ export class VerifiedLookupBucketAssignmentProvider implements LookupBucketAssig
   }
 
   async resolveActiveAssignment(virtualBucket: number): Promise<ActiveLookupBucketAssignment> {
-    integer(virtualBucket, 0, 4095, 'lookup_registry_bucket_invalid');
+    integer(virtualBucket, 0, LOOKUP_MAX_VIRTUAL_BUCKET, 'lookup_registry_bucket_invalid');
     const range = this.registry.ranges.find(
       (candidate) => candidate.startBucket <= virtualBucket && candidate.endBucket >= virtualBucket
     );

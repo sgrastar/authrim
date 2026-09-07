@@ -17,6 +17,7 @@ import type {
   ControlTenantDisasterRecoveryVerificationRequest,
   ControlTenantDisasterRecoveryView,
 } from '@authrim/ar-lib-core/control-plane';
+import { LOOKUP_VIRTUAL_BUCKET_COUNT } from '@authrim/ar-lib-core/services/lookup-directory/contract';
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
 const SAFE_BINDING = /^[A-Z][A-Z0-9_]{0,127}$/u;
@@ -74,7 +75,7 @@ interface TargetRow {
   shard_generation: number;
   binding_ref: string;
   provider_database_id: string;
-  migration_stream_id: 'd1-core' | 'd1-pii';
+  migration_stream_id: 'core-d1' | 'pii-d1';
   release_id: string;
   manifest_digest: string;
   restore_confirmed_at: number | null;
@@ -347,7 +348,7 @@ export class TenantDisasterRecoveryService {
                 shard.generation AS shard_generation, shard.binding_ref,
                 observed.provider_resource_id AS provider_database_id, route.route_generation,
                 route.route_projection_json,
-                CASE WHEN assignment.data_role = 'tenant_pii' THEN 'd1-pii' ELSE 'd1-core' END
+                CASE WHEN assignment.data_role = 'tenant_pii' THEN 'pii-d1' ELSE 'core-d1' END
                   AS migration_stream_id,
                 release.release_id, release.manifest_digest,
                 NULL AS restore_confirmed_at, NULL AS migration_verified_at,
@@ -374,7 +375,7 @@ export class TenantDisasterRecoveryService {
            JOIN control_migration_release_catalog release
              ON release.environment_id = assignment.environment_id
             AND release.stream_id = CASE
-              WHEN assignment.data_role = 'tenant_pii' THEN 'd1-pii' ELSE 'd1-core' END
+              WHEN assignment.data_role = 'tenant_pii' THEN 'pii-d1' ELSE 'core-d1' END
             AND release.state = 'active'
           WHERE assignment.environment_id = ? AND assignment.tenant_id = ?
             AND assignment.assignment_state = 'active'
@@ -762,7 +763,7 @@ export class TenantDisasterRecoveryService {
       request.lookupShardCount,
       'control_tenant_dr_lookup_shard_count_invalid'
     );
-    if (lookupShardCount > 4096) {
+    if (lookupShardCount > LOOKUP_VIRTUAL_BUCKET_COUNT) {
       throw new Error('control_tenant_dr_lookup_shard_count_invalid');
     }
     const now = this.now();
@@ -857,7 +858,7 @@ export class TenantDisasterRecoveryService {
     const targetIndex = nonNegativeInteger(
       request.targetIndex,
       'control_tenant_dr_lookup_cursor_invalid',
-      4096
+      LOOKUP_VIRTUAL_BUCKET_COUNT
     );
     const afterCreatedAt = nonNegativeInteger(
       request.afterCreatedAt,

@@ -1,6 +1,9 @@
 import type { R2Bucket } from '@cloudflare/workers-types';
 import type { RuntimeSmokeResult } from '@authrim/ar-lib-core';
-import type { ControlTenantShardAllocationScope } from '@authrim/ar-lib-core/control-plane';
+import type {
+  ControlManagedMigrationStreamId,
+  ControlTenantShardAllocationScope,
+} from '@authrim/ar-lib-core/control-plane';
 
 export interface RuntimeControlKeyVerificationResult {
   purpose: 'smoke_rpc' | 'runtime_registry';
@@ -70,6 +73,15 @@ export type ProvisionedD1DataRole = TenantShardDataRole | 'lookup';
 
 export interface RuntimeSmokeServiceBinding {
   smokeTenantBinding: (token: string) => Promise<RuntimeSmokeResult>;
+  smokeTenantBindings?: (
+    tokens: string[]
+  ) => Promise<
+    Array<
+      | { ok: true; result: RuntimeSmokeResult }
+      | { ok: false; errorCode: string }
+      | RuntimeSmokeResult
+    >
+  >;
   verifyControlKeyCandidate?: (input: unknown) => Promise<RuntimeControlKeyVerificationResult>;
   verifyLookupHmacCandidate?: (
     input: unknown
@@ -162,7 +174,7 @@ export interface TenantShardPlan {
   jurisdiction?: 'eu' | 'fedramp';
   locationHint?: 'wnam' | 'enam' | 'weur' | 'eeur' | 'apac' | 'oc';
   readReplicationMode: 'enabled' | 'disabled';
-  migrationStreamId: 'd1-core' | 'd1-pii' | 'd1-lookup';
+  migrationStreamId: 'core-d1' | 'pii-d1' | 'lookup-d1';
   idempotencyKey: string;
 }
 
@@ -202,7 +214,7 @@ export interface PendingMigrationPlan {
   shardId: string;
   environmentId: string;
   databaseId: string;
-  streamId: 'd1-core' | 'd1-pii' | 'd1-lookup';
+  streamId: ControlManagedMigrationStreamId;
   releaseId: string;
   manifestDigest: string;
   manifestObjectKey: string;

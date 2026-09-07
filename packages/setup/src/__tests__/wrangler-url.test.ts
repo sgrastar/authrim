@@ -183,6 +183,11 @@ describe('generateEnvVars - ar-management', () => {
     expect(vars['ISSUER_URL']).toBe(expected.ISSUER_URL);
     expect(vars['UI_URL']).toBe(expectedUiUrl);
     expect(vars['LOGIN_UI_ENABLED']).toBe((config.components?.loginUi ?? true) ? 'true' : 'false');
+    const loginUiRunsOnIssuer =
+      config.urls?.loginUi?.sameAsApi === true || isMultiTenantConfigured(config);
+    expect(vars['LOGIN_UI_EXECUTION_HOST_MODE']).toBe(
+      config.components?.loginUi ? (loginUiRunsOnIssuer ? 'issuer' : 'dedicated') : undefined
+    );
     expect(vars['ADMIN_UI_ENABLED']).toBe((config.components?.adminUi ?? true) ? 'true' : 'false');
     expect(vars['SAML_ENABLED']).toBe('true');
     expect(vars['ASYNC_ENABLED']).toBe('true');
@@ -215,6 +220,25 @@ describe('generateEnvVars - ar-management', () => {
     } else {
       expect(vars['NAKED_DOMAIN_AS_ISSUER']).toBeUndefined();
     }
+  });
+
+  it('keeps workers.dev single-tenant login discovery on the dedicated Login UI Worker', () => {
+    const scenario = SCENARIOS.find((candidate) => candidate.id === 11)!;
+    const config = buildAuthrimConfig(scenario) as AuthrimConfig;
+    config.urls!.loginUi = {
+      custom: null,
+      auto: 'https://prod-ar-login-ui.my-project.workers.dev',
+      sameAsApi: false,
+    };
+
+    const managementVars = generateEnvVars('ar-management', config, WORKERS_SUBDOMAIN);
+    const routerVars = generateEnvVars('ar-router', config, WORKERS_SUBDOMAIN);
+
+    expect(managementVars['UI_URL']).toBe('https://prod-ar-login-ui.my-project.workers.dev');
+    expect(managementVars['LOGIN_UI_EXECUTION_HOST_MODE']).toBe('dedicated');
+    expect(routerVars['ENABLE_LOGIN_UI_PROXY']).toBe('false');
+    expect(routerVars['ENABLE_LOGIN_UI_PATH_PROXY']).toBe('false');
+    expect(routerVars['AR_LOGIN_UI_URL']).toBeUndefined();
   });
 });
 

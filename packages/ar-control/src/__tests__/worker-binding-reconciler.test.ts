@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { CloudflareControlApiError } from '@authrim/ar-lib-core/control-plane';
 import { WorkerBindingReconciler } from '../worker-binding-reconciler';
+import { BoundedServiceBindingInvocationBudget } from '../service-binding-invocation-budget';
 import type { ControlEnv, RuntimeSmokeServiceBinding } from '../types';
 import type { WorkerBindingTarget, WorkerDeploymentLease } from '../worker-binding-repository';
 
@@ -96,6 +97,7 @@ function repositoryMock(targets: WorkerBindingTarget[], deploymentLease = lease(
   return {
     ensurePendingTargets: vi.fn().mockResolvedValue(undefined),
     listDueTargets: vi.fn().mockResolvedValue(targets),
+    listDueTargetsForWorkers: vi.fn().mockResolvedValue(targets),
     acquireReconcilerLease: vi.fn().mockResolvedValue(true),
     releaseReconcilerLease: vi.fn().mockResolvedValue(true),
     acquireDeploymentLease: vi.fn().mockResolvedValue(deploymentLease),
@@ -164,6 +166,27 @@ async function controlEnv(smoke?: RuntimeSmokeServiceBinding): Promise<ControlEn
 }
 
 describe('WorkerBindingReconciler', () => {
+  it('rejects a non-finite Worker batch limit before touching durable state', async () => {
+    const repository = repositoryMock([]);
+    const reconciler = new WorkerBindingReconciler(
+      repository,
+      inventoryMock(),
+      {
+        getWorkerSettings: vi.fn(),
+        patchWorkerSettings: vi.fn(),
+        listWorkerDeployments: vi.fn(),
+        createWorkerDeployment: vi.fn(),
+      },
+      await controlEnv(),
+      () => 1_800_000_000
+    );
+
+    await expect(reconciler.reconcile(Number.NaN)).rejects.toThrow(
+      'invalid_worker_binding_reconciliation_limit'
+    );
+    expect(repository.ensurePendingTargets).not.toHaveBeenCalled();
+  });
+
   it('hands an untouched binding operation to setup when provider mutation is disabled', async () => {
     const repository = repositoryMock([target()]);
     const inventory = inventoryMock();
@@ -376,6 +399,35 @@ describe('WorkerBindingReconciler', () => {
     expect(repository.recordTransientError).not.toHaveBeenCalled();
   });
 
+  it('treats a not-yet-deployed Worker as retryable initial deployment progress', async () => {
+    const pending = target();
+    const repository = repositoryMock([pending]);
+    const api = {
+      listWorkerDeployments: vi
+        .fn()
+        .mockRejectedValue(new CloudflareControlApiError('workers.deployment.list', 404, [])),
+      getWorkerSettings: vi.fn(),
+      patchWorkerSettings: vi.fn(),
+      createWorkerDeployment: vi.fn(),
+    };
+    const reconciler = new WorkerBindingReconciler(
+      repository,
+      inventoryMock(),
+      api,
+      await controlEnv(),
+      () => 1_800_000_000
+    );
+
+    await expect(reconciler.reconcile()).resolves.toMatchObject({ blocked: 0, deferred: 1 });
+    expect(repository.recordTransientError).toHaveBeenCalledWith(
+      pending,
+      'control_worker_active_deployment_missing',
+      1_800_000_015,
+      1_800_000_000
+    );
+    expect(repository.markBlocked).not.toHaveBeenCalled();
+  });
+
   it('retries a temporarily unavailable smoke Service Binding', async () => {
     const patched = target({
       state: 'settings_patched',
@@ -503,6 +555,252 @@ describe('WorkerBindingReconciler', () => {
         stabilizationNotBefore: 1_800_000_030,
       })
     );
+    expect(repository.releaseDeploymentLease).not.toHaveBeenCalled();
+  });
+
+  it('patches every due binding for one Worker once and shares the stabilization window', async () => {
+    const first = target();
+    const second = target({
+      operationId: 'operation-2',
+      shardId: 'shard-2',
+      bindingRef: 'TEST_TDB_USERS_002',
+      databaseId: 'tenant-db-2',
+    });
+    const repository = repositoryMock([first, second]);
+    repository.acquireDeploymentLease.mockImplementation(
+      async (input: { target: WorkerBindingTarget; expectedSourceVersionId: string }) => ({
+        ...lease(),
+        operationId: input.target.operationId,
+        expectedSourceVersionId: input.expectedSourceVersionId,
+      })
+    );
+    const reflectedBatchSettings = {
+      ...beforeSettings,
+      bindings: [
+        ...beforeSettings.bindings,
+        { name: first.bindingRef, type: 'd1', database_id: first.databaseId },
+        { name: second.bindingRef, type: 'd1', database_id: second.databaseId },
+      ],
+    };
+    const api = {
+      listWorkerDeployments: vi
+        .fn()
+        .mockResolvedValueOnce([oldDeployment])
+        .mockResolvedValueOnce([oldDeployment])
+        .mockResolvedValueOnce([oldDeployment])
+        .mockResolvedValue([newDeployment, oldDeployment]),
+      getWorkerSettings: vi
+        .fn()
+        .mockResolvedValueOnce(beforeSettings)
+        .mockResolvedValue(reflectedBatchSettings),
+      patchWorkerSettings: vi.fn().mockResolvedValue(reflectedBatchSettings),
+      createWorkerDeployment: vi.fn(),
+    };
+    const smokeBatch = vi.fn().mockResolvedValueOnce([
+      ...Array.from({ length: 3 }, () => ({
+        bindingRef: first.bindingRef,
+        migrationGeneration: 1,
+        dataRole: first.dataRole,
+        residencyPartition: first.residencyPartition,
+        checkedAt: 1_800_000_000,
+        observedVersionId: 'version-new',
+        observedVersionTag: 'release',
+        observedVersionTimestamp: '2026-07-29T00:00:01.000Z',
+      })),
+      ...Array.from({ length: 3 }, () => ({
+        bindingRef: second.bindingRef,
+        migrationGeneration: 1,
+        dataRole: second.dataRole,
+        residencyPartition: second.residencyPartition,
+        checkedAt: 1_800_000_000,
+        observedVersionId: 'version-new',
+        observedVersionTag: 'release',
+        observedVersionTimestamp: '2026-07-29T00:00:01.000Z',
+      })),
+    ]);
+    const env = await controlEnv({
+      smokeTenantBinding: vi.fn(),
+      smokeTenantBindings: smokeBatch,
+    });
+    const reconciler = new WorkerBindingReconciler(
+      repository,
+      inventoryMock(),
+      api,
+      env,
+      () => 1_800_000_000
+    );
+
+    await expect(reconciler.reconcile()).resolves.toEqual({
+      attempted: 2,
+      succeeded: 0,
+      deferred: 2,
+      blocked: 0,
+    });
+    expect(api.patchWorkerSettings).toHaveBeenCalledTimes(1);
+    expect(api.patchWorkerSettings).toHaveBeenCalledWith(
+      first.workerScriptName,
+      expect.objectContaining({
+        bindings: [
+          { name: 'DB', type: 'inherit', version_id: 'latest' },
+          { name: first.bindingRef, type: 'd1', database_id: first.databaseId },
+          { name: second.bindingRef, type: 'd1', database_id: second.databaseId },
+        ],
+      })
+    );
+    expect(smokeBatch).toHaveBeenCalledTimes(1);
+    expect(smokeBatch.mock.calls[0]?.[0]).toHaveLength(6);
+    expect(repository.releaseDeploymentLease).not.toHaveBeenCalled();
+  });
+
+  it('blocks conflicting database identities in one Worker batch before provider mutation', async () => {
+    const first = target();
+    const conflicting = target({ operationId: 'operation-2', databaseId: 'other-database-id' });
+    const repository = repositoryMock([first, conflicting]);
+    const api = {
+      getWorkerSettings: vi.fn(),
+      patchWorkerSettings: vi.fn(),
+      listWorkerDeployments: vi.fn(),
+      createWorkerDeployment: vi.fn(),
+    };
+    const reconciler = new WorkerBindingReconciler(
+      repository,
+      inventoryMock(),
+      api,
+      await controlEnv(),
+      () => 1_800_000_000
+    );
+
+    await expect(reconciler.reconcile()).resolves.toMatchObject({ blocked: 2, deferred: 0 });
+    expect(repository.markBlocked).toHaveBeenCalledTimes(2);
+    expect(repository.markBlocked).toHaveBeenCalledWith(
+      first,
+      'control_worker_binding_batch_conflict',
+      1_800_000_000
+    );
+    expect(api.listWorkerDeployments).not.toHaveBeenCalled();
+    expect(api.patchWorkerSettings).not.toHaveBeenCalled();
+  });
+
+  it('uses provider Retry-After when scheduling a rate-limited retry', async () => {
+    const pending = target();
+    const repository = repositoryMock([pending]);
+    const rateLimitError = new CloudflareControlApiError('workers.deployment.list', 429, [1015]);
+    Object.defineProperty(rateLimitError, 'retryAfterSeconds', { value: 90 });
+    const reconciler = new WorkerBindingReconciler(
+      repository,
+      inventoryMock(),
+      {
+        listWorkerDeployments: vi.fn().mockRejectedValue(rateLimitError),
+        getWorkerSettings: vi.fn(),
+        patchWorkerSettings: vi.fn(),
+        createWorkerDeployment: vi.fn(),
+      },
+      await controlEnv(),
+      () => 1_800_000_000
+    );
+
+    await expect(reconciler.reconcile()).resolves.toMatchObject({ deferred: 1, blocked: 0 });
+    expect(repository.recordTransientError).toHaveBeenCalledWith(
+      pending,
+      'control_worker_settings_request_failed',
+      1_800_000_090,
+      1_800_000_000
+    );
+  });
+
+  it('falls back to signed individual smoke while older Workers lack the batch RPC', async () => {
+    const patched = target({
+      state: 'settings_patched',
+      patchResultVersionId: 'version-new',
+      patchResultDeploymentId: 'deployment-new',
+    });
+    const repository = repositoryMock([patched]);
+    const individualSmoke = vi.fn().mockResolvedValue({
+      bindingRef: patched.bindingRef,
+      migrationGeneration: patched.migrationGeneration,
+      dataRole: patched.dataRole,
+      residencyPartition: patched.residencyPartition,
+      checkedAt: 1_800_000_000,
+      observedVersionId: 'version-new',
+      observedVersionTag: 'release',
+      observedVersionTimestamp: '2026-07-29T00:00:01.000Z',
+    });
+    const reconciler = new WorkerBindingReconciler(
+      repository,
+      inventoryMock(),
+      {
+        listWorkerDeployments: vi.fn(),
+        getWorkerSettings: vi.fn(),
+        patchWorkerSettings: vi.fn(),
+        createWorkerDeployment: vi.fn(),
+      },
+      await controlEnv({
+        smokeTenantBinding: individualSmoke,
+        smokeTenantBindings: vi.fn().mockRejectedValue(new Error('rpc_method_not_found')),
+      }),
+      () => 1_800_000_000,
+      false
+    );
+
+    await expect(reconciler.reconcile()).resolves.toMatchObject({ deferred: 1, blocked: 0 });
+    expect(individualSmoke).toHaveBeenCalledTimes(3);
+    expect(repository.recordSmokeProgress).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps batched smoke within the shared Service Binding invocation budget', async () => {
+    const patchedTargets = Array.from({ length: 11 }, (_unused, index) =>
+      target({
+        operationId: `operation-${index + 1}`,
+        shardId: `shard-${index + 1}`,
+        bindingRef: `TEST_TDB_USERS_${String(index + 1).padStart(3, '0')}`,
+        databaseId: `tenant-db-${index + 1}`,
+        state: 'settings_patched',
+        patchResultVersionId: 'version-new',
+        patchResultDeploymentId: 'deployment-new',
+      })
+    );
+    const repository = repositoryMock(patchedTargets);
+    const smokeResults = patchedTargets.flatMap((patched) =>
+      Array.from({ length: 3 }, () => ({
+        bindingRef: patched.bindingRef,
+        migrationGeneration: patched.migrationGeneration,
+        dataRole: patched.dataRole,
+        residencyPartition: patched.residencyPartition,
+        checkedAt: 1_800_000_000,
+        observedVersionId: 'version-new',
+        observedVersionTag: 'release',
+        observedVersionTimestamp: '2026-07-29T00:00:01.000Z',
+      }))
+    );
+    const smokeBatch = vi
+      .fn()
+      .mockImplementation(async (tokens: string[]) => smokeResults.slice(0, tokens.length));
+    const budget = new BoundedServiceBindingInvocationBudget(1);
+    const reconciler = new WorkerBindingReconciler(
+      repository,
+      inventoryMock(),
+      {
+        listWorkerDeployments: vi.fn(),
+        getWorkerSettings: vi.fn(),
+        patchWorkerSettings: vi.fn(),
+        createWorkerDeployment: vi.fn(),
+      },
+      await controlEnv({ smokeTenantBinding: vi.fn(), smokeTenantBindings: smokeBatch }),
+      () => 1_800_000_000,
+      false,
+      budget
+    );
+
+    await expect(reconciler.reconcile()).resolves.toEqual({
+      attempted: 11,
+      succeeded: 0,
+      deferred: 11,
+      blocked: 0,
+    });
+    expect(smokeBatch).toHaveBeenCalledOnce();
+    expect(smokeBatch.mock.calls[0]?.[0]).toHaveLength(30);
+    expect(repository.recordSmokeProgress).toHaveBeenCalledTimes(30);
+    expect(budget.remaining).toBe(0);
   });
 
   it('records a secret-free field-specific smoke mismatch code', async () => {
@@ -686,7 +984,12 @@ describe('WorkerBindingReconciler', () => {
     await expect(reconciler.reconcile()).resolves.toMatchObject({ succeeded: 1, blocked: 0 });
     expect(api.listWorkerDeployments).not.toHaveBeenCalled();
     expect(api.getWorkerSettings).not.toHaveBeenCalled();
-    expect(repository.acquireDeploymentLease).toHaveBeenCalledOnce();
+    expect(repository.acquireDeploymentLease).toHaveBeenCalledWith({
+      target: stabilizing,
+      expectedSourceVersionId: 'version-old',
+      now: 1_800_000_001,
+      ttlSeconds: 900,
+    });
     expect(repository.markSucceeded).toHaveBeenCalledWith(stabilizing, 1_800_000_001);
     expect(repository.completeOperationIfReady).toHaveBeenCalledWith('operation-1', 1_800_000_001);
   });
@@ -799,7 +1102,41 @@ describe('WorkerBindingReconciler', () => {
     await expect(reconciler.reconcile()).resolves.toMatchObject({ deferred: 1, blocked: 0 });
     expect(repository.recordSmokeProgress).toHaveBeenCalledTimes(3);
     expect(api.listWorkerDeployments).not.toHaveBeenCalled();
-    expect(repository.acquireDeploymentLease).toHaveBeenCalledOnce();
+    expect(repository.acquireDeploymentLease).toHaveBeenCalledWith({
+      target: patched,
+      expectedSourceVersionId: 'version-new',
+      now: 1_800_000_500,
+      ttlSeconds: 900,
+    });
+  });
+
+  it('defers a stale smoke checkpoint without overwriting newer durable progress', async () => {
+    const patched = target({
+      state: 'settings_patched',
+      patchResultVersionId: 'version-new',
+      patchResultDeploymentId: 'deployment-new',
+    });
+    const repository = repositoryMock([patched]);
+    repository.recordSmokeProgress.mockRejectedValueOnce(
+      new Error('control_worker_binding_smoke_state_stale')
+    );
+    const reconciler = new WorkerBindingReconciler(
+      repository,
+      inventoryMock(),
+      {
+        listWorkerDeployments: vi.fn(),
+        getWorkerSettings: vi.fn(),
+        patchWorkerSettings: vi.fn(),
+        createWorkerDeployment: vi.fn(),
+      },
+      await controlEnv(),
+      () => 1_800_000_600,
+      false
+    );
+
+    await expect(reconciler.reconcile()).resolves.toMatchObject({ deferred: 1, blocked: 0 });
+    expect(repository.recordSmokeProgress).toHaveBeenCalledOnce();
+    expect(repository.recordTransientError).not.toHaveBeenCalled();
   });
 
   it('restores saved settings directly while the patched version remains fenced', async () => {

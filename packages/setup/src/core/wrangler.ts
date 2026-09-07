@@ -119,6 +119,8 @@ export interface GenerateWranglerConfigOptions {
   placementMode?: 'off' | 'smart';
   /** Initial-deploy escape hatch for Control smoke bindings whose targets do not exist yet. */
   includeControlSmokeBindings?: boolean;
+  /** Keep Control cron reconciliation inactive until the initial Worker inventory is deployed. */
+  includeControlCronTriggers?: boolean;
   /** Initial-deploy escape hatch for the Auth -> Management -> Auth bootstrap cycle. */
   includeAuthAccountProvisioner?: boolean;
   /** Initial-deploy escape hatch for the Bridge -> Management -> Bridge bootstrap cycle. */
@@ -670,7 +672,7 @@ export function generateWranglerConfig(
     };
   }
 
-  if (component === 'ar-control') {
+  if (component === 'ar-control' && options.includeControlCronTriggers !== false) {
     wranglerConfig.triggers = {
       crons: ['* * * * *'],
     };
@@ -1314,7 +1316,7 @@ export function generateEnvVars(
   if (component === 'ar-auth' || component === 'ar-management' || component === 'ar-saml') {
     vars['UI_URL'] = uiUrl;
     vars['LOGIN_UI_ENABLED'] = config.components.loginUi ? 'true' : 'false';
-    if (component === 'ar-auth' && config.components.loginUi) {
+    if ((component === 'ar-auth' || component === 'ar-management') && config.components.loginUi) {
       // workers.dev-only deployments use the Login UI Worker's own origin.
       // Once Login UI shares the API/issuer host (or tenant hosts are enabled),
       // execute browser flows on the issuer.
@@ -2159,6 +2161,7 @@ export function parseWranglerToml(
   content: string,
   env: string
 ): {
+  crons: string[];
   kv: Record<string, string>;
   d1: Record<string, string>;
   hyperdrive: Record<string, string>;
@@ -2167,6 +2170,7 @@ export function parseWranglerToml(
   queueConsumers: string[];
 } {
   const result = {
+    crons: [] as string[],
     kv: {} as Record<string, string>,
     d1: {} as Record<string, string>,
     hyperdrive: {} as Record<string, string>,
@@ -2175,6 +2179,27 @@ export function parseWranglerToml(
     queueConsumers: [] as string[],
   };
   const escapedEnv = escapeRegExp(env);
+
+  // Parse the environment-scoped Cron Trigger list. Generated deployment configs always use a
+  // single-line string array, which lets recovery compare the checked-in intent with Cloudflare's
+  // provider state without accepting arbitrary TOML syntax.
+  const cronRegex = new RegExp(
+    `\\[env\\.${escapedEnv}\\.triggers\\]\\s*\\ncrons\\s*=\\s*\\[([^\\]]*)\\]`,
+    'u'
+  );
+  const cronMatch = cronRegex.exec(content);
+  if (cronMatch) {
+    try {
+      const values: unknown = JSON.parse(`[${cronMatch[1]}]`);
+      if (!Array.isArray(values) || values.some((value) => typeof value !== 'string')) {
+        throw new Error('wrangler_cron_trigger_invalid');
+      }
+      result.crons.push(...values);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'wrangler_cron_trigger_invalid') throw error;
+      throw new Error('wrangler_cron_trigger_invalid');
+    }
+  }
 
   // Parse KV namespaces: [[env.{env}.kv_namespaces]]
   const kvRegex = new RegExp(

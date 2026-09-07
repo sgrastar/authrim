@@ -1,4 +1,4 @@
-export const LOOKUP_VIRTUAL_BUCKET_COUNT = 4096;
+export { LOOKUP_VIRTUAL_BUCKET_COUNT, LOOKUP_MAX_VIRTUAL_BUCKET } from './contract.js';
 export const LOOKUP_NORMALIZATION_VERSION = 1;
 
 export type LookupIdentifierKind = 'email_exact' | 'external_subject' | 'account_id';

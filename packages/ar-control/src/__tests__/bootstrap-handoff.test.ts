@@ -10,6 +10,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 import {
   BootstrapHandoffVerifier,
+  D1BootstrapHandoffRepository,
   type BootstrapHandoff,
   type BootstrapHandoffApi,
   type BootstrapHandoffRepository,
@@ -23,7 +24,7 @@ const roles = ['lookup', 'tenant_core/default', 'tenant_core/users', 'tenant_pii
 const tenantId = 'default';
 
 function resource(role: (typeof roles)[number], index: number): BootstrapResource {
-  const streamId = role === 'lookup' ? 'd1-lookup' : role === 'tenant_pii' ? 'd1-pii' : 'd1-core';
+  const streamId = role === 'lookup' ? 'lookup-d1' : role === 'tenant_pii' ? 'pii-d1' : 'core-d1';
   const releaseId = 'release-v1';
   const tenantResource = role !== 'lookup';
   const desiredSpecJson = JSON.stringify({
@@ -106,6 +107,9 @@ async function fixture() {
       expectedDeploymentId: 'deployment-control',
       expectedVersionId: 'version-control',
       expectedSettingsDigest: settingsDigest,
+      observedSettingsDigest: null,
+      observedAt: null,
+      verificationState: 'pending',
       requiredDataRoles: [],
     },
     {
@@ -113,6 +117,9 @@ async function fixture() {
       expectedDeploymentId: 'deployment-management',
       expectedVersionId: 'version-management',
       expectedSettingsDigest: settingsDigest,
+      observedSettingsDigest: null,
+      observedAt: null,
+      verificationState: 'pending',
       requiredDataRoles: [...roles],
     },
   ];
@@ -125,17 +132,19 @@ async function fixture() {
     observedVersionId: 'version-control',
   };
   const accepted = vi.fn<BootstrapHandoffRepository['accept']>();
+  const recordWorkerObservations = vi.fn<BootstrapHandoffRepository['recordWorkerObservations']>();
   const blocked = vi.fn<BootstrapHandoffRepository['block']>();
   const repository: BootstrapHandoffRepository = {
     listPending: vi.fn(async () => [handoff]),
     listResources: vi.fn(async () => resources),
     listWorkers: vi.fn(async () => workers),
     listPinnedReleaseStreams: vi.fn(async () => [
-      { streamId: 'd1-core', releaseId: 'release-v1', manifestDigest, state: 'active' as const },
-      { streamId: 'd1-pii', releaseId: 'release-v1', manifestDigest, state: 'active' as const },
-      { streamId: 'd1-lookup', releaseId: 'release-v1', manifestDigest, state: 'active' as const },
+      { streamId: 'core-d1', releaseId: 'release-v1', manifestDigest, state: 'active' as const },
+      { streamId: 'pii-d1', releaseId: 'release-v1', manifestDigest, state: 'active' as const },
+      { streamId: 'lookup-d1', releaseId: 'release-v1', manifestDigest, state: 'active' as const },
     ]),
     accept: accepted,
+    recordWorkerObservations,
     block: blocked,
   };
   const byDatabaseId = new Map(resources.map((entry) => [entry.providerDatabaseId, entry]));
@@ -197,7 +206,17 @@ async function fixture() {
       ]
     ),
   };
-  return { resources, workers, handoff, repository, accepted, blocked, api, settings };
+  return {
+    resources,
+    workers,
+    handoff,
+    repository,
+    accepted,
+    recordWorkerObservations,
+    blocked,
+    api,
+    settings,
+  };
 }
 
 describe('BootstrapHandoffVerifier', () => {
@@ -220,6 +239,74 @@ describe('BootstrapHandoffVerifier', () => {
       expect(observation.settingsDigest).toMatch(/^[0-9a-f]{64}$/u);
     }
     expect(state.blocked).not.toHaveBeenCalled();
+  });
+
+  it('persists bounded Worker evidence and resumes from the remaining workers', async () => {
+    const state = await fixture();
+    for (let index = 0; index < 3; index += 1) {
+      state.workers.push({
+        ...state.workers[1],
+        workerScriptName: `test-ar-extra-${index}`,
+        expectedDeploymentId: `deployment-extra-${index}`,
+        expectedVersionId: `version-extra-${index}`,
+      });
+    }
+    state.api.listWorkerDeployments = vi.fn(
+      async (scriptName: string): Promise<CloudflareWorkerDeployment[]> => {
+        const suffix = scriptName.replace(/^test-ar-/u, '');
+        return [
+          {
+            id: `deployment-${suffix}`,
+            created_on: '2026-07-30T00:00:00.000Z',
+            source: 'api',
+            strategy: 'percentage',
+            versions: [{ percentage: 100, version_id: `version-${suffix}` }],
+          },
+        ];
+      }
+    );
+    state.recordWorkerObservations.mockImplementation(async (_handoff, observations) => {
+      for (const observation of observations) {
+        const worker = state.workers.find(
+          (candidate) => candidate.workerScriptName === observation.workerScriptName
+        );
+        if (!worker) throw new Error('bootstrap_test_worker_missing');
+        worker.verificationState = 'verified';
+        worker.observedSettingsDigest = observation.settingsDigest;
+        worker.observedAt = 1_800_000_000;
+      }
+    });
+
+    const verifier = new BootstrapHandoffVerifier(state.repository, state.api, () => 1_800_000_000);
+    await expect(verifier.reconcile()).resolves.toEqual({
+      attempted: 1,
+      accepted: 0,
+      blocked: 0,
+      retrying: 1,
+    });
+    expect(state.recordWorkerObservations).toHaveBeenCalledOnce();
+    expect(state.recordWorkerObservations.mock.calls[0]?.[1]).toHaveLength(2);
+    expect(state.accepted).not.toHaveBeenCalled();
+
+    await expect(verifier.reconcile()).resolves.toEqual({
+      attempted: 1,
+      accepted: 0,
+      blocked: 0,
+      retrying: 1,
+    });
+    expect(state.recordWorkerObservations).toHaveBeenCalledTimes(2);
+    expect(state.recordWorkerObservations.mock.calls[1]?.[1]).toHaveLength(2);
+
+    await expect(verifier.reconcile()).resolves.toEqual({
+      attempted: 1,
+      accepted: 1,
+      blocked: 0,
+      retrying: 0,
+    });
+    expect(state.accepted).toHaveBeenCalledOnce();
+    expect(state.accepted.mock.calls[0]?.[1]).toHaveLength(1);
+    expect(state.api.getD1Database).toHaveBeenCalledTimes(4);
+    expect(state.api.queryD1Batch).toHaveBeenCalledTimes(4);
   });
 
   it('accepts platform-owned shared-pool shards with one active tenant assignment', async () => {
@@ -486,5 +573,46 @@ describe('BootstrapHandoffVerifier', () => {
       1_800_000_000
     );
     expect(state.api.getD1Database).not.toHaveBeenCalledWith(entry.providerDatabaseId);
+  });
+
+  it('accepts an idempotent concurrent handoff commit after exact state readback', async () => {
+    const state = await fixture();
+    const prepared = {
+      bind: vi.fn(),
+      all: vi.fn(async () => ({
+        results: [
+          {
+            state: 'accepted',
+            ownership_fingerprint: state.handoff.ownershipFingerprint,
+            release_manifest_digest: state.handoff.releaseManifestDigest,
+            environment_active: 1,
+            invalid_evidence: 0,
+          },
+        ],
+        meta: {},
+      })),
+    };
+    prepared.bind.mockReturnValue(prepared);
+    const db = {
+      prepare: vi.fn(() => prepared),
+      batch: vi.fn(async (statements: readonly unknown[]) =>
+        statements.map((_statement, index) => ({
+          results: [],
+          meta: { changes: index === 2 ? 0 : 1 },
+        }))
+      ),
+    };
+    const repository = new D1BootstrapHandoffRepository(
+      db as unknown as ConstructorParameters<typeof D1BootstrapHandoffRepository>[0]
+    );
+
+    await expect(
+      repository.accept(
+        state.handoff,
+        [{ workerScriptName: 'test-ar-control', settingsDigest: 'c'.repeat(64) }],
+        1_800_000_000
+      )
+    ).resolves.toBeUndefined();
+    expect(prepared.all).toHaveBeenCalledOnce();
   });
 });

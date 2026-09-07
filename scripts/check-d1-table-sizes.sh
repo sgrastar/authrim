@@ -44,7 +44,6 @@ TABLES=(
     "user_custom_fields"
     "user_roles"
     "users"
-    "verified_attributes"
     "external_idp_auth_states"
     "linked_identities"
     "migration_metadata"

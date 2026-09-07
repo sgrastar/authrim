@@ -30,7 +30,7 @@ export interface ControlReleaseRolloutStatus {
 
 export interface ControlReleaseRolloutBlockedTarget {
   targetId: string;
-  streamId: 'd1-core' | 'd1-pii' | 'd1-lookup';
+  streamId: ControlManagedMigrationStreamId;
   attemptCount: number;
   lastErrorCode: string;
   updatedAt: number;
@@ -156,7 +156,7 @@ export interface ControlCapacityProvisioningTargetPreview {
   databaseName: string;
   bindingRef: string;
   readReplicationMode: 'enabled' | 'disabled';
-  migrationStreamId: 'd1-core' | 'd1-pii' | 'd1-lookup';
+  migrationStreamId: ControlManagedMigrationStreamId;
 }
 
 export interface ControlCapacityProvisioningPreview extends ControlCapacityProfileRequest {
@@ -647,7 +647,7 @@ export interface ControlTenantDisasterRecoveryTarget {
   shardGeneration: number;
   bindingRef: string;
   providerDatabaseId: string;
-  migrationStreamId: 'd1-core' | 'd1-pii';
+  migrationStreamId: Exclude<ControlManagedMigrationStreamId, 'lookup-d1'>;
   releaseId: string;
   manifestDigest: string;
   restoreConfirmedAt: number | null;
@@ -2227,3 +2227,4 @@ export function nextDirectoryRewriteFencingToken(input: {
   }
   return input.current.fencingToken + 1;
 }
+import type { ControlManagedMigrationStreamId } from './migration-stream-contract.js';

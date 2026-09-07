@@ -26,7 +26,7 @@ function readMigration(relativePath: string): string {
 
 describe('consent canonical runtime user binding migrations', () => {
   it('defines final D1 consent tables without users_core foreign keys', () => {
-    const sql = readMigration('migrations/001_pre_1_0_core_baseline.sql');
+    const sql = readMigration('migrations/core/d1/001_0_4_0_core_baseline.sql');
 
     for (const table of ['oauth_client_consents', 'user_consent_records', 'consent_item_history']) {
       const block =
@@ -39,9 +39,7 @@ describe('consent canonical runtime user binding migrations', () => {
   });
 
   it('defines final PostgreSQL consent tables without users_core foreign keys', () => {
-    const sql = readMigration(
-      'migrations/external/postgres/001_pre_1_0_external_postgres_core_baseline.sql'
-    );
+    const sql = readMigration('migrations/core/postgresql/001_0_4_0_core_baseline.sql');
 
     for (const table of ['oauth_client_consents', 'user_consent_records']) {
       const block =

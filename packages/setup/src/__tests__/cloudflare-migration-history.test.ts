@@ -156,7 +156,7 @@ describe('D1 migration history safety', () => {
     );
   });
 
-  it('prefers the split D1 token for typed D1 batches', async () => {
+  it('does not use the Control Worker split D1 token for Setup D1 batches', async () => {
     process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
     process.env.CLOUDFLARE_API_TOKEN = 'generic-token';
     process.env.CLOUDFLARE_D1_API_TOKEN = 'd1-token';
@@ -171,7 +171,7 @@ describe('D1 migration history safety', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: 'Bearer d1-token' }),
+        headers: expect.objectContaining({ Authorization: 'Bearer generic-token' }),
       })
     );
   });
@@ -183,20 +183,16 @@ describe('D1 migration history safety', () => {
       false
     );
     expect(shouldRefreshD1OAuthCredential({ status: 403, source: 'env', attempt: 1 })).toBe(false);
-    expect(shouldRefreshD1OAuthCredential({ status: 403, source: 'd1_env', attempt: 1 })).toBe(
-      false
-    );
   });
 
-  it('does not retry an explicit D1 token after a permission rejection', async () => {
+  it('does not accept a Control Worker D1 token as the Setup operator credential', async () => {
     process.env.CLOUDFLARE_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
     process.env.CLOUDFLARE_D1_API_TOKEN = 'd1-token';
-    fetchMock.mockResolvedValueOnce({ ok: false, status: 403 });
 
     await expect(
       executeD1Batch('11111111-1111-1111-1111-111111111111', [{ sql: 'SELECT 1' }])
-    ).rejects.toThrow('cloudflare_d1_batch_failed:403');
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    ).rejects.toThrow('cloudflare_api_credentials_required');
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(execaMock).not.toHaveBeenCalled();
   });
 
@@ -743,15 +739,37 @@ describe('D1 migration history safety', () => {
     const rootDirectory = mkdtempSync(join(tmpdir(), 'authrim-environment-migration-status-'));
     tempDirs.push(rootDirectory);
     const migrationsRoot = join(rootDirectory, 'migrations');
-    mkdirSync(join(migrationsRoot, 'pii'), { recursive: true });
-    mkdirSync(join(migrationsRoot, 'admin'), { recursive: true });
+    mkdirSync(join(migrationsRoot, 'core', 'd1'), { recursive: true });
+    mkdirSync(join(migrationsRoot, 'pii', 'd1'), { recursive: true });
+    mkdirSync(join(migrationsRoot, 'admin', 'd1'), { recursive: true });
     writeReleaseMigrationManifest(join(migrationsRoot, DRAFT_RELEASE_MANIFEST_FILENAME), {
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       streams: [
-        { id: 'd1-core', dialect: 'sqlite', logicalRoles: ['core'], files: [] },
-        { id: 'd1-pii', dialect: 'sqlite', logicalRoles: ['pii'], files: [] },
-        { id: 'd1-admin', dialect: 'sqlite', logicalRoles: ['admin'], files: [] },
+        {
+          id: 'core-d1',
+          schemaFamily: 'core',
+          dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
+          files: [],
+        },
+        {
+          id: 'pii-d1',
+          schemaFamily: 'pii',
+          dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['pii', 'tenant_pii'],
+          files: [],
+        },
+        {
+          id: 'admin-d1',
+          schemaFamily: 'admin',
+          dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['admin'],
+          files: [],
+        },
       ],
     });
     execaMock.mockResolvedValue({
@@ -794,15 +812,36 @@ describe('D1 migration history safety', () => {
     const rootDirectory = mkdtempSync(join(tmpdir(), 'authrim-environment-migration-status-'));
     tempDirs.push(rootDirectory);
     const migrationsRoot = join(rootDirectory, 'migrations');
-    mkdirSync(join(migrationsRoot, 'pii'), { recursive: true });
-    mkdirSync(join(migrationsRoot, 'admin'), { recursive: true });
+    mkdirSync(join(migrationsRoot, 'pii', 'd1'), { recursive: true });
+    mkdirSync(join(migrationsRoot, 'admin', 'd1'), { recursive: true });
     writeReleaseMigrationManifest(join(migrationsRoot, DRAFT_RELEASE_MANIFEST_FILENAME), {
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       streams: [
-        { id: 'd1-core', dialect: 'sqlite', logicalRoles: ['core'], files: [] },
-        { id: 'd1-pii', dialect: 'sqlite', logicalRoles: ['pii'], files: [] },
-        { id: 'd1-admin', dialect: 'sqlite', logicalRoles: ['admin'], files: [] },
+        {
+          id: 'core-d1',
+          schemaFamily: 'core',
+          dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
+          files: [],
+        },
+        {
+          id: 'pii-d1',
+          schemaFamily: 'pii',
+          dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['pii', 'tenant_pii'],
+          files: [],
+        },
+        {
+          id: 'admin-d1',
+          schemaFamily: 'admin',
+          dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['admin'],
+          files: [],
+        },
       ],
     });
 
@@ -859,8 +898,10 @@ describe('D1 migration history safety', () => {
   });
 
   it('auto-discovers supersedes metadata for legacy deploy and tenant call paths', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'authrim-release-auto-discovery-'));
-    tempDirs.push(directory);
+    const migrationsRoot = mkdtempSync(join(tmpdir(), 'authrim-release-auto-discovery-'));
+    tempDirs.push(migrationsRoot);
+    const directory = join(migrationsRoot, 'core', 'd1');
+    mkdirSync(directory, { recursive: true });
     const sourceSql = 'CREATE TABLE draft_schema (id TEXT PRIMARY KEY);';
     const sourcePath = join(directory, '001_draft_schema.sql');
     writeFileSync(sourcePath, sourceSql);
@@ -869,14 +910,16 @@ describe('D1 migration history safety', () => {
     const bundlePath = join(directory, '001_release_1_0_0.sql');
     writeFileSync(bundlePath, sourceSql);
     const bundleChecksum = calculateD1MigrationChecksum(bundlePath);
-    writeReleaseMigrationManifest(join(directory, DRAFT_RELEASE_MANIFEST_FILENAME), {
-      formatVersion: 1,
+    writeReleaseMigrationManifest(join(migrationsRoot, DRAFT_RELEASE_MANIFEST_FILENAME), {
+      formatVersion: 2,
       productVersion: '1.0.0',
       streams: [
         {
-          id: 'd1-core',
+          id: 'core-d1',
+          schemaFamily: 'core',
           dialect: 'sqlite',
-          logicalRoles: ['core'],
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
           files: [
             {
               path: '001_release_1_0_0.sql',
@@ -921,8 +964,10 @@ describe('D1 migration history safety', () => {
   });
 
   it('materializes a consolidated bundle in status when all draft sources were applied', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'authrim-release-status-'));
-    tempDirs.push(directory);
+    const migrationsRoot = mkdtempSync(join(tmpdir(), 'authrim-release-status-'));
+    tempDirs.push(migrationsRoot);
+    const directory = join(migrationsRoot, 'core', 'd1');
+    mkdirSync(directory, { recursive: true });
     const sourceSql = 'CREATE TABLE status_draft (id TEXT PRIMARY KEY);';
     const sourcePath = join(directory, '001_status_draft.sql');
     writeFileSync(sourcePath, sourceSql);
@@ -931,14 +976,16 @@ describe('D1 migration history safety', () => {
     const bundlePath = join(directory, '001_release_1_0_0.sql');
     writeFileSync(bundlePath, sourceSql);
     const bundleChecksum = calculateD1MigrationChecksum(bundlePath);
-    writeReleaseMigrationManifest(join(directory, DRAFT_RELEASE_MANIFEST_FILENAME), {
-      formatVersion: 1,
+    writeReleaseMigrationManifest(join(migrationsRoot, DRAFT_RELEASE_MANIFEST_FILENAME), {
+      formatVersion: 2,
       productVersion: '1.0.0',
       streams: [
         {
-          id: 'd1-core',
+          id: 'core-d1',
+          schemaFamily: 'core',
           dialect: 'sqlite',
-          logicalRoles: ['core'],
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
           files: [
             {
               path: '001_release_1_0_0.sql',
@@ -1034,11 +1081,13 @@ describe('D1 migration history safety', () => {
   });
 
   it('uses the discovered logical stream instead of recursively applying nested database roles', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'authrim-stream-filter-'));
-    tempDirs.push(directory);
+    const migrationsRoot = mkdtempSync(join(tmpdir(), 'authrim-stream-filter-'));
+    tempDirs.push(migrationsRoot);
+    const directory = join(migrationsRoot, 'core', 'd1');
+    mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, '001_core.sql'), 'CREATE TABLE core_only (id TEXT);');
     for (const nested of ['pii', 'admin']) {
-      const nestedDirectory = join(directory, nested);
+      const nestedDirectory = join(migrationsRoot, nested, 'd1');
       mkdirSync(nestedDirectory, { recursive: true });
       writeFileSync(
         join(nestedDirectory, `001_${nested}.sql`),
@@ -1046,14 +1095,16 @@ describe('D1 migration history safety', () => {
       );
     }
     const coreChecksum = calculateD1MigrationChecksum(join(directory, '001_core.sql'));
-    writeReleaseMigrationManifest(join(directory, DRAFT_RELEASE_MANIFEST_FILENAME), {
-      formatVersion: 1,
+    writeReleaseMigrationManifest(join(migrationsRoot, DRAFT_RELEASE_MANIFEST_FILENAME), {
+      formatVersion: 2,
       productVersion: '1.0.0',
       streams: [
         {
-          id: 'd1-core',
+          id: 'core-d1',
+          schemaFamily: 'core',
           dialect: 'sqlite',
-          logicalRoles: ['core'],
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
           files: [{ path: '001_core.sql', checksum: coreChecksum }],
         },
       ],

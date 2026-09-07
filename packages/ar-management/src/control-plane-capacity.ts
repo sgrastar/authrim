@@ -132,10 +132,10 @@ function validatePreview(
       typeof target.bindingRef !== 'string' ||
       !SAFE_BINDING.test(target.bindingRef) ||
       (target.readReplicationMode !== 'enabled' && target.readReplicationMode !== 'disabled') ||
-      !['d1-core', 'd1-pii', 'd1-lookup'].includes(String(migrationStreamId)) ||
-      (dataRole === 'tenant_pii' && migrationStreamId !== 'd1-pii') ||
-      (dataRole === 'lookup' && migrationStreamId !== 'd1-lookup') ||
-      (!['tenant_pii', 'lookup'].includes(dataRole) && migrationStreamId !== 'd1-core')
+      !['core-d1', 'pii-d1', 'lookup-d1'].includes(String(migrationStreamId)) ||
+      (dataRole === 'tenant_pii' && migrationStreamId !== 'pii-d1') ||
+      (dataRole === 'lookup' && migrationStreamId !== 'lookup-d1') ||
+      (!['tenant_pii', 'lookup'].includes(dataRole) && migrationStreamId !== 'core-d1')
     ) {
       throw new Error('control_capacity_preview_invalid');
     }

@@ -84,7 +84,7 @@ describe('D1BootstrapHandoffRepository', () => {
     database = new DatabaseSync(':memory:');
     database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
         'utf8'
       )
     );
@@ -145,6 +145,9 @@ describe('D1BootstrapHandoffRepository', () => {
         expectedDeploymentId: 'deployment-control',
         expectedVersionId: 'version-control',
         expectedSettingsDigest: '3'.repeat(64),
+        observedSettingsDigest: null,
+        observedAt: null,
+        verificationState: 'pending',
         requiredDataRoles: [],
       },
       {
@@ -152,6 +155,9 @@ describe('D1BootstrapHandoffRepository', () => {
         expectedDeploymentId: 'deployment-management',
         expectedVersionId: 'version-management',
         expectedSettingsDigest: '4'.repeat(64),
+        observedSettingsDigest: null,
+        observedAt: null,
+        verificationState: 'pending',
         requiredDataRoles: ['lookup', 'tenant_core/default'],
       },
     ]);
@@ -189,38 +195,65 @@ describe('D1BootstrapHandoffRepository', () => {
     ).toEqual({ count: 2 });
   });
 
-  it('reads the exact active d1-core, d1-pii, and d1-lookup release streams', async () => {
+  it('persists partial Worker observations without accepting the handoff', async () => {
+    await repository.recordWorkerObservations(
+      handoff,
+      [{ workerScriptName: 'test-ar-control', settingsDigest: '3'.repeat(64) }],
+      50
+    );
+
+    expect(
+      database
+        .prepare(
+          `SELECT state, observed_settings_digest, observed_at
+             FROM control_bootstrap_worker_evidence
+            WHERE environment_id = 'test' AND worker_script_name = 'test-ar-control'`
+        )
+        .get()
+    ).toEqual({
+      state: 'verified',
+      observed_settings_digest: '3'.repeat(64),
+      observed_at: 50,
+    });
+    expect(
+      database
+        .prepare(`SELECT state FROM control_bootstrap_handoffs WHERE environment_id = 'test'`)
+        .get()
+    ).toEqual({ state: 'pending_verification' });
+  });
+
+  it('reads the exact active core-d1, pii-d1, and lookup-d1 release streams', async () => {
     database.exec(
       `INSERT INTO control_migration_release_catalog (
          environment_id, stream_id, release_id, manifest_digest, manifest_r2_object_key,
          state, active_stream_key, registered_by_operation_id, registered_at, activated_at
        ) VALUES
-         ('test', 'd1-core', 'release-v1', '${'b'.repeat(64)}',
+         ('test', 'core-d1', 'release-v1', '${'b'.repeat(64)}',
           'releases/release-v1/${'b'.repeat(64)}/manifest.json',
           'active', 'active', 'inventory-op', 1, 1),
-         ('test', 'd1-pii', 'release-v1', '${'b'.repeat(64)}',
+         ('test', 'pii-d1', 'release-v1', '${'b'.repeat(64)}',
           'releases/release-v1/${'b'.repeat(64)}/manifest.json',
           'active', 'active', 'inventory-op', 1, 1),
-         ('test', 'd1-lookup', 'release-v1', '${'b'.repeat(64)}',
+         ('test', 'lookup-d1', 'release-v1', '${'b'.repeat(64)}',
           'releases/release-v1/${'b'.repeat(64)}/manifest.json',
           'active', 'active', 'inventory-op', 1, 1);`
     );
 
     await expect(repository.listPinnedReleaseStreams('test', 'b'.repeat(64))).resolves.toEqual([
       {
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         releaseId: 'release-v1',
         manifestDigest: 'b'.repeat(64),
         state: 'active',
       },
       {
-        streamId: 'd1-lookup',
+        streamId: 'lookup-d1',
         releaseId: 'release-v1',
         manifestDigest: 'b'.repeat(64),
         state: 'active',
       },
       {
-        streamId: 'd1-pii',
+        streamId: 'pii-d1',
         releaseId: 'release-v1',
         manifestDigest: 'b'.repeat(64),
         state: 'active',
@@ -235,7 +268,7 @@ describe('D1BootstrapHandoffRepository', () => {
       bootstrap: true,
       bootstrap_role: 'lookup',
       data_role: 'lookup',
-      migration_stream_id: 'd1-lookup',
+      migration_stream_id: 'lookup-d1',
       release_id: 'release-v1',
       manifest_digest: manifestDigest,
       migration_files: [{ path: '001_lookup.sql', checksum }],
@@ -245,7 +278,7 @@ describe('D1BootstrapHandoffRepository', () => {
       bootstrap_role: 'tenant_core/default',
       data_role: 'tenant_core/default',
       allocation_scope: 'shared_pool',
-      migration_stream_id: 'd1-core',
+      migration_stream_id: 'core-d1',
       release_id: 'release-v1',
       manifest_digest: manifestDigest,
       migration_files: [{ path: '001_core.sql', checksum }],
@@ -264,31 +297,34 @@ describe('D1BootstrapHandoffRepository', () => {
          release_manifest_digest, created_at, completed_at, updated_at
        ) VALUES (
          'bootstrap-op', 'test', 'provision_shard', 'bootstrap:default:v1', 'succeeded',
-         'setup', 1, 'release-v1', 'd1-core', '${manifestDigest}', 1, 1, 1
+         'setup', 1, 'release-v1', 'core-d1', '${manifestDigest}', 1, 1, 1
        );
        INSERT INTO control_migration_release_catalog (
          environment_id, stream_id, release_id, manifest_digest, manifest_r2_object_key,
          state, active_stream_key, registered_by_operation_id, registered_at, activated_at
        ) VALUES (
-         'test', 'd1-core', 'release-v1', '${manifestDigest}',
+         'test', 'core-d1', 'release-v1', '${manifestDigest}',
          'releases/release-v1/${manifestDigest}/manifest.json',
          'active', 'active', 'inventory-op', 1, 1
        );
        INSERT INTO control_operation_release_pins (
          operation_id, environment_id, stream_id, release_id, manifest_digest, pinned_at
-       ) VALUES ('bootstrap-op', 'test', 'd1-core', 'release-v1', '${manifestDigest}', 1);
+       ) VALUES ('bootstrap-op', 'test', 'core-d1', 'release-v1', '${manifestDigest}', 1);
        INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          resource_scope, tenant_id, deterministic_name, ownership_fingerprint,
          desired_state, provisioning_state, origin_operation_id, observed_resource_id,
-         desired_spec_json, created_at, updated_at
+         desired_spec_json, provider_create_state, provider_resource_id,
+         provider_identity_checkpointed_at, created_at, updated_at
        ) VALUES
          ('lookup-resource', 'test', 'd1', 'lookup-default', 'platform', NULL,
           'authrim-test-lookup', '${'6'.repeat(64)}', 'present', 'ready', 'inventory-op',
-          'lookup-observed', '${lookupSpec.replaceAll("'", "''")}', 1, 1),
+          'lookup-observed', '${lookupSpec.replaceAll("'", "''")}', 'identified',
+          'lookup-db-id', 1, 1, 1),
          ('tenant-resource', 'test', 'd1', 'tenant-default', 'platform', NULL,
           'authrim-test-tenant-default', '${'7'.repeat(64)}', 'present', 'ready',
-          'bootstrap-op', 'tenant-observed', '${tenantSpec.replaceAll("'", "''")}', 1, 1);
+          'bootstrap-op', 'tenant-observed', '${tenantSpec.replaceAll("'", "''")}', 'identified',
+          'tenant-db-id', 1, 1, 1);
        INSERT INTO control_observed_resources (
          observed_resource_id, environment_id, desired_resource_id, provider_resource_id,
          provider_name, resource_kind, ownership_fingerprint, observed_state,
@@ -337,7 +373,7 @@ describe('D1BootstrapHandoffRepository', () => {
          applied_file_count, last_filename, observed_sentinel_json,
          started_at, completed_at, updated_at
        ) VALUES (
-         'tenant-resource', 'test', 'bootstrap-op', 'd1-core', 'release-v1',
+         'tenant-resource', 'test', 'bootstrap-op', 'core-d1', 'release-v1',
          '${manifestDigest}', 'tenant-db-id', 'ready', 1, 1, '001_core.sql', '{}', 1, 1, 1
        );`
     );

@@ -81,6 +81,7 @@
     "migrate:create": "tsx scripts/create-migration.ts",
     "migrate:manifest": "tsx scripts/release-migrations-cli.ts draft",
     "migrate:manifest:check": "tsx scripts/release-migrations-cli.ts check",
+    "migrate:release:check": "tsx scripts/release-migrations-cli.ts check --require-release-candidate",
     "release:migrations": "tsx scripts/release-migrations-cli.ts prepare",
     "release:migrations:baseline": "tsx scripts/release-migrations-cli.ts baseline",
     "release:migrations:semantic": "tsx scripts/semantic-baseline-migrations.ts",

@@ -847,6 +847,10 @@ type RootTranslation = {
 	 */
 	admin_login_authenticating: string
 	/**
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​t​o​o​k​ ​t​o​o​ ​l​o​n​g​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	admin_login_timeout: string
+	/**
 	 * L​o​g​i​n​ ​w​i​t​h​ ​P​a​s​s​k​e​y
 	 */
 	admin_login_with_passkey: string
@@ -25562,7 +25566,7 @@ type RootTranslation = {
 	 */
 	admin_identity_mapping_editor_policy_name: string
 	/**
-	 * S​o​u​r​c​e​ ​F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
+	 * F​i​e​l​d​ ​M​a​p​p​i​n​g​ ​S​e​t
 	 */
 	admin_identity_mapping_editor_policy_placeholder: string
 	/**
@@ -34269,6 +34273,10 @@ export type TranslationFunctions = {
 	 * Authenticating...
 	 */
 	admin_login_authenticating: () => LocalizedString
+	/**
+	 * Authentication took too long. Please try again.
+	 */
+	admin_login_timeout: () => LocalizedString
 	/**
 	 * Login with Passkey
 	 */
@@ -58624,7 +58632,7 @@ Remove this role from {email}?
 	 */
 	admin_identity_mapping_editor_policy_name: () => LocalizedString
 	/**
-	 * Source Field Mapping Set
+	 * Field Mapping Set
 	 */
 	admin_identity_mapping_editor_policy_placeholder: () => LocalizedString
 	/**

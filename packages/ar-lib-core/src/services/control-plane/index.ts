@@ -13,6 +13,7 @@ export * from './plugin-resource-cleanup.js';
 export * from './plugin-runner-registry.js';
 export * from './provisioning-engine.js';
 export * from './release-artifact.js';
+export * from './migration-stream-contract.js';
 export * from './runtime-smoke-rpc.js';
 export * from './worker-binding-engine.js';
 export {

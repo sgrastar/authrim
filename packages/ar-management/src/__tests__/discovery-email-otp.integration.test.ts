@@ -175,7 +175,7 @@ describe('DiscoveryEmailOtpService', () => {
     for (const target of [database, targetDatabase]) {
       target.exec(
         readFileSync(
-          resolve(REPO_ROOT, 'migrations/lookup/001_pre_1_0_lookup_baseline.sql'),
+          resolve(REPO_ROOT, 'migrations/lookup/d1/001_0_4_0_lookup_baseline.sql'),
           'utf8'
         )
           .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')

@@ -65,7 +65,7 @@ describe('Control storage topology', () => {
     database = new DatabaseSync(':memory:');
     database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
         'utf8'
       )
     );
@@ -91,17 +91,18 @@ describe('Control storage topology', () => {
         desired_resource_id, environment_id, resource_kind, logical_shard_id,
         resource_scope, tenant_id, deterministic_name, ownership_fingerprint,
         desired_state, provisioning_state, origin_operation_id, create_started_at,
-        observed_resource_id, created_at, updated_at
+        observed_resource_id, provider_create_state, provider_resource_id,
+        provider_identity_checkpointed_at, created_at, updated_at
       ) VALUES
         ('desired-users', 'env-test', 'd1', 'users-1', 'platform', NULL,
          'test-authrim-tenant-users-db-a', 'fingerprint', 'present', 'active',
-         'op-users', 11, 'observed-users', 10, 20),
+         'op-users', 11, 'observed-users', 'identified', 'provider-users', 20, 10, 20),
         ('desired-lookup', 'env-test', 'd1', 'lookup-1', 'platform', NULL,
          'test-authrim-lookup-db', 'fingerprint', 'present', 'active',
-         'op-lookup', 13, 'observed-lookup', 12, 21),
+         'op-lookup', 13, 'observed-lookup', 'identified', 'provider-lookup', 21, 12, 21),
         ('desired-pending', 'env-test', 'd1', 'pii-2', 'tenant', 'tenant-b',
          'test-authrim-tenant-pii-db-b', 'fingerprint', 'present', 'requested',
-         'op-pending', NULL, NULL, 30, 30);
+         'op-pending', NULL, NULL, 'not_started', NULL, NULL, 30, 30);
       INSERT INTO control_observed_resources (
         observed_resource_id, environment_id, desired_resource_id, provider_resource_id,
         provider_name, resource_kind, observed_state, observed_spec_json, observed_at
@@ -242,8 +243,10 @@ describe('Control storage topology', () => {
       `INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          deterministic_name, ownership_fingerprint, desired_state, provisioning_state,
-         origin_operation_id, created_at, updated_at
-       ) VALUES (?, 'env-test', 'd1', ?, ?, ?, 'present', 'ready', ?, ?, ?)`
+         origin_operation_id, provider_create_state, provider_resource_id,
+         provider_identity_checkpointed_at, created_at, updated_at
+       ) VALUES (?, 'env-test', 'd1', ?, ?, ?, 'present', 'ready', ?,
+                 'identified', ?, ?, ?, ?)`
     );
     for (let index = 0; index < 100; index += 1) {
       const operationId = `op-new-${index}`;
@@ -256,6 +259,8 @@ describe('Control storage topology', () => {
         `test-authrim-new-${index}`,
         `fingerprint-${index}`,
         operationId,
+        `database-new-${index}`,
+        timestamp,
         timestamp,
         timestamp
       );

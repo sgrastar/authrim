@@ -578,7 +578,9 @@ program
                   ? resolveLoginUiEntryUrl(cfg, { env, workersSubdomain })
                   : resolveAdminUiEntryUrl(cfg, { env, workersSubdomain });
               const httpReadiness = await waitForWorkerHttpReady({
-                targets: [{ workerName: result.projectName, url: entryUrl }],
+                targets: [
+                  { workerName: result.projectName, url: entryUrl, allowRedirectResponse: true },
+                ],
               });
               if (!httpReadiness.ready) {
                 throw new Error(

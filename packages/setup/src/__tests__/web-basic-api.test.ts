@@ -14,6 +14,7 @@ const cloudflareMocks = vi.hoisted(() => ({
   getAccountId: vi.fn(),
   getCloudflareApiToken: vi.fn(),
   listQueues: vi.fn(),
+  checkAdminSetupStatus: vi.fn(),
 }));
 const runReleaseUpdateCliMock = vi.hoisted(() => vi.fn());
 const completeInitialSetupMock = vi.hoisted(() => vi.fn());
@@ -34,6 +35,7 @@ vi.mock('../core/cloudflare.js', async (importOriginal) => {
     getAccountId: cloudflareMocks.getAccountId,
     getCloudflareApiToken: cloudflareMocks.getCloudflareApiToken,
     listQueues: cloudflareMocks.listQueues,
+    checkAdminSetupStatus: cloudflareMocks.checkAdminSetupStatus,
   };
 });
 
@@ -134,6 +136,7 @@ describe('setup web basic API contracts', () => {
       .mockReset()
       .mockResolvedValue({ token: 'oauth-token', source: 'oauth' });
     cloudflareMocks.listQueues.mockReset().mockResolvedValue([]);
+    cloudflareMocks.checkAdminSetupStatus.mockReset().mockResolvedValue({ completed: false });
     cloudflareMocks.deleteEnvironment.mockReset().mockResolvedValue({
       success: true,
       completion: 'complete',
@@ -1841,6 +1844,23 @@ describe('setup web basic API contracts', () => {
       );
       expect(generated.status).toBe(400);
     }
+  });
+
+  it('keeps an unavailable admin setup check distinct from not configured', async () => {
+    cloudflareMocks.checkAdminSetupStatus.mockResolvedValue({
+      completed: false,
+      error: 'cloudflare_status_unavailable',
+    });
+    const app = createApiRoutes();
+    const response = await app.request(`/admin/status/${'a'.repeat(32)}`);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      adminSetupCompleted: false,
+      statusKnown: false,
+      error: 'cloudflare_status_unavailable',
+    });
   });
 
   it('validates environment and component names before update or deployment work', async () => {

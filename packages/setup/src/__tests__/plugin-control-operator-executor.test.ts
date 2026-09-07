@@ -194,13 +194,7 @@ describe('setup plugin Control operator executor', () => {
     database = new DatabaseSync(':memory:');
     database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
         'utf8'
       )
     );
@@ -425,12 +419,15 @@ describe('setup plugin Control operator executor', () => {
     const sql = 'CREATE TABLE plugin_state (id TEXT PRIMARY KEY);';
     const checksum = createHash('sha256').update(sql).digest('hex');
     const manifest = `${JSON.stringify({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       streams: [
         {
           id: 'plugin/plugin-a/state',
+          schemaFamily: 'plugin_runner',
           dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['plugin_runner'],
           files: [{ path: '001_state.sql', checksum }],
         },
       ],

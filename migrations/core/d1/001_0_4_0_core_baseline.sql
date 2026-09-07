@@ -1,7 +1,7 @@
--- Authrim 0.4.0 pre-1.0 semantic fresh-install baseline.
--- Logical stream: d1-core.
+-- Authrim 0.4.0 semantic fresh-install baseline.
+-- Logical stream: core-d1.
 -- Generated from the final database state; do not append historical migration SQL here.
--- Pre-1.0 databases are not upgrade-compatible and must be recreated.
+-- Fresh-install baselines must never be applied to upgrade an existing database.
 PRAGMA foreign_keys = OFF;
 
 CREATE TABLE tenants (
@@ -28,15 +28,6 @@ CREATE TABLE tenants (
   )), isolation_policy TEXT NOT NULL DEFAULT 'tenant_exclusive'
   CHECK (isolation_policy IN ('shared_pool', 'tenant_exclusive')));
 INSERT INTO tenants VALUES('default','default','t_' || lower(hex(randomblob(18))),'Default',NULL,1,'default',__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,'active','tenant_exclusive');
-CREATE TABLE trust_groups (
-  id          TEXT PRIMARY KEY,
-  tenant_id   TEXT NOT NULL,
-  name        TEXT,
-  description TEXT,
-  created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL,
-  FOREIGN KEY (tenant_id) REFERENCES tenants(id)
-);
 CREATE TABLE tenant_domain_mappings (
   id                      TEXT PRIMARY KEY,
   domain_hash             TEXT NOT NULL,
@@ -599,26 +590,6 @@ CREATE TABLE issued_credentials (
     UNIQUE (tenant_id, public_id),
     FOREIGN KEY (status_list_internal_id) REFERENCES status_lists(internal_id)
 );
-CREATE TABLE IF NOT EXISTS "linked_identities" (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  user_id TEXT NOT NULL,
-  provider_id TEXT NOT NULL,
-  provider_user_id TEXT NOT NULL,
-  provider_email TEXT,
-  email_verified INTEGER DEFAULT 0,
-  access_token_encrypted TEXT,
-  refresh_token_encrypted TEXT,
-  token_expires_at INTEGER,
-  raw_claims TEXT,
-  profile_data TEXT,
-  linked_at INTEGER NOT NULL,
-  last_login_at INTEGER,
-  updated_at INTEGER NOT NULL,
-  UNIQUE(tenant_id, provider_id, provider_user_id),
-  FOREIGN KEY (user_id) REFERENCES users_core(id) ON DELETE CASCADE,
-  FOREIGN KEY (provider_id) REFERENCES upstream_providers(id) ON DELETE CASCADE
-);
 CREATE TABLE oauth_clients (
   client_id TEXT NOT NULL,
   client_name TEXT NOT NULL,
@@ -1161,23 +1132,6 @@ CREATE TABLE status_lists (
     updated_at TEXT DEFAULT (CURRENT_TIMESTAMP),
     UNIQUE (tenant_id, public_id)
 );
-CREATE TABLE subject_identifiers (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  -- User this identifier belongs to
-  subject_id TEXT NOT NULL,         -- References users(id)
-  -- Identifier details
-  identifier_type TEXT NOT NULL,    -- 'email', 'did', 'phone', 'username'
-  identifier_value TEXT NOT NULL,   -- 'user@example.com', 'did:key:z6Mk...'
-  -- Flags
-  is_primary INTEGER DEFAULT 0,     -- Whether this is the primary identifier
-  -- Verification
-  verified_at INTEGER,              -- When the identifier was verified
-  verification_method TEXT,         -- 'email_verification', 'did_auth', 'phone_sms'
-  -- Timestamps
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-, destination_type TEXT DEFAULT 'global', destination_id TEXT DEFAULT 'default', identifier_value_hash TEXT, identifier_storage_ref TEXT, lifecycle_state TEXT NOT NULL DEFAULT 'active');
 CREATE TABLE IF NOT EXISTS "subject_org_membership" (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -1466,26 +1420,6 @@ CREATE TABLE users_core (
   locked_at INTEGER,
   locked_until INTEGER
 );
-CREATE TABLE verified_attributes (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  -- Subject this attribute belongs to
-  subject_id TEXT NOT NULL,         -- References users(id)
-  -- Attribute details
-  attribute_name TEXT NOT NULL,     -- 'age_over_18', 'medical_license', 'subscription_tier'
-  attribute_value TEXT,             -- 'true', 'MD12345', 'premium'
-  -- Source information (for auditing and trust evaluation)
-  source TEXT NOT NULL DEFAULT 'manual',  -- 'manual', 'vc', 'jwt_sd', 'kyc_provider'
-  issuer TEXT,                      -- Issuer DID or URL (Phase 4+)
-  credential_id TEXT,               -- VC ID for traceability (Phase 4+)
-  -- Validity
-  verified_at INTEGER NOT NULL,     -- When the attribute was verified/extracted
-  expires_at INTEGER,               -- When the attribute expires (from VC exp)
-  revoked_at INTEGER,               -- When the attribute was revoked
-  -- Timestamps
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
-);
 CREATE TABLE vp_requests (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL,
@@ -1558,17 +1492,6 @@ CREATE TABLE webhook_deliveries (
   duration_ms INTEGER,
   detail_object_catalog_id TEXT,
   FOREIGN KEY (webhook_id) REFERENCES webhook_configs(id) ON DELETE CASCADE
-);
-CREATE TABLE websocket_subscriptions (
-    id TEXT PRIMARY KEY,
-    tenant_id TEXT NOT NULL DEFAULT 'default',
-    connection_id TEXT NOT NULL,
-    subject_id TEXT NOT NULL,
-    watched_subjects TEXT DEFAULT '[]',        -- JSON array of subject IDs to watch
-    watched_resources TEXT DEFAULT '[]',       -- JSON array of resource patterns
-    watched_relations TEXT DEFAULT '[]',       -- JSON array of relation types
-    connected_at INTEGER NOT NULL,
-    is_active INTEGER DEFAULT 1
 );
 CREATE TABLE log_object_catalog (
   id TEXT PRIMARY KEY,
@@ -1660,10 +1583,14 @@ CREATE TABLE custom_claim_schemas (
   registration_placeholder TEXT
 , ui_group_key TEXT, ui_group_label TEXT, ui_group_order INTEGER NOT NULL DEFAULT 0, ui_field_order INTEGER NOT NULL DEFAULT 0, examples_json TEXT CHECK(examples_json IS NULL OR json_valid(examples_json)), cardinality TEXT NOT NULL DEFAULT 'single'
   CHECK (cardinality IN ('single', 'multi')));
-INSERT INTO custom_claim_schemas VALUES('builtin:default:name','default','name','name','Full Name','string',1,0,1,NULL,0,1,0,NULL,'any',1,1,0,NULL,NULL,1,1,'active',NULL,0,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,1,'{"values":["John Doe","山田 太郎"]}','single');
-INSERT INTO custom_claim_schemas VALUES('builtin:default:locale','default','locale','locale','Locale','string',0,0,1,NULL,0,1,0,NULL,'any',0,1,0,NULL,NULL,12,1,'active',NULL,0,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,12,'{"values":["ja-JP","en-US"]}','single');
-INSERT INTO custom_claim_schemas VALUES('builtin:default:email','default','email','email','Email','string',1,0,1,NULL,0,1,0,NULL,'any',1,1,0,NULL,NULL,20,1,'active',NULL,0,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'contact','Contact',20,1,'{"values":["john@example.com"]}','single');
-INSERT INTO custom_claim_schemas VALUES('builtin:default:email_verified','default','email_verified','email_verified','Email Verified','boolean',0,0,1,NULL,0,1,0,NULL,'any',0,0,0,NULL,NULL,21,1,'active',NULL,0,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'contact','Contact',20,2,'{"values":[true]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:display_name','default','display_name','display_name','Display Name','string',1,0,1,NULL,0,0,0,NULL,'any',1,1,0,NULL,NULL,1,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,1,'{"values":["John Doe","山田 太郎"]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:locale','default','locale','locale','Locale','string',0,0,1,NULL,0,0,0,NULL,'any',0,1,0,NULL,NULL,6,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,6,'{"values":["ja-JP","en-US"]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:email','default','email','email','Email','string',1,0,1,NULL,0,0,0,NULL,'any',1,1,0,NULL,NULL,20,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'contact','Contact',20,1,'{"values":["john@example.com"]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:email_verified','default','email_verified','email_verified','Email Verified','boolean',0,0,1,NULL,0,0,0,NULL,'any',0,0,0,NULL,NULL,21,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'contact','Contact',20,2,'{"values":[true]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:given_name','default','given_name','given_name','Given Name','string',1,0,1,NULL,0,0,0,NULL,'any',1,1,0,NULL,NULL,2,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,2,'{"values":["John","太郎"]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:family_name','default','family_name','family_name','Family Name','string',1,0,1,NULL,0,0,0,NULL,'any',1,1,0,NULL,NULL,3,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,3,'{"values":["Doe","山田"]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:preferred_username','default','preferred_username','preferred_username','Preferred Username','string',0,0,1,NULL,0,0,0,NULL,'any',1,1,0,NULL,NULL,4,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,4,'{"values":["jdoe"]}','single');
+INSERT INTO custom_claim_schemas VALUES('builtin:default:picture_url','default','picture_url','picture_url','Picture URL','string',1,0,1,NULL,0,0,0,NULL,'any',0,1,0,NULL,NULL,5,1,'active',NULL,1,NULL,__AUTHRIM_NOW_EPOCH_SECONDS__,__AUTHRIM_NOW_EPOCH_SECONDS__,0,0,0,NULL,'profile','Profile',10,5,'{"values":["https://example.com/users/jdoe/photo.jpg"]}','single');
 CREATE TABLE custom_claim_schema_history (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL DEFAULT 'default',
@@ -1747,82 +1674,6 @@ CREATE TABLE support_operation_actions (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   FOREIGN KEY (cohort_id) REFERENCES support_operation_cohorts(id) ON DELETE CASCADE
-);
-CREATE TABLE support_operation_break_glass_requests (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  resource TEXT NOT NULL,
-  cohort_id TEXT,
-  action_id TEXT,
-  target_id TEXT,
-  target_hash TEXT,
-  requested_detail_classes_json TEXT NOT NULL DEFAULT '[]',
-  redaction_level TEXT NOT NULL DEFAULT 'masked' CHECK (
-    redaction_level IN ('summary_only', 'masked', 'raw')
-  ),
-  reason TEXT NOT NULL,
-  support_case_id TEXT,
-  approval_request_id TEXT,
-  status TEXT NOT NULL CHECK (
-    status IN ('approval_required', 'approved', 'revealed', 'expired', 'denied', 'cancelled')
-  ),
-  requested_by TEXT NOT NULL,
-  approved_by TEXT,
-  approved_at INTEGER,
-  revealed_by TEXT,
-  revealed_at INTEGER,
-  expires_at INTEGER NOT NULL,
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  FOREIGN KEY (cohort_id) REFERENCES support_operation_cohorts(id) ON DELETE SET NULL,
-  FOREIGN KEY (action_id) REFERENCES support_operation_actions(id) ON DELETE SET NULL
-);
-CREATE TABLE support_operation_break_glass_reveals (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  break_glass_request_id TEXT NOT NULL,
-  actor_id TEXT NOT NULL,
-  detail_classes_json TEXT NOT NULL DEFAULT '[]',
-  result_summary_json TEXT,
-  occurred_at INTEGER NOT NULL,
-  FOREIGN KEY (break_glass_request_id)
-    REFERENCES support_operation_break_glass_requests(id) ON DELETE CASCADE
-);
-CREATE TABLE internal_notification_events (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  category TEXT NOT NULL CHECK (
-    category IN (
-      'identity_mapping_signal',
-      'identity_mapping_manual_review',
-      'identity_mapping_propagation_failure',
-      'identity_mapping_bulk_impact',
-      'storage_registry_security',
-      'storage_registry_health',
-      'tenant_database_stats',
-      'tenant_database_health',
-      'logging_destination_health',
-      'logging_delivery_failure',
-      'logging_fallback_used',
-      'logging_dlq_backlog',
-      'logging_quota_warning',
-      'logging_repair_job_status',
-      'notification_delivery_failure'
-    )
-  ),
-  event_type TEXT NOT NULL,
-  severity TEXT NOT NULL CHECK (severity IN ('critical', 'high', 'medium', 'low', 'info')),
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (
-    status IN ('pending', 'delivered', 'failed', 'dead_letter', 'suppressed')
-  ),
-  deduplication_key TEXT,
-  payload_json TEXT NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0,
-  last_error TEXT,
-  next_attempt_at TEXT,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  delivered_at TEXT
 );
 CREATE TABLE internal_notification_delivery_routes (
   id TEXT PRIMARY KEY,
@@ -2909,29 +2760,6 @@ CREATE TABLE directory_auth_support_bundles (
   completed_at INTEGER,
   deleted_at INTEGER
 );
-CREATE TABLE object_catalog (
-  id TEXT PRIMARY KEY,
-  public_artifact_id TEXT NOT NULL UNIQUE,
-  tenant_id TEXT NOT NULL DEFAULT 'default',
-  object_class TEXT NOT NULL CHECK (
-    object_class IN (
-      'admin_audit_detail',
-      'webhook_delivery_payload',
-      'operational_log_detail',
-      'user_export',
-      'user_import_input',
-      'user_import_result',
-      'admin_job_result',
-      'directory_auth_evidence_export',
-      'directory_auth_support_bundle',
-      'dr_bundle',
-      'approval_transport_detail'
-    )
-  ),
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  deleted_at INTEGER
-);
 CREATE TABLE object_catalog_objects (
   id TEXT PRIMARY KEY,
   catalog_id TEXT NOT NULL,
@@ -3198,22 +3026,6 @@ CREATE TABLE plugin_hook_outbox (
   CHECK ((status = 'succeeded' AND succeeded_at IS NOT NULL AND delete_after = succeeded_at + 604800) OR status <> 'succeeded'),
   CHECK ((status = 'dead_letter' AND dead_lettered_at IS NOT NULL AND delete_after = dead_lettered_at + 7776000) OR status <> 'dead_letter'),
   CHECK ((status = 'canceled' AND canceled_at IS NOT NULL) OR status <> 'canceled')
-);
-CREATE TABLE identifier_change_notification_outbox (
-  notification_id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  account_id TEXT NOT NULL,
-  replacement_id TEXT NOT NULL,
-  destination_ref TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'leased', 'retry', 'sent', 'dead_letter')),
-  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
-  next_attempt_at INTEGER,
-  last_error_code TEXT,
-  created_at INTEGER NOT NULL,
-  sent_at INTEGER,
-  updated_at INTEGER NOT NULL,
-  UNIQUE (tenant_id, replacement_id)
 );
 CREATE TABLE plugin_account_metadata (
   tenant_id TEXT NOT NULL,
@@ -3640,6 +3452,68 @@ CREATE TABLE launcher_favorites (
   created_at INTEGER NOT NULL,
   PRIMARY KEY (tenant_id, user_id, launcher_id)
 );
+CREATE TABLE IF NOT EXISTS "object_catalog" (
+  id TEXT PRIMARY KEY,
+  public_artifact_id TEXT NOT NULL UNIQUE,
+  tenant_id TEXT NOT NULL DEFAULT 'default',
+  object_class TEXT NOT NULL CHECK (
+    object_class IN (
+      'admin_audit_detail',
+      'event_log_detail',
+      'pii_log_values',
+      'webhook_delivery_payload',
+      'operational_log_detail',
+      'user_export',
+      'user_import_input',
+      'user_import_result',
+      'admin_job_result',
+      'directory_auth_evidence_export',
+      'directory_auth_support_bundle',
+      'approval_transport_detail',
+      'dr_bundle'
+    )
+  ),
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS "internal_notification_events" (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  category TEXT NOT NULL CHECK (
+    category IN (
+      'identity_mapping_signal',
+      'identity_mapping_manual_review',
+      'identity_mapping_propagation_failure',
+      'identity_mapping_bulk_impact',
+      'storage_registry_security',
+      'storage_registry_health',
+      'tenant_database_stats',
+      'tenant_database_health',
+      'control_plane_drift',
+      'logging_destination_health',
+      'logging_delivery_failure',
+      'logging_fallback_used',
+      'logging_dlq_backlog',
+      'logging_quota_warning',
+      'logging_repair_job_status',
+      'notification_delivery_failure'
+    )
+  ),
+  event_type TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('critical', 'high', 'medium', 'low', 'info')),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (
+    status IN ('pending', 'delivered', 'failed', 'dead_letter', 'suppressed')
+  ),
+  deduplication_key TEXT,
+  payload_json TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  next_attempt_at TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  delivered_at TEXT
+);
 CREATE TRIGGER trg_account_creation_operation_status_transition
 BEFORE UPDATE OF status ON account_creation_operations
 WHEN OLD.status <> NEW.status AND NOT (
@@ -3966,7 +3840,6 @@ BEGIN
   SELECT RAISE(ABORT, 'tenant_placement_policy_scope_weakening');
 END;
 CREATE UNIQUE INDEX idx_tenants_is_default ON tenants(default_tenant_guard);
-CREATE UNIQUE INDEX idx_trust_groups_tenant_id ON trust_groups(tenant_id, id);
 CREATE UNIQUE INDEX idx_tdm_domain_hash ON tenant_domain_mappings(active_domain_hash);
 CREATE INDEX idx_tdm_domain_lookup ON tenant_domain_mappings(domain_hash, is_active);
 CREATE INDEX idx_tdm_tenant ON tenant_domain_mappings(tenant_id);
@@ -4152,12 +4025,6 @@ CREATE INDEX idx_issued_credentials_type ON issued_credentials(tenant_id, creden
 CREATE INDEX idx_issued_credentials_user ON issued_credentials(tenant_id, user_id);
 CREATE INDEX idx_issued_credentials_status_list
     ON issued_credentials(tenant_id, status_list_internal_id, status_list_index);
-CREATE INDEX idx_linked_identities_provider ON linked_identities(tenant_id, provider_id);
-CREATE INDEX idx_linked_identities_provider_sub ON linked_identities(tenant_id, provider_id, provider_user_id);
-CREATE INDEX idx_linked_identities_tenant_provider_user
-    ON linked_identities(tenant_id, provider_id, provider_user_id);
-CREATE INDEX idx_linked_identities_user ON linked_identities(tenant_id, user_id);
-CREATE INDEX idx_linked_identities_tenant_user ON linked_identities(tenant_id, user_id);
 CREATE INDEX idx_membership_org ON subject_org_membership(tenant_id, org_id);
 CREATE INDEX idx_membership_subject ON subject_org_membership(tenant_id, subject_id);
 CREATE INDEX idx_oauth_clients_tenant_id ON oauth_clients(tenant_id);
@@ -4293,14 +4160,6 @@ CREATE INDEX idx_settings_history_cleanup ON settings_history(
 );
 CREATE INDEX idx_status_lists_tenant ON status_lists(tenant_id);
 CREATE INDEX idx_status_lists_tenant_public ON status_lists(tenant_id, public_id);
-CREATE INDEX idx_subject_identifiers_lookup
-  ON subject_identifiers(tenant_id, identifier_type, identifier_value);
-CREATE INDEX idx_subject_identifiers_primary
-  ON subject_identifiers(tenant_id, subject_id, is_primary);
-CREATE INDEX idx_subject_identifiers_tenant_subject
-  ON subject_identifiers(tenant_id, subject_id);
-CREATE UNIQUE INDEX idx_subject_identifiers_unique
-  ON subject_identifiers(tenant_id, identifier_type, identifier_value);
 CREATE INDEX idx_suspicious_activities_created ON suspicious_activities(tenant_id, created_at);
 CREATE INDEX idx_suspicious_activities_severity ON suspicious_activities(tenant_id, severity);
 CREATE INDEX idx_suspicious_activities_tenant ON suspicious_activities(tenant_id);
@@ -4342,16 +4201,6 @@ CREATE UNIQUE INDEX idx_users_tenant_email ON users(tenant_id, email);
 CREATE INDEX idx_users_tenant_id ON users(tenant_id);
 CREATE INDEX idx_users_tenant_status ON users(tenant_id, status);
 CREATE INDEX idx_users_user_type ON users(user_type);
-CREATE INDEX idx_verified_attributes_expires
-  ON verified_attributes(tenant_id, expires_at);
-CREATE INDEX idx_verified_attributes_lookup
-  ON verified_attributes(tenant_id, subject_id, attribute_name);
-CREATE INDEX idx_verified_attributes_source
-  ON verified_attributes(tenant_id, source);
-CREATE INDEX idx_verified_attributes_tenant_subject
-  ON verified_attributes(tenant_id, subject_id);
-CREATE INDEX idx_verified_attributes_unique_check
-  ON verified_attributes(tenant_id, subject_id, attribute_name, source);
 CREATE INDEX idx_vp_requests_nonce ON vp_requests(nonce);
 CREATE INDEX idx_vp_requests_tenant_status ON vp_requests(tenant_id, status);
 CREATE INDEX idx_webhook_configs_active ON webhook_configs(tenant_id, active);
@@ -4370,12 +4219,6 @@ CREATE INDEX idx_webhook_deliveries_tenant_created
   ON webhook_deliveries(tenant_id, created_at DESC);
 CREATE INDEX idx_webhook_deliveries_webhook_created
   ON webhook_deliveries(webhook_id, created_at DESC);
-CREATE INDEX idx_ws_subs_active
-    ON websocket_subscriptions(is_active);
-CREATE INDEX idx_ws_subs_connection
-    ON websocket_subscriptions(connection_id);
-CREATE INDEX idx_ws_subs_subject
-    ON websocket_subscriptions(subject_id, is_active);
 CREATE UNIQUE INDEX uniq_ccs_active_key
   ON custom_claim_schemas(tenant_id, active_field_key);
 CREATE INDEX idx_ccs_tenant_active ON custom_claim_schemas(tenant_id, is_active, display_order);
@@ -4405,22 +4248,6 @@ CREATE INDEX idx_soa_cohort
   ON support_operation_actions(tenant_id, cohort_id);
 CREATE INDEX idx_soa_approval_request
   ON support_operation_actions(tenant_id, approval_request_id);
-CREATE INDEX idx_sobgr_tenant_status
-  ON support_operation_break_glass_requests(tenant_id, status, created_at DESC);
-CREATE INDEX idx_sobgr_approval_request
-  ON support_operation_break_glass_requests(tenant_id, approval_request_id);
-CREATE INDEX idx_sobgr_cohort
-  ON support_operation_break_glass_requests(tenant_id, cohort_id);
-CREATE INDEX idx_sobgr_action
-  ON support_operation_break_glass_requests(tenant_id, action_id);
-CREATE INDEX idx_sobgr_reveals_request
-  ON support_operation_break_glass_reveals(tenant_id, break_glass_request_id, occurred_at DESC);
-CREATE UNIQUE INDEX idx_internal_notification_events_dedup
-  ON internal_notification_events(deduplication_key);
-CREATE INDEX idx_internal_notification_events_pending
-  ON internal_notification_events(status, severity, created_at);
-CREATE INDEX idx_internal_notification_events_tenant_created
-  ON internal_notification_events(tenant_id, created_at DESC);
 CREATE INDEX idx_internal_notification_delivery_routes_lookup
   ON internal_notification_delivery_routes(scope_type, scope_id, enabled, provider);
 CREATE INDEX idx_internal_notification_delivery_attempts_event
@@ -4461,8 +4288,6 @@ CREATE INDEX idx_identity_resolution_events_subject
   ON identity_resolution_events(tenant_id, subject_id, created_at);
 CREATE INDEX idx_identity_resolution_candidates_state
   ON identity_resolution_candidates(tenant_id, decision_state, created_at);
-CREATE INDEX idx_subject_identifiers_destination
-  ON subject_identifiers(tenant_id, subject_id, destination_type, lifecycle_state);
 CREATE INDEX idx_assurance_evidence_subject
   ON assurance_evidence(tenant_id, subject_id, evidence_type, expires_at);
 CREATE INDEX idx_entitlements_subject
@@ -4673,5 +4498,24 @@ CREATE INDEX idx_application_launchers_updated
   ON application_launchers (tenant_id, updated_at, id);
 CREATE INDEX idx_launcher_favorites_user
   ON launcher_favorites (tenant_id, user_id, created_at, launcher_id);
+CREATE UNIQUE INDEX idx_identity_providers_saml_entity_id
+  ON identity_providers(
+    tenant_id,
+    provider_type,
+    json_extract(config_json, '$.entityId')
+  )
+  WHERE provider_type IN ('saml_idp', 'saml_sp')
+    AND json_valid(config_json)
+    AND json_type(config_json, '$.entityId') = 'text';
+CREATE INDEX idx_object_catalog_tenant_class_created
+  ON object_catalog(tenant_id, object_class, created_at DESC);
+CREATE INDEX idx_object_catalog_deleted_at
+  ON object_catalog(deleted_at);
+CREATE UNIQUE INDEX idx_internal_notification_events_dedup
+  ON internal_notification_events(deduplication_key);
+CREATE INDEX idx_internal_notification_events_pending
+  ON internal_notification_events(status, severity, created_at);
+CREATE INDEX idx_internal_notification_events_tenant_created
+  ON internal_notification_events(tenant_id, created_at DESC);
 
 PRAGMA foreign_keys = ON;

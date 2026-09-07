@@ -32,6 +32,8 @@ export interface IdentityMappingFieldMappingVersionSummary {
 	sourceProfileIds?: string[];
 	destinationProfileIds?: string[];
 	rules?: IdentityMappingFieldMappingVersionRuleSummary[];
+	releaseRules?: IdentityMappingFieldMappingVersionReleaseRuleSummary[];
+	conflictRules?: IdentityMappingFieldMappingVersionConflictRuleSummary[];
 	latestSnapshot?: {
 		id: string;
 		catalogVersionId?: string | null;
@@ -46,9 +48,12 @@ export interface IdentityMappingFieldMappingVersionRuleSummary {
 	ruleKind: string;
 	action: string;
 	priority: number;
+	scope?: Record<string, unknown>;
+	condition?: Record<string, unknown>;
 	metadata?: Record<string, unknown>;
 	edges: IdentityMappingFieldMappingVersionRuleEdgeSummary[];
 	transforms: IdentityMappingFieldMappingVersionTransformSummary[];
+	validationRules?: IdentityMappingFieldMappingVersionValidationRuleSummary[];
 }
 
 export interface IdentityMappingFieldMappingVersionRuleEdgeSummary {
@@ -65,6 +70,35 @@ export interface IdentityMappingFieldMappingVersionTransformSummary {
 	stepOrder: number;
 	operation: string;
 	parameters: Record<string, unknown>;
+}
+
+export interface IdentityMappingFieldMappingVersionValidationRuleSummary {
+	id: string;
+	ruleId: string | null;
+	targetRef: Record<string, unknown>;
+	validationKind: string;
+	severity: string;
+	parameters: Record<string, unknown>;
+}
+
+export interface IdentityMappingFieldMappingVersionReleaseRuleSummary {
+	id: string;
+	destinationType: string;
+	destinationId: string | null;
+	sourceRef: Record<string, unknown>;
+	releaseAction: string;
+	legalBasis: string | null;
+	purpose: string | null;
+	condition: Record<string, unknown>;
+	priority: number;
+}
+
+export interface IdentityMappingFieldMappingVersionConflictRuleSummary {
+	id: string;
+	targetRef: Record<string, unknown>;
+	conflictStrategy: string;
+	sourcePriority: unknown[];
+	condition: Record<string, unknown>;
 }
 
 export interface IdentityMappingCatalogSummary {

@@ -55,7 +55,10 @@ describe('setup Worker deployment lease coordinator', () => {
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
     database.exec(
-      readFileSync(resolve(ROOT_DIR, 'migrations/control/001_pre_1_0_control_baseline.sql'), 'utf8')
+      readFileSync(
+        resolve(ROOT_DIR, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
+        'utf8'
+      )
     );
     database.exec(`INSERT INTO control_environments (
       environment_id, environment_name, issuer, lifecycle_state, created_at, updated_at

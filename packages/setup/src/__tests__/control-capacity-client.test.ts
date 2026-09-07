@@ -36,7 +36,7 @@ const preview = {
       databaseName: 'authrim-test-users-jp-capacity-1',
       bindingRef: 'TEST_TDB_USERS_CAPACITY_1_CORE',
       readReplicationMode: 'disabled',
-      migrationStreamId: 'd1-core',
+      migrationStreamId: 'core-d1',
     },
   ],
 } as const;

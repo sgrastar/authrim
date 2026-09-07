@@ -30,20 +30,22 @@ class MemoryArtifactStore implements ReleaseArtifactStore {
 
 function fixture(sql = 'CREATE TABLE account (id TEXT PRIMARY KEY);') {
   const manifest = `${JSON.stringify({
-    formatVersion: 1,
+    formatVersion: 2,
     productVersion: '0.4.0',
     streams: [
       {
-        id: 'd1-core',
+        id: 'core-d1',
+        schemaFamily: 'core',
         dialect: 'sqlite',
-        logicalRoles: ['tenant_core'],
+        targetKind: 'cloudflare-d1',
+        logicalRoles: ['core', 'tenant_core'],
         files: [{ path: '001_core.sql', checksum: digest(sql) }],
       },
     ],
   })}\n`;
   const pin: MigrationReleasePin = {
     environmentId: 'env-test',
-    streamId: 'd1-core',
+    streamId: 'core-d1',
     releaseId: '0.4.0',
     manifestDigest: digest(manifest),
     manifestObjectKey: `releases/0.4.0/${digest(manifest)}/manifest.json`,
@@ -52,13 +54,157 @@ function fixture(sql = 'CREATE TABLE account (id TEXT PRIMARY KEY);') {
 }
 
 describe('MigrationReleaseArtifactReader', () => {
+  it('selects a source-version upgrade delta while keeping the fresh baseline for provisioning', async () => {
+    const baselineSql = 'CREATE TABLE account (id TEXT PRIMARY KEY);';
+    const deltaSql = 'ALTER TABLE account ADD COLUMN display_name TEXT;';
+    const encoded = `${JSON.stringify({
+      formatVersion: 2,
+      productVersion: '0.4.1',
+      streams: [
+        {
+          id: 'core-d1',
+          schemaFamily: 'core',
+          dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
+          files: [{ path: '001_0_4_0_core_baseline.sql', checksum: digest(baselineSql) }],
+        },
+      ],
+      upgradePaths: [
+        {
+          fromProductVersion: '0.4.0',
+          kind: 'delta',
+          streams: [
+            {
+              id: 'core-d1',
+              schemaFamily: 'core',
+              dialect: 'sqlite',
+              targetKind: 'cloudflare-d1',
+              logicalRoles: ['core', 'tenant_core'],
+              files: [{ path: '002_0_4_1_core_delta.sql', checksum: digest(deltaSql) }],
+            },
+          ],
+        },
+      ],
+      acceptedMigrationHistory: [
+        {
+          id: 'core-d1',
+          schemaFamily: 'core',
+          dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
+          files: [
+            { path: '001_0_4_0_core_baseline.sql', checksum: digest(baselineSql) },
+            { path: '002_unpublished_source.sql', checksum: 'a'.repeat(64) },
+            { path: '002_0_4_1_core_delta.sql', checksum: digest(deltaSql) },
+          ],
+        },
+      ],
+    })}\n`;
+    const manifestDigest = digest(encoded);
+    const base = `releases/0.4.1/${manifestDigest}/`;
+    const pin: MigrationReleasePin = {
+      environmentId: 'env-test',
+      streamId: 'core-d1',
+      releaseId: '0.4.1',
+      manifestDigest,
+      manifestObjectKey: `${base}manifest.json`,
+    };
+    const store = new MemoryArtifactStore(
+      new Map([
+        [pin.manifestObjectKey, encoded],
+        [`${base}streams/core-d1/001_0_4_0_core_baseline.sql`, baselineSql],
+        [`${base}streams/core-d1/002_0_4_1_core_delta.sql`, deltaSql],
+      ])
+    );
+
+    const fresh = await new MigrationReleaseArtifactReader(store).load(pin);
+    expect(fresh).toMatchObject({
+      files: [{ path: '001_0_4_0_core_baseline.sql' }],
+    });
+    expect(fresh.knownHistory.some((file) => file.path === '002_unpublished_source.sql')).toBe(
+      true
+    );
+    const upgrade = await new MigrationReleaseArtifactReader(store).load({
+      ...pin,
+      sourceProductVersion: '0.4.0',
+    });
+    expect(upgrade).toMatchObject({
+      files: [{ path: '002_0_4_1_core_delta.sql' }],
+    });
+    expect(upgrade.knownHistory.some((file) => file.path === '002_unpublished_source.sql')).toBe(
+      true
+    );
+    await expect(
+      new MigrationReleaseArtifactReader(store).load({
+        ...pin,
+        sourceProductVersion: '0.3.4',
+      })
+    ).rejects.toThrow('migration_release_upgrade_path_missing');
+    expect(store.reads).not.toContain(`${base}streams/core-d1/002_unpublished_source.sql`);
+  });
+
+  it('rejects conflicting fallback history identities across fresh and upgrade plans', async () => {
+    const baselineSql = 'CREATE TABLE account (id TEXT PRIMARY KEY);';
+    const deltaSql = 'ALTER TABLE account ADD COLUMN display_name TEXT;';
+    const encoded = JSON.stringify({
+      formatVersion: 2,
+      productVersion: '0.4.1',
+      streams: [
+        {
+          id: 'core-d1',
+          schemaFamily: 'core',
+          dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
+          files: [{ path: '001_conflict.sql', checksum: digest(baselineSql) }],
+        },
+      ],
+      upgradePaths: [
+        {
+          fromProductVersion: '0.4.0',
+          kind: 'delta',
+          streams: [
+            {
+              id: 'core-d1',
+              schemaFamily: 'core',
+              dialect: 'sqlite',
+              targetKind: 'cloudflare-d1',
+              logicalRoles: ['core', 'tenant_core'],
+              files: [{ path: '001_conflict.sql', checksum: digest(deltaSql) }],
+            },
+          ],
+        },
+      ],
+    });
+    const manifestDigest = digest(encoded);
+    const base = `releases/0.4.1/${manifestDigest}/`;
+    const pin: MigrationReleasePin = {
+      environmentId: 'env-test',
+      streamId: 'core-d1',
+      releaseId: '0.4.1',
+      manifestDigest,
+      manifestObjectKey: `${base}manifest.json`,
+    };
+    const store = new MemoryArtifactStore(
+      new Map([
+        [pin.manifestObjectKey, encoded],
+        [`${base}streams/core-d1/001_conflict.sql`, baselineSql],
+      ])
+    );
+
+    await expect(new MigrationReleaseArtifactReader(store).load(pin)).rejects.toThrow(
+      'migration_artifact_manifest_history_conflict'
+    );
+  });
+
   it('loads only the pinned stream after exact manifest and SQL digest validation', async () => {
     const { manifest, pin, sql } = fixture();
     const base = pin.manifestObjectKey.slice(0, pin.manifestObjectKey.lastIndexOf('/') + 1);
     const store = new MemoryArtifactStore(
       new Map([
         [pin.manifestObjectKey, manifest],
-        [`${base}streams/d1-core/001_core.sql`, sql],
+        [`${base}streams/core-d1/001_core.sql`, sql],
       ])
     );
 
@@ -71,14 +217,66 @@ describe('MigrationReleaseArtifactReader', () => {
         adminMutationMode: 'read_only',
       },
       files: [{ path: '001_core.sql', checksum: digest(sql), sql }],
+      knownHistory: [{ path: '001_core.sql', checksum: digest(sql) }],
     });
-    expect(store.reads).toEqual([pin.manifestObjectKey, `${base}streams/d1-core/001_core.sql`]);
+    expect(store.reads).toEqual([pin.manifestObjectKey, `${base}streams/core-d1/001_core.sql`]);
+  });
+
+  it('rejects legacy manifest v1 instead of inferring backend metadata', async () => {
+    const manifest = JSON.stringify({
+      formatVersion: 1,
+      productVersion: '0.4.0',
+      streams: [{ id: 'd1-core', dialect: 'sqlite', files: [] }],
+    });
+    const manifestDigest = digest(manifest);
+    const manifestObjectKey = `releases/0.4.0/${manifestDigest}/manifest.json`;
+    const store = new MemoryArtifactStore(new Map([[manifestObjectKey, manifest]]));
+
+    await expect(
+      new MigrationReleaseArtifactReader(store).load({
+        environmentId: 'env-test',
+        streamId: 'core-d1',
+        releaseId: '0.4.0',
+        manifestDigest,
+        manifestObjectKey,
+      })
+    ).rejects.toThrow('migration_artifact_manifest_invalid');
+  });
+
+  it('rejects canonical IDs whose declared backend metadata does not match the contract', async () => {
+    const manifest = JSON.stringify({
+      formatVersion: 2,
+      productVersion: '0.4.0',
+      streams: [
+        {
+          id: 'core-d1',
+          schemaFamily: 'core',
+          dialect: 'postgresql',
+          targetKind: 'postgresql-connection',
+          logicalRoles: ['core', 'custom', 'policy'],
+          files: [],
+        },
+      ],
+    });
+    const manifestDigest = digest(manifest);
+    const manifestObjectKey = `releases/0.4.0/${manifestDigest}/manifest.json`;
+    const store = new MemoryArtifactStore(new Map([[manifestObjectKey, manifest]]));
+
+    await expect(
+      new MigrationReleaseArtifactReader(store).load({
+        environmentId: 'env-test',
+        streamId: 'core-d1',
+        releaseId: '0.4.0',
+        manifestDigest,
+        manifestObjectKey,
+      })
+    ).rejects.toThrow('migration_artifact_manifest_stream_contract_mismatch');
   });
 
   it('accepts the exact database-only Worker compatibility allow-list', async () => {
     const { pin, sql } = fixture();
     const encoded = JSON.stringify({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       rollout: {
         databaseExecution: 'setup_then_control',
@@ -88,9 +286,11 @@ describe('MigrationReleaseArtifactReader', () => {
       },
       streams: [
         {
-          id: 'd1-core',
+          id: 'core-d1',
+          schemaFamily: 'core',
           dialect: 'sqlite',
-          logicalRoles: ['tenant_core'],
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
           files: [{ path: '001_core.sql', checksum: digest(sql) }],
         },
       ],
@@ -104,7 +304,7 @@ describe('MigrationReleaseArtifactReader', () => {
     const store = new MemoryArtifactStore(
       new Map([
         [nextPin.manifestObjectKey, encoded],
-        [`${base}streams/d1-core/001_core.sql`, sql],
+        [`${base}streams/core-d1/001_core.sql`, sql],
       ])
     );
 
@@ -128,7 +328,7 @@ describe('MigrationReleaseArtifactReader', () => {
     const store = new MemoryArtifactStore(
       new Map([
         [draftPin.manifestObjectKey, manifest],
-        [`${base}streams/d1-core/001_core.sql`, sql],
+        [`${base}streams/core-d1/001_core.sql`, sql],
       ])
     );
 
@@ -151,17 +351,23 @@ describe('MigrationReleaseArtifactReader', () => {
   it('allows unrelated external-database streams but rejects selecting them for D1', async () => {
     const sql = 'CREATE TABLE account (id TEXT PRIMARY KEY);';
     const manifest = JSON.stringify({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       streams: [
         {
-          id: 'd1-core',
+          id: 'core-d1',
+          schemaFamily: 'core',
           dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
           files: [{ path: '001_core.sql', checksum: digest(sql) }],
         },
         {
-          id: 'external-postgres-core',
-          dialect: 'postgres',
+          id: 'core-postgresql',
+          schemaFamily: 'core',
+          dialect: 'postgresql',
+          targetKind: 'postgresql-connection',
+          logicalRoles: ['core', 'custom', 'policy'],
           files: [{ path: '001_external.sql', checksum: 'a'.repeat(64) }],
         },
       ],
@@ -171,12 +377,12 @@ describe('MigrationReleaseArtifactReader', () => {
     const store = new MemoryArtifactStore(
       new Map([
         [manifestKey, manifest],
-        [`${base}streams/d1-core/001_core.sql`, sql],
+        [`${base}streams/core-d1/001_core.sql`, sql],
       ])
     );
     const basePin: MigrationReleasePin = {
       environmentId: 'env-test',
-      streamId: 'd1-core',
+      streamId: 'core-d1',
       releaseId: '0.4.0',
       manifestDigest: digest(manifest),
       manifestObjectKey: manifestKey,
@@ -188,7 +394,7 @@ describe('MigrationReleaseArtifactReader', () => {
     await expect(
       new MigrationReleaseArtifactReader(store).load({
         ...basePin,
-        streamId: 'external-postgres-core',
+        streamId: 'core-postgresql',
       })
     ).rejects.toThrow('migration_release_stream_dialect_unsupported');
   });
@@ -197,12 +403,15 @@ describe('MigrationReleaseArtifactReader', () => {
     const streamId = 'plugin/example.notifier/state';
     const sql = 'CREATE TABLE plugin_state (id TEXT PRIMARY KEY);';
     const manifest = JSON.stringify({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       streams: [
         {
           id: streamId,
+          schemaFamily: 'plugin_runner',
           dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['plugin_runner'],
           files: [{ path: '001_state.sql', checksum: digest(sql) }],
         },
       ],
@@ -245,7 +454,7 @@ describe('MigrationReleaseArtifactReader', () => {
     const store = new MemoryArtifactStore(
       new Map([
         [pin.manifestObjectKey, manifest.replace('0.4.0', '0.4.1')],
-        [`${base}streams/d1-core/001_core.sql`, sql],
+        [`${base}streams/core-d1/001_core.sql`, sql],
       ])
     );
 
@@ -261,7 +470,7 @@ describe('MigrationReleaseArtifactReader', () => {
     const replaced = new MemoryArtifactStore(
       new Map([
         [pin.manifestObjectKey, manifest],
-        [`${base}streams/d1-core/001_core.sql`, 'SELECT 1;'],
+        [`${base}streams/core-d1/001_core.sql`, 'SELECT 1;'],
       ])
     );
     await expect(new MigrationReleaseArtifactReader(replaced).load(pin)).rejects.toThrow(
@@ -289,13 +498,23 @@ describe('MigrationReleaseArtifactReader', () => {
 
   it('rejects duplicate streams and path traversal in a digest-valid manifest', async () => {
     const manifest = JSON.stringify({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       streams: [
-        { id: 'd1-core', dialect: 'sqlite', files: [] },
         {
-          id: 'd1-core',
+          id: 'core-d1',
+          schemaFamily: 'core',
           dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
+          files: [],
+        },
+        {
+          id: 'core-d1',
+          schemaFamily: 'core',
+          dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
           files: [{ path: '../x.sql', checksum: 'a'.repeat(64) }],
         },
       ],
@@ -305,7 +524,7 @@ describe('MigrationReleaseArtifactReader', () => {
     await expect(
       new MigrationReleaseArtifactReader(store).load({
         environmentId: 'env-test',
-        streamId: 'd1-core',
+        streamId: 'core-d1',
         releaseId: '0.4.0',
         manifestDigest: digest(manifest),
         manifestObjectKey: manifestKey,
@@ -317,12 +536,15 @@ describe('MigrationReleaseArtifactReader', () => {
     const first = 'SELECT 111111;';
     const second = 'SELECT 222222;';
     const manifest = JSON.stringify({
-      formatVersion: 1,
+      formatVersion: 2,
       productVersion: '0.4.0',
       streams: [
         {
-          id: 'd1-core',
+          id: 'core-d1',
+          schemaFamily: 'core',
           dialect: 'sqlite',
+          targetKind: 'cloudflare-d1',
+          logicalRoles: ['core', 'tenant_core'],
           files: [
             { path: '001.sql', checksum: digest(first) },
             { path: '002.sql', checksum: digest(second) },
@@ -332,7 +554,7 @@ describe('MigrationReleaseArtifactReader', () => {
     });
     const pin: MigrationReleasePin = {
       environmentId: 'env-test',
-      streamId: 'd1-core',
+      streamId: 'core-d1',
       releaseId: '0.4.0',
       manifestDigest: digest(manifest),
       manifestObjectKey: `releases/0.4.0/${digest(manifest)}/manifest.json`,
@@ -341,8 +563,8 @@ describe('MigrationReleaseArtifactReader', () => {
     const store = new MemoryArtifactStore(
       new Map([
         [pin.manifestObjectKey, manifest],
-        [`${base}streams/d1-core/001.sql`, first],
-        [`${base}streams/d1-core/002.sql`, second],
+        [`${base}streams/core-d1/001.sql`, first],
+        [`${base}streams/core-d1/002.sql`, second],
       ])
     );
     await expect(

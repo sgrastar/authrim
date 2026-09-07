@@ -85,7 +85,7 @@ describe('PluginRunnerRegistryPublisher', () => {
     database = new DatabaseSync(':memory:');
     database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
         'utf8'
       )
     );
@@ -111,14 +111,15 @@ describe('PluginRunnerRegistryPublisher', () => {
        INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          deterministic_name, ownership_fingerprint, provisioning_state,
-         origin_operation_id, desired_spec_json, created_at, updated_at
+         origin_operation_id, desired_spec_json, provider_create_state,
+         provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
        ) VALUES
          ('resource-a', 'test', 'd1', 'default-1', 'default-1', 'fingerprint-a', 'ready',
-          'seed-operation', '{}', 1, 1),
+          'seed-operation', '{}', 'identified', 'database-a', 1, 1, 1),
          ('resource-b', 'test', 'd1', 'users-1', 'users-1', 'fingerprint-b', 'ready',
-          'seed-operation', '{}', 1, 1),
+          'seed-operation', '{}', 'identified', 'database-b', 1, 1, 1),
          ('resource-c', 'test', 'd1', 'pii-1', 'pii-1', 'fingerprint-c', 'ready',
-          'seed-operation', '{}', 1, 1);
+          'seed-operation', '{}', 'identified', 'database-c', 1, 1, 1);
        INSERT INTO control_tenant_shards (
          shard_id, environment_id, data_role, residency_policy_id, residency_partition,
          generation, logical_shard_id, binding_ref, d1_desired_resource_id,

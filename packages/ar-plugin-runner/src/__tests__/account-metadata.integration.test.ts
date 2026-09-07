@@ -119,13 +119,13 @@ describe('PluginAccountMetadataService', () => {
     tenantDatabase = new DatabaseSync(':memory:');
     runnerDatabase.exec('PRAGMA foreign_keys = ON');
     tenantDatabase.exec('PRAGMA foreign_keys = ON');
-    for (const migrationName of ['001_pre_1_0_plugin_runner_baseline.sql']) {
+    for (const migrationName of ['001_0_4_0_plugin_runner_baseline.sql']) {
       runnerDatabase.exec(
-        readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner', migrationName), 'utf8')
+        readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner/d1', migrationName), 'utf8')
       );
     }
     tenantDatabase.exec(
-      readFileSync(resolve(REPO_ROOT, 'migrations/001_pre_1_0_core_baseline.sql'), 'utf8')
+      readFileSync(resolve(REPO_ROOT, 'migrations/core/d1/001_0_4_0_core_baseline.sql'), 'utf8')
         .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
         .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()')
     );

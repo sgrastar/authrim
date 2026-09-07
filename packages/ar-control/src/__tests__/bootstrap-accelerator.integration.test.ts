@@ -7,6 +7,8 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { signBootstrapAcceleratorProof } from '@authrim/ar-lib-core/control-plane';
 import {
   admitInitialBootstrapAcceleration,
+  advanceInitialBootstrap,
+  bootstrapAcceleratorFailureCode,
   releaseInitialBootstrapAcceleration,
 } from '../bootstrap-accelerator';
 import type { ControlEnv } from '../types';
@@ -29,6 +31,14 @@ class BoundStatement {
 
   async first<T>() {
     return (this.statement.get(...this.values) as T | undefined) ?? null;
+  }
+
+  async all<T>() {
+    return {
+      success: true,
+      results: this.statement.all(...this.values) as T[],
+      meta: { changes: 0 },
+    };
   }
 }
 
@@ -58,6 +68,9 @@ function d1(database: DatabaseSync): D1Database {
     prepare(sql: string) {
       return new PreparedStatement(database.prepare(sql));
     },
+    async batch(statements: BoundStatement[]) {
+      return Promise.all(statements.map((statement) => statement.run()));
+    },
   } as unknown as D1Database;
 }
 
@@ -74,7 +87,7 @@ describe('initial bootstrap accelerator admission', () => {
     database = new DatabaseSync(':memory:');
     database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
         'utf8'
       )
     );
@@ -134,5 +147,25 @@ describe('initial bootstrap accelerator admission', () => {
     await expect(
       admitInitialBootstrapAcceleration({ env, proof: await proof('setup-proof-4'), now: NOW })
     ).resolves.toEqual({ state: 'inactive' });
+  });
+
+  it('advances tokenless operator smoke work without requiring provider API credentials', async () => {
+    env.CLOUDFLARE_ACCOUNT_ID = 'account-id';
+
+    await expect(advanceInitialBootstrap({ env, now: () => NOW })).resolves.toEqual({
+      attempted: 0,
+      succeeded: 0,
+      deferred: 0,
+      blocked: 0,
+    });
+  });
+
+  it('exposes only bounded internal error codes', () => {
+    expect(
+      bootstrapAcceleratorFailureCode(new Error('control_worker_smoke_service_binding_missing'))
+    ).toBe('control_worker_smoke_service_binding_missing');
+    expect(bootstrapAcceleratorFailureCode(new Error('request failed with secret abc'))).toBe(
+      'bootstrap_accelerator_advance_failed'
+    );
   });
 });

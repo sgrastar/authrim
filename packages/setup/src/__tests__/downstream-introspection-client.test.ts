@@ -306,6 +306,7 @@ describe('ensureDownstreamIntrospectionClient', () => {
   });
 
   it('updates metadata and rotates the secret for a discovered system client', async () => {
+    const progress: string[] = [];
     fetchMock
       .mockResolvedValueOnce(
         jsonResponse({
@@ -328,6 +329,7 @@ describe('ensureDownstreamIntrospectionClient', () => {
       adminBearerToken,
       keysDir: tempDir,
       maxRetries: 1,
+      onProgress: (message) => progress.push(message),
     });
 
     expect(result).toMatchObject({
@@ -338,6 +340,9 @@ describe('ensureDownstreamIntrospectionClient', () => {
       rotatedSecret: true,
     });
     expect(fetchMock.mock.calls.map(([, init]) => init?.method)).toEqual(['GET', 'PUT', 'POST']);
+    expect(progress).toContain('Regenerating downstream introspection client secret');
+    expect(progress.join('\n')).not.toContain('existing-client');
+    expect(progress.join('\n')).not.toContain('rotated-secret');
   });
 
   it('restricts generated credentials even when replacing permissive files', async () => {
@@ -386,21 +391,84 @@ describe('ensureDownstreamIntrospectionClient', () => {
       })
     ).resolves.toMatchObject({ success: false, error: expect.stringContaining('keys not found') });
 
-    fetchMock.mockResolvedValueOnce(textResponse('forbidden', 403));
-    await expect(
-      ensureDownstreamIntrospectionClient({
-        apiBaseUrl: 'https://issuer.test',
-        adminBearerToken,
-        keysDir: tempDir,
-        maxRetries: 1,
-      })
-    ).resolves.toMatchObject({
+    fetchMock.mockResolvedValueOnce(
+      textResponse('{"client_secret":"must-not-appear","error":"forbidden"}', 403)
+    );
+    const failure = await ensureDownstreamIntrospectionClient({
+      apiBaseUrl: 'https://issuer.test',
+      adminBearerToken,
+      keysDir: tempDir,
+      maxRetries: 1,
+    });
+    expect(failure).toMatchObject({
       success: false,
       error: expect.stringContaining('Failed to check downstream introspection client (403)'),
     });
+    expect(failure.error).not.toContain('must-not-appear');
+    expect(failure.error).not.toContain('client_secret');
   });
 
-  it('does not start Admin API work after the shared optional-integration deadline', async () => {
+  it('retains a stable diagnostic for retryable Admin API failures', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ error: 'tenant_not_found', client_secret: 'must-not-appear' }, 404)
+    );
+
+    const failure = await ensureDownstreamIntrospectionClient({
+      apiBaseUrl: 'https://issuer.test',
+      adminBearerToken,
+      keysDir: tempDir,
+      maxRetries: 1,
+    });
+
+    expect(failure).toMatchObject({
+      success: false,
+      error: 'Failed to check downstream introspection client (404): tenant_not_found',
+      diagnosticCode: 'http_404:tenant_not_found',
+      retryable: true,
+    });
+    expect(JSON.stringify(failure)).not.toContain('must-not-appear');
+    expect(JSON.stringify(failure)).not.toContain('client_secret');
+  });
+
+  it('redacts setup-machine response bodies while retaining the tenant routing diagnostic', async () => {
+    const secrets = generateAllSecrets('downstream-introspection-diagnostic-key');
+    await saveKeysToDirectory(secrets, { targetDir: tempDir });
+    const details: string[] = [];
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        {
+          error: 'not_found',
+          error_description: 'Tenant not found',
+          client_secret: 'must-not-appear',
+        },
+        404
+      )
+    );
+
+    const failure = await ensureDownstreamIntrospectionClient({
+      apiBaseUrl: 'https://environment.example.test',
+      keysDir: tempDir,
+      tenantId: 'tenant',
+      maxRetries: 1,
+      onDetail: (message) => details.push(message),
+    });
+
+    expect(failure).toMatchObject({
+      success: false,
+      error: 'admin_machine_token_failed:404:tenant_not_found',
+      diagnosticCode: 'admin_machine_token_failed:404:tenant_not_found',
+      retryable: true,
+    });
+    expect(JSON.stringify(failure)).not.toContain('must-not-appear');
+    expect(JSON.stringify(failure)).not.toContain('client_secret');
+    expect(details).toEqual([
+      'Downstream introspection setup failed: admin_machine_token_failed:404:tenant_not_found',
+    ]);
+    expect(JSON.stringify(details)).not.toContain('must-not-appear');
+    expect(JSON.stringify(details)).not.toContain('client_secret');
+  });
+
+  it('does not start Admin API work after its optional-integration deadline', async () => {
     await expect(
       ensureDownstreamIntrospectionClient({
         apiBaseUrl: 'https://issuer.test',
@@ -415,6 +483,31 @@ describe('ensureDownstreamIntrospectionClient', () => {
       error: 'optional_integration_deadline_exceeded',
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('retains the last safe diagnostic when the retry deadline expires between attempts', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'tenant_not_found' }, 404));
+      const resultPromise = ensureDownstreamIntrospectionClient({
+        apiBaseUrl: 'https://issuer.test',
+        adminBearerToken,
+        keysDir: tempDir,
+        maxRetries: 2,
+        retryDelayMs: 100,
+        deadlineAt: Date.now() + 10,
+      });
+
+      await vi.advanceTimersByTimeAsync(20);
+      await expect(resultPromise).resolves.toMatchObject({
+        success: false,
+        error: 'optional_integration_deadline_exceeded',
+        diagnosticCode: 'http_404:tenant_not_found',
+        retryable: true,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('loads deployable secrets only when both files contain values', async () => {

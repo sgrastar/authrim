@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { renderPortableMigrationSql } from '../core/sql-portability.js';
 
 const migrationPath = fileURLToPath(
-  new URL('../../../../migrations/admin/001_pre_1_0_admin_baseline.sql', import.meta.url)
+  new URL('../../../../migrations/admin/d1/001_0_4_0_admin_baseline.sql', import.meta.url)
 );
 
 function findSqlite3(): string | null {

@@ -48,12 +48,14 @@ const SECTION_NAMES = new Map([
 ]);
 
 function displayResult(status) {
-  return {
-    covered: 'Evidence covered',
-    manual: 'Manual',
-    not_applicable: 'Not applicable',
-    gap: 'Gap',
-  }[status] ?? status;
+  return (
+    {
+      covered: 'Evidence covered',
+      manual: 'Manual',
+      not_applicable: 'Not applicable',
+      gap: 'Gap',
+    }[status] ?? status
+  );
 }
 
 function shortRequirementId(id) {
@@ -171,11 +173,23 @@ async function runIndependentCheck(repoRoot, id) {
   if (id === 'asvs.v6_3_2.setup_requires_token_and_disables_after_first_admin') {
     const setup = await readText(repoRoot, 'packages/ar-auth/src/setup.ts');
     const setupToken = await readText(repoRoot, 'packages/ar-lib-core/src/utils/setup-token.ts');
-    requirePattern(setup, /validateSetupToken\(c\.env,\s*setup_token\)/, 'Setup must validate token.');
-    requirePattern(setup, /isSystemInitialized\(c\.env\)/, 'Setup must reject initialized systems.');
+    requirePattern(
+      setup,
+      /validateSetupToken\(c\.env,\s*setup_token\)/,
+      'Setup must validate token.'
+    );
+    requirePattern(
+      setup,
+      /isSystemInitialized\(c\.env\)/,
+      'Setup must reject initialized systems.'
+    );
     requirePattern(setup, /checkSetupEnabled/, 'Setup routes must check setup enabled state.');
     requirePattern(setup, /completeSetup\(c\.env\)/, 'Setup completion must call completeSetup.');
-    requirePattern(setupToken, /delete\(SETUP_TOKEN_KEY\)/, 'completeSetup must delete setup token.');
+    requirePattern(
+      setupToken,
+      /delete\(SETUP_TOKEN_KEY\)/,
+      'completeSetup must delete setup token.'
+    );
     requirePattern(
       setupToken,
       /put\(SETUP_COMPLETED_KEY,\s*'true'\)/,
@@ -210,14 +224,26 @@ async function runIndependentCheck(repoRoot, id) {
       /expirationTtl:\s*ttlSeconds/,
       'Stored setup tokens must use expirationTtl.'
     );
-    requirePattern(setupKeys, /head -c 32 \/dev\/urandom/, 'Shell setup token must use 32 random bytes.');
-    requirePattern(setupKeys, /--expiration-ttl=3600/, 'Shell setup token must be stored with one hour TTL.');
+    requirePattern(
+      setupKeys,
+      /head -c 32 \/dev\/urandom/,
+      'Shell setup token must use 32 random bytes.'
+    );
+    requirePattern(
+      setupKeys,
+      /--expiration-ttl=3600/,
+      'Shell setup token must be stored with one hour TTL.'
+    );
     requirePattern(
       setupCoreAdmin,
       /\[A-Za-z0-9_-\]\{43\}/,
       'Setup CLI must validate base64url 32-byte token format.'
     );
-    requirePattern(setupCoreAdmin, /'--ttl'[\s\S]{0,80}ttlSeconds\.toString\(\)/, 'Setup CLI must pass TTL to Wrangler.');
+    requirePattern(
+      setupCoreAdmin,
+      /'--ttl'[\s\S]{0,80}ttlSeconds\.toString\(\)/,
+      'Setup CLI must pass TTL to Wrangler.'
+    );
 
     return {
       id,
@@ -231,19 +257,44 @@ async function runIndependentCheck(repoRoot, id) {
 
   if (id === 'asvs.v6_4_1.admin_ui_setup_token_lifecycle') {
     const setup = await readText(repoRoot, 'packages/ar-auth/src/setup.ts');
-    const schema = await readText(
-      repoRoot,
-      'migrations/admin/001_pre_1_0_admin_baseline.sql'
-    );
+    const schema = await readText(repoRoot, 'migrations/admin/d1/001_0_4_0_admin_baseline.sql');
     const base = await readText(repoRoot, 'packages/ar-lib-core/src/repositories/base.ts');
     requirePattern(base, /crypto\.randomUUID\(\)/, 'Repository IDs must use crypto.randomUUID.');
-    requirePattern(setup, /const setupTokenId = generateId\(\)/, 'Admin UI setup token ID must be generated.');
-    requirePattern(setup, /tokenExpiresAt\s*=\s*now\s*\+\s*24\s*\*\s*60\s*\*\s*60\s*\*\s*1000/, 'Admin UI setup token must expire within 24 hours.');
-    requirePattern(setup, /INSERT INTO admin_setup_tokens/, 'Admin UI setup token must be inserted.');
-    requirePattern(setup, /status,\s*expires_at,\s*created_at,\s*created_by/, 'Admin UI setup token insert must include status and expires_at columns.');
-    requirePattern(setup, /VALUES \(\?, \?, \?, 'pending', \?, \?, 'initial_setup'\)/, 'Admin UI setup token insert must start with pending status.');
-    requirePattern(schema, /status TEXT NOT NULL DEFAULT 'pending'/, 'Setup token schema must have status.');
-    requirePattern(schema, /expires_at INTEGER NOT NULL/, 'Setup token schema must require expires_at.');
+    requirePattern(
+      setup,
+      /const setupTokenId = generateId\(\)/,
+      'Admin UI setup token ID must be generated.'
+    );
+    requirePattern(
+      setup,
+      /tokenExpiresAt\s*=\s*now\s*\+\s*24\s*\*\s*60\s*\*\s*60\s*\*\s*1000/,
+      'Admin UI setup token must expire within 24 hours.'
+    );
+    requirePattern(
+      setup,
+      /INSERT INTO admin_setup_tokens/,
+      'Admin UI setup token must be inserted.'
+    );
+    requirePattern(
+      setup,
+      /status,\s*expires_at,\s*created_at,\s*created_by/,
+      'Admin UI setup token insert must include status and expires_at columns.'
+    );
+    requirePattern(
+      setup,
+      /VALUES \(\?, \?, \?, 'pending', \?, \?, 'initial_setup'\)/,
+      'Admin UI setup token insert must start with pending status.'
+    );
+    requirePattern(
+      schema,
+      /status TEXT NOT NULL DEFAULT 'pending'/,
+      'Setup token schema must have status.'
+    );
+    requirePattern(
+      schema,
+      /expires_at INTEGER NOT NULL/,
+      'Setup token schema must require expires_at.'
+    );
     requirePattern(schema, /used_at INTEGER/, 'Setup token schema must track used_at.');
 
     return {
@@ -252,7 +303,7 @@ async function runIndependentCheck(repoRoot, id) {
       description:
         'Admin UI passkey setup tokens are random UUIDs, start pending, expire, and have status/usage tracking.',
       evidence:
-        'packages/ar-auth/src/setup.ts; packages/ar-lib-core/src/repositories/base.ts; migrations/admin/001_pre_1_0_admin_baseline.sql',
+        'packages/ar-auth/src/setup.ts; packages/ar-lib-core/src/repositories/base.ts; migrations/admin/d1/001_0_4_0_admin_baseline.sql',
     };
   }
 
@@ -331,16 +382,23 @@ async function runIndependentCheck(repoRoot, id) {
       result: 'pass',
       description:
         'Session tokens are verified through backend SessionStore lookup with format, expiry, and revocation checks.',
-      evidence: 'packages/ar-auth/src/direct-auth.ts; packages/ar-lib-core/src/durable-objects/SessionStore.ts',
+      evidence:
+        'packages/ar-auth/src/direct-auth.ts; packages/ar-lib-core/src/durable-objects/SessionStore.ts',
     };
   }
 
   if (id === 'asvs.v7_2_2.dynamic_reference_session_tokens') {
-    const sessionHelper = await readText(repoRoot, 'packages/ar-lib-core/src/utils/session-helper.ts');
+    const sessionHelper = await readText(
+      repoRoot,
+      'packages/ar-lib-core/src/utils/session-helper.ts'
+    );
     const directAuth = await readText(repoRoot, 'packages/ar-auth/src/direct-auth.ts');
     const emailCode = await readText(repoRoot, 'packages/ar-auth/src/email-code.ts');
     const anonLogin = await readText(repoRoot, 'packages/ar-auth/src/anon-login.ts');
-    const directoryPassword = await readText(repoRoot, 'packages/ar-auth/src/directory-password-login.ts');
+    const directoryPassword = await readText(
+      repoRoot,
+      'packages/ar-auth/src/directory-password-login.ts'
+    );
     requirePattern(
       sessionHelper,
       /generateRegionShardedSessionId/,
@@ -385,7 +443,10 @@ async function runIndependentCheck(repoRoot, id) {
   }
 
   if (id === 'asvs.v7_2_3.session_token_entropy') {
-    const sessionHelper = await readText(repoRoot, 'packages/ar-lib-core/src/utils/session-helper.ts');
+    const sessionHelper = await readText(
+      repoRoot,
+      'packages/ar-lib-core/src/utils/session-helper.ts'
+    );
     const cryptoUtils = await readText(repoRoot, 'packages/ar-lib-core/src/utils/crypto.ts');
     requirePattern(
       sessionHelper,
@@ -847,7 +908,9 @@ function validateLedger(ledger, repoRoot) {
       errors.push(`${prefix}: covered controls must include at least one evidence item.`);
     }
     if (control.status === 'manual') {
-      warnings.push(`${prefix}: manual review remains before this can be counted as evidence covered.`);
+      warnings.push(
+        `${prefix}: manual review remains before this can be counted as evidence covered.`
+      );
     }
     if (control.status === 'gap' && !control.remediation) {
       errors.push(`${prefix}: gap controls must include remediation.`);
@@ -966,46 +1029,45 @@ function buildMarkdown(report) {
   const byStatus = (status) => report.controls.filter((control) => control.status === status);
   const gapRows =
     byStatus('gap')
-      .map((control) =>
-        [
-          escapeMarkdownTable(control.req_id),
-          escapeMarkdownTable(control.section_name),
-          escapeMarkdownTable(control.title),
-          escapeMarkdownTable(control.rationale),
-        ]
-      )
+      .map((control) => [
+        escapeMarkdownTable(control.req_id),
+        escapeMarkdownTable(control.section_name),
+        escapeMarkdownTable(control.title),
+        escapeMarkdownTable(control.rationale),
+      ])
       .map((row) => `| ${row.join(' | ')} |`)
       .join('\n') || '| - | - | - | - |';
   const manualRows =
     byStatus('manual')
-      .map((control) =>
-        [
-          escapeMarkdownTable(control.req_id),
-          escapeMarkdownTable(control.section_name),
-          escapeMarkdownTable(control.title),
-          escapeMarkdownTable(control.rationale),
-        ]
-      )
+      .map((control) => [
+        escapeMarkdownTable(control.req_id),
+        escapeMarkdownTable(control.section_name),
+        escapeMarkdownTable(control.title),
+        escapeMarkdownTable(control.rationale),
+      ])
       .map((row) => `| ${row.join(' | ')} |`)
       .join('\n') || '| - | - | - | - |';
-  const chapterSummaryRows = [...new Set(report.controls.map((control) => control.section[0] + control.section.slice(1).split('.')[0]))]
+  const chapterSummaryRows = [
+    ...new Set(
+      report.controls.map((control) => control.section[0] + control.section.slice(1).split('.')[0])
+    ),
+  ]
     .map((chapter) => {
       const controls = report.controls.filter((control) => control.id.includes(`-${chapter}.`));
       const covered = controls.filter((control) => control.status === 'covered').length;
       const manual = controls.filter((control) => control.status === 'manual').length;
-      const notApplicable = controls.filter((control) => control.status === 'not_applicable').length;
+      const notApplicable = controls.filter(
+        (control) => control.status === 'not_applicable'
+      ).length;
       const gaps = controls.filter((control) => control.status === 'gap').length;
       return `| ${chapter} | ${controls.length} | ${covered} | ${manual} | ${notApplicable} | ${gaps} |`;
     })
     .join('\n');
   const summaryRows = report.controls
     .map((control) =>
-      [
-        control.id,
-        control.result,
-        control.evidence_count,
-        escapeMarkdownTable(control.title),
-      ].join(' | ')
+      [control.id, control.result, control.evidence_count, escapeMarkdownTable(control.title)].join(
+        ' | '
+      )
     )
     .map((row) => `| ${row} |`)
     .join('\n');

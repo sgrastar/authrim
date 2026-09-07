@@ -107,6 +107,7 @@ describe('SCIM inbound identity mapping', () => {
         edge('email', 'emails.value'),
         edge('preferred_username', 'userName'),
         edge('display_name', 'displayName'),
+        edge('picture_url', 'photos.value'),
         edge('scim_active', 'active'),
         edge('scim_external_id', 'externalId'),
       ],
@@ -125,6 +126,7 @@ describe('SCIM inbound identity mapping', () => {
         externalId: 'external-ada',
         active: false,
         displayName: 'Ada Lovelace',
+        photos: [{ value: 'https://example.test/ada.png', primary: true }],
         emails: [{ value: 'ada@example.test', primary: true }],
       },
     });
@@ -133,6 +135,7 @@ describe('SCIM inbound identity mapping', () => {
       email: 'ada@example.test',
       preferred_username: 'ada',
       name: 'Ada Lovelace',
+      picture: 'https://example.test/ada.png',
       active: 0,
       external_id: 'external-ada',
     });

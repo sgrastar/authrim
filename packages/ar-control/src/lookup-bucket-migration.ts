@@ -13,6 +13,10 @@ import {
   type ControlLookupBucketRouteTarget,
   type ControlLookupBucketWriteRoute,
 } from '@authrim/ar-lib-core/control-plane';
+import {
+  LOOKUP_MAX_VIRTUAL_BUCKET,
+  LOOKUP_VIRTUAL_BUCKET_COUNT,
+} from '@authrim/ar-lib-core/services/lookup-directory/contract';
 
 const LEASE_SECONDS = 2 * 60;
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
@@ -99,7 +103,11 @@ function safeId(value: unknown, code: string): string {
 }
 
 function bucket(value: unknown): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > 4095) {
+  if (
+    !Number.isSafeInteger(value) ||
+    (value as number) < 0 ||
+    (value as number) > LOOKUP_MAX_VIRTUAL_BUCKET
+  ) {
     throw new Error('invalid_lookup_bucket_migration_bucket');
   }
   return value as number;
@@ -177,7 +185,7 @@ export class LookupBucketMigrationService {
       input.observedAt > now + 5 ||
       !Array.isArray(input.buckets) ||
       input.buckets.length < 1 ||
-      input.buckets.length > 4096
+      input.buckets.length > LOOKUP_VIRTUAL_BUCKET_COUNT
     ) {
       throw new Error('control_lookup_bucket_load_snapshot_invalid');
     }
@@ -225,7 +233,7 @@ export class LookupBucketMigrationService {
               AND residency.status = 'active'
             WHERE shard.environment_id = ? AND shard.status = 'active'
             ORDER BY shard.lookup_shard_id
-            LIMIT 4096`
+            LIMIT ${LOOKUP_VIRTUAL_BUCKET_COUNT}`
         )
         .bind(environmentId)
         .all<PlanShardRow>(),

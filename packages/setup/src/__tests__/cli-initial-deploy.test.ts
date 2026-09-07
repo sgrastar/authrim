@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   buildApiPackages: vi.fn(),
   loadDeploySecretsFromKeys: vi.fn(),
   deployAll: vi.fn(),
+  reconcileWorkerCronTriggers: vi.fn(),
   deployAllUiWorkers: vi.fn(),
   deployUiWorkerBindingTargets: vi.fn(),
   resolveExistingWorkerComponents: vi.fn(),
@@ -136,6 +137,7 @@ vi.mock('../core/deploy.js', async (importOriginal) => {
     ...actual,
     buildApiPackages: mocks.buildApiPackages,
     deployAll: mocks.deployAll,
+    reconcileWorkerCronTriggers: mocks.reconcileWorkerCronTriggers,
     deployAllUiWorkers: mocks.deployAllUiWorkers,
     deployUiWorkerBindingTargets: mocks.deployUiWorkerBindingTargets,
     loadDeploySecretsFromKeys: mocks.loadDeploySecretsFromKeys,
@@ -347,11 +349,16 @@ let root: string;
 let controlBootstrapCompleted = false;
 const TEST_ACCOUNT_ID = '0123456789abcdef0123456789abcdef';
 
-async function writeHeadlessEnvironment(env: string, automaticProvisioning = false): Promise<void> {
+async function writeHeadlessEnvironment(
+  env: string,
+  automaticProvisioning = false,
+  configure?: (config: ReturnType<typeof createDefaultConfig>) => void
+): Promise<void> {
   const config = createDefaultConfig(env);
   config.components.loginUi = false;
   config.components.adminUi = false;
   config.controlPlane = { automaticProvisioning };
+  configure?.(config);
 
   await mkdir(join(root, '.authrim', env), { recursive: true });
   for (const component of [...CORE_WORKER_COMPONENTS, 'ar-login-ui', 'ar-admin-ui']) {
@@ -417,17 +424,54 @@ async function writeHeadlessEnvironment(env: string, automaticProvisioning = fal
     join(root, 'migrations', 'release-manifest.draft.json'),
     `${JSON.stringify(
       {
-        formatVersion: 1,
+        formatVersion: 2,
         productVersion: '0.2.0',
         streams: [
-          { id: 'd1-core', dialect: 'sqlite', logicalRoles: ['core'], files: [] },
-          { id: 'd1-pii', dialect: 'sqlite', logicalRoles: ['pii'], files: [] },
-          { id: 'd1-admin', dialect: 'sqlite', logicalRoles: ['admin'], files: [] },
-          { id: 'd1-control', dialect: 'sqlite', logicalRoles: ['control'], files: [] },
-          { id: 'd1-lookup', dialect: 'sqlite', logicalRoles: ['lookup'], files: [] },
           {
-            id: 'd1-plugin-runner',
+            id: 'core-d1',
+            schemaFamily: 'core',
             dialect: 'sqlite',
+            targetKind: 'cloudflare-d1',
+            logicalRoles: ['core', 'tenant_core'],
+            files: [],
+          },
+          {
+            id: 'pii-d1',
+            schemaFamily: 'pii',
+            dialect: 'sqlite',
+            targetKind: 'cloudflare-d1',
+            logicalRoles: ['pii', 'tenant_pii'],
+            files: [],
+          },
+          {
+            id: 'admin-d1',
+            schemaFamily: 'admin',
+            dialect: 'sqlite',
+            targetKind: 'cloudflare-d1',
+            logicalRoles: ['admin'],
+            files: [],
+          },
+          {
+            id: 'control-d1',
+            schemaFamily: 'control',
+            dialect: 'sqlite',
+            targetKind: 'cloudflare-d1',
+            logicalRoles: ['control'],
+            files: [],
+          },
+          {
+            id: 'lookup-d1',
+            schemaFamily: 'lookup',
+            dialect: 'sqlite',
+            targetKind: 'cloudflare-d1',
+            logicalRoles: ['lookup'],
+            files: [],
+          },
+          {
+            id: 'plugin-runner-d1',
+            schemaFamily: 'plugin_runner',
+            dialect: 'sqlite',
+            targetKind: 'cloudflare-d1',
             logicalRoles: ['plugin_runner'],
             files: [],
           },
@@ -483,7 +527,7 @@ async function prepareAppendOnlyDraftCheckpoint(env: string): Promise<{
   oldManifestChecksum: string;
   currentManifestChecksum: string;
 }> {
-  const migrationDirectory = join(root, 'migrations', 'control');
+  const migrationDirectory = join(root, 'migrations', 'control', 'd1');
   const firstMigrationPath = join(migrationDirectory, '001_initial.sql');
   const appendedMigrationPath = join(migrationDirectory, '002_appended.sql');
   await mkdir(migrationDirectory, { recursive: true });
@@ -493,7 +537,7 @@ async function prepareAppendOnlyDraftCheckpoint(env: string): Promise<{
   const draftPath = join(root, 'migrations', 'release-manifest.draft.json');
   const currentManifest = JSON.parse(await readFile(draftPath, 'utf-8'));
   const controlStream = currentManifest.streams.find(
-    (stream: { id: string }) => stream.id === 'd1-control'
+    (stream: { id: string }) => stream.id === 'control-d1'
   );
   controlStream.files = [
     {
@@ -508,18 +552,18 @@ async function prepareAppendOnlyDraftCheckpoint(env: string): Promise<{
   await writeFile(draftPath, `${JSON.stringify(currentManifest, null, 2)}\n`);
 
   const oldManifest = structuredClone(currentManifest);
-  oldManifest.streams.find((stream: { id: string }) => stream.id === 'd1-control').files.pop();
+  oldManifest.streams.find((stream: { id: string }) => stream.id === 'control-d1').files.pop();
   const oldManifestChecksum = calculateReleaseManifestChecksum(oldManifest);
   const currentManifestChecksum = calculateReleaseManifestChecksum(currentManifest);
   const lockPath = join(root, '.authrim', env, 'lock.json');
   const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
   const streamByBinding = new Map([
-    ['DB', 'd1-core'],
-    ['DB_PII', 'd1-pii'],
-    ['DB_ADMIN', 'd1-admin'],
-    ['CONTROL_DB', 'd1-control'],
-    ['LOOKUP_DB', 'd1-lookup'],
-    ['PLUGIN_RUNNER_DB', 'd1-plugin-runner'],
+    ['DB', 'core-d1'],
+    ['DB_PII', 'pii-d1'],
+    ['DB_ADMIN', 'admin-d1'],
+    ['CONTROL_DB', 'control-d1'],
+    ['LOOKUP_DB', 'lookup-d1'],
+    ['PLUGIN_RUNNER_DB', 'plugin-runner-d1'],
   ]);
   const targetIds: string[] = [];
   lock.schemaTargets = {};
@@ -665,6 +709,7 @@ describe('CLI initial deployment', () => {
     controlBootstrapCompleted = false;
     mocks.oraSpinners.length = 0;
     mocks.assertLocalDeploymentCapacity.mockResolvedValue(2 * 1024 * 1024 * 1024);
+    mocks.reconcileWorkerCronTriggers.mockResolvedValue(undefined);
 
     mocks.isWranglerInstalled.mockResolvedValue(true);
     mocks.checkAuth.mockResolvedValue({
@@ -731,12 +776,12 @@ describe('CLI initial deployment', () => {
     mocks.applyReleaseSchemaUpdatePlan.mockResolvedValue({
       success: true,
       results: [
-        'd1:admin-id:d1-admin',
-        'd1:control-id:d1-control',
-        'd1:core-id:d1-core',
-        'd1:lookup-id:d1-lookup',
-        'd1:pii-id:d1-pii',
-        'd1:plugin-runner-id:d1-plugin-runner',
+        'd1:admin-id:admin-d1',
+        'd1:control-id:control-d1',
+        'd1:core-id:core-d1',
+        'd1:lookup-id:lookup-d1',
+        'd1:pii-id:pii-d1',
+        'd1:plugin-runner-id:plugin-runner-d1',
       ].map((targetId) => ({
         targetId,
         success: true,
@@ -868,7 +913,7 @@ describe('CLI initial deployment', () => {
         releaseId: '0.2.0',
         manifestDigest: 'c'.repeat(64),
         manifestObjectKey: `releases/0.2.0/${'c'.repeat(64)}/manifest.json`,
-        streamIds: ['d1-core', 'd1-pii'],
+        streamIds: ['core-d1', 'pii-d1'],
         objects: [],
       },
       operationId: `op_release_${'c'.repeat(32)}`,
@@ -1245,12 +1290,12 @@ describe('CLI initial deployment', () => {
       return {
         success: true,
         results: [
-          'd1:admin-id:d1-admin',
-          'd1:control-id:d1-control',
-          'd1:core-id:d1-core',
-          'd1:lookup-id:d1-lookup',
-          'd1:pii-id:d1-pii',
-          'd1:plugin-runner-id:d1-plugin-runner',
+          'd1:admin-id:admin-d1',
+          'd1:control-id:control-d1',
+          'd1:core-id:core-d1',
+          'd1:lookup-id:lookup-d1',
+          'd1:pii-id:pii-d1',
+          'd1:plugin-runner-id:plugin-runner-d1',
         ].map((targetId) => ({
           targetId,
           success: true,
@@ -1275,7 +1320,7 @@ describe('CLI initial deployment', () => {
           releaseId: '0.2.0',
           manifestDigest: 'c'.repeat(64),
           manifestObjectKey: `releases/0.2.0/${'c'.repeat(64)}/manifest.json`,
-          streamIds: ['d1-core', 'd1-pii'],
+          streamIds: ['core-d1', 'pii-d1'],
           objects: [],
         },
         operationId: `op_release_${'c'.repeat(32)}`,
@@ -1313,7 +1358,7 @@ describe('CLI initial deployment', () => {
     );
     expect(mocks.registerInitialControlTopology).toHaveBeenCalledOnce();
     expect(mocks.waitForInitialBootstrapHandoff).toHaveBeenCalledOnce();
-    expect(mocks.recordInitialBootstrapWorkerEvidence).not.toHaveBeenCalled();
+    expect(mocks.recordInitialBootstrapWorkerEvidence).toHaveBeenCalledOnce();
     const handoffInput = mocks.waitForInitialBootstrapHandoff.mock.calls[0]?.[0] as
       | {
           advanceBindings?: () => Promise<unknown>;
@@ -1327,8 +1372,14 @@ describe('CLI initial deployment', () => {
     expect(handoffInput?.advanceBindings).toEqual(expect.any(Function));
     await handoffInput?.advanceBindings?.();
     await handoffInput?.refreshEvidence?.();
-    expect(mocks.requestInitialBootstrapAcceleration).not.toHaveBeenCalled();
-    expect(mocks.recordInitialBootstrapWorkerEvidence).toHaveBeenCalledOnce();
+    expect(mocks.requestInitialBootstrapAcceleration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        environmentId: env,
+        activeSlot: 'A',
+        activeKeyId: 'smoke-v1',
+      })
+    );
+    expect(mocks.recordInitialBootstrapWorkerEvidence).toHaveBeenCalledTimes(2);
     expect(mocks.deployAll).toHaveBeenCalledWith(
       expect.objectContaining({
         deployConfigLockProof: expect.objectContaining({ assertOwned: expect.any(Function) }),
@@ -1386,6 +1437,43 @@ describe('CLI initial deployment', () => {
     expect(lock.releaseUpdate?.phase).toBe('verified');
     expect(lock.workers['ar-login-ui']).toBeUndefined();
     expect(lock.workers['ar-admin-ui']).toBeUndefined();
+  });
+
+  it('checks multi-tenant router readiness on the operational API origin', async () => {
+    const env = 'headless';
+    await writeHeadlessEnvironment(env, false, (config) => {
+      config.tenant.multiTenant = true;
+      config.tenant.name = 'default';
+      config.tenant.baseDomain = 'multi.example.com';
+      config.urls = {
+        api: {
+          custom: 'https://multi.example.com',
+          auto: `https://${env}-ar-router.example.workers.dev`,
+          customDomainBinding: true,
+        },
+        loginUi: {
+          custom: null,
+          auto: `https://${env}-ar-login-ui.example.workers.dev`,
+          sameAsApi: false,
+        },
+        adminUi: {
+          custom: null,
+          auto: `https://${env}-ar-admin-ui.example.workers.dev`,
+          sameAsApi: false,
+        },
+      };
+    });
+
+    await deployCommand({
+      env,
+      source: root,
+      skipBuild: true,
+      yes: true,
+    });
+
+    expect(mocks.waitForRouterWorkerReady).toHaveBeenCalledWith(
+      expect.objectContaining({ apiBaseUrl: 'https://multi.example.com' })
+    );
   });
 
   it('does not verify a fresh deployment when notification provider bootstrap fails', async () => {
@@ -1550,9 +1638,11 @@ describe('CLI initial deployment', () => {
       controlDatabaseId: 'control-id',
       controlDatabaseName: 'control-id',
       environmentId: env,
+      onProgress: expect.any(Function),
     });
     expect(mocks.reconcileInitialBootstrapHandoffAsOperator).toHaveBeenCalledWith({
       controlDatabaseId: 'control-id',
+      environmentId: 'headless',
       executeWorkerBindings: false,
     });
   });
@@ -1832,6 +1922,52 @@ describe('CLI initial deployment', () => {
     expect(verifiedLock.releaseUpdate.initialWorkerRedeployRequired).toBeUndefined();
   });
 
+  it('forces a full redeploy from a fully locked workers_deployed checkpoint', async () => {
+    const env = 'headless';
+    await writeHeadlessEnvironment(env);
+    mocks.waitForInitialBootstrapHandoff.mockRejectedValueOnce(
+      new Error('post_worker_bootstrap_transient')
+    );
+
+    await expect(deployCommand({ env, source: root, skipBuild: true, yes: true })).rejects.toThrow(
+      'post_worker_bootstrap_transient'
+    );
+
+    const lockPath = join(root, '.authrim', env, 'lock.json');
+    const interruptedLock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    expect(interruptedLock.releaseUpdate.phase).toBe('workers_deployed');
+    expect(Object.keys(interruptedLock.workers)).not.toHaveLength(0);
+    mocks.deployAll.mockClear();
+    mocks.registerInitialControlTopology.mockClear();
+    mocks.applyReleaseSchemaUpdatePlan.mockClear();
+    mocks.publishAndActivateMigrationRelease.mockClear();
+    let checkpointDuringRedeploy: Record<string, unknown> | undefined;
+    mocks.deployAll.mockImplementationOnce(async (_options, components) => {
+      checkpointDuringRedeploy = JSON.parse(await readFile(lockPath, 'utf-8'));
+      return successfulDeploymentSummary(env, components ?? CORE_WORKER_COMPONENTS);
+    });
+
+    await deployCommand({
+      env,
+      source: root,
+      skipBuild: true,
+      yes: true,
+      recoverLegacyWorkerDeployments: true,
+    });
+
+    expect(mocks.deployAll).toHaveBeenCalledOnce();
+    expect(mocks.registerInitialControlTopology).not.toHaveBeenCalled();
+    expect(mocks.applyReleaseSchemaUpdatePlan).not.toHaveBeenCalled();
+    expect(mocks.publishAndActivateMigrationRelease).not.toHaveBeenCalled();
+    expect(
+      (checkpointDuringRedeploy?.releaseUpdate as { initialWorkerRedeployRequired?: boolean })
+        .initialWorkerRedeployRequired
+    ).toBe(true);
+    const verifiedLock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    expect(verifiedLock.releaseUpdate.phase).toBe('verified');
+    expect(verifiedLock.releaseUpdate.initialWorkerRedeployRequired).toBeUndefined();
+  });
+
   it('does not recover a Worker automatically and preserves an empty lock on insufficient proof', async () => {
     const env = 'headless';
     await writeHeadlessEnvironment(env);
@@ -2041,6 +2177,20 @@ describe('CLI initial deployment', () => {
   it('resumes a failed initial handoff without uploading or promoting Worker code again', async () => {
     const env = 'headless';
     await writeHeadlessEnvironment(env);
+    const configPath = join(root, '.authrim', env, 'config.json');
+    const config = JSON.parse(await readFile(configPath, 'utf-8'));
+    config.components.loginUi = true;
+    config.components.adminUi = true;
+    config.urls = {
+      api: { custom: null, auto: `https://${env}-ar-router.example.workers.dev` },
+      loginUi: { custom: null, auto: `https://${env}-ar-login-ui.example.workers.dev` },
+      adminUi: {
+        custom: null,
+        auto: `https://${env}-ar-admin-ui.example.workers.dev`,
+        sameAsApi: false,
+      },
+    };
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
     mocks.waitForInitialBootstrapHandoff.mockRejectedValueOnce(
       new Error('control_bootstrap_handoff_transient')
     );
@@ -2055,7 +2205,17 @@ describe('CLI initial deployment', () => {
     expect(checkpoint.releaseUpdate.phase).toBe('workers_deployed');
     expect(checkpoint.workers['ar-control'].cloudflareVersionId).toMatch(/^[a-f0-9-]{36}$/u);
 
+    // Simulate an older Web retry that persisted a stale schema checkpoint after Control had
+    // already accepted the exact Worker handoff. A safe resume must recover this phase from
+    // durable Control evidence instead of repeating schema or Worker mutations.
+    checkpoint.releaseUpdate.phase = 'schema_applied';
+    await writeFile(
+      join(root, '.authrim', env, 'lock.json'),
+      `${JSON.stringify(checkpoint, null, 2)}\n`
+    );
+
     mocks.deployAll.mockClear();
+    mocks.reconcileWorkerCronTriggers.mockClear();
     mocks.applyReleaseSchemaUpdatePlan.mockClear();
     mocks.publishAndActivateMigrationRelease.mockClear();
     mocks.isInitialBootstrapHandoffAccepted.mockResolvedValue(true);
@@ -2064,11 +2224,32 @@ describe('CLI initial deployment', () => {
     await deployCommand({ env, source: root, skipBuild: true, yes: true });
 
     expect(mocks.deployAll).not.toHaveBeenCalled();
+    expect(mocks.reconcileWorkerCronTriggers).toHaveBeenCalledOnce();
+    expect(mocks.reconcileWorkerCronTriggers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        env,
+        cloudflareAccountId: TEST_ACCOUNT_ID,
+        workerScriptOwnership: expect.objectContaining({
+          assertBeforeMutation: expect.any(Function),
+        }),
+      }),
+      expect.arrayContaining(['ar-management'])
+    );
     expect(mocks.applyReleaseSchemaUpdatePlan).not.toHaveBeenCalled();
+    expect(mocks.publishAndActivateMigrationRelease).not.toHaveBeenCalled();
     expect(mocks.isInitialBootstrapHandoffAccepted).toHaveBeenCalledWith(
       expect.objectContaining({ environmentId: env })
     );
-    expect(mocks.recordInitialBootstrapWorkerEvidence).not.toHaveBeenCalled();
+    expect(mocks.recordInitialBootstrapWorkerEvidence).toHaveBeenCalledOnce();
+    expect(
+      mocks.prepareManagedWorkerScriptOwnership.mock.calls.some(([input]) => {
+        const targets = input.targets as Array<{ component: string }>;
+        return (
+          targets.some((target) => target.component === 'ar-login-ui') &&
+          targets.some((target) => target.component === 'ar-admin-ui')
+        );
+      })
+    ).toBe(true);
   });
 
   it('requires recreation without mutating schema or Workers when the draft manifest changed', async () => {
@@ -2111,7 +2292,7 @@ describe('CLI initial deployment', () => {
       success: false,
       results: [
         {
-          targetId: 'd1:control-id:d1-control',
+          targetId: 'd1:control-id:control-d1',
           success: false,
           appliedCount: 1,
           skippedCount: 0,
@@ -2129,7 +2310,7 @@ describe('CLI initial deployment', () => {
       phase: 'schema_applied',
       manifestChecksum: oldManifestChecksum,
     });
-    expect(failedCheckpoint.schemaTargets['d1:control-id:d1-control']).toMatchObject({
+    expect(failedCheckpoint.schemaTargets['d1:control-id:control-d1']).toMatchObject({
       manifestChecksum: oldManifestChecksum,
       files: [expect.objectContaining({ path: '001_initial.sql' })],
     });
@@ -2144,12 +2325,12 @@ describe('CLI initial deployment', () => {
       return {
         success: true,
         results: [
-          'd1:admin-id:d1-admin',
-          'd1:control-id:d1-control',
-          'd1:core-id:d1-core',
-          'd1:lookup-id:d1-lookup',
-          'd1:pii-id:d1-pii',
-          'd1:plugin-runner-id:d1-plugin-runner',
+          'd1:admin-id:admin-d1',
+          'd1:control-id:control-d1',
+          'd1:core-id:core-d1',
+          'd1:lookup-id:lookup-d1',
+          'd1:pii-id:pii-d1',
+          'd1:plugin-runner-id:plugin-runner-d1',
         ].map((targetId) => ({
           targetId,
           success: true,
@@ -2173,7 +2354,7 @@ describe('CLI initial deployment', () => {
       phase: 'schema_applied',
       manifestChecksum: currentManifestChecksum,
     });
-    expect(retriedCheckpoint.schemaTargets['d1:control-id:d1-control']).toMatchObject({
+    expect(retriedCheckpoint.schemaTargets['d1:control-id:control-d1']).toMatchObject({
       manifestChecksum: currentManifestChecksum,
       files: [
         expect.objectContaining({ path: '001_initial.sql' }),
@@ -2325,12 +2506,12 @@ describe('CLI initial deployment', () => {
       return {
         success: true,
         results: [
-          'd1:admin-id:d1-admin',
-          'd1:control-id:d1-control',
-          'd1:core-id:d1-core',
-          'd1:lookup-id:d1-lookup',
-          'd1:pii-id:d1-pii',
-          'd1:plugin-runner-id:d1-plugin-runner',
+          'd1:admin-id:admin-d1',
+          'd1:control-id:control-d1',
+          'd1:core-id:core-d1',
+          'd1:lookup-id:lookup-d1',
+          'd1:pii-id:pii-d1',
+          'd1:plugin-runner-id:plugin-runner-d1',
         ].map((targetId) => ({
           targetId,
           success: true,
@@ -2430,6 +2611,7 @@ describe('CLI initial deployment', () => {
     mocks.configureDownstreamIntrospectionDeployment.mockResolvedValueOnce({
       success: false,
       error: 'secret write failed',
+      diagnosticCode: 'downstream_introspection_operation_failed',
     });
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -2437,6 +2619,7 @@ describe('CLI initial deployment', () => {
       await deployCommand({ env, source: root, skipBuild: true, yes: true });
       const output = log.mock.calls.flat().join('\n');
       expect(output).toContain('Reason: secret write failed');
+      expect(output).toContain('Diagnostic: downstream_introspection_operation_failed');
       expect(output).toContain('Core login, Admin UI, and token issuance remain available.');
       expect(output).not.toContain('undefined');
       expect(
@@ -2448,12 +2631,91 @@ describe('CLI initial deployment', () => {
       ).toBe(true);
       expect(mocks.configureDownstreamIntrospectionDeployment).toHaveBeenCalledWith(
         expect.objectContaining({
-          knownRouterReadyBaseUrls: expect.arrayContaining([expect.any(String)]),
+          apiBaseUrl: 'https://headless-ar-router.example-subdomain.workers.dev',
+          apiBaseUrls: ['https://headless-ar-router.example-subdomain.workers.dev'],
+          knownRouterReadyBaseUrls: ['https://headless-ar-router.example-subdomain.workers.dev'],
+          onDetail: expect.any(Function),
         })
       );
     } finally {
       log.mockRestore();
     }
+  });
+
+  it('restores and removes Setup machine access around a focused ar-userinfo retry', async () => {
+    const env = 'headless';
+    await writeHeadlessEnvironment(env);
+    const lockPath = join(root, '.authrim', env, 'lock.json');
+    const lock = JSON.parse(await readFile(lockPath, 'utf-8'));
+    lock.productVersion = '0.2.0';
+    const draftManifest = await readFile(
+      join(root, 'migrations', 'release-manifest.draft.json'),
+      'utf-8'
+    );
+    const manifestChecksum = calculateReleaseManifestChecksum(JSON.parse(draftManifest));
+    const tenantDatabases = [
+      ['HEADLESS_TDB_DEFAULT_BOOTSTRAP_CORE', 'bootstrap-default-id', 'core-d1'],
+      ['HEADLESS_TDB_USERS_BOOTSTRAP_CORE', 'bootstrap-users-id', 'core-d1'],
+      ['HEADLESS_TDB_PII_BOOTSTRAP_PII', 'bootstrap-pii-id', 'pii-d1'],
+    ] as const;
+    for (const [binding, id, streamId] of tenantDatabases) {
+      lock.d1[binding] = { id, name: `${env}-${binding.toLowerCase()}` };
+      lock.schemaTargets ??= {};
+      lock.schemaTargets[`d1:${id}:${streamId}`] = {
+        productVersion: '0.2.0',
+        manifestChecksum,
+        streamId,
+        appliedBy: 'automatic',
+        updatedAt: '2026-07-22T00:00:00.000Z',
+      };
+    }
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    await mkdir(join(root, 'migrations', 'releases'), { recursive: true });
+    await writeFile(join(root, 'migrations', 'releases', '0.2.0.json'), draftManifest);
+    mocks.listD1Databases.mockResolvedValue([
+      ...(await mocks.listD1Databases()),
+      ...tenantDatabases.map(([binding, id]) => ({
+        uuid: id,
+        name: `${env}-${binding.toLowerCase()}`,
+      })),
+    ]);
+
+    const events: string[] = [];
+    mocks.ensureSetupMachineAccessInD1.mockImplementationOnce(async () => {
+      events.push('ensure');
+      return { success: true };
+    });
+    mocks.configureDownstreamIntrospectionDeployment.mockImplementationOnce(async () => {
+      events.push('configure');
+      return { success: true, skipped: true };
+    });
+    mocks.cleanupSetupMachineAccessInD1.mockImplementationOnce(async () => {
+      events.push('cleanup');
+      return { success: true };
+    });
+
+    await deployCommand({
+      env,
+      source: root,
+      component: 'ar-userinfo',
+      skipBuild: true,
+      yes: true,
+    });
+
+    expect(events).toEqual(['ensure', 'configure', 'cleanup']);
+    expect(mocks.ensureSetupMachineAccessInD1).toHaveBeenCalledWith(
+      env,
+      expect.any(Object),
+      expect.any(String),
+      expect.any(Function),
+      { databaseIdentifier: 'admin-id' }
+    );
+    expect(mocks.cleanupSetupMachineAccessInD1).toHaveBeenCalledWith(
+      env,
+      expect.any(String),
+      expect.any(Function),
+      { databaseIdentifier: 'admin-id' }
+    );
   });
 
   it('defers an unexpected optional introspection exception without failing core deployment', async () => {

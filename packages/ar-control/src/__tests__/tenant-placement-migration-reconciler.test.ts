@@ -192,7 +192,7 @@ describe('tenant placement migration verification and write fence', () => {
     control = new DatabaseSync(':memory:');
     control.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
         'utf8'
       )
     );
@@ -252,14 +252,17 @@ describe('tenant placement migration verification and write fence', () => {
           `INSERT INTO control_desired_resources (
              desired_resource_id, environment_id, resource_kind, logical_shard_id,
              deterministic_name, ownership_fingerprint, provisioning_state,
-             origin_operation_id, created_at, updated_at
-           ) VALUES (?, 'env-test', 'd1', ?, ?, ?, 'active', 'op-seed', 1, 1)`
+             origin_operation_id, provider_create_state, provider_resource_id,
+             provider_identity_checkpointed_at, created_at, updated_at
+           ) VALUES (?, 'env-test', 'd1', ?, ?, ?, 'active', 'op-seed',
+                     'identified', ?, 1, 1, 1)`
         )
         .run(
           `source-desired-${index}`,
           `source-shard-${index}`,
           `source-shard-${index}-db`,
-          `source-shard-${index}-owner`
+          `source-shard-${index}-owner`,
+          sourceId
         );
       control
         .prepare(
@@ -347,14 +350,17 @@ describe('tenant placement migration verification and write fence', () => {
           `INSERT INTO control_desired_resources (
              desired_resource_id, environment_id, resource_kind, logical_shard_id,
              deterministic_name, ownership_fingerprint, provisioning_state,
-             origin_operation_id, created_at, updated_at
-           ) VALUES (?, 'env-test', 'd1', ?, ?, ?, 'active', 'op-seed', 2, 2)`
+             origin_operation_id, provider_create_state, provider_resource_id,
+             provider_identity_checkpointed_at, created_at, updated_at
+           ) VALUES (?, 'env-test', 'd1', ?, ?, ?, 'active', 'op-seed',
+                     'identified', ?, 2, 2, 2)`
         )
         .run(
           `target-desired-${index}`,
           `target-shard-${index}`,
           `target-shard-${index}-db`,
-          `target-shard-${index}-owner`
+          `target-shard-${index}-owner`,
+          `target-db-${index}`
         );
       control
         .prepare(

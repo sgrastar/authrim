@@ -196,7 +196,7 @@ export interface ReleaseRolloutStatus {
 
 export interface ReleaseRolloutBlockedTarget {
 	targetId: string;
-	streamId: 'd1-core' | 'd1-pii' | 'd1-lookup';
+	streamId: 'core-d1' | 'pii-d1' | 'lookup-d1';
 	attemptCount: number;
 	lastErrorCode: string;
 	updatedAt: number;
@@ -224,7 +224,7 @@ export interface ControlCapacityProvisioningTarget {
 	databaseName: string;
 	bindingRef: string;
 	readReplicationMode: 'enabled' | 'disabled';
-	migrationStreamId: 'd1-core' | 'd1-pii';
+	migrationStreamId: 'core-d1' | 'pii-d1';
 }
 
 export interface ControlCapacityProvisioningPreview extends ControlCapacityProfileRequest {
@@ -342,7 +342,7 @@ export interface TenantDisasterRecoveryTarget {
 	shardGeneration: number;
 	bindingRef: string;
 	providerDatabaseId: string;
-	migrationStreamId: 'd1-core' | 'd1-pii';
+	migrationStreamId: 'core-d1' | 'pii-d1';
 	releaseId: string;
 	manifestDigest: string;
 	restoreConfirmedAt: number | null;
@@ -794,7 +794,7 @@ function parseReleaseRolloutResponse(value: unknown): { rollout: ReleaseRolloutS
 				!isExactRecord(target, RELEASE_ROLLOUT_BLOCKED_TARGET_KEYS) ||
 				typeof target.targetId !== 'string' ||
 				!SAFE_ID.test(target.targetId) ||
-				!['d1-core', 'd1-pii', 'd1-lookup'].includes(String(target.streamId)) ||
+				!['core-d1', 'pii-d1', 'lookup-d1'].includes(String(target.streamId)) ||
 				!Number.isSafeInteger(target.attemptCount) ||
 				(target.attemptCount as number) < 0 ||
 				typeof target.lastErrorCode !== 'string' ||
@@ -1224,7 +1224,7 @@ function parseTenantDisasterRecovery(
 			!SAFE_ID.test(candidate.bindingRef) ||
 			typeof candidate.providerDatabaseId !== 'string' ||
 			!SAFE_ID.test(candidate.providerDatabaseId) ||
-			!['d1-core', 'd1-pii'].includes(String(candidate.migrationStreamId)) ||
+			!['core-d1', 'pii-d1'].includes(String(candidate.migrationStreamId)) ||
 			typeof candidate.releaseId !== 'string' ||
 			!SAFE_ID.test(candidate.releaseId) ||
 			typeof candidate.manifestDigest !== 'string' ||
@@ -1380,8 +1380,8 @@ function parseCapacityPreview(
 			typeof target.bindingRef !== 'string' ||
 			!SAFE_D1_BINDING.test(target.bindingRef) ||
 			!['enabled', 'disabled'].includes(String(target.readReplicationMode)) ||
-			!['d1-core', 'd1-pii'].includes(String(target.migrationStreamId)) ||
-			(target.dataRole === 'tenant_pii') !== (target.migrationStreamId === 'd1-pii')
+			!['core-d1', 'pii-d1'].includes(String(target.migrationStreamId)) ||
+			(target.dataRole === 'tenant_pii') !== (target.migrationStreamId === 'pii-d1')
 		) {
 			invalidResponse();
 		}

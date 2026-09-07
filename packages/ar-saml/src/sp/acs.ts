@@ -1386,8 +1386,23 @@ function applySAMLInboundMappedValues(userInfo: UserInfo, values: SourceValueEnv
       userInfo.email = value;
       continue;
     }
-    if (path === 'name') {
+    if (path === 'name' || path === 'display_name') {
       userInfo.name = value;
+      if (path === 'display_name') userInfo.customClaims.display_name = value;
+      continue;
+    }
+    if (
+      namespace === 'authrim.profile' &&
+      [
+        'email_verified',
+        'given_name',
+        'family_name',
+        'preferred_username',
+        'picture_url',
+        'locale',
+      ].includes(path)
+    ) {
+      userInfo.customClaims[path] = value;
       continue;
     }
     if (

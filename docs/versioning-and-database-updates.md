@@ -54,7 +54,7 @@ The normal sequence is:
 1. Prepare the release candidate on `develop`.
 2. Update and check the test environment with the development SQL file list.
 3. Fix the SQL files for the release.
-4. Check the test environment again with the fixed SQL file list.
+4. Check the test environment again with the prepared release SQL file list.
 5. Run all checks and merge the `develop` to `main` pull request.
 6. Publish the tag and GitHub Release.
 7. Update and verify production.
@@ -66,8 +66,8 @@ Check each item when it is complete:
 - [ ] The development SQL file list is current
 - [ ] The development changes were applied to the test environment
 - [ ] Required test-environment checks passed
-- [ ] The release SQL and fixed SQL file list were created
-- [ ] The test environment was checked against the fixed SQL file list
+- [ ] The release SQL and prepared release SQL file list were created
+- [ ] The test environment was checked against the prepared release SQL file list
 - [ ] Lint, type checking, tests, and build passed
 - [ ] The `develop` to `main` release pull request passed
 - [ ] The tag and GitHub Release were published
@@ -99,8 +99,8 @@ pnpm migrate:manifest
 pnpm migrate:manifest:check
 ```
 
-If `migrations/releases/0.4.0.json` already exists, the database part of `0.4.0` is already fixed. Do
-not change that file. Use the next product version instead.
+Before changing an existing migration, fetch `origin/main` and tags. If the version tag is reachable
+from remote `main`, the database artifacts are published and immutable; use the next product version.
 
 ### 3.3 Check locked dependencies
 
@@ -158,10 +158,11 @@ pnpm exec tsx test/generated-environment/smoke-generated-server-surfaces.ts --en
 Also check the changed features through their UI or API. If a problem is found, correct the code or add
 a new SQL file, then repeat from section 4.1.
 
-### 4.5 Pre-1.0 semantic baseline
+### 4.5 Major/minor fresh-install baseline
 
-Until 1.0.0 is published, Authrim intentionally supports only new database installations. Preview and
-then write the semantic baseline:
+For an `x.y.0` release, preview and then write the semantic fresh-install baseline for every stream.
+Do not run this for a patch release, and do not run the write command until the repository owner
+explicitly requests baseline generation:
 
 ```sh
 pnpm release:migrations:semantic
@@ -170,15 +171,18 @@ pnpm migrate:manifest:check
 git diff -- migrations
 ```
 
-This is not textual concatenation. The command materializes the final SQLite and PostgreSQL schemas
-and seed state, reapplies the generated baselines to empty databases, and requires equivalence before
-replacing the old files. It also removes obsolete 0.x release manifests. Delete and initialize the
-test environment after the rewrite; `setup update` deliberately rejects a different installed
-pre-1.0 baseline.
+This is not textual concatenation. The command materializes the prior fresh plan plus current changes
+for SQLite and PostgreSQL, reapplies the generated baselines to empty databases, and requires schema
+and seed equivalence. It adds the new baseline without replacing earlier baselines, deltas, manifests,
+or provenance. It records the current evidence in `migrations/semantic-baseline.evidence.json` and a
+release-specific copy in `migrations/evidence/<version>.json`. Existing environments continue through
+explicit deltas or bridges.
 
 ## 5. Fix the database update for the release
 
 After the test environment passes, stop adding SQL files and create the release files.
+This is an owner-triggered release-boundary action. A version bump, release branch, or PR to `main`
+does not authorize an AI agent or automation to generate these files.
 
 ### 5.1 Preview the release files
 
@@ -188,10 +192,9 @@ This command only displays the planned file changes:
 pnpm release:migrations -- --version 0.4.0
 ```
 
-For a pre-1.0 release, the semantic baseline from section 4.5 is the complete fresh-install artifact;
-there is no supported `minimumProductVersion` or 0.x upgrade path. For 1.1.0 and later, pass the oldest
-supported stable source explicitly, for example
-`--version 1.1.0 --minimum-version 1.0.0`.
+For a major/minor release, the semantic baseline from section 4.5 is the complete fresh-install
+artifact. The release delta or bridge remains separate and upgrades the immediately preceding
+supported release. Use `--minimum-version` when an explicit compatibility boundary is needed.
 
 ### 5.2 Write the release files
 
@@ -199,9 +202,11 @@ supported stable source explicitly, for example
 pnpm release:migrations -- --version 0.4.0 --write
 ```
 
-This publishes `migrations/releases/0.4.0.json` from the verified baseline. In the stable forward-only
-workflow, the same command also combines multiple unpublished deltas per stream when needed and
-records their source paths and checksums in `supersedes`.
+This prepares `migrations/releases/0.4.0.json` from the verified baseline. Later releases use the same
+command to combine unpublished files in each changed stream into one versioned release delta and
+record their source paths and checksums in `supersedes`. Before writing, it verifies the source files
+and consolidated delta from the same prior schema on SQLite or PostgreSQL and stores the resulting
+schema/seed checksums and object count as semantic evidence.
 
 Do not remove source SQL files yourself. If the command is interrupted, run the same `--write` command
 again.
@@ -218,15 +223,23 @@ Confirm:
 - `migrations/releases/0.4.0.json` exists
 - It contains only the intended SQL
 - Combined SQL contains every intended source file
-- For 1.0.0 and later, previously published SQL did not change
-- For a pre-1.0 release, `databaseCompatibility` is `fresh_install_only` and no
-  `minimumProductVersion` is present
+- No migration belonging to a remote-main tag changed
+- `freshInstallBaseline` identifies the correct series baseline
+- `upgradePaths` contains deltas/bridges only and never a fresh baseline
 
-For a published 0.x release, a later pre-1.0 semantic rewrite may deliberately replace this manifest
-and baseline, but no retained database may be upgraded across that rewrite. From 1.0.0 onward, do not
-change published SQL or manifests; put every correction in the next product version.
+The PR and main publication workflows run `pnpm migrate:release:check`. This check is read-only: when
+the owner-triggered baseline or consolidated release delta has not been prepared, it fails and reports
+the omission instead of creating files automatically.
 
-## 6. Check the test environment against the fixed SQL file list
+The normal `pnpm migrate:manifest` command updates only the draft manifest. It does not silently refresh
+an existing release candidate; development installs that explicitly allow the draft use that draft,
+while the main-bound check reports any candidate divergence.
+
+A version is published when its tag is reachable from remote `main`. From that point, do not change,
+rename, delete, or re-integrate its SQL, manifest, checksum, or provenance. This applies to 0.x and
+continues unchanged after 1.0.0; put every correction in a later release delta.
+
+## 6. Check the test environment against the prepared release SQL file list
 
 Run the test update again after fixing the release file list:
 
@@ -283,7 +296,7 @@ Before merging, confirm:
 
 - All required GitHub Actions checks passed
 - The version matches in every package
-- Release SQL and the fixed SQL file list are in the pull request
+- Release SQL and the prepared release SQL file list are in the pull request
 - The tested commit matches the pull request
 - Release and update notes are included
 
@@ -408,7 +421,7 @@ Apply every external PostgreSQL SQL file shown by `--dry-run` to its target data
 
 ```sh
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -f migrations/external/postgres/001_pre_1_0_external_postgres_core_baseline.sql
+  -f migrations/core/postgresql/001_0_4_0_core_baseline.sql
 ```
 
 Use the actual file shown by `--dry-run`. If Core and PII use different databases, apply each SQL file
@@ -483,8 +496,10 @@ Do not overwrite the environment with Workers from an older product version. Run
 
 ### A problem was found after release
 
-Do not change fixed SQL or `migrations/releases/0.4.0.json`. Prepare a new product version such as
-`0.4.1`, and add a new correction SQL file if required.
+Once the release tag is present on remote `main`, do not change its fixed SQL or release manifest. For
+example, after the 0.4.0 tag is published, keep `migrations/releases/0.4.0.json` unchanged, prepare
+`0.4.1`, and add a new correction SQL file if required. Before that tag exists, 0.4.0 remains an
+unpublished candidate and may be regenerated only after the repository owner requests it.
 
 Authrim does not support downgrading the product and database to an older version.
 
@@ -572,9 +587,11 @@ next product version before adding SQL. New SQL cannot be added to a published v
 | Root `package.json`                      | Authrim product version           |
 | `packages/*/package.json`                | Package versions                  |
 | `migrations/*.sql`                       | Core D1 SQL                       |
-| `migrations/pii/*.sql`                   | PII D1 SQL                        |
-| `migrations/admin/*.sql`                 | Admin D1 SQL                      |
-| `migrations/external/postgres/*.sql`     | External PostgreSQL SQL           |
+| `migrations/core/d1/*.sql`               | Core D1 SQL                       |
+| `migrations/pii/d1/*.sql`                | PII D1 SQL                        |
+| `migrations/admin/d1/*.sql`              | Admin D1 SQL                      |
+| `migrations/core/postgresql/*.sql`       | Core PostgreSQL SQL               |
+| `migrations/pii/postgresql/*.sql`        | PII PostgreSQL SQL                |
 | `migrations/release-manifest.draft.json` | Development SQL file list         |
 | `migrations/releases/<version>.json`     | Fixed SQL file list for a release |
 

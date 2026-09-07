@@ -102,10 +102,13 @@ import {
   calculateReleaseManifestChecksum,
   assertDatabaseOnlyWorkerCompatibility,
   assertReleaseDatabaseCompatibility,
+  buildReleaseMigrationArtifactManifest,
   compareProductVersions,
   isProductVersion,
+  listReleaseMigrationManifests,
   loadTargetReleaseMigrationManifest,
   readReleaseMigrationManifest,
+  resolveReleaseMigrationExecutionManifest,
   resolveReleaseMigrationTargets,
   type ReleaseMigrationManifest,
 } from '../../core/release-migrations.js';
@@ -113,7 +116,6 @@ import {
   applyReleaseSchemaUpdatePlan,
   buildReleaseSchemaUpdatePlan,
   getControlManagedReleaseStreamIds,
-  releaseMigrationStreamChangedFiles,
   type ReleaseSchemaUpdatePlan,
 } from '../../core/release-update.js';
 import {
@@ -145,6 +147,10 @@ import {
   evaluateEnvironmentOperation,
 } from '../../core/environment-operation-policy.js';
 import { publishInitialControlPlaneRuntimeSnapshot } from '../../core/control-plane-bootstrap.js';
+import {
+  checkpointReadyControlTokenGenerationForRedeploy,
+  commitReadyControlTokenGenerationRedeploy,
+} from '../../core/control-token-bootstrap-orchestrator.js';
 
 export {
   withRecoveredReleaseUpdateState,
@@ -244,10 +250,10 @@ export function splitReleaseSchemaTargetsForControlHandoff(
   const setupOwnedTargets = targets.filter((target) => target.target.scope !== 'tenant');
   return {
     controlSchemaTargets: setupOwnedTargets.filter(
-      (target) => target.target.streamId === 'd1-control'
+      (target) => target.target.streamId === 'control-d1'
     ),
     remainingSetupTargets: setupOwnedTargets.filter(
-      (target) => target.target.streamId !== 'd1-control'
+      (target) => target.target.streamId !== 'control-d1'
     ),
   };
 }
@@ -281,6 +287,7 @@ async function awaitControlManagedReleaseRollout(input: {
       phase: 'control_handoff',
       manifestChecksum: input.manifestChecksum,
       controlOperationId: created.operationId,
+      controlManifestDigest: input.artifact.manifestDigest,
       controlCompletedTargets: created.completedTargets,
       controlTotalTargets: created.totalTargets,
     });
@@ -304,6 +311,7 @@ async function awaitControlManagedReleaseRollout(input: {
         phase: 'control_handoff',
         manifestChecksum: input.manifestChecksum,
         controlOperationId: ready.operationId,
+        controlManifestDigest: input.artifact.manifestDigest,
         controlCompletedTargets: ready.completedTargets,
         controlTotalTargets: ready.totalTargets,
       });
@@ -318,6 +326,7 @@ async function awaitControlManagedReleaseRollout(input: {
       phase: 'awaiting_setup',
       manifestChecksum: input.manifestChecksum,
       controlOperationId: ready.operationId,
+      controlManifestDigest: input.artifact.manifestDigest,
       controlCompletedTargets: ready.completedTargets,
       controlTotalTargets: ready.totalTargets,
     });
@@ -335,6 +344,7 @@ async function awaitControlManagedReleaseRollout(input: {
       phase: 'schema_applied',
       manifestChecksum: input.manifestChecksum,
       controlOperationId: ready.operationId,
+      controlManifestDigest: input.artifact.manifestDigest,
       controlCompletedTargets: ready.completedTargets,
       controlTotalTargets: ready.totalTargets,
     });
@@ -807,7 +817,7 @@ async function deployReleaseUiWorkers(input: {
         ? resolveLoginUiEntryUrl(input.config, { env: input.env, workersSubdomain })
         : resolveAdminUiEntryUrl(input.config, { env: input.env, workersSubdomain });
     const httpReadiness = await waitForWorkerHttpReady({
-      targets: [{ workerName: result.projectName, url: entryUrl }],
+      targets: [{ workerName: result.projectName, url: entryUrl, allowRedirectResponse: true }],
     });
     if (!httpReadiness.ready) {
       throw new Error(
@@ -1099,6 +1109,22 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       currentManifest = readReleaseMigrationManifest(currentManifestPath);
     }
   }
+  const migrationExecutionManifest = resolveReleaseMigrationExecutionManifest({
+    targetManifest: targetManifestResult.manifest,
+    installedProductVersion: workingLock.productVersion,
+    availableManifests: listReleaseMigrationManifests(migrationsRoot).map(
+      (release) => release.manifest
+    ),
+  });
+  const migrationArtifactManifest = workingLock.productVersion
+    ? buildReleaseMigrationArtifactManifest({
+        targetManifest: targetManifestResult.manifest,
+        installedProductVersion: workingLock.productVersion,
+        availableManifests: listReleaseMigrationManifests(migrationsRoot).map(
+          (release) => release.manifest
+        ),
+      })
+    : targetManifestResult.manifest;
   const targetManifestCache = new Map<string, ReturnType<typeof readReleaseMigrationManifest>>();
   const currentManifestForTarget = (
     target: (typeof physicalTargets)[number]
@@ -1106,17 +1132,19 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     const state = workingLock.schemaTargets?.[target.id];
     if (!state) return undefined;
     if (state.streamId === target.streamId && state.files) {
-      const targetStream = targetManifestResult.manifest.streams.find(
+      const targetStream = migrationExecutionManifest.streams.find(
         (stream) => stream.id === target.streamId
       );
       if (!targetStream) return undefined;
       return {
-        formatVersion: 1,
+        formatVersion: 2,
         productVersion: state.productVersion,
         streams: [
           {
             id: targetStream.id,
+            schemaFamily: targetStream.schemaFamily,
             dialect: targetStream.dialect,
+            targetKind: targetStream.targetKind,
             logicalRoles: targetStream.logicalRoles,
             files: state.files,
           },
@@ -1124,9 +1152,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       };
     }
     if (state.productVersion === productVersion) {
-      return state.manifestChecksum === manifestChecksum
-        ? targetManifestResult.manifest
-        : undefined;
+      return state.manifestChecksum === manifestChecksum ? migrationExecutionManifest : undefined;
     }
     const cached = targetManifestCache.get(state.productVersion);
     if (cached) return cached;
@@ -1139,17 +1165,16 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     return manifest;
   };
   const schemaPlan = buildReleaseSchemaUpdatePlan({
-    targetManifest: targetManifestResult.manifest,
+    targetManifest: migrationExecutionManifest,
     currentManifest,
     currentManifestForTarget,
+    requireCurrentManifestForTargets: true,
     targets: physicalTargets,
   });
   spinner.succeed('Release migration plan resolved');
   displaySchemaUpdatePlan(schemaPlan);
-  const hasReleaseSchemaDelta = targetManifestResult.manifest.streams.some(
-    (stream) =>
-      releaseMigrationStreamChangedFiles(targetManifestResult.manifest, currentManifest, stream.id)
-        .length > 0
+  const hasReleaseSchemaDelta = migrationExecutionManifest.streams.some(
+    (stream) => stream.files.length > 0
   );
   if (options.databaseOnly) {
     if (options.all) {
@@ -1195,7 +1220,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     );
   }
   const controlManagedStreamIds = getControlManagedReleaseStreamIds({
-    targetManifest: targetManifestResult.manifest,
+    targetManifest: migrationExecutionManifest,
     currentManifest,
   });
   const componentsWithCoordinator = includeRequiredReleaseControlCoordinator(
@@ -1411,7 +1436,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           manualTargets: [],
           blockedTargets: [],
         },
-        manifest: targetManifestResult.manifest,
+        manifest: migrationExecutionManifest,
         migrationsRoot,
         concurrency: 2,
         backfillLegacyChecksums: !targetManifestResult.draft,
@@ -1455,7 +1480,8 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       productVersion,
       manifestChecksum,
       targetStreamIds: new Map(physicalTargets.map((target) => [target.id, target.streamId])),
-      manifest: targetManifestResult.manifest,
+      manifest: migrationExecutionManifest,
+      preserveExistingFiles: true,
     });
     workingLock = withReleaseUpdateState(workingLock, {
       targetVersion: productVersion,
@@ -1485,7 +1511,8 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         await verifyMigrationBucketOwnership();
         const publication = await publishAndActivateMigrationRelease({
           migrationsRoot,
-          manifestPath: targetManifestResult.path,
+          manifest: migrationArtifactManifest,
+          draft: targetManifestResult.draft,
           bucketName: migrationReleaseBucket.name,
           controlDatabaseId: controlDatabase.id,
           environmentId: env,
@@ -1526,6 +1553,7 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
         appliedTargets: appliedTargetIds,
         manualTargets: [...acknowledgedManualTargets],
         controlOperationId: handoff.operationId,
+        controlManifestDigest: migrationReleaseArtifact.manifestDigest,
         controlCompletedTargets: handoff.completedTargets,
         controlTotalTargets: handoff.totalTargets,
       });
@@ -1542,7 +1570,8 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       productVersion,
       manifestChecksum,
       targetStreamIds: new Map(physicalTargets.map((target) => [target.id, target.streamId])),
-      manifest: targetManifestResult.manifest,
+      manifest: migrationExecutionManifest,
+      preserveExistingFiles: true,
     });
     workingLock = withReleaseUpdateState(workingLock, {
       targetVersion: productVersion,
@@ -1812,6 +1841,16 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     }
     wranglerSpinner.succeed(`Refreshed ${syncResult.synced.length} wrangler config(s)`);
 
+    const controlTokenGenerationCheckpoint =
+      !options.dryRun && componentsToUpdate.includes('ar-control')
+        ? await checkpointReadyControlTokenGenerationForRedeploy({
+            environmentId: env,
+            rootDir: baseDir,
+            config,
+            lock: workingLock,
+          })
+        : null;
+
     // Build packages (unless skipped)
     if (!options.skipBuild) {
       const buildSpinner = ora('Building packages...').start();
@@ -1969,6 +2008,31 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       if (coordinatorSummary.failedCount > 0) {
         summary = coordinatorSummary;
       } else {
+        const controlDeployment = coordinatorSummary.results.find(
+          (result) => result.component === 'ar-control' && result.success
+        );
+        if (!controlDeployment?.cloudflareVersionId) {
+          throw new Error('control_worker_redeploy_version_missing');
+        }
+        const controlGenerationVisibility = await waitForWorkerDeploymentsReady({
+          targets: [
+            {
+              workerName: controlDeployment.workerName,
+              deployedAt: controlDeployment.deployedAt,
+              expectedVersionId: controlDeployment.cloudflareVersionId,
+            },
+          ],
+        });
+        if (!controlGenerationVisibility.ready) {
+          throw new Error(
+            `control_worker_redeploy_generation_not_visible:${controlGenerationVisibility.error ?? 'unknown'}`
+          );
+        }
+        await commitReadyControlTokenGenerationRedeploy({
+          environmentId: env,
+          checkpoint: controlTokenGenerationCheckpoint,
+          deployedVersionId: controlDeployment?.cloudflareVersionId,
+        });
         workingLock = updateLockWithDeploymentsAndVersions(
           workingLock,
           coordinatorSummary.results,

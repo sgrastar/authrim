@@ -10,6 +10,7 @@ import {
 } from '../control-plane/control-plane-contracts';
 import type { LookupAliasIndex, LookupBlindIndex } from './blind-index';
 import { D1SessionReadRepository } from './d1-session-repository';
+import { LOOKUP_MAX_VIRTUAL_BUCKET } from './contract.js';
 
 const MAX_EXACT_MEMBERSHIPS = 100;
 const MAX_ALIAS_RESULTS = 128;
@@ -102,7 +103,7 @@ function strictPositiveInteger(value: number | string, code: string): number {
 
 function strictBucket(value: number | string): number {
   const number = typeof value === 'number' ? value : Number(value);
-  if (!Number.isSafeInteger(number) || number < 0 || number > 4095) {
+  if (!Number.isSafeInteger(number) || number < 0 || number > LOOKUP_MAX_VIRTUAL_BUCKET) {
     throw new Error('lookup_row_bucket_invalid');
   }
   return number;

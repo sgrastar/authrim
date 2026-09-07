@@ -89,7 +89,7 @@ function d1(database: DatabaseSync): D1Database {
 }
 
 function pluginOutboxSchema(): string {
-  return readFileSync(resolve(REPO_ROOT, 'migrations/001_pre_1_0_core_baseline.sql'), 'utf8')
+  return readFileSync(resolve(REPO_ROOT, 'migrations/core/d1/001_0_4_0_core_baseline.sql'), 'utf8')
     .replaceAll('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', '(unixepoch() * 1000)')
     .replaceAll('__AUTHRIM_NOW_EPOCH_SECONDS__', 'unixepoch()');
 }
@@ -169,9 +169,9 @@ describe('PluginRunnerScheduler integration', () => {
     runnerDatabase = new DatabaseSync(':memory:');
     tenantDatabase = new DatabaseSync(':memory:');
     runnerDatabase.exec('PRAGMA foreign_keys = ON');
-    for (const migration of ['001_pre_1_0_plugin_runner_baseline.sql']) {
+    for (const migration of ['001_0_4_0_plugin_runner_baseline.sql']) {
       runnerDatabase.exec(
-        readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner', migration), 'utf8')
+        readFileSync(resolve(REPO_ROOT, 'migrations/plugin-runner/d1', migration), 'utf8')
       );
     }
     tenantDatabase.exec(pluginOutboxSchema());

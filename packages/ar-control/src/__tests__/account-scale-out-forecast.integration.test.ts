@@ -70,7 +70,7 @@ describe('AccountScaleOutForecastService', () => {
     database = new DatabaseSync(':memory:');
     database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
         'utf8'
       )
     );
@@ -95,9 +95,10 @@ describe('AccountScaleOutForecastService', () => {
       INSERT INTO control_desired_resources (
         desired_resource_id, environment_id, resource_kind, logical_shard_id,
         deterministic_name, ownership_fingerprint, provisioning_state,
-        origin_operation_id, desired_spec_json, created_at, updated_at
+        origin_operation_id, desired_spec_json, provider_create_state,
+        provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
       ) VALUES ('resource-users-a', 'test', 'd1', 'users-a', 'users-a', 'fingerprint-a',
-                'active', 'seed', '{}', 1, 1);
+                'active', 'seed', '{}', 'identified', 'database-users-a', 1, 1, 1);
       INSERT INTO control_tenant_shards (
         shard_id, environment_id, data_role, residency_policy_id, residency_partition,
         generation, logical_shard_id, binding_ref, d1_desired_resource_id,
@@ -201,9 +202,11 @@ describe('AccountScaleOutForecastService', () => {
       INSERT INTO control_desired_resources (
         desired_resource_id, environment_id, resource_kind, logical_shard_id,
         deterministic_name, ownership_fingerprint, provisioning_state,
-        origin_operation_id, desired_spec_json, created_at, updated_at
+        origin_operation_id, desired_spec_json, provider_create_state,
+        provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
       ) VALUES ('resource-users-b', 'test', 'd1', 'users-b', 'users-b', 'fingerprint-b',
-                'active', 'predict-users-1', '{}', 1000, 1060);
+                'active', 'predict-users-1', '{}', 'identified', 'database-users-b',
+                1060, 1000, 1060);
       INSERT INTO control_tenant_shards (
         shard_id, environment_id, data_role, residency_policy_id, residency_partition,
         generation, logical_shard_id, binding_ref, d1_desired_resource_id,

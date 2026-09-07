@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, scryptSync } from 'node:crypto';
 import { execa } from 'execa';
 
 const API_BASE = 'https://api.cloudflare.com/client/v4';
@@ -18,6 +18,8 @@ const DEFAULT_WRANGLER_SECRET_OPERATION_TIMEOUT_MS = 300_000;
 const TOKEN_INVENTORY_PAGE_SIZE = 50;
 const MAX_TOKEN_INVENTORY_PAGES = 100;
 const MAX_TOKEN_INVENTORY_RECORDS = TOKEN_INVENTORY_PAGE_SIZE * MAX_TOKEN_INVENTORY_PAGES;
+const CONTROL_CHILD_TOKEN_FINGERPRINT_SALT =
+  'authrim/cloudflare-control-child-token-fingerprint/v1';
 
 interface OperationDeadline {
   readonly expiresAt: number;
@@ -88,14 +90,17 @@ async function waitWithinDeadline(
     }
     return;
   }
-  await runWithinDeadline({
-    deadline,
-    attemptTimeoutMs: delayMs + 1,
-    timeoutCode,
-    operation: async () => {
-      await waitForTokenApiRetry(delayMs);
-    },
-  });
+  // Do not race two timers whose deadlines differ by only one millisecond. Under load the timeout
+  // timer can win even though the intended retry delay completed in the same event-loop turn,
+  // turning a transient provider response into a false terminal failure. Reserve the delay from
+  // the operation deadline first and verify the deadline again after waking.
+  if (remainingDeadlineMs(deadline) <= delayMs) {
+    throw new OperationDeadlineExceededError(timeoutCode);
+  }
+  await waitForTokenApiRetry(delayMs);
+  if (remainingDeadlineMs(deadline) <= 0) {
+    throw new OperationDeadlineExceededError(timeoutCode);
+  }
 }
 
 async function fetchWithinDeadline<T>(input: {
@@ -219,6 +224,12 @@ export interface ControlSecretSink {
   has(secretName: string): Promise<boolean>;
   delete(secretName: string): Promise<void>;
   readActiveGeneration?(): Promise<ControlSecretGenerationReceipt>;
+  /** Read-only proof that a checkpointed immutable version is still deployable. */
+  canActivateGeneration?(generation: ControlSecretGenerationReceipt): Promise<boolean>;
+  /** Restore one exact checkpointed immutable version and confirm it is serving 100% traffic. */
+  activateGeneration?(
+    generation: ControlSecretGenerationReceipt
+  ): Promise<ControlSecretGenerationReceipt>;
 }
 
 export interface ControlSecretGenerationReceipt {
@@ -282,7 +293,7 @@ function requiredEnvironment(environment: string): string {
 }
 
 function fingerprintToken(token: string): string {
-  return createHash('sha256').update(token, 'utf8').digest('hex');
+  return scryptSync(token, CONTROL_CHILD_TOKEN_FINGERPRINT_SALT, 32).toString('hex');
 }
 
 function deterministicTokenName(accountId: string, environment: string, suffix: string): string {
@@ -2301,6 +2312,62 @@ export class WranglerControlSecretSink implements ControlSecretSink {
 
   async readActiveGeneration(): Promise<ControlSecretGenerationReceipt> {
     return this.readActiveGenerationWithin(this.createDeadline());
+  }
+
+  async canActivateGeneration(generation: ControlSecretGenerationReceipt): Promise<boolean> {
+    if (
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(generation.deploymentId) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(generation.versionId)
+    ) {
+      throw new Error('cloudflare_control_secret_generation_receipt_invalid');
+    }
+    const deadline = this.createDeadline();
+    try {
+      const result = await this.run(
+        [
+          'exec',
+          'wrangler',
+          'versions',
+          'view',
+          generation.versionId,
+          '--name',
+          this.input.workerName,
+          '--json',
+        ],
+        undefined,
+        'log',
+        deadline
+      );
+      const parsed = JSON.parse(result.stdout) as unknown;
+      return (
+        parsed !== null &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed) &&
+        (parsed as { id?: unknown }).id === generation.versionId
+      );
+    } catch (error) {
+      if (isWranglerSecretCommandTimeout(error)) throw error;
+      return false;
+    }
+  }
+
+  async activateGeneration(
+    generation: ControlSecretGenerationReceipt
+  ): Promise<ControlSecretGenerationReceipt> {
+    if (!(await this.canActivateGeneration(generation))) {
+      throw new CloudflareTokenBootstrapError(
+        'cloudflare_control_secret_generation_restore_unavailable',
+        true
+      );
+    }
+    const restored = await this.deployGeneration(generation.versionId, this.createDeadline());
+    if (restored.versionId !== generation.versionId) {
+      throw new CloudflareTokenBootstrapError(
+        'cloudflare_control_secret_generation_restore_mismatch',
+        true
+      );
+    }
+    return restored;
   }
 
   async has(secretName: string): Promise<boolean> {

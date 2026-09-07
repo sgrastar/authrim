@@ -411,6 +411,10 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
       'John Doe',
       '山田 太郎',
     ]);
+    expect(catalogs[0].entries.find((entry) => entry.path === 'name')).toMatchObject({
+      required: false,
+      nullable: true,
+    });
     expect(catalogs[0].entries.find((entry) => entry.path === 'locale')).toMatchObject({
       valueType: 'string',
       allowedValues: ['ja-JP', 'en-US'],
@@ -1632,6 +1636,8 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             rule_kind: 'source_mapping',
             action: 'map',
             priority: 0,
+            scope_json: JSON.stringify({ tenant: 'tenant_a' }),
+            condition_json: JSON.stringify({ when: 'present' }),
             metadata_json: JSON.stringify({ source: 'test' }),
             edge_id: 'edge_1',
             source_ref_json: JSON.stringify({
@@ -1648,6 +1654,8 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             rule_kind: 'destination_release',
             action: 'map',
             priority: 0,
+            scope_json: '{}',
+            condition_json: '{}',
             metadata_json: JSON.stringify({ source: 'test' }),
             edge_id: 'edge_2',
             source_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
@@ -1669,6 +1677,41 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             parameters_json: JSON.stringify({ mode: 'whitespace' }),
           },
         ],
+        [
+          {
+            field_mapping_version_id: 'policy_version_1',
+            rule_id: 'rule_1',
+            validation_id: 'validation_1',
+            target_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
+            validation_kind: 'required',
+            severity: 'error',
+            parameters_json: JSON.stringify({ allowEmpty: false }),
+          },
+        ],
+        [
+          {
+            field_mapping_version_id: 'policy_version_1',
+            release_id: 'release_1',
+            destination_type: 'oidc',
+            destination_id: 'destination-profile-destination_profile_oidc',
+            source_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
+            release_action: 'allow',
+            legal_basis: 'consent',
+            purpose: 'authentication',
+            condition_json: JSON.stringify({ scope: 'email' }),
+            priority: 5,
+          },
+        ],
+        [
+          {
+            field_mapping_version_id: 'policy_version_1',
+            conflict_id: 'conflict_1',
+            target_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
+            conflict_strategy: 'prefer_verified',
+            source_priority_json: JSON.stringify(['scim', 'oidc']),
+            condition_json: JSON.stringify({ when: 'different' }),
+          },
+        ],
       ],
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
@@ -1688,6 +1731,8 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
           expect.objectContaining({
             id: 'rule_1',
             ruleKind: 'source_mapping',
+            scope: { tenant: 'tenant_a' },
+            condition: { when: 'present' },
             edges: [
               expect.objectContaining({
                 id: 'edge_1',
@@ -1696,6 +1741,14 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
               }),
             ],
             transforms: [],
+            validationRules: [
+              expect.objectContaining({
+                id: 'validation_1',
+                validationKind: 'required',
+                severity: 'error',
+                parameters: { allowEmpty: false },
+              }),
+            ],
           }),
           expect.objectContaining({
             id: 'rule_2',
@@ -1713,6 +1766,23 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
                 parameters: { mode: 'whitespace' },
               }),
             ],
+          }),
+        ],
+        releaseRules: [
+          expect.objectContaining({
+            id: 'release_1',
+            destinationType: 'oidc',
+            destinationId: 'destination-profile-destination_profile_oidc',
+            releaseAction: 'allow',
+            condition: { scope: 'email' },
+          }),
+        ],
+        conflictRules: [
+          expect.objectContaining({
+            id: 'conflict_1',
+            conflictStrategy: 'prefer_verified',
+            sourcePriority: ['scim', 'oidc'],
+            condition: { when: 'different' },
           }),
         ],
         latestSnapshot: expect.objectContaining({
@@ -2377,6 +2447,69 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
                   path: 'userName',
                 },
                 targetRef: { namespace: 'authrim.profile', path: 'preferred_username' },
+              },
+            ],
+          },
+        ],
+      })
+    ).resolves.toMatchObject({
+      fieldMappingSetId: 'policy_1',
+      versionLabel: 'v1',
+    });
+    expect(
+      adapter.executes.some((item) => item.sql.includes('INSERT INTO field_mapping_versions'))
+    ).toBe(true);
+  });
+
+  it('saves a destination-only mapping without validating an unrelated SCIM source profile', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_1',
+          tenant_id: 'tenant_a',
+          field_mapping_key: 'oidc-release',
+          display_name: 'OIDC release',
+          description: null,
+          lifecycle_state: 'draft',
+        },
+        null,
+      ],
+      queryRows: [
+        {
+          id: 'source_profile_scim',
+          profile_key: 'scim_users',
+          source_type: 'scim',
+          schema_json: JSON.stringify({
+            sourceType: 'scim',
+            attributes: [{ name: 'userName', mappingRequired: true }],
+          }),
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+        versionLabel: 'v1',
+        sourceProfileIds: [],
+        rules: [
+          {
+            ruleKey: 'release-email',
+            ruleKind: 'destination_release',
+            action: 'map',
+            edges: [
+              {
+                sourceRef: {
+                  namespace: 'authrim.profile',
+                  path: 'email',
+                  role: 'target',
+                },
+                targetRef: {
+                  namespace: 'oidc.claim',
+                  path: 'email',
+                  role: 'destination',
+                  profileId: 'destination-profile-destination_profile_oidc',
+                },
               },
             ],
           },

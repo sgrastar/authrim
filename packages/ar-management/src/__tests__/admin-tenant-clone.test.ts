@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   provision: vi.fn(),
   activate: vi.fn(),
   rotateSigningKey: vi.fn(),
+  seedBuiltinProfileClaimSchemas: vi.fn(),
   rollback: vi.fn(),
   logger: { error: vi.fn() },
 }));
@@ -31,6 +32,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     createAuditLog: mocks.audit,
     createAuditLogFromContext: mocks.audit,
     requireAdminDatabaseAdapter: vi.fn(() => mocks.admin),
+    seedBuiltinProfileClaimSchemas: mocks.seedBuiltinProfileClaimSchemas,
     createErrorResponse: vi.fn((c, code, options) => {
       const status =
         code === actual.AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND
@@ -244,7 +246,10 @@ describe('admin tenant clone', () => {
 
   it('keeps the cloned OAuth client fields aligned with the current schema', () => {
     const migrationsUrl = new URL('../../../../migrations/', import.meta.url);
-    const migration = readFileSync(new URL('001_pre_1_0_core_baseline.sql', migrationsUrl), 'utf8');
+    const migration = readFileSync(
+      new URL('core/d1/001_0_4_0_core_baseline.sql', migrationsUrl),
+      'utf8'
+    );
     const definition = migration.match(
       /CREATE TABLE oauth_clients \(([\s\S]*?)\);\nCREATE TABLE web_origin_registry/u
     )?.[1];
@@ -635,6 +640,10 @@ describe('admin tenant clone', () => {
     expect(result).toMatchObject({
       source_tenant_id: 'source',
       cloned_items: { settings: 0, clients: 0, roles: 0 },
+    });
+    expect(mocks.seedBuiltinProfileClaimSchemas).toHaveBeenCalledWith({
+      db: mocks.target,
+      tenantId: 'destination',
     });
     expect(rotateKeysRpc).toHaveBeenCalledOnce();
     expect(mocks.activate).not.toHaveBeenCalled();

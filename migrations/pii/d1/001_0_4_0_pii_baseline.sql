@@ -1,7 +1,7 @@
--- Authrim 0.4.0 pre-1.0 semantic fresh-install baseline.
--- Logical stream: d1-pii.
+-- Authrim 0.4.0 semantic fresh-install baseline.
+-- Logical stream: pii-d1.
 -- Generated from the final database state; do not append historical migration SQL here.
--- Pre-1.0 databases are not upgrade-compatible and must be recreated.
+-- Fresh-install baselines must never be applied to upgrade an existing database.
 PRAGMA foreign_keys = OFF;
 
 CREATE TABLE users_pii (
@@ -64,7 +64,7 @@ CREATE TABLE users_pii (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
-CREATE TABLE subject_identifiers (
+CREATE TABLE IF NOT EXISTS "pairwise_subject_identifiers" (
   -- Primary key
   id TEXT PRIMARY KEY,
 
@@ -82,7 +82,7 @@ CREATE TABLE subject_identifiers (
 
   -- Timestamp
   created_at INTEGER NOT NULL
-);
+, tenant_id TEXT NOT NULL DEFAULT 'default');
 CREATE TABLE audit_log_pii (
   -- Primary key
   id TEXT PRIMARY KEY,
@@ -417,6 +417,23 @@ CREATE TABLE IF NOT EXISTS "identity_identifier_replacement_operations" (
   CHECK ((state = 'completed' AND completed_at IS NOT NULL) OR state <> 'completed'),
   CHECK (retry_budget_expires_at > created_at)
 );
+CREATE TABLE subject_identifiers (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  identifier_type TEXT NOT NULL,
+  identifier_value TEXT NOT NULL,
+  is_primary INTEGER NOT NULL DEFAULT 0,
+  verified_at INTEGER,
+  verification_method TEXT,
+  destination_type TEXT NOT NULL DEFAULT 'global',
+  destination_id TEXT NOT NULL DEFAULT 'default',
+  identifier_value_hash TEXT,
+  identifier_storage_ref TEXT,
+  lifecycle_state TEXT NOT NULL DEFAULT 'active',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 CREATE TRIGGER trg_external_identifier_unlink_link_required
 BEFORE INSERT ON external_identifier_unlink_operations
 WHEN NOT EXISTS (
@@ -507,12 +524,6 @@ CREATE INDEX idx_users_pii_tenant
   ON users_pii(tenant_id);
 CREATE INDEX idx_users_pii_class
   ON users_pii(pii_class);
-CREATE UNIQUE INDEX idx_subject_ids_unique
-  ON subject_identifiers(user_id, sector_identifier);
-CREATE INDEX idx_subject_ids_subject
-  ON subject_identifiers(subject);
-CREATE INDEX idx_subject_ids_client
-  ON subject_identifiers(client_id);
 CREATE INDEX idx_audit_pii_user
   ON audit_log_pii(user_id);
 CREATE INDEX idx_audit_pii_target
@@ -578,5 +589,21 @@ CREATE INDEX idx_identifier_replacement_operation_due
 CREATE UNIQUE INDEX idx_identifier_replacement_operation_account_active
   ON identity_identifier_replacement_operations(tenant_id, account_id, identifier_kind)
   WHERE state NOT IN ('completed', 'canceled');
+CREATE UNIQUE INDEX idx_pairwise_subject_identifiers_unique
+  ON pairwise_subject_identifiers(tenant_id, user_id, sector_identifier);
+CREATE INDEX idx_pairwise_subject_identifiers_subject
+  ON pairwise_subject_identifiers(tenant_id, subject);
+CREATE INDEX idx_pairwise_subject_identifiers_client
+  ON pairwise_subject_identifiers(tenant_id, client_id);
+CREATE UNIQUE INDEX idx_subject_identifiers_unique
+  ON subject_identifiers(tenant_id, identifier_type, identifier_value);
+CREATE INDEX idx_subject_identifiers_primary
+  ON subject_identifiers(tenant_id, subject_id, is_primary);
+CREATE INDEX idx_subject_identifiers_tenant_subject
+  ON subject_identifiers(tenant_id, subject_id);
+CREATE INDEX idx_subject_identifiers_destination
+  ON subject_identifiers(tenant_id, subject_id, destination_type, lifecycle_state);
+CREATE INDEX idx_subject_identifiers_hash
+  ON subject_identifiers(tenant_id, identifier_type, identifier_value_hash, lifecycle_state);
 
 PRAGMA foreign_keys = ON;

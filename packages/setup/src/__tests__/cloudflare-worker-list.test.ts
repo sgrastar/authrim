@@ -5,7 +5,7 @@ const fetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock('execa', () => ({ execa: execaMock }));
 
-import { listWorkers } from '../core/cloudflare.js';
+import { listWorkerCronTriggers, listWorkers } from '../core/cloudflare.js';
 
 describe('Cloudflare Worker script inventory', () => {
   const originalAccountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -67,6 +67,43 @@ describe('Cloudflare Worker script inventory', () => {
 
     await expect(listWorkers()).rejects.toThrow(
       'Cloudflare Worker inventory unexpectedly requires pagination'
+    );
+  });
+
+  it('reads the exact Cron Trigger set for a Worker from the pinned account', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        success: true,
+        result: { schedules: [{ cron: '*/5 * * * *' }, { cron: '* * * * *' }] },
+      }),
+    });
+
+    await expect(
+      listWorkerCronTriggers({
+        workerName: 'test-ar-management',
+        accountId: '0123456789abcdef0123456789abcdef',
+      })
+    ).resolves.toEqual(['* * * * *', '*/5 * * * *']);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/workers/scripts/test-ar-management/schedules',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer test-token' },
+        signal: expect.any(AbortSignal),
+      })
+    );
+  });
+
+  it('rejects an invalid Cron Trigger provider response', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ success: true, result: { schedules: [{ created_on: 'now' }] } }),
+    });
+
+    await expect(listWorkerCronTriggers({ workerName: 'test-ar-management' })).rejects.toThrow(
+      'cloudflare_worker_cron_response_invalid'
     );
   });
 

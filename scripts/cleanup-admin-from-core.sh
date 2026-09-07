@@ -314,9 +314,11 @@ if [ "$CORE_ONLY" = "false" ] && [ -n "$ADMIN_IDS" ]; then
         echo -e "  Deleting from linked_identities..."
         run_d1_query "$DB_PII_NAME" "DELETE FROM linked_identities WHERE user_id IN ($ID_LIST)" "text"
 
-        # Delete from subject_identifiers
+        # Delete pairwise and general identifiers from the PII-owned tables.
+        echo -e "  Deleting from pairwise_subject_identifiers..."
+        run_d1_query "$DB_PII_NAME" "DELETE FROM pairwise_subject_identifiers WHERE user_id IN ($ID_LIST)" "text"
         echo -e "  Deleting from subject_identifiers..."
-        run_d1_query "$DB_PII_NAME" "DELETE FROM subject_identifiers WHERE user_id IN ($ID_LIST)" "text"
+        run_d1_query "$DB_PII_NAME" "DELETE FROM subject_identifiers WHERE subject_id IN ($ID_LIST)" "text"
 
         echo -e "  ${GREEN}✓ D1_PII cleanup complete.${NC}"
     else

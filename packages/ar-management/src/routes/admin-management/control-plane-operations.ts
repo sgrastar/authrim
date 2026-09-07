@@ -28,6 +28,7 @@ import {
   type ControlWorkerInventoryDriftReviewRequest,
   type Env,
 } from '@authrim/ar-lib-core';
+import { LOOKUP_VIRTUAL_BUCKET_COUNT } from '@authrim/ar-lib-core/services/lookup-directory/contract';
 import { writeAdminAuditLog } from '../../admin-shared';
 import {
   previewControlCapacityProvisioning,
@@ -1267,7 +1268,7 @@ function parseTenantDisasterRecovery(
     !TENANT_DR_LOOKUP_STAGES.has(lookupProgress.stage) ||
     !Number.isSafeInteger(lookupProgress.targetIndex) ||
     (lookupProgress.targetIndex as number) < 0 ||
-    (lookupProgress.targetIndex as number) > 4096 ||
+    (lookupProgress.targetIndex as number) > LOOKUP_VIRTUAL_BUCKET_COUNT ||
     !Number.isSafeInteger(lookupProgress.afterCreatedAt) ||
     (lookupProgress.afterCreatedAt as number) < 0 ||
     typeof lookupProgress.afterId !== 'string' ||
@@ -1318,7 +1319,7 @@ function parseTenantDisasterRecovery(
       !/^[A-Z][A-Z0-9_]{0,127}$/u.test(target.bindingRef) ||
       typeof target.providerDatabaseId !== 'string' ||
       !SAFE_IDEMPOTENCY_KEY.test(target.providerDatabaseId) ||
-      (target.migrationStreamId !== 'd1-core' && target.migrationStreamId !== 'd1-pii') ||
+      (target.migrationStreamId !== 'core-d1' && target.migrationStreamId !== 'pii-d1') ||
       typeof target.releaseId !== 'string' ||
       !SAFE_IDEMPOTENCY_KEY.test(target.releaseId) ||
       typeof target.manifestDigest !== 'string' ||
@@ -1407,7 +1408,7 @@ function parseReleaseRolloutStatus(value: unknown): ControlReleaseRolloutStatus 
         !exactKeys(target as Record<string, unknown>, RELEASE_ROLLOUT_BLOCKED_TARGET_KEYS) ||
         typeof (target as Record<string, unknown>).targetId !== 'string' ||
         !SAFE_IDEMPOTENCY_KEY.test((target as Record<string, unknown>).targetId as string) ||
-        !['d1-core', 'd1-pii', 'd1-lookup'].includes(
+        !['core-d1', 'pii-d1', 'lookup-d1'].includes(
           String((target as Record<string, unknown>).streamId)
         ) ||
         !Number.isSafeInteger((target as Record<string, unknown>).attemptCount) ||

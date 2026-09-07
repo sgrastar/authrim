@@ -26,6 +26,7 @@ import {
   isLocalDiskExhaustionError,
   loadDeploySecretsFromKeys,
   nodeVersionSatisfiesEngine,
+  reconcileWorkerCronTriggers,
   resolveExistingWorkerComponents,
   updateLockWithDeployments,
   type DeployOptions,
@@ -130,6 +131,28 @@ function createWorkerPackage(rootDir: string, component: string, version: string
       name: `@authrim/${component}`,
       version,
     })
+  );
+}
+
+function createWorkerPackageWithCrons(
+  rootDir: string,
+  component: string,
+  version: string,
+  crons: readonly string[]
+): void {
+  createWorkerPackage(rootDir, component, version);
+  writeFileSync(
+    join(rootDir, 'packages', component, 'wrangler.toml'),
+    [
+      `name = "test-${component}"`,
+      '',
+      '[env.test]',
+      `name = "test-${component}"`,
+      '',
+      '[env.test.triggers]',
+      `crons = [${crons.map((cron) => JSON.stringify(cron)).join(', ')}]`,
+      '',
+    ].join('\n')
   );
 }
 
@@ -794,6 +817,154 @@ describe('deployWorker', () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
+  it('adopts the active version and retries only triggers after a partial trigger deployment', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-router', '1.0.0');
+    const activeVersionId = 'router-version-after-partial-trigger-failure';
+    const sleep = vi.fn(async () => undefined);
+    let deployAttempts = 0;
+    let triggerAttempts = 0;
+
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'router-deployment-after-trigger-failure',
+              versions: [{ version_id: activeVersionId, percentage: 100 }],
+            },
+          ]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (commandArgs.includes('triggers') && commandArgs.includes('deploy')) {
+        triggerAttempts++;
+        if (triggerAttempts === 1) {
+          throw commandError(
+            'Some triggers failed to deploy for test-ar-router:\n' +
+              '  - A request to the Cloudflare API (/accounts/account/workers/scripts/test-ar-router/domains/records) failed.'
+          );
+        }
+        return successfulCommandResult();
+      }
+      if (commandArgs.includes('deploy')) {
+        deployAttempts++;
+        throw commandError(
+          'Some triggers failed to deploy for test-ar-router:\n' +
+            '  - A request to the Cloudflare API (/accounts/account/workers/scripts/test-ar-router/domains/records) failed.'
+        );
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorker('ar-router', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      maxRetries: 3,
+      retryDelayMs: 2,
+      random: () => 0.5,
+      sleep,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: true,
+        cloudflareVersionId: activeVersionId,
+      })
+    );
+    expect(deployAttempts).toBe(1);
+    expect(triggerAttempts).toBe(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it('checkpoints fresh ownership before retrying triggers after a partial deployment', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-router', '1.0.0');
+    const activeVersionId = '11111111-1111-4111-8111-111111111111';
+    const events: string[] = [];
+    let deployAttempts = 0;
+    let triggerAttempts = 0;
+    let ownershipState: 'absent' | 'pending' | 'owned' = 'absent';
+    const ownership: WorkerScriptOwnershipGuard = {
+      assertBeforeMutation: async () => {
+        events.push(`assert:${ownershipState}`);
+        if (deployAttempts > 0 && ownershipState !== 'owned') {
+          throw new Error('worker_script_fresh_name_conflict:test-ar-router');
+        }
+      },
+      checkpointCommittedVersion: async (_workerName, versionId) => {
+        expect(versionId).toBe(activeVersionId);
+        events.push('checkpoint');
+        ownershipState = 'pending';
+      },
+      captureAfterMutation: async () => {
+        events.push('capture');
+        ownershipState = 'owned';
+        return TEST_CLOUDFLARE_SCRIPT_TAG;
+      },
+      getEvidence: (workerName) =>
+        ownershipState === 'owned'
+          ? { workerName, state: 'owned', tag: TEST_CLOUDFLARE_SCRIPT_TAG }
+          : { workerName, state: 'absent' },
+    };
+
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const commandArgs = [...(args ?? [])];
+      if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([
+            {
+              id: 'router-deployment-after-trigger-failure',
+              versions: [{ version_id: activeVersionId, percentage: 100 }],
+            },
+          ]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      if (commandArgs.includes('triggers') && commandArgs.includes('deploy')) {
+        triggerAttempts++;
+        return successfulCommandResult();
+      }
+      if (commandArgs.includes('deploy')) {
+        deployAttempts++;
+        throw commandError(
+          'Some triggers failed to deploy for test-ar-router:\n' +
+            '  - A request to the Cloudflare API (/accounts/account/workers/scripts/test-ar-router/domains/records) failed.'
+        );
+      }
+      return successfulCommandResult();
+    });
+
+    const result = await deployWorkerCore('ar-router', {
+      env: 'test',
+      rootDir,
+      deploymentStrategy: 'direct',
+      maxRetries: 1,
+      workerScriptOwnership: ownership,
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        success: true,
+        cloudflareVersionId: activeVersionId,
+        cloudflareScriptTag: TEST_CLOUDFLARE_SCRIPT_TAG,
+      })
+    );
+    expect(deployAttempts).toBe(1);
+    expect(triggerAttempts).toBe(1);
+    expect(events).toEqual([
+      'assert:absent',
+      'assert:absent',
+      'checkpoint',
+      'capture',
+      'assert:owned',
+      'checkpoint',
+      'capture',
+    ]);
+  });
+
   it('reconciles and retries a transient Wrangler authentication code 10000 failure', async () => {
     const rootDir = createTempRoot();
     createWorkerPackage(rootDir, 'ar-auth', '1.0.0');
@@ -820,7 +991,9 @@ describe('deployWorker', () => {
       rootDir,
       deploymentStrategy: 'direct',
       maxRetries: 3,
-      retryDelayMs: 1,
+      // Keep the synthetic deadline well ahead of wall-clock execution so the assertion does
+      // not depend on whether a 1 ms retry window elapsed between the failure and throttle check.
+      retryDelayMs: 60_000,
       random: () => 0.5,
       sleep,
     });
@@ -2518,6 +2691,78 @@ describe('updateLockWithDeployments', () => {
   });
 });
 
+describe('reconcileWorkerCronTriggers', () => {
+  const managementCrons = ['* * * * *', '*/2 * * * *', '*/5 * * * *', '0 */6 * * *'] as const;
+
+  it('accepts an exact provider schedule set without mutating the Worker', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackageWithCrons(rootDir, 'ar-management', '1.0.0', managementCrons);
+    const readWorkerCronTriggers = vi.fn().mockResolvedValue([...managementCrons].reverse());
+
+    await reconcileWorkerCronTriggers(
+      {
+        env: 'test',
+        rootDir,
+        cloudflareAccountId: '11111111111111111111111111111111',
+        readWorkerCronTriggers,
+        workerScriptOwnership: testWorkerScriptOwnership,
+      },
+      ['ar-management']
+    );
+
+    expect(readWorkerCronTriggers).toHaveBeenCalledWith(
+      'test-ar-management',
+      '11111111111111111111111111111111'
+    );
+    expect(vi.mocked(execa)).not.toHaveBeenCalled();
+  });
+
+  it('reapplies missing schedules and requires an exact provider readback', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackageWithCrons(rootDir, 'ar-management', '1.0.0', managementCrons);
+    const readWorkerCronTriggers = vi
+      .fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([...managementCrons]);
+
+    await reconcileWorkerCronTriggers(
+      {
+        env: 'test',
+        rootDir,
+        readWorkerCronTriggers,
+        workerScriptOwnership: testWorkerScriptOwnership,
+      },
+      ['ar-management']
+    );
+
+    expect(readWorkerCronTriggers).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(execa)).toHaveBeenCalledOnce();
+    expect(vi.mocked(execa).mock.calls[0]?.[1]).toEqual(
+      expect.arrayContaining(['triggers', 'deploy', '--config', 'wrangler.toml', '--env', 'test'])
+    );
+  });
+
+  it('fails the resume when provider schedules remain inconsistent after repair', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackageWithCrons(rootDir, 'ar-management', '1.0.0', managementCrons);
+    const readWorkerCronTriggers = vi.fn().mockResolvedValue([]);
+
+    await expect(
+      reconcileWorkerCronTriggers(
+        {
+          env: 'test',
+          rootDir,
+          readWorkerCronTriggers,
+          workerScriptOwnership: testWorkerScriptOwnership,
+        },
+        ['ar-management']
+      )
+    ).rejects.toThrow('worker_cron_reconciliation_failed:ar-management');
+    expect(readWorkerCronTriggers).toHaveBeenCalledTimes(5);
+    expect(vi.mocked(execa)).toHaveBeenCalledOnce();
+  });
+});
+
 describe('deployAll', () => {
   it('rejects insufficient disk capacity before any Worker command starts', async () => {
     const rootDir = createTempRoot();
@@ -3141,7 +3386,47 @@ describe('deployAll', () => {
     expect(mutations.every(({ config }) => config !== undefined)).toBe(true);
   });
 
-  it('never replaces an existing Control deployment with the bootstrap config', async () => {
+  it('keeps a Control-only initial deployment on the bootstrap config for credential setup', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-control', '1.0.0');
+    const controlDirectory = join(rootDir, 'packages', 'ar-control');
+    const controlBootstrapPath = join(controlDirectory, 'wrangler.bootstrap.toml');
+    writeFileSync(
+      join(controlDirectory, 'wrangler.toml'),
+      'name = "test-ar-control"\n\n[[services]]\nbinding = "SMOKE_AR_AUTH"\nservice = "test-ar-auth"\n'
+    );
+    writeFileSync(controlBootstrapPath, 'name = "test-ar-control"\n');
+
+    const configs: Array<string | undefined> = [];
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const configIndex = (args ?? []).indexOf('--config');
+      configs.push(configIndex >= 0 ? args?.[configIndex + 1] : undefined);
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        existingComponents: [],
+        automaticProvisioning: false,
+        deferInitialControlSmokeBindingRestore: true,
+        secrets: {
+          RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-key',
+          SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+        },
+      },
+      ['ar-control']
+    );
+
+    expect(summary.failedCount).toBe(0);
+    expect(summary.successCount).toBe(1);
+    expect(configs).toEqual([controlBootstrapPath]);
+  });
+
+  it('retries an incomplete Control-only bootstrap without restoring unavailable smoke bindings', async () => {
     const rootDir = createTempRoot();
     createWorkerPackage(rootDir, 'ar-control', '1.0.0');
     const controlDirectory = join(rootDir, 'packages', 'ar-control');
@@ -3166,6 +3451,78 @@ describe('deployAll', () => {
         deploymentStrategy: 'direct',
         existingComponents: ['ar-control'],
         automaticProvisioning: false,
+        deferInitialControlSmokeBindingRestore: true,
+        secrets: {
+          RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-key',
+          SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+        },
+      },
+      ['ar-control']
+    );
+
+    expect(summary.failedCount).toBe(0);
+    expect(configs).toEqual([controlBootstrapPath]);
+  });
+
+  it('rejects deferred Control smoke restoration outside the initial Control-only contract', async () => {
+    const rootDir = createTempRoot();
+    for (const component of ['ar-control', 'ar-auth'] as const) {
+      createWorkerPackage(rootDir, component, '1.0.0');
+    }
+    const controlDirectory = join(rootDir, 'packages', 'ar-control');
+    writeFileSync(
+      join(controlDirectory, 'wrangler.toml'),
+      'name = "test-ar-control"\n\n[[services]]\nbinding = "SMOKE_AR_AUTH"\nservice = "test-ar-auth"\n'
+    );
+    writeFileSync(join(controlDirectory, 'wrangler.bootstrap.toml'), 'name = "test-ar-control"\n');
+
+    await expect(
+      deployAll(
+        {
+          env: 'test',
+          rootDir,
+          deploymentStrategy: 'direct',
+          existingComponents: [],
+          automaticProvisioning: false,
+          deferInitialControlSmokeBindingRestore: true,
+          secrets: {
+            RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+            TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-key',
+            SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          },
+        },
+        ['ar-control', 'ar-auth']
+      )
+    ).rejects.toThrow('initial_control_bootstrap_only_contract_invalid');
+    expect(execa).not.toHaveBeenCalled();
+  });
+
+  it('keeps the full Control config when every smoke target already exists', async () => {
+    const rootDir = createTempRoot();
+    createWorkerPackage(rootDir, 'ar-control', '1.0.0');
+    const controlDirectory = join(rootDir, 'packages', 'ar-control');
+    const controlBootstrapPath = join(controlDirectory, 'wrangler.bootstrap.toml');
+    writeFileSync(
+      join(controlDirectory, 'wrangler.toml'),
+      'name = "test-ar-control"\n\n[[services]]\nbinding = "SMOKE_AR_AUTH"\nservice = "test-ar-auth"\n'
+    );
+    writeFileSync(controlBootstrapPath, 'name = "test-ar-control"\n');
+
+    const configs: Array<string | undefined> = [];
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      const configIndex = (args ?? []).indexOf('--config');
+      configs.push(configIndex >= 0 ? args?.[configIndex + 1] : undefined);
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        existingComponents: [...CORE_WORKER_COMPONENTS],
+        automaticProvisioning: false,
         secrets: {
           RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
           TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-key',
@@ -3178,6 +3535,54 @@ describe('deployAll', () => {
     expect(summary.failedCount).toBe(0);
     expect(configs).toEqual(['wrangler.toml']);
     expect(configs).not.toContain(controlBootstrapPath);
+  });
+
+  it('reuses the Control bootstrap config while missing smoke targets are deployed', async () => {
+    const rootDir = createTempRoot();
+    const selected = [...CORE_WORKER_COMPONENTS];
+    for (const component of selected) {
+      createWorkerPackage(rootDir, component, '1.0.0');
+    }
+    const controlDirectory = join(rootDir, 'packages', 'ar-control');
+    const controlBootstrapPath = join(controlDirectory, 'wrangler.bootstrap.toml');
+    writeFileSync(
+      join(controlDirectory, 'wrangler.toml'),
+      'name = "test-ar-control"\n\n[[services]]\nbinding = "SMOKE_AR_AUTH"\nservice = "test-ar-auth"\n'
+    );
+    writeFileSync(controlBootstrapPath, 'name = "test-ar-control"\n');
+
+    const mutations: Array<{ component: string; config: string | undefined }> = [];
+    vi.mocked(execa).mockImplementation(async (_command, args, options) => {
+      const configIndex = (args ?? []).indexOf('--config');
+      mutations.push({
+        component: basename(String(options?.cwd)),
+        config: configIndex >= 0 ? args?.[configIndex + 1] : undefined,
+      });
+      return successfulCommandResult();
+    });
+
+    const summary = await deployAll(
+      {
+        env: 'test',
+        rootDir,
+        deploymentStrategy: 'direct',
+        concurrency: 2,
+        existingComponents: ['ar-control'],
+        automaticProvisioning: false,
+        secrets: {
+          RUNTIME_REGISTRY_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+          TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID: 'registry-key',
+          SMOKE_RPC_SIGNING_JWK_SLOT_A: '{"kty":"OKP"}',
+        },
+      },
+      selected
+    );
+
+    expect(summary.failedCount).toBe(0);
+    expect(mutations.filter(({ component }) => component === 'ar-control')).toEqual([
+      { component: 'ar-control', config: controlBootstrapPath },
+      { component: 'ar-control', config: 'wrangler.toml' },
+    ]);
   });
 
   it('fails safe to the full Control config when the existing inventory is unknown', async () => {

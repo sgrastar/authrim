@@ -133,7 +133,7 @@ function plan(suffix: string): TenantShardPlan {
     ownerTenantId: null,
     locationHint: 'apac',
     readReplicationMode: 'disabled',
-    migrationStreamId: 'd1-core',
+    migrationStreamId: 'core-d1',
     idempotencyKey: `idempotency-${suffix}`,
   };
 }
@@ -325,13 +325,7 @@ describe('D1ControlRepository lease and budget integration', () => {
     database = new DatabaseSync(':memory:');
     database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
-        'utf8'
-      )
-    );
-    database.exec(
-      readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/009_provider_identity_checkpoint.sql'),
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
         'utf8'
       )
     );
@@ -360,7 +354,7 @@ describe('D1ControlRepository lease and budget integration', () => {
          state, active_stream_key, registered_by_operation_id, registered_by_actor_id,
          registered_at, activated_at
        ) VALUES (
-         'env-test', 'd1-core', '0.4.0', '${'a'.repeat(64)}',
+         'env-test', 'core-d1', '0.4.0', '${'a'.repeat(64)}',
          'releases/0.4.0/${'a'.repeat(64)}/manifest.json', 'active', 'active',
          'op-release', 'setup:test', 1, 1
        );`
@@ -1038,7 +1032,7 @@ describe('D1ControlRepository lease and budget integration', () => {
       state, active_stream_key, registered_by_operation_id, registered_by_actor_id,
       registered_at, activated_at
     ) VALUES (
-      'env-test', 'd1-lookup', '0.4.0', '${'b'.repeat(64)}',
+      'env-test', 'lookup-d1', '0.4.0', '${'b'.repeat(64)}',
       'releases/0.4.0/${'b'.repeat(64)}/manifest.json', 'active', 'active',
       'op-release', 'setup:test', 1, 1
     )`);
@@ -1049,7 +1043,7 @@ describe('D1ControlRepository lease and budget integration', () => {
       logicalShardId: 'lookup:jp:lookup-capacity',
       databaseName: 'authrim-test-lookup-jp-lookup-capacity',
       bindingRef: 'TDB_LOOKUP_CAPACITY_LOOKUP',
-      migrationStreamId: 'd1-lookup',
+      migrationStreamId: 'lookup-d1',
     };
 
     await repository.createShardPlan(lookupPlan, 100, 'admin');
@@ -1073,7 +1067,7 @@ describe('D1ControlRepository lease and budget integration', () => {
       status: 'requested',
     });
     await expect(repository.listPendingShardPlans(10)).resolves.toEqual([
-      expect.objectContaining({ dataRole: 'lookup', migrationStreamId: 'd1-lookup' }),
+      expect.objectContaining({ dataRole: 'lookup', migrationStreamId: 'lookup-d1' }),
     ]);
     const createLease = await repository.tryStartProvisioning(
       lookupPlan.operationId,
@@ -1092,7 +1086,7 @@ describe('D1ControlRepository lease and budget integration', () => {
     const [migrationPlan] = await repository.listPendingMigrationPlans(10);
     expect(migrationPlan).toMatchObject({
       dataRole: 'lookup',
-      streamId: 'd1-lookup',
+      streamId: 'lookup-d1',
       databaseId: 'lookup-database-id',
     });
     if (!migrationPlan) throw new Error('expected_lookup_migration_plan');
@@ -1347,6 +1341,103 @@ describe('D1ControlRepository lease and budget integration', () => {
     ).toEqual({ reservation_state: 'released', capacity_counted_at: null, released_at: 120 });
   });
 
+  it('selects complete Worker target groups instead of splitting them at a row limit', async () => {
+    database.exec(
+      `UPDATE control_environment_resource_policies SET max_d1_resources = 200
+        WHERE environment_id = 'env-test'`
+    );
+    database.exec(`
+      INSERT INTO control_operations (
+        operation_id, environment_id, operation_kind, idempotency_key, status,
+        requested_by_type, attempt_count, created_at, updated_at
+      ) VALUES
+        ('op-worker-a', 'env-test', 'provision_shard', 'worker-a', 'running',
+         'reconciler', 1, 10, 10),
+        ('op-worker-b', 'env-test', 'provision_shard', 'worker-b', 'running',
+         'reconciler', 1, 20, 20);
+      INSERT INTO control_desired_worker_inventory (
+        environment_id, worker_script_name, package_name, deployment_target,
+        capability_manifest_digest, source_manifest_path, source_manifest_hash,
+        generated_artifact_hash, source_kind, source_reference, status,
+        registered_by_operation_id, registered_by, registered_at
+      ) VALUES
+        ('env-test', 'test-ar-auth', '@authrim/ar-auth', 'test-ar-auth',
+         '${'b'.repeat(64)}', 'auth.json', '${'c'.repeat(64)}', '${'d'.repeat(64)}',
+         'core_manifest', 'test', 'active', 'op-release', 'setup:test', 1),
+        ('env-test', 'test-ar-token', '@authrim/ar-token', 'test-ar-token',
+         '${'e'.repeat(64)}', 'token.json', '${'f'.repeat(64)}', '${'1'.repeat(64)}',
+         'core_manifest', 'test', 'active', 'op-release', 'setup:test', 1);
+      INSERT INTO control_worker_required_data_roles (
+        environment_id, worker_script_name, data_role, source_manifest_hash, updated_at
+      ) VALUES
+        ('env-test', 'test-ar-auth', 'tenant_core/users', '${'c'.repeat(64)}', 1),
+        ('env-test', 'test-ar-token', 'tenant_core/users', '${'f'.repeat(64)}', 1);
+    `);
+    const insert = database.prepare(`INSERT INTO control_worker_binding_reconciliations (
+      operation_id, environment_id, worker_script_name, shard_id, binding_ref,
+      data_role, residency_partition, migration_generation, provider_database_id,
+      state, created_at, updated_at
+    ) VALUES (?, 'env-test', ?, ?, ?, 'tenant_core/users', 'jp', 1, ?, 'pending', ?, ?)`);
+    const insertShard = database.prepare(`INSERT INTO control_tenant_shards (
+      shard_id, environment_id, data_role, residency_policy_id, residency_partition,
+      generation, logical_shard_id, binding_ref, d1_desired_resource_id,
+      location_hint, status, created_at, updated_at
+    ) VALUES (?, 'env-test', 'tenant_core/users', 'default', 'jp', 1, ?, ?, ?,
+              'apac', 'ready', ?, ?)`);
+    const insertDesired = database.prepare(`INSERT INTO control_desired_resources (
+      desired_resource_id, environment_id, resource_kind, logical_shard_id,
+      deterministic_name, ownership_fingerprint, provisioning_state,
+      origin_operation_id, created_at, updated_at
+    ) VALUES (?, 'env-test', 'd1', ?, ?, ?, 'requested', ?, ?, ?)`);
+    for (let index = 0; index < 101; index += 1) {
+      insertDesired.run(
+        `resource-a-${index}`,
+        `logical-a-${index}`,
+        `database-a-${index}`,
+        `fingerprint-a-${index}`,
+        'op-worker-a',
+        10,
+        10
+      );
+      insertShard.run(
+        `shard-a-${index}`,
+        `logical-a-${index}`,
+        `TDB_USERS_A_${index}`,
+        `resource-a-${index}`,
+        10,
+        10
+      );
+      insert.run(
+        'op-worker-a',
+        'test-ar-auth',
+        `shard-a-${index}`,
+        `TDB_USERS_A_${index}`,
+        `database-a-${index}`,
+        10,
+        10
+      );
+    }
+    insertDesired.run(
+      'resource-b',
+      'logical-b',
+      'database-b',
+      'fingerprint-b',
+      'op-worker-b',
+      20,
+      20
+    );
+    insertShard.run('shard-b', 'logical-b', 'TDB_USERS_B', 'resource-b', 20, 20);
+    insert.run('op-worker-b', 'test-ar-token', 'shard-b', 'TDB_USERS_B', 'database-b', 20, 20);
+    const bindingRepository = new D1WorkerBindingRepository(d1Adapter(database));
+
+    await expect(bindingRepository.listDueTargets(100, 30)).resolves.toHaveLength(100);
+    const workerTargets = await bindingRepository.listDueTargetsForWorkers(1, 30);
+    expect(workerTargets).toHaveLength(101);
+    expect(new Set(workerTargets.map((target) => target.workerScriptName))).toEqual(
+      new Set(['test-ar-auth'])
+    );
+  });
+
   it('builds shared and tenant-exclusive planner inputs only from matching shard scope', async () => {
     database.exec(`INSERT INTO control_desired_worker_inventory (
       environment_id, worker_script_name, package_name, deployment_target,
@@ -1567,7 +1658,7 @@ describe('D1ControlRepository lease and budget integration', () => {
              FROM control_operation_release_pins WHERE operation_id = ?`
         )
         .get(shardPlan.operationId)
-    ).toEqual({ stream_id: 'd1-core', release_id: '0.4.0', manifest_digest: 'a'.repeat(64) });
+    ).toEqual({ stream_id: 'core-d1', release_id: '0.4.0', manifest_digest: 'a'.repeat(64) });
     expect(
       database
         .prepare(
@@ -1575,11 +1666,11 @@ describe('D1ControlRepository lease and budget integration', () => {
              FROM control_tenant_database_migration_state WHERE desired_resource_id = ?`
         )
         .get(shardPlan.desiredResourceId)
-    ).toEqual({ state: 'requested', stream_id: 'd1-core', release_id: '0.4.0' });
+    ).toEqual({ state: 'requested', stream_id: 'core-d1', release_id: '0.4.0' });
 
     database.exec(`UPDATE control_migration_release_catalog
       SET state = 'retired', active_stream_key = 'release:0.4.0'
-      WHERE environment_id = 'env-test' AND stream_id = 'd1-core'`);
+      WHERE environment_id = 'env-test' AND stream_id = 'core-d1'`);
     const missingPlan = plan('missing');
     await expect(repository.createShardPlan(missingPlan, 101, 'admin')).rejects.toThrow(
       'control_active_migration_release_missing'
@@ -1767,8 +1858,12 @@ describe('D1ControlRepository lease and budget integration', () => {
     database.exec(`UPDATE control_environments
       SET automatic_provisioning_enabled = 1,
           provisioning_token_ownership = 'account',
+          provisioning_token_management = 'setup',
           provisioning_capability_state = 'ready',
           provisioning_capability_checked_at = 90,
+          provisioning_child_tokens_json = '[{"resourceClass":"d1","tokenId":"11111111111111111111111111111111","tokenName":"authrim-test-control-d1","secretName":"CLOUDFLARE_D1_API_TOKEN","tokenFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"resourceClass":"workers","tokenId":"22222222222222222222222222222222","tokenName":"authrim-test-control-workers","secretName":"CLOUDFLARE_WORKERS_API_TOKEN","tokenFingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]',
+          provisioning_secret_generation_deployment_id = 'deployment:test',
+          provisioning_secret_generation_version_id = 'version:test',
           updated_at = 90
       WHERE environment_id = 'env-test'`);
     const shardPlan = plan('authority-blocked');
@@ -1785,13 +1880,20 @@ describe('D1ControlRepository lease and budget integration', () => {
     expect(
       database
         .prepare(
-          `SELECT provisioning_capability_state, provisioning_capability_checked_at
+          `SELECT provisioning_capability_state, provisioning_capability_checked_at,
+                  provisioning_token_management, provisioning_child_tokens_json,
+                  provisioning_secret_generation_deployment_id,
+                  provisioning_secret_generation_version_id
              FROM control_environments WHERE environment_id = 'env-test'`
         )
         .get()
     ).toEqual({
       provisioning_capability_state: 'blocked',
       provisioning_capability_checked_at: 120,
+      provisioning_token_management: 'none',
+      provisioning_child_tokens_json: null,
+      provisioning_secret_generation_deployment_id: null,
+      provisioning_secret_generation_version_id: null,
     });
     expect(
       database
@@ -1814,8 +1916,12 @@ describe('D1ControlRepository lease and budget integration', () => {
     database.exec(`UPDATE control_environments
       SET automatic_provisioning_enabled = 1,
           provisioning_token_ownership = 'user',
+          provisioning_token_management = 'operator',
           provisioning_capability_state = 'ready',
           provisioning_capability_checked_at = 90,
+          provisioning_child_tokens_json = '[{"resourceClass":"d1","tokenId":"11111111111111111111111111111111","tokenName":"authrim-test-control-d1","secretName":"CLOUDFLARE_D1_API_TOKEN","tokenFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"resourceClass":"workers","tokenId":"22222222222222222222222222222222","tokenName":"authrim-test-control-workers","secretName":"CLOUDFLARE_WORKERS_API_TOKEN","tokenFingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]',
+          provisioning_secret_generation_deployment_id = 'deployment:test',
+          provisioning_secret_generation_version_id = 'version:test',
           updated_at = 90
       WHERE environment_id = 'env-test'`);
     const shardPlan = plan('workers-authority-blocked');
@@ -1854,13 +1960,20 @@ describe('D1ControlRepository lease and budget integration', () => {
     expect(
       database
         .prepare(
-          `SELECT provisioning_capability_state, provisioning_capability_checked_at
+          `SELECT provisioning_capability_state, provisioning_capability_checked_at,
+                  provisioning_token_management, provisioning_child_tokens_json,
+                  provisioning_secret_generation_deployment_id,
+                  provisioning_secret_generation_version_id
              FROM control_environments WHERE environment_id = 'env-test'`
         )
         .get()
     ).toEqual({
       provisioning_capability_state: 'blocked',
       provisioning_capability_checked_at: 130,
+      provisioning_token_management: 'none',
+      provisioning_child_tokens_json: null,
+      provisioning_secret_generation_deployment_id: null,
+      provisioning_secret_generation_version_id: null,
     });
     expect(
       database
@@ -2794,10 +2907,22 @@ describe('D1ControlRepository lease and budget integration', () => {
                 previous_restore_settings_json = '{"bindings":[]}',
                 patch_result_version_id = 'version-after',
                 patch_result_deployment_id = 'deployment-after',
+                smoke_attempt_count = 3, consecutive_smoke_successes = 3,
+                stabilization_not_before = 132,
                 completed_at = 133, updated_at = 133
           WHERE operation_id = ?`
       )
       .run(shardPlan.operationId);
+    database
+      .prepare(
+        `INSERT INTO control_worker_observed_bindings (
+           environment_id, worker_script_name, binding_name, binding_kind,
+           provider_resource_id, observed_spec_json, observed_version_id,
+           observed_deployment_id, observed_at
+         ) VALUES ('env-test', 'test-ar-auth', ?, 'd1', 'database-id', '{}',
+                   'version-after', 'deployment-after', 133)`
+      )
+      .run(shardPlan.bindingRef);
     database
       .prepare(
         `INSERT INTO control_worker_deployment_leases (
@@ -2813,8 +2938,9 @@ describe('D1ControlRepository lease and budget integration', () => {
     database
       .prepare(
         `UPDATE control_operation_steps
-            SET status = 'blocked', last_error_code = 'operator_action_required',
-                last_error_redacted = 'Operator execution is required.', updated_at = 133
+            SET status = 'blocked',
+                last_error_code = 'control_worker_settings_request_rejected',
+                last_error_redacted = 'A prior provider request was rejected.', updated_at = 133
           WHERE operation_id = ?
             AND step_key IN (
               'reconcile_worker_bindings', 'smoke_bindings', 'stabilize_bindings'
@@ -2822,7 +2948,7 @@ describe('D1ControlRepository lease and budget integration', () => {
       )
       .run(shardPlan.operationId);
 
-    await bindingRepository.ensurePendingTargets(134);
+    await expect(bindingRepository.recoverCompletedOperations('env-test', 134)).resolves.toBe(1);
 
     expect(
       database
@@ -2920,7 +3046,7 @@ describe('D1ControlRepository lease and budget integration', () => {
 
     database.exec(`UPDATE control_migration_release_catalog
       SET state = 'retired', active_stream_key = 'release:' || release_id
-      WHERE environment_id = 'env-test' AND stream_id = 'd1-core' AND state = 'active';
+      WHERE environment_id = 'env-test' AND stream_id = 'core-d1' AND state = 'active';
       INSERT INTO control_operations (
         operation_id, environment_id, operation_kind, idempotency_key, status,
         requested_by_type, attempt_count, created_at, completed_at, updated_at
@@ -2933,7 +3059,7 @@ describe('D1ControlRepository lease and budget integration', () => {
         state, active_stream_key, registered_by_operation_id, registered_by_actor_id,
         registered_at, activated_at
       ) VALUES (
-        'env-test', 'd1-core', '0.5.0', '${'b'.repeat(64)}',
+        'env-test', 'core-d1', '0.5.0', '${'b'.repeat(64)}',
         'releases/0.5.0/${'b'.repeat(64)}/manifest.json', 'active', 'active', 'op-release-next',
         'setup:test', 111, 111
       );`);
@@ -2945,7 +3071,7 @@ describe('D1ControlRepository lease and budget integration', () => {
       shardId: shardPlan.shardId,
       environmentId: 'env-test',
       databaseId: 'database-id',
-      streamId: 'd1-core',
+      streamId: 'core-d1',
       releaseId: '0.4.0',
       manifestDigest: 'a'.repeat(64),
       manifestObjectKey: `releases/0.4.0/${'a'.repeat(64)}/manifest.json`,
@@ -3237,6 +3363,28 @@ describe('D1ControlRepository lease and budget integration', () => {
         now: 136 + attempt,
       });
     }
+    await expect(
+      bindingRepository.recordSmokeProgress({
+        target: adoptedTarget,
+        successful: true,
+        attempt: 3,
+        stabilizationNotBefore: 170,
+        now: 140,
+      })
+    ).resolves.toBeUndefined();
+    await expect(
+      bindingRepository.recordSmokeProgress({
+        target: {
+          ...adoptedTarget,
+          patchResultVersionId: 'version-stale',
+          patchResultDeploymentId: 'deployment-stale',
+        },
+        successful: true,
+        attempt: 4,
+        completeStabilizationCheck: true,
+        now: 141,
+      })
+    ).rejects.toThrow('control_worker_binding_smoke_state_stale');
     expect(
       database
         .prepare(
@@ -3304,7 +3452,41 @@ describe('D1ControlRepository lease and budget integration', () => {
             AND step_key IN ('reconcile_worker_bindings', 'smoke_bindings', 'stabilize_bindings')`
       )
       .run(target.operationId);
+    database
+      .prepare(
+        `UPDATE control_operation_steps
+            SET status = 'blocked',
+                last_error_code = 'control_worker_settings_request_rejected',
+                last_error_redacted = 'A prior provider request was rejected.'
+          WHERE operation_id = ? AND step_key = 'stabilize_bindings'`
+      )
+      .run(target.operationId);
     await bindingRepository.markSucceeded(stabilizingTarget, 170);
+    expect(
+      database
+        .prepare(
+          `SELECT step_key, status, progress_current, progress_total, last_error_code
+             FROM control_operation_steps
+            WHERE operation_id = ? AND step_key IN ('smoke_bindings', 'stabilize_bindings')
+            ORDER BY display_order`
+        )
+        .all(target.operationId)
+    ).toEqual([
+      {
+        step_key: 'smoke_bindings',
+        status: 'succeeded',
+        progress_current: 2,
+        progress_total: 2,
+        last_error_code: null,
+      },
+      {
+        step_key: 'stabilize_bindings',
+        status: 'running',
+        progress_current: 1,
+        progress_total: 2,
+        last_error_code: null,
+      },
+    ]);
     expect(
       database
         .prepare(

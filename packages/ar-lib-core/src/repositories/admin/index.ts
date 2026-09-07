@@ -22,6 +22,7 @@ export {
   type AdminLoginAttemptFilterOptions,
 } from './admin-login-attempt';
 export {
+  INTERNAL_NOTIFICATION_EVENT_CATEGORIES,
   InternalNotificationEventRepository,
   resolveLoggingNotificationRoutingPolicy,
   type InternalNotificationEventCategory,

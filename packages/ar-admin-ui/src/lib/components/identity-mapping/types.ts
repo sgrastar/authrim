@@ -128,15 +128,44 @@ export interface MappingDraftTransformInput {
 	parameters?: Record<string, unknown>;
 }
 
+export interface MappingDraftValidationRuleInput {
+	targetRef: Record<string, unknown>;
+	validationKind: string;
+	severity?: string;
+	parameters?: Record<string, unknown>;
+}
+
+export interface MappingDraftReleaseRuleInput {
+	destinationType: string;
+	destinationId?: string;
+	sourceRef: Record<string, unknown>;
+	releaseAction: string;
+	legalBasis?: string;
+	purpose?: string;
+	condition?: Record<string, unknown>;
+	priority?: number;
+}
+
+export interface MappingDraftConflictRuleInput {
+	targetRef: Record<string, unknown>;
+	conflictStrategy: string;
+	sourcePriority?: unknown[];
+	condition?: Record<string, unknown>;
+}
+
 export interface MappingDraftRuleInput {
 	ruleKey: string;
 	ruleKind: string;
 	action: string;
 	priority?: number;
 	scope?: Record<string, unknown>;
+	condition?: Record<string, unknown>;
 	metadata?: Record<string, unknown>;
 	edges?: MappingDraftEdgeInput[];
 	transforms?: MappingDraftTransformInput[];
+	validationRules?: MappingDraftValidationRuleInput[];
+	releaseRules?: MappingDraftReleaseRuleInput[];
+	conflictRules?: MappingDraftConflictRuleInput[];
 }
 
 export interface MappingDraftPayload {

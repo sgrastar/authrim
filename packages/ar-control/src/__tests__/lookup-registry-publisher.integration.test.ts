@@ -89,7 +89,7 @@ describe('LookupRegistryPublisher', () => {
     database = new DatabaseSync(':memory:');
     database.exec(
       readFileSync(
-        resolve(REPO_ROOT, 'migrations/control/001_pre_1_0_control_baseline.sql'),
+        resolve(REPO_ROOT, 'migrations/control/d1/001_0_4_0_control_baseline.sql'),
         'utf8'
       )
     );
@@ -112,10 +112,12 @@ describe('LookupRegistryPublisher', () => {
        INSERT INTO control_desired_resources (
          desired_resource_id, environment_id, resource_kind, logical_shard_id,
          deterministic_name, ownership_fingerprint, provisioning_state,
-         origin_operation_id, desired_spec_json, created_at, updated_at
+         origin_operation_id, desired_spec_json, provider_create_state,
+         provider_resource_id, provider_identity_checkpointed_at, created_at, updated_at
        ) VALUES (
          'lookup-resource-1', 'test', 'd1', 'lookup-1', 'lookup-1',
-         'lookup-fingerprint-1', 'ready', 'seed-operation', '{}', 1, 1
+         'lookup-fingerprint-1', 'ready', 'seed-operation', '{}', 'identified',
+         'lookup-database-1', 1, 1, 1
        );
        INSERT INTO control_lookup_physical_shards (
          lookup_shard_id, environment_id, residency_partition, binding_ref,

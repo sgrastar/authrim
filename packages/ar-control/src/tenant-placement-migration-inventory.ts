@@ -3,7 +3,9 @@ import type { TenantShardDataRole } from './types';
 
 const SAFE_SQL_IDENTIFIER = /^[a-z][a-z0-9_]{0,127}$/u;
 const MAX_SCHEMA_TABLES = 500;
-const MAX_TABLE_COLUMNS = 256;
+// Cloudflare D1 rejects tables with more than 100 columns. Keep inventory validation at the
+// provider boundary so an unsupported schema cannot be accepted for migration or scale-out.
+const MAX_TABLE_COLUMNS = 100;
 const SCHEMA_BATCH_SIZE = 32;
 
 export interface TenantMigrationSchemaExecutor {
@@ -117,7 +119,7 @@ const CORE_SPECIAL_RULES: Readonly<Record<string, TenantMigrationOwnershipRule>>
 };
 
 const PII_SPECIAL_RULES: Readonly<Record<string, TenantMigrationOwnershipRule>> = {
-  subject_identifiers: {
+  pairwise_subject_identifiers: {
     kind: 'parent',
     foreignKeyColumn: 'user_id',
     parentTable: 'users_pii',

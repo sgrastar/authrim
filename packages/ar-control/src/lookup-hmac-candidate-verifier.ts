@@ -1,6 +1,10 @@
 import type { ControlLookupHmacKeyMetadata } from '@authrim/ar-lib-core/control-plane';
 import { getTenantDatabaseBindingPrefix } from '@authrim/ar-lib-core/services/tenant-database-naming';
 import { signControlRuntimeSmokeRequest } from './runtime-smoke-signer';
+import {
+  consumeServiceBindingInvocation,
+  type ServiceBindingInvocationBudget,
+} from './service-binding-invocation-budget';
 import type { ControlEnv } from './types';
 
 const SAFE_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
@@ -308,7 +312,8 @@ export class LookupHmacCandidateVerifier {
   constructor(
     private readonly repository: LookupHmacCandidateVerificationRepository,
     private readonly env: ControlEnv,
-    private readonly now: () => number
+    private readonly now: () => number,
+    private readonly serviceBindingBudget?: ServiceBindingInvocationBudget
   ) {}
 
   async reconcile(): Promise<{ attempted: number; succeeded: number; failed: number }> {
@@ -335,6 +340,7 @@ export class LookupHmacCandidateVerifier {
     const summary = { attempted: 0, succeeded: 0, failed: 0 };
     let baseline: { currentDigest: string; candidateDigest: string } | null = null;
     for (const [component, bindingName] of Object.entries(LOOKUP_HMAC_VERIFICATION_BINDINGS)) {
+      if (!consumeServiceBindingInvocation(this.serviceBindingBudget)) return summary;
       summary.attempted += 1;
       const workerScriptName = `${rotation.environmentId}-${component}`;
       if (!SAFE_WORKER.test(workerScriptName)) {
@@ -442,6 +448,7 @@ export class LookupHmacCandidateVerifier {
     validateRotation(rotation);
     const summary = { attempted: 0, succeeded: 0, failed: 0 };
     for (const [component, bindingName] of Object.entries(LOOKUP_HMAC_VERIFICATION_BINDINGS)) {
+      if (!consumeServiceBindingInvocation(this.serviceBindingBudget)) return summary;
       summary.attempted += 1;
       const workerScriptName = `${rotation.environmentId}-${component}`;
       try {

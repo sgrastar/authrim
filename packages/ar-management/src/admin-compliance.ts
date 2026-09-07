@@ -732,9 +732,15 @@ export async function adminComplianceAccessReviewsCreateHandler(c: Context<{ Bin
           // Users not logged in for 90 days
           const inactiveThreshold = nowTs - 90 * 24 * 60 * 60;
           const result = await adapter.queryOne<{ count: number }>(
-            `SELECT COUNT(*) as count FROM users_core
-             WHERE tenant_id = ? AND is_active = 1 AND status = 'active'
-             AND (last_login_at IS NULL OR last_login_at < ?)`,
+            `SELECT COUNT(*) as count FROM identity_accounts
+             WHERE tenant_id = ? AND lifecycle_state = 'active'
+             AND CASE
+               WHEN metadata_json IS NOT NULL
+                 AND json_valid(metadata_json)
+                 AND json_type(metadata_json, '$.last_login_at') IN ('integer', 'real')
+                 THEN CAST(json_extract(metadata_json, '$.last_login_at') AS INTEGER) < ?
+               ELSE 1
+             END`,
             [tenantId, inactiveThreshold]
           );
           totalItems = result?.count ?? 0;

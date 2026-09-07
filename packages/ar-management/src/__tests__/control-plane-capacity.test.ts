@@ -38,7 +38,7 @@ function preview(
         databaseName: 'authrim-test-users-jp-1234',
         bindingRef: 'TDB_USERS_1234_CORE',
         readReplicationMode: 'enabled',
-        migrationStreamId: 'd1-core',
+        migrationStreamId: 'core-d1',
         ...overrides,
       },
     ],
@@ -96,7 +96,7 @@ describe('Control capacity Service Binding preview', () => {
     ).rejects.toThrow('control_capacity_preview_invalid');
     await expect(
       previewControlCapacityProvisioning({ AUTHRIM_ENVIRONMENT_NAME: 'test' } as Env, request, {
-        control: control(preview({ migrationStreamId: 'd1-pii' })),
+        control: control(preview({ migrationStreamId: 'pii-d1' })),
       })
     ).rejects.toThrow('control_capacity_preview_invalid');
 

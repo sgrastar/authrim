@@ -396,14 +396,13 @@ describe('Cloudflare Control token bootstrap', () => {
         fetcher,
       })
     ).resolves.toBe('user');
-    await expect(
-      validateDirectControlTokensWithEvidence({
-        accountId: ACCOUNT_ID,
-        d1Token: 'direct-d1',
-        workersToken: 'direct-workers',
-        fetcher,
-      })
-    ).resolves.toMatchObject({
+    const evidence = await validateDirectControlTokensWithEvidence({
+      accountId: ACCOUNT_ID,
+      d1Token: 'direct-d1',
+      workersToken: 'direct-workers',
+      fetcher,
+    });
+    expect(evidence).toMatchObject({
       ownership: 'user',
       childTokens: [
         {
@@ -418,6 +417,13 @@ describe('Cloudflare Control token bootstrap', () => {
         },
       ],
     });
+    expect(evidence.childTokens.map((child) => child.tokenFingerprint)).toEqual([
+      '2817b436fdf93fc1d96cd804be1dbf7abe21a1ec5819d9e050bd4911ddae701a',
+      'd36d9e3588e6831d903979d7573fe39c3fef498699e2a43bc6d2cd16e3fb51f8',
+    ]);
+    expect(new Set(evidence.childTokens.map((child) => child.tokenFingerprint)).size).toBe(2);
+    expect(JSON.stringify(evidence)).not.toContain('direct-d1');
+    expect(JSON.stringify(evidence)).not.toContain('direct-workers');
     await expect(
       validateDirectControlTokens({
         accountId: ACCOUNT_ID,
@@ -2371,6 +2377,42 @@ describe('Cloudflare Control token bootstrap', () => {
     await expect(sink.readActiveGeneration()).rejects.toMatchObject({
       code: 'cloudflare_control_secret_generation_receipt_invalid',
     });
+  });
+
+  it('restores one exact immutable secret generation before a managed code redeploy', async () => {
+    const calls: string[][] = [];
+    let activeVersion = 'version-code';
+    const sink = new WranglerControlSecretSink({
+      workerName: 'test-ar-control',
+      cwd: '/workspace',
+      runner: async (_command, args) => {
+        calls.push([...args]);
+        if (args.includes('view')) {
+          return { stdout: JSON.stringify({ id: 'version-secret' }) };
+        }
+        if (args.includes('deploy') && args.includes('version-secret@100%')) {
+          activeVersion = 'version-secret';
+          return { stdout: 'Deployed version-secret' };
+        }
+        if (args.includes('deployments') && args.includes('status')) {
+          return {
+            stdout: JSON.stringify({
+              id: activeVersion === 'version-secret' ? 'deployment-restored' : 'deployment-code',
+              versions: [{ version_id: activeVersion, percentage: 100 }],
+            }),
+          };
+        }
+        return { stdout: '' };
+      },
+    });
+
+    await expect(
+      sink.activateGeneration({ deploymentId: 'deployment-secret', versionId: 'version-secret' })
+    ).resolves.toEqual({ deploymentId: 'deployment-restored', versionId: 'version-secret' });
+    expect(calls.some((args) => args.includes('view') && args.includes('version-secret'))).toBe(
+      true
+    );
+    expect(calls.some((args) => args.includes('version-secret@100%'))).toBe(true);
   });
 
   it('uses a visible Wrangler log level for JSON secret-list output', async () => {

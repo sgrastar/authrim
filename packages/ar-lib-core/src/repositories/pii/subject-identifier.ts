@@ -6,6 +6,7 @@
 
 import type { DatabaseAdapter } from '../../db/adapter';
 import { BaseRepository, type BaseEntity, generateId, getCurrentTimestamp } from '../base';
+import { requireTenantId } from '../tenant';
 
 export interface SubjectIdentifier extends BaseEntity {
   tenant_id: string;
@@ -70,9 +71,10 @@ export class SubjectIdentifierRepository extends BaseRepository<SubjectIdentifie
   ): Promise<SubjectIdentifier> {
     const db = adapter ?? this.adapter;
     const now = getCurrentTimestamp();
+    const tenantId = requireTenantId(input.tenant_id, 'SubjectIdentifierRepository create');
     const identifier: SubjectIdentifier = {
       id: input.id ?? generateId(),
-      tenant_id: input.tenant_id,
+      tenant_id: tenantId,
       subject_id: input.subject_id,
       identifier_type: input.identifier_type,
       identifier_value: input.identifier_value,
@@ -111,9 +113,10 @@ export class SubjectIdentifierRepository extends BaseRepository<SubjectIdentifie
   ): Promise<SubjectIdentifier> {
     const db = adapter ?? this.adapter;
     const now = getCurrentTimestamp();
+    const tenantId = requireTenantId(input.tenant_id, 'SubjectIdentifierRepository create');
     const identifier: SubjectIdentifier = {
       id: input.id ?? generateId(),
-      tenant_id: input.tenant_id,
+      tenant_id: tenantId,
       subject_id: input.subject_id,
       identifier_type: input.identifier_type,
       identifier_value: input.identifier_value,
@@ -164,10 +167,11 @@ export class SubjectIdentifierRepository extends BaseRepository<SubjectIdentifie
     adapter?: DatabaseAdapter
   ): Promise<SubjectIdentifier | null> {
     const db = adapter ?? this.adapter;
+    const scopedTenantId = requireTenantId(tenantId, 'SubjectIdentifierRepository lookup');
     return db.queryOne<SubjectIdentifier>(
       `SELECT * FROM subject_identifiers
        WHERE tenant_id = ? AND identifier_type = ? AND identifier_value = ?`,
-      [tenantId, identifierType, identifierValue]
+      [scopedTenantId, identifierType, identifierValue]
     );
   }
 
@@ -180,7 +184,8 @@ export class SubjectIdentifierRepository extends BaseRepository<SubjectIdentifie
     adapter?: DatabaseAdapter
   ): Promise<SubjectIdentifier | null> {
     const db = adapter ?? this.adapter;
-    const params: unknown[] = [tenantId, subjectId, destinationType, destinationId, 'active'];
+    const scopedTenantId = requireTenantId(tenantId, 'SubjectIdentifierRepository lookup');
+    const params: unknown[] = [scopedTenantId, subjectId, destinationType, destinationId, 'active'];
     const typeClause = identifierType ? ' AND identifier_type = ?' : '';
     if (identifierType) {
       params.push(identifierType);
@@ -201,11 +206,12 @@ export class SubjectIdentifierRepository extends BaseRepository<SubjectIdentifie
     adapter?: DatabaseAdapter
   ): Promise<SubjectIdentifier | null> {
     const db = adapter ?? this.adapter;
+    const scopedTenantId = requireTenantId(tenantId, 'SubjectIdentifierRepository lookup');
     return db.queryOne<SubjectIdentifier>(
       `SELECT * FROM subject_identifiers
        WHERE tenant_id = ? AND identifier_type = ? AND identifier_value_hash = ? AND lifecycle_state = ?
        LIMIT 1`,
-      [tenantId, identifierType, identifierValueHash, 'active']
+      [scopedTenantId, identifierType, identifierValueHash, 'active']
     );
   }
 
@@ -215,11 +221,12 @@ export class SubjectIdentifierRepository extends BaseRepository<SubjectIdentifie
     adapter?: DatabaseAdapter
   ): Promise<SubjectIdentifier[]> {
     const db = adapter ?? this.adapter;
+    const scopedTenantId = requireTenantId(tenantId, 'SubjectIdentifierRepository lookup');
     return db.query<SubjectIdentifier>(
       `SELECT * FROM subject_identifiers
        WHERE tenant_id = ? AND subject_id = ?
        ORDER BY is_primary DESC, created_at ASC`,
-      [tenantId, subjectId]
+      [scopedTenantId, subjectId]
     );
   }
 
@@ -230,8 +237,9 @@ export class SubjectIdentifierRepository extends BaseRepository<SubjectIdentifie
     adapter?: DatabaseAdapter
   ): Promise<SubjectIdentifier | null> {
     const db = adapter ?? this.adapter;
+    const scopedTenantId = requireTenantId(tenantId, 'SubjectIdentifierRepository lookup');
     const typeClause = identifierType ? ' AND identifier_type = ?' : '';
-    const params: unknown[] = [tenantId, subjectId];
+    const params: unknown[] = [scopedTenantId, subjectId];
     if (identifierType) {
       params.push(identifierType);
     }
@@ -283,9 +291,10 @@ export class SubjectIdentifierRepository extends BaseRepository<SubjectIdentifie
     adapter?: DatabaseAdapter
   ): Promise<number> {
     const db = adapter ?? this.adapter;
+    const scopedTenantId = requireTenantId(tenantId, 'SubjectIdentifierRepository delete');
     const result = await db.execute(
       'DELETE FROM subject_identifiers WHERE tenant_id = ? AND subject_id = ?',
-      [tenantId, userId]
+      [scopedTenantId, userId]
     );
     return result.rowsAffected;
   }
@@ -297,10 +306,11 @@ export class SubjectIdentifierRepository extends BaseRepository<SubjectIdentifie
     adapter?: DatabaseAdapter
   ): Promise<number> {
     const db = adapter ?? this.adapter;
+    const scopedTenantId = requireTenantId(tenantId, 'SubjectIdentifierRepository delete');
     const result = await db.execute(
       `DELETE FROM subject_identifiers
        WHERE tenant_id = ? AND identifier_type = ? AND identifier_value = ?`,
-      [tenantId, identifierType, identifierValue]
+      [scopedTenantId, identifierType, identifierValue]
     );
     return result.rowsAffected;
   }
