@@ -81,7 +81,7 @@ jobs:
     name: Type Check
     runs-on: ubuntu-latest
     env:
-      TURBO_CONCURRENCY: 4
+      TURBO_CONCURRENCY: 2
 
     steps:
       - name: Checkout code
@@ -119,7 +119,7 @@ jobs:
     name: API Tests with Coverage
     runs-on: ubuntu-latest
     env:
-      TURBO_CONCURRENCY: 4
+      TURBO_CONCURRENCY: 2
 
     steps:
       - name: Checkout code
@@ -303,7 +303,7 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     env:
-      TURBO_CONCURRENCY: 4
+      TURBO_CONCURRENCY: 2
 
     steps:
       - name: Checkout code
