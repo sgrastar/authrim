@@ -16,8 +16,6 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  CanonicalIdentityRepository,
-  CanonicalRuntimeUserWriter,
   // Setup utilities
   isSetupDisabled,
   validateSetupToken,
@@ -30,8 +28,6 @@ import {
   // Helpers
   generateId,
   generateUserIdFromSettings,
-  createAuthContextFromHono,
-  createPIIContextFromHono,
   getTenantIdFromContext,
   getTenantSettings,
   parseAllowedOrigins,
@@ -312,48 +308,20 @@ async function releaseSetupLock(env: Env): Promise<void> {
 
 /**
  * Rollback user creation on Passkey registration failure
- * Deletes the Admin user from DB_ADMIN (or legacy DB if DB_ADMIN unavailable)
+ * Deletes the initial Admin user from the dedicated Admin database.
  */
-async function rollbackUserCreation(
-  c: Context<{ Bindings: Env }>,
-  userId: string,
-  tenantId: string
-): Promise<void> {
+async function rollbackUserCreation(c: Context<{ Bindings: Env }>, userId: string): Promise<void> {
   try {
-    // Use DB_ADMIN when available (new architecture)
-    if (c.env.DB_ADMIN) {
-      const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'setup-admin');
-      const adminUserRepo = new AdminUserRepository(adminAdapter);
-      const adminPasskeyRepo = new AdminPasskeyRepository(adminAdapter);
+    const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'setup-admin');
+    const adminUserRepo = new AdminUserRepository(adminAdapter);
+    const adminPasskeyRepo = new AdminPasskeyRepository(adminAdapter);
+    await adminPasskeyRepo.deleteAllByUser(userId);
+    await adminAdapter.execute('DELETE FROM admin_users WHERE id = ?', [userId]);
 
-      // Delete any passkeys first (foreign key constraint)
-      await adminPasskeyRepo.deleteAllByUser(userId);
-
-      // Delete from admin_users
-      await adminAdapter.execute('DELETE FROM admin_users WHERE id = ?', [userId]);
-
-      moduleLogger.info('Admin user rollback completed', {
-        action: 'rollback_completed',
-        userId: userId.substring(0, 8) + '...',
-        database: 'DB_ADMIN',
-      });
-      return;
-    }
-
-    // Fallback to legacy DB
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const piiCtx = createPIIContextFromHono(c, tenantId);
-
-    const writer = new CanonicalRuntimeUserWriter(
-      new CanonicalIdentityRepository(authCtx.coreAdapter, tenantId),
-      piiCtx.defaultPiiAdapter
-    );
-    await writer.deleteRuntimeUser(userId);
-
-    moduleLogger.info('User rollback completed (canonical runtime)', {
+    moduleLogger.info('Admin user rollback completed', {
       action: 'rollback_completed',
       userId: userId.substring(0, 8) + '...',
-      database: 'DB_CORE',
+      database: 'DB_ADMIN',
     });
   } catch (error) {
     // Log but don't throw - rollback failure shouldn't block error response
@@ -413,7 +381,6 @@ setupApp.get('/api/admin-init-setup/status', async (c) => {
 setupApp.post('/api/admin-init-setup/initialize', async (c) => {
   let lockAcquired = false;
   let createdUserId: string | null = null;
-  let rollbackTenantId = getTenantIdFromContext(c);
 
   try {
     const body = await c.req.json<{
@@ -559,59 +526,18 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
 
     // Create user in database
     const tenantId = getTenantIdFromContext(c);
-    rollbackTenantId = tenantId;
     const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
 
-    // Use DB_ADMIN when available (new Admin/EndUser separation architecture)
-    if (c.env.DB_ADMIN) {
-      const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'setup-admin');
-      const adminUserRepo = new AdminUserRepository(adminAdapter);
-
-      // Create Admin user in admin_users (no PII separation needed for Admin)
-      await adminUserRepo.createAdminUser({
-        id: userId,
-        tenant_id: tenantId,
-        email: email.toLowerCase(),
-        name: name || undefined,
-        // email_verified is set to true during setup
-        // MFA can be configured later
-      });
-      createdUserId = userId;
-
-      // Set email as verified for initial admin
-      await adminUserRepo.setEmailVerified(userId);
-    } else {
-      // Fallback to canonical runtime user store when DB_ADMIN is unavailable.
-      const authCtx = createAuthContextFromHono(c, tenantId);
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const preferredUsername = email.split('@')[0];
-
-      const writer = new CanonicalRuntimeUserWriter(
-        new CanonicalIdentityRepository(authCtx.coreAdapter, tenantId),
-        piiCtx.defaultPiiAdapter
-      );
-      await writer.createFromRuntimeUser({
-        userId,
-        tenantId,
-        active: true,
-        emailVerified: true,
-        phoneNumberVerified: false,
-        userType: 'admin',
-        displayName: name || email.toLowerCase(),
-        sourceRef: 'setup:/api/admin-init-setup/initialize',
-        piiFields: {
-          email: true,
-          name: true,
-          preferred_username: true,
-        },
-        sensitiveValues: {
-          email: email.toLowerCase(),
-          name: name || null,
-          preferred_username: preferredUsername,
-        },
-      });
-      createdUserId = userId;
-    }
+    const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'setup-admin');
+    const adminUserRepo = new AdminUserRepository(adminAdapter);
+    await adminUserRepo.createAdminUser({
+      id: userId,
+      tenant_id: tenantId,
+      email: email.toLowerCase(),
+      name: name || undefined,
+    });
+    createdUserId = userId;
+    await adminUserRepo.setEmailVerified(userId);
 
     // Assign super_admin role
     await assignSystemAdminRole(c.env, userId, tenantId);
@@ -621,14 +547,11 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
     const now = Date.now();
     const tokenExpiresAt = now + 24 * 60 * 60 * 1000; // 24 hours
 
-    if (c.env.DB_ADMIN) {
-      const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'setup-admin');
-      await adminAdapter.execute(
-        `INSERT INTO admin_setup_tokens (id, tenant_id, admin_user_id, status, expires_at, created_at, created_by)
-         VALUES (?, ?, ?, 'pending', ?, ?, 'initial_setup')`,
-        [setupTokenId, tenantId, userId, tokenExpiresAt, now]
-      );
-    }
+    await adminAdapter.execute(
+      `INSERT INTO admin_setup_tokens (id, tenant_id, admin_user_id, status, expires_at, created_at, created_by)
+       VALUES (?, ?, ?, 'pending', ?, ?, 'initial_setup')`,
+      [setupTokenId, tenantId, userId, tokenExpiresAt, now]
+    );
 
     // Store temporary session for the /complete endpoint
     const tempSessionToken = await createSetupSession(c.env, {
@@ -667,7 +590,7 @@ setupApp.post('/api/admin-init-setup/initialize', async (c) => {
     });
   } catch (error) {
     if (createdUserId) {
-      await rollbackUserCreation(c, createdUserId, rollbackTenantId);
+      await rollbackUserCreation(c, createdUserId);
     }
 
     // Release lock on error

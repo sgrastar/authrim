@@ -86,6 +86,11 @@ const mocked = vi.hoisted(() => {
           (invitation) => invitation.token === token && invitation.expires_at > now
         ) ?? null) as T | null;
       }
+      if (query.includes('FROM oauth_clients WHERE tenant_id = ? AND client_id = ?')) {
+        return (state.clients.find(
+          (client) => client.tenant_id === params[0] && client.client_id === params[1]
+        ) ?? null) as T | null;
+      }
       return null;
     }
   }
@@ -93,10 +98,28 @@ const mocked = vi.hoisted(() => {
   return {
     state,
     discoveryCandidatesMock: vi.fn(),
-    resolveUserStoreRuntimeSourcesMock: vi.fn(),
+    tenantAliasResolveMock: vi.fn(),
+    tenantAliasesResolveManyMock: vi.fn(),
+    tenantStoreResolveMock: vi.fn(),
+    lookupAssignmentsMock: vi.fn(),
     FakeD1Adapter,
   };
 });
+
+function discoveryRouteProjection(tenantId: string) {
+  return {
+    schemaVersion: 1,
+    tenantRouteGeneration: 8,
+    residencyPolicyId: 'default-policy',
+    target: {
+      dataRole: 'tenant_core/default' as const,
+      residencyPartition: 'default',
+      shardId: `default-${tenantId}`,
+      bindingRef: `TDB_${tenantId.toUpperCase()}_DEFAULT`,
+      requiredBindingRouteGeneration: 8,
+    },
+  };
+}
 
 vi.mock('@authrim/ar-lib-core', async () => {
   const actual =
@@ -120,8 +143,18 @@ vi.mock('@authrim/ar-lib-core', async () => {
     resolveAuthCorePersistenceAdapterFromEnv: vi.fn(
       async (_env: Partial<Env>) => new mocked.FakeD1Adapter({ db: {} })
     ),
+    loadVerifiedLookupBucketAssignmentProvider: mocked.lookupAssignmentsMock,
+    LookupRouteResolver: class {
+      async resolveAlias(input: unknown) {
+        return mocked.tenantAliasResolveMock(input);
+      }
+
+      async resolveAliases(input: unknown) {
+        return mocked.tenantAliasesResolveManyMock(input);
+      }
+    },
+    resolveTenantDatabaseSourceFromRegistry: mocked.tenantStoreResolveMock,
     resolveTenantCandidatesFromEmailDomain: mocked.discoveryCandidatesMock,
-    resolveUserStoreRuntimeSourcesFromEnv: mocked.resolveUserStoreRuntimeSourcesMock,
     CanonicalRuntimeUserStore: class {
       private tenantId: string;
 
@@ -143,7 +176,10 @@ vi.mock('@authrim/ar-lib-core', async () => {
 });
 
 import {
+  clearTenantCandidatePresentationCacheForTest,
   getDiscoveryConfigHandler,
+  postDiscoveryEmailStartHandler,
+  postDiscoveryEmailVerifyHandler,
   postDiscoveryGrantHandler,
   postDiscoveryGrantVerifyHandler,
   postDiscoveryHandler,
@@ -207,6 +243,8 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
   });
   app.get('/api/auth/discovery', getDiscoveryConfigHandler);
   app.post('/api/auth/discovery', postDiscoveryHandler);
+  app.post('/api/auth/discovery/email/start', postDiscoveryEmailStartHandler);
+  app.post('/api/auth/discovery/email/verify', postDiscoveryEmailVerifyHandler);
   app.post('/api/auth/discovery/grant', postDiscoveryGrantHandler);
   app.post('/api/auth/discovery/grant/verify', postDiscoveryGrantVerifyHandler);
 
@@ -216,7 +254,7 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
     SETTINGS: createMockKV({
       'settings:tenant:default:login-entry': JSON.stringify({
         'login-entry.override_enabled': true,
-        'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug","app_hint"]',
+        'login-entry.discovery_methods': '["email_exact","tenant_code","tenant_slug","app_hint"]',
       }),
       'settings:platform:tenant-discovery-ui': JSON.stringify({
         'tenant-discovery-ui.brand_name': 'Shared Discovery',
@@ -248,9 +286,12 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
       }),
     }),
     BASE_DOMAIN: 'auth.example.com',
+    AUTHRIM_ENVIRONMENT_NAME: 'test',
+    TENANT_RUNTIME_REGISTRY: createMockKV(),
+    TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
     DEFAULT_TENANT_ID: 'default',
     ISSUER_URL: 'https://default.auth.example.com',
-    KEY_MANAGER_SECRET: 'test-discovery-grant-secret',
+    OTP_HMAC_SECRET: 'test-discovery-grant-secret',
     ...envOverrides,
   } as unknown as Env;
 
@@ -258,36 +299,161 @@ function createDiscoveryApp(envOverrides: Partial<Env> = {}) {
 }
 
 describe('discovery API', () => {
-  beforeEach(() => {
-    mocked.discoveryCandidatesMock.mockReset();
-    const defaultPiiAdapter = createMockAdapter({
-      queryOne: (sql, params) => {
-        if (sql.includes('SELECT id, tenant_id FROM users_pii WHERE email = ? AND tenant_id = ?')) {
-          const email = String(params[0] ?? '');
-          const tenantId = String(params[1] ?? '');
-          const user =
-            mocked.state.users.find(
-              (candidate) =>
-                candidate.email === email &&
-                candidate.tenant_id === tenantId &&
-                candidate.is_active === 1
-            ) ?? null;
-          return user ? { id: user.id, tenant_id: user.tenant_id } : null;
-        }
-        return null;
+  it('emits secret-free timing only for an explicit Phase 0c test diagnostic session', async () => {
+    const { app, env } = createDiscoveryApp({ AUTHRIM_ENVIRONMENT_NAME: 'test' });
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery/email/verify',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Forwarded-Host': 'login.example.com',
+          'X-Diagnostic-Session-Id': 'phase0c-20260731064204-a03bb4',
+        },
+        body: JSON.stringify({}),
       },
+      env
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get('X-Authrim-Diagnostic-Session-Id')).toBe(
+      'phase0c-20260731064204-a03bb4'
+    );
+    const serverTiming = response.headers.get('Server-Timing') ?? '';
+    expect(serverTiming).toContain('discovery_settings;dur=');
+    expect(serverTiming).toContain('handler_total;dur=');
+    expect(serverTiming).not.toContain('login.example.com');
+    expect(serverTiming).not.toContain('default');
+  });
+
+  it('does not enable Phase 0c diagnostic timing outside the test environment', async () => {
+    const { app, env } = createDiscoveryApp({ AUTHRIM_ENVIRONMENT_NAME: 'production' });
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery/email/verify',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Forwarded-Host': 'login.example.com',
+          'X-Diagnostic-Session-Id': 'phase0c-20260731064204-a03bb4',
+        },
+        body: JSON.stringify({}),
+      },
+      env
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get('Server-Timing')).toBeNull();
+    expect(response.headers.get('X-Authrim-Diagnostic-Session-Id')).toBeNull();
+  });
+
+  it('rejects malformed Phase 0c diagnostic session IDs in the test environment', async () => {
+    const { app, env } = createDiscoveryApp({ AUTHRIM_ENVIRONMENT_NAME: 'test' });
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery/email/verify',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Forwarded-Host': 'login.example.com',
+          'X-Diagnostic-Session-Id': 'phase0c-not-a-run-id/../../x-leak',
+        },
+        body: JSON.stringify({}),
+      },
+      env
+    );
+
+    expect(response.status).toBe(400);
+    expect(response.headers.get('Server-Timing')).toBeNull();
+    expect(response.headers.get('X-Authrim-Diagnostic-Session-Id')).toBeNull();
+  });
+
+  it('rejects direct OTP API calls when exact-email discovery is disabled', async () => {
+    const { app, env } = createDiscoveryApp({
+      SETTINGS: createMockKV({
+        'settings:platform:login-entry': JSON.stringify({
+          'login-entry.discovery_methods': '["tenant_code","tenant_slug"]',
+          'login-entry.email_resolution_policy': 'disabled',
+        }),
+      }),
     });
 
-    mocked.resolveUserStoreRuntimeSourcesMock.mockImplementation(async (env: Partial<Env>) => ({
-      storageProfile: {
-        id: 'builtin:storage:standard',
-        kind: 'storage',
-        label: 'Standard D1 Split',
-        slices: {},
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery/email/start',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+        body: JSON.stringify({ email: 'person@example.com' }),
       },
-      coreDb: env.DB,
-      piiDb: defaultPiiAdapter,
-    }));
+      env
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: 'discovery_disabled' });
+  });
+
+  it('fails closed without exposing membership when the OTP provider is unavailable', async () => {
+    const { app, env } = createDiscoveryApp();
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery/email/start',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+        body: JSON.stringify({ email: 'person@example.com' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ error: 'temporarily_unavailable' });
+    expect(mocked.discoveryCandidatesMock).not.toHaveBeenCalled();
+  });
+  beforeEach(() => {
+    clearTenantCandidatePresentationCacheForTest();
+    mocked.discoveryCandidatesMock.mockReset();
+    mocked.tenantAliasResolveMock.mockReset();
+    mocked.tenantAliasesResolveManyMock.mockReset();
+    mocked.tenantStoreResolveMock.mockReset();
+    mocked.lookupAssignmentsMock.mockReset();
+    mocked.lookupAssignmentsMock.mockResolvedValue({});
+    mocked.tenantAliasResolveMock.mockImplementation(
+      async (input: { index?: { aliasKind?: string } }) => {
+        if (
+          input.index?.aliasKind !== 'tenant_code' &&
+          input.index?.aliasKind !== 'invitation_token'
+        ) {
+          return null;
+        }
+        return { tenantId: 'acme', routeProjection: discoveryRouteProjection('acme') };
+      }
+    );
+    mocked.tenantAliasesResolveManyMock.mockImplementation(
+      async (input: { index?: { aliasKind?: string } }) => {
+        if (input.index?.aliasKind === 'environment_tenant') {
+          return mocked.state.tenants
+            .filter((tenant) => tenant.lifecycle_state === 'active')
+            .map((tenant) => ({
+              tenantId: tenant.id,
+              routeProjection: discoveryRouteProjection(tenant.id),
+            }));
+        }
+        if (input.index?.aliasKind === 'client_id') {
+          return [{ tenantId: 'acme', routeProjection: discoveryRouteProjection('acme') }];
+        }
+        return [];
+      }
+    );
+    mocked.tenantStoreResolveMock.mockImplementation(
+      async (_env: Env, input: { tenantId: string }) => ({
+        source: new mocked.FakeD1Adapter({ db: {} }),
+        bindingRef: `TDB_${input.tenantId.toUpperCase()}_DEFAULT`,
+        bindingRouteGeneration: 8,
+        runtimeGeneration: 8,
+        residencyPolicyId: 'default-policy',
+        residencyPartition: 'default',
+        shardId: `default-${input.tenantId}`,
+      })
+    );
   });
 
   it('returns public config for the current host', async () => {
@@ -325,6 +491,135 @@ describe('discovery API', () => {
     expect(body.ui.brand_name).toBe('Shared Discovery');
     expect(body.ui.theme).toBe('dark');
     expect(body.ui.title_text).toBe('Find your workspace');
+  });
+
+  it('resolves tenant codes through Lookup and revalidates the runtime route', async () => {
+    const tenantAdapter = createMockAdapter({
+      queryOne: (sql, params) =>
+        sql.includes('FROM tenants WHERE id = ?') && params[0] === 'acme'
+          ? mocked.state.tenants.find((tenant) => tenant.id === 'acme')
+          : null,
+    });
+    mocked.tenantAliasResolveMock.mockResolvedValue({
+      tenantId: 'acme',
+      routeProjection: {
+        schemaVersion: 1,
+        tenantRouteGeneration: 8,
+        residencyPolicyId: 'default-policy',
+        target: {
+          dataRole: 'tenant_core/default',
+          residencyPartition: 'default',
+          shardId: 'default-1',
+          bindingRef: 'TDB_ACME_DEFAULT',
+          requiredBindingRouteGeneration: 8,
+        },
+      },
+    });
+    mocked.tenantStoreResolveMock.mockResolvedValue({
+      source: tenantAdapter,
+      bindingRef: 'TDB_ACME_DEFAULT',
+      bindingRouteGeneration: 8,
+      runtimeGeneration: 8,
+      residencyPolicyId: 'default-policy',
+      residencyPartition: 'default',
+      shardId: 'default-1',
+    });
+    const { app, env } = createDiscoveryApp({
+      AUTHRIM_ENVIRONMENT_NAME: 'test',
+      TENANT_RUNTIME_REGISTRY: createMockKV(),
+      TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
+    });
+
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+        body: JSON.stringify({ mode: 'tenant_code', value: 'ACME' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      result: 'resolved',
+      candidate: { tenant_id: 'acme', tenant_code: 'acme' },
+    });
+    expect(mocked.tenantStoreResolveMock).toHaveBeenCalledWith(
+      env,
+      expect.objectContaining({
+        tenantId: 'acme',
+        role: 'tenant_core',
+        shardGroup: 'default',
+      })
+    );
+  });
+
+  it('fails closed when a tenant alias generation disagrees with the runtime registry', async () => {
+    mocked.tenantAliasResolveMock.mockResolvedValue({
+      tenantId: 'acme',
+      routeProjection: {
+        schemaVersion: 1,
+        tenantRouteGeneration: 7,
+        residencyPolicyId: 'default-policy',
+        target: {
+          dataRole: 'tenant_core/default',
+          residencyPartition: 'default',
+          shardId: 'default-1',
+          bindingRef: 'TDB_ACME_DEFAULT',
+          requiredBindingRouteGeneration: 7,
+        },
+      },
+    });
+    mocked.tenantStoreResolveMock.mockResolvedValue({
+      source: createMockAdapter(),
+      bindingRef: 'TDB_ACME_DEFAULT',
+      bindingRouteGeneration: 8,
+      runtimeGeneration: 8,
+      residencyPolicyId: 'default-policy',
+      residencyPartition: 'default',
+      shardId: 'default-1',
+    });
+    const { app, env } = createDiscoveryApp({
+      AUTHRIM_ENVIRONMENT_NAME: 'test',
+      TENANT_RUNTIME_REGISTRY: createMockKV(),
+      TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS: '{"keys":[]}',
+    });
+
+    const response = await app.request(
+      'https://login.example.com/api/auth/discovery',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+        body: JSON.stringify({ mode: 'tenant_code', value: 'acme' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(500);
+  });
+
+  it('returns the dedicated Login UI URL for a workers.dev-only single tenant', async () => {
+    const { app, env } = createDiscoveryApp({
+      BASE_DOMAIN: undefined,
+      ISSUER_URL: 'https://single-ar-router.example.workers.dev',
+      UI_URL: 'https://single-ar-login-ui.example.workers.dev',
+      LOGIN_UI_EXECUTION_HOST_MODE: 'dedicated',
+    });
+
+    const response = await app.request(
+      'https://single-ar-login-ui.example.workers.dev/api/auth/discovery',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'tenant_code', value: 'default' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { candidate: { login_url: string } };
+    expect(body.candidate.login_url).toBe('https://single-ar-login-ui.example.workers.dev/login');
   });
 
   it('uses platform login-entry settings for the common entry host', async () => {
@@ -406,8 +701,8 @@ describe('discovery API', () => {
       }),
       'settings:tenant:default:login-entry': JSON.stringify({
         'login-entry.override_enabled': false,
-        'login-entry.discovery_methods': '["email_domain","tenant_slug"]',
-        'login-entry.email_resolution_policy': 'exact_email_then_domain',
+        'login-entry.discovery_methods': '["email_exact","tenant_slug"]',
+        'login-entry.email_resolution_policy': 'exact_email_only',
       }),
     });
     const { app, env } = createDiscoveryApp({ SETTINGS: kv });
@@ -485,7 +780,38 @@ describe('discovery API', () => {
     expect(body.candidate.login_url).toBe('https://acme.auth.example.com/login');
   });
 
-  it('returns multiple candidates for email-domain discovery', async () => {
+  it('briefly caches only completed tenant candidate presentation values', async () => {
+    const { app, env } = createDiscoveryApp();
+    const request = () =>
+      app.request(
+        'https://login.example.com/api/auth/discovery',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Forwarded-Host': 'login.example.com' },
+          body: JSON.stringify({ mode: 'tenant_code', value: 'acme' }),
+        },
+        env
+      );
+
+    expect((await request()).status).toBe(200);
+    expect((await request()).status).toBe(200);
+    const settingsGet = env.SETTINGS!.get as ReturnType<typeof vi.fn>;
+    const configGet = env.AUTHRIM_CONFIG!.get as ReturnType<typeof vi.fn>;
+    expect(
+      settingsGet.mock.calls.filter(([key]) => key === 'settings:tenant:acme:login-ui')
+    ).toHaveLength(1);
+    expect(
+      configGet.mock.calls.filter(([key]) => key === 'settings:tenant:acme:tenant')
+    ).toHaveLength(1);
+
+    clearTenantCandidatePresentationCacheForTest();
+    expect((await request()).status).toBe(200);
+    expect(
+      settingsGet.mock.calls.filter(([key]) => key === 'settings:tenant:acme:login-ui')
+    ).toHaveLength(2);
+  });
+
+  it('does not resolve raw email through the legacy generic discovery endpoint', async () => {
     mocked.discoveryCandidatesMock.mockResolvedValue([
       { tenant_id: 'acme', priority: 20 },
       { tenant_id: 'beta', priority: 10 },
@@ -503,15 +829,12 @@ describe('discovery API', () => {
     );
 
     expect(response.status).toBe(200);
-    const body = (await response.json()) as {
-      result: 'multiple';
-      candidates: Array<{ tenant_id: string }>;
-    };
-    expect(body.result).toBe('multiple');
-    expect(body.candidates.map((candidate) => candidate.tenant_id)).toEqual(['acme', 'beta']);
+    const body = (await response.json()) as { result: string };
+    expect(body.result).toBe('manual_required');
+    expect(mocked.discoveryCandidatesMock).not.toHaveBeenCalled();
   });
 
-  it('resolves a unique exact email match before falling back to domain mappings', async () => {
+  it('requires the OTP endpoint even for an existing exact email', async () => {
     mocked.discoveryCandidatesMock.mockResolvedValue([]);
     const { app, env } = createDiscoveryApp();
 
@@ -526,39 +849,13 @@ describe('discovery API', () => {
     );
 
     expect(response.status).toBe(200);
-    const body = (await response.json()) as {
-      result: 'resolved';
-      candidate: { tenant_id: string };
-    };
-    expect(body.result).toBe('resolved');
-    expect(body.candidate.tenant_id).toBe('acme');
+    const body = (await response.json()) as { result: string };
+    expect(body.result).toBe('manual_required');
   });
 
-  it('uses the runtime-resolved pii store for exact-email discovery', async () => {
+  it('does not fan out to tenant PII stores from raw email', async () => {
     mocked.discoveryCandidatesMock.mockResolvedValue([]);
     const { app, env } = createDiscoveryApp({ DB_PII: undefined as any });
-    const acmePiiAdapter = createMockAdapter({
-      queryOne: (sql, params) => {
-        if (sql.includes('SELECT id, tenant_id FROM users_pii WHERE email = ? AND tenant_id = ?')) {
-          return params[1] === 'acme' ? { id: 'user-1', tenant_id: 'acme' } : null;
-        }
-        return null;
-      },
-    });
-
-    mocked.resolveUserStoreRuntimeSourcesMock.mockImplementation(
-      async (_env: Partial<Env>, tenantId: string) => ({
-        storageProfile: {
-          id: 'builtin:storage:tenant-override',
-          kind: 'storage',
-          label: 'Tenant Override',
-          slices: {},
-        },
-        coreDb: env.DB,
-        piiDb: tenantId === 'acme' ? acmePiiAdapter : null,
-      })
-    );
-
     const response = await app.request(
       'https://login.example.com/api/auth/discovery',
       {
@@ -570,13 +867,8 @@ describe('discovery API', () => {
     );
 
     expect(response.status).toBe(200);
-    const body = (await response.json()) as {
-      result: 'resolved';
-      candidate: { tenant_id: string };
-    };
-    expect(body.result).toBe('resolved');
-    expect(body.candidate.tenant_id).toBe('acme');
-    expect(mocked.resolveUserStoreRuntimeSourcesMock).toHaveBeenCalledWith(env, 'acme');
+    const body = (await response.json()) as { result: string };
+    expect(body.result).toBe('manual_required');
   });
 
   it('resolves invitation tokens and returns invited_email', async () => {
@@ -629,13 +921,13 @@ describe('discovery API', () => {
     expect(body.allow_manual_tenant_entry).toBe(true);
   });
 
-  it('returns email_not_found when exact-email-only policy has no exact match', async () => {
+  it('does not expose exact-email existence through the legacy endpoint', async () => {
     mocked.discoveryCandidatesMock.mockResolvedValue([{ tenant_id: 'acme', priority: 20 }]);
     const { app, env } = createDiscoveryApp({
       SETTINGS: createMockKV({
         'settings:tenant:default:login-entry': JSON.stringify({
           'login-entry.override_enabled': true,
-          'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug"]',
+          'login-entry.discovery_methods': '["email_exact","tenant_code","tenant_slug"]',
           'login-entry.email_resolution_policy': 'exact_email_only',
         }),
       }),
@@ -655,9 +947,8 @@ describe('discovery API', () => {
     );
 
     expect(response.status).toBe(200);
-    const body = (await response.json()) as { result: 'not_found'; code: string };
-    expect(body.result).toBe('not_found');
-    expect(body.code).toBe('email_not_found');
+    const body = (await response.json()) as { result: string };
+    expect(body.result).toBe('manual_required');
     expect(mocked.discoveryCandidatesMock).not.toHaveBeenCalled();
   });
 
@@ -666,7 +957,7 @@ describe('discovery API', () => {
       SETTINGS: createMockKV({
         'settings:tenant:default:login-entry': JSON.stringify({
           'login-entry.override_enabled': true,
-          'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug"]',
+          'login-entry.discovery_methods': '["email_exact","tenant_code","tenant_slug"]',
           'login-entry.email_resolution_policy': 'disabled',
         }),
       }),
@@ -748,6 +1039,10 @@ describe('discovery API', () => {
   it('returns multiple app_hint candidates when client_id exists in multiple tenants', async () => {
     mocked.state.clients.push({ client_id: 'shared-native', tenant_id: 'acme' });
     mocked.state.clients.push({ client_id: 'shared-native', tenant_id: 'beta' });
+    mocked.tenantAliasesResolveManyMock.mockResolvedValue([
+      { tenantId: 'acme', routeProjection: discoveryRouteProjection('acme') },
+      { tenantId: 'beta', routeProjection: discoveryRouteProjection('beta') },
+    ]);
     try {
       const { app, env } = createDiscoveryApp();
 
@@ -780,6 +1075,9 @@ describe('discovery API', () => {
   });
 
   it('returns not_found when app_hint resolves to an inactive tenant', async () => {
+    mocked.tenantAliasesResolveManyMock.mockResolvedValue([
+      { tenantId: 'inactive', routeProjection: discoveryRouteProjection('inactive') },
+    ]);
     const { app, env } = createDiscoveryApp();
 
     const response = await app.request(
@@ -803,7 +1101,7 @@ describe('discovery API', () => {
       SETTINGS: createMockKV({
         'settings:tenant:default:login-entry': JSON.stringify({
           'login-entry.override_enabled': true,
-          'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug"]',
+          'login-entry.discovery_methods': '["email_exact","tenant_code","tenant_slug"]',
         }),
       }),
     });

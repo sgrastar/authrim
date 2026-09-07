@@ -23,6 +23,7 @@
 	import type { AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
 	import { formatDate, isValidDownloadUrl, SMALL_PAGE_SIZE, sanitizeText } from '$lib/utils';
 	import { LL } from '$i18n/i18n-svelte';
+	import { toast } from '$lib/toast';
 
 	// State
 	let loading = $state(true);
@@ -673,11 +674,20 @@
 		editingCategory = null;
 	}
 
-	async function handleRetentionSave(category: string, retentionDays: number) {
-		await adminDataRetentionAPI.updateCategory(category, retentionDays);
+	async function handleRetentionSave(
+		category: string,
+		retentionDays: number,
+		confirmShortening: boolean,
+		expectedCurrentRetentionDays: number
+	) {
+		await adminDataRetentionAPI.updateCategory(category, retentionDays, {
+			confirmShortening,
+			expectedCurrentRetentionDays
+		});
 		// Reload data to show updated values
 		const freshData = await adminComplianceAPI.getDataRetentionStatus();
 		dataRetention = freshData;
+		toast.success($LL.admin_compliance_retention_updated());
 		closeRetentionEditDialog();
 	}
 
@@ -698,11 +708,19 @@
 		retentionActionError = '';
 
 		try {
-			const result = await adminDataRetentionAPI.runCleanup();
+			const tenantLocalCategories =
+				dataRetention?.categories
+					.map((category) => category.category)
+					.filter((category) => category !== 'lookup_directory') ?? [];
+			if (tenantLocalCategories.length === 0) {
+				throw new Error($LL.admin_compliance_cleanup_no_local_categories());
+			}
+			const result = await adminDataRetentionAPI.runCleanup(tenantLocalCategories);
 			cleanupResult = {
 				deleted: result.deleted_count || 0,
 				runId: result.run_id
 			};
+			toast.success($LL.admin_compliance_cleanup_completed_count({ count: cleanupResult.deleted }));
 			// Reload data to show updated values
 			const freshData = await adminComplianceAPI.getDataRetentionStatus();
 			dataRetention = freshData;
@@ -728,6 +746,8 @@
 				return $LL.admin_compliance_category_refresh_tokens();
 			case 'access_tokens':
 				return $LL.admin_compliance_category_access_tokens();
+			case 'lookup_directory':
+				return $LL.admin_compliance_category_lookup_directory();
 			default:
 				return category.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
 		}
@@ -747,6 +767,8 @@
 				return $LL.admin_compliance_category_refresh_tokens_desc();
 			case 'access_tokens':
 				return $LL.admin_compliance_category_access_tokens_desc();
+			case 'lookup_directory':
+				return $LL.admin_compliance_category_lookup_directory_desc();
 			default:
 				return $LL.admin_compliance_category_unknown_desc();
 		}

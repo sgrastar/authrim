@@ -14,11 +14,7 @@ export default defineConfig({
     include: ['src/**/*.test.ts'],
     exclude: ['**/node_modules/**', '**/dist/**'],
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        isolate: true,
-      },
-    },
+    isolate: true,
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

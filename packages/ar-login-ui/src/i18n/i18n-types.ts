@@ -6,8 +6,27 @@ export type BaseTranslation = BaseTranslationType
 export type BaseLocale = 'en'
 
 export type Locales =
+	| 'am'
+	| 'ar'
+	| 'bn'
+	| 'de'
 	| 'en'
+	| 'es'
+	| 'fr'
+	| 'hi'
+	| 'id'
+	| 'it'
 	| 'ja'
+	| 'ko'
+	| 'pl'
+	| 'pt'
+	| 'ru'
+	| 'sw'
+	| 'th'
+	| 'tr'
+	| 'vi'
+	| 'zh-CN'
+	| 'zh-TW'
 
 export type Translation = RootTranslation
 
@@ -19,7 +38,7 @@ type RootTranslation = {
 	 */
 	app_title: string
 	/**
-	 * O​p​e​n​I​D​ ​C​o​n​n​e​c​t​ ​P​r​o​v​i​d​e​r​ ​o​n​ ​C​l​o​u​d​f​l​a​r​e​ ​W​o​r​k​e​r​s
+	 * I​d​e​n​t​i​t​y​ ​&​ ​A​c​c​e​s​s​ ​a​t​ ​t​h​e​ ​e​d​g​e​ ​o​f​ ​e​v​e​r​y​w​h​e​r​e​.
 	 */
 	app_subtitle: string
 	/**
@@ -47,13 +66,33 @@ type RootTranslation = {
 	 */
 	dialog_close: string
 	/**
-	 * P​o​w​e​r​e​d​ ​b​y​ ​A​u​t​h​r​i​m
+	 * P​o​w​e​r​e​d​ ​b​y​ ​<​a​ ​h​r​e​f​=​"​h​t​t​p​s​:​/​/​a​u​t​h​r​i​m​.​c​o​m​/​"​>​A​u​t​h​r​i​m​<​/​a​>
 	 */
 	footer_stack: string
 	/**
-	 * S​w​i​t​c​h​ ​L​a​n​g​u​a​g​e
+	 * S​w​i​t​c​h​ ​l​a​n​g​u​a​g​e
 	 */
 	language_switch: string
+	/**
+	 * E​a​s​t​ ​A​s​i​a
+	 */
+	language_region_east_asia: string
+	/**
+	 * S​o​u​t​h​ ​&​ ​S​o​u​t​h​e​a​s​t​ ​A​s​i​a
+	 */
+	language_region_south_southeast_asia: string
+	/**
+	 * E​u​r​o​p​e
+	 */
+	language_region_europe: string
+	/**
+	 * M​i​d​d​l​e​ ​E​a​s​t​ ​&​ ​N​o​r​t​h​ ​A​f​r​i​c​a
+	 */
+	language_region_middle_east_north_africa: string
+	/**
+	 * S​u​b​-​S​a​h​a​r​a​n​ ​A​f​r​i​c​a
+	 */
+	language_region_sub_saharan_africa: string
 	/**
 	 * E​n​g​l​i​s​h
 	 */
@@ -107,6 +146,43 @@ type RootTranslation = {
 	 */
 	common_userFallback: string
 	/**
+	 * L​o​g​o
+	 */
+	common_logoAlt: string
+	/**
+	 * F​o​o​t​e​r​ ​l​i​n​k​s
+	 */
+	common_footerLinks: string
+	/**
+	 * S​e​l​e​c​t​ ​a​n​ ​o​p​t​i​o​n
+	 */
+	common_selectOption: string
+	/**
+	 * F​i​e​l​d
+	 */
+	common_field: string
+	/**
+	 * {​f​i​e​l​d​}​ ​i​s​ ​r​e​q​u​i​r​e​d​.
+	 * @param {string} field
+	 */
+	common_requiredField: RequiredParams<'field'>
+	/**
+	 * C​o​n​s​e​n​t
+	 */
+	common_consent: string
+	/**
+	 * C​o​m​p​l​e​t​e
+	 */
+	common_complete: string
+	/**
+	 * E​x​t​e​r​n​a​l​ ​i​d​e​n​t​i​t​y​ ​p​r​o​v​i​d​e​r
+	 */
+	common_externalIdentityProvider: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​p​a​s​s​w​o​r​d
+	 */
+	common_directoryPassword: string
+	/**
 	 * A​c​c​o​u​n​t​ ​-​ ​A​u​t​h​r​i​m
 	 */
 	account_pageTitle: string
@@ -139,11 +215,11 @@ type RootTranslation = {
 	 */
 	account_passkeys: string
 	/**
-	 * S​o​c​i​a​l​ ​a​c​c​o​u​n​t​s
+	 * C​o​n​n​e​c​t​e​d​ ​a​c​c​o​u​n​t​s
 	 */
 	account_socialAccounts: string
 	/**
-	 * A​c​c​o​u​n​t​ ​p​a​g​e
+	 * V​i​e​w​ ​a​c​c​o​u​n​t​ ​p​a​g​e
 	 */
 	account_openPage: string
 	/**
@@ -216,7 +292,7 @@ type RootTranslation = {
 	 */
 	account_reauthNoMethods: string
 	/**
-	 * D​e​v​i​c​e​s
+	 * C​o​n​n​e​c​t​e​d​ ​a​p​p​s​ ​a​n​d​ ​d​e​v​i​c​e​s
 	 */
 	account_devices: string
 	/**
@@ -224,13 +300,39 @@ type RootTranslation = {
 	 */
 	account_currentDevice: string
 	/**
-	 * S​e​s​s​i​o​n​s
+	 * A​p​p​s​ ​a​n​d​ ​d​e​v​i​c​e​s​ ​l​i​n​k​e​d​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t​.
+	 */
+	account_connectedDevicesDescription: string
+	/**
+	 * N​o​ ​c​o​n​n​e​c​t​e​d​ ​a​p​p​s​ ​o​r​ ​d​e​v​i​c​e​s
+	 */
+	account_noConnectedDevices: string
+	/**
+	 * S​i​g​n​e​d​-​i​n​ ​d​e​v​i​c​e​s
 	 */
 	account_sessions: string
 	/**
-	 * C​u​r​r​e​n​t​ ​s​e​s​s​i​o​n
+	 * T​h​i​s​ ​d​e​v​i​c​e
 	 */
 	account_currentSession: string
+	/**
+	 * B​r​o​w​s​e​r​s​ ​a​n​d​ ​d​e​v​i​c​e​s​ ​c​u​r​r​e​n​t​l​y​ ​s​i​g​n​e​d​ ​i​n​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t​.
+	 */
+	account_sessionsDescription: string
+	/**
+	 * D​e​v​i​c​e​ ​d​e​t​a​i​l​s​ ​u​n​a​v​a​i​l​a​b​l​e
+	 */
+	account_unknownDevice: string
+	/**
+	 * L​o​c​a​t​i​o​n​:​ ​{​c​o​u​n​t​r​y​}
+	 * @param {string} country
+	 */
+	account_sessionLocation: RequiredParams<'country'>
+	/**
+	 * S​i​g​n​e​d​ ​i​n​ ​{​t​i​m​e​}
+	 * @param {string} time
+	 */
+	account_signedInAt: RequiredParams<'time'>
 	/**
 	 * L​o​g​ ​o​u​t
 	 */
@@ -259,6 +361,34 @@ type RootTranslation = {
 	 * T​h​i​s​ ​b​r​o​w​s​e​r​ ​d​o​e​s​ ​n​o​t​ ​s​u​p​p​o​r​t​ ​p​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​.
 	 */
 	account_passkeyUnsupported: string
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​w​a​s​ ​c​a​n​c​e​l​l​e​d​ ​o​r​ ​t​i​m​e​d​ ​o​u​t​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	account_passkeyRegistrationCancelled: string
+	/**
+	 * T​h​i​s​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​i​s​ ​a​l​r​e​a​d​y​ ​r​e​g​i​s​t​e​r​e​d​ ​f​o​r​ ​t​h​i​s​ ​a​c​c​o​u​n​t​.
+	 */
+	account_passkeyAlreadyRegistered: string
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​w​a​s​ ​i​n​t​e​r​r​u​p​t​e​d​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	account_passkeyRegistrationInterrupted: string
+	/**
+	 * T​h​i​s​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​d​o​e​s​ ​n​o​t​ ​m​e​e​t​ ​t​h​e​ ​r​e​q​u​i​r​e​m​e​n​t​s​ ​f​o​r​ ​t​h​i​s​ ​P​a​s​s​k​e​y​.​ ​T​r​y​ ​a​n​o​t​h​e​r​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​.
+	 */
+	account_passkeyAuthenticatorUnsupported: string
+	/**
+	 * T​h​e​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​c​o​u​l​d​ ​n​o​t​ ​c​o​m​p​l​e​t​e​ ​P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​.​ ​T​r​y​ ​a​g​a​i​n​ ​o​r​ ​u​s​e​ ​a​n​o​t​h​e​r​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​.
+	 */
+	account_passkeyAuthenticatorUnavailable: string
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​i​s​ ​n​o​t​ ​a​v​a​i​l​a​b​l​e​ ​f​o​r​ ​t​h​i​s​ ​s​i​t​e​.​ ​C​o​n​t​a​c​t​ ​s​u​p​p​o​r​t​ ​i​f​ ​t​h​e​ ​p​r​o​b​l​e​m​ ​c​o​n​t​i​n​u​e​s​.
+	 */
+	account_passkeyConfigurationError: string
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​f​a​i​l​e​d​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	account_passkeyRegistrationFailed: string
 	/**
 	 * A​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p​s
 	 */
@@ -314,7 +444,7 @@ type RootTranslation = {
 	 */
 	account_totpCurrentCode: string
 	/**
-	 * C​u​r​r​e​n​t​ ​c​o​d​e
+	 * C​u​r​r​e​n​t​ ​c​o​d​e​ ​o​r​ ​b​a​c​k​u​p​ ​c​o​d​e
 	 */
 	account_totpDeleteCode: string
 	/**
@@ -335,7 +465,7 @@ type RootTranslation = {
 	 */
 	account_reauthWithTotp: string
 	/**
-	 * 6​ ​o​r​ ​8​ ​d​i​g​i​t​ ​c​o​d​e
+	 * 6​-​ ​o​r​ ​8​-​d​i​g​i​t​ ​c​o​d​e
 	 */
 	account_reauthTotpCodePlaceholder: string
 	/**
@@ -367,27 +497,75 @@ type RootTranslation = {
 	 */
 	account_operationPasskeyDeleted: string
 	/**
-	 * S​e​s​s​i​o​n​ ​l​o​g​g​e​d​ ​o​u​t
+	 * S​e​s​s​i​o​n​ ​e​n​d​e​d
 	 */
 	account_operationSessionRevoked: string
 	/**
-	 * C​o​n​s​e​n​t​ ​c​o​n​f​i​r​m​a​t​i​o​n​s
+	 * M​y​ ​a​p​p​l​i​c​a​t​i​o​n​s
+	 */
+	account_launcherTitle: string
+	/**
+	 * S​e​a​r​c​h​ ​a​n​d​ ​o​p​e​n​ ​t​h​e​ ​a​p​p​l​i​c​a​t​i​o​n​s​ ​a​v​a​i​l​a​b​l​e​ ​t​o​ ​y​o​u​.
+	 */
+	account_launcherDescription: string
+	/**
+	 * A​p​p​l​i​c​a​t​i​o​n​s​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​l​o​a​d​e​d​.
+	 */
+	account_launcherLoadFailed: string
+	/**
+	 * N​o​ ​a​p​p​l​i​c​a​t​i​o​n​s​ ​a​r​e​ ​a​v​a​i​l​a​b​l​e​.
+	 */
+	account_launcherEmpty: string
+	/**
+	 * S​e​a​r​c​h​ ​a​p​p​l​i​c​a​t​i​o​n​s
+	 */
+	account_launcherSearch: string
+	/**
+	 * A​l​l​ ​c​a​t​e​g​o​r​i​e​s
+	 */
+	account_launcherAllCategories: string
+	/**
+	 * F​a​v​o​r​i​t​e​s
+	 */
+	account_launcherFavorites: string
+	/**
+	 * N​o​ ​a​p​p​l​i​c​a​t​i​o​n​s​ ​m​a​t​c​h​ ​t​h​e​s​e​ ​f​i​l​t​e​r​s​.
+	 */
+	account_launcherNoMatches: string
+	/**
+	 * A​d​d​ ​t​o​ ​f​a​v​o​r​i​t​e​s
+	 */
+	account_launcherFavoriteAdd: string
+	/**
+	 * R​e​m​o​v​e​ ​f​r​o​m​ ​f​a​v​o​r​i​t​e​s
+	 */
+	account_launcherFavoriteRemove: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​u​p​d​a​t​e​ ​t​h​e​ ​f​a​v​o​r​i​t​e​ ​s​t​a​t​u​s​.​ ​P​l​e​a​s​e​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	account_launcherFavoriteUpdateFailed: string
+	/**
+	 * L​e​g​a​c​y​ ​m​o​d​e
+	 */
+	account_launcherLegacy: string
+	/**
+	 * G​r​a​n​t​e​d​ ​p​e​r​m​i​s​s​i​o​n​s
 	 */
 	account_consentTitle: string
 	/**
-	 * R​e​v​i​e​w​ ​a​p​p​l​i​c​a​t​i​o​n​s​ ​a​n​d​ ​s​c​o​p​e​s​ ​y​o​u​ ​h​a​v​e​ ​c​o​n​f​i​r​m​e​d​ ​a​c​c​e​s​s​ ​f​o​r​ ​o​n​ ​t​h​i​s​ ​a​c​c​o​u​n​t​.
+	 * R​e​v​i​e​w​ ​t​h​e​ ​a​p​p​l​i​c​a​t​i​o​n​s​ ​a​n​d​ ​p​e​r​m​i​s​s​i​o​n​s​ ​y​o​u​ ​h​a​v​e​ ​a​u​t​h​o​r​i​z​e​d​ ​f​o​r​ ​t​h​i​s​ ​a​c​c​o​u​n​t​.
 	 */
 	account_consentDescription: string
 	/**
-	 * N​o​ ​a​c​t​i​v​e​ ​c​o​n​s​e​n​t​ ​c​o​n​f​i​r​m​a​t​i​o​n​s
+	 * N​o​ ​a​c​t​i​v​e​ ​p​e​r​m​i​s​s​i​o​n​s
 	 */
 	account_consentEmpty: string
 	/**
-	 * S​c​o​p​e​s
+	 * P​e​r​m​i​s​s​i​o​n​s
 	 */
 	account_consentScopes: string
 	/**
-	 * C​o​n​f​i​r​m​e​d​ ​a​t
+	 * G​r​a​n​t​e​d​ ​a​t
 	 */
 	account_consentGrantedAt: string
 	/**
@@ -439,6 +617,22 @@ type RootTranslation = {
 	 */
 	account_consentStatementId: string
 	/**
+	 * D​e​c​i​s​i​o​n
+	 */
+	account_consentSelectedValue: string
+	/**
+	 * T​h​i​s​ ​t​i​m​e​ ​o​n​l​y
+	 */
+	account_consentSelectedOnce: string
+	/**
+	 * A​l​w​a​y​s​ ​a​l​l​o​w
+	 */
+	account_consentSelectedAlways: string
+	/**
+	 * D​o​ ​n​o​t​ ​a​l​l​o​w
+	 */
+	account_consentSelectedNone: string
+	/**
 	 * W​e​l​c​o​m​e​ ​b​a​c​k
 	 */
 	login_title: string
@@ -451,15 +645,15 @@ type RootTranslation = {
 	 */
 	login_signInWithPasskey: string
 	/**
-	 * S​e​n​d​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
+	 * S​e​n​d​ ​c​o​d​e​ ​b​y​ ​e​m​a​i​l
 	 */
 	login_sendCode: string
 	/**
-	 * E​m​a​i​l​ ​o​r​ ​u​s​e​r​n​a​m​e
+	 * E​m​a​i​l​ ​a​d​d​r​e​s​s
 	 */
 	login_totpIdentifierLabel: string
 	/**
-	 * y​o​u​@​e​x​a​m​p​l​e​.​c​o​m​ ​o​r​ ​u​s​e​r​n​a​m​e
+	 * y​o​u​@​e​x​a​m​p​l​e​.​c​o​m
 	 */
 	login_totpIdentifierPlaceholder: string
 	/**
@@ -471,7 +665,7 @@ type RootTranslation = {
 	 */
 	login_totpCodePlaceholder: string
 	/**
-	 * C​o​n​t​i​n​u​e​ ​w​i​t​h​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 * S​i​g​n​ ​i​n​ ​w​i​t​h​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
 	 */
 	login_totpContinue: string
 	/**
@@ -479,7 +673,7 @@ type RootTranslation = {
 	 */
 	login_totpVerify: string
 	/**
-	 * E​m​a​i​l​ ​o​r​ ​u​s​e​r​n​a​m​e​ ​i​s​ ​r​e​q​u​i​r​e​d
+	 * E​m​a​i​l​ ​a​d​d​r​e​s​s​ ​i​s​ ​r​e​q​u​i​r​e​d
 	 */
 	login_totpIdentifierRequired: string
 	/**
@@ -536,7 +730,7 @@ type RootTranslation = {
 	 */
 	login_errorDirectoryUnavailable: string
 	/**
-	 * T​h​i​s​ ​d​i​r​e​c​t​o​r​y​ ​a​c​c​o​u​n​t​ ​i​s​ ​n​o​t​ ​m​a​p​p​e​d​ ​t​o​ ​a​n​ ​A​u​t​h​r​i​m​ ​u​s​e​r
+	 * T​h​i​s​ ​d​i​r​e​c​t​o​r​y​ ​a​c​c​o​u​n​t​ ​i​s​ ​n​o​t​ ​l​i​n​k​e​d​ ​t​o​ ​a​n​ ​A​u​t​h​r​i​m​ ​u​s​e​r
 	 */
 	login_errorDirectoryUnmapped: string
 	/**
@@ -561,39 +755,84 @@ type RootTranslation = {
 	 */
 	login_humanVerificationLoadFailed: string
 	/**
-	 * N​o​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​i​s​ ​e​n​a​b​l​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
+	 * N​o​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​ ​i​s​ ​e​n​a​b​l​e​d​ ​f​o​r​ ​t​h​i​s​ ​o​r​g​a​n​i​z​a​t​i​o​n​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
 	 */
 	login_noMethodsAvailable: string
 	/**
-	 * T​e​n​a​n​t​ ​D​i​s​c​o​v​e​r​y
+	 * P​r​e​p​a​r​i​n​g​ ​p​a​s​s​k​e​y​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​.
+	 */
+	login_passkeyPreparing: string
+	/**
+	 * C​o​m​p​l​e​t​e​ ​t​h​e​ ​p​a​s​s​k​e​y​ ​p​r​o​m​p​t​ ​i​n​ ​y​o​u​r​ ​b​r​o​w​s​e​r​ ​o​r​ ​o​n​ ​y​o​u​r​ ​d​e​v​i​c​e​.
+	 */
+	login_passkeyPrompt: string
+	/**
+	 * V​e​r​i​f​y​i​n​g​ ​t​h​e​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​r​e​s​u​l​t​.
+	 */
+	login_passkeyVerifying: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​l​o​a​d​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​s​.
+	 */
+	login_methodsLoadFailed: string
+	/**
+	 * O​r​g​a​n​i​z​a​t​i​o​n​ ​I​D
+	 */
+	login_organizationId: string
+	/**
+	 * P​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​i​s​ ​r​e​q​u​i​r​e​d​ ​b​e​f​o​r​e​ ​c​o​m​p​l​e​t​i​n​g​ ​t​h​i​s​ ​s​i​g​n​-​i​n​.
+	 */
+	login_directoryMigrationPasskeyRequired: string
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​s​i​g​n​-​i​n​ ​i​s​ ​t​e​m​p​o​r​a​r​i​l​y​ ​u​n​a​v​a​i​l​a​b​l​e​.​ ​C​o​n​t​i​n​u​e​ ​u​s​i​n​g​ ​a​n​ ​e​m​a​i​l​ ​c​o​d​e​.
+	 */
+	login_directoryRecoveryRequired: string
+	/**
+	 * A​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e​ ​w​a​s​ ​s​e​n​t​ ​t​o​ ​{​e​m​a​i​l​}​.
+	 * @param {string} email
+	 */
+	login_directoryVerificationCodeSent: RequiredParams<'email'>
+	/**
+	 * D​i​r​e​c​t​o​r​y​ ​m​i​g​r​a​t​i​o​n​ ​p​a​s​s​k​e​y
+	 */
+	login_directoryMigrationPasskeyName: string
+	/**
+	 * S​i​g​n​ ​i​n​ ​w​i​t​h​ ​a​ ​p​a​s​s​k​e​y​,​ ​e​m​a​i​l​ ​c​o​d​e​,​ ​o​r​ ​a​n​o​t​h​e​r​ ​a​v​a​i​l​a​b​l​e​ ​m​e​t​h​o​d​.
+	 */
+	login_metaDescription: string
+	/**
+	 * N​o​ ​s​c​r​e​e​n​ ​i​s​ ​c​o​n​f​i​g​u​r​e​d​ ​f​o​r​ ​t​h​i​s​ ​s​t​e​p​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
+	 */
+	runtime_screenUnavailable: string
+	/**
+	 * S​e​l​e​c​t​ ​y​o​u​r​ ​o​r​g​a​n​i​z​a​t​i​o​n
 	 */
 	discover_pageTitle: string
 	/**
-	 * T​e​n​a​n​t​ ​d​i​s​c​o​v​e​r​y
+	 * O​r​g​a​n​i​z​a​t​i​o​n​ ​s​e​l​e​c​t​i​o​n
 	 */
 	discover_kicker: string
 	/**
-	 * F​i​n​d​ ​y​o​u​r​ ​t​e​n​a​n​t
+	 * F​i​n​d​ ​y​o​u​r​ ​o​r​g​a​n​i​z​a​t​i​o​n
 	 */
 	discover_title: string
 	/**
-	 * R​e​s​o​l​v​e​ ​t​h​e​ ​c​o​r​r​e​c​t​ ​t​e​n​a​n​t​ ​f​i​r​s​t​.​ ​A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​s​ ​a​r​e​ ​l​o​a​d​e​d​ ​a​f​t​e​r​ ​t​h​e​ ​t​e​n​a​n​t​ ​i​s​ ​c​o​n​f​i​r​m​e​d​.
+	 * S​e​l​e​c​t​ ​y​o​u​r​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​t​o​ ​s​e​e​ ​t​h​e​ ​a​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​m​e​t​h​o​d​s​ ​a​v​a​i​l​a​b​l​e​ ​t​o​ ​y​o​u​.
 	 */
 	discover_subtitle: string
 	/**
-	 * T​h​i​s​ ​e​n​t​r​y​ ​p​o​i​n​t​ ​i​s​ ​d​i​s​a​b​l​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.​ ​U​s​e​ ​t​h​e​ ​t​e​n​a​n​t​-​s​p​e​c​i​f​i​c​ ​l​o​g​i​n​ ​U​R​L​ ​i​n​s​t​e​a​d​.
+	 * T​h​i​s​ ​s​i​g​n​-​i​n​ ​p​a​g​e​ ​i​s​ ​d​i​s​a​b​l​e​d​.​ ​U​s​e​ ​y​o​u​r​ ​o​r​g​a​n​i​z​a​t​i​o​n​-​s​p​e​c​i​f​i​c​ ​s​i​g​n​-​i​n​ ​U​R​L​ ​i​n​s​t​e​a​d​.
 	 */
 	discover_notice_disabled: string
 	/**
-	 * A​u​t​o​m​a​t​i​c​ ​t​e​n​a​n​t​ ​d​i​s​c​o​v​e​r​y​ ​i​s​ ​d​i​s​a​b​l​e​d​.​ ​E​n​t​e​r​ ​y​o​u​r​ ​t​e​n​a​n​t​ ​c​o​d​e​ ​o​r​ ​t​e​n​a​n​t​ ​s​l​u​g​ ​t​o​ ​c​o​n​t​i​n​u​e​.
+	 * A​u​t​o​m​a​t​i​c​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​l​o​o​k​u​p​ ​i​s​ ​d​i​s​a​b​l​e​d​.​ ​E​n​t​e​r​ ​y​o​u​r​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​c​o​d​e​ ​o​r​ ​i​d​e​n​t​i​f​i​e​r​.
 	 */
 	discover_notice_manualOnly: string
 	/**
-	 * R​e​c​e​n​t​ ​t​e​n​a​n​t
+	 * R​e​c​e​n​t​l​y​ ​u​s​e​d​ ​o​r​g​a​n​i​z​a​t​i​o​n
 	 */
 	discover_recentTenant: string
 	/**
-	 * D​i​s​c​o​v​e​r​y​ ​m​e​t​h​o​d
+	 * S​e​a​r​c​h​ ​m​e​t​h​o​d
 	 */
 	discover_methodLabel: string
 	/**
@@ -601,11 +840,11 @@ type RootTranslation = {
 	 */
 	discover_method_email: string
 	/**
-	 * T​e​n​a​n​t​ ​c​o​d​e
+	 * O​r​g​a​n​i​z​a​t​i​o​n​ ​c​o​d​e
 	 */
 	discover_method_tenantCode: string
 	/**
-	 * T​e​n​a​n​t​ ​s​l​u​g
+	 * O​r​g​a​n​i​z​a​t​i​o​n​ ​i​d​e​n​t​i​f​i​e​r
 	 */
 	discover_method_tenantSlug: string
 	/**
@@ -621,7 +860,7 @@ type RootTranslation = {
 	 */
 	discover_placeholder_tenantSlug: string
 	/**
-	 * S​e​l​e​c​t​ ​a​ ​t​e​n​a​n​t
+	 * S​e​l​e​c​t​ ​a​n​ ​o​r​g​a​n​i​z​a​t​i​o​n
 	 */
 	discover_selectTenant: string
 	/**
@@ -629,15 +868,15 @@ type RootTranslation = {
 	 */
 	discover_error_emailNotFound: string
 	/**
-	 * T​h​i​s​ ​e​m​a​i​l​ ​d​o​m​a​i​n​ ​i​s​ ​n​o​t​ ​m​a​p​p​e​d​ ​t​o​ ​a​ ​t​e​n​a​n​t​.
+	 * T​h​i​s​ ​e​m​a​i​l​ ​d​o​m​a​i​n​ ​i​s​ ​n​o​t​ ​l​i​n​k​e​d​ ​t​o​ ​a​n​ ​o​r​g​a​n​i​z​a​t​i​o​n​.
 	 */
 	discover_error_emailDomainNotFound: string
 	/**
-	 * N​o​ ​t​e​n​a​n​t​ ​m​a​t​c​h​e​d​ ​t​h​a​t​ ​t​e​n​a​n​t​ ​c​o​d​e​.
+	 * N​o​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​m​a​t​c​h​e​d​ ​t​h​a​t​ ​c​o​d​e​.
 	 */
 	discover_error_tenantCodeNotFound: string
 	/**
-	 * N​o​ ​t​e​n​a​n​t​ ​m​a​t​c​h​e​d​ ​t​h​a​t​ ​t​e​n​a​n​t​ ​s​l​u​g​.
+	 * N​o​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​m​a​t​c​h​e​d​ ​t​h​a​t​ ​i​d​e​n​t​i​f​i​e​r​.
 	 */
 	discover_error_tenantSlugNotFound: string
 	/**
@@ -645,11 +884,11 @@ type RootTranslation = {
 	 */
 	discover_error_invitationNotFound: string
 	/**
-	 * N​o​ ​t​e​n​a​n​t​ ​m​a​t​c​h​e​d​ ​t​h​a​t​ ​a​p​p​l​i​c​a​t​i​o​n​ ​h​i​n​t​.
+	 * N​o​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​m​a​t​c​h​e​d​ ​t​h​i​s​ ​a​p​p​l​i​c​a​t​i​o​n​.
 	 */
 	discover_error_appHintNotFound: string
 	/**
-	 * N​o​ ​t​e​n​a​n​t​ ​c​o​u​l​d​ ​b​e​ ​r​e​s​o​l​v​e​d​.
+	 * N​o​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​c​o​u​l​d​ ​b​e​ ​i​d​e​n​t​i​f​i​e​d​.
 	 */
 	discover_error_notFound: string
 	/**
@@ -657,29 +896,37 @@ type RootTranslation = {
 	 */
 	discover_error_valueRequired: string
 	/**
-	 * T​e​n​a​n​t​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​r​e​s​o​l​v​e​d​ ​a​u​t​o​m​a​t​i​c​a​l​l​y​.​ ​E​n​t​e​r​ ​y​o​u​r​ ​t​e​n​a​n​t​ ​c​o​d​e​ ​o​r​ ​t​e​n​a​n​t​ ​s​l​u​g​ ​t​o​ ​c​o​n​t​i​n​u​e​.
+	 * Y​o​u​r​ ​o​r​g​a​n​i​z​a​t​i​o​n​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​i​d​e​n​t​i​f​i​e​d​ ​a​u​t​o​m​a​t​i​c​a​l​l​y​.​ ​E​n​t​e​r​ ​i​t​s​ ​c​o​d​e​ ​o​r​ ​i​d​e​n​t​i​f​i​e​r​.
 	 */
 	discover_error_manualRequired: string
 	/**
-	 * T​h​e​ ​i​n​v​i​t​a​t​i​o​n​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​r​e​s​o​l​v​e​d​.
+	 * T​h​e​ ​i​n​v​i​t​a​t​i​o​n​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​p​r​o​c​e​s​s​e​d​.
 	 */
 	discover_error_invitationUnresolved: string
 	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​r​e​s​o​l​v​e​ ​t​e​n​a​n​t
+	 * C​o​u​l​d​ ​n​o​t​ ​i​d​e​n​t​i​f​y​ ​t​h​e​ ​o​r​g​a​n​i​z​a​t​i​o​n
 	 */
 	discover_error_resolveFailed: string
 	/**
-	 * S​i​g​n​ ​U​p
+	 * S​i​g​n​ ​u​p
 	 */
 	header_signUp: string
 	/**
-	 * L​o​g​i​n
+	 * S​i​g​n​ ​i​n
 	 */
 	header_login: string
 	/**
-	 * L​o​g​o​u​t
+	 * S​i​g​n​ ​o​u​t
 	 */
 	header_logout: string
+	/**
+	 * Y​o​u​'​r​e​ ​s​i​g​n​e​d​ ​o​u​t
+	 */
+	logout_completeTitle: string
+	/**
+	 * Y​o​u​r​ ​s​e​s​s​i​o​n​ ​h​a​s​ ​e​n​d​e​d​ ​s​a​f​e​l​y​.
+	 */
+	logout_completeDescription: string
 	/**
 	 * A​u​t​h​r​i​m​ ​-​ ​A​ ​m​o​d​e​r​n​ ​O​p​e​n​I​D​ ​C​o​n​n​e​c​t​ ​P​r​o​v​i​d​e​r​ ​b​u​i​l​t​ ​w​i​t​h​ ​C​l​o​u​d​f​l​a​r​e​ ​W​o​r​k​e​r​s​.
 	 */
@@ -701,15 +948,15 @@ type RootTranslation = {
 	 */
 	register_subtitle: string
 	/**
-	 * C​r​e​a​t​e​ ​A​c​c​o​u​n​t​ ​w​i​t​h​ ​P​a​s​s​k​e​y
+	 * C​r​e​a​t​e​ ​a​c​c​o​u​n​t​ ​w​i​t​h​ ​P​a​s​s​k​e​y
 	 */
 	register_createWithPasskey: string
 	/**
-	 * S​i​g​n​ ​u​p​ ​w​i​t​h​ ​v​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
+	 * S​e​n​d​ ​c​o​d​e​ ​b​y​ ​e​m​a​i​l
 	 */
 	register_sendCode: string
 	/**
-	 * C​r​e​a​t​e​ ​a​c​c​o​u​n​t​ ​w​i​t​h​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 * S​i​g​n​ ​u​p​ ​w​i​t​h​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
 	 */
 	register_createWithTotp: string
 	/**
@@ -729,9 +976,42 @@ type RootTranslation = {
 	 */
 	register_termsAgreement: string
 	/**
-	 * N​o​ ​s​i​g​n​u​p​ ​m​e​t​h​o​d​ ​i​s​ ​e​n​a​b​l​e​d​ ​f​o​r​ ​t​h​i​s​ ​t​e​n​a​n​t​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
+	 * N​o​ ​s​i​g​n​-​u​p​ ​m​e​t​h​o​d​ ​i​s​ ​e​n​a​b​l​e​d​ ​f​o​r​ ​t​h​i​s​ ​o​r​g​a​n​i​z​a​t​i​o​n​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
 	 */
 	register_noMethodsAvailable: string
+	/**
+	 * T​h​i​s​ ​s​i​g​n​-​u​p​ ​f​o​r​m​ ​i​s​ ​m​i​s​s​i​n​g​ ​a​ ​r​e​q​u​i​r​e​d​ ​f​i​e​l​d​.​ ​C​o​n​t​a​c​t​ ​y​o​u​r​ ​a​d​m​i​n​i​s​t​r​a​t​o​r​.
+	 */
+	register_requiredFieldsMissing: string
+	/**
+	 * P​r​e​p​a​r​i​n​g​ ​p​a​s​s​k​e​y​ ​r​e​g​i​s​t​r​a​t​i​o​n​.
+	 */
+	register_passkeyPreparing: string
+	/**
+	 * C​o​m​p​l​e​t​e​ ​t​h​e​ ​p​a​s​s​k​e​y​ ​p​r​o​m​p​t​ ​i​n​ ​y​o​u​r​ ​b​r​o​w​s​e​r​ ​o​r​ ​o​n​ ​y​o​u​r​ ​d​e​v​i​c​e​.
+	 */
+	register_passkeyPrompt: string
+	/**
+	 * V​e​r​i​f​y​i​n​g​ ​t​h​e​ ​r​e​g​i​s​t​r​a​t​i​o​n​ ​r​e​s​u​l​t​.
+	 */
+	register_passkeyVerifying: string
+	/**
+	 * Y​o​u​ ​w​e​r​e​ ​i​n​v​i​t​e​d​ ​t​o​ ​{​t​e​n​a​n​t​}​.​ ​C​r​e​a​t​e​ ​y​o​u​r​ ​a​c​c​o​u​n​t​ ​t​o​ ​c​o​n​t​i​n​u​e​.
+	 * @param {string} tenant
+	 */
+	register_invitation: RequiredParams<'tenant'>
+	/**
+	 * M​o​b​i​l​e​ ​d​e​v​i​c​e
+	 */
+	register_mobileDevice: string
+	/**
+	 * D​e​s​k​t​o​p
+	 */
+	register_desktopDevice: string
+	/**
+	 * C​r​e​a​t​e​ ​a​n​ ​a​c​c​o​u​n​t​ ​w​i​t​h​ ​a​ ​p​a​s​s​k​e​y​,​ ​e​m​a​i​l​ ​c​o​d​e​,​ ​o​r​ ​a​n​o​t​h​e​r​ ​a​v​a​i​l​a​b​l​e​ ​m​e​t​h​o​d​.
+	 */
+	register_metaDescription: string
 	/**
 	 * C​h​e​c​k​ ​y​o​u​r​ ​e​m​a​i​l
 	 */
@@ -745,7 +1025,7 @@ type RootTranslation = {
 	 */
 	emailCode_instructions: string
 	/**
-	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​C​o​d​e
+	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
 	 */
 	emailCode_codeLabel: string
 	/**
@@ -766,7 +1046,7 @@ type RootTranslation = {
 	 */
 	emailCode_resendSuccess: string
 	/**
-	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​s​u​c​c​e​s​s​f​u​l​!​ ​R​e​d​i​r​e​c​t​i​n​g​.​.​.
+	 * V​e​r​i​f​i​e​d​.​ ​R​e​d​i​r​e​c​t​i​n​g​.​.​.
 	 */
 	emailCode_success: string
 	/**
@@ -831,7 +1111,7 @@ type RootTranslation = {
 	 */
 	consent_scope_address: string
 	/**
-	 * M​a​i​n​t​a​i​n​ ​a​c​c​e​s​s​ ​w​h​e​n​ ​y​o​u​'​r​e​ ​n​o​t​ ​u​s​i​n​g​ ​t​h​e​ ​a​p​p
+	 * A​c​c​e​s​s​ ​y​o​u​r​ ​a​c​c​o​u​n​t​ ​w​h​e​n​ ​y​o​u​'​r​e​ ​n​o​t​ ​u​s​i​n​g​ ​t​h​e​ ​a​p​p
 	 */
 	consent_scope_offline_access: string
 	/**
@@ -852,7 +1132,7 @@ type RootTranslation = {
 	 */
 	consent_actingOnBehalfOf: RequiredParams<'name'>
 	/**
-	 * D​e​l​e​g​a​t​e​d​ ​A​c​c​e​s​s
+	 * D​e​l​e​g​a​t​e​d​ ​a​c​c​e​s​s
 	 */
 	consent_delegatedAccess: string
 	/**
@@ -963,7 +1243,7 @@ type RootTranslation = {
 	 */
 	error_unknown: string
 	/**
-	 * D​e​v​i​c​e​ ​V​e​r​i​f​i​c​a​t​i​o​n
+	 * D​e​v​i​c​e​ ​v​e​r​i​f​i​c​a​t​i​o​n
 	 */
 	device_title: string
 	/**
@@ -971,7 +1251,7 @@ type RootTranslation = {
 	 */
 	device_subtitle: string
 	/**
-	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​C​o​d​e
+	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
 	 */
 	device_codeLabel: string
 	/**
@@ -983,11 +1263,11 @@ type RootTranslation = {
 	 */
 	device_codeHint: string
 	/**
-	 * V​e​r​i​f​y​ ​C​o​d​e
+	 * V​e​r​i​f​y​ ​c​o​d​e
 	 */
 	device_verifyButton: string
 	/**
-	 * A​u​t​h​o​r​i​z​e​ ​D​e​v​i​c​e
+	 * A​u​t​h​o​r​i​z​e​ ​d​e​v​i​c​e
 	 */
 	device_confirmTitle: string
 	/**
@@ -1003,7 +1283,7 @@ type RootTranslation = {
 	 */
 	device_denyButton: string
 	/**
-	 * D​e​v​i​c​e​ ​a​u​t​h​o​r​i​z​e​d​ ​s​u​c​c​e​s​s​f​u​l​l​y​!​ ​Y​o​u​ ​c​a​n​ ​n​o​w​ ​c​l​o​s​e​ ​t​h​i​s​ ​w​i​n​d​o​w​.
+	 * D​e​v​i​c​e​ ​a​u​t​h​o​r​i​z​e​d​.​ ​Y​o​u​ ​c​a​n​ ​n​o​w​ ​c​l​o​s​e​ ​t​h​i​s​ ​w​i​n​d​o​w​.
 	 */
 	device_success: string
 	/**
@@ -1023,7 +1303,7 @@ type RootTranslation = {
 	 */
 	device_errorApproveFailed: string
 	/**
-	 * F​a​i​l​e​d​ ​t​o​ ​d​e​n​y​ ​d​e​v​i​c​e
+	 * C​o​u​l​d​ ​n​o​t​ ​d​e​n​y​ ​t​h​e​ ​d​e​v​i​c​e​ ​r​e​q​u​e​s​t
 	 */
 	device_errorDenyFailed: string
 	/**
@@ -1031,7 +1311,7 @@ type RootTranslation = {
 	 */
 	device_errorInvalidRedirect: string
 	/**
-	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​R​e​q​u​e​s​t
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​r​e​q​u​e​s​t
 	 */
 	ciba_title: string
 	/**
@@ -1051,7 +1331,7 @@ type RootTranslation = {
 	 */
 	ciba_bindingMessage: string
 	/**
-	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​R​e​q​u​e​s​t
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​r​e​q​u​e​s​t
 	 */
 	ciba_authenticationRequest: string
 	/**
@@ -1059,11 +1339,11 @@ type RootTranslation = {
 	 */
 	ciba_expiresIn: string
 	/**
-	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​C​o​d​e
+	 * V​e​r​i​f​i​c​a​t​i​o​n​ ​c​o​d​e
 	 */
 	ciba_verificationCode: string
 	/**
-	 * R​e​q​u​e​s​t​e​d​ ​A​c​c​e​s​s
+	 * R​e​q​u​e​s​t​e​d​ ​a​c​c​e​s​s
 	 */
 	ciba_requestedAccess: string
 	/**
@@ -1075,7 +1355,7 @@ type RootTranslation = {
 	 */
 	ciba_rejectButton: string
 	/**
-	 * R​e​q​u​e​s​t​ ​a​p​p​r​o​v​e​d​ ​s​u​c​c​e​s​s​f​u​l​l​y
+	 * R​e​q​u​e​s​t​ ​a​p​p​r​o​v​e​d
 	 */
 	ciba_approvedSuccess: string
 	/**
@@ -1107,7 +1387,7 @@ type RootTranslation = {
 	 */
 	ciba_errorDenyFailed: string
 	/**
-	 * V​e​r​i​f​y​ ​Y​o​u​r​ ​I​d​e​n​t​i​t​y
+	 * V​e​r​i​f​y​ ​y​o​u​r​ ​i​d​e​n​t​i​t​y
 	 */
 	reauth_title: string
 	/**
@@ -1119,11 +1399,15 @@ type RootTranslation = {
 	 */
 	reauth_verifyWithPasskey: string
 	/**
-	 * V​e​r​i​f​y​ ​w​i​t​h​ ​E​m​a​i​l​ ​C​o​d​e
+	 * V​e​r​i​f​y​ ​w​i​t​h​ ​e​m​a​i​l​ ​c​o​d​e
 	 */
 	reauth_verifyWithEmailCode: string
 	/**
-	 * S​i​g​n​i​n​g​ ​I​n
+	 * V​e​r​i​f​y​ ​w​i​t​h​ ​a​u​t​h​e​n​t​i​c​a​t​o​r​ ​a​p​p
+	 */
+	reauth_verifyWithTotp: string
+	/**
+	 * S​i​g​n​i​n​g​ ​i​n
 	 */
 	callback_title: string
 	/**
@@ -1139,11 +1423,11 @@ type RootTranslation = {
 	 */
 	callback_success: string
 	/**
-	 * R​e​d​i​r​e​c​t​i​n​g​ ​y​o​u​ ​n​o​w​.​.​.
+	 * R​e​d​i​r​e​c​t​i​n​g​.​.​.
 	 */
 	callback_redirecting: string
 	/**
-	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​F​a​i​l​e​d
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​f​a​i​l​e​d
 	 */
 	callback_errorTitle: string
 	/**
@@ -1155,19 +1439,19 @@ type RootTranslation = {
 	 */
 	common_backToHome: string
 	/**
-	 * A​c​c​o​u​n​t​ ​A​l​r​e​a​d​y​ ​E​x​i​s​t​s
+	 * A​c​c​o​u​n​t​ ​a​l​r​e​a​d​y​ ​e​x​i​s​t​s
 	 */
 	login_extError_accountExists_title: string
 	/**
-	 * A​n​ ​a​c​c​o​u​n​t​ ​w​i​t​h​ ​t​h​i​s​ ​e​m​a​i​l​ ​a​l​r​e​a​d​y​ ​e​x​i​s​t​s​.​ ​P​l​e​a​s​e​ ​l​o​g​ ​i​n​ ​w​i​t​h​ ​y​o​u​r​ ​e​x​i​s​t​i​n​g​ ​c​r​e​d​e​n​t​i​a​l​s​ ​f​i​r​s​t​.
+	 * A​n​ ​a​c​c​o​u​n​t​ ​w​i​t​h​ ​t​h​i​s​ ​e​m​a​i​l​ ​a​l​r​e​a​d​y​ ​e​x​i​s​t​s​.​ ​S​i​g​n​ ​i​n​ ​w​i​t​h​ ​y​o​u​r​ ​e​x​i​s​t​i​n​g​ ​c​r​e​d​e​n​t​i​a​l​s​ ​f​i​r​s​t​.
 	 */
 	login_extError_accountExists_message: string
 	/**
-	 * A​f​t​e​r​ ​l​o​g​g​i​n​g​ ​i​n​,​ ​y​o​u​ ​c​a​n​ ​l​i​n​k​ ​y​o​u​r​ ​e​x​t​e​r​n​a​l​ ​a​c​c​o​u​n​t​ ​f​r​o​m​ ​t​h​e​ ​s​e​t​t​i​n​g​s​ ​p​a​g​e​.
+	 * A​f​t​e​r​ ​s​i​g​n​i​n​g​ ​i​n​,​ ​y​o​u​ ​c​a​n​ ​l​i​n​k​ ​y​o​u​r​ ​e​x​t​e​r​n​a​l​ ​a​c​c​o​u​n​t​ ​f​r​o​m​ ​t​h​e​ ​s​e​t​t​i​n​g​s​ ​p​a​g​e​.
 	 */
 	login_extError_accountExists_action: string
 	/**
-	 * E​m​a​i​l​ ​N​o​t​ ​V​e​r​i​f​i​e​d
+	 * E​m​a​i​l​ ​n​o​t​ ​v​e​r​i​f​i​e​d
 	 */
 	login_extError_emailNotVerified_title: string
 	/**
@@ -1175,7 +1459,7 @@ type RootTranslation = {
 	 */
 	login_extError_emailNotVerified_message: string
 	/**
-	 * V​e​r​i​f​y​ ​Y​o​u​r​ ​E​m​a​i​l
+	 * V​e​r​i​f​y​ ​y​o​u​r​ ​e​m​a​i​l
 	 */
 	login_extError_localEmailNotVerified_title: string
 	/**
@@ -1183,7 +1467,7 @@ type RootTranslation = {
 	 */
 	login_extError_localEmailNotVerified_message: string
 	/**
-	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​N​o​t​ ​A​v​a​i​l​a​b​l​e
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​n​o​t​ ​a​v​a​i​l​a​b​l​e
 	 */
 	login_extError_jitDisabled_title: string
 	/**
@@ -1191,7 +1475,7 @@ type RootTranslation = {
 	 */
 	login_extError_jitDisabled_message: string
 	/**
-	 * N​o​ ​A​c​c​o​u​n​t​ ​F​o​u​n​d
+	 * N​o​ ​a​c​c​o​u​n​t​ ​f​o​u​n​d
 	 */
 	login_extError_noAccount_title: string
 	/**
@@ -1199,7 +1483,7 @@ type RootTranslation = {
 	 */
 	login_extError_noAccount_message: string
 	/**
-	 * P​r​o​v​i​d​e​r​ ​E​r​r​o​r
+	 * P​r​o​v​i​d​e​r​ ​e​r​r​o​r
 	 */
 	login_extError_providerError_title: string
 	/**
@@ -1207,7 +1491,7 @@ type RootTranslation = {
 	 */
 	login_extError_providerError_message: string
 	/**
-	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​F​a​i​l​e​d
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​f​a​i​l​e​d
 	 */
 	login_extError_callbackFailed_title: string
 	/**
@@ -1215,7 +1499,7 @@ type RootTranslation = {
 	 */
 	login_extError_callbackFailed_message: string
 	/**
-	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​E​r​r​o​r
+	 * A​u​t​h​e​n​t​i​c​a​t​i​o​n​ ​e​r​r​o​r
 	 */
 	login_extError_default_title: string
 	/**
@@ -1227,7 +1511,7 @@ type RootTranslation = {
 	 */
 	login_signingInTo: string
 	/**
-	 * C​o​n​t​a​c​t​ ​S​u​p​p​o​r​t
+	 * C​o​n​t​a​c​t​ ​s​u​p​p​o​r​t
 	 */
 	common_contactSupport: string
 	/**
@@ -1247,7 +1531,7 @@ export type TranslationFunctions = {
 	 */
 	app_title: () => LocalizedString
 	/**
-	 * OpenID Connect Provider on Cloudflare Workers
+	 * Identity & Access at the edge of everywhere.
 	 */
 	app_subtitle: () => LocalizedString
 	/**
@@ -1275,13 +1559,33 @@ export type TranslationFunctions = {
 	 */
 	dialog_close: () => LocalizedString
 	/**
-	 * Powered by Authrim
+	 * Powered by <a href="https://authrim.com/">Authrim</a>
 	 */
 	footer_stack: () => LocalizedString
 	/**
-	 * Switch Language
+	 * Switch language
 	 */
 	language_switch: () => LocalizedString
+	/**
+	 * East Asia
+	 */
+	language_region_east_asia: () => LocalizedString
+	/**
+	 * South & Southeast Asia
+	 */
+	language_region_south_southeast_asia: () => LocalizedString
+	/**
+	 * Europe
+	 */
+	language_region_europe: () => LocalizedString
+	/**
+	 * Middle East & North Africa
+	 */
+	language_region_middle_east_north_africa: () => LocalizedString
+	/**
+	 * Sub-Saharan Africa
+	 */
+	language_region_sub_saharan_africa: () => LocalizedString
 	/**
 	 * English
 	 */
@@ -1335,6 +1639,42 @@ export type TranslationFunctions = {
 	 */
 	common_userFallback: () => LocalizedString
 	/**
+	 * Logo
+	 */
+	common_logoAlt: () => LocalizedString
+	/**
+	 * Footer links
+	 */
+	common_footerLinks: () => LocalizedString
+	/**
+	 * Select an option
+	 */
+	common_selectOption: () => LocalizedString
+	/**
+	 * Field
+	 */
+	common_field: () => LocalizedString
+	/**
+	 * {field} is required.
+	 */
+	common_requiredField: (arg: { field: string }) => LocalizedString
+	/**
+	 * Consent
+	 */
+	common_consent: () => LocalizedString
+	/**
+	 * Complete
+	 */
+	common_complete: () => LocalizedString
+	/**
+	 * External identity provider
+	 */
+	common_externalIdentityProvider: () => LocalizedString
+	/**
+	 * Directory password
+	 */
+	common_directoryPassword: () => LocalizedString
+	/**
 	 * Account - Authrim
 	 */
 	account_pageTitle: () => LocalizedString
@@ -1367,11 +1707,11 @@ export type TranslationFunctions = {
 	 */
 	account_passkeys: () => LocalizedString
 	/**
-	 * Social accounts
+	 * Connected accounts
 	 */
 	account_socialAccounts: () => LocalizedString
 	/**
-	 * Account page
+	 * View account page
 	 */
 	account_openPage: () => LocalizedString
 	/**
@@ -1443,7 +1783,7 @@ export type TranslationFunctions = {
 	 */
 	account_reauthNoMethods: () => LocalizedString
 	/**
-	 * Devices
+	 * Connected apps and devices
 	 */
 	account_devices: () => LocalizedString
 	/**
@@ -1451,13 +1791,37 @@ export type TranslationFunctions = {
 	 */
 	account_currentDevice: () => LocalizedString
 	/**
-	 * Sessions
+	 * Apps and devices linked to your account.
+	 */
+	account_connectedDevicesDescription: () => LocalizedString
+	/**
+	 * No connected apps or devices
+	 */
+	account_noConnectedDevices: () => LocalizedString
+	/**
+	 * Signed-in devices
 	 */
 	account_sessions: () => LocalizedString
 	/**
-	 * Current session
+	 * This device
 	 */
 	account_currentSession: () => LocalizedString
+	/**
+	 * Browsers and devices currently signed in to your account.
+	 */
+	account_sessionsDescription: () => LocalizedString
+	/**
+	 * Device details unavailable
+	 */
+	account_unknownDevice: () => LocalizedString
+	/**
+	 * Location: {country}
+	 */
+	account_sessionLocation: (arg: { country: string }) => LocalizedString
+	/**
+	 * Signed in {time}
+	 */
+	account_signedInAt: (arg: { time: string }) => LocalizedString
 	/**
 	 * Log out
 	 */
@@ -1486,6 +1850,34 @@ export type TranslationFunctions = {
 	 * This browser does not support passkey registration.
 	 */
 	account_passkeyUnsupported: () => LocalizedString
+	/**
+	 * Passkey registration was cancelled or timed out. Please try again.
+	 */
+	account_passkeyRegistrationCancelled: () => LocalizedString
+	/**
+	 * This authenticator is already registered for this account.
+	 */
+	account_passkeyAlreadyRegistered: () => LocalizedString
+	/**
+	 * Passkey registration was interrupted. Please try again.
+	 */
+	account_passkeyRegistrationInterrupted: () => LocalizedString
+	/**
+	 * This authenticator does not meet the requirements for this Passkey. Try another authenticator.
+	 */
+	account_passkeyAuthenticatorUnsupported: () => LocalizedString
+	/**
+	 * The authenticator could not complete Passkey registration. Try again or use another authenticator.
+	 */
+	account_passkeyAuthenticatorUnavailable: () => LocalizedString
+	/**
+	 * Passkey registration is not available for this site. Contact support if the problem continues.
+	 */
+	account_passkeyConfigurationError: () => LocalizedString
+	/**
+	 * Passkey registration failed. Please try again.
+	 */
+	account_passkeyRegistrationFailed: () => LocalizedString
 	/**
 	 * Authenticator apps
 	 */
@@ -1539,7 +1931,7 @@ export type TranslationFunctions = {
 	 */
 	account_totpCurrentCode: () => LocalizedString
 	/**
-	 * Current code
+	 * Current code or backup code
 	 */
 	account_totpDeleteCode: () => LocalizedString
 	/**
@@ -1559,7 +1951,7 @@ export type TranslationFunctions = {
 	 */
 	account_reauthWithTotp: () => LocalizedString
 	/**
-	 * 6 or 8 digit code
+	 * 6- or 8-digit code
 	 */
 	account_reauthTotpCodePlaceholder: () => LocalizedString
 	/**
@@ -1591,27 +1983,75 @@ export type TranslationFunctions = {
 	 */
 	account_operationPasskeyDeleted: () => LocalizedString
 	/**
-	 * Session logged out
+	 * Session ended
 	 */
 	account_operationSessionRevoked: () => LocalizedString
 	/**
-	 * Consent confirmations
+	 * My applications
+	 */
+	account_launcherTitle: () => LocalizedString
+	/**
+	 * Search and open the applications available to you.
+	 */
+	account_launcherDescription: () => LocalizedString
+	/**
+	 * Applications could not be loaded.
+	 */
+	account_launcherLoadFailed: () => LocalizedString
+	/**
+	 * No applications are available.
+	 */
+	account_launcherEmpty: () => LocalizedString
+	/**
+	 * Search applications
+	 */
+	account_launcherSearch: () => LocalizedString
+	/**
+	 * All categories
+	 */
+	account_launcherAllCategories: () => LocalizedString
+	/**
+	 * Favorites
+	 */
+	account_launcherFavorites: () => LocalizedString
+	/**
+	 * No applications match these filters.
+	 */
+	account_launcherNoMatches: () => LocalizedString
+	/**
+	 * Add to favorites
+	 */
+	account_launcherFavoriteAdd: () => LocalizedString
+	/**
+	 * Remove from favorites
+	 */
+	account_launcherFavoriteRemove: () => LocalizedString
+	/**
+	 * Could not update the favorite status. Please try again.
+	 */
+	account_launcherFavoriteUpdateFailed: () => LocalizedString
+	/**
+	 * Legacy mode
+	 */
+	account_launcherLegacy: () => LocalizedString
+	/**
+	 * Granted permissions
 	 */
 	account_consentTitle: () => LocalizedString
 	/**
-	 * Review applications and scopes you have confirmed access for on this account.
+	 * Review the applications and permissions you have authorized for this account.
 	 */
 	account_consentDescription: () => LocalizedString
 	/**
-	 * No active consent confirmations
+	 * No active permissions
 	 */
 	account_consentEmpty: () => LocalizedString
 	/**
-	 * Scopes
+	 * Permissions
 	 */
 	account_consentScopes: () => LocalizedString
 	/**
-	 * Confirmed at
+	 * Granted at
 	 */
 	account_consentGrantedAt: () => LocalizedString
 	/**
@@ -1663,6 +2103,22 @@ export type TranslationFunctions = {
 	 */
 	account_consentStatementId: () => LocalizedString
 	/**
+	 * Decision
+	 */
+	account_consentSelectedValue: () => LocalizedString
+	/**
+	 * This time only
+	 */
+	account_consentSelectedOnce: () => LocalizedString
+	/**
+	 * Always allow
+	 */
+	account_consentSelectedAlways: () => LocalizedString
+	/**
+	 * Do not allow
+	 */
+	account_consentSelectedNone: () => LocalizedString
+	/**
 	 * Welcome back
 	 */
 	login_title: () => LocalizedString
@@ -1675,15 +2131,15 @@ export type TranslationFunctions = {
 	 */
 	login_signInWithPasskey: () => LocalizedString
 	/**
-	 * Send verification code
+	 * Send code by email
 	 */
 	login_sendCode: () => LocalizedString
 	/**
-	 * Email or username
+	 * Email address
 	 */
 	login_totpIdentifierLabel: () => LocalizedString
 	/**
-	 * you@example.com or username
+	 * you@example.com
 	 */
 	login_totpIdentifierPlaceholder: () => LocalizedString
 	/**
@@ -1695,7 +2151,7 @@ export type TranslationFunctions = {
 	 */
 	login_totpCodePlaceholder: () => LocalizedString
 	/**
-	 * Continue with authenticator app
+	 * Sign in with authenticator app
 	 */
 	login_totpContinue: () => LocalizedString
 	/**
@@ -1703,7 +2159,7 @@ export type TranslationFunctions = {
 	 */
 	login_totpVerify: () => LocalizedString
 	/**
-	 * Email or username is required
+	 * Email address is required
 	 */
 	login_totpIdentifierRequired: () => LocalizedString
 	/**
@@ -1759,7 +2215,7 @@ export type TranslationFunctions = {
 	 */
 	login_errorDirectoryUnavailable: () => LocalizedString
 	/**
-	 * This directory account is not mapped to an Authrim user
+	 * This directory account is not linked to an Authrim user
 	 */
 	login_errorDirectoryUnmapped: () => LocalizedString
 	/**
@@ -1783,39 +2239,83 @@ export type TranslationFunctions = {
 	 */
 	login_humanVerificationLoadFailed: () => LocalizedString
 	/**
-	 * No authentication method is enabled for this tenant. Contact your administrator.
+	 * No authentication method is enabled for this organization. Contact your administrator.
 	 */
 	login_noMethodsAvailable: () => LocalizedString
 	/**
-	 * Tenant Discovery
+	 * Preparing passkey authentication.
+	 */
+	login_passkeyPreparing: () => LocalizedString
+	/**
+	 * Complete the passkey prompt in your browser or on your device.
+	 */
+	login_passkeyPrompt: () => LocalizedString
+	/**
+	 * Verifying the authentication result.
+	 */
+	login_passkeyVerifying: () => LocalizedString
+	/**
+	 * Could not load authentication methods.
+	 */
+	login_methodsLoadFailed: () => LocalizedString
+	/**
+	 * Organization ID
+	 */
+	login_organizationId: () => LocalizedString
+	/**
+	 * Passkey registration is required before completing this sign-in.
+	 */
+	login_directoryMigrationPasskeyRequired: () => LocalizedString
+	/**
+	 * Directory sign-in is temporarily unavailable. Continue using an email code.
+	 */
+	login_directoryRecoveryRequired: () => LocalizedString
+	/**
+	 * A verification code was sent to {email}.
+	 */
+	login_directoryVerificationCodeSent: (arg: { email: string }) => LocalizedString
+	/**
+	 * Directory migration passkey
+	 */
+	login_directoryMigrationPasskeyName: () => LocalizedString
+	/**
+	 * Sign in with a passkey, email code, or another available method.
+	 */
+	login_metaDescription: () => LocalizedString
+	/**
+	 * No screen is configured for this step. Contact your administrator.
+	 */
+	runtime_screenUnavailable: () => LocalizedString
+	/**
+	 * Select your organization
 	 */
 	discover_pageTitle: () => LocalizedString
 	/**
-	 * Tenant discovery
+	 * Organization selection
 	 */
 	discover_kicker: () => LocalizedString
 	/**
-	 * Find your tenant
+	 * Find your organization
 	 */
 	discover_title: () => LocalizedString
 	/**
-	 * Resolve the correct tenant first. Authentication methods are loaded after the tenant is confirmed.
+	 * Select your organization to see the authentication methods available to you.
 	 */
 	discover_subtitle: () => LocalizedString
 	/**
-	 * This entry point is disabled for this tenant. Use the tenant-specific login URL instead.
+	 * This sign-in page is disabled. Use your organization-specific sign-in URL instead.
 	 */
 	discover_notice_disabled: () => LocalizedString
 	/**
-	 * Automatic tenant discovery is disabled. Enter your tenant code or tenant slug to continue.
+	 * Automatic organization lookup is disabled. Enter your organization code or identifier.
 	 */
 	discover_notice_manualOnly: () => LocalizedString
 	/**
-	 * Recent tenant
+	 * Recently used organization
 	 */
 	discover_recentTenant: () => LocalizedString
 	/**
-	 * Discovery method
+	 * Search method
 	 */
 	discover_methodLabel: () => LocalizedString
 	/**
@@ -1823,11 +2323,11 @@ export type TranslationFunctions = {
 	 */
 	discover_method_email: () => LocalizedString
 	/**
-	 * Tenant code
+	 * Organization code
 	 */
 	discover_method_tenantCode: () => LocalizedString
 	/**
-	 * Tenant slug
+	 * Organization identifier
 	 */
 	discover_method_tenantSlug: () => LocalizedString
 	/**
@@ -1843,7 +2343,7 @@ export type TranslationFunctions = {
 	 */
 	discover_placeholder_tenantSlug: () => LocalizedString
 	/**
-	 * Select a tenant
+	 * Select an organization
 	 */
 	discover_selectTenant: () => LocalizedString
 	/**
@@ -1851,15 +2351,15 @@ export type TranslationFunctions = {
 	 */
 	discover_error_emailNotFound: () => LocalizedString
 	/**
-	 * This email domain is not mapped to a tenant.
+	 * This email domain is not linked to an organization.
 	 */
 	discover_error_emailDomainNotFound: () => LocalizedString
 	/**
-	 * No tenant matched that tenant code.
+	 * No organization matched that code.
 	 */
 	discover_error_tenantCodeNotFound: () => LocalizedString
 	/**
-	 * No tenant matched that tenant slug.
+	 * No organization matched that identifier.
 	 */
 	discover_error_tenantSlugNotFound: () => LocalizedString
 	/**
@@ -1867,11 +2367,11 @@ export type TranslationFunctions = {
 	 */
 	discover_error_invitationNotFound: () => LocalizedString
 	/**
-	 * No tenant matched that application hint.
+	 * No organization matched this application.
 	 */
 	discover_error_appHintNotFound: () => LocalizedString
 	/**
-	 * No tenant could be resolved.
+	 * No organization could be identified.
 	 */
 	discover_error_notFound: () => LocalizedString
 	/**
@@ -1879,29 +2379,37 @@ export type TranslationFunctions = {
 	 */
 	discover_error_valueRequired: () => LocalizedString
 	/**
-	 * Tenant could not be resolved automatically. Enter your tenant code or tenant slug to continue.
+	 * Your organization could not be identified automatically. Enter its code or identifier.
 	 */
 	discover_error_manualRequired: () => LocalizedString
 	/**
-	 * The invitation could not be resolved.
+	 * The invitation could not be processed.
 	 */
 	discover_error_invitationUnresolved: () => LocalizedString
 	/**
-	 * Failed to resolve tenant
+	 * Could not identify the organization
 	 */
 	discover_error_resolveFailed: () => LocalizedString
 	/**
-	 * Sign Up
+	 * Sign up
 	 */
 	header_signUp: () => LocalizedString
 	/**
-	 * Login
+	 * Sign in
 	 */
 	header_login: () => LocalizedString
 	/**
-	 * Logout
+	 * Sign out
 	 */
 	header_logout: () => LocalizedString
+	/**
+	 * You're signed out
+	 */
+	logout_completeTitle: () => LocalizedString
+	/**
+	 * Your session has ended safely.
+	 */
+	logout_completeDescription: () => LocalizedString
 	/**
 	 * Authrim - A modern OpenID Connect Provider built with Cloudflare Workers.
 	 */
@@ -1923,15 +2431,15 @@ export type TranslationFunctions = {
 	 */
 	register_subtitle: () => LocalizedString
 	/**
-	 * Create Account with Passkey
+	 * Create account with Passkey
 	 */
 	register_createWithPasskey: () => LocalizedString
 	/**
-	 * Sign up with verification code
+	 * Send code by email
 	 */
 	register_sendCode: () => LocalizedString
 	/**
-	 * Create account with authenticator app
+	 * Sign up with authenticator app
 	 */
 	register_createWithTotp: () => LocalizedString
 	/**
@@ -1951,9 +2459,41 @@ export type TranslationFunctions = {
 	 */
 	register_termsAgreement: () => LocalizedString
 	/**
-	 * No signup method is enabled for this tenant. Contact your administrator.
+	 * No sign-up method is enabled for this organization. Contact your administrator.
 	 */
 	register_noMethodsAvailable: () => LocalizedString
+	/**
+	 * This sign-up form is missing a required field. Contact your administrator.
+	 */
+	register_requiredFieldsMissing: () => LocalizedString
+	/**
+	 * Preparing passkey registration.
+	 */
+	register_passkeyPreparing: () => LocalizedString
+	/**
+	 * Complete the passkey prompt in your browser or on your device.
+	 */
+	register_passkeyPrompt: () => LocalizedString
+	/**
+	 * Verifying the registration result.
+	 */
+	register_passkeyVerifying: () => LocalizedString
+	/**
+	 * You were invited to {tenant}. Create your account to continue.
+	 */
+	register_invitation: (arg: { tenant: string }) => LocalizedString
+	/**
+	 * Mobile device
+	 */
+	register_mobileDevice: () => LocalizedString
+	/**
+	 * Desktop
+	 */
+	register_desktopDevice: () => LocalizedString
+	/**
+	 * Create an account with a passkey, email code, or another available method.
+	 */
+	register_metaDescription: () => LocalizedString
 	/**
 	 * Check your email
 	 */
@@ -1967,7 +2507,7 @@ export type TranslationFunctions = {
 	 */
 	emailCode_instructions: () => LocalizedString
 	/**
-	 * Verification Code
+	 * Verification code
 	 */
 	emailCode_codeLabel: () => LocalizedString
 	/**
@@ -1987,7 +2527,7 @@ export type TranslationFunctions = {
 	 */
 	emailCode_resendSuccess: () => LocalizedString
 	/**
-	 * Verification successful! Redirecting...
+	 * Verified. Redirecting...
 	 */
 	emailCode_success: () => LocalizedString
 	/**
@@ -2051,7 +2591,7 @@ export type TranslationFunctions = {
 	 */
 	consent_scope_address: () => LocalizedString
 	/**
-	 * Maintain access when you're not using the app
+	 * Access your account when you're not using the app
 	 */
 	consent_scope_offline_access: () => LocalizedString
 	/**
@@ -2071,7 +2611,7 @@ export type TranslationFunctions = {
 	 */
 	consent_actingOnBehalfOf: (arg: { name: string }) => LocalizedString
 	/**
-	 * Delegated Access
+	 * Delegated access
 	 */
 	consent_delegatedAccess: () => LocalizedString
 	/**
@@ -2179,7 +2719,7 @@ export type TranslationFunctions = {
 	 */
 	error_unknown: () => LocalizedString
 	/**
-	 * Device Verification
+	 * Device verification
 	 */
 	device_title: () => LocalizedString
 	/**
@@ -2187,7 +2727,7 @@ export type TranslationFunctions = {
 	 */
 	device_subtitle: () => LocalizedString
 	/**
-	 * Verification Code
+	 * Verification code
 	 */
 	device_codeLabel: () => LocalizedString
 	/**
@@ -2199,11 +2739,11 @@ export type TranslationFunctions = {
 	 */
 	device_codeHint: () => LocalizedString
 	/**
-	 * Verify Code
+	 * Verify code
 	 */
 	device_verifyButton: () => LocalizedString
 	/**
-	 * Authorize Device
+	 * Authorize device
 	 */
 	device_confirmTitle: () => LocalizedString
 	/**
@@ -2219,7 +2759,7 @@ export type TranslationFunctions = {
 	 */
 	device_denyButton: () => LocalizedString
 	/**
-	 * Device authorized successfully! You can now close this window.
+	 * Device authorized. You can now close this window.
 	 */
 	device_success: () => LocalizedString
 	/**
@@ -2239,7 +2779,7 @@ export type TranslationFunctions = {
 	 */
 	device_errorApproveFailed: () => LocalizedString
 	/**
-	 * Failed to deny device
+	 * Could not deny the device request
 	 */
 	device_errorDenyFailed: () => LocalizedString
 	/**
@@ -2247,7 +2787,7 @@ export type TranslationFunctions = {
 	 */
 	device_errorInvalidRedirect: () => LocalizedString
 	/**
-	 * Authentication Request
+	 * Authentication request
 	 */
 	ciba_title: () => LocalizedString
 	/**
@@ -2267,7 +2807,7 @@ export type TranslationFunctions = {
 	 */
 	ciba_bindingMessage: () => LocalizedString
 	/**
-	 * Authentication Request
+	 * Authentication request
 	 */
 	ciba_authenticationRequest: () => LocalizedString
 	/**
@@ -2275,11 +2815,11 @@ export type TranslationFunctions = {
 	 */
 	ciba_expiresIn: () => LocalizedString
 	/**
-	 * Verification Code
+	 * Verification code
 	 */
 	ciba_verificationCode: () => LocalizedString
 	/**
-	 * Requested Access
+	 * Requested access
 	 */
 	ciba_requestedAccess: () => LocalizedString
 	/**
@@ -2291,7 +2831,7 @@ export type TranslationFunctions = {
 	 */
 	ciba_rejectButton: () => LocalizedString
 	/**
-	 * Request approved successfully
+	 * Request approved
 	 */
 	ciba_approvedSuccess: () => LocalizedString
 	/**
@@ -2323,7 +2863,7 @@ export type TranslationFunctions = {
 	 */
 	ciba_errorDenyFailed: () => LocalizedString
 	/**
-	 * Verify Your Identity
+	 * Verify your identity
 	 */
 	reauth_title: () => LocalizedString
 	/**
@@ -2335,11 +2875,15 @@ export type TranslationFunctions = {
 	 */
 	reauth_verifyWithPasskey: () => LocalizedString
 	/**
-	 * Verify with Email Code
+	 * Verify with email code
 	 */
 	reauth_verifyWithEmailCode: () => LocalizedString
 	/**
-	 * Signing In
+	 * Verify with authenticator app
+	 */
+	reauth_verifyWithTotp: () => LocalizedString
+	/**
+	 * Signing in
 	 */
 	callback_title: () => LocalizedString
 	/**
@@ -2355,11 +2899,11 @@ export type TranslationFunctions = {
 	 */
 	callback_success: () => LocalizedString
 	/**
-	 * Redirecting you now...
+	 * Redirecting...
 	 */
 	callback_redirecting: () => LocalizedString
 	/**
-	 * Authentication Failed
+	 * Authentication failed
 	 */
 	callback_errorTitle: () => LocalizedString
 	/**
@@ -2371,19 +2915,19 @@ export type TranslationFunctions = {
 	 */
 	common_backToHome: () => LocalizedString
 	/**
-	 * Account Already Exists
+	 * Account already exists
 	 */
 	login_extError_accountExists_title: () => LocalizedString
 	/**
-	 * An account with this email already exists. Please log in with your existing credentials first.
+	 * An account with this email already exists. Sign in with your existing credentials first.
 	 */
 	login_extError_accountExists_message: () => LocalizedString
 	/**
-	 * After logging in, you can link your external account from the settings page.
+	 * After signing in, you can link your external account from the settings page.
 	 */
 	login_extError_accountExists_action: () => LocalizedString
 	/**
-	 * Email Not Verified
+	 * Email not verified
 	 */
 	login_extError_emailNotVerified_title: () => LocalizedString
 	/**
@@ -2391,7 +2935,7 @@ export type TranslationFunctions = {
 	 */
 	login_extError_emailNotVerified_message: () => LocalizedString
 	/**
-	 * Verify Your Email
+	 * Verify your email
 	 */
 	login_extError_localEmailNotVerified_title: () => LocalizedString
 	/**
@@ -2399,7 +2943,7 @@ export type TranslationFunctions = {
 	 */
 	login_extError_localEmailNotVerified_message: () => LocalizedString
 	/**
-	 * Registration Not Available
+	 * Registration not available
 	 */
 	login_extError_jitDisabled_title: () => LocalizedString
 	/**
@@ -2407,7 +2951,7 @@ export type TranslationFunctions = {
 	 */
 	login_extError_jitDisabled_message: () => LocalizedString
 	/**
-	 * No Account Found
+	 * No account found
 	 */
 	login_extError_noAccount_title: () => LocalizedString
 	/**
@@ -2415,7 +2959,7 @@ export type TranslationFunctions = {
 	 */
 	login_extError_noAccount_message: () => LocalizedString
 	/**
-	 * Provider Error
+	 * Provider error
 	 */
 	login_extError_providerError_title: () => LocalizedString
 	/**
@@ -2423,7 +2967,7 @@ export type TranslationFunctions = {
 	 */
 	login_extError_providerError_message: () => LocalizedString
 	/**
-	 * Authentication Failed
+	 * Authentication failed
 	 */
 	login_extError_callbackFailed_title: () => LocalizedString
 	/**
@@ -2431,7 +2975,7 @@ export type TranslationFunctions = {
 	 */
 	login_extError_callbackFailed_message: () => LocalizedString
 	/**
-	 * Authentication Error
+	 * Authentication error
 	 */
 	login_extError_default_title: () => LocalizedString
 	/**
@@ -2443,7 +2987,7 @@ export type TranslationFunctions = {
 	 */
 	login_signingInTo: () => LocalizedString
 	/**
-	 * Contact Support
+	 * Contact support
 	 */
 	common_contactSupport: () => LocalizedString
 	/**

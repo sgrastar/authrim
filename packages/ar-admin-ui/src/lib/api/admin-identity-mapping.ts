@@ -32,6 +32,8 @@ export interface IdentityMappingFieldMappingVersionSummary {
 	sourceProfileIds?: string[];
 	destinationProfileIds?: string[];
 	rules?: IdentityMappingFieldMappingVersionRuleSummary[];
+	releaseRules?: IdentityMappingFieldMappingVersionReleaseRuleSummary[];
+	conflictRules?: IdentityMappingFieldMappingVersionConflictRuleSummary[];
 	latestSnapshot?: {
 		id: string;
 		catalogVersionId?: string | null;
@@ -46,9 +48,12 @@ export interface IdentityMappingFieldMappingVersionRuleSummary {
 	ruleKind: string;
 	action: string;
 	priority: number;
+	scope?: Record<string, unknown>;
+	condition?: Record<string, unknown>;
 	metadata?: Record<string, unknown>;
 	edges: IdentityMappingFieldMappingVersionRuleEdgeSummary[];
 	transforms: IdentityMappingFieldMappingVersionTransformSummary[];
+	validationRules?: IdentityMappingFieldMappingVersionValidationRuleSummary[];
 }
 
 export interface IdentityMappingFieldMappingVersionRuleEdgeSummary {
@@ -65,6 +70,35 @@ export interface IdentityMappingFieldMappingVersionTransformSummary {
 	stepOrder: number;
 	operation: string;
 	parameters: Record<string, unknown>;
+}
+
+export interface IdentityMappingFieldMappingVersionValidationRuleSummary {
+	id: string;
+	ruleId: string | null;
+	targetRef: Record<string, unknown>;
+	validationKind: string;
+	severity: string;
+	parameters: Record<string, unknown>;
+}
+
+export interface IdentityMappingFieldMappingVersionReleaseRuleSummary {
+	id: string;
+	destinationType: string;
+	destinationId: string | null;
+	sourceRef: Record<string, unknown>;
+	releaseAction: string;
+	legalBasis: string | null;
+	purpose: string | null;
+	condition: Record<string, unknown>;
+	priority: number;
+}
+
+export interface IdentityMappingFieldMappingVersionConflictRuleSummary {
+	id: string;
+	targetRef: Record<string, unknown>;
+	conflictStrategy: string;
+	sourcePriority: unknown[];
+	condition: Record<string, unknown>;
 }
 
 export interface IdentityMappingCatalogSummary {
@@ -133,6 +167,7 @@ export interface IdentityMappingSourceProfileColumn {
 	label: string;
 	valueType: string;
 	required: boolean;
+	mappingRequired?: boolean;
 	classification: string;
 	candidates?: {
 		valueType?: string;
@@ -149,7 +184,9 @@ export interface IdentityMappingSourceProfileColumn {
 	nullable?: boolean | null;
 }
 
-export interface IdentityMappingSourceProfileSchema {
+export type IdentityMappingSourceType = 'csv' | 'scim' | 'saml' | 'directory';
+
+export interface IdentityMappingCsvSourceProfileSchema {
 	sourceType: 'csv';
 	parser?: Record<string, unknown>;
 	columns: IdentityMappingSourceProfileColumn[];
@@ -157,10 +194,35 @@ export interface IdentityMappingSourceProfileSchema {
 	summary?: Record<string, unknown>;
 }
 
+export interface IdentityMappingScimSourceAttribute {
+	name: string;
+	label: string;
+	type: string;
+	required: boolean;
+	mappingRequired?: boolean;
+	classification: string;
+	valueMultiplicity?: 'single' | 'multi' | null;
+	nullable?: boolean | null;
+	examples?: unknown[];
+	note?: string | null;
+}
+
+export interface IdentityMappingScimSourceProfileSchema {
+	sourceType: 'scim';
+	resourceType: 'User';
+	schemaUris: string[];
+	attributes: IdentityMappingScimSourceAttribute[];
+}
+
+export type IdentityMappingSourceProfileSchema =
+	| IdentityMappingCsvSourceProfileSchema
+	| IdentityMappingScimSourceProfileSchema
+	| (Record<string, unknown> & { sourceType: 'saml' | 'directory' });
+
 export interface IdentityMappingSourceProfileSummary {
 	id: string;
 	tenantId: string;
-	sourceType: 'csv';
+	sourceType: IdentityMappingSourceType;
 	profileKey: string;
 	displayName: string;
 	lifecycleState: string;
@@ -175,7 +237,7 @@ export interface IdentityMappingSourceProfileSummary {
 	} | null;
 }
 
-export type IdentityMappingDestinationType = 'oidc' | 'csv' | 'saml';
+export type IdentityMappingDestinationType = 'oidc' | 'csv' | 'saml' | 'resource_server';
 export type IdentityMappingProfileOwnerScope = 'platform' | 'tenant' | 'client';
 export type IdentityMappingRegistryOwnerScope = 'platform' | 'tenant';
 export type IdentityMappingOidcSurface = 'id_token' | 'userinfo';
@@ -342,14 +404,14 @@ export interface IdentityMappingCsvParseResult {
 	tenantId: string;
 	sourceType: 'csv';
 	schemaHash: string;
-	schema: IdentityMappingSourceProfileSchema;
+	schema: IdentityMappingCsvSourceProfileSchema;
 	parserOptions: Record<string, unknown>;
 	warningSummary: Record<string, unknown>;
 	expiresAt: number;
 }
 
 export interface IdentityMappingSourceProfileCreateRequest {
-	sourceType: 'csv';
+	sourceType: IdentityMappingSourceType;
 	profileKey: string;
 	displayName: string;
 	versionLabel?: string;
@@ -361,7 +423,7 @@ export interface IdentityMappingSourceProfileCreateRequest {
 }
 
 export interface IdentityMappingSourceProfileUpdateRequest {
-	sourceType?: 'csv';
+	sourceType?: IdentityMappingSourceType;
 	profileKey?: string;
 	displayName?: string;
 	versionLabel?: string;
@@ -411,6 +473,10 @@ export interface IdentityMappingFederationTrustSourceRequest {
 		scopeId?: string | null;
 		priority?: number;
 	}>;
+}
+
+export interface IdentityMappingFederationTrustSourceUpdateRequest extends IdentityMappingFederationTrustSourceRequest {
+	expectedUpdatedAt: number;
 }
 
 export interface IdentityMappingFederationMetadataDocument {
@@ -492,6 +558,7 @@ export interface IdentityMappingFieldMappingVersionCreateRequest {
 	versionLabel: string;
 	compatibilityRange?: string;
 	authorId?: string;
+	sourceProfileIds?: string[];
 	rules: Array<{
 		ruleKey: string;
 		ruleKind: string;
@@ -1005,7 +1072,7 @@ export const adminIdentityMappingAPI = {
 
 	async createFederationTrustSource(
 		request: IdentityMappingFederationTrustSourceRequest
-	): Promise<IdentityMappingFederationTrustSourceSummary> {
+	): Promise<{ result: IdentityMappingFederationTrustSourceSummary }> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources`,
 			{
@@ -1019,8 +1086,8 @@ export const adminIdentityMappingAPI = {
 
 	async updateFederationTrustSource(
 		trustSourceId: string,
-		request: IdentityMappingFederationTrustSourceRequest
-	): Promise<IdentityMappingFederationTrustSourceSummary> {
+		request: IdentityMappingFederationTrustSourceUpdateRequest
+	): Promise<{ result: IdentityMappingFederationTrustSourceSummary }> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/field-mapping/federation-trust-sources/${encodeURIComponent(trustSourceId)}`,
 			{
@@ -1041,7 +1108,11 @@ export const adminIdentityMappingAPI = {
 				body: JSON.stringify({})
 			}
 		);
-		return parseJson(response, 'Failed to delete federation trust source');
+		const body = await parseJson<{ result: { success: boolean } }>(
+			response,
+			'Failed to delete federation trust source'
+		);
+		return body.result;
 	},
 
 	async listFederationMetadataDocuments(

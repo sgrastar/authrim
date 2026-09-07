@@ -1,4 +1,5 @@
 import { Hono, type Context, type Next } from 'hono';
+import { WorkerEntrypoint } from 'cloudflare:workers';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
 import { logger } from 'hono/logger';
@@ -9,6 +10,7 @@ import {
   csrfProtectionMiddleware,
   validateHostHeader,
   getDefaultTenantId,
+  readAuthenticationMethodsCacheRevision,
   SELF_SERVICE_DEFAULTS,
   validateAccountPagePath,
 } from '@authrim/ar-lib-core';
@@ -28,6 +30,8 @@ interface Env {
   OP_TOKEN: Fetcher;
   OP_USERINFO: Fetcher;
   OP_MANAGEMENT: Fetcher;
+  OP_CONTROL: Fetcher;
+  OP_AGENT_ACCESS?: Fetcher;
   OP_ASYNC?: Fetcher;
   OP_SAML?: Fetcher;
   EXTERNAL_IDP: Fetcher; // External IdP (social login, enterprise IdP)
@@ -43,6 +47,7 @@ interface Env {
   BASE_DOMAIN?: string;
   PRIMARY_TENANT_ID?: string;
   DEFAULT_TENANT_ID?: string;
+  NAKED_DOMAIN_AS_ISSUER?: string;
 
   // UI Proxy configuration (optional)
   // When enabled, routes UI paths through the router for same-domain deployment
@@ -66,8 +71,16 @@ interface Env {
   SERVICE_SITE_BINDING?: string;
   /** Enable Login UI proxy (true/false) */
   ENABLE_LOGIN_UI_PROXY?: string;
+  /** Enable Login UI paths on the issuer without proxying the API root (true/false) */
+  ENABLE_LOGIN_UI_PATH_PROXY?: string;
   /** Enable Admin UI proxy (true/false) */
   ENABLE_ADMIN_UI_PROXY?: string;
+  /** Allow header-gated Server-Timing diagnostics */
+  AUTHRIM_DIAGNOSTIC_TIMING_ENABLED?: string;
+  /** Router-side Cache API TTL for public authentication methods (seconds) */
+  AUTHENTICATION_METHODS_ROUTER_CACHE_TTL?: string;
+  /** Shared edge Cache API TTL for public authentication methods (seconds) */
+  AUTHENTICATION_METHODS_EDGE_CACHE_TTL?: string;
 }
 
 const LOGIN_UI_ASSET_PREFIX = '/_authrim_login';
@@ -75,8 +88,26 @@ const ADMIN_UI_ASSET_PREFIX = '/_authrim_admin';
 const ACCOUNT_PAGE_INTERNAL_PATH = '/account';
 const ACCOUNT_PAGE_SETTINGS_CACHE_TTL_MS = 5_000;
 const SERVICE_SITE_SETTINGS_CACHE_TTL_MS = 5_000;
+const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
+const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
+const AUTHENTICATION_METHODS_ROUTER_CACHE_KEY_ORIGIN = 'https://authrim-router.internal';
+const DEFAULT_AUTHENTICATION_METHODS_ROUTER_CACHE_TTL = 24 * 60 * 60;
+const MAX_AUTHENTICATION_METHODS_ROUTER_CACHE_TTL = 7 * 24 * 60 * 60;
+const AUTHENTICATION_METHODS_ROUTER_CACHE_STATUS_HEADER =
+  'X-Authrim-Router-Authentication-Methods-Cache';
+const DOWNSTREAM_AUTHENTICATION_METHODS_CACHE_STATUS_HEADER =
+  'X-Authrim-Authentication-Methods-Cache';
+const DIAGNOSTIC_RESPONSE_SESSION_ID_HEADER = 'X-Authrim-Diagnostic-Session-Id';
+type AuthenticationMethodsRouterCacheStatus = 'hit' | 'miss' | 'bypass';
+type AuthenticationMethodsRouterCache = {
+  match(request: Request): Promise<Response | undefined>;
+  put(request: Request, response: Response): Promise<void>;
+};
+type WaitUntilExecutionContext = {
+  waitUntil(promise: Promise<unknown>): void;
+};
 
-// Login UI paths that should be proxied when ENABLE_LOGIN_UI_PROXY is true
+// Login UI paths that should be proxied when the Login UI path proxy is enabled.
 const LOGIN_UI_PATHS = [
   '/discover',
   '/invite',
@@ -88,6 +119,8 @@ const LOGIN_UI_PATHS = [
   '/reauth',
   '/verify-email-code',
   '/error',
+  '/logged-out',
+  '/logout-complete',
   '/api/set-language',
   '/callback',
 ];
@@ -109,6 +142,7 @@ const BEARER_TOKEN_CANONICAL_PATHS = [
   '/register',
   '/clients',
   '/par',
+  '/oauth/admin-agent',
   '/device_authorization',
   '/bc-authorize',
   '/auth/step-up',
@@ -121,6 +155,7 @@ const BEARER_TOKEN_CANONICAL_PATHS = [
   '/api/v1/auth/direct',
   '/api/sessions',
   '/api/protected',
+  '/mcp',
   '/vci',
   '/vp',
   '/scim/v2',
@@ -130,8 +165,48 @@ function isLoginUiBackendProxyRequest(request: Request): boolean {
   return request.headers.get('X-Authrim-Ui-Proxy') === 'login-ui';
 }
 
+const LOGIN_UI_INTERNAL_HEADERS = [
+  'X-Authrim-Ui-Proxy',
+  'X-Authrim-Original-Host',
+  'X-Authrim-Forwarded-Host',
+  'X-Authrim-Browser-Origin',
+] as const;
+
+function sanitizePublicRouterRequest(request: Request): Request {
+  const headers = new Headers(request.headers);
+  for (const header of LOGIN_UI_INTERNAL_HEADERS) {
+    headers.delete(header);
+  }
+  return new Request(request, { headers });
+}
+
+function validateLoginUiServiceBindingRequest(request: Request): Request | null {
+  if (!isLoginUiBackendProxyRequest(request)) return null;
+
+  const requestHost = new URL(request.url).host;
+  const forwardedHost = normalizeForwardedHostHeader(
+    request.headers.get('X-Authrim-Forwarded-Host')
+  );
+  const originalHost = normalizeForwardedHostHeader(request.headers.get('X-Authrim-Original-Host'));
+  if (forwardedHost !== requestHost || originalHost !== requestHost) return null;
+
+  const headers = new Headers(request.headers);
+  headers.set('Host', requestHost);
+  headers.set('X-Forwarded-Host', requestHost);
+  headers.set('X-Authrim-Forwarded-Host', requestHost);
+  headers.set('X-Authrim-Original-Host', requestHost);
+  return new Request(request, { headers });
+}
+
 function isDedicatedLoginUiHostMode(env: Env): boolean {
   return env.LOGIN_UI_HOST_MODE !== 'shared';
+}
+
+function isLoginUiPathProxyEnabled(env: Env): boolean {
+  // ENABLE_LOGIN_UI_PROXY is retained as the backwards-compatible fallback for
+  // existing deployments. New setup output enables the path proxy separately so
+  // an issuer can serve /login without changing the API response at /.
+  return env.ENABLE_LOGIN_UI_PATH_PROXY === 'true' || env.ENABLE_LOGIN_UI_PROXY === 'true';
 }
 
 function normalizeForwardedHostHeader(value: string | null): string | null {
@@ -191,21 +266,374 @@ function createServiceBindingRequest(request: Request): Request {
   const forwarded = new Request(request.url, request);
   const headers = new Headers(forwarded.headers);
   const originalHost = new URL(request.url).host;
-  const forwardedHost = isLoginUiBackendProxyRequest(request)
-    ? normalizeForwardedHostHeader(headers.get('X-Authrim-Forwarded-Host')) ||
-      normalizeForwardedHostHeader(headers.get('X-Authrim-Original-Host')) ||
-      originalHost
-    : originalHost;
-
-  if (forwardedHost !== originalHost) {
-    targetUrl.host = forwardedHost;
-    targetUrl.protocol = 'https:';
-  }
-  headers.set('X-Authrim-Forwarded-Host', forwardedHost);
-  headers.set('X-Forwarded-Host', forwardedHost);
-  headers.set('Host', forwardedHost);
+  headers.set('X-Authrim-Forwarded-Host', originalHost);
+  headers.set('X-Forwarded-Host', originalHost);
+  headers.set('Host', originalHost);
 
   return new Request(new Request(targetUrl.toString(), forwarded), { headers });
+}
+
+function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+}
+
+function isDiagnosticTimingEnabled(env: Env): boolean {
+  const value = env.AUTHRIM_DIAGNOSTIC_TIMING_ENABLED?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+function roundDiagnosticDurationMs(durationMs: number): number {
+  return Math.round(durationMs * 10) / 10;
+}
+
+function appendServerTimingHeader(headers: Headers, spans: Record<string, number>): void {
+  const value = Object.entries(spans)
+    .map(([name, durationMs]) => `${name};dur=${durationMs.toFixed(1)}`)
+    .join(', ');
+  if (!value) return;
+  const existing = headers.get('Server-Timing');
+  headers.set('Server-Timing', existing ? `${existing}, ${value}` : value);
+}
+
+async function fetchServiceBindingWithDiagnostics(
+  c: Context<{ Bindings: Env }>,
+  target: 'OP_AUTH' | 'OP_MANAGEMENT',
+  fetcher: Fetcher
+): Promise<Response> {
+  const diagnosticSessionId = sanitizeDiagnosticSessionId(
+    c.req.header(DIAGNOSTIC_SESSION_ID_HEADER)
+  );
+  const totalStartedAt = performance.now();
+  const prepareStartedAt = performance.now();
+  const request = createServiceBindingRequest(c.req.raw);
+  const prepareDurationMs = roundDiagnosticDurationMs(performance.now() - prepareStartedAt);
+  const fetchStartedAt = performance.now();
+  const response = await fetcher.fetch(request);
+  const fetchDurationMs = roundDiagnosticDurationMs(performance.now() - fetchStartedAt);
+
+  if (!diagnosticSessionId || !isDiagnosticTimingEnabled(c.env)) {
+    return response;
+  }
+
+  const totalDurationMs = roundDiagnosticDurationMs(performance.now() - totalStartedAt);
+  const spans = {
+    router_prepare_request: prepareDurationMs,
+    router_service_fetch: fetchDurationMs,
+    router_total: totalDurationMs,
+  };
+  const headers = new Headers(response.headers);
+  appendServerTimingHeader(headers, spans);
+  headers.set('X-Authrim-Diagnostic-Session-Id', diagnosticSessionId);
+
+  log.info('Router service binding diagnostics', {
+    diagnosticSessionId,
+    target,
+    method: c.req.method,
+    path: c.req.path,
+    status: response.status,
+    timingMs: spans,
+  });
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function readBoundedIntegerEnvValue(
+  value: string | undefined,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.floor(parsed))) : fallback;
+}
+
+function resolveAuthenticationMethodsRouterCacheTTL(env: Env): number {
+  return readBoundedIntegerEnvValue(
+    env.AUTHENTICATION_METHODS_ROUTER_CACHE_TTL ?? env.AUTHENTICATION_METHODS_EDGE_CACHE_TTL,
+    DEFAULT_AUTHENTICATION_METHODS_ROUTER_CACHE_TTL,
+    0,
+    MAX_AUTHENTICATION_METHODS_ROUTER_CACHE_TTL
+  );
+}
+
+function getDefaultRouterCache(): AuthenticationMethodsRouterCache | null {
+  const candidate = (
+    globalThis as unknown as {
+      caches?: { default?: AuthenticationMethodsRouterCache };
+    }
+  ).caches?.default;
+  return candidate ?? null;
+}
+
+function getWaitUntilExecutionContext(
+  c: Context<{ Bindings: Env }>
+): WaitUntilExecutionContext | null {
+  try {
+    return (c as unknown as { executionCtx?: WaitUntilExecutionContext }).executionCtx ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeRouterCacheKeyPart(value: string | null | undefined, fallback: string): string {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || fallback;
+}
+
+function resolveAuthenticationMethodsRouterTenantId(
+  c: Context<{ Bindings: Env }>,
+  serviceRequest: Request
+): string | null {
+  const serviceHost = serviceRequest.headers.get('Host') ?? new URL(serviceRequest.url).host;
+  const hostResult = validateHostHeader(serviceHost, c.env);
+  return hostResult.valid && hostResult.tenantId ? hostResult.tenantId : null;
+}
+
+function buildAuthenticationMethodsRouterCacheRequest(input: {
+  tenantId: string;
+  serviceRequest: Request;
+  revision: string;
+}): Request {
+  const serviceUrl = new URL(input.serviceRequest.url);
+  const url = new URL(
+    '/cache/authentication-methods/v3',
+    AUTHENTICATION_METHODS_ROUTER_CACHE_KEY_ORIGIN
+  );
+  url.searchParams.set('tenant', input.tenantId);
+  url.searchParams.set('host', normalizeRouterCacheKeyPart(serviceUrl.host, '__unknown_host__'));
+  url.searchParams.set('path', serviceUrl.pathname);
+  url.searchParams.set('query', serviceUrl.search);
+  url.searchParams.set('revision', input.revision);
+  return new Request(url.toString(), { method: 'GET' });
+}
+
+function hasExplicitCacheBypassHeader(request: Request): boolean {
+  const cacheControl = request.headers.get('Cache-Control')?.toLowerCase() ?? '';
+  const pragma = request.headers.get('Pragma')?.toLowerCase() ?? '';
+  return (
+    cacheControl.includes('no-cache') ||
+    cacheControl.includes('no-store') ||
+    pragma.includes('no-cache')
+  );
+}
+
+function isAuthenticationMethodsRouterCacheEligible(request: Request): boolean {
+  return (
+    request.method === 'GET' &&
+    !request.headers.has('Authorization') &&
+    !hasExplicitCacheBypassHeader(request)
+  );
+}
+
+function isCacheableAuthenticationMethodsResponse(response: Response): boolean {
+  const contentType = response.headers.get('Content-Type')?.toLowerCase() ?? '';
+  const cacheControl = response.headers.get('Cache-Control')?.toLowerCase() ?? '';
+  return (
+    response.status === 200 &&
+    contentType.includes('application/json') &&
+    !response.headers.has('Set-Cookie') &&
+    !cacheControl.includes('no-store') &&
+    !cacheControl.includes('private')
+  );
+}
+
+function stripRequestScopedCacheHeaders(headers: Headers): void {
+  headers.delete('Access-Control-Allow-Origin');
+  headers.delete('Access-Control-Allow-Credentials');
+  headers.delete('Access-Control-Expose-Headers');
+  headers.delete('Access-Control-Allow-Methods');
+  headers.delete('Access-Control-Allow-Headers');
+  headers.delete('Access-Control-Max-Age');
+  headers.delete('Vary');
+  headers.delete('Server-Timing');
+  headers.delete(DIAGNOSTIC_RESPONSE_SESSION_ID_HEADER);
+  headers.delete(DOWNSTREAM_AUTHENTICATION_METHODS_CACHE_STATUS_HEADER);
+}
+
+function withAuthenticationMethodsRouterCacheStatus(
+  response: Response,
+  status: AuthenticationMethodsRouterCacheStatus
+): Response {
+  const headers = new Headers(response.headers);
+  headers.set(AUTHENTICATION_METHODS_ROUTER_CACHE_STATUS_HEADER, status);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function finalizeAuthenticationMethodsRouterResponse(input: {
+  c: Context<{ Bindings: Env }>;
+  response: Response;
+  diagnosticSessionId: string | null;
+  totalStartedAt: number;
+  spans: Record<string, number>;
+  cacheStatus: AuthenticationMethodsRouterCacheStatus;
+  tenantId: string | null;
+  cacheEnabled: boolean;
+}): Response {
+  if (!input.diagnosticSessionId || !isDiagnosticTimingEnabled(input.c.env)) {
+    return input.response;
+  }
+
+  input.spans.router_total = roundDiagnosticDurationMs(performance.now() - input.totalStartedAt);
+  const headers = new Headers(input.response.headers);
+  appendServerTimingHeader(headers, input.spans);
+  headers.set('X-Authrim-Diagnostic-Session-Id', input.diagnosticSessionId);
+
+  log.info('Router authentication methods diagnostics', {
+    diagnosticSessionId: input.diagnosticSessionId,
+    method: input.c.req.method,
+    path: input.c.req.path,
+    status: input.response.status,
+    tenantId: input.tenantId ?? undefined,
+    cacheStatus: input.cacheStatus,
+    cacheEnabled: input.cacheEnabled,
+    timingMs: input.spans,
+  });
+
+  return new Response(input.response.body, {
+    status: input.response.status,
+    statusText: input.response.statusText,
+    headers,
+  });
+}
+
+async function putAuthenticationMethodsRouterCache(
+  c: Context<{ Bindings: Env }>,
+  cache: AuthenticationMethodsRouterCache,
+  request: Request,
+  response: Response,
+  cacheTTL: number
+): Promise<void> {
+  const headers = new Headers(response.headers);
+  headers.set('Cache-Control', `public, max-age=${cacheTTL}`);
+  headers.delete('Set-Cookie');
+  stripRequestScopedCacheHeaders(headers);
+  const cacheable = new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+
+  const put = cache.put(request, cacheable).catch((error) => {
+    log.warn('Failed to store authentication methods router cache', {
+      error: error instanceof Error ? error.message : 'unknown_error',
+    });
+  });
+  const executionCtx = getWaitUntilExecutionContext(c);
+  if (executionCtx) {
+    executionCtx.waitUntil(put);
+    return;
+  }
+  await put;
+}
+
+async function fetchAuthenticationMethodsWithRouterCache(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
+  const diagnosticSessionId = sanitizeDiagnosticSessionId(
+    c.req.header(DIAGNOSTIC_SESSION_ID_HEADER)
+  );
+  const totalStartedAt = performance.now();
+  const spans: Record<string, number> = {};
+
+  const prepareStartedAt = performance.now();
+  const serviceRequest = createServiceBindingRequest(c.req.raw);
+  spans.router_prepare_request = roundDiagnosticDurationMs(performance.now() - prepareStartedAt);
+
+  const cacheTTL = resolveAuthenticationMethodsRouterCacheTTL(c.env);
+  const cache = cacheTTL > 0 ? getDefaultRouterCache() : null;
+  const tenantId = resolveAuthenticationMethodsRouterTenantId(c, serviceRequest);
+  const cacheEnabled =
+    Boolean(cache) &&
+    Boolean(c.env.SETTINGS) &&
+    Boolean(tenantId) &&
+    cacheTTL > 0 &&
+    isAuthenticationMethodsRouterCacheEligible(c.req.raw);
+  let cacheStatus: AuthenticationMethodsRouterCacheStatus = 'bypass';
+  let cacheRequest: Request | null = null;
+
+  if (cacheEnabled && cache && tenantId) {
+    try {
+      const revisionStartedAt = performance.now();
+      const revision = await readAuthenticationMethodsCacheRevision(c.env, tenantId);
+      spans.router_revision_read = roundDiagnosticDurationMs(performance.now() - revisionStartedAt);
+
+      cacheRequest = buildAuthenticationMethodsRouterCacheRequest({
+        tenantId,
+        serviceRequest,
+        revision,
+      });
+
+      const cacheStartedAt = performance.now();
+      const cached = await cache.match(cacheRequest);
+      spans.router_cache_match = roundDiagnosticDurationMs(performance.now() - cacheStartedAt);
+
+      if (cached) {
+        cacheStatus = 'hit';
+        const response = withAuthenticationMethodsRouterCacheStatus(cached, cacheStatus);
+        return finalizeAuthenticationMethodsRouterResponse({
+          c,
+          response,
+          diagnosticSessionId,
+          totalStartedAt,
+          spans,
+          cacheStatus,
+          tenantId,
+          cacheEnabled: true,
+        });
+      }
+
+      cacheStatus = 'miss';
+    } catch (error) {
+      cacheRequest = null;
+      cacheStatus = 'bypass';
+      log.warn('Authentication methods router cache lookup failed', {
+        error: error instanceof Error ? error.message : 'unknown_error',
+      });
+    }
+  }
+
+  const fetchStartedAt = performance.now();
+  const upstreamResponse = await c.env.OP_MANAGEMENT.fetch(serviceRequest);
+  spans.router_service_fetch = roundDiagnosticDurationMs(performance.now() - fetchStartedAt);
+
+  if (cache && cacheRequest && cacheStatus === 'miss') {
+    if (isCacheableAuthenticationMethodsResponse(upstreamResponse)) {
+      const putStartedAt = performance.now();
+      await putAuthenticationMethodsRouterCache(
+        c,
+        cache,
+        cacheRequest,
+        upstreamResponse.clone(),
+        cacheTTL
+      );
+      spans.router_cache_put = roundDiagnosticDurationMs(performance.now() - putStartedAt);
+    } else {
+      cacheStatus = 'bypass';
+    }
+  }
+
+  const response = withAuthenticationMethodsRouterCacheStatus(upstreamResponse, cacheStatus);
+  return finalizeAuthenticationMethodsRouterResponse({
+    c,
+    response,
+    diagnosticSessionId,
+    totalStartedAt,
+    spans,
+    cacheStatus,
+    tenantId,
+    cacheEnabled,
+  });
 }
 
 async function requestHasFormBearerToken(request: Request): Promise<boolean> {
@@ -472,10 +900,13 @@ app.use('*', async (c, next) => {
   if (
     path === '/authorize' ||
     path.startsWith('/authorize/') ||
+    path === '/oauth/admin-agent/authorize' ||
     path.startsWith('/flow/') ||
     path === '/session/check' ||
     path === '/logout' ||
+    path.endsWith('/frontchannel-logout') ||
     path === '/logged-out' ||
+    path === '/logout-complete' ||
     path === '/logout-error' ||
     path.startsWith('/admin-init-setup') ||
     path === '/api/ciba/test' ||
@@ -503,7 +934,7 @@ app.use('*', async (c, next) => {
     return next();
   }
 
-  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+  if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
     const accountPageSettings = await resolveAccountPageSettings(c);
     if (
       accountPageSettings.enabled &&
@@ -547,6 +978,8 @@ app.use('*', async (c, next) => {
  * - Supports wildcards (e.g., https://*.example.com)
  */
 app.use('*', async (c, next) => {
+  // MCP Streamable HTTP owns its stricter Origin/CORS contract in ar-agent-access.
+  if (c.req.path === '/mcp') return next();
   let allowedOriginsStr: string | null = null;
 
   // 1. Try to get from KV (tenant-aware settings)
@@ -597,7 +1030,7 @@ app.use('*', async (c, next) => {
     return null;
   };
 
-  return cors({
+  const result = await cors({
     origin: validateOrigin,
     allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: [
@@ -621,6 +1054,14 @@ app.use('*', async (c, next) => {
     maxAge: 86400,
     credentials: allowCredentials,
   })(c, next);
+
+  // Backend Workers may return their own credentialed CORS header. When this
+  // router has no explicit origin allowlist, strip it after downstream handling
+  // so reflecting a public Origin can never become credentialed CORS.
+  if (!allowCredentials) {
+    c.res.headers.delete('Access-Control-Allow-Credentials');
+  }
+  return result;
 });
 
 app.use('*', async (c, next) => {
@@ -642,6 +1083,11 @@ app.use('*', async (c, next) => {
   return next();
 });
 
+function isExternalProviderProtocolPost(method: string, pathname: string): boolean {
+  if (method !== 'POST') return false;
+  return /^\/(?:api|auth)\/external\/[^/]+\/(?:callback|backchannel-logout)$/.test(pathname);
+}
+
 // CSRF protection (defense-in-depth at the router level)
 // Validates Origin/Referer on state-changing requests before forwarding to workers.
 // Each worker also has its own CSRF protection for additional security.
@@ -654,6 +1100,10 @@ app.use(
       '/authorize', // OAuth authorization endpoint (form_post from login UI or RP redirects)
       '/token', // OAuth token endpoint (client_secret auth)
       '/par', // Pushed Authorization Request (client auth)
+      '/oauth/admin-agent/par', // Dedicated Agent PAR (client auth)
+      '/oauth/admin-agent/token', // Dedicated Agent token endpoint (client auth)
+      '/oauth/admin-agent/delegation', // Mode B machine delegation (DPoP-bound machine auth)
+      '/mcp', // MCP Streamable HTTP (Bearer/DPoP, Origin validated by the owner Worker)
       '/introspect', // Token introspection (client auth)
       '/revoke', // Token revocation (client auth)
       '/register', // Dynamic Client Registration (initial access token)
@@ -663,6 +1113,9 @@ app.use(
       '/device_authorization', // Device flow (client auth)
       '/device', // Device verification page (form submission, CSRF handled by device code)
       '/bc-authorize', // CIBA (client auth)
+      // Short-lived capability-authenticated OIDF automation endpoint. Keep the regular
+      // browser/user CIBA approval routes behind CSRF validation.
+      '/api/ciba/conformance-action',
       '/api/auth/discovery', // Public discovery + discovery-grant endpoints used by Login UI server-side fetches
       '/auth/step-up', // Step-up orchestration (Bearer/receipt/idempotency-key based)
       '/me', // Self-service API (Bearer token auth, not cookie CSRF)
@@ -677,6 +1130,17 @@ app.use(
       '/.well-known', // Discovery endpoints (read-only, GET only)
       '/jwks.json', // JWKS endpoint (read-only)
     ],
+    // OIDC response_mode=form_post originates at the external OP, not at an
+    // Authrim UI origin. The callback validates a one-time, browser-bound state
+    // value. Back-channel logout independently validates its signed logout token.
+    // Keep link, unlink, handoff, and Admin mutations behind normal CSRF checks.
+    excludeRequest: (request) => {
+      const pathname = new URL(request.url).pathname;
+      return (
+        (request.method === 'POST' && pathname === '/oauth/admin-agent/register') ||
+        isExternalProviderProtocolPost(request.method, pathname)
+      );
+    },
   })
 );
 
@@ -687,6 +1151,12 @@ app.get('/api/health', (c) => {
     service: 'authrim-router',
     timestamp: new Date().toISOString(),
   });
+});
+
+// Initial setup acceleration is authenticated and state-gated by Control. Router only preserves
+// the proof-bearing request across the private service binding; Control remains the authority.
+app.post('/api/internal/control/bootstrap/advance', async (c) => {
+  return c.env.OP_CONTROL.fetch(createServiceBindingRequest(c.req.raw));
 });
 
 // Kubernetes health probes (router has no DB/KV, just routes to other services)
@@ -744,6 +1214,21 @@ app.get('/.well-known/*', async (c) => {
   return c.env.OP_DISCOVERY.fetch(request);
 });
 
+/** MCP Streamable HTTP endpoint. Its owner Worker enforces Origin, version, and token admission. */
+app.all('/mcp', async (c) => {
+  if (!c.env.OP_AGENT_ACCESS) return notFoundResponse();
+  const request = createServiceBindingRequest(c.req.raw);
+  const response = await c.env.OP_AGENT_ACCESS.fetch(request);
+  // Service Binding responses can carry an immutable header guard. Hono's outer
+  // security middleware adds response headers after the route returns, so keep
+  // the body stream and copy the response metadata onto a mutable Response.
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: new Headers(response.headers),
+  });
+});
+
 /**
  * Authorization endpoints - Route to OP_AUTH worker
  * - /authorize (GET/POST)
@@ -783,11 +1268,47 @@ app.get('/par', async (c) => {
   return c.env.OP_AUTH.fetch(request);
 });
 
+// Dedicated Admin Agent OAuth authorization and PAR endpoints.
+app.get('/oauth/admin-agent/authorize', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.post('/oauth/admin-agent/authorize', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.get('/oauth/admin-agent/login-handoff/consume', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.post('/oauth/admin-agent/par', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.post('/oauth/admin-agent/register', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_MANAGEMENT.fetch(request);
+});
+
 /**
  * Token endpoint - Route to OP_TOKEN worker
  * - /token (POST)
  */
 app.post('/token', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_TOKEN.fetch(request);
+});
+
+app.post('/oauth/admin-agent/token', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_TOKEN.fetch(request);
+});
+
+app.post('/oauth/admin-agent/delegation', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_TOKEN.fetch(request);
 });
@@ -802,6 +1323,11 @@ app.get('/userinfo', async (c) => {
 });
 
 app.post('/userinfo', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_USERINFO.fetch(request);
+});
+
+app.get('/api/protected/fapi-resource', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_USERINFO.fetch(request);
 });
@@ -829,9 +1355,23 @@ app.all('/api/v1/auth/direct/*', async (c) => {
   return c.env.OP_AUTH.fetch(request);
 });
 
-app.all('/api/v1/login/interactions/*', async (c) => {
+app.post('/api/v1/auth/account-provisioning/status', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
+});
+
+app.get('/api/v1/invitations/validate', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.post('/api/v1/invitations/use', async (c) => {
+  const request = createServiceBindingRequest(c.req.raw);
+  return c.env.OP_AUTH.fetch(request);
+});
+
+app.all('/api/v1/login/interactions/*', async (c) => {
+  return fetchServiceBindingWithDiagnostics(c, 'OP_AUTH', c.env.OP_AUTH);
 });
 
 app.get('/api/v1/registration-fields', async (c) => {
@@ -843,7 +1383,7 @@ app.get('/api/v1/registration-fields', async (c) => {
  * Diagnostic Logs API v1 - Route to OP_MANAGEMENT worker
  * - /api/v1/diagnostic-logs/ingest
  */
-app.all('/api/v1/diagnostic-logs/*', async (c) => {
+app.post('/api/v1/diagnostic-logs/ingest', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_MANAGEMENT.fetch(request);
 });
@@ -854,8 +1394,7 @@ app.all('/api/v1/diagnostic-logs/*', async (c) => {
  * - /api/auth/authentication-methods - Public endpoint for available authentication methods + UI config
  */
 app.get('/api/auth/authentication-methods', async (c) => {
-  const request = createServiceBindingRequest(c.req.raw);
-  return c.env.OP_MANAGEMENT.fetch(request);
+  return fetchAuthenticationMethodsWithRouterCache(c);
 });
 app.all('/api/auth/discovery', async (c) => {
   const request = createServiceBindingRequest(c.req.raw);
@@ -932,6 +1471,9 @@ app.post('/logout/backchannel', async (c) => {
 });
 
 app.get('/logged-out', async (c) => {
+  if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
+    return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
+  }
   const request = createServiceBindingRequest(c.req.raw);
   return c.env.OP_AUTH.fetch(request);
 });
@@ -1051,6 +1593,7 @@ app.post('/revoke/batch', async (c) => {
  *
  * /api/admin/auth/* - Route to OP_AUTH worker (admin passkey login endpoints)
  * /api/admin/setup-token/* - Route to OP_AUTH worker (admin setup token endpoints)
+ * /api/admin/invitations/* - Route to OP_AUTH worker (admin invitation enrollment endpoints)
  * /api/admin/* - Route to OP_MANAGEMENT worker (admin management endpoints)
  *
  * Note: Using conditional routing instead of separate route registrations
@@ -1071,12 +1614,17 @@ app.all('/api/admin/*', async (c) => {
     return c.env.OP_AUTH.fetch(request);
   }
 
+  if (path.startsWith('/api/admin/invitations/')) {
+    return c.env.OP_AUTH.fetch(request);
+  }
+
   // Route SAML admin endpoints to OP_SAML.
   if (
     matchesPathGroup(path, '/api/admin/saml-providers') ||
     matchesPathGroup(path, '/api/admin/saml-settings') ||
     matchesPathGroup(path, '/api/admin/saml-attribute-presets') ||
-    matchesPathGroup(path, '/api/admin/saml-metadata')
+    matchesPathGroup(path, '/api/admin/saml-metadata') ||
+    matchesPathGroup(path, '/api/admin/saml-federation-sources')
   ) {
     if (!c.env.OP_SAML) {
       return notFoundResponse();
@@ -1085,7 +1633,23 @@ app.all('/api/admin/*', async (c) => {
   }
 
   // Route all other admin endpoints to OP_MANAGEMENT
-  return c.env.OP_MANAGEMENT.fetch(request);
+  try {
+    return await c.env.OP_MANAGEMENT.fetch(request);
+  } catch {
+    log.warn('Admin Management service binding is temporarily unavailable', {
+      path: c.req.path,
+      method: c.req.method,
+    });
+    c.header('Cache-Control', 'no-store');
+    c.header('Retry-After', '5');
+    return c.json(
+      {
+        error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
+        error_description: 'Admin Management is temporarily unavailable during rollout',
+      },
+      503
+    );
+  }
 });
 
 app.all('/api/approval-artifacts/*', async (c) => {
@@ -1230,15 +1794,6 @@ app.all('/external-idp/*', async (c) => {
 });
 
 /**
- * Internal endpoints - Route to OP_AUTH worker
- * - /_internal/warmup - Pre-heat Durable Objects (admin only)
- */
-app.all('/_internal/*', async (c) => {
-  const request = createServiceBindingRequest(c.req.raw);
-  return c.env.OP_AUTH.fetch(request);
-});
-
-/**
  * Initial Admin Setup endpoints - Route to OP_AUTH worker
  * - /admin-init-setup - Initial admin setup page (one-time use, expires in 1 hour)
  * - /api/admin-init-setup/* - Setup API endpoints
@@ -1260,7 +1815,7 @@ app.all('/api/admin-init-setup/*', async (c) => {
  * Admin UI Proxy (ENABLE_ADMIN_UI_PROXY=true):
  * - /admin/* - Admin dashboard pages
  *
- * Login UI Proxy (ENABLE_LOGIN_UI_PROXY=true):
+ * Login UI path proxy (ENABLE_LOGIN_UI_PATH_PROXY=true):
  * - /discover, /invite, /login, /signup, /consent, /device, /ciba, /reauth, /verify-email-code, /error
  */
 
@@ -1308,7 +1863,7 @@ app.get('/admin', async (c) => {
 for (const uiPath of LOGIN_UI_PATHS) {
   // Handle exact path
   app.all(uiPath, async (c) => {
-    if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+    if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
       return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
     }
     return c.json(
@@ -1323,7 +1878,7 @@ for (const uiPath of LOGIN_UI_PATHS) {
 
   // Handle paths with trailing content (e.g., /login/*, /signup/*)
   app.all(`${uiPath}/*`, async (c) => {
-    if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+    if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
       return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
     }
     return c.json(
@@ -1346,7 +1901,7 @@ app.get('/geo/*', async (c) => {
 
 // Login UI SvelteKit static assets use a dedicated namespace to avoid /_app collisions.
 app.all(`${LOGIN_UI_ASSET_PREFIX}/*`, async (c) => {
-  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+  if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
     return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, c.req.path, c.env.LOGIN_UI_WORKER);
   }
   return c.json({ error: 'not_found', message: 'Login UI proxy is not enabled' }, 404);
@@ -1424,7 +1979,7 @@ app.all('*', async (c, next) => {
     return next();
   }
 
-  if (c.env.ENABLE_LOGIN_UI_PROXY === 'true' && c.env.AR_LOGIN_UI_URL) {
+  if (isLoginUiPathProxyEnabled(c.env) && c.env.AR_LOGIN_UI_URL) {
     return proxyToUiWorker(c.req.raw, c.env.AR_LOGIN_UI_URL, internalPath, c.env.LOGIN_UI_WORKER);
   }
   return c.json({ error: 'not_found', message: 'Login UI proxy is not enabled' }, 404);
@@ -1468,5 +2023,32 @@ app.onError((err, c) => {
   );
 });
 
-// Export for Cloudflare Workers
-export default app;
+/** Private fetch entrypoint bound only by the Login UI Worker. */
+export class LoginUiBackendEntrypoint extends WorkerEntrypoint<Env> {
+  fetch(request: Request): Promise<Response> {
+    const trustedRequest = validateLoginUiServiceBindingRequest(request);
+    if (!trustedRequest) {
+      return Promise.resolve(
+        Response.json(
+          {
+            error: 'access_denied',
+            error_description: 'Trusted Login UI service-binding request required.',
+          },
+          { status: 403 }
+        )
+      );
+    }
+    return Promise.resolve(app.fetch(trustedRequest, this.env, this.ctx));
+  }
+}
+
+// Public HTTP entrypoint: internal Login UI trust headers are never accepted from the network.
+export default {
+  fetch(
+    request: Request,
+    env: unknown,
+    executionCtx?: ExecutionContext
+  ): Response | Promise<Response> {
+    return app.fetch(sanitizePublicRouterRequest(request), env as Env, executionCtx);
+  },
+};

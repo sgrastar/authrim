@@ -15,10 +15,16 @@ import {
   readResponseTextWithLimit,
   reactivateDirectoryConnectorInstance,
   safeFetch,
+  getLogger,
+  bumpAuthenticationMethodsCacheRevision,
+  directoryIdentityLookupSubject,
+  ensureDatabaseAdapter,
+  resolveAccountDataContext,
   type DirectoryConnectorInstanceRow,
   type DirectoryConnectorStatusEpisodeRow,
 } from '@authrim/ar-lib-core';
 import { requireTenantResourceAccess } from '../admin-tenant-access';
+import { publishAccountExternalSubjectAddition } from '../account-identifier-addition';
 
 const CATEGORY = 'directory-connectors';
 const CONNECTOR_KEY_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -233,6 +239,24 @@ function managedSecretRef(connectorId: string): string {
 
 function storage(env: Env): KVNamespace | null {
   return env.SETTINGS ?? null;
+}
+
+async function invalidateAuthenticationMethodsCacheForDirectoryConnectors(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  reason: string
+): Promise<void> {
+  try {
+    await bumpAuthenticationMethodsCacheRevision(c.env, tenantId);
+  } catch (error) {
+    getLogger(c)
+      .module('DIRECTORY-CONNECTORS')
+      .warn('Failed to bump authentication methods cache revision', {
+        tenantId,
+        reason,
+        error: error instanceof Error ? error.message : 'unknown_error',
+      });
+  }
 }
 
 function coreAdapter(c: Context<{ Bindings: Env }>, tenantId: string): DatabaseAdapter {
@@ -594,6 +618,11 @@ export async function updateDirectoryConnectorsHandler(c: Context<{ Bindings: En
 
   try {
     await writeConfig(c.env, tenantId, config);
+    await invalidateAuthenticationMethodsCacheForDirectoryConnectors(
+      c,
+      tenantId,
+      'directory-connectors:update'
+    );
   } catch {
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -768,23 +797,32 @@ export async function updateDirectoryPendingUserHandler(c: Context<{ Bindings: E
   if (!userId) {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
   }
-  const user = await adapter.queryOne<{ legacy_user_id: string }>(
-    `SELECT legacy_user_id
-       FROM identity_accounts
-      WHERE tenant_id = ? AND legacy_user_id = ? AND lifecycle_state = 'active'
-      LIMIT 1`,
-    [tenantId, userId]
-  );
-  if (!user) {
+  let account;
+  try {
+    account = await resolveAccountDataContext(c.env, {
+      tenantId,
+      accountId: `account:${userId}`,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_data_route_not_found') {
+      return c.json({ error: 'directory_pending_link_user_not_found' }, 404);
+    }
+    throw error;
+  }
+  if (account.legacyUserId !== userId) {
     return c.json({ error: 'directory_pending_link_user_not_found' }, 404);
   }
-  const existingLink = await adapter.queryOne<{ user_id: string }>(
+  const accountAdapter = ensureDatabaseAdapter(
+    account.coreDb,
+    'directory-pending-link-account-core'
+  );
+  const existingLink = await accountAdapter.queryOne<{ user_id: string }>(
     `SELECT user_id
        FROM directory_identity_links
       WHERE tenant_id = ? AND connector_id = ? AND directory_subject = ?`,
     [tenantId, pending.connector_id, pending.directory_subject]
   );
-  if (existingLink) {
+  if (existingLink && existingLink.user_id !== userId) {
     return c.json(
       {
         error: 'directory_identity_link_conflict',
@@ -795,8 +833,8 @@ export async function updateDirectoryPendingUserHandler(c: Context<{ Bindings: E
   }
 
   try {
-    await adapter.transaction(async (tx) => {
-      const inserted = await tx.execute(
+    if (!existingLink) {
+      const inserted = await accountAdapter.execute(
         `INSERT INTO directory_identity_links (
        id, tenant_id, connector_id, directory_subject, user_id,
        latest_facts_json, created_at, updated_at, last_login_at
@@ -816,8 +854,30 @@ export async function updateDirectoryPendingUserHandler(c: Context<{ Bindings: E
       if (inserted.rowsAffected !== 1) {
         throw new Error('directory_identity_link_conflict');
       }
-      const updated = await tx.execute(
-        `UPDATE directory_jit_pending_users
+    }
+
+    if (!c.env.ACCOUNT_DIRECTORY) throw new Error('directory_account_directory_unavailable');
+    await publishAccountExternalSubjectAddition(
+      c.env,
+      {
+        operationId: `directory-link-route-${pendingId}`,
+        idempotencyKey: `directory-link-route:${pendingId}`,
+        tenantId,
+        accountId: account.accountId,
+        externalSubject: directoryIdentityLookupSubject({
+          connectorId: pending.connector_id,
+          directorySubject: pending.directory_subject,
+        }),
+        routeProjection: account.membership.routeProjection,
+      },
+      {
+        tenantCoreUsers: accountAdapter,
+        directory: c.env.ACCOUNT_DIRECTORY,
+      }
+    );
+
+    const updated = await adapter.execute(
+      `UPDATE directory_jit_pending_users
           SET status = 'linked',
               linked_user_id = ?,
               updated_at = ?,
@@ -825,12 +885,11 @@ export async function updateDirectoryPendingUserHandler(c: Context<{ Bindings: E
               decided_by = ?,
               decision_reason = ?
         WHERE tenant_id = ? AND id = ? AND status = 'pending'`,
-        [userId, now, now, actor, reason, tenantId, pendingId]
-      );
-      if (updated.rowsAffected !== 1) {
-        throw new Error('directory_pending_user_not_pending');
-      }
-    });
+      [userId, now, now, actor, reason, tenantId, pendingId]
+    );
+    if (updated.rowsAffected !== 1) {
+      throw new Error('directory_pending_user_not_pending');
+    }
   } catch (error) {
     if (error instanceof Error && error.message === 'directory_identity_link_conflict') {
       return c.json(

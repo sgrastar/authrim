@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import {
   createIDToken,
   createAccessToken,
+  createRefreshToken,
   verifyToken,
   parseToken,
   importPrivateKeyFromPEM,
@@ -10,7 +11,7 @@ import {
   type AccessTokenClaims,
 } from '../jwt';
 import { generateKeySet } from '../keys';
-import type { KeyLike, JWK } from 'jose';
+import { decodeProtectedHeader, generateKeyPair, jwtVerify, type KeyLike, type JWK } from 'jose';
 
 describe('JWT Utilities', () => {
   let privateKey: KeyLike;
@@ -33,6 +34,25 @@ describe('JWT Utilities', () => {
   });
 
   describe('createIDToken', () => {
+    it('signs with a client-selected ES256 key', async () => {
+      const { privateKey: ecPrivateKey, publicKey: ecPublicKey } = await generateKeyPair('ES256');
+      const token = await createIDToken(
+        { iss: issuer, sub: 'user123', aud: clientId },
+        ecPrivateKey,
+        'oidc-es256-test',
+        3600,
+        'ES256'
+      );
+
+      expect(decodeProtectedHeader(token)).toMatchObject({
+        alg: 'ES256',
+        kid: 'oidc-es256-test',
+      });
+      await expect(
+        jwtVerify(token, ecPublicKey, { issuer, audience: clientId, algorithms: ['ES256'] })
+      ).resolves.toBeDefined();
+    });
+
     it('should create valid ID token', async () => {
       const claims: Omit<IDTokenClaims, 'iat' | 'exp'> = {
         iss: issuer,
@@ -130,6 +150,44 @@ describe('JWT Utilities', () => {
 
       expect(parsed.scope).toBe('openid profile email');
       expect(parsed.jti).toBe(result.jti);
+      expect(parsed.token_use).toBe('access');
+    });
+
+    it('should preserve a narrower internal token-use discriminator', async () => {
+      const result = await createAccessToken(
+        {
+          iss: issuer,
+          sub: 'user123',
+          aud: clientId,
+          scope: 'elevation:use',
+          client_id: clientId,
+          token_use: 'elevation_grant_subject',
+        },
+        privateKey,
+        kid
+      );
+
+      expect(parseToken(result.token).token_use).toBe('elevation_grant_subject');
+    });
+  });
+
+  describe('createRefreshToken', () => {
+    it('should include the refresh token-use discriminator', async () => {
+      const result = await createRefreshToken(
+        {
+          iss: issuer,
+          sub: 'user123',
+          aud: clientId,
+          scope: 'openid offline_access',
+          client_id: clientId,
+        },
+        privateKey,
+        kid
+      );
+
+      const parsed = parseToken(result.token);
+
+      expect(parsed.token_use).toBe('refresh');
     });
   });
 

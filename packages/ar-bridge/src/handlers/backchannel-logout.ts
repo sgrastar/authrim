@@ -10,17 +10,20 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { Env, Session } from '@authrim/ar-lib-core';
 import {
-  type DatabaseAdapter,
   getSessionStoreBySessionId,
   isShardedSessionId,
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
   getTenantIdFromContext,
-  resolveAuthCorePersistenceAdapterFromEnv,
+  listExternalProviderSessions,
   safeFetchJson,
+  createDiagnosticLoggerFromContext,
+  getDiagnosticSessionId,
+  DIAGNOSTIC_FLOW_ID_HEADER,
+  resolveAccountDataContextByIdentifier,
 } from '@authrim/ar-lib-core';
 import * as jose from 'jose';
 import { getProviderByIdOrSlug } from '../services/provider-store';
@@ -65,6 +68,11 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
   const providerIdOrSlug = c.req.param('provider');
   if (!providerIdOrSlug) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
   const tenantId = getTenantIdFromContext(c);
+  const flowId = crypto.randomUUID();
+  c.header(DIAGNOSTIC_FLOW_ID_HEADER, flowId);
+  c.header('Cache-Control', 'no-store');
+  let diagnosticLogger: Awaited<ReturnType<typeof createDiagnosticLoggerFromContext>> = null;
+  let logoutTokenValidated = false;
 
   try {
     // 1. Get provider configuration
@@ -74,9 +82,27 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    try {
+      diagnosticLogger = await createDiagnosticLoggerFromContext(c, {
+        tenantId,
+        clientId: provider.clientId,
+      });
+    } catch (error) {
+      log.warn('Failed to initialize backchannel logout diagnostic logging', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     // 2. Parse form body to get logout_token
     const contentType = c.req.header('Content-Type');
     if (!contentType?.includes('application/x-www-form-urlencoded')) {
+      await recordBackchannelRejection(
+        log,
+        diagnosticLogger,
+        getDiagnosticSessionId(c),
+        flowId,
+        'invalid_content_type'
+      );
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
@@ -84,6 +110,13 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
     const logoutToken = formData['logout_token'];
 
     if (!logoutToken || typeof logoutToken !== 'string') {
+      await recordBackchannelRejection(
+        log,
+        diagnosticLogger,
+        getDiagnosticSessionId(c),
+        flowId,
+        'missing_logout_token'
+      );
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'logout_token' },
       });
@@ -91,17 +124,55 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
 
     // 3. Validate logout token
     const claims = await validateLogoutToken(c.env, provider, logoutToken);
+    logoutTokenValidated = true;
+    if (diagnosticLogger) {
+      await recordDiagnostic(log, 'logout token validation success', () =>
+        diagnosticLogger!.logTokenValidation({
+          diagnosticSessionId: getDiagnosticSessionId(c),
+          flowId,
+          step: 'logout-token-validation',
+          tokenType: 'logout_token',
+          token: logoutToken,
+          result: 'pass',
+          details: {
+            issuer_valid: true,
+            audience_valid: true,
+            signature_valid: true,
+            has_sub: Boolean(claims.sub),
+            has_sid: Boolean(claims.sid),
+            has_jti: Boolean(claims.jti),
+            nonce_absent: claims.nonce === undefined,
+          },
+        })
+      );
+    }
 
     // 4. Find and invalidate sessions/tokens for the subject
     const result = await invalidateUserSessions(c.env, tenantId, provider.id, claims, log);
 
     log.info('Backchannel logout processed', {
       provider: provider.name,
-      sub: claims.sub,
-      sid: claims.sid,
+      hasSub: Boolean(claims.sub),
+      hasSid: Boolean(claims.sid),
       identitiesAffected: result.identitiesAffected,
       sessionsTerminated: result.sessionsTerminated,
     });
+
+    if (diagnosticLogger) {
+      await recordDiagnostic(log, 'backchannel logout success decision', () =>
+        diagnosticLogger!.logAuthDecision({
+          diagnosticSessionId: getDiagnosticSessionId(c),
+          flowId,
+          decision: 'allow',
+          reason: 'backchannel_logout_processed',
+          flow: 'backchannel_logout',
+          context: {
+            identities_affected: result.identitiesAffected,
+            sessions_terminated: result.sessionsTerminated,
+          },
+        })
+      );
+    }
 
     // 5. Return success (spec requires 200 OK for success)
     // Cache-Control: no-store per spec
@@ -109,15 +180,137 @@ export async function handleBackchannelLogout(c: Context<{ Bindings: Env }>): Pr
       status: 200,
       headers: {
         'Cache-Control': 'no-store',
+        [DIAGNOSTIC_FLOW_ID_HEADER]: flowId,
       },
     });
   } catch (error) {
-    log.error('Backchannel logout error', {}, error as Error);
+    log.error('Backchannel logout error', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+      stage: logoutTokenValidated ? 'session_invalidation' : 'token_validation',
+    });
 
-    // Return 400 for token validation errors
+    if (diagnosticLogger) {
+      const validationError = logoutTokenValidated
+        ? 'session_invalidation_failed'
+        : classifyBackchannelLogoutError(error);
+      if (!logoutTokenValidated) {
+        await recordDiagnostic(log, 'logout token validation rejection', () =>
+          diagnosticLogger!.logTokenValidation({
+            diagnosticSessionId: getDiagnosticSessionId(c),
+            flowId,
+            step: 'logout-token-validation',
+            tokenType: 'logout_token',
+            result: 'fail',
+            errorMessage: validationError,
+            details: { validation_error: validationError },
+          })
+        );
+      }
+      await recordDiagnostic(log, 'backchannel logout rejection decision', () =>
+        diagnosticLogger!.logAuthDecision({
+          diagnosticSessionId: getDiagnosticSessionId(c),
+          flowId,
+          decision: 'deny',
+          reason: 'backchannel_logout_rejected',
+          flow: 'backchannel_logout',
+          context: { validation_error: validationError },
+        })
+      );
+    }
+
+    // Return 400 for token validation errors and 500 for post-validation
+    // operational failures. Do not mislabel storage failures as JWT failures.
     // SECURITY: Don't leak internal error details to prevent information disclosure
-    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    return createErrorResponse(
+      c,
+      logoutTokenValidated ? AR_ERROR_CODES.INTERNAL_ERROR : AR_ERROR_CODES.VALIDATION_INVALID_VALUE
+    );
+  } finally {
+    try {
+      await diagnosticLogger?.cleanup();
+    } catch (error) {
+      log.warn('Failed to flush backchannel logout diagnostic logs', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
+}
+
+async function recordDiagnostic(
+  log: ReturnType<ReturnType<typeof getLogger>['module']>,
+  operation: string,
+  write: () => Promise<void>
+): Promise<void> {
+  try {
+    await write();
+  } catch (error) {
+    log.warn('Failed to record backchannel logout diagnostic event', {
+      operation,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function recordBackchannelRejection(
+  log: ReturnType<ReturnType<typeof getLogger>['module']>,
+  diagnosticLogger: Awaited<ReturnType<typeof createDiagnosticLoggerFromContext>>,
+  diagnosticSessionId: string | undefined,
+  flowId: string,
+  validationError: string
+): Promise<void> {
+  if (!diagnosticLogger) return;
+  await recordDiagnostic(log, 'logout token validation rejection', () =>
+    diagnosticLogger.logTokenValidation({
+      diagnosticSessionId,
+      flowId,
+      step: 'logout-token-validation',
+      tokenType: 'logout_token',
+      result: 'fail',
+      errorMessage: validationError,
+      details: { validation_error: validationError },
+    })
+  );
+  await recordDiagnostic(log, 'backchannel logout rejection decision', () =>
+    diagnosticLogger.logAuthDecision({
+      diagnosticSessionId,
+      flowId,
+      decision: 'deny',
+      reason: 'backchannel_logout_rejected',
+      flow: 'backchannel_logout',
+      context: { validation_error: validationError },
+    })
+  );
+}
+
+export function classifyBackchannelLogoutError(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  const knownErrors = new Map<string, string>([
+    ['Failed to fetch provider JWKS', 'jwks_fetch_failed'],
+    ['Logout token missing backchannel-logout event', 'missing_logout_event'],
+    ['Logout token must contain either sub or sid claim', 'missing_sub_or_sid'],
+    ['Logout token MUST NOT contain nonce claim', 'nonce_present'],
+    ['Logout token missing jti claim', 'missing_jti'],
+    ['Logout token is too old', 'iat_too_old'],
+    ['Logout token replay detected', 'replay_detected'],
+  ]);
+  const known = knownErrors.get(message);
+  if (known) return known;
+
+  const joseError = error as { code?: unknown; claim?: unknown };
+  const code = typeof joseError?.code === 'string' ? joseError.code : '';
+  const claim = typeof joseError?.claim === 'string' ? joseError.claim : '';
+  if (code === 'ERR_JOSE_ALG_NOT_ALLOWED') return 'unexpected_signing_algorithm';
+  if (code === 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED') return 'invalid_signature';
+  if (code === 'ERR_JWKS_NO_MATCHING_KEY') return 'signing_key_not_found';
+  if (code === 'ERR_JWS_INVALID' || code === 'ERR_JWT_INVALID') return 'malformed_logout_token';
+  if (code === 'ERR_JWT_CLAIM_VALIDATION_FAILED' || code === 'ERR_JWT_EXPIRED') {
+    if (claim === 'iss') return 'issuer_mismatch';
+    if (claim === 'aud') return 'audience_mismatch';
+    if (claim === 'iat') return 'invalid_iat';
+    if (claim === 'exp') return 'expired_token';
+    return 'claim_validation_failed';
+  }
+  return 'signature_or_claim_validation_failed';
 }
 
 /**
@@ -140,11 +333,21 @@ async function validateLogoutToken(
     throw new Error('Failed to fetch provider JWKS');
   }
   const JWKS = jose.createLocalJWKSet(jwks);
+  const providerQuirks = provider.providerQuirks as Record<string, unknown> | undefined;
+  const configuredIdTokenAlg = providerQuirks?.idTokenSignedResponseAlg;
+  const expectedSigningAlg =
+    typeof configuredIdTokenAlg === 'string' && configuredIdTokenAlg.length > 0
+      ? configuredIdTokenAlg
+      : 'RS256';
 
   // Verify signature and decode
   const { payload } = await jose.jwtVerify(logoutToken, JWKS, {
     issuer: provider.issuer,
     audience: provider.clientId,
+    // Back-Channel Logout uses the client's registered ID Token signing
+    // algorithm. Pinning it prevents a valid key of another algorithm in the
+    // OP JWKS from being accepted for a Logout Token.
+    algorithms: [expectedSigningAlg],
   });
 
   const claims = payload as unknown as LogoutTokenClaims;
@@ -210,74 +413,94 @@ async function invalidateUserSessions(
 
   // Find linked identities for this provider and subject
   if (claims.sub) {
-    const identities = await findLinkedIdentitiesByProviderSub(
-      env,
-      tenantId,
-      providerId,
-      claims.sub
-    );
+    let accountContext:
+      | Awaited<ReturnType<typeof resolveAccountDataContextByIdentifier>>
+      | undefined;
+    try {
+      accountContext = await resolveAccountDataContextByIdentifier(env, {
+        tenantId,
+        indexKind: 'external_subject',
+        identifier: { issuer: providerId, subject: claims.sub },
+      });
+    } catch (error) {
+      if (!(error instanceof Error && error.message === 'account_data_route_not_found')) {
+        throw error;
+      }
+    }
+    const identities = accountContext
+      ? await findLinkedIdentitiesByProviderSub(
+          env,
+          tenantId,
+          providerId,
+          claims.sub,
+          accountContext.piiDb
+        )
+      : [];
 
     for (const identity of identities) {
       identitiesAffected++;
 
       // Mark the linked identity as requiring re-authentication
       // We do this by clearing the tokens
-      await updateLinkedIdentity(env, identity.tenantId, identity.id, {
-        tokens: {
-          access_token: '', // Clear tokens
-          token_type: 'Bearer',
-        },
-      });
-    }
-
-    // Terminate sessions that were created via this provider and subject
-    // Query D1 for sessions with matching external_provider_id and external_provider_sub
-    const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-      env,
-      `bridge-backchannel-logout:${tenantId}`,
-      { tenantId }
-    );
-    const sessions = await coreAdapter.query<{ id: string }>(
-      `SELECT id FROM sessions
-       WHERE external_provider_id = ?
-         AND external_provider_sub = ?
-         AND tenant_id = ?
-         AND expires_at > ?`,
-      [providerId, claims.sub, tenantId, Date.now()]
-    );
-
-    for (const session of sessions) {
-      // Terminate session in Durable Object
-      if (isShardedSessionId(session.id)) {
-        try {
-          const { stub: sessionStore } = getSessionStoreBySessionId(env, session.id, tenantId);
-          await sessionStore.fetch(
-            new Request(`https://session-store/session/${session.id}`, {
-              method: 'DELETE',
-            })
-          );
-          sessionsTerminated++;
-        } catch (error) {
-          log.warn('Failed to terminate session', { sessionId: session.id });
-        }
+      const updates = {
+        clearTokens: true,
+      };
+      if (accountContext) {
+        await updateLinkedIdentity(
+          env,
+          identity.tenantId,
+          identity.id,
+          updates,
+          accountContext.piiDb
+        );
+      } else {
+        throw new Error('external_idp_logout_account_route_missing');
       }
-    }
-
-    // Clean up terminated sessions from D1
-    if (sessionsTerminated > 0) {
-      await coreAdapter.execute(
-        `DELETE FROM sessions
-         WHERE external_provider_id = ?
-           AND external_provider_sub = ?
-           AND tenant_id = ?`,
-        [providerId, claims.sub, tenantId]
-      );
     }
   }
 
-  // If sid is present, log for debugging (could implement IdP-sid based lookup in future)
-  if (claims.sid) {
-    log.debug('IdP session ID received (not yet used for targeted logout)', { sid: claims.sid });
+  // A sid identifies one upstream OP session and takes precedence when both
+  // sid and sub are present. A sub-only token terminates every matching RP
+  // session for that subject.
+  const sessionClaim = claims.sid ?? claims.sub;
+  if (sessionClaim) {
+    const claimKind = claims.sid ? 'sid' : 'sub';
+    const sessions = await listExternalProviderSessions(env, {
+      tenantId,
+      providerId,
+      claimKind,
+      claim: sessionClaim,
+    });
+    let terminationFailures = 0;
+
+    for (const session of sessions) {
+      try {
+        if (!isShardedSessionId(session.sessionId)) continue;
+        const { stub: sessionStore } = getSessionStoreBySessionId(env, session.sessionId, tenantId);
+        const current = (await sessionStore.getSessionRpc(session.sessionId)) as Session | null;
+        const expectedClaim =
+          claimKind === 'sid'
+            ? current?.data?.external_provider_sid
+            : current?.data?.external_provider_sub;
+        if (
+          !current ||
+          current.tenantId !== tenantId ||
+          current.data?.external_provider_id !== providerId ||
+          expectedClaim !== sessionClaim
+        ) {
+          continue;
+        }
+        if (!(await sessionStore.invalidateSessionRpc(session.sessionId))) {
+          terminationFailures++;
+          continue;
+        }
+        sessionsTerminated++;
+      } catch {
+        terminationFailures++;
+        log.warn('Failed to terminate a back-channel logout session');
+      }
+    }
+    if (terminationFailures > 0) throw new Error('session_invalidation_failed');
   }
 
   return { identitiesAffected, sessionsTerminated };

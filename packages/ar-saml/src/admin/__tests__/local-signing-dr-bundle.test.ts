@@ -161,7 +161,6 @@ function createEnv(): Env {
   const keyManager = new MockKeyManagerNamespace();
   return {
     ISSUER_URL: 'https://admin.test.authrim.com',
-    KEY_MANAGER_SECRET: 'test-secret',
     SETTINGS: {
       get: async (key: string) => settings.get(key) ?? null,
       put: async (key: string, value: string) => {
@@ -204,6 +203,64 @@ class MockKeyManagerStub {
   private key: MockStoredKey | null = null;
 
   constructor(private readonly keyRef: string) {}
+
+  async getActiveKeyWithPrivateRpc(): Promise<MockStoredKey | null> {
+    return this.key;
+  }
+
+  async rotateKeys(): Promise<MockStoredKey> {
+    const kid = `kid-${this.keyRef.replace(/[^a-zA-Z0-9]/g, '-')}`;
+    this.key = {
+      kid,
+      publicJWK: { kty: 'RSA', kid, n: `modulus-${kid}`, e: 'AQAB' },
+      privatePEM: [
+        '-----BEGIN PRIVATE KEY-----',
+        `private-${kid}`,
+        '-----END PRIVATE KEY-----',
+      ].join('\n'),
+      createdAt: 1770000000000,
+      status: 'active',
+      certificatePEM: ['-----BEGIN CERTIFICATE-----', 'QUJD', '-----END CERTIFICATE-----'].join(
+        '\n'
+      ),
+      certificateCreatedAt: 1770000000000,
+      certificateSha256Thumbprint: 'thumbprint',
+    };
+    return this.key;
+  }
+
+  async storeCertificateForKey(body: {
+    certificatePEM: string;
+    certificateCreatedAt?: number;
+    certificateSha256Thumbprint?: string;
+  }): Promise<MockStoredKey> {
+    if (!this.key) throw new Error('No active key found');
+    this.key.certificatePEM = body.certificatePEM;
+    this.key.certificateCreatedAt = body.certificateCreatedAt ?? Date.now();
+    this.key.certificateSha256Thumbprint = body.certificateSha256Thumbprint ?? '';
+    return this.key;
+  }
+
+  async importKey(body: {
+    kid: string;
+    publicJWK: Record<string, unknown>;
+    privatePEM: string;
+    certificatePEM?: string;
+    certificateCreatedAt?: number;
+    certificateSha256Thumbprint?: string;
+  }): Promise<MockStoredKey> {
+    this.key = {
+      kid: body.kid,
+      publicJWK: body.publicJWK,
+      privatePEM: body.privatePEM,
+      createdAt: 1770000000000,
+      status: 'active',
+      certificatePEM: body.certificatePEM ?? '',
+      certificateCreatedAt: body.certificateCreatedAt ?? 1770000000000,
+      certificateSha256Thumbprint: body.certificateSha256Thumbprint ?? '',
+    };
+    return this.key;
+  }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);

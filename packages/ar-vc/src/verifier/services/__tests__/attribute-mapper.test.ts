@@ -4,7 +4,6 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
-  extractNormalizedAttributes,
   storeUserVerifiedAttributes,
   getUserVerifiedAttributes,
   hasVerifiedAttribute,
@@ -16,6 +15,22 @@ import type {
   AttributeVerificationRepository,
   UserVerifiedAttribute,
 } from '@authrim/ar-lib-core';
+
+const persistencePolicy = (
+  attributes: Array<{ name: string; value: string; originalClaim: string }>
+) => ({
+  attributes,
+  expiresAt: Date.now() + 60_000,
+  revalidateAfter: Date.now() + 30_000,
+  credentialProfileId: 'profile-1',
+  credentialProfileVersionId: 'profile-version-1',
+  mappingVersionId: 'mapping-version-1',
+  mappingSnapshotHash: 'mapping-snapshot-1',
+  policyVersion: 'haip-1',
+  evidenceFingerprint: 'fingerprint-1',
+  statusCheckedAt: Date.now(),
+  statusFreshUntil: Date.now() + 30_000,
+});
 
 // Create mock UserVerifiedAttributeRepository
 const createMockAttributeRepo = (
@@ -81,151 +96,6 @@ const createMockVerificationRepo = (): AttributeVerificationRepository => {
   } as unknown as AttributeVerificationRepository;
 };
 
-describe('extractNormalizedAttributes', () => {
-  it('should extract and normalize simple claims', () => {
-    const claims = {
-      given_name: 'John',
-      family_name: 'Doe',
-      email: 'john@example.com',
-    };
-
-    const attributes = extractNormalizedAttributes(claims);
-
-    expect(attributes).toHaveLength(3);
-    expect(attributes).toContainEqual({
-      name: 'verified_given_name',
-      value: 'John',
-      originalClaim: 'given_name',
-    });
-    expect(attributes).toContainEqual({
-      name: 'verified_family_name',
-      value: 'Doe',
-      originalClaim: 'family_name',
-    });
-    expect(attributes).toContainEqual({
-      name: 'verified_email',
-      value: 'john@example.com',
-      originalClaim: 'email',
-    });
-  });
-
-  it('should normalize boolean age claims', () => {
-    const claims = {
-      age_over_18: true,
-      age_over_21: false,
-    };
-
-    const attributes = extractNormalizedAttributes(claims);
-
-    expect(attributes).toHaveLength(2);
-    expect(attributes).toContainEqual({
-      name: 'verified_age_over_18',
-      value: 'true',
-      originalClaim: 'age_over_18',
-    });
-    expect(attributes).toContainEqual({
-      name: 'verified_age_over_21',
-      value: 'false',
-      originalClaim: 'age_over_21',
-    });
-  });
-
-  it('should handle string boolean values', () => {
-    const claims = {
-      age_over_18: 'true',
-      age_over_21: 'false',
-    };
-
-    const attributes = extractNormalizedAttributes(claims);
-
-    expect(attributes).toContainEqual({
-      name: 'verified_age_over_18',
-      value: 'true',
-      originalClaim: 'age_over_18',
-    });
-    expect(attributes).toContainEqual({
-      name: 'verified_age_over_21',
-      value: 'false',
-      originalClaim: 'age_over_21',
-    });
-  });
-
-  it('should extract nested address claims', () => {
-    const claims = {
-      address: {
-        country: 'JP',
-        region: 'Tokyo',
-        locality: 'Shibuya',
-      },
-    };
-
-    const attributes = extractNormalizedAttributes(claims);
-
-    expect(attributes).toHaveLength(3);
-    expect(attributes).toContainEqual({
-      name: 'verified_country',
-      value: 'JP',
-      originalClaim: 'address.country',
-    });
-    expect(attributes).toContainEqual({
-      name: 'verified_region',
-      value: 'Tokyo',
-      originalClaim: 'address.region',
-    });
-    expect(attributes).toContainEqual({
-      name: 'verified_locality',
-      value: 'Shibuya',
-      originalClaim: 'address.locality',
-    });
-  });
-
-  it('should skip null and undefined values', () => {
-    const claims = {
-      given_name: 'John',
-      family_name: null,
-      email: undefined,
-    };
-
-    const attributes = extractNormalizedAttributes(claims);
-
-    expect(attributes).toHaveLength(1);
-    expect(attributes[0].name).toBe('verified_given_name');
-  });
-
-  it('should skip unmapped claims (data minimization)', () => {
-    const claims = {
-      given_name: 'John',
-      unknown_claim: 'should be skipped',
-      random_data: 12345,
-    };
-
-    const attributes = extractNormalizedAttributes(claims);
-
-    expect(attributes).toHaveLength(1);
-    expect(attributes[0].name).toBe('verified_given_name');
-  });
-
-  it('should handle flat country claim', () => {
-    const claims = {
-      country: 'US',
-    };
-
-    const attributes = extractNormalizedAttributes(claims);
-
-    expect(attributes).toHaveLength(1);
-    expect(attributes).toContainEqual({
-      name: 'verified_country',
-      value: 'US',
-      originalClaim: 'country',
-    });
-  });
-
-  it('should return empty array for empty claims', () => {
-    const attributes = extractNormalizedAttributes({});
-    expect(attributes).toHaveLength(0);
-  });
-});
-
 describe('storeUserVerifiedAttributes', () => {
   let mockAttributeRepo: UserVerifiedAttributeRepository;
 
@@ -255,7 +125,12 @@ describe('storeUserVerifiedAttributes', () => {
       'user-123',
       'tenant-1',
       verificationResult,
-      'verification-id-1'
+      'verification-id-1',
+      persistencePolicy([
+        { name: 'verified_given_name', value: 'John', originalClaim: 'given_name' },
+        { name: 'verified_family_name', value: 'Doe', originalClaim: 'family_name' },
+        { name: 'verified_age_over_18', value: 'true', originalClaim: 'age_over_18' },
+      ])
     );
 
     expect(result.success).toBe(true);
@@ -281,7 +156,8 @@ describe('storeUserVerifiedAttributes', () => {
       'user-123',
       'tenant-1',
       verificationResult,
-      'verification-id-1'
+      'verification-id-1',
+      persistencePolicy([])
     );
 
     expect(result.success).toBe(true);
@@ -312,7 +188,10 @@ describe('storeUserVerifiedAttributes', () => {
       'user-123',
       'tenant-1',
       verificationResult,
-      'verification-id-1'
+      'verification-id-1',
+      persistencePolicy([
+        { name: 'verified_given_name', value: 'John', originalClaim: 'given_name' },
+      ])
     );
 
     expect(result.success).toBe(false);
@@ -496,7 +375,11 @@ describe('linkVerificationToUser', () => {
       mockAttributeRepo,
       vpRequest,
       verificationResult,
-      'user-123'
+      'user-123',
+      persistencePolicy([
+        { name: 'verified_age_over_18', value: 'true', originalClaim: 'age_over_18' },
+        { name: 'verified_country', value: 'JP', originalClaim: 'country' },
+      ])
     );
 
     expect(result.success).toBe(true);

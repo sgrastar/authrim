@@ -504,6 +504,9 @@ export interface SessionClientWithWebhook {
   /** Client ID */
   client_id: string;
 
+  /** RP-specific OIDC sid; never the internal OP session key */
+  oidc_sid?: string;
+
   /** Client name (for logging) */
   client_name: string | null;
 

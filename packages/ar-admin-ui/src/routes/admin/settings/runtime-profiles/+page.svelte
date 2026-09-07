@@ -1,16 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { LL } from '$i18n/i18n-svelte';
 	import {
 		adminRuntimeProfilesAPI,
 		type RuntimeProfileActivationStatus,
 		type RuntimeProfileReferenceCatalog,
 		type RuntimeProfileRecord,
 		type RuntimeProfileReferenceManagementPolicy,
-		type RuntimeProfileReferenceStatusEntry,
-		type StorageProfileCapabilityStatus,
-		type StorageProfileListPolicy,
-		type StorageProfileTenantOverridePolicy,
-		type StorageSliceBoundaryPolicy
+		type RuntimeProfileReferenceStatusEntry
 	} from '$lib/api/admin-runtime-profiles';
 	import {
 		clearAuditArchiveTemplate,
@@ -44,155 +41,20 @@
 	let success = $state('');
 
 	let auditProfiles = $state<RuntimeProfileRecord[]>([]);
-	let storageProfiles = $state<RuntimeProfileRecord[]>([]);
 	let residencyProfiles = $state<RuntimeProfileRecord[]>([]);
-	let storagePolicy = $state<StorageProfileListPolicy | null>(null);
 	let referenceCatalog = $state<RuntimeProfileReferenceCatalog | null>(null);
 	let auditReferenceStatus = $state<Record<string, RuntimeProfileReferenceStatusEntry[]>>({});
 	let auditActivationStatus = $state<Record<string, RuntimeProfileActivationStatus>>({});
-	let storageActivationStatus = $state<Record<string, RuntimeProfileActivationStatus>>({});
 	let residencyActivationStatus = $state<Record<string, RuntimeProfileActivationStatus>>({});
 	let defaultsActivationStatus = $state<Record<string, RuntimeProfileActivationStatus>>({});
 	let referenceManagement = $state<RuntimeProfileReferenceManagementPolicy | null>(null);
 	let defaultAuditProfileId = $state('');
-	let defaultStorageProfileId = $state('');
 	let defaultResidencyProfileId = $state('');
 	let selectedProfileId = $state('');
 	let profileIdInput = $state('');
 	let profileJson = $state('');
 	let profileJsonError = $state('');
 	let parsedProfileDraft = $state<AuditProfileDraft | null>(null);
-
-	const boundaryClassLabels: Record<StorageSliceBoundaryPolicy['boundaryClass'], string> = {
-		auth_core: 'Auth Core Plane',
-		pii: 'PII Plane',
-		custom_extension: 'Custom / Extension Plane',
-		authorization: 'Authorization Plane'
-	};
-
-	const storageSliceLabels: Record<string, string> = {
-		identity_core: 'Identity Core Plane',
-		identity_pii: 'Identity PII Plane',
-		custom_claims: 'Custom Claims',
-		registration_fields: 'Registration Fields',
-		custom_pii: 'Custom PII',
-		passkeys: 'Passkeys',
-		linked_identities: 'Linked Identities',
-		consent: 'Consent',
-		authorization: 'Authorization'
-	};
-
-	function formatStorageSliceLabel(slice: string): string {
-		return storageSliceLabels[slice] ?? slice;
-	}
-
-	function getStorageTenantPolicy(profileId: string): StorageProfileTenantOverridePolicy | null {
-		return storagePolicy?.tenantOverrideEligibility?.[profileId] ?? null;
-	}
-
-	function getStorageCapabilityStatus(profileId: string): StorageProfileCapabilityStatus | null {
-		return storagePolicy?.capabilityStatus?.[profileId] ?? null;
-	}
-
-	function getStorageProfileSlices(profile: RuntimeProfileRecord): string[] {
-		const slices = profile.slices;
-		if (!slices || typeof slices !== 'object') {
-			return [];
-		}
-		return Object.keys(slices as Record<string, unknown>);
-	}
-
-	function formatStorageProfileSummary(profile: RuntimeProfileRecord): string {
-		const slices = getStorageProfileSlices(profile);
-		if (slices.length === 0) {
-			return 'No storage slices configured';
-		}
-		return slices.map(formatStorageSliceLabel).join(', ');
-	}
-
-	function describeTenantOverrideCompatibility(
-		policy: StorageProfileTenantOverridePolicy | null
-	): string {
-		if (!policy) {
-			return 'Compatibility unknown';
-		}
-		if (policy.tenantOverrideAllowed) {
-			return 'Tenant override compatible';
-		}
-		return 'Auth core plane differs from the environment default';
-	}
-
-	function formatCapabilityReadiness(status: StorageProfileCapabilityStatus | null): string {
-		if (!status) {
-			return 'Capability status unknown';
-		}
-		if (status.mvpReady) {
-			return 'MVP ready';
-		}
-		return `${status.unsupportedCount} unsupported / ${status.partialCount} partial`;
-	}
-
-	function formatPolicyBadge(value: boolean): string {
-		return value ? 'Allowed' : 'Blocked';
-	}
-
-	function formatTenantDatabaseStatsAvailability(): string {
-		const status = storagePolicy?.tenantDatabaseStatsStatus;
-		if (!status) {
-			return 'Unknown';
-		}
-		if (status.available) {
-			return status.attentionRequired ? 'Attention required' : 'Healthy';
-		}
-		return status.unavailableReason === 'db_admin_not_configured'
-			? 'Control DB unavailable'
-			: 'Stats unavailable';
-	}
-
-	function getTenantDatabaseStatsSummaryItems(): Array<{ label: string; value: number }> {
-		const summary = storagePolicy?.tenantDatabaseStatsStatus?.summary;
-		if (!summary) {
-			return [];
-		}
-		return [
-			{ label: 'Active core DBs', value: summary.active_tenant_core_databases },
-			{ label: 'Stats rows', value: summary.stats_rows },
-			{ label: 'Missing stats', value: summary.missing_stats_count },
-			{ label: 'Stale stats', value: summary.stale_stats_count },
-			{ label: 'Warnings', value: summary.warning_count },
-			{ label: 'Strong warnings', value: summary.strong_warning_count },
-			{ label: 'Stale file size', value: summary.stale_file_size_count },
-			{ label: 'Unavailable file size', value: summary.unavailable_file_size_count }
-		];
-	}
-
-	function formatRuntimeRegistrySecurityStatus(): string {
-		const status = storagePolicy?.runtimeRegistrySecurityNotifications;
-		if (!status) {
-			return 'Unknown';
-		}
-		if (status.available) {
-			return status.attentionRequired ? 'Attention required' : 'Healthy';
-		}
-		return status.unavailableReason === 'db_admin_not_configured'
-			? 'Control DB unavailable'
-			: 'Alerts unavailable';
-	}
-
-	function getRuntimeRegistrySecurityItems(): Array<{ label: string; value: number | string }> {
-		const summary = storagePolicy?.runtimeRegistrySecurityNotifications?.summary;
-		if (!summary) {
-			return [];
-		}
-		return [
-			{ label: 'Pending', value: summary.pending_count },
-			{ label: 'Failed', value: summary.failed_count },
-			{ label: 'Dead letter', value: summary.dead_letter_count },
-			{ label: 'Critical', value: summary.critical_count },
-			{ label: 'High', value: summary.high_count },
-			{ label: 'Latest', value: summary.latest_created_at ?? 'None' }
-		];
-	}
 
 	function getActivationStatus(
 		map: Record<string, RuntimeProfileActivationStatus>,
@@ -338,37 +200,29 @@
 		error = '';
 
 		try {
-			const [auditProfilesResult, storageProfilesResult, residencyProfilesResult, defaultsResult] =
-				await Promise.all([
-					adminRuntimeProfilesAPI.list('audit', true),
-					adminRuntimeProfilesAPI.list('storage', true),
-					adminRuntimeProfilesAPI.list('residency', true),
-					adminRuntimeProfilesAPI.getDefaults()
-				]);
+			const [auditProfilesResult, residencyProfilesResult, defaultsResult] = await Promise.all([
+				adminRuntimeProfilesAPI.list('audit', true),
+				adminRuntimeProfilesAPI.list('residency', true),
+				adminRuntimeProfilesAPI.getDefaults()
+			]);
 
 			auditProfiles = auditProfilesResult.profiles.audit ?? [];
-			storageProfiles = storageProfilesResult.profiles.storage ?? [];
 			residencyProfiles = residencyProfilesResult.profiles.residency ?? [];
 			auditReferenceStatus = auditProfilesResult.reference_status?.audit ?? {};
 			auditActivationStatus = auditProfilesResult.activation_status?.audit ?? {};
-			storageActivationStatus = storageProfilesResult.activation_status?.storage ?? {};
 			residencyActivationStatus = residencyProfilesResult.activation_status?.residency ?? {};
 			defaultsActivationStatus = defaultsResult.activation_status ?? {};
 			referenceManagement =
 				auditProfilesResult.reference_management ??
-				storageProfilesResult.reference_management ??
 				residencyProfilesResult.reference_management ??
 				defaultsResult.reference_management ??
 				null;
 			referenceCatalog =
 				auditProfilesResult.reference_catalog ??
-				storageProfilesResult.reference_catalog ??
 				residencyProfilesResult.reference_catalog ??
 				defaultsResult.reference_catalog ??
 				null;
-			storagePolicy = storageProfilesResult.storage_policy ?? null;
 			defaultAuditProfileId = defaultsResult.defaults.auditProfileId;
-			defaultStorageProfileId = defaultsResult.defaults.storageProfileId;
 			defaultResidencyProfileId = defaultsResult.defaults.residencyProfileId;
 
 			const selected =
@@ -378,7 +232,8 @@
 				null;
 			setSelectedProfile(selected);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load runtime profiles';
+			error =
+				err instanceof Error ? err.message : $LL.admin_settings_runtime_profiles_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -392,16 +247,18 @@
 		try {
 			const id = profileIdInput.trim();
 			if (!id) {
-				throw new Error('Profile ID is required');
+				throw new Error($LL.admin_settings_runtime_profile_id_required());
 			}
 
 			const parsed = JSON.parse(profileJson);
 			const result = await adminRuntimeProfilesAPI.upsert('audit', id, parsed);
-			success = result.created ? 'Audit profile created' : 'Audit profile updated';
+			success = result.created
+				? $LL.admin_settings_audit_profile_created()
+				: $LL.admin_settings_audit_profile_updated();
 			await load();
 			setSelectedProfile(result.profile);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to save profile';
+			error = err instanceof Error ? err.message : $LL.admin_settings_runtime_profile_save_failed();
 		} finally {
 			saving = false;
 		}
@@ -415,10 +272,11 @@
 		saving = true;
 		try {
 			await adminRuntimeProfilesAPI.remove('audit', selectedProfileId);
-			success = 'Audit profile deleted';
+			success = $LL.admin_settings_audit_profile_deleted();
 			await load();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to delete profile';
+			error =
+				err instanceof Error ? err.message : $LL.admin_settings_runtime_profile_delete_failed();
 		} finally {
 			saving = false;
 		}
@@ -431,28 +289,16 @@
 
 		try {
 			if (!defaultAuditProfileId) {
-				throw new Error('Default audit profile is required');
-			}
-			if (!defaultStorageProfileId) {
-				throw new Error('Default storage profile is required');
+				throw new Error($LL.admin_settings_default_audit_profile_required());
 			}
 			if (!defaultResidencyProfileId) {
-				throw new Error('Default residency profile is required');
-			}
-			const selectedStorageActivation = getActivationStatus(
-				storageActivationStatus,
-				defaultStorageProfileId
-			);
-			if (selectedStorageActivation && !selectedStorageActivation.activatable) {
-				throw new Error(
-					selectedStorageActivation.blockingReasons[0] ??
-						'Selected storage profile is not activatable'
-				);
+				throw new Error($LL.admin_settings_default_residency_profile_required());
 			}
 			const selectedActivation = getActivationStatus(auditActivationStatus, defaultAuditProfileId);
 			if (selectedActivation && !selectedActivation.activatable) {
 				throw new Error(
-					selectedActivation.blockingReasons[0] ?? 'Selected audit profile is not activatable'
+					selectedActivation.blockingReasons[0] ??
+						$LL.admin_settings_audit_profile_not_activatable()
 				);
 			}
 			const selectedResidencyActivation = getActivationStatus(
@@ -462,18 +308,20 @@
 			if (selectedResidencyActivation && !selectedResidencyActivation.activatable) {
 				throw new Error(
 					selectedResidencyActivation.blockingReasons[0] ??
-						'Selected residency profile is not activatable'
+						$LL.admin_settings_residency_profile_not_activatable()
 				);
 			}
 			await adminRuntimeProfilesAPI.updateDefaults({
-				storageProfileId: defaultStorageProfileId,
 				auditProfileId: defaultAuditProfileId,
 				residencyProfileId: defaultResidencyProfileId
 			});
-			success = 'Default runtime profiles updated';
+			success = $LL.admin_settings_runtime_profile_defaults_updated();
 			await load();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to update default profiles';
+			error =
+				err instanceof Error
+					? err.message
+					: $LL.admin_settings_runtime_profile_defaults_save_failed();
 		} finally {
 			saving = false;
 		}
@@ -504,7 +352,7 @@
 <AdminPageShell>
 	<AdminPageHeader
 		title="Runtime Profiles"
-		description="Review storage boundary policy and manage audit profiles. Tenant overrides are intentionally limited to PII and custom-extension slices."
+		description="Manage audit and residency profiles. D1 placement is configured per tenant and is not a runtime profile."
 		actions={headerActions}
 	/>
 
@@ -530,310 +378,17 @@
 				<p>Loading runtime profiles...</p>
 			</div>
 		{:else}
-			<div class="profiles-grid storage-grid">
-				<section class="panel">
-					<h2>Storage Boundary Policy</h2>
-					<p class="helper-text">
-						Auth core stays pinned to the environment default. Storage tenant overrides are intended
-						for PII and custom-extension slices.
-					</p>
-
-					<div class="policy-summary">
-						<div>
-							<div class="summary-label">Default storage profile</div>
-							<div class="summary-value">{defaultStorageProfileId}</div>
-						</div>
-						<div>
-							<div class="summary-label">Auth core slices</div>
-							<div class="chip-row">
-								{#if storagePolicy?.authCoreSlices?.length}
-									{#each storagePolicy.authCoreSlices as slice (slice)}
-										<span class="badge">{formatStorageSliceLabel(slice)}</span>
-									{/each}
-								{:else}
-									<span class="badge">Identity Core Plane</span>
-								{/if}
-							</div>
-						</div>
-					</div>
-
-					<div class="status-panel">
-						<div class="status-header">
-							<h3>Tenant DB Stats</h3>
-							<span
-								class="badge"
-								class:badge-primary={storagePolicy?.tenantDatabaseStatsStatus?.available &&
-									!storagePolicy?.tenantDatabaseStatsStatus?.attentionRequired}
-								class:badge-warning={storagePolicy?.tenantDatabaseStatsStatus?.available &&
-									storagePolicy?.tenantDatabaseStatsStatus?.attentionRequired}
-								class:badge-muted={!storagePolicy?.tenantDatabaseStatsStatus?.available}
-							>
-								{formatTenantDatabaseStatsAvailability()}
-							</span>
-						</div>
-						{#if storagePolicy?.tenantDatabaseStatsStatus?.available}
-							<div class="stats-grid">
-								{#each getTenantDatabaseStatsSummaryItems() as item (item.label)}
-									<div>
-										<div class="summary-label">{item.label}</div>
-										<div class="summary-value">{item.value}</div>
-									</div>
-								{/each}
-							</div>
-							<div class="helper-text">
-								Stale threshold: {storagePolicy.tenantDatabaseStatsStatus.staleAfterHours} hours. Cutoff:
-								{storagePolicy.tenantDatabaseStatsStatus.cutoffIso}.
-							</div>
-						{:else if storagePolicy?.tenantDatabaseStatsStatus?.unavailableReason}
-							<p class="helper-text">
-								{storagePolicy.tenantDatabaseStatsStatus.unavailableReason}
-							</p>
-						{:else}
-							<p class="helper-text">Tenant DB stats have not been loaded.</p>
-						{/if}
-					</div>
-
-					<div class="status-panel">
-						<div class="status-header">
-							<h3>Storage Registry Alerts</h3>
-							<span
-								class="badge"
-								class:badge-primary={storagePolicy?.runtimeRegistrySecurityNotifications
-									?.available &&
-									!storagePolicy?.runtimeRegistrySecurityNotifications?.attentionRequired}
-								class:badge-warning={storagePolicy?.runtimeRegistrySecurityNotifications
-									?.available &&
-									storagePolicy?.runtimeRegistrySecurityNotifications?.attentionRequired}
-								class:badge-muted={!storagePolicy?.runtimeRegistrySecurityNotifications?.available}
-							>
-								{formatRuntimeRegistrySecurityStatus()}
-							</span>
-						</div>
-						{#if storagePolicy?.runtimeRegistrySecurityNotifications?.available}
-							<div class="stats-grid">
-								{#each getRuntimeRegistrySecurityItems() as item (item.label)}
-									<div>
-										<div class="summary-label">{item.label}</div>
-										<div class="summary-value compact">{item.value}</div>
-									</div>
-								{/each}
-							</div>
-						{:else if storagePolicy?.runtimeRegistrySecurityNotifications?.unavailableReason}
-							<p class="helper-text">
-								{storagePolicy.runtimeRegistrySecurityNotifications.unavailableReason}
-							</p>
-						{:else}
-							<p class="helper-text">Storage registry alerts have not been loaded.</p>
-						{/if}
-					</div>
-
-					<div class="policy-grid">
-						{#if storagePolicy}
-							{#each Object.values(storagePolicy.slicePolicies) as policy (policy.slice)}
-								<article class="policy-card">
-									<div class="policy-card-header">
-										<strong>{formatStorageSliceLabel(policy.slice)}</strong>
-										<span
-											class:badge-primary={policy.tenantOverrideAllowed}
-											class:badge-muted={!policy.tenantOverrideAllowed}
-											class="badge"
-										>
-											{formatPolicyBadge(policy.tenantOverrideAllowed)}
-										</span>
-									</div>
-									<div class="policy-card-body">
-										<div>{boundaryClassLabels[policy.boundaryClass]}</div>
-										<div>D1 default: {policy.d1Default ? 'Yes' : 'No'}</div>
-										<div>Non-D1 option required: {policy.nonD1OptionRequired ? 'Yes' : 'No'}</div>
-									</div>
-								</article>
-							{/each}
-						{/if}
-					</div>
-				</section>
-
-				<section class="panel">
-					<h2>Storage Profiles</h2>
-					<p class="helper-text">
-						Profiles shown here are read-only for now. The compatibility badge indicates whether a
-						tenant may safely point at the profile without moving the auth core plane.
-					</p>
-
-					<div class="profile-list">
-						{#each storageProfiles as profile (profile.id)}
-							{@const tenantPolicy = getStorageTenantPolicy(profile.id)}
-							{@const capabilityStatus = getStorageCapabilityStatus(profile.id)}
-							{@const activation = getActivationStatus(storageActivationStatus, profile.id)}
-							<button class="profile-item profile-item-static" disabled>
-								<div class="profile-title-row">
-									<strong>{profile.label}</strong>
-									{#if profile.builtin}
-										<span class="badge">Builtin</span>
-									{/if}
-									{#if profile.id === defaultStorageProfileId}
-										<span class="badge badge-primary">Default</span>
-									{/if}
-									<span
-										class:badge-primary={tenantPolicy?.tenantOverrideAllowed}
-										class:badge-muted={!tenantPolicy?.tenantOverrideAllowed}
-										class="badge"
-									>
-										{describeTenantOverrideCompatibility(tenantPolicy)}
-									</span>
-									<span
-										class="badge"
-										class:badge-primary={activation?.state === 'ready'}
-										class:badge-warning={activation?.state === 'warning'}
-										class:badge-danger={activation?.state === 'blocked'}
-									>
-										Activation: {activationLabel(activation)}
-									</span>
-									<span
-										class="badge"
-										class:badge-primary={capabilityStatus?.mvpReady}
-										class:badge-warning={capabilityStatus && !capabilityStatus.mvpReady}
-										class:badge-muted={!capabilityStatus}
-									>
-										{formatCapabilityReadiness(capabilityStatus)}
-									</span>
-								</div>
-								<div class="profile-id">{profile.id}</div>
-								<div class="helper-text">{formatStorageProfileSummary(profile)}</div>
-								{#if capabilityStatus && !capabilityStatus.mvpReady}
-									<div class="reference-status-list">
-										{#each capabilityStatus.capabilities
-											.filter((item) => item.state === 'unsupported' || item.state === 'partial')
-											.slice(0, 3) as item (item.id)}
-											<div class="helper-text warning-text">
-												{item.label}: {item.state}
-											</div>
-										{/each}
-									</div>
-								{/if}
-								{#if activation?.blockingReasons?.length}
-									<div class="helper-text warning-text">
-										{activation.blockingReasons[0]}
-									</div>
-								{/if}
-							</button>
-						{/each}
-					</div>
-				</section>
-
-				<section class="panel">
-					<h2>Reference Catalog</h2>
-					<p class="helper-text">
-						Setup currently owns runtime bindings and connection aliases. You can save profile refs
-						before setup catches up, but activation stays blocked until the runtime can resolve
-						them.
-					</p>
-					{#if referenceCatalog}
-						<div class="policy-grid">
-							<article class="policy-card">
-								<div class="policy-card-header">
-									<strong>D1 Bindings</strong>
-									<span class="badge badge-muted">{referenceCatalog.bindingRefs.d1.length}</span>
-								</div>
-								<div class="chip-row">
-									{#if referenceCatalog.bindingRefs.d1.length}
-										{#each referenceCatalog.bindingRefs.d1 as ref (ref)}
-											<span class="badge">{ref}</span>
-										{/each}
-									{:else}
-										<span class="helper-text">None detected</span>
-									{/if}
-								</div>
-							</article>
-
-							<article class="policy-card">
-								<div class="policy-card-header">
-									<strong>R2 Bindings</strong>
-									<span class="badge badge-muted">{referenceCatalog.bindingRefs.r2.length}</span>
-								</div>
-								<div class="chip-row">
-									{#if referenceCatalog.bindingRefs.r2.length}
-										{#each referenceCatalog.bindingRefs.r2 as ref (ref)}
-											<span class="badge">{ref}</span>
-										{/each}
-									{:else}
-										<span class="helper-text">None detected</span>
-									{/if}
-								</div>
-							</article>
-
-							<article class="policy-card">
-								<div class="policy-card-header">
-									<strong>Hyperdrive Bindings</strong>
-									<span class="badge badge-muted"
-										>{referenceCatalog.bindingRefs.hyperdrive.length}</span
-									>
-								</div>
-								<div class="chip-row">
-									{#if referenceCatalog.bindingRefs.hyperdrive.length}
-										{#each referenceCatalog.bindingRefs.hyperdrive as ref (ref)}
-											<span class="badge">{ref}</span>
-										{/each}
-									{:else}
-										<span class="helper-text">None detected</span>
-									{/if}
-								</div>
-							</article>
-
-							<article class="policy-card">
-								<div class="policy-card-header">
-									<strong>Connection Refs</strong>
-									<span class="badge badge-muted">{referenceCatalog.connectionRefs.all.length}</span
-									>
-								</div>
-								<div class="chip-row">
-									{#if referenceCatalog.connectionRefs.all.length}
-										{#each referenceCatalog.connectionRefs.all as ref (ref)}
-											<span class="badge">{ref}</span>
-										{/each}
-									{:else}
-										<span class="helper-text">None detected</span>
-									{/if}
-								</div>
-							</article>
-						</div>
-					{:else}
-						<p class="helper-text">No runtime reference catalog is available.</p>
-					{/if}
-				</section>
-			</div>
+			<section class="panel placement-note">
+				<h2>D1 Placement</h2>
+				<p class="helper-text">
+					D1 routing is always provided by the Control Plane. Choose shared pool or tenant-exclusive
+					placement when creating or editing a tenant; there is no environment-wide storage mode.
+				</p>
+			</section>
 
 			<div class="profiles-grid">
 				<section class="panel">
 					<h2>Default Runtime Profiles</h2>
-					<div class="field">
-						<label for="defaultStorageProfile">Default storage profile</label>
-						<select id="defaultStorageProfile" bind:value={defaultStorageProfileId}>
-							{#each storageProfiles as profile (profile.id)}
-								<option
-									value={profile.id}
-									disabled={isActivationBlocked(
-										getActivationStatus(storageActivationStatus, profile.id)
-									)}
-								>
-									{profile.label} ({profile.id})
-								</option>
-							{/each}
-						</select>
-					</div>
-					{#if defaultsActivationStatus.storage}
-						<div class="helper-text">
-							Current default storage activation: {activationLabel(
-								defaultsActivationStatus.storage
-							)}
-						</div>
-					{/if}
-					{#if isActivationBlocked(getActivationStatus(storageActivationStatus, defaultStorageProfileId))}
-						<div class="alert alert-error">
-							{getActivationStatus(storageActivationStatus, defaultStorageProfileId)
-								?.blockingReasons?.[0] ?? 'Selected storage profile cannot be activated.'}
-						</div>
-					{/if}
-
 					<div class="field">
 						<label for="defaultAuditProfile">Default profile</label>
 						<select id="defaultAuditProfile" bind:value={defaultAuditProfileId}>
@@ -1011,8 +566,6 @@
 									>
 										<option value="archive-only">archive-only</option>
 										<option value="d1">d1</option>
-										<option value="postgres">postgres</option>
-										<option value="mysql">mysql</option>
 									</select>
 								</div>
 								{#if parsedProfileDraft.primary}
@@ -1483,8 +1036,6 @@
 	.profiles-grid,
 	.panel,
 	.profile-item,
-	.policy-summary,
-	.policy-card,
 	.status-panel,
 	.reference-status-card,
 	.draft-card,
@@ -1517,10 +1068,6 @@
 		display: grid;
 		grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
 		gap: 20px;
-	}
-
-	.storage-grid {
-		grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
 	}
 
 	.panel {
@@ -1573,11 +1120,6 @@
 		color: var(--color-text);
 	}
 
-	.profile-item-static {
-		cursor: default;
-		opacity: 1;
-	}
-
 	.profile-title-row {
 		display: flex;
 		flex-wrap: wrap;
@@ -1619,74 +1161,6 @@
 	.badge-danger {
 		background: color-mix(in srgb, var(--color-danger) 14%, var(--color-surface));
 		color: var(--color-danger);
-	}
-
-	.policy-summary {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 12px;
-		padding: 14px;
-		border-radius: var(--radius-control);
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-	}
-
-	.summary-label {
-		font-size: 0.8rem;
-		color: var(--color-text-muted);
-		margin-bottom: 4px;
-	}
-
-	.summary-value {
-		font-weight: 600;
-		word-break: break-word;
-	}
-
-	.summary-value.compact {
-		font-size: 0.9rem;
-	}
-
-	.chip-row {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 8px;
-	}
-
-	.policy-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-		gap: 12px;
-	}
-
-	.stats-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-		gap: 12px;
-	}
-
-	.policy-card {
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-control);
-		padding: 14px;
-		background: var(--color-surface);
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
-	}
-
-	.policy-card-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 12px;
-	}
-
-	.policy-card-body {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-		color: var(--color-text-muted);
-		font-size: 0.92rem;
 	}
 
 	.actions {
@@ -1760,10 +1234,6 @@
 
 	@media (max-width: 960px) {
 		.profiles-grid {
-			grid-template-columns: 1fr;
-		}
-
-		.policy-summary {
 			grid-template-columns: 1fr;
 		}
 	}

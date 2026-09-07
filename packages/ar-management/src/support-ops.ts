@@ -23,6 +23,7 @@ import {
   listSupportOpsResources,
   requireDedicatedAdminDatabaseAdapter,
   resolveAuthCorePersistenceAdapterFromEnv,
+  transitionAccountAuthenticationState,
   validateSupportOpsAction,
 } from '@authrim/ar-lib-core';
 import { writeAdminAuditLog } from './admin-shared';
@@ -1784,6 +1785,26 @@ supportOpsRouter.post('/actions/:actionId/execute', async (c) => {
   }
 
   try {
+    const targets = await authCtx.coreAdapter.query<{ target_id: string }>(
+      `SELECT target_id
+         FROM support_operation_cohort_targets
+        WHERE tenant_id = ? AND cohort_id = ? AND block_reason IS NULL`,
+      [tenantId, action.cohort_id]
+    );
+    for (let offset = 0; offset < targets.length; offset += 20) {
+      await Promise.all(
+        targets.slice(offset, offset + 20).map((target) =>
+          transitionAccountAuthenticationState(c.env, {
+            tenantId,
+            userId: target.target_id,
+            lifecycle: 'suspended',
+            sourceVersionMs: now,
+            operationId: crypto.randomUUID(),
+            revokeSessions: true,
+          })
+        )
+      );
+    }
     const updateResult = await authCtx.coreAdapter.execute(
       `UPDATE identity_accounts
           SET lifecycle_state = 'suspended',

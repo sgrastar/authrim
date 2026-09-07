@@ -2,7 +2,7 @@
  * Issuer URL & Host Validation Matrix Tests v2
  *
  * Tests buildIssuerUrl() and validateHostHeader() across 27 representative scenarios.
- * All expected values are hardcoded in deployment-matrix.ts — no calculation here.
+ * All expected values are hardcoded in deployment-topology-matrix.ts — no calculation here.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -17,7 +17,7 @@ import {
   BASE_DOMAIN,
   DEFAULT_TENANT,
   PRIMARY_TENANT,
-} from '../../../../../test/fixtures/deployment-matrix';
+} from '../../../../../test/shared-fixtures/deployment-topology-matrix';
 
 // =============================================================================
 // buildIssuerUrl tests — 27 default + 27 with tenant = 54 tests

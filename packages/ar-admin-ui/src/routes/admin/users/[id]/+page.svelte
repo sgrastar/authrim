@@ -4,9 +4,20 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
-	import { adminUsersAPI, type User, type UpdateUserInput } from '$lib/api/admin-users';
+	import {
+		adminUsersAPI,
+		type AccountLegalHold,
+		type AccountSupportExternalReference,
+		type IdentifierReplacementOperation,
+		type User,
+		type UpdateUserInput
+	} from '$lib/api/admin-users';
 	import { adminSessionsAPI, type Session } from '$lib/api/admin-sessions';
 	import { adminAuditLogsAPI, type AuditLogEntry } from '$lib/api/admin-audit-logs';
+	import {
+		adminEmailDeliveriesAPI,
+		type EmailDeliveryRecord
+	} from '$lib/api/admin-email-deliveries';
 	import {
 		adminRolesAPI,
 		type Role,
@@ -25,11 +36,13 @@
 	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 	import AdminTabs, { type AdminTabItem } from '$lib/components/admin/AdminTabs.svelte';
 	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
+	import EmailDeliveryTable from '$lib/components/admin/EmailDeliveryTable.svelte';
 	import type { OrganizationNode } from '$lib/api/admin-organizations';
 	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { sanitizeText, isValidUUID } from '$lib/utils';
 	import { normalizeTimestampMs } from '$lib/utils/timestamp';
+	import { formatAccountAuditAction } from '$lib/admin/account-audit-action-label';
 
 	let user: User | null = $state(null);
 	let loading = $state(true);
@@ -38,6 +51,15 @@
 	let saving = $state(false);
 	let actionError = $state('');
 	let totpResetLoading = $state(false);
+	let identifierOperations = $state<IdentifierReplacementOperation[]>([]);
+	let identifierOperationsLoading = $state(false);
+	let identifierOperationsError = $state('');
+	let resumingIdentifierOperationId = $state<string | null>(null);
+	let activeIdentifierOperations = $derived(
+		identifierOperations.filter(
+			(operation) => operation.state !== 'completed' && operation.state !== 'canceled'
+		)
+	);
 
 	// Edit form state
 	let editForm = $state<UpdateUserInput>({});
@@ -82,11 +104,19 @@
 	let revokedSessionsCount = $state<number | null>(null);
 
 	// Tab management
+	const canReadAccountGovernance = $derived(
+		adminAuth.hasAnyPermission([
+			'admin:account_support_context:read',
+			'admin:account_legal_holds:read'
+		])
+	);
 	type TabId =
 		| 'overview'
 		| 'authentication-methods'
 		| 'sessions'
 		| 'audit-logs'
+		| 'email-deliveries'
+		| 'support'
 		| 'roles'
 		| 'consents'
 		| 'actions';
@@ -96,17 +126,21 @@
 		{ id: 'authentication-methods', icon: 'i-ph-fingerprint' },
 		{ id: 'sessions', icon: 'i-ph-clock' },
 		{ id: 'audit-logs', icon: 'i-ph-file-text' },
+		{ id: 'email-deliveries', icon: 'i-ph-envelope-open' },
+		{ id: 'support', icon: 'i-ph-lifebuoy' },
 		{ id: 'roles', icon: 'i-ph-shield-check' },
 		{ id: 'consents', icon: 'i-ph-check-circle' },
 		{ id: 'actions', icon: 'i-ph-gear' }
 	];
 	const userTabItems = $derived<AdminTabItem[]>(
-		USER_TAB_DEFINITIONS.map((tab) => ({
-			id: tab.id,
-			icon: tab.icon,
-			label: tabLabel(tab.id),
-			panelId: `${tab.id}-panel`
-		}))
+		USER_TAB_DEFINITIONS.filter((tab) => tab.id !== 'support' || canReadAccountGovernance).map(
+			(tab) => ({
+				id: tab.id,
+				icon: tab.icon,
+				label: tabLabel(tab.id),
+				panelId: `${tab.id}-panel`
+			})
+		)
 	);
 
 	// Consent records state
@@ -121,6 +155,23 @@
 	let auditEntries = $state<AuditLogEntry[]>([]);
 	let auditLoading = $state(false);
 	let auditError = $state('');
+	let emailDeliveries = $state<EmailDeliveryRecord[]>([]);
+	let emailDeliveriesLoading = $state(false);
+	let emailDeliveriesError = $state('');
+	let accountGovernanceLoaded = $state(false);
+	let accountGovernanceLoading = $state(false);
+	let accountGovernanceError = $state('');
+	let supportContextVersion = $state(0);
+	let supportSummary = $state('');
+	let supportReferences = $state<AccountSupportExternalReference[]>([]);
+	let supportSaving = $state(false);
+	let legalHolds = $state<AccountLegalHold[]>([]);
+	let legalHoldReason = $state('');
+	let legalHoldReleaseReason = $state('');
+	let legalHoldCaseReference = $state('');
+	let legalHoldExpiresAt = $state('');
+	let legalHoldSaving = $state(false);
+	const LEGAL_HOLD_REASON_CODE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 	// Consent history modal
 	let showHistoryModal = $state(false);
@@ -140,6 +191,10 @@
 	const canDeleteUsers = $derived(adminAuth.hasPermission('admin:users:delete'));
 	const canManageRoles = $derived(adminAuth.hasPermission('admin:roles:write'));
 	const canRevokeSessions = $derived(adminAuth.hasPermission('admin:sessions:revoke'));
+	const canWriteSupportContext = $derived(
+		adminAuth.hasPermission('admin:account_support_context:write')
+	);
+	const canWriteLegalHolds = $derived(adminAuth.hasPermission('admin:account_legal_holds:write'));
 
 	async function loadUser() {
 		loading = true;
@@ -153,6 +208,41 @@
 			error = err instanceof Error ? err.message : $LL.admin_user_detail_error_load();
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadIdentifierOperations() {
+		identifierOperationsLoading = true;
+		identifierOperationsError = '';
+		try {
+			identifierOperations = await adminUsersAPI.listIdentifierReplacements(userId);
+		} catch (err) {
+			console.error('Failed to load identifier operations:', err);
+			identifierOperationsError = $LL.admin_user_detail_identifier_operations_error();
+		} finally {
+			identifierOperationsLoading = false;
+		}
+	}
+
+	async function resumeIdentifierOperation(operationId: string) {
+		if (!canWriteUsers || resumingIdentifierOperationId) return;
+		resumingIdentifierOperationId = operationId;
+		identifierOperationsError = '';
+		try {
+			await adminUsersAPI.resumeIdentifierReplacement(userId, operationId);
+			await loadIdentifierOperations();
+		} catch (err) {
+			console.error('Failed to resume identifier operation:', err);
+			await loadIdentifierOperations();
+			if (
+				identifierOperations.some(
+					(operation) => operation.operation_id === operationId && operation.attention_required
+				)
+			) {
+				identifierOperationsError = $LL.admin_user_detail_identifier_operation_resume_error();
+			}
+		} finally {
+			resumingIdentifierOperationId = null;
 		}
 	}
 
@@ -193,10 +283,21 @@
 		consentHistory = [];
 		userSessions = [];
 		auditEntries = [];
+		accountGovernanceLoaded = false;
+		accountGovernanceError = '';
+		supportContextVersion = 0;
+		supportSummary = '';
+		supportReferences = [];
+		legalHolds = [];
+		legalHoldReason = '';
+		legalHoldReleaseReason = '';
+		legalHoldCaseReference = '';
+		legalHoldExpiresAt = '';
 		showHistoryModal = false;
 		showWithdrawModal = false;
 		statementToWithdraw = null;
 		loadUser();
+		loadIdentifierOperations();
 		loadUserRoles();
 		loadAvailableRoles();
 		if (activeTab === 'consents') {
@@ -645,19 +746,8 @@
 	}
 
 	function auditActionLabel(action: string): string {
-		const ja = getLocale() === 'ja';
-		switch (action) {
-			case 'account.profile.name_updated':
-				return ja ? 'アカウントページ: 名前変更' : 'Account Page: Name changed';
-			case 'account.passkey.created':
-				return ja ? 'アカウントページ: Passkey追加' : 'Account Page: Passkey added';
-			case 'account.passkey.updated':
-				return ja ? 'アカウントページ: Passkey名変更' : 'Account Page: Passkey renamed';
-			case 'account.passkey.deleted':
-				return ja ? 'アカウントページ: Passkey削除' : 'Account Page: Passkey deleted';
-			case 'account.session.revoked':
-				return ja ? 'アカウントページ: セッションログアウト' : 'Account Page: Session logged out';
-		}
+		const accountAction = formatAccountAuditAction(action, getLocale());
+		if (accountAction) return accountAction;
 		return action
 			.split('.')
 			.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -709,6 +799,156 @@
 		}
 		if (tab === 'audit-logs' && auditEntries.length === 0 && !auditLoading) {
 			loadUserAuditLogs();
+		}
+		if (tab === 'email-deliveries' && emailDeliveries.length === 0 && !emailDeliveriesLoading) {
+			loadUserEmailDeliveries();
+		}
+		if (tab === 'support' && !accountGovernanceLoaded && !accountGovernanceLoading) {
+			loadAccountGovernance();
+		}
+	}
+
+	async function loadUserEmailDeliveries() {
+		emailDeliveriesLoading = true;
+		emailDeliveriesError = '';
+		try {
+			emailDeliveries = (await adminEmailDeliveriesAPI.listForUser(userId)).items;
+		} catch (err) {
+			emailDeliveriesError =
+				err instanceof Error ? err.message : $LL.admin_email_deliveries_load_failed();
+		} finally {
+			emailDeliveriesLoading = false;
+		}
+	}
+
+	async function loadAccountGovernance() {
+		accountGovernanceLoading = true;
+		accountGovernanceError = '';
+		try {
+			const [support, holds] = await Promise.all([
+				adminAuth.hasPermission('admin:account_support_context:read')
+					? adminUsersAPI.getSupportContext(userId)
+					: null,
+				adminAuth.hasPermission('admin:account_legal_holds:read')
+					? adminUsersAPI.listLegalHolds(userId)
+					: []
+			]);
+			if (support) {
+				supportContextVersion = support.version;
+				supportSummary = support.context.summary ?? '';
+				supportReferences = support.context.external_references.map((reference) => ({
+					...reference
+				}));
+			}
+			legalHolds = holds;
+			accountGovernanceLoaded = true;
+		} catch (err) {
+			accountGovernanceError =
+				err instanceof Error ? err.message : $LL.admin_user_detail_support_load_error();
+		} finally {
+			accountGovernanceLoading = false;
+		}
+	}
+
+	function addSupportReference() {
+		if (supportReferences.length >= 20) return;
+		supportReferences = [...supportReferences, { system: '', kind: '', reference: '' }];
+	}
+
+	function updateSupportReference(
+		index: number,
+		field: keyof AccountSupportExternalReference,
+		value: string
+	) {
+		supportReferences = supportReferences.map((reference, currentIndex) =>
+			currentIndex === index ? { ...reference, [field]: value } : reference
+		);
+	}
+
+	function removeSupportReference(index: number) {
+		supportReferences = supportReferences.filter((_, currentIndex) => currentIndex !== index);
+	}
+
+	async function saveSupportContext() {
+		if (!canWriteSupportContext || supportSaving) return;
+		supportSaving = true;
+		accountGovernanceError = '';
+		try {
+			const result = await adminUsersAPI.replaceSupportContext(userId, {
+				expected_version: supportContextVersion,
+				context: {
+					schema_version: 1,
+					...(supportSummary.trim() ? { summary: supportSummary.trim() } : {}),
+					external_references: supportReferences.map((reference) => ({
+						system: reference.system.trim(),
+						kind: reference.kind.trim(),
+						reference: reference.reference.trim()
+					}))
+				}
+			});
+			supportContextVersion = result.version;
+			supportSummary = result.context.summary ?? '';
+			supportReferences = result.context.external_references;
+		} catch (err) {
+			accountGovernanceError =
+				err instanceof Error ? err.message : $LL.admin_user_detail_support_save_error();
+		} finally {
+			supportSaving = false;
+		}
+	}
+
+	async function createLegalHold() {
+		const reasonCode = legalHoldReason.trim();
+		if (!canWriteLegalHolds || legalHoldSaving || !LEGAL_HOLD_REASON_CODE.test(reasonCode)) {
+			accountGovernanceError = $LL.admin_user_detail_legal_hold_reason_invalid();
+			return;
+		}
+		legalHoldSaving = true;
+		accountGovernanceError = '';
+		try {
+			await adminUsersAPI.createLegalHold(userId, {
+				reason_code: reasonCode,
+				...(legalHoldCaseReference.trim() ? { case_reference: legalHoldCaseReference.trim() } : {}),
+				...(legalHoldExpiresAt ? { expires_at: new Date(legalHoldExpiresAt).toISOString() } : {})
+			});
+			legalHoldReason = '';
+			legalHoldCaseReference = '';
+			legalHoldExpiresAt = '';
+			legalHolds = await adminUsersAPI.listLegalHolds(userId);
+		} catch (err) {
+			accountGovernanceError =
+				err instanceof Error ? err.message : $LL.admin_user_detail_legal_hold_create_error();
+		} finally {
+			legalHoldSaving = false;
+		}
+	}
+
+	async function releaseLegalHold(hold: AccountLegalHold) {
+		const reasonCode = legalHoldReleaseReason.trim();
+		if (
+			!canWriteLegalHolds ||
+			legalHoldSaving ||
+			hold.state !== 'active' ||
+			!LEGAL_HOLD_REASON_CODE.test(reasonCode)
+		) {
+			accountGovernanceError = $LL.admin_user_detail_legal_hold_reason_invalid();
+			return;
+		}
+		if (!window.confirm($LL.admin_user_detail_legal_hold_release_confirm())) return;
+		legalHoldSaving = true;
+		accountGovernanceError = '';
+		try {
+			await adminUsersAPI.releaseLegalHold(userId, hold.id, {
+				expected_version: hold.version,
+				reason_code: reasonCode
+			});
+			legalHoldReleaseReason = '';
+			legalHolds = await adminUsersAPI.listLegalHolds(userId);
+		} catch (err) {
+			accountGovernanceError =
+				err instanceof Error ? err.message : $LL.admin_user_detail_legal_hold_release_error();
+		} finally {
+			legalHoldSaving = false;
 		}
 	}
 
@@ -862,6 +1102,17 @@
 		}
 	}
 
+	function legalHoldStateLabel(state: AccountLegalHold['state']): string {
+		switch (state) {
+			case 'active':
+				return $LL.admin_user_detail_legal_hold_state_active();
+			case 'released':
+				return $LL.admin_user_detail_legal_hold_state_released();
+			case 'expired':
+				return $LL.admin_user_detail_legal_hold_state_expired();
+		}
+	}
+
 	function tabLabel(tab: TabId): string {
 		switch (tab) {
 			case 'overview':
@@ -872,6 +1123,10 @@
 				return $LL.admin_user_detail_tab_sessions();
 			case 'audit-logs':
 				return $LL.admin_user_detail_tab_audit_logs();
+			case 'email-deliveries':
+				return $LL.admin_user_detail_tab_email_deliveries();
+			case 'support':
+				return $LL.admin_user_detail_tab_support();
 			case 'roles':
 				return $LL.admin_user_detail_tab_roles();
 			case 'consents':
@@ -981,6 +1236,45 @@
 
 		<!-- Overview Tab -->
 		{#if activeTab === 'overview'}
+			{#if identifierOperationsLoading || identifierOperationsError || activeIdentifierOperations.length > 0}
+				<AdminSection title={$LL.admin_user_detail_identifier_operations()}>
+					{#if identifierOperationsError}
+						<div class="alert alert-error">{identifierOperationsError}</div>
+					{:else if identifierOperationsLoading}
+						<div class="loading-state">
+							<i class="i-ph-circle-notch loading-spinner"></i>
+							<p>{$LL.admin_user_detail_identifier_operations_loading()}</p>
+						</div>
+					{:else}
+						<div class="identifier-operation-list">
+							{#each activeIdentifierOperations as operation (operation.operation_id)}
+								<div class="identifier-operation-row">
+									<div>
+										<p class="user-detail-strong">
+											{operation.attention_required
+												? $LL.admin_user_detail_identifier_operation_attention()
+												: $LL.admin_user_detail_identifier_operation_processing()}
+										</p>
+										<p class="muted mono">{sanitizeText(operation.state)}</p>
+									</div>
+									{#if operation.attention_required && canWriteUsers}
+										<button
+											class="btn btn-secondary btn-sm"
+											disabled={resumingIdentifierOperationId !== null}
+											onclick={() => resumeIdentifierOperation(operation.operation_id)}
+										>
+											<i class="i-ph-arrow-clockwise"></i>
+											{resumingIdentifierOperationId === operation.operation_id
+												? $LL.admin_user_detail_identifier_operation_resuming()
+												: $LL.admin_user_detail_identifier_operation_resume()}
+										</button>
+									{/if}
+								</div>
+							{/each}
+						</div>
+					{/if}
+				</AdminSection>
+			{/if}
 			<!-- Account Information -->
 			<AdminSection title={$LL.admin_user_detail_account_information()}>
 				<dl class="account-info-list">
@@ -1515,6 +1809,215 @@
 					</div>
 				{/if}
 			</AdminSection>
+		{/if}
+
+		{#if activeTab === 'email-deliveries'}
+			<AdminSection
+				title={$LL.admin_email_deliveries_history()}
+				description={$LL.admin_email_deliveries_history_description()}
+			>
+				{#if emailDeliveriesError}<div class="alert alert-error">{emailDeliveriesError}</div>{/if}
+				{#if emailDeliveriesLoading}
+					<p class="state-text">{$LL.admin_email_deliveries_loading()}</p>
+				{:else}
+					<EmailDeliveryTable items={emailDeliveries} showUser={false} />
+				{/if}
+			</AdminSection>
+		{/if}
+
+		{#if activeTab === 'support'}
+			{#if accountGovernanceError}
+				<div class="alert alert-error">{accountGovernanceError}</div>
+			{/if}
+			{#if accountGovernanceLoading}
+				<div class="loading-state">
+					<i class="i-ph-circle-notch loading-spinner"></i>
+					<p>{$LL.admin_user_detail_support_loading()}</p>
+				</div>
+			{:else}
+				<div class="governance-grid">
+					{#if adminAuth.hasPermission('admin:account_support_context:read')}
+						<AdminSection
+							title={$LL.admin_user_detail_support_context()}
+							description={$LL.admin_user_detail_support_context_desc()}
+						>
+							<div class="form-group">
+								<label for="support-summary" class="form-label"
+									>{$LL.admin_user_detail_support_summary()}</label
+								>
+								<textarea
+									id="support-summary"
+									class="form-input support-summary"
+									maxlength="4000"
+									value={supportSummary}
+									disabled={!canWriteSupportContext}
+									oninput={(event) => (supportSummary = event.currentTarget.value)}
+								></textarea>
+							</div>
+
+							<div class="support-reference-heading">
+								<h3 class="user-detail-subheading">
+									{$LL.admin_user_detail_support_external_references()}
+								</h3>
+								{#if canWriteSupportContext}
+									<button
+										class="btn btn-secondary btn-sm"
+										onclick={addSupportReference}
+										disabled={supportReferences.length >= 20}
+									>
+										{$LL.admin_user_detail_support_add_reference()}
+									</button>
+								{/if}
+							</div>
+							{#each supportReferences as reference, index (`${reference.system}-${reference.kind}-${index}`)}
+								<div class="support-reference-row">
+									<input
+										class="form-input"
+										aria-label={$LL.admin_user_detail_support_reference_system()}
+										placeholder={$LL.admin_user_detail_support_reference_system_placeholder()}
+										value={reference.system}
+										disabled={!canWriteSupportContext}
+										oninput={(event) =>
+											updateSupportReference(index, 'system', event.currentTarget.value)}
+									/>
+									<input
+										class="form-input"
+										aria-label={$LL.admin_user_detail_support_reference_kind()}
+										placeholder={$LL.admin_user_detail_support_reference_kind_placeholder()}
+										value={reference.kind}
+										disabled={!canWriteSupportContext}
+										oninput={(event) =>
+											updateSupportReference(index, 'kind', event.currentTarget.value)}
+									/>
+									<input
+										class="form-input"
+										aria-label={$LL.admin_user_detail_support_reference_value()}
+										placeholder={$LL.admin_user_detail_support_reference_value_placeholder()}
+										value={reference.reference}
+										disabled={!canWriteSupportContext}
+										oninput={(event) =>
+											updateSupportReference(index, 'reference', event.currentTarget.value)}
+									/>
+									{#if canWriteSupportContext}
+										<button
+											class="btn btn-danger btn-sm"
+											onclick={() => removeSupportReference(index)}
+											aria-label={$LL.admin_user_detail_support_remove_reference()}
+										>
+											<i class="i-ph-trash"></i>
+										</button>
+									{/if}
+								</div>
+							{/each}
+							{#if canWriteSupportContext}
+								<div class="user-detail-form-actions">
+									<button
+										class="btn btn-primary"
+										onclick={saveSupportContext}
+										disabled={supportSaving}
+									>
+										{supportSaving
+											? $LL.admin_user_detail_support_saving()
+											: $LL.admin_user_detail_support_save()}
+									</button>
+									<span class="muted"
+										>{$LL.admin_user_detail_support_version({
+											version: supportContextVersion
+										})}</span
+									>
+								</div>
+							{/if}
+						</AdminSection>
+					{/if}
+
+					{#if adminAuth.hasPermission('admin:account_legal_holds:read')}
+						<AdminSection
+							title={$LL.admin_user_detail_legal_holds()}
+							description={$LL.admin_user_detail_legal_holds_desc()}
+						>
+							{#if canWriteLegalHolds && !legalHolds.some((hold) => hold.state === 'active')}
+								<div class="legal-hold-form">
+									<input
+										class="form-input"
+										placeholder={$LL.admin_user_detail_legal_hold_reason_placeholder()}
+										value={legalHoldReason}
+										oninput={(event) => (legalHoldReason = event.currentTarget.value)}
+									/>
+									<input
+										class="form-input"
+										placeholder={$LL.admin_user_detail_legal_hold_case_placeholder()}
+										value={legalHoldCaseReference}
+										oninput={(event) => (legalHoldCaseReference = event.currentTarget.value)}
+									/>
+									<input
+										class="form-input"
+										type="datetime-local"
+										aria-label={$LL.admin_user_detail_legal_hold_expiry()}
+										value={legalHoldExpiresAt}
+										oninput={(event) => (legalHoldExpiresAt = event.currentTarget.value)}
+									/>
+									<button
+										class="btn btn-danger"
+										onclick={createLegalHold}
+										disabled={legalHoldSaving ||
+											!LEGAL_HOLD_REASON_CODE.test(legalHoldReason.trim())}
+									>
+										{$LL.admin_user_detail_legal_hold_create()}
+									</button>
+								</div>
+							{/if}
+							{#if legalHolds.length === 0}
+								<p class="empty-state-description">{$LL.admin_user_detail_legal_hold_none()}</p>
+							{:else}
+								<div class="legal-hold-list">
+									{#each legalHolds as hold (hold.id)}
+										<div class="legal-hold-row">
+											<div>
+												<span
+													class={hold.state === 'active'
+														? 'badge badge-danger'
+														: 'badge badge-neutral'}
+												>
+													{legalHoldStateLabel(hold.state)}
+												</span>
+												<strong>{hold.reason_code}</strong>
+												{#if hold.case_reference}<span class="muted">{hold.case_reference}</span
+													>{/if}
+											</div>
+											<div class="legal-hold-meta">
+												<span>{formatTimestamp(hold.created_at)}</span>
+												{#if hold.expires_at}
+													<span
+														>{$LL.admin_user_detail_legal_hold_expires({
+															date: formatTimestamp(hold.expires_at)
+														})}</span
+													>
+												{/if}
+											</div>
+											{#if canWriteLegalHolds && hold.state === 'active'}
+												<input
+													class="form-input"
+													placeholder={$LL.admin_user_detail_legal_hold_release_reason_placeholder()}
+													value={legalHoldReleaseReason}
+													oninput={(event) => (legalHoldReleaseReason = event.currentTarget.value)}
+												/>
+												<button
+													class="btn btn-secondary btn-sm"
+													onclick={() => releaseLegalHold(hold)}
+													disabled={legalHoldSaving ||
+														!LEGAL_HOLD_REASON_CODE.test(legalHoldReleaseReason.trim())}
+												>
+													{$LL.admin_user_detail_legal_hold_release()}
+												</button>
+											{/if}
+										</div>
+									{/each}
+								</div>
+							{/if}
+						</AdminSection>
+					{/if}
+				</div>
+			{/if}
 		{/if}
 
 		<!-- Roles Tab -->
@@ -2161,12 +2664,102 @@
 	}
 
 	.user-detail-form-actions {
+		display: flex;
+		align-items: center;
+		gap: 12px;
 		margin-top: 20px;
+	}
+
+	.governance-grid {
+		display: grid;
+		gap: 24px;
+	}
+
+	.support-summary {
+		min-height: 132px;
+		resize: vertical;
+	}
+
+	.support-reference-heading {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		margin-top: 20px;
+	}
+
+	.support-reference-heading .user-detail-subheading {
+		margin: 0;
+	}
+
+	.support-reference-row {
+		display: grid;
+		grid-template-columns: minmax(120px, 0.75fr) minmax(120px, 0.75fr) minmax(180px, 1.5fr) auto;
+		gap: 10px;
+		align-items: center;
+		margin-top: 10px;
+	}
+
+	.legal-hold-form {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+		gap: 10px;
+		align-items: center;
+		margin-bottom: 20px;
+	}
+
+	.legal-hold-list {
+		border-top: 1px solid var(--color-border-strong);
+	}
+
+	.legal-hold-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto auto;
+		gap: 16px;
+		align-items: center;
+		padding: 14px 4px;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.legal-hold-row > div:first-child,
+	.legal-hold-meta {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+		align-items: center;
+	}
+
+	.legal-hold-meta {
+		color: var(--color-text-muted);
+		font-size: 0.78rem;
 	}
 
 	.user-detail-strong {
 		font-weight: 600;
 		color: var(--color-text);
+	}
+
+	.identifier-operation-list {
+		display: grid;
+		gap: 0;
+	}
+
+	.identifier-operation-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 18px;
+		min-height: 56px;
+		padding: 10px 4px;
+		border-bottom: 1px solid var(--color-border);
+	}
+
+	.identifier-operation-row:last-child {
+		border-bottom: none;
+	}
+
+	.identifier-operation-row p {
+		margin: 0;
 	}
 
 	@media (max-width: 760px) {
@@ -2182,6 +2775,17 @@
 		.auth-method-row {
 			align-items: flex-start;
 			flex-direction: column;
+		}
+
+		.identifier-operation-row {
+			align-items: flex-start;
+			flex-direction: column;
+		}
+
+		.support-reference-row,
+		.legal-hold-form,
+		.legal-hold-row {
+			grid-template-columns: 1fr;
 		}
 	}
 </style>

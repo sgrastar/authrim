@@ -115,12 +115,20 @@ interface UpdateFlowBody {
   status?: FlowStatus;
 }
 
-const STANDARD_FLOW_KINDS = new Set<FlowKind>(['login', 'registration', 'approve', 'account']);
+const STANDARD_FLOW_KINDS = new Set<FlowKind>([
+  'login',
+  'registration',
+  'approve',
+  'account',
+  'credential_issuance',
+  'attribute_elevation',
+]);
 const FLOW_STATUSES = new Set<FlowStatus>(['draft', 'published', 'disabled']);
 const FLOW_ASSIGNMENT_TARGET_TYPES = new Set<FlowAssignmentTargetType>([
   'tenant',
   'oidc_client',
   'saml_sp',
+  'credential_profile',
 ]);
 
 function asBaseContext(c: AdminContext): BaseContext {
@@ -418,9 +426,87 @@ async function validateDraftReferences(
         ))
       );
     }
+
+    if (node.type === 'consent') {
+      const screenRef = readConfigString(node.config, 'screen_ref');
+      if (screenRef && screenRef !== 'basic_profile' && screenRef !== 'consent') {
+        issues.push(
+          ...(await validateConsentScreenReference(db, tenantId, node.id, path, screenRef))
+        );
+      }
+    }
   }
 
   return issues;
+}
+
+async function validateConsentScreenReference(
+  db: DatabaseAdapter,
+  tenantId: string,
+  nodeId: string,
+  path: string,
+  screenRef: string
+): Promise<FlowValidationIssue[]> {
+  const screen = await db.queryOne<{
+    id: string;
+    is_active: number;
+    fields_json: string;
+  }>(
+    `SELECT id, is_active, fields_json
+       FROM screens
+      WHERE tenant_id = ? AND (id = ? OR screen_key = ?)
+      LIMIT 1`,
+    [tenantId, screenRef, screenRef]
+  );
+  if (!screen) {
+    return [
+      {
+        level: 'error',
+        code: 'missing_consent_screen',
+        message: `Consent screen does not exist: ${screenRef}.`,
+        path: `${path}.screen_ref`,
+        node_id: nodeId,
+        ref: { type: 'reference', id: screenRef, key: 'screen_ref' },
+      },
+    ];
+  }
+
+  if (screen.is_active !== 1) {
+    return [
+      {
+        level: 'error',
+        code: 'inactive_consent_screen',
+        message: `Consent screen is inactive: ${screenRef}.`,
+        path: `${path}.screen_ref`,
+        node_id: nodeId,
+        ref: { type: 'reference', id: screenRef, key: 'screen_ref' },
+      },
+    ];
+  }
+
+  let fields: unknown = [];
+  try {
+    fields = JSON.parse(screen.fields_json);
+  } catch {
+    // Invalid screen JSON cannot safely render consent controls.
+  }
+  if (
+    !Array.isArray(fields) ||
+    !fields.some((field) => isRecord(field) && field.block_type === 'consent_widget')
+  ) {
+    return [
+      {
+        level: 'error',
+        code: 'missing_consent_widget',
+        message: `Consent screen must contain a consent widget: ${screenRef}.`,
+        path: `${path}.screen_ref`,
+        node_id: nodeId,
+        ref: { type: 'reference', id: screen.id, key: 'screen_ref' },
+      },
+    ];
+  }
+
+  return [];
 }
 
 async function validateConsentPolicyReference(

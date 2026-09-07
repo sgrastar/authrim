@@ -10,12 +10,10 @@ describe('TENANT_SETTINGS_META', () => {
     expect(TENANT_SETTINGS_META['tenant.ui_error_path'].visibility).toBe('page');
   });
 
-  it('keeps runtime profile overrides as admin-visible pointers', () => {
-    expect(TENANT_SETTINGS_META['tenant.storage_profile_id'].visibility).toBe('admin');
+  it('keeps audit and residency profile overrides as admin-visible pointers', () => {
     expect(TENANT_SETTINGS_META['tenant.audit_profile_id'].visibility).toBe('admin');
     expect(TENANT_SETTINGS_META['tenant.residency_profile_id'].visibility).toBe('admin');
 
-    expect(TENANT_DEFAULTS['tenant.storage_profile_id']).toBe('');
     expect(TENANT_DEFAULTS['tenant.audit_profile_id']).toBe('');
     expect(TENANT_DEFAULTS['tenant.residency_profile_id']).toBe('');
   });

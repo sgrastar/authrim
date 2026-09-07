@@ -1,4 +1,6 @@
 #!/usr/bin/env npx tsx
+import { randomBytes } from 'node:crypto';
+
 /**
  * Integration Test: Suspend/Lock → Introspect Flow
  *
@@ -9,14 +11,14 @@
  * Usage:
  *   BASE_URL=https://conformance.authrim.com \
  *   CLIENT_ID=xxx CLIENT_SECRET=xxx \
- *   ADMIN_API_SECRET=xxx \
+ *   ADMIN_MACHINE_ACCESS_TOKEN=xxx \
  *   npx tsx scripts/test-suspend-lock-introspect.ts
  */
 
 const BASE_URL = process.env.BASE_URL || 'https://conformance.authrim.com';
 const CLIENT_ID = process.env.CLIENT_ID || '';
 const CLIENT_SECRET = process.env.CLIENT_SECRET || '';
-const ADMIN_API_SECRET = process.env.ADMIN_API_SECRET || '';
+const ADMIN_MACHINE_ACCESS_TOKEN = process.env.ADMIN_MACHINE_ACCESS_TOKEN || '';
 
 interface TestResult {
   name: string;
@@ -51,7 +53,7 @@ async function adminRequest(
   const url = `${BASE_URL}${path}`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${ADMIN_API_SECRET}`,
+    Authorization: `Bearer ${ADMIN_MACHINE_ACCESS_TOKEN}`,
   };
 
   return fetch(url, {
@@ -105,12 +107,13 @@ async function getAccessToken(userId: string): Promise<string | null> {
 
 async function createTestUser(): Promise<string | null> {
   const testEmail = `test-suspend-${Date.now()}@example.com`;
+  const testPassword = `Tt1!${randomBytes(24).toString('base64url')}`;
   log(`Creating test user: ${testEmail}`);
 
   const response = await adminRequest('POST', '/api/admin/users', {
     email: testEmail,
     name: 'Test User for Suspend/Lock',
-    password: 'TestPassword123!',
+    password: testPassword,
     email_verified: true,
   });
 
@@ -142,7 +145,9 @@ async function testSuspendUserAndIntrospect() {
   }
 
   // Note: Response format is { users: [...], pagination: {...} }
-  const usersData = (await usersResponse.json()) as { users: Array<{ id: string; email: string; status: string }> };
+  const usersData = (await usersResponse.json()) as {
+    users: Array<{ id: string; email: string; status: string }>;
+  };
 
   let testUser: { id: string; email: string; status: string };
 
@@ -256,7 +261,9 @@ async function testLockUserFlow() {
   }
 
   // Note: Response format is { users: [...], pagination: {...} }
-  const usersData = (await usersResponse.json()) as { users?: Array<{ id: string; status: string }> };
+  const usersData = (await usersResponse.json()) as {
+    users?: Array<{ id: string; status: string }>;
+  };
 
   if (!usersData.users) {
     log('No users data in response, skipping lock test...');
@@ -343,9 +350,9 @@ async function main() {
   console.log('Suspend/Lock → Introspect Integration Tests');
   console.log('========================================\n');
 
-  if (!CLIENT_ID || !CLIENT_SECRET || !ADMIN_API_SECRET) {
+  if (!CLIENT_ID || !CLIENT_SECRET || !ADMIN_MACHINE_ACCESS_TOKEN) {
     console.error(
-      'Missing required environment variables: CLIENT_ID, CLIENT_SECRET, ADMIN_API_SECRET'
+      'Missing required environment variables: CLIENT_ID, CLIENT_SECRET, ADMIN_MACHINE_ACCESS_TOKEN'
     );
     process.exit(1);
   }

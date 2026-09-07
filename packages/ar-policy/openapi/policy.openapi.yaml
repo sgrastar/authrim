@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Policy API
-  version: 0.3.4
+  version: 0.4.0
   summary: Policy, ReBAC, and authorization check APIs.
   description: Initial OpenAPI contract for `@authrim/ar-policy`.
 servers:
@@ -1072,6 +1072,10 @@ components:
             - deny
         cache_ttl:
           type: integer
+          minimum: 0
+          description: >-
+            Suggested cache lifetime in seconds. This is 0 for decisions using resource_context
+            or rebac because those request-specific authorization inputs are not cacheable.
     BatchCheckApiRequest:
       type: object
       required:

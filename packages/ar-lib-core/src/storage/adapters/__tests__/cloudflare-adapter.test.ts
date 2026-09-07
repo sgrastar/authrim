@@ -153,7 +153,7 @@ function createMockEnv(): Env {
     } as unknown as DurableObjectNamespace,
     STATE_STORE: {} as KVNamespace,
     NONCE_STORE: {} as KVNamespace,
-    AVATARS: {
+    PUBLIC_ASSETS: {
       get: vi.fn().mockResolvedValue(null),
       put: vi.fn().mockResolvedValue(undefined),
       delete: vi.fn().mockResolvedValue(undefined),
@@ -196,17 +196,19 @@ describe('CloudflareStorageAdapter', () => {
       expect(env.SESSION_STORE.idFromName).toHaveBeenCalledWith('tenant:acme:session');
     });
 
-    it('should route client: prefix to D1 with KV cache', async () => {
-      // Mock KV cache to return null (cache miss)
-      (env.CLIENTS_CACHE?.get as any).mockResolvedValue(null);
+    it('should read client security metadata directly from D1', async () => {
+      (env.CLIENTS_CACHE?.get as any).mockResolvedValue(
+        JSON.stringify({ client_id: 'stale-client' })
+      );
       // Mock D1 to return data
       (env.DB.prepare as any).mockReturnValue({
         bind: vi.fn().mockReturnThis(),
         first: vi.fn().mockResolvedValue({ data: JSON.stringify({ client_id: 'test-client' }) }),
       });
 
-      await adapter.get('client:test-client');
-      expect(env.CLIENTS_CACHE?.get).toHaveBeenCalled();
+      const result = await adapter.get('client:test-client');
+      expect(result).toBe(JSON.stringify({ client_id: 'test-client' }));
+      expect(env.CLIENTS_CACHE?.get).not.toHaveBeenCalled();
       expect(env.DB.prepare).toHaveBeenCalled();
     });
 

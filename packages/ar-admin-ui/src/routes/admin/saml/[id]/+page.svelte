@@ -7,6 +7,7 @@
 		adminSAMLAPI,
 		type AttributeReleaseConsentMode,
 		type SAMLAttributeReleaseConfirmationValueDisplay,
+		type SAMLDestinationFieldReleaseMode,
 		type SAMLJitEmailLinkingPolicy,
 		type SAMLProvider,
 		type SAMLProviderConfig,
@@ -18,7 +19,8 @@
 	} from '$lib/api/admin-consent-statements';
 	import {
 		adminIdentityMappingAPI,
-		type IdentityMappingFieldMappingSetSummary
+		type IdentityMappingFieldMappingSetSummary,
+		type IdentityMappingFieldMappingVersionSummary
 	} from '$lib/api/admin-identity-mapping';
 	import {
 		AdminDataTable,
@@ -29,6 +31,15 @@
 	import ConsentPolicyTargetSettings from '$lib/components/admin/ConsentPolicyTargetSettings.svelte';
 	import FlowAssignmentSettings from '$lib/components/admin/FlowAssignmentSettings.svelte';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
+	import SAMLMappingSetReleasePolicy from '$lib/components/saml/SAMLMappingSetReleasePolicy.svelte';
+	import {
+		buildSAMLFieldReleasePolicies,
+		resolveSAMLMappingSetDestinationProfileIds,
+		resolveSAMLMappingSetReleaseFields,
+		type SAMLMappingSetReleaseField
+	} from '$lib/saml/mapping-set-release-policy';
+	import { buildSelectableFieldMappingSets } from '$lib/saml/field-mapping-options';
+	import { buildProviderIdentityMapping } from '$lib/saml/provider-identity-mapping';
 	import { getLocale, LL } from '$i18n/i18n-svelte';
 
 	const providerId = $derived($page.params.id);
@@ -63,6 +74,9 @@
 
 	let provider = $state<SAMLProvider | null>(null);
 	let fieldMappingSets = $state<IdentityMappingFieldMappingSetSummary[]>([]);
+	let fieldMappingVersionsByFieldMappingSetId = $state<
+		Record<string, IdentityMappingFieldMappingVersionSummary[]>
+	>({});
 	let loading = $state(true);
 	let saving = $state(false);
 	let busyAction = $state('');
@@ -73,6 +87,8 @@
 	let description = $state('');
 	let enabled = $state(true);
 	let metadataUrl = $state('');
+	let metadataAutoPolling = $state(true);
+	let metadataPollingIntervalSeconds = $state(6 * 60 * 60);
 	let providerName = $state('Authrim');
 	let logoUrl = $state('');
 	let iconName = $state('');
@@ -106,6 +122,12 @@
 	let attributeReleaseTemplateStatementId = $state('');
 	let attributeReleaseButtonLabel = $state('');
 	let identityMappingFieldMappingSetId = $state('');
+	let identityMappingDestinationProfileId = $state('');
+	let destinationFieldPolicies = $state<Record<string, SAMLDestinationFieldReleaseMode>>({});
+	let mappingReleaseFields = $state<SAMLMappingSetReleaseField[]>([]);
+	let loadingMappingReleaseFields = $state(false);
+	let mappingReleaseFieldsError = $state('');
+	let mappingReleaseLoadSequence = 0;
 	let certificatePreview = $state<SAMLTrustCertificatePreview | null>(null);
 	let certificatePreviewError = $state('');
 	let loadingCertificatePreview = $state(false);
@@ -138,8 +160,21 @@
 			]);
 			provider = loadedProvider;
 			fieldMappingSets = fieldMappingResult.fieldMappingSets;
+			const versionPairs = await Promise.all(
+				fieldMappingSets.map(async (fieldMappingSet) => {
+					const versions = await adminIdentityMappingAPI
+						.listFieldMappingVersions(fieldMappingSet.id)
+						.catch(() => null);
+					if (!versions) return null;
+					return [fieldMappingSet.id, versions.fieldMappingVersions] as const;
+				})
+			);
+			fieldMappingVersionsByFieldMappingSetId = Object.fromEntries(
+				versionPairs.filter((entry) => entry !== null)
+			);
 			consentStatements = statementResult.statements || [];
 			populateForm(loadedProvider);
+			await loadMappingReleaseFields();
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_saml_detail_error_load();
 		} finally {
@@ -152,6 +187,9 @@
 		description = data.config.description || '';
 		enabled = data.enabled;
 		metadataUrl = data.config.metadataUrl || '';
+		metadataAutoPolling = data.config.metadataRefreshPolicy?.mode !== 'manual';
+		metadataPollingIntervalSeconds =
+			data.config.metadataRefreshPolicy?.intervalSeconds ?? 6 * 60 * 60;
 		providerName = data.config.providerName || 'Authrim';
 		logoUrl = data.config.logoUrl || '';
 		iconName = data.config.iconName || '';
@@ -190,8 +228,87 @@
 			data.config.attributeReleaseConfirmation?.templateStatementId || '';
 		attributeReleaseButtonLabel = data.config.attributeReleaseConfirmation?.buttonLabel || '';
 		identityMappingFieldMappingSetId = data.config.identityMapping?.fieldMappingSetId || '';
+		destinationFieldPolicies = {
+			...(data.config.identityMapping?.destinationFieldPolicies ?? {})
+		};
 		certificatePreview = null;
 		certificatePreviewError = '';
+	}
+
+	async function handleFieldMappingSetChange(event: Event) {
+		identityMappingFieldMappingSetId = (event.currentTarget as HTMLSelectElement).value;
+		await loadMappingReleaseFields();
+	}
+
+	function selectableFieldMappingSets(): IdentityMappingFieldMappingSetSummary[] {
+		if (!provider) return [];
+		return buildSelectableFieldMappingSets({
+			fieldMappingSets,
+			versionsByFieldMappingSetId: fieldMappingVersionsByFieldMappingSetId,
+			providerType: provider.providerType,
+			currentFieldMappingSetId: identityMappingFieldMappingSetId
+		});
+	}
+
+	async function loadMappingReleaseFields() {
+		const sequence = ++mappingReleaseLoadSequence;
+		mappingReleaseFieldsError = '';
+		if (provider?.providerType !== 'saml_sp' || !identityMappingFieldMappingSetId) {
+			loadingMappingReleaseFields = false;
+			mappingReleaseFields = [];
+			if (provider?.providerType === 'saml_sp') {
+				destinationFieldPolicies = {};
+				identityMappingDestinationProfileId = '';
+			}
+			return;
+		}
+		loadingMappingReleaseFields = true;
+		try {
+			const cachedVersions =
+				fieldMappingVersionsByFieldMappingSetId[identityMappingFieldMappingSetId];
+			const [versionResult, destinationResult] = await Promise.all([
+				cachedVersions
+					? Promise.resolve({ fieldMappingVersions: cachedVersions })
+					: adminIdentityMappingAPI.listFieldMappingVersions(identityMappingFieldMappingSetId),
+				adminIdentityMappingAPI.listDestinationProfiles()
+			]);
+			if (sequence !== mappingReleaseLoadSequence) return;
+			const releaseInput = {
+				versions: versionResult.fieldMappingVersions,
+				destinationProfiles: destinationResult.destinationProfiles
+			};
+			const destinationProfileIds = resolveSAMLMappingSetDestinationProfileIds(releaseInput);
+			if (destinationProfileIds.length !== 1) {
+				throw new Error(
+					getLocale() === 'ja'
+						? 'Mapping Setには有効なSAML Destination Profileが1つ必要です。'
+						: 'The Mapping Set must reference exactly one active SAML destination profile.'
+				);
+			}
+			identityMappingDestinationProfileId = destinationProfileIds[0];
+			mappingReleaseFields = resolveSAMLMappingSetReleaseFields(releaseInput);
+			destinationFieldPolicies = buildSAMLFieldReleasePolicies({
+				fields: mappingReleaseFields,
+				existing: destinationFieldPolicies,
+				metadataRequestedAttributes: provider?.config.metadataRequestedAttributes
+			});
+		} catch (err) {
+			if (sequence !== mappingReleaseLoadSequence) return;
+			mappingReleaseFields = [];
+			identityMappingDestinationProfileId = '';
+			mappingReleaseFieldsError =
+				err instanceof Error
+					? err.message
+					: getLocale() === 'ja'
+						? 'Mapping Setの属性を読み込めませんでした。'
+						: 'Failed to load Mapping Set attributes.';
+		} finally {
+			if (sequence === mappingReleaseLoadSequence) loadingMappingReleaseFields = false;
+		}
+	}
+
+	function updateDestinationFieldPolicy(key: string, mode: SAMLDestinationFieldReleaseMode) {
+		destinationFieldPolicies = { ...destinationFieldPolicies, [key]: mode };
 	}
 
 	function providerTypeLabel(type: SAMLProvider['providerType']) {
@@ -252,6 +369,11 @@
 		const date = new Date(value);
 		if (Number.isNaN(date.getTime())) return value || '-';
 		return date.toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
+	}
+
+	function formatMetadataTimestamp(value?: number) {
+		if (!value) return $LL.admin_saml_metadata_never();
+		return new Date(value).toLocaleString(getLocale() === 'ja' ? 'ja-JP' : 'en-US');
 	}
 
 	function providerCertificateMessage() {
@@ -379,12 +501,18 @@
 	}
 
 	function buildConfig(): SAMLProviderConfig {
+		const sourceUrl = metadataUrl.trim();
 		const config: SAMLProviderConfig = {
+			...(provider?.config ?? {}),
 			description: description.trim(),
 			logoUrl: logoUrl.trim() || undefined,
 			iconName: iconName || undefined,
 			entityId: entityId.trim(),
-			metadataUrl: metadataUrl.trim(),
+			metadataUrl: sourceUrl || undefined,
+			metadataRefreshPolicy: {
+				mode: sourceUrl && metadataAutoPolling ? 'automatic' : 'manual',
+				intervalSeconds: metadataPollingIntervalSeconds
+			},
 			sloUrl: sloUrl.trim(),
 			certificate: certificate.trim(),
 			nameIdFormat,
@@ -395,13 +523,11 @@
 		if (provider?.providerType === 'saml_idp') {
 			return {
 				...config,
-				identityMapping: identityMappingFieldMappingSetId
-					? {
-							...(provider?.config.identityMapping ?? {}),
-							fieldMappingSetId: identityMappingFieldMappingSetId,
-							destinationNamespace: provider?.config.identityMapping?.destinationNamespace
-						}
-					: undefined,
+				identityMapping: buildProviderIdentityMapping({
+					existing: provider.config.identityMapping,
+					selectedFieldMappingSetId: identityMappingFieldMappingSetId,
+					providerType: 'saml_idp'
+				}),
 				providerName: providerName.trim() || undefined,
 				ssoUrl: ssoUrl.trim(),
 				logoutRequestSignaturePolicy,
@@ -446,14 +572,12 @@
 						buttonLabel: attributeReleaseButtonLabel.trim() || undefined
 					}
 				: undefined,
-			identityMapping: identityMappingFieldMappingSetId
-				? {
-						...(provider?.config.identityMapping ?? {}),
-						fieldMappingSetId: identityMappingFieldMappingSetId,
-						destinationNamespace:
-							provider?.config.identityMapping?.destinationNamespace ?? 'saml.attribute'
-					}
-				: undefined
+			identityMapping: buildProviderIdentityMapping({
+				existing: provider?.config.identityMapping,
+				selectedFieldMappingSetId: identityMappingFieldMappingSetId,
+				providerType: 'saml_sp',
+				destinationFieldPolicies
+			})
 		};
 	}
 
@@ -468,10 +592,23 @@
 		if (provider?.providerType === 'saml_sp' && !acsUrl.trim()) {
 			return $LL.admin_saml_detail_sp_required();
 		}
-		if (!identityMappingFieldMappingSetId) {
+		if (enabled && !identityMappingFieldMappingSetId) {
 			return getLocale() === 'ja'
 				? 'Field Mapping Setを選択してください。'
 				: 'Select a Field Mapping Set.';
+		}
+		if (enabled && provider?.providerType === 'saml_sp' && mappingReleaseFieldsError) {
+			return mappingReleaseFieldsError;
+		}
+		if (enabled && provider?.providerType === 'saml_sp' && !identityMappingDestinationProfileId) {
+			return getLocale() === 'ja'
+				? 'Mapping SetのSAML Destination Profileを特定できません。'
+				: 'The Mapping Set SAML destination profile could not be resolved.';
+		}
+		if (enabled && provider?.providerType === 'saml_sp' && mappingReleaseFields.length === 0) {
+			return getLocale() === 'ja'
+				? '選択したMapping Setに有効なSAML Destination属性がありません。'
+				: 'The selected Mapping Set has no active SAML destination attributes.';
 		}
 		return '';
 	}
@@ -487,6 +624,7 @@
 
 	async function handleSave() {
 		if (!providerId) return;
+		if (enabled && loadingMappingReleaseFields) return;
 		const validationError = validate();
 		if (validationError) {
 			error = validationError;
@@ -498,6 +636,7 @@
 		message = '';
 		try {
 			const updated = await adminSAMLAPI.updateProvider(providerId, {
+				expectedUpdatedAt: provider!.updatedAt,
 				name: name.trim(),
 				enabled,
 				config: buildConfig()
@@ -509,6 +648,27 @@
 			error = err instanceof Error ? err.message : $LL.admin_saml_detail_error_update();
 		} finally {
 			saving = false;
+		}
+	}
+
+	async function refreshMetadataNow() {
+		if (!providerId || !metadataUrl.trim() || metadataUrl.trim() !== provider?.config.metadataUrl)
+			return;
+		busyAction = 'refresh-metadata';
+		error = '';
+		message = '';
+		try {
+			const result = await adminSAMLAPI.refreshMetadata(providerId);
+			const refreshed = await adminSAMLAPI.getProvider(providerId);
+			provider = refreshed;
+			populateForm(refreshed);
+			message = result.changed
+				? $LL.admin_saml_metadata_refreshed_changed()
+				: $LL.admin_saml_metadata_refreshed_unchanged();
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.admin_saml_metadata_refresh_failed();
+		} finally {
+			busyAction = '';
 		}
 	}
 
@@ -662,11 +822,20 @@
 				<div class={providerCertificateMessageClass()}>{providerCertificateMessage()}</div>
 			{/if}
 
+			{#if !identityMappingFieldMappingSetId}
+				<div class="alert alert-warning">
+					{$LL.admin_saml_detail_mapping_pending()}
+				</div>
+			{/if}
+
 			<AdminSection>
 				<ToggleSwitch
 					bind:checked={enabled}
+					disabled={!enabled && !identityMappingFieldMappingSetId}
 					label={$LL.admin_saml_detail_provider_status()}
-					description={$LL.admin_saml_detail_provider_status_desc()}
+					description={identityMappingFieldMappingSetId
+						? $LL.admin_saml_detail_provider_status_desc()
+						: $LL.admin_saml_detail_provider_status_mapping_required()}
 				/>
 			</AdminSection>
 
@@ -780,6 +949,57 @@
 						<p class="field-hint">
 							{$LL.admin_saml_detail_metadata_source_hint()}
 						</p>
+						<ToggleSwitch
+							bind:checked={metadataAutoPolling}
+							label={$LL.admin_saml_metadata_auto_polling()}
+							description={$LL.admin_saml_metadata_auto_polling_desc()}
+							disabled={!metadataUrl.trim()}
+						/>
+						{#if metadataAutoPolling && metadataUrl.trim()}
+							<label for="metadataPollingInterval" class="admin-field__label">
+								{$LL.admin_saml_metadata_polling_interval()}
+							</label>
+							<select
+								id="metadataPollingInterval"
+								bind:value={metadataPollingIntervalSeconds}
+								class="admin-select"
+							>
+								<option value={3600}>{$LL.admin_saml_metadata_interval_1h()}</option>
+								<option value={21600}>{$LL.admin_saml_metadata_interval_6h()}</option>
+								<option value={43200}>{$LL.admin_saml_metadata_interval_12h()}</option>
+								<option value={86400}>{$LL.admin_saml_metadata_interval_24h()}</option>
+							</select>
+						{/if}
+						<div class="metadata-refresh-status">
+							<span>
+								{$LL.admin_saml_metadata_last_success()}:
+								{formatMetadataTimestamp(provider.config.metadataRefreshPolicy?.lastSuccessAt)}
+							</span>
+							<span>
+								{$LL.admin_saml_metadata_next_refresh()}:
+								{metadataAutoPolling
+									? formatMetadataTimestamp(provider.config.metadataRefreshPolicy?.nextRefreshAt)
+									: $LL.admin_saml_metadata_manual_mode()}
+							</span>
+							{#if provider.config.metadataRefreshPolicy?.lastErrorCode}
+								<span class="form-error">
+									{$LL.admin_saml_metadata_last_error()}:
+									{provider.config.metadataRefreshPolicy.lastErrorCode}
+								</span>
+							{/if}
+						</div>
+						<button
+							type="button"
+							class="btn btn-secondary btn-sm"
+							onclick={refreshMetadataNow}
+							disabled={!metadataUrl.trim() ||
+								metadataUrl.trim() !== provider.config.metadataUrl ||
+								busyAction === 'refresh-metadata'}
+						>
+							{busyAction === 'refresh-metadata'
+								? $LL.admin_saml_metadata_refreshing()
+								: $LL.admin_saml_metadata_refresh_now()}
+						</button>
 					</div>
 
 					<div class="admin-field admin-field--full">
@@ -880,7 +1100,12 @@
 								class="admin-select"
 							>
 								<option value="">{$LL.admin_saml_detail_identity_mapping_policy_default()}</option>
-								{#each fieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
+								{#if identityMappingFieldMappingSetId && !fieldMappingSets.some((fieldMappingSet) => fieldMappingSet.id === identityMappingFieldMappingSetId)}
+									<option value={identityMappingFieldMappingSetId}>
+										{identityMappingFieldMappingSetId}
+									</option>
+								{/if}
+								{#each selectableFieldMappingSets() as fieldMappingSet (fieldMappingSet.id)}
 									<option value={fieldMappingSet.id}>
 										{fieldMappingSet.displayName} ({fieldMappingSet.lifecycleState})
 									</option>
@@ -983,11 +1208,17 @@
 							>
 							<select
 								id="identityMappingFieldMapping"
-								bind:value={identityMappingFieldMappingSetId}
+								value={identityMappingFieldMappingSetId}
+								onchange={handleFieldMappingSetChange}
 								class="admin-select"
 							>
 								<option value="">{$LL.admin_saml_detail_identity_mapping_policy_default()}</option>
-								{#each fieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
+								{#if identityMappingFieldMappingSetId && !fieldMappingSets.some((fieldMappingSet) => fieldMappingSet.id === identityMappingFieldMappingSetId)}
+									<option value={identityMappingFieldMappingSetId}>
+										{identityMappingFieldMappingSetId}
+									</option>
+								{/if}
+								{#each selectableFieldMappingSets() as fieldMappingSet (fieldMappingSet.id)}
 									<option value={fieldMappingSet.id}>
 										{fieldMappingSet.displayName} ({fieldMappingSet.lifecycleState})
 									</option>
@@ -999,6 +1230,16 @@
 									{$LL.admin_saml_detail_identity_mapping_policy_link()}
 								</a>
 							</p>
+						</div>
+
+						<div class="admin-field admin-field--full">
+							<SAMLMappingSetReleasePolicy
+								fields={mappingReleaseFields}
+								policies={destinationFieldPolicies}
+								loading={loadingMappingReleaseFields}
+								error={mappingReleaseFieldsError}
+								onChange={updateDestinationFieldPolicy}
+							/>
 						</div>
 
 						<div class="admin-field admin-field--full attribute-release-confirmation">
@@ -1324,7 +1565,12 @@
 		</AdminSection>
 
 		<div class="form-actions page-bottom-actions">
-			<button class="btn btn-primary" type="button" onclick={handleSave} disabled={saving}>
+			<button
+				class="btn btn-primary"
+				type="button"
+				onclick={handleSave}
+				disabled={saving || (enabled && loadingMappingReleaseFields)}
+			>
 				{saving ? $LL.admin_saml_local_saving() : $LL.admin_saml_detail_save_changes()}
 			</button>
 		</div>

@@ -15,7 +15,13 @@ import {
   validateRegionShardRequest,
   createNewRegionGeneration,
   calculateRegionDistribution,
+  buildPolicyConstrainedRegionShardConfig,
+  clearRegionShardConfigCache,
+  getRegionAwareDOStub,
+  getRegionShardConfig,
   getDefaultRegionShardConfig,
+  parseRegionPlacementKey,
+  validateRegionShardResidencyStrict,
   type RegionShardConfig,
   type RegionGenerationConfig,
   REGION_MAX_PREVIOUS_GENERATIONS,
@@ -250,7 +256,7 @@ describe('Region Sharding Utilities', () => {
   describe('validateRegionShardRequest', () => {
     it('should accept valid request', () => {
       const result = validateRegionShardRequest({
-        totalShards: 20,
+        totalShards: 21,
         regionDistribution: { apac: 20, enam: 40, weur: 40 },
       });
 
@@ -297,9 +303,19 @@ describe('Region Sharding Utilities', () => {
       expect(result.error).toContain('must be >= active region count');
     });
 
+    it('should reject totalShards that is not a multiple of active regions', () => {
+      const result = validateRegionShardRequest({
+        totalShards: 4,
+        regionDistribution: { apac: 33, enam: 33, weur: 34 },
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain('must be a multiple of active region count');
+    });
+
     it('should reject when percentage would result in 0 shards', () => {
       const result = validateRegionShardRequest({
-        totalShards: 10,
+        totalShards: 12,
         regionDistribution: { apac: 1, enam: 49, weur: 50 },
       });
 
@@ -621,9 +637,9 @@ describe('Region Sharding Utilities', () => {
         expect(result.error).toContain('must be >= active region count');
       });
 
-      it('should handle very large totalShards (1000)', () => {
+      it('should handle a very large valid totalShards multiple', () => {
         const result = validateRegionShardRequest({
-          totalShards: 1000,
+          totalShards: 999,
           regionDistribution: { apac: 20, enam: 40, weur: 40 },
         });
 
@@ -803,6 +819,154 @@ describe('Region Sharding Utilities', () => {
       });
 
       expect(result.valid).toBe(true);
+    });
+  });
+
+  describe('Control-owned residency boundary', () => {
+    beforeEach(() => clearRegionShardConfigCache());
+
+    it('fails closed when no tenant config exists instead of using implicit defaults', async () => {
+      const get = vi.fn().mockResolvedValue(null);
+      await expect(
+        getRegionShardConfig({ AUTHRIM_CONFIG: { get } } as never, 'tenant-a')
+      ).rejects.toThrow('region_shard_config_missing');
+      expect(get).toHaveBeenCalledWith('region_shard_config:tenant-a', { type: 'json' });
+    });
+
+    it('builds only regions allowed by the server-owned residency projection', () => {
+      const config = buildPolicyConstrainedRegionShardConfig({
+        residency: {
+          version: 1,
+          residencyPolicyId: 'policy-eu',
+          residencyPartition: 'default',
+          policyGeneration: 3,
+          allowedRegions: ['weur', 'eeur'],
+          jurisdiction: 'eu',
+        },
+        now: 123,
+      });
+      expect(config).toMatchObject({
+        currentGeneration: 1,
+        currentTotalShards: 4,
+        updatedAt: 123,
+        residency: {
+          policyGeneration: 3,
+          allowedRegions: ['weur', 'eeur'],
+          jurisdiction: 'eu',
+        },
+      });
+      expect(Object.keys(config.currentRegions).sort()).toEqual(['eeur', 'weur']);
+      expect(() => validateRegionShardResidencyStrict(config)).not.toThrow();
+    });
+
+    it('rejects current and historical generations outside the residency boundary', () => {
+      const config = buildPolicyConstrainedRegionShardConfig({
+        residency: {
+          version: 1,
+          residencyPolicyId: 'policy-eu',
+          residencyPartition: 'default',
+          policyGeneration: 1,
+          allowedRegions: ['weur', 'eeur'],
+          jurisdiction: 'eu',
+        },
+      });
+      expect(() =>
+        validateRegionShardResidencyStrict({
+          ...config,
+          currentRegions: { apac: { startShard: 0, endShard: 3, shardCount: 4 } },
+        })
+      ).toThrow('region_shard_current_region_disallowed');
+      expect(() =>
+        validateRegionShardResidencyStrict({
+          ...config,
+          previousGenerations: [
+            {
+              generation: 0,
+              totalShards: 4,
+              regions: { apac: { startShard: 0, endShard: 3, shardCount: 4 } },
+            },
+          ],
+        })
+      ).toThrow('region_shard_previous_region_disallowed');
+    });
+
+    it('rejects disallowed regions even when they contain no active shards', () => {
+      const config = buildPolicyConstrainedRegionShardConfig({
+        residency: {
+          version: 1,
+          residencyPolicyId: 'policy-eu',
+          residencyPartition: 'default',
+          policyGeneration: 1,
+          allowedRegions: ['weur', 'eeur'],
+          jurisdiction: 'eu',
+        },
+      });
+      expect(() =>
+        validateRegionShardResidencyStrict({
+          ...config,
+          currentRegions: {
+            ...config.currentRegions,
+            apac: { startShard: 0, endShard: -1, shardCount: 0 },
+          },
+        })
+      ).toThrow('region_shard_current_region_disallowed');
+    });
+
+    it('encodes jurisdiction in new IDs and restores the same subnamespace for existing IDs', () => {
+      const config = buildPolicyConstrainedRegionShardConfig({
+        residency: {
+          version: 1,
+          residencyPolicyId: 'policy-eu',
+          residencyPartition: 'default',
+          policyGeneration: 1,
+          allowedRegions: ['weur'],
+          jurisdiction: 'eu',
+        },
+      });
+      const resolution = resolveShardForNewResource(config, 'account-a');
+      expect(resolution.regionKey).toBe('weur_j_eu');
+      expect(parseRegionPlacementKey(resolution.regionKey)).toEqual({
+        regionKey: 'weur',
+        jurisdiction: 'eu',
+      });
+
+      const id = { id: 'eu-id' };
+      const stub = { stub: 'eu-stub' };
+      const restricted = {
+        idFromName: vi.fn().mockReturnValue(id),
+        get: vi.fn().mockReturnValue(stub),
+      };
+      const namespace = {
+        jurisdiction: vi.fn().mockReturnValue(restricted),
+        idFromName: vi.fn(),
+        get: vi.fn(),
+      };
+      expect(
+        getRegionAwareDOStub(namespace as never, 'tenant-a:weur_j_eu:ses:0', 'weur_j_eu')
+      ).toBe(stub);
+      expect(namespace.jurisdiction).toHaveBeenCalledWith('eu');
+      expect(restricted.get).toHaveBeenCalledWith(id, { locationHint: 'weur' });
+      expect(namespace.idFromName).not.toHaveBeenCalled();
+    });
+
+    it('keeps legacy unrestricted IDs in the unrestricted namespace', () => {
+      const id = { id: 'plain-id' };
+      const stub = { stub: 'plain-stub' };
+      const namespace = {
+        jurisdiction: vi.fn(),
+        idFromName: vi.fn().mockReturnValue(id),
+        get: vi.fn().mockReturnValue(stub),
+      };
+      expect(getRegionAwareDOStub(namespace as never, 'tenant-a:apac:ses:0', 'apac')).toBe(stub);
+      expect(namespace.jurisdiction).not.toHaveBeenCalled();
+      expect(namespace.get).toHaveBeenCalledWith(id, { locationHint: 'apac' });
+    });
+
+    it('rejects forged jurisdiction markers', () => {
+      expect(() => parseRegionPlacementKey('weur_j_us')).toThrow(
+        'region_shard_jurisdiction_invalid'
+      );
+      expect(() => parseRegionPlacementKey('unknown_j_eu')).toThrow('region_shard_region_invalid');
     });
   });
 });

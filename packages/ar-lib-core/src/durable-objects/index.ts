@@ -14,6 +14,7 @@
  */
 
 export { SessionStore } from './SessionStore';
+export { SessionRevocationStore } from './SessionRevocationStore';
 export { SessionClientStore } from './SessionClientStore';
 export { AuthorizationCodeStore } from './AuthorizationCodeStore';
 export { RefreshTokenRotator } from './RefreshTokenRotator';
@@ -31,9 +32,18 @@ export { SAMLAggregateMetadataStore } from './SAMLAggregateMetadataStore';
 export { PermissionChangeHub } from './PermissionChangeHub';
 export { UserCodeRateLimiter } from './UserCodeRateLimiter';
 export { FlowStateStore } from './FlowStateStore';
+export { DeviceSecretRouteStore } from './DeviceSecretRouteStore';
+export type { DeviceSecretRouteHint } from './DeviceSecretRouteStore';
+export { KeyManagerPublicEntrypoint } from '../entrypoints/KeyManagerPublicEntrypoint';
+export { RuntimeSmokeEntrypoint } from '../entrypoints/RuntimeSmokeEntrypoint';
 
 // Export types for external use
 export type { Session, SessionData, CreateSessionRequest, SessionResponse } from './SessionStore';
+export type {
+  AccountAuthenticationLifecycle,
+  AccountAuthenticationSnapshot,
+  SessionRegistrationResult,
+} from './SessionRevocationStore';
 export type {
   RegisterSessionClientRequest,
   SessionClientRecord,

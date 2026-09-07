@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://authrim.com/schemas/control-plane/authrim.worker-capabilities.schema.json",
+  "title": "Authrim Worker Capabilities",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "packageName",
+    "worker",
+    "requiredDataRoles",
+    "bindings",
+    "secrets"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "packageName": { "type": "string", "pattern": "^@authrim/[a-z0-9-]+$" },
+    "worker": { "type": "string", "pattern": "^ar-[a-z0-9-]+$" },
+    "requiredDataRoles": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "tenant_core/default",
+          "tenant_core/users",
+          "tenant_pii",
+          "lookup",
+          "control",
+          "plugin_runner"
+        ]
+      }
+    },
+    "lookupBlindIndex": { "type": "boolean", "default": false },
+    "bindings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/binding" }
+    },
+    "dynamicBindings": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/dynamicBinding" },
+      "default": []
+    },
+    "secrets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/secret" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "worker": { "const": "ar-control" } },
+        "required": ["worker"]
+      },
+      "then": {
+        "properties": {
+          "secrets": {
+            "items": {
+              "allOf": [
+                { "$ref": "#/$defs/secret" },
+                {
+                  "properties": {
+                    "name": {
+                      "anyOf": [
+                        {
+                          "not": {
+                            "pattern": "^(CLOUDFLARE|CF)_.+_(API_)?TOKEN$"
+                          }
+                        },
+                        {
+                          "enum": [
+                            "CLOUDFLARE_D1_API_TOKEN",
+                            "CLOUDFLARE_WORKERS_API_TOKEN",
+                            "CLOUDFLARE_KV_API_TOKEN",
+                            "CLOUDFLARE_R2_API_TOKEN"
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "secrets": {
+            "items": {
+              "allOf": [
+                { "$ref": "#/$defs/secret" },
+                {
+                  "properties": {
+                    "name": {
+                      "not": {
+                        "pattern": "^(CLOUDFLARE|CF)_.+_(API_)?TOKEN$"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "dynamicBindings": { "minItems": 1 } },
+        "required": ["dynamicBindings"]
+      },
+      "then": {
+        "properties": {
+          "worker": { "const": "ar-plugin-runner" },
+          "dynamicBindings": {
+            "items": {
+              "oneOf": [
+                {
+                  "properties": {
+                    "prefix": { "const": "PRES_D1_" },
+                    "kind": { "const": "d1" }
+                  }
+                },
+                {
+                  "properties": {
+                    "prefix": { "const": "PRES_KV_" },
+                    "kind": { "const": "kv_namespace" }
+                  }
+                },
+                {
+                  "properties": {
+                    "prefix": { "const": "PRES_R2_" },
+                    "kind": { "const": "r2_bucket" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "required"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+        "kind": {
+          "enum": [
+            "d1",
+            "kv_namespace",
+            "r2_bucket",
+            "service",
+            "worker_loader",
+            "durable_object_namespace",
+            "queue",
+            "send_email",
+            "hyperdrive",
+            "version_metadata"
+          ]
+        },
+        "required": { "type": "boolean" },
+        "dataRole": {
+          "enum": [
+            "tenant_core/default",
+            "tenant_core/users",
+            "tenant_pii",
+            "lookup",
+            "control",
+            "plugin_runner"
+          ]
+        },
+        "capability": { "type": "string", "minLength": 1 }
+      }
+    },
+    "dynamicBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prefix", "kind", "suffixFormat", "capability"],
+      "properties": {
+        "prefix": { "enum": ["PRES_D1_", "PRES_KV_", "PRES_R2_"] },
+        "kind": { "enum": ["d1", "kv_namespace", "r2_bucket"] },
+        "suffixFormat": { "const": "uppercase_hex_24" },
+        "capability": { "type": "string", "minLength": 1 }
+      }
+    },
+    "secret": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "capability", "required"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "capability": { "type": "string", "minLength": 1 },
+        "required": { "type": "boolean" }
+      }
+    }
+  }
+}

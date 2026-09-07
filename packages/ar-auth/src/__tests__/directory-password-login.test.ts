@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   emailNotifierEnabled: true,
   rateLimiter: {
     incrementRpc: vi.fn(),
+    resetRpc: vi.fn(),
   },
   coreAdapter: {
     query: vi.fn(),
@@ -49,11 +50,19 @@ const mocks = vi.hoisted(() => ({
   confirmationStore: {
     storeChallengeRpc: vi.fn(),
   },
+  resolveAccountDataContextByIdentifierFromHono: vi.fn(),
+  publishPasskeyRoute: vi.fn(),
+  publishAuthDirectoryRoute: vi.fn(),
 }));
 
 vi.mock('@simplewebauthn/server', () => ({
   generateRegistrationOptions: mocks.generateRegistrationOptions,
   verifyRegistrationResponse: mocks.verifyRegistrationResponse,
+}));
+
+vi.mock('../account-provisioning', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../account-provisioning')>()),
+  publishPasskeyRoute: mocks.publishPasskeyRoute,
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -71,7 +80,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         passkey: mocks.passkeyRepo,
       },
     })),
+    createAccountAuthContextFromHono: vi.fn(() => ({
+      coreAdapter: mocks.coreAdapter,
+      repositories: {
+        passkey: mocks.passkeyRepo,
+      },
+    })),
+    resolveAccountDataContextFromHono: vi.fn().mockResolvedValue({}),
+    resolveAccountDataContextByIdentifierFromHono:
+      mocks.resolveAccountDataContextByIdentifierFromHono,
     createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: {} })),
+    ensureAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
     getTenantIdFromContext: vi.fn(() => 'tenant-a'),
     getSessionStoreForNewSession: mocks.getSessionStoreForNewSession,
     generateUserIdFromSettings: mocks.generateUserIdFromSettings,
@@ -138,6 +157,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         ),
       },
     })),
+    produceNotificationDelivery: vi.fn(async (_env, input) => {
+      if (!mocks.emailNotifierEnabled) {
+        throw new Error('notification_delivery_provider_order_unavailable');
+      }
+      const result = await mocks.emailNotifier.send(input.payload);
+      return {
+        reference: { intentId: input.intentId },
+        bindingRef: 'PLATFORM_NOTIFICATION_DB',
+        delivery: result.success ? 'delivered' : 'permanent_failure',
+      };
+    }),
   };
 });
 
@@ -212,6 +242,9 @@ function createContext(
     RATE_LIMITER: {
       idFromName: vi.fn((name: string) => ({ name })),
       get: vi.fn(() => mocks.rateLimiter),
+    },
+    ACCOUNT_PROVISIONER: {
+      publishAuthDirectoryRoute: mocks.publishAuthDirectoryRoute,
     },
     ...envOverrides,
   };
@@ -290,8 +323,22 @@ describe('directory password login handler', () => {
     mocks.emailNotifierEnabled = true;
     mocks.emailNotifier.send.mockReset().mockResolvedValue({ success: true, messageId: 'email-1' });
     mocks.rateLimiter.incrementRpc.mockReset().mockResolvedValue({ allowed: true });
+    mocks.rateLimiter.resetRpc.mockReset().mockResolvedValue(true);
     mocks.publishEvent.mockResolvedValue(undefined);
     mocks.createAuditLog.mockResolvedValue(undefined);
+    mocks.resolveAccountDataContextByIdentifierFromHono.mockResolvedValue({
+      tenantId: 'tenant-a',
+      accountId: 'account:user_generated',
+      legacyUserId: 'user_generated',
+    });
+    mocks.publishPasskeyRoute.mockResolvedValue(undefined);
+    mocks.publishAuthDirectoryRoute.mockImplementation(
+      async (input: { operationId: string; accountId: string }) => ({
+        status: 201,
+        operationId: input.operationId,
+        accountId: input.accountId,
+      })
+    );
   });
 
   it('verifies Wordwarden credentials and creates an Authrim session', async () => {
@@ -1082,7 +1129,7 @@ describe('directory password login handler', () => {
     );
   });
 
-  it('does not store an email-code challenge when no email notifier is configured', async () => {
+  it('does not call a provider when no materialized provider order is configured', async () => {
     const tokenHash = await testMigrationTokenHash('tenant-a', 'migration-email-token');
     mocks.coreAdapter.queryOne.mockResolvedValueOnce({
       id: 'damt_email_1',
@@ -1112,7 +1159,8 @@ describe('directory password login handler', () => {
     );
 
     expect(response.status).toBe(500);
-    expect(mocks.challengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    // The undisclosed, TTL-bound challenge is committed before any provider execution.
+    expect(mocks.challengeStore.storeChallengeRpc).toHaveBeenCalledOnce();
     expect(mocks.emailNotifier.send).not.toHaveBeenCalled();
   });
 
@@ -1533,6 +1581,66 @@ describe('directory password login handler', () => {
       })
     );
     expect(JSON.stringify(mocks.publishEvent.mock.calls)).not.toContain('alice');
+    expect(mocks.rateLimiter.incrementRpc).toHaveBeenCalledWith(
+      expect.stringMatching(/^account:[a-f0-9]{64}$/),
+      { windowSeconds: 900, maxRequests: 5 }
+    );
+  });
+
+  it('atomically blocks an exhausted account before contacting the directory connector', async () => {
+    mocks.rateLimiter.incrementRpc.mockResolvedValueOnce({
+      allowed: false,
+      retryAfter: 300,
+    });
+    const fetcher = vi.fn();
+    const handler = createDirectoryPasswordLoginHandler(fetcher);
+
+    const response = await handler(
+      createContext({ username: 'Alice', password: 'guessed-password' }) as never
+    );
+
+    expect(response.status).toBe(429);
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(mocks.rateLimiter.incrementRpc).toHaveBeenCalledWith(
+      expect.stringMatching(/^account:[a-f0-9]{64}$/),
+      { windowSeconds: 900, maxRequests: 5 }
+    );
+  });
+
+  it('limits a concurrent password-guess burst before connector verification', async () => {
+    let attemptCount = 0;
+    mocks.rateLimiter.incrementRpc.mockImplementation(async () => {
+      attemptCount += 1;
+      return {
+        allowed: attemptCount <= 5,
+        retryAfter: attemptCount <= 5 ? 0 : 300,
+      };
+    });
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+      return Response.json({
+        request_id: body.request_id,
+        tenant_id: 'tenant-a',
+        connector_id: 'wwcon_8K4M2Q9F7D3H6P1X',
+        result: 'failure',
+        reason: 'invalid_credentials',
+        directory_status: 'ok',
+      });
+    });
+    const handler = createDirectoryPasswordLoginHandler(fetcher);
+
+    const responses = await Promise.all(
+      Array.from({ length: 6 }, (_, index) =>
+        handler(
+          createContext({ username: 'alice', password: `guessed-password-${index}` }) as never
+        )
+      )
+    );
+
+    expect(responses.map((response) => response.status).sort()).toEqual([
+      401, 401, 401, 401, 401, 429,
+    ]);
+    expect(fetcher).toHaveBeenCalledTimes(5);
   });
 
   it('does not create a session for policy-required directory verdicts', async () => {
@@ -1855,6 +1963,11 @@ describe('directory password login handler', () => {
       email: 'alice@example.com',
       name: 'Alice Existing',
     });
+    mocks.resolveAccountDataContextByIdentifierFromHono.mockResolvedValue({
+      tenantId: 'tenant-a',
+      accountId: 'account:user_existing',
+      legacyUserId: 'user_existing',
+    });
     const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
       return Response.json({
@@ -2083,6 +2196,11 @@ describe('directory password login handler', () => {
   it('fails closed when an existing directory subject link points to a missing user', async () => {
     mocks.coreAdapter.queryOne.mockResolvedValue({ user_id: 'user_deleted' });
     mocks.findById.mockResolvedValue(null);
+    mocks.resolveAccountDataContextByIdentifierFromHono.mockResolvedValue({
+      tenantId: 'tenant-a',
+      accountId: 'account:user_deleted',
+      legacyUserId: 'user_deleted',
+    });
     const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(init?.body as string) as Record<string, unknown>;
       return Response.json({
@@ -2146,6 +2264,11 @@ describe('directory password login handler', () => {
       email: 'alice@example.com',
       name: 'Alice Example',
     });
+    mocks.resolveAccountDataContextByIdentifierFromHono.mockResolvedValue({
+      tenantId: 'tenant-a',
+      accountId: 'account:user_existing',
+      legacyUserId: 'user_existing',
+    });
     mocks.coreAdapter.queryOne.mockResolvedValue(null);
     mocks.challengeStore.consumeChallengeRpc.mockResolvedValue({
       metadata: {
@@ -2188,8 +2311,8 @@ describe('directory password login handler', () => {
       type: 'login',
     });
     expect(body.redirect_url).toContain('https://auth.example.com/authorize?');
-    expect(body.redirect_url).toContain('client_id=client-a');
-    expect(body.redirect_url).toContain('_confirmation_challenge=');
+    const redirectUrl = new URL(body.redirect_url!);
+    expect([...redirectUrl.searchParams.keys()]).toEqual(['_confirmation_challenge']);
     expect(mocks.challengeStore.consumeChallengeRpc).toHaveBeenCalledWith({
       id: 'login_challenge',
       tenantId: 'tenant-a',

@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import app from '../../src/index';
+import app from './protocol-app';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 import { createMockEnv } from './fixtures';
 

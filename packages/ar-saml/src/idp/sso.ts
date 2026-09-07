@@ -34,9 +34,10 @@ import {
   resolveAuthCorePersistenceAdapterFromEnv,
   requireAdminDatabaseAdapter,
   resolveRuntimeIdentityMappingBinding,
+  filterSamlAttributesByDestinationConsentWithStatus,
 } from '@authrim/ar-lib-core';
 import {
-  parseXml,
+  parseSAMLXml,
   findDirectChildElement,
   getAttribute,
   getTextContent,
@@ -58,6 +59,7 @@ import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
   buildSAMLAttributesForSPWithDiagnostics,
   MissingRequiredSAMLAttributeError,
+  resolveSAMLIdentityMappingFieldMappingBinding,
   type SAMLIdentityMappingReleaseConfig,
   SAMLIdentityMappingRuntimeError,
 } from './attributes';
@@ -79,7 +81,7 @@ import {
   validateSAMLResponseProtocolBinding,
 } from './response-destination';
 import { getSAMLInteractiveLoginUrlPolicy } from '../common/entity-id';
-import { applySAMLResponseSigningPolicy } from './signing';
+import { applySAMLResponseSigningPolicy, assertSAMLResponseSigningPolicy } from './signing';
 import { applySAMLAssertionEncryptionPolicy } from './encryption';
 import {
   createSAMLSessionIndex,
@@ -109,6 +111,7 @@ import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize } from '../common/relay-state';
 import { isAllowedIdPSSODestination } from './shibboleth-compat';
+import { parseRedirectBindingSignatureInput } from '../common/signature';
 
 interface AuthenticatedSAMLSession {
   userId: string;
@@ -149,7 +152,8 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
       parsedInput = await parsePostBinding(c);
     }
 
-    const { authnRequest, relayState } = parsedInput;
+    let { authnRequest } = parsedInput;
+    const { relayState } = parsedInput;
 
     // Validate AuthnRequest
     await validateAuthnRequest(authnRequest, issuerUrl);
@@ -162,13 +166,36 @@ export async function handleIdPSSO(c: Context<{ Bindings: Env }>): Promise<Respo
 
     try {
       if (!parsedInput.storedRequestValidated) {
-        await validateSAMLAuthnRequestSignature({
+        const verifiedReferences = await validateSAMLAuthnRequestSignature({
           authnRequest,
           spConfig,
           binding: parsedInput.binding,
           xml: parsedInput.xml,
           redirectSignature: parsedInput.redirectSignature,
         });
+        if (parsedInput.binding === 'post' && verifiedReferences) {
+          const signedRequest = verifiedReferences.find(
+            (reference) => reference.uri === `#${authnRequest.id}`
+          );
+          if (!signedRequest) {
+            throw new SAMLAuthnRequestSignatureValidationError(
+              'authn_request_invalid_signature',
+              'Signed AuthnRequest reference is missing'
+            );
+          }
+          const authenticatedRequest = parseAuthnRequestXml(signedRequest.xml);
+          if (
+            authenticatedRequest.id !== authnRequest.id ||
+            authenticatedRequest.issuer !== authnRequest.issuer
+          ) {
+            throw new SAMLAuthnRequestSignatureValidationError(
+              'authn_request_invalid_signature',
+              'Signed AuthnRequest does not match the routed request'
+            );
+          }
+          authnRequest = authenticatedRequest;
+          await validateAuthnRequest(authnRequest, issuerUrl);
+        }
       }
       validateSAMLResponseProtocolBinding(authnRequest);
       resolveSAMLResponseDestination(authnRequest, spConfig);
@@ -656,7 +683,8 @@ export async function handleIdPAttributeReleaseConsent(
     if (!oneTimeApproval) {
       const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
         env,
-        'saml-attribute-release-consent-post'
+        'saml-attribute-release-consent-post',
+        { tenantId }
       );
       const repository = new AttributeReleaseConsentRepository(adapter);
       await repository.grant({
@@ -843,7 +871,8 @@ async function loadSAMLAttributeReleaseConsentPresentation(
   try {
     const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
       c.env,
-      'saml-attribute-release-consent-template'
+      'saml-attribute-release-consent-template',
+      { tenantId: input.tenantId }
     );
     const version = await adapter.queryOne<{ id: string }>(
       `SELECT id
@@ -947,18 +976,14 @@ async function parseRedirectBinding(c: Context<{ Bindings: Env }>): Promise<{
 
   // Decode: URL decode -> Base64 decode -> Inflate (deflate decompress)
   const inflated = inflateRedirectBindingMessage(samlRequest, 'SAML AuthnRequest');
+  const redirectSignature = parseRedirectBindingSignatureInput(url.search, 'SAMLRequest');
 
   return {
     authnRequest: parseAuthnRequestXml(inflated),
     relayState,
     binding: 'redirect',
     xml: inflated,
-    redirectSignature: {
-      samlMessage: getRawQueryParam(url.search, 'SAMLRequest') ?? encodeURIComponent(samlRequest),
-      relayState: getRawQueryParam(url.search, 'RelayState'),
-      signature: url.searchParams.get('Signature') || undefined,
-      sigAlg: url.searchParams.get('SigAlg') || undefined,
-    },
+    redirectSignature,
   };
 }
 
@@ -1049,18 +1074,11 @@ async function parsePostBinding(c: Context<{ Bindings: Env }>): Promise<{
   };
 }
 
-function getRawQueryParam(search: string, name: string): string | undefined {
-  const prefix = `${name}=`;
-  const query = search.startsWith('?') ? search.slice(1) : search;
-  const match = query.split('&').find((part) => part.startsWith(prefix));
-  return match ? match.slice(prefix.length) : undefined;
-}
-
 /**
  * Parse AuthnRequest XML into structured data
  */
 export function parseAuthnRequestXml(xml: string): SAMLAuthnRequest {
-  const doc = parseXml(xml);
+  const doc = parseSAMLXml(xml);
   const authnRequestElement = doc.documentElement;
 
   if (
@@ -1141,16 +1159,19 @@ async function validateAuthnRequest(
   issuerUrl: string
 ): Promise<void> {
   // Check request is not expired (allow clock skew)
-  const issueInstant = new Date(authnRequest.issueInstant);
-  const now = new Date();
+  const issueInstantMs = Date.parse(authnRequest.issueInstant);
+  if (!Number.isFinite(issueInstantMs)) {
+    throw new Error('AuthnRequest IssueInstant is invalid');
+  }
+  const nowMs = Date.now();
   const skewMs = DEFAULTS.CLOCK_SKEW_SECONDS * 1000;
   const maxAge = DEFAULTS.REQUEST_VALIDITY_SECONDS * 1000;
 
-  if (issueInstant.getTime() > now.getTime() + skewMs) {
+  if (issueInstantMs > nowMs + skewMs) {
     throw new Error('AuthnRequest IssueInstant is in the future');
   }
 
-  if (now.getTime() - issueInstant.getTime() > maxAge + skewMs) {
+  if (nowMs - issueInstantMs > maxAge + skewMs) {
     throw new Error('AuthnRequest has expired');
   }
 
@@ -1333,6 +1354,45 @@ async function generateSAMLResponse(
         }
       : undefined,
   });
+  let destinationFieldConsentConfirmed: { consentRecordId: string } | undefined;
+  if (identityMapping?.destinationProfileId) {
+    const destinationRelease = (await filterSamlAttributesByDestinationConsentWithStatus({
+      coreAdapter: await resolveAuthCorePersistenceAdapterFromEnv(
+        env,
+        'saml-destination-profile-consent',
+        { tenantId }
+      ),
+      adminAdapter: requireAdminDatabaseAdapter(env, 'saml-destination-profile-consent'),
+      tenantId,
+      subjectId: userInfo.id,
+      samlSpId: spConfig.entityId,
+      profileId: identityMapping.destinationProfileId,
+      fieldPolicies: identityMapping.destinationFieldPolicies,
+      releaseSafetyBinding: resolveSAMLIdentityMappingFieldMappingBinding(identityMapping, {
+        role: 'idp',
+        tenantId,
+        localEntityId: idpEntityId,
+        partnerEntityId: spConfig.entityId,
+        runtimeContext: identityMappingRuntimeContext,
+      }),
+      attributes: attributeRelease.attributes,
+    })) as {
+      attributes: typeof attributeRelease.attributes;
+      consentApplied: boolean;
+      consentRecordId?: string;
+      consentEvidence?: Record<string, unknown>;
+    };
+    attributeRelease.attributes = destinationRelease.attributes;
+    if (
+      destinationRelease.consentApplied &&
+      destinationRelease.consentRecordId &&
+      destinationRelease.consentEvidence?.saml_request_id === authnRequest.id
+    ) {
+      destinationFieldConsentConfirmed = {
+        consentRecordId: destinationRelease.consentRecordId,
+      };
+    }
+  }
   await enforceSAMLAttributeReleaseConsent({
     env,
     tenantId,
@@ -1340,6 +1400,7 @@ async function generateSAMLResponse(
     spConfig,
     attributes: attributeRelease.attributes,
     confirmedRelease: requestContext?.attributeReleaseConsentConfirmed,
+    destinationFieldConsentConfirmed,
   });
   if (attributeRelease.optionalMissingAttributes.length > 0) {
     log?.debug('Optional SAML attributes omitted', {
@@ -1389,6 +1450,8 @@ async function generateSAMLResponse(
 
   const encryptFullAssertion = Boolean(spConfig.encryptAssertions);
   const encryptNameIdOnly = !encryptFullAssertion && Boolean(spConfig.encryptNameID);
+
+  assertSAMLResponseSigningPolicy(spConfig);
 
   if (encryptNameIdOnly) {
     responseXml = await applySAMLAssertionEncryptionPolicy(responseXml, spConfig);
@@ -1446,6 +1509,15 @@ async function resolveSAMLRuntimeIdentityMapping(
       },
     ]);
   }
+  if (binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
+    throw new SAMLIdentityMappingRuntimeError([
+      {
+        category: 'policy',
+        code: 'policy.invalid_destination_profile_binding',
+        severity: 'critical',
+      },
+    ]);
+  }
 
   return {
     id: binding.id,
@@ -1460,10 +1532,11 @@ async function resolveSAMLRuntimeIdentityMapping(
     fieldMappingSet: binding.fieldMappingSet,
     destinationNamespace: configured?.destinationNamespace ?? binding.destinationNamespace,
     attributeDescriptors: configured?.attributeDescriptors,
+    destinationFieldPolicies: configured?.destinationFieldPolicies,
     fieldMappingSetId: binding.fieldMappingSetId,
     fieldMappingVersionId: binding.fieldMappingVersionId,
     sourceProfileId: configured?.sourceProfileId ?? binding.sourceProfileId,
-    destinationProfileId: configured?.destinationProfileId ?? binding.destinationProfileId,
+    destinationProfileId: binding.destinationProfileId ?? configured?.destinationProfileId,
   };
 }
 
@@ -1637,14 +1710,12 @@ async function generateSAMLProtocolErrorResponse(
   statusMessage: string,
   failureKind?: string
 ): Promise<string> {
-  const signingMaterial =
-    spConfig.signResponses || spConfig.signAssertions
-      ? await getSAMLIdPSigningMaterial(env, {
-          tenantId,
-          counterpartyEntityId: spConfig.entityId,
-          providerPolicy: spConfig.signingKeyPolicy,
-        })
-      : undefined;
+  assertSAMLResponseSigningPolicy(spConfig);
+  const signingMaterial = await getSAMLIdPSigningMaterial(env, {
+    tenantId,
+    counterpartyEntityId: spConfig.entityId,
+    providerPolicy: spConfig.signingKeyPolicy,
+  });
 
   const resolvedStatus = applySAMLErrorResponseOverride(spConfig, {
     failureKind,

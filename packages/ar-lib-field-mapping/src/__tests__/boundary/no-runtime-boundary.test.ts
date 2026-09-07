@@ -9,7 +9,11 @@ const srcRoot = resolve(packageRoot, 'src');
 const runtimeSourceEntries = [
   resolve(srcRoot, 'core'),
   resolve(srcRoot, 'adapters'),
-  resolve(srcRoot, 'index.ts'),
+  resolve(srcRoot, 'previews'),
+  resolve(srcRoot, 'source-profiles'),
+  resolve(srcRoot, 'contract.ts'),
+  resolve(srcRoot, 'runtime.ts'),
+  resolve(srcRoot, 'authoring.ts'),
   resolve(srcRoot, 'experimental.ts'),
 ];
 

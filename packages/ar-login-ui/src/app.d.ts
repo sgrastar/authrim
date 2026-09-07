@@ -68,6 +68,7 @@ declare global {
 		interface Locals {
 			locale?: string;
 			emailVerificationProtocolEnabled?: boolean;
+			accountPageInitial?: import('$lib/server/account-page-initial-data').AccountPageInitialData;
 			authenticationMethods?:
 				| import('$lib/api/authentication-methods').AuthenticationMethodsResponse
 				| null;

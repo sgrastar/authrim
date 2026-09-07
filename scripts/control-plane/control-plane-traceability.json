@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 2,
+  "ci": {
+    "workflow": ".github/workflows/ci.yml",
+    "backendCommand": "pnpm run test:coverage:api",
+    "uiCommand": "pnpm run test:ui",
+    "controlPlaneCommand": "pnpm run control-plane:test"
+  },
+  "requirements": [
+    {
+      "id": "UCP-P0-TARGET-CONTRACT-AND-LEGACY-INVENTORY",
+      "phase": "0",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "scripts/control-plane/control-plane-traceability.test.ts",
+        "packages/setup/src/__tests__/config.test.ts",
+        "packages/ar-lib-core/src/services/__tests__/runtime-profile-resolver.test.ts"
+      ]
+    },
+    {
+      "id": "UCP-P1-UNIFIED-RUNTIME-ROUTING-CONTRACT",
+      "phase": "1",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "packages/ar-lib-core/src/services/__tests__/tenant-database-resolver.test.ts",
+        "packages/ar-lib-core/src/services/__tests__/runtime-data-context.test.ts",
+        "packages/ar-lib-core/src/services/lookup-directory/__tests__/routing-characterization.test.ts",
+        "packages/ar-lib-core/src/services/lookup-directory/__tests__/resolver.test.ts"
+      ]
+    },
+    {
+      "id": "UCP-P2-RUNTIME-WORKER-ROUTE-CUTOVER",
+      "phase": "2",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "packages/ar-auth/src/__tests__/control-plane-runtime-boundary.test.ts",
+        "packages/ar-token/src/__tests__/control-plane-runtime-boundary.test.ts",
+        "packages/ar-userinfo/src/__tests__/userinfo.test.ts",
+        "packages/ar-bridge/src/__tests__/link-routed-account.test.ts",
+        "packages/ar-saml/src/common/__tests__/user-store.test.ts",
+        "packages/ar-vc/src/issuer/routes/__tests__/control-plane-runtime-boundary.test.ts"
+      ]
+    },
+    {
+      "id": "UCP-P3-TRANSIENT-AUTH-AND-SESSION-AUTHORITY",
+      "phase": "3",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "packages/ar-lib-core/src/durable-objects/__tests__/SessionStore.test.ts",
+        "packages/ar-lib-core/src/services/__tests__/session-revocation-store.test.ts",
+        "packages/ar-auth/src/__tests__/direct-session-create.test.ts",
+        "packages/ar-auth/src/__tests__/direct-session.test.ts",
+        "packages/ar-auth/src/__tests__/logout.test.ts",
+        "packages/ar-bridge/src/__tests__/backchannel-logout.test.ts"
+      ]
+    },
+    {
+      "id": "UCP-P4-FRESH-INSTALL-CONTROL-PLANE-BOOTSTRAP",
+      "phase": "4",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "packages/setup/src/__tests__/control-plane-bootstrap.test.ts",
+        "packages/setup/src/__tests__/control-bootstrap-handoff.test.ts",
+        "packages/setup/src/__tests__/generated-env-validator.test.ts",
+        "packages/setup/src/__tests__/cli-initial-deploy.test.ts",
+        "packages/setup/src/__tests__/naming.test.ts",
+        "packages/setup/src/__tests__/wrangler-routes.test.ts"
+      ]
+    },
+    {
+      "id": "UCP-P5-ADMIN-PLACEMENT-AND-RUNTIME-PROFILE-SURFACES",
+      "phase": "5",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "packages/ar-management/src/__tests__/admin-tenants-control-plane.test.ts",
+        "packages/ar-management/src/__tests__/runtime-profiles.test.ts",
+        "packages/ar-admin-ui/src/lib/admin/__tests__/runtime-profile-audit-editor.test.ts",
+        "packages/ar-admin-ui/src/lib/api/admin-tenants.test.ts"
+      ]
+    },
+    {
+      "id": "UCP-P6-REMOVAL-REGRESSION-AND-FRESH-INSTALL-GATES",
+      "phase": "6",
+      "perspectives": ["implementation", "security", "runtime_operations"],
+      "tests": [
+        "test/integration/unified-control-plane-runtime-smoke.test.ts",
+        "packages/setup/src/__tests__/worker-capabilities.test.ts",
+        "packages/ar-lib-core/src/utils/__tests__/audit-log-runtime-boundary.test.ts",
+        "packages/ar-lib-core/src/utils/__tests__/system-init.test.ts",
+        "packages/ar-auth/src/__tests__/email-code-handler.test.ts",
+        "packages/ar-auth/src/__tests__/totp.test.ts",
+        "packages/ar-auth/src/__tests__/passkey.test.ts",
+        "packages/ar-auth/src/__tests__/directory-password-login.test.ts"
+      ]
+    }
+  ]
+}

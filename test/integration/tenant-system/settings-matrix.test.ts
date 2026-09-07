@@ -4,13 +4,13 @@ import {
   buildEnvForTopology,
   createTenantSystemDiscoveryApp,
   expectDiscoveryConfig,
-  loadMatrixCsv,
   loginEntrySettingsFromRow,
   makeCommonHost,
   makeTenantHost,
   makeTenantRequest,
   type SettingsMatrixRow,
 } from './helpers';
+import { loadMatrixCsv } from './fixtures/matrix-loader';
 
 const MATRIX_FILES = [
   'tenant-system-3wise-constrained-valid-matrix.csv',
@@ -29,7 +29,7 @@ const BOOLEAN_FIELDS = [
   'skip_if_one_tenant',
 ] as const;
 
-const KNOWN_DISCOVERY_METHODS = new Set(['email_domain', 'tenant_code', 'tenant_slug', 'app_hint']);
+const KNOWN_DISCOVERY_METHODS = new Set(['email_exact', 'tenant_code', 'tenant_slug', 'app_hint']);
 
 describe('tenant-system matrix fixtures', () => {
   it.each(MATRIX_FILES)('loads %s with required columns and unique case IDs', (filename) => {
@@ -77,7 +77,7 @@ describe('tenant-system constrained settings matrix', () => {
     const settings = loginEntrySettingsFromRow(row);
     const expectedMethods = JSON.parse(settings['login-entry.discovery_methods']).filter(
       (method: string) =>
-        settings['login-entry.email_resolution_policy'] !== 'disabled' || method !== 'email_domain'
+        settings['login-entry.email_resolution_policy'] !== 'disabled' || method !== 'email_exact'
     );
 
     const commonApp = createTenantSystemDiscoveryApp('first');

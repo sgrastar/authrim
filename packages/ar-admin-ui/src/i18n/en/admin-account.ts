@@ -32,8 +32,6 @@ const adminAccount = {
 	admin_account_theme_color: 'Admin Skin',
 	admin_account_light_theme_color_desc:
 		'Select the Admin UI skin. Each skin supports light and dark mode.',
-	admin_account_dark_theme_color_desc:
-		'Select the Admin UI skin. Each skin supports light and dark mode.',
 	admin_account_skin_classic: 'Classic',
 	admin_account_skin_classic_desc: 'Timeless ivory, navy, and brass administration surface.',
 	admin_account_skin_swiss_grid: 'Swiss Grid',
@@ -44,12 +42,6 @@ const adminAccount = {
 		'Warm paper, softer controls, dark navigation, and emerald accents.',
 	admin_account_skin_frosted: 'Frosted',
 	admin_account_skin_frosted_desc: 'Translucent panels, blur, and a quiet indigo control language.',
-	admin_account_theme_warm_beige: 'Warm Beige',
-	admin_account_theme_blue_gray: 'Blue Gray',
-	admin_account_theme_fresh_green: 'Fresh Green',
-	admin_account_theme_dark_brown: 'Dark Brown',
-	admin_account_theme_navy_blue: 'Navy Blue',
-	admin_account_theme_slate_gray: 'Slate Gray',
 	admin_account_language_region: 'Language & Region',
 	admin_account_interface_language: 'Interface Language',
 	admin_account_interface_language_desc: 'Select your preferred language for the admin interface',

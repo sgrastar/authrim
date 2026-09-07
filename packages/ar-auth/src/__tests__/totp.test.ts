@@ -20,6 +20,12 @@ const {
   mockValidateRegistrationFieldSubmissionFromEnv,
   mockPersistRegistrationFieldValuesFromEnv,
   mockBuildCanonicalProfileRuntimeUserFields,
+  mockTotpLogWarn,
+  mockResolveAccountDataContextFromHono,
+  mockResolveTenantD1EmailAccountRoute,
+  mockUsesTenantD1AccountStorage,
+  mockEnsureAccountAuthenticationState,
+  mockConsumeTotpTimeStepRpc,
 } = vi.hoisted(() => {
   const challengeStore = {
     storeChallengeRpc: vi.fn(),
@@ -52,6 +58,8 @@ const {
       findById: vi.fn(),
       syncUser: vi.fn(),
       touchLastLogin: vi.fn(),
+      findAccountAuthenticationState: vi.fn(),
+      findAuthenticationResponseUser: vi.fn(),
     },
     mockGetChallengeStoreByChallengeId: vi.fn().mockResolvedValue(challengeStore),
     mockGetSessionStoreForNewSession: vi.fn().mockResolvedValue({
@@ -78,6 +86,12 @@ const {
       piiFields: {},
       sensitiveValues: {},
     }),
+    mockTotpLogWarn: vi.fn(),
+    mockResolveAccountDataContextFromHono: vi.fn(),
+    mockResolveTenantD1EmailAccountRoute: vi.fn(),
+    mockUsesTenantD1AccountStorage: vi.fn(),
+    mockEnsureAccountAuthenticationState: vi.fn(),
+    mockConsumeTotpTimeStepRpc: vi.fn(),
   };
 });
 
@@ -88,8 +102,29 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getChallengeStoreByChallengeId: mockGetChallengeStoreByChallengeId,
     getSessionStoreForNewSession: mockGetSessionStoreForNewSession,
     getTenantIdFromContext: mockGetTenantIdFromContext,
+    createAccountAuthContextFromHono: mockCreateAuthContextFromHono,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
+    resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
+    ensureAccountAuthenticationState: mockEnsureAccountAuthenticationState,
+    consumeTotpAuthenticationState: vi.fn(async (_env, input, loader) => {
+      const account = await loader();
+      if (!account || account.lifecycle !== 'active') {
+        throw new Error('account_authentication_not_allowed');
+      }
+      return mockConsumeTotpTimeStepRpc(
+        input.tenantId,
+        input.userId,
+        `account:${input.userId}`,
+        input.credentialId,
+        input.storedLastUsedTimeStep,
+        input.observedTimeStep,
+        input.observedAtMs
+      );
+    }),
+    getSessionRevocationStore: vi.fn(() => ({
+      consumeTotpTimeStepRpc: mockConsumeTotpTimeStepRpc,
+    })),
     CanonicalRuntimeUserStore: vi.fn(function CanonicalRuntimeUserStoreMock() {
       return mockRuntimeUserStore;
     }),
@@ -99,6 +134,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getLogger: () => ({
       module: () => ({
         error: vi.fn(),
+        warn: mockTotpLogWarn,
       }),
     }),
   };
@@ -113,6 +149,15 @@ vi.mock('../registration-field-utils', () => ({
   persistRegistrationFieldValuesFromEnv: mockPersistRegistrationFieldValuesFromEnv,
   buildCanonicalProfileRuntimeUserFields: mockBuildCanonicalProfileRuntimeUserFields,
 }));
+
+vi.mock('../account-provisioning', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../account-provisioning')>();
+  return {
+    ...actual,
+    resolveTenantD1EmailAccountRoute: mockResolveTenantD1EmailAccountRoute,
+    usesTenantD1AccountStorage: mockUsesTenantD1AccountStorage,
+  };
+});
 
 import {
   encryptValue,
@@ -180,6 +225,30 @@ describe('TOTP login handlers', () => {
     mockRuntimeUserStore.findByEmail.mockResolvedValue(null);
     mockRuntimeUserStore.findByPreferredUsername.mockResolvedValue(null);
     mockRuntimeUserStore.findById.mockResolvedValue(null);
+    mockRuntimeUserStore.findAccountAuthenticationState.mockImplementation(async (userId) => {
+      const user = await mockRuntimeUserStore.findById(userId);
+      if (!user) return null;
+      return {
+        userId,
+        accountType: user.account_type ?? 'user',
+        lifecycle: user.active === 1 ? 'active' : 'inactive',
+        sourceVersionMs: 1_000,
+      };
+    });
+    mockRuntimeUserStore.findAuthenticationResponseUser.mockImplementation(async (userId) => {
+      const user = await mockRuntimeUserStore.findById(userId);
+      return { id: userId, email: user?.email ?? null, name: user?.name ?? null };
+    });
+    mockEnsureAccountAuthenticationState.mockImplementation(
+      async (_env, _tenant, _user, loader) => {
+        const state = await loader();
+        if (!state || state.lifecycle !== 'active') {
+          throw new Error('account_authentication_not_allowed');
+        }
+        return state;
+      }
+    );
+    mockConsumeTotpTimeStepRpc.mockResolvedValue({ lastAcceptedTimeStep: 1 });
     mockRuntimeUserStore.syncUser.mockResolvedValue(undefined);
     mockRuntimeUserStore.touchLastLogin.mockResolvedValue(true);
     mockResolvePostLoginRedirectUrl.mockResolvedValue({ redirectUrl: '/' });
@@ -197,6 +266,12 @@ describe('TOTP login handlers', () => {
       piiFields: {},
       sensitiveValues: {},
     });
+    mockResolveAccountDataContextFromHono.mockResolvedValue({
+      accountId: 'account:user-001',
+      legacyUserId: 'user-001',
+    });
+    mockResolveTenantD1EmailAccountRoute.mockResolvedValue('not_required');
+    mockUsesTenantD1AccountStorage.mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -204,7 +279,241 @@ describe('TOTP login handlers', () => {
     vi.restoreAllMocks();
   });
 
+  const enabledSettings = {
+    'settings:tenant:default:authentication-methods': {
+      'authentication-methods.totp.login_enabled': true,
+      'authentication-methods.totp.signup_enabled': true,
+    },
+  };
+
+  async function post(
+    path: string,
+    body: Record<string, unknown>,
+    env = createEnv(enabledSettings),
+    constantTime = false
+  ) {
+    const responsePromise = createApp().request(
+      path,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': '203.0.113.10' },
+        body: JSON.stringify(body),
+      },
+      env,
+      { waitUntil: vi.fn() } as unknown as ExecutionContext
+    );
+    return constantTime ? resolveConstantTimeResponse(responsePromise) : responsePromise;
+  }
+
+  describe('rejection and enumeration-resistance boundaries', () => {
+    it.each([
+      [{}, 'missing identifier'],
+      [{ identifier: '   ' }, 'blank identifier'],
+      [{ identifier: 42 }, 'non-string identifier'],
+    ])('rejects login start with %s', async (body, _case) => {
+      const response = await post('/api/auth/totp/login/start', body, undefined, true);
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('does not issue a login challenge when TOTP login is disabled', async () => {
+      const response = await post(
+        '/api/auth/totp/login/start',
+        { identifier: 'person@example.com' },
+        createEnv(),
+        true
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockRuntimeUserStore.findByEmail).not.toHaveBeenCalled();
+    });
+
+    it('rate limits login challenge creation before user lookup', async () => {
+      mockRateLimiter.incrementRpc.mockResolvedValueOnce({ allowed: false, retryAfter: 30 });
+
+      const response = await post(
+        '/api/auth/totp/login/start',
+        { identifier: 'person@example.com' },
+        undefined,
+        true
+      );
+
+      expect(response.status).toBe(429);
+      expect(mockRuntimeUserStore.findByEmail).not.toHaveBeenCalled();
+      expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [{}, 'missing challenge and code'],
+      [{ challenge_id: 'challenge' }, 'missing code'],
+      [{ challenge_id: 'challenge', code: '12ab56' }, 'non-numeric code'],
+      [{ challenge_id: 'challenge', code: '12345' }, 'wrong-length code'],
+    ])('rejects login verification with %s', async (body, _case) => {
+      const response = await post('/api/auth/totp/login/verify', body, undefined, true);
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockChallengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('normalizes challenge-store failures to the same invalid-code response', async () => {
+      mockChallengeStore.consumeChallengeRpc.mockRejectedValueOnce(
+        new Error('storage unavailable')
+      );
+
+      const response = await post(
+        '/api/auth/totp/login/verify',
+        { challenge_id: 'challenge', code: '123456' },
+        undefined,
+        true
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockPublishEvent).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ data: expect.objectContaining({ errorCode: 'challenge_error' }) })
+      );
+    });
+
+    it.each([
+      [undefined, 'missing user identity'],
+      ['unknown', 'enumeration-resistant unknown identity'],
+    ])('does not reveal %s from a consumed challenge', async (userId, _case) => {
+      mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({ userId });
+
+      const response = await post(
+        '/api/auth/totp/login/verify',
+        { challenge_id: 'challenge', code: '123456' },
+        undefined,
+        true
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockRuntimeUserStore.findById).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when the TOTP encryption key is absent', async () => {
+      mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({ userId: 'user-1' });
+      const env = createEnv(enabledSettings);
+      delete (env as unknown as Record<string, unknown>).PII_ENCRYPTION_KEY;
+
+      const response = await post(
+        '/api/auth/totp/login/verify',
+        { challenge_id: 'challenge', code: '123456' },
+        env,
+        true
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockTotpRepo.findActiveByUserId).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [null, [], 'missing user'],
+      [{ id: 'user-1', active: 0 }, [], 'inactive user'],
+      [{ id: 'user-1', active: 1 }, [], 'no active credential'],
+    ])('returns one generic failure for %s', async (user, credentials, _case) => {
+      mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({ userId: 'user-1' });
+      mockRuntimeUserStore.findById.mockResolvedValueOnce(user);
+      mockTotpRepo.findActiveByUserId.mockResolvedValueOnce(credentials);
+
+      const response = await post(
+        '/api/auth/totp/login/verify',
+        { challenge_id: 'challenge', code: '123456' },
+        undefined,
+        true
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockSessionStore.createSessionRpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [{}, 'missing email'],
+      [{ email: 'not-an-email' }, 'invalid email'],
+      [{ email: 'person@example.com', label: 'x'.repeat(129) }, 'oversized label'],
+    ])('rejects signup options with %s', async (body, _case) => {
+      const response = await post('/api/auth/totp/signup/options', body);
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('requires both encryption and HMAC secrets before generating a TOTP seed', async () => {
+      const env = createEnv(enabledSettings);
+      delete (env as unknown as Record<string, unknown>).OTP_HMAC_SECRET;
+
+      const response = await post(
+        '/api/auth/totp/signup/options',
+        { email: 'person@example.com' },
+        env
+      );
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockRuntimeUserStore.findByEmail).not.toHaveBeenCalled();
+    });
+
+    it('returns registration schema details when required custom fields are missing', async () => {
+      mockValidateRegistrationFieldSubmissionFromEnv.mockResolvedValueOnce({
+        ok: false,
+        error: 'Department is required',
+        missingRequiredFields: [
+          { fieldKey: 'department', label: 'Department', fieldType: 'string' },
+        ],
+      });
+
+      const response = await post('/api/auth/totp/signup/options', {
+        email: 'person@example.com',
+        custom_fields: [],
+      });
+      const body = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(JSON.stringify(body)).toContain('department');
+      expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('does not allow TOTP signup to claim an existing email address', async () => {
+      mockRuntimeUserStore.findByEmail.mockResolvedValueOnce({ id: 'existing-user', active: 1 });
+
+      const response = await post('/api/auth/totp/signup/options', {
+        email: 'person@example.com',
+      });
+
+      expect(response.status).toBe(409);
+      expect(mockChallengeStore.storeChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [{}, 'missing challenge and code'],
+      [{ challenge_id: 'challenge' }, 'missing activation code'],
+    ])('rejects signup activation with %s', async (body, _case) => {
+      const response = await post('/api/auth/totp/signup/activate', body);
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockChallengeStore.getChallengeRpc).not.toHaveBeenCalled();
+    });
+
+    it('rejects missing or mismatched signup challenge metadata', async () => {
+      mockChallengeStore.getChallengeRpc.mockResolvedValueOnce({
+        userId: 'user-1',
+        challenge: 'different',
+        metadata: { credential_id: 'credential-1' },
+      });
+
+      const response = await post('/api/auth/totp/signup/activate', {
+        challenge_id: 'challenge',
+        code: '123456',
+      });
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockTotpRepo.findById).not.toHaveBeenCalled();
+    });
+  });
+
   it('starts a login challenge without exposing unknown identifiers', async () => {
+    mockUsesTenantD1AccountStorage.mockReturnValue(true);
+    mockResolveTenantD1EmailAccountRoute.mockResolvedValueOnce('not_found');
     const app = createApp();
     const responsePromise = app.request(
       '/api/auth/totp/login/start',
@@ -226,6 +535,12 @@ describe('TOTP login handlers', () => {
     expect(response.status).toBe(200);
     expect(body.challenge_id).toEqual(expect.any(String));
     expect(body.expires_in).toBe(300);
+    expect(mockResolveTenantD1EmailAccountRoute).toHaveBeenCalledWith(
+      expect.anything(),
+      'unknown@example.com'
+    );
+    expect(mockRuntimeUserStore.findByEmail).not.toHaveBeenCalled();
+    expect(mockTotpRepo.findActiveByUserId).not.toHaveBeenCalled();
     expect(mockChallengeStore.storeChallengeRpc).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'totp_login',
@@ -234,7 +549,87 @@ describe('TOTP login handlers', () => {
     );
   });
 
+  it('starts reauthentication from the bound OAuth challenge without exposing an identifier', async () => {
+    mockUsesTenantD1AccountStorage.mockReturnValue(true);
+    mockChallengeStore.getChallengeRpc.mockResolvedValueOnce({
+      tenantId: 'default',
+      type: 'reauth',
+      userId: 'user-001',
+      consumed: false,
+    });
+    mockRuntimeUserStore.findById.mockResolvedValueOnce({
+      id: 'user-001',
+      email: 'person@example.com',
+      active: 1,
+    });
+    mockTotpRepo.findActiveByUserId.mockResolvedValueOnce([{ id: 'totp-001' }]);
+
+    const response = await post(
+      '/api/auth/totp/login/start',
+      { authorization_challenge_id: 'oauth-reauth-001' },
+      createEnv({
+        'settings:tenant:default:authentication-methods': {
+          'authentication-methods.totp.reauth_enabled': true,
+        },
+      }),
+      true
+    );
+
+    expect(response.status).toBe(200);
+    expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+      expect.anything(),
+      'user-001'
+    );
+    expect(mockRuntimeUserStore.findByEmail).not.toHaveBeenCalled();
+    expect(mockChallengeStore.storeChallengeRpc).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'totp_login',
+        userId: 'user-001',
+        metadata: expect.objectContaining({
+          authorization_challenge_id: 'oauth-reauth-001',
+          usage: 'reauth',
+        }),
+      })
+    );
+  });
+
+  it('rejects a TOTP challenge presented with a different OAuth reauth challenge', async () => {
+    mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+      userId: 'user-001',
+      challenge: 'identifier-hash',
+      metadata: {
+        authorization_challenge_id: 'oauth-reauth-001',
+        usage: 'reauth',
+      },
+    });
+
+    const response = await post(
+      '/api/auth/totp/login/verify',
+      {
+        challenge_id: 'totp-challenge-001',
+        code: '123456',
+        authorization_challenge_id: 'oauth-reauth-002',
+      },
+      createEnv({
+        'settings:tenant:default:authentication-methods': {
+          'authentication-methods.totp.reauth_enabled': true,
+        },
+      }),
+      true
+    );
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(mockRuntimeUserStore.findById).not.toHaveBeenCalled();
+    expect(mockPublishEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        data: expect.objectContaining({ errorCode: 'authorization_challenge_mismatch' }),
+      })
+    );
+  });
+
   it('verifies a TOTP code and creates an otp/totp session', async () => {
+    mockUsesTenantD1AccountStorage.mockReturnValue(true);
     const app = createApp();
     const secret = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
     const encrypted = await encryptValue(secret, encryptionKey, 'AES-256-GCM', 1);
@@ -293,6 +688,10 @@ describe('TOTP login handlers', () => {
     };
 
     expect(response.status).toBe(200);
+    expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+      expect.anything(),
+      'user-001'
+    );
     expect(body).toMatchObject({
       success: true,
       sessionId: 'g1:apac:3:session_new',
@@ -307,7 +706,6 @@ describe('TOTP login handlers', () => {
       'user-001',
       expect.any(Number),
       expect.objectContaining({
-        email: 'person@example.com',
         amr: ['otp', 'totp'],
         acr: 'urn:authrim:aal:2',
         authTime: Math.floor(Date.now() / 1000),
@@ -316,6 +714,34 @@ describe('TOTP login handlers', () => {
       'default'
     );
     expect(response.headers.get('Set-Cookie')).toContain('authrim_session=');
+  });
+
+  it('fails closed before reading credentials when the account route is missing', async () => {
+    mockUsesTenantD1AccountStorage.mockReturnValue(true);
+    mockResolveAccountDataContextFromHono.mockRejectedValueOnce(
+      new Error('account_data_route_not_found')
+    );
+    mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+      userId: 'user-001',
+      challenge: 'identifier-hash',
+    });
+
+    const response = await post(
+      '/api/auth/totp/login/verify',
+      { challenge_id: 'challenge-001', code: '123456' },
+      undefined,
+      true
+    );
+
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(mockRuntimeUserStore.findById).not.toHaveBeenCalled();
+    expect(mockTotpRepo.findActiveByUserId).not.toHaveBeenCalled();
+    expect(mockPublishEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        data: expect.objectContaining({ errorCode: 'credential_not_found' }),
+      })
+    );
   });
 
   it('continues an authorization challenge after a successful TOTP login', async () => {
@@ -655,6 +1081,7 @@ describe('TOTP login handlers', () => {
         sourceRef: 'direct_auth_totp',
       })
     );
+    expect(mockCreateAuthContextFromHono).toHaveBeenCalled();
     expect(mockChallengeStore.deleteChallengeRpc).toHaveBeenCalledWith(
       'totp_signup:signup-challenge'
     );

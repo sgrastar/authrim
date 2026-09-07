@@ -59,7 +59,7 @@ export interface AdminAuthContext {
   /** Authentication method used (Bearer token or session) */
   authMethod: 'bearer' | 'session' | 'machine_access_token';
   /** Authenticated actor type for audit and policy decisions */
-  actorType?: 'human' | 'machine' | 'internal_service' | 'bootstrap';
+  actorType?: 'human' | 'machine' | 'agent' | 'internal_service' | 'bootstrap';
   /** Stable actor identifier */
   actorId?: string;
   /** Credential identifier for machine actors */
@@ -76,6 +76,14 @@ export interface AdminAuthContext {
   credentialStrength?: 'asymmetric_key' | 'service_binding' | 'none';
   /** Whether the token is sender constrained with DPoP/mTLS */
   senderConstrained?: boolean;
+  /** Agent authorization evidence attached by the Admin API token owner. */
+  agentMode?: 'mode_a' | 'mode_b';
+  agentAssurance?: 'public_client_transaction' | 'confidential_client' | 'machine_key';
+  agentGrantId?: string;
+  agentGrantGeneration?: number;
+  agentConsentVersion?: number;
+  sourceTokenJti?: string;
+  correlationId?: string;
   /** Tenant scope carried by a machine access token */
   tenantScope?: string[];
   /** User roles (e.g., ['admin', 'super_admin']) */
@@ -93,8 +101,12 @@ export interface AdminAuthContext {
   hierarchyLevel?: number;
   /** Whether MFA has been verified for this session */
   mfaVerified?: boolean;
+  /** Most recent primary/MFA authentication instant in epoch milliseconds. */
+  authenticationTimeMs?: number;
   /** Admin session ID (for session auth) */
   sessionId?: string;
+  /** Absolute expiry of the backing Admin session in epoch milliseconds. */
+  sessionExpiresAt?: number;
   // ==========================================================================
   // RBAC Extensions (Phase 1) - Legacy, kept for backward compatibility
   // ==========================================================================

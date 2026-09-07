@@ -40,6 +40,14 @@ const mockSessionStoreStub = vi.hoisted(() => ({
   createSessionRpc: vi.fn(),
 }));
 
+const mockAccountAuthStateStub = vi.hoisted(() => ({
+  getAccountStateRpc: vi.fn(),
+  initializeAccountStateRpc: vi.fn(),
+  advancePasskeyCounterRpc: vi.fn(),
+}));
+
+const mockAdvancePasskeyAuthenticationState = vi.hoisted(() => vi.fn());
+
 const mockChallengeStoreStub = vi.hoisted(() => ({
   storeChallengeRpc: vi.fn(),
   consumeChallengeRpc: vi.fn(),
@@ -68,6 +76,7 @@ const mockPasskeyRepository = {
   create: vi.fn().mockResolvedValue('new-passkey-id'),
   updateCounter: vi.fn().mockResolvedValue(true),
   updateCounterAfterAuth: vi.fn().mockResolvedValue(true),
+  mirrorCounterAfterAuth: vi.fn().mockResolvedValue(true),
 };
 const mockCoreAdapter = {
   execute: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
@@ -136,6 +145,29 @@ vi.mock('@authrim/ar-lib-core', async () => {
         if (!pii) return null;
         return this.findById(pii.id);
       }
+      async findAccountAuthenticationState(userId: string) {
+        const core = await mockUserCoreRepository.findById(userId);
+        if (!core) return null;
+        return {
+          userId,
+          accountType: core.user_type === 'admin' ? 'admin' : 'user',
+          lifecycle: core.is_active === false ? 'inactive' : 'active',
+          sourceVersionMs: 1_000,
+        };
+      }
+      async findAuthenticationResponseUser(userId: string) {
+        const core = await mockUserCoreRepository.findById(userId);
+        const pii = await mockUserPIIRepository.findById(userId);
+        return {
+          id: userId,
+          email: pii?.email ?? null,
+          name: pii?.name ?? null,
+          emailVerified: core?.email_verified ? 1 : 0,
+          createdAt: new Date(core?.created_at ?? Date.now()).toISOString(),
+          updatedAt: new Date(core?.updated_at ?? Date.now()).toISOString(),
+          lastLoginAt: core?.last_login_at ?? null,
+        };
+      }
       async syncUser(input: { userId: string; email?: string | null; name?: string | null }) {
         await mockUserCoreRepository.createUser({
           id: input.userId,
@@ -173,8 +205,11 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getChallengeStoreByChallengeId: () => Promise.resolve(mockChallengeStoreStub),
     // Repository pattern mocks - return the pre-defined context objects
     createAuthContextFromHono: () => mockAuthContext,
+    createAccountAuthContextFromHono: () => mockAuthContext,
     createPIIContextFromHono: () => mockPIIContext,
+    resolveAccountDataContextFromHono: vi.fn().mockResolvedValue({}),
     getTenantIdFromContext: () => 'default',
+    advancePasskeyAuthenticationState: mockAdvancePasskeyAuthenticationState,
     resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
       storageProfile: {
         id: 'builtin:storage:standard',
@@ -362,10 +397,20 @@ function createMockContext(options: {
       ALLOWED_ORIGINS: 'https://example.com',
       CHALLENGE_STORE: challengeStore,
       SESSION_STORE: sessionStore,
+      SESSION_REVOCATION_STORE: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => mockAccountAuthStateStub),
+      },
     } as unknown as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
+    header: vi.fn(),
     get: vi.fn((key: string) => contextStore.get(key)),
     set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
+    executionCtx: {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: {},
+    },
     _mockDB: mockDB,
     _mockDBPII: mockDBPII, // For test assertions
     _challengeStore: challengeStore,
@@ -476,6 +521,56 @@ describe('Passkey Handlers', () => {
     mockPasskeyRepository.findByCredentialId.mockReset().mockResolvedValue(null);
     mockPasskeyRepository.create.mockReset().mockResolvedValue('new-passkey-id');
     mockPasskeyRepository.updateCounterAfterAuth.mockReset().mockResolvedValue(true);
+    mockPasskeyRepository.mirrorCounterAfterAuth.mockReset().mockResolvedValue(true);
+    mockAccountAuthStateStub.getAccountStateRpc.mockReset().mockResolvedValue({
+      revokedAfterMs: null,
+      lastLoginAtMs: null,
+      lifecycle: null,
+      lifecycleVersionMs: null,
+      lifecycleOperationId: null,
+    });
+    mockAccountAuthStateStub.initializeAccountStateRpc
+      .mockReset()
+      .mockImplementation(
+        async (_tenantId: string, _userId: string, _accountId: string, lifecycle: string) => ({
+          revokedAfterMs: null,
+          lastLoginAtMs: null,
+          lifecycle,
+          lifecycleVersionMs: 1_000,
+          lifecycleOperationId: null,
+        })
+      );
+    mockAccountAuthStateStub.advancePasskeyCounterRpc
+      .mockReset()
+      .mockResolvedValue({ counter: 1, advanced: true });
+    mockAdvancePasskeyAuthenticationState.mockReset().mockImplementation(
+      async (
+        _env: unknown,
+        input: {
+          tenantId: string;
+          userId: string;
+          credentialId: string;
+          storedCounter: number;
+          observedCounter: number;
+          observedAtMs: number;
+        },
+        loader: () => Promise<{ lifecycle: string } | null>
+      ) => {
+        const account = await loader();
+        if (!account || account.lifecycle !== 'active') {
+          throw new Error('account_authentication_not_allowed');
+        }
+        return mockAccountAuthStateStub.advancePasskeyCounterRpc(
+          input.tenantId,
+          input.userId,
+          `account:${input.userId}`,
+          input.credentialId,
+          input.storedCounter,
+          input.observedCounter,
+          input.observedAtMs
+        );
+      }
+    );
     mockCoreAdapter.execute.mockReset().mockResolvedValue({ rowsAffected: 1 });
   });
 
@@ -484,7 +579,7 @@ describe('Passkey Handlers', () => {
   });
 
   describe('passkeyRegisterOptionsHandler', () => {
-    it('should require email parameter', async () => {
+    it('should allow discoverable registration without email', async () => {
       const c = createMockContext({
         body: {},
         headers: { origin: 'https://example.com' },
@@ -492,11 +587,13 @@ describe('Passkey Handlers', () => {
 
       const response = await passkeyRegisterOptionsHandler(c);
 
-      expect(response.status).toBe(400);
-      const body = (await response.json()) as { error: string; error_description?: string };
-      expect(body.error).toBe('invalid_request');
-      // AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD returns generic message
-      expect(body.error_description).toContain('required');
+      expect(response.status).toBe(200);
+      expect(mockWebAuthnFunctions.generateRegistrationOptions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userName: expect.any(String),
+          userDisplayName: expect.any(String),
+        })
+      );
     });
 
     it('should reject unauthorized origins', async () => {
@@ -908,6 +1005,152 @@ describe('Passkey Handlers', () => {
       expect(mockUserCoreRepository.updateLastLogin).toHaveBeenCalledWith('user-123');
       expect(mockCoreAdapter.execute).not.toHaveBeenCalled();
     });
+
+    it('rejects a consumed or expired registration challenge before WebAuthn verification', async () => {
+      mockChallengeStoreStub.consumeChallengeRpc.mockRejectedValueOnce(new Error('consumed'));
+      const c = createMockContext({
+        body: {
+          userId: 'user-123',
+          credential: { id: 'credential-1', response: {} },
+        },
+        headers: { origin: 'https://example.com' },
+      });
+
+      const response = await passkeyRegisterVerifyHandler(c);
+
+      expect(response.status).toBe(401);
+      expect(mockWebAuthnFunctions.verifyRegistrationResponse).not.toHaveBeenCalled();
+    });
+
+    it('rejects a registration challenge bound to another user', async () => {
+      mockChallengeStoreStub.consumeChallengeRpc.mockResolvedValueOnce({
+        challenge: 'challenge',
+        userId: 'other-user',
+      });
+      const c = createMockContext({
+        body: {
+          userId: 'user-123',
+          credential: { id: 'credential-1', response: {} },
+        },
+        headers: { origin: 'https://example.com' },
+      });
+
+      const response = await passkeyRegisterVerifyHandler(c);
+
+      expect(response.status).toBe(401);
+      expect(mockWebAuthnFunctions.verifyRegistrationResponse).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unauthorized registration origin after atomically consuming the challenge', async () => {
+      const c = createMockContext({
+        body: {
+          userId: 'user-123',
+          credential: { id: 'credential-1', response: {} },
+        },
+        headers: { origin: 'https://evil.example.com' },
+      });
+
+      const response = await passkeyRegisterVerifyHandler(c);
+
+      expect(response.status).toBe(403);
+      expect(mockChallengeStoreStub.consumeChallengeRpc).toHaveBeenCalledTimes(1);
+      expect(mockWebAuthnFunctions.verifyRegistrationResponse).not.toHaveBeenCalled();
+    });
+
+    it('maps WebAuthn registration exceptions to the generic passkey error', async () => {
+      mockWebAuthnFunctions.verifyRegistrationResponse.mockRejectedValueOnce(
+        new Error('attestation internals')
+      );
+      const c = createMockContext({
+        body: {
+          userId: 'user-123',
+          credential: { id: 'credential-1', response: {} },
+        },
+        headers: { origin: 'https://example.com' },
+      });
+
+      const response = await passkeyRegisterVerifyHandler(c);
+
+      expect(response.status).toBe(400);
+      expect(await response.text()).not.toContain('attestation internals');
+      expect(mockPasskeyRepository.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { verified: false },
+      { verified: true, registrationInfo: undefined },
+      { verified: true, registrationInfo: { counter: 0 } },
+    ])('rejects incomplete WebAuthn registration results: %j', async (verification) => {
+      mockWebAuthnFunctions.verifyRegistrationResponse.mockResolvedValueOnce(verification);
+      const c = createMockContext({
+        body: {
+          userId: 'user-123',
+          credential: { id: 'credential-1', response: {} },
+        },
+        headers: { origin: 'https://example.com' },
+      });
+
+      const response = await passkeyRegisterVerifyHandler(c);
+
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
+      expect(mockPasskeyRepository.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts the current nested SimpleWebAuthn registration result format', async () => {
+      mockWebAuthnFunctions.verifyRegistrationResponse.mockResolvedValueOnce({
+        verified: true,
+        registrationInfo: {
+          credential: {
+            id: new Uint8Array([9, 8, 7]),
+            publicKey: new Uint8Array([1, 2, 3]),
+            counter: 7,
+          },
+        },
+      });
+      mockUserCoreRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        is_active: true,
+        email_verified: false,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      });
+      mockUserPIIRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        email: 'user@example.com',
+        name: 'User',
+      });
+      const c = createMockContext({
+        body: {
+          userId: 'user-123',
+          credential: { id: 'credential-1', response: { transports: [] } },
+        },
+        headers: { origin: 'https://example.com' },
+      });
+
+      const response = await passkeyRegisterVerifyHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(mockPasskeyRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ counter: 7, device_name: 'Unknown Device', aaguid: null })
+      );
+    });
+
+    it('does not persist a passkey if sharded session creation fails', async () => {
+      mockSessionStoreStub.createSessionRpc.mockRejectedValueOnce(new Error('DO unavailable'));
+      const c = createMockContext({
+        body: {
+          userId: 'user-123',
+          credential: { id: 'credential-1', response: {} },
+        },
+        headers: { origin: 'https://example.com' },
+      });
+
+      const response = await passkeyRegisterVerifyHandler(c);
+
+      expect(response.status).toBe(500);
+      expect(mockPasskeyRepository.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('passkeyLoginVerifyHandler', () => {
@@ -998,11 +1241,211 @@ describe('Passkey Handlers', () => {
 
       await passkeyLoginVerifyHandler(c);
 
-      // Should update counter via Repository
-      expect(mockPasskeyRepository.updateCounterAfterAuth).toHaveBeenCalledWith(
+      // The DO accepts the counter before the D1 mirror is scheduled.
+      expect(mockAccountAuthStateStub.advancePasskeyCounterRpc).toHaveBeenCalledWith(
+        'default',
+        'user-123',
+        'account:user-123',
         'passkey-1',
-        1 // newCounter from verifyAuthenticationResponse mock
+        0,
+        1,
+        expect.any(Number)
       );
+      expect(mockPasskeyRepository.mirrorCounterAfterAuth).toHaveBeenCalledWith('passkey-1', 1);
+    });
+
+    it('rejects a consumed authentication challenge before credential lookup', async () => {
+      mockChallengeStoreStub.consumeChallengeRpc.mockRejectedValueOnce(new Error('consumed'));
+      const c = createMockContext({
+        body: {
+          challengeId: 'challenge-1',
+          credential: { id: 'credential-1', response: {} },
+        },
+        headers: { origin: 'https://example.com' },
+      });
+
+      const response = await passkeyLoginVerifyHandler(c);
+
+      expect(response.status).toBe(401);
+      expect(mockPasskeyRepository.findByCredentialId).not.toHaveBeenCalled();
+    });
+
+    it('uses the legacy base64 credential ID once and migrates it to base64url', async () => {
+      const passkey = {
+        id: 'passkey-1',
+        user_id: 'user-123',
+        credential_id: 'legacy-base64',
+        public_key: 'AQID',
+        counter: 0,
+        transports: [],
+      };
+      mockPasskeyRepository.findByCredentialId
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(passkey);
+      mockIsoBase64URL.toBase64.mockReturnValueOnce('legacy-base64');
+      mockUserCoreRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        is_active: true,
+        email_verified: true,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      });
+      mockUserPIIRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        email: 'user@example.com',
+        name: 'User',
+      });
+      const c = createMockContext({
+        body: {
+          challengeId: 'challenge-1',
+          credential: { id: 'credential-url', response: {} },
+        },
+        headers: { origin: 'https://example.com' },
+      });
+
+      const response = await passkeyLoginVerifyHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(mockCoreAdapter.execute).toHaveBeenCalledWith(
+        'UPDATE passkeys SET credential_id = ? WHERE id = ? AND tenant_id = ?',
+        ['credential-url', 'passkey-1', 'default']
+      );
+      expect(passkey.credential_id).toBe('credential-url');
+    });
+
+    it('returns the same generic error for an unknown credential', async () => {
+      mockPasskeyRepository.findByCredentialId.mockResolvedValue(null);
+      const c = createMockContext({
+        body: {
+          challengeId: 'challenge-1',
+          credential: { id: 'unknown-credential', response: {} },
+        },
+        headers: { origin: 'https://example.com' },
+      });
+
+      const response = await passkeyLoginVerifyHandler(c);
+
+      expect(response.status).toBe(400);
+      expect(mockWebAuthnFunctions.verifyAuthenticationResponse).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unauthorized login origin before WebAuthn verification', async () => {
+      mockPasskeyRepository.findByCredentialId.mockResolvedValueOnce({
+        id: 'passkey-1',
+        user_id: 'user-123',
+        credential_id: 'credential-1',
+        public_key: 'AQID',
+        counter: 0,
+        transports: [],
+      });
+      const c = createMockContext({
+        body: {
+          challengeId: 'challenge-1',
+          credential: { id: 'credential-1', response: {} },
+        },
+        headers: { origin: 'https://evil.example.com' },
+      });
+
+      const response = await passkeyLoginVerifyHandler(c);
+
+      expect(response.status).toBe(403);
+      expect(mockWebAuthnFunctions.verifyAuthenticationResponse).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['verification exception', new Error('signature detail')],
+      ['unverified response', { verified: false }],
+    ])('fails closed for %s', async (_label, outcome) => {
+      mockPasskeyRepository.findByCredentialId.mockResolvedValueOnce({
+        id: 'passkey-1',
+        user_id: 'user-123',
+        credential_id: 'credential-1',
+        public_key: 'AQID',
+        counter: 0,
+        transports: [],
+      });
+      if (outcome instanceof Error) {
+        mockWebAuthnFunctions.verifyAuthenticationResponse.mockRejectedValueOnce(outcome);
+      } else {
+        mockWebAuthnFunctions.verifyAuthenticationResponse.mockResolvedValueOnce(outcome);
+      }
+      const c = createMockContext({
+        body: {
+          challengeId: 'challenge-1',
+          credential: { id: 'credential-1', response: {} },
+        },
+        headers: { origin: 'https://example.com' },
+      });
+
+      const response = await passkeyLoginVerifyHandler(c);
+
+      expect(response.status).toBe(400);
+      expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
+      expect(mockPasskeyRepository.updateCounterAfterAuth).not.toHaveBeenCalled();
+    });
+
+    it('rejects a valid credential belonging to an inactive user', async () => {
+      mockPasskeyRepository.findByCredentialId.mockResolvedValueOnce({
+        id: 'passkey-1',
+        user_id: 'inactive-user',
+        credential_id: 'credential-1',
+        public_key: 'AQID',
+        counter: 0,
+        transports: [],
+      });
+      mockUserCoreRepository.findById.mockResolvedValueOnce({
+        id: 'inactive-user',
+        is_active: false,
+      });
+      const c = createMockContext({
+        body: {
+          challengeId: 'challenge-1',
+          credential: { id: 'credential-1', response: {} },
+        },
+        headers: { origin: 'https://example.com' },
+      });
+
+      const response = await passkeyLoginVerifyHandler(c);
+
+      expect(response.status).toBe(400);
+      expect(mockSessionStoreStub.createSessionRpc).not.toHaveBeenCalled();
+    });
+
+    it('does not mirror the accepted authenticator counter if session creation fails', async () => {
+      mockPasskeyRepository.findByCredentialId.mockResolvedValueOnce({
+        id: 'passkey-1',
+        user_id: 'user-123',
+        credential_id: 'credential-1',
+        public_key: 'AQID',
+        counter: 3,
+        transports: [],
+      });
+      mockUserCoreRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        is_active: true,
+        email_verified: true,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      });
+      mockUserPIIRepository.findById.mockResolvedValue({
+        id: 'user-123',
+        email: 'user@example.com',
+        name: 'User',
+      });
+      mockSessionStoreStub.createSessionRpc.mockRejectedValueOnce(new Error('DO unavailable'));
+      const c = createMockContext({
+        body: {
+          challengeId: 'challenge-1',
+          credential: { id: 'credential-1', response: {} },
+        },
+        headers: { origin: 'https://example.com' },
+      });
+
+      const response = await passkeyLoginVerifyHandler(c);
+
+      expect(response.status).toBe(500);
+      expect(mockAccountAuthStateStub.advancePasskeyCounterRpc).toHaveBeenCalledOnce();
+      expect(mockPasskeyRepository.mirrorCounterAfterAuth).not.toHaveBeenCalled();
     });
   });
 });

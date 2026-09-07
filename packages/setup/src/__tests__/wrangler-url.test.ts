@@ -2,7 +2,7 @@
  * Wrangler URL / Env Vars Matrix Tests v2
  *
  * Tests generateEnvVars() and deriveAllowedOrigins() across 27 representative scenarios.
- * All expected values are hardcoded in deployment-matrix.ts — no calculation here.
+ * All expected values are hardcoded in deployment-topology-matrix.ts — no calculation here.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -15,7 +15,7 @@ import {
   buildAuthrimConfig,
   scenarioLabel,
   WORKERS_SUBDOMAIN,
-} from '../../../../test/fixtures/deployment-matrix.js';
+} from '../../../../test/shared-fixtures/deployment-topology-matrix.js';
 
 function expectedPrimaryTenantId(config: AuthrimConfig): string | undefined {
   if (!config.tenant?.multiTenant || !config.tenant.baseDomain) {
@@ -83,6 +83,23 @@ function expectedAdminUiApiMode(config: AuthrimConfig): string {
   return classification === 'cross-site' ? 'cross-site-proxy' : classification;
 }
 
+describe('Control automatic provisioning vars', () => {
+  it('generates an explicit fail-closed off value by default', () => {
+    const config = buildAuthrimConfig(SCENARIOS[0]!) as AuthrimConfig;
+    expect(generateEnvVars('ar-control', config, WORKERS_SUBDOMAIN)).toMatchObject({
+      AUTHRIM_AUTOMATIC_PROVISIONING: 'false',
+    });
+  });
+
+  it('enables the Control executor only when setup selected it', () => {
+    const config = buildAuthrimConfig(SCENARIOS[0]!) as AuthrimConfig;
+    config.controlPlane = { automaticProvisioning: true };
+    expect(generateEnvVars('ar-control', config, WORKERS_SUBDOMAIN)).toMatchObject({
+      AUTHRIM_AUTOMATIC_PROVISIONING: 'true',
+    });
+  });
+});
+
 // =============================================================================
 // deriveAllowedOrigins — 27 tests
 // =============================================================================
@@ -106,11 +123,16 @@ describe('generateEnvVars - ar-auth', () => {
     const vars = generateEnvVars('ar-auth', config, WORKERS_SUBDOMAIN);
     const expected = scenario.expected.arAuthEnvVars;
     const expectedUiUrl = expectedLoginUiUrl(config);
+    const loginUiRunsOnIssuer =
+      config.urls?.loginUi?.sameAsApi === true || isMultiTenantConfigured(config);
     const expectedCookieSameSite =
-      config.urls?.loginUi?.sameAsApi === true ? 'Lax' : expected.COOKIE_SAME_SITE;
+      config.components?.loginUi && loginUiRunsOnIssuer ? 'Lax' : expected.COOKIE_SAME_SITE;
 
     expect(vars['ISSUER_URL']).toBe(expected.ISSUER_URL);
     expect(vars['UI_URL']).toBe(expectedUiUrl);
+    expect(vars['LOGIN_UI_EXECUTION_HOST_MODE']).toBe(
+      config.components?.loginUi ? (loginUiRunsOnIssuer ? 'issuer' : 'dedicated') : undefined
+    );
     expect(vars['ADMIN_UI_URL']).toBe(expected.ADMIN_UI_URL);
     expect(vars['COOKIE_SAME_SITE']).toBe(expectedCookieSameSite);
     expect(vars['ADMIN_UI_API_MODE']).toBe(expectedAdminUiApiMode(config));
@@ -161,6 +183,11 @@ describe('generateEnvVars - ar-management', () => {
     expect(vars['ISSUER_URL']).toBe(expected.ISSUER_URL);
     expect(vars['UI_URL']).toBe(expectedUiUrl);
     expect(vars['LOGIN_UI_ENABLED']).toBe((config.components?.loginUi ?? true) ? 'true' : 'false');
+    const loginUiRunsOnIssuer =
+      config.urls?.loginUi?.sameAsApi === true || isMultiTenantConfigured(config);
+    expect(vars['LOGIN_UI_EXECUTION_HOST_MODE']).toBe(
+      config.components?.loginUi ? (loginUiRunsOnIssuer ? 'issuer' : 'dedicated') : undefined
+    );
     expect(vars['ADMIN_UI_ENABLED']).toBe((config.components?.adminUi ?? true) ? 'true' : 'false');
     expect(vars['SAML_ENABLED']).toBe('true');
     expect(vars['ASYNC_ENABLED']).toBe('true');
@@ -194,6 +221,25 @@ describe('generateEnvVars - ar-management', () => {
       expect(vars['NAKED_DOMAIN_AS_ISSUER']).toBeUndefined();
     }
   });
+
+  it('keeps workers.dev single-tenant login discovery on the dedicated Login UI Worker', () => {
+    const scenario = SCENARIOS.find((candidate) => candidate.id === 11)!;
+    const config = buildAuthrimConfig(scenario) as AuthrimConfig;
+    config.urls!.loginUi = {
+      custom: null,
+      auto: 'https://prod-ar-login-ui.my-project.workers.dev',
+      sameAsApi: false,
+    };
+
+    const managementVars = generateEnvVars('ar-management', config, WORKERS_SUBDOMAIN);
+    const routerVars = generateEnvVars('ar-router', config, WORKERS_SUBDOMAIN);
+
+    expect(managementVars['UI_URL']).toBe('https://prod-ar-login-ui.my-project.workers.dev');
+    expect(managementVars['LOGIN_UI_EXECUTION_HOST_MODE']).toBe('dedicated');
+    expect(routerVars['ENABLE_LOGIN_UI_PROXY']).toBe('false');
+    expect(routerVars['ENABLE_LOGIN_UI_PATH_PROXY']).toBe('false');
+    expect(routerVars['AR_LOGIN_UI_URL']).toBeUndefined();
+  });
 });
 
 describe('generateEnvVars - ar-saml', () => {
@@ -221,7 +267,6 @@ describe('generateEnvVars - ar-saml', () => {
     const config = buildAuthrimConfig(SCENARIOS[0]) as AuthrimConfig;
     config.profiles = {
       defaults: {
-        storage: 'builtin:storage:external-postgres',
         audit: 'builtin:audit:standard',
         residency: 'builtin:residency:eu',
       },
@@ -234,21 +279,18 @@ describe('generateEnvVars - ar-saml', () => {
     const samlVars = generateEnvVars('ar-saml', config, WORKERS_SUBDOMAIN);
 
     expect(authVars['PROFILE_REGISTRY_BACKEND']).toBe('database');
-    expect(authVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:external-postgres');
     expect(authVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('builtin:audit:standard');
     expect(authVars['DEFAULT_RESIDENCY_PROFILE_ID']).toBe('builtin:residency:eu');
 
     expect(samlVars['PROFILE_REGISTRY_BACKEND']).toBe('database');
-    expect(samlVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:external-postgres');
     expect(samlVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('builtin:audit:standard');
     expect(samlVars['DEFAULT_RESIDENCY_PROFILE_ID']).toBe('builtin:residency:eu');
   });
 
-  it('passes through built-in single-db profile defaults for profile-aware workers', () => {
+  it('passes through audit defaults', () => {
     const config = buildAuthrimConfig(SCENARIOS[0]) as AuthrimConfig;
     config.profiles = {
       defaults: {
-        storage: 'builtin:storage:single-db',
         audit: 'custom:audit:external-primary',
         residency: 'builtin:residency:default',
       },
@@ -261,9 +303,8 @@ describe('generateEnvVars - ar-saml', () => {
     const managementVars = generateEnvVars('ar-management', config, WORKERS_SUBDOMAIN);
 
     expect(authVars['PROFILE_REGISTRY_BACKEND']).toBe('kv');
-    expect(authVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:single-db');
     expect(authVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('custom:audit:external-primary');
-    expect(managementVars['DEFAULT_STORAGE_PROFILE_ID']).toBe('builtin:storage:single-db');
+    expect(managementVars['DEFAULT_AUDIT_PROFILE_ID']).toBe('custom:audit:external-primary');
   });
 });
 
@@ -294,6 +335,7 @@ describe('generateEnvVars - ar-router', () => {
 
     expect(vars['ENABLE_ADMIN_UI_PROXY']).toBe(adminProxyEnabled ? 'true' : 'false');
     expect(vars['ENABLE_LOGIN_UI_PROXY']).toBe(loginProxyEnabled ? 'true' : 'false');
+    expect(vars['ENABLE_LOGIN_UI_PATH_PROXY']).toBe(loginProxyEnabled ? 'true' : 'false');
     expect(vars['LOGIN_UI_URL']).toBe(expectedLoginUiUrl(config));
     expect(vars['LOGIN_UI_HOST_MODE']).toBe(expectedLoginUiHostMode(config));
 
@@ -305,7 +347,7 @@ describe('generateEnvVars - ar-router', () => {
       expect(vars['AR_ADMIN_UI_URL']).toBeUndefined();
     }
 
-    // AR_LOGIN_UI_URL is set when ar-router proxies Login UI routes.
+    // AR_LOGIN_UI_URL is set when Router owns Login UI paths.
     if (loginProxyEnabled) {
       const loginUiWorkerUrl = scenario.config.loginUiAuto ?? scenario.config.loginUiCustom;
       expect(vars['AR_LOGIN_UI_URL']).toBe(loginUiWorkerUrl ?? undefined);
@@ -431,8 +473,9 @@ describe('multi-tenant login UI canonical routing', () => {
 
     expect(authVars['UI_URL']).toBe('https://login.example.com');
     expect(samlVars['UI_URL']).toBe('https://login.example.com');
-    expect(authVars['COOKIE_SAME_SITE']).toBe('None');
+    expect(authVars['COOKIE_SAME_SITE']).toBe('Lax');
     expect(routerVars['ENABLE_LOGIN_UI_PROXY']).toBe('true');
+    expect(routerVars['ENABLE_LOGIN_UI_PATH_PROXY']).toBe('true');
     expect(routerVars['LOGIN_UI_URL']).toBe('https://login.example.com');
     expect(routerVars['LOGIN_UI_HOST_MODE']).toBe('dedicated');
     expect(routerVars['AR_LOGIN_UI_URL']).toBe('https://test-ar-login-ui.my-project.workers.dev');

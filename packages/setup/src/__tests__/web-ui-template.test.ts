@@ -14,7 +14,7 @@ import zhCN from '../i18n/locales/zh-CN.js';
 import zhTW from '../i18n/locales/zh-TW.js';
 import { SUPPORTED_LOCALES } from '../i18n/types.js';
 import { SETUP_WEB_FONT_FACE } from '../web/ui-fonts.js';
-import { getHtmlTemplate } from '../web/ui.js';
+import { CONTROL_OPERATION_RESULT_TRANSLATION_KEYS, getHtmlTemplate } from '../web/ui.js';
 import { SETUP_WEB_UI_STYLE } from '../web/ui-style.js';
 
 function extractInlineScripts(html: string): string[] {
@@ -48,6 +48,41 @@ function extractInlineScripts(html: string): string[] {
   }
 
   return scripts;
+}
+
+function extractInlineObject(
+  html: string,
+  variableName: string
+): Record<string, Record<string, string> | string[]> {
+  const marker = `const ${variableName} = `;
+  const markerIndex = html.indexOf(marker);
+  const objectStart = html.indexOf('{', markerIndex);
+  let depth = 0;
+  let quote: string | null = null;
+  let escaped = false;
+
+  expect(markerIndex, `${variableName} declaration`).toBeGreaterThanOrEqual(0);
+  expect(objectStart, `${variableName} object`).toBeGreaterThanOrEqual(0);
+
+  for (let index = objectStart; index < html.length; index += 1) {
+    const character = html[index];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === quote) quote = null;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === '`') {
+      quote = character;
+      continue;
+    }
+    if (character === '{') depth += 1;
+    else if (character === '}' && --depth === 0) {
+      return vm.runInNewContext(`(${html.slice(objectStart, index + 1)})`);
+    }
+  }
+
+  throw new Error(`Could not extract ${variableName}`);
 }
 
 describe('getHtmlTemplate', () => {
@@ -128,6 +163,224 @@ describe('getHtmlTemplate', () => {
     }
   });
 
+  it('localizes Control operation outcomes, R2 recovery, and progress copy', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(CONTROL_OPERATION_RESULT_TRANSLATION_KEYS).toMatchObject({
+      succeeded: 'web.control.operationSucceeded',
+      awaiting_quarantine: 'web.control.operationAwaitingQuarantine',
+      blocked: 'web.control.operationBlocked',
+    });
+    expect(Object.keys(CONTROL_OPERATION_RESULT_TRANSLATION_KEYS)).toEqual([
+      'awaiting_migration',
+      'awaiting_worker_bindings',
+      'awaiting_smoke',
+      'awaiting_quarantine',
+      'retry_required',
+      'lease_unavailable',
+      'succeeded',
+      'blocked',
+    ]);
+    expect(html).toContain('CONTROL_OPERATION_RESULT_TRANSLATION_KEYS[result.result?.state]');
+    expect(html).toContain("t('web.envDetail.r2OwnershipRecoverySummary'");
+    expect(html).toContain("t('web.envDetail.r2IdentityMismatchSummary'");
+    expect(html).toContain("t('web.status.percentComplete', { percent })");
+    expect(html).toContain("t('web.status.resourceProgress'");
+    expect(html).not.toContain("status.textContent = 'Running provisioning operation...'");
+    expect(html).not.toContain("result.error || 'Could not create the Cloudflare token link.'");
+  });
+
+  it('provides explicit environment-management copy instead of English fallback', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const base = extractInlineObject(html, 'envManagementCopyByLocale');
+    const dynamic = extractInlineObject(html, 'envDynamicCopyByLocale');
+    const rows = extractInlineObject(html, 'envManagementSupplementalRows') as Record<
+      string,
+      string[]
+    >;
+    const supplementalLocales = SUPPORTED_LOCALES.map(({ code }) => code).filter(
+      (locale) => locale !== 'en' && locale !== 'ja'
+    );
+    const english = {
+      ...(base.en as Record<string, string>),
+      ...(dynamic.en as Record<string, string>),
+    };
+
+    for (const [localeIndex, locale] of supplementalLocales.entries()) {
+      const baseLocale = (base[locale] ?? {}) as Record<string, string>;
+      const dynamicLocale = (dynamic[locale] ?? {}) as Record<string, string>;
+      const supplemental = Object.fromEntries(
+        Object.entries(rows).map(([key, translations]) => {
+          expect(translations, `${key} translations`).toHaveLength(supplementalLocales.length);
+          expect(translations[localeIndex], `${locale} ${key}`).toBeTruthy();
+          return [key, translations[localeIndex]];
+        })
+      );
+      const keysRequiringExplicitTranslation = Object.keys(english).filter(
+        (key) => !(key in baseLocale) && !(key in dynamicLocale)
+      );
+
+      expect(
+        keysRequiringExplicitTranslation.filter((key) => !(key in supplemental)),
+        `${locale} environment-management English fallbacks`
+      ).toEqual([]);
+
+      for (const key of keysRequiringExplicitTranslation) {
+        const expectedPlaceholders = english[key].match(/{{[a-zA-Z0-9_-]+}}/g) ?? [];
+        const actualPlaceholders = supplemental[key].match(/{{[a-zA-Z0-9_-]+}}/g) ?? [];
+        expect(actualPlaceholders.sort(), `${locale} ${key} placeholders`).toEqual(
+          expectedPlaceholders.sort()
+        );
+      }
+    }
+  });
+
+  it('localizes setup-operation conflicts from their stable API error code', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain("result?.errorCode === 'setup_operation_in_progress'");
+    expect(html).toContain("result.error = t('web.status.operationInProgress')");
+    expect(html).toContain(".replaceAll('⚠️', t('web.status.warning'))");
+  });
+
+  it('shows retryable deletion inventory errors without an empty error alert', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain("result?.errorCode === 'environment_inventory_unavailable'");
+    expect(html).toContain("result.error = t('web.delete.inventoryUnavailable')");
+    expect(html).toContain('function apiErrorMessages(result)');
+    expect(html).toContain("summary !== messages.join(', ')");
+    expect(html).toContain("messages.length > 0 ? messages : [t('web.status.unknownError')]");
+    expect(html).not.toContain("(deleteResult.errors || []).join(', ')");
+  });
+
+  it('distinguishes final environment cleanup from a successful partial deletion', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('deleteResult.environmentDeleted === true');
+    expect(html).toContain("'web.delete.success' : 'web.delete.partialSuccess'");
+    expect(html).toContain('環境と残りのローカル状態は保持されています。');
+  });
+
+  it('finishes an empty environment without making unobserved legacy Pages inventory strict', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    for (const resourceType of ['queues', 'r2']) {
+      expect(html).toContain(`document.getElementById('delete-${resourceType}').checked = true;`);
+    }
+    expect(html).toContain(
+      "document.getElementById('delete-pages').checked = (env.pages || []).length > 0;"
+    );
+    expect(html).toContain('finalizeEnvironment: true,');
+    expect(html).not.toContain(
+      "document.getElementById('delete-queues').checked = env.queues.length > 0;"
+    );
+    expect(html).not.toContain("document.getElementById('delete-r2').checked = env.r2.length > 0;");
+  });
+
+  it('renders R2 and DNS deletion manual actions independently with dashboard links', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('function appendManualR2CleanupNotice(parent, targets)');
+    expect(html).toContain('function appendManualDnsCleanupNotice(parent, issues)');
+    expect(html).toContain('function appendManualControlTokenCleanupNotice(parent, targets)');
+    expect(html).toContain(
+      "item.textContent = t('web.delete.manualControlTokenId', { tokenId: String(tokenId) });"
+    );
+    expect(html).toContain('if (manualR2Targets.length > 0)');
+    expect(html).toContain('if (manualDnsIssues.length > 0)');
+    expect(html).toContain('const environmentDeleted = deleteResult.environmentDeleted === true;');
+    expect(html).toContain(
+      "t(environmentDeleted ? 'web.delete.complete' : 'web.delete.manualActionRequired')"
+    );
+    expect(html).toContain("backLabel.textContent = t('web.env.backToList')");
+    expect(html).toContain('appendManualR2CleanupNotice(result, manualR2Targets)');
+    expect(html).toContain('appendManualDnsCleanupNotice(result, manualDnsIssues)');
+    expect(html).toContain(
+      'appendManualControlTokenCleanupNotice(result, manualControlTokenTargets)'
+    );
+    expect(html).toContain('if (environmentDeleted) {');
+    expect(html).toContain('await loadEnvironments();');
+    expect(html).toContain('if (target.dashboardUrl)');
+    expect(html).toContain('link.href = target.dashboardUrl');
+    expect(html).toContain("t('web.deploy.openCloudflareDns')");
+    expect(html).toContain("'https://dash.cloudflare.com/'");
+  });
+
+  it('reports key replacement only after guarded generation succeeds', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('keyResult.reusedExistingKeys === true');
+    expect(html).toContain('Existing environment keys reused');
+    expect(html).not.toContain("output.textContent += '   Existing keys will be overwritten.");
+  });
+
+  it('shows one description and one example for each user ID format', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('data-i18n="userId.nanoidDesc"');
+    expect(html).toContain('data-i18n="userId.uuidDesc"');
+    expect(html).toContain('V1StGXR8_Z5jdHi6B-myT');
+    expect(html).toContain('550e8400-e29b-41d4-a716-446655440000');
+    expect(html).toContain('id="user-id-format-description"');
+    expect(html).toContain('id="user-id-format-example-value"');
+    expect(html).toContain("descriptionKey = selected === 'uuid'");
+  });
+
   it('embeds multilingual API domain copy for dynamic tenant URL hints', () => {
     const html = getHtmlTemplate(
       'session-token',
@@ -203,6 +456,131 @@ describe('getHtmlTemplate', () => {
     });
   });
 
+  it('renders deletion progress from structured resource counts without irreversible footer copy', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      true,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('data-i18n="web.delete.resourcesLabel">resources</span>');
+    expect(html).not.toContain('web.delete.resourcesIrreversible');
+    expect(html).not.toContain('リソース - 戻すことはできません');
+    expect(html).not.toContain('This action is irreversible');
+    expect(html).not.toMatch(/cannot be undone|取り消せません|irreversible/iu);
+    expect(en['web.delete.warning']).not.toMatch(/irreversible|cannot be undone/iu);
+    expect(ja['web.delete.warning']).not.toMatch(/取り消せません|元に戻せません/iu);
+    expect(html).toContain("statusResult.operationProgress?.operation === 'delete'");
+    expect(html).toContain("progressBar.classList.toggle('indeterminate', indeterminate)");
+    expect(SETUP_WEB_UI_STYLE).toContain('.setup-progress-fill.indeterminate');
+    expect(SETUP_WEB_UI_STYLE).toContain('@keyframes delete-progress-indeterminate');
+  });
+
+  it('uses the shared solid progress treatment in light and dark themes', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    for (const progressBarId of [
+      'provision-progress-bar',
+      'deploy-progress-bar',
+      'delete-progress-bar',
+      'release-update-progress-bar',
+    ]) {
+      expect(html).toMatch(
+        new RegExp(`id="${progressBarId}"[^>]*class="[^"]*setup-progress-fill`, 'u')
+      );
+    }
+    expect(html.match(/class="[^"]*setup-progress-track[^"]*"/gu)).toHaveLength(4);
+    expect(html).toContain('function updateProgressBarVisual(');
+    expect(html).toContain("progressBar.classList.toggle('is-complete', status === 'complete')");
+    expect(html).toContain("progressBar.classList.toggle('is-error', status === 'error')");
+    expect(html).toContain("markProgressBarError('provision')");
+    expect(html).toContain("markProgressBarError('delete')");
+
+    expect(SETUP_WEB_UI_STYLE).toContain('--progress-fill: #9a7b36;');
+    expect(SETUP_WEB_UI_STYLE).toContain('--progress-fill: #c9a86a;');
+    expect(SETUP_WEB_UI_STYLE).toContain('.setup-progress-fill::after');
+    expect(SETUP_WEB_UI_STYLE).toContain('background: var(--progress-head);');
+    expect(SETUP_WEB_UI_STYLE).toContain('.setup-progress-fill.is-complete');
+    expect(SETUP_WEB_UI_STYLE).toContain('.setup-progress-fill.is-error');
+    expect(SETUP_WEB_UI_STYLE).toContain('@media (prefers-reduced-motion: reduce) {');
+    expect(SETUP_WEB_UI_STYLE).not.toContain('repeating-linear-gradient');
+  });
+
+  it('offers in-place initial deployment recovery after a failed deploy request', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain(
+      "recoveryStatus = await api('/deploy/recovery/' + encodeURIComponent(config.env))"
+    );
+    expect(html).toContain("btn.textContent = t('web.envDetail.initialDeployRecoveryAction')");
+    expect(html).toContain('describeInitialDeploymentRecovery(recoveryStatus)');
+    expect(html).toContain("result?.status === 'recreate_required'");
+    expect(html).toContain("result.reasonCode === 'initial_manifest_changed'");
+    expect(html).toContain('Delete this incomplete environment and create it again.');
+    expect(html).toContain(
+      "document.getElementById('btn-resume-initial-deploy')?.classList.add('hidden')"
+    );
+    expect(html).toContain('class="inline-action-spinner hidden"');
+    expect(html).toContain("spinner?.classList.remove('hidden')");
+    expect(html).toContain("button.setAttribute('aria-busy', 'true')");
+    expect(html).toContain('const envName = selectedEnvForDetail?.env || config?.env');
+    expect(html).toContain("'/deploy/recovery/' + encodeURIComponent(envName)");
+    expect(html).toContain('recoveryStatus.requiresWorkerOwnershipRecovery === true');
+    expect(html).toContain('resumeWorkerOwnershipRecovery ? { recoverWorkerOwnership: true } : {}');
+    expect(html).toContain("'/config?env=' + encodeURIComponent(envName)");
+    expect(html).toContain('recoveryStatus.requiresBootstrapToken !== true');
+    expect(html).toContain('!resumeControlBootstrapReady');
+  });
+
+  it('does not label endpoint URLs as verified before initial deployment verification completes', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('id="detail-url-deployment-status"');
+    expect(html).toContain("status.textContent = t('web.envDetail.deploymentChecking')");
+    expect(html).toContain("result.status === 'complete'");
+    expect(html).toContain('result.completedSteps?.verificationComplete === true');
+    expect(html).toContain("status.textContent = t('web.envDetail.deploymentIncomplete')");
+    expect(html).toContain("status.dataset.state = 'incomplete'");
+    expect(html).toContain("status.textContent = t('web.envDetail.deploymentStatusUnknown')");
+    expect(html).toContain('デプロイ未完了');
+    expect(html).not.toContain('<em data-i18n="web.envDetail.verified">verified ✓</em>');
+  });
+
+  it('restores credential prerequisites when a DNS preflight pauses deployment', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain(
+      "restoreSetupProgressPreludes([\n            'control-token-bootstrap-row',\n            'deploy-manual-wildcard-warning'"
+    );
+    expect(html).toContain('DNS validation happens before Control token consumption.');
+  });
+
   it('renders the Classic setup chrome from the extracted stylesheet', () => {
     const html = getHtmlTemplate(
       'session-token',
@@ -271,16 +649,24 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain("spinner.className = 'check-spinner'");
     expect(html).toContain('updateEnvCardIssuerFromConfig');
     expect(html).toContain('resolveEnvDetailIssuerUrl(env, configResponse.config)');
+    expect(html).toContain('getEnvironmentModePreview(env, configResponse.config)');
+    expect(html).toContain("'e-kv-mode'");
+    expect(html).toContain('getEnvironmentModePreview(env, config)');
+    expect(html).not.toContain('const hasLogin = (env.workers || [])');
     expect(html).toContain('class="env-loading-indicator"');
     expect(html).toContain("row.className = 'e-kv e-kv-issuer'");
     expect(html).not.toContain("className = 'e-st");
     expect(html).not.toContain('admin-badge');
     expect(html).toContain('if (response.adminSetupCompleted) {');
-    expect(html).toContain("section.classList.add('hidden');");
+    expect(html).toContain('if (response.statusKnown === false) {');
+    expect(html).toContain("'?env=' + encodeURIComponent(envName)");
+    expect(html).toContain("section.className = 'alert ok';");
+    expect(html).toContain("heading.setAttribute('data-i18n', 'web.env.adminConfigured');");
+    expect(html).toContain("description.classList.add('hidden');");
     expect(html).not.toContain('If every administrator is locked out');
     expect(html).not.toContain('管理者が全員ロックアウト');
     expect(html).toContain('class="setup-recap"');
-    expect(html).toContain('data-i18n="web.common.setupTool">Setup Tool</span> v0.3.4');
+    expect(html).toContain('data-i18n="web.common.setupTool">Setup Tool</span> v0.4.0');
     expect(html).not.toContain('Mock list');
     expect(html).not.toContain('v0.9.4');
     expect(html).not.toContain('4分12秒で完了');
@@ -312,7 +698,20 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain('window.requestAnimationFrame(applyTheme)');
     expect(html).toContain('themeTransitionCleanupTimer = window.setTimeout');
     expect(html).toContain('class="twocol ui-update-grid"');
+    expect(html).toContain('id="env-release-update"');
+    expect(html).toContain('id="btn-start-release-update"');
+    expect(html).toContain('id="btn-start-database-only-update"');
+    expect(html).toContain('startReleaseUpdate(true)');
+    expect(html).toContain('response.inProgress === true');
+    expect(html).toContain("api('/update/release'");
+    expect(html).toContain('loadReleaseUpdateStatus(env.env)');
     expect(html).toContain('class="bigtable ui-update-card"');
+    expect(html).toContain('id="full-environment-deploy-card"');
+    expect(html).toContain('id="btn-deploy-full-environment"');
+    expect(html).toContain('id="full-environment-deploy-progress"');
+    expect(html).toContain('onlyChanged: false');
+    expect(html).toContain("'/deploy/component/' + encodeURIComponent(componentName)");
+    expect(html).toContain('getFullDeployUiComponents');
     expect(html).toContain("'theme-transition-to-dark'");
     expect(html).toContain("'theme-transition-to-light'");
     expect(SETUP_WEB_UI_STYLE).toContain('--paper: #f9f8f3');
@@ -327,6 +726,14 @@ describe('getHtmlTemplate', () => {
     expect(SETUP_WEB_UI_STYLE).not.toContain('html.theme-transitioning .setup-hero-title');
     expect(SETUP_WEB_UI_STYLE).not.toContain('radial-gradient(circle at 18% 12%');
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-hero.setup-enter .setup-hero-number');
+    expect(SETUP_WEB_UI_STYLE).toContain('body.env-management-mode .setup-hero-number');
+    expect(SETUP_WEB_UI_STYLE).toContain('.env-management-surface .tabpane.env-tab-enter');
+    expect(SETUP_WEB_UI_STYLE).toContain('.env-full-deploy-card');
+    expect(SETUP_WEB_UI_STYLE).toContain('.release-update-card');
+    expect(SETUP_WEB_UI_STYLE).toContain('.env-release-badge');
+    expect(SETUP_WEB_UI_STYLE).toContain(
+      '.env-management-surface #env-control-automatic-provisioning:not(.hidden)'
+    );
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-section-enter .row');
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-section-enter .modepanel:nth-child(3)');
     expect(SETUP_WEB_UI_STYLE).toContain('.setup-masthead');
@@ -340,6 +747,9 @@ describe('getHtmlTemplate', () => {
     expect(SETUP_WEB_UI_STYLE).toContain('[data-theme="dark"] .step-active');
     expect(SETUP_WEB_UI_STYLE).toContain('[data-theme="dark"] .step-complete');
     expect(SETUP_WEB_UI_STYLE).toContain('[data-theme="dark"] .checkitem.on:not(.lock) .sq');
+    expect(html).toContain("activePane.classList.add('env-tab-enter');");
+    expect(html).toContain("t('web.env.adminConfigured')");
+    expect(html).toContain("button.classList.add('hidden');");
     expect(SETUP_WEB_UI_STYLE).toContain('[data-theme="dark"] .radiocard.on .dot');
     expect(SETUP_WEB_UI_STYLE).toContain('[data-theme="dark"] .switchline:has(input:checked) .sw');
     expect(SETUP_WEB_UI_STYLE).toContain('.region .dot::before');
@@ -460,7 +870,8 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain(
       'class="region auto-region"><input type="radio" name="db-pii-location" value="auto" checked>'
     );
-    expect(html).toContain('data-i18n="web.db.storageProfileDesc"');
+    expect(html).toContain('<h2 data-i18n="web.db.controlPlaneTitle">D1 Control Plane</h2>');
+    expect(html).toContain('name="automatic-provisioning" value="on" checked');
     expect(SETUP_WEB_UI_STYLE).toContain('.topo tr');
     expect(SETUP_WEB_UI_STYLE).toContain('.region.auto-region');
     expect(SETUP_WEB_UI_STYLE).toContain('.db-profile-card .st');
@@ -511,6 +922,125 @@ describe('getHtmlTemplate', () => {
     expect(html).toContain("setupLogCopyButton('delete-log-copy-btn', 'delete-output')");
   });
 
+  it('starts the deployment screen in a clean ready state without mock progress data', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('id="deploy-ready-text" class="deploy-ready-card"');
+    expect(html).toContain('id="deploy-progress-ui" class="deploy-progress-panel hidden"');
+    expect(html).toContain('class="logbox hidden" id="deploy-log"');
+    expect(html).toContain('<span id="deploy-percent">0</span>');
+    expect(html).toContain('id="deploy-phase-rail"');
+    expect(html).toContain('role="progressbar"');
+    expect(html).toContain('aria-valuenow="1"');
+    expect(html.match(/data-deploy-phase="\d+"/gu)).toHaveLength(10);
+    expect(html).toContain('id="deploy-log-ora"');
+    expect(html).toContain("const WEB_ORA_FRAMES = ['⠋', '⠙'");
+    expect(html).toContain("setLogVisibility('deploy-log-toggle', 'deploy-log', false)");
+    expect(html).toContain('statusResult.deploymentProgress');
+    expect(html).toContain('id="deploy-current-message-line"');
+    expect(html).toContain('id="deploy-current-message"');
+    expect(html).toContain('currentMessage.textContent = oraMessage');
+    expect(html).toContain('oraText.textContent = oraMessage');
+    expect(html).toContain('deployedWorkerNames.clear()');
+    expect(html).toContain('updateDeployedWorkerCount(progress)');
+    expect(html).toContain('deployedWorkerNames.size +');
+    expect(html).not.toContain("'<b>0</b> / 14'");
+    expect(html).toContain("const finalStatus = await api('/deploy/status')");
+    expect(html).toContain('renderDeploymentSnapshot(finalStatus.deploymentProgress)');
+    expect(html).toContain('if (!renderedServerSnapshot)');
+    expect(html).not.toContain("btnCancel.classList.remove('hidden')");
+    expect(html).not.toContain("btnGotoComplete.classList.remove('hidden')");
+    expect(html).not.toContain('prod-ar-userinfo uploading...');
+    expect(html).not.toContain('bindings: D1(3) KV(9) DO(12)');
+    expect(SETUP_WEB_UI_STYLE).toContain('.deploy-ready-card');
+    expect(SETUP_WEB_UI_STYLE).toContain('.ora-log-line');
+    expect(SETUP_WEB_UI_STYLE).toContain('.deploy-current-message');
+    expect(SETUP_WEB_UI_STYLE).toContain('.deploy-phase-rail');
+  });
+
+  it('dismisses setup guidance when provisioning or deployment starts', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('id="provision-preflight-row" data-setup-progress-prelude');
+    expect(html).toContain('id="control-token-bootstrap-row" data-setup-progress-prelude');
+    expect(html).toContain('id="deploy-manual-wildcard-warning" data-setup-progress-prelude');
+    expect(html).toContain("dismissSetupProgressPreludes(['provision-preflight-row'])");
+    expect(html).toContain(
+      "'control-token-bootstrap-row',\n        'deploy-manual-wildcard-warning'"
+    );
+    expect(html).toContain("window.matchMedia('(prefers-reduced-motion: reduce)').matches");
+    expect(SETUP_WEB_UI_STYLE).toContain('.setup-progress-prelude-exit');
+    expect(SETUP_WEB_UI_STYLE).toContain('authrim-prelude-exit 0.22s');
+  });
+
+  it('hides running-stage guidance and restores only explicitly requested manual guidance', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const transitionSource = html.match(
+      /const setupProgressPreludeHideTimers = new Map\(\);[\s\S]*?(?=\n\s{4}function showSection\(name\))/u
+    )?.[0];
+    expect(transitionSource).toBeTruthy();
+
+    const classes = new Set<string>();
+    const element = {
+      dataset: {} as Record<string, string>,
+      classList: {
+        add: (...names: string[]) => names.forEach((name) => classes.add(name)),
+        contains: (name: string) => classes.has(name),
+        remove: (...names: string[]) => names.forEach((name) => classes.delete(name)),
+      },
+    };
+    let finishTransition: (() => void) | undefined;
+    const context = vm.createContext({
+      clearTimeout: () => undefined,
+      document: {
+        getElementById: (id: string) => (id === 'prelude' ? element : null),
+      },
+      setTimeout: (callback: () => void) => {
+        finishTransition = callback;
+        return 1;
+      },
+      window: {
+        matchMedia: () => ({ matches: false }),
+      },
+    });
+
+    vm.runInContext(`${transitionSource}\ndismissSetupProgressPreludes(['prelude']);`, context);
+    expect(classes.has('setup-progress-prelude-exit')).toBe(true);
+    expect(element.dataset.setupProgressPreludeWasVisible).toBe('true');
+
+    expect(finishTransition).toBeTypeOf('function');
+    finishTransition?.();
+    expect(classes.has('setup-progress-prelude-exit')).toBe(false);
+    expect(classes.has('hidden')).toBe(true);
+
+    vm.runInContext("restoreSetupProgressPreludes(['prelude']);", context);
+    expect(classes.has('hidden')).toBe(false);
+    expect(element.dataset.setupProgressPreludeWasVisible).toBeUndefined();
+
+    expect(html).toContain('function restoreSetupProgressPreludes(ids)');
+    expect(html).toContain(
+      "restoreSetupProgressPreludes([\n            'control-token-bootstrap-row',\n            'deploy-manual-wildcard-warning'"
+    );
+  });
+
   it('uses monotonic phase-based deployment progress instead of log-count percentages', () => {
     const html = getHtmlTemplate(
       'session-token',
@@ -520,11 +1050,254 @@ describe('getHtmlTemplate', () => {
       SUPPORTED_LOCALES
     );
 
-    expect(html).toContain('function createDeployProgressTracker()');
-    expect(html).toContain("setProgress(68, 'Verifying Worker deployments...')");
-    expect(html).toContain("Deploying API Workers (' + completed + '/' + expectedWorkers + ')");
+    expect(html).toContain('function renderDeploymentSnapshot(snapshot)');
+    expect(html).toContain('Math.max(lastRenderedDeployStep');
+    expect(html).toContain("snapshot.status === 'error' ||");
+    expect(html).toContain('snapshot.terminal === true');
+    expect(html).toContain("rail.setAttribute('aria-valuenow', String(step))");
+    expect(html).toContain("rail.setAttribute('aria-valuetext', phaseLabel)");
+    expect(html).toContain('oraText.textContent !== oraMessage');
+    expect(html).toContain('const renderedPhase = DEPLOY_PHASE_IDS[step - 1] || snapshot.phase');
+    expect(html).toContain("t('web.deploy.phase.progress', { current: step, total })");
+    expect(html).toContain("message: t('web.deploy.manualWildcardTitle')");
+    expect(SETUP_WEB_UI_STYLE).toContain('.deploy-phase-rail span.running');
+    expect(SETUP_WEB_UI_STYLE).toContain('.deploy-phase-rail span.waiting');
+    expect(html).not.toContain('const deployProgress = createDeployProgressTracker()');
+    expect(html).not.toContain('function createDeployProgressTracker()');
     expect(html).not.toContain("Processing... ' + completedCount + ' steps completed");
     expect(html).not.toContain('totalComponents = Math.max');
+  });
+
+  it('localizes deployment phase labels and accessibility text', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain("preparation: 'web.deploy.phase.preparation'");
+    expect(html).toContain("t('web.deploy.phase.aria', { current: step, total })");
+    expect(html).toContain("'web.deploy.phase.preparation': 'デプロイを準備しています'");
+    expect(html).toContain("'web.deploy.phase.complete': 'デプロイが完了しました'");
+    expect(html.match(/'web.deploy.phase.preparation'/gu)).toHaveLength(
+      SUPPORTED_LOCALES.length + 1
+    );
+    expect(html.match(/'web.delete.manualR2Summary'/gu)).toHaveLength(SUPPORTED_LOCALES.length + 1);
+    expect(html.match(/'web.delete.manualActionRequired'/gu)).toHaveLength(
+      SUPPORTED_LOCALES.length + 1
+    );
+  });
+
+  it('resets deletion UI when a new environment is selected without resetting locale refreshes', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('function showDeleteConfirmation(env, resetState = true)');
+    expect(html).toContain('if (resetState) {\n        resetDeleteSection();\n      }');
+    expect(html).toContain('showDeleteConfirmation(selectedEnvForDelete, false)');
+    expect(html).toContain("document.getElementById('delete-output').textContent = ''");
+    expect(html).toContain("resetProgressContainer('delete')");
+    expect(html).toContain("resetLogToggle('delete-log-toggle', 'delete-log')");
+  });
+
+  it('localizes deletion inventory progress for every supported locale', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const progressCopy = extractInlineObject(html, 'deleteProgressCopyByLocale');
+    const english = progressCopy.en as Record<string, string>;
+
+    for (const { code } of SUPPORTED_LOCALES) {
+      const localized = progressCopy[code] as Record<string, string>;
+      expect(localized, `${code} deletion progress copy`).toBeTruthy();
+      expect(Object.keys(localized).sort(), `${code} deletion progress keys`).toEqual(
+        Object.keys(english).sort()
+      );
+      for (const [key, englishText] of Object.entries(english)) {
+        const expectedPlaceholders = englishText.match(/{{[a-zA-Z0-9_-]+}}/g) ?? [];
+        const actualPlaceholders = localized[key].match(/{{[a-zA-Z0-9_-]+}}/g) ?? [];
+        expect(actualPlaceholders.sort(), `${code} ${key} placeholders`).toEqual(
+          expectedPlaceholders.sort()
+        );
+      }
+    }
+
+    const parserSource = html.match(
+      /function getDeleteProgressTask\(message\) \{[\s\S]*?(?=\n\s{4}function createProvisionProgressTracker)/u
+    )?.[0];
+    expect(parserSource).toBeTruthy();
+    const context = vm.createContext({
+      t: (key: string, params?: { resource?: string }) =>
+        params?.resource ? `${key}:${params.resource}` : key,
+    });
+    vm.runInContext(parserSource!, context);
+
+    expect(vm.runInContext("getDeleteProgressTask('Scanning R2 buckets...')", context)).toBe(
+      'web.delete.progress.scanningResource:R2'
+    );
+    expect(
+      vm.runInContext(
+        "getDeleteProgressTask('🔎 Verifying Cloudflare inventory after deletion...')",
+        context
+      )
+    ).toBe('web.delete.progress.verifyingInventory');
+    expect(html).toContain('getDeleteProgressTask(msg) || parseProgressMessage(msg)');
+  });
+
+  it('hides stale environment counts while a Cloudflare rescan is running', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('id="env-list-progress-summary"');
+    expect(html).toContain(
+      'function renderEnvironmentListSummary(count, scanState = environmentScanState)'
+    );
+    expect(html).toContain("environmentScanState = 'scanning'");
+    expect(html).toContain("summary.textContent = t('web.env.scanningEnvironments')");
+    expect(html).toContain("summary.setAttribute('aria-busy', 'true')");
+    expect(html).toContain("environmentScanState = 'complete'");
+    expect(html).toContain(
+      'renderEnvironmentListSummary(detectedEnvironments.length, environmentScanState)'
+    );
+    expect(html).toContain('const scanGeneration = ++environmentScanGeneration');
+    expect(html).toContain('refreshButton.disabled = true');
+    expect(html).toContain('scanGeneration !== environmentScanGeneration');
+    const loadEnvironmentsBody = html.match(
+      /async function loadEnvironments\(\) \{[\s\S]*?(?=\n\s{4}function getEnvironmentIssuerPreview)/u
+    )?.[0];
+    expect(loadEnvironmentsBody).not.toContain("api('/deploy/status')");
+  });
+
+  it('hydrates Cloudflare account context in manage-only mode', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      true,
+      'ja',
+      ja as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain('async function loadRuntimeContext()');
+    expect(html).toContain("const result = await api('/prerequisites')");
+    expect(html).toContain('async function initializeManageOnly()');
+    expect(html).toContain("setEnvManagementHero('envList')");
+    expect(html).toContain('await Promise.allSettled([runtimeContextPromise, loadEnvironments()])');
+    expect(html).toContain('unknownAccountValues.has(recapAccount)');
+    expect(html).toContain('initializeManageOnly();');
+  });
+
+  it('keeps provisioning progress complete after trailing log messages and polling races', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const trackerSource = html.match(
+      /function createProvisionProgressTracker\(totalResources\) \{[\s\S]*?(?=\n\s{4}\/\/ Safe DOM element creation helpers)/u
+    )?.[0];
+    expect(trackerSource).toBeTruthy();
+    const progressUpdates: Array<{ current: number; total: number; task: string }> = [];
+    const context = vm.createContext({
+      updateProgressUI: (_prefix: string, current: number, total: number, task: string) => {
+        progressUpdates.push({ current, total, task });
+      },
+      parseProgressMessage: () => null,
+      t: (key: string) => key,
+    });
+    vm.runInContext(
+      `${trackerSource}
+       const tracker = createProvisionProgressTracker(8);
+       tracker.handle('D1 Databases (6/6) ✓');
+       tracker.handle('Provisioning complete!');
+       tracker.handle('Config saved: /tmp/config.json');
+       tracker.complete();
+       tracker.handle('Log: Progress log saved');`,
+      context
+    );
+
+    expect(progressUpdates.at(-1)).toEqual({
+      current: 8,
+      total: 8,
+      task: 'web.status.complete',
+    });
+    expect(progressUpdates.filter((update) => update.current === 8)).toHaveLength(2);
+    expect(progressUpdates.at(-1)?.current).not.toBe(4);
+  });
+
+  it('labels provisioning milestones as tasks instead of Cloudflare resources', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    expect(html).toContain("else if (prefix === 'provision')");
+    expect(html).toContain("progressText.textContent = t('web.provision.runningTasks'");
+    expect(html).toContain('const totalProvisionTasks = 8;');
+    expect(html).not.toContain('current: 0, total: 5');
+  });
+
+  it('previews every fixed D1 database and the initial tenant shards', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    for (const dbType of [
+      'core-db',
+      'pii-db',
+      'admin-db',
+      'control-db',
+      'lookup-db',
+      'plugin-runner-db',
+    ]) {
+      expect(html).toContain(`"${dbType}"`);
+    }
+    expect(html).toContain('String(resources.d1.length + 3)');
+    expect(html).toContain(
+      "appendPreviewRow(d1List, 'Control Plane bootstrap tenant shards', '3 D1')"
+    );
+  });
+
+  it('stores the validated environment before rendering the domain step header', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    const configureHandler = html.match(
+      /document\.getElementById\('btn-configure'\)[\s\S]*?(?=document\.getElementById\('btn-back-domain')/u
+    )?.[0];
+
+    expect(configureHandler).toBeTruthy();
+    expect(configureHandler?.indexOf('config = { ...(config || {}), env };')).toBeLessThan(
+      configureHandler?.indexOf('setStep(4);') ?? -1
+    );
   });
 
   it('renders prerequisite capability list styles and client-side renderer', () => {
@@ -581,6 +1354,10 @@ describe('getHtmlTemplate', () => {
 
     expect(html).toContain('function getWildcardDnsManualCopy()');
     expect(html).toContain('deploy-manual-wildcard-warning');
+    expect(html).toContain(
+      '<section class="row wide hidden" id="deploy-manual-wildcard-warning" data-setup-progress-prelude>'
+    );
+    expect(html).toContain('data-i18n="web.deploy.manualDnsSectionTitle"');
     expect(html).toContain('deploy-manual-wildcard-dashboard-link');
     expect(html).toContain('deploy-manual-wildcard-docs-link');
     expect(html).toContain('deploy-manual-wildcard-example-image');
@@ -605,6 +1382,17 @@ describe('getHtmlTemplate', () => {
     }
     expect(html).toContain('WILDCARD_DNS_MANUAL_COPY_DATA');
     expect(html).toContain('CLOUDFLARE_DNS_RECORDS_DOCS');
+    const warningRenderer = html.match(
+      /function renderDeployManualWildcardWarning\(\) \{[\s\S]*?(?=\n\s{4}\/\/ Step navigation)/u
+    )?.[0];
+    expect(warningRenderer).toContain('const target = config?.manualAction?.target || baseDomain;');
+    expect(warningRenderer).not.toContain("envName + '-ar-router.' + workersSubdomain");
+    expect(html).toContain("status.textContent = t('web.deploy.manualWildcardTitle');");
+    expect(html).toContain(
+      "document.getElementById('deploy-manual-wildcard-recheck').addEventListener('click'"
+    );
+    expect(html).not.toContain('recheckButton.disabled = true;');
+    expect(html).toContain('deployButton.click();');
   });
 
   it('downloads config files with the environment name in the filename', () => {
@@ -617,5 +1405,121 @@ describe('getHtmlTemplate', () => {
     );
 
     expect(html).toContain("a.download = 'authrim-' + env + '-config.json';");
+  });
+
+  it('keeps Automatic provisioning optional and handles bootstrap input as a password', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    expect(html).toContain('name="automatic-provisioning" value="on" checked');
+    expect(html).toContain('name="automatic-provisioning" value="off"');
+    expect(html).toContain('id="btn-create-control-bootstrap-token"');
+    expect(html).toContain('data-i18n="web.deploy.bootstrapTokenDescription"');
+    expect(en['web.deploy.bootstrapTokenRequired']).toContain('Control Worker needs');
+    expect(en['web.deploy.bootstrapTokenRequired']).toContain('D1, Workers, KV, and R2');
+    expect(html).toMatch(/type="password"\s+id="control-bootstrap-token"\s+autocomplete="off"/u);
+    expect(html).toContain("api('/cloudflare/control-token-template'");
+    expect(html).toContain("bootstrapTokenInput.value = '';");
+    expect(html).toContain('id="env-control-automatic-provisioning"');
+    expect(html).toMatch(
+      /type="password"\s+id="env-control-bootstrap-token"\s+autocomplete="off"/u
+    );
+    expect(html).toContain("api('/control/automatic-provisioning/prepare'");
+    expect(html).toContain("api('/deploy/component/ar-control'");
+    expect(html).toContain('initialControlBootstrap: true');
+    expect(html).toContain("api('/control/automatic-provisioning/complete'");
+    expect(html).toContain("api('/control/automatic-provisioning/cleanup-bootstrap'");
+    expect(html).toContain("api('/control/automatic-provisioning/cancel-pending'");
+    expect(html).toContain('error.cleanupRequired === false');
+    expect(html).toContain('completionError.bootstrapRetainedForRetry =');
+    expect(html).toContain('completionError.cutoverPending = completed.cutoverPending === true');
+    expect(html).toContain("const recoveringCutover = envControlBootstrapPhase !== 'none'");
+    expect(html).toContain('if (!recoveringCutover) {');
+    expect(html).toContain('if (recoveringCutover || error.cutoverPending === true)');
+    expect(html).toContain('if (error.bootstrapRetainedForRetry === true)');
+    expect(html).toContain('if (!bootstrapSubmitted && bootstrapToken)');
+    expect(html).toContain("t('web.envDetail.bootstrapNotSubmittedForRetry')");
+    expect(html).toContain("t('web.envDetail.bootstrapRetainedForRetry')");
+    expect(html.indexOf('if (error.bootstrapRetainedForRetry === true)')).toBeLessThan(
+      html.indexOf("api('/control/automatic-provisioning/cleanup-bootstrap'")
+    );
+    expect(html).toContain('Automatic provisioning returned to Off.');
+    expect(html).toContain("api('/control/automatic-provisioning/status?env='");
+    expect(html).toContain('if (!bootstrapToken && !recoveringCutover) {');
+    expect(html).not.toContain('if (!bootstrapToken || !envControlBootstrapOwnership)');
+    expect(html).toContain('if (error.recoveryTokenRequired === true)');
+    expect(html.indexOf("api('/deploy/component/ar-control'")).toBeLessThan(
+      html.indexOf("api('/control/automatic-provisioning/complete'")
+    );
+    expect(html).not.toContain('body: { env: envName, dryRun: false, bootstrapToken');
+    expect(html).not.toContain('CLOUDFLARE_D1_API_TOKEN: bootstrapToken');
+    expect(html).toContain("bootstrapToken = '';");
+  });
+
+  it('prioritizes canonical pending Control operations without tenant reselection', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    expect(html).toContain('id="pending-control-operations"');
+    expect(html).toContain("api('/control/pending-operations')");
+    expect(html).toContain('pendingControlOperations.find(isPendingControlOperationExecutable)');
+    expect(html).toContain("t('web.control.pendingObserving')");
+    expect(html).toContain('pendingControlPollTimer = setTimeout');
+    expect(html).toContain('operation.tenantId');
+    expect(html).toContain("api('/control/pending-operations/execute'");
+    expect(html).toContain('Run pending operation');
+    expect(html).toContain('let inFlightMutationRequests = 0;');
+    expect(html).toContain('inFlightMutationRequests === 0');
+    expect(html).not.toContain('pending.tenantId =');
+  });
+
+  it('stops provisioning and keeps deploy blocked when key generation fails', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+
+    const keyRequest = html.indexOf("api('/keys/generate'");
+    const keyGuard = html.indexOf('if (!keyResult.success)', keyRequest);
+    const keySuccessOutput = html.indexOf('RSA key pair generated', keyRequest);
+    const provisionRequest = html.indexOf("api('/provision'", keyRequest);
+
+    expect(keyRequest).toBeGreaterThanOrEqual(0);
+    expect(keyGuard).toBeGreaterThan(keyRequest);
+    expect(keySuccessOutput).toBeGreaterThan(keyGuard);
+    expect(provisionRequest).toBeGreaterThan(keyGuard);
+    expect(html).toContain("throw new Error(apiErrorMessages(keyResult).join('; '))");
+    expect(html).toContain('btnGotoDeploy.disabled = !provisioningCompleted;');
+  });
+
+  it('offers the same server-owned capacity profiles without raw D1 inputs', () => {
+    const html = getHtmlTemplate(
+      'session-token',
+      false,
+      'en',
+      en as Record<string, string>,
+      SUPPORTED_LOCALES
+    );
+    expect(html).toContain('id="control-capacity-profile"');
+    expect(html).toContain('value="minimum"');
+    expect(html).toContain('value="recommended" selected');
+    expect(html).toContain('value="extra_headroom"');
+    expect(html).toContain('id="control-capacity-scope"');
+    expect(html).toContain("api('/control/capacity/' + action");
+    expect(html).toContain("'/control/capacity/tenants?environmentId='");
+    expect(html).not.toContain('id="control-capacity-database-name"');
+    expect(html).not.toContain('id="control-capacity-binding-ref"');
+    expect(html).not.toContain('id="control-capacity-d1-count"');
   });
 });

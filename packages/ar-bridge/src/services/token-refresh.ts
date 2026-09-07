@@ -9,14 +9,14 @@
 import type { Env } from '@authrim/ar-lib-core';
 import {
   type DatabaseAdapter,
+  type DatabaseSource,
   type AdminAuthContext,
-  createObjectCatalogEntry,
   createLogger,
   ensureAdminDatabaseAdapter,
   ensureDatabaseAdapter,
   getDefaultTenantId,
-  resolveAuthCorePersistenceAdapterFromEnv,
-  resolveUserStoreRuntimeSourcesFromEnv,
+  listEnvironmentTenantDefaultStores,
+  storeImmediateChunkedSensitiveDetailJson,
 } from '@authrim/ar-lib-core';
 import type { LinkedIdentity } from '../types';
 import { getProvider } from './provider-store';
@@ -37,7 +37,9 @@ export interface TokenRefreshConfig {
   batchSize: number;
   /** Maximum number of tenants to refresh per scheduled run (default: 25) */
   scheduledTenantBatchSize: number;
-  /** Whether token refresh is enabled (default: true) */
+  /** Maximum tenant PII shards scanned per tenant step (default: 4, maximum: 32) */
+  piiShardPageSize: number;
+  /** Whether proactive scheduled token refresh is enabled (default: false) */
   enabled: boolean;
 }
 
@@ -45,13 +47,29 @@ const DEFAULT_TOKEN_REFRESH_CONFIG: TokenRefreshConfig = {
   refreshThresholdSeconds: 3600, // 1 hour
   batchSize: 100,
   scheduledTenantBatchSize: 100,
-  enabled: true,
+  piiShardPageSize: 4,
+  enabled: false,
 };
 
 const MAX_TOKEN_REFRESH_BATCH_SIZE = 1000;
 const MAX_SCHEDULED_TENANT_BATCH_SIZE = 100;
+const MAX_TOKEN_REFRESH_PII_SHARD_PAGE_SIZE = 32;
 const TOKEN_REFRESH_CONFIG_KEY = 'external_idp_token_refresh';
 const TOKEN_REFRESH_TENANT_CURSOR_KEY = 'external_idp_token_refresh:tenant_cursor';
+const TOKEN_REFRESH_PII_SHARD_CURSOR_PREFIX = 'external_idp_token_refresh:pii_shard_cursor:';
+const SAFE_SHARD_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
+const SAFE_BINDING_REF = /^[A-Z][A-Z0-9_]{0,127}$/u;
+
+interface ExpiringIdentityCandidate {
+  identity: LinkedIdentity;
+  piiSource: DatabaseSource;
+}
+
+interface PiiSourcePage {
+  cursorKey: string;
+  entries: Array<{ shardId: string; source: DatabaseSource }>;
+  wrapped: boolean;
+}
 
 export interface ScheduledTokenRefreshResult {
   runId: string | null;
@@ -158,7 +176,10 @@ export async function refreshExpiringTokensForTenantManual(
   const startedAt = Date.now();
 
   try {
-    const tokensRefreshed = await refreshExpiringTokensForTenantWithConfig(env, tenantId, config);
+    const tokensRefreshed = await refreshExpiringTokensForTenantWithConfig(env, tenantId, {
+      ...config,
+      enabled: true,
+    });
     const completedAt = Date.now();
     const tenantResults: TokenRefreshTenantResult[] = [
       {
@@ -229,7 +250,13 @@ async function refreshExpiringTokensForTenantWithConfig(
   const threshold = now + config.refreshThresholdSeconds * 1000;
 
   // Find linked identities with tokens expiring soon
-  const expiringIdentities = await findExpiringTokens(env, tenantId, threshold, config.batchSize);
+  const expiringIdentities = await findExpiringTokens(
+    env,
+    tenantId,
+    threshold,
+    config.batchSize,
+    config.piiShardPageSize
+  );
 
   if (expiringIdentities.length === 0) {
     return 0;
@@ -237,9 +264,14 @@ async function refreshExpiringTokensForTenantWithConfig(
 
   let refreshedCount = 0;
 
-  for (const identity of expiringIdentities) {
+  for (const candidate of expiringIdentities) {
     try {
-      const success = await refreshIdentityToken(env, identity, encryptionKey);
+      const success = await refreshIdentityToken(
+        env,
+        candidate.identity,
+        encryptionKey,
+        candidate.piiSource
+      );
       if (success) {
         refreshedCount++;
       }
@@ -352,32 +384,17 @@ export async function refreshExpiringTokensForScheduledTenants(
 }
 
 async function listNextTokenRefreshTenantIds(env: Env, batchSize: number): Promise<string[]> {
-  if (!env.SETTINGS) {
-    log.warn('Token refresh tenant cursor unavailable; falling back to default tenant');
-    return [getDefaultTenantId(env)];
-  }
-
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
-    env,
-    'bridge-token-refresh-tenants'
-  );
-  const cursor = await env.SETTINGS.get(TOKEN_REFRESH_TENANT_CURSOR_KEY);
-
-  if (cursor) {
-    const rows = await adapter.query<{ id: string }>(
-      "SELECT id FROM tenants WHERE lifecycle_state = 'active' AND id > ? ORDER BY id ASC LIMIT ?",
-      [cursor, batchSize]
-    );
-    if (rows.length > 0) {
-      return rows.map((row) => row.id);
-    }
-  }
-
-  const rows = await adapter.query<{ id: string }>(
-    "SELECT id FROM tenants WHERE lifecycle_state = 'active' ORDER BY id ASC LIMIT ?",
-    [batchSize]
-  );
-  return rows.map((row) => row.id);
+  const cursor = (await env.SETTINGS?.get(TOKEN_REFRESH_TENANT_CURSOR_KEY)) ?? null;
+  const page = await listEnvironmentTenantDefaultStores(env, {
+    limit: batchSize,
+    afterTenantId: cursor ?? undefined,
+  });
+  if (page.length > 0 || !cursor) return page.map((entry) => entry.tenantId);
+  return (
+    await listEnvironmentTenantDefaultStores(env, {
+      limit: batchSize,
+    })
+  ).map((entry) => entry.tenantId);
 }
 
 /**
@@ -387,26 +404,109 @@ async function findExpiringTokens(
   env: Env,
   tenantId: string,
   threshold: number,
-  limit: number
-): Promise<LinkedIdentity[]> {
-  const sources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
-  const adapter: DatabaseAdapter = ensureDatabaseAdapter(
-    sources.piiDb ?? sources.coreDb,
-    'bridge-token-refresh'
-  );
-  const result = await adapter.query<DbLinkedIdentity>(
-    `SELECT * FROM linked_identities
-     WHERE tenant_id = ?
-       AND token_expires_at IS NOT NULL
-       AND token_expires_at < ?
-       AND token_expires_at > ?
-       AND refresh_token_encrypted IS NOT NULL
-     ORDER BY token_expires_at ASC
-     LIMIT ?`,
-    [tenantId, threshold, Date.now(), limit]
-  );
+  limit: number,
+  piiShardPageSize: number
+): Promise<ExpiringIdentityCandidate[]> {
+  const piiSourcePage = await listPiiSources(env, tenantId, piiShardPageSize);
+  const piiSources = piiSourcePage.entries;
+  const candidates: ExpiringIdentityCandidate[] = [];
+  let lastProcessedShardId: string | null = null;
 
-  return result.map(mapDbToLinkedIdentity);
+  for (const pii of piiSources) {
+    const remaining = limit - candidates.length;
+    if (remaining <= 0) break;
+    const adapter: DatabaseAdapter = ensureDatabaseAdapter(pii.source, 'bridge-token-refresh');
+    const result = await adapter.query<DbLinkedIdentity>(
+      `SELECT * FROM linked_identities
+       WHERE tenant_id = ?
+         AND provisioning_state = 'active'
+         AND token_expires_at IS NOT NULL
+         AND token_expires_at < ?
+         AND token_expires_at > ?
+         AND refresh_token_encrypted IS NOT NULL
+       ORDER BY token_expires_at ASC
+       LIMIT ?`,
+      [tenantId, threshold, Date.now(), remaining]
+    );
+    candidates.push(
+      ...result.map((row) => ({ identity: mapDbToLinkedIdentity(row), piiSource: pii.source }))
+    );
+    lastProcessedShardId = pii.shardId;
+  }
+
+  if (lastProcessedShardId) {
+    const scannedWholePage = lastProcessedShardId === piiSourcePage.entries.at(-1)?.shardId;
+    if (scannedWholePage && piiSourcePage.wrapped) {
+      await env.SETTINGS?.delete(piiSourcePage.cursorKey);
+    } else {
+      await env.SETTINGS?.put(piiSourcePage.cursorKey, lastProcessedShardId);
+    }
+  }
+
+  candidates.sort(
+    (left, right) =>
+      (left.identity.tokenExpiresAt ?? Number.MAX_SAFE_INTEGER) -
+        (right.identity.tokenExpiresAt ?? Number.MAX_SAFE_INTEGER) ||
+      left.identity.id.localeCompare(right.identity.id)
+  );
+  return candidates.slice(0, limit);
+}
+
+async function listPiiSources(
+  env: Env,
+  tenantId: string,
+  pageSize: number
+): Promise<PiiSourcePage> {
+  if (!env.SETTINGS || !env.EXTERNAL_IDP_ACCOUNT_PROVISIONER) {
+    throw new Error('external_idp_token_refresh_shard_inventory_unavailable');
+  }
+  const cursorKey = `${TOKEN_REFRESH_PII_SHARD_CURSOR_PREFIX}${tenantId}`;
+  const afterShardId = await env.SETTINGS.get(cursorKey);
+  let shards = await env.EXTERNAL_IDP_ACCOUNT_PROVISIONER.listExternalIdpPiiSourceShards({
+    schemaVersion: 1,
+    afterShardId,
+    limit: pageSize,
+  });
+  if (!Array.isArray(shards) || shards.length > pageSize) {
+    throw new Error('external_idp_token_refresh_shard_inventory_invalid');
+  }
+  let wrapped = shards.length < pageSize;
+  if (shards.length === 0 && afterShardId !== null) {
+    shards = await env.EXTERNAL_IDP_ACCOUNT_PROVISIONER.listExternalIdpPiiSourceShards({
+      schemaVersion: 1,
+      afterShardId: null,
+      limit: pageSize,
+    });
+    if (!Array.isArray(shards) || shards.length > pageSize) {
+      throw new Error('external_idp_token_refresh_shard_inventory_invalid');
+    }
+    wrapped = shards.length < pageSize;
+  }
+  if (shards.length === 0) throw new Error('external_idp_token_refresh_shard_inventory_empty');
+
+  const seen = new Set<string>();
+  const entries = shards.map((shard) => {
+    const raw = shard as unknown as Record<string, unknown>;
+    if (
+      !raw ||
+      typeof raw !== 'object' ||
+      Array.isArray(raw) ||
+      Object.keys(raw).length !== 4 ||
+      !SAFE_SHARD_ID.test(shard.shardId) ||
+      seen.has(shard.shardId) ||
+      !SAFE_BINDING_REF.test(shard.bindingRef) ||
+      !SAFE_SHARD_ID.test(shard.residencyPartition) ||
+      !Number.isSafeInteger(shard.routeGeneration) ||
+      shard.routeGeneration < 1
+    ) {
+      throw new Error('external_idp_token_refresh_shard_inventory_invalid');
+    }
+    seen.add(shard.shardId);
+    const source = (env as unknown as Record<string, unknown>)[shard.bindingRef];
+    ensureDatabaseAdapter(source as DatabaseSource, 'bridge-token-refresh-shard-binding');
+    return { shardId: shard.shardId, source: source as DatabaseSource };
+  });
+  return { cursorKey, entries, wrapped };
 }
 
 /**
@@ -415,7 +515,8 @@ async function findExpiringTokens(
 async function refreshIdentityToken(
   env: Env,
   identity: LinkedIdentity,
-  encryptionKey: string
+  encryptionKey: string,
+  piiSource: DatabaseSource
 ): Promise<boolean> {
   // Get provider configuration
   const provider = await getProvider(env, identity.tenantId, identity.providerId);
@@ -444,9 +545,15 @@ async function refreshIdentityToken(
   const tokens = await client.refreshTokens(refreshToken);
 
   // Update the linked identity with new tokens
-  await updateLinkedIdentity(env, identity.tenantId, identity.id, {
-    tokens,
-  });
+  await updateLinkedIdentity(
+    env,
+    identity.tenantId,
+    identity.id,
+    {
+      tokens,
+    },
+    piiSource
+  );
 
   // PII Protection: Don't log identity.id
   log.info('Successfully refreshed external IdP token');
@@ -531,6 +638,11 @@ export function normalizeTokenRefreshConfig(
       config.scheduledTenantBatchSize,
       DEFAULT_TOKEN_REFRESH_CONFIG.scheduledTenantBatchSize,
       MAX_SCHEDULED_TENANT_BATCH_SIZE
+    ),
+    piiShardPageSize: normalizePositiveInteger(
+      config.piiShardPageSize,
+      DEFAULT_TOKEN_REFRESH_CONFIG.piiShardPageSize,
+      MAX_TOKEN_REFRESH_PII_SHARD_PAGE_SIZE
     ),
   };
 }
@@ -664,7 +776,10 @@ async function writeTokenRefreshDetailArtifact(
   adapter: DatabaseAdapter,
   input: TokenRefreshRunFinishInput
 ): Promise<string | null> {
-  if (!env.SENSITIVE_DETAILS) {
+  if (!env.SENSITIVE_DETAILS || !env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    log.warn(
+      'Token refresh detail artifact unavailable: encrypted object storage is not configured'
+    );
     return null;
   }
 
@@ -681,34 +796,18 @@ async function writeTokenRefreshDetailArtifact(
       errorMessage: input.errorMessage ?? null,
       generatedAt: Date.now(),
     };
-    const json = JSON.stringify(payload);
-    const objectKey = `external-token-refresh/${input.runId}.json`;
-    const bytes = new TextEncoder().encode(json);
-    const hash = await crypto.subtle.digest('SHA-256', bytes);
-    const checksumSha256 = Array.from(new Uint8Array(hash))
-      .map((byte) => byte.toString(16).padStart(2, '0'))
-      .join('');
-
-    await env.SENSITIVE_DETAILS.put(objectKey, json, {
-      httpMetadata: { contentType: 'application/json' },
-    });
-
-    const catalog = await createObjectCatalogEntry(adapter, {
+    const stored = await storeImmediateChunkedSensitiveDetailJson({
+      adapter,
+      bucket: env.SENSITIVE_DETAILS,
+      rootKeyHex: env.OBJECT_ENCRYPTION_ROOT_KEY,
       tenantId: input.requestedTenantId ?? getDefaultTenantId(env),
       objectClass: 'operational_log_detail',
-      objects: [
-        {
-          representation: 'canonical_json',
-          objectKind: 'single',
-          bucketBinding: 'SENSITIVE_DETAILS',
-          objectKey,
-          keyVersion: 1,
-          checksumSha256,
-          totalBytes: bytes.byteLength,
-        },
-      ],
+      payload,
+      contentType: 'application/json',
+      surface: 'external_token_refresh',
+      logType: 'operational',
     });
-    return catalog.catalogId;
+    return stored.catalogId;
   } catch (error) {
     log.warn('Token refresh detail artifact unavailable', {
       errorName: error instanceof Error ? error.name : 'UnknownError',

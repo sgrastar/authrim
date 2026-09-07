@@ -38,6 +38,8 @@ export interface SetupDomainValidationInput {
 
 export interface SetupDomainValidationIssue {
   field: 'apiDomain' | 'loginUiDomain' | 'adminUiDomain';
+  kind: 'baseDomainDepth' | 'uiDomainDepth';
+  hostname: string;
   message: string;
   suggestion?: string;
 }
@@ -160,6 +162,8 @@ export function validateSetupDomainInputs(
       const suggested = `${apiPrefixLabels[apiPrefixLabels.length - 1]}.${zoneName}`;
       issues.push({
         field: 'apiDomain',
+        kind: 'baseDomainDepth',
+        hostname: apiDomain,
         message: buildBaseMessage(apiDomain),
         suggestion: suggested,
       });
@@ -183,6 +187,8 @@ export function validateSetupDomainInputs(
       const suggestion = `${uiPrefixLabels.join('-')}.${parentDomain}`;
       issues.push({
         field,
+        kind: 'uiDomainDepth',
+        hostname,
         message: buildUiMessage(label, hostname, suggestion),
         suggestion,
       });

@@ -1,8 +1,8 @@
 ---
 project: Authrim
 lang: en
-date: 2026-05-25
-description: "Authrim feature and SDK matrix."
+date: 2026-07-20
+description: 'Authrim feature and SDK matrix.'
 type: reference
 tags:
   - authrim
@@ -10,166 +10,171 @@ tags:
   - sdk
   - identity-platform
 ---
+
 # Authrim Feature Matrix
 
 Authrim is pre-1.0. This matrix separates implementation coverage, validation level, and operational maturity.
 
 ## Status Legend
 
-| Column | Value | Meaning |
-| --- | --- | --- |
-| Implementation | Complete | Feature is implemented end-to-end for the documented scope. |
-|  | Basic complete | Main protocol or runtime path exists, but some operational surface remains. |
-|  | Partial | Important pieces exist, but the feature is not usable as a complete capability yet. |
-|  | Planned | Not implemented yet. |
-| Validation | Certified | Validated through formal certification. |
-|  | Unit/integration tested | Covered by automated tests in this repository. |
-|  | Partial | Some automated tests exist, but broader interop or E2E coverage is still needed. |
-|  | Not yet | Validation is not yet meaningful or not yet started. |
-| Operational maturity | Ready | Suitable for production use within documented constraints. |
-|  | In progress | Hardening, docs, interop, or operational work remains. |
-|  | Experimental | Available, but intended for evaluation. |
-|  | Not in scope | Intentionally not supported under the current architecture. |
+| Column               | Value                     | Meaning                                                                                                               |
+| -------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Implementation       | Complete                  | Feature is implemented end-to-end for the documented scope.                                                           |
+|                      | Basic complete            | Main protocol or runtime path exists, but some operational surface remains.                                           |
+|                      | Partial                   | Important pieces exist, but the feature is not usable as a complete capability yet.                                   |
+|                      | Planned                   | Not implemented yet.                                                                                                  |
+| Validation           | Certified                 | Validated through formal certification.                                                                               |
+|                      | Official suite tested     | Completed applicable official conformance-suite plans without functional failures; this is not a certification claim. |
+|                      | Official suite gap-tested | Executed against the official conformance suite, with known failures still remaining.                                 |
+|                      | Unit/integration tested   | Covered by automated tests in this repository.                                                                        |
+|                      | Partial                   | Some automated tests exist, but broader interop or E2E coverage is still needed.                                      |
+|                      | Not yet                   | Validation is not yet meaningful or not yet started.                                                                  |
+| Operational maturity | Ready                     | Suitable for production use within documented constraints.                                                            |
+|                      | In progress               | Hardening, docs, interop, or operational work remains.                                                                |
+|                      | Experimental              | Available, but intended for evaluation.                                                                               |
+|                      | Not in scope              | Intentionally not supported under the current architecture.                                                           |
 
 ## Protocol and Platform Capabilities
 
-| Area | Implementation | Validation | Operational maturity | Notes |
-| --- | --- | --- | --- | --- |
-| OpenID Provider | Complete | Certified | Ready | OpenID Provider profiles and Logout profiles |
-| OpenID Provider certification profiles | Complete | Certified | Ready | Basic, Implicit, Hybrid, Config, Dynamic, Form Post, and Third-Party Initiated OP |
-| OpenID Provider Logout profiles | Complete | Certified | Ready | RP-Initiated, Session, Front-Channel, and Back-Channel Logout OP |
-| OpenID Relying Party / federation client | Basic complete | Partial | In progress | External IdP bridge support exists; broader RP conformance is not a release target |
-| Authorization Code + PKCE | Complete | Certified | Ready | Standard OAuth/OIDC browser flow |
-| Implicit and Hybrid Flow | Complete | Certified | Ready | Supported for OP conformance and compatibility |
-| Form Post Response Mode | Complete | Certified | Ready | Supported by OP conformance profiles |
-| Third-Party Initiated Login | Complete | Certified | Ready | Supported by OP conformance profiles |
-| Dynamic Client Registration | Complete | Certified | Ready | RFC 7591 |
-| PAR | Complete | Unit/integration tested | In progress | RFC 9126 |
-| DPoP | Complete | Unit/integration tested | In progress | RFC 9449 |
-| JAR | Complete | Unit/integration tested | In progress | RFC 9101 |
-| JARM | Complete | Unit/integration tested | In progress | Signed authorization responses |
-| FAPI 2.0 Security Profile | Complete | Unit/integration tested | In progress | PAR enforcement, PKCE S256, private_key_jwt, DPoP strict mode, and setup/certification profiles; formal certification is planned |
-| FAPI CIBA profile | Basic complete | Partial | In progress | CIBA-specific certification profile exists; formal certification and interoperability validation are planned |
-| JWE | Complete | Unit/integration tested | In progress | Encrypted token support |
-| Pairwise Subject Identifiers | Complete | Unit/integration tested | In progress | Pairwise subject generation |
-| Claims Parameter | Complete | Unit/integration tested | In progress | Claims request parsing, scope policy, and claim-level release policy |
-| OIDC Advanced Syntax for Claims | Complete | Unit/integration tested | In progress | Selective Abort/Omit and predefined transformed claims |
-| OIDC Session Management | Complete | Certified | Ready | `session_state` and configurable `check_session_iframe` |
-| Token Introspection | Complete | Unit/integration tested | In progress | RFC 7662 |
-| Token Revocation | Complete | Unit/integration tested | In progress | RFC 7009 |
-| Token Exchange | Complete | Unit/integration tested | In progress | RFC 8693 |
-| ID-JAG | Complete | Unit/integration tested | Experimental | Identity Assertion Authorization Grant draft support |
-| Client Credentials | Complete | Unit/integration tested | In progress | RFC 6749 section 4.4 |
-| Private Key JWT | Complete | Unit/integration tested | In progress | Client authentication |
-| JWT Signing and Key Rotation | Complete | Unit/integration tested | In progress | Durable Object backed key management |
-| Refresh Token Rotation | Complete | Unit/integration tested | In progress | Refresh token family tracking and theft detection support |
-| NIST Assurance Levels | Complete | Unit/integration tested | In progress | AAL/FAL/IAL claims and policy hooks |
-| SAML 2.0 IdP/SP | Hardening active | Unit/integration tested | In progress | Tenant-scoped IdP/SP endpoints, metadata import/export, configurable published entityIDs, interactive login redirect policy, RequestedAttribute suggestions, provider logos/icons, signing subject/rollover, encryption options, SSO/SLO correlation, fanout timeout observation, and admin operations |
-| SCIM 2.0 | Complete | Unit/integration tested | In progress | User provisioning |
-| Device Flow | Complete | Unit/integration tested | In progress | RFC 8628 |
-| CIBA | Complete | Unit/integration tested | In progress | OpenID Connect CIBA |
-| JWT Bearer | Complete | Unit/integration tested | In progress | RFC 7523 |
-| Native SSO | Complete | Unit/integration tested | In progress | OIDC Native SSO draft support for `device_secret`, `ds_hash`, DPoP-bound token exchange, revoke/introspection, and device management; hardening remains |
-| Direct Auth | Complete | Unit/integration tested | In progress | Headless/direct passkey, email code, social, anonymous, and managed browser session flows |
-| Passkey/WebAuthn | Complete | Unit/integration tested | In progress | Direct authentication and registration flows |
-| Passkey Conditional UI | Complete | Unit/integration tested | In progress | Browser autofill integration support |
-| Email Code/OTP | Complete | Unit/integration tested | In progress | Passwordless authentication |
-| Social Login | Complete | Unit/integration tested | In progress | External OIDC/OAuth providers |
-| Anonymous Login and Upgrade | Complete | Unit/integration tested | In progress | Anonymous user creation and account upgrade flow |
-| Identity Linking | Complete | Unit/integration tested | In progress | Link multiple identities to one user |
-| Identity Stitching | Complete | Unit/integration tested | In progress | Determine identity across sources |
-| RBAC / ABAC / ReBAC | Complete | Unit/integration tested | In progress | Policy engine and relationship-based checks |
-| Real-time Check API | Complete | Unit/integration tested | In progress | Runtime authorization checks |
-| WebSocket Push | Complete | Unit/integration tested | In progress | Authorization update push channel |
-| Custom Claims | Complete | Unit/integration tested | In progress | Schema-driven custom claims for tokens, UserInfo, introspection, and VC targets |
-| OpenID4VP | Complete | Unit/integration tested | Experimental | Verifiable presentation verification |
-| OpenID4VCI | Complete | Unit/integration tested | Experimental | Credential issuance |
-| SD-JWT | Complete | Unit/integration tested | Experimental | Selective disclosure utilities and VC-oriented support |
-| DID support | Complete | Unit/integration tested | Experimental | did:web and did:key |
-| PII/non-PII separation | Complete | Unit/integration tested | In progress | Separate storage and access boundaries |
-| Runtime storage profiles | Basic complete | Unit/integration tested | In progress | Runtime profiles and Hyperdrive-backed user core, PII, custom/extension, and audit paths exist; control-plane storage remains D1/KV-biased in the public contract |
-| Admin UI | Basic complete | Partial | In progress | Broad surface exists, including SAML entity info, certificate rollover, database connections, storage destinations, logging controls, and tenant discovery settings; consolidation remains active |
-| Login UI | Basic complete | Partial | In progress | Production flow hardening is active; provider logos and curated login-button icons are supported for SAML/OIDC methods |
-| UI localization | Basic complete | Partial | In progress | Admin/Login UI currently focus on English and Japanese; setup tooling has broader locale files and localized setup warnings |
-| Tenant discovery / WAYF | Basic complete | Partial | In progress | Common discovery supports configured methods plus WAYF-style tenant selection; WAYF-only mode shows only the tenant chooser |
-| Setup tooling | Complete | Unit/integration tested | In progress | Source-download setup, fresh root migrations, optional Admin/Login UI, standard SAML/CIBA/VC deployment, setup-managed D1/R2 inventory, DNS guidance, and environment deletion are implemented; production documentation is still being refined |
+| Area                                     | Implementation   | Validation                | Operational maturity | Notes                                                                                                                                                                                                                                                                                                  |
+| ---------------------------------------- | ---------------- | ------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| OpenID Provider                          | Complete         | Certified                 | Ready                | OpenID Provider profiles and Logout profiles                                                                                                                                                                                                                                                           |
+| OpenID Provider certification profiles   | Complete         | Certified                 | Ready                | Basic, Implicit, Hybrid, Config, Dynamic, Form Post, and Third-Party Initiated OP                                                                                                                                                                                                                      |
+| OpenID Provider Logout profiles          | Complete         | Certified                 | Ready                | RP-Initiated, Session, Front-Channel, and Back-Channel Logout OP                                                                                                                                                                                                                                       |
+| OpenID Relying Party / federation client | Basic complete   | Official suite tested     | In progress          | Basic, Config, Dynamic, Form Post Basic, Hybrid `code id_token`, Third-Party Initiated Login, RP Logout, and FAPI RP plans have been exercised; formal RP certification submission is not complete.                                                                                                    |
+| Authorization Code + PKCE                | Complete         | Certified                 | Ready                | Standard OAuth/OIDC browser flow                                                                                                                                                                                                                                                                       |
+| Implicit and Hybrid Flow                 | Complete         | Certified                 | Ready                | Supported for OP conformance and compatibility                                                                                                                                                                                                                                                         |
+| Form Post Response Mode                  | Complete         | Certified                 | Ready                | Supported by OP conformance profiles                                                                                                                                                                                                                                                                   |
+| Third-Party Initiated Login              | Complete         | Certified                 | Ready                | Supported by OP conformance profiles                                                                                                                                                                                                                                                                   |
+| Dynamic Client Registration              | Complete         | Certified                 | Ready                | RFC 7591                                                                                                                                                                                                                                                                                               |
+| PAR                                      | Complete         | Unit/integration tested   | In progress          | RFC 9126                                                                                                                                                                                                                                                                                               |
+| DPoP                                     | Complete         | Unit/integration tested   | In progress          | RFC 9449                                                                                                                                                                                                                                                                                               |
+| JAR                                      | Complete         | Unit/integration tested   | In progress          | RFC 9101                                                                                                                                                                                                                                                                                               |
+| JARM                                     | Complete         | Unit/integration tested   | In progress          | Signed authorization responses                                                                                                                                                                                                                                                                         |
+| FAPI 2.0 Security Profile                | Complete         | Official suite tested     | In progress          | Final DPoP OpenID Connect, Client Credentials, and Message Signing OP plans completed without functional failures; formal certification publication is still planned.                                                                                                                                  |
+| FAPI CIBA profile                        | Basic complete   | Official suite tested     | In progress          | Private-key Poll completed without warnings or failures; Ping completed without functional failures and with Suite-side incoming TLS warnings. Formal certification is not complete.                                                                                                                   |
+| JWE                                      | Complete         | Unit/integration tested   | In progress          | Encrypted token support                                                                                                                                                                                                                                                                                |
+| Pairwise Subject Identifiers             | Complete         | Unit/integration tested   | In progress          | Pairwise subject generation                                                                                                                                                                                                                                                                            |
+| Claims Parameter                         | Complete         | Unit/integration tested   | In progress          | Claims request parsing, scope policy, and claim-level release policy                                                                                                                                                                                                                                   |
+| OIDC Advanced Syntax for Claims          | Complete         | Unit/integration tested   | In progress          | Selective Abort/Omit and predefined transformed claims                                                                                                                                                                                                                                                 |
+| OIDC Session Management                  | Complete         | Certified                 | Ready                | `session_state` and configurable `check_session_iframe`                                                                                                                                                                                                                                                |
+| Token Introspection                      | Complete         | Unit/integration tested   | In progress          | RFC 7662                                                                                                                                                                                                                                                                                               |
+| Token Revocation                         | Complete         | Unit/integration tested   | In progress          | RFC 7009                                                                                                                                                                                                                                                                                               |
+| Token Exchange                           | Complete         | Unit/integration tested   | In progress          | RFC 8693                                                                                                                                                                                                                                                                                               |
+| ID-JAG                                   | Complete         | Unit/integration tested   | Experimental         | Identity Assertion Authorization Grant draft support                                                                                                                                                                                                                                                   |
+| Client Credentials                       | Complete         | Unit/integration tested   | In progress          | RFC 6749 section 4.4                                                                                                                                                                                                                                                                                   |
+| Private Key JWT                          | Complete         | Unit/integration tested   | In progress          | Client authentication                                                                                                                                                                                                                                                                                  |
+| JWT Signing and Key Rotation             | Complete         | Unit/integration tested   | In progress          | Durable Object backed key management                                                                                                                                                                                                                                                                   |
+| Refresh Token Rotation                   | Complete         | Unit/integration tested   | In progress          | Refresh token family tracking and theft detection support                                                                                                                                                                                                                                              |
+| NIST Assurance Levels                    | Complete         | Unit/integration tested   | In progress          | AAL/FAL/IAL claims and policy hooks                                                                                                                                                                                                                                                                    |
+| SAML 2.0 IdP/SP                          | Hardening active | Unit/integration tested   | In progress          | Tenant-scoped IdP/SP endpoints, metadata import/export, configurable published entityIDs, interactive login redirect policy, RequestedAttribute suggestions, provider logos/icons, signing subject/rollover, encryption options, SSO/SLO correlation, fanout timeout observation, and admin operations |
+| SCIM 2.0                                 | Inbound complete | Unit/integration tested   | In progress          | Users, Groups, and Bulk receiver with Mapping Set-based User writes; outbound provisioning is out of scope                                                                                                                                                                                             |
+| Device Flow                              | Complete         | Unit/integration tested   | In progress          | RFC 8628                                                                                                                                                                                                                                                                                               |
+| CIBA                                     | Complete         | Unit/integration tested   | In progress          | OpenID Connect CIBA                                                                                                                                                                                                                                                                                    |
+| JWT Bearer                               | Complete         | Unit/integration tested   | In progress          | RFC 7523                                                                                                                                                                                                                                                                                               |
+| Native SSO                               | Complete         | Unit/integration tested   | In progress          | OIDC Native SSO draft support for `device_secret`, `ds_hash`, DPoP-bound token exchange, revoke/introspection, and device management; hardening remains                                                                                                                                                |
+| Direct Auth                              | Complete         | Unit/integration tested   | In progress          | Headless/direct passkey, email code, social, anonymous, and managed browser session flows                                                                                                                                                                                                              |
+| Passkey/WebAuthn                         | Complete         | Unit/integration tested   | In progress          | Direct authentication and registration flows                                                                                                                                                                                                                                                           |
+| Passkey Conditional UI                   | Complete         | Unit/integration tested   | In progress          | Browser autofill integration support                                                                                                                                                                                                                                                                   |
+| Email Code/OTP                           | Complete         | Unit/integration tested   | In progress          | Passwordless authentication                                                                                                                                                                                                                                                                            |
+| Social Login                             | Complete         | Unit/integration tested   | In progress          | External OIDC/OAuth providers                                                                                                                                                                                                                                                                          |
+| Anonymous Login and Upgrade              | Complete         | Unit/integration tested   | In progress          | Anonymous user creation and account upgrade flow                                                                                                                                                                                                                                                       |
+| Identity Linking                         | Complete         | Unit/integration tested   | In progress          | Link multiple identities to one user                                                                                                                                                                                                                                                                   |
+| Identity Stitching                       | Complete         | Unit/integration tested   | In progress          | Determine identity across sources                                                                                                                                                                                                                                                                      |
+| RBAC / ABAC / ReBAC                      | Complete         | Unit/integration tested   | In progress          | Policy engine and relationship-based checks                                                                                                                                                                                                                                                            |
+| Real-time Check API                      | Complete         | Unit/integration tested   | In progress          | Runtime authorization checks                                                                                                                                                                                                                                                                           |
+| WebSocket Push                           | Complete         | Unit/integration tested   | In progress          | Authorization update push channel                                                                                                                                                                                                                                                                      |
+| Custom Claims                            | Complete         | Unit/integration tested   | In progress          | Schema-driven custom claims for tokens, UserInfo, introspection, and VC targets                                                                                                                                                                                                                        |
+| OpenID4VP 1.0 Final                      | Partial          | Official suite gap-tested | Experimental         | Core authorization, request storage, response, and verification paths exist. The official Final verifier plan currently fails on Final client identifier/metadata behavior and acceptance of the Suite-generated `dc+sd-jwt` response.                                                                 |
+| OpenID4VCI 1.0 Final                     | Partial          | Official suite gap-tested | Experimental         | Core metadata, offer, token, credential, nonce, deferred, and status paths exist. The official Final issuer plan currently fails on Final claims metadata, Authorization Server metadata, and OAuth-only token response semantics.                                                                     |
+| OpenID4VCI HAIP                          | Partial          | Official suite gap-tested | Experimental         | Proof, holder-binding, PAR, DPoP, and FAPI building blocks exist. Credential Configuration scopes and Wallet/Client Attestation authentication remain incomplete.                                                                                                                                      |
+| OpenID4VP HAIP                           | Partial          | Official suite gap-tested | Experimental         | HAIP-related types, request storage, and SD-JWT verification building blocks exist. `x509_hash`, signed requests by `request_uri`, `direct_post.jwt` response processing, and mdoc verification remain incomplete; verifier metadata currently over-advertises the latter capabilities.                |
+| SD-JWT                                   | Basic complete   | Unit/integration tested   | Experimental         | Selective-disclosure issuance and verification primitives exist, but Final OpenID4VP interoperability is not yet complete.                                                                                                                                                                             |
+| DID support                              | Complete         | Unit/integration tested   | Experimental         | did:web and did:key                                                                                                                                                                                                                                                                                    |
+| PII/non-PII separation                   | Complete         | Unit/integration tested   | In progress          | Separate storage and access boundaries                                                                                                                                                                                                                                                                 |
+| Unified Control Plane routing            | Basic complete   | Unit/integration tested   | In progress          | Signed Runtime Registry and Lookup routes resolve single- or multi-shard D1 assignments; tenant placement is independently selected as `shared_pool` or `tenant_exclusive`, while `DatabaseAdapter` preserves the future backend extension boundary                                                    |
+| Admin UI                                 | Basic complete   | Partial                   | In progress          | Broad surface exists, including SAML entity info, certificate rollover, database connections, storage destinations, logging controls, and tenant discovery settings; consolidation remains active                                                                                                      |
+| Login UI                                 | Basic complete   | Partial                   | In progress          | Production flow hardening is active; provider logos and curated login-button icons are supported for SAML/OIDC methods                                                                                                                                                                                 |
+| UI localization                          | Basic complete   | Partial                   | In progress          | Admin/Login UI currently focus on English and Japanese; setup tooling has broader locale files and localized setup warnings                                                                                                                                                                            |
+| Tenant discovery / WAYF                  | Basic complete   | Partial                   | In progress          | Common discovery supports configured methods plus WAYF-style tenant selection; WAYF-only mode shows only the tenant chooser                                                                                                                                                                            |
+| Setup tooling                            | Complete         | Unit/integration tested   | In progress          | Source-download setup, fresh root migrations, optional Admin/Login UI, standard SAML/CIBA/VC deployment, setup-managed D1/R2 inventory, DNS guidance, and environment deletion are implemented; production documentation is still being refined                                                        |
 
 ## SDK Packages
 
-| Package | Status | Primary use case |
-| --- | --- | --- |
-| `@authrim/core` | Implemented | Platform-agnostic OIDC/PKCE client utilities |
-| `@authrim/web` | Implemented | Browser SDK for direct auth and OAuth flows |
-| `@authrim/server` | Implemented | Server-side token validation and middleware |
-| `@authrim/sveltekit` | Implemented | SvelteKit integration |
-| `@authrim/react` | Future candidate | React hooks and components |
-| `@authrim/vue` | Future candidate | Vue integration |
+| Package              | Status           | Primary use case                             |
+| -------------------- | ---------------- | -------------------------------------------- |
+| `@authrim/core`      | Implemented      | Platform-agnostic OIDC/PKCE client utilities |
+| `@authrim/web`       | Implemented      | Browser SDK for direct auth and OAuth flows  |
+| `@authrim/server`    | Implemented      | Server-side token validation and middleware  |
+| `@authrim/sveltekit` | Implemented      | SvelteKit integration                        |
+| `@authrim/react`     | Future candidate | React hooks and components                   |
+| `@authrim/vue`       | Future candidate | Vue integration                              |
 
 ## SDK Capability Overview
 
 Values: `Yes` means public/high-level support, `Helper` means exported lower-level support, `Internal` means used by the SDK but not exposed as a public capability, and `No` means no public SDK support. Other short labels describe narrower support, such as validation-only, types-only, or parameter pass-through support.
 
-| Capability | Server SDK | Core SDK | Web SDK | SvelteKit SDK | Notes |
-| --- | :---: | :---: | :---: | :---: | --- |
-| OIDC Discovery | Yes | Yes | Yes | Yes | Server SDK discovers JWKS; client SDKs use OP discovery |
-| Authorization Code + PKCE | No | Yes | Yes | Yes | Browser-facing SDKs use core OAuth flow support |
-| Redirect auth | No | Yes | Yes | Yes | Browser redirect flow |
-| Silent auth | No | Yes | Yes | Yes | Web/SvelteKit expose browser silent login helpers |
-| Popup auth | No | No | Yes | Yes | Browser popup flow |
-| State/nonce management | No | Yes | Yes | Yes | CSRF and OIDC replay protection |
-| Token/session storage | Helper | Yes | Yes | Yes | Server SDK has cookie-session helpers; browser SDKs manage client session state |
-| Passkey/WebAuthn | No | Types | Yes | Yes | Login, signup, registration |
-| Passkey Conditional UI | No | No | Yes | Yes | Browser autofill integration |
-| Email code | No | Types | Yes | Yes | Send and verify |
-| Social login | No | Types | Yes | Yes | Popup and redirect |
-| Token refresh | Helper | Yes | Yes | Yes | Server SDK has BFF/session helpers; client SDKs refresh access tokens |
-| Token introspection | Yes | Yes | No | No | Server-side validation and admin/service use cases |
-| Token revocation | Yes | Yes | No | No | Explicit invalidation for server/core clients |
-| Token exchange | No | Yes | Internal | Internal | Web/SvelteKit use exchange internally for Direct Auth artifacts |
-| PAR | No | Yes | No | No | Core SDK exposes PAR directly |
-| DPoP | Validate | Yes | Yes | Yes | Server validates proofs; browser SDKs generate DPoP proofs and handle nonce retry |
-| JAR | No | Helper | No | No | Core SDK exports request object builder |
-| JARM | No | Helper | No | No | Core SDK exports response validator |
-| Claims parameter policy | No | Via params | No | No | Core can pass custom authorization parameters |
-| ASC/SAO claims | No | Via params | No | No | Core can pass claims requests through authorization parameters |
-| Client credentials | No | Yes | No | No | Machine-to-machine auth |
-| Private Key JWT | No | Helper | No | No | Client assertion builder in core |
-| Device Flow | No | Yes | UI helper | Yes | Core implements device grant; browser SDKs support user-facing device verification helpers |
-| DeviceFlowUI helper | No | No | Yes | UI components | Events, countdown, QR, and Svelte UI integration |
-| Native SSO helpers | Device secret ops | Yes | No | No | Core supports `device_secret` token exchange; server supports device-secret revoke/introspection |
-| RP-Initiated Logout | No | Yes | Yes | Yes | Core logout handler; browser SDK sign-out helpers |
-| Front-Channel Logout | No | Helper | Yes | No | Core URL builder; Web SDK iframe handler |
-| Back-Channel Logout | Yes | Types | No | No | Server SDK validates logout tokens |
-| Session state calculator | No | Yes | No | No | OIDC Session Management hash calculation |
-| Check Session Iframe | No | Types | Yes | No | Browser `postMessage` session checks |
-| Session monitor | No | No | Yes | No | Periodic browser session polling |
-| Auth lifecycle events | No | Yes | Yes | Yes | Login, logout, token refresh |
-| Session events | No | Yes | Yes | Yes | Changed and expired events |
-| PKCE helper | No | Yes | No | No | Code verifier/challenge utilities |
-| JWT decode/validate helpers | Yes | Yes | No | No | Server verifies JWTs; core provides client-side decode/validation helpers |
-| Base64url utilities | Yes | Yes | No | No | Standard encoding helpers |
-| Timing-safe comparison | Internal | Yes | No | No | Server uses timing-safe utilities internally; core exports a helper |
+| Capability                  |    Server SDK     |  Core SDK  |  Web SDK  | SvelteKit SDK | Notes                                                                                            |
+| --------------------------- | :---------------: | :--------: | :-------: | :-----------: | ------------------------------------------------------------------------------------------------ |
+| OIDC Discovery              |        Yes        |    Yes     |    Yes    |      Yes      | Server SDK discovers JWKS; client SDKs use OP discovery                                          |
+| Authorization Code + PKCE   |        No         |    Yes     |    Yes    |      Yes      | Browser-facing SDKs use core OAuth flow support                                                  |
+| Redirect auth               |        No         |    Yes     |    Yes    |      Yes      | Browser redirect flow                                                                            |
+| Silent auth                 |        No         |    Yes     |    Yes    |      Yes      | Web/SvelteKit expose browser silent login helpers                                                |
+| Popup auth                  |        No         |     No     |    Yes    |      Yes      | Browser popup flow                                                                               |
+| State/nonce management      |        No         |    Yes     |    Yes    |      Yes      | CSRF and OIDC replay protection                                                                  |
+| Token/session storage       |      Helper       |    Yes     |    Yes    |      Yes      | Server SDK has cookie-session helpers; browser SDKs manage client session state                  |
+| Passkey/WebAuthn            |        No         |   Types    |    Yes    |      Yes      | Login, signup, registration                                                                      |
+| Passkey Conditional UI      |        No         |     No     |    Yes    |      Yes      | Browser autofill integration                                                                     |
+| Email code                  |        No         |   Types    |    Yes    |      Yes      | Send and verify                                                                                  |
+| Social login                |        No         |   Types    |    Yes    |      Yes      | Popup and redirect                                                                               |
+| Token refresh               |      Helper       |    Yes     |    Yes    |      Yes      | Server SDK has BFF/session helpers; client SDKs refresh access tokens                            |
+| Token introspection         |        Yes        |    Yes     |    No     |      No       | Server-side validation and admin/service use cases                                               |
+| Token revocation            |        Yes        |    Yes     |    No     |      No       | Explicit invalidation for server/core clients                                                    |
+| Token exchange              |        No         |    Yes     | Internal  |   Internal    | Web/SvelteKit use exchange internally for Direct Auth artifacts                                  |
+| PAR                         |        No         |    Yes     |    No     |      No       | Core SDK exposes PAR directly                                                                    |
+| DPoP                        |     Validate      |    Yes     |    Yes    |      Yes      | Server validates proofs; browser SDKs generate DPoP proofs and handle nonce retry                |
+| JAR                         |        No         |   Helper   |    No     |      No       | Core SDK exports request object builder                                                          |
+| JARM                        |        No         |   Helper   |    No     |      No       | Core SDK exports response validator                                                              |
+| Claims parameter policy     |        No         | Via params |    No     |      No       | Core can pass custom authorization parameters                                                    |
+| ASC/SAO claims              |        No         | Via params |    No     |      No       | Core can pass claims requests through authorization parameters                                   |
+| Client credentials          |        No         |    Yes     |    No     |      No       | Machine-to-machine auth                                                                          |
+| Private Key JWT             |        No         |   Helper   |    No     |      No       | Client assertion builder in core                                                                 |
+| Device Flow                 |        No         |    Yes     | UI helper |      Yes      | Core implements device grant; browser SDKs support user-facing device verification helpers       |
+| DeviceFlowUI helper         |        No         |     No     |    Yes    | UI components | Events, countdown, QR, and Svelte UI integration                                                 |
+| Native SSO helpers          | Device secret ops |    Yes     |    No     |      No       | Core supports `device_secret` token exchange; server supports device-secret revoke/introspection |
+| RP-Initiated Logout         |        No         |    Yes     |    Yes    |      Yes      | Core logout handler; browser SDK sign-out helpers                                                |
+| Front-Channel Logout        |        No         |   Helper   |    Yes    |      No       | Core URL builder; Web SDK iframe handler                                                         |
+| Back-Channel Logout         |        Yes        |   Types    |    No     |      No       | Server SDK validates logout tokens                                                               |
+| Session state calculator    |        No         |    Yes     |    No     |      No       | OIDC Session Management hash calculation                                                         |
+| Check Session Iframe        |        No         |   Types    |    Yes    |      No       | Browser `postMessage` session checks                                                             |
+| Session monitor             |        No         |     No     |    Yes    |      No       | Periodic browser session polling                                                                 |
+| Auth lifecycle events       |        No         |    Yes     |    Yes    |      Yes      | Login, logout, token refresh                                                                     |
+| Session events              |        No         |    Yes     |    Yes    |      Yes      | Changed and expired events                                                                       |
+| PKCE helper                 |        No         |    Yes     |    No     |      No       | Code verifier/challenge utilities                                                                |
+| JWT decode/validate helpers |        Yes        |    Yes     |    No     |      No       | Server verifies JWTs; core provides client-side decode/validation helpers                        |
+| Base64url utilities         |        Yes        |    Yes     |    No     |      No       | Standard encoding helpers                                                                        |
+| Timing-safe comparison      |     Internal      |    Yes     |    No     |      No       | Server uses timing-safe utilities internally; core exports a helper                              |
 
 ## Operations
 
-| Area | Status | Notes |
-| --- | --- | --- |
-| Multi-tenancy isolation | Baseline complete / validation active | Tenant-scoped issuer routing, storage access, admin boundaries, job artifacts, and regression tests are in place; production hardening continues |
-| Audit and managed logging | Baseline complete / validation active | Runtime structured logs, user/admin audit, diagnostic detail, sensitive detail chunks, delivery events, DLQ replay, exports, runtime policy snapshots, and storage-destination controls exist |
-| Storage portability | Baseline complete / validation active | User core, PII, custom/extension, and audit storage targets have runtime-profile and Hyperdrive paths; setup-managed D1/R2 resources are visible in Admin UI; control-plane storage remains D1/KV-biased in the public contract |
-| Backup and restore | Planned | Documented procedures and repeatable test scenarios are still needed |
-| SAML DR planning | Active | Metadata stability, configurable entityID style, signing key rollover, issuer continuity, and failover assumptions are documented; deployment-specific DNS/TLS guidance remains important |
-| Security testing | In progress | Automated tests exist; external audit and penetration testing are not yet completed |
-| Performance testing | Partial | K6 benchmarks exist for representative OIDC workloads |
-| Deployment documentation | In progress | Setup tooling exists; production deployment guidance is being refined |
+| Area                      | Status                                | Notes                                                                                                                                                                                                                           |
+| ------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Multi-tenancy isolation   | Baseline complete / validation active | Tenant-scoped issuer routing, storage access, admin boundaries, job artifacts, and regression tests are in place; production hardening continues                                                                                |
+| Audit and managed logging | Baseline complete / validation active | Runtime structured logs, user/admin audit, diagnostic detail, sensitive detail chunks, delivery events, DLQ replay, exports, runtime policy snapshots, and storage-destination controls exist                                   |
+| Storage portability       | Baseline complete / validation active | User core, PII, custom/extension, and audit storage targets have runtime-profile and Hyperdrive paths; setup-managed D1/R2 resources are visible in Admin UI; control-plane storage remains D1/KV-biased in the public contract |
+| Backup and restore        | Planned                               | Documented procedures and repeatable test scenarios are still needed                                                                                                                                                            |
+| SAML DR planning          | Active                                | Metadata stability, configurable entityID style, signing key rollover, issuer continuity, and failover assumptions are documented; deployment-specific DNS/TLS guidance remains important                                       |
+| Security testing          | In progress                           | Automated tests exist; external audit and penetration testing are not yet completed                                                                                                                                             |
+| Performance testing       | Partial                               | K6 benchmarks exist for representative OIDC workloads                                                                                                                                                                           |
+| Deployment documentation  | In progress                           | Setup tooling exists; production deployment guidance is being refined                                                                                                                                                           |
 
 ## Not Supported
 
-| Item | Reason / Alternative |
-| --- | --- |
-| Direct MTLS termination | Cloudflare Workers terminates TLS at the edge, so application code cannot directly control the TLS handshake. Use private_key_jwt, DPoP, or Cloudflare-specific mTLS/API Shield features where appropriate. |
-| Direct LDAP/AD integration | Cloudflare Workers runtime does not provide general TCP socket support for LDAP/AD. Use SCIM or federate through an external IdP that supports OIDC/SAML. |
-| SFTP storage or delivery | Cloudflare Workers does not provide a general SSH/SFTP runtime. Use R2, S3-compatible object storage, HTTPS sinks, Cloudflare Logpush, or another external collector instead. |
+| Item                       | Reason / Alternative                                                                                                                                                                                        |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Direct MTLS termination    | Cloudflare Workers terminates TLS at the edge, so application code cannot directly control the TLS handshake. Use private_key_jwt, DPoP, or Cloudflare-specific mTLS/API Shield features where appropriate. |
+| Direct LDAP/AD integration | Cloudflare Workers runtime does not provide general TCP socket support for LDAP/AD. Use SCIM or federate through an external IdP that supports OIDC/SAML.                                                   |
+| SFTP storage or delivery   | Cloudflare Workers does not provide a general SSH/SFTP runtime. Use R2, S3-compatible object storage, HTTPS sinks, Cloudflare Logpush, or another external collector instead.                               |
 
 ## Related Documents
 

@@ -71,6 +71,32 @@ describe('url-security response limits', () => {
       expect.objectContaining({ redirect: 'manual' })
     );
   });
+
+  it('implements redirect error semantics without passing unsupported mode to Workers', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 302 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      safeFetch('https://example.com/client-jwks', { redirect: 'error' })
+    ).rejects.toThrow('Redirect response blocked: HTTP 302');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://example.com/client-jwks',
+      expect.objectContaining({ redirect: 'manual' })
+    );
+  });
+
+  it('allows a successful response when callers request redirect error semantics', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ keys: [] }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      safeFetchJson('https://example.com/client-jwks', { redirect: 'error' })
+    ).resolves.toEqual({ keys: [] });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://example.com/client-jwks',
+      expect.objectContaining({ redirect: 'manual' })
+    );
+  });
 });
 
 describe('url-security SSRF host classification', () => {

@@ -30,7 +30,18 @@ describe('generated server-surface smoke', () => {
     };
 
     await writeFile(join(envDir, 'config.json'), JSON.stringify(config, null, 2));
-    await writeFile(join(keysDir, 'admin_api_secret.txt'), 'admin-secret');
+    await writeFile(
+      join(envDir, 'lock.json'),
+      JSON.stringify({
+        version: '1.0.0',
+        env,
+        createdAt: '2026-08-31T00:00:00.000Z',
+        d1: {
+          DB_ADMIN: { id: 'admin-immutable-id', name: `${env}-authrim-admin-db` },
+        },
+        kv: {},
+      })
+    );
 
     const schemas: Array<Record<string, unknown>> = [];
     const routingRules: Array<Record<string, unknown>> = [];
@@ -106,6 +117,8 @@ describe('generated server-surface smoke', () => {
 
       if (url.endsWith('/api/admin/users') && method === 'POST') {
         const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
+        const headers = new Headers(init?.headers);
+        expect(headers.get('Idempotency-Key')).toMatch(/^server-surfaces-user-(missing|create)-/u);
         const requiredFieldKey = String(schemas[0]?.field_key ?? 'department');
         if (
           !(requiredFieldKey in body) ||
@@ -212,7 +225,6 @@ describe('generated server-surface smoke', () => {
         return new Response(
           JSON.stringify({
             defaults: {
-              storageProfileId: 'builtin:storage:standard',
               auditProfileId: 'builtin:audit:standard',
               residencyProfileId: 'builtin:residency:default',
             },
@@ -271,7 +283,6 @@ describe('generated server-surface smoke', () => {
         return new Response(
           JSON.stringify({
             effective: {
-              storage: { id: 'builtin:storage:standard' },
               audit: { id: 'builtin:audit:standard' },
               residency: { id: 'builtin:residency:default' },
             },

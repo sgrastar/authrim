@@ -1,0 +1,15 @@
+{
+	"schemaVersion": 1,
+	"packageName": "@authrim/ar-login-ui",
+	"worker": "ar-login-ui",
+	"requiredDataRoles": [],
+	"bindings": [
+		{
+			"name": "AR_ROUTER",
+			"kind": "service",
+			"required": true,
+			"capability": "runtime_api.invoke"
+		}
+	],
+	"secrets": []
+}

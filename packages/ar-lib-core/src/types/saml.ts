@@ -267,6 +267,43 @@ export interface SAMLMetadataRefreshStatus {
   diff: SAMLMetadataDiffSummary;
 }
 
+export type SAMLMetadataRefreshMode = 'automatic' | 'manual';
+export type SAMLMetadataSourceState =
+  | 'healthy'
+  | 'stale'
+  | 'error'
+  | 'expired'
+  | 'missing'
+  | 'identity_change_pending';
+
+/**
+ * Polling policy and operational state for metadata-backed SAML providers.
+ * URL-backed providers default to automatic refresh when this object is absent;
+ * inline XML/manual providers default to manual refresh.
+ */
+export interface SAMLMetadataRefreshPolicy {
+  mode: SAMLMetadataRefreshMode;
+  /** Requested successful-refresh interval. Defaults to six hours. */
+  intervalSeconds: number;
+  nextRefreshAt?: number;
+  lastAttemptAt?: number;
+  lastSuccessAt?: number;
+  consecutiveFailures?: number;
+  sourceState?: SAMLMetadataSourceState;
+  /** Stable, non-sensitive machine-readable failure reason. */
+  lastErrorCode?: string;
+  /** HTTP validator returned by the metadata source. */
+  etag?: string;
+  /** HTTP Last-Modified validator returned by the metadata source. */
+  lastModified?: string;
+  /** Source URL that produced the stored HTTP validators. */
+  validatorSourceUrl?: string;
+  /** validUntil from the last document accepted for these validators. */
+  acceptedValidUntil?: string;
+  /** True only when metadata lifecycle automation, rather than an operator, disabled the provider. */
+  suspendedByMetadataSync?: boolean;
+}
+
 export type SAMLMetadataVerificationPolicy = 'strict' | 'warn' | 'disabled';
 export type SAMLMetadataVerificationStatus = 'verified' | 'unverified' | 'skipped' | 'failed';
 
@@ -284,11 +321,45 @@ export interface SAMLFederationTrustProfile {
   name: string;
   description?: string;
   metadataUrlPatterns: string[];
+  metadataUrl?: string;
   certificates: SAMLFederationTrustCertificate[];
   policy?: SAMLMetadataVerificationPolicy;
+  polling?: SAMLMetadataRefreshPolicy;
+  runtimeResolution?: SAMLFederationRuntimeResolutionPolicy;
+  /** Immutable hash of the currently active trust context used to verify metadata. */
+  trustContextSnapshotHash?: string;
   enabled: boolean;
   createdAt: number;
   updatedAt: number;
+}
+
+export type SAMLFederationRuntimeResolutionMode = 'inventory_only' | 'automatic';
+export type SAMLFederationRuntimeRole = 'saml_idp' | 'saml_sp';
+export type SAMLFederationEntityCategoryDecision = 'allow' | 'deny';
+
+export interface SAMLFederationEntityCategoryRule {
+  entityCategory: string;
+  decision: SAMLFederationEntityCategoryDecision;
+  /** Optional SP attribute-release preset selected when this allow rule matches. */
+  attributePresetId?: SAMLAttributePresetId;
+}
+
+/**
+ * Opt-in policy for resolving entities directly from the latest verified aggregate document.
+ * Inventory-only is the safe default. Automatic mode requires role-specific mapping selectors.
+ */
+export interface SAMLFederationRuntimeResolutionPolicy {
+  mode: SAMLFederationRuntimeResolutionMode;
+  roles: SAMLFederationRuntimeRole[];
+  priority?: number;
+  idpFieldMappingSetId?: string;
+  spFieldMappingSetId?: string;
+  defaultAttributePresetId?: SAMLAttributePresetId;
+  registrationAuthorities?: string[];
+  entityCategoryPolicy?: {
+    defaultDecision: SAMLFederationEntityCategoryDecision;
+    rules: SAMLFederationEntityCategoryRule[];
+  };
 }
 
 export interface SAMLMetadataVerificationSummary {
@@ -296,6 +367,8 @@ export interface SAMLMetadataVerificationSummary {
   policy: SAMLMetadataVerificationPolicy;
   trustProfileId?: string;
   trustProfileName?: string;
+  /** Trust-context generation that was current when this metadata was verified. */
+  trustContextSnapshotHash?: string;
   certificateFingerprintSha256?: string;
   signedElementId?: string;
   verifiedAt?: number;
@@ -586,6 +659,8 @@ export interface SAMLSPConfig {
   metadataCriticalFields?: SAMLMetadataCriticalFields;
   /** Last manual/job metadata refresh status */
   metadataRefreshStatus?: SAMLMetadataRefreshStatus;
+  /** Automatic polling policy. URL-backed providers default to automatic. */
+  metadataRefreshPolicy?: SAMLMetadataRefreshPolicy;
   /** Metadata last fetched timestamp */
   metadataLastFetched?: number;
   /** Aggregate metadata import/verification snapshot when imported from federation metadata */
@@ -613,6 +688,8 @@ export interface SAMLIdentityMappingAttributeDescriptor {
   required?: boolean;
 }
 
+export type SAMLDestinationFieldReleaseMode = 'required' | 'optional' | 'hidden';
+
 export interface SAMLIdentityMappingFieldMappingSelector {
   /** Active mapping policy set selected for this SP override. Empty falls back to tenant activation scope. */
   fieldMappingSetId?: string;
@@ -622,6 +699,8 @@ export interface SAMLIdentityMappingFieldMappingSelector {
   sourceProfileId?: string;
   destinationProfileId?: string;
   attributeDescriptors?: Record<string, SAMLIdentityMappingAttributeDescriptor>;
+  /** Per-SP release policy keyed by the destination SAML attribute name. */
+  destinationFieldPolicies?: Record<string, SAMLDestinationFieldReleaseMode>;
 }
 
 export interface SAMLAssertionConsumerService {
@@ -705,6 +784,8 @@ export interface SAMLIdPConfig {
   metadataCriticalFields?: SAMLMetadataCriticalFields;
   /** Last manual/job metadata refresh status */
   metadataRefreshStatus?: SAMLMetadataRefreshStatus;
+  /** Automatic polling policy. URL-backed providers default to automatic. */
+  metadataRefreshPolicy?: SAMLMetadataRefreshPolicy;
   /** Metadata last fetched timestamp */
   metadataLastFetched?: number;
   /** Aggregate metadata import/verification snapshot when imported from federation metadata */
@@ -874,6 +955,8 @@ export interface SAMLProviderCreateRequest {
  * SAML Provider update request
  */
 export interface SAMLProviderUpdateRequest {
+  /** Current provider updatedAt value. Updates fail with 409 when the provider changed. */
+  expectedUpdatedAt: string;
   /** Provider name for display */
   name?: string;
   /** Configuration */
@@ -923,6 +1006,12 @@ export interface SAMLMetadataEntitySummary {
   validUntil?: string;
   keywords?: string[];
   logoUrl?: string;
+  /** Values of the SAML metadata entity-category attribute. */
+  entityCategories?: string[];
+  /** Values of the SAML metadata entity-category-support attribute. */
+  entityCategorySupport?: string[];
+  /** Registration authority declared by mdrpi:RegistrationInfo. */
+  registrationAuthority?: string;
 }
 
 export interface SAMLMetadataKeywordFacetValue {

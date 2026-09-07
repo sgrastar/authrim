@@ -13,7 +13,7 @@
  * - Error handling
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Hoist mock logger
 const { mockLogger, mockResolveAuthCorePersistenceAdapterFromEnv } = vi.hoisted(() => {
@@ -37,6 +37,18 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     getLogger: () => mockLogger,
     resolveAuthCorePersistenceAdapterFromEnv: mockResolveAuthCorePersistenceAdapterFromEnv,
+    readAuthenticationMethodsCacheRevision: async (
+      env: Pick<Env, 'SETTINGS'>,
+      tenantId: string
+    ) => {
+      const settings = env.SETTINGS;
+      if (!settings) return '0.0';
+      const [globalRevision, tenantRevision] = await Promise.all([
+        settings.get('cache:authentication-methods:v1:revision:global'),
+        settings.get(`cache:authentication-methods:v1:revision:tenant:${tenantId}`),
+      ]);
+      return `${globalRevision || '0'}.${tenantRevision || '0'}`;
+    },
   };
 });
 
@@ -98,6 +110,16 @@ function createMockExternalIdp(options: MockExternalIdpOptions = {}) {
   };
 }
 
+function createMockEdgeCache() {
+  const store = new Map<string, Response>();
+  return {
+    match: vi.fn(async (request: Request) => store.get(request.url)?.clone()),
+    put: vi.fn(async (request: Request, response: Response) => {
+      store.set(request.url, response.clone());
+    }),
+  };
+}
+
 interface CreateTestAppOptions {
   settingsKV?: KVNamespace;
   configKV?: KVNamespace;
@@ -131,6 +153,11 @@ describe('Authentication Methods API', () => {
     mockResolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue({
       query: vi.fn(async () => []),
     });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete (globalThis as { caches?: unknown }).caches;
   });
 
   // ===========================================================================
@@ -204,7 +231,29 @@ describe('Authentication Methods API', () => {
         brandPosition: 'center',
         brandAlign: 'left',
       });
-      expect(body.ui.supportedLocales).toEqual(['en', 'ja']);
+      expect(body.ui.supportedLocales).toEqual([
+        'en',
+        'ja',
+        'zh-CN',
+        'zh-TW',
+        'es',
+        'pt',
+        'fr',
+        'de',
+        'ko',
+        'ru',
+        'id',
+        'ar',
+        'it',
+        'th',
+        'vi',
+        'hi',
+        'bn',
+        'tr',
+        'sw',
+        'am',
+        'pl',
+      ]);
       expect(body.ui.selfService).toEqual({
         accountPageEnabled: true,
         accountPagePath: '/account',
@@ -240,6 +289,7 @@ describe('Authentication Methods API', () => {
       expect(body.ui.appearance.thumbnailUrl).toBeNull();
       expect(body.ui.appearance.customCss).toBeNull();
       expect(body.ui.appearance.headerText).toBeNull();
+      expect(body.ui.appearance.textLocalizations).toEqual({});
       expect(body.ui.appearance.footerText).toBeNull();
       expect(body.ui.appearance.footerLinks).toEqual([]);
       expect(body.ui.appearance.customBlocks).toEqual([]);
@@ -263,6 +313,216 @@ describe('Authentication Methods API', () => {
       const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
 
       expect(res.headers.get('Cache-Control')).toBe('public, max-age=60');
+      expect(res.headers.get('Server-Timing')).toBeNull();
+    });
+
+    it('should reuse edge cache entries while the authentication methods revision is unchanged', async () => {
+      const edgeCache = createMockEdgeCache();
+      const globalWithCaches = globalThis as unknown as {
+        caches: { default: ReturnType<typeof createMockEdgeCache> };
+      };
+      globalWithCaches.caches = { default: edgeCache };
+      const externalIdp = createMockExternalIdp({
+        providers: [{ id: 'ggl-123', name: 'Google', slug: 'google', enabled: true }],
+      });
+      const settingsKV = createMockKV({
+        'cache:authentication-methods:v1:revision:tenant:default': 'tenant-rev-1',
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV, externalIdp });
+
+      const first = await app.request(
+        'https://first.test.authrim.com/api/auth/authentication-methods',
+        { method: 'GET' },
+        mockEnv
+      );
+      const second = await app.request(
+        'https://first.test.authrim.com/api/auth/authentication-methods',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(first.headers.get('X-Authrim-Authentication-Methods-Cache')).toBe('miss');
+      expect(second.headers.get('X-Authrim-Authentication-Methods-Cache')).toBe('hit');
+      expect(second.headers.get('Cache-Control')).toBe('public, max-age=60');
+      expect(second.headers.get('Cloudflare-CDN-Cache-Control')).toBe('public, max-age=86400');
+      expect(edgeCache.match).toHaveBeenCalledTimes(2);
+      expect(edgeCache.put).toHaveBeenCalledTimes(1);
+      expect(externalIdp.fetch).toHaveBeenCalledTimes(1);
+      await expect(second.json()).resolves.toMatchObject({
+        methods: {
+          external: {
+            enabled: true,
+          },
+        },
+      });
+    });
+
+    it('should emit diagnostic timing when diagnostics are enabled and a session header is present', async () => {
+      const edgeCache = createMockEdgeCache();
+      const globalWithCaches = globalThis as unknown as {
+        caches: { default: ReturnType<typeof createMockEdgeCache> };
+      };
+      globalWithCaches.caches = { default: edgeCache };
+      const settingsKV = createMockKV({
+        'cache:authentication-methods:v1:revision:tenant:default': 'tenant-rev-1',
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+      mockEnv.AUTHRIM_DIAGNOSTIC_TIMING_ENABLED = 'true';
+
+      const res = await app.request(
+        'https://first.test.authrim.com/api/auth/authentication-methods',
+        {
+          method: 'GET',
+          headers: { 'X-Diagnostic-Session-Id': 'diag-session-1' },
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('X-Authrim-Diagnostic-Session-Id')).toBe('diag-session-1');
+      expect(res.headers.get('Server-Timing')).toContain('revision_read;dur=');
+      expect(res.headers.get('Server-Timing')).toContain('cache_match;dur=');
+      expect(res.headers.get('Server-Timing')).toContain('handler_total;dur=');
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'Authentication methods diagnostics',
+        expect.objectContaining({
+          diagnosticSessionId: 'diag-session-1',
+          cacheStatus: 'miss',
+          edgeCacheEnabled: true,
+          clientScoped: false,
+        })
+      );
+    });
+
+    it('should isolate edge cache entries by client_id', async () => {
+      const edgeCache = createMockEdgeCache();
+      const globalWithCaches = globalThis as unknown as {
+        caches: { default: ReturnType<typeof createMockEdgeCache> };
+      };
+      globalWithCaches.caches = { default: edgeCache };
+      let providerCounter = 0;
+      const externalIdp = {
+        fetch: vi.fn(async () => {
+          providerCounter += 1;
+          return new Response(
+            JSON.stringify({
+              providers: [
+                {
+                  id: `provider-${providerCounter}`,
+                  name: `Provider ${providerCounter}`,
+                  slug: `provider-${providerCounter}`,
+                  enabled: true,
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }),
+      };
+      const settingsKV = createMockKV({
+        'cache:authentication-methods:v1:revision:tenant:default': 'tenant-rev-1',
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV, externalIdp });
+
+      const firstClient = await app.request(
+        'https://first.test.authrim.com/api/auth/authentication-methods?client_id=client-a',
+        { method: 'GET' },
+        mockEnv
+      );
+      const secondClient = await app.request(
+        'https://first.test.authrim.com/api/auth/authentication-methods?client_id=client-b',
+        { method: 'GET' },
+        mockEnv
+      );
+      const firstClientAgain = await app.request(
+        'https://first.test.authrim.com/api/auth/authentication-methods?client_id=client-a',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(firstClient.headers.get('X-Authrim-Authentication-Methods-Cache')).toBe('miss');
+      expect(secondClient.headers.get('X-Authrim-Authentication-Methods-Cache')).toBe('miss');
+      expect(firstClientAgain.headers.get('X-Authrim-Authentication-Methods-Cache')).toBe('hit');
+      expect(externalIdp.fetch).toHaveBeenCalledTimes(2);
+      await expect(firstClientAgain.json()).resolves.toMatchObject({
+        methods: {
+          external: {
+            providers: [expect.objectContaining({ id: 'provider-1' })],
+          },
+        },
+      });
+    });
+
+    it('should miss the edge cache after the authentication methods revision changes', async () => {
+      const edgeCache = createMockEdgeCache();
+      const globalWithCaches = globalThis as unknown as {
+        caches: { default: ReturnType<typeof createMockEdgeCache> };
+      };
+      globalWithCaches.caches = { default: edgeCache };
+      let providerCounter = 0;
+      const externalIdp = {
+        fetch: vi.fn(async () => {
+          providerCounter += 1;
+          return new Response(
+            JSON.stringify({
+              providers: [
+                {
+                  id: `provider-${providerCounter}`,
+                  name: `Provider ${providerCounter}`,
+                  slug: `provider-${providerCounter}`,
+                  enabled: true,
+                },
+              ],
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } }
+          );
+        }),
+      };
+      const settingsKV = createMockKV({
+        'cache:authentication-methods:v1:revision:tenant:default': 'tenant-rev-1',
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV, externalIdp });
+
+      const beforeRevisionChange = await app.request(
+        'https://first.test.authrim.com/api/auth/authentication-methods',
+        { method: 'GET' },
+        mockEnv
+      );
+      await settingsKV.put(
+        'cache:authentication-methods:v1:revision:tenant:default',
+        'tenant-rev-2'
+      );
+      const afterRevisionChange = await app.request(
+        'https://first.test.authrim.com/api/auth/authentication-methods',
+        { method: 'GET' },
+        mockEnv
+      );
+      const afterRevisionChangeAgain = await app.request(
+        'https://first.test.authrim.com/api/auth/authentication-methods',
+        { method: 'GET' },
+        mockEnv
+      );
+
+      expect(beforeRevisionChange.headers.get('X-Authrim-Authentication-Methods-Cache')).toBe(
+        'miss'
+      );
+      expect(afterRevisionChange.headers.get('X-Authrim-Authentication-Methods-Cache')).toBe(
+        'miss'
+      );
+      const afterRevisionChangeAgainCacheStatus = afterRevisionChangeAgain.headers.get(
+        'X-Authrim-Authentication-Methods-Cache'
+      );
+      expect(afterRevisionChangeAgainCacheStatus).toBe('hit');
+      expect(externalIdp.fetch).toHaveBeenCalledTimes(2);
+      await expect(afterRevisionChangeAgain.json()).resolves.toMatchObject({
+        methods: {
+          external: {
+            providers: [expect.objectContaining({ id: 'provider-2' })],
+          },
+        },
+      });
     });
   });
 
@@ -536,7 +796,7 @@ describe('Authentication Methods API', () => {
         provider: 'recaptcha',
         siteKey: 'recaptcha-site-key',
         loginEnabled: true,
-        failurePolicy: 'fail_open',
+        failurePolicy: 'fail_closed',
         widget: {
           mode: 'score',
         },
@@ -817,7 +1077,7 @@ describe('Authentication Methods API', () => {
       );
     });
 
-    it('should not require ADMIN_API_SECRET for external login providers', async () => {
+    it('should use the public external-provider discovery surface', async () => {
       const externalIdp = createMockExternalIdp({
         providers: [{ id: 'ggl-123', name: 'Google', slug: 'google', enabled: true }],
       });
@@ -828,6 +1088,26 @@ describe('Authentication Methods API', () => {
 
       expect(body.methods.external.enabled).toBe(true);
       expect(body.methods.external.providers).toHaveLength(1);
+    });
+
+    it('should skip bridge provider discovery when external provider usage is explicitly empty', async () => {
+      const externalIdp = createMockExternalIdp({
+        providers: [{ id: 'ggl-123', name: 'Google', slug: 'google', enabled: true }],
+      });
+      const settingsKV = createMockKV({
+        'settings:tenant:default:authentication-methods': JSON.stringify({
+          'authentication-methods.external_provider_usage': [],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV, externalIdp });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(externalIdp.fetch).not.toHaveBeenCalled();
+      expect(body.methods.external.enabled).toBe(false);
+      expect(body.methods.external.providers).toEqual([]);
     });
   });
 
@@ -873,6 +1153,139 @@ describe('Authentication Methods API', () => {
   // ===========================================================================
 
   describe('UI config from settings-v2', () => {
+    it('expands the legacy default locale set to include newly supported locales', async () => {
+      const settingsKV = createMockKV({
+        'settings:platform:login-ui': JSON.stringify({
+          'login-ui.supported_locales': 'en,ja,zh-CN,zh-TW,es,pt,fr,de,ko,ru,id',
+          'login-ui.default_locale': 'en',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.ui.supportedLocales).toEqual([
+        'am',
+        'ar',
+        'bn',
+        'zh-CN',
+        'zh-TW',
+        'en',
+        'fr',
+        'de',
+        'hi',
+        'id',
+        'it',
+        'ja',
+        'ko',
+        'pl',
+        'pt',
+        'ru',
+        'es',
+        'sw',
+        'th',
+        'tr',
+        'vi',
+      ]);
+      expect(body.ui.defaultLocale).toBe('en');
+      expect(body.ui.primaryLocales).toEqual(['en', 'zh-CN', 'hi', 'es', 'ar', 'fr']);
+      expect(body.ui.showEnglishLanguageNames).toBe(false);
+    });
+
+    it('inherits platform language settings when tenant settings are absent', async () => {
+      const settingsKV = createMockKV({
+        'settings:platform:login-ui': JSON.stringify({
+          'login-ui.supported_locales': 'en,de',
+          'login-ui.default_locale': 'de',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.ui.supportedLocales).toEqual(['en', 'de']);
+      expect(body.ui.defaultLocale).toBe('de');
+      expect(body.ui.primaryLocales).toEqual([]);
+    });
+
+    it('preserves manually configured primary languages instead of recalculating them', async () => {
+      const settingsKV = createMockKV({
+        'settings:platform:login-ui': JSON.stringify({
+          'login-ui.primary_locales': ['pl', 'ja'],
+          'login-ui.show_english_language_names': true,
+        }),
+        'settings:tenant:default:login-ui': JSON.stringify({
+          'login-ui.brand_name': 'Tenant Brand',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.ui.primaryLocales).toEqual(['ja', 'pl']);
+      expect(body.ui.showEnglishLanguageNames).toBe(true);
+    });
+
+    it('preserves an explicit zero-primary-language selection', async () => {
+      const settingsKV = createMockKV({
+        'settings:platform:login-ui': JSON.stringify({
+          'login-ui.primary_locales': [],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.ui.primaryLocales).toEqual([]);
+    });
+
+    it('does not expose disabled configured languages as primary languages', async () => {
+      const settingsKV = createMockKV({
+        'settings:platform:login-ui': JSON.stringify({
+          'login-ui.supported_locales': 'en,ja,zh-CN,zh-TW,es,pt,fr,de,ko,ru,ar',
+          'login-ui.primary_locales': ['pl', 'en'],
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request('/api/auth/authentication-methods', { method: 'GET' }, mockEnv);
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.ui.primaryLocales).toEqual(['en']);
+    });
+
+    it('applies client Login UI overrides for DCR-generated client identifiers', async () => {
+      const clientId = `client_${'a'.repeat(128)}`;
+      const settingsKV = createMockKV({
+        'settings:tenant:default:login-ui': JSON.stringify({
+          'login-ui.brand_name': 'Tenant App',
+        }),
+        [`settings:client:default:${clientId}:login-ui`]: JSON.stringify({
+          'login-ui.brand_name': 'DCR Client App',
+        }),
+      });
+      const { app, mockEnv } = createTestApp({ settingsKV });
+
+      const res = await app.request(
+        `/api/auth/authentication-methods?client_id=${encodeURIComponent(clientId)}`,
+        { method: 'GET' },
+        mockEnv
+      );
+      const body = (await res.json()) as any;
+
+      expect(res.status).toBe(200);
+      expect(body.ui.branding.brandName).toBe('DCR Client App');
+    });
+
     it('should use settings-v2 KV values when available', async () => {
       const settingsKV = createMockKV({
         'settings:tenant:default:login-ui': JSON.stringify({
@@ -883,6 +1296,7 @@ describe('Authentication Methods API', () => {
           'login-ui.font_family': 'mono',
           'login-ui.font_scale': 'spacious',
           'login-ui.background_color': '#0b1220',
+          'login-ui.accent_color': '#336699',
           'login-ui.title_color': '#111827',
           'login-ui.text_color': '#1f2937',
           'login-ui.copy_color': '#4b5563',
@@ -916,10 +1330,25 @@ describe('Authentication Methods API', () => {
           'login-ui.favicon_url': 'https://example.com/favicon.ico',
           'login-ui.thumbnail_url': 'https://example.com/thumb.webp',
           'login-ui.supported_locales': 'en,ja,fr',
+          'login-ui.default_locale': 'fr',
           'login-ui.background_image_url': 'https://example.com/bg.jpg',
           'login-ui.login_panel_background_image_url': 'https://example.com/panel.jpg',
           'login-ui.custom_css': '.auth-page { background: #fff; }',
           'login-ui.header_text': 'Welcome',
+          'login-ui.text_localizations': JSON.stringify({
+            en: {
+              tagline: '  Identity at every edge  ',
+              loginTitle: '  Sign in to Example  ',
+              registrationTitle: 'Create an Example account',
+              accountTitle: 'Your Example account',
+              brandPanelTitle: 'Welcome back',
+              brandPanelText: '   ',
+              unsupportedField: 'Ignored',
+            },
+            ja: { tagline: 'あらゆる場所のアイデンティティ', footerText: 'Authrim提供' },
+            fr: { tagline: '   ' },
+            unsupported: { tagline: 'Ignored' },
+          }),
           'login-ui.footer_text': '© 2025 My App',
           'login-ui.footer_links': JSON.stringify([
             { label: 'Privacy', url: 'https://example.com/privacy' },
@@ -945,6 +1374,7 @@ describe('Authentication Methods API', () => {
         fontFamily: 'mono',
         fontScale: 'spacious',
         backgroundColor: '#0b1220',
+        accentColor: '#336699',
         titleColor: '#111827',
         textColor: '#1f2937',
         copyColor: '#4b5563',
@@ -975,11 +1405,24 @@ describe('Authentication Methods API', () => {
         brandAlign: 'center',
       });
       expect(body.ui.supportedLocales).toEqual(['en', 'ja', 'fr']);
+      expect(body.ui.defaultLocale).toBe('fr');
       expect(body.ui.appearance.backgroundImageUrl).toBe('https://example.com/bg.jpg');
       expect(body.ui.appearance.loginPanelBackgroundImageUrl).toBe('https://example.com/panel.jpg');
       expect(body.ui.appearance.thumbnailUrl).toBe('https://example.com/thumb.webp');
       expect(body.ui.appearance.customCss).toBe('.auth-page { background: #fff; }');
       expect(body.ui.appearance.headerText).toBe('Welcome');
+      expect(body.ui.appearance.textLocalizations).toEqual({
+        en: {
+          tagline: 'Identity at every edge',
+          loginTitle: 'Sign in to Example',
+          registrationTitle: 'Create an Example account',
+          accountTitle: 'Your Example account',
+          brandPanelTitle: 'Welcome back',
+          brandPanelText: '',
+        },
+        ja: { tagline: 'あらゆる場所のアイデンティティ', footerText: 'Authrim提供' },
+        fr: { tagline: '' },
+      });
       expect(body.ui.appearance.footerText).toBe('© 2025 My App');
       expect(body.ui.appearance.footerLinks).toEqual([
         { label: 'Privacy', url: 'https://example.com/privacy' },

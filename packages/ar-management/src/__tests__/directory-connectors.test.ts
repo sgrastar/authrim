@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   safeFetch: vi.fn(),
   readResponseTextWithLimit: vi.fn(),
   createAuditLogFromContext: vi.fn(),
+  publishAccountExternalSubjectAddition: vi.fn(),
+  resolveAccountDataContext: vi.fn(),
   coreAdapter: {
     query: vi.fn(),
     queryOne: vi.fn(),
@@ -32,8 +34,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     readResponseTextWithLimit: mocks.readResponseTextWithLimit,
     createAuditLogFromContext: mocks.createAuditLogFromContext,
     createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.coreAdapter })),
+    ensureDatabaseAdapter: vi.fn(() => mocks.coreAdapter),
+    resolveAccountDataContext: mocks.resolveAccountDataContext,
   };
 });
+
+vi.mock('../account-identifier-addition', () => ({
+  publishAccountExternalSubjectAddition: mocks.publishAccountExternalSubjectAddition,
+}));
 
 function createKV(initial: Record<string, unknown> = {}) {
   const values = new Map<string, string>();
@@ -118,6 +126,13 @@ describe('directory connectors admin API', () => {
     mocks.coreAdapter.execute.mockReset();
     mocks.coreAdapter.transaction.mockReset();
     mocks.createAuditLogFromContext.mockResolvedValue(undefined);
+    mocks.publishAccountExternalSubjectAddition.mockResolvedValue({ status: 201 });
+    mocks.resolveAccountDataContext.mockResolvedValue({
+      accountId: 'account:user-1',
+      legacyUserId: 'user-1',
+      coreDb: mocks.coreAdapter,
+      membership: { routeProjection: {} },
+    });
     mocks.coreAdapter.query.mockResolvedValue([]);
     mocks.coreAdapter.queryOne.mockResolvedValue(null);
     mocks.coreAdapter.execute.mockResolvedValue({ rowsAffected: 1, success: true });
@@ -737,13 +752,11 @@ describe('directory connectors admin API', () => {
       decision_reason: null,
       linked_user_id: null,
     });
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({ legacy_user_id: 'user-1' });
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({ legacy_user_id: 'user-1' });
     mocks.coreAdapter.queryOne.mockResolvedValueOnce(null);
     const context = createContext(
       'tenant-a',
       { action: 'reject', reason: 'No matching SCIM user' },
-      {},
+      { ACCOUNT_DIRECTORY: {} },
       undefined,
       {},
       {},
@@ -780,14 +793,13 @@ describe('directory connectors admin API', () => {
       decision_reason: null,
       linked_user_id: null,
     });
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({ legacy_user_id: 'user-1' });
     mocks.coreAdapter.queryOne.mockResolvedValueOnce(null);
     const context = createContext(
       'tenant-a',
       { action: 'link', user_id: 'user-1', reason: 'SCIM profile verified' },
       {},
       undefined,
-      {},
+      { ACCOUNT_DIRECTORY: {} },
       {},
       'pending-1'
     ) as never;
@@ -802,7 +814,7 @@ describe('directory connectors admin API', () => {
       status: 'linked',
       linked_user_id: 'user-1',
     });
-    expect(mocks.coreAdapter.transaction).toHaveBeenCalledOnce();
+    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
     expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO directory_identity_links'),
       expect.arrayContaining(['tenant-a', 'wwcon_8K4M2Q9F7D3H6P1X', 'subject-1', 'user-1'])
@@ -829,14 +841,13 @@ describe('directory connectors admin API', () => {
       decision_reason: null,
       linked_user_id: null,
     });
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({ legacy_user_id: 'user-1' });
     mocks.coreAdapter.queryOne.mockResolvedValueOnce({ user_id: 'user-other' });
     const context = createContext(
       'tenant-a',
       { action: 'link', user_id: 'user-1' },
       {},
       undefined,
-      {},
+      { ACCOUNT_DIRECTORY: {} },
       {},
       'pending-1'
     ) as never;
@@ -849,7 +860,7 @@ describe('directory connectors admin API', () => {
     expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
   });
 
-  it('rolls back pending linking when pending state changes during the transaction', async () => {
+  it('keeps the durable account link when pending state changes after route publication', async () => {
     mocks.coreAdapter.queryOne.mockResolvedValueOnce({
       id: 'pending-1',
       tenant_id: 'tenant-a',
@@ -865,7 +876,6 @@ describe('directory connectors admin API', () => {
       decision_reason: null,
       linked_user_id: null,
     });
-    mocks.coreAdapter.queryOne.mockResolvedValueOnce({ legacy_user_id: 'user-1' });
     mocks.coreAdapter.queryOne.mockResolvedValueOnce(null);
     mocks.coreAdapter.execute
       .mockResolvedValueOnce({ rowsAffected: 1, success: true })
@@ -875,7 +885,7 @@ describe('directory connectors admin API', () => {
       { action: 'link', user_id: 'user-1' },
       {},
       undefined,
-      {},
+      { ACCOUNT_DIRECTORY: {} },
       {},
       'pending-1'
     ) as never;
@@ -885,7 +895,8 @@ describe('directory connectors admin API', () => {
 
     expect(response.status).toBe(409);
     expect(body.error).toBe('directory_pending_user_not_pending');
-    expect(mocks.coreAdapter.transaction).toHaveBeenCalledOnce();
+    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+    expect(mocks.publishAccountExternalSubjectAddition).toHaveBeenCalledOnce();
     expect(mocks.createAuditLogFromContext).not.toHaveBeenCalledWith(
       expect.anything(),
       'directory_jit_pending_user.linked',

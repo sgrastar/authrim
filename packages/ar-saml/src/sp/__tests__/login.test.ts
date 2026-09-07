@@ -128,6 +128,9 @@ describe('SP login tenant signing boundary', () => {
       })
     );
     expect(mockSignRedirectBinding).toHaveBeenCalled();
+    expect(res.headers.get('Set-Cookie')).toMatch(
+      /__Host-authrim_saml_request__\w+=1; Path=\/; HttpOnly; Secure; SameSite=None; Max-Age=300/
+    );
   });
 
   it('uses the Redirect SSO endpoint when a Shibboleth POST endpoint is configured with redirect enabled', async () => {
@@ -175,6 +178,7 @@ describe('SP login tenant signing boundary', () => {
     const xml = atob(requestValue!);
 
     expect(xml).toContain('ProviderName="Authrim Test SP"');
+    expect(res.headers.get('Set-Cookie')).toContain('__Host-authrim_saml_request_');
   });
 });
 

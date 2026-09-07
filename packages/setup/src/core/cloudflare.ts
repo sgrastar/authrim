@@ -6,12 +6,19 @@
  */
 
 import { execa, type ExecaError } from 'execa';
-import { createHash } from 'node:crypto';
+import {
+  AUTHRIM_MIGRATIONS_COLUMN_ALTERS,
+  AUTHRIM_MIGRATIONS_TABLE_SQL,
+  AUTHRIM_MIGRATION_HISTORY_SQL,
+  requireMigrationStreamId,
+  validateAuthrimMigrationHistoryRows,
+  type AuthrimMigrationHistoryRow,
+} from '@authrim/ar-lib-core/control-plane';
+import { BUILTIN_PROFILE_CLAIM_SCHEMAS } from '@authrim/ar-lib-core/services/custom-claims/schema-catalog';
+import { createHash, randomUUID } from 'node:crypto';
 import { resolve4, resolve6, resolveCname } from 'node:dns/promises';
 import { basename, join as pathJoin } from 'node:path';
-import { tmpdir } from 'node:os';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { writeFile, unlink } from 'node:fs/promises';
 import {
   getD1DatabaseName,
   getKVNamespaceName,
@@ -20,7 +27,19 @@ import {
   KV_NAMESPACES,
 } from './naming.js';
 import type { AuthrimConfig, D1Location, D1Jurisdiction } from './config.js';
+import type { DnsOwnershipEntry, DnsOwnershipRole, DnsRecordRestoreSnapshot } from './lock.js';
+import type {
+  ProvisioningResourceCheckpoint,
+  ProvisioningResourceIdentity,
+  ProvisioningResourceState,
+} from './provisioning-intent.js';
 import { getPortableSqlExpressions, renderPortableMigrationSql } from './sql-portability.js';
+import {
+  discoverReleaseMigrationStream,
+  loadTargetReleaseMigrationManifest,
+  streamDirectory,
+  type ReleaseMigrationManifest,
+} from './release-migrations.js';
 import {
   buildAdminUiBffMachineAccessBootstrapSql,
   buildSetupMachineAccessCleanupSql,
@@ -30,17 +49,237 @@ import {
   loadAdminUiBffPublicJwk,
   loadSetupMachinePublicJwk,
 } from './admin-machine-access.js';
-
+import {
+  withPrivateTemporaryBinaryFile,
+  withPrivateTemporaryOutputFile,
+  withPrivateTemporaryTextFile,
+} from './private-temporary-file.js';
+import {
+  ControlTokenCleanupManualActionError,
+  MISSING_CONTROL_TOKEN_CLEANUP_CHECKPOINT,
+  type ControlTokenManualCleanupIssue,
+} from './control-token-manual-action.js';
 const D1_MIGRATION_EXECUTE_TIMEOUT_MS = 180_000;
 const D1_MIGRATION_MAX_ATTEMPTS = 4;
+const D1_MIGRATION_AUTH_MAX_ATTEMPTS = 8;
 const QUEUE_PROVISIONING_DEFINITIONS = [
   { binding: 'AUDIT_QUEUE', nameSuffix: 'audit-queue' },
   { binding: 'LOGGING_DELIVERY_CRITICAL_QUEUE', nameSuffix: 'logging-delivery-critical-queue' },
   { binding: 'LOGGING_DELIVERY_QUEUE', nameSuffix: 'logging-delivery-queue' },
   { binding: 'LOGGING_DELIVERY_BULK_QUEUE', nameSuffix: 'logging-delivery-bulk-queue' },
 ] as const;
+
+export function getRequiredQueues(env: string): Array<{ binding: string; name: string }> {
+  validateEnvName(env);
+  return QUEUE_PROVISIONING_DEFINITIONS.map((definition) => ({
+    binding: definition.binding,
+    name: getQueueName(env, definition.nameSuffix),
+  }));
+}
+
+export function getProvisioningResourceCount(
+  options: Pick<ProvisionOptions, 'env' | 'createD1' | 'createKV' | 'createQueues' | 'createR2'>
+): number {
+  validateEnvName(options.env);
+  return (
+    (options.createD1 === false ? 0 : D1_DATABASES.length) +
+    (options.createKV === false ? 0 : KV_NAMESPACES.length) +
+    (options.createQueues ? QUEUE_PROVISIONING_DEFINITIONS.length : 0) +
+    getRequiredR2Buckets(options.env, {
+      includeFeatureBuckets: options.createR2 !== false,
+    }).length
+  );
+}
 const QUEUE_CONSUMER_DETACH_PROPAGATION_DELAY_MS = 15_000;
 const WORKER_DELETE_PROPAGATION_DELAY_MS = 20_000;
+const WORKER_DELETE_MAX_ATTEMPTS = 3;
+const WORKER_DELETE_RETRY_DELAY_MS = 1_000;
+const WORKER_INVENTORY_MAX_ATTEMPTS = 3;
+const WORKER_INVENTORY_REQUEST_TIMEOUT_MS = 10_000;
+const WORKER_INVENTORY_RETRY_DELAY_MS = 1_000;
+const DELETION_PREFLIGHT_INVENTORY_MAX_ATTEMPTS = 2;
+const DELETION_PREFLIGHT_INVENTORY_RETRY_DELAY_MS = 1_000;
+const ENVIRONMENT_DELETE_VERIFY_MAX_ATTEMPTS = 5;
+const ENVIRONMENT_DELETE_VERIFY_RETRY_DELAY_MS = 2_000;
+// Cloudflare's REST API is rate limited. Keep deletion concurrent, while letting the request
+// retry/backoff logic absorb transient 429/971 responses instead of adding a fixed delay per object.
+const R2_OBJECT_DELETE_CONCURRENCY = 5;
+// Bucket creation is dominated by remote Wrangler/API round trips. Keep this deliberately low so
+// fresh installs are faster without creating an aggressive burst against the account API.
+const R2_BUCKET_PROVISIONING_CONCURRENCY = 2;
+const R2_BUCKET_LIST_PER_PAGE = 1_000;
+// Cloudflare currently permits up to 1,000,000 buckets per account. Keep the traversal bounded at
+// that documented ceiling so a malformed stream of unique cursors cannot make Setup loop forever.
+const R2_BUCKET_LIST_MAX_PAGES = 1_000;
+const R2_OBJECT_LIST_MAX_PAGES = process.env.NODE_ENV === 'test' ? 4 : 1_000;
+const R2_OBJECT_LIST_MAX_KEYS = process.env.NODE_ENV === 'test' ? 2_500 : 1_000_000;
+const R2_OBJECT_LIST_MAX_CURSOR_LENGTH = 4_096;
+export const R2_MANUAL_CLEANUP_THRESHOLD = 2_000;
+const CLOUDFLARE_API_REQUEST_TIMEOUT_MS = process.env.NODE_ENV === 'test' ? 50 : 30_000;
+const CLOUDFLARE_API_READ_MAX_ATTEMPTS = 4;
+const CLOUDFLARE_API_MAX_RETRY_DELAY_MS = 30_000;
+const CLOUDFLARE_INVENTORY_MAX_PAGES = 1_000;
+const CLOUDFLARE_INVENTORY_MAX_RESOURCES = 100_000;
+
+type CloudflareApiRetryMode = 'read' | 'idempotent_mutation' | 'non_idempotent_mutation';
+
+interface CloudflareApiJsonRequestOptions<T> {
+  label: string;
+  retryMode: CloudflareApiRetryMode;
+  timeoutMs?: number;
+  maxAttempts?: number;
+  isRetryableResponse?: (response: Response, data: T) => boolean;
+}
+
+interface CloudflareApiJsonResult<T> {
+  response: Response;
+  data: T;
+}
+
+class CloudflareApiRequestInterruptedError extends Error {
+  constructor(
+    readonly reason: 'timeout' | 'caller_abort',
+    label: string
+  ) {
+    super(
+      reason === 'timeout'
+        ? `${label} request exceeded its deadline`
+        : `${label} request was cancelled`
+    );
+    this.name = 'CloudflareApiRequestInterruptedError';
+  }
+}
+
+/**
+ * Parse Cloudflare's Retry-After response header without allowing a provider response to keep the
+ * setup operation lock indefinitely. Both delta-seconds and HTTP-date forms are supported.
+ */
+export function parseCloudflareRetryAfterMs(
+  value: string | null | undefined,
+  nowMs = Date.now()
+): number | null {
+  const normalized = value?.trim();
+  if (!normalized) return null;
+
+  const seconds = Number(normalized);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(Math.ceil(seconds * 1_000), CLOUDFLARE_API_MAX_RETRY_DELAY_MS);
+  }
+
+  const retryAt = Date.parse(normalized);
+  if (!Number.isFinite(retryAt)) return null;
+  return Math.min(Math.max(0, retryAt - nowMs), CLOUDFLARE_API_MAX_RETRY_DELAY_MS);
+}
+
+function getCloudflareRetryDelayMs(response: Response, attempt: number): number {
+  const retryAfter = parseCloudflareRetryAfterMs(response.headers?.get?.('retry-after'));
+  return retryAfter ?? Math.min(500 * 2 ** (attempt - 1), CLOUDFLARE_API_MAX_RETRY_DELAY_MS);
+}
+
+async function requestCloudflareApiJsonOnce<T>(
+  input: string | URL,
+  init: globalThis.RequestInit,
+  options: Pick<CloudflareApiJsonRequestOptions<T>, 'label' | 'timeoutMs'>
+): Promise<CloudflareApiJsonResult<T>> {
+  const timeoutMs = options.timeoutMs ?? CLOUDFLARE_API_REQUEST_TIMEOUT_MS;
+  const requestController = new AbortController();
+  const callerSignal = init.signal;
+  let deadlineReached = false;
+
+  const abortFromCaller = () => requestController.abort();
+  if (callerSignal?.aborted) {
+    throw new CloudflareApiRequestInterruptedError('caller_abort', options.label);
+  }
+  callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
+
+  let rejectOnAbort: ((error: CloudflareApiRequestInterruptedError) => void) | undefined;
+  const interrupted = new Promise<never>((_resolve, reject) => {
+    rejectOnAbort = reject;
+  });
+  const rejectForAbort = () => {
+    rejectOnAbort?.(
+      new CloudflareApiRequestInterruptedError(
+        deadlineReached ? 'timeout' : 'caller_abort',
+        options.label
+      )
+    );
+  };
+  requestController.signal.addEventListener('abort', rejectForAbort, { once: true });
+
+  const timeoutId = setTimeout(() => {
+    deadlineReached = true;
+    requestController.abort();
+  }, timeoutMs);
+
+  const request = (async (): Promise<CloudflareApiJsonResult<T>> => {
+    const response = await fetch(input, {
+      ...init,
+      signal: requestController.signal,
+    });
+    const jsonReader = (response as Response & { json?: () => Promise<unknown> }).json;
+    const data =
+      typeof jsonReader === 'function'
+        ? ((await jsonReader.call(response).catch(() => ({}))) as T)
+        : ({} as T);
+    return { response, data };
+  })();
+
+  try {
+    return await Promise.race([request, interrupted]);
+  } finally {
+    clearTimeout(timeoutId);
+    callerSignal?.removeEventListener('abort', abortFromCaller);
+    requestController.signal.removeEventListener('abort', rejectForAbort);
+  }
+}
+
+async function requestCloudflareApiJson<T>(
+  input: string | URL,
+  init: globalThis.RequestInit,
+  options: CloudflareApiJsonRequestOptions<T>
+): Promise<CloudflareApiJsonResult<T>> {
+  const canRetry = options.retryMode !== 'non_idempotent_mutation';
+  const maxAttempts = canRetry
+    ? Math.max(1, options.maxAttempts ?? CLOUDFLARE_API_READ_MAX_ATTEMPTS)
+    : 1;
+  let lastFailureReason = 'network failure';
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const result = await requestCloudflareApiJsonOnce<T>(input, init, options);
+      const retryableResponse =
+        isRetryableCloudflareHttpStatus(result.response.status) ||
+        options.isRetryableResponse?.(result.response, result.data) === true;
+      if (!retryableResponse || !canRetry || attempt >= maxAttempts) return result;
+
+      lastFailureReason = `HTTP ${result.response.status}`;
+      const delayMs = getCloudflareRetryDelayMs(result.response, attempt);
+      if (delayMs > 0 && process.env.NODE_ENV !== 'test') await sleep(delayMs);
+    } catch (error) {
+      if (
+        error instanceof CloudflareApiRequestInterruptedError &&
+        error.reason === 'caller_abort'
+      ) {
+        throw error;
+      }
+      if (!canRetry) throw error;
+      lastFailureReason =
+        error instanceof CloudflareApiRequestInterruptedError && error.reason === 'timeout'
+          ? 'request timeout'
+          : 'network failure';
+      if (attempt >= maxAttempts) {
+        throw new Error(
+          `${options.label} failed after ${maxAttempts} attempts (${lastFailureReason})`
+        );
+      }
+      if (process.env.NODE_ENV !== 'test') {
+        await sleep(Math.min(500 * 2 ** (attempt - 1), CLOUDFLARE_API_MAX_RETRY_DELAY_MS));
+      }
+    }
+  }
+
+  throw new Error(`${options.label} retry loop exited unexpectedly (${lastFailureReason})`);
+}
 
 // =============================================================================
 // Types
@@ -74,13 +313,23 @@ export interface QueueInfo {
 export interface R2BucketInfo {
   binding: string;
   name: string;
+  creationDate?: string;
+  ownershipMarkerKey?: string;
+  ownershipId?: string;
 }
 
-export type R2BucketProvisioningState = 'configured' | 'recorded_but_missing' | 'missing';
+export type R2BucketProvisioningState =
+  | 'configured'
+  | 'recorded_but_missing'
+  | 'ownership_unverified'
+  | 'identity_mismatch'
+  | 'missing';
 
 export interface R2BucketProvisioningStatus extends R2BucketInfo {
   recorded: boolean;
   exists: boolean;
+  exactOwnership: boolean;
+  providerIdentityMatches: boolean;
   configured: boolean;
   state: R2BucketProvisioningState;
 }
@@ -118,6 +367,32 @@ export interface D1MigrationEnvironmentStatus {
   databases: D1MigrationDatabaseStatus[];
 }
 
+export interface EnvironmentReleaseMigrationOptions {
+  productVersion: string;
+  allowDraft?: boolean;
+  backfillLegacyChecksums?: boolean;
+  /** Immutable provider IDs from the environment lock. Existing-environment callers must set all roles. */
+  databaseIdentifiers?: Partial<Record<D1MigrationDatabaseRole, string>>;
+  /** Do not borrow migrations from the process cwd when operating on a resolved source checkout. */
+  strictMigrationsRoot?: boolean;
+}
+
+function resolveEnvironmentMigrationDatabaseIdentifier(input: {
+  env: string;
+  role: D1MigrationDatabaseRole;
+  release?: EnvironmentReleaseMigrationOptions;
+}): string {
+  const pinnedIdentifiers = input.release?.databaseIdentifiers;
+  if (pinnedIdentifiers) {
+    const identifier = pinnedIdentifiers[input.role]?.trim();
+    if (!identifier) {
+      throw new Error(`fixed_migration_database_id_required:${input.role}`);
+    }
+    return identifier;
+  }
+  return getD1DatabaseName(input.env, `${input.role}-db`);
+}
+
 export interface ProvisionedResources {
   d1: D1DatabaseInfo[];
   kv: KVNamespaceInfo[];
@@ -142,35 +417,146 @@ export interface DatabaseProvisionConfig {
 
 export interface ProvisionOptions {
   env: string;
-  rootDir?: string;
   createD1?: boolean;
   createKV?: boolean;
   createQueues?: boolean;
   createR2?: boolean;
-  runMigrations?: boolean;
   onProgress?: (message: string) => void;
+  onResourceProvisioned: (resource: ProvisioningResourceCheckpoint) => Promise<void>;
+  /** Persist the immutable provider identity before visibility polling or later setup work. */
+  onResourceIdentified: (resource: ProvisioningResourceCheckpoint) => Promise<void>;
+  /**
+   * Per-resource write-ahead checkpoints from the exact durable provisioning intent. An empty
+   * record is a fresh attempt and authorizes adoption of no pre-existing provider resources.
+   */
+  provisioningIntentResources: Readonly<Record<string, ProvisioningResourceCheckpoint>>;
+  /** Persisted immediately after strict absence verification and before the provider mutation. */
+  onResourceCreateIssued: (resource: ProvisioningResourceIdentity) => Promise<void>;
+  /** Persist a definite non-commit so a later retry cannot adopt a raced deterministic name. */
+  onResourceCreateRejected: (resource: ProvisioningResourceIdentity) => Promise<void>;
   /** Database location configuration */
   databaseConfig?: DatabaseProvisionConfig;
-  /** Runtime profile defaults used for migration layout decisions */
-  config?: MigrationProfileConfig;
 }
 
-export interface MigrationProfileConfig {
-  profiles?: {
-    defaults?: {
-      storage?: string;
-    };
+interface ProvisioningCreateBehavior {
+  allowExisting?: boolean;
+  recordedState?: ProvisioningResourceState;
+  expectedExistingId?: string;
+  expectedCreationDate?: string;
+  ownershipMarkerKey?: string;
+  ownershipId?: string;
+  onCreateIssued?: () => Promise<void>;
+  onCreateRejected?: () => Promise<void>;
+  onProviderIdentityIdentified?: (
+    identity: Pick<
+      ProvisioningResourceCheckpoint,
+      'id' | 'creationDate' | 'ownershipMarkerKey' | 'ownershipId'
+    >
+  ) => Promise<void>;
+}
+
+export interface ProvisioningResourceAdoptionPolicy {
+  allowExisting: boolean;
+  recordedState?: ProvisioningResourceState;
+  expectedExistingId?: string;
+  expectedCreationDate?: string;
+  ownershipMarkerKey?: string;
+  ownershipId?: string;
+}
+
+export function getProvisioningResourceAdoptionPolicy(
+  resources: Readonly<Record<string, ProvisioningResourceCheckpoint>>,
+  resource: ProvisioningResourceIdentity
+): ProvisioningResourceAdoptionPolicy {
+  const checkpointKey = `${resource.kind}:${resource.binding}`;
+  const checkpoint = resources[checkpointKey];
+  if (
+    checkpoint &&
+    (checkpoint.kind !== resource.kind ||
+      checkpoint.binding !== resource.binding ||
+      checkpoint.name !== resource.name)
+  ) {
+    throw new Error(`provisioning_resource_identity_changed:${checkpointKey}`);
+  }
+  if (
+    checkpoint &&
+    checkpoint.kind !== 'r2' &&
+    (checkpoint.state === 'identified' || checkpoint.state === 'created') &&
+    !checkpoint.id
+  ) {
+    throw new Error(`provisioning_resource_identity_missing:${checkpointKey}`);
+  }
+  if (
+    checkpoint?.kind === 'r2' &&
+    (checkpoint.state === 'identified' || checkpoint.state === 'created') &&
+    (!checkpoint.creationDate || !checkpoint.ownershipMarkerKey || !checkpoint.ownershipId)
+  ) {
+    throw new Error(`provisioning_resource_identity_missing:${checkpointKey}`);
+  }
+  return {
+    // `create_issued` proves only intent to call Cloudflare. `identified` is the earliest state
+    // carrying immutable provider evidence and is therefore safe for exact reconciliation.
+    allowExisting: checkpoint?.state === 'identified' || checkpoint?.state === 'created',
+    recordedState: checkpoint?.state,
+    expectedExistingId: checkpoint?.id,
+    expectedCreationDate: checkpoint?.creationDate,
+    ownershipMarkerKey: checkpoint?.ownershipMarkerKey,
+    ownershipId: checkpoint?.ownershipId,
   };
 }
 
+function getProvisioningCreateBehavior(
+  options: Pick<
+    ProvisionOptions,
+    | 'provisioningIntentResources'
+    | 'onResourceCreateIssued'
+    | 'onResourceCreateRejected'
+    | 'onResourceIdentified'
+  >,
+  resource: ProvisioningResourceIdentity
+): ProvisioningCreateBehavior {
+  const policy = getProvisioningResourceAdoptionPolicy(
+    options.provisioningIntentResources,
+    resource
+  );
+  return {
+    ...policy,
+    onCreateIssued: () => options.onResourceCreateIssued(resource),
+    onCreateRejected: () => options.onResourceCreateRejected(resource),
+    onProviderIdentityIdentified: (providerIdentity) =>
+      options.onResourceIdentified({
+        ...resource,
+        ...providerIdentity,
+        state: 'identified',
+      }),
+  };
+}
+
+async function throwDefiniteProvisioningCreateFailure(
+  behavior: ProvisioningCreateBehavior,
+  providerError: unknown,
+  resourceDescription: string
+): Promise<never> {
+  try {
+    await behavior.onCreateRejected?.();
+  } catch (checkpointError) {
+    throw new AggregateError(
+      [providerError, checkpointError],
+      `${resourceDescription} creation failed and its rejection checkpoint could not be persisted`
+    );
+  }
+  throw providerError;
+}
+
 export const R2_BUCKETS = [
-  { binding: 'PUBLIC_ASSETS', suffix: 'public-assets' },
-  { binding: 'AVATARS', suffix: 'authrim-avatars' },
-  { binding: 'DIAGNOSTIC_LOGS', suffix: 'diagnostic-logs' },
-  { binding: 'AUDIT_ARCHIVE', suffix: 'audit-archive' },
-  { binding: 'IMPORT_ARTIFACTS', suffix: 'import-artifacts' },
-  { binding: 'EXPORT_ARTIFACTS', suffix: 'export-artifacts' },
-  { binding: 'SENSITIVE_DETAILS', suffix: 'sensitive-details' },
+  { binding: 'MIGRATION_RELEASES', suffix: 'migration-releases', baseline: true },
+  { binding: 'PLUGIN_BUNDLES', suffix: 'plugin-bundles', baseline: false },
+  { binding: 'PUBLIC_ASSETS', suffix: 'public-assets', baseline: false },
+  { binding: 'DIAGNOSTIC_LOGS', suffix: 'diagnostic-logs', baseline: false },
+  { binding: 'AUDIT_ARCHIVE', suffix: 'audit-archive', baseline: false },
+  { binding: 'IMPORT_ARTIFACTS', suffix: 'import-artifacts', baseline: false },
+  { binding: 'EXPORT_ARTIFACTS', suffix: 'export-artifacts', baseline: false },
+  { binding: 'SENSITIVE_DETAILS', suffix: 'sensitive-details', baseline: false },
 ] as const;
 
 export type R2BucketBinding = (typeof R2_BUCKETS)[number]['binding'];
@@ -183,8 +569,12 @@ export function getR2BucketName(env: string, binding: R2BucketBinding): string {
   return `${env}-${bucket.suffix}`;
 }
 
-export function getRequiredR2Buckets(env: string): R2BucketInfo[] {
-  return R2_BUCKETS.map((bucket) => ({
+export function getRequiredR2Buckets(
+  env: string,
+  options: { includeFeatureBuckets?: boolean } = {}
+): R2BucketInfo[] {
+  const includeFeatureBuckets = options.includeFeatureBuckets ?? true;
+  return R2_BUCKETS.filter((bucket) => bucket.baseline || includeFeatureBuckets).map((bucket) => ({
     binding: bucket.binding,
     name: `${env}-${bucket.suffix}`,
   }));
@@ -192,8 +582,8 @@ export function getRequiredR2Buckets(env: string): R2BucketInfo[] {
 
 export function buildR2BucketProvisioningStatus(
   env: string,
-  recordedBuckets: Record<string, { name: string }> | null | undefined,
-  cloudflareBucketNames: Iterable<string>
+  recordedBuckets: Record<string, Omit<R2BucketInfo, 'binding'>> | null | undefined,
+  cloudflareBuckets: Iterable<R2BucketProviderIdentity>
 ): {
   env: string;
   enabled: boolean;
@@ -202,24 +592,42 @@ export function buildR2BucketProvisioningStatus(
   missing: R2BucketProvisioningStatus[];
   buckets: R2BucketProvisioningStatus[];
 } {
-  const existingNames = new Set(cloudflareBucketNames);
+  const liveByName = new Map(
+    Array.from(cloudflareBuckets, (bucket) => [bucket.name, bucket] as const)
+  );
   const buckets = getRequiredR2Buckets(env).map((bucket) => {
-    const recordedName = recordedBuckets?.[bucket.binding]?.name;
+    const recordedBucket = recordedBuckets?.[bucket.binding];
+    const recordedName = recordedBucket?.name;
     const name = recordedName ?? bucket.name;
     const recorded = Boolean(recordedName);
-    const exists = existingNames.has(name);
-    const configured = recorded && exists;
-    const state: R2BucketProvisioningState = recorded
-      ? exists
-        ? 'configured'
-        : 'recorded_but_missing'
-      : 'missing';
+    const liveBucket = liveByName.get(name);
+    const exists = Boolean(liveBucket);
+    const exactOwnership = recordedBucket ? hasExactR2BucketOwnership(recordedBucket) : false;
+    const providerIdentityMatches = Boolean(
+      exactOwnership &&
+      liveBucket?.creationDate &&
+      liveBucket.creationDate === recordedBucket?.creationDate
+    );
+    const configured = recorded && exists && exactOwnership && providerIdentityMatches;
+    let state: R2BucketProvisioningState = 'missing';
+    if (recorded && !exists) {
+      state = 'recorded_but_missing';
+    } else if (recorded && !exactOwnership) {
+      state = 'ownership_unverified';
+    } else if (recorded && !providerIdentityMatches) {
+      state = 'identity_mismatch';
+    } else if (configured) {
+      state = 'configured';
+    }
 
     return {
       ...bucket,
+      ...recordedBucket,
       name,
       recorded,
       exists,
+      exactOwnership,
+      providerIdentityMatches,
       configured,
       state,
     };
@@ -235,12 +643,325 @@ export function buildR2BucketProvisioningStatus(
   };
 }
 
-export function shouldMirrorPiiMigrationsToCore(config?: MigrationProfileConfig | null): boolean {
-  return config?.profiles?.defaults?.storage === 'builtin:storage:single-db';
+export function hasExactR2BucketOwnership(recorded: {
+  creationDate?: string;
+  ownershipMarkerKey?: string;
+  ownershipId?: string;
+}): boolean {
+  return Boolean(recorded.creationDate && recorded.ownershipMarkerKey && recorded.ownershipId);
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientD1MigrationError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    isD1AuthenticationError(message) ||
+    isD1RateLimitError(message) ||
+    normalized.includes('file could not be uploaded') ||
+    normalized.includes('internalerror') ||
+    normalized.includes('please retry') ||
+    normalized.includes('we encountered an internal error') ||
+    normalized.includes('internal server error') ||
+    normalized.includes('bad gateway') ||
+    normalized.includes('service unavailable') ||
+    normalized.includes('gateway timeout') ||
+    normalized.includes('fetch failed') ||
+    normalized.includes('econnreset') ||
+    normalized.includes('etimedout') ||
+    normalized.includes('timed out')
+  );
+}
+
+function isAmbiguousCloudflareMutationFailure(message: string): boolean {
+  // Authentication code 10000 and explicit rate-limit responses reject the request before the
+  // provider mutation. Create callers retry these boundedly inside the same create_issued
+  // operation; exhaustion remains a definite rejection so the intent can be retried later.
+  if (isD1AuthenticationError(message) || isD1RateLimitError(message)) return false;
+  const normalized = message.toLowerCase();
+  const explicitNameCollision =
+    normalized.includes('already exists') ||
+    normalized.includes('already in use') ||
+    /\bname\s+conflict\b/u.test(normalized);
+  const labelledStatusCodes = [
+    ...normalized.matchAll(
+      /\b(?:http(?: status)?|status(?: code)?|error(?: code)?|code)\s*[:=]?\s*(\d{3,5})\b/gu
+    ),
+  ].map((match) => Number(match[1]));
+  const explicitHttpStatus = labelledStatusCodes.find((code) => code >= 400 && code <= 599);
+
+  // A provider can use 409 for transient state conflicts as well as deterministic name
+  // collisions. Treat it as a definite non-commit only when the response explicitly identifies
+  // a same-name collision, independent of the status/message ordering.
+  if (explicitNameCollision) return false;
+
+  if (explicitHttpStatus !== undefined) {
+    if (explicitHttpStatus === 409) return true;
+    return (
+      explicitHttpStatus === 408 ||
+      explicitHttpStatus === 425 ||
+      explicitHttpStatus === 429 ||
+      explicitHttpStatus >= 500
+    );
+  }
+
+  if (
+    /\b5\d{2}\s+(?:internal server error|bad gateway|service unavailable|gateway timeout)\b/u.test(
+      normalized
+    )
+  ) {
+    return true;
+  }
+
+  // Only an explicit local/provider validation or authorization rejection is known not to have
+  // committed. Process errors without a parsed non-retryable 4xx are ambiguous by default: undici,
+  // Node, proxies, and Wrangler use many different strings for a response lost after commit.
+  const deterministicClientFailure =
+    normalized.includes('permission denied') ||
+    /\bmissing\b.{0,40}\bpermission\b/u.test(normalized) ||
+    normalized.includes('not authorized') ||
+    normalized.includes('unauthorized') ||
+    normalized.includes('forbidden') ||
+    normalized.includes('invalid argument') ||
+    normalized.includes('invalid name') ||
+    normalized.includes('validation error') ||
+    normalized.includes('configuration error');
+
+  return !deterministicClientFailure;
+}
+
+interface ProviderResourceIdentity {
+  id: string;
+  name: string;
+}
+
+class ProviderResourceIdentityMismatchError extends Error {}
+
+function provisioningVisibilityMaxAttempts(): number {
+  return process.env.NODE_ENV === 'test' ? 3 : 6;
+}
+
+function provisioningVisibilityRetryDelayMs(attempt: number): number {
+  if (process.env.NODE_ENV === 'test') return 0;
+  return Math.min(500 * 2 ** (attempt - 1), 4_000);
+}
+
+async function waitForProviderResourceVisible<T extends ProviderResourceIdentity>(input: {
+  resourceDescription: string;
+  expectedId?: string;
+  createError?: unknown;
+  findExisting: () => Promise<T | null>;
+}): Promise<T> {
+  const maxAttempts = provisioningVisibilityMaxAttempts();
+  let lastInventoryError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const existing = await input.findExisting();
+      if (existing) {
+        if (input.expectedId && existing.id !== input.expectedId) {
+          throw new ProviderResourceIdentityMismatchError(
+            `${input.resourceDescription} does not match the provider create response`
+          );
+        }
+        return existing;
+      }
+    } catch (error) {
+      if (error instanceof ProviderResourceIdentityMismatchError) throw error;
+      lastInventoryError = error;
+    }
+
+    if (attempt < maxAttempts) {
+      const delayMs = provisioningVisibilityRetryDelayMs(attempt);
+      if (delayMs > 0) await sleep(delayMs);
+    }
+  }
+
+  const visibilityError = new Error(
+    `${input.resourceDescription} was not visible after creation (${maxAttempts} readback attempts)`
+  );
+  const causes = [input.createError, lastInventoryError, visibilityError].filter(
+    (cause): cause is NonNullable<typeof cause> => cause !== undefined
+  );
+  if (causes.length > 1) {
+    const createErrorDetail =
+      input.createError instanceof Error ? `: ${input.createError.message}` : '';
+    throw new AggregateError(
+      causes,
+      `${input.resourceDescription} creation outcome could not be verified${createErrorDetail}`
+    );
+  }
+  throw visibilityError;
+}
+
+function isD1AuthenticationError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes('authentication error') && normalized.includes('code: 10000');
+}
+
+interface WranglerOAuthRefreshState {
+  attempted: boolean;
+}
+
+const wranglerOAuthSessionRefreshes = new Map<string, Promise<void>>();
+
+function hasAuthoritativeWranglerApiToken(): boolean {
+  // Wrangler reads CLOUDFLARE_API_TOKEN. Authrim's resource-specific token variables are secrets
+  // installed into Control Workers; Wrangler does not use them as its own operator credential.
+  // Treating one of those unrelated variables as authoritative here would prevent a stale OAuth
+  // session from being refreshed even though that session is what Wrangler actually used.
+  return Boolean(process.env.CLOUDFLARE_API_TOKEN?.trim());
+}
+
+async function refreshWranglerOAuthAfterCode10000(
+  message: string,
+  state: WranglerOAuthRefreshState
+): Promise<boolean> {
+  if (!isD1AuthenticationError(message)) {
+    return false;
+  }
+  return refreshWranglerOAuthSession(message, state);
+}
+
+function pinnedWranglerOAuthAccountId(message: string): string {
+  const configuredAccountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim().toLowerCase();
+  const messageAccountIds = Array.from(
+    new Set(
+      [...message.matchAll(/\/accounts\/([a-f0-9]{32})(?:\/|\?|\b)/giu)].map((match) =>
+        match[1].toLowerCase()
+      )
+    )
+  );
+  if (messageAccountIds.length > 1) {
+    throw new Error('cloudflare_oauth_account_id_ambiguous_before_refresh');
+  }
+  const messageAccountId = messageAccountIds[0];
+  if (configuredAccountId && messageAccountId && configuredAccountId !== messageAccountId) {
+    throw new Error('cloudflare_oauth_account_id_mismatch_before_refresh');
+  }
+  const pinnedAccountId = configuredAccountId || messageAccountId;
+  if (!pinnedAccountId || !/^[a-f0-9]{32}$/u.test(pinnedAccountId)) {
+    throw new Error('cloudflare_oauth_account_id_required_before_refresh');
+  }
+  return pinnedAccountId;
+}
+
+async function refreshWranglerOAuthSession(
+  message: string,
+  state: WranglerOAuthRefreshState
+): Promise<boolean> {
+  if (state.attempted || hasAuthoritativeWranglerApiToken()) return false;
+  const pinnedAccountId = pinnedWranglerOAuthAccountId(message);
+  state.attempted = true;
+
+  const inFlight = wranglerOAuthSessionRefreshes.get(pinnedAccountId);
+  if (inFlight) {
+    await inFlight;
+    return true;
+  }
+
+  const refresh = (async () => {
+    const { stdout, stderr } = await wrangler(['whoami'], { timeout: 30_000 });
+    assertCloudflareOAuthRefreshAccount(pinnedAccountId, `${stdout}\n${stderr}`);
+  })();
+  wranglerOAuthSessionRefreshes.set(pinnedAccountId, refresh);
+  try {
+    await refresh;
+  } finally {
+    if (wranglerOAuthSessionRefreshes.get(pinnedAccountId) === refresh) {
+      wranglerOAuthSessionRefreshes.delete(pinnedAccountId);
+    }
+  }
+  return true;
+}
+
+async function wranglerCreateWithDefiniteRejectionRetry(
+  args: string[]
+): Promise<{ stdout: string; stderr: string }> {
+  let lastError: unknown;
+  const oauthRefresh: WranglerOAuthRefreshState = { attempted: false };
+  for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await wrangler(args);
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        (!isD1AuthenticationError(message) && !isD1RateLimitError(message)) ||
+        attempt >= D1_MIGRATION_AUTH_MAX_ATTEMPTS
+      ) {
+        throw error;
+      }
+      await refreshWranglerOAuthAfterCode10000(message, oauthRefresh);
+      const delayMs = d1MigrationRetryDelayMs(attempt);
+      if (delayMs > 0) await sleep(delayMs);
+    }
+  }
+  throw lastError;
+}
+
+function isD1RateLimitError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    /\b429\b/u.test(normalized) ||
+    /\bcode:\s*971\b/u.test(normalized) ||
+    normalized.includes('rate limit') ||
+    normalized.includes('too many requests') ||
+    normalized.includes('throttl')
+  );
+}
+
+function d1MigrationRetryDelayMs(attempt: number): number {
+  if (process.env.NODE_ENV === 'test') {
+    return 0;
+  }
+  return Math.min(2_000 * 2 ** (attempt - 1), 30_000);
+}
+
+function isExpectedMigrationTrackingColumnError(message: string): boolean {
+  return /duplicate column name:\s*(checksum|execution_time_ms|setup_version|tool_version)\b/iu.test(
+    message
+  );
+}
+
+async function executeD1PreparationCommand(
+  dbName: string,
+  sql: string,
+  onProgress?: (message: string) => void
+): Promise<{ success: boolean; error?: string }> {
+  const oauthRefresh: WranglerOAuthRefreshState = { attempted: false };
+  for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
+    try {
+      await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const maxAttempts = isD1AuthenticationError(message)
+        ? D1_MIGRATION_AUTH_MAX_ATTEMPTS
+        : D1_MIGRATION_MAX_ATTEMPTS;
+      const canRetry = attempt < maxAttempts && isTransientD1MigrationError(message);
+      if (!canRetry) {
+        return { success: false, error: message };
+      }
+
+      await refreshWranglerOAuthAfterCode10000(message, oauthRefresh);
+
+      const delayMs = d1MigrationRetryDelayMs(attempt);
+      const failureKind = isD1AuthenticationError(message)
+        ? 'Transient Cloudflare D1 authentication failure'
+        : 'Transient Cloudflare D1 preparation failure';
+      onProgress?.(
+        `  ⚠️ ${failureKind} while preparing migration tracking for ${dbName} ` +
+          `(attempt ${attempt}/${maxAttempts}); retrying in ${Math.round(delayMs / 1000)}s`
+      );
+      if (delayMs > 0) {
+        await sleep(delayMs);
+      }
+    }
+  }
+  return { success: false, error: 'D1 migration preparation retry loop exited unexpectedly' };
 }
 
 // =============================================================================
@@ -296,20 +1017,51 @@ export async function isWranglerInstalled(): Promise<boolean> {
   }
 }
 
+function extractWranglerAccountIds(output: string): string[] {
+  return Array.from(
+    new Set([...output.matchAll(/\b[a-f0-9]{32}\b/giu)].map((match) => match[0].toLowerCase()))
+  );
+}
+
 /**
  * Check if user is authenticated with Cloudflare
  */
 export async function checkAuth(): Promise<CloudflareAuth> {
+  // An explicitly supplied API token is the operator-selected credential for this process.
+  // Do not let an unrelated cached Wrangler OAuth session silently select a different account.
+  if (process.env.CLOUDFLARE_API_TOKEN?.trim()) {
+    const tokenAuth = await (async (): Promise<CloudflareAuth | null> => {
+      const token = process.env.CLOUDFLARE_API_TOKEN?.trim();
+      if (
+        !token ||
+        !(await verifyCloudflareApiToken(
+          token,
+          process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || undefined
+        ))
+      ) {
+        return null;
+      }
+      return {
+        isLoggedIn: true,
+        accountId: process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || undefined,
+        email: 'api-token',
+      };
+    })();
+    return tokenAuth ?? { isLoggedIn: false };
+  }
+
   const apiTokenAuth = async (): Promise<CloudflareAuth | null> => {
-    const envToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
-    const tokenInfo = envToken
-      ? ({ token: envToken, source: 'env' } satisfies CloudflareApiToken)
-      : await getCloudflareApiToken();
+    const tokenInfo = await getCloudflareApiToken();
     if (!tokenInfo?.token) {
       return null;
     }
 
-    if (!(await verifyCloudflareApiToken(tokenInfo.token))) {
+    if (
+      !(await verifyCloudflareApiToken(
+        tokenInfo.token,
+        process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || undefined
+      ))
+    ) {
       return null;
     }
 
@@ -344,8 +1096,9 @@ export async function checkAuth(): Promise<CloudflareAuth> {
 
     // Parse output to extract account info
     const emailMatch = stdout.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
-    const accountMatch = stdout.match(/([a-f0-9]{32})/);
     const envAccountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || undefined;
+    const accountIds = extractWranglerAccountIds(`${stdout}\n${stderr}`);
+    const unambiguousWranglerAccountId = accountIds.length === 1 ? accountIds[0] : undefined;
 
     // Consider logged in if: no negative patterns AND (has email OR has logged in message)
     const isLoggedIn = !isNotLoggedIn && (hasEmail || hasLoggedInMessage);
@@ -359,7 +1112,9 @@ export async function checkAuth(): Promise<CloudflareAuth> {
     return {
       isLoggedIn,
       email: emailMatch?.[1],
-      accountId: accountMatch?.[1] ?? envAccountId,
+      // An explicit account is the operator's selection. Without one, never silently choose the
+      // first row from a Wrangler session that can access multiple Cloudflare accounts.
+      accountId: envAccountId ?? unambiguousWranglerAccountId,
     };
   } catch {
     const tokenAuth = await apiTokenAuth();
@@ -370,23 +1125,31 @@ export async function checkAuth(): Promise<CloudflareAuth> {
   }
 }
 
-async function verifyCloudflareApiToken(token: string): Promise<boolean> {
-  try {
-    const response = await fetch('https://api.cloudflare.com/client/v4/user/tokens/verify', {
-      headers: {
-        Authorization: `Bearer ${token}`,
+async function verifyCloudflareApiToken(token: string, accountId?: string): Promise<boolean> {
+  const verifyAt = async (url: string): Promise<boolean> => {
+    const { response, data } = await requestCloudflareApiJson<{ success?: boolean }>(
+      url,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       },
-    });
-    if (!response.ok) {
-      return false;
-    }
+      { label: 'Cloudflare API token verification', retryMode: 'read' }
+    );
+    return response.ok && data.success !== false;
+  };
 
-    try {
-      const data = (await response.json()) as { success?: boolean };
-      return data.success !== false;
-    } catch {
-      return true;
-    }
+  try {
+    if (await verifyAt('https://api.cloudflare.com/client/v4/user/tokens/verify')) return true;
+  } catch {
+    // An account-owned token is expected to be rejected by the user-token verification route.
+    // Continue only when the operator also pinned the exact account authority below.
+  }
+  if (!accountId || !/^[a-f0-9]{32}$/iu.test(accountId)) return false;
+  try {
+    return await verifyAt(
+      `https://api.cloudflare.com/client/v4/accounts/${accountId}/tokens/verify`
+    );
   } catch {
     return false;
   }
@@ -399,11 +1162,15 @@ export async function getAccountId(): Promise<string | null> {
   const auth = await checkAuth();
   if (auth.accountId) return auth.accountId;
 
+  // With an explicit API token, a cached OAuth account is not evidence for the token's account.
+  // Require CLOUDFLARE_ACCOUNT_ID instead of crossing credential/account authorities.
+  if (process.env.CLOUDFLARE_API_TOKEN?.trim()) return null;
+
   // Try to get from wrangler.toml or env
   try {
     const { stdout } = await wrangler(['whoami', '--verbose']);
-    const match = stdout.match(/([a-f0-9]{32})/);
-    return match?.[1] || null;
+    const accountIds = extractWranglerAccountIds(stdout);
+    return accountIds.length === 1 ? accountIds[0] : null;
   } catch {
     return null;
   }
@@ -418,12 +1185,57 @@ export interface CloudflareApiToken {
   source: 'oauth' | 'env';
 }
 
+function parseWranglerAuthTokenOutput(stdout: string): CloudflareApiToken | null {
+  try {
+    const value = JSON.parse(stdout.trim()) as unknown;
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const candidate = value as { type?: unknown; token?: unknown };
+    if (
+      (candidate.type !== 'oauth' && candidate.type !== 'api_token') ||
+      typeof candidate.token !== 'string'
+    ) {
+      return null;
+    }
+    const token = candidate.token.trim();
+    if (token.length === 0 || token.length > 8_192) return null;
+    return { token, source: candidate.type === 'oauth' ? 'oauth' : 'env' };
+  } catch {
+    return null;
+  }
+}
+
+async function getWranglerAuthToken(): Promise<CloudflareApiToken | null> {
+  try {
+    // Use Wrangler's supported credential resolver so Keychain-backed and named-profile OAuth
+    // sessions work. Never route this command through the generic wrapper: its failure text can
+    // include stdout, which is secret material for `auth token`.
+    const result = await execa('npx', ['wrangler', 'auth', 'token', '--json'], {
+      env: { ...process.env },
+      reject: false,
+      timeout: 30_000,
+      maxBuffer: 64 * 1024,
+    });
+    return result.exitCode === 0 ? parseWranglerAuthTokenOutput(result.stdout) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Get Cloudflare API token from wrangler config or environment variable.
- * Searches platform-specific paths for OAuth token, falls back to CLOUDFLARE_API_TOKEN env var.
+ * Get the explicit Cloudflare API token or the Wrangler OAuth credential.
+ * An operator-supplied environment token is authoritative and must not be shadowed by an
+ * unrelated or expired local OAuth session.
  */
 export async function getCloudflareApiToken(): Promise<CloudflareApiToken | null> {
   try {
+    const apiToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
+    if (apiToken) {
+      return { token: apiToken, source: 'env' };
+    }
+
+    const wranglerToken = await getWranglerAuthToken();
+    if (wranglerToken) return wranglerToken;
+
     const { readFile } = await import('node:fs/promises');
     const { homedir, platform } = await import('node:os');
     const { join } = await import('node:path');
@@ -467,12 +1279,6 @@ export async function getCloudflareApiToken(): Promise<CloudflareApiToken | null
       }
     }
 
-    // Fallback to CLOUDFLARE_API_TOKEN environment variable
-    const apiToken = process.env.CLOUDFLARE_API_TOKEN;
-    if (apiToken) {
-      return { token: apiToken, source: 'env' };
-    }
-
     return null;
   } catch {
     return null;
@@ -491,18 +1297,20 @@ export async function getWorkersSubdomain(): Promise<string | null> {
     const tokenInfo = await getCloudflareApiToken();
     if (!tokenInfo) return null;
 
-    const response = await fetch(
+    const { response, data } = await requestCloudflareApiJson<{
+      result?: { subdomain?: string };
+      success?: boolean;
+    }>(
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/subdomain`,
       {
         headers: {
           Authorization: `Bearer ${tokenInfo.token}`,
         },
-      }
+      },
+      { label: 'Cloudflare Workers subdomain lookup', retryMode: 'read' }
     );
 
     if (!response.ok) return null;
-
-    const data = (await response.json()) as { result?: { subdomain?: string }; success?: boolean };
     return data.result?.subdomain || null;
   } catch {
     return null;
@@ -635,30 +1443,34 @@ export async function getSetupCapabilityDiagnostics(
   baseDiagnostics.tokenAvailable = true;
 
   try {
-    const zoneResponse = await fetch('https://api.cloudflare.com/client/v4/zones?per_page=1', {
-      headers: {
-        Authorization: `Bearer ${tokenInfo.token}`,
+    const { response: zoneResponse, data: zoneData } = await requestCloudflareApiJson<{
+      success?: boolean;
+      result?: Array<{ id?: string }>;
+    }>(
+      'https://api.cloudflare.com/client/v4/zones?per_page=1',
+      {
+        headers: {
+          Authorization: `Bearer ${tokenInfo.token}`,
+        },
       },
-    });
+      { label: 'Cloudflare zone capability lookup', retryMode: 'read' }
+    );
 
     if (zoneResponse.ok) {
-      const zoneData = (await zoneResponse.json()) as {
-        success?: boolean;
-        result?: Array<{ id?: string }>;
-      };
       if (zoneData.success) {
         baseDiagnostics.zoneReadAvailable = true;
         baseDiagnostics.accessibleZoneCount = zoneData.result?.length ?? 0;
 
         const sampleZoneId = zoneData.result?.[0]?.id;
         if (sampleZoneId) {
-          const dnsResponse = await fetch(
+          const { response: dnsResponse } = await requestCloudflareApiJson<Record<string, unknown>>(
             `https://api.cloudflare.com/client/v4/zones/${sampleZoneId}/dns_records?per_page=1`,
             {
               headers: {
                 Authorization: `Bearer ${tokenInfo.token}`,
               },
-            }
+            },
+            { label: 'Cloudflare DNS capability lookup', retryMode: 'read' }
           );
           baseDiagnostics.dnsReadAvailable = dnsResponse.ok;
         }
@@ -670,13 +1482,14 @@ export async function getSetupCapabilityDiagnostics(
 
   if (auth.accountId) {
     try {
-      const workersResponse = await fetch(
+      const { response: workersResponse } = await requestCloudflareApiJson<Record<string, unknown>>(
         `https://api.cloudflare.com/client/v4/accounts/${auth.accountId}/workers/scripts`,
         {
           headers: {
             Authorization: `Bearer ${tokenInfo.token}`,
           },
-        }
+        },
+        { label: 'Cloudflare Workers capability lookup', retryMode: 'read' }
       );
       baseDiagnostics.uiWorkersApiAvailable = workersResponse.ok;
     } catch {
@@ -1291,13 +2104,18 @@ export async function checkZoneExists(domain: string): Promise<ZoneCheckResult> 
       });
     }
 
-    const response = await fetch(
+    const { response, data } = await requestCloudflareApiJson<{
+      success: boolean;
+      result: Array<{ id: string; name: string; status: string }>;
+      errors?: CloudflareApiMessage[];
+    }>(
       `https://api.cloudflare.com/client/v4/zones?name=${encodeURIComponent(zoneName)}`,
       {
         headers: {
           Authorization: `Bearer ${tokenInfo.token}`,
         },
-      }
+      },
+      { label: 'Cloudflare zone lookup', retryMode: 'read' }
     );
 
     if (!response.ok) {
@@ -1312,12 +2130,6 @@ export async function checkZoneExists(domain: string): Promise<ZoneCheckResult> 
         error: `Cloudflare API returned ${response.status}`,
       });
     }
-
-    const data = (await response.json()) as {
-      success: boolean;
-      result: Array<{ id: string; name: string; status: string }>;
-      errors?: CloudflareApiMessage[];
-    };
 
     if (!data.success) {
       const apiMessage = data.errors?.find((item) => item.message)?.message;
@@ -1352,6 +2164,12 @@ export interface EnsureWildcardDnsResult {
   name: string;
   target: string;
   verificationLimited?: boolean;
+  ownership?: DnsOwnershipEntry;
+}
+
+export interface DnsOwnershipPersistence {
+  get(role: DnsOwnershipRole): DnsOwnershipEntry | undefined;
+  persist(entry: DnsOwnershipEntry): Promise<void>;
 }
 
 interface CloudflareApiMessage {
@@ -1367,6 +2185,10 @@ interface CloudflareDnsRecordResponse {
     name: string;
     content: string;
     proxied?: boolean;
+    ttl?: number;
+    comment?: string | null;
+    tags?: string[];
+    settings?: Record<string, string | number | boolean | null>;
   }>;
   errors?: CloudflareApiMessage[];
   messages?: CloudflareApiMessage[];
@@ -1381,10 +2203,39 @@ interface CloudflareDnsMutationResponse {
 
 interface CloudflareR2ObjectListResponse {
   success?: boolean;
-  result?: Array<{ key?: string }>;
+  result?: Array<{
+    key?: string;
+    size?: number;
+    last_modified?: string;
+    etag?: string;
+  }>;
   result_info?: {
     cursor?: string;
     is_truncated?: boolean;
+  };
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}
+
+interface CloudflareR2BucketListResponse {
+  success?: boolean;
+  result?: {
+    buckets?: unknown;
+  };
+  result_info?: {
+    cursor?: unknown;
+    per_page?: unknown;
+  };
+  errors?: CloudflareApiMessage[];
+  messages?: CloudflareApiMessage[];
+}
+
+interface CloudflareR2BucketGetResponse {
+  success?: boolean;
+  result?: {
+    name?: unknown;
+    creation_date?: unknown;
+    creationDate?: unknown;
   };
   errors?: CloudflareApiMessage[];
   messages?: CloudflareApiMessage[];
@@ -1408,6 +2259,170 @@ function hasCloudflareAlreadyExistsError(payload: {
   );
 }
 
+const DNS_API_REQUEST_TIMEOUT_MS = process.env.NODE_ENV === 'test' ? 100 : 30_000;
+const DNS_API_READ_ATTEMPTS = process.env.NODE_ENV === 'test' ? 3 : 5;
+
+interface DnsRecordReadResult {
+  forbidden: boolean;
+  records: NonNullable<CloudflareDnsRecordResponse['result']>;
+}
+
+function isRetryableCloudflareHttpStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+async function readDnsRecordsExact(options: {
+  zoneId: string;
+  recordName: string;
+  token: string;
+}): Promise<DnsRecordReadResult> {
+  const url =
+    `https://api.cloudflare.com/client/v4/zones/${options.zoneId}/dns_records?name=` +
+    encodeURIComponent(options.recordName);
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= DNS_API_READ_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${options.token}` },
+        signal: AbortSignal.timeout(DNS_API_REQUEST_TIMEOUT_MS),
+      });
+      if (response.status === 403) return { forbidden: true, records: [] };
+      if (!response.ok) {
+        const error = new Error(`Failed to query DNS records (${response.status})`);
+        if (isRetryableCloudflareHttpStatus(response.status) && attempt < DNS_API_READ_ATTEMPTS) {
+          lastError = error;
+          continue;
+        }
+        throw error;
+      }
+
+      const data = (await response.json().catch(() => null)) as CloudflareDnsRecordResponse | null;
+      if (!data || data.success !== true || !Array.isArray(data.result)) {
+        throw new Error('Cloudflare DNS query returned an invalid or unsuccessful response');
+      }
+      return { forbidden: false, records: data.result };
+    } catch (error) {
+      lastError = error;
+      if (attempt >= DNS_API_READ_ATTEMPTS) throw error;
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('Cloudflare DNS query retry loop exited unexpectedly');
+}
+
+function findDesiredProxiedCname(
+  records: NonNullable<CloudflareDnsRecordResponse['result']>,
+  recordName: string,
+  recordTarget: string,
+  marker?: string
+) {
+  return records.find(
+    (record) =>
+      record.type === 'CNAME' &&
+      record.name === recordName &&
+      record.content === recordTarget &&
+      record.proxied === true &&
+      (marker === undefined || record.comment === marker)
+  );
+}
+
+function toDnsRestoreSnapshot(
+  record: NonNullable<CloudflareDnsRecordResponse['result']>[number]
+): DnsRecordRestoreSnapshot {
+  if (record.type !== 'CNAME') {
+    throw new Error(`dns_record_type_not_safe_to_replace:${record.name}:${record.type}`);
+  }
+  return {
+    id: record.id,
+    type: 'CNAME',
+    name: record.name,
+    content: record.content,
+    ...(record.proxied === undefined ? {} : { proxied: record.proxied }),
+    ...(record.ttl === undefined ? {} : { ttl: record.ttl }),
+    ...(record.comment === undefined ? {} : { comment: record.comment }),
+    ...(record.tags === undefined ? {} : { tags: record.tags }),
+    ...(record.settings === undefined ? {} : { settings: record.settings }),
+  };
+}
+
+function dnsSnapshotMatches(
+  record: NonNullable<CloudflareDnsRecordResponse['result']>[number],
+  snapshot: DnsRecordRestoreSnapshot
+): boolean {
+  return (
+    record.id === snapshot.id &&
+    record.type === snapshot.type &&
+    record.name === snapshot.name &&
+    record.content === snapshot.content &&
+    record.proxied === snapshot.proxied &&
+    record.ttl === snapshot.ttl &&
+    (record.comment ?? null) === (snapshot.comment ?? null) &&
+    JSON.stringify(record.tags ?? []) === JSON.stringify(snapshot.tags ?? []) &&
+    JSON.stringify(Object.entries(record.settings ?? {}).sort()) ===
+      JSON.stringify(Object.entries(snapshot.settings ?? {}).sort())
+  );
+}
+
+function assertDnsOwnershipScope(
+  ownership: DnsOwnershipEntry,
+  options: {
+    role: DnsOwnershipRole;
+    zoneId: string;
+    recordName: string;
+    recordTarget: string;
+  }
+): void {
+  if (
+    ownership.role !== options.role ||
+    ownership.zoneId !== options.zoneId ||
+    ownership.name !== options.recordName ||
+    ownership.target !== options.recordTarget
+  ) {
+    throw new Error(`dns_ownership_scope_mismatch:${options.role}`);
+  }
+}
+
+function createDnsOwnershipMarker(operationId: string): string {
+  return `Authrim Setup managed DNS ownership ${operationId}`;
+}
+
+async function waitForDesiredProxiedCname(options: {
+  zoneId: string;
+  recordName: string;
+  recordTarget: string;
+  token: string;
+  marker?: string;
+}) {
+  let lastRecords: NonNullable<CloudflareDnsRecordResponse['result']> = [];
+  for (let attempt = 1; attempt <= DNS_API_READ_ATTEMPTS; attempt++) {
+    const readback = await readDnsRecordsExact(options);
+    if (readback.forbidden) {
+      throw new Error(`DNS read permission was lost while verifying ${options.recordName}`);
+    }
+    lastRecords = readback.records;
+    const desired = findDesiredProxiedCname(
+      readback.records,
+      options.recordName,
+      options.recordTarget,
+      options.marker
+    );
+    if (desired) return desired;
+    if (attempt < DNS_API_READ_ATTEMPTS && process.env.NODE_ENV !== 'test') {
+      await sleep(Math.min(500 * 2 ** (attempt - 1), 4_000));
+    }
+  }
+
+  const conflicting = lastRecords.some((record) => record.name === options.recordName);
+  throw new Error(
+    conflicting
+      ? `DNS record ${options.recordName} does not match the required proxied CNAME target`
+      : `DNS record ${options.recordName} was not visible after the Cloudflare mutation`
+  );
+}
+
 /**
  * Ensure a proxied wildcard DNS record exists for tenant subdomains.
  *
@@ -1416,44 +2431,52 @@ function hasCloudflareAlreadyExistsError(payload: {
  */
 export async function ensureWildcardDnsRecord(
   baseDomain: string,
-  zoneId?: string | null
+  zoneId?: string | null,
+  ownership?: DnsOwnershipPersistence
 ): Promise<EnsureWildcardDnsResult> {
   return ensureProxiedCnameDnsRecord({
+    role: 'tenant_wildcard',
     recordName: `*.${baseDomain}`,
     recordTarget: baseDomain,
     zoneLookupName: baseDomain,
     zoneId,
     permissionErrorName: 'wildcard DNS record',
+    ownership,
   });
 }
 
 export async function ensureApiBaseDnsRecord(
   baseDomain: string,
   targetHostname: string,
-  zoneId?: string | null
+  zoneId?: string | null,
+  ownership?: DnsOwnershipPersistence
 ): Promise<EnsureWildcardDnsResult> {
   return ensureProxiedCnameDnsRecord({
+    role: 'api_base',
     recordName: baseDomain,
     recordTarget: targetHostname,
     zoneLookupName: baseDomain,
     zoneId,
     permissionErrorName: 'API base DNS record',
+    ownership,
   });
 }
 
 async function ensureProxiedCnameDnsRecord(options: {
+  role: DnsOwnershipRole;
   recordName: string;
   recordTarget: string;
   zoneLookupName: string;
   zoneId?: string | null;
   permissionErrorName: string;
+  ownership?: DnsOwnershipPersistence;
 }): Promise<EnsureWildcardDnsResult> {
   const tokenInfo = await getCloudflareApiToken();
   if (!tokenInfo) {
     throw new Error('Not logged in to Cloudflare (run: wrangler login)');
   }
 
-  const { recordName, recordTarget, zoneLookupName, zoneId, permissionErrorName } = options;
+  const { role, recordName, recordTarget, zoneLookupName, zoneId, permissionErrorName } = options;
 
   let resolvedZoneId = zoneId || undefined;
   if (!resolvedZoneId) {
@@ -1473,126 +2496,353 @@ async function ensureProxiedCnameDnsRecord(options: {
     resolvedZoneId = zoneResult.zone.id;
   }
 
-  const recordResponse = await fetch(
-    `https://api.cloudflare.com/client/v4/zones/${resolvedZoneId}/dns_records?name=${encodeURIComponent(recordName)}`,
-    {
-      headers: {
-        Authorization: `Bearer ${tokenInfo.token}`,
-      },
-    }
-  );
+  const persistedOwnership = options.ownership?.get(role);
+  if (persistedOwnership) {
+    assertDnsOwnershipScope(persistedOwnership, {
+      role,
+      zoneId: resolvedZoneId,
+      recordName,
+      recordTarget,
+    });
+  }
 
-  const payload = {
+  const persistManagedOwnership = async (
+    ownership: DnsOwnershipEntry,
+    recordId: string
+  ): Promise<DnsOwnershipEntry> => {
+    const managed: DnsOwnershipEntry = {
+      ...ownership,
+      state: 'managed',
+      recordId,
+      updatedAt: new Date().toISOString(),
+    };
+    await options.ownership?.persist(managed);
+    return managed;
+  };
+
+  let mutationOwnership = persistedOwnership;
+  const buildPayload = (marker?: string) => ({
     type: 'CNAME',
     name: recordName,
     content: recordTarget,
     proxied: true,
     ttl: 1,
-  };
+    ...(marker ? { comment: marker } : {}),
+  });
 
   const createWildcardRecord = async (
-    assumeExistingOnForbidden: boolean
+    dnsReadForbidden: boolean
   ): Promise<EnsureWildcardDnsResult> => {
-    const createResponse = await fetch(
-      `https://api.cloudflare.com/client/v4/zones/${resolvedZoneId}/dns_records`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${tokenInfo.token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
+    if (options.ownership && dnsReadForbidden) {
+      return {
+        created: false,
+        updated: false,
+        name: recordName,
+        target: recordTarget,
+        verificationLimited: true,
+      };
+    }
+    if (options.ownership && !mutationOwnership) {
+      const operationId = randomUUID();
+      mutationOwnership = {
+        role,
+        state: 'mutation_pending',
+        action: 'created',
+        operationId,
+        zoneId: resolvedZoneId,
+        name: recordName,
+        target: recordTarget,
+        marker: createDnsOwnershipMarker(operationId),
+        previous: null,
+        updatedAt: new Date().toISOString(),
+      };
+      await options.ownership.persist(mutationOwnership);
+    }
+    const marker = mutationOwnership?.marker;
+    const payload = buildPayload(marker);
+    let createResponse: Response | null = null;
+    let createdData: CloudflareDnsMutationResponse = {};
+    let mutationError: unknown;
+    try {
+      createResponse = await fetch(
+        `https://api.cloudflare.com/client/v4/zones/${resolvedZoneId}/dns_records`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${tokenInfo.token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(DNS_API_REQUEST_TIMEOUT_MS),
+        }
+      );
+      createdData = (await createResponse
+        .json()
+        .catch(() => ({}))) as CloudflareDnsMutationResponse;
+    } catch (error) {
+      mutationError = error;
+    }
+
+    const conflict =
+      createResponse !== null &&
+      (createResponse.status === 409 || hasCloudflareAlreadyExistsError(createdData));
+    const mutationSucceeded =
+      createResponse !== null && createResponse.ok && createdData.success !== false;
+
+    if (dnsReadForbidden) {
+      if (mutationSucceeded) {
+        return {
+          created: true,
+          updated: false,
+          recordId: createdData.result?.id,
+          name: recordName,
+          target: recordTarget,
+          verificationLimited: true,
+        };
       }
-    );
-
-    const createdData = (await createResponse
-      .json()
-      .catch(() => ({}))) as CloudflareDnsMutationResponse;
-
-    if (!createResponse.ok || createdData.success === false) {
-      if (hasCloudflareAlreadyExistsError(createdData) || createResponse.status === 409) {
+      if (conflict || createResponse?.status === 403) {
         return {
           created: false,
           updated: false,
           name: recordName,
           target: recordTarget,
+          verificationLimited: true,
         };
       }
-
-      if (createResponse.status === 403) {
-        if (assumeExistingOnForbidden) {
-          return {
-            created: false,
-            updated: false,
-            name: recordName,
-            target: recordTarget,
-            verificationLimited: true,
-          };
-        }
-        throw new Error(`Token lacks dns:edit permission to create ${permissionErrorName}`);
+      if (mutationError) {
+        throw mutationError instanceof Error
+          ? mutationError
+          : new Error(describeInventoryError(mutationError, 'unknown DNS mutation error'));
       }
-
-      throw new Error(`Failed to create ${permissionErrorName} (${createResponse.status})`);
+      throw new Error(`Failed to create ${permissionErrorName} (${createResponse?.status ?? 0})`);
     }
 
-    return {
-      created: true,
-      updated: false,
-      recordId: createdData.result?.id,
-      name: recordName,
-      target: recordTarget,
-    };
+    if (createResponse?.status === 403) {
+      throw new Error(`Token lacks dns:edit permission to create ${permissionErrorName}`);
+    }
+
+    try {
+      const verified = await waitForDesiredProxiedCname({
+        zoneId: resolvedZoneId,
+        recordName,
+        recordTarget,
+        token: tokenInfo.token,
+        marker,
+      });
+      const managedOwnership = mutationOwnership
+        ? await persistManagedOwnership(mutationOwnership, verified.id)
+        : undefined;
+      return {
+        created: mutationOwnership?.action === 'created' || (mutationSucceeded && !conflict),
+        updated: false,
+        recordId: verified.id,
+        name: recordName,
+        target: recordTarget,
+        ownership: managedOwnership,
+      };
+    } catch (verificationError) {
+      if (mutationError) {
+        throw new AggregateError(
+          [mutationError, verificationError],
+          `Failed to verify ${permissionErrorName} after an ambiguous create`
+        );
+      }
+      if (!mutationSucceeded && !conflict) {
+        throw new AggregateError(
+          [
+            new Error(
+              `Failed to create ${permissionErrorName} (${createResponse?.status ?? 0})${formatCloudflareApiMessages(createdData) ? `: ${formatCloudflareApiMessages(createdData)}` : ''}`
+            ),
+            verificationError,
+          ],
+          `Failed to create and verify ${permissionErrorName}`
+        );
+      }
+      throw verificationError;
+    }
   };
 
-  if (!recordResponse.ok) {
-    if (recordResponse.status === 403) {
-      return createWildcardRecord(true);
+  const initialRead = await readDnsRecordsExact({
+    zoneId: resolvedZoneId,
+    recordName,
+    token: tokenInfo.token,
+  });
+  if (initialRead.forbidden) return createWildcardRecord(true);
+
+  const exactNameRecords = initialRead.records.filter((record) => record.name === recordName);
+  if (exactNameRecords.length > 1) {
+    throw new Error(`dns_record_inventory_ambiguous:${recordName}`);
+  }
+  const existingRecord = exactNameRecords[0];
+
+  if (persistedOwnership?.state === 'managed') {
+    if (!existingRecord) {
+      throw new Error(`dns_managed_record_missing:${role}`);
     }
-    throw new Error(`Failed to query DNS records (${recordResponse.status})`);
+    if (existingRecord.id !== persistedOwnership.recordId) {
+      throw new Error(`dns_managed_record_identity_mismatch:${role}`);
+    }
+    const desired = findDesiredProxiedCname(
+      [existingRecord],
+      recordName,
+      recordTarget,
+      persistedOwnership.marker
+    );
+    if (!desired) {
+      throw new Error(`dns_managed_record_value_mismatch:${role}`);
+    }
+    return {
+      created: false,
+      updated: false,
+      recordId: existingRecord.id,
+      name: recordName,
+      target: recordTarget,
+      ownership: persistedOwnership,
+    };
   }
 
-  const recordData = (await recordResponse.json()) as CloudflareDnsRecordResponse;
-
-  if (!recordData.success) {
-    throw new Error('Cloudflare DNS query failed');
-  }
-
-  const existingRecord = recordData.result?.find((record) => record.name === recordName);
-
-  if (existingRecord) {
-    if (existingRecord.content === recordTarget && existingRecord.proxied === true) {
+  if (persistedOwnership?.state === 'mutation_pending') {
+    if (
+      existingRecord &&
+      findDesiredProxiedCname([existingRecord], recordName, recordTarget, persistedOwnership.marker)
+    ) {
+      if (
+        persistedOwnership.action === 'updated' &&
+        existingRecord.id !== persistedOwnership.previous?.id
+      ) {
+        throw new Error(`dns_pending_record_identity_mismatch:${role}`);
+      }
+      const managedOwnership = await persistManagedOwnership(persistedOwnership, existingRecord.id);
       return {
         created: false,
         updated: false,
         recordId: existingRecord.id,
         name: recordName,
         target: recordTarget,
+        ownership: managedOwnership,
+      };
+    }
+    if (persistedOwnership.action === 'created' && existingRecord) {
+      throw new Error(`dns_pending_record_collision:${role}`);
+    }
+    if (persistedOwnership.action === 'updated') {
+      if (!existingRecord || !persistedOwnership.previous) {
+        throw new Error(`dns_pending_record_missing:${role}`);
+      }
+      if (!dnsSnapshotMatches(existingRecord, persistedOwnership.previous)) {
+        throw new Error(`dns_pending_previous_value_mismatch:${role}`);
+      }
+    }
+  }
+
+  if (existingRecord) {
+    if (existingRecord.content === recordTarget && existingRecord.proxied === true) {
+      const adoptedOwnership: DnsOwnershipEntry | undefined = options.ownership
+        ? {
+            role,
+            state: 'managed',
+            action: 'adopted',
+            operationId: randomUUID(),
+            zoneId: resolvedZoneId,
+            recordId: existingRecord.id,
+            name: recordName,
+            target: recordTarget,
+            updatedAt: new Date().toISOString(),
+          }
+        : undefined;
+      if (adoptedOwnership) await options.ownership?.persist(adoptedOwnership);
+      return {
+        created: false,
+        updated: false,
+        recordId: existingRecord.id,
+        name: recordName,
+        target: recordTarget,
+        ownership: adoptedOwnership,
       };
     }
 
-    const updateResponse = await fetch(
-      `https://api.cloudflare.com/client/v4/zones/${resolvedZoneId}/dns_records/${existingRecord.id}`,
-      {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${tokenInfo.token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      }
-    );
+    if (options.ownership && !mutationOwnership) {
+      const previous = toDnsRestoreSnapshot(existingRecord);
+      const operationId = randomUUID();
+      mutationOwnership = {
+        role,
+        state: 'mutation_pending',
+        action: 'updated',
+        operationId,
+        zoneId: resolvedZoneId,
+        recordId: existingRecord.id,
+        name: recordName,
+        target: recordTarget,
+        marker: createDnsOwnershipMarker(operationId),
+        previous,
+        updatedAt: new Date().toISOString(),
+      };
+      await options.ownership.persist(mutationOwnership);
+    }
+    const marker = mutationOwnership?.marker;
+    const payload = buildPayload(marker);
 
-    if (!updateResponse.ok) {
-      throw new Error(`Failed to update ${permissionErrorName} (${updateResponse.status})`);
+    let updateResponse: Response | null = null;
+    let updateData: CloudflareDnsMutationResponse = {};
+    let updateError: unknown;
+    try {
+      updateResponse = await fetch(
+        `https://api.cloudflare.com/client/v4/zones/${resolvedZoneId}/dns_records/${existingRecord.id}`,
+        {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${tokenInfo.token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(DNS_API_REQUEST_TIMEOUT_MS),
+        }
+      );
+      updateData = (await updateResponse.json().catch(() => ({}))) as CloudflareDnsMutationResponse;
+    } catch (error) {
+      updateError = error;
     }
 
-    return {
-      created: false,
-      updated: true,
-      recordId: existingRecord.id,
-      name: recordName,
-      target: recordTarget,
-    };
+    try {
+      const verified = await waitForDesiredProxiedCname({
+        zoneId: resolvedZoneId,
+        recordName,
+        recordTarget,
+        token: tokenInfo.token,
+        marker,
+      });
+      if (mutationOwnership?.action === 'updated' && verified.id !== existingRecord.id) {
+        throw new Error(`dns_updated_record_identity_mismatch:${role}`);
+      }
+      const managedOwnership = mutationOwnership
+        ? await persistManagedOwnership(mutationOwnership, verified.id)
+        : undefined;
+      return {
+        created: false,
+        updated: true,
+        recordId: verified.id,
+        name: recordName,
+        target: recordTarget,
+        ownership: managedOwnership,
+      };
+    } catch (verificationError) {
+      if (updateError) {
+        throw new AggregateError(
+          [updateError, verificationError],
+          `Failed to verify ${permissionErrorName} after an ambiguous update`
+        );
+      }
+      if (!updateResponse?.ok || updateData.success === false) {
+        throw new AggregateError(
+          [
+            new Error(`Failed to update ${permissionErrorName} (${updateResponse?.status ?? 0})`),
+            verificationError,
+          ],
+          `Failed to update and verify ${permissionErrorName}`
+        );
+      }
+      throw verificationError;
+    }
   }
 
   return createWildcardRecord(false);
@@ -1601,7 +2851,8 @@ async function ensureProxiedCnameDnsRecord(options: {
 export async function ensureWildcardDnsForMultiTenant(
   cfg: Partial<AuthrimConfig> | null | undefined,
   onProgress?: (message: string) => void,
-  verifyPublicDns: (baseDomain: string) => Promise<boolean> = verifyWildcardDnsPublicResolution
+  verifyPublicDns: (baseDomain: string) => Promise<boolean> = verifyWildcardDnsPublicResolution,
+  ownership?: DnsOwnershipPersistence
 ): Promise<void> {
   const baseDomain = cfg?.tenant?.multiTenant === true ? cfg.tenant.baseDomain?.trim() : undefined;
   if (!baseDomain) {
@@ -1615,20 +2866,17 @@ export async function ensureWildcardDnsForMultiTenant(
     const apiDnsResult = await ensureApiBaseDnsRecord(
       baseDomain,
       apiAutoHostname,
-      cfg?.urls?.api?.zoneId ?? null
+      cfg?.urls?.api?.zoneId ?? null,
+      ownership
     );
-    if (apiDnsResult.created) {
+    if (apiDnsResult.verificationLimited) {
+      throw new Error(
+        `Token lacks zone:read or dns:edit permission to verify the exact proxied CNAME target for ${apiDnsResult.name}`
+      );
+    } else if (apiDnsResult.created) {
       onProgress?.(`✓ API DNS created: ${apiDnsResult.name} -> ${apiDnsResult.target}`);
     } else if (apiDnsResult.updated) {
       onProgress?.(`✓ API DNS updated: ${apiDnsResult.name} -> ${apiDnsResult.target}`);
-    } else if (apiDnsResult.verificationLimited) {
-      if (await verifyHostnameDnsPublicResolution(baseDomain)) {
-        onProgress?.(`✓ API DNS resolves publicly: ${apiDnsResult.name}`);
-      } else {
-        throw new Error(
-          `Token lacks zone:read or dns:edit permission to verify/create DNS record for ${apiDnsResult.name}`
-        );
-      }
     } else {
       onProgress?.(`✓ API DNS already present: ${apiDnsResult.name} -> ${apiDnsResult.target}`);
     }
@@ -1638,22 +2886,285 @@ export async function ensureWildcardDnsForMultiTenant(
 
   onProgress?.(`Ensuring wildcard DNS for *.${baseDomain}...`);
 
-  const result = await ensureWildcardDnsRecord(baseDomain, cfg?.urls?.api?.zoneId ?? null);
-  if (result.created) {
-    onProgress?.(`✓ Wildcard DNS created: ${result.name} -> ${result.target}`);
-  } else if (result.updated) {
-    onProgress?.(`✓ Wildcard DNS updated: ${result.name} -> ${result.target}`);
-  } else if (result.verificationLimited) {
-    if (await verifyPublicDns(baseDomain)) {
-      onProgress?.(`✓ Wildcard DNS resolves publicly: ${result.name} -> ${result.target}`);
+  const result = await ensureWildcardDnsRecord(
+    baseDomain,
+    cfg?.urls?.api?.zoneId ?? null,
+    ownership
+  );
+  if (result.verificationLimited) {
+    const providerMutationWasNotObserved =
+      result.created === false &&
+      result.updated === false &&
+      result.recordId === undefined &&
+      result.ownership === undefined;
+    if (providerMutationWasNotObserved && (await verifyPublicDns(baseDomain))) {
+      onProgress?.(
+        `✓ Wildcard DNS resolves publicly and remains externally managed: ${result.name}`
+      );
       return;
     }
     throw new Error(
-      `Token lacks zone:read or dns:edit permission to verify/create wildcard DNS record for ${result.name}`
+      `Token lacks zone:read or dns:edit permission to verify the exact proxied CNAME target for ${result.name}`
     );
+  } else if (result.created) {
+    onProgress?.(`✓ Wildcard DNS created: ${result.name} -> ${result.target}`);
+  } else if (result.updated) {
+    onProgress?.(`✓ Wildcard DNS updated: ${result.name} -> ${result.target}`);
   } else {
     onProgress?.(`✓ Wildcard DNS already present: ${result.name} -> ${result.target}`);
   }
+}
+
+export interface ManagedDnsCleanupIssue {
+  role: DnsOwnershipRole | 'unknown';
+  name: string;
+  reason: string;
+}
+
+function isUntrackedDnsCleanupIssue(issue: ManagedDnsCleanupIssue): boolean {
+  return issue.reason === 'dns_ownership_evidence_missing';
+}
+
+async function readSingleDnsRecordForOwnership(options: {
+  entry: DnsOwnershipEntry;
+  token: string;
+}): Promise<NonNullable<CloudflareDnsRecordResponse['result']>[number] | null> {
+  const readback = await readDnsRecordsExact({
+    zoneId: options.entry.zoneId,
+    recordName: options.entry.name,
+    token: options.token,
+  });
+  if (readback.forbidden) throw new Error(`dns_read_permission_required:${options.entry.role}`);
+  const exact = readback.records.filter((record) => record.name === options.entry.name);
+  if (exact.length > 1) throw new Error(`dns_record_inventory_ambiguous:${options.entry.name}`);
+  return exact[0] ?? null;
+}
+
+function managedDnsRecordMatches(
+  record: NonNullable<CloudflareDnsRecordResponse['result']>[number],
+  entry: DnsOwnershipEntry
+): boolean {
+  return (
+    record.id === entry.recordId &&
+    Boolean(findDesiredProxiedCname([record], entry.name, entry.target, entry.marker))
+  );
+}
+
+async function mutateManagedDnsRecord(options: {
+  entry: DnsOwnershipEntry;
+  token: string;
+  method: 'DELETE' | 'PUT';
+  body?: Record<string, unknown>;
+}): Promise<void> {
+  let response: Response | null = null;
+  let mutationError: unknown;
+  try {
+    response = await fetch(
+      `https://api.cloudflare.com/client/v4/zones/${options.entry.zoneId}/dns_records/${options.entry.recordId}`,
+      {
+        method: options.method,
+        headers: {
+          Authorization: `Bearer ${options.token}`,
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+        signal: AbortSignal.timeout(DNS_API_REQUEST_TIMEOUT_MS),
+      }
+    );
+    await response.json().catch(() => undefined);
+  } catch (error) {
+    mutationError = error;
+  }
+  if (response?.status === 403) {
+    throw new Error(`dns_edit_permission_required:${options.entry.role}`);
+  }
+  if (response && !response.ok && response.status !== 404) {
+    mutationError = new Error(
+      `dns_cleanup_mutation_failed:${options.entry.role}:${response.status}`
+    );
+  }
+  // Mutation responses are not authoritative: callers always perform exact readback and accept
+  // an ambiguous timeout only when the requested final state is visible. The captured error is
+  // intentionally not used to issue a second mutation.
+  void mutationError;
+}
+
+async function waitForManagedDnsCleanupState(options: {
+  entry: DnsOwnershipEntry;
+  token: string;
+  expected: 'absent' | DnsRecordRestoreSnapshot;
+}): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= DNS_API_READ_ATTEMPTS; attempt++) {
+    try {
+      const record = await readSingleDnsRecordForOwnership(options);
+      if (options.expected === 'absent') {
+        if (!record || record.id !== options.entry.recordId) return;
+      } else if (record && dnsSnapshotMatches(record, options.expected)) {
+        return;
+      }
+      lastError = new Error(`dns_cleanup_readback_mismatch:${options.entry.role}`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt < DNS_API_READ_ATTEMPTS && process.env.NODE_ENV !== 'test') {
+      await sleep(Math.min(500 * 2 ** (attempt - 1), 4_000));
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`dns_cleanup_readback_failed:${options.entry.role}`);
+}
+
+/**
+ * Revert only DNS mutations whose exact ownership is recorded by Setup. Same-name replacement
+ * records are never deleted or overwritten. This operation is idempotent across a crash after the
+ * provider mutation because the requested absent/restored state is accepted on the next run.
+ */
+export async function cleanupManagedDnsRecords(options: {
+  entries: Partial<Record<DnsOwnershipRole, DnsOwnershipEntry>> | undefined;
+  required: boolean;
+  requiredRoles?: DnsOwnershipRole[];
+  preflightOnly?: boolean;
+  onProgress?: (message: string) => void;
+}): Promise<{ completedNames: string[]; issues: ManagedDnsCleanupIssue[] }> {
+  const entries = Object.values(options.entries ?? {});
+  const missingRoleIssues: ManagedDnsCleanupIssue[] = (options.requiredRoles ?? [])
+    .filter((role) => options.entries?.[role] === undefined)
+    .map((role) => ({
+      role,
+      name: `(${role})`,
+      reason: 'dns_ownership_evidence_missing',
+    }));
+  if (entries.length === 0) {
+    return {
+      completedNames: [],
+      issues:
+        missingRoleIssues.length > 0
+          ? missingRoleIssues
+          : options.required
+            ? [
+                {
+                  role: 'unknown',
+                  name: '(multi-tenant DNS)',
+                  reason: 'dns_ownership_evidence_missing',
+                },
+              ]
+            : [],
+    };
+  }
+  const tokenInfo = await getCloudflareApiToken();
+  if (!tokenInfo) {
+    return {
+      completedNames: [],
+      issues: entries.map((entry) => ({
+        role: entry.role,
+        name: entry.name,
+        reason: 'cloudflare_login_required_for_dns_cleanup',
+      })),
+    };
+  }
+
+  const completedNames: string[] = [];
+  const issues: ManagedDnsCleanupIssue[] = [...missingRoleIssues];
+  for (const entry of entries) {
+    options.onProgress?.(`  ⏳ Reconciling DNS ownership: ${entry.name}...`);
+    try {
+      const current = await readSingleDnsRecordForOwnership({ entry, token: tokenInfo.token });
+      let cleanupEntry = entry;
+      if (entry.state === 'mutation_pending' && current) {
+        const pendingDesired = Boolean(
+          findDesiredProxiedCname([current], entry.name, entry.target, entry.marker)
+        );
+        if (entry.action === 'created' && pendingDesired) {
+          cleanupEntry = { ...entry, state: 'managed', recordId: current.id };
+        } else if (
+          entry.action === 'updated' &&
+          entry.previous &&
+          current.id === entry.previous.id &&
+          pendingDesired
+        ) {
+          cleanupEntry = { ...entry, state: 'managed', recordId: current.id };
+        }
+      }
+      if (entry.action === 'adopted') {
+        if (current && !managedDnsRecordMatches(current, entry)) {
+          throw new Error(`dns_adopted_record_identity_mismatch:${entry.role}`);
+        }
+        if (options.preflightOnly) continue;
+        completedNames.push(entry.name);
+        options.onProgress?.(`  ✅ ${entry.name} (pre-existing record preserved)`);
+        continue;
+      }
+
+      if (!entry.marker) throw new Error(`dns_ownership_marker_missing:${entry.role}`);
+      if (entry.action === 'created') {
+        if (!current) {
+          if (options.preflightOnly) continue;
+          completedNames.push(entry.name);
+          options.onProgress?.(`  ✅ ${entry.name} (already absent)`);
+          continue;
+        }
+        if (!managedDnsRecordMatches(current, cleanupEntry)) {
+          throw new Error(`dns_managed_record_identity_mismatch:${entry.role}`);
+        }
+        if (options.preflightOnly) continue;
+        await mutateManagedDnsRecord({
+          entry: cleanupEntry,
+          token: tokenInfo.token,
+          method: 'DELETE',
+        });
+        await waitForManagedDnsCleanupState({
+          entry: cleanupEntry,
+          token: tokenInfo.token,
+          expected: 'absent',
+        });
+        completedNames.push(entry.name);
+        options.onProgress?.(`  ✅ ${entry.name} (Setup-created record deleted)`);
+        continue;
+      }
+
+      const previous = entry.previous;
+      if (!previous) throw new Error(`dns_previous_value_missing:${entry.role}`);
+      if (current && dnsSnapshotMatches(current, previous)) {
+        if (options.preflightOnly) continue;
+        completedNames.push(entry.name);
+        options.onProgress?.(`  ✅ ${entry.name} (previous value already restored)`);
+        continue;
+      }
+      if (!current || !managedDnsRecordMatches(current, cleanupEntry)) {
+        throw new Error(`dns_managed_record_identity_mismatch:${entry.role}`);
+      }
+      if (options.preflightOnly) continue;
+      await mutateManagedDnsRecord({
+        entry: cleanupEntry,
+        token: tokenInfo.token,
+        method: 'PUT',
+        body: {
+          type: previous.type,
+          name: previous.name,
+          content: previous.content,
+          ...(previous.proxied === undefined ? {} : { proxied: previous.proxied }),
+          ...(previous.ttl === undefined ? {} : { ttl: previous.ttl }),
+          ...(previous.comment === undefined ? {} : { comment: previous.comment }),
+          ...(previous.tags === undefined ? {} : { tags: previous.tags }),
+          ...(previous.settings === undefined ? {} : { settings: previous.settings }),
+        },
+      });
+      await waitForManagedDnsCleanupState({
+        entry: cleanupEntry,
+        token: tokenInfo.token,
+        expected: previous,
+      });
+      completedNames.push(entry.name);
+      options.onProgress?.(`  ✅ ${entry.name} (previous value restored)`);
+    } catch (error) {
+      const reason = sanitizeError(error);
+      issues.push({ role: entry.role, name: entry.name, reason });
+      options.onProgress?.(`  ❌ ${entry.name} - ${reason}`);
+    }
+  }
+  return { completedNames, issues };
 }
 
 function extractHostnameFromUrl(value: string | null | undefined): string | null {
@@ -1781,78 +3292,393 @@ function describeInventoryError(error: unknown, fallback: string): string {
   return fallback;
 }
 
-async function resolveCloudflareInventoryCredentials(): Promise<{
+type CloudflareInventoryCredentials = {
   accountId: string;
   token: string;
-} | null> {
+  source: CloudflareApiToken['source'];
+};
+
+const cloudflareInventoryCredentialResolutions = new Map<
+  string,
+  Promise<CloudflareInventoryCredentials | null>
+>();
+
+async function resolveCloudflareInventoryCredentialsUnshared(
+  accountIdHint?: string
+): Promise<CloudflareInventoryCredentials | null> {
+  const hintedAccountId = accountIdHint?.trim();
+  if (hintedAccountId && !/^[a-f0-9]{32}$/u.test(hintedAccountId)) {
+    throw new Error('cloudflare_account_id_invalid');
+  }
   if (
     process.env.NODE_ENV === 'test' &&
-    (!process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || !process.env.CLOUDFLARE_API_TOKEN?.trim())
+    ((!hintedAccountId && !process.env.CLOUDFLARE_ACCOUNT_ID?.trim()) ||
+      !process.env.CLOUDFLARE_API_TOKEN?.trim())
   ) {
     return null;
   }
 
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || (await getAccountId());
   const envToken = process.env.CLOUDFLARE_API_TOKEN?.trim();
-  const tokenInfo = envToken
+  let tokenInfo = envToken
     ? ({ token: envToken, source: 'env' } satisfies CloudflareApiToken)
     : await getCloudflareApiToken();
+  let oauthAccountId: string | null = null;
+  if (tokenInfo?.source === 'oauth') {
+    // `wrangler whoami` refreshes an expired cached OAuth session. Re-read the token only after
+    // that command; a configured account ID must not cause Setup to skip credential refresh.
+    oauthAccountId = await getAccountId();
+    const refreshed = await getCloudflareApiToken();
+    if (!refreshed || refreshed.source !== 'oauth') return null;
+    tokenInfo = refreshed;
+  }
+  const configuredAccountId = hintedAccountId || process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
+  if (configuredAccountId && oauthAccountId && configuredAccountId !== oauthAccountId) {
+    throw new Error('cloudflare_oauth_account_id_mismatch');
+  }
+  const accountId = configuredAccountId || oauthAccountId || (await getAccountId());
   if (!accountId || !tokenInfo?.token) {
     return null;
   }
 
-  return { accountId, token: tokenInfo.token };
+  return { accountId, token: tokenInfo.token, source: tokenInfo.source };
+}
+
+/**
+ * Share only concurrent credential resolution. Environment discovery reads several independent
+ * Cloudflare inventories at once; without single-flight coordination every reader launches its
+ * own Wrangler token/whoami subprocesses. The entry is removed as soon as resolution settles, so
+ * later operations still observe account switches and refreshed OAuth credentials.
+ */
+function resolveCloudflareInventoryCredentials(
+  accountIdHint?: string
+): Promise<CloudflareInventoryCredentials | null> {
+  const key = accountIdHint?.trim() ?? '';
+  const existing = cloudflareInventoryCredentialResolutions.get(key);
+  if (existing) return existing;
+
+  const pending = resolveCloudflareInventoryCredentialsUnshared(accountIdHint);
+  cloudflareInventoryCredentialResolutions.set(key, pending);
+  const clear = () => {
+    if (cloudflareInventoryCredentialResolutions.get(key) === pending) {
+      cloudflareInventoryCredentialResolutions.delete(key);
+    }
+  };
+  void pending.then(clear, clear);
+  return pending;
+}
+
+async function resolveCloudflareD1Credentials(accountIdHint?: string): Promise<{
+  accountId: string;
+  token: string;
+  source: CloudflareApiToken['source'];
+} | null> {
+  if (
+    process.env.NODE_ENV === 'test' &&
+    ((!accountIdHint?.trim() && !process.env.CLOUDFLARE_ACCOUNT_ID?.trim()) ||
+      !process.env.CLOUDFLARE_API_TOKEN?.trim())
+  ) {
+    return null;
+  }
+  // CLOUDFLARE_D1_API_TOKEN is a runtime secret issued for the Control Worker. It is not a
+  // Setup/operator credential. Web Setup uses Wrangler OAuth; headless Setup may use the generic
+  // CLOUDFLARE_API_TOKEN. Keeping those authorities separate prevents a Control child token from
+  // being selected accidentally for migrations, deletion, or post-deploy verification.
+  return resolveCloudflareInventoryCredentials(accountIdHint);
+}
+
+export function shouldRefreshD1OAuthCredential(input: {
+  status: number;
+  source: CloudflareApiToken['source'];
+  attempt: number;
+}): boolean {
+  return (
+    input.source === 'oauth' &&
+    input.attempt === 1 &&
+    (input.status === 401 || input.status === 403)
+  );
+}
+
+export function shouldRefreshCloudflareOAuthCredential(input: {
+  status: number;
+  errorCodes?: readonly number[];
+  source: CloudflareApiToken['source'];
+  attempt: number;
+}): boolean {
+  return (
+    input.source === 'oauth' &&
+    input.attempt === 1 &&
+    (input.status === 401 || input.errorCodes?.includes(10_000) === true)
+  );
+}
+
+export function assertCloudflareOAuthRefreshAccount(
+  pinnedAccountId: string,
+  whoamiOutput: string
+): void {
+  const authenticatedAccountIds = extractWranglerAccountIds(whoamiOutput);
+  if (authenticatedAccountIds.length !== 1 || authenticatedAccountIds[0] !== pinnedAccountId) {
+    throw new Error('cloudflare_oauth_account_id_mismatch_after_refresh');
+  }
+}
+
+export async function refreshPinnedCloudflareOAuthToken(
+  accountId: string
+): Promise<{ accountId: string; token: string; source: 'oauth' } | null> {
+  if (process.env.CLOUDFLARE_API_TOKEN?.trim()) return null;
+  const { stdout, stderr } = await wrangler(['whoami'], { timeout: 30_000 });
+  assertCloudflareOAuthRefreshAccount(accountId, `${stdout}\n${stderr}`);
+  const refreshed = await getCloudflareApiToken();
+  if (!refreshed || refreshed.source !== 'oauth') return null;
+  return { accountId, token: refreshed.token, source: 'oauth' };
+}
+
+export function normalizeWorkerCronTriggersResponse(payload: unknown): string[] {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('cloudflare_worker_cron_response_invalid');
+  }
+  const result = (payload as { result?: unknown }).result;
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    throw new Error('cloudflare_worker_cron_response_invalid');
+  }
+  const schedules = (result as { schedules?: unknown }).schedules;
+  if (!Array.isArray(schedules)) {
+    throw new Error('cloudflare_worker_cron_response_invalid');
+  }
+
+  const crons: string[] = [];
+  const seen = new Set<string>();
+  for (const schedule of schedules) {
+    const cron =
+      schedule && typeof schedule === 'object' && !Array.isArray(schedule)
+        ? (schedule as { cron?: unknown }).cron
+        : undefined;
+    if (typeof cron !== 'string' || cron.length === 0 || cron.trim() !== cron || seen.has(cron)) {
+      throw new Error('cloudflare_worker_cron_response_invalid');
+    }
+    seen.add(cron);
+    crons.push(cron);
+  }
+  return crons.sort();
+}
+
+/** Read the exact Cron Trigger set attached to one Worker in the pinned Cloudflare account. */
+export async function listWorkerCronTriggers(input: {
+  workerName: string;
+  accountId?: string;
+}): Promise<string[]> {
+  if (!input.workerName || input.workerName.trim() !== input.workerName) {
+    throw new Error('cloudflare_worker_name_invalid');
+  }
+  let credentials = await resolveCloudflareInventoryCredentials(input.accountId);
+  if (!credentials) throw new Error('cloudflare_worker_cron_credentials_unavailable');
+
+  const url =
+    `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/workers/scripts/` +
+    `${encodeURIComponent(input.workerName)}/schedules`;
+  for (let authAttempt = 1; authAttempt <= 2; authAttempt++) {
+    const { response, data } = await requestCloudflareApiJson<{
+      success?: boolean;
+      result?: unknown;
+      errors?: CloudflareApiMessage[];
+    }>(
+      url,
+      { headers: { Authorization: `Bearer ${credentials.token}` } },
+      { label: `Cloudflare Cron Trigger lookup for ${input.workerName}`, retryMode: 'read' }
+    );
+    const errorCodes = (data.errors ?? []).flatMap((error) =>
+      typeof error.code === 'number' ? [error.code] : []
+    );
+    if (
+      shouldRefreshCloudflareOAuthCredential({
+        status: response.status,
+        errorCodes,
+        source: credentials.source,
+        attempt: authAttempt,
+      })
+    ) {
+      const refreshed = await refreshPinnedCloudflareOAuthToken(credentials.accountId);
+      if (refreshed) {
+        credentials = refreshed;
+        continue;
+      }
+    }
+    if (!response.ok || data.success === false) {
+      const detail = formatCloudflareApiMessages(data);
+      throw new Error(
+        `Cloudflare Cron Trigger lookup failed (${response.status})${detail ? `: ${detail}` : ''}`
+      );
+    }
+    return normalizeWorkerCronTriggersResponse(data);
+  }
+  throw new Error('cloudflare_worker_cron_oauth_refresh_retry_exhausted');
 }
 
 async function listCloudflarePaginatedResourcesViaApi<T>(input: {
   path: string;
   label: string;
   normalizeRows: (rows: unknown) => T[];
+  identityKey: (row: T) => string;
+  perPage?: number;
 }): Promise<T[] | null> {
-  const credentials = await resolveCloudflareInventoryCredentials();
+  let credentials = await resolveCloudflareInventoryCredentials();
   if (!credentials) return null;
 
   const resources: T[] = [];
-  const perPage = 1000;
+  const perPage = input.perPage ?? 1000;
   let page = 1;
+  const seenIdentities = new Set<string>();
+  let expectedTotalCount: number | undefined;
+  let expectedTotalPages: number | undefined;
+  let expectedPerPage: number | undefined;
 
-  while (true) {
+  while (page <= CLOUDFLARE_INVENTORY_MAX_PAGES) {
     const url = new URL(
       `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/${input.path}`
     );
     url.searchParams.set('page', String(page));
     url.searchParams.set('per_page', String(perPage));
 
-    const response = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${credentials.token}`,
-      },
-    });
+    let apiResult:
+      | CloudflareApiJsonResult<{
+          success?: boolean;
+          result?: unknown;
+          errors?: CloudflareApiMessage[];
+          result_info?: {
+            count?: unknown;
+            page?: unknown;
+            per_page?: unknown;
+            total_count?: unknown;
+            total_pages?: unknown;
+          };
+        }>
+      | undefined;
+    for (let authAttempt = 1; authAttempt <= 2; authAttempt++) {
+      apiResult = await requestCloudflareApiJson(
+        url,
+        {
+          headers: {
+            Authorization: `Bearer ${credentials.token}`,
+          },
+        },
+        { label: `Cloudflare ${input.label}`, retryMode: 'read' }
+      );
+      const errorCodes = (apiResult.data.errors ?? []).flatMap((error) =>
+        typeof error.code === 'number' ? [error.code] : []
+      );
+      if (
+        shouldRefreshCloudflareOAuthCredential({
+          status: apiResult.response.status,
+          errorCodes,
+          source: credentials.source,
+          attempt: authAttempt,
+        })
+      ) {
+        const refreshed = await refreshPinnedCloudflareOAuthToken(credentials.accountId);
+        if (refreshed) {
+          credentials = refreshed;
+          continue;
+        }
+      }
+      break;
+    }
+    if (!apiResult) throw new Error(`Cloudflare ${input.label} returned no response`);
+    const { response, data: payload } = apiResult;
     if (!response.ok) {
       throw new Error(`Cloudflare ${input.label} failed (${response.status})`);
     }
-
-    const payload = (await response.json()) as {
-      success?: boolean;
-      result?: unknown;
-      result_info?: { total_count?: unknown };
-    };
     if (payload.success === false) {
       throw new Error(`Cloudflare ${input.label} returned an unsuccessful response`);
     }
 
     const rows = input.normalizeRows(payload.result);
+    for (const row of rows) {
+      const identity = input.identityKey(row);
+      if (!identity || seenIdentities.has(identity)) {
+        throw new Error(`Cloudflare ${input.label} returned a duplicate resource identity`);
+      }
+      seenIdentities.add(identity);
+    }
     resources.push(...rows);
 
-    const totalCount = payload.result_info?.total_count;
+    const resultInfo = payload.result_info;
+    const totalCount = resultInfo?.total_count;
+    const totalPages = resultInfo?.total_pages;
+    const responsePage = resultInfo?.page;
+    const responsePerPage = resultInfo?.per_page;
+    const validInteger = (value: unknown, minimum: number): value is number =>
+      typeof value === 'number' && Number.isInteger(value) && value >= minimum;
+    if (responsePage !== undefined && !validInteger(responsePage, 1)) {
+      throw new Error(`Cloudflare ${input.label} returned invalid page metadata`);
+    }
+    if (responsePerPage !== undefined && !validInteger(responsePerPage, 1)) {
+      throw new Error(`Cloudflare ${input.label} returned invalid per-page metadata`);
+    }
+    if (totalCount !== undefined && !validInteger(totalCount, 0)) {
+      throw new Error(`Cloudflare ${input.label} returned invalid total-count metadata`);
+    }
+    if (totalPages !== undefined && !validInteger(totalPages, 0)) {
+      throw new Error(`Cloudflare ${input.label} returned invalid total-pages metadata`);
+    }
+    if (resultInfo?.count !== undefined && !validInteger(resultInfo.count, 0)) {
+      throw new Error(`Cloudflare ${input.label} returned invalid count metadata`);
+    }
+    if (responsePage !== undefined && responsePage !== page) {
+      throw new Error(`Cloudflare ${input.label} returned an unexpected page`);
+    }
     if (
-      rows.length < perPage ||
-      (typeof totalCount === 'number' && resources.length >= totalCount)
+      page > 1 &&
+      ((expectedTotalCount === undefined) !== (totalCount === undefined) ||
+        (expectedTotalPages === undefined) !== (totalPages === undefined) ||
+        (expectedPerPage === undefined) !== (responsePerPage === undefined))
     ) {
+      throw new Error(`Cloudflare ${input.label} changed pagination metadata shape`);
+    }
+    if (expectedTotalCount !== undefined && totalCount !== expectedTotalCount) {
+      throw new Error(`Cloudflare ${input.label} changed total count during pagination`);
+    }
+    if (expectedTotalPages !== undefined && totalPages !== expectedTotalPages) {
+      throw new Error(`Cloudflare ${input.label} changed total pages during pagination`);
+    }
+    if (expectedPerPage !== undefined && responsePerPage !== expectedPerPage) {
+      throw new Error(`Cloudflare ${input.label} changed page size during pagination`);
+    }
+    expectedTotalCount ??= totalCount;
+    expectedTotalPages ??= totalPages;
+    expectedPerPage ??= responsePerPage;
+    if (typeof totalCount === 'number' && resources.length > totalCount) {
+      throw new Error(`Cloudflare ${input.label} exceeded its declared total count`);
+    }
+    if (typeof totalCount === 'number' && resources.length === totalCount) {
+      if (typeof totalPages === 'number' && page !== totalPages && totalPages !== 0) {
+        throw new Error(`Cloudflare ${input.label} ended before its declared final page`);
+      }
       return resources;
+    }
+    if (typeof totalPages === 'number' && page >= totalPages) {
+      if (typeof totalCount === 'number') {
+        throw new Error(`Cloudflare ${input.label} ended before its declared total count`);
+      }
+      return resources;
+    }
+
+    const authoritativePagination =
+      typeof totalCount === 'number' || typeof totalPages === 'number';
+    if (!authoritativePagination) {
+      const effectivePerPage =
+        typeof responsePerPage === 'number' && responsePerPage > 0 ? responsePerPage : perPage;
+      if (rows.length < effectivePerPage) return resources;
+    }
+    if (rows.length === 0) {
+      throw new Error(
+        `Cloudflare ${input.label} pagination stopped before all resources were read`
+      );
     }
     page++;
   }
+
+  throw new Error(
+    `Cloudflare ${input.label} exceeded the ${CLOUDFLARE_INVENTORY_MAX_PAGES}-page safety limit`
+  );
 }
 
 function normalizeD1DatabaseRows(rows: unknown): D1DatabaseListRow[] {
@@ -1879,12 +3705,36 @@ function normalizeD1DatabaseRows(rows: unknown): D1DatabaseListRow[] {
   });
 }
 
+function assertUniqueNamedResourceInventory<T>(input: {
+  rows: T[];
+  label: string;
+  name: (row: T) => string;
+  id: (row: T) => string;
+}): T[] {
+  const names = new Set<string>();
+  const ids = new Set<string>();
+  for (const row of input.rows) {
+    const name = input.name(row);
+    const id = input.id(row);
+    if (names.has(name)) throw new Error(`${input.label} contained a duplicate resource name`);
+    if (ids.has(id)) throw new Error(`${input.label} contained a duplicate immutable resource ID`);
+    names.add(name);
+    ids.add(id);
+  }
+  return input.rows;
+}
+
 export function parseD1DatabaseListOutput(stdout: string): D1DatabaseListRow[] {
-  return parseValidatedJsonOutput(
-    stdout,
-    normalizeD1DatabaseRows,
-    'Wrangler output did not contain a valid D1 database list'
-  );
+  return assertUniqueNamedResourceInventory({
+    rows: parseValidatedJsonOutput(
+      stdout,
+      normalizeD1DatabaseRows,
+      'Wrangler output did not contain a valid D1 database list'
+    ),
+    label: 'Wrangler D1 database inventory',
+    name: (row) => row.name,
+    id: (row) => row.uuid,
+  });
 }
 
 async function listD1DatabasesViaApi(): Promise<D1DatabaseListRow[] | null> {
@@ -1892,6 +3742,7 @@ async function listD1DatabasesViaApi(): Promise<D1DatabaseListRow[] | null> {
     path: 'd1/database',
     label: 'D1 database list',
     normalizeRows: normalizeD1DatabaseRows,
+    identityKey: (row) => row.uuid,
   });
 }
 
@@ -1904,7 +3755,12 @@ export async function listD1Databases(): Promise<Array<{ name: string; uuid: str
   try {
     const apiDatabases = await listD1DatabasesViaApi();
     if (apiDatabases) {
-      return apiDatabases;
+      return assertUniqueNamedResourceInventory({
+        rows: apiDatabases,
+        label: 'Cloudflare API D1 database inventory',
+        name: (row) => row.name,
+        id: (row) => row.uuid,
+      });
     }
   } catch (error) {
     apiError = error;
@@ -1965,14 +3821,49 @@ function isValidD1Jurisdiction(value: unknown): value is D1Jurisdiction {
   return typeof value === 'string' && VALID_D1_JURISDICTIONS.includes(value as D1Jurisdiction);
 }
 
+function extractD1CreateResponseId(output: string): string | undefined {
+  return output.match(
+    /(?:"(?:uuid|database_id|id)"|\b(?:uuid|database_id|id)\b)\s*[:=]\s*"?([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})"?/iu
+  )?.[1];
+}
+
 export async function createD1Database(
   name: string,
-  options?: D1CreateOptions
+  options?: D1CreateOptions,
+  behavior: ProvisioningCreateBehavior = {}
 ): Promise<{ id: string; name: string }> {
   // Check if already exists
   const existing = await d1DatabaseExists(name);
   if (existing.exists && existing.id) {
+    if (behavior.allowExisting === false) {
+      throw new Error(`D1 database ${name} already exists outside this provisioning attempt`);
+    }
+    if (behavior.expectedExistingId && behavior.expectedExistingId !== existing.id) {
+      throw new Error(`D1 database ${name} does not match the recorded provisioning resource`);
+    }
     return { id: existing.id, name };
+  }
+  if (behavior.recordedState === 'created') {
+    throw new Error(`D1 database ${name} recorded by provisioning is missing`);
+  }
+  if (behavior.recordedState === 'identified') {
+    if (!behavior.expectedExistingId) {
+      throw new Error(`D1 database ${name} identified checkpoint omitted its immutable ID`);
+    }
+    return waitForProviderResourceVisible({
+      resourceDescription: `D1 database ${name}`,
+      expectedId: behavior.expectedExistingId,
+      findExisting: async () => {
+        const reconciled = await d1DatabaseExists(name);
+        return reconciled.exists && reconciled.id ? { id: reconciled.id, name } : null;
+      },
+    });
+  }
+  if (behavior.recordedState === 'create_issued') {
+    throw new Error(
+      `D1 database ${name} has an interrupted create_issued checkpoint without immutable ` +
+        'provider evidence. Setup will not reissue the create; inspect Cloudflare and recover explicitly.'
+    );
   }
 
   // Build command args with optional location/jurisdiction
@@ -1994,36 +3885,101 @@ export async function createD1Database(
     args.push(`--location=${options.location}`);
   }
 
-  // Create new database
-  const { stdout, stderr } = await wrangler(args);
+  await behavior.onCreateIssued?.();
 
-  // Extract database ID from output
-  const idMatch = stdout.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/);
-
-  if (!idMatch) {
-    // Try to get ID from list (in case creation message format changed)
-    const databases = await listD1Databases();
-    const db = databases.find((d) => d.name === name);
-    if (db) {
-      return { id: db.uuid, name };
+  // Create new database. A provider commit can outlive a lost Wrangler response, so reconcile
+  // by exact deterministic name before deciding the operation failed.
+  let stdout: string;
+  try {
+    ({ stdout } = await wranglerCreateWithDefiniteRejectionRetry(args));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isAmbiguousCloudflareMutationFailure(message)) {
+      return throwDefiniteProvisioningCreateFailure(behavior, error, `D1 database ${name}`);
     }
-    throw new Error(`Failed to create D1 database: ${stderr || stdout}`);
+    const responseId = extractD1CreateResponseId(message);
+    if (!responseId) {
+      throw new Error(
+        `D1 database ${name} creation outcome is ambiguous and Cloudflare returned no immutable ` +
+          'database ID. Setup will not adopt a same-name database; inspect or delete it before retrying.',
+        { cause: error }
+      );
+    }
+    await behavior.onProviderIdentityIdentified?.({ id: responseId });
+    return waitForProviderResourceVisible({
+      resourceDescription: `D1 database ${name}`,
+      createError: error,
+      expectedId: responseId,
+      findExisting: async () => {
+        const reconciled = await d1DatabaseExists(name);
+        return reconciled.exists && reconciled.id ? { id: reconciled.id, name } : null;
+      },
+    });
   }
 
-  return { id: idMatch[1], name };
+  // Wrangler output is useful evidence, but only provider inventory visibility makes the resource
+  // safe to journal and use in generated bindings. A delayed list must not trigger another create.
+  const createdId = extractD1CreateResponseId(stdout);
+  if (!createdId) {
+    throw new Error(
+      `D1 database ${name} create succeeded but returned no immutable database ID. ` +
+        'Setup will not adopt a same-name database; inspect the provider inventory before retrying.'
+    );
+  }
+  await behavior.onProviderIdentityIdentified?.({ id: createdId });
+  return waitForProviderResourceVisible({
+    resourceDescription: `D1 database ${name}`,
+    expectedId: createdId,
+    findExisting: async () => {
+      const reconciled = await d1DatabaseExists(name);
+      return reconciled.exists && reconciled.id ? { id: reconciled.id, name } : null;
+    },
+  });
 }
 
 export async function putKVKeyByNamespaceId(
   namespaceId: string,
   key: string,
   value: string,
-  options: { expirationTtl?: number } = {}
+  options: { expirationTtl?: number; onProgress?: (message: string) => void } = {}
 ): Promise<void> {
-  const args = ['kv', 'key', 'put', key, value, '--namespace-id', namespaceId, '--remote'];
-  if (options.expirationTtl !== undefined) {
-    args.push('--ttl', String(options.expirationTtl));
-  }
-  await wrangler(args, { timeout: 60000 });
+  await withPrivateTemporaryTextFile(value, async (valuePath) => {
+    const oauthRefresh: WranglerOAuthRefreshState = { attempted: false };
+    const args = [
+      'kv',
+      'key',
+      'put',
+      key,
+      '--path',
+      valuePath,
+      '--namespace-id',
+      namespaceId,
+      '--remote',
+    ];
+    if (options.expirationTtl !== undefined) {
+      args.push('--ttl', String(options.expirationTtl));
+    }
+    for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
+      try {
+        await wrangler(args, { timeout: 60000 });
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const maxAttempts = isD1AuthenticationError(message)
+          ? D1_MIGRATION_AUTH_MAX_ATTEMPTS
+          : D1_MIGRATION_MAX_ATTEMPTS;
+        if (attempt >= maxAttempts || !isTransientD1MigrationError(message)) throw error;
+        await refreshWranglerOAuthAfterCode10000(message, oauthRefresh);
+        const delayMs = d1MigrationRetryDelayMs(attempt);
+        options.onProgress?.(
+          `  ⚠️ Transient Cloudflare KV write failure for ${key} ` +
+            `(attempt ${attempt}/${maxAttempts}); retrying in ${Math.round(delayMs / 1000)}s`
+        );
+        if (delayMs > 0) await sleep(delayMs);
+      }
+    }
+    throw new Error('KV write retry loop exited unexpectedly');
+  });
 }
 
 export async function getKVKeyByNamespaceId(namespaceId: string, key: string): Promise<string> {
@@ -2036,16 +3992,150 @@ export async function getKVKeyByNamespaceId(namespaceId: string, key: string): P
   return stdout;
 }
 
+interface KVKeyListRow {
+  name: string;
+}
+
+function normalizeKVKeyListRows(rows: unknown): KVKeyListRow[] {
+  if (!Array.isArray(rows)) {
+    throw new TypeError('KV key list was not an array');
+  }
+  return rows.map((row, index) => {
+    if (!row || typeof row !== 'object') {
+      throw new TypeError(`KV key list row ${index} was not an object`);
+    }
+    const name = (row as { name?: unknown }).name;
+    if (typeof name !== 'string' || name.length === 0) {
+      throw new TypeError(`KV key list row ${index} did not contain a name`);
+    }
+    return { name };
+  });
+}
+
+export function parseKVKeyListOutput(stdout: string): KVKeyListRow[] {
+  return parseValidatedJsonOutput(
+    stdout,
+    normalizeKVKeyListRows,
+    'Wrangler output did not contain a valid KV key list'
+  );
+}
+
+export async function getOptionalKVKeyByNamespaceId(
+  namespaceId: string,
+  key: string
+): Promise<string | null> {
+  const { stdout } = await wrangler(
+    ['kv', 'key', 'list', '--namespace-id', namespaceId, '--prefix', key, '--remote'],
+    { timeout: 60000 }
+  );
+  const exactMatches = parseKVKeyListOutput(stdout).filter((row) => row.name === key);
+  if (exactMatches.length === 0) return null;
+  if (exactMatches.length !== 1) {
+    throw new Error('Cloudflare KV returned duplicate exact keys');
+  }
+  return getKVKeyByNamespaceId(namespaceId, key);
+}
+
 /**
  * Delete a D1 database
  */
-export async function deleteD1Database(name: string): Promise<boolean> {
-  try {
-    await wrangler(['d1', 'delete', name, '--skip-confirmation']);
-    return true;
-  } catch {
-    return false;
+function isCloudflareResourceAlreadyAbsent(error: unknown): boolean {
+  const detail = [
+    error instanceof Error ? error.message : String(error),
+    typeof (error as { stderr?: unknown })?.stderr === 'string'
+      ? (error as { stderr: string }).stderr
+      : '',
+    typeof (error as { stdout?: unknown })?.stdout === 'string'
+      ? (error as { stdout: string }).stdout
+      : '',
+  ]
+    .join('\n')
+    .toLowerCase();
+  return /(?:not found|does not exist|could not find|no such (?:database|queue|resource))/u.test(
+    detail
+  );
+}
+
+type ExactResourceDeleteResult =
+  | { status: 'deleted' }
+  | { status: 'already_absent' }
+  | { status: 'failed'; error: string };
+
+type CloudflareDeletionCredentials = { accountId: string; token: string };
+
+function normalizeDeletionResourceId(id: string, label: string): string {
+  const normalized = id.trim();
+  if (!normalized || normalized !== id || normalized.length > 256) {
+    throw new Error(`${label} immutable resource ID is invalid`);
   }
+  return normalized;
+}
+
+async function deleteCloudflareAccountResourceById(input: {
+  credentials: CloudflareDeletionCredentials;
+  resourcePath: string;
+  resourceId: string;
+  label: string;
+}): Promise<ExactResourceDeleteResult> {
+  try {
+    const resourceId = normalizeDeletionResourceId(input.resourceId, input.label);
+    const { response, data } = await requestCloudflareApiJson<{
+      success?: boolean;
+      errors?: CloudflareApiMessage[];
+      messages?: CloudflareApiMessage[];
+    }>(
+      `https://api.cloudflare.com/client/v4/accounts/${input.credentials.accountId}/${input.resourcePath}/${encodeURIComponent(resourceId)}`,
+      {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${input.credentials.token}` },
+      },
+      {
+        label: input.label,
+        retryMode: 'idempotent_mutation',
+        maxAttempts: 7,
+        isRetryableResponse: (_response, payload) =>
+          (payload.errors ?? []).some(
+            (error) => error.code === 971 || /throttl|too many requests/iu.test(error.message ?? '')
+          ),
+      }
+    );
+    if (response.status === 404) return { status: 'already_absent' };
+    if (response.ok && data.success !== false) return { status: 'deleted' };
+    const detail = formatCloudflareApiMessages(data);
+    return {
+      status: 'failed',
+      error: `${input.label} failed (${response.status})${detail ? `: ${detail}` : ''}`,
+    };
+  } catch (error) {
+    return { status: 'failed', error: sanitizeError(error) };
+  }
+}
+
+async function deleteD1DatabaseWithResult(
+  databaseId: string,
+  credentials?: CloudflareDeletionCredentials
+): Promise<ExactResourceDeleteResult> {
+  let resolved = credentials;
+  try {
+    resolved ??= (await resolveCloudflareD1Credentials()) ?? undefined;
+  } catch (error) {
+    return { status: 'failed', error: sanitizeError(error) };
+  }
+  if (!resolved) {
+    return { status: 'failed', error: 'Cloudflare D1 API credentials are unavailable' };
+  }
+  return deleteCloudflareAccountResourceById({
+    credentials: resolved,
+    resourcePath: 'd1/database',
+    resourceId: databaseId,
+    label: 'Cloudflare D1 database delete',
+  });
+}
+
+/** Delete a D1 database by its immutable Cloudflare database ID. */
+export async function deleteD1Database(databaseId: string): Promise<boolean> {
+  const result = await deleteD1DatabaseWithResult(databaseId);
+  return result.status !== 'failed';
 }
 
 /**
@@ -2093,71 +4183,99 @@ export async function getD1Info(name: string): Promise<D1Info> {
 export async function executeD1Migration(
   dbName: string,
   sqlFilePath: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: {
+    transactionSuffixSql?: string;
+    verifyCommitted?: () => Promise<boolean>;
+  } = {}
 ): Promise<{ success: boolean; error?: string }> {
-  const isTransientD1MigrationError = (message: string): boolean => {
-    const normalized = message.toLowerCase();
-    return (
-      normalized.includes('file could not be uploaded') ||
-      normalized.includes('internalerror') ||
-      normalized.includes('please retry') ||
-      normalized.includes('we encountered an internal error') ||
-      normalized.includes('internal server error') ||
-      normalized.includes('bad gateway') ||
-      normalized.includes('service unavailable') ||
-      normalized.includes('gateway timeout') ||
-      normalized.includes('fetch failed') ||
-      normalized.includes('econnreset') ||
-      normalized.includes('etimedout') ||
-      normalized.includes('timed out')
-    );
-  };
-
-  const retryDelayMs = (attempt: number): number => {
-    if (process.env.NODE_ENV === 'test') {
-      return 0;
-    }
-    return Math.min(2_000 * 2 ** (attempt - 1), 15_000);
-  };
-
   try {
     onProgress?.(`  Executing migration: ${sqlFilePath}`);
     const { readFileSync } = await import('node:fs');
     const renderedSql = renderPortableMigrationSql(readFileSync(sqlFilePath, 'utf-8'), 'sqlite');
-    const tempSqlPath = pathJoin(
-      tmpdir(),
-      `authrim-migration-${Date.now()}-${Math.random().toString(16).slice(2)}.sql`
-    );
-    await writeFile(tempSqlPath, renderedSql, 'utf-8');
-    try {
-      for (let attempt = 1; attempt <= D1_MIGRATION_MAX_ATTEMPTS; attempt++) {
-        try {
-          await wrangler(['d1', 'execute', dbName, '--remote', '--file', tempSqlPath, '--yes'], {
-            timeout: D1_MIGRATION_EXECUTE_TIMEOUT_MS,
-          });
-          return { success: true };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          const canRetry =
-            attempt < D1_MIGRATION_MAX_ATTEMPTS && isTransientD1MigrationError(message);
-          if (!canRetry) {
-            return { success: false, error: message };
-          }
+    const transactionSql = options.transactionSuffixSql
+      ? `${renderedSql.trimEnd()}\n\n${options.transactionSuffixSql}\n`
+      : renderedSql;
+    return await withPrivateTemporaryTextFile(
+      transactionSql,
+      async (tempSqlPath) => {
+        const oauthRefresh: WranglerOAuthRefreshState = { attempted: false };
+        for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
+          try {
+            await wrangler(['d1', 'execute', dbName, '--remote', '--file', tempSqlPath, '--yes'], {
+              timeout: D1_MIGRATION_EXECUTE_TIMEOUT_MS,
+            });
+            return { success: true };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (options.verifyCommitted) {
+              for (
+                let verificationAttempt = 1;
+                verificationAttempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS;
+                verificationAttempt++
+              ) {
+                try {
+                  if (await options.verifyCommitted()) return { success: true };
+                  break;
+                } catch (verificationError) {
+                  const verificationErrorMessage =
+                    verificationError instanceof Error
+                      ? verificationError.message
+                      : String(verificationError);
+                  const verificationMaxAttempts = isD1AuthenticationError(verificationErrorMessage)
+                    ? D1_MIGRATION_AUTH_MAX_ATTEMPTS
+                    : D1_MIGRATION_MAX_ATTEMPTS;
+                  const canRetryVerification =
+                    verificationAttempt < verificationMaxAttempts &&
+                    isTransientD1MigrationError(verificationErrorMessage);
+                  if (!canRetryVerification) {
+                    return {
+                      success: false,
+                      error:
+                        `${message}; could not determine whether the migration committed: ` +
+                        verificationErrorMessage,
+                    };
+                  }
 
-          const delayMs = retryDelayMs(attempt);
-          onProgress?.(
-            `  ⚠️ Transient D1 migration failure for ${basename(sqlFilePath)} ` +
-              `(attempt ${attempt}/${D1_MIGRATION_MAX_ATTEMPTS}); retrying in ${Math.round(delayMs / 1000)}s`
-          );
-          if (delayMs > 0) {
-            await sleep(delayMs);
+                  const verificationDelayMs = d1MigrationRetryDelayMs(verificationAttempt);
+                  onProgress?.(
+                    `  ⚠️ Transient D1 commit verification failure for ${basename(sqlFilePath)} ` +
+                      `(attempt ${verificationAttempt}/${verificationMaxAttempts}); ` +
+                      `retrying verification in ${Math.round(verificationDelayMs / 1000)}s`
+                  );
+                  if (verificationDelayMs > 0) {
+                    await sleep(verificationDelayMs);
+                  }
+                }
+              }
+            }
+            const maxAttempts = isD1AuthenticationError(message)
+              ? D1_MIGRATION_AUTH_MAX_ATTEMPTS
+              : D1_MIGRATION_MAX_ATTEMPTS;
+            const canRetry = attempt < maxAttempts && isTransientD1MigrationError(message);
+            if (!canRetry) {
+              return { success: false, error: message };
+            }
+
+            await refreshWranglerOAuthAfterCode10000(message, oauthRefresh);
+
+            const delayMs = d1MigrationRetryDelayMs(attempt);
+            const failureKind = isD1AuthenticationError(message)
+              ? 'Transient Cloudflare D1 authentication failure'
+              : 'Transient D1 migration failure';
+            onProgress?.(
+              `  ⚠️ ${failureKind} for ${basename(sqlFilePath)} ` +
+                `(attempt ${attempt}/${maxAttempts}); retrying in ${Math.round(delayMs / 1000)}s`
+            );
+            if (delayMs > 0) {
+              await sleep(delayMs);
+            }
           }
         }
-      }
-    } finally {
-      await unlink(tempSqlPath).catch(() => {});
-    }
-    return { success: false, error: 'D1 migration retry loop exited unexpectedly' };
+        return { success: false, error: 'D1 migration retry loop exited unexpectedly' };
+      },
+      { directoryPrefix: 'authrim-migration-', filename: 'migration.sql' }
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return { success: false, error: message };
@@ -2169,24 +4287,159 @@ export interface D1ExecuteCommandResult {
   stderr: string;
 }
 
+export interface D1BatchStatement {
+  sql: string;
+  params?: readonly unknown[];
+}
+
+export interface D1BatchExecutionResult {
+  success: true;
+  results?: unknown[];
+  meta?: unknown;
+}
+
+export interface D1BatchExecutionOptions {
+  accountId?: string;
+}
+
+export async function executeD1Batch(
+  databaseId: string,
+  batch: readonly D1BatchStatement[],
+  options: D1BatchExecutionOptions = {}
+): Promise<D1BatchExecutionResult[]> {
+  if (!/^[a-fA-F0-9-]{16,64}$/u.test(databaseId)) {
+    throw new Error('invalid_d1_database_id');
+  }
+  if (batch.length === 0 || batch.length > 512) {
+    throw new Error('invalid_d1_batch_size');
+  }
+  const normalized = batch.map((statement) => {
+    if (!statement.sql.trim() || statement.sql.length > 100_000) {
+      throw new Error('invalid_d1_batch_statement');
+    }
+    return {
+      sql: statement.sql,
+      ...(statement.params ? { params: [...statement.params] } : {}),
+    };
+  });
+  const body = JSON.stringify({ batch: normalized });
+  if (Buffer.byteLength(body, 'utf8') > 4 * 1024 * 1024) {
+    throw new Error('d1_batch_payload_too_large');
+  }
+  let credentials = await resolveCloudflareD1Credentials(options.accountId);
+  if (!credentials) throw new Error('cloudflare_api_credentials_required');
+  let response: Response | undefined;
+  let payload: { success?: unknown; result?: unknown } = {};
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const result = await requestCloudflareApiJson<{ success?: unknown; result?: unknown }>(
+        `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/d1/database/${databaseId}/query`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${credentials.token}`,
+            'Content-Type': 'application/json',
+          },
+          body,
+        },
+        { label: 'Cloudflare D1 batch', retryMode: 'non_idempotent_mutation' }
+      );
+      response = result.response;
+      payload = result.data;
+    } catch (error) {
+      if (
+        error instanceof CloudflareApiRequestInterruptedError &&
+        error.reason === 'caller_abort'
+      ) {
+        throw new Error('cloudflare_d1_batch_aborted');
+      }
+      // D1 query is a POST and may have committed before a transport failure. The deployment
+      // coordinator must reconcile the durable lease/state before deciding whether to issue it again.
+      throw new Error('cloudflare_d1_batch_ambiguous');
+    }
+    if (response.ok) break;
+    if (
+      !shouldRefreshD1OAuthCredential({
+        status: response.status,
+        source: credentials.source,
+        attempt,
+      })
+    ) {
+      if (response.status === 408 || response.status === 425 || response.status >= 500) {
+        throw new Error(`cloudflare_d1_batch_ambiguous:${response.status}`);
+      }
+      throw new Error(`cloudflare_d1_batch_failed:${response.status}`);
+    }
+    await wrangler(['whoami'], { timeout: 30_000 });
+    const refreshed = await resolveCloudflareD1Credentials(options.accountId);
+    if (!refreshed || refreshed.source !== 'oauth') {
+      throw new Error(`cloudflare_d1_batch_failed:${response.status}`);
+    }
+    credentials = refreshed;
+  }
+  if (!response?.ok) throw new Error(`cloudflare_d1_batch_failed:${response?.status ?? 0}`);
+  if (
+    payload.success !== true ||
+    !Array.isArray(payload.result) ||
+    payload.result.length !== normalized.length ||
+    payload.result.some(
+      (result) =>
+        !result ||
+        typeof result !== 'object' ||
+        Array.isArray(result) ||
+        (result as { success?: unknown }).success !== true
+    )
+  ) {
+    throw new Error('cloudflare_d1_batch_unsuccessful');
+  }
+  return payload.result as D1BatchExecutionResult[];
+}
+
 export async function executeD1Command(
   dbName: string,
   sql: string,
-  options: { json?: boolean; timeout?: number } = {}
+  options: { json?: boolean; timeout?: number; onProgress?: (message: string) => void } = {}
 ): Promise<D1ExecuteCommandResult> {
-  return wrangler(
-    [
-      'd1',
-      'execute',
-      dbName,
-      '--remote',
-      '--yes',
-      '--command',
-      sql,
-      ...(options.json ? ['--json'] : []),
-    ],
-    { timeout: options.timeout ?? D1_MIGRATION_EXECUTE_TIMEOUT_MS }
-  );
+  const args = [
+    'd1',
+    'execute',
+    dbName,
+    '--remote',
+    '--yes',
+    '--command',
+    sql,
+    ...(options.json ? ['--json'] : []),
+  ];
+  const oauthRefresh: WranglerOAuthRefreshState = { attempted: false };
+  for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await wrangler(args, {
+        timeout: options.timeout ?? D1_MIGRATION_EXECUTE_TIMEOUT_MS,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const maxAttempts = isD1AuthenticationError(message)
+        ? D1_MIGRATION_AUTH_MAX_ATTEMPTS
+        : D1_MIGRATION_MAX_ATTEMPTS;
+      const canRetry =
+        attempt < maxAttempts && (isD1AuthenticationError(message) || isD1RateLimitError(message));
+      if (!canRetry) throw error;
+
+      await refreshWranglerOAuthAfterCode10000(message, oauthRefresh);
+
+      const delayMs = d1MigrationRetryDelayMs(attempt);
+      const failureKind = isD1AuthenticationError(message)
+        ? 'Transient Cloudflare D1 authentication failure'
+        : 'Cloudflare D1 rate limit';
+      options.onProgress?.(
+        `  ⚠️ ${failureKind} for ${dbName} ` +
+          `(attempt ${attempt}/${maxAttempts}); ` +
+          `retrying in ${Math.round(delayMs / 1000)}s`
+      );
+      if (delayMs > 0) await sleep(delayMs);
+    }
+  }
+  throw new Error('D1 command retry loop exited unexpectedly');
 }
 
 function normalizeD1QueryRows<T extends Record<string, unknown>>(payload: unknown): T[] {
@@ -2256,24 +4509,49 @@ export async function queryD1Rows<T extends Record<string, unknown>>(
   dbName: string,
   sql: string
 ): Promise<T[]> {
-  const result = await executeD1Command(dbName, sql, { json: true });
-  return parseD1RowsFromWranglerResult<T>(result);
+  let wranglerError: unknown;
+  try {
+    const result = await executeD1Command(dbName, sql, { json: true });
+    return parseD1RowsFromWranglerResult<T>(result);
+  } catch (error) {
+    wranglerError = error;
+  }
+
+  try {
+    const apiRows = await queryD1RowsViaApi<T>(dbName, sql);
+    if (apiRows) return apiRows;
+  } catch (apiError) {
+    const wranglerMessage = describeInventoryError(wranglerError, 'unknown Wrangler error');
+    const apiMessage = describeInventoryError(apiError, 'unknown API error');
+    throw new Error(
+      `Could not query D1 via Wrangler (${wranglerMessage}) or the Cloudflare API (${apiMessage})`
+    );
+  }
+
+  throw wranglerError;
 }
 
 async function queryD1RowsViaApi<T extends Record<string, unknown>>(
-  dbName: string,
+  databaseIdentifier: string,
   sql: string
 ): Promise<T[] | null> {
   const credentials = await resolveCloudflareInventoryCredentials();
   if (!credentials) return null;
 
   const databases = await listD1DatabasesViaApi();
-  const database = databases?.find((candidate) => candidate.name === dbName);
+  const databaseById = databases?.find((candidate) => candidate.uuid === databaseIdentifier);
+  const databasesByName = databaseById
+    ? []
+    : (databases?.filter((candidate) => candidate.name === databaseIdentifier) ?? []);
+  if (!databaseById && databasesByName.length > 1) {
+    throw new Error(`Cloudflare D1 database name ${databaseIdentifier} is ambiguous`);
+  }
+  const database = databaseById ?? databasesByName[0];
   if (!database) {
-    throw new Error(`Cloudflare D1 database ${dbName} was not found`);
+    throw new Error(`Cloudflare D1 database ${databaseIdentifier} was not found`);
   }
 
-  const response = await fetch(
+  const { response, data } = await requestCloudflareApiJson<unknown>(
     new URL(
       `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/d1/database/${database.uuid}/query`
     ),
@@ -2284,65 +4562,45 @@ async function queryD1RowsViaApi<T extends Record<string, unknown>>(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ sql }),
-    }
+    },
+    { label: 'Cloudflare D1 read query', retryMode: 'read' }
   );
   if (!response.ok) {
     throw new Error(`Cloudflare D1 query failed (${response.status})`);
   }
 
-  return normalizeD1QueryRows<T>(await response.json());
+  return normalizeD1QueryRows<T>(data);
 }
-
-/** SQL to create the migration tracking table (idempotent) */
-const CREATE_MIGRATIONS_TABLE_SQL = `
-CREATE TABLE IF NOT EXISTS authrim_migrations (
-  filename TEXT PRIMARY KEY,
-  checksum TEXT NOT NULL,
-  applied_at INTEGER NOT NULL,
-  execution_time_ms INTEGER,
-  setup_version TEXT,
-  tool_version TEXT
-);
-`.trim();
-
-const MIGRATION_TABLE_COLUMN_ALTERS = [
-  'ALTER TABLE authrim_migrations ADD COLUMN checksum TEXT;',
-  'ALTER TABLE authrim_migrations ADD COLUMN execution_time_ms INTEGER;',
-  'ALTER TABLE authrim_migrations ADD COLUMN setup_version TEXT;',
-  'ALTER TABLE authrim_migrations ADD COLUMN tool_version TEXT;',
-];
 
 /**
  * Ensure the authrim_migrations tracking table exists in the target database.
- * Returns true on success, false on failure.
+ * Retries provider transients, tolerates only the expected legacy-column duplicates,
+ * and throws with the provider detail when preparation cannot complete.
  */
 async function ensureMigrationsTable(
   dbName: string,
   onProgress?: (message: string) => void
-): Promise<boolean> {
-  try {
-    await wrangler([
-      'd1',
-      'execute',
-      dbName,
-      '--remote',
-      '--yes',
-      '--command',
-      CREATE_MIGRATIONS_TABLE_SQL,
-    ]);
-    for (const sql of MIGRATION_TABLE_COLUMN_ALTERS) {
-      try {
-        await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
-      } catch {
-        // Existing columns are expected for databases created with the current schema.
-      }
+): Promise<void> {
+  const createResult = await executeD1PreparationCommand(
+    dbName,
+    AUTHRIM_MIGRATIONS_TABLE_SQL,
+    onProgress
+  );
+  if (!createResult.success) {
+    const message = createResult.error ?? 'unknown Cloudflare D1 error';
+    onProgress?.(`  ❌ Could not prepare migration tracking for ${dbName}: ${message}`);
+    throw new Error(`Could not prepare migration tracking for ${dbName}: ${message}`);
+  }
+
+  for (const sql of AUTHRIM_MIGRATIONS_COLUMN_ALTERS) {
+    const alterResult = await executeD1PreparationCommand(dbName, sql, onProgress);
+    if (alterResult.success) continue;
+    const message = alterResult.error ?? 'unknown Cloudflare D1 error';
+    if (isExpectedMigrationTrackingColumnError(message)) {
+      continue;
     }
-    return true;
-  } catch (error) {
-    onProgress?.(
-      `  ⚠️  Could not create migrations table: ${error instanceof Error ? error.message : String(error)}`
-    );
-    return false;
+    onProgress?.(`  ❌ Could not update migration tracking for ${dbName}: ${message}`);
+    throw new Error(`Could not update migration tracking for ${dbName}: ${message}`);
   }
 }
 
@@ -2355,36 +4613,24 @@ async function getAppliedMigrations(dbName: string): Promise<Set<string>> {
   return new Set(rows.map((r) => r.filename));
 }
 
-interface AppliedMigrationRow extends Record<string, unknown> {
-  filename: string;
-  checksum?: string | null;
-  applied_at?: number | null;
-  execution_time_ms?: number | null;
-}
-
-const APPLIED_MIGRATIONS_SQL =
-  'SELECT filename, checksum, applied_at, execution_time_ms FROM authrim_migrations;';
+type AppliedMigrationRow = AuthrimMigrationHistoryRow;
 
 function validateAppliedMigrationRows(rows: AppliedMigrationRow[]): AppliedMigrationRow[] {
-  return rows.map((row, index) => {
-    if (typeof row.filename !== 'string' || row.filename.trim().length === 0) {
-      throw new TypeError(`Migration history row ${index} did not contain a filename`);
-    }
-    if (row.checksum !== undefined && row.checksum !== null && typeof row.checksum !== 'string') {
-      throw new TypeError(`Migration history row ${index} contained an invalid checksum`);
-    }
-    return { ...row, filename: row.filename.trim() };
-  });
+  return validateAuthrimMigrationHistoryRows(rows);
 }
 
-async function getAppliedMigrationRows(dbName: string): Promise<AppliedMigrationRow[]> {
-  if (!(await ensureMigrationsTable(dbName))) {
-    throw new Error(`Could not prepare migration tracking table for ${dbName}`);
-  }
+async function getAppliedMigrationRows(
+  dbName: string,
+  onProgress?: (message: string) => void
+): Promise<AppliedMigrationRow[]> {
+  await ensureMigrationsTable(dbName, onProgress);
 
   let apiError: unknown;
   try {
-    const apiRows = await queryD1RowsViaApi<AppliedMigrationRow>(dbName, APPLIED_MIGRATIONS_SQL);
+    const apiRows = await queryD1RowsViaApi<AppliedMigrationRow>(
+      dbName,
+      AUTHRIM_MIGRATION_HISTORY_SQL
+    );
     if (apiRows) {
       return validateAppliedMigrationRows(apiRows);
     }
@@ -2393,7 +4639,7 @@ async function getAppliedMigrationRows(dbName: string): Promise<AppliedMigration
   }
 
   try {
-    const result = await executeD1Command(dbName, APPLIED_MIGRATIONS_SQL, { json: true });
+    const result = await executeD1Command(dbName, AUTHRIM_MIGRATION_HISTORY_SQL, { json: true });
     return validateAppliedMigrationRows(parseD1RowsFromWranglerResult<AppliedMigrationRow>(result));
   } catch (error) {
     if (apiError) {
@@ -2454,6 +4700,63 @@ function escapeSqlString(value: string): string {
   return value.replace(/'/g, "''");
 }
 
+export function buildLegacyMigrationChecksumBackfillSql(
+  files: ReadonlyArray<{ path: string; checksum: string }>
+): string {
+  return files
+    .map(
+      (file) =>
+        `UPDATE authrim_migrations SET checksum = '${escapeSqlString(file.checksum)}' ` +
+        `WHERE filename = '${escapeSqlString(file.path)}' AND (checksum IS NULL OR checksum = '');`
+    )
+    .join('\n');
+}
+
+export function collectManifestMigrationChecksumEvidence(
+  files: ReadonlyArray<{
+    path: string;
+    checksum: string;
+    supersedes?: ReadonlyArray<{ path: string; checksum: string }>;
+  }>
+): Array<{ path: string; checksum: string }> {
+  const evidence = new Map<string, string>();
+  for (const file of files) {
+    for (const candidate of [file, ...(file.supersedes ?? [])]) {
+      const existing = evidence.get(candidate.path);
+      if (existing && existing !== candidate.checksum) {
+        throw new Error(`Conflicting release manifest checksums: ${candidate.path}`);
+      }
+      evidence.set(candidate.path, candidate.checksum);
+    }
+  }
+  return [...evidence].map(([path, checksum]) => ({ path, checksum }));
+}
+
+async function backfillLegacyMigrationChecksums(
+  dbName: string,
+  manifestFiles: ReadonlyArray<{
+    path: string;
+    checksum: string;
+    supersedes?: ReadonlyArray<{ path: string; checksum: string }>;
+  }>,
+  onProgress?: (message: string) => void
+): Promise<number> {
+  const rows = await getAppliedMigrationRows(dbName);
+  const legacyFilenames = new Set(
+    rows
+      .filter((row) => row.checksum === null || row.checksum === undefined || row.checksum === '')
+      .map((row) => row.filename)
+  );
+  const backfills = collectManifestMigrationChecksumEvidence(manifestFiles).filter((file) =>
+    legacyFilenames.has(file.path)
+  );
+  if (backfills.length === 0) return 0;
+  await executeD1Command(dbName, buildLegacyMigrationChecksumBackfillSql(backfills), {
+    onProgress,
+  });
+  return backfills.length;
+}
+
 function buildRecordMigrationWithChecksumSql(input: {
   filename: string;
   checksum: string;
@@ -2462,7 +4765,10 @@ function buildRecordMigrationWithChecksumSql(input: {
   setupVersion?: string | null;
   toolVersion?: string | null;
 }): string {
-  const appliedAt = input.appliedAt ?? Date.now();
+  const appliedAt =
+    input.appliedAt === undefined
+      ? "CAST(strftime('%s', 'now') AS INTEGER) * 1000"
+      : String(input.appliedAt);
   const executionTimeMs = Number.isFinite(input.executionTimeMs ?? Number.NaN)
     ? String(Math.max(0, Math.round(input.executionTimeMs ?? 0)))
     : 'NULL';
@@ -2482,15 +4788,23 @@ export function calculateD1MigrationChecksum(sqlFilePath: string): string {
   return createHash('sha256').update(renderedSql).digest('hex');
 }
 
-const CORE_DB_EXCLUDED_MIGRATION_DIRS = new Set(['admin', 'archive', 'external', 'pii']);
-
-interface ListD1MigrationOptions {
+export interface ListD1MigrationOptions {
   excludeTopLevelDirectories?: ReadonlySet<string>;
+  manifestFiles?: ReadonlyArray<{
+    path: string;
+    checksum: string;
+    supersedes?: ReadonlyArray<{ path: string; checksum: string }>;
+  }>;
+  /** Show a consolidated release bundle as applied when every superseded draft is applied. */
+  materializeSuperseded?: boolean;
 }
 
-interface RunD1MigrationOptions extends ListD1MigrationOptions {
+export interface RunD1MigrationOptions extends ListD1MigrationOptions {
   logSummaryLimit?: number;
   onlyFiles?: ReadonlySet<string>;
+  releaseVersion?: string;
+  /** Backfill pre-checksum history only when files came from a published release manifest. */
+  backfillLegacyChecksums?: boolean;
 }
 
 export function listD1MigrationSqlFiles(
@@ -2545,15 +4859,57 @@ export function getBlockingChangedMigrationFiles(
     .map((item) => item.filename);
 }
 
+export type SupersededMigrationState = 'none_applied' | 'fully_applied' | 'partially_applied';
+
+export function evaluateSupersededMigrationState(
+  supersedes: ReadonlyArray<{ path: string; checksum: string }>,
+  migrations: ReadonlyArray<D1MigrationFileState>
+): { state: SupersededMigrationState; error?: string } {
+  const migrationByFilename = new Map(
+    migrations.map((migration) => [migration.filename, migration])
+  );
+  const present = supersedes.flatMap((expected) => {
+    const actual = migrationByFilename.get(expected.path);
+    return actual?.status === 'orphaned' ? [{ expected, actual }] : [];
+  });
+  if (present.length === 0) return { state: 'none_applied' };
+  const checksumMismatch = present.find(
+    ({ expected, actual }) => actual.appliedChecksum !== expected.checksum
+  );
+  if (checksumMismatch) {
+    return {
+      state: 'partially_applied',
+      error: `Superseded migration checksum mismatch: ${checksumMismatch.expected.path}`,
+    };
+  }
+  if (present.length !== supersedes.length) return { state: 'partially_applied' };
+  return { state: 'fully_applied' };
+}
+
 async function recordMigration(
   dbName: string,
-  input: { filename: string; checksum: string; executionTimeMs?: number | null }
-): Promise<void> {
-  const sql = buildRecordMigrationWithChecksumSql(input);
+  input: {
+    filename: string;
+    checksum: string;
+    executionTimeMs?: number | null;
+    releaseVersion?: string;
+  },
+  onProgress?: (message: string) => void
+): Promise<{ success: boolean; error?: string }> {
+  const sql = buildRecordMigrationWithChecksumSql({
+    filename: input.filename,
+    checksum: input.checksum,
+    executionTimeMs: input.executionTimeMs,
+    setupVersion: input.releaseVersion,
+  });
   try {
-    await wrangler(['d1', 'execute', dbName, '--remote', '--yes', '--command', sql]);
-  } catch {
-    // Non-fatal: tracking failure should not abort the migration run
+    await executeD1Command(dbName, sql, { onProgress });
+    return { success: true };
+  } catch (error) {
+    return {
+      success: false,
+      error: describeInventoryError(error, 'unknown error'),
+    };
   }
 }
 
@@ -2573,7 +4929,8 @@ export async function getD1MigrationStatus(
   dbName: string,
   migrationsDir: string,
   role: D1MigrationDatabaseRole,
-  options: ListD1MigrationOptions = {}
+  options: ListD1MigrationOptions = {},
+  onProgress?: (message: string) => void
 ): Promise<D1MigrationDatabaseStatus> {
   const { existsSync } = await import('node:fs');
   const { join } = await import('node:path');
@@ -2590,14 +4947,33 @@ export async function getD1MigrationStatus(
   }
 
   try {
-    const sqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
-    const appliedRows = await getAppliedMigrationRows(dbName);
+    const discoveredManifest =
+      options.materializeSuperseded && !options.manifestFiles
+        ? discoverReleaseMigrationStream(migrationsDir)
+        : null;
+    const manifestFiles = options.manifestFiles ?? discoveredManifest?.stream.files;
+    const allSqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
+    const allSqlFileSet = new Set(allSqlFiles);
+    const sqlFiles = manifestFiles
+      ? manifestFiles.map((file) => file.path).sort((a, b) => a.localeCompare(b))
+      : allSqlFiles;
+    const missingFiles = sqlFiles.filter((filename) => !allSqlFileSet.has(filename));
+    if (missingFiles.length > 0) {
+      throw new Error(
+        `Release manifest references missing migration files: ${formatMigrationFileSummary(missingFiles)}`
+      );
+    }
+    const appliedRows = await getAppliedMigrationRows(dbName, onProgress);
     const appliedByFilename = new Map(appliedRows.map((row) => [row.filename, row]));
     const localFilenames = new Set(sqlFiles);
     const migrations: D1MigrationFileState[] = [];
 
     for (const filename of sqlFiles) {
       const checksum = calculateD1MigrationChecksum(join(migrationsDir, filename));
+      const manifestFile = manifestFiles?.find((file) => file.path === filename);
+      if (manifestFile && manifestFile.checksum !== checksum) {
+        throw new Error(`Release manifest checksum mismatch: ${filename}`);
+      }
       const applied = appliedByFilename.get(filename);
       const appliedChecksum = applied?.checksum ?? null;
       const status: D1MigrationFileStatus = !applied
@@ -2624,6 +5000,47 @@ export async function getD1MigrationStatus(
           appliedAt: applied.applied_at ?? null,
           executionTimeMs: applied.execution_time_ms ?? null,
         });
+      }
+    }
+
+    if (options.materializeSuperseded && manifestFiles) {
+      const migrationByFilename = new Map(
+        migrations.map((migration) => [migration.filename, migration])
+      );
+      const consumedSupersededFiles = new Set<string>();
+      for (const manifestFile of manifestFiles) {
+        if (!manifestFile.supersedes?.length) continue;
+        const target = migrationByFilename.get(manifestFile.path);
+        if (!target || (target.status !== 'pending' && target.status !== 'applied')) continue;
+        const supersededState = evaluateSupersededMigrationState(
+          manifestFile.supersedes,
+          migrations
+        );
+        if (supersededState.state !== 'fully_applied') continue;
+
+        const supersededRows = manifestFile.supersedes
+          .map((source) => migrationByFilename.get(source.path))
+          .filter((source): source is D1MigrationFileState => source !== undefined);
+        if (target.status === 'pending') {
+          target.status = 'applied';
+          target.appliedChecksum = target.checksum ?? manifestFile.checksum;
+          target.appliedAt = Math.max(...supersededRows.map((source) => source.appliedAt ?? 0));
+          target.executionTimeMs = supersededRows.reduce(
+            (total, source) => total + (source.executionTimeMs ?? 0),
+            0
+          );
+        }
+        for (const source of manifestFile.supersedes) {
+          consumedSupersededFiles.add(source.path);
+        }
+      }
+      if (consumedSupersededFiles.size > 0) {
+        for (let index = migrations.length - 1; index >= 0; index--) {
+          const migration = migrations[index];
+          if (migration?.status === 'orphaned' && consumedSupersededFiles.has(migration.filename)) {
+            migrations.splice(index, 1);
+          }
+        }
       }
     }
 
@@ -2675,19 +5092,95 @@ export async function runD1Migrations(
     };
   }
 
+  const discoveredManifest = options.manifestFiles
+    ? null
+    : discoverReleaseMigrationStream(migrationsDir);
+  const manifestFiles = options.manifestFiles ?? discoveredManifest?.stream.files;
+  const releaseVersion = options.releaseVersion ?? discoveredManifest?.manifest.productVersion;
   const allSqlFiles = listD1MigrationSqlFiles(migrationsDir, options);
-  const sqlFiles = options.onlyFiles
-    ? allSqlFiles.filter((file) => options.onlyFiles?.has(file))
+  const manifestFileSet = manifestFiles
+    ? new Set(manifestFiles.map((file) => file.path))
+    : undefined;
+  if (options.onlyFiles && manifestFileSet) {
+    const outsideManifest = [...options.onlyFiles].filter((file) => !manifestFileSet.has(file));
+    if (outsideManifest.length > 0) {
+      return {
+        success: false,
+        appliedCount: 0,
+        skippedCount: 0,
+        error: `Requested migration files are not part of the selected release manifest: ${formatMigrationFileSummary(outsideManifest.sort())}`,
+      };
+    }
+  }
+  const selectedFiles = options.onlyFiles ?? manifestFileSet;
+  const sqlFiles = selectedFiles
+    ? allSqlFiles.filter((file) => selectedFiles.has(file))
     : allSqlFiles;
 
-  if (allSqlFiles.length === 0) {
+  if (manifestFileSet) {
+    const missingFiles = [...manifestFileSet].filter((file) => !allSqlFiles.includes(file));
+    if (missingFiles.length > 0) {
+      return {
+        success: false,
+        appliedCount: 0,
+        skippedCount: 0,
+        error: `Release manifest references missing migration files: ${formatMigrationFileSummary(missingFiles)}`,
+      };
+    }
+    for (const manifestFile of manifestFiles ?? []) {
+      const actualChecksum = calculateD1MigrationChecksum(join(migrationsDir, manifestFile.path));
+      if (actualChecksum !== manifestFile.checksum) {
+        return {
+          success: false,
+          appliedCount: 0,
+          skippedCount: 0,
+          error: `Release manifest checksum mismatch: ${manifestFile.path}`,
+        };
+      }
+    }
+  }
+
+  if (manifestFiles && options.backfillLegacyChecksums) {
+    try {
+      const backfilledCount = await backfillLegacyMigrationChecksums(
+        dbName,
+        manifestFiles,
+        onProgress
+      );
+      if (backfilledCount > 0) {
+        onProgress?.(`  Upgraded ${backfilledCount} legacy migration checksum record(s)`);
+      }
+    } catch (error) {
+      return {
+        success: false,
+        appliedCount: 0,
+        skippedCount: 0,
+        error: `Could not upgrade legacy migration checksum history: ${describeInventoryError(
+          error,
+          'unknown error'
+        )}`,
+      };
+    }
+  }
+
+  if (sqlFiles.length === 0) {
     onProgress?.(`  No migration files found in ${migrationsDir}`);
     return { success: true, appliedCount: 0, skippedCount: 0 };
   }
 
-  onProgress?.(`  Found ${allSqlFiles.length} migration files`);
+  onProgress?.(`  Found ${sqlFiles.length} migration files`);
 
-  const status = await getD1MigrationStatus(dbName, migrationsDir, 'core', options);
+  const status = await getD1MigrationStatus(
+    dbName,
+    migrationsDir,
+    'core',
+    {
+      ...options,
+      ...(manifestFiles ? { manifestFiles } : {}),
+      materializeSuperseded: false,
+    },
+    onProgress
+  );
   if (!status.success) {
     return {
       success: false,
@@ -2698,7 +5191,7 @@ export async function runD1Migrations(
         'Refusing to run migrations without a trustworthy applied-migration history.',
     };
   }
-  const changedFiles = getBlockingChangedMigrationFiles(status.migrations, options.onlyFiles);
+  const changedFiles = getBlockingChangedMigrationFiles(status.migrations, selectedFiles);
   if (changedFiles.length > 0) {
     return {
       success: false,
@@ -2712,6 +5205,45 @@ export async function runD1Migrations(
   const applied = new Set(
     status.migrations.filter((item) => item.status === 'applied').map((item) => item.filename)
   );
+  for (const manifestFile of manifestFiles ?? []) {
+    if (applied.has(manifestFile.path) || !manifestFile.supersedes?.length) continue;
+    const supersededState = evaluateSupersededMigrationState(
+      manifestFile.supersedes,
+      status.migrations
+    );
+    if (supersededState.state === 'none_applied') continue;
+    if (supersededState.state === 'partially_applied') {
+      return {
+        success: false,
+        appliedCount: 0,
+        skippedCount: applied.size,
+        error:
+          `${supersededState.error ?? `Release migration ${manifestFile.path} only partially supersedes applied draft migrations.`} ` +
+          'Apply every draft migration from the previous checkout or recreate the pre-release database.',
+      };
+    }
+    const recorded = await recordMigration(
+      dbName,
+      {
+        filename: manifestFile.path,
+        checksum: manifestFile.checksum,
+        executionTimeMs: 0,
+        releaseVersion,
+      },
+      onProgress
+    );
+    if (!recorded.success) {
+      return {
+        success: false,
+        appliedCount: 0,
+        skippedCount: applied.size,
+        error:
+          `Could not record consolidated release migration ${manifestFile.path}: ` +
+          (recorded.error ?? 'unknown error'),
+      };
+    }
+    applied.add(manifestFile.path);
+  }
   onProgress?.(`  ${applied.size} migration(s) already recorded as applied`);
 
   let appliedCount = 0;
@@ -2728,8 +5260,19 @@ export async function runD1Migrations(
 
     const sqlFilePath = join(migrationsDir, sqlFile);
     const checksum = calculateD1MigrationChecksum(sqlFilePath);
-    const startedAt = Date.now();
-    const result = await executeD1Migration(dbName, sqlFilePath, onProgress);
+    const trackingSql = buildRecordMigrationWithChecksumSql({
+      filename: sqlFile,
+      checksum,
+      executionTimeMs: null,
+      setupVersion: releaseVersion,
+    });
+    const result = await executeD1Migration(dbName, sqlFilePath, onProgress, {
+      transactionSuffixSql: trackingSql,
+      verifyCommitted: async () => {
+        const rows = await getAppliedMigrationRows(dbName, onProgress);
+        return rows.some((row) => row.filename === sqlFile && row.checksum === checksum);
+      },
+    });
     if (!result.success) {
       return {
         success: false,
@@ -2739,11 +5282,6 @@ export async function runD1Migrations(
       };
     }
 
-    await recordMigration(dbName, {
-      filename: sqlFile,
-      checksum,
-      executionTimeMs: Date.now() - startedAt,
-    });
     appliedCount++;
   }
 
@@ -2775,10 +5313,34 @@ export function buildInitialTenantBootstrapSql(config: AuthrimConfig): string {
   const tenantId = config.tenant?.name?.trim() || 'default';
   const tenantCode = tenantId;
   const displayName = config.tenant?.displayName?.trim() || 'Initial Tenant';
+  const placementPolicy = config.tenant?.placementPolicy ?? 'tenant_exclusive';
 
   const tenantIdSql = sqlString(tenantId);
   const tenantCodeSql = sqlString(tenantCode);
   const displayNameSql = sqlString(displayName);
+  const placementPolicySql = sqlString(placementPolicy);
+  const builtinProfileValuesSql = BUILTIN_PROFILE_CLAIM_SCHEMAS.map(
+    (schema) =>
+      `(${[
+        schema.field_key,
+        schema.display_label,
+        schema.field_type,
+        schema.cardinality ?? 'single',
+        schema.is_pii,
+        schema.is_searchable,
+        schema.is_exportable,
+        schema.display_order,
+        schema.ui_group_key ?? null,
+        schema.ui_group_label ?? null,
+        schema.ui_group_order ?? 0,
+        schema.ui_field_order ?? schema.display_order,
+        schema.examples_json ?? null,
+      ]
+        .map((value) =>
+          value === null ? 'NULL' : typeof value === 'number' ? value : sqlString(value)
+        )
+        .join(', ')})`
+  ).join(',\n    ');
 
   // Note: D1's HTTP API (used by `wrangler d1 execute --command`) does not support
   // explicit BEGIN TRANSACTION / COMMIT statements. Each statement runs as its own
@@ -2791,7 +5353,8 @@ SET id = ${tenantIdSql},
     name = ${displayNameSql},
     tenant_key = COALESCE(tenant_key, 't_' || lower(hex(randomblob(18)))),
     lifecycle_state = 'active',
-    updated_at = ${sqlExpr.nowEpochSeconds}
+    isolation_policy = ${placementPolicySql},
+    updated_at = MAX(${sqlExpr.nowEpochSeconds}, updated_at + 1)
 WHERE id = 'default'
   AND ${tenantIdSql} <> 'default'
   AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
@@ -2842,12 +5405,12 @@ WHERE tenant_id = 'default'
 
 INSERT INTO tenants (
   id, tenant_code, tenant_key, name, description, lifecycle_state, is_default,
-  default_tenant_guard, created_at, updated_at
+  default_tenant_guard, created_at, updated_at, isolation_policy
 )
 SELECT ${tenantIdSql}, ${tenantCodeSql}, 't_' || lower(hex(randomblob(18))), ${displayNameSql}, NULL, 'active',
        CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN 0 ELSE 1 END,
        CASE WHEN EXISTS (SELECT 1 FROM tenants WHERE is_default = 1) THEN NULL ELSE 'default' END,
-       ${sqlExpr.nowEpochSeconds}, ${sqlExpr.nowEpochSeconds}
+       ${sqlExpr.nowEpochSeconds}, ${sqlExpr.nowEpochSeconds}, ${placementPolicySql}
 WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql});
 
 UPDATE tenants
@@ -2855,8 +5418,119 @@ SET tenant_code = ${tenantCodeSql},
     name = ${displayNameSql},
     tenant_key = COALESCE(tenant_key, 't_' || lower(hex(randomblob(18)))),
     lifecycle_state = 'active',
-    updated_at = ${sqlExpr.nowEpochSeconds}
+    isolation_policy = ${placementPolicySql},
+    updated_at = MAX(${sqlExpr.nowEpochSeconds}, updated_at + 1)
 WHERE id = ${tenantIdSql};
+
+-- A fresh baseline starts with tenant 'default'. Move its deterministic built-in profile
+-- schemas alongside a renamed initial tenant, without overwriting any destination schema
+-- that may already exist during an idempotent setup resume.
+DELETE FROM custom_claim_schemas
+WHERE tenant_id = 'default'
+  AND id = 'builtin:' || tenant_id || ':' || field_key
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default')
+  AND EXISTS (
+    SELECT 1
+    FROM custom_claim_schemas AS target
+    WHERE target.tenant_id = ${tenantIdSql}
+      AND target.field_key = custom_claim_schemas.field_key
+  );
+
+UPDATE custom_claim_schemas
+SET id = 'builtin:' || ${tenantIdSql} || ':' || field_key,
+    tenant_id = ${tenantIdSql},
+    updated_at = ${sqlExpr.nowEpochSeconds}
+WHERE tenant_id = 'default'
+  AND id = 'builtin:' || tenant_id || ':' || field_key
+  AND ${tenantIdSql} <> 'default'
+  AND EXISTS (SELECT 1 FROM tenants WHERE id = ${tenantIdSql})
+  AND NOT EXISTS (SELECT 1 FROM tenants WHERE id = 'default');
+
+-- Upgrade the unpublished legacy built-in 'name' key even when Setup is installing from
+-- a draft manifest that has not yet been finalized with the current development delta.
+UPDATE custom_claim_schemas
+SET id = 'builtin:' || tenant_id || ':display_name',
+    field_key = 'display_name',
+    active_field_key = 'display_name',
+    display_label = 'Display Name',
+    updated_at = ${sqlExpr.nowEpochSeconds}
+WHERE tenant_id = ${tenantIdSql}
+  AND field_key = 'name'
+  AND id = 'builtin:' || tenant_id || ':name'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM custom_claim_schemas AS target
+    WHERE target.tenant_id = custom_claim_schemas.tenant_id
+      AND target.field_key = 'display_name'
+  );
+
+DELETE FROM custom_claim_schemas
+WHERE tenant_id = ${tenantIdSql}
+  AND field_key = 'name'
+  AND id = 'builtin:' || tenant_id || ':name';
+
+WITH builtin_profile_fields(
+  field_key, display_label, field_type, cardinality, is_pii, is_searchable, is_exportable,
+  display_order, ui_group_key, ui_group_label, ui_group_order, ui_field_order, examples_json
+) AS (
+  VALUES
+    ${builtinProfileValuesSql}
+)
+INSERT INTO custom_claim_schemas (
+  id, tenant_id, field_key, active_field_key, display_label, field_type, cardinality,
+  is_pii, is_required, is_active, is_system, is_searchable, is_exportable, is_vc_claim,
+  include_in_id_token, include_in_userinfo, include_in_introspection, scope_mode,
+  display_order, ui_group_key, ui_group_label, ui_group_order, ui_field_order, examples_json,
+  schema_version, operation_status, created_at, updated_at
+)
+SELECT
+  'builtin:' || ${tenantIdSql} || ':' || field.field_key,
+  ${tenantIdSql},
+  field.field_key,
+  field.field_key,
+  field.display_label,
+  field.field_type,
+  field.cardinality,
+  field.is_pii,
+  0,
+  1,
+  1,
+  field.is_searchable,
+  field.is_exportable,
+  0,
+  0,
+  0,
+  0,
+  'any',
+  field.display_order,
+  field.ui_group_key,
+  field.ui_group_label,
+  field.ui_group_order,
+  field.ui_field_order,
+  field.examples_json,
+  1,
+  'active',
+  ${sqlExpr.nowEpochSeconds},
+  ${sqlExpr.nowEpochSeconds}
+FROM builtin_profile_fields AS field
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM custom_claim_schemas AS existing
+  WHERE existing.tenant_id = ${tenantIdSql}
+    AND existing.field_key = field.field_key
+);
+
+UPDATE custom_claim_schemas
+SET is_system = 1,
+    is_required = 0,
+    is_active = 1,
+    operation_status = 'active',
+    updated_at = ${sqlExpr.nowEpochSeconds}
+WHERE tenant_id = ${tenantIdSql}
+  AND id = 'builtin:' || tenant_id || ':' || field_key
+  AND field_key IN (${BUILTIN_PROFILE_CLAIM_SCHEMAS.map((schema) => sqlString(schema.field_key)).join(', ')});
 `.trim();
 }
 
@@ -2974,24 +5648,16 @@ export interface DefaultCanonicalCatalogSeedResult {
 export async function ensureInitialTenantInD1(
   env: string,
   config: AuthrimConfig,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: { databaseIdentifier?: string } = {}
 ): Promise<InitialTenantBootstrapResult> {
-  const dbName = getD1DatabaseName(env, 'core-db');
+  const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'core-db');
   const tenantId = config.tenant?.name?.trim() || 'default';
   const sql = buildInitialTenantBootstrapSql(config);
 
   try {
     onProgress?.(`🔧 Ensuring initial tenant exists in ${dbName} (${tenantId})...`);
-    const { stdout, stderr } = await wrangler([
-      'd1',
-      'execute',
-      dbName,
-      '--remote',
-      '--yes',
-      '--command',
-      sql,
-    ]);
-    // wrangler uses reject:false so errors appear in output rather than thrown
+    const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
     const combined = (stdout + '\n' + stderr).toLowerCase();
     if (combined.includes('[error]') || combined.includes('✘ [error]')) {
       const errorDetail = stderr || stdout;
@@ -3013,23 +5679,16 @@ export async function ensureInitialTenantInD1(
 export async function ensureInitialAdminRolesInD1(
   env: string,
   config: AuthrimConfig,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: { databaseIdentifier?: string } = {}
 ): Promise<InitialAdminRolesBootstrapResult> {
-  const dbName = getD1DatabaseName(env, 'admin-db');
+  const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
   const tenantId = config.tenant?.name?.trim() || 'default';
   const sql = buildInitialAdminRolesBootstrapSql(config);
 
   try {
     onProgress?.(`🔧 Ensuring admin roles exist in ${dbName} (${tenantId})...`);
-    const { stdout, stderr } = await wrangler([
-      'd1',
-      'execute',
-      dbName,
-      '--remote',
-      '--yes',
-      '--command',
-      sql,
-    ]);
+    const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
     const combined = (stdout + '\n' + stderr).toLowerCase();
     if (combined.includes('[error]') || combined.includes('✘ [error]')) {
       const errorDetail = stderr || stdout;
@@ -3052,9 +5711,10 @@ export async function ensureSetupMachineAccessInD1(
   env: string,
   config: AuthrimConfig,
   keysDir: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: { databaseIdentifier?: string } = {}
 ): Promise<SetupMachineAccessBootstrapResult> {
-  const dbName = getD1DatabaseName(env, 'admin-db');
+  const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
 
   try {
     await ensureSetupMachineKeyFiles(keysDir);
@@ -3062,15 +5722,7 @@ export async function ensureSetupMachineAccessInD1(
     const sql = buildSetupMachineAccessBootstrapSql(config, publicJwk);
 
     onProgress?.(`🔧 Ensuring setup machine access exists in ${dbName}...`);
-    const { stdout, stderr } = await wrangler([
-      'd1',
-      'execute',
-      dbName,
-      '--remote',
-      '--yes',
-      '--command',
-      sql,
-    ]);
+    const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
     const combined = (stdout + '\n' + stderr).toLowerCase();
     if (combined.includes('[error]') || combined.includes('✘ [error]')) {
       const errorDetail = stderr || stdout;
@@ -3096,38 +5748,48 @@ export async function ensureSetupMachineAccessInD1(
 export async function cleanupSetupMachineAccessInD1(
   env: string,
   keysDir: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: { databaseIdentifier?: string } = {}
 ): Promise<SetupMachineAccessBootstrapResult> {
-  const dbName = getD1DatabaseName(env, 'admin-db');
-
+  const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
+  let remoteError: string | undefined;
+  let localError: string | undefined;
   try {
-    const sql = buildSetupMachineAccessCleanupSql();
+    try {
+      const sql = buildSetupMachineAccessCleanupSql();
 
-    onProgress?.(`🧹 Removing setup machine access from ${dbName}...`);
-    const { stdout, stderr } = await wrangler([
-      'd1',
-      'execute',
-      dbName,
-      '--remote',
-      '--yes',
-      '--command',
-      sql,
-    ]);
-    const combined = (stdout + '\n' + stderr).toLowerCase();
-    if (combined.includes('[error]') || combined.includes('✘ [error]')) {
-      const errorDetail = stderr || stdout;
-      onProgress?.(`  ❌ Setup machine access cleanup failed: ${errorDetail}`);
-      return { success: false, error: errorDetail };
+      onProgress?.(`🧹 Removing setup machine access from ${dbName}...`);
+      const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
+      const combined = (stdout + '\n' + stderr).toLowerCase();
+      if (combined.includes('[error]') || combined.includes('✘ [error]')) {
+        remoteError = stderr || stdout;
+      }
+    } catch (error) {
+      remoteError = error instanceof Error ? error.message : String(error);
     }
-
-    await deleteSetupMachineKeyFiles(keysDir);
-    onProgress?.('  ✅ Setup machine access removed');
-    return { success: true };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    onProgress?.(`  ❌ Setup machine access cleanup failed: ${message}`);
-    return { success: false, error: message };
+  } finally {
+    // The private key is useful only for this bounded setup operation. Retaining it after an
+    // unknown/failed remote revocation increases exposure without improving recovery: the fixed
+    // principal can be cleaned up by SQL and a later ensure call safely generates a new key pair.
+    try {
+      await deleteSetupMachineKeyFiles(keysDir);
+    } catch (error) {
+      localError = error instanceof Error ? error.message : String(error);
+    }
   }
+
+  if (remoteError || localError) {
+    const error = [
+      remoteError ? `remote cleanup failed: ${remoteError}` : undefined,
+      localError ? `local key cleanup failed: ${localError}` : undefined,
+    ]
+      .filter((entry): entry is string => entry !== undefined)
+      .join('; ');
+    onProgress?.(`  ❌ Setup machine access cleanup failed: ${error}`);
+    return { success: false, error };
+  }
+  onProgress?.('  ✅ Setup machine access removed');
+  return { success: true };
 }
 
 /**
@@ -3137,24 +5799,17 @@ export async function ensureAdminUiBffMachineAccessInD1(
   env: string,
   config: AuthrimConfig,
   keysDir: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: { databaseIdentifier?: string } = {}
 ): Promise<SetupMachineAccessBootstrapResult> {
-  const dbName = getD1DatabaseName(env, 'admin-db');
+  const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
 
   try {
     const publicJwk = await loadAdminUiBffPublicJwk(keysDir);
     const sql = buildAdminUiBffMachineAccessBootstrapSql(config, publicJwk);
 
     onProgress?.(`🔧 Ensuring Admin UI BFF machine access exists in ${dbName}...`);
-    const { stdout, stderr } = await wrangler([
-      'd1',
-      'execute',
-      dbName,
-      '--remote',
-      '--yes',
-      '--command',
-      sql,
-    ]);
+    const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
     const combined = (stdout + '\n' + stderr).toLowerCase();
     if (combined.includes('[error]') || combined.includes('✘ [error]')) {
       const errorDetail = stderr || stdout;
@@ -3172,7 +5827,7 @@ export async function ensureAdminUiBffMachineAccessInD1(
 }
 
 type SeededRuntimeProfile = {
-  kind: 'storage' | 'audit' | 'residency';
+  kind: 'audit' | 'residency';
   id: string;
   payload: Record<string, unknown>;
 };
@@ -3535,17 +6190,6 @@ const DEFAULT_CANONICAL_CATALOG_ENTRIES: DefaultCanonicalCatalogEntrySeed[] = [
 
 function collectSeededRuntimeProfiles(config: AuthrimConfig): SeededRuntimeProfile[] {
   const seeded: SeededRuntimeProfile[] = [];
-  for (const profile of config.profiles?.seed?.storage ?? []) {
-    seeded.push({
-      kind: 'storage',
-      id: profile.id,
-      payload: {
-        ...profile,
-        kind: 'storage',
-        builtin: false,
-      },
-    });
-  }
   for (const profile of config.profiles?.seed?.audit ?? []) {
     seeded.push({
       kind: 'audit',
@@ -3713,22 +6357,15 @@ WHERE NOT EXISTS (
 export async function seedDefaultCanonicalCatalog(
   env: string,
   config: AuthrimConfig,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: { databaseIdentifier?: string } = {}
 ): Promise<DefaultCanonicalCatalogSeedResult> {
-  const dbName = getD1DatabaseName(env, 'admin-db');
+  const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'admin-db');
   const sql = buildDefaultCanonicalCatalogSeedSql(config);
 
   try {
     onProgress?.(`🔧 Seeding default canonical field catalog into ${dbName}...`);
-    const { stdout, stderr } = await wrangler([
-      'd1',
-      'execute',
-      dbName,
-      '--remote',
-      '--yes',
-      '--command',
-      sql,
-    ]);
+    const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
 
     const combined = (stdout + '\n' + stderr).toLowerCase();
     if (combined.includes('[error]') || combined.includes('✘ [error]')) {
@@ -3751,7 +6388,8 @@ export async function seedDefaultCanonicalCatalog(
 export async function seedRuntimeProfiles(
   env: string,
   config: AuthrimConfig,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: { databaseIdentifier?: string } = {}
 ): Promise<RuntimeProfileSeedResult> {
   const seeded = collectSeededRuntimeProfiles(config);
   if (seeded.length === 0) {
@@ -3766,22 +6404,14 @@ export async function seedRuntimeProfiles(
 
   try {
     if (backend === 'database') {
-      const dbName = getD1DatabaseName(env, 'core-db');
+      const dbName = options.databaseIdentifier?.trim() || getD1DatabaseName(env, 'core-db');
       const sql = buildRuntimeProfileSeedSql(config);
       if (!sql) {
         return { success: true, seededCount: 0, backend };
       }
 
       onProgress?.(`🔧 Seeding ${seeded.length} runtime profile(s) into ${dbName}...`);
-      const { stdout, stderr } = await wrangler([
-        'd1',
-        'execute',
-        dbName,
-        '--remote',
-        '--yes',
-        '--command',
-        sql,
-      ]);
+      const { stdout, stderr } = await executeD1Command(dbName, sql, { onProgress });
 
       const combined = (stdout + '\n' + stderr).toLowerCase();
       if (combined.includes('[error]') || combined.includes('✘ [error]')) {
@@ -3795,18 +6425,41 @@ export async function seedRuntimeProfiles(
     }
 
     onProgress?.(`🔧 Seeding ${seeded.length} runtime profile(s) into AUTHRIM_CONFIG KV...`);
+    const oauthRefresh: WranglerOAuthRefreshState = { attempted: false };
     for (const profile of seeded) {
-      await wrangler([
-        'kv',
-        'key',
-        'put',
-        `profile-registry:${profile.kind}:${profile.id}`,
-        JSON.stringify(profile.payload),
-        '--env',
-        env,
-        '--binding',
-        'AUTHRIM_CONFIG',
-      ]);
+      const key = `profile-registry:${profile.kind}:${profile.id}`;
+      let written = false;
+      for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
+        try {
+          await wrangler([
+            'kv',
+            'key',
+            'put',
+            key,
+            JSON.stringify(profile.payload),
+            '--env',
+            env,
+            '--binding',
+            'AUTHRIM_CONFIG',
+          ]);
+          written = true;
+          break;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const maxAttempts = isD1AuthenticationError(message)
+            ? D1_MIGRATION_AUTH_MAX_ATTEMPTS
+            : D1_MIGRATION_MAX_ATTEMPTS;
+          if (attempt >= maxAttempts || !isTransientD1MigrationError(message)) throw error;
+          await refreshWranglerOAuthAfterCode10000(message, oauthRefresh);
+          const delayMs = d1MigrationRetryDelayMs(attempt);
+          onProgress?.(
+            `  ⚠️ Transient runtime-profile KV write failure for ${key} ` +
+              `(attempt ${attempt}/${maxAttempts}); retrying in ${Math.round(delayMs / 1000)}s`
+          );
+          if (delayMs > 0) await sleep(delayMs);
+        }
+      }
+      if (!written) throw new Error(`runtime_profile_kv_write_retry_exhausted:${key}`);
     }
 
     onProgress?.(`  ✅ Seeded ${seeded.length} runtime profile(s)`);
@@ -3821,19 +6474,30 @@ export async function seedRuntimeProfiles(
 /**
  * Locate the migrations root used by setup commands.
  *
- * Priority: local project > authrim subdir > cwd.
+ * Priority: local project > authrim subdir > cwd. Setup mutation flows must enable
+ * `strictRoot` so a checkout missing migrations cannot silently borrow them from another cwd.
  */
 export async function findMigrationsRoot(
   rootDir: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: { strictRoot?: boolean } = {}
 ): Promise<{ path: string | null; searchPaths: string[] }> {
   const { existsSync } = await import('node:fs');
   const { resolve } = await import('node:path');
-  const searchPaths = [
+  const rootedSearchPaths = [
     resolve(rootDir, 'migrations'),
     resolve(rootDir, 'authrim', 'migrations'),
-    resolve(process.cwd(), 'migrations'),
-    resolve(process.cwd(), 'authrim', 'migrations'),
+  ];
+  const searchPaths = [
+    ...new Set(
+      options.strictRoot
+        ? rootedSearchPaths
+        : [
+            ...rootedSearchPaths,
+            resolve(process.cwd(), 'migrations'),
+            resolve(process.cwd(), 'authrim', 'migrations'),
+          ]
+    ),
   ];
 
   for (const searchPath of searchPaths) {
@@ -3864,7 +6528,7 @@ export async function runMigrationsForEnvironment(
   env: string,
   rootDir: string,
   onProgress?: (message: string) => void,
-  config?: MigrationProfileConfig
+  release?: EnvironmentReleaseMigrationOptions
 ): Promise<{
   success: boolean;
   core: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
@@ -3872,14 +6536,30 @@ export async function runMigrationsForEnvironment(
   admin: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
 }> {
   const { existsSync } = await import('node:fs');
-  const { join } = await import('node:path');
 
   // Database names for this environment
   const coreDbName = getD1DatabaseName(env, 'core-db');
   const piiDbName = getD1DatabaseName(env, 'pii-db');
   const adminDbName = getD1DatabaseName(env, 'admin-db');
+  const coreDbIdentifier = resolveEnvironmentMigrationDatabaseIdentifier({
+    env,
+    role: 'core',
+    release,
+  });
+  const piiDbIdentifier = resolveEnvironmentMigrationDatabaseIdentifier({
+    env,
+    role: 'pii',
+    release,
+  });
+  const adminDbIdentifier = resolveEnvironmentMigrationDatabaseIdentifier({
+    env,
+    role: 'admin',
+    release,
+  });
 
-  const migrationSearch = await findMigrationsRoot(rootDir, onProgress);
+  const migrationSearch = await findMigrationsRoot(rootDir, onProgress, {
+    strictRoot: release?.strictMigrationsRoot === true,
+  });
   const migrationsRoot = migrationSearch.path;
 
   if (!migrationsRoot) {
@@ -3893,10 +6573,45 @@ export async function runMigrationsForEnvironment(
     };
   }
 
+  let releaseManifest: { manifest: ReleaseMigrationManifest; draft: boolean } | undefined;
+  if (release) {
+    try {
+      releaseManifest = loadTargetReleaseMigrationManifest({
+        migrationsRoot,
+        productVersion: release.productVersion,
+        allowDraft: release.allowDraft === true,
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      onProgress?.(`  ❌ ${errorMsg}`);
+      return {
+        success: false,
+        core: { success: false, appliedCount: 0, skippedCount: 0, error: errorMsg },
+        pii: { success: false, appliedCount: 0, skippedCount: 0, error: errorMsg },
+        admin: { success: false, appliedCount: 0, skippedCount: 0, error: errorMsg },
+      };
+    }
+  }
+
+  const releaseOptionsFor = (streamId: string): RunD1MigrationOptions => {
+    if (!releaseManifest || !release) return {};
+    const stream = releaseManifest.manifest.streams.find((candidate) => candidate.id === streamId);
+    if (!stream) {
+      throw new Error(`release_migration_stream_not_found:${streamId}`);
+    }
+    return {
+      manifestFiles: stream.files,
+      releaseVersion: release.productVersion,
+      backfillLegacyChecksums: release.backfillLegacyChecksums ?? releaseManifest.draft === false,
+    };
+  };
+
   // Run core database migrations
   onProgress?.(`📜 Running migrations for ${coreDbName}...`);
-  const coreResult = await runD1Migrations(coreDbName, migrationsRoot, onProgress, {
-    excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS,
+  const coreMigrationsDir = streamDirectory(migrationsRoot, 'core-d1');
+  if (!coreMigrationsDir) throw new Error('release_migration_stream_not_found:core-d1');
+  const coreResult = await runD1Migrations(coreDbIdentifier, coreMigrationsDir, onProgress, {
+    ...releaseOptionsFor('core-d1'),
   });
   if (!coreResult.success) {
     onProgress?.(`  ❌ Core migration failed: ${coreResult.error}`);
@@ -3907,7 +6622,8 @@ export async function runMigrationsForEnvironment(
   }
 
   // Run PII database migrations
-  const piiMigrationsDir = join(migrationsRoot, 'pii');
+  const piiMigrationsDir = streamDirectory(migrationsRoot, 'pii-d1');
+  if (!piiMigrationsDir) throw new Error('release_migration_stream_not_found:pii-d1');
   onProgress?.(`📜 Running migrations for ${piiDbName}...`);
 
   let piiResult: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
@@ -3915,7 +6631,9 @@ export async function runMigrationsForEnvironment(
     onProgress?.(`  ⚠️ PII migrations directory not found: ${piiMigrationsDir}`);
     piiResult = { success: true, appliedCount: 0, skippedCount: 0 };
   } else {
-    piiResult = await runD1Migrations(piiDbName, piiMigrationsDir, onProgress);
+    piiResult = await runD1Migrations(piiDbIdentifier, piiMigrationsDir, onProgress, {
+      ...releaseOptionsFor('pii-d1'),
+    });
     if (!piiResult.success) {
       onProgress?.(`  ❌ PII migration failed: ${piiResult.error}`);
     } else {
@@ -3925,29 +6643,9 @@ export async function runMigrationsForEnvironment(
     }
   }
 
-  let coreMirrorResult: {
-    success: boolean;
-    appliedCount: number;
-    skippedCount: number;
-    error?: string;
-  } | null = null;
-
-  if (shouldMirrorPiiMigrationsToCore(config) && existsSync(piiMigrationsDir)) {
-    onProgress?.(`📜 Mirroring PII migrations into ${coreDbName} for single-db profile...`);
-    coreMirrorResult = await runD1Migrations(coreDbName, piiMigrationsDir, onProgress);
-    if (!coreMirrorResult.success) {
-      onProgress?.(`  ❌ Core mirror migration failed: ${coreMirrorResult.error}`);
-    } else {
-      coreResult.appliedCount += coreMirrorResult.appliedCount;
-      coreResult.skippedCount += coreMirrorResult.skippedCount;
-      onProgress?.(
-        `  ✅ Mirrored ${coreMirrorResult.appliedCount} PII migrations into core (${coreMirrorResult.skippedCount} skipped)`
-      );
-    }
-  }
-
   // Run Admin database migrations
-  const adminMigrationsDir = join(migrationsRoot, 'admin');
+  const adminMigrationsDir = streamDirectory(migrationsRoot, 'admin-d1');
+  if (!adminMigrationsDir) throw new Error('release_migration_stream_not_found:admin-d1');
   onProgress?.(`📜 Running migrations for ${adminDbName}...`);
 
   let adminResult: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
@@ -3955,7 +6653,9 @@ export async function runMigrationsForEnvironment(
     onProgress?.(`  ⚠️ Admin migrations directory not found: ${adminMigrationsDir}`);
     adminResult = { success: true, appliedCount: 0, skippedCount: 0 };
   } else {
-    adminResult = await runD1Migrations(adminDbName, adminMigrationsDir, onProgress);
+    adminResult = await runD1Migrations(adminDbIdentifier, adminMigrationsDir, onProgress, {
+      ...releaseOptionsFor('admin-d1'),
+    });
     if (!adminResult.success) {
       onProgress?.(`  ❌ Admin migration failed: ${adminResult.error}`);
     } else {
@@ -3966,16 +6666,8 @@ export async function runMigrationsForEnvironment(
   }
 
   return {
-    success:
-      coreResult.success &&
-      (coreMirrorResult?.success ?? true) &&
-      piiResult.success &&
-      adminResult.success,
-    core: {
-      ...coreResult,
-      success: coreResult.success && (coreMirrorResult?.success ?? true),
-      error: coreMirrorResult?.error ?? coreResult.error,
-    },
+    success: coreResult.success && piiResult.success && adminResult.success,
+    core: coreResult,
     pii: piiResult,
     admin: adminResult,
   };
@@ -3983,9 +6675,10 @@ export async function runMigrationsForEnvironment(
 
 async function resolveMigrationRootOrError(
   rootDir: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: { strictRoot?: boolean } = {}
 ): Promise<{ success: true; migrationsRoot: string } | { success: false; error: string }> {
-  const migrationSearch = await findMigrationsRoot(rootDir, onProgress);
+  const migrationSearch = await findMigrationsRoot(rootDir, onProgress, options);
   if (!migrationSearch.path) {
     return {
       success: false,
@@ -3998,25 +6691,76 @@ async function resolveMigrationRootOrError(
 export async function getD1MigrationStatusForEnvironment(
   env: string,
   rootDir: string,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  release?: EnvironmentReleaseMigrationOptions
 ): Promise<D1MigrationEnvironmentStatus> {
-  const { join } = await import('node:path');
-  const root = await resolveMigrationRootOrError(rootDir, onProgress);
+  const root = await resolveMigrationRootOrError(rootDir, onProgress, {
+    strictRoot: release?.strictMigrationsRoot === true,
+  });
   if (!root.success) {
     return { env, success: false, databases: [] };
   }
+  const manifest = release
+    ? loadTargetReleaseMigrationManifest({
+        migrationsRoot: root.migrationsRoot,
+        productVersion: release.productVersion,
+        allowDraft: release.allowDraft === true,
+      }).manifest
+    : undefined;
+  const manifestFilesFor = (streamId: string) => {
+    const stream = manifest?.streams.find((candidate) => candidate.id === streamId);
+    if (manifest && !stream) throw new Error(`release_migration_stream_not_found:${streamId}`);
+    return stream?.files;
+  };
 
-  const databases = await Promise.all([
-    getD1MigrationStatus(getD1DatabaseName(env, 'core-db'), root.migrationsRoot, 'core', {
-      excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS,
-    }),
-    getD1MigrationStatus(getD1DatabaseName(env, 'pii-db'), join(root.migrationsRoot, 'pii'), 'pii'),
-    getD1MigrationStatus(
-      getD1DatabaseName(env, 'admin-db'),
-      join(root.migrationsRoot, 'admin'),
-      'admin'
-    ),
-  ]);
+  const coreDbName = getD1DatabaseName(env, 'core-db');
+  const piiDbName = getD1DatabaseName(env, 'pii-db');
+  const adminDbName = getD1DatabaseName(env, 'admin-db');
+  const databaseInputs = [
+    {
+      role: 'core' as const,
+      name: coreDbName,
+      identifier: resolveEnvironmentMigrationDatabaseIdentifier({ env, role: 'core', release }),
+      migrationsDir: streamDirectory(root.migrationsRoot, 'core-d1')!,
+      options: {
+        materializeSuperseded: true,
+        manifestFiles: manifestFilesFor('core-d1'),
+      },
+    },
+    {
+      role: 'pii' as const,
+      name: piiDbName,
+      identifier: resolveEnvironmentMigrationDatabaseIdentifier({ env, role: 'pii', release }),
+      migrationsDir: streamDirectory(root.migrationsRoot, 'pii-d1')!,
+      options: {
+        materializeSuperseded: true,
+        manifestFiles: manifestFilesFor('pii-d1'),
+      },
+    },
+    {
+      role: 'admin' as const,
+      name: adminDbName,
+      identifier: resolveEnvironmentMigrationDatabaseIdentifier({ env, role: 'admin', release }),
+      migrationsDir: streamDirectory(root.migrationsRoot, 'admin-d1')!,
+      options: {
+        materializeSuperseded: true,
+        manifestFiles: manifestFilesFor('admin-d1'),
+      },
+    },
+  ];
+  const databases = await Promise.all(
+    databaseInputs.map(async (database) => ({
+      ...(await getD1MigrationStatus(
+        database.identifier,
+        database.migrationsDir,
+        database.role,
+        database.options
+      )),
+      // Preserve the stable operator-facing database name while all provider reads use the
+      // immutable identifier pinned by the environment lock.
+      dbName: database.name,
+    }))
+  );
 
   return {
     env,
@@ -4031,7 +6775,7 @@ export async function runD1MigrationsForEnvironmentSelection(input: {
   role?: D1MigrationDatabaseRole;
   filenames?: string[];
   onProgress?: (message: string) => void;
-  config?: MigrationProfileConfig;
+  release?: EnvironmentReleaseMigrationOptions;
 }): Promise<{
   success: boolean;
   core?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
@@ -4040,19 +6784,31 @@ export async function runD1MigrationsForEnvironmentSelection(input: {
   error?: string;
 }> {
   const { existsSync } = await import('node:fs');
-  const { join } = await import('node:path');
   const onlyFiles = input.filenames?.length ? new Set(input.filenames) : undefined;
 
   if (!input.role && !onlyFiles) {
-    return runMigrationsForEnvironment(input.env, input.rootDir, input.onProgress, input.config);
+    return runMigrationsForEnvironment(input.env, input.rootDir, input.onProgress, input.release);
   }
 
-  const root = await resolveMigrationRootOrError(input.rootDir, input.onProgress);
+  const root = await resolveMigrationRootOrError(input.rootDir, input.onProgress, {
+    strictRoot: input.release?.strictMigrationsRoot === true,
+  });
   if (!root.success) {
     return { success: false, error: root.error };
   }
 
   const roles: D1MigrationDatabaseRole[] = input.role ? [input.role] : ['core', 'pii', 'admin'];
+  let exactManifest: ReleaseMigrationManifest | undefined;
+  let exactManifestIsDraft = false;
+  if (input.release) {
+    const target = loadTargetReleaseMigrationManifest({
+      migrationsRoot: root.migrationsRoot,
+      productVersion: input.release.productVersion,
+      allowDraft: input.release.allowDraft === true,
+    });
+    exactManifest = target.manifest;
+    exactManifestIsDraft = target.draft;
+  }
   const results: {
     core?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
     pii?: { success: boolean; appliedCount: number; skippedCount: number; error?: string };
@@ -4061,11 +6817,32 @@ export async function runD1MigrationsForEnvironmentSelection(input: {
 
   for (const role of roles) {
     const dbName = getD1DatabaseName(input.env, `${role}-db`);
-    const migrationsDir = role === 'core' ? root.migrationsRoot : join(root.migrationsRoot, role);
+    const databaseIdentifier = resolveEnvironmentMigrationDatabaseIdentifier({
+      env: input.env,
+      role,
+      release: input.release,
+    });
+    const streamId = requireMigrationStreamId({
+      logicalRole: role,
+      targetKind: 'cloudflare-d1',
+    });
+    const migrationsDir = streamDirectory(root.migrationsRoot, streamId);
+    if (!migrationsDir) {
+      return { success: false, error: `release_migration_stream_not_found:${streamId}` };
+    }
     const options: RunD1MigrationOptions = {
       onlyFiles,
-      ...(role === 'core' ? { excludeTopLevelDirectories: CORE_DB_EXCLUDED_MIGRATION_DIRS } : {}),
     };
+    if (exactManifest && input.release) {
+      const stream = exactManifest.streams.find((candidate) => candidate.id === streamId);
+      if (!stream) {
+        return { success: false, error: `release_migration_stream_not_found:${streamId}` };
+      }
+      options.manifestFiles = stream.files;
+      options.releaseVersion = input.release.productVersion;
+      options.backfillLegacyChecksums =
+        input.release.backfillLegacyChecksums ?? !exactManifestIsDraft;
+    }
 
     if (!existsSync(migrationsDir)) {
       results[role] = { success: true, appliedCount: 0, skippedCount: 0 };
@@ -4073,7 +6850,12 @@ export async function runD1MigrationsForEnvironmentSelection(input: {
     }
 
     input.onProgress?.(`📜 Running ${role} migrations for ${dbName}...`);
-    results[role] = await runD1Migrations(dbName, migrationsDir, input.onProgress, options);
+    results[role] = await runD1Migrations(
+      databaseIdentifier,
+      migrationsDir,
+      input.onProgress,
+      options
+    );
   }
 
   return {
@@ -4113,11 +6895,16 @@ function normalizeKVNamespaceRows(rows: unknown): KVNamespaceListRow[] {
 }
 
 export function parseKVNamespaceListOutput(stdout: string): KVNamespaceListRow[] {
-  return parseValidatedJsonOutput(
-    stdout,
-    normalizeKVNamespaceRows,
-    'Wrangler output did not contain a valid KV namespace list'
-  );
+  return assertUniqueNamedResourceInventory({
+    rows: parseValidatedJsonOutput(
+      stdout,
+      normalizeKVNamespaceRows,
+      'Wrangler output did not contain a valid KV namespace list'
+    ),
+    label: 'Wrangler KV namespace inventory',
+    name: (row) => row.title,
+    id: (row) => row.id,
+  });
 }
 
 async function listKVNamespacesViaApi(): Promise<KVNamespaceListRow[] | null> {
@@ -4125,6 +6912,7 @@ async function listKVNamespacesViaApi(): Promise<KVNamespaceListRow[] | null> {
     path: 'storage/kv/namespaces',
     label: 'KV namespace list',
     normalizeRows: normalizeKVNamespaceRows,
+    identityKey: (row) => row.id,
   });
 }
 
@@ -4137,7 +6925,12 @@ export async function listKVNamespaces(): Promise<Array<{ title: string; id: str
   try {
     const apiNamespaces = await listKVNamespacesViaApi();
     if (apiNamespaces) {
-      return apiNamespaces;
+      return assertUniqueNamedResourceInventory({
+        rows: apiNamespaces,
+        label: 'Cloudflare API KV namespace inventory',
+        name: (row) => row.title,
+        id: (row) => row.id,
+      });
     }
   } catch (error) {
     apiError = error;
@@ -4223,18 +7016,21 @@ export async function generateAndStoreSetupToken(
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
 
     // Store token in KV with TTL
-    await wrangler([
-      'kv',
-      'key',
-      'put',
-      'setup:token',
-      token,
-      '--namespace-id',
-      kvNamespaceId,
-      '--ttl',
-      ttlSeconds.toString(),
-      '--remote',
-    ]);
+    await withPrivateTemporaryTextFile(token, (tokenPath) =>
+      wrangler([
+        'kv',
+        'key',
+        'put',
+        'setup:token',
+        '--path',
+        tokenPath,
+        '--namespace-id',
+        kvNamespaceId,
+        '--ttl',
+        ttlSeconds.toString(),
+        '--remote',
+      ])
+    );
 
     return { success: true, token, expiresAt };
   } catch (error) {
@@ -4248,58 +7044,123 @@ export async function generateAndStoreSetupToken(
  */
 export async function createKVNamespace(
   name: string,
-  preview: boolean = false
+  preview: boolean = false,
+  behavior: ProvisioningCreateBehavior = {}
 ): Promise<{ id: string; name: string }> {
+  const findExisting = async (): Promise<{ id: string; name: string } | null> => {
+    const namespaces = await listKVNamespaces();
+    const candidateNames = preview ? [`${name}_preview`, name] : [name];
+    const existing = namespaces.find((namespace) => candidateNames.includes(namespace.title));
+    return existing ? { id: existing.id, name: existing.title } : null;
+  };
+
+  const existing = await findExisting();
+  if (existing) {
+    if (behavior.allowExisting === false) {
+      throw new Error(`KV namespace ${name} already exists outside this provisioning attempt`);
+    }
+    if (behavior.expectedExistingId && behavior.expectedExistingId !== existing.id) {
+      throw new Error(`KV namespace ${name} does not match the recorded provisioning resource`);
+    }
+    return existing;
+  }
+  if (behavior.recordedState === 'created') {
+    throw new Error(`KV namespace ${name} recorded by provisioning is missing`);
+  }
+  if (behavior.recordedState === 'identified') {
+    if (!behavior.expectedExistingId) {
+      throw new Error(`KV namespace ${name} identified checkpoint omitted its immutable ID`);
+    }
+    return waitForProviderResourceVisible({
+      resourceDescription: `KV namespace ${name}`,
+      expectedId: behavior.expectedExistingId,
+      findExisting,
+    });
+  }
+  if (behavior.recordedState === 'create_issued') {
+    throw new Error(
+      `KV namespace ${name} has an interrupted create_issued checkpoint without immutable ` +
+        'provider evidence. Setup will not reissue the create; inspect Cloudflare and recover explicitly.'
+    );
+  }
+
   const args = ['kv', 'namespace', 'create', name];
   if (preview) {
     args.push('--preview');
   }
 
-  const { stdout, stderr } = await wrangler(args);
+  await behavior.onCreateIssued?.();
+
+  let stdout: string;
+  try {
+    ({ stdout } = await wranglerCreateWithDefiniteRejectionRetry(args));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isAmbiguousCloudflareMutationFailure(message)) {
+      return throwDefiniteProvisioningCreateFailure(behavior, error, `KV namespace ${name}`);
+    }
+    const responseId = message.match(
+      /"(?:id|namespace_id|preview_id)"\s*:\s*"([a-f0-9]{32})"/iu
+    )?.[1];
+    if (!responseId) {
+      throw new Error(
+        `KV namespace ${name} creation outcome is ambiguous and Cloudflare returned no immutable ` +
+          'namespace ID. Setup will not adopt a same-name namespace; inspect or delete it before retrying.',
+        { cause: error }
+      );
+    }
+    await behavior.onProviderIdentityIdentified?.({ id: responseId });
+    return waitForProviderResourceVisible({
+      resourceDescription: `KV namespace ${name}`,
+      createError: error,
+      expectedId: responseId,
+      findExisting,
+    });
+  }
 
   // Extract ID from output
   // Format: "id": "abc123..." or "preview_id": "abc123..."
   const idKey = preview ? 'preview_id' : 'id';
-  const idMatch = stdout.match(new RegExp(`"${idKey}"\\s*:\\s*"([a-f0-9]{32})"`));
-
-  if (!idMatch) {
-    // Check if namespace already exists
-    const existing = await kvNamespaceExists(name);
-    if (existing.exists && existing.id) {
-      return { id: existing.id, name };
-    }
-
-    // Try preview namespace name format
-    if (preview) {
-      const previewExisting = await kvNamespaceExists(`${name}_preview`);
-      if (previewExisting.exists && previewExisting.id) {
-        return { id: previewExisting.id, name: `${name}_preview` };
-      }
-    }
-
-    throw new Error(`Failed to create KV namespace: ${stderr || stdout}`);
+  const createdId = stdout.match(new RegExp(`"${idKey}"\\s*:\\s*"([a-f0-9]{32})"`, 'i'))?.[1];
+  if (!createdId) {
+    throw new Error(
+      `KV namespace ${name} create succeeded but returned no immutable namespace ID. ` +
+        'Setup will not adopt a same-name namespace; inspect the provider inventory before retrying.'
+    );
   }
-
-  return { id: idMatch[1], name };
+  await behavior.onProviderIdentityIdentified?.({ id: createdId });
+  return waitForProviderResourceVisible({
+    resourceDescription: `KV namespace ${name}`,
+    expectedId: createdId,
+    findExisting,
+  });
 }
 
-/**
- * Delete a KV namespace
- */
-export async function deleteKVNamespace(namespaceId: string): Promise<boolean> {
+async function deleteKVNamespaceWithResult(
+  namespaceId: string,
+  credentials?: CloudflareDeletionCredentials
+): Promise<ExactResourceDeleteResult> {
+  let resolved = credentials;
   try {
-    await wrangler([
-      'kv',
-      'namespace',
-      'delete',
-      '--namespace-id',
-      namespaceId,
-      '--skip-confirmation',
-    ]);
-    return true;
-  } catch {
-    return false;
+    resolved ??= (await resolveCloudflareInventoryCredentials()) ?? undefined;
+  } catch (error) {
+    return { status: 'failed', error: sanitizeError(error) };
   }
+  if (!resolved) {
+    return { status: 'failed', error: 'Cloudflare KV API credentials are unavailable' };
+  }
+  return deleteCloudflareAccountResourceById({
+    credentials: resolved,
+    resourcePath: 'storage/kv/namespaces',
+    resourceId: namespaceId,
+    label: 'Cloudflare KV namespace delete',
+  });
+}
+
+/** Delete a KV namespace by its immutable Cloudflare namespace ID. */
+export async function deleteKVNamespace(namespaceId: string): Promise<boolean> {
+  const result = await deleteKVNamespaceWithResult(namespaceId);
+  return result.status !== 'failed';
 }
 
 /**
@@ -4315,32 +7176,27 @@ export async function kvPut(
   value: string,
   options: { expirationTtl?: number } = {}
 ): Promise<boolean> {
-  const tmpFile = pathJoin(
-    tmpdir(),
-    `authrim-kv-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`
-  );
   try {
-    await writeFile(tmpFile, value, 'utf-8');
-    const args = [
-      'kv',
-      'key',
-      'put',
-      key,
-      '--path',
-      tmpFile,
-      '--namespace-id',
-      namespaceId,
-      '--remote',
-    ];
-    if (options.expirationTtl) {
-      args.push('--expiration-ttl', options.expirationTtl.toString());
-    }
-    await wrangler(args);
+    await withPrivateTemporaryTextFile(value, async (valuePath) => {
+      const args = [
+        'kv',
+        'key',
+        'put',
+        key,
+        '--path',
+        valuePath,
+        '--namespace-id',
+        namespaceId,
+        '--remote',
+      ];
+      if (options.expirationTtl) {
+        args.push('--expiration-ttl', options.expirationTtl.toString());
+      }
+      await wranglerCreateWithDefiniteRejectionRetry(args);
+    });
     return true;
   } catch {
     return false;
-  } finally {
-    await unlink(tmpFile).catch(() => {});
   }
 }
 
@@ -4348,24 +7204,200 @@ export async function kvPut(
 // Queue Operations
 // =============================================================================
 
+async function createQueueViaApi(name: string): Promise<{ id: string; name: string } | null> {
+  let credentials = await resolveCloudflareInventoryCredentials();
+  if (!credentials) {
+    // Unit tests without a Cloudflare credential exercise the legacy Wrangler parser. A real
+    // provisioning run must use REST create so queue_id is part of the create response.
+    if (process.env.NODE_ENV === 'test') return null;
+    throw new Error('Cloudflare Queue API credentials are unavailable');
+  }
+
+  for (let attempt = 1; attempt <= D1_MIGRATION_AUTH_MAX_ATTEMPTS; attempt++) {
+    const { response, data } = await requestCloudflareApiJson<{
+      success?: boolean;
+      result?: { queue_id?: unknown; queue_name?: unknown };
+      errors?: CloudflareApiMessage[];
+    }>(
+      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/queues`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${credentials.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ queue_name: name }),
+      },
+      { label: 'Cloudflare Queue create', retryMode: 'non_idempotent_mutation' }
+    );
+    const queueId = typeof data.result?.queue_id === 'string' ? data.result.queue_id.trim() : '';
+    const queueName =
+      typeof data.result?.queue_name === 'string' ? data.result.queue_name.trim() : '';
+    if (response.ok && data.success !== false) {
+      if (!queueId || queueName !== name) {
+        throw new Error(
+          `Queue ${name} create succeeded but the Cloudflare API omitted its exact queue_id`
+        );
+      }
+      return { id: queueId, name: queueName };
+    }
+
+    const detail = (data.errors ?? [])
+      .map((entry) => `${entry.message ?? 'Cloudflare error'} [code: ${entry.code ?? 'unknown'}]`)
+      .join('; ');
+    const message = `HTTP status ${response.status}: ${detail || 'Queue create failed'}`;
+    const errorCodes = (data.errors ?? []).flatMap((error) =>
+      typeof error.code === 'number' ? [error.code] : []
+    );
+    if (
+      shouldRefreshCloudflareOAuthCredential({
+        status: response.status,
+        errorCodes,
+        source: credentials.source,
+        attempt,
+      })
+    ) {
+      const refreshed = await refreshPinnedCloudflareOAuthToken(credentials.accountId);
+      if (refreshed) {
+        credentials = refreshed;
+        continue;
+      }
+    }
+    const definitelyRejected = isD1AuthenticationError(message) || isD1RateLimitError(message);
+    if (definitelyRejected && attempt < D1_MIGRATION_AUTH_MAX_ATTEMPTS) {
+      const delayMs = d1MigrationRetryDelayMs(attempt);
+      if (delayMs > 0) await sleep(delayMs);
+      continue;
+    }
+    throw new Error(message);
+  }
+  throw new Error(`Queue ${name} API create retry loop exited unexpectedly`);
+}
+
 /**
  * Create a Queue
  */
-export async function createQueue(name: string): Promise<{ id: string; name: string }> {
-  try {
-    const { stdout } = await wrangler(['queues', 'create', name]);
-
-    // Extract queue ID (format varies)
-    const idMatch = stdout.match(/"id"\s*:\s*"([^"]+)"/);
-
+export async function createQueue(
+  name: string,
+  behavior: ProvisioningCreateBehavior = {}
+): Promise<{ id: string; name: string; providerId?: string }> {
+  const findExisting = async (): Promise<{ id?: string; name: string } | null> => {
+    const existing = (
+      await listQueues({
+        strictOutput: true,
+        requireIds: true,
+      })
+    ).find((queue) => queue.name === name);
+    return existing ? { id: existing.id, name: existing.name } : null;
+  };
+  const acceptExisting = (
+    existing: { id?: string; name: string },
+    createdId?: string
+  ): { id: string; name: string; providerId?: string } => {
+    const providerId = existing.id ?? createdId;
+    if (!providerId) {
+      throw new Error(`Queue ${name} immutable provider ID could not be verified`);
+    }
+    if (behavior.expectedExistingId && providerId && behavior.expectedExistingId !== providerId) {
+      throw new Error(`Queue ${name} does not match the recorded provisioning resource`);
+    }
     return {
-      id: idMatch?.[1] || name, // Use name as fallback ID
-      name,
+      id: providerId,
+      name: existing.name,
+      providerId,
     };
-  } catch {
-    // Queue might already exist
-    return { id: name, name };
+  };
+
+  const existing = await findExisting();
+  if (existing) {
+    if (behavior.allowExisting === false) {
+      throw new Error(`Queue ${name} already exists outside this provisioning attempt`);
+    }
+    return acceptExisting(existing);
   }
+  if (behavior.recordedState === 'created') {
+    throw new Error(`Queue ${name} recorded by provisioning is missing`);
+  }
+  if (behavior.recordedState === 'identified') {
+    if (!behavior.expectedExistingId) {
+      throw new Error(`Queue ${name} identified checkpoint omitted its immutable provider ID`);
+    }
+    return waitForProviderResourceVisible({
+      resourceDescription: `Queue ${name}`,
+      expectedId: behavior.expectedExistingId,
+      findExisting: async () => {
+        const reconciled = await findExisting();
+        return reconciled ? acceptExisting(reconciled, behavior.expectedExistingId) : null;
+      },
+    });
+  }
+  if (behavior.recordedState === 'create_issued') {
+    throw new Error(
+      `Queue ${name} has an interrupted create_issued checkpoint without immutable provider ` +
+        'evidence. Setup will not reissue the create; inspect Cloudflare and recover explicitly.'
+    );
+  }
+
+  await behavior.onCreateIssued?.();
+
+  let createdId: string | undefined;
+  let usedWranglerFallback = false;
+  try {
+    const apiCreated = await createQueueViaApi(name);
+    if (apiCreated) {
+      createdId = apiCreated.id;
+    } else {
+      usedWranglerFallback = true;
+      const { stdout } = await wranglerCreateWithDefiniteRejectionRetry(['queues', 'create', name]);
+      createdId = stdout.match(/"id"\s*:\s*"([^"]+)"/)?.[1];
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!isAmbiguousCloudflareMutationFailure(message)) {
+      return throwDefiniteProvisioningCreateFailure(behavior, error, `Queue ${name}`);
+    }
+    // The production REST response identifies this resource specifically as queue_id. Never treat
+    // a generic request/ray `id` as provider identity, and never adopt identity text found in the
+    // credential-free Wrangler test fallback's stderr.
+    const responseId = usedWranglerFallback
+      ? undefined
+      : message.match(/"queue_id"\s*:\s*"([A-Za-z0-9_-]{1,128})"/u)?.[1];
+    if (!responseId) {
+      throw new Error(
+        `Queue ${name} creation outcome is ambiguous and Cloudflare returned no immutable queue ` +
+          'ID. Setup will not adopt a same-name Queue; inspect or delete it before retrying.',
+        { cause: error }
+      );
+    }
+    await behavior.onProviderIdentityIdentified?.({ id: responseId });
+    return waitForProviderResourceVisible({
+      resourceDescription: `Queue ${name}`,
+      createError: error,
+      expectedId: responseId,
+      findExisting: async () => {
+        const reconciled = await findExisting();
+        return reconciled ? acceptExisting(reconciled, responseId) : null;
+      },
+    });
+  }
+
+  if (createdId) {
+    await behavior.onProviderIdentityIdentified?.({ id: createdId });
+  }
+
+  // The production REST path supplies queue_id. Wrangler 4.x does not; its path above exists only
+  // for credential-free unit tests and must never become a production name-adoption fallback.
+  const visibilityAttempts = process.env.NODE_ENV === 'test' ? 2 : 5;
+  for (let attempt = 1; attempt <= visibilityAttempts; attempt++) {
+    const reconciled = await findExisting();
+    if (reconciled) {
+      return acceptExisting(reconciled, createdId);
+    }
+    if (attempt < visibilityAttempts) {
+      await sleep(Math.min(500 * 2 ** (attempt - 1), 4_000));
+    }
+  }
+  throw new Error(`Queue ${name} was not visible after creation`);
 }
 
 export function getQueueConsumerWorkerNamesForDeletion(
@@ -4376,57 +7408,617 @@ export function getQueueConsumerWorkerNamesForDeletion(
     new Set(
       workers
         .map((worker) => worker.name)
-        .filter((workerName) => workerName.startsWith(`${env}-ar-`))
+        // setup/wrangler.ts configures ar-management as the consumer for every Authrim Queue.
+        // Producer-only Workers must not receive consumer removal requests.
+        .filter((workerName) => workerName === `${env}-ar-management`)
     )
   ).sort();
 }
 
 export async function deleteQueueConsumer(queueName: string, workerName: string): Promise<boolean> {
+  const result = await deleteQueueConsumerWithResult(queueName, workerName);
+  return result.status === 'detached' || result.status === 'already_absent';
+}
+
+type QueueConsumerDetachResult =
+  | { status: 'detached' }
+  | { status: 'already_absent'; error: string }
+  | { status: 'failed'; error: string };
+
+type QueueConsumerRestoreResult = { status: 'attached' } | { status: 'failed'; error: string };
+
+function isQueueConsumerAlreadyAbsentError(error: unknown): boolean {
+  const detail = error instanceof Error ? error.message : String(error);
+  return (
+    isCloudflareResourceAlreadyAbsent(error) ||
+    /(?:not attached|already removed|consumer[^\n]*(?:not found|does not exist)|does not have[^\n]*consumer|no such consumer)/iu.test(
+      detail
+    )
+  );
+}
+
+async function deleteQueueConsumerWithResult(
+  queueName: string,
+  workerName: string
+): Promise<QueueConsumerDetachResult> {
   try {
-    await wrangler(['queues', 'consumer', 'remove', queueName, workerName]);
-    return true;
-  } catch {
-    return false;
+    await wrangler(['queues', 'consumer', 'worker', 'remove', queueName, workerName]);
+    return { status: 'detached' };
+  } catch (error) {
+    const detail = sanitizeError(error);
+    return isQueueConsumerAlreadyAbsentError(error)
+      ? { status: 'already_absent', error: detail }
+      : { status: 'failed', error: detail };
   }
+}
+
+export interface QueueConsumerDetachSummary {
+  removed: Array<{ queueName: string; workerName: string }>;
+  errors: string[];
+}
+
+interface ExactQueueWorkerConsumerSnapshot {
+  queueId: string;
+  queueName: string;
+  // Cloudflare documents consumer_id as optional on the list response. Keep it when present so
+  // deletion can use the immutable REST identity; otherwise use Wrangler's queue/Worker tuple
+  // only after both resources have passed the strict ownership preflight.
+  consumerId?: string;
+  workerName: string;
+  restorePayload: {
+    type: 'worker';
+    script_name: string;
+    dead_letter_queue?: string;
+    settings?: Record<string, unknown>;
+  };
+}
+
+async function listExactQueueWorkerConsumers(input: {
+  queues: readonly DeletionResourceIdentity[];
+  workerNames: readonly string[];
+  credentials: CloudflareDeletionCredentials;
+}): Promise<ExactQueueWorkerConsumerSnapshot[]> {
+  const targets = new Set(input.workerNames);
+  const snapshots: ExactQueueWorkerConsumerSnapshot[] = [];
+  const consumerIds = new Set<string>();
+  for (const queue of input.queues) {
+    const queueId = normalizeDeletionResourceId(queue.id, 'Cloudflare Queue consumer inventory');
+    const { response, data } = await requestCloudflareApiJson<{
+      success?: boolean;
+      errors?: CloudflareApiMessage[];
+      messages?: CloudflareApiMessage[];
+      result?: Array<{
+        consumer_id?: unknown;
+        type?: unknown;
+        script_name?: unknown;
+        script?: unknown;
+        service?: unknown;
+        dead_letter_queue?: unknown;
+        settings?: unknown;
+      }>;
+      result_info?: { page?: unknown; total_pages?: unknown };
+    }>(
+      `https://api.cloudflare.com/client/v4/accounts/${input.credentials.accountId}/queues/${encodeURIComponent(queueId)}/consumers`,
+      { headers: { Authorization: `Bearer ${input.credentials.token}` } },
+      {
+        label: `Cloudflare Queue consumer inventory for ${queue.name}`,
+        retryMode: 'read',
+      }
+    );
+    if (!response.ok || data.success === false || !Array.isArray(data.result)) {
+      const detail = formatCloudflareApiMessages(data);
+      throw new Error(
+        `Cloudflare Queue consumer inventory failed for ${queue.name} (${response.status})${detail ? `: ${detail}` : ''}`
+      );
+    }
+    if (
+      (data.result_info?.page !== undefined && data.result_info.page !== 1) ||
+      (data.result_info?.total_pages !== undefined && data.result_info.total_pages !== 1)
+    ) {
+      throw new Error(`Cloudflare Queue consumer inventory was incomplete for ${queue.name}`);
+    }
+    if (data.result.length > CLOUDFLARE_INVENTORY_MAX_RESOURCES) {
+      throw new Error(`Cloudflare Queue consumer inventory exceeded the safety limit`);
+    }
+    const workersSeen = new Set<string>();
+    for (const [index, consumer] of data.result.entries()) {
+      if (consumer.type !== 'worker') continue;
+      const consumerId =
+        typeof consumer.consumer_id === 'string' ? consumer.consumer_id.trim() : undefined;
+      const workerNameFields = [consumer.script_name, consumer.script, consumer.service];
+      const invalidWorkerNameField = workerNameFields.some(
+        (value) => value !== undefined && (typeof value !== 'string' || value.trim().length === 0)
+      );
+      const workerNames = Array.from(
+        new Set(
+          workerNameFields
+            .filter((value): value is string => typeof value === 'string')
+            .map((value) => value.trim())
+            .filter(Boolean)
+        )
+      );
+      const workerName = workerNames[0] ?? '';
+      if (
+        (consumer.consumer_id !== undefined && !consumerId) ||
+        (consumerId !== undefined && consumerId.length > 256) ||
+        invalidWorkerNameField ||
+        workerNames.length !== 1 ||
+        !workerName ||
+        workerName.length > 256
+      ) {
+        throw new Error(
+          `Cloudflare Queue consumer inventory row ${index} was invalid for ${queue.name}`
+        );
+      }
+      if (consumerId !== undefined) {
+        const scopedConsumerId = `${queueId}:${consumerId}`;
+        if (consumerIds.has(scopedConsumerId)) {
+          throw new Error(`Cloudflare Queue consumer inventory contained duplicate immutable IDs`);
+        }
+        consumerIds.add(scopedConsumerId);
+      }
+      if (!targets.has(workerName)) continue;
+      if (workersSeen.has(workerName)) {
+        throw new Error(
+          `Cloudflare Queue consumer inventory was ambiguous for ${queue.name} -> ${workerName}`
+        );
+      }
+      workersSeen.add(workerName);
+      const deadLetterQueue =
+        typeof consumer.dead_letter_queue === 'string' && consumer.dead_letter_queue.length > 0
+          ? consumer.dead_letter_queue
+          : undefined;
+      const settings =
+        consumer.settings &&
+        typeof consumer.settings === 'object' &&
+        !Array.isArray(consumer.settings)
+          ? (consumer.settings as Record<string, unknown>)
+          : undefined;
+      snapshots.push({
+        queueId,
+        queueName: queue.name,
+        consumerId,
+        workerName,
+        restorePayload: {
+          type: 'worker',
+          script_name: workerName,
+          ...(deadLetterQueue ? { dead_letter_queue: deadLetterQueue } : {}),
+          ...(settings ? { settings } : {}),
+        },
+      });
+    }
+  }
+  return snapshots;
+}
+
+async function deleteExactQueueWorkerConsumer(
+  consumer: ExactQueueWorkerConsumerSnapshot,
+  credentials: CloudflareDeletionCredentials
+): Promise<ExactResourceDeleteResult> {
+  if (consumer.consumerId === undefined) {
+    const result = await deleteQueueConsumerWithResult(consumer.queueName, consumer.workerName);
+    if (result.status === 'detached') return { status: 'deleted' };
+    if (result.status === 'already_absent') return { status: 'already_absent' };
+    return { status: 'failed', error: result.error };
+  }
+  return deleteCloudflareAccountResourceById({
+    credentials,
+    resourcePath: `queues/${encodeURIComponent(consumer.queueId)}/consumers`,
+    resourceId: consumer.consumerId,
+    label: `Cloudflare Queue consumer delete for ${consumer.queueName}`,
+  });
+}
+
+async function restoreExactQueueWorkerConsumer(
+  consumer: ExactQueueWorkerConsumerSnapshot,
+  credentials: CloudflareDeletionCredentials
+): Promise<QueueConsumerRestoreResult> {
+  try {
+    const { response, data } = await requestCloudflareApiJson<{
+      success?: boolean;
+      errors?: CloudflareApiMessage[];
+      messages?: CloudflareApiMessage[];
+    }>(
+      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/queues/${encodeURIComponent(consumer.queueId)}/consumers`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${credentials.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(consumer.restorePayload),
+      },
+      {
+        label: `Cloudflare Queue consumer restore for ${consumer.queueName}`,
+        retryMode: 'non_idempotent_mutation',
+        maxAttempts: 1,
+      }
+    );
+    if (response.ok && data.success !== false) return { status: 'attached' };
+    const detail = formatCloudflareApiMessages(data);
+    return {
+      status: 'failed',
+      error: `Cloudflare Queue consumer restore failed (${response.status})${detail ? `: ${detail}` : ''}`,
+    };
+  } catch (error) {
+    return { status: 'failed', error: sanitizeError(error) };
+  }
+}
+
+async function deleteExactQueueConsumers(
+  consumers: readonly ExactQueueWorkerConsumerSnapshot[],
+  credentials: CloudflareDeletionCredentials,
+  onProgress?: (message: string) => void
+): Promise<{ removed: ExactQueueWorkerConsumerSnapshot[]; errors: string[] }> {
+  const removed: ExactQueueWorkerConsumerSnapshot[] = [];
+  const errors: string[] = [];
+  for (const consumer of consumers) {
+    onProgress?.(`  ⏳ Detaching ${consumer.workerName} from ${consumer.queueName}...`);
+    const result = await deleteExactQueueWorkerConsumer(consumer, credentials);
+    if (result.status === 'deleted') {
+      removed.push(consumer);
+      onProgress?.(`  ✅ ${consumer.queueName} -> ${consumer.workerName}`);
+    } else if (result.status === 'already_absent') {
+      onProgress?.(
+        `  ⚠️ ${consumer.queueName} -> ${consumer.workerName} (not attached or already removed)`
+      );
+    } else {
+      errors.push(
+        `Failed to detach Queue consumer: ${consumer.queueName} -> ${consumer.workerName} (${result.error})`
+      );
+      onProgress?.(`  ❌ ${consumer.queueName} -> ${consumer.workerName} - ${result.error}`);
+    }
+  }
+  return { removed, errors };
+}
+
+async function restoreExactQueueConsumers(
+  consumers: readonly ExactQueueWorkerConsumerSnapshot[],
+  credentials: CloudflareDeletionCredentials,
+  onProgress?: (message: string) => void
+): Promise<string[]> {
+  const errors: string[] = [];
+  for (const consumer of consumers) {
+    onProgress?.(`  ⏳ Restoring ${consumer.workerName} on ${consumer.queueName}...`);
+    const result = await restoreExactQueueWorkerConsumer(consumer, credentials);
+    if (result.status === 'attached') {
+      onProgress?.(`  ✅ Restored ${consumer.queueName} -> ${consumer.workerName}`);
+    } else {
+      errors.push(
+        `Failed to restore Queue consumer: ${consumer.queueName} -> ${consumer.workerName} (${result.error})`
+      );
+      onProgress?.(
+        `  ❌ Could not restore ${consumer.queueName} -> ${consumer.workerName} - ${result.error}`
+      );
+    }
+  }
+  return errors;
 }
 
 export async function deleteQueueConsumersForWorkers(
   queues: Array<{ name: string }>,
   workerNames: string[],
   onProgress?: (message: string) => void
-): Promise<Array<{ queueName: string; workerName: string }>> {
+): Promise<QueueConsumerDetachSummary> {
   const removed: Array<{ queueName: string; workerName: string }> = [];
+  const errors: string[] = [];
   for (const workerName of workerNames) {
     for (const queue of queues) {
       onProgress?.(`  ⏳ Detaching ${workerName} from ${queue.name}...`);
-      const success = await deleteQueueConsumer(queue.name, workerName);
-      if (success) {
+      const result = await deleteQueueConsumerWithResult(queue.name, workerName);
+      if (result.status === 'detached') {
         removed.push({ queueName: queue.name, workerName });
         onProgress?.(`  ✅ ${queue.name} -> ${workerName}`);
-      } else {
+      } else if (result.status === 'already_absent') {
         onProgress?.(`  ⚠️ ${queue.name} -> ${workerName} (not attached or already removed)`);
+      } else {
+        const message =
+          `Failed to detach Queue consumer: ${queue.name} -> ${workerName} ` + `(${result.error})`;
+        errors.push(message);
+        onProgress?.(`  ❌ ${queue.name} -> ${workerName} - ${result.error}`);
       }
     }
   }
-  return removed;
+  return { removed, errors };
 }
 
 // =============================================================================
 // R2 Bucket Operations
 // =============================================================================
 
+const R2_BUCKET_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/u;
+
+export interface R2ManualCleanupTarget {
+  bucketName: string;
+  objectCount: number;
+  dashboardUrl: string | null;
+}
+
+export type R2BucketDeleteResult =
+  | { status: 'deleted' }
+  | { status: 'manual_cleanup_required'; target: R2ManualCleanupTarget }
+  | { status: 'failed'; error: string };
+
+export function getR2BucketDashboardUrl(
+  accountId: string | null | undefined,
+  bucketName: string | null | undefined
+): string | null {
+  if (
+    !accountId ||
+    !/^[a-f0-9]{32}$/u.test(accountId) ||
+    !bucketName ||
+    !R2_BUCKET_NAME_PATTERN.test(bucketName)
+  ) {
+    return null;
+  }
+
+  return `https://dash.cloudflare.com/${accountId}/r2/default/buckets/${encodeURIComponent(bucketName)}`;
+}
+
+function assertSafeR2ObjectKey(key: string): void {
+  const segments = key.split('/');
+  if (
+    key.length === 0 ||
+    key.length > 1024 ||
+    key.startsWith('/') ||
+    key.endsWith('/') ||
+    key.includes('\\') ||
+    segments.some((segment) => segment === '' || segment === '.' || segment === '..') ||
+    Array.from(key).some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 0x20 || code === 0x7f;
+    })
+  ) {
+    throw new Error('invalid_r2_object_key');
+  }
+}
+
+async function wranglerR2ObjectWithOAuthRefresh(
+  args: string[],
+  options: { timeout: number }
+): Promise<{ stdout: string; stderr: string }> {
+  const oauthRefresh: WranglerOAuthRefreshState = { attempted: false };
+  try {
+    return await wrangler(args, options);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const oauthAuthenticationRejected =
+      !process.env.CLOUDFLARE_API_TOKEN?.trim() &&
+      (isD1AuthenticationError(message) || /\b(?:http(?: status)?\s*)?401\b/iu.test(message));
+    if (!oauthAuthenticationRejected) throw error;
+    // Authentication rejection is known not to have committed. Refresh the Wrangler OAuth
+    // credential once, then safely retry the same object-key operation.
+    if (!(await refreshWranglerOAuthSession(message, oauthRefresh))) throw error;
+    return wrangler(args, options);
+  }
+}
+
+export async function putR2Object(input: {
+  bucketName: string;
+  objectKey: string;
+  bytes: Uint8Array;
+  contentType: 'application/json' | 'application/sql';
+}): Promise<void> {
+  if (!R2_BUCKET_NAME_PATTERN.test(input.bucketName)) throw new Error('invalid_r2_bucket_name');
+  assertSafeR2ObjectKey(input.objectKey);
+  if (input.bytes.byteLength === 0 || input.bytes.byteLength > 16 * 1024 * 1024) {
+    throw new Error('invalid_r2_object_size');
+  }
+  await withPrivateTemporaryBinaryFile(
+    input.bytes,
+    async (temporaryPath) => {
+      await wranglerR2ObjectWithOAuthRefresh(
+        [
+          'r2',
+          'object',
+          'put',
+          `${input.bucketName}/${input.objectKey}`,
+          '--remote',
+          '--file',
+          temporaryPath,
+          '--content-type',
+          input.contentType,
+        ],
+        { timeout: 180_000 }
+      );
+    },
+    { directoryPrefix: 'authrim-r2-put-', filename: 'artifact.bin' }
+  );
+}
+
+export async function getR2ObjectBytes(input: {
+  bucketName: string;
+  objectKey: string;
+  maxBytes?: number;
+}): Promise<Uint8Array | null> {
+  if (!R2_BUCKET_NAME_PATTERN.test(input.bucketName)) throw new Error('invalid_r2_bucket_name');
+  assertSafeR2ObjectKey(input.objectKey);
+  const maxBytes = input.maxBytes ?? 16 * 1024 * 1024;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 16 * 1024 * 1024) {
+    throw new Error('invalid_r2_object_size_limit');
+  }
+  return withPrivateTemporaryOutputFile(
+    async (temporaryPath, access) => {
+      try {
+        await wranglerR2ObjectWithOAuthRefresh(
+          [
+            'r2',
+            'object',
+            'get',
+            `${input.bucketName}/${input.objectKey}`,
+            '--remote',
+            '--file',
+            temporaryPath,
+          ],
+          { timeout: 180_000 }
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/not found|10007|404/iu.test(message)) return null;
+        throw error;
+      }
+      return access.readBytes(maxBytes, 'r2_object_size_limit_exceeded');
+    },
+    { directoryPrefix: 'authrim-r2-get-', filename: 'artifact.bin' }
+  );
+}
+
+const R2_OWNERSHIP_MARKER_PREFIX = '__authrim_setup__/ownership-v1-';
+
+export function buildR2OwnershipMarkerKey(ownershipId: string): string {
+  if (!/^[a-f0-9-]{36}$/u.test(ownershipId)) throw new Error('invalid_r2_ownership_id');
+  return `${R2_OWNERSHIP_MARKER_PREFIX}${ownershipId}.json`;
+}
+
+function encodeR2ObjectKeyPath(objectKey: string): string {
+  // Cloudflare requires '/' inside R2 keys to remain literal. Dot-only segments are encoded
+  // explicitly so URL normalization cannot redirect a request outside the intended object path.
+  return objectKey
+    .split('/')
+    .map((segment) =>
+      segment === '.' ? '%2E' : segment === '..' ? '%2E%2E' : encodeURIComponent(segment)
+    )
+    .join('/');
+}
+
+function buildR2OwnershipMarkerPayload(input: {
+  environment: string;
+  binding: string;
+  bucketName: string;
+  ownershipId: string;
+}): Uint8Array {
+  return new TextEncoder().encode(
+    `${JSON.stringify({
+      version: 1,
+      environment: input.environment,
+      binding: input.binding,
+      bucketName: input.bucketName,
+      ownershipId: input.ownershipId,
+    })}\n`
+  );
+}
+
+export async function assertR2OwnershipMarker(input: {
+  bucketName: string;
+  markerKey: string;
+  ownershipId: string;
+  environment?: string;
+  binding?: string;
+}): Promise<void> {
+  if (input.markerKey !== buildR2OwnershipMarkerKey(input.ownershipId)) {
+    throw new Error(`R2 ownership marker identity is invalid for ${input.bucketName}`);
+  }
+
+  const credentials = await getR2ApiCredentials();
+  let marker: Uint8Array | null;
+  if (credentials) {
+    const rows = await listR2ObjectRowsViaApi({
+      bucketName: input.bucketName,
+      credentials,
+      prefix: input.markerKey,
+    });
+    if (!rows.some((row) => row.key === input.markerKey)) {
+      throw new Error(`R2 ownership marker is missing for ${input.bucketName}`);
+    }
+    marker = await getR2ObjectBytesViaApi({
+      bucketName: input.bucketName,
+      objectKey: input.markerKey,
+      credentials,
+      maxBytes: 4 * 1024,
+    });
+  } else {
+    marker = await getR2ObjectBytes({
+      bucketName: input.bucketName,
+      objectKey: input.markerKey,
+      maxBytes: 4 * 1024,
+    });
+  }
+  if (!marker) throw new Error(`R2 ownership marker is missing for ${input.bucketName}`);
+  let payload: unknown;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(marker));
+  } catch {
+    throw new Error(`R2 ownership marker is invalid for ${input.bucketName}`);
+  }
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    (payload as { version?: unknown }).version !== 1 ||
+    (payload as { ownershipId?: unknown }).ownershipId !== input.ownershipId ||
+    (payload as { bucketName?: unknown }).bucketName !== input.bucketName ||
+    (input.environment !== undefined &&
+      (payload as { environment?: unknown }).environment !== input.environment) ||
+    (input.binding !== undefined && (payload as { binding?: unknown }).binding !== input.binding)
+  ) {
+    throw new Error(`R2 ownership marker does not match ${input.bucketName}`);
+  }
+}
+
+export async function writeAndVerifyR2OwnershipMarker(input: {
+  environment: string;
+  binding: string;
+  bucketName: string;
+  markerKey: string;
+  ownershipId: string;
+}): Promise<void> {
+  try {
+    await putR2Object({
+      bucketName: input.bucketName,
+      objectKey: input.markerKey,
+      bytes: buildR2OwnershipMarkerPayload(input),
+      contentType: 'application/json',
+    });
+  } catch (error) {
+    // A lost Wrangler response may still follow a committed object PUT. Exact readback is the
+    // only safe authority to continue; otherwise preserve the bucket for explicit recovery.
+    await assertR2OwnershipMarker(input).catch(() => {
+      throw error;
+    });
+  }
+  await assertR2OwnershipMarker(input);
+}
+
+async function restoreR2OwnershipMarkerAfterAmbiguousDelete(
+  identity: ExactDeletionR2Identity
+): Promise<void> {
+  await putR2Object({
+    bucketName: identity.name,
+    objectKey: identity.ownershipMarkerKey,
+    bytes: new TextEncoder().encode(
+      `${JSON.stringify({
+        version: 1,
+        bucketName: identity.name,
+        ownershipId: identity.ownershipId,
+        ...(identity.environment ? { environment: identity.environment } : {}),
+        ...(identity.binding ? { binding: identity.binding } : {}),
+        restoredAfterAmbiguousDelete: true,
+      })}\n`
+    ),
+    contentType: 'application/json',
+  });
+  await assertR2OwnershipMarker({
+    bucketName: identity.name,
+    markerKey: identity.ownershipMarkerKey,
+    ownershipId: identity.ownershipId,
+  });
+}
+
 /**
  * Create an R2 bucket
  */
-export async function createR2Bucket(name: string): Promise<{ name: string }> {
+export async function createR2Bucket(
+  name: string,
+  behavior: { allowExisting?: boolean } = {}
+): Promise<{ name: string }> {
   try {
-    await wrangler(['r2', 'bucket', 'create', name]);
+    await wranglerCreateWithDefiniteRejectionRetry(['r2', 'bucket', 'create', name]);
     return { name };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!isAlreadyExistsError(message)) {
       throw error;
     }
+    if (behavior.allowExisting === false) throw error;
     return { name };
   }
 }
@@ -4441,61 +8033,116 @@ function isAlreadyExistsError(message: string): boolean {
   );
 }
 
-export function parseR2BucketRows(stdout: string): Array<{ name: string }> {
+export interface R2BucketProviderIdentity {
+  name: string;
+  creationDate?: string;
+}
+
+function normalizeCloudflareTimestamp(value: unknown, label: string): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) {
+    throw new TypeError(`${label} was not a valid timestamp`);
+  }
+  return new Date(value).toISOString();
+}
+
+export function parseR2BucketRows(stdout: string): R2BucketProviderIdentity[] {
+  let parsedJson: unknown;
   try {
-    const parsed = JSON.parse(stdout) as
-      | Array<{ name?: unknown }>
-      | { buckets?: Array<{ name?: unknown }>; result?: Array<{ name?: unknown }> };
-    const rows = Array.isArray(parsed) ? parsed : (parsed.buckets ?? parsed.result ?? []);
-    return rows
-      .map((row) => (typeof row.name === 'string' ? row.name.trim() : ''))
-      .filter((name) => name.length > 0)
-      .map((name) => ({ name }));
+    parsedJson = JSON.parse(stripAnsiSequences(stdout));
   } catch {
-    // Wrangler has emitted plain text in older versions. Keep a conservative fallback.
+    // Wrangler 4.x emits a sequence of name/creation_date blocks instead of JSON.
   }
 
-  return stdout
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .flatMap((line) => {
-      const nameMatch = line.match(/^name:\s+(.+)$/i);
-      if (nameMatch?.[1]) {
-        return [{ name: nameMatch[1].trim() }];
-      }
-      if (/^[a-z0-9][a-z0-9-]*$/i.test(line)) {
-        return [{ name: line }];
-      }
-      return [];
-    });
+  if (parsedJson !== undefined) {
+    const parsed = parsedJson as {
+      buckets?: Array<{ name?: unknown; creation_date?: unknown; creationDate?: unknown }>;
+      result?: Array<{ name?: unknown; creation_date?: unknown; creationDate?: unknown }>;
+    } | null;
+    const rows = Array.isArray(parsedJson)
+      ? (parsedJson as Array<{
+          name?: unknown;
+          creation_date?: unknown;
+          creationDate?: unknown;
+        }>)
+      : parsed && typeof parsed === 'object'
+        ? (parsed.buckets ?? parsed.result ?? [])
+        : [];
+    return rows
+      .map((row) => ({
+        name: typeof row.name === 'string' ? row.name.trim() : '',
+        creationDate: normalizeCloudflareTimestamp(
+          row.creation_date ?? row.creationDate,
+          'R2 bucket creation_date'
+        ),
+      }))
+      .filter((row) => row.name.length > 0);
+  }
+
+  const rows: R2BucketProviderIdentity[] = [];
+  let pendingName: string | undefined;
+  for (const rawLine of stripAnsiSequences(stdout).split('\n')) {
+    const line = rawLine.trim();
+    const nameMatch = line.match(/^name:\s+(.+)$/iu);
+    if (nameMatch?.[1]) {
+      if (pendingName) rows.push({ name: pendingName });
+      pendingName = nameMatch[1].trim();
+      continue;
+    }
+    const creationDateMatch = line.match(/^creation_date:\s+(.+)$/iu);
+    if (creationDateMatch?.[1] && pendingName) {
+      const creationDate = normalizeCloudflareTimestamp(
+        creationDateMatch[1].trim(),
+        `R2 bucket ${pendingName} creation_date`
+      );
+      rows.push({ name: pendingName, ...(creationDate ? { creationDate } : {}) });
+      pendingName = undefined;
+      continue;
+    }
+    if (/^[a-z0-9][a-z0-9-]*$/iu.test(line)) {
+      if (pendingName) rows.push({ name: pendingName });
+      rows.push({ name: line });
+      pendingName = undefined;
+    }
+  }
+  if (pendingName) rows.push({ name: pendingName });
+  return rows;
 }
 
-function normalizeR2BucketRows(rows: unknown): Array<{ name: string }> {
+function normalizeR2BucketRows(rows: unknown): R2BucketProviderIdentity[] {
   if (!Array.isArray(rows)) {
-    return [];
+    throw new TypeError('R2 bucket list was not an array');
   }
-  return rows
-    .map((row) => {
-      if (row && typeof row === 'object' && 'name' in row) {
-        const name = (row as { name?: unknown }).name;
-        return typeof name === 'string' ? name.trim() : '';
-      }
-      return '';
-    })
-    .filter((name) => name.length > 0)
-    .map((name) => ({ name }));
+  return rows.map((row, index) => {
+    const name =
+      row && typeof row === 'object' && 'name' in row
+        ? (row as { name?: unknown }).name
+        : undefined;
+    if (typeof name !== 'string' || name.trim().length === 0) {
+      throw new TypeError(`R2 bucket list row ${index} did not contain a name`);
+    }
+    const value = row as { creation_date?: unknown; creationDate?: unknown };
+    const creationDate = normalizeCloudflareTimestamp(
+      value.creation_date ?? value.creationDate,
+      `R2 bucket list row ${index} creation_date`
+    );
+    return { name: name.trim(), ...(creationDate ? { creationDate } : {}) };
+  });
 }
 
-function extractR2BucketRowsFromApiPayload(payload: unknown): Array<{ name: string }> {
+function extractR2BucketRowsFromApiPayload(payload: unknown): R2BucketProviderIdentity[] {
   if (!payload || typeof payload !== 'object') {
-    return [];
+    throw new TypeError('Cloudflare R2 bucket list returned an invalid response');
   }
 
   const data = payload as {
+    success?: unknown;
     result?: unknown;
     buckets?: unknown;
   };
+  if (data.success === false) {
+    throw new Error('Cloudflare R2 bucket list returned an unsuccessful response');
+  }
   if (data.result && typeof data.result === 'object' && !Array.isArray(data.result)) {
     const result = data.result as { buckets?: unknown };
     return normalizeR2BucketRows(result.buckets);
@@ -4503,7 +8150,56 @@ function extractR2BucketRowsFromApiPayload(payload: unknown): Array<{ name: stri
   return normalizeR2BucketRows(data.result ?? data.buckets);
 }
 
-async function listR2BucketsViaApi(): Promise<Array<{ name: string }> | null> {
+function extractR2BucketCursorFromApiPayload(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object') {
+    throw new TypeError('Cloudflare R2 bucket list returned an invalid response');
+  }
+
+  const resultInfo = (payload as { result_info?: unknown }).result_info;
+  if (resultInfo === undefined) return undefined;
+  if (!resultInfo || typeof resultInfo !== 'object' || Array.isArray(resultInfo)) {
+    throw new TypeError('Cloudflare R2 bucket list returned invalid pagination metadata');
+  }
+
+  const { cursor, per_page: perPage } = resultInfo as {
+    cursor?: unknown;
+    per_page?: unknown;
+  };
+  if (
+    perPage !== undefined &&
+    (typeof perPage !== 'number' ||
+      !Number.isInteger(perPage) ||
+      perPage < 1 ||
+      perPage > R2_BUCKET_LIST_PER_PAGE)
+  ) {
+    throw new TypeError('Cloudflare R2 bucket list returned an invalid page size');
+  }
+  if (cursor === undefined || cursor === null || cursor === '') return undefined;
+  if (typeof cursor !== 'string' || cursor.trim().length === 0 || cursor.length > 8_192) {
+    throw new TypeError('Cloudflare R2 bucket list returned an invalid pagination cursor');
+  }
+  return cursor.trim();
+}
+
+function isRecognizedR2BucketListOutput(stdout: string): boolean {
+  const trimmed = stripAnsiSequences(stdout).trim();
+  if (trimmed.length === 0 || /no\s+(?:r2\s+)?buckets?\s+(?:found|exist)/iu.test(trimmed)) {
+    return true;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed)) return true;
+    if (parsed && typeof parsed === 'object') {
+      const value = parsed as { buckets?: unknown; result?: unknown };
+      return Array.isArray(value.buckets) || Array.isArray(value.result);
+    }
+  } catch {
+    // Continue with the documented legacy plain-text forms.
+  }
+  return parseR2BucketRows(trimmed).length > 0;
+}
+
+async function listR2BucketsViaApi(): Promise<R2BucketProviderIdentity[] | null> {
   if (
     process.env.NODE_ENV === 'test' &&
     (!process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || !process.env.CLOUDFLARE_API_TOKEN?.trim())
@@ -4511,89 +8207,369 @@ async function listR2BucketsViaApi(): Promise<Array<{ name: string }> | null> {
     return null;
   }
 
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || (await getAccountId());
-  const tokenInfo = await getCloudflareApiToken();
-  if (!accountId || !tokenInfo?.token) {
-    return null;
-  }
+  const credentials = await resolveCloudflareInventoryCredentials();
+  if (!credentials) return null;
 
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets?per_page=1000`,
-    {
-      headers: {
-        Authorization: `Bearer ${tokenInfo.token}`,
+  const buckets: R2BucketProviderIdentity[] = [];
+  const bucketNames = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+
+  for (let page = 1; page <= R2_BUCKET_LIST_MAX_PAGES; page++) {
+    const params = new URLSearchParams({ per_page: String(R2_BUCKET_LIST_PER_PAGE) });
+    if (cursor) params.set('cursor', cursor);
+    const { data } = await requestR2Api<CloudflareR2BucketListResponse>(
+      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets?${params.toString()}`,
+      {
+        headers: {
+          Authorization: `Bearer ${credentials.token}`,
+        },
       },
+      'Cloudflare R2 bucket list',
+      false,
+      credentials.source
+    );
+    const rows = extractR2BucketRowsFromApiPayload(data);
+    for (const row of rows) {
+      if (bucketNames.has(row.name)) {
+        throw new Error('Cloudflare R2 bucket list returned a duplicate bucket name');
+      }
+      bucketNames.add(row.name);
+      buckets.push(row);
     }
-  );
-  if (!response.ok) {
-    throw new Error(`Cloudflare R2 bucket list failed (${response.status})`);
+
+    const nextCursor = extractR2BucketCursorFromApiPayload(data);
+    if (!nextCursor) return buckets;
+    if (rows.length === 0) {
+      throw new Error('Cloudflare R2 bucket list returned a cursor after an empty page');
+    }
+    if (seenCursors.has(nextCursor)) {
+      throw new Error('Cloudflare R2 bucket list returned a repeated pagination cursor');
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
   }
 
-  return extractR2BucketRowsFromApiPayload(await response.json());
+  throw new Error(
+    `Cloudflare R2 bucket list exceeded the ${R2_BUCKET_LIST_MAX_PAGES}-page safety limit`
+  );
 }
 
-async function listR2BucketNamesStrict(): Promise<Set<string>> {
-  return new Set((await listR2Buckets({ throwOnError: true })).map((bucket) => bucket.name));
+function assertR2BucketIdentityComplete(
+  bucket: R2BucketProviderIdentity
+): asserts bucket is R2BucketProviderIdentity & { creationDate: string } {
+  if (!bucket.creationDate) {
+    throw new Error(`Cloudflare R2 bucket ${bucket.name} omitted provider creation_date`);
+  }
 }
 
-async function waitForR2BucketVisible(name: string): Promise<void> {
-  const maxAttempts = process.env.NODE_ENV === 'test' ? 1 : 4;
+async function listR2BucketIdentitiesStrict(): Promise<
+  Array<R2BucketProviderIdentity & { creationDate: string }>
+> {
+  const buckets = await listR2Buckets({ throwOnError: true, requireIdentity: true });
+  buckets.forEach(assertR2BucketIdentityComplete);
+  return buckets.map((bucket) => ({ name: bucket.name, creationDate: bucket.creationDate! }));
+}
+
+async function waitForR2BucketVisible(
+  name: string,
+  createError?: unknown
+): Promise<R2BucketProviderIdentity & { creationDate: string }> {
+  const maxAttempts = provisioningVisibilityMaxAttempts();
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const names = await listR2BucketNamesStrict();
-      if (names.has(name)) {
-        return;
-      }
+      const bucket = (await listR2BucketIdentitiesStrict()).find((row) => row.name === name);
+      if (bucket) return bucket;
     } catch (error) {
       lastError = error;
     }
 
-    if (attempt < maxAttempts && process.env.NODE_ENV !== 'test') {
-      await sleep(Math.min(1_000 * 2 ** (attempt - 1), 5_000));
+    if (attempt < maxAttempts) {
+      const delayMs = provisioningVisibilityRetryDelayMs(attempt);
+      if (delayMs > 0) await sleep(delayMs);
     }
   }
 
-  const suffix = lastError instanceof Error ? `: ${lastError.message}` : '';
-  throw new Error(`R2 bucket ${name} was not visible after creation${suffix}`);
+  const visibilityError = new Error(
+    `R2 bucket ${name} was not visible after creation (${maxAttempts} readback attempts)`
+  );
+  const causes = [createError, lastError, visibilityError].filter(
+    (cause): cause is NonNullable<typeof cause> => cause !== undefined
+  );
+  if (causes.length > 1) {
+    const createErrorDetail = createError instanceof Error ? `: ${createError.message}` : '';
+    throw new AggregateError(
+      causes,
+      `R2 bucket ${name} creation outcome could not be verified${createErrorDetail}`
+    );
+  }
+  throw visibilityError;
+}
+
+async function runR2BucketProvisioningPool<T>(
+  items: readonly T[],
+  worker: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  let nextIndex = 0;
+  let stopped = false;
+  let firstError: unknown;
+
+  const workers = Array.from(
+    { length: Math.min(R2_BUCKET_PROVISIONING_CONCURRENCY, items.length) },
+    async () => {
+      while (!stopped) {
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= items.length) return;
+
+        try {
+          await worker(items[index]!, index);
+        } catch (error) {
+          if (!stopped) {
+            stopped = true;
+            firstError = error;
+          }
+          return;
+        }
+      }
+    }
+  );
+
+  await Promise.all(workers);
+  if (stopped) throw firstError;
 }
 
 export async function provisionR2Buckets(
   env: string,
   options: {
-    existing?: Record<string, { name: string }> | null;
+    existing?: Record<
+      string,
+      {
+        name: string;
+        creationDate?: string;
+        ownershipMarkerKey?: string;
+        ownershipId?: string;
+      }
+    > | null;
+    includeFeatureBuckets?: boolean;
     onProgress?: (message: string) => void;
+    onResourceProvisioned?: (resource: ProvisioningResourceCheckpoint) => Promise<void>;
+    onResourceIdentified?: (resource: ProvisioningResourceCheckpoint) => Promise<void>;
+    allowExisting?: boolean;
+    provisioningIntentResources?: Readonly<Record<string, ProvisioningResourceCheckpoint>>;
+    onResourceCreateIssued?: (resource: ProvisioningResourceIdentity) => Promise<void>;
+    onResourceCreateRejected?: (resource: ProvisioningResourceIdentity) => Promise<void>;
   } = {}
 ): Promise<R2BucketInfo[]> {
   const onProgress = options.onProgress ?? (() => undefined);
   const existing = options.existing ?? {};
-  const provisioned: R2BucketInfo[] = [];
-  let bucketNames = await listR2BucketNamesStrict();
+  const requiredBuckets = getRequiredR2Buckets(env, {
+    includeFeatureBuckets: options.includeFeatureBuckets,
+  });
+  const provisioned: Array<R2BucketInfo | undefined> = new Array(requiredBuckets.length);
+  const bucketsByName = new Map(
+    (await listR2BucketIdentitiesStrict()).map((candidate) => [candidate.name, candidate])
+  );
 
-  for (const bucket of getRequiredR2Buckets(env)) {
-    const bucketName = existing[bucket.binding]?.name ?? bucket.name;
-    if (bucketNames.has(bucketName)) {
-      provisioned.push({
+  // Provisioning-intent callbacks update one shared durable file with read-modify-write semantics.
+  // Bucket work may overlap, but those checkpoint writes must remain serialized or one bucket can
+  // overwrite another bucket's freshly persisted state.
+  let checkpointTail: Promise<void> = Promise.resolve();
+  const serializeCheckpoint = <T>(
+    callback: ((resource: T) => Promise<void>) | undefined
+  ): ((resource: T) => Promise<void>) | undefined => {
+    if (!callback) return undefined;
+    return (resource: T) => {
+      const result = checkpointTail.then(() => callback(resource));
+      checkpointTail = result.then(
+        () => undefined,
+        () => undefined
+      );
+      return result;
+    };
+  };
+  const onResourceCreateIssued = serializeCheckpoint(options.onResourceCreateIssued);
+  const onResourceCreateRejected = serializeCheckpoint(options.onResourceCreateRejected);
+  const onResourceIdentified = serializeCheckpoint(options.onResourceIdentified);
+  const onResourceProvisioned = serializeCheckpoint(options.onResourceProvisioned);
+
+  await runR2BucketProvisioningPool(requiredBuckets, async (bucket, index) => {
+    const lockedBucket = existing[bucket.binding];
+    const bucketName = lockedBucket?.name ?? bucket.name;
+    const checkpoint = options.provisioningIntentResources?.[`r2:${bucket.binding}`];
+    const ownershipId =
+      checkpoint?.ownershipId ?? lockedBucket?.ownershipId ?? randomUUID().toLowerCase();
+    const ownershipMarkerKey =
+      checkpoint?.ownershipMarkerKey ??
+      lockedBucket?.ownershipMarkerKey ??
+      buildR2OwnershipMarkerKey(ownershipId);
+    const identity: ProvisioningResourceIdentity = {
+      kind: 'r2',
+      binding: bucket.binding,
+      name: bucketName,
+      ownershipMarkerKey,
+      ownershipId,
+    };
+    const behavior =
+      options.provisioningIntentResources && onResourceCreateIssued && onResourceCreateRejected
+        ? getProvisioningCreateBehavior(
+            {
+              provisioningIntentResources: options.provisioningIntentResources,
+              onResourceCreateIssued,
+              onResourceCreateRejected,
+              onResourceIdentified: onResourceIdentified ?? (async () => undefined),
+            },
+            identity
+          )
+        : { allowExisting: options.allowExisting };
+    const liveBucket = bucketsByName.get(bucketName);
+    if (liveBucket) {
+      const legacyRecordedBinding =
+        (checkpoint?.state === 'created' &&
+          !checkpoint.creationDate &&
+          !checkpoint.ownershipMarkerKey &&
+          !checkpoint.ownershipId) ||
+        (Boolean(lockedBucket) &&
+          !lockedBucket?.creationDate &&
+          !lockedBucket?.ownershipMarkerKey &&
+          !lockedBucket?.ownershipId);
+      if (legacyRecordedBinding) {
+        // A pre-fix lock/checkpoint remains usable as a non-destructive Worker binding so an
+        // interrupted 0.4.0 setup can finish. It does not gain deletion authority and is never
+        // silently upgraded to a marker-owned bucket.
+        provisioned[index] = { binding: bucket.binding, name: bucketName };
+        onProgress(`  ✓ Existing legacy binding (name-only): ${bucketName}`);
+        return;
+      }
+      const expectedCreationDate = behavior.expectedCreationDate ?? lockedBucket?.creationDate;
+      if (expectedCreationDate && liveBucket.creationDate !== expectedCreationDate) {
+        throw new Error(
+          `R2 bucket ${bucketName} was replaced after Setup recorded its provider creation_date`
+        );
+      }
+      try {
+        await assertR2OwnershipMarker({
+          bucketName,
+          markerKey: ownershipMarkerKey,
+          ownershipId,
+          environment: env,
+          binding: bucket.binding,
+        });
+      } catch (error) {
+        const interrupted = behavior.recordedState === 'create_issued';
+        throw new Error(
+          interrupted
+            ? `R2 bucket ${bucketName} exists after an interrupted create but has no matching ` +
+                'Setup ownership marker. Delete or adopt it explicitly before retrying.'
+            : `R2 bucket ${bucketName} already exists without exact Setup ownership evidence`,
+          { cause: error }
+        );
+      }
+      const postMarkerIdentity = (await listR2BucketIdentitiesStrict()).find(
+        (candidate) => candidate.name === bucketName
+      );
+      if (!postMarkerIdentity || postMarkerIdentity.creationDate !== liveBucket.creationDate) {
+        throw new Error(
+          `R2 bucket ${bucketName} changed while Setup verified its ownership marker`
+        );
+      }
+      const creationDate = expectedCreationDate ?? liveBucket.creationDate;
+      provisioned[index] = {
         binding: bucket.binding,
         name: bucketName,
+        creationDate,
+        ownershipMarkerKey,
+        ownershipId,
+      };
+      await onResourceIdentified?.({
+        ...identity,
+        state: 'identified',
+        creationDate,
+      });
+      await onResourceProvisioned?.({
+        ...identity,
+        state: 'created',
+        creationDate,
       });
       onProgress(`  ✓ Existing: ${bucketName}`);
-      continue;
+      return;
+    }
+
+    if (behavior.recordedState === 'identified' || behavior.recordedState === 'created') {
+      throw new Error(`R2 bucket ${bucketName} recorded by provisioning is missing`);
+    }
+    if (behavior.recordedState === 'create_issued') {
+      throw new Error(
+        `R2 bucket ${bucketName} has an interrupted create_issued checkpoint and is not ` +
+          'currently visible. Setup will not reissue the create; inspect Cloudflare and recover explicitly.'
+      );
     }
 
     onProgress(`  ⏳ Creating: ${bucketName}...`);
-    const result = await createR2Bucket(bucketName);
-    await waitForR2BucketVisible(result.name);
-    bucketNames = await listR2BucketNamesStrict();
-    provisioned.push({
+    await behavior.onCreateIssued?.();
+    let result: { name: string };
+    try {
+      result = await createR2Bucket(bucketName, { allowExisting: behavior.allowExisting });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!isAmbiguousCloudflareMutationFailure(message)) {
+        return throwDefiniteProvisioningCreateFailure(behavior, error, `R2 bucket ${bucketName}`);
+      }
+      await waitForR2BucketVisible(bucketName, error);
+      // R2 create has neither an idempotency key nor an immutable bucket ID. A same-name bucket
+      // observed after a lost create response cannot safely be attributed to this attempt because
+      // the marker write occurs only after this boundary.
+      throw new Error(
+        `R2 bucket ${bucketName} became visible after an ambiguous create response, but Setup ` +
+          'cannot prove ownership. Delete or adopt it explicitly before retrying.',
+        { cause: error }
+      );
+    }
+    const providerIdentity = await waitForR2BucketVisible(result.name);
+    await writeAndVerifyR2OwnershipMarker({
+      environment: env,
+      binding: bucket.binding,
+      bucketName: result.name,
+      markerKey: ownershipMarkerKey,
+      ownershipId,
+    });
+    const postMarkerIdentity = await waitForR2BucketVisible(result.name);
+    if (postMarkerIdentity.creationDate !== providerIdentity.creationDate) {
+      throw new Error(
+        `R2 bucket ${result.name} was replaced while Setup established its ownership marker`
+      );
+    }
+    await onResourceIdentified?.({
+      ...identity,
+      name: result.name,
+      state: 'identified',
+      creationDate: providerIdentity.creationDate,
+    });
+    provisioned[index] = {
       binding: bucket.binding,
       name: result.name,
+      creationDate: providerIdentity.creationDate,
+      ownershipMarkerKey,
+      ownershipId,
+    };
+    await onResourceProvisioned?.({
+      ...identity,
+      name: result.name,
+      state: 'created',
+      creationDate: providerIdentity.creationDate,
     });
     onProgress(`  ✅ ${bucketName} created`);
-  }
+  });
 
-  return provisioned;
+  return requiredBuckets.map((bucket, index) => {
+    const result = provisioned[index];
+    if (!result) {
+      throw new Error(`R2 bucket ${bucket.name} completed without a provisioning result`);
+    }
+    return result;
+  });
 }
 
 // =============================================================================
@@ -4675,10 +8651,11 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     r2: [],
   };
 
-  // Calculate totals for progress tracking
-  const d1Count = D1_DATABASES.length;
-  const kvCount = KV_NAMESPACES.length;
-  const totalResources = d1Count + kvCount;
+  // Calculate the same resource set this operation will actually provision. R2 baseline
+  // infrastructure is always present, while feature buckets and Queues follow their options.
+  const d1Count = options.createD1 === false ? 0 : D1_DATABASES.length;
+  const kvCount = options.createKV === false ? 0 : KV_NAMESPACES.length;
+  const totalResources = getProvisioningResourceCount(options);
   let _completedResources = 0;
 
   onProgress(`📦 Provisioning ${totalResources} resources...`);
@@ -4689,18 +8666,30 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     onProgress(`📊 D1 Databases (0/${d1Count})`);
     for (const db of D1_DATABASES) {
       const dbName = getD1DatabaseName(env, db.dbType);
+      const identity: ProvisioningResourceIdentity = {
+        kind: 'd1',
+        binding: db.binding,
+        name: dbName,
+      };
       onProgress(`  ⏳ Creating: ${dbName}...`);
 
-      // Get location options for this database type
-      // Note: admin-db uses the same region as pii-db (both contain sensitive data)
-      const dbLocationKey = db.dbType === 'core-db' ? 'core' : 'pii';
-      const dbOptions = options.databaseConfig?.[dbLocationKey];
+      const dbOptions = options.databaseConfig?.[db.locationProfile];
 
       try {
-        const result = await createD1Database(dbName, dbOptions);
+        const result = await createD1Database(
+          dbName,
+          dbOptions,
+          getProvisioningCreateBehavior(options, identity)
+        );
         resources.d1.push({
           binding: db.binding,
           name: result.name,
+          id: result.id,
+        });
+        await options.onResourceProvisioned?.({
+          ...identity,
+          name: result.name,
+          state: 'created',
           id: result.id,
         });
         _completedResources++;
@@ -4715,34 +8704,11 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
         onProgress(`  ✅ ${dbName} (ID: ${result.id.substring(0, 8)}...)${locationInfo}`);
       } catch (error) {
         onProgress(`  ❌ Failed: ${dbName} - ${sanitizeError(error)}`);
-        throw new Error(`Failed to create D1 database ${dbName}`);
+        throw new Error(`Failed to create D1 database ${dbName}`, { cause: error });
       }
     }
     onProgress(`📊 D1 Databases (${d1Count}/${d1Count}) ✓`);
     onProgress('');
-
-    // Run migrations if rootDir is provided
-    // Use runMigrationsForEnvironment which supports searching multiple paths
-    if (options.runMigrations !== false && options.rootDir) {
-      onProgress('📜 Running database migrations...');
-
-      const migrationsResult = await runMigrationsForEnvironment(
-        env,
-        options.rootDir,
-        onProgress,
-        options.config
-      );
-
-      if (!migrationsResult.success) {
-        const errors = [];
-        if (!migrationsResult.core.success) errors.push(`core: ${migrationsResult.core.error}`);
-        if (!migrationsResult.pii.success) errors.push(`pii: ${migrationsResult.pii.error}`);
-        if (!migrationsResult.admin.success) errors.push(`admin: ${migrationsResult.admin.error}`);
-        throw new Error(`Failed to run migrations: ${errors.join(', ')}`);
-      }
-
-      onProgress('');
-    }
   }
 
   // Provision KV namespaces
@@ -4750,10 +8716,19 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     onProgress(`🗄️ KV Namespaces (0/${kvCount})`);
     for (const kvName of KV_NAMESPACES) {
       const nsName = getKVNamespaceName(env, kvName);
+      const identity: ProvisioningResourceIdentity = {
+        kind: 'kv',
+        binding: kvName,
+        name: nsName,
+      };
       onProgress(`  ⏳ Creating: ${nsName}...`);
 
       try {
-        const result = await createKVNamespace(nsName);
+        const result = await createKVNamespace(
+          nsName,
+          false,
+          getProvisioningCreateBehavior(options, identity)
+        );
         // Preview namespaces are auto-created by wrangler dev when needed
         // const previewResult = await createKVNamespace(nsName, true);
 
@@ -4763,11 +8738,17 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
           id: result.id,
           // previewId: previewResult.id,
         });
+        await options.onResourceProvisioned?.({
+          ...identity,
+          name: result.name,
+          state: 'created',
+          id: result.id,
+        });
         _completedResources++;
         onProgress(`  ✅ ${nsName} (ID: ${result.id.substring(0, 8)}...)`);
       } catch (error) {
         onProgress(`  ❌ Failed: ${nsName} - ${sanitizeError(error)}`);
-        throw new Error(`Failed to create KV namespace ${nsName}`);
+        throw new Error(`Failed to create KV namespace ${nsName}`, { cause: error });
       }
     }
     onProgress(`🗄️ KV Namespaces (${kvCount}/${kvCount}) ✓`);
@@ -4779,33 +8760,58 @@ export async function provisionResources(options: ProvisionOptions): Promise<Pro
     onProgress('📨 Queues');
     for (const definition of QUEUE_PROVISIONING_DEFINITIONS) {
       const queueName = getQueueName(env, definition.nameSuffix);
+      const identity: ProvisioningResourceIdentity = {
+        kind: 'queue',
+        binding: definition.binding,
+        name: queueName,
+      };
       onProgress(`  ⏳ Creating: ${queueName}...`);
 
       try {
-        const result = await createQueue(queueName);
+        const result = await createQueue(
+          queueName,
+          getProvisioningCreateBehavior(options, identity)
+        );
         resources.queues.push({
           binding: definition.binding,
           name: result.name,
           id: result.id,
         });
+        await options.onResourceProvisioned?.({
+          ...identity,
+          name: result.name,
+          state: 'created',
+          id: result.providerId,
+        });
         onProgress(`  ✅ ${queueName} created`);
       } catch (error) {
-        onProgress(`  ⚠️ Skipped: ${queueName} - ${sanitizeError(error)}`);
+        onProgress(`  ❌ Failed: ${queueName} - ${sanitizeError(error)}`);
+        throw new Error(`Failed to create Queue ${queueName}`, { cause: error });
       }
     }
     onProgress('');
   }
 
-  // Provision R2 buckets (optional)
-  if (options.createR2) {
-    onProgress('📁 R2 Buckets');
-    try {
-      resources.r2.push(...(await provisionR2Buckets(env, { onProgress })));
-    } catch (error) {
-      onProgress(`  ⚠️ R2 provisioning skipped: ${sanitizeError(error)}`);
-    }
-    onProgress('');
+  // The migration release bucket is baseline infrastructure. A normal setup provisions every
+  // product bucket; only an explicit R2 opt-out limits provisioning to the baseline bucket.
+  onProgress('📁 R2 Buckets');
+  try {
+    resources.r2.push(
+      ...(await provisionR2Buckets(env, {
+        onProgress,
+        includeFeatureBuckets: options.createR2 !== false,
+        onResourceProvisioned: options.onResourceProvisioned,
+        onResourceIdentified: options.onResourceIdentified,
+        provisioningIntentResources: options.provisioningIntentResources,
+        onResourceCreateIssued: options.onResourceCreateIssued,
+        onResourceCreateRejected: options.onResourceCreateRejected,
+      }))
+    );
+  } catch (error) {
+    onProgress(`  ❌ R2 provisioning failed: ${sanitizeError(error)}`);
+    throw new Error('Failed to provision baseline R2 migration release bucket', { cause: error });
   }
+  onProgress('');
 
   // Summary
   onProgress('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -4824,7 +8830,15 @@ export function toResourceIds(resources: ProvisionedResources): {
   d1: Record<string, { id: string; name: string }>;
   kv: Record<string, { id: string; name: string }>;
   queues?: Record<string, { id: string; name: string }>;
-  r2?: Record<string, { name: string }>;
+  r2?: Record<
+    string,
+    {
+      name: string;
+      creationDate?: string;
+      ownershipMarkerKey?: string;
+      ownershipId?: string;
+    }
+  >;
 } {
   const result: ReturnType<typeof toResourceIds> = {
     d1: {},
@@ -4849,7 +8863,12 @@ export function toResourceIds(resources: ProvisionedResources): {
   if (resources.r2.length > 0) {
     result.r2 = {};
     for (const r of resources.r2) {
-      result.r2[r.binding] = { name: r.name };
+      result.r2[r.binding] = {
+        name: r.name,
+        ...(r.creationDate ? { creationDate: r.creationDate } : {}),
+        ...(r.ownershipMarkerKey ? { ownershipMarkerKey: r.ownershipMarkerKey } : {}),
+        ...(r.ownershipId ? { ownershipId: r.ownershipId } : {}),
+      };
     }
   }
 
@@ -4865,13 +8884,15 @@ export function toResourceIds(resources: ProvisionedResources): {
  */
 const AUTHRIM_PATTERNS = {
   worker:
-    /^([a-z][a-z0-9-]*)-ar-(auth|token|userinfo|discovery|management|router|async|saml|bridge|vc|lib-core|policy|admin-ui|login-ui)$/,
-  d1: /^(?:([a-z][a-z0-9-]*)-authrim-(core|pii|admin)-db|authrim-([a-z][a-z0-9-]*)-(?:tdb-slot-[0-9]{4}-(?:core|pii)|[a-z0-9-]+-(?:core|pii)))$/,
+    /^([a-z][a-z0-9-]*)-ar-(auth|token|userinfo|discovery|control|plugin-runner|management|agent-access|router|async|saml|bridge|vc|lib-core|policy|admin-ui|login-ui)$/,
+  d1: /^([a-z][a-z0-9-]*)-authrim-(core|pii|admin|control|lookup|plugin-runner)-db$/,
   // KV can have either lowercase or uppercase env prefix (e.g., conformance-CLIENTS_CACHE or TESTENV-CLIENTS_CACHE)
   kv: /^([a-zA-Z][a-zA-Z0-9-]*)-(?:CLIENTS_CACHE|INITIAL_ACCESS_TOKENS|SETTINGS|REBAC_CACHE|USER_CACHE|AUTHRIM_CONFIG|TENANT_RUNTIME_REGISTRY|STATE_STORE|CONSENT_CACHE)(?:_preview)?$/i,
   queue:
     /^([a-z][a-z0-9-]*)-(audit-queue|logging-delivery-critical-queue|logging-delivery-queue|logging-delivery-bulk-queue)$/,
-  r2: /^([a-z][a-z0-9-]*)-(public-assets|authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details)$/,
+  // Keep the retired authrim-avatars suffix discoverable so environment deletion can clean up
+  // buckets created by pre-consolidation installations.
+  r2: /^([a-z][a-z0-9-]*)-(migration-releases|plugin-bundles|public-assets|authrim-avatars|diagnostic-logs|audit-archive|import-artifacts|export-artifacts|sensitive-details)$/,
   // Legacy Pages projects kept only for cleanup of older installations.
   pages: /^([a-z][a-z0-9-]*)-(ar-admin-ui|ar-login-ui)$/,
 };
@@ -4882,32 +8903,552 @@ export interface EnvironmentInfo {
   d1: Array<{ name: string; id: string }>;
   kv: Array<{ name: string; id: string }>;
   queues: Array<{ name: string; id?: string }>;
-  r2: Array<{ name: string }>;
-  pages: Array<{ name: string }>;
+  r2: R2BucketProviderIdentity[];
+  pages: PagesProjectProviderIdentity[];
+}
+
+export interface DeletionResourceIdentity {
+  name: string;
+  id: string;
+}
+
+export interface DeletionWorkerIdentity {
+  name: string;
+  cloudflareScriptTag?: string;
+  cloudflareVersionId?: string;
+  /** Uploaded checkpoints are verified against version inventory, not active deployments. */
+  cloudflareVersionState?: 'active' | 'uploaded';
+}
+
+export interface DeletionR2Identity {
+  name: string;
+  creationDate?: string;
+  ownershipMarkerKey?: string;
+  ownershipId?: string;
+  environment?: string;
+  binding?: string;
+}
+
+export type ExactDeletionR2Identity = DeletionR2Identity &
+  Required<
+    Pick<DeletionR2Identity, 'name' | 'creationDate' | 'ownershipMarkerKey' | 'ownershipId'>
+  >;
+
+export interface DeletionPagesIdentity {
+  name: string;
+  id: string;
+  createdOn: string;
 }
 
 export interface DeleteOptions {
   env: string;
+  /** The environment still has a local operation lock even if remote inventory is already empty. */
+  environmentKnownLocally?: boolean;
+  /**
+   * Complete environment deletion after every current resource type is verified, even when an
+   * unobserved legacy Pages project was not selected. A lock-recorded Pages identity must still be
+   * selected and verified by the caller.
+   */
+  finalizeEnvironment?: boolean;
   deleteWorkers?: boolean;
   deleteD1?: boolean;
   deleteKV?: boolean;
   deleteQueues?: boolean;
   deleteR2?: boolean;
   deletePages?: boolean;
+  /** @deprecated Name-only recovery cannot prove Worker script ownership. */
+  knownWorkerNames?: string[];
+  /** @deprecated Name-only recovery cannot prove ownership. Pass knownD1Resources instead. */
   knownD1Names?: string[];
+  /** @deprecated Name-only recovery cannot prove ownership. Pass knownQueueResources instead. */
   knownQueueNames?: string[];
+  /** Exact immutable identities pinned in the environment lock. */
+  knownD1Resources?: DeletionResourceIdentity[];
+  /** Exact immutable identities pinned in the environment lock. */
+  knownKVResources?: DeletionResourceIdentity[];
+  /** Exact immutable identities pinned in the environment lock. */
+  knownQueueResources?: DeletionResourceIdentity[];
+  /** Exact R2 provider generation and Setup ownership marker pinned in the environment lock. */
+  knownR2Resources?: DeletionR2Identity[];
+  /** Exact retired Pages provider identities pinned in the environment lock. */
+  knownPagesResources?: DeletionPagesIdentity[];
+  /** Final Worker identities pinned in the environment lock. */
+  knownWorkerResources?: DeletionWorkerIdentity[];
+  /** Persist a verified legacy Worker tag before any destructive provider mutation. */
+  onWorkerIdentityBackfill?: (resources: readonly DeletionWorkerIdentity[]) => Promise<void>;
+  knownDnsOwnership?: Partial<Record<DnsOwnershipRole, DnsOwnershipEntry>>;
+  /** Multi-tenant configuration proves DNS cleanup is required even for a legacy lock. */
+  dnsCleanupRequired?: boolean;
+  requiredDnsRoles?: DnsOwnershipRole[];
   queueConsumerDetachPropagationDelayMs?: number;
   workerDeletePropagationDelayMs?: number;
+  /** Bounded strict Cloudflare inventory reads before declaring the environment empty. */
+  postDeleteVerificationAttempts?: number;
+  /** Delay between post-delete inventory reads; primarily configurable for deterministic tests. */
+  postDeleteVerificationDelayMs?: number;
+  /** Durable exact-ID Control child-token cleanup, invoked after Workers/R2 and before any D1. */
+  beforeD1Deletion?: (context: {
+    observedD1Resources: readonly DeletionResourceIdentity[];
+  }) => Promise<void>;
   onProgress?: (message: string) => void;
+  /** Idempotent no-op and raw diagnostic messages for detailed logs only. */
+  onDetail?: (message: string) => void;
+  onResourceProgress?: (progress: { current: number; total: number }) => void;
+}
+
+export const ENVIRONMENT_INVENTORY_UNAVAILABLE_ERROR_CODE =
+  'environment_inventory_unavailable' as const;
+
+export class EnvironmentInventoryUnavailableError extends Error {
+  readonly code = ENVIRONMENT_INVENTORY_UNAVAILABLE_ERROR_CODE;
+
+  constructor(resourceType: string, error: unknown) {
+    const detail = sanitizeError(error);
+    super(
+      `Cloudflare ${resourceType} inventory could not be verified. No resources were deleted. ` +
+        `Check your Cloudflare connection and sign-in, then retry. Details: ${detail}`,
+      { cause: error }
+    );
+    this.name = 'EnvironmentInventoryUnavailableError';
+  }
+}
+
+const CONTROL_FIXED_D1_SUFFIX = /^(?:core|pii|admin|control|lookup|plugin-runner)-db$/u;
+const CONTROL_SHARD_D1_SUFFIX =
+  /^(?:(?:tenant-core-default|tenant-core-users|tenant-pii|tenant-lookup)-[a-z0-9-]+-db-[a-f0-9]{8}|(?:core-default|core-users|pii|lookup)-[a-z0-9-]+(?:-db)?-[a-f0-9]{8})$/u;
+const CONTROL_BOOTSTRAP_D1_SUFFIX = /^tenant-(?:default|users|pii)-bootstrap-db$/u;
+const CONTROL_PLUGIN_D1_SUFFIX = /^[a-f0-9]{32}-d1$/u;
+const CONTROL_PLUGIN_KV_SUFFIX = /^[a-f0-9]{32}-kv$/u;
+const CONTROL_PLUGIN_R2_SUFFIX = /^[a-f0-9]{32}-r2$/u;
+
+function controlManagedSuffix(env: string, name: string): string | null {
+  const prefixes = [`${env}-authrim-`, `authrim-${env}-`];
+  const prefix = prefixes.find((candidate) => name.startsWith(candidate));
+  return prefix ? name.slice(prefix.length) : null;
+}
+
+function isControlManagedD1NameForEnvironment(env: string, name: string): boolean {
+  const suffix = controlManagedSuffix(env, name);
+  return (
+    suffix !== null &&
+    (CONTROL_FIXED_D1_SUFFIX.test(suffix) ||
+      CONTROL_SHARD_D1_SUFFIX.test(suffix) ||
+      CONTROL_BOOTSTRAP_D1_SUFFIX.test(suffix) ||
+      CONTROL_PLUGIN_D1_SUFFIX.test(suffix))
+  );
+}
+
+function isControlManagedKVNameForEnvironment(env: string, name: string): boolean {
+  const suffix = controlManagedSuffix(env, name);
+  return suffix !== null && CONTROL_PLUGIN_KV_SUFFIX.test(suffix);
+}
+
+function isControlManagedR2NameForEnvironment(env: string, name: string): boolean {
+  const suffix = controlManagedSuffix(env, name);
+  return suffix !== null && CONTROL_PLUGIN_R2_SUFFIX.test(suffix);
+}
+
+function isFixedD1NameForEnvironment(env: string, name: string): boolean {
+  const match = name.match(AUTHRIM_PATTERNS.d1);
+  return match?.[1]?.toLowerCase() === env.toLowerCase();
+}
+
+function isKVNameForEnvironment(env: string, name: string): boolean {
+  const match = name.match(AUTHRIM_PATTERNS.kv);
+  return match?.[1]?.toLowerCase() === env.toLowerCase();
+}
+
+function isQueueNameForEnvironment(env: string, name: string): boolean {
+  const match = name.match(AUTHRIM_PATTERNS.queue);
+  return match?.[1]?.toLowerCase() === env.toLowerCase();
+}
+
+function isR2NameForEnvironment(env: string, name: string): boolean {
+  const match = name.match(AUTHRIM_PATTERNS.r2);
+  return (
+    match?.[1]?.toLowerCase() === env.toLowerCase() ||
+    isControlManagedR2NameForEnvironment(env, name)
+  );
+}
+
+function isPagesNameForEnvironment(env: string, name: string): boolean {
+  const match = name.match(AUTHRIM_PATTERNS.pages);
+  return match?.[1]?.toLowerCase() === env.toLowerCase();
+}
+
+function normalizeKnownR2DeletionIdentities(
+  env: string,
+  resources: readonly DeletionR2Identity[]
+): DeletionR2Identity[] {
+  const names = new Set<string>();
+  return resources.map((resource, index) => {
+    const name = resource.name?.trim();
+    if (!name || name !== resource.name || !isR2NameForEnvironment(env, name)) {
+      throw new Error(`R2 deletion identity ${index} is invalid or outside environment '${env}'`);
+    }
+    if (names.has(name)) throw new Error('R2 deletion identities contain a duplicate name');
+    names.add(name);
+    return { ...resource, name };
+  });
+}
+
+async function reconcileR2DeletionIdentities(input: {
+  pinned: readonly DeletionR2Identity[];
+  remote: readonly (R2BucketProviderIdentity & { creationDate: string })[];
+}): Promise<{
+  targets: DeletionR2Identity[];
+  mismatches: string[];
+  liveNames: Set<string>;
+}> {
+  const remoteByName = new Map(input.remote.map((resource) => [resource.name, resource]));
+  const pinnedByName = new Map(input.pinned.map((resource) => [resource.name, resource]));
+  const mismatches: string[] = [];
+  const targets: DeletionR2Identity[] = [];
+
+  for (const remote of input.remote) {
+    if (!pinnedByName.has(remote.name)) {
+      mismatches.push(
+        `R2 ownership for ${remote.name} is not recorded in lock.json. No resources were deleted. ` +
+          `Delete that bucket manually in Cloudflare, or use an explicit ownership-adoption workflow.`
+      );
+    }
+  }
+
+  for (const pinned of input.pinned) {
+    const complete = pinned.creationDate && pinned.ownershipMarkerKey && pinned.ownershipId;
+    if (!complete) {
+      mismatches.push(
+        `R2 ownership for ${pinned.name} is name-only legacy state. No resources were deleted. ` +
+          `Delete that bucket manually in Cloudflare, or use an explicit ownership-adoption workflow.`
+      );
+      continue;
+    }
+    const remote = remoteByName.get(pinned.name);
+    if (!remote) {
+      targets.push(pinned);
+      continue;
+    }
+    if (remote.creationDate !== pinned.creationDate) {
+      mismatches.push(
+        `R2 ownership mismatch for ${pinned.name}: provider creation_date changed. ` +
+          'The same-name replacement was preserved.'
+      );
+      continue;
+    }
+    try {
+      await assertR2OwnershipMarker({
+        bucketName: pinned.name,
+        markerKey: pinned.ownershipMarkerKey!,
+        ownershipId: pinned.ownershipId!,
+        environment: pinned.environment,
+        binding: pinned.binding,
+      });
+      targets.push(pinned);
+    } catch {
+      mismatches.push(
+        `R2 ownership mismatch for ${pinned.name}: the Setup ownership marker is missing or ` +
+          'invalid. The bucket was preserved.'
+      );
+    }
+  }
+
+  return { targets, mismatches, liveNames: new Set(input.remote.map((row) => row.name)) };
+}
+
+function normalizeKnownPagesDeletionIdentities(
+  env: string,
+  resources: readonly DeletionPagesIdentity[]
+): DeletionPagesIdentity[] {
+  const names = new Set<string>();
+  const ids = new Set<string>();
+  return resources.map((resource, index) => {
+    const name = resource.name?.trim();
+    const id = resource.id?.trim();
+    const createdOn = normalizeCloudflareTimestamp(
+      resource.createdOn,
+      `Pages deletion identity ${index} created_on`
+    );
+    if (!name || !id || !createdOn || !isPagesNameForEnvironment(env, name)) {
+      throw new Error(
+        `Pages deletion identity ${index} is invalid or outside environment '${env}'`
+      );
+    }
+    if (names.has(name) || ids.has(id)) {
+      throw new Error('Pages deletion identities contain a duplicate name or ID');
+    }
+    names.add(name);
+    ids.add(id);
+    return { name, id, createdOn };
+  });
+}
+
+function reconcilePagesDeletionIdentities(input: {
+  pinned: readonly DeletionPagesIdentity[];
+  remote: readonly PagesProjectProviderIdentity[];
+}): { targets: DeletionPagesIdentity[]; mismatches: string[]; liveIds: Set<string> } {
+  const remoteByName = new Map(input.remote.map((resource) => [resource.name, resource]));
+  const pinnedByName = new Map(input.pinned.map((resource) => [resource.name, resource]));
+  const mismatches: string[] = [];
+  const targets: DeletionPagesIdentity[] = [];
+
+  for (const remote of input.remote) {
+    if (!pinnedByName.has(remote.name)) {
+      mismatches.push(
+        `Legacy Pages ownership for ${remote.name} is not recorded with provider ID and ` +
+          'created_on. No resources were deleted. Delete it manually in Cloudflare.'
+      );
+    }
+  }
+  for (const pinned of input.pinned) {
+    const remote = remoteByName.get(pinned.name);
+    if (!remote) {
+      targets.push(pinned);
+      continue;
+    }
+    if (remote.id !== pinned.id || remote.createdOn !== pinned.createdOn) {
+      mismatches.push(
+        `Legacy Pages ownership mismatch for ${pinned.name}: provider ID or created_on changed. ` +
+          'The same-name replacement was preserved.'
+      );
+      continue;
+    }
+    targets.push(pinned);
+  }
+  return {
+    targets,
+    mismatches,
+    liveIds: new Set(input.remote.flatMap((row) => (row.id ? [row.id] : []))),
+  };
+}
+
+function normalizeKnownDeletionResourceIdentities(input: {
+  env: string;
+  kind: 'D1 database' | 'KV namespace' | 'Queue';
+  resources: readonly DeletionResourceIdentity[];
+  acceptsName: (name: string) => boolean;
+}): DeletionResourceIdentity[] {
+  const names = new Set<string>();
+  const ids = new Set<string>();
+  return input.resources.map((resource, index) => {
+    const name = resource.name?.trim();
+    const id = resource.id?.trim();
+    if (!name || !id || name !== resource.name || id !== resource.id || id.length > 256) {
+      throw new Error(`${input.kind} deletion identity ${index} is invalid`);
+    }
+    if (!input.acceptsName(name)) {
+      throw new Error(`${input.kind} deletion identity is outside environment '${input.env}'`);
+    }
+    if (names.has(name) || ids.has(id)) {
+      throw new Error(`${input.kind} deletion identities contain a duplicate name or ID`);
+    }
+    names.add(name);
+    ids.add(id);
+    return { name, id };
+  });
+}
+
+function reconcilePinnedDeletionIdentities(input: {
+  label: string;
+  pinned: readonly DeletionResourceIdentity[];
+  remote: readonly DeletionResourceIdentity[];
+}): { targets: DeletionResourceIdentity[]; mismatches: string[]; liveIds: Set<string> } {
+  const remoteByName = new Map(input.remote.map((resource) => [resource.name, resource]));
+  const remoteById = new Map(input.remote.map((resource) => [resource.id, resource]));
+  const targets = [...input.remote];
+  const targetNames = new Set(targets.map((resource) => resource.name));
+  const liveIds = new Set(input.remote.map((resource) => resource.id));
+  const mismatches: string[] = [];
+
+  for (const pinned of input.pinned) {
+    const sameName = remoteByName.get(pinned.name);
+    const sameId = remoteById.get(pinned.id);
+    if (sameName && sameName.id !== pinned.id) {
+      mismatches.push(
+        `${input.label} ownership mismatch for ${pinned.name}: the immutable ID changed`
+      );
+      continue;
+    }
+    if (sameId && sameId.name !== pinned.name) {
+      mismatches.push(
+        `${input.label} ownership mismatch for ${pinned.name}: the immutable ID belongs to ${sameId.name}`
+      );
+      continue;
+    }
+    // A missing exact ID is an idempotent deletion retry. Keep the pinned row in the target list
+    // so callers can reconcile the local lock without issuing a name-based provider mutation.
+    if (!sameName && !sameId && !targetNames.has(pinned.name)) {
+      targets.push(pinned);
+      targetNames.add(pinned.name);
+    }
+  }
+
+  return { targets, mismatches, liveIds };
+}
+
+interface WorkerDeletionTarget {
+  name: string;
+  cloudflareScriptTag?: string;
+  live: boolean;
+}
+
+function normalizeKnownWorkerDeletionIdentities(
+  env: string,
+  resources: readonly DeletionWorkerIdentity[]
+): DeletionWorkerIdentity[] {
+  const names = new Set<string>();
+  const tags = new Set<string>();
+  return resources.map((resource, index) => {
+    const name = resource.name?.trim();
+    const tag = resource.cloudflareScriptTag?.trim();
+    const versionId = resource.cloudflareVersionId?.trim();
+    const versionState = resource.cloudflareVersionState;
+    if (!name || name !== resource.name || name.length > 256) {
+      throw new Error(`Worker deletion identity ${index} has an invalid name`);
+    }
+    if (!filterKnownWorkerNamesForEnvironment(env, [name]).includes(name)) {
+      throw new Error(`Worker deletion identity is outside environment '${env}'`);
+    }
+    if (
+      (resource.cloudflareScriptTag !== undefined &&
+        (!tag || tag !== resource.cloudflareScriptTag || tag.length > 256)) ||
+      (resource.cloudflareVersionId !== undefined &&
+        (!versionId || versionId !== resource.cloudflareVersionId || versionId.length > 256)) ||
+      (versionState !== undefined && versionState !== 'active' && versionState !== 'uploaded') ||
+      (versionState !== undefined && !versionId)
+    ) {
+      throw new Error(`Worker deletion identity ${index} is invalid`);
+    }
+    if (names.has(name) || (tag !== undefined && tags.has(tag))) {
+      throw new Error('Worker deletion identities contain a duplicate name or immutable tag');
+    }
+    names.add(name);
+    if (tag) tags.add(tag);
+    return {
+      name,
+      ...(tag ? { cloudflareScriptTag: tag } : {}),
+      ...(versionId ? { cloudflareVersionId: versionId } : {}),
+      ...(versionState ? { cloudflareVersionState: versionState } : {}),
+    };
+  });
+}
+
+async function reconcileWorkerDeletionIdentities(input: {
+  env: string;
+  pinned: readonly DeletionWorkerIdentity[];
+  remoteInventory: ReadonlyArray<{ name: string; tag?: string }>;
+}): Promise<{
+  targets: WorkerDeletionTarget[];
+  mismatches: string[];
+  backfills: DeletionWorkerIdentity[];
+}> {
+  const remoteByName = new Map(input.remoteInventory.map((worker) => [worker.name, worker]));
+  const remoteByTag = new Map(
+    input.remoteInventory
+      .filter((worker): worker is { name: string; tag: string } => Boolean(worker.tag))
+      .map((worker) => [worker.tag, worker])
+  );
+  const targets: WorkerDeletionTarget[] = [];
+  const targetNames = new Set<string>();
+  const mismatches: string[] = [];
+  const backfills: DeletionWorkerIdentity[] = [];
+
+  for (const pinned of input.pinned) {
+    const live = remoteByName.get(pinned.name);
+    const tagOwner = pinned.cloudflareScriptTag
+      ? remoteByTag.get(pinned.cloudflareScriptTag)
+      : undefined;
+    if (!live) {
+      if (tagOwner && tagOwner.name !== pinned.name) {
+        mismatches.push(
+          `Worker ownership mismatch for ${pinned.name}: its immutable tag belongs to ${tagOwner.name}`
+        );
+        continue;
+      }
+      targets.push({ name: pinned.name, live: false });
+      targetNames.add(pinned.name);
+      continue;
+    }
+    const liveTag = live.tag?.trim();
+    if (!liveTag) {
+      mismatches.push(`Worker ownership for ${pinned.name} has no immutable script tag`);
+      continue;
+    }
+    if (pinned.cloudflareScriptTag) {
+      if (pinned.cloudflareScriptTag !== liveTag) {
+        mismatches.push(
+          `Worker ownership mismatch for ${pinned.name}: the immutable script tag changed`
+        );
+        continue;
+      }
+      targets.push({ name: pinned.name, cloudflareScriptTag: liveTag, live: true });
+      targetNames.add(pinned.name);
+      continue;
+    }
+    if (!pinned.cloudflareVersionId) {
+      mismatches.push(
+        `Worker ownership for ${pinned.name} has neither an immutable script tag nor a pinned active Version ID`
+      );
+      continue;
+    }
+    try {
+      if (pinned.cloudflareVersionState === 'uploaded') {
+        const version = await getWorkerVersion(pinned.name, pinned.cloudflareVersionId);
+        if (!version.exists || version.versionId !== pinned.cloudflareVersionId) {
+          mismatches.push(
+            `Worker ownership mismatch for ${pinned.name}: the uploaded Version ID does not match the pending checkpoint`
+          );
+          continue;
+        }
+      } else {
+        const deployment = await getWorkerDeployments(pinned.name);
+        if (
+          !deployment.exists ||
+          !deployment.versionId ||
+          deployment.versionId !== pinned.cloudflareVersionId
+        ) {
+          mismatches.push(
+            `Worker ownership mismatch for ${pinned.name}: the active Version ID does not match the legacy lock`
+          );
+          continue;
+        }
+      }
+    } catch (error) {
+      mismatches.push(
+        `Worker ownership for ${pinned.name} could not verify its ${pinned.cloudflareVersionState === 'uploaded' ? 'uploaded' : 'legacy'} Version ID: ${sanitizeError(error)}`
+      );
+      continue;
+    }
+    const backfill: DeletionWorkerIdentity = {
+      name: pinned.name,
+      cloudflareVersionId: pinned.cloudflareVersionId,
+      cloudflareScriptTag: liveTag,
+    };
+    backfills.push(backfill);
+    targets.push({ name: pinned.name, cloudflareScriptTag: liveTag, live: true });
+    targetNames.add(pinned.name);
+  }
+
+  for (const remote of input.remoteInventory) {
+    if (!filterKnownWorkerNamesForEnvironment(input.env, [remote.name]).includes(remote.name)) {
+      continue;
+    }
+    if (targetNames.has(remote.name)) continue;
+    const liveTag = remote.tag?.trim();
+    if (!liveTag) {
+      mismatches.push(`Worker ownership for ${remote.name} has no immutable script tag`);
+      continue;
+    }
+    targets.push({ name: remote.name, cloudflareScriptTag: liveTag, live: true });
+    targetNames.add(remote.name);
+  }
+
+  return { targets, mismatches, backfills };
 }
 
 export function filterKnownD1NamesForEnvironment(env: string, names: string[]): string[] {
+  validateEnvName(env);
   return Array.from(
-    new Set(
-      names.filter(
-        (name) => name.startsWith(`${env}-authrim-`) || name.startsWith(`authrim-${env}-`)
-      )
-    )
+    new Set(names.filter((name) => isControlManagedD1NameForEnvironment(env, name)))
   );
 }
 
@@ -4926,39 +9467,181 @@ export function filterKnownQueueNamesForEnvironment(env: string, names: string[]
   );
 }
 
+export function filterKnownWorkerNamesForEnvironment(env: string, names: string[]): string[] {
+  validateEnvName(env);
+  return Array.from(
+    new Set(
+      names.filter((name) => {
+        const match = name.match(AUTHRIM_PATTERNS.worker);
+        return match?.[1]?.toLowerCase() === env.toLowerCase();
+      })
+    )
+  ).sort();
+}
+
+export function filterControlManagedD1ForEnvironment(
+  env: string,
+  databases: Array<{ name: string; uuid: string }>
+): Array<{ name: string; uuid: string }> {
+  validateEnvName(env);
+  return databases.filter((database) => isControlManagedD1NameForEnvironment(env, database.name));
+}
+
+export function filterControlManagedKVForEnvironment(
+  env: string,
+  namespaces: Array<{ title: string; id: string }>
+): Array<{ title: string; id: string }> {
+  validateEnvName(env);
+  return namespaces.filter((namespace) =>
+    isControlManagedKVNameForEnvironment(env, namespace.title)
+  );
+}
+
+export function filterControlManagedR2ForEnvironment(
+  env: string,
+  buckets: Array<{ name: string }>
+): Array<{ name: string }> {
+  validateEnvName(env);
+  return buckets.filter((bucket) => isControlManagedR2NameForEnvironment(env, bucket.name));
+}
+
+export async function hasControlManagedResourcesForEnvironment(
+  env: string,
+  options: { d1?: boolean; kv?: boolean; r2?: boolean } = {}
+): Promise<boolean> {
+  validateEnvName(env);
+  const { d1 = true, kv = true, r2 = true } = options;
+  const [databases, namespaces, buckets] = await Promise.all([
+    d1 ? listD1Databases() : [],
+    kv ? listKVNamespaces() : [],
+    r2 ? listR2Buckets({ throwOnError: true }) : [],
+  ]);
+  return (
+    filterControlManagedD1ForEnvironment(env, databases).length > 0 ||
+    filterControlManagedKVForEnvironment(env, namespaces).length > 0 ||
+    filterControlManagedR2ForEnvironment(env, buckets).length > 0
+  );
+}
+
 /**
- * List all Workers
+ * List all Workers. Inventory failure is never represented as an empty account; callers decide
+ * whether a failed scan is advisory or must stop the operation.
  */
-export async function listWorkers(): Promise<Array<{ name: string; id?: string }>> {
-  try {
-    const accountId = await getAccountId();
-    if (!accountId) return [];
-    const tokenInfo = await getCloudflareApiToken();
-    if (!tokenInfo) return [];
+export async function listWorkers(
+  options: {
+    onRetry?: (message: string) => void;
+  } = {}
+): Promise<Array<{ name: string; id: string; tag?: string }>> {
+  let lastError: unknown = new Error('Worker inventory was not requested');
 
-    const response = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts`,
-      { headers: { Authorization: `Bearer ${tokenInfo.token}` } }
-    );
-    if (!response.ok) return [];
+  for (let attempt = 1; attempt <= WORKER_INVENTORY_MAX_ATTEMPTS; attempt++) {
+    let retryDelayMs = WORKER_INVENTORY_RETRY_DELAY_MS * attempt;
+    try {
+      const credentials = await resolveCloudflareInventoryCredentials();
+      if (!credentials) {
+        throw new Error('Cloudflare API authentication is unavailable');
+      }
 
-    const data = (await response.json()) as { result?: Array<{ id: string }> };
-    return (data.result || []).map((w) => ({ name: w.id }));
-  } catch {
-    return [];
+      const { response, data } = await requestCloudflareApiJson<{
+        success?: boolean;
+        result?: Array<{ id?: unknown; tag?: unknown }>;
+        result_info?: {
+          page?: unknown;
+          total_pages?: unknown;
+        };
+      }>(
+        `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/workers/scripts`,
+        {
+          headers: { Authorization: `Bearer ${credentials.token}` },
+        },
+        {
+          label: 'Cloudflare Worker inventory',
+          retryMode: 'read',
+          timeoutMs: WORKER_INVENTORY_REQUEST_TIMEOUT_MS,
+          maxAttempts: 1,
+        }
+      );
+      if (!response.ok) {
+        if (isRetryableCloudflareHttpStatus(response.status)) {
+          retryDelayMs = getCloudflareRetryDelayMs(response, attempt);
+        }
+        throw new Error(`Cloudflare API returned HTTP ${response.status}`);
+      }
+
+      if (data.success === false || !Array.isArray(data.result)) {
+        throw new Error('Cloudflare API returned an invalid Worker inventory response');
+      }
+      // The Workers Scripts endpoint is documented as a SinglePage endpoint. Fail closed if the
+      // provider ever reports a multi-page response rather than silently treating page one as a
+      // complete ownership inventory.
+      if (
+        data.result_info?.page !== undefined &&
+        (!Number.isInteger(data.result_info.page) || data.result_info.page !== 1)
+      ) {
+        throw new Error('Cloudflare Worker inventory returned an invalid single-page marker');
+      }
+      if (
+        data.result_info?.total_pages !== undefined &&
+        (!Number.isInteger(data.result_info.total_pages) || data.result_info.total_pages !== 1)
+      ) {
+        throw new Error('Cloudflare Worker inventory unexpectedly requires pagination');
+      }
+      if (data.result.length > CLOUDFLARE_INVENTORY_MAX_RESOURCES) {
+        throw new Error('Cloudflare Worker inventory exceeded the resource safety limit');
+      }
+
+      const names = new Set<string>();
+      const tags = new Set<string>();
+      return data.result.map((worker, index) => {
+        if (typeof worker.id !== 'string' || worker.id.trim().length === 0) {
+          throw new Error(`Worker inventory row ${index} did not contain a script name`);
+        }
+        const name = worker.id.trim();
+        if (names.has(name)) {
+          throw new Error(`Worker inventory contained duplicate script name: ${name}`);
+        }
+        names.add(name);
+
+        let tag: string | undefined;
+        if (worker.tag !== undefined && worker.tag !== null) {
+          if (typeof worker.tag !== 'string' || worker.tag.trim().length === 0) {
+            throw new Error(`Worker inventory row ${index} contained an invalid immutable tag`);
+          }
+          tag = worker.tag.trim();
+          if (tags.has(tag)) {
+            throw new Error(`Worker inventory contained duplicate immutable tag: ${tag}`);
+          }
+          tags.add(tag);
+        }
+        return { name, id: name, ...(tag ? { tag } : {}) };
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt < WORKER_INVENTORY_MAX_ATTEMPTS) {
+        options.onRetry?.(
+          `Worker inventory check failed; retrying (${attempt + 1}/${WORKER_INVENTORY_MAX_ATTEMPTS})...`
+        );
+        if (process.env.NODE_ENV !== 'test') {
+          await sleep(retryDelayMs);
+        }
+      }
+    }
   }
+
+  throw lastError;
 }
 
 /**
  * List R2 buckets
  */
 export async function listR2Buckets(
-  options: { throwOnError?: boolean } = {}
-): Promise<Array<{ name: string }>> {
+  options: { throwOnError?: boolean; requireIdentity?: boolean } = {}
+): Promise<R2BucketProviderIdentity[]> {
   let apiError: unknown;
   try {
     const apiBuckets = await listR2BucketsViaApi();
     if (apiBuckets) {
+      if (options.requireIdentity) apiBuckets.forEach(assertR2BucketIdentityComplete);
       return apiBuckets;
     }
   } catch (error) {
@@ -4967,10 +9650,56 @@ export async function listR2Buckets(
 
   try {
     const { stdout } = await wrangler(['r2', 'bucket', 'list']);
-    return parseR2BucketRows(stdout);
+    if (options.throwOnError && !isRecognizedR2BucketListOutput(stdout)) {
+      throw new Error('Wrangler output did not contain a recognizable R2 bucket list');
+    }
+    const parsed = parseR2BucketRows(stdout);
+    if (!options.requireIdentity) return parsed;
+
+    const complete: Array<R2BucketProviderIdentity & { creationDate: string }> = [];
+    for (const bucket of parsed) {
+      if (bucket.creationDate) {
+        complete.push({ name: bucket.name, creationDate: bucket.creationDate });
+        continue;
+      }
+      const { stdout: infoOutput } = await wrangler([
+        'r2',
+        'bucket',
+        'info',
+        bucket.name,
+        '--json',
+      ]);
+      const info = parseR2BucketRows(infoOutput);
+      const exact = info.find((candidate) => candidate.name === bucket.name);
+      if (!exact) {
+        // Wrangler's info command returns a single object rather than the list shape.
+        const raw = JSON.parse(stripAnsiSequences(infoOutput)) as {
+          name?: unknown;
+          creation_date?: unknown;
+        };
+        const creationDate = normalizeCloudflareTimestamp(
+          raw.creation_date,
+          `R2 bucket ${bucket.name} creation_date`
+        );
+        if (raw.name !== bucket.name || !creationDate) {
+          throw new Error(`Wrangler omitted exact identity for R2 bucket ${bucket.name}`);
+        }
+        complete.push({ name: bucket.name, creationDate });
+        continue;
+      }
+      assertR2BucketIdentityComplete(exact);
+      complete.push(exact);
+    }
+    return complete;
   } catch (error) {
     if (options.throwOnError) {
-      throw error ?? apiError;
+      if (apiError) {
+        throw new AggregateError(
+          [apiError, error],
+          'R2 bucket inventory failed through both the Cloudflare API and Wrangler'
+        );
+      }
+      throw error;
     }
     return [];
   }
@@ -4979,113 +9708,447 @@ export async function listR2Buckets(
 /**
  * List Queues
  */
-export async function listQueues(): Promise<Array<{ name: string; id?: string }>> {
-  try {
-    const { stdout } = await wrangler(['queues', 'list']);
-    // Parse JSON output
-    const queues = JSON.parse(stdout);
-    return queues.map((q: { queue_name?: string; queue_id?: string }) => ({
-      name: q.queue_name || '',
-      id: q.queue_id,
-    }));
-  } catch {
-    return [];
+type QueueListRow = { name: string; id?: string };
+
+function normalizeQueueRows(rows: unknown): QueueListRow[] {
+  if (!Array.isArray(rows)) {
+    throw new TypeError('Queue list was not an array');
   }
+
+  return rows.map((row, index): QueueListRow => {
+    if (!row || typeof row !== 'object') {
+      throw new TypeError(`Queue list row ${index} was not an object`);
+    }
+    const value = row as {
+      name?: unknown;
+      id?: unknown;
+      queue_name?: unknown;
+      queue_id?: unknown;
+    };
+    const name =
+      typeof value.queue_name === 'string'
+        ? value.queue_name
+        : typeof value.name === 'string'
+          ? value.name
+          : '';
+    const id =
+      typeof value.queue_id === 'string'
+        ? value.queue_id.trim() || undefined
+        : typeof value.id === 'string'
+          ? value.id.trim() || undefined
+          : undefined;
+    const normalizedName = name.trim();
+    if (normalizedName.length === 0) {
+      throw new TypeError(`Queue list row ${index} did not contain a name`);
+    }
+    return { name: normalizedName, id };
+  });
+}
+
+function assertQueueInventoryHasUniqueIds(
+  queues: QueueListRow[],
+  source: 'Wrangler' | 'Cloudflare API'
+): void {
+  const names = new Set<string>();
+  const ids = new Set<string>();
+  for (const queue of queues) {
+    const id = queue.id?.trim();
+    if (!id) {
+      throw new Error(`${source} Queue inventory omitted immutable Queue IDs`);
+    }
+    if (names.has(queue.name)) {
+      throw new Error(`${source} Queue inventory contained a duplicate Queue name`);
+    }
+    if (ids.has(id)) {
+      throw new Error(`${source} Queue inventory contained a duplicate immutable Queue ID`);
+    }
+    names.add(queue.name);
+    ids.add(id);
+  }
+}
+
+export function parseQueueRows(stdout: string): QueueListRow[] {
+  try {
+    return parseValidatedJsonOutput(
+      stdout,
+      normalizeQueueRows,
+      'Wrangler output did not contain a valid Queue list'
+    );
+  } catch {
+    const lines = stripAnsiSequences(stdout).split('\n');
+    const tableLines = lines.filter((line) => line.includes('│'));
+    const headerLine = tableLines.find((line) =>
+      /(?:^|│)\s*(?:name|queue(?:[_ ]?name)?)\s*(?:│|$)/iu.test(line)
+    );
+    if (!headerLine) return [];
+
+    const headerCells = headerLine.split('│').map((cell) => cell.trim().toLowerCase());
+    const nameIndex = headerCells.findIndex((cell) => /^(?:name|queue(?:[_ ]?name)?)$/u.test(cell));
+    if (nameIndex < 0) return [];
+
+    return tableLines
+      .filter((line) => line !== headerLine && !/^[\s├┼┤┌┐└┘─]+$/u.test(line))
+      .map((line) => line.split('│').map((cell) => cell.trim())[nameIndex] ?? '')
+      .filter((name) => name.length > 0 && !/^name$/iu.test(name))
+      .map((name) => ({ name }));
+  }
+}
+
+function isRecognizedQueueListOutput(stdout: string): boolean {
+  const normalized = stripAnsiSequences(stdout);
+  if (normalized.trim().length === 0 || /no\s+queues?\s+(?:found|exist)/iu.test(normalized)) {
+    return true;
+  }
+  try {
+    parseValidatedJsonOutput(
+      normalized,
+      normalizeQueueRows,
+      'Wrangler output did not contain a valid Queue list'
+    );
+    return true;
+  } catch {
+    return /(?:^|│)\s*(?:name|queue(?:[_ ]?name)?)\s*(?:│|$)/imu.test(normalized);
+  }
+}
+
+async function listQueuesViaApi(): Promise<QueueListRow[] | null> {
+  return listCloudflarePaginatedResourcesViaApi({
+    path: 'queues',
+    label: 'Queue list',
+    normalizeRows: normalizeQueueRows,
+    identityKey: (row) => `${row.name}\u0000${row.id ?? ''}`,
+  });
+}
+
+export async function listQueues(
+  options: { strictOutput?: boolean; requireIds?: boolean } = {}
+): Promise<Array<{ name: string; id?: string }>> {
+  let apiError: unknown;
+  try {
+    // Wrangler's Queue command exposes one page at a time. Prefer the REST inventory because it
+    // carries stable pagination metadata and is therefore the authoritative complete snapshot.
+    const apiQueues = await listQueuesViaApi();
+    if (apiQueues) {
+      if (options.requireIds) assertQueueInventoryHasUniqueIds(apiQueues, 'Cloudflare API');
+      return apiQueues;
+    }
+  } catch (error) {
+    apiError = error;
+  }
+
+  let wranglerError: unknown;
+  try {
+    const queues: QueueListRow[] = [];
+    const seen = new Set<string>();
+    // The current Cloudflare Queues endpoint used by Wrangler defaults to 20 rows per page.
+    // Continue whenever a page is full; API-first operation above remains the preferred path.
+    const wranglerPageSize = 20;
+    for (let page = 1; page <= CLOUDFLARE_INVENTORY_MAX_PAGES; page++) {
+      const { stdout } = await wrangler(
+        page === 1 ? ['queues', 'list'] : ['queues', 'list', '--page', String(page)]
+      );
+      if (options.strictOutput && !isRecognizedQueueListOutput(stdout)) {
+        throw new Error('Wrangler output did not contain a recognizable Queue list');
+      }
+      const pageRows = parseQueueRows(stdout);
+      for (const queue of pageRows) {
+        const identity = `${queue.name}\u0000${queue.id ?? ''}`;
+        if (seen.has(identity)) {
+          throw new Error('Wrangler Queue inventory repeated a page or resource identity');
+        }
+        seen.add(identity);
+      }
+      queues.push(...pageRows);
+      if (queues.length > CLOUDFLARE_INVENTORY_MAX_RESOURCES) {
+        throw new Error('Wrangler Queue inventory exceeded the resource limit');
+      }
+      if (pageRows.length < wranglerPageSize) {
+        if (options.requireIds) assertQueueInventoryHasUniqueIds(queues, 'Wrangler');
+        return queues;
+      }
+    }
+    throw new Error('Wrangler Queue inventory exceeded the pagination limit');
+  } catch (error) {
+    wranglerError = error;
+  }
+
+  throw new Error(
+    `Failed to list Queues via the Cloudflare API (${describeInventoryError(
+      apiError,
+      'credentials unavailable'
+    )}) and Wrangler (${describeInventoryError(wranglerError, 'unknown Wrangler error')})`
+  );
 }
 
 /**
  * List legacy Pages projects
  */
-export async function listPagesProjects(): Promise<Array<{ name: string }>> {
+export interface PagesProjectProviderIdentity {
+  name: string;
+  id?: string;
+  createdOn?: string;
+  domains?: string[];
+}
+
+function normalizePagesProjectRows(rows: unknown): PagesProjectProviderIdentity[] {
+  if (!Array.isArray(rows)) throw new TypeError('Pages project list was not an array');
+  return rows.map((row, index) => {
+    if (!row || typeof row !== 'object') {
+      throw new TypeError(`Pages project list row ${index} was not an object`);
+    }
+    const value = row as {
+      name?: unknown;
+      id?: unknown;
+      created_on?: unknown;
+      domains?: unknown;
+    };
+    const name = typeof value.name === 'string' ? value.name.trim() : '';
+    const id = typeof value.id === 'string' ? value.id.trim() : '';
+    const createdOn = normalizeCloudflareTimestamp(
+      value.created_on,
+      `Pages project list row ${index} created_on`
+    );
+    if (!name || !/^[a-z0-9][a-z0-9-]*$/u.test(name) || !id || !createdOn) {
+      throw new TypeError(`Pages project list row ${index} omitted exact provider identity`);
+    }
+    if (
+      value.domains !== undefined &&
+      (!Array.isArray(value.domains) ||
+        value.domains.some((domain) => typeof domain !== 'string' || !domain.trim()))
+    ) {
+      throw new TypeError(`Pages project list row ${index} contained invalid domains`);
+    }
+    return {
+      name,
+      id,
+      createdOn,
+      ...(Array.isArray(value.domains) ? { domains: [...value.domains] as string[] } : {}),
+    };
+  });
+}
+
+function parsePagesProjectListOutput(stdout: string): {
+  projects: PagesProjectProviderIdentity[];
+  recognized: boolean;
+} {
+  const normalized = stripAnsiSequences(stdout);
+  const trimmed = normalized.trim();
+  if (trimmed.length === 0 || /no\s+(?:pages\s+)?projects?\s+(?:found|exist)/iu.test(trimmed)) {
+    return { projects: [], recognized: true };
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    const rows = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === 'object' && 'result' in parsed
+        ? (parsed as { result?: unknown }).result
+        : undefined;
+    if (Array.isArray(rows)) {
+      const projects = rows.map((row, index) => {
+        const name =
+          row && typeof row === 'object' && 'name' in row
+            ? (row as { name?: unknown }).name
+            : undefined;
+        if (typeof name !== 'string' || !/^[a-z0-9][a-z0-9-]*$/iu.test(name.trim())) {
+          throw new TypeError(`Pages project list row ${index} did not contain a valid name`);
+        }
+        return { name: name.trim() };
+      });
+      return { projects, recognized: true };
+    }
+  } catch {
+    // Continue with the Wrangler table and legacy plain-text formats.
+  }
+
+  const lines = normalized.split('\n').filter((line) => line.trim());
+  const projects: Array<{ name: string }> = [];
+  let recognizedTable = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    // Skip header lines and empty lines
+    if (
+      line.startsWith('│') ||
+      line.startsWith('┌') ||
+      line.startsWith('└') ||
+      line.startsWith('├')
+    ) {
+      if (/\b(?:project\s+)?name\b/iu.test(line)) recognizedTable = true;
+      // Table format - extract project name from table row
+      const cells = line
+        .split('│')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (
+        cells.length > 0 &&
+        cells[0] &&
+        !cells[0].includes('Name') &&
+        !cells[0].includes('─') &&
+        /^[a-z0-9][a-z0-9-]*$/iu.test(cells[0])
+      ) {
+        projects.push({ name: cells[0] });
+      }
+    } else if (/^[a-z0-9][a-z0-9-]*$/iu.test(line.trim())) {
+      // Plain text format
+      projects.push({ name: line.trim() });
+    }
+  }
+  return {
+    projects: Array.from(new Map(projects.map((project) => [project.name, project])).values()),
+    recognized: recognizedTable || projects.length > 0,
+  };
+}
+
+async function listPagesProjectsViaApi(): Promise<PagesProjectProviderIdentity[] | null> {
+  return listCloudflarePaginatedResourcesViaApi({
+    path: 'pages/projects',
+    label: 'Pages project list',
+    normalizeRows: normalizePagesProjectRows,
+    identityKey: (row) => `${row.name}\u0000${row.id}\u0000${row.createdOn}`,
+    perPage: 100,
+  });
+}
+
+export async function listPagesProjects(
+  options: {
+    strictOutput?: boolean;
+    requireIdentity?: boolean;
+    requireIdentityForEnvironment?: string;
+  } = {}
+): Promise<PagesProjectProviderIdentity[]> {
+  if (options.requireIdentityForEnvironment) {
+    validateEnvName(options.requireIdentityForEnvironment);
+  }
+  let apiError: unknown;
+  try {
+    const projects = await listPagesProjectsViaApi();
+    if (projects) return projects;
+  } catch (error) {
+    apiError = error;
+  }
+
   try {
     const { stdout } = await wrangler(['pages', 'project', 'list']);
-    // Parse the output - each project is listed with its name
-    const lines = stdout.split('\n').filter((line) => line.trim());
-    const projects: Array<{ name: string }> = [];
-
-    for (const line of lines) {
-      // Skip header lines and empty lines
-      if (
-        line.startsWith('│') ||
-        line.startsWith('┌') ||
-        line.startsWith('└') ||
-        line.startsWith('├')
-      ) {
-        // Table format - extract project name from table row
-        const cells = line
-          .split('│')
-          .map((s) => s.trim())
-          .filter(Boolean);
-        if (cells.length > 0 && cells[0] && !cells[0].includes('Name') && !cells[0].includes('─')) {
-          projects.push({ name: cells[0] });
-        }
-      } else if (line.trim() && !line.includes('Projects') && !line.includes('Name')) {
-        // Plain text format
-        projects.push({ name: line.trim() });
-      }
+    const parsed = parsePagesProjectListOutput(stdout);
+    if (options.strictOutput && !parsed.recognized) {
+      throw new Error('Wrangler output did not contain a recognizable Pages project list');
     }
-    return projects;
-  } catch {
-    return [];
+    const projectsRequiringIdentity = options.requireIdentityForEnvironment
+      ? parsed.projects.filter((project) =>
+          isPagesNameForEnvironment(options.requireIdentityForEnvironment!, project.name)
+        )
+      : parsed.projects;
+    if (options.requireIdentity && projectsRequiringIdentity.length > 0) {
+      throw new Error(
+        'Cloudflare Pages inventory omitted provider ID/created_on; name-only cleanup is blocked',
+        { cause: apiError }
+      );
+    }
+    return parsed.projects;
+  } catch (error) {
+    if (apiError) {
+      throw new AggregateError(
+        [apiError, error],
+        'Pages project inventory failed through both the Cloudflare API and Wrangler'
+      );
+    }
+    throw error;
   }
 }
 
 /**
  * Delete a legacy Pages project
  */
-export async function deletePagesProject(name: string): Promise<boolean> {
+async function getPagesProjectViaApi(input: {
+  name: string;
+  credentials: CloudflareDeletionCredentials;
+}): Promise<PagesProjectProviderIdentity | null> {
+  const { response, data } = await requestCloudflareApiJson<{
+    success?: boolean;
+    result?: unknown;
+    errors?: CloudflareApiMessage[];
+    messages?: CloudflareApiMessage[];
+  }>(
+    `https://api.cloudflare.com/client/v4/accounts/${input.credentials.accountId}/pages/projects/${encodeURIComponent(input.name)}`,
+    { headers: { Authorization: `Bearer ${input.credentials.token}` } },
+    { label: 'Cloudflare Pages project lookup', retryMode: 'read' }
+  );
+  if (response.status === 404) return null;
+  if (!response.ok || data.success === false) {
+    throw new Error(`Cloudflare Pages project lookup failed (${response.status})`);
+  }
+  const [project] = normalizePagesProjectRows([data.result]);
+  return project;
+}
+
+function assertPagesProjectIdentity(
+  live: PagesProjectProviderIdentity,
+  expected: DeletionPagesIdentity
+): void {
+  if (
+    live.name !== expected.name ||
+    live.id !== expected.id ||
+    live.createdOn !== expected.createdOn
+  ) {
+    throw new Error(`Pages project ${expected.name} provider identity changed`);
+  }
+}
+
+export async function deletePagesProject(identity: DeletionPagesIdentity): Promise<boolean> {
   try {
-    // First, remove all custom domains from the Pages project
-    // This is required before the project can be deleted
-    const token = await getCloudflareApiToken();
-    if (token) {
-      try {
-        const accountId = await getAccountId();
-        // Get project details to list custom domains
-        const projectResponse = await fetch(
-          `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${name}`,
-          {
-            headers: {
-              Authorization: `Bearer ${token.token}`,
-            },
-          }
-        );
+    const credentials = await resolveCloudflareInventoryCredentials();
+    if (!credentials) throw new Error('Cloudflare Pages API credentials are unavailable');
+    let live = await getPagesProjectViaApi({ name: identity.name, credentials });
+    if (!live) return true;
+    assertPagesProjectIdentity(live, identity);
 
-        if (projectResponse.ok) {
-          const projectData = (await projectResponse.json()) as {
-            result?: { domains?: string[] };
-          };
-          const domains = projectData.result?.domains || [];
-
-          // Remove each custom domain (skip *.pages.dev domains)
-          for (const domain of domains) {
-            if (!domain.endsWith('.pages.dev')) {
-              try {
-                await fetch(
-                  `https://api.cloudflare.com/client/v4/accounts/${accountId}/pages/projects/${name}/domains/${domain}`,
-                  {
-                    method: 'DELETE',
-                    headers: {
-                      Authorization: `Bearer ${token.token}`,
-                    },
-                  }
-                );
-                // Small delay to let Cloudflare process the deletion
-                await new Promise((resolve) => setTimeout(resolve, 1000));
-              } catch {
-                // Continue even if domain deletion fails
-              }
-            }
-          }
-        }
-      } catch {
-        // Continue even if custom domain cleanup fails
+    for (const domain of live.domains ?? []) {
+      if (domain.endsWith('.pages.dev')) continue;
+      live = await getPagesProjectViaApi({ name: identity.name, credentials });
+      if (!live) return true;
+      assertPagesProjectIdentity(live, identity);
+      const { response, data } = await requestCloudflareApiJson<{
+        success?: boolean;
+        errors?: CloudflareApiMessage[];
+      }>(
+        `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/pages/projects/${encodeURIComponent(identity.name)}/domains/${encodeURIComponent(domain)}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${credentials.token}` },
+        },
+        { label: 'Cloudflare Pages custom-domain delete', retryMode: 'non_idempotent_mutation' }
+      );
+      if (response.status !== 404 && (!response.ok || data.success === false)) {
+        throw new Error(`Cloudflare Pages custom-domain delete failed (${response.status})`);
       }
     }
 
-    // Now delete the Pages project
-    await wrangler(['pages', 'project', 'delete', name, '--yes']);
-    return true;
+    live = await getPagesProjectViaApi({ name: identity.name, credentials });
+    if (!live) return true;
+    assertPagesProjectIdentity(live, identity);
+    try {
+      const { response, data } = await requestCloudflareApiJson<{
+        success?: boolean;
+        errors?: CloudflareApiMessage[];
+      }>(
+        `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/pages/projects/${encodeURIComponent(identity.name)}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${credentials.token}` },
+        },
+        { label: 'Cloudflare Pages project delete', retryMode: 'non_idempotent_mutation' }
+      );
+      if (response.status === 404) return true;
+      return response.ok && data.success !== false;
+    } catch {
+      // A transport failure may follow a committed name-only DELETE. Reconcile by exact provider
+      // identity and never retry against a same-name replacement.
+      const after = await getPagesProjectViaApi({ name: identity.name, credentials });
+      if (!after) return true;
+      assertPagesProjectIdentity(after, identity);
+      return false;
+    }
   } catch {
     return false;
   }
@@ -5094,149 +10157,200 @@ export async function deletePagesProject(name: string): Promise<boolean> {
 /**
  * Detect all Authrim environments from existing resources
  */
+export type EnvironmentInventoryResource =
+  | 'Workers'
+  | 'D1 databases'
+  | 'KV namespaces'
+  | 'Queues'
+  | 'R2 buckets'
+  | 'Pages projects';
+
+export interface DeletionResourceSelection {
+  deleteWorkers: boolean;
+  deleteD1: boolean;
+  deleteKV: boolean;
+  deleteQueues: boolean;
+  deleteR2: boolean;
+  deletePages: boolean;
+}
+
+export function getRequiredDeletionInventoryResources(
+  selection: DeletionResourceSelection
+): EnvironmentInventoryResource[] {
+  const resources: EnvironmentInventoryResource[] = [];
+  if (selection.deleteWorkers) resources.push('Workers');
+  if (selection.deleteD1) resources.push('D1 databases');
+  if (selection.deleteKV) resources.push('KV namespaces');
+  // Worker deletion can require Queue-consumer detachments even when the Queue itself is retained.
+  // Queue inventory is therefore a required ownership boundary for both operations.
+  if (selection.deleteQueues || selection.deleteWorkers) resources.push('Queues');
+  if (selection.deleteR2) resources.push('R2 buckets');
+  if (selection.deletePages) resources.push('Pages projects');
+  return resources;
+}
+
 export async function detectEnvironments(
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  options: {
+    requiredResources?: readonly EnvironmentInventoryResource[];
+    /** Include dynamic Control-managed storage for this exact environment in the same scan. */
+    includeControlManagedResourcesForEnvironment?: string;
+  } = {}
 ): Promise<EnvironmentInfo[]> {
   const environments = new Map<string, EnvironmentInfo>();
 
   const progress = onProgress || (() => {});
-
-  // Scan Workers first — environments are only valid if Workers or D1 exist
-  progress('Scanning Workers...');
-  const workerEnvs = new Set<string>();
-  try {
-    const workers = await listWorkers();
-    for (const w of workers) {
-      const match = w.name.match(AUTHRIM_PATTERNS.worker);
-      if (match) {
-        const env = match[1].toLowerCase();
-        workerEnvs.add(env);
-        if (!environments.has(env)) {
-          environments.set(env, {
-            env,
-            workers: [],
-            d1: [],
-            kv: [],
-            queues: [],
-            r2: [],
-            pages: [],
-          });
-        }
-        environments.get(env)!.workers.push({ name: w.name });
-      }
+  const requiredResources = new Set(options.requiredResources ?? []);
+  const controlManagedEnvironment = options.includeControlManagedResourcesForEnvironment;
+  if (controlManagedEnvironment) validateEnvName(controlManagedEnvironment);
+  const handleScanError = (resourceType: EnvironmentInventoryResource, error: unknown): void => {
+    const detail = error instanceof Error ? error.message : String(error);
+    progress(`  ⚠️ Could not scan ${resourceType}: ${detail}`);
+    if (requiredResources.has(resourceType)) {
+      throw new EnvironmentInventoryUnavailableError(resourceType, error);
     }
-  } catch (error) {
-    progress(`  ⚠️ Could not scan Workers: ${error instanceof Error ? error.message : error}`);
+  };
+
+  const scanInventory = async <T>(
+    resourceType: EnvironmentInventoryResource,
+    message: string,
+    operation: () => Promise<T[]>
+  ): Promise<T[]> => {
+    progress(message);
+    try {
+      return await operation();
+    } catch (error) {
+      handleScanError(resourceType, error);
+      return [];
+    }
+  };
+  const queuesRequired = requiredResources.has('Queues');
+  const r2Required = requiredResources.has('R2 buckets');
+  const pagesRequired = requiredResources.has('Pages projects');
+
+  // These are independent account-level reads. Run them concurrently and share the in-flight
+  // Wrangler OAuth resolution above; serial reads made a normal Web environment refresh take over
+  // a minute even though none of the provider inventories depends on another.
+  const scans = [
+    () => scanInventory('Workers', 'Scanning Workers...', () => listWorkers({ onRetry: progress })),
+    () => scanInventory('D1 databases', 'Scanning D1 databases...', () => listD1Databases()),
+    () => scanInventory('KV namespaces', 'Scanning KV namespaces...', () => listKVNamespaces()),
+    () =>
+      scanInventory('Queues', 'Scanning Queues...', () =>
+        listQueues({ strictOutput: queuesRequired, requireIds: queuesRequired })
+      ),
+    () =>
+      scanInventory('R2 buckets', 'Scanning R2 buckets...', () =>
+        listR2Buckets({ throwOnError: r2Required, requireIdentity: r2Required })
+      ),
+    () =>
+      scanInventory('Pages projects', 'Scanning legacy Pages projects...', () =>
+        listPagesProjects({ strictOutput: pagesRequired, requireIdentity: pagesRequired })
+      ),
+  ] as const;
+  const inventories: [
+    Awaited<ReturnType<typeof listWorkers>>,
+    Awaited<ReturnType<typeof listD1Databases>>,
+    Awaited<ReturnType<typeof listKVNamespaces>>,
+    Awaited<ReturnType<typeof listQueues>>,
+    Awaited<ReturnType<typeof listR2Buckets>>,
+    Awaited<ReturnType<typeof listPagesProjects>>,
+  ] =
+    requiredResources.size === 0
+      ? await Promise.all([scans[0](), scans[1](), scans[2](), scans[3](), scans[4](), scans[5]()])
+      : [
+          await scans[0](),
+          await scans[1](),
+          await scans[2](),
+          await scans[3](),
+          await scans[4](),
+          await scans[5](),
+        ];
+  const [workers, databases, namespaces, queues, buckets, pagesProjects] = inventories;
+
+  const environmentFor = (env: string): EnvironmentInfo => {
+    const existing = environments.get(env);
+    if (existing) return existing;
+    const created: EnvironmentInfo = {
+      env,
+      workers: [],
+      d1: [],
+      kv: [],
+      queues: [],
+      r2: [],
+      pages: [],
+    };
+    environments.set(env, created);
+    return created;
+  };
+
+  for (const worker of workers) {
+    const match = worker.name.match(AUTHRIM_PATTERNS.worker);
+    if (match) environmentFor(match[1].toLowerCase()).workers.push({ name: worker.name });
   }
 
-  progress('Scanning D1 databases...');
-  const d1Envs = new Set<string>();
-  try {
-    const databases = await listD1Databases();
-    for (const db of databases) {
-      const match = db.name.match(AUTHRIM_PATTERNS.d1);
-      if (match) {
-        const env = (match[1] ?? match[3]).toLowerCase();
-        d1Envs.add(env);
-        if (!environments.has(env)) {
-          environments.set(env, {
-            env,
-            workers: [],
-            d1: [],
-            kv: [],
-            queues: [],
-            r2: [],
-            pages: [],
-          });
-        }
-        environments.get(env)!.d1.push({ name: db.name, id: db.uuid });
-      }
+  for (const database of databases) {
+    const match = database.name.match(AUTHRIM_PATTERNS.d1);
+    const matchedEnvironment = match
+      ? (match[1] ?? match[3]).toLowerCase()
+      : controlManagedEnvironment &&
+          isControlManagedD1NameForEnvironment(controlManagedEnvironment, database.name)
+        ? controlManagedEnvironment
+        : null;
+    if (matchedEnvironment) {
+      environmentFor(matchedEnvironment).d1.push({ name: database.name, id: database.uuid });
     }
-  } catch (error) {
-    progress(`  ⚠️ Could not scan D1: ${error instanceof Error ? error.message : error}`);
   }
 
-  progress('Scanning KV namespaces...');
-  try {
-    const namespaces = await listKVNamespaces();
-    for (const ns of namespaces) {
-      const match = ns.title.match(AUTHRIM_PATTERNS.kv);
-      if (match) {
-        const env = match[1].toLowerCase();
-        // Only attach KV to environments that already have Workers or D1
-        if (environments.has(env)) {
-          environments.get(env)!.kv.push({ name: ns.title, id: ns.id });
-        }
-      }
+  for (const namespace of namespaces) {
+    const match = namespace.title.match(AUTHRIM_PATTERNS.kv);
+    const matchedEnvironment = match
+      ? match[1].toLowerCase()
+      : controlManagedEnvironment &&
+          isControlManagedKVNameForEnvironment(controlManagedEnvironment, namespace.title)
+        ? controlManagedEnvironment
+        : null;
+    // Keep KV-only environments visible so deterministic-name collisions remain recoverable.
+    if (matchedEnvironment) {
+      environmentFor(matchedEnvironment).kv.push({ name: namespace.title, id: namespace.id });
     }
-  } catch (error) {
-    progress(`  ⚠️ Could not scan KV: ${error instanceof Error ? error.message : error}`);
   }
 
-  progress('Scanning Queues...');
-  try {
-    const queues = await listQueues();
-    for (const q of queues) {
-      const match = q.name.match(AUTHRIM_PATTERNS.queue);
-      if (match) {
-        const env = match[1].toLowerCase();
-        if (!environments.has(env)) {
-          environments.set(env, {
-            env,
-            workers: [],
-            d1: [],
-            kv: [],
-            queues: [],
-            r2: [],
-            pages: [],
-          });
-        }
-        environments.get(env)!.queues.push({ name: q.name, id: q.id });
-      }
+  for (const queue of queues) {
+    const match = queue.name.match(AUTHRIM_PATTERNS.queue);
+    if (match) {
+      environmentFor(match[1].toLowerCase()).queues.push({ name: queue.name, id: queue.id });
     }
-  } catch (error) {
-    progress(`  ⚠️ Could not scan Queues: ${error instanceof Error ? error.message : error}`);
   }
 
-  progress('Scanning R2 buckets...');
-  try {
-    const buckets = await listR2Buckets();
-    for (const bucket of buckets) {
-      const match = bucket.name.match(AUTHRIM_PATTERNS.r2);
-      if (match) {
-        const env = match[1].toLowerCase();
-        // Only attach R2 to environments that already have Workers or D1
-        if (environments.has(env)) {
-          environments.get(env)!.r2.push({ name: bucket.name });
-        }
-      }
-    }
-  } catch (error) {
-    progress(`  ⚠️ Could not scan R2: ${error instanceof Error ? error.message : error}`);
+  for (const bucket of buckets) {
+    const match = bucket.name.match(AUTHRIM_PATTERNS.r2);
+    const matchedEnvironment = match
+      ? match[1].toLowerCase()
+      : controlManagedEnvironment &&
+          isControlManagedR2NameForEnvironment(controlManagedEnvironment, bucket.name)
+        ? controlManagedEnvironment
+        : null;
+    if (matchedEnvironment) environmentFor(matchedEnvironment).r2.push(bucket);
   }
 
-  progress('Scanning legacy Pages projects...');
-  try {
-    const pagesProjects = await listPagesProjects();
-    for (const project of pagesProjects) {
-      const match = project.name.match(AUTHRIM_PATTERNS.pages);
-      if (match) {
-        const env = match[1].toLowerCase();
-        // Only attach legacy Pages projects to environments that already have Workers or D1
-        if (environments.has(env)) {
-          environments.get(env)!.pages.push({ name: project.name });
-        }
-      }
-    }
-  } catch (error) {
-    progress(
-      `  ⚠️ Could not scan legacy Pages projects: ${error instanceof Error ? error.message : error}`
-    );
+  for (const project of pagesProjects) {
+    const match = project.name.match(AUTHRIM_PATTERNS.pages);
+    // Keep Pages-only legacy environments visible so they can be fully deleted through Setup.
+    if (match) environmentFor(match[1].toLowerCase()).pages.push(project);
   }
 
-  // Filter out empty placeholders while keeping queue-only environments for cleanup.
+  // Keep independently listed KV, Queues, R2, and legacy Pages resources so interrupted operations are
+  // discoverable and fresh provisioning can reject deterministic-name collisions up front.
   for (const [env, info] of environments) {
-    if (info.workers.length === 0 && info.d1.length === 0 && info.queues.length === 0) {
+    if (
+      info.workers.length === 0 &&
+      info.d1.length === 0 &&
+      info.kv.length === 0 &&
+      info.queues.length === 0 &&
+      info.r2.length === 0 &&
+      info.pages.length === 0
+    ) {
       environments.delete(env);
     }
   }
@@ -5246,17 +10360,202 @@ export async function detectEnvironments(
   return Array.from(environments.values()).sort((a, b) => a.env.localeCompare(b.env));
 }
 
+export async function confirmEnvironmentObservedForDeletion(
+  env: string,
+  selection: DeletionResourceSelection,
+  onProgress?: (message: string) => void
+): Promise<boolean> {
+  const environments = await detectEnvironments(onProgress, {
+    // A post-delete read does not mutate Pages. Require a recognizable name inventory here, then
+    // scope exact provider-identity requirements to this environment below. Unrelated legacy
+    // projects must not prevent an otherwise empty environment from being finalized.
+    requiredResources: getRequiredDeletionInventoryResources(selection).filter(
+      (resource) => resource !== 'Pages projects'
+    ),
+  });
+  if (environments.some((candidate) => candidate.env === env)) return true;
+
+  if (selection.deletePages) {
+    try {
+      const pagesProjects = await listPagesProjects({
+        strictOutput: true,
+        requireIdentity: true,
+        requireIdentityForEnvironment: env,
+      });
+      if (pagesProjects.some((project) => isPagesNameForEnvironment(env, project.name))) {
+        return true;
+      }
+    } catch (error) {
+      throw new EnvironmentInventoryUnavailableError('Pages projects', error);
+    }
+  }
+
+  if (!selection.deleteD1 && !selection.deleteKV && !selection.deleteR2) return false;
+  try {
+    return await hasControlManagedResourcesForEnvironment(env, {
+      d1: selection.deleteD1,
+      kv: selection.deleteKV,
+      r2: selection.deleteR2,
+    });
+  } catch (error) {
+    throw new EnvironmentInventoryUnavailableError('Control-managed resources', error);
+  }
+}
+
+type PostDeleteVerificationStatus =
+  | 'not_required'
+  | 'verified_empty'
+  | 'resources_remaining'
+  | 'inventory_unavailable';
+
+interface PostDeleteVerificationResult {
+  status: Exclude<PostDeleteVerificationStatus, 'not_required'>;
+  attempts: number;
+  error?: string;
+}
+
+async function verifyEnvironmentAbsentAfterDeletion(options: {
+  env: string;
+  selection: DeletionResourceSelection;
+  attempts: number;
+  retryDelayMs: number;
+  onProgress: (message: string) => void;
+  onDetail?: (message: string) => void;
+}): Promise<PostDeleteVerificationResult> {
+  const attempts = Math.max(1, Math.min(Math.trunc(options.attempts), 10));
+  const retryDelayMs = Math.max(0, Math.min(Math.trunc(options.retryDelayMs), 30_000));
+  let lastStatus: PostDeleteVerificationResult['status'] = 'resources_remaining';
+  let lastError: unknown;
+
+  options.onProgress('🔎 Verifying Cloudflare inventory after deletion...');
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const resourceRemains = await confirmEnvironmentObservedForDeletion(
+        options.env,
+        options.selection,
+        options.onDetail
+      );
+      if (!resourceRemains) {
+        options.onProgress(`  ✅ Cloudflare inventory is empty (attempt ${attempt}/${attempts})`);
+        return { status: 'verified_empty', attempts: attempt };
+      }
+      lastStatus = 'resources_remaining';
+      lastError = undefined;
+      options.onProgress(
+        `  ⏳ Cloudflare still reports environment resources (attempt ${attempt}/${attempts})`
+      );
+    } catch (error) {
+      lastStatus = 'inventory_unavailable';
+      lastError = error;
+      options.onProgress(
+        `  ⚠️ Cloudflare inventory readback failed (attempt ${attempt}/${attempts}): ${sanitizeError(
+          error instanceof EnvironmentInventoryUnavailableError && error.cause !== undefined
+            ? error.cause
+            : error
+        )}`
+      );
+    }
+
+    if (attempt < attempts && retryDelayMs > 0 && process.env.NODE_ENV !== 'test') {
+      await sleep(retryDelayMs * attempt);
+    }
+  }
+
+  return {
+    status: lastStatus,
+    attempts,
+    error:
+      lastError === undefined
+        ? undefined
+        : sanitizeError(
+            lastError instanceof EnvironmentInventoryUnavailableError &&
+              lastError.cause !== undefined
+              ? lastError.cause
+              : lastError
+          ),
+  };
+}
+
 /**
  * Delete a Worker
  */
-export async function deleteWorker(name: string): Promise<boolean> {
-  try {
-    await wrangler(['delete', '--name', name, '--force']);
-    return true;
-  } catch {
-    // Worker might not exist
-    return false;
+type WorkerDeleteResult =
+  | { status: 'deleted' }
+  | { status: 'already_absent'; error: string }
+  | { status: 'failed'; error: string };
+
+function isWorkerAlreadyAbsentError(error: string): boolean {
+  return /(not found|does not exist|could not find|no such script|10007)/iu.test(error);
+}
+
+async function assertWorkerDeletionIdentity(
+  target: WorkerDeletionTarget,
+  onRetry?: (message: string) => void
+): Promise<'owned' | 'already_absent'> {
+  const inventory = await listWorkers({ onRetry });
+  const byName = new Map(inventory.map((worker) => [worker.name, worker]));
+  const live = byName.get(target.name);
+  if (!target.cloudflareScriptTag) {
+    if (live) {
+      throw new Error(
+        `Worker ownership mismatch for ${target.name}: a script appeared after absence was recorded`
+      );
+    }
+    return 'already_absent';
   }
+  const tagOwner = inventory.find((worker) => worker.tag === target.cloudflareScriptTag);
+  if (!live) {
+    if (tagOwner && tagOwner.name !== target.name) {
+      throw new Error(
+        `Worker ownership mismatch for ${target.name}: its immutable tag belongs to ${tagOwner.name}`
+      );
+    }
+    return 'already_absent';
+  }
+  if (!live.tag || live.tag !== target.cloudflareScriptTag) {
+    throw new Error(
+      `Worker ownership mismatch for ${target.name}: the immutable script tag changed`
+    );
+  }
+  return 'owned';
+}
+
+async function deleteWorkerWithResult(
+  name: string,
+  onProgress?: (message: string) => void,
+  beforeAttempt?: () => Promise<'owned' | 'already_absent'>
+): Promise<WorkerDeleteResult> {
+  let lastError = 'unknown error';
+
+  for (let attempt = 1; attempt <= WORKER_DELETE_MAX_ATTEMPTS; attempt++) {
+    try {
+      if ((await beforeAttempt?.()) === 'already_absent') {
+        return { status: 'already_absent', error: 'Worker is already absent' };
+      }
+      await wrangler(['delete', '--name', name, '--force']);
+      return { status: 'deleted' };
+    } catch (error) {
+      lastError = sanitizeError(error);
+      if (isWorkerAlreadyAbsentError(lastError)) {
+        return { status: 'already_absent', error: lastError };
+      }
+      if (attempt < WORKER_DELETE_MAX_ATTEMPTS) {
+        onProgress?.(
+          `  ⏳ Retrying Worker deletion for ${name} (${attempt + 1}/${WORKER_DELETE_MAX_ATTEMPTS})...`
+        );
+        if (process.env.NODE_ENV !== 'test') {
+          await sleep(WORKER_DELETE_RETRY_DELAY_MS * attempt);
+        }
+      }
+    }
+  }
+
+  return { status: 'failed', error: lastError };
+}
+
+export async function deleteWorker(name: string): Promise<boolean> {
+  const result = await deleteWorkerWithResult(name);
+  return result.status === 'deleted';
 }
 
 /**
@@ -5268,12 +10567,39 @@ export interface WorkerDeploymentInfo {
   lastDeployedAt: string | null;
   author: string | null;
   versionId: string | null;
+  source?: string | null;
+}
+
+export interface WorkerVersionInfo {
+  name: string;
+  exists: boolean;
+  versionId: string | null;
+}
+
+function isWorkerInventoryNotFoundError(message: string): boolean {
+  return (
+    /does not exist|\b10007\b/iu.test(message) ||
+    /(?:worker\s+)?version[^\n]*not found|could not find[^\n]*(?:worker\s+)?version|no such (?:worker\s+)?version/iu.test(
+      message
+    )
+  );
+}
+
+function isRetryableWorkerInventoryError(message: string): boolean {
+  return (
+    isD1RateLimitError(message) ||
+    /authentication error\s*\[code:\s*10000\]/iu.test(message) ||
+    /\b5\d{2}\b|service unavailable|internal server error|fetch failed|network error|econnreset|etimedout|timed out/iu.test(
+      message
+    )
+  );
 }
 
 function parseLatestWorkerDeployment(stdout: string): {
   createdAt: string | null;
   author: string | null;
   versionId: string | null;
+  source: string | null;
 } {
   const deploymentStarts = Array.from(
     stdout.matchAll(/^Created:\s+(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\s*$/gm)
@@ -5307,66 +10633,146 @@ function parseLatestWorkerDeployment(stdout: string): {
       createdAt: null,
       author: null,
       versionId: null,
+      source: null,
     };
   }
 
   const block = stdout.slice(latest.index, latest.nextIndex);
   const authorMatch = block.match(/^Author:\s+(\S+)/m);
+  const sourceMatch = block.match(/^Source:\s+(.+)$/m);
   const versionMatch = block.match(/^Version\(s\):\s+\(\d+%\)\s+([a-f0-9-]+)/m);
   return {
     createdAt: latest.createdAt,
     author: authorMatch?.[1] || null,
     versionId: versionMatch?.[1] || null,
+    source: sourceMatch?.[1]?.trim() || null,
   };
 }
 
 export async function getWorkerDeployments(name: string): Promise<WorkerDeploymentInfo> {
-  try {
-    const { stdout, stderr } = await wrangler(['deployments', 'list', '--name', name]);
+  const maxAttempts = process.env.NODE_ENV === 'test' ? 2 : 4;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const { stdout, stderr } = await wrangler(['deployments', 'list', '--name', name]);
 
-    // Check if worker doesn't exist
-    if (stderr?.includes('does not exist') || stderr?.includes('10007')) {
+      // Check if worker doesn't exist
+      if (isWorkerInventoryNotFoundError(stderr)) {
+        return {
+          name,
+          exists: false,
+          lastDeployedAt: null,
+          author: null,
+          versionId: null,
+          source: null,
+        };
+      }
+
+      // Wrangler does not guarantee newest-first output here; secret changes can appear before
+      // the upload deployment. Use the max top-level Created timestamp instead of the first one.
+      const deployment = parseLatestWorkerDeployment(stdout);
+      if (!deployment.createdAt) {
+        throw new Error('wrangler_worker_deployment_output_unparseable');
+      }
+
       return {
         name,
-        exists: false,
-        lastDeployedAt: null,
-        author: null,
-        versionId: null,
+        exists: true,
+        lastDeployedAt: deployment.createdAt,
+        author: deployment.author,
+        versionId: deployment.versionId,
+        source: deployment.source,
       };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isWorkerInventoryNotFoundError(message)) {
+        return {
+          name,
+          exists: false,
+          lastDeployedAt: null,
+          author: null,
+          versionId: null,
+          source: null,
+        };
+      }
+      const retryable = isRetryableWorkerInventoryError(message);
+      if (!retryable || attempt === maxAttempts) {
+        throw new Error(`Worker deployment inventory unavailable for ${name}: ${message}`, {
+          cause: error,
+        });
+      }
+      if (process.env.NODE_ENV !== 'test') {
+        await sleep(Math.min(1_000 * 2 ** (attempt - 1), 5_000));
+      }
     }
-
-    // Wrangler does not guarantee newest-first output here; secret changes can appear before
-    // the upload deployment. Use the max top-level Created timestamp instead of the first one.
-    const deployment = parseLatestWorkerDeployment(stdout);
-
-    return {
-      name,
-      exists: true,
-      lastDeployedAt: deployment.createdAt,
-      author: deployment.author,
-      versionId: deployment.versionId,
-    };
-  } catch {
-    return {
-      name,
-      exists: false,
-      lastDeployedAt: null,
-      author: null,
-      versionId: null,
-    };
   }
+  throw new Error(`Worker deployment inventory retry loop exited unexpectedly for ${name}`);
+}
+
+/** Verify that a specific uploaded Worker Version still belongs to the named script. */
+export async function getWorkerVersion(
+  name: string,
+  versionId: string
+): Promise<WorkerVersionInfo> {
+  const maxAttempts = process.env.NODE_ENV === 'test' ? 2 : 4;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const { stdout } = await wrangler(['versions', 'view', versionId, '--name', name, '--json'], {
+        env: { WRANGLER_LOG: 'log' },
+      });
+      const parsed = JSON.parse(stdout) as { id?: unknown };
+      if (!parsed || typeof parsed !== 'object' || typeof parsed.id !== 'string') {
+        throw new Error('wrangler_worker_version_output_unparseable');
+      }
+      if (parsed.id !== versionId) {
+        throw new Error(`wrangler_worker_version_id_mismatch:${versionId}:${parsed.id}`);
+      }
+      return { name, exists: true, versionId: parsed.id };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isWorkerInventoryNotFoundError(message)) {
+        return { name, exists: false, versionId: null };
+      }
+      if (!isRetryableWorkerInventoryError(message) || attempt === maxAttempts) {
+        throw new Error(`Worker version inventory unavailable for ${name}: ${message}`, {
+          cause: error,
+        });
+      }
+      if (process.env.NODE_ENV !== 'test') {
+        await sleep(Math.min(1_000 * 2 ** (attempt - 1), 5_000));
+      }
+    }
+  }
+  throw new Error(`Worker version inventory retry loop exited unexpectedly for ${name}`);
 }
 
 /**
  * Delete a Queue
  */
-export async function deleteQueue(name: string): Promise<boolean> {
+async function deleteQueueWithResult(
+  queueId: string,
+  credentials?: CloudflareDeletionCredentials
+): Promise<ExactResourceDeleteResult> {
+  let resolved = credentials;
   try {
-    await wrangler(['queues', 'delete', name]);
-    return true;
-  } catch {
-    return false;
+    resolved ??= (await resolveCloudflareInventoryCredentials()) ?? undefined;
+  } catch (error) {
+    return { status: 'failed', error: sanitizeError(error) };
   }
+  if (!resolved) {
+    return { status: 'failed', error: 'Cloudflare Queue API credentials are unavailable' };
+  }
+  return deleteCloudflareAccountResourceById({
+    credentials: resolved,
+    resourcePath: 'queues',
+    resourceId: queueId,
+    label: 'Cloudflare Queue delete',
+  });
+}
+
+/** Delete a Queue by its immutable Cloudflare Queue ID. */
+export async function deleteQueue(queueId: string): Promise<boolean> {
+  const result = await deleteQueueWithResult(queueId);
+  return result.status !== 'failed';
 }
 
 const OBJECT_CATALOG_R2_BUCKET_SUFFIX_BY_BINDING: Record<string, string> = Object.fromEntries(
@@ -5457,7 +10863,8 @@ async function collectKnownR2ObjectsByBucket(
 async function removeKnownR2Objects(
   bucketName: string,
   objectKeys: string[],
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  verifyOwnership?: () => Promise<void>
 ): Promise<void> {
   if (objectKeys.length === 0) {
     return;
@@ -5467,59 +10874,232 @@ async function removeKnownR2Objects(
   const concurrency = 5;
   let removed = 0;
   let completed = 0;
-  let nextIndex = 0;
-
-  const workerCount = Math.min(concurrency, objectKeys.length);
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (nextIndex < objectKeys.length) {
-        const objectKey = objectKeys[nextIndex];
-        nextIndex += 1;
-        try {
-          await wrangler(['r2', 'object', 'delete', `${bucketName}/${objectKey}`, '--remote']);
-          removed += 1;
-        } catch (error) {
-          onProgress?.(`  ⚠️ R2 object cleanup skipped for ${bucketName}: ${sanitizeError(error)}`);
-        } finally {
-          completed += 1;
-          if (completed % 50 === 0 || completed === objectKeys.length) {
-            onProgress?.(
-              `  R2 object cleanup progress for ${bucketName}: ${completed}/${objectKeys.length}`
-            );
-          }
+  for (let offset = 0; offset < objectKeys.length; offset += concurrency) {
+    await verifyOwnership?.();
+    const batch = objectKeys.slice(offset, offset + concurrency);
+    await Promise.all(
+      batch.map(async (objectKey) => {
+        await wrangler(['r2', 'object', 'delete', `${bucketName}/${objectKey}`, '--remote']);
+        removed += 1;
+        completed += 1;
+        if (completed % 50 === 0 || completed === objectKeys.length) {
+          onProgress?.(
+            `  R2 object cleanup progress for ${bucketName}: ${completed}/${objectKeys.length}`
+          );
         }
-      }
-    })
-  );
+      })
+    );
+  }
   onProgress?.(`  R2 objects removed for ${bucketName}: ${removed}/${objectKeys.length}`);
 }
 
-async function getR2ApiCredentials(): Promise<{ accountId: string; token: string } | null> {
-  const tokenInfo = await getCloudflareApiToken();
+export async function resolveR2ApiCredentials(input: {
+  configuredAccountId?: string;
+  resolveAccountId: () => Promise<string | null>;
+  readToken: () => Promise<CloudflareApiToken | null>;
+  inferSingleAccountId: (token: string) => Promise<string | null>;
+}): Promise<{ accountId: string; token: string; source: CloudflareApiToken['source'] } | null> {
+  let tokenInfo = await input.readToken();
   if (!tokenInfo?.token) {
     return null;
   }
 
+  let oauthAccountId: string | null = null;
+  if (tokenInfo.source === 'oauth') {
+    // A pinned account is routing authority, not proof that the cached OAuth token is fresh.
+    oauthAccountId = await input.resolveAccountId();
+    const refreshed = await input.readToken();
+    if (!refreshed || refreshed.source !== 'oauth') return null;
+    tokenInfo = refreshed;
+  }
+
+  if (input.configuredAccountId && oauthAccountId && input.configuredAccountId !== oauthAccountId) {
+    throw new Error('cloudflare_oauth_account_id_mismatch');
+  }
+
   const accountId =
-    process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ||
-    (await getAccountId()) ||
-    (await getSingleAccountIdViaApi(tokenInfo.token));
+    input.configuredAccountId ||
+    oauthAccountId ||
+    (await input.resolveAccountId()) ||
+    (await input.inferSingleAccountId(tokenInfo.token));
   if (!accountId) {
     return null;
   }
 
-  return { accountId, token: tokenInfo.token };
+  return { accountId, token: tokenInfo.token, source: tokenInfo.source };
+}
+
+async function getR2ApiCredentials(): Promise<{
+  accountId: string;
+  token: string;
+  source: CloudflareApiToken['source'];
+} | null> {
+  return resolveR2ApiCredentials({
+    configuredAccountId: process.env.CLOUDFLARE_ACCOUNT_ID?.trim(),
+    resolveAccountId: getAccountId,
+    readToken: getCloudflareApiToken,
+    inferSingleAccountId: getSingleAccountIdViaApi,
+  });
+}
+
+export interface R2ObjectMetadata {
+  key: string;
+  size: number | null;
+  lastModified: string | null;
+  etag: string | null;
+}
+
+type CloudflareR2ObjectRow = NonNullable<CloudflareR2ObjectListResponse['result']>[number];
+
+function parseR2ObjectListCursor(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > R2_OBJECT_LIST_MAX_CURSOR_LENGTH ||
+    value.trim() !== value ||
+    [...value].some((character) => {
+      const codePoint = character.codePointAt(0)!;
+      return codePoint <= 0x1f || codePoint === 0x7f;
+    })
+  ) {
+    throw new Error('cloudflare_r2_object_list_cursor_invalid');
+  }
+  return value;
+}
+
+async function listR2ObjectRowsViaApi(input: {
+  bucketName: string;
+  credentials: {
+    accountId: string;
+    token: string;
+    source?: CloudflareApiToken['source'];
+  };
+  prefix?: string;
+}): Promise<CloudflareR2ObjectRow[]> {
+  const objects: CloudflareR2ObjectRow[] = [];
+  const seenKeys = new Set<string>();
+  const seenCursors = new Set<string>();
+  let cursor: string | undefined;
+
+  for (let page = 1; page <= R2_OBJECT_LIST_MAX_PAGES; page++) {
+    const pageLimit = 1000;
+    const params = new URLSearchParams({ per_page: String(pageLimit) });
+    if (input.prefix) params.set('prefix', input.prefix);
+    if (cursor) params.set('cursor', cursor);
+    const { data } = await requestR2Api<CloudflareR2ObjectListResponse>(
+      `https://api.cloudflare.com/client/v4/accounts/${input.credentials.accountId}/r2/buckets/${encodeURIComponent(input.bucketName)}/objects?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${input.credentials.token}` } },
+      'Cloudflare R2 object list',
+      false,
+      input.credentials.source ?? 'env'
+    );
+    if (!Array.isArray(data.result)) {
+      throw new Error('cloudflare_r2_object_list_response_invalid');
+    }
+    if (
+      data.result_info !== undefined &&
+      (!data.result_info || typeof data.result_info !== 'object' || Array.isArray(data.result_info))
+    ) {
+      throw new Error('cloudflare_r2_object_list_response_invalid');
+    }
+    const rawTruncated = data.result_info?.is_truncated;
+    if (rawTruncated !== undefined && typeof rawTruncated !== 'boolean') {
+      throw new Error('cloudflare_r2_object_list_response_invalid');
+    }
+    const rawCursor = data.result_info?.cursor;
+
+    for (const object of data.result) {
+      if (
+        !object ||
+        typeof object !== 'object' ||
+        typeof object.key !== 'string' ||
+        object.key.length === 0
+      ) {
+        throw new Error('cloudflare_r2_object_list_row_invalid');
+      }
+      if (seenKeys.has(object.key)) {
+        throw new Error('cloudflare_r2_object_list_duplicate_key');
+      }
+      seenKeys.add(object.key);
+      objects.push(object);
+      if (objects.length > R2_OBJECT_LIST_MAX_KEYS) {
+        throw new Error('cloudflare_r2_object_list_key_limit_exceeded');
+      }
+    }
+
+    // Cloudflare's current List Objects schema marks result_info and all of its fields optional,
+    // and the live API omits result_info for a complete prefix lookup. Accept that documented
+    // terminal form only when the page is below the requested limit. A full page without explicit
+    // pagination evidence is ambiguous and must fail closed so cleanup cannot silently skip keys.
+    if (rawTruncated === false) {
+      if (rawCursor !== undefined && rawCursor !== null && rawCursor !== '') {
+        throw new Error('cloudflare_r2_object_list_pagination_conflict');
+      }
+      return objects;
+    }
+    if (
+      rawTruncated === undefined &&
+      (rawCursor === undefined || rawCursor === null || rawCursor === '')
+    ) {
+      if (data.result.length >= pageLimit) {
+        throw new Error('cloudflare_r2_object_list_pagination_metadata_missing');
+      }
+      return objects;
+    }
+    if (data.result.length === 0) {
+      throw new Error('cloudflare_r2_object_list_truncated_empty_page');
+    }
+    const nextCursor = parseR2ObjectListCursor(rawCursor);
+    if (seenCursors.has(nextCursor)) {
+      throw new Error('cloudflare_r2_object_list_cursor_cycle');
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+
+  throw new Error('cloudflare_r2_object_list_page_limit_exceeded');
+}
+
+/**
+ * List R2 objects through Cloudflare's REST API. Wrangler does not expose an object-list command,
+ * while the REST API provides cursor pagination and prefix filtering.
+ */
+export async function listR2Objects(input: {
+  bucketName: string;
+  prefix?: string;
+}): Promise<R2ObjectMetadata[]> {
+  if (!R2_BUCKET_NAME_PATTERN.test(input.bucketName)) throw new Error('invalid_r2_bucket_name');
+  if (input.prefix && (input.prefix.startsWith('/') || input.prefix.includes('\\'))) {
+    throw new Error('invalid_r2_object_prefix');
+  }
+  const credentials = await getR2ApiCredentials();
+  if (!credentials) throw new Error('cloudflare_r2_api_credentials_unavailable');
+
+  return (
+    await listR2ObjectRowsViaApi({
+      bucketName: input.bucketName,
+      credentials,
+      ...(input.prefix ? { prefix: input.prefix } : {}),
+    })
+  ).map((object) => ({
+    key: object.key!,
+    size: typeof object.size === 'number' && Number.isFinite(object.size) ? object.size : null,
+    lastModified: typeof object.last_modified === 'string' ? object.last_modified : null,
+    etag: typeof object.etag === 'string' ? object.etag : null,
+  }));
 }
 
 async function getSingleAccountIdViaApi(token: string): Promise<string | null> {
   try {
-    const response = await fetch('https://api.cloudflare.com/client/v4/accounts?per_page=2', {
-      headers: {
-        Authorization: `Bearer ${token}`,
+    const { response, data } = await requestCloudflareApiJson<CloudflareAccountsResponse>(
+      'https://api.cloudflare.com/client/v4/accounts?per_page=2',
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       },
-    });
-
-    const data = (await response.json().catch(() => ({}))) as CloudflareAccountsResponse;
+      { label: 'Cloudflare account lookup', retryMode: 'read' }
+    );
     if (!response.ok || data.success === false) {
       return null;
     }
@@ -5535,157 +11115,466 @@ async function getSingleAccountIdViaApi(token: string): Promise<string | null> {
 
 async function listAllR2ObjectKeysViaApi(
   bucketName: string,
-  credentials: { accountId: string; token: string }
+  credentials: {
+    accountId: string;
+    token: string;
+    source?: CloudflareApiToken['source'];
+  }
 ): Promise<string[]> {
-  const keys: string[] = [];
-  let cursor: string | undefined;
+  return (await listR2ObjectRowsViaApi({ bucketName, credentials })).map((object) => object.key!);
+}
 
-  do {
-    const params = new URLSearchParams({ per_page: '1000' });
-    if (cursor) {
-      params.set('cursor', cursor);
+async function requestR2Api<
+  T extends {
+    success?: boolean;
+    errors?: CloudflareApiMessage[];
+    messages?: CloudflareApiMessage[];
+  },
+>(
+  url: string,
+  init: NonNullable<Parameters<typeof fetch>[1]>,
+  label: string,
+  acceptNotFound = false,
+  credentialSource: CloudflareApiToken['source'] = 'env'
+): Promise<{ data: T; notFound: boolean }> {
+  const method = (init.method ?? 'GET').toUpperCase();
+  const retryMode: CloudflareApiRetryMode =
+    method === 'GET' || method === 'HEAD' ? 'read' : 'non_idempotent_mutation';
+  let requestInit = init;
+  for (let authAttempt = 1; authAttempt <= 2; authAttempt++) {
+    const { response, data } = await requestCloudflareApiJson<T>(url, requestInit, {
+      label,
+      retryMode,
+      maxAttempts: 7,
+      isRetryableResponse: (_response, payload) => {
+        const errors =
+          payload && typeof payload === 'object' && Array.isArray(payload.errors)
+            ? payload.errors
+            : [];
+        return errors.some(
+          (error) => error.code === 971 || /throttl|too many requests/iu.test(error.message ?? '')
+        );
+      },
+    });
+    if (!data || typeof data !== 'object') {
+      throw new Error(`${label} returned an invalid response`);
     }
-
-    const response = await fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects?${params.toString()}`,
-      {
-        headers: {
-          Authorization: `Bearer ${credentials.token}`,
-        },
-      }
+    const errorCodes = (data.errors ?? []).flatMap((error) =>
+      typeof error.code === 'number' ? [error.code] : []
     );
+    if (
+      shouldRefreshCloudflareOAuthCredential({
+        status: response.status,
+        errorCodes,
+        source: credentialSource,
+        attempt: authAttempt,
+      })
+    ) {
+      const accountId = new URL(url).pathname.match(/\/accounts\/([^/]+)/u)?.[1];
+      const refreshed = accountId
+        ? await refreshPinnedCloudflareOAuthToken(decodeURIComponent(accountId))
+        : null;
+      if (refreshed) {
+        const headers = new Headers(requestInit.headers);
+        headers.set('Authorization', `Bearer ${refreshed.token}`);
+        requestInit = { ...requestInit, headers };
+        continue;
+      }
+    }
+    if (acceptNotFound && response.status === 404) return { data, notFound: true };
+    if (response.ok && data.success !== false) return { data, notFound: false };
+    const detail = formatCloudflareApiMessages(data);
+    throw new Error(`${label} failed (${response.status})${detail ? `: ${detail}` : ''}`);
+  }
+  throw new Error(`${label} OAuth refresh retry loop exited unexpectedly`);
+}
 
-    const data = (await response.json().catch(() => ({}))) as CloudflareR2ObjectListResponse;
-    if (!response.ok || data.success === false) {
-      const detail = formatCloudflareApiMessages(data);
-      throw new Error(
-        `Cloudflare R2 object list failed (${response.status})${detail ? `: ${detail}` : ''}`
+function parseR2BucketInfoOutput(
+  stdout: string,
+  expectedName: string
+): R2BucketProviderIdentity & { creationDate: string } {
+  const cleaned = stripAnsiSequences(stdout).trim();
+  let row: unknown;
+  try {
+    const parsed: unknown = JSON.parse(cleaned);
+    row =
+      parsed && typeof parsed === 'object' && !Array.isArray(parsed) && 'result' in parsed
+        ? (parsed as { result?: unknown }).result
+        : parsed;
+  } catch {
+    const exact = parseR2BucketRows(cleaned).find((candidate) => candidate.name === expectedName);
+    if (!exact) throw new Error(`Wrangler omitted exact identity for R2 bucket ${expectedName}`);
+    assertR2BucketIdentityComplete(exact);
+    return exact;
+  }
+
+  const exact = normalizeR2BucketRows([row]).find((candidate) => candidate.name === expectedName);
+  if (!exact) throw new Error(`Wrangler omitted exact identity for R2 bucket ${expectedName}`);
+  assertR2BucketIdentityComplete(exact);
+  return exact;
+}
+
+/**
+ * Read one exact R2 provider generation. Ownership-sensitive paths must not repeatedly depend on
+ * the account-wide list when Cloudflare exposes a bucket-scoped identity endpoint.
+ */
+async function getR2BucketIdentityStrict(
+  name: string
+): Promise<(R2BucketProviderIdentity & { creationDate: string }) | null> {
+  if (!R2_BUCKET_NAME_PATTERN.test(name)) throw new Error('invalid_r2_bucket_name');
+
+  let apiError: unknown;
+  try {
+    const credentials = await resolveCloudflareInventoryCredentials();
+    if (credentials) {
+      const { data, notFound } = await requestR2Api<CloudflareR2BucketGetResponse>(
+        `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(name)}`,
+        { headers: { Authorization: `Bearer ${credentials.token}` } },
+        `Cloudflare R2 bucket ${name} identity`,
+        true,
+        credentials.source
+      );
+      if (notFound) return null;
+      const exact = normalizeR2BucketRows([data.result]).find(
+        (candidate) => candidate.name === name
+      );
+      if (!exact) throw new Error(`Cloudflare omitted exact identity for R2 bucket ${name}`);
+      assertR2BucketIdentityComplete(exact);
+      return exact;
+    }
+  } catch (error) {
+    apiError = error;
+  }
+
+  try {
+    const { stdout } = await wrangler(['r2', 'bucket', 'info', name, '--json']);
+    return parseR2BucketInfoOutput(stdout, name);
+  } catch (error) {
+    if (isCloudflareResourceAlreadyAbsent(error)) return null;
+    if (apiError) {
+      throw new AggregateError(
+        [apiError, error],
+        `R2 bucket ${name} identity failed through both the Cloudflare API and Wrangler`
       );
     }
+    throw error;
+  }
+}
 
-    for (const object of data.result ?? []) {
-      if (typeof object.key === 'string') {
-        keys.push(object.key);
+async function getR2ObjectBytesViaApi(input: {
+  bucketName: string;
+  objectKey: string;
+  credentials: {
+    accountId: string;
+    token: string;
+    source?: CloudflareApiToken['source'];
+  };
+  maxBytes: number;
+}): Promise<Uint8Array | null> {
+  const url =
+    `https://api.cloudflare.com/client/v4/accounts/${input.credentials.accountId}/r2/buckets/` +
+    `${encodeURIComponent(input.bucketName)}/objects/${encodeR2ObjectKeyPath(input.objectKey)}`;
+  let lastError: unknown;
+  let credentials = input.credentials;
+  let authRefreshAttempted = false;
+  for (let attempt = 1; attempt <= CLOUDFLARE_API_READ_MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), CLOUDFLARE_API_REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${credentials.token}` },
+        signal: controller.signal,
+      });
+      if (response.status === 404) return null;
+      let errorCodes: number[] = [];
+      if (!response.ok && typeof response.json === 'function') {
+        try {
+          const payload = (await response.json()) as { errors?: CloudflareApiMessage[] };
+          errorCodes = (payload.errors ?? []).flatMap((error) =>
+            typeof error.code === 'number' ? [error.code] : []
+          );
+        } catch {
+          // The status alone is sufficient for a 401 refresh decision.
+        }
       }
+      if (
+        !authRefreshAttempted &&
+        shouldRefreshCloudflareOAuthCredential({
+          status: response.status,
+          errorCodes,
+          source: credentials.source ?? 'env',
+          attempt: 1,
+        })
+      ) {
+        authRefreshAttempted = true;
+        const refreshed = await refreshPinnedCloudflareOAuthToken(credentials.accountId);
+        if (refreshed) {
+          credentials = refreshed;
+          continue;
+        }
+      }
+      if (isRetryableCloudflareHttpStatus(response.status)) {
+        throw new Error(`Cloudflare R2 ownership marker read failed (${response.status})`);
+      }
+      if (!response.ok) {
+        throw new Error(`Cloudflare R2 ownership marker read failed (${response.status})`);
+      }
+      const declaredSize = Number(response.headers?.get?.('content-length') ?? '');
+      if (Number.isFinite(declaredSize) && declaredSize > input.maxBytes) {
+        throw new Error('r2_ownership_marker_size_limit_exceeded');
+      }
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength === 0 || bytes.byteLength > input.maxBytes) {
+        throw new Error('r2_ownership_marker_size_limit_exceeded');
+      }
+      return bytes;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= CLOUDFLARE_API_READ_MAX_ATTEMPTS) break;
+      if (process.env.NODE_ENV !== 'test') {
+        await sleep(Math.min(500 * 2 ** (attempt - 1), CLOUDFLARE_API_MAX_RETRY_DELAY_MS));
+      }
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    cursor = data.result_info?.is_truncated ? data.result_info.cursor : undefined;
-  } while (cursor);
-
-  return keys;
+  }
+  throw new Error('Cloudflare R2 ownership marker read failed after bounded retries', {
+    cause: lastError,
+  });
 }
 
 async function deleteR2ObjectViaApi(
   bucketName: string,
   objectKey: string,
-  credentials: { accountId: string; token: string }
+  credentials: {
+    accountId: string;
+    token: string;
+    source?: CloudflareApiToken['source'];
+  }
 ): Promise<void> {
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects/${encodeURIComponent(objectKey)}`,
+  const encodedObjectKey = encodeR2ObjectKeyPath(objectKey);
+  const result = await requestR2Api(
+    `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}/objects/${encodedObjectKey}`,
     {
       method: 'DELETE',
       headers: {
         Authorization: `Bearer ${credentials.token}`,
       },
-    }
+    },
+    'Cloudflare R2 object delete',
+    true,
+    credentials.source ?? 'env'
   );
-
-  if (response.status === 404) {
-    return;
-  }
-
-  const data = (await response.json().catch(() => ({}))) as {
-    success?: boolean;
-    errors?: CloudflareApiMessage[];
-    messages?: CloudflareApiMessage[];
-  };
-  if (!response.ok || data.success === false) {
-    const detail = formatCloudflareApiMessages(data);
-    throw new Error(
-      `Cloudflare R2 object delete failed (${response.status})${detail ? `: ${detail}` : ''}`
-    );
-  }
+  if (result.notFound) return;
 }
 
 async function deleteR2BucketViaApi(
   bucketName: string,
-  credentials: { accountId: string; token: string }
+  credentials: {
+    accountId: string;
+    token: string;
+    source?: CloudflareApiToken['source'];
+  }
 ): Promise<void> {
-  const response = await fetch(
+  const result = await requestR2Api(
     `https://api.cloudflare.com/client/v4/accounts/${credentials.accountId}/r2/buckets/${encodeURIComponent(bucketName)}`,
     {
       method: 'DELETE',
       headers: {
         Authorization: `Bearer ${credentials.token}`,
       },
-    }
+    },
+    'Cloudflare R2 bucket delete',
+    true,
+    credentials.source ?? 'env'
   );
-
-  if (response.status === 404) {
-    return;
-  }
-
-  const data = (await response.json().catch(() => ({}))) as {
-    success?: boolean;
-    errors?: CloudflareApiMessage[];
-    messages?: CloudflareApiMessage[];
-  };
-  if (!response.ok || data.success === false) {
-    const detail = formatCloudflareApiMessages(data);
-    throw new Error(
-      `Cloudflare R2 bucket delete failed (${response.status})${detail ? `: ${detail}` : ''}`
-    );
-  }
+  if (result.notFound) return;
 }
 
 async function removeAllR2ObjectsViaApi(
   bucketName: string,
-  onProgress?: (message: string) => void
-): Promise<void> {
-  const credentials = await getR2ApiCredentials();
-  if (!credentials) {
-    onProgress?.(
-      `  ⚠️ R2 full object cleanup skipped for ${bucketName}: API token/account unavailable`
-    );
-    return;
+  credentials: {
+    accountId: string;
+    token: string;
+    source?: CloudflareApiToken['source'];
+  },
+  ownershipMarkerKey: string,
+  onProgress?: (message: string) => void,
+  verifyOwnership?: () => Promise<void>
+): Promise<R2ManualCleanupTarget | null> {
+  const objectKeys = (await listAllR2ObjectKeysViaApi(bucketName, credentials)).filter(
+    (key) => key !== ownershipMarkerKey
+  );
+  if (objectKeys.length === 0) {
+    return null;
   }
 
-  const objectKeys = await listAllR2ObjectKeysViaApi(bucketName, credentials);
-  if (objectKeys.length === 0) {
-    return;
+  if (objectKeys.length >= R2_MANUAL_CLEANUP_THRESHOLD) {
+    const target: R2ManualCleanupTarget = {
+      bucketName,
+      objectCount: objectKeys.length,
+      dashboardUrl: getR2BucketDashboardUrl(credentials.accountId, bucketName),
+    };
+    onProgress?.(
+      `  ⚠️ Skipping R2 cleanup for ${bucketName}: ${objectKeys.length} objects require manual Dashboard cleanup`
+    );
+    return target;
   }
 
   onProgress?.(`  🧹 Emptying all R2 objects: ${bucketName} (${objectKeys.length})...`);
-  const concurrency = 5;
-  let removed = 0;
   let completed = 0;
-  let nextIndex = 0;
-
-  const workerCount = Math.min(concurrency, objectKeys.length);
-  await Promise.all(
-    Array.from({ length: workerCount }, async () => {
-      while (nextIndex < objectKeys.length) {
-        const objectKey = objectKeys[nextIndex];
-        nextIndex += 1;
-        try {
-          await deleteR2ObjectViaApi(bucketName, objectKey, credentials);
-          removed += 1;
-        } catch (error) {
-          onProgress?.(`  ⚠️ R2 object cleanup failed for ${bucketName}: ${sanitizeError(error)}`);
-        } finally {
-          completed += 1;
-          if (completed % 50 === 0 || completed === objectKeys.length) {
-            onProgress?.(
-              `  R2 full object cleanup progress for ${bucketName}: ${completed}/${objectKeys.length}`
-            );
-          }
+  let removed = 0;
+  for (let offset = 0; offset < objectKeys.length; offset += R2_OBJECT_DELETE_CONCURRENCY) {
+    await verifyOwnership?.();
+    const batch = objectKeys.slice(offset, offset + R2_OBJECT_DELETE_CONCURRENCY);
+    await Promise.all(
+      batch.map(async (objectKey) => {
+        await deleteR2ObjectViaApi(bucketName, objectKey, credentials);
+        removed += 1;
+        completed += 1;
+        if (completed % 50 === 0 || completed === objectKeys.length) {
+          onProgress?.(
+            `  R2 full object cleanup progress for ${bucketName}: ${completed}/${objectKeys.length}`
+          );
         }
-      }
-    })
-  );
+      })
+    );
+  }
   onProgress?.(
     `  R2 full object cleanup removed for ${bucketName}: ${removed}/${objectKeys.length}`
   );
+  return null;
+}
+
+async function assertLiveR2DeletionIdentity(
+  identity: ExactDeletionR2Identity,
+  options: { requireMarker: boolean }
+): Promise<'present' | 'absent'> {
+  const live = await getR2BucketIdentityStrict(identity.name);
+  if (!live) return 'absent';
+  if (live.creationDate !== identity.creationDate) {
+    throw new Error(
+      `R2 bucket ${identity.name} provider creation_date changed; same-name replacement preserved`
+    );
+  }
+  if (options.requireMarker) {
+    await assertR2OwnershipMarker({
+      bucketName: identity.name,
+      markerKey: identity.ownershipMarkerKey,
+      ownershipId: identity.ownershipId,
+      environment: identity.environment,
+      binding: identity.binding,
+    });
+  }
+  return 'present';
+}
+
+function requireCompleteR2DeletionIdentity(
+  name: string,
+  identity: DeletionR2Identity | undefined
+): ExactDeletionR2Identity {
+  if (
+    !identity ||
+    identity.name !== name ||
+    !identity.creationDate ||
+    !identity.ownershipMarkerKey ||
+    !identity.ownershipId
+  ) {
+    throw new Error(
+      `R2 bucket ${name} has no exact creation_date and ownership marker; automatic deletion is blocked`
+    );
+  }
+  return identity as ExactDeletionR2Identity;
+}
+
+/** Verify an owned R2 binding before a non-destructive update; legacy name-only bindings skip it. */
+export async function assertR2BucketOwnershipIdentity(identity: DeletionR2Identity): Promise<void> {
+  if (!identity.creationDate && !identity.ownershipMarkerKey && !identity.ownershipId) return;
+  const exact = requireCompleteR2DeletionIdentity(identity.name, identity);
+  if ((await assertLiveR2DeletionIdentity(exact, { requireMarker: true })) === 'absent') {
+    throw new Error(`R2 bucket ${identity.name} recorded in lock.json is missing`);
+  }
+}
+
+/**
+ * Require exact Setup ownership before reading executable artifacts from, or writing objects to,
+ * an R2 bucket. Unlike binding-only verification, legacy name-only locks are intentionally denied:
+ * a same-name replacement could otherwise supply untrusted migration SQL or receive plugin code.
+ */
+export async function assertR2BucketOwnershipForUse(identity: DeletionR2Identity): Promise<void> {
+  const exact = requireCompleteR2DeletionIdentity(identity.name, identity);
+  if ((await assertLiveR2DeletionIdentity(exact, { requireMarker: true })) === 'absent') {
+    throw new Error(`R2 bucket ${identity.name} recorded in lock.json is missing`);
+  }
+  const afterMarker = (await listR2BucketIdentitiesStrict()).find(
+    (bucket) => bucket.name === exact.name
+  );
+  if (!afterMarker || afterMarker.creationDate !== exact.creationDate) {
+    throw new Error(`R2 bucket ${identity.name} changed while Setup verified its ownership marker`);
+  }
+}
+
+/**
+ * Explicitly claim an existing deterministic-name bucket for a locked Authrim environment.
+ * `onPrepared` is called before the marker PUT so a crash/response loss retains the exact random
+ * marker identity and provider creation_date needed to resume without generating another claim.
+ */
+export async function adoptR2BucketOwnership(input: {
+  environment: string;
+  binding: string;
+  name: string;
+  prepared?: DeletionR2Identity;
+  onPrepared: (identity: ExactDeletionR2Identity) => Promise<void>;
+}): Promise<ExactDeletionR2Identity> {
+  const initial = (await listR2BucketIdentitiesStrict()).find(
+    (bucket) => bucket.name === input.name
+  );
+  if (!initial?.creationDate) {
+    throw new Error(`R2 bucket ${input.name} is missing or has no provider creation_date`);
+  }
+
+  const preparedHasAnyEvidence = Boolean(
+    input.prepared?.creationDate ||
+    input.prepared?.ownershipMarkerKey ||
+    input.prepared?.ownershipId
+  );
+  const ownershipId = preparedHasAnyEvidence
+    ? requireCompleteR2DeletionIdentity(input.name, input.prepared).ownershipId
+    : randomUUID().toLowerCase();
+  const markerKey = preparedHasAnyEvidence
+    ? requireCompleteR2DeletionIdentity(input.name, input.prepared).ownershipMarkerKey
+    : buildR2OwnershipMarkerKey(ownershipId);
+  const creationDate = preparedHasAnyEvidence
+    ? requireCompleteR2DeletionIdentity(input.name, input.prepared).creationDate
+    : initial.creationDate;
+  if (creationDate !== initial.creationDate) {
+    throw new Error(`R2 bucket ${input.name} changed after its ownership adoption was prepared`);
+  }
+
+  const prepared: ExactDeletionR2Identity = {
+    name: input.name,
+    creationDate,
+    ownershipMarkerKey: markerKey,
+    ownershipId,
+    environment: input.environment,
+    binding: input.binding,
+  };
+  await input.onPrepared(prepared);
+  await writeAndVerifyR2OwnershipMarker({
+    environment: input.environment,
+    binding: input.binding,
+    bucketName: input.name,
+    markerKey,
+    ownershipId,
+  });
+  const postMarker = (await listR2BucketIdentitiesStrict()).find(
+    (bucket) => bucket.name === input.name
+  );
+  if (!postMarker || postMarker.creationDate !== creationDate) {
+    throw new Error(`R2 bucket ${input.name} changed while Setup adopted its ownership`);
+  }
+  await assertR2BucketOwnershipForUse(prepared);
+  return prepared;
 }
 
 /**
@@ -5693,21 +11582,100 @@ async function removeAllR2ObjectsViaApi(
  */
 export async function deleteR2Bucket(
   name: string,
-  options: { objectKeys?: string[]; onProgress?: (message: string) => void } = {}
-): Promise<boolean> {
+  options: {
+    objectKeys?: string[];
+    onProgress?: (message: string) => void;
+    /** Omitted source is treated conservatively as an explicit, non-refreshable credential. */
+    apiCredentials?: {
+      accountId: string;
+      token: string;
+      source?: CloudflareApiToken['source'];
+    } | null;
+    ownership?: DeletionR2Identity;
+  } = {}
+): Promise<R2BucketDeleteResult> {
   try {
-    await removeKnownR2Objects(name, options.objectKeys ?? [], options.onProgress);
-    await removeAllR2ObjectsViaApi(name, options.onProgress);
-    const credentials = await getR2ApiCredentials();
-    if (credentials) {
-      await deleteR2BucketViaApi(name, credentials);
-    } else {
-      await wrangler(['r2', 'bucket', 'delete', name]);
+    const ownership = requireCompleteR2DeletionIdentity(name, options.ownership);
+    if ((await assertLiveR2DeletionIdentity(ownership, { requireMarker: true })) === 'absent') {
+      return { status: 'deleted' };
     }
-    return true;
+    const credentials =
+      options.apiCredentials === undefined ? await getR2ApiCredentials() : options.apiCredentials;
+    if (credentials) {
+      const manualCleanupTarget = await removeAllR2ObjectsViaApi(
+        name,
+        credentials,
+        ownership.ownershipMarkerKey,
+        options.onProgress,
+        async () => {
+          if (
+            (await assertLiveR2DeletionIdentity(ownership, { requireMarker: true })) === 'absent'
+          ) {
+            throw new Error(`R2 bucket ${name} disappeared during guarded object cleanup`);
+          }
+        }
+      );
+      if (manualCleanupTarget) {
+        return { status: 'manual_cleanup_required', target: manualCleanupTarget };
+      }
+      if ((await assertLiveR2DeletionIdentity(ownership, { requireMarker: true })) === 'absent') {
+        return { status: 'deleted' };
+      }
+      await deleteR2ObjectViaApi(name, ownership.ownershipMarkerKey, credentials);
+      // The provider exposes only a name-addressed DELETE, with no generation precondition. Keep
+      // the marker until the final stage, then minimize (but cannot eliminate) the last GET/DELETE
+      // TOCTOU window by re-reading creation_date immediately before the one-shot bucket DELETE.
+      if ((await assertLiveR2DeletionIdentity(ownership, { requireMarker: false })) === 'absent') {
+        return { status: 'deleted' };
+      }
+      try {
+        await deleteR2BucketViaApi(name, credentials);
+      } catch (error) {
+        const state = await assertLiveR2DeletionIdentity(ownership, { requireMarker: false });
+        if (state === 'absent') return { status: 'deleted' };
+        await restoreR2OwnershipMarkerAfterAmbiguousDelete(ownership);
+        throw error;
+      }
+    } else {
+      await removeKnownR2Objects(
+        name,
+        (options.objectKeys ?? []).filter((key) => key !== ownership.ownershipMarkerKey),
+        options.onProgress,
+        async () => {
+          if (
+            (await assertLiveR2DeletionIdentity(ownership, { requireMarker: true })) === 'absent'
+          ) {
+            throw new Error(`R2 bucket ${name} disappeared during guarded object cleanup`);
+          }
+        }
+      );
+      if ((await assertLiveR2DeletionIdentity(ownership, { requireMarker: true })) === 'absent') {
+        return { status: 'deleted' };
+      }
+      await wrangler([
+        'r2',
+        'object',
+        'delete',
+        `${name}/${ownership.ownershipMarkerKey}`,
+        '--remote',
+      ]);
+      if ((await assertLiveR2DeletionIdentity(ownership, { requireMarker: false })) === 'absent') {
+        return { status: 'deleted' };
+      }
+      try {
+        await wrangler(['r2', 'bucket', 'delete', name]);
+      } catch (error) {
+        const state = await assertLiveR2DeletionIdentity(ownership, { requireMarker: false });
+        if (state === 'absent') return { status: 'deleted' };
+        await restoreR2OwnershipMarkerAfterAmbiguousDelete(ownership);
+        throw error;
+      }
+    }
+    return { status: 'deleted' };
   } catch (error) {
-    options.onProgress?.(`  ⚠️ R2 bucket delete failed for ${name}: ${sanitizeError(error)}`);
-    return false;
+    const detail = sanitizeError(error);
+    options.onProgress?.(`  ⚠️ R2 bucket delete failed for ${name}: ${detail}`);
+    return { status: 'failed', error: detail };
   }
 }
 
@@ -5716,6 +11684,12 @@ export async function deleteR2Bucket(
  */
 export async function deleteEnvironment(options: DeleteOptions): Promise<{
   success: boolean;
+  completion: 'complete' | 'manual_action_required' | 'failed';
+  /** True only when the verified inventory contains no Authrim resources after this operation. */
+  environmentEmpty: boolean;
+  /** True when retrying the same deletion is the safe recovery action. */
+  retryable: boolean;
+  postDeleteVerification: PostDeleteVerificationStatus;
   deleted: {
     workers: string[];
     d1: string[];
@@ -5723,25 +11697,51 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     queues: string[];
     r2: string[];
     pages: string[];
+    dns: string[];
   };
+  manualR2: R2ManualCleanupTarget[];
+  manualDns: ManagedDnsCleanupIssue[];
+  manualControlTokens?: ControlTokenManualCleanupIssue[];
   errors: string[];
 }> {
   const {
     env,
+    environmentKnownLocally = false,
+    finalizeEnvironment = false,
     deleteWorkers = true,
     deleteD1 = true,
     deleteKV = true,
     deleteQueues = true,
     deleteR2 = true,
     deletePages = true,
+    knownWorkerNames = [],
+    knownWorkerResources = [],
     knownD1Names = [],
     knownQueueNames = [],
+    knownD1Resources = [],
+    knownKVResources = [],
+    knownQueueResources = [],
+    knownR2Resources = [],
+    knownPagesResources = [],
+    onWorkerIdentityBackfill,
+    knownDnsOwnership,
+    dnsCleanupRequired = false,
+    requiredDnsRoles = [],
     queueConsumerDetachPropagationDelayMs = QUEUE_CONSUMER_DETACH_PROPAGATION_DELAY_MS,
     workerDeletePropagationDelayMs = WORKER_DELETE_PROPAGATION_DELAY_MS,
+    postDeleteVerificationAttempts = ENVIRONMENT_DELETE_VERIFY_MAX_ATTEMPTS,
+    postDeleteVerificationDelayMs = ENVIRONMENT_DELETE_VERIFY_RETRY_DELAY_MS,
+    beforeD1Deletion,
     onProgress = console.log,
+    onDetail,
+    onResourceProgress,
   } = options;
-
   validateEnvName(env);
+  if (finalizeEnvironment && !deletePages && knownPagesResources.length > 0) {
+    throw new Error(
+      'Lock-recorded Pages projects must remain selected during final environment deletion'
+    );
+  }
 
   const deleted = {
     workers: [] as string[],
@@ -5750,19 +11750,263 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     queues: [] as string[],
     r2: [] as string[],
     pages: [] as string[],
+    dns: [] as string[],
+  };
+  const manualR2: R2ManualCleanupTarget[] = [];
+  const manualDns: ManagedDnsCleanupIssue[] = [];
+  const manualControlTokens: ControlTokenManualCleanupIssue[] = [];
+  const recordManualDnsIssues = (issues: readonly ManagedDnsCleanupIssue[]): void => {
+    for (const issue of issues) {
+      if (
+        !manualDns.some(
+          (existing) =>
+            existing.role === issue.role &&
+            existing.name === issue.name &&
+            existing.reason === issue.reason
+        )
+      ) {
+        manualDns.push(issue);
+      }
+    }
   };
   const errors: string[] = [];
+  let dependentDeletionBlocked = false;
+  let dependentDeletionReason:
+    | 'resource_identity'
+    | 'queue_consumer_detach'
+    | 'worker_delete'
+    | 'dns_cleanup'
+    | 'r2_delete'
+    | 'control_token_cleanup'
+    | null = null;
+  let detachedQueueConsumers: ExactQueueWorkerConsumerSnapshot[] = [];
+  let queueConsumerSnapshots: ExactQueueWorkerConsumerSnapshot[] = [];
 
-  // Get environment info first
-  const envs = await detectEnvironments(onProgress);
+  // Inventory verification is a safety boundary. Every selected resource type must be confirmed
+  // before the first destructive request so a transient list failure cannot be mistaken for an
+  // empty account and cause resources to be deleted out of dependency order.
+  const requiredResources = getRequiredDeletionInventoryResources({
+    deleteWorkers,
+    deleteD1,
+    deleteKV,
+    deleteQueues,
+    deleteR2,
+    deletePages,
+  });
+  // The broad discovery pass is advisory for resource types that receive an independently retried
+  // strict snapshot below. Worker listing already performs its own bounded retries, so it remains
+  // required here rather than multiplying the same retry loop.
+  const envs = await detectEnvironments(onProgress, {
+    requiredResources: requiredResources.filter((resource) => resource === 'Workers'),
+  });
   let envInfo = envs.find((e) => e.env === env);
+  const safeKnownWorkerNames = filterKnownWorkerNamesForEnvironment(env, knownWorkerNames);
   const safeKnownD1Names = filterKnownD1NamesForEnvironment(env, knownD1Names);
   const safeKnownQueueNames = filterKnownQueueNamesForEnvironment(env, knownQueueNames);
+  const pinnedD1 = normalizeKnownDeletionResourceIdentities({
+    env,
+    kind: 'D1 database',
+    resources: knownD1Resources,
+    acceptsName: (name) =>
+      isFixedD1NameForEnvironment(env, name) || isControlManagedD1NameForEnvironment(env, name),
+  });
+  const pinnedKV = normalizeKnownDeletionResourceIdentities({
+    env,
+    kind: 'KV namespace',
+    resources: knownKVResources,
+    acceptsName: (name) =>
+      isKVNameForEnvironment(env, name) || isControlManagedKVNameForEnvironment(env, name),
+  });
+  const pinnedQueues = normalizeKnownDeletionResourceIdentities({
+    env,
+    kind: 'Queue',
+    resources: knownQueueResources,
+    acceptsName: (name) => isQueueNameForEnvironment(env, name),
+  });
+  const pinnedR2 = normalizeKnownR2DeletionIdentities(env, knownR2Resources);
+  const pinnedPages = normalizeKnownPagesDeletionIdentities(env, knownPagesResources);
+  const pinnedWorkers = normalizeKnownWorkerDeletionIdentities(env, knownWorkerResources);
+  const requireInventory = async <T>(
+    resourceType: EnvironmentInventoryResource,
+    operation: () => Promise<T>
+  ): Promise<T> => {
+    let lastError: unknown;
+    const maxAttempts = resourceType === 'Workers' ? 1 : DELETION_PREFLIGHT_INVENTORY_MAX_ATTEMPTS;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        lastError = error;
+        if (attempt < maxAttempts) {
+          onProgress(
+            `${resourceType} deletion preflight failed; retrying ` +
+              `(${attempt + 1}/${maxAttempts})...`
+          );
+          if (process.env.NODE_ENV !== 'test') {
+            await sleep(DELETION_PREFLIGHT_INVENTORY_RETRY_DELAY_MS * attempt);
+          }
+        }
+      }
+    }
+    throw new EnvironmentInventoryUnavailableError(resourceType, lastError);
+  };
+  const [workerInventory, d1Inventory, kvInventory, queueInventory, r2Inventory, pagesInventory] =
+    await Promise.all([
+      deleteWorkers ? requireInventory('Workers', () => listWorkers({ onRetry: onProgress })) : [],
+      deleteD1 ? requireInventory('D1 databases', () => listD1Databases()) : [],
+      deleteKV ? requireInventory('KV namespaces', () => listKVNamespaces()) : [],
+      deleteQueues || deleteWorkers
+        ? requireInventory('Queues', () => listQueues({ strictOutput: true, requireIds: true }))
+        : [],
+      deleteR2
+        ? requireInventory('R2 buckets', () =>
+            listR2Buckets({ throwOnError: true, requireIdentity: true }).then((buckets) =>
+              buckets.filter((bucket) => isR2NameForEnvironment(env, bucket.name))
+            )
+          )
+        : [],
+      deletePages
+        ? requireInventory('Pages projects', () =>
+            listPagesProjects({
+              strictOutput: true,
+              requireIdentity: true,
+              requireIdentityForEnvironment: env,
+            }).then((projects) =>
+              projects.filter((project) => isPagesNameForEnvironment(env, project.name))
+            )
+          )
+        : [],
+    ]);
+  r2Inventory.forEach(assertR2BucketIdentityComplete);
+  const remoteR2 = r2Inventory.map((bucket) => ({
+    name: bucket.name,
+    creationDate: bucket.creationDate!,
+  }));
+  const remoteD1 = d1Inventory
+    .filter(
+      (database) =>
+        isFixedD1NameForEnvironment(env, database.name) ||
+        isControlManagedD1NameForEnvironment(env, database.name)
+    )
+    .map((database) => ({ name: database.name, id: database.uuid }));
+  const remoteKV = kvInventory
+    .filter(
+      (namespace) =>
+        isKVNameForEnvironment(env, namespace.title) ||
+        isControlManagedKVNameForEnvironment(env, namespace.title)
+    )
+    .map((namespace) => ({ name: namespace.title, id: namespace.id }));
+  const remoteQueues = queueInventory
+    .filter((queue) => isQueueNameForEnvironment(env, queue.name))
+    .map((queue) => ({ name: queue.name, id: queue.id! }));
+  const workerPreflight = await reconcileWorkerDeletionIdentities({
+    env,
+    pinned: pinnedWorkers,
+    remoteInventory: workerInventory,
+  });
+  const d1Preflight = reconcilePinnedDeletionIdentities({
+    label: 'D1 database',
+    pinned: pinnedD1,
+    remote: remoteD1,
+  });
+  const kvPreflight = reconcilePinnedDeletionIdentities({
+    label: 'KV namespace',
+    pinned: pinnedKV,
+    remote: remoteKV,
+  });
+  const queuePreflight = reconcilePinnedDeletionIdentities({
+    label: 'Queue',
+    pinned: pinnedQueues,
+    remote: remoteQueues,
+  });
+  const r2Preflight = deleteR2
+    ? await reconcileR2DeletionIdentities({ pinned: pinnedR2, remote: remoteR2 })
+    : {
+        targets: [] as DeletionR2Identity[],
+        mismatches: [] as string[],
+        liveNames: new Set<string>(),
+      };
+  const remotePages = pagesInventory.map((project) => {
+    if (!project.id || !project.createdOn) {
+      throw new EnvironmentInventoryUnavailableError(
+        'Pages projects',
+        new Error(`Pages project ${project.name} omitted provider ID/created_on`)
+      );
+    }
+    return { name: project.name, id: project.id, createdOn: project.createdOn };
+  });
+  const pagesPreflight = deletePages
+    ? reconcilePagesDeletionIdentities({ pinned: pinnedPages, remote: remotePages })
+    : {
+        targets: [] as DeletionPagesIdentity[],
+        mismatches: [] as string[],
+        liveIds: new Set<string>(),
+      };
+  const resourceIdentityMismatches = [
+    ...workerPreflight.mismatches,
+    ...d1Preflight.mismatches,
+    ...kvPreflight.mismatches,
+    ...queuePreflight.mismatches,
+    ...r2Preflight.mismatches,
+    ...pagesPreflight.mismatches,
+  ];
+  const pinnedD1Names = new Set(pinnedD1.map((resource) => resource.name));
+  const pinnedQueueNames = new Set(pinnedQueues.map((resource) => resource.name));
+  const pinnedWorkerNames = new Set(pinnedWorkers.map((resource) => resource.name));
+  for (const name of safeKnownWorkerNames) {
+    if (!pinnedWorkerNames.has(name)) {
+      resourceIdentityMismatches.push(
+        `Worker ownership for ${name} has no immutable identity; name-only deletion is not allowed`
+      );
+    }
+  }
+  for (const name of safeKnownD1Names) {
+    if (!pinnedD1Names.has(name)) {
+      resourceIdentityMismatches.push(
+        `D1 database ownership for ${name} has no immutable ID; name-only deletion is not allowed`
+      );
+    }
+  }
+  for (const name of safeKnownQueueNames) {
+    if (!pinnedQueueNames.has(name)) {
+      resourceIdentityMismatches.push(
+        `Queue ownership for ${name} has no immutable ID; name-only deletion is not allowed`
+      );
+    }
+  }
+  // Preserve strict remote inventory separately from lock-recorded recovery names. The token
+  // cleanup gate uses this evidence to distinguish a still-queryable Control D1 from one that was
+  // already removed during a previously interrupted deletion.
+  const observedD1Resources = [...remoteD1].sort((left, right) => left.id.localeCompare(right.id));
 
-  if (!envInfo && safeKnownD1Names.length === 0 && safeKnownQueueNames.length === 0) {
+  if (
+    !envInfo &&
+    !environmentKnownLocally &&
+    safeKnownWorkerNames.length === 0 &&
+    safeKnownD1Names.length === 0 &&
+    safeKnownQueueNames.length === 0 &&
+    pinnedD1.length === 0 &&
+    pinnedKV.length === 0 &&
+    pinnedQueues.length === 0 &&
+    pinnedR2.length === 0 &&
+    pinnedPages.length === 0 &&
+    pinnedWorkers.length === 0 &&
+    remoteD1.length === 0 &&
+    remoteKV.length === 0 &&
+    remoteQueues.length === 0 &&
+    r2Inventory.length === 0 &&
+    remotePages.length === 0
+  ) {
     return {
       success: false,
+      completion: 'failed',
+      environmentEmpty: false,
+      retryable: false,
+      postDeleteVerification: 'not_required',
       deleted,
+      manualR2,
+      manualDns,
+      manualControlTokens,
       errors: [`Environment '${env}' not found`],
     };
   }
@@ -5778,31 +12022,214 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     };
   }
 
-  const knownD1Set = new Set(envInfo.d1.map((db) => db.name));
-  for (const name of safeKnownD1Names) {
-    if (!knownD1Set.has(name)) {
-      envInfo.d1.push({ name, id: '' });
-      knownD1Set.add(name);
-    }
+  if (deleteWorkers) {
+    envInfo.workers = workerPreflight.targets.map((worker) => ({ name: worker.name }));
   }
-  const knownQueueSet = new Set(envInfo.queues.map((queue) => queue.name));
-  for (const name of safeKnownQueueNames) {
-    if (!knownQueueSet.has(name)) {
-      envInfo.queues.push({ name });
-      knownQueueSet.add(name);
-    }
-  }
+  const workerDeletionTargetsByName = new Map(
+    workerPreflight.targets.map((worker) => [worker.name, worker])
+  );
+
+  // Replace the storage rows from the broad environment scan with the final strict ownership
+  // snapshot. Pinned-but-absent rows remain so the local lock can be reconciled without issuing a
+  // provider mutation by deterministic name.
+  if (deleteD1) envInfo.d1 = d1Preflight.targets;
+  if (deleteKV) envInfo.kv = kvPreflight.targets;
+  if (deleteQueues || deleteWorkers) envInfo.queues = queuePreflight.targets;
+  if (deleteR2) envInfo.r2 = r2Preflight.targets;
+  if (deletePages) envInfo.pages = pagesPreflight.targets;
+  const queuesForConsumerDetach =
+    deleteWorkers && envInfo.workers.length > 0
+      ? Array.from(
+          new Map(
+            envInfo.queues
+              .filter((queue): queue is { name: string; id: string } =>
+                Boolean(queue.id && queuePreflight.liveIds.has(queue.id))
+              )
+              .map((queue) => [queue.name, queue])
+          ).values()
+        )
+      : envInfo.queues.filter((queue): queue is { name: string; id: string } =>
+          Boolean(queue.id && queuePreflight.liveIds.has(queue.id))
+        );
+  const queueConsumerWorkerNamesForDeletion = deleteWorkers
+    ? getQueueConsumerWorkerNamesForDeletion(env, envInfo.workers)
+    : [];
+  const allCurrentResourceTypesSelected =
+    deleteWorkers && deleteD1 && deleteKV && deleteQueues && deleteR2;
+  const fullDeletionRequested =
+    allCurrentResourceTypesSelected && (deletePages || finalizeEnvironment);
+
+  const totalResources =
+    (deleteWorkers ? envInfo.workers.length : 0) +
+    (deleteD1 ? envInfo.d1.length : 0) +
+    (deleteKV ? envInfo.kv.length : 0) +
+    (deleteQueues ? envInfo.queues.length : 0) +
+    (deleteR2 ? envInfo.r2.length : 0) +
+    (deletePages ? envInfo.pages.length : 0) +
+    (fullDeletionRequested ? Object.keys(knownDnsOwnership ?? {}).length : 0);
+  let processedResources = 0;
+  const reportResourceProcessed = () => {
+    processedResources += 1;
+    onResourceProgress?.({ current: processedResources, total: totalResources });
+  };
+  onResourceProgress?.({ current: 0, total: totalResources });
 
   onProgress(`🗑️ Deleting environment: ${env}`);
   onProgress('');
 
+  let d1DeletionCredentials: CloudflareDeletionCredentials | undefined;
+  let generalDeletionCredentials: CloudflareDeletionCredentials | undefined;
+  if (resourceIdentityMismatches.length > 0) {
+    errors.push(...resourceIdentityMismatches);
+    dependentDeletionBlocked = true;
+    dependentDeletionReason = 'resource_identity';
+    onProgress(
+      '⚠️ Immutable resource ownership preflight failed. No Cloudflare resource was modified.'
+    );
+    for (const mismatch of resourceIdentityMismatches) onProgress(`  ❌ ${mismatch}`);
+    onProgress('');
+  } else {
+    if (workerPreflight.backfills.length > 0) {
+      if (!onWorkerIdentityBackfill) {
+        errors.push(
+          'Verified legacy Worker identities could not be durably backfilled before deletion'
+        );
+      } else {
+        try {
+          await onWorkerIdentityBackfill(workerPreflight.backfills);
+        } catch (error) {
+          errors.push(`Worker identity backfill failed: ${sanitizeError(error)}`);
+        }
+      }
+    }
+    // Resolve every credential required by the selected live storage snapshot before Queue
+    // consumers or any other resource is modified. A missing REST credential cannot therefore
+    // strand the environment halfway through deletion.
+    const needsD1Credentials = deleteD1 && d1Preflight.liveIds.size > 0;
+    const needsGeneralCredentials =
+      (deleteKV && kvPreflight.liveIds.size > 0) ||
+      (deleteQueues && queuePreflight.liveIds.size > 0) ||
+      (deleteWorkers &&
+        queuesForConsumerDetach.length > 0 &&
+        queueConsumerWorkerNamesForDeletion.length > 0);
+    let resolvedD1: Awaited<ReturnType<typeof resolveCloudflareD1Credentials>> | undefined;
+    let resolvedGeneral:
+      | Awaited<ReturnType<typeof resolveCloudflareInventoryCredentials>>
+      | undefined;
+    let credentialResolutionFailed = false;
+    try {
+      [resolvedD1, resolvedGeneral] = await Promise.all([
+        needsD1Credentials ? resolveCloudflareD1Credentials() : undefined,
+        needsGeneralCredentials ? resolveCloudflareInventoryCredentials() : undefined,
+      ]);
+    } catch (error) {
+      credentialResolutionFailed = true;
+      errors.push(
+        `Cloudflare exact-ID deletion credential preflight failed: ${sanitizeError(error)}`
+      );
+    }
+    if (resolvedD1) {
+      d1DeletionCredentials = resolvedD1;
+    } else if (needsD1Credentials && !credentialResolutionFailed) {
+      errors.push('Cloudflare D1 API credentials are unavailable for exact-ID deletion');
+    }
+    if (resolvedGeneral) {
+      generalDeletionCredentials = resolvedGeneral;
+    } else if (needsGeneralCredentials && !credentialResolutionFailed) {
+      errors.push('Cloudflare API credentials are unavailable for exact-ID KV/Queue deletion');
+    }
+    if (
+      errors.length === 0 &&
+      deleteWorkers &&
+      queuesForConsumerDetach.length > 0 &&
+      queueConsumerWorkerNamesForDeletion.length > 0
+    ) {
+      try {
+        queueConsumerSnapshots = await listExactQueueWorkerConsumers({
+          queues: queuesForConsumerDetach,
+          workerNames: queueConsumerWorkerNamesForDeletion,
+          credentials: generalDeletionCredentials!,
+        });
+      } catch (error) {
+        errors.push(`Cloudflare exact Queue consumer preflight failed: ${sanitizeError(error)}`);
+      }
+    }
+    if (errors.length > 0) {
+      dependentDeletionBlocked = true;
+      dependentDeletionReason = 'resource_identity';
+      onProgress(
+        '⚠️ Exact-ID deletion credentials could not be established. No Cloudflare resource was modified.'
+      );
+      for (const error of errors) onProgress(`  ❌ ${error}`);
+      onProgress('');
+    }
+  }
+
+  // Prove DNS ownership before the first destructive operation. A missing lock entry, changed
+  // immutable ID, or changed value must not be discovered only after Workers have been removed.
+  if (!dependentDeletionBlocked && fullDeletionRequested) {
+    const dnsPreflight = await cleanupManagedDnsRecords({
+      entries: knownDnsOwnership,
+      required: dnsCleanupRequired,
+      requiredRoles: requiredDnsRoles,
+      preflightOnly: true,
+    });
+    if (dnsPreflight.issues.length > 0) {
+      recordManualDnsIssues(dnsPreflight.issues);
+      if (dnsPreflight.issues.every(isUntrackedDnsCleanupIssue)) {
+        onProgress(
+          '⚠️ DNS ownership was never recorded. Setup will leave untracked DNS unchanged and continue deleting the environment.'
+        );
+        for (const issue of dnsPreflight.issues) {
+          onProgress(`  ⚠️ ${issue.name} - ${issue.reason}`);
+        }
+      } else {
+        dependentDeletionBlocked = true;
+        dependentDeletionReason = 'dns_cleanup';
+        onProgress(
+          '⚠️ DNS ownership preflight failed. No Cloudflare environment resource was deleted.'
+        );
+        for (const issue of dnsPreflight.issues) {
+          onProgress(`  ❌ ${issue.name} - ${issue.reason}`);
+        }
+      }
+      onProgress('');
+    }
+  }
+
   // Queue consumers must be detached before Cloudflare allows the Worker script to be deleted.
-  if (deleteWorkers && envInfo.workers.length > 0 && envInfo.queues.length > 0) {
-    const queueConsumerWorkerNames = getQueueConsumerWorkerNamesForDeletion(env, envInfo.workers);
-    if (queueConsumerWorkerNames.length > 0) {
-      onProgress(`📨 Detaching Queue Consumers (${envInfo.queues.length})...`);
-      await deleteQueueConsumersForWorkers(envInfo.queues, queueConsumerWorkerNames, onProgress);
-      if (queueConsumerDetachPropagationDelayMs > 0) {
+  if (
+    !dependentDeletionBlocked &&
+    deleteWorkers &&
+    envInfo.workers.length > 0 &&
+    queuesForConsumerDetach.length > 0
+  ) {
+    if (queueConsumerWorkerNamesForDeletion.length > 0) {
+      onProgress(`📨 Detaching Queue Consumers (${queuesForConsumerDetach.length})...`);
+      const detachSummary = await deleteExactQueueConsumers(
+        queueConsumerSnapshots,
+        generalDeletionCredentials!,
+        (message) => {
+          if (message.includes('(not attached or already removed)')) {
+            onDetail?.(message);
+            return;
+          }
+          onProgress(message);
+        }
+      );
+      detachedQueueConsumers = detachSummary.removed;
+      if (detachSummary.errors.length > 0) {
+        errors.push(...detachSummary.errors);
+        const restoreErrors = await restoreExactQueueConsumers(
+          detachedQueueConsumers,
+          generalDeletionCredentials!,
+          onProgress
+        );
+        errors.push(...restoreErrors);
+        detachedQueueConsumers = [];
+        dependentDeletionBlocked = true;
+        dependentDeletionReason = 'queue_consumer_detach';
+      } else if (queueConsumerDetachPropagationDelayMs > 0) {
         onProgress(
           `  ⏳ Waiting ${Math.ceil(
             queueConsumerDetachPropagationDelayMs / 1000
@@ -5815,19 +12242,51 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
   }
 
   // Delete Workers before D1/KV because they reference runtime bindings.
-  if (deleteWorkers && envInfo.workers.length > 0) {
+  if (!dependentDeletionBlocked && deleteWorkers && envInfo.workers.length > 0) {
+    const queueConsumerWorkerNameSet = new Set(queueConsumerWorkerNamesForDeletion);
+    const workersForDeletion = [...envInfo.workers].sort((left, right) => {
+      const leftIsConsumer = queueConsumerWorkerNameSet.has(left.name);
+      const rightIsConsumer = queueConsumerWorkerNameSet.has(right.name);
+      return Number(leftIsConsumer) - Number(rightIsConsumer);
+    });
+    const deletedWorkerNames = new Set<string>();
     onProgress(`🔧 Deleting Workers (${envInfo.workers.length})...`);
-    for (const worker of envInfo.workers) {
+    for (const worker of workersForDeletion) {
       onProgress(`  ⏳ Deleting: ${worker.name}...`);
-      const success = await deleteWorker(worker.name);
-      if (success) {
-        deleted.workers.push(worker.name);
-        onProgress(`  ✅ ${worker.name}`);
-      } else {
-        onProgress(`  ⚠️ ${worker.name} (not found or already deleted)`);
+      const target = workerDeletionTargetsByName.get(worker.name);
+      let workerResult: WorkerDeleteResult;
+      try {
+        if (!target) {
+          throw new Error(`Worker ownership evidence is missing for ${worker.name}`);
+        }
+        workerResult = await deleteWorkerWithResult(worker.name, onProgress, () =>
+          assertWorkerDeletionIdentity(target, onProgress)
+        );
+      } catch (error) {
+        workerResult = { status: 'failed', error: sanitizeError(error) };
       }
+      if (workerResult.status === 'deleted') {
+        deleted.workers.push(worker.name);
+        deletedWorkerNames.add(worker.name);
+        onProgress(`  ✅ ${worker.name}`);
+      } else if (workerResult.status === 'already_absent') {
+        deleted.workers.push(worker.name);
+        deletedWorkerNames.add(worker.name);
+        onProgress(`  ⚠️ ${worker.name} (already absent)`);
+      } else {
+        errors.push(`Failed to delete Worker: ${worker.name} (${workerResult.error})`);
+        dependentDeletionBlocked = true;
+        dependentDeletionReason = 'worker_delete';
+        onProgress(`  ❌ ${worker.name} - ${workerResult.error}`);
+      }
+      reportResourceProcessed();
+      if (dependentDeletionBlocked) break;
     }
-    if (envInfo.queues.length > 0 && workerDeletePropagationDelayMs > 0) {
+    if (
+      !dependentDeletionBlocked &&
+      queuesForConsumerDetach.length > 0 &&
+      workerDeletePropagationDelayMs > 0
+    ) {
       onProgress(
         `  ⏳ Waiting ${Math.ceil(
           workerDeletePropagationDelayMs / 1000
@@ -5835,72 +12294,189 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
       );
       await sleep(workerDeletePropagationDelayMs);
     }
+    const consumersToRestore = detachedQueueConsumers.filter(
+      (consumer) => !deletedWorkerNames.has(consumer.workerName)
+    );
+    if (consumersToRestore.length > 0) {
+      onProgress('  ⚠️ Restoring Queue consumers for Workers that could not be deleted...');
+      errors.push(
+        ...(await restoreExactQueueConsumers(
+          consumersToRestore,
+          generalDeletionCredentials!,
+          onProgress
+        ))
+      );
+    }
+    onProgress('');
+  }
+
+  if (dependentDeletionReason === 'queue_consumer_detach') {
+    onProgress(
+      '  ⚠️ Stopping before deleting Workers because Queue consumers could not be detached safely.'
+    );
+    onProgress('  ⚠️ Successfully detached consumers were restored; retry the deletion.');
+    onProgress('');
+  } else if (dependentDeletionReason === 'worker_delete') {
+    onProgress(
+      '  ⚠️ Stopping before deleting bound storage and Queues because Worker deletion is incomplete.'
+    );
+    onProgress('  ⚠️ Resolve the Worker error, then retry the environment deletion.');
+    onProgress('');
+  }
+
+  if (!dependentDeletionBlocked && fullDeletionRequested) {
+    onProgress('🌐 Reconciling Setup-managed DNS records...');
+    const dnsCleanup = await cleanupManagedDnsRecords({
+      entries: knownDnsOwnership,
+      required: dnsCleanupRequired,
+      requiredRoles: requiredDnsRoles,
+      onProgress,
+    });
+    deleted.dns.push(...dnsCleanup.completedNames);
+    recordManualDnsIssues(dnsCleanup.issues);
+    for (let index = 0; index < Object.keys(knownDnsOwnership ?? {}).length; index++) {
+      reportResourceProcessed();
+    }
+    if (dnsCleanup.issues.some((issue) => !isUntrackedDnsCleanupIssue(issue))) {
+      dependentDeletionBlocked = true;
+      dependentDeletionReason = 'dns_cleanup';
+      onProgress(
+        '  ⚠️ Setup cannot safely delete or restore DNS without exact ownership evidence. No bound storage was deleted.'
+      );
+    } else if (dnsCleanup.issues.length > 0) {
+      onProgress('  ⚠️ Untracked DNS was left unchanged for manual review.');
+    }
     onProgress('');
   }
 
   // Delete R2 buckets before D1 so object_catalog_objects can still identify stored objects.
-  if (deleteR2 && envInfo.r2.length > 0) {
-    const knownR2ObjectsByBucket = await collectKnownR2ObjectsByBucket(env, envInfo.r2, onProgress);
+  if (!dependentDeletionBlocked && deleteR2 && envInfo.r2.length > 0) {
+    const r2ApiCredentials = await getR2ApiCredentials();
+    const knownR2ObjectsByBucket = r2ApiCredentials
+      ? new Map<string, string[]>()
+      : await collectKnownR2ObjectsByBucket(env, envInfo.r2, onProgress);
     onProgress(`📁 Deleting R2 Buckets (${envInfo.r2.length})...`);
     for (const bucket of envInfo.r2) {
       onProgress(`  ⏳ Deleting: ${bucket.name}...`);
-      const success = await deleteR2Bucket(bucket.name, {
+      const r2Result = await deleteR2Bucket(bucket.name, {
         objectKeys: knownR2ObjectsByBucket.get(bucket.name) ?? [],
         onProgress,
+        apiCredentials: r2ApiCredentials,
+        ownership: bucket,
       });
-      if (success) {
+      if (r2Result.status === 'deleted') {
         deleted.r2.push(bucket.name);
         onProgress(`  ✅ ${bucket.name}`);
+      } else if (r2Result.status === 'manual_cleanup_required') {
+        manualR2.push(r2Result.target);
+        onProgress(`  ⚠️ ${bucket.name} requires manual Dashboard cleanup`);
       } else {
-        errors.push(
-          `Failed to delete R2: ${bucket.name} (bucket may still contain objects or require manual cleanup)`
+        errors.push(`Failed to delete R2: ${bucket.name} (${r2Result.error})`);
+        dependentDeletionBlocked = true;
+        dependentDeletionReason = 'r2_delete';
+        onProgress(`  ❌ ${bucket.name} - ${r2Result.error}`);
+      }
+      reportResourceProcessed();
+    }
+    onProgress('');
+    if (dependentDeletionReason === 'r2_delete') {
+      onProgress(
+        '  ⚠️ Stopping before deleting D1 and other resources because R2 deletion is incomplete.'
+      );
+      onProgress('  ⚠️ The R2 object catalog was preserved so the deletion can be retried safely.');
+      onProgress('');
+    }
+  }
+
+  if (!dependentDeletionBlocked && deleteD1 && beforeD1Deletion) {
+    onProgress('🔐 Revoking setup-managed Control API tokens...');
+    try {
+      await beforeD1Deletion({ observedD1Resources });
+      onProgress('  ✅ Control API token cleanup evidence verified');
+    } catch (error) {
+      const detail = sanitizeError(error);
+      if (error instanceof ControlTokenCleanupManualActionError) {
+        manualControlTokens.push(error.issue);
+        onProgress(
+          '  ⚠️ The current Cloudflare credential cannot revoke the recorded Control API ' +
+            'tokens. Exact checkpoint targets were retained for manual review; verified resource ' +
+            'deletion will continue.'
         );
-        onProgress(`  ❌ ${bucket.name}`);
+        for (const tokenId of error.issue.targetTokenIds ?? []) {
+          onProgress(`    • Exact ${error.issue.tokenOwnership ?? 'unknown'} token ID: ${tokenId}`);
+        }
+      } else if (detail === MISSING_CONTROL_TOKEN_CLEANUP_CHECKPOINT) {
+        manualControlTokens.push({ reason: detail });
+        onProgress(
+          '  ⚠️ Control D1 and its token cleanup checkpoint are already absent. ' +
+            'Unidentified API tokens were left unchanged for manual review.'
+        );
+      } else {
+        errors.push(`Failed to revoke setup-managed Control API tokens: ${detail}`);
+        dependentDeletionBlocked = true;
+        dependentDeletionReason = 'control_token_cleanup';
+        onProgress(`  ❌ Control API token cleanup blocked D1 deletion: ${detail}`);
       }
     }
     onProgress('');
   }
 
   // Delete D1 databases
-  if (deleteD1 && envInfo.d1.length > 0) {
+  if (!dependentDeletionBlocked && deleteD1 && envInfo.d1.length > 0) {
     onProgress(`📊 Deleting D1 Databases (${envInfo.d1.length})...`);
     for (const db of envInfo.d1) {
       onProgress(`  ⏳ Deleting: ${db.name}...`);
-      const success = await deleteD1Database(db.name);
-      if (success) {
+      const result = d1Preflight.liveIds.has(db.id)
+        ? await deleteD1DatabaseWithResult(db.id, d1DeletionCredentials)
+        : ({ status: 'already_absent' } as const);
+      if (result.status === 'deleted') {
         deleted.d1.push(db.name);
         onProgress(`  ✅ ${db.name}`);
+      } else if (result.status === 'already_absent') {
+        deleted.d1.push(db.name);
+        onProgress(`  ⚠️ ${db.name} (already absent)`);
       } else {
-        errors.push(`Failed to delete D1: ${db.name}`);
-        onProgress(`  ❌ ${db.name}`);
+        errors.push(`Failed to delete D1: ${db.name} (${result.error})`);
+        onProgress(`  ❌ ${db.name} - ${result.error}`);
       }
+      reportResourceProcessed();
     }
     onProgress('');
   }
 
   // Delete KV namespaces
-  if (deleteKV && envInfo.kv.length > 0) {
+  if (!dependentDeletionBlocked && deleteKV && envInfo.kv.length > 0) {
     onProgress(`🗄️ Deleting KV Namespaces (${envInfo.kv.length})...`);
     for (const kv of envInfo.kv) {
       onProgress(`  ⏳ Deleting: ${kv.name}...`);
-      const success = await deleteKVNamespace(kv.id);
-      if (success) {
+      const result = kvPreflight.liveIds.has(kv.id)
+        ? await deleteKVNamespaceWithResult(kv.id, generalDeletionCredentials)
+        : ({ status: 'already_absent' } as const);
+      if (result.status === 'deleted') {
         deleted.kv.push(kv.name);
         onProgress(`  ✅ ${kv.name}`);
+      } else if (result.status === 'already_absent') {
+        deleted.kv.push(kv.name);
+        onProgress(`  ⚠️ ${kv.name} (already absent)`);
       } else {
-        errors.push(`Failed to delete KV: ${kv.name}`);
-        onProgress(`  ❌ ${kv.name}`);
+        errors.push(`Failed to delete KV: ${kv.name} (${result.error})`);
+        onProgress(`  ❌ ${kv.name} - ${result.error}`);
       }
+      reportResourceProcessed();
     }
     onProgress('');
   }
 
   // Delete legacy Pages projects
-  if (deletePages && envInfo.pages.length > 0) {
+  if (!dependentDeletionBlocked && deletePages && envInfo.pages.length > 0) {
     onProgress(`📄 Deleting legacy Pages Projects (${envInfo.pages.length})...`);
     for (const project of envInfo.pages) {
       onProgress(`  ⏳ Deleting: ${project.name}...`);
-      const success = await deletePagesProject(project.name);
+      const success = await deletePagesProject({
+        name: project.name,
+        id: project.id!,
+        createdOn: project.createdOn!,
+      });
       if (success) {
         deleted.pages.push(project.name);
         onProgress(`  ✅ ${project.name}`);
@@ -5908,24 +12484,32 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
         errors.push(`Failed to delete legacy Pages project: ${project.name}`);
         onProgress(`  ❌ ${project.name}`);
       }
+      reportResourceProcessed();
     }
     onProgress('');
   }
 
   // Delete Queues last. Cloudflare can keep transient Worker/Queue references briefly after detach
   // and script deletion, so Queue removal is intentionally delayed until all Worker work is complete.
-  if (deleteQueues && envInfo.queues.length > 0) {
+  if (!dependentDeletionBlocked && deleteQueues && envInfo.queues.length > 0) {
     onProgress(`📨 Deleting Queues (${envInfo.queues.length})...`);
     for (const queue of envInfo.queues) {
       onProgress(`  ⏳ Deleting: ${queue.name}...`);
-      const success = await deleteQueue(queue.name);
-      if (success) {
+      const queueResult =
+        queue.id && queuePreflight.liveIds.has(queue.id)
+          ? await deleteQueueWithResult(queue.id, generalDeletionCredentials)
+          : ({ status: 'already_absent' } as const);
+      if (queueResult.status === 'deleted') {
         deleted.queues.push(queue.name);
         onProgress(`  ✅ ${queue.name}`);
+      } else if (queueResult.status === 'already_absent') {
+        deleted.queues.push(queue.name);
+        onProgress(`  ⚠️ ${queue.name} (already absent)`);
       } else {
-        errors.push(`Failed to delete Queue: ${queue.name}`);
-        onProgress(`  ❌ ${queue.name}`);
+        errors.push(`Failed to delete Queue: ${queue.name} (${queueResult.error})`);
+        onProgress(`  ❌ ${queue.name} - ${queueResult.error}`);
       }
+      reportResourceProcessed();
     }
     onProgress('');
   }
@@ -5937,22 +12521,96 @@ export async function deleteEnvironment(options: DeleteOptions): Promise<{
     deleted.kv.length +
     deleted.queues.length +
     deleted.r2.length +
-    deleted.pages.length;
+    deleted.pages.length +
+    deleted.dns.length;
+  // A partial deletion deliberately preserves the environment even when the selected inventory
+  // happens to be empty. Unselected inventory may be unavailable, so it cannot prove that the
+  // remote environment is empty or justify deleting the local recovery state.
+  let environmentEmpty = false;
+  let retryable = false;
+  let postDeleteVerification: PostDeleteVerificationStatus = 'not_required';
+  const hasBlockingManualDns = manualDns.some((issue) => !isUntrackedDnsCleanupIssue(issue));
+  if (
+    fullDeletionRequested &&
+    errors.length === 0 &&
+    manualR2.length === 0 &&
+    !hasBlockingManualDns
+  ) {
+    const verification = await verifyEnvironmentAbsentAfterDeletion({
+      env,
+      selection: {
+        deleteWorkers,
+        deleteD1,
+        deleteKV,
+        deleteQueues,
+        deleteR2,
+        deletePages,
+      },
+      attempts: postDeleteVerificationAttempts,
+      retryDelayMs: postDeleteVerificationDelayMs,
+      onProgress,
+      onDetail,
+    });
+    postDeleteVerification = verification.status;
+    if (verification.status === 'verified_empty') {
+      environmentEmpty = true;
+    } else {
+      retryable = true;
+      if (verification.status === 'resources_remaining') {
+        errors.push(
+          `Post-delete verification still found Cloudflare resources for environment '${env}' ` +
+            `after ${verification.attempts} attempt(s). Local recovery state was preserved; retry deletion.`
+        );
+      } else {
+        errors.push(
+          `Post-delete Cloudflare inventory verification was unavailable after ` +
+            `${verification.attempts} attempt(s). Local recovery state was preserved; retry deletion. ` +
+            `Details: ${verification.error ?? 'unknown inventory error'}`
+        );
+      }
+    }
+  }
 
   onProgress('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  if (errors.length === 0) {
+  if (errors.length > 0) {
+    onProgress(`❌ Environment '${env}' deletion encountered ${errors.length} error(s)`);
+  } else if (manualR2.length > 0 || manualDns.length > 0 || manualControlTokens.length > 0) {
+    const manualActionCount = manualR2.length + manualDns.length + manualControlTokens.length;
+    onProgress(
+      environmentEmpty
+        ? `✅ Environment '${env}' deleted; ${manualActionCount} Cloudflare follow-up review(s) remain`
+        : `⚠️ Environment '${env}' deletion requires ${manualActionCount} manual action(s)`
+    );
+  } else if (environmentEmpty) {
     onProgress(`✅ Environment '${env}' deleted successfully!`);
   } else {
-    onProgress(`⚠️ Environment '${env}' partially deleted`);
+    onProgress(`✅ Selected resources for '${env}' deleted; remaining environment preserved`);
   }
   onProgress(`   Deleted: ${totalDeleted} resources`);
+  if (manualR2.length > 0 || manualDns.length > 0 || manualControlTokens.length > 0) {
+    onProgress(
+      `   Manual actions: ${manualR2.length + manualDns.length + manualControlTokens.length}`
+    );
+  }
   if (errors.length > 0) {
     onProgress(`   Errors: ${errors.length}`);
   }
 
   return {
     success: errors.length === 0,
+    completion:
+      errors.length > 0
+        ? 'failed'
+        : manualR2.length > 0 || manualDns.length > 0 || manualControlTokens.length > 0
+          ? 'manual_action_required'
+          : 'complete',
+    environmentEmpty,
+    retryable,
+    postDeleteVerification,
     deleted,
+    manualR2,
+    manualDns,
+    manualControlTokens,
     errors,
   };
 }

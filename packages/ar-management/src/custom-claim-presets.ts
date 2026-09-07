@@ -2,6 +2,7 @@ export interface CustomClaimPresetField {
   field_key: string;
   display_label: string;
   field_type: string;
+  cardinality?: 'single' | 'multi';
   is_pii: number;
   is_searchable: number;
   is_exportable: number;
@@ -11,7 +12,7 @@ export interface CustomClaimPresetField {
   ui_group_order: number;
   ui_field_order: number;
   examples_json: string;
-  scope: 'profile' | 'email' | 'phone' | 'address';
+  scope: string;
   description: string;
 }
 
@@ -39,6 +40,50 @@ const ADDRESS_GROUP = {
   ui_group_label: 'Address',
   ui_group_order: 30,
 };
+
+const WORKFORCE_GROUP = {
+  ui_group_key: 'workforce',
+  ui_group_label: 'Workforce',
+  ui_group_order: 40,
+};
+
+const ACCESS_GROUP = {
+  ui_group_key: 'access',
+  ui_group_label: 'Access',
+  ui_group_order: 50,
+};
+
+function commonPresetField(input: {
+  field_key: string;
+  display_label: string;
+  field_type?: string;
+  cardinality?: 'single' | 'multi';
+  is_pii?: number;
+  is_searchable?: number;
+  is_exportable?: number;
+  display_order: number;
+  ui_field_order: number;
+  examples: unknown[];
+  scope: string;
+  description: string;
+  group: typeof WORKFORCE_GROUP | typeof ACCESS_GROUP | typeof PROFILE_GROUP;
+}): CustomClaimPresetField {
+  return {
+    field_key: input.field_key,
+    display_label: input.display_label,
+    field_type: input.field_type ?? 'string',
+    cardinality: input.cardinality ?? 'single',
+    is_pii: input.is_pii ?? 0,
+    is_searchable: input.is_searchable ?? 0,
+    is_exportable: input.is_exportable ?? 1,
+    display_order: input.display_order,
+    ui_field_order: input.ui_field_order,
+    examples_json: JSON.stringify({ values: input.examples }),
+    scope: input.scope,
+    description: input.description,
+    ...input.group,
+  };
+}
 
 export const OIDC_STANDARD_CLAIM_FIELDS: CustomClaimPresetField[] = [
   {
@@ -379,11 +424,289 @@ export const OIDC_STANDARD_CLAIM_FIELDS: CustomClaimPresetField[] = [
   },
 ];
 
+export const SCIM_CORE_USER_FIELDS: CustomClaimPresetField[] = [
+  commonPresetField({
+    field_key: 'scim_user_name',
+    display_label: 'SCIM User Name',
+    is_pii: 1,
+    is_searchable: 1,
+    display_order: 100,
+    ui_field_order: 1,
+    examples: ['bjensen@example.com'],
+    scope: 'scim_core',
+    description: 'SCIM User userName canonical source field.',
+    group: PROFILE_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'scim_external_id',
+    display_label: 'SCIM External ID',
+    is_searchable: 1,
+    display_order: 101,
+    ui_field_order: 2,
+    examples: ['hr-2819'],
+    scope: 'scim_core',
+    description: 'Identifier assigned by the SCIM provisioning client.',
+    group: PROFILE_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'scim_active',
+    display_label: 'SCIM Active',
+    field_type: 'boolean',
+    display_order: 102,
+    ui_field_order: 3,
+    examples: [true],
+    scope: 'scim_core',
+    description: 'SCIM account active state.',
+    group: PROFILE_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'display_name',
+    display_label: 'Display Name',
+    is_pii: 1,
+    is_searchable: 1,
+    display_order: 103,
+    ui_field_order: 4,
+    examples: ['Barbara Jensen'],
+    scope: 'scim_core',
+    description: 'SCIM displayName field.',
+    group: PROFILE_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'user_type',
+    display_label: 'User Type',
+    display_order: 104,
+    ui_field_order: 5,
+    examples: ['Employee'],
+    scope: 'scim_core',
+    description: 'SCIM userType field.',
+    group: WORKFORCE_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'preferred_language',
+    display_label: 'Preferred Language',
+    display_order: 105,
+    ui_field_order: 6,
+    examples: ['ja-JP'],
+    scope: 'scim_core',
+    description: 'SCIM preferredLanguage field.',
+    group: PROFILE_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'scim_roles',
+    display_label: 'SCIM Roles',
+    cardinality: 'multi',
+    display_order: 106,
+    ui_field_order: 1,
+    examples: ['employee', 'approver'],
+    scope: 'scim_core',
+    description: 'Scalar role values derived from the SCIM roles attribute.',
+    group: ACCESS_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'scim_groups',
+    display_label: 'SCIM Groups',
+    cardinality: 'multi',
+    display_order: 107,
+    ui_field_order: 2,
+    examples: ['engineering', 'tokyo'],
+    scope: 'scim_core',
+    description: 'Scalar group identifiers derived from SCIM group membership.',
+    group: ACCESS_GROUP,
+  }),
+];
+
+export const SCIM_ENTERPRISE_USER_FIELDS: CustomClaimPresetField[] = [
+  commonPresetField({
+    field_key: 'employee_number',
+    display_label: 'Employee Number',
+    is_pii: 1,
+    is_searchable: 1,
+    display_order: 120,
+    ui_field_order: 1,
+    examples: ['701984'],
+    scope: 'scim_enterprise',
+    description: 'SCIM Enterprise User employeeNumber field.',
+    group: WORKFORCE_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'cost_center',
+    display_label: 'Cost Center',
+    display_order: 121,
+    ui_field_order: 2,
+    examples: ['CC-1001'],
+    scope: 'scim_enterprise',
+    description: 'SCIM Enterprise User costCenter field.',
+    group: WORKFORCE_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'organization',
+    display_label: 'Organization',
+    display_order: 122,
+    ui_field_order: 3,
+    examples: ['Example Corp'],
+    scope: 'scim_enterprise',
+    description: 'SCIM Enterprise User organization field.',
+    group: WORKFORCE_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'division',
+    display_label: 'Division',
+    display_order: 123,
+    ui_field_order: 4,
+    examples: ['Product'],
+    scope: 'scim_enterprise',
+    description: 'SCIM Enterprise User division field.',
+    group: WORKFORCE_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'department',
+    display_label: 'Department',
+    display_order: 124,
+    ui_field_order: 5,
+    examples: ['Engineering'],
+    scope: 'scim_enterprise',
+    description: 'SCIM Enterprise User department field.',
+    group: WORKFORCE_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'manager_id',
+    display_label: 'Manager ID',
+    is_pii: 1,
+    is_searchable: 1,
+    display_order: 125,
+    ui_field_order: 6,
+    examples: ['manager-42'],
+    scope: 'scim_enterprise',
+    description: 'Stable manager identifier from the SCIM Enterprise User extension.',
+    group: WORKFORCE_GROUP,
+  }),
+];
+
+export const SAML_EDUPERSON_FIELDS: CustomClaimPresetField[] = [
+  commonPresetField({
+    field_key: 'edu_person_principal_name',
+    display_label: 'eduPersonPrincipalName',
+    is_pii: 1,
+    is_searchable: 1,
+    display_order: 140,
+    ui_field_order: 1,
+    examples: ['bjensen@example.edu'],
+    scope: 'saml_eduperson',
+    description: 'Common SAML eduPerson principal name source field.',
+    group: PROFILE_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'edu_person_unique_id',
+    display_label: 'eduPersonUniqueId',
+    is_pii: 1,
+    is_searchable: 1,
+    display_order: 141,
+    ui_field_order: 2,
+    examples: ['28c5353b8bb34984a8bd4169ba94c606@example.edu'],
+    scope: 'saml_eduperson',
+    description: 'Non-reassignable eduPerson unique identifier source field.',
+    group: PROFILE_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'edu_person_affiliation',
+    display_label: 'eduPersonAffiliation',
+    cardinality: 'multi',
+    display_order: 142,
+    ui_field_order: 3,
+    examples: ['faculty', 'member'],
+    scope: 'saml_eduperson',
+    description: 'Multi-valued eduPerson affiliation source field.',
+    group: ACCESS_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'edu_person_scoped_affiliation',
+    display_label: 'eduPersonScopedAffiliation',
+    cardinality: 'multi',
+    display_order: 143,
+    ui_field_order: 4,
+    examples: ['faculty@example.edu', 'member@example.edu'],
+    scope: 'saml_eduperson',
+    description: 'Multi-valued scoped eduPerson affiliation source field.',
+    group: ACCESS_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'edu_person_entitlement',
+    display_label: 'eduPersonEntitlement',
+    cardinality: 'multi',
+    display_order: 144,
+    ui_field_order: 5,
+    examples: ['urn:mace:example.edu:entitlement:library'],
+    scope: 'saml_eduperson',
+    description: 'Multi-valued eduPerson entitlement source field.',
+    group: ACCESS_GROUP,
+  }),
+];
+
+export const AUTHORIZATION_CONTEXT_FIELDS: CustomClaimPresetField[] = [
+  commonPresetField({
+    field_key: 'roles',
+    display_label: 'Roles',
+    cardinality: 'multi',
+    display_order: 160,
+    ui_field_order: 1,
+    examples: ['admin', 'auditor'],
+    scope: 'authorization',
+    description: 'Application-independent role identifiers.',
+    group: ACCESS_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'groups',
+    display_label: 'Groups',
+    cardinality: 'multi',
+    display_order: 161,
+    ui_field_order: 2,
+    examples: ['engineering', 'security'],
+    scope: 'authorization',
+    description: 'Application-independent group identifiers.',
+    group: ACCESS_GROUP,
+  }),
+  commonPresetField({
+    field_key: 'permissions',
+    display_label: 'Permissions',
+    cardinality: 'multi',
+    display_order: 162,
+    ui_field_order: 3,
+    examples: ['invoice:read', 'invoice:approve'],
+    scope: 'authorization',
+    description: 'Fine-grained permission identifiers for mapped release.',
+    group: ACCESS_GROUP,
+  }),
+];
+
 export const CUSTOM_CLAIM_PRESETS: CustomClaimPreset[] = [
   {
     id: 'oidc_standard',
     label: 'OIDC Standard Claims',
     description: 'Standard OIDC profile, email, phone, and address claim fields.',
     fields: OIDC_STANDARD_CLAIM_FIELDS,
+  },
+  {
+    id: 'scim_core_user',
+    label: 'SCIM Core User',
+    description: 'Common scalar SCIM 2.0 User fields, roles, and group identifiers.',
+    fields: SCIM_CORE_USER_FIELDS,
+  },
+  {
+    id: 'scim_enterprise_user',
+    label: 'SCIM Enterprise User',
+    description: 'Workforce fields from the SCIM Enterprise User extension.',
+    fields: SCIM_ENTERPRISE_USER_FIELDS,
+  },
+  {
+    id: 'saml_eduperson',
+    label: 'SAML eduPerson',
+    description: 'Common higher-education identity and authorization source fields.',
+    fields: SAML_EDUPERSON_FIELDS,
+  },
+  {
+    id: 'authorization_context',
+    label: 'Authorization Context',
+    description: 'Common multi-valued roles, groups, and permissions source fields.',
+    fields: AUTHORIZATION_CONTEXT_FIELDS,
   },
 ];

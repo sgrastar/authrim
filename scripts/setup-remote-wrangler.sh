@@ -84,30 +84,6 @@ echo "📦 Key Information:"
 echo "   Key ID: $KEY_ID"
 echo ""
 
-# Prompt for KEY_MANAGER_SECRET (used for DO auth and token signing)
-EXISTING_KEY_MANAGER_SECRET=${KEY_MANAGER_SECRET:-}
-echo "🔐 Key Manager Authentication"
-echo "   This secret secures requests between workers and the KeyManager Durable Object."
-if [ -n "$EXISTING_KEY_MANAGER_SECRET" ]; then
-    echo "   Existing KEY_MANAGER_SECRET detected (from env). Press Enter to reuse or type a new value."
-else
-    echo "   No KEY_MANAGER_SECRET configured. Enter a strong secret or leave blank to use the"
-    echo "   default 'production-secret-change-me' (development only)."
-fi
-read -s -p "KEY_MANAGER_SECRET: " KEY_MANAGER_SECRET_INPUT
-echo ""
-
-if [ -n "$KEY_MANAGER_SECRET_INPUT" ]; then
-    KEY_MANAGER_SECRET="$KEY_MANAGER_SECRET_INPUT"
-elif [ -n "$EXISTING_KEY_MANAGER_SECRET" ]; then
-    KEY_MANAGER_SECRET="$EXISTING_KEY_MANAGER_SECRET"
-else
-    KEY_MANAGER_SECRET="production-secret-change-me"
-fi
-
-echo ""
-
-
 # Prompt for deployment mode if not provided via CLI
 if [ -z "$DEPLOYMENT_MODE" ]; then
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -379,8 +355,6 @@ KEY_ID = "$KEY_ID"
 ALLOW_HTTP_REDIRECT = "false"
 OPEN_REGISTRATION = "false"
 TRUSTED_DOMAINS = "www.certification.openid.net"
-KEY_MANAGER_SECRET = "$KEY_MANAGER_SECRET"
-ADMIN_API_SECRET = "$KEY_MANAGER_SECRET"
 # Version management (set by deploy script via --var)
 CODE_VERSION_UUID = ""
 DEPLOY_TIME_UTC = ""
@@ -763,8 +737,6 @@ database_id = "placeholder"
 
 # Environment variables
 [vars]
-KEY_MANAGER_SECRET = "$KEY_MANAGER_SECRET"
-ADMIN_API_SECRET = "$KEY_MANAGER_SECRET"
 EOF
 fi
 
@@ -833,8 +805,8 @@ database_name = \"${DEPLOY_ENV}-authrim-admin-db\"
 database_id = \"placeholder\"
 
 " "[[r2_buckets]]
-binding = \"AVATARS\"
-bucket_name = \"${DEPLOY_ENV}-authrim-avatars\"
+binding = \"PUBLIC_ASSETS\"
+bucket_name = \"${DEPLOY_ENV}-public-assets\"
 
 " "[[durable_objects.bindings]]
 name = \"KEY_MANAGER\"
@@ -1284,6 +1256,11 @@ class_name = "KeyManager"
 script_name = "${DEPLOY_ENV}-ar-lib-core"
 
 [[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
+script_name = "${DEPLOY_ENV}-ar-lib-core"
+
+[[durable_objects.bindings]]
 name = "VERSION_MANAGER"
 class_name = "VersionManager"
 script_name = "${DEPLOY_ENV}-ar-lib-core"
@@ -1310,8 +1287,6 @@ VP_REQUEST_EXPIRY_SECONDS = "300"
 NONCE_EXPIRY_SECONDS = "300"
 CREDENTIAL_OFFER_EXPIRY_SECONDS = "600"
 C_NONCE_EXPIRY_SECONDS = "300"
-KEY_MANAGER_SECRET = "$KEY_MANAGER_SECRET"
-ADMIN_API_SECRET = "$KEY_MANAGER_SECRET"
 # Version management
 CODE_VERSION_UUID = ""
 DEPLOY_TIME_UTC = ""

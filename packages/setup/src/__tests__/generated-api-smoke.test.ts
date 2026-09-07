@@ -4,10 +4,12 @@ import {
   buildApiSmokeLoginProtocolBaseUrl,
   buildApiSmokeBaseUrl,
   buildApiSmokeTargets,
+  validateAuthHealthPayload,
   validateAuthorizeInvalidRequestResponse,
   validateDiscoveryPayload,
   validateInvalidRequestPayload,
   validateJwksPayload,
+  validateRouterHealthPayload,
   validateAuthenticationMethodsPayload,
 } from '../core/generated-api-smoke.js';
 
@@ -136,5 +138,119 @@ describe('generated api smoke helpers', () => {
         bodyText: 'Authrim Router Worker',
       })
     ).toContain('request was handled by router 404 instead of OP_AUTH');
+  });
+
+  it('reports every malformed router and auth health field', () => {
+    expect(validateRouterHealthPayload(null)).toEqual(['payload is not an object']);
+    expect(validateRouterHealthPayload({ status: 'down', service: 'wrong' })).toEqual([
+      'status expected=ok actual=down',
+      'service expected=authrim-router actual=wrong',
+    ]);
+    expect(validateAuthHealthPayload([])).toEqual(['payload is not an object']);
+    expect(validateAuthHealthPayload({ status: 503, service: null })).toEqual([
+      'status expected=ok actual=503',
+      'service expected=ar-auth actual=null',
+    ]);
+  });
+
+  it('reports discovery contract drift including async endpoints', () => {
+    const config = createDefaultConfig('single');
+    const failures = validateDiscoveryPayload(
+      {
+        issuer: 'wrong',
+        response_types_supported: 'code',
+        grant_types_supported: null,
+        device_authorization_endpoint: 'wrong',
+        backchannel_authentication_endpoint: 'wrong',
+      },
+      'https://issuer.test',
+      config
+    );
+    expect(failures).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('issuer expected='),
+        'response_types_supported is not an array',
+        'grant_types_supported is not an array',
+        expect.stringContaining('device_authorization_endpoint expected='),
+        expect.stringContaining('backchannel_authentication_endpoint expected='),
+      ])
+    );
+    config.components.async = false;
+    expect(
+      validateDiscoveryPayload(
+        {
+          issuer: 'https://issuer.test',
+          authorization_endpoint: 'https://issuer.test/authorize',
+          token_endpoint: 'https://issuer.test/token',
+          userinfo_endpoint: 'https://issuer.test/userinfo',
+          jwks_uri: 'https://issuer.test/.well-known/jwks.json',
+          registration_endpoint: 'https://issuer.test/register',
+          response_types_supported: [],
+          grant_types_supported: [],
+        },
+        'https://issuer.test',
+        config
+      )
+    ).toEqual([]);
+  });
+
+  it('validates all structural JWKS failure modes', () => {
+    expect(validateJwksPayload(null)).toEqual(['payload is not an object']);
+    expect(validateJwksPayload({ keys: 'invalid' })).toEqual(['keys is not an array']);
+    expect(validateJwksPayload({ keys: [null] })).toEqual(['keys[0] is not an object']);
+    expect(validateJwksPayload({ keys: [{}] })).toEqual([
+      'keys[0].kid is missing',
+      'keys[0].kty is missing',
+    ]);
+    expect(validateJwksPayload({ keys: [{ kid: 'key-1', kty: 'RSA' }] })).toEqual([]);
+  });
+
+  it('reports malformed authentication-methods sections independently', () => {
+    expect(validateAuthenticationMethodsPayload(null)).toEqual(['payload is not an object']);
+    expect(validateAuthenticationMethodsPayload({ methods: null, ui: null, meta: null })).toEqual([
+      'methods is not an object',
+      'ui is not an object',
+      'meta.cacheTTL is invalid',
+    ]);
+    expect(
+      validateAuthenticationMethodsPayload({
+        methods: { passkey: {}, emailCode: false, external: { providers: 'none' } },
+        ui: { branding: {}, supportedLocales: 'en' },
+        meta: { cacheTTL: '300' },
+      })
+    ).toEqual([
+      'methods.passkey.enabled is invalid',
+      'methods.emailCode.enabled is invalid',
+      'methods.external.providers is invalid',
+      'ui.branding.brandName is invalid',
+      'ui.supportedLocales is not an array',
+      'meta.cacheTTL is invalid',
+    ]);
+  });
+
+  it('reports invalid-request payload and browser response omissions', () => {
+    expect(validateInvalidRequestPayload([])).toEqual(['payload is not an object']);
+    expect(validateInvalidRequestPayload({ error: 'server_error' })).toEqual([
+      'error expected=invalid_request actual=server_error',
+      'error_description is missing',
+    ]);
+    expect(
+      validateAuthorizeInvalidRequestResponse({
+        ok: false,
+        status: 400,
+        contentType: 'text/plain',
+      })
+    ).toEqual([
+      'body does not include invalid_request',
+      'body does not include response_type is required',
+    ]);
+    expect(
+      validateAuthorizeInvalidRequestResponse({
+        ok: false,
+        status: 400,
+        contentType: 'text/plain',
+        bodyText: 'invalid_request: response_type is required',
+      })
+    ).toEqual([]);
   });
 });

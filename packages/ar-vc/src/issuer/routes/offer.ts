@@ -11,14 +11,17 @@
 
 import type { Context } from 'hono';
 import type { Env } from '../../types';
-import { getCredentialOfferStoreById } from '../../utils/credential-offer-sharding';
+import {
+  getCredentialOfferStoreById,
+  parsePreAuthorizedCode,
+} from '../../utils/credential-offer-sharding';
 import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
-import { getRequestIssuerIdentifier } from '../../request-identifiers';
+import { getRequestIssuerUrl } from '../../request-identifiers';
 
 interface CredentialOffer {
   credential_issuer: string;
@@ -39,17 +42,16 @@ interface CredentialOffer {
 }
 
 /**
- * GET /vci/offer/:id
+ * GET /vci/offers/:id
  *
  * Returns the credential offer details for wallet.
  */
 export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const log = getLogger(c as any).module('VC-ISSUER');
+  const log = getLogger(c).module('VC-ISSUER');
   try {
-    const offerId = c.req.param('id');
+    const offerReference = c.req.param('id');
 
-    if (!offerId) {
+    if (!offerReference) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
         variables: { field: 'id' },
       });
@@ -57,9 +59,19 @@ export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promi
 
     // Get DO stub using region-aware sharding (self-routing from ID)
     // Offer ID format: g{gen}:{region}:{shard}:co_{uuid}
-    const { stub } = getCredentialOfferStoreById(c.env, offerId, getTenantIdFromContext(c));
+    const parsedReference = parsePreAuthorizedCode(offerReference);
+    if (!parsedReference) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
+    const offerId = parsedReference.offerId;
+    const tenantId = getTenantIdFromContext(c);
+    const { stub } = getCredentialOfferStoreById(c.env, offerId, tenantId);
 
-    const response = await stub.fetch(new Request('https://internal/get'));
+    const response = await stub.fetch(
+      new Request(
+        `https://internal/get?id=${encodeURIComponent(offerId)}&tenant_id=${encodeURIComponent(tenantId)}`
+      )
+    );
 
     if (!response.ok) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
@@ -68,8 +80,7 @@ export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promi
     const offer = (await response.json()) as {
       id: string;
       credentialConfigurationId: string;
-      preAuthorizedCode: string;
-      txCode?: string;
+      txCodeRequired: boolean;
       status: string;
       expiresAt: number;
     };
@@ -85,15 +96,13 @@ export async function credentialOfferRoute(c: Context<{ Bindings: Env }>): Promi
     }
 
     // Build credential offer response
-    const issuerIdentifier = getRequestIssuerIdentifier(c);
-
     const credentialOffer: CredentialOffer = {
-      credential_issuer: issuerIdentifier,
+      credential_issuer: getRequestIssuerUrl(c),
       credential_configuration_ids: [offer.credentialConfigurationId],
       grants: {
         'urn:ietf:params:oauth:grant-type:pre-authorized_code': {
-          'pre-authorized_code': offer.preAuthorizedCode,
-          ...(offer.txCode && {
+          'pre-authorized_code': offerReference,
+          ...(offer.txCodeRequired && {
             tx_code: {
               input_mode: 'numeric',
               length: 6,

@@ -14,7 +14,7 @@ vi.mock('../kv', () => ({
   getClient: mockGetClient,
 }));
 
-import { getClientCached, getRequestCacheStats } from '../request-cache';
+import { getClientCached, getRequestCacheStats, getSystemSettingsCached } from '../request-cache';
 
 function createContext() {
   const store = new Map<string, unknown>();
@@ -95,5 +95,37 @@ describe('request client cache', () => {
     );
     expect(mockCreateAuthContextFromHono).not.toHaveBeenCalled();
     expect(mockGetClient).not.toHaveBeenCalled();
+  });
+});
+
+describe('request system-settings cache', () => {
+  it('remembers read failures so a later strict caller cannot observe a disabled profile', async () => {
+    const c = createContext();
+    c.set('tenantId', 'tenant-a');
+    const get = vi.fn().mockRejectedValue(new Error('KV unavailable'));
+    const env = { SETTINGS: { get } as unknown as KVNamespace } as Env;
+
+    await expect(getSystemSettingsCached(c, env)).resolves.toBeNull();
+    await expect(getSystemSettingsCached(c, env, { failOnError: true })).rejects.toThrow(
+      'Tenant system settings are unavailable'
+    );
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('shares a successful strict read with later callers in the same request', async () => {
+    const c = createContext();
+    c.set('tenantId', 'tenant-a');
+    const get = vi.fn(async (key: string) =>
+      key.includes('certification-profile') ? JSON.stringify({ fapi: { enabled: true } }) : null
+    );
+    const env = { SETTINGS: { get } as unknown as KVNamespace } as Env;
+
+    await expect(getSystemSettingsCached(c, env, { failOnError: true })).resolves.toMatchObject({
+      fapi: { enabled: true },
+    });
+    await expect(getSystemSettingsCached(c, env)).resolves.toMatchObject({
+      fapi: { enabled: true },
+    });
+    expect(get).toHaveBeenCalledTimes(2);
   });
 });

@@ -78,6 +78,12 @@ export interface ScimAddress {
   primary?: boolean;
 }
 
+export interface ScimPhoto {
+  value: string;
+  type?: string; // e.g., "photo", "thumbnail"
+  primary?: boolean;
+}
+
 /**
  * SCIM Group Member Reference
  */
@@ -109,6 +115,7 @@ export interface ScimUser {
   password?: string; // RFC 7643 write-only; Authrim provisioning rejects it.
   emails?: ScimEmail[];
   phoneNumbers?: ScimPhoneNumber[];
+  photos?: ScimPhoto[];
   addresses?: ScimAddress[];
   groups?: Array<{
     value: string;
@@ -350,6 +357,7 @@ export interface ScimQueryParams {
 export interface UserToScimContext {
   baseUrl: string;
   includeGroups?: boolean;
+  groups?: ScimUser['groups'];
 }
 
 /**

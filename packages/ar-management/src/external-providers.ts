@@ -14,10 +14,14 @@ import {
   createErrorResponse,
   AR_ERROR_CODES,
   getLogger,
+  getRequestHost,
   getTenantIdFromContext,
+  createDiagnosticLoggerFromContext,
+  getDiagnosticSessionId,
   readRequestTextWithLimit,
   readResponseTextWithLimit,
   safeFetch,
+  bumpAuthenticationMethodsCacheRevision,
 } from '@authrim/ar-lib-core';
 
 /**
@@ -29,11 +33,23 @@ const EXTERNAL_TOKEN_REFRESH_ADMIN_PATH = '/api/admin/external-token-refresh';
 const EXTERNAL_IDP_ADMIN_BODY_MAX_BYTES = 256 * 1024;
 const EXTERNAL_IDP_ADMIN_RESPONSE_MAX_BYTES = 1024 * 1024;
 const DEFAULT_TOKEN_REFRESH_CONFIG = {
-  enabled: true,
+  enabled: false,
   refreshThresholdSeconds: 3600,
   batchSize: 100,
   scheduledTenantBatchSize: 100,
+  piiShardPageSize: 4,
 };
+
+const OIDC_ISSUER_REL = 'http://openid.net/specs/connect/1.0/issuer';
+const MAX_WEBFINGER_RESPONSE_SIZE = 64 * 1024;
+
+function getPublicRequestProto(request: Request): 'http' | 'https' {
+  try {
+    return new URL(request.url).protocol === 'http:' ? 'http' : 'https';
+  } catch {
+    return 'https';
+  }
+}
 
 async function readExternalIdpAdminBody(
   c: Context<{ Bindings: Env }>
@@ -80,6 +96,12 @@ async function proxyToExternalIdp(
       Accept: 'application/json',
       'X-Tenant-Id': getTenantIdFromContext(c),
     });
+    const forwardedHost = getRequestHost(c.req.raw);
+    if (forwardedHost) {
+      headers.set('X-Authrim-Forwarded-Host', forwardedHost);
+      headers.set('X-Forwarded-Host', forwardedHost);
+      headers.set('X-Forwarded-Proto', getPublicRequestProto(c.req.raw));
+    }
 
     const contentType = c.req.header('Content-Type');
     if (contentType) {
@@ -101,6 +123,10 @@ async function proxyToExternalIdp(
     const sessionId = c.req.header('X-Session-Id');
     if (sessionId) {
       headers.set('X-Session-Id', sessionId);
+    }
+    const diagnosticSessionId = c.req.header('X-Diagnostic-Session-Id');
+    if (diagnosticSessionId) {
+      headers.set('X-Diagnostic-Session-Id', diagnosticSessionId);
     }
 
     const targetUrl = `https://external-idp${path}`;
@@ -142,6 +168,37 @@ async function proxyToExternalIdp(
   }
 }
 
+async function invalidateAuthenticationMethodsCacheForExternalProviders(
+  c: Context<{ Bindings: Env }>,
+  reason: string
+): Promise<void> {
+  const log = getLogger(c).module('EXTERNAL-PROVIDERS');
+  const tenantId = getTenantIdFromContext(c);
+  try {
+    await bumpAuthenticationMethodsCacheRevision(c.env, tenantId);
+  } catch (error) {
+    log.warn('Failed to bump authentication methods cache revision', {
+      tenantId,
+      reason,
+      error: error instanceof Error ? error.message : 'unknown_error',
+    });
+  }
+}
+
+async function proxyToExternalIdpAndInvalidateAuthenticationMethods(
+  c: Context<{ Bindings: Env }>,
+  path: string,
+  method: string,
+  reason: string,
+  body?: string
+): Promise<Response> {
+  const response = await proxyToExternalIdp(c, path, method, body);
+  if (response.ok) {
+    await invalidateAuthenticationMethodsCacheForExternalProviders(c, reason);
+  }
+  return response;
+}
+
 /**
  * GET /api/admin/external-providers - List all external IdP providers
  */
@@ -171,7 +228,13 @@ export async function adminExternalProvidersCreateHandler(c: Context<{ Bindings:
   if (!body.ok) {
     return body.response;
   }
-  return proxyToExternalIdp(c, EXTERNAL_IDP_ADMIN_PATH, 'POST', body.body);
+  return proxyToExternalIdpAndInvalidateAuthenticationMethods(
+    c,
+    EXTERNAL_IDP_ADMIN_PATH,
+    'POST',
+    'external-provider:create',
+    body.body
+  );
 }
 
 /**
@@ -201,11 +264,33 @@ export async function adminExternalProvidersUpdateHandler(c: Context<{ Bindings:
   if (!body.ok) {
     return body.response;
   }
-  return proxyToExternalIdp(
+  return proxyToExternalIdpAndInvalidateAuthenticationMethods(
     c,
     `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`,
     'PUT',
+    'external-provider:update',
     body.body
+  );
+}
+
+/**
+ * POST /api/admin/external-providers/:id/register - Run OIDC Dynamic Client Registration
+ */
+export async function adminExternalProvidersRegisterHandler(c: Context<{ Bindings: Env }>) {
+  const id = c.req.param('id')!;
+  if (!id) {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+      variables: { field: 'id' },
+    });
+  }
+  const body = await readExternalIdpAdminBody(c);
+  if (!body.ok) return body.response;
+  return proxyToExternalIdpAndInvalidateAuthenticationMethods(
+    c,
+    `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}/register`,
+    'POST',
+    'external-provider:register',
+    body.body || '{}'
   );
 }
 
@@ -219,7 +304,12 @@ export async function adminExternalProvidersDeleteHandler(c: Context<{ Bindings:
       variables: { field: 'id' },
     });
   }
-  return proxyToExternalIdp(c, `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`, 'DELETE');
+  return proxyToExternalIdpAndInvalidateAuthenticationMethods(
+    c,
+    `${EXTERNAL_IDP_ADMIN_PATH}/${encodeURIComponent(id)}`,
+    'DELETE',
+    'external-provider:delete'
+  );
 }
 
 /**
@@ -384,6 +474,74 @@ function safeUrlForLog(urlString: string): string {
   }
 }
 
+function buildWebFingerUrl(resource: string): URL | null {
+  const trimmed = resource.trim();
+  let host: string;
+  if (trimmed.startsWith('acct:')) {
+    const at = trimmed.lastIndexOf('@');
+    if (at <= 'acct:'.length || at === trimmed.length - 1) return null;
+    host = trimmed.slice(at + 1);
+  } else {
+    try {
+      const resourceUrl = new URL(trimmed);
+      if (resourceUrl.protocol !== 'https:' || resourceUrl.username || resourceUrl.password) {
+        return null;
+      }
+      host = resourceUrl.host;
+    } catch {
+      return null;
+    }
+  }
+  try {
+    const webfingerUrl = new URL(`https://${host}/.well-known/webfinger`);
+    webfingerUrl.searchParams.set('resource', trimmed);
+    return webfingerUrl;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveIssuerWithWebFinger(resource: string): Promise<{
+  issuer: string;
+  webfingerUrl: string;
+}> {
+  const webfingerUrl = buildWebFingerUrl(resource);
+  if (!webfingerUrl || !isUrlSafeForFetch(webfingerUrl).safe) {
+    throw new Error('invalid_webfinger_resource');
+  }
+  const response = await safeFetch(webfingerUrl.toString(), {
+    method: 'GET',
+    headers: {
+      Accept: 'application/jrd+json, application/json',
+      'User-Agent': 'Authrim OIDC Discovery/1.0',
+    },
+    redirect: 'manual',
+    timeoutMs: 10_000,
+    maxResponseSize: MAX_WEBFINGER_RESPONSE_SIZE,
+  });
+  if (!response.ok) throw new Error(`webfinger_http_${response.status}`);
+  const payload = JSON.parse(
+    await readResponseTextWithLimit(response, MAX_WEBFINGER_RESPONSE_SIZE)
+  ) as unknown;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('invalid_webfinger_response');
+  }
+  const jrd = payload as { subject?: unknown; links?: unknown };
+  if (jrd.subject !== resource || !Array.isArray(jrd.links)) {
+    throw new Error('invalid_webfinger_response');
+  }
+  const issuerLink = jrd.links.find(
+    (link): link is { rel: string; href: string } =>
+      !!link &&
+      typeof link === 'object' &&
+      (link as { rel?: unknown }).rel === OIDC_ISSUER_REL &&
+      typeof (link as { href?: unknown }).href === 'string'
+  );
+  const issuer = issuerLink ? sanitizeUrl(issuerLink.href) : null;
+  if (!issuer) throw new Error('webfinger_issuer_missing');
+  return { issuer, webfingerUrl: webfingerUrl.toString() };
+}
+
 /**
  * POST /api/admin/external-providers/discover-oidc - Discover OIDC configuration from well-known endpoint
  *
@@ -397,23 +555,46 @@ function safeUrlForLog(urlString: string): string {
  * - Redirect disabled
  * - Response sanitization (only returns known OIDC fields)
  *
- * Request body: { url: string } - The issuer URL or full discovery URL
+ * Request body: { url: string } or { resource: string } - An issuer/discovery URL or WebFinger resource
  * Returns: Sanitized OpenID Configuration JSON or error
  */
 export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('EXTERNAL-PROVIDERS');
 
   try {
-    const body = await c.req.json<{ url: string }>();
+    const body = await c.req.json<{ url?: string; resource?: string }>();
 
-    if (!body.url) {
+    if (!body.url && !body.resource) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'url' },
+        variables: { field: 'url or resource' },
       });
     }
 
+    if (body.url && body.resource) {
+      return c.json({ error: 'Specify either url or resource, not both' }, 400);
+    }
+
+    let webfinger:
+      | {
+          resource: string;
+          issuer: string;
+          webfingerUrl: string;
+        }
+      | undefined;
+    if (body.resource) {
+      const resource = body.resource.trim();
+      try {
+        webfinger = { resource, ...(await resolveIssuerWithWebFinger(resource)) };
+      } catch (error) {
+        log.warn('OIDC WebFinger discovery failed', {
+          reason: error instanceof Error ? error.message : 'unknown_error',
+        });
+        return c.json({ error: 'Failed to resolve a valid OIDC issuer with WebFinger' }, 400);
+      }
+    }
+
     // Normalize URL - add .well-known/openid-configuration if not present
-    let discoveryUrl = body.url.trim();
+    let discoveryUrl = (webfinger?.issuer || body.url || '').trim();
     if (
       !discoveryUrl.endsWith('/.well-known/openid-configuration') &&
       !discoveryUrl.endsWith('/openid-configuration')
@@ -558,14 +739,19 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
       return c.json({ error: 'Invalid OIDC configuration: missing required fields' }, 400);
     }
 
-    // Validate issuer matches the discovery URL (RFC 8414 recommendation)
+    // Validate issuer matches the discovery URL. WebFinger-based issuer discovery
+    // requires an exact match; direct admin discovery retains the compatibility
+    // warning used for legacy providers.
     const expectedIssuer = discoveryUrl.replace('/.well-known/openid-configuration', '');
     if (issuer !== expectedIssuer && issuer !== expectedIssuer + '/') {
       log.warn('OIDC issuer mismatch', {
         expected: safeUrlForLog(expectedIssuer),
         actual: safeUrlForLog(issuer),
       });
-      // This is a warning, not an error - some providers don't follow the spec strictly
+      if (webfinger) {
+        return c.json({ error: 'OIDC issuer does not match the WebFinger issuer' }, 400);
+      }
+      // Direct issuer discovery remains a warning for legacy provider compatibility.
     }
 
     // Sanitize scopes_supported (array of strings only)
@@ -584,7 +770,35 @@ export async function adminExternalProvidersDiscoverOidcHandler(c: Context<{ Bin
       ...(userinfoEndpoint && { userinfo_endpoint: userinfoEndpoint }),
       ...(jwksUri && { jwks_uri: jwksUri }),
       ...(scopesSupported && { scopes_supported: scopesSupported }),
+      ...(webfinger && {
+        discovery_source: {
+          method: 'webfinger',
+          resource: webfinger.resource,
+          webfinger_endpoint: safeUrlForLog(webfinger.webfingerUrl),
+        },
+      }),
     };
+
+    if (webfinger) {
+      const diagnosticLogger = await createDiagnosticLoggerFromContext(c, {
+        tenantId: getTenantIdFromContext(c),
+      });
+      if (diagnosticLogger) {
+        await diagnosticLogger.logAuthDecision({
+          diagnosticSessionId: getDiagnosticSessionId(c),
+          decision: 'allow',
+          reason: 'webfinger_discovery',
+          flow: 'external_idp',
+          context: {
+            resource: webfinger.resource,
+            webfinger_endpoint: safeUrlForLog(webfinger.webfingerUrl),
+            issuer,
+            discovery_endpoint: safeUrlForLog(discoveryUrl),
+          },
+        });
+        await diagnosticLogger.cleanup();
+      }
+    }
 
     log.info('OIDC discovery successful', { issuer: safeUrlForLog(issuer) });
 

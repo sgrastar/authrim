@@ -10,7 +10,7 @@ import type {
   TransformOperation,
   ValidationRule,
   ValidationRuleKind,
-} from '@authrim/ar-lib-field-mapping';
+} from '@authrim/ar-lib-field-mapping/contract';
 import type { DatabaseAdapter } from '../db/adapter';
 
 export type RuntimeIdentityMappingProtocol = 'saml' | 'oidc' | 'vc' | string;
@@ -26,6 +26,10 @@ export interface RuntimeIdentityMappingResolutionContext {
   partnerEntityId?: string;
   clientId?: string;
   providerId?: string;
+  credentialProfileId?: string;
+  credentialConfigurationId?: string;
+  direction?: 'issuance' | 'verification' | string;
+  destinationProfileId?: string;
 }
 
 export interface RuntimeIdentityMappingBinding {
@@ -33,6 +37,7 @@ export interface RuntimeIdentityMappingBinding {
   tenantId: string;
   fieldMappingSetId: string;
   fieldMappingVersionId: string;
+  mappingSnapshotHash: string;
   catalog: FieldCatalogBundle;
   edges: MappingRuleEdge[];
   transforms: MappingTransformStep[];
@@ -42,6 +47,51 @@ export interface RuntimeIdentityMappingBinding {
   destinationNamespace?: string;
   sourceProfileId?: string;
   destinationProfileId?: string;
+  destinationProfileIds: string[];
+}
+
+export interface RuntimeDestinationReleaseField {
+  key: string;
+  classification: string;
+  requiredScopes: string[];
+}
+
+export class RuntimeIdentityMappingReleaseSafetyError extends Error {
+  constructor(
+    message: string,
+    readonly field: string
+  ) {
+    super(message);
+    this.name = 'RuntimeIdentityMappingReleaseSafetyError';
+  }
+}
+
+export function assertRuntimeIdentityMappingReleaseSafety(
+  binding: Pick<RuntimeIdentityMappingBinding, 'catalog' | 'edges'>,
+  destinationFields: RuntimeDestinationReleaseField[],
+  requireSensitiveScopes: boolean
+): void {
+  const destinationByKey = new Map(destinationFields.map((field) => [field.key, field]));
+  for (const edge of binding.edges) {
+    if (edge.sourceRef.side !== 'source' || edge.targetRef.side !== 'destination') continue;
+    const source = findCatalogEntry(binding.catalog, edge.sourceRef);
+    const destination = destinationByKey.get(edge.targetRef.path);
+    if (!source || !destination) continue;
+    const sourceSensitivity = runtimeSensitiveClassificationRank(source.classification);
+    if (sourceSensitivity === 0) continue;
+    if (runtimeSensitiveClassificationRank(destination.classification) < sourceSensitivity) {
+      throw new RuntimeIdentityMappingReleaseSafetyError(
+        `Identity mapping cannot lower sensitive classification for ${edge.targetRef.path}`,
+        edge.targetRef.path
+      );
+    }
+    if (requireSensitiveScopes && destination.requiredScopes.length === 0) {
+      throw new RuntimeIdentityMappingReleaseSafetyError(
+        `Sensitive destination field must require at least one scope: ${edge.targetRef.path}`,
+        edge.targetRef.path
+      );
+    }
+  }
 }
 
 interface ActiveActivationRow {
@@ -57,6 +107,7 @@ interface ActiveActivationRow {
   catalog_version_label: string | null;
   catalog_bundle_hash: string | null;
   catalog_compatibility_range: string | null;
+  snapshot_hash: string;
 }
 
 interface CatalogEntryRow {
@@ -110,7 +161,24 @@ export async function resolveRuntimeIdentityMappingBinding(
   context: RuntimeIdentityMappingResolutionContext
 ): Promise<RuntimeIdentityMappingBinding | null> {
   const activeRows = await loadActiveActivationRows(adapter, context);
-  const selected = selectBestActivation(activeRows, context);
+  const rankedRows = rankActivations(activeRows, context);
+  let selected: ActiveActivationRow | undefined = rankedRows[0];
+  let selectedEdges: EdgeRow[] | undefined;
+  if (context.destinationProfileId) {
+    selected = undefined;
+    for (const candidate of rankedRows) {
+      const edges = await loadEdges(adapter, context.tenantId, candidate.field_mapping_version_id);
+      if (
+        uniqueDestinationProfileIds(edges).some((profileId) =>
+          destinationProfileReferencesMatch(profileId, context.destinationProfileId as string)
+        )
+      ) {
+        selected = candidate;
+        selectedEdges = edges;
+        break;
+      }
+    }
+  }
   if (!selected || !selected.catalog_version_id) {
     return null;
   }
@@ -118,19 +186,25 @@ export async function resolveRuntimeIdentityMappingBinding(
   const [catalogEntries, edges, transforms, validationRules, fieldMappingRules] = await Promise.all(
     [
       loadCatalogEntries(adapter, context.tenantId, selected.catalog_version_id),
-      loadEdges(adapter, context.tenantId, selected.field_mapping_version_id),
+      selectedEdges ?? loadEdges(adapter, context.tenantId, selected.field_mapping_version_id),
       loadTransforms(adapter, context.tenantId, selected.field_mapping_version_id),
       loadValidationRules(adapter, context.tenantId, selected.field_mapping_version_id),
       loadFieldMappingRules(adapter, context.tenantId, selected.field_mapping_version_id),
     ]
   );
   const activationScope = parseJsonObject(selected.activation_scope_json);
+  const destinationProfileIds = uniqueDestinationProfileIds(edges);
+  const scopedDestinationProfileId = readString(activationScope.destinationProfileId);
+  if (scopedDestinationProfileId && !destinationProfileIds.includes(scopedDestinationProfileId)) {
+    destinationProfileIds.unshift(scopedDestinationProfileId);
+  }
 
   return {
     id: selected.activation_id,
     tenantId: selected.tenant_id,
     fieldMappingSetId: selected.field_mapping_set_id,
     fieldMappingVersionId: selected.field_mapping_version_id,
+    mappingSnapshotHash: selected.snapshot_hash,
     catalog: {
       identity: {
         id: selected.catalog_version_id,
@@ -178,8 +252,30 @@ export async function resolveRuntimeIdentityMappingBinding(
     activationScope,
     destinationNamespace: readString(activationScope.destinationNamespace),
     sourceProfileId: readString(activationScope.sourceProfileId),
-    destinationProfileId: readString(activationScope.destinationProfileId),
+    destinationProfileId: context.destinationProfileId
+      ? destinationProfileIds.some((profileId) =>
+          destinationProfileReferencesMatch(profileId, context.destinationProfileId as string)
+        )
+        ? context.destinationProfileId
+        : scopedDestinationProfileId
+      : destinationProfileIds.length === 1
+        ? destinationProfileIds[0]
+        : scopedDestinationProfileId,
+    destinationProfileIds,
   };
+}
+
+function uniqueDestinationProfileIds(edges: EdgeRow[]): string[] {
+  const profileIds = new Set<string>();
+  for (const edge of edges) {
+    const targetRef = parseJsonObject(edge.target_ref_json);
+    const profileId = readString(targetRef.profileId) ?? readString(targetRef.profile_id);
+    const side = readString(targetRef.side);
+    if (profileId && (!side || side === 'destination')) {
+      profileIds.add(normalizeDestinationProfileReference(profileId));
+    }
+  }
+  return [...profileIds];
 }
 
 async function loadActiveActivationRows(
@@ -207,6 +303,7 @@ async function loadActiveActivationRows(
             v.field_mapping_hash,
             v.compatibility_range AS field_mapping_compatibility_range,
             s.catalog_version_id,
+            s.snapshot_hash,
             cv.version_label AS catalog_version_label,
             cv.bundle_hash AS catalog_bundle_hash,
             cv.compatibility_range AS catalog_compatibility_range
@@ -231,17 +328,28 @@ async function loadActiveActivationRows(
   );
 }
 
-function selectBestActivation(
+function rankActivations(
   rows: ActiveActivationRow[],
   context: RuntimeIdentityMappingResolutionContext
-): ActiveActivationRow | undefined {
+): ActiveActivationRow[] {
   return rows
     .map((row) => ({
       row,
       score: activationScore(parseJsonObject(row.activation_scope_json), context),
     }))
     .filter((candidate) => candidate.score >= 0)
-    .sort((left, right) => right.score - left.score)[0]?.row;
+    .sort((left, right) => right.score - left.score)
+    .map((candidate) => candidate.row);
+}
+
+function destinationProfileReferencesMatch(left: string, right: string): boolean {
+  return normalizeDestinationProfileReference(left) === normalizeDestinationProfileReference(right);
+}
+
+function normalizeDestinationProfileReference(value: string): string {
+  return value.startsWith('destination-profile-')
+    ? value.slice('destination-profile-'.length)
+    : value;
 }
 
 function activationScore(
@@ -268,6 +376,17 @@ function activationScore(
     ],
     [readString(scope.clientId) ?? readString(scope.client_id), context.clientId, 16],
     [readString(scope.providerId) ?? readString(scope.provider_id), context.providerId, 16],
+    [
+      readString(scope.credentialProfileId) ?? readString(scope.credential_profile_id),
+      context.credentialProfileId,
+      32,
+    ],
+    [
+      readString(scope.credentialConfigurationId) ?? readString(scope.credential_configuration_id),
+      context.credentialConfigurationId,
+      64,
+    ],
+    [readString(scope.direction), context.direction, 128],
   ];
 
   for (const [scopeValue, contextValue, weight] of checks) {
@@ -380,6 +499,24 @@ function toCatalogEntry(row: CatalogEntryRow): FieldCatalogBundle['entries'][num
     nullable: readBoolean(validation.nullable),
     allowedValues: parseStringArray(validation.allowedValues),
   };
+}
+
+function findCatalogEntry(catalog: FieldCatalogBundle, ref: FieldRef) {
+  if (ref.catalogEntryId) {
+    const exact = catalog.entries.find((entry) => entry.id === ref.catalogEntryId);
+    if (exact) return exact;
+  }
+  return catalog.entries.find(
+    (entry) =>
+      (entry.namespace === ref.namespace && entry.path === ref.path) ||
+      entry.aliases?.some((alias) => alias.namespace === ref.namespace && alias.path === ref.path)
+  );
+}
+
+function runtimeSensitiveClassificationRank(classification: string): number {
+  if (['regulated', 'secret', 'credential', 'token'].includes(classification)) return 2;
+  if (classification === 'pii') return 1;
+  return 0;
 }
 
 function inferTransformOutputTargetRef(transform: TransformRow, edges: EdgeRow[]): FieldRef {

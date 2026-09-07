@@ -4,7 +4,7 @@ const {
   mockCheckResolvedTenantDatabaseDeepHealth,
   mockEnsureDatabaseAdapter,
   mockRepository,
-  mockResolveTenantDatabaseSourceFromRegistry,
+  mockResolveTenantDatabaseSourceFromControlRegistry,
   MockTenantDatabaseRegistryRepository,
 } = vi.hoisted(() => {
   const repository = {
@@ -20,7 +20,7 @@ const {
     mockCheckResolvedTenantDatabaseDeepHealth: vi.fn(),
     mockEnsureDatabaseAdapter: vi.fn((source: unknown) => source),
     mockRepository: repository,
-    mockResolveTenantDatabaseSourceFromRegistry: vi.fn(),
+    mockResolveTenantDatabaseSourceFromControlRegistry: vi.fn(),
     MockTenantDatabaseRegistryRepository: vi.fn(MockRepositoryConstructor),
   };
 });
@@ -31,7 +31,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     ...actual,
     checkResolvedTenantDatabaseDeepHealth: mockCheckResolvedTenantDatabaseDeepHealth,
     ensureDatabaseAdapter: mockEnsureDatabaseAdapter,
-    resolveTenantDatabaseSourceFromRegistry: mockResolveTenantDatabaseSourceFromRegistry,
+    resolveTenantDatabaseSourceFromControlRegistry:
+      mockResolveTenantDatabaseSourceFromControlRegistry,
     TenantDatabaseRegistryRepository: MockTenantDatabaseRegistryRepository,
   };
 });
@@ -53,7 +54,9 @@ describe('tenant database health jobs', () => {
     mockRepository.listActiveRegistryRowsForTenantRole.mockResolvedValue([]);
     mockRepository.updateRegistryStatus.mockResolvedValue(undefined);
     mockRepository.updateRegistryStatusAndMetadata.mockResolvedValue(undefined);
-    mockResolveTenantDatabaseSourceFromRegistry.mockResolvedValue({ source: 'tenant-source' });
+    mockResolveTenantDatabaseSourceFromControlRegistry.mockResolvedValue({
+      source: 'tenant-source',
+    });
     mockCheckResolvedTenantDatabaseDeepHealth.mockResolvedValue({
       severity: 'healthy',
       schemaDrift: 'none',
@@ -171,6 +174,33 @@ describe('tenant database health jobs', () => {
       expect.stringContaining('"health_failure_count":2'),
       'tenant-database-health'
     );
+  });
+
+  it('leaves a healthy database pending until its failed snapshot is republished', async () => {
+    mockRepository.listActiveRegistryRowsForRole
+      .mockResolvedValueOnce([
+        {
+          tenant_id: 'tenant-a',
+          role: 'tenant_core',
+          generation: 2,
+          shard_group: 'default',
+          shard_index: 0,
+          status: 'degraded_pending_snapshot',
+          metadata_json: JSON.stringify({
+            control_data_role: 'tenant_core/default',
+            snapshot_publish_error: 'kv_unavailable',
+          }),
+        },
+      ])
+      .mockResolvedValueOnce([]);
+
+    const summary = await refreshTenantDatabaseHealth({ DB_ADMIN: 'control-db' } as never, logger, {
+      checkedAt: '2026-05-16T00:00:00.000Z',
+    });
+
+    expect(summary).toEqual({ scanned: 1, healthy: 1, degraded: 0, failed: 0, skipped: 0 });
+    expect(mockRepository.updateRegistryStatus).not.toHaveBeenCalled();
+    expect(mockRepository.updateRegistryStatusAndMetadata).not.toHaveBeenCalled();
   });
 
   it('processes pending operator-requested deep health-check jobs', async () => {

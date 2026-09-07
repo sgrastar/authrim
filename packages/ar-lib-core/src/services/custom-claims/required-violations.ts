@@ -4,6 +4,11 @@ import { ensureDatabaseAdapter, ensureOptionalDatabaseAdapter } from '../../db';
 import type { UserLifecycleState } from './user-lifecycle';
 import { setUserLifecycleState } from './user-lifecycle';
 import { SchemaLoader } from './schema-loader';
+import {
+  customAttributeFieldKey,
+  customAttributeValueKey,
+  deserializeCustomAttributeValue,
+} from './pii-field-storage';
 import type { MissingRequiredCustomClaim } from './write-validator';
 import { collectMissingRequiredCustomClaims } from './write-validator';
 
@@ -99,7 +104,6 @@ export async function getRequiredCustomClaimViolationStatuses(
   const piiKeys = requiredSchemas
     .filter((schema) => schema.is_pii === 1)
     .map((schema) => schema.field_key);
-  const piiKeySet = new Set(piiKeys);
   const results: RequiredCustomClaimViolationStatus[] = [];
 
   for (const userIdBatch of chunk(userIds, USER_BATCH_SIZE)) {
@@ -132,41 +136,28 @@ export async function getRequiredCustomClaimViolationStatuses(
 
     if (piiKeys.length > 0 && piiAdapter) {
       const userPlaceholders = userIdBatch.map(() => '?').join(', ');
+      const valueKeys = piiKeys.map(customAttributeValueKey);
+      const keyPlaceholders = valueKeys.map(() => '?').join(', ');
       const rows = await piiAdapter.query<{
         owner_id: string;
-        value_json: string | null;
+        value_key: string;
+        value_json: unknown;
       }>(
-        `SELECT owner_id, value_json
+        `SELECT owner_id, value_key, value_json
            FROM identity_sensitive_values
           WHERE tenant_id = ?
             AND owner_type = 'runtime_user'
             AND owner_id IN (${userPlaceholders})
-            AND value_key = 'custom_attributes_json'
+            AND value_key IN (${keyPlaceholders})
             AND lifecycle_state = 'active'`,
-        [tenantId, ...userIdBatch]
+        [tenantId, ...userIdBatch, ...valueKeys]
       );
 
       for (const row of rows) {
-        if (!row.value_json) {
-          continue;
-        }
-
-        try {
-          const parsed = JSON.parse(row.value_json) as Record<string, unknown>;
-          const userValues = userValueMap.get(row.owner_id);
-          if (!userValues) {
-            continue;
-          }
-
-          for (const [key, value] of Object.entries(parsed)) {
-            if (!piiKeySet.has(key) || value === null || value === undefined) {
-              continue;
-            }
-            userValues.set(key, String(value));
-          }
-        } catch {
-          // Ignore malformed custom_attributes_json. The user will be treated as missing those values.
-        }
+        const fieldKey = customAttributeFieldKey(row.value_key);
+        const value = deserializeCustomAttributeValue(row.value_json);
+        const userValues = userValueMap.get(row.owner_id);
+        if (fieldKey && value !== null && userValues) userValues.set(fieldKey, value);
       }
     }
 

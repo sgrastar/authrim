@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { Button, Card, Alert } from '$lib/components';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import ConfiguredFooter from '$lib/components/ConfiguredFooter.svelte';
+	import LocalizedTagline from '$lib/components/LocalizedTagline.svelte';
 	import PinCodeInput from '$lib/components/PinCodeInput.svelte';
-	import { LL } from '$i18n/i18n-svelte';
+	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import { accountAPI } from '$lib/api/account';
 	import { emailCodeAPI } from '$lib/api/client';
 	import {
@@ -11,9 +13,10 @@
 		type FlowRuntimeStep
 	} from '$lib/api/flow-runtime';
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
+	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { auth } from '$lib/stores/auth';
-	import { isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
+	import { isValidImageUrl, isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import {
@@ -28,7 +31,25 @@
 		persistFlowRuntimeState
 	} from '$lib/authrim/flow-runtime-state';
 
-	const { brandingStore } = useLoginUIStores();
+	const { brandingStore, loginUIPageStore } = useLoginUIStores();
+	const localizedBrandPanelTitle = $derived(
+		loginUIPageStore.getLocalizedText(getLocale(), 'brandPanelTitle')
+	);
+	const localizedBrandPanelText = $derived(
+		loginUIPageStore.getLocalizedText(getLocale(), 'brandPanelText')
+	);
+	const hasBrandingLogo = $derived(
+		Boolean(brandingStore.logoUrl && isValidImageUrl(brandingStore.logoUrl))
+	);
+	const showBrandLogo = $derived(
+		loginUIPageStore.logoDisplay !== 'hidden' &&
+			loginUIPageStore.logoDisplay !== 'text' &&
+			hasBrandingLogo
+	);
+	const showBrandText = $derived(
+		loginUIPageStore.logoDisplay !== 'hidden' &&
+			(loginUIPageStore.logoDisplay !== 'image' || !hasBrandingLogo)
+	);
 
 	let email = $state('');
 	let inviteToken = $state('');
@@ -54,7 +75,11 @@
 			unknown: () => $LL.error_unknown(),
 			invalidRequest: () => $LL.error_invalid_request(),
 			accessDenied: () => $LL.error_access_denied(),
+			unauthorizedClient: () => $LL.error_unauthorized_client(),
+			unsupportedResponseType: () => $LL.error_unsupported_response_type(),
+			invalidScope: () => $LL.error_invalid_scope(),
 			serverError: () => $LL.error_server_error(),
+			temporarilyUnavailable: () => $LL.error_temporarily_unavailable(),
 			loginRequired: () => $LL.error_login_required(),
 			emailCodeInvalid: () => $LL.emailCode_errorInvalid()
 		});
@@ -190,7 +215,7 @@
 				window.location.href = postVerifyRedirect;
 			}, 2000);
 		} catch (err) {
-			error = err instanceof Error ? err.message : $LL.emailCode_errorInvalid();
+			error = messageForCaughtError(err, $LL.emailCode_errorInvalid());
 			code = '';
 		} finally {
 			loading = false;
@@ -248,7 +273,7 @@
 
 		const storedRuntime = consumeFlowRuntimeState(runtimeInteractionId);
 		if (!storedRuntime) {
-			throw new Error($LL.error_invalid_request());
+			throw loginUiDisplayError($LL.error_invalid_request());
 		}
 
 		const { data: resumedFlow, error: resumeError } = await flowRuntimeAPI.start({
@@ -257,7 +282,7 @@
 			signature: storedRuntime.signature
 		});
 		if (resumeError || !resumedFlow) {
-			throw new Error(resumeError?.error_description || $LL.error_invalid_request());
+			throw loginUiDisplayError($LL.error_invalid_request());
 		}
 
 		let flow: FlowRuntimeStartResponse = resumedFlow;
@@ -271,12 +296,12 @@
 
 			const step = getRuntimeCurrentStep(flow);
 			if (!step) {
-				throw new Error($LL.error_invalid_request());
+				throw loginUiDisplayError($LL.error_invalid_request());
 			}
 
 			if (step.render !== false && step.component !== 'email_verification') {
 				if (!persistFlowRuntimeState(flow, { postAuthRedirect })) {
-					throw new Error($LL.error_invalid_request());
+					throw loginUiDisplayError($LL.error_invalid_request());
 				}
 				return `${getRuntimeResumePath()}?runtime_interaction_id=${encodeURIComponent(
 					flow.interaction.id
@@ -294,7 +319,7 @@
 				}
 			);
 			if (submitError || !submittedFlow) {
-				throw new Error(submitError?.error_description || $LL.error_invalid_request());
+				throw loginUiDisplayError($LL.error_invalid_request());
 			}
 
 			flow = {
@@ -313,7 +338,7 @@
 			}
 		}
 
-		throw new Error($LL.error_invalid_request());
+		throw loginUiDisplayError($LL.error_invalid_request());
 	}
 
 	async function handleResend() {
@@ -332,7 +357,7 @@
 			});
 
 			if (apiError) {
-				throw new Error(getApiErrorMessage(apiError));
+				throw loginUiDisplayError(getApiErrorMessage(apiError));
 			}
 
 			// Clear the input
@@ -351,7 +376,7 @@
 				}
 			}, 3000);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to resend code';
+			error = messageForCaughtError(err, $LL.error_unknown());
 		} finally {
 			resendLoading = false;
 		}
@@ -362,134 +387,188 @@
 	<title>{$LL.emailCode_title()} - {brandingStore.brandName || $LL.app_title()}</title>
 </svelte:head>
 
-<div class="auth-page">
-	<LanguageSwitcher />
+<div class="auth-page" class:auth-page--has-footer={loginUIPageStore.footerEnabled}>
+	<div class="auth-main">
+		{#if loginUIPageStore.showTopbar && loginUIPageStore.topbarPosition !== 'in_card'}
+			<LanguageSwitcher
+				showThemeToggle={loginUIPageStore.themeToggleEnabled}
+				showLanguageSelect={loginUIPageStore.languageSelectEnabled}
+			/>
+		{/if}
 
-	<!-- Main Card -->
-	<div class="auth-container">
-		<!-- Header -->
-		<div class="auth-header">
-			<h1 class="auth-header__title">
-				{brandingStore.brandName || $LL.app_title()}
-			</h1>
-			<p class="auth-header__subtitle">
-				{$LL.app_subtitle()}
+		{#if loginUIPageStore.showBrandPanel}
+			<aside class="auth-brand-panel" aria-hidden="true">
+				<div class="auth-brand-panel__content">
+					{#if showBrandLogo && brandingStore.logoUrl}
+						<img
+							src={brandingStore.logoUrl}
+							alt=""
+							class="auth-brand-panel__logo"
+							onerror={(event) =>
+								((event.currentTarget as HTMLImageElement).style.display = 'none')}
+						/>
+					{/if}
+					{#if loginUIPageStore.brandContentMode === 'logo_copy'}
+						<p class="auth-brand-panel__eyebrow">
+							{brandingStore.brandName || $LL.app_title()}
+						</p>
+						{#if localizedBrandPanelTitle}
+							<h2>{localizedBrandPanelTitle}</h2>
+						{/if}
+						{#if localizedBrandPanelText}
+							<p>{localizedBrandPanelText}</p>
+						{/if}
+					{:else if !showBrandLogo}
+						<h2>{brandingStore.brandName || $LL.app_title()}</h2>
+					{/if}
+				</div>
+			</aside>
+		{/if}
+
+		<div class="auth-container">
+			{#if loginUIPageStore.headerEnabled}
+				<header class="auth-header">
+					{#if showBrandLogo && brandingStore.logoUrl}
+						<img
+							src={brandingStore.logoUrl}
+							alt={brandingStore.brandName || $LL.common_logoAlt()}
+							class="auth-header__logo"
+							onerror={(event) =>
+								((event.currentTarget as HTMLImageElement).style.display = 'none')}
+						/>
+					{/if}
+					{#if showBrandText}
+						<h1 class="auth-header__title">
+							{brandingStore.brandName || $LL.app_title()}
+						</h1>
+					{/if}
+					{#if loginUIPageStore.subtitleEnabled}
+						<p class="auth-header__subtitle">
+							<LocalizedTagline />
+						</p>
+					{/if}
+				</header>
+			{/if}
+
+			{#if loginUIPageStore.showTopbar && loginUIPageStore.topbarPosition === 'in_card'}
+				<LanguageSwitcher
+					showThemeToggle={loginUIPageStore.themeToggleEnabled}
+					showLanguageSelect={loginUIPageStore.languageSelectEnabled}
+				/>
+			{/if}
+
+			<Card class="mb-6">
+				<!-- Icon -->
+				<div class="auth-icon-badge">
+					<div class="auth-icon-badge__circle">
+						<div class="i-heroicons-envelope-solid h-9 w-9 auth-icon-badge__icon"></div>
+					</div>
+				</div>
+
+				<!-- Title -->
+				<h2 class="auth-section-title text-center">
+					{$LL.emailCode_title()}
+				</h2>
+
+				<!-- The same accepted status is shown regardless of account existence. -->
+				<div class="auth-progress mb-6" role="status" aria-live="polite">
+					<span class="i-heroicons-check-circle h-5 w-5" aria-hidden="true"></span>
+					<div class="min-w-0">
+						<p class="font-medium" style="color: var(--text-secondary);">
+							{$LL.emailCode_subtitle()}
+						</p>
+						<p class="text-sm font-medium break-all" style="color: var(--text-primary);">
+							{email}
+						</p>
+					</div>
+				</div>
+
+				<!-- Instructions -->
+				<div class="auth-binding-message mb-6">
+					<p class="text-sm" style="color: var(--text-secondary);">
+						{$LL.emailCode_instructions()}
+					</p>
+				</div>
+
+				<!-- Success Message -->
+				{#if success}
+					<Alert variant="success" dismissible={true} onDismiss={() => (success = '')} class="mb-4">
+						{success}
+					</Alert>
+				{/if}
+
+				{#if resendNotice}
+					<Alert
+						variant="success"
+						dismissible={true}
+						onDismiss={() => (resendNotice = '')}
+						class="mb-4"
+					>
+						{resendNotice}
+					</Alert>
+				{/if}
+
+				<!-- Error Message -->
+				{#if error}
+					<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
+						{error}
+					</Alert>
+				{/if}
+
+				<!-- Pin Input -->
+				<div class="mb-6">
+					<div
+						class="block text-sm font-medium mb-2 text-center"
+						style="color: var(--text-secondary);"
+					>
+						{$LL.emailCode_codeLabel()}
+					</div>
+
+					<PinCodeInput
+						value={code}
+						length={6}
+						disabled={loading || resendLoading || !!success}
+						label={$LL.emailCode_codeLabel()}
+						digitLabel={(position) => $LL.emailCode_digitLabel({ position })}
+						onValueChange={(nextValue) => (code = nextValue)}
+					/>
+				</div>
+
+				<!-- Verify Button -->
+				<Button
+					variant="primary"
+					class="w-full mb-4"
+					disabled={code.length !== 6 || loading || resendLoading || !!success}
+					{loading}
+					onclick={() => handleVerify()}
+				>
+					{$LL.emailCode_verifyButton()}
+				</Button>
+
+				<!-- Resend Button -->
+				<Button
+					variant="secondary"
+					class="w-full"
+					disabled={!canResend || resendLoading || !!success}
+					loading={resendLoading}
+					onclick={handleResend}
+				>
+					{#if canResend || resendLoading}
+						{$LL.emailCode_resendButton()}
+					{:else}
+						{$LL.emailCode_resendTimer({ seconds: countdown })}
+					{/if}
+				</Button>
+			</Card>
+
+			<p class="auth-bottom-link">
+				<a href="/login" class="inline-flex items-center gap-2" data-sveltekit-reload>
+					<span class="i-heroicons-arrow-left h-4 w-4"></span>
+					{$LL.common_backToLogin()}
+				</a>
 			</p>
 		</div>
-
-		<!-- Verification Card -->
-		<Card class="mb-6">
-			<!-- Icon -->
-			<div class="auth-icon-badge">
-				<div class="auth-icon-badge__circle">
-					<div class="i-heroicons-envelope-solid h-9 w-9 auth-icon-badge__icon"></div>
-				</div>
-			</div>
-
-			<!-- Title -->
-			<h2 class="auth-section-title text-center">
-				{$LL.emailCode_title()}
-			</h2>
-
-			<!-- Email -->
-			<div class="mb-6 text-center">
-				<p style="color: var(--text-secondary); margin-bottom: 8px;">
-					{$LL.emailCode_subtitle()}
-				</p>
-				<p class="text-lg font-medium break-all" style="color: var(--text-primary);">
-					{email}
-				</p>
-			</div>
-
-			<!-- Instructions -->
-			<div class="auth-binding-message mb-6">
-				<p class="text-sm" style="color: var(--text-secondary);">
-					{$LL.emailCode_instructions()}
-				</p>
-			</div>
-
-			<!-- Success Message -->
-			{#if success}
-				<Alert variant="success" dismissible={true} onDismiss={() => (success = '')} class="mb-4">
-					{success}
-				</Alert>
-			{/if}
-
-			{#if resendNotice}
-				<Alert
-					variant="success"
-					dismissible={true}
-					onDismiss={() => (resendNotice = '')}
-					class="mb-4"
-				>
-					{resendNotice}
-				</Alert>
-			{/if}
-
-			<!-- Error Message -->
-			{#if error}
-				<Alert variant="error" dismissible={true} onDismiss={() => (error = '')} class="mb-4">
-					{error}
-				</Alert>
-			{/if}
-
-			<!-- Pin Input -->
-			<div class="mb-6">
-				<div
-					class="block text-sm font-medium mb-2 text-center"
-					style="color: var(--text-secondary);"
-				>
-					{$LL.emailCode_codeLabel()}
-				</div>
-
-				<PinCodeInput
-					value={code}
-					length={6}
-					disabled={loading || resendLoading || !!success}
-					label={$LL.emailCode_codeLabel()}
-					digitLabel={(position) => $LL.emailCode_digitLabel({ position })}
-					onValueChange={(nextValue) => (code = nextValue)}
-				/>
-			</div>
-
-			<!-- Verify Button -->
-			<Button
-				variant="primary"
-				class="w-full mb-4"
-				disabled={code.length !== 6 || loading || resendLoading || !!success}
-				{loading}
-				onclick={() => handleVerify()}
-			>
-				{$LL.emailCode_verifyButton()}
-			</Button>
-
-			<!-- Resend Button -->
-			<Button
-				variant="secondary"
-				class="w-full"
-				disabled={!canResend || resendLoading || !!success}
-				loading={resendLoading}
-				onclick={handleResend}
-			>
-				{#if canResend || resendLoading}
-					{$LL.emailCode_resendButton()}
-				{:else}
-					{$LL.emailCode_resendTimer({ seconds: countdown })}
-				{/if}
-			</Button>
-		</Card>
-
-		<!-- Back to Login Link -->
-		<p class="auth-bottom-link">
-			<a href="/login" class="inline-flex items-center gap-2" data-sveltekit-reload>
-				<span class="i-heroicons-arrow-left h-4 w-4"></span>
-				{$LL.common_backToLogin()}
-			</a>
-		</p>
 	</div>
 
-	<!-- Footer -->
-	<footer class="auth-footer">
-		<p>{$LL.footer_stack()}</p>
-	</footer>
+	<ConfiguredFooter class="auth-page-footer" />
 </div>

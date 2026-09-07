@@ -67,14 +67,8 @@ const SETUP_R2_DESTINATIONS: Array<{
     bindingRef: 'PUBLIC_ASSETS',
     name: 'setup-r2-public-assets',
     displayName: 'Public Assets R2',
-    description: 'Setup-managed R2 bucket for public Login UI images and theme assets.',
-  },
-  {
-    id: 'setup-r2-avatars',
-    bindingRef: 'AVATARS',
-    name: 'setup-r2-avatars',
-    displayName: 'Avatars R2',
-    description: 'Setup-managed R2 bucket for user avatar objects.',
+    description:
+      'Setup-managed R2 bucket for public Login UI images, theme assets, and user avatars.',
   },
   {
     id: 'setup-r2-diagnostic-logs',

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { LL } from '$i18n/i18n-svelte';
 	import {
 		platformTenantVanityDomainsAPI,
 		type TenantVanityDomain
@@ -34,7 +35,7 @@
 			domains = response.domains;
 			cloudflareConfigured = response.cloudflare_configured;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load vanity domains';
+			error = err instanceof Error ? err.message : $LL.admin_tenants_load_vanity_failed();
 		} finally {
 			loading = false;
 		}
@@ -46,10 +47,10 @@
 		success = '';
 		try {
 			await platformTenantVanityDomainsAPI.sync(id);
-			success = 'Cloudflare status refreshed.';
+			success = $LL.admin_tenants_vanity_refreshed();
 			await loadDomains();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to refresh vanity domain';
+			error = err instanceof Error ? err.message : $LL.admin_tenants_vanity_refresh_failed();
 		} finally {
 			syncingId = null;
 		}
@@ -61,10 +62,10 @@
 		success = '';
 		try {
 			await platformTenantVanityDomainsAPI.verify(id);
-			success = 'Vanity domain marked as verified.';
+			success = $LL.admin_tenants_vanity_verified();
 			await loadDomains();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to verify vanity domain';
+			error = err instanceof Error ? err.message : $LL.admin_tenants_vanity_verify_failed();
 		} finally {
 			verifyingId = null;
 		}
@@ -76,10 +77,10 @@
 		success = '';
 		try {
 			await platformTenantVanityDomainsAPI.delete(id);
-			success = 'Vanity domain deleted.';
+			success = $LL.admin_tenants_vanity_deleted();
 			await loadDomains();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to delete vanity domain';
+			error = err instanceof Error ? err.message : $LL.admin_tenants_vanity_delete_failed();
 		} finally {
 			deletingId = null;
 		}

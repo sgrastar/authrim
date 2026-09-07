@@ -76,6 +76,7 @@ function createMockContext(options: {
 }) {
   const contextStore = new Map<string, unknown>([
     ['tenantId', 'default'],
+    ['tenantMetadataContext', { tenantId: 'default', coreDb: options.db, route: {} }],
     ['adminAuth', { userId: 'admin-user-1' }],
   ]);
   return {
@@ -204,6 +205,7 @@ describe('Phase 4 audit profile adoption', () => {
 
     const envOverrides = {
       DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:archive-only-logpush',
+      DB_ADMIN: mockDB,
     } as Partial<Env>;
 
     const complianceResponse = await adminComplianceStatusHandler(

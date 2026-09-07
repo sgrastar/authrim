@@ -11,6 +11,9 @@ import {
   AR_ERROR_CODES,
   getLogger,
   getTenantIdFromContext,
+  buildIssuerUrl,
+  createDiagnosticLoggerFromContext,
+  getDiagnosticSessionId,
   hasAdminPermission,
   validateWebhookUrl,
 } from '@authrim/ar-lib-core';
@@ -21,6 +24,7 @@ import {
   updateProvider,
   deleteProvider,
 } from '../services/provider-store';
+import { ensureDynamicClientRegistration } from '../services/dynamic-registration';
 import { GOOGLE_DEFAULT_CONFIG } from '../providers/google';
 import {
   MICROSOFT_DEFAULT_CONFIG,
@@ -150,6 +154,175 @@ function normalizeLoginProviderIconName(value: unknown): string | undefined {
   return LOGIN_PROVIDER_ICON_NAMES.has(normalized) ? normalized : undefined;
 }
 
+async function protectProviderQuirks(
+  quirks: Record<string, unknown>,
+  encryptionKey: string
+): Promise<Record<string, unknown>> {
+  const privateKey = quirks.privateKeyEncrypted;
+  const protectedQuirks: Record<string, unknown> = {
+    ...quirks,
+  };
+  if (typeof privateKey === 'string' && privateKey.length > 0) {
+    protectedQuirks.privateKeyEncrypted = await encrypt(privateKey, encryptionKey);
+  }
+  const fapi2 = quirks.fapi2;
+  if (fapi2 && typeof fapi2 === 'object' && !Array.isArray(fapi2)) {
+    const protectedFapi2 = { ...(fapi2 as Record<string, unknown>) };
+    for (const [plainField, encryptedField] of [
+      ['clientAssertionPrivateJwk', 'clientAssertionPrivateJwkEncrypted'],
+      ['dpopPrivateJwk', 'dpopPrivateJwkEncrypted'],
+    ] as const) {
+      const jwk = protectedFapi2[plainField];
+      delete protectedFapi2[plainField];
+      delete protectedFapi2[
+        plainField === 'clientAssertionPrivateJwk' ? 'hasClientAssertionKey' : 'hasDpopKey'
+      ];
+      if (jwk && typeof jwk === 'object' && !Array.isArray(jwk)) {
+        protectedFapi2[encryptedField] = await encrypt(JSON.stringify(jwk), encryptionKey);
+      }
+    }
+    protectedQuirks.fapi2 = protectedFapi2;
+  }
+  return protectedQuirks;
+}
+
+function hasClientSuppliedEncryptedProviderSecret(quirks: Record<string, unknown>): boolean {
+  const dynamic = quirks.dynamicClientRegistration;
+  const hasDynamicSecret =
+    !!dynamic &&
+    typeof dynamic === 'object' &&
+    !Array.isArray(dynamic) &&
+    Object.prototype.hasOwnProperty.call(dynamic, 'initialAccessTokenEncrypted');
+  const fapi2 = quirks.fapi2;
+  const hasFapi2Secret =
+    !!fapi2 &&
+    typeof fapi2 === 'object' &&
+    !Array.isArray(fapi2) &&
+    ['clientAssertionPrivateJwkEncrypted', 'dpopPrivateJwkEncrypted'].some((field) =>
+      Object.prototype.hasOwnProperty.call(fapi2, field)
+    );
+  return hasDynamicSecret || hasFapi2Secret;
+}
+
+function hasPlaintextProviderSecret(quirks: Record<string, unknown>): boolean {
+  if (typeof quirks.privateKeyEncrypted === 'string' && quirks.privateKeyEncrypted.length > 0) {
+    return true;
+  }
+  const fapi2 = quirks.fapi2;
+  return (
+    !!fapi2 &&
+    typeof fapi2 === 'object' &&
+    !Array.isArray(fapi2) &&
+    ['clientAssertionPrivateJwk', 'dpopPrivateJwk'].some((field) => {
+      const value = (fapi2 as Record<string, unknown>)[field];
+      return !!value && typeof value === 'object' && !Array.isArray(value);
+    })
+  );
+}
+
+function mergeProviderQuirksPreservingSecrets(
+  input: Record<string, unknown>,
+  existing?: Record<string, unknown>
+): Record<string, unknown> {
+  const merged = { ...input };
+  if (typeof merged.privateKeyEncrypted !== 'string' && existing?.privateKeyEncrypted) {
+    merged.privateKeyEncrypted = existing.privateKeyEncrypted;
+  }
+
+  const dynamic = merged.dynamicClientRegistration;
+  if (dynamic && typeof dynamic === 'object' && !Array.isArray(dynamic)) {
+    const cleanDynamic = { ...(dynamic as Record<string, unknown>) };
+    delete cleanDynamic.hasInitialAccessToken;
+    const existingDynamic = existing?.dynamicClientRegistration;
+    if (
+      existingDynamic &&
+      typeof existingDynamic === 'object' &&
+      !Array.isArray(existingDynamic) &&
+      typeof (existingDynamic as Record<string, unknown>).initialAccessTokenEncrypted === 'string'
+    ) {
+      cleanDynamic.initialAccessTokenEncrypted = (
+        existingDynamic as Record<string, unknown>
+      ).initialAccessTokenEncrypted;
+    }
+    merged.dynamicClientRegistration = cleanDynamic;
+  }
+  const fapi2 = merged.fapi2;
+  if (fapi2 && typeof fapi2 === 'object' && !Array.isArray(fapi2)) {
+    const cleanFapi2 = { ...(fapi2 as Record<string, unknown>) };
+    delete cleanFapi2.hasClientAssertionKey;
+    delete cleanFapi2.hasDpopKey;
+    const existingFapi2 = existing?.fapi2;
+    if (existingFapi2 && typeof existingFapi2 === 'object' && !Array.isArray(existingFapi2)) {
+      for (const encryptedField of [
+        'clientAssertionPrivateJwkEncrypted',
+        'dpopPrivateJwkEncrypted',
+      ]) {
+        if (
+          !Object.prototype.hasOwnProperty.call(cleanFapi2, encryptedField) &&
+          typeof (existingFapi2 as Record<string, unknown>)[encryptedField] === 'string'
+        ) {
+          cleanFapi2[encryptedField] = (existingFapi2 as Record<string, unknown>)[encryptedField];
+        }
+      }
+    }
+    merged.fapi2 = cleanFapi2;
+  }
+  return merged;
+}
+
+function sanitizeProvider<
+  T extends {
+    clientSecretEncrypted?: string;
+    privateKeyJwkEncrypted?: string;
+    providerQuirks?: unknown;
+  },
+>(provider: T) {
+  const quirks =
+    provider.providerQuirks && typeof provider.providerQuirks === 'object'
+      ? { ...(provider.providerQuirks as Record<string, unknown>) }
+      : {};
+  const hasPrivateKey = typeof quirks.privateKeyEncrypted === 'string';
+  delete quirks.privateKeyEncrypted;
+  const dynamicRegistration = quirks.dynamicClientRegistration;
+  if (
+    dynamicRegistration &&
+    typeof dynamicRegistration === 'object' &&
+    !Array.isArray(dynamicRegistration)
+  ) {
+    const sanitizedDynamicRegistration = {
+      ...(dynamicRegistration as Record<string, unknown>),
+    };
+    const hasInitialAccessToken =
+      typeof sanitizedDynamicRegistration.initialAccessTokenEncrypted === 'string';
+    delete sanitizedDynamicRegistration.initialAccessTokenEncrypted;
+    quirks.dynamicClientRegistration = {
+      ...sanitizedDynamicRegistration,
+      hasInitialAccessToken,
+    };
+  }
+  const fapi2 = quirks.fapi2;
+  if (fapi2 && typeof fapi2 === 'object' && !Array.isArray(fapi2)) {
+    const sanitizedFapi2 = { ...(fapi2 as Record<string, unknown>) };
+    const hasClientAssertionKey =
+      typeof sanitizedFapi2.clientAssertionPrivateJwkEncrypted === 'string';
+    const hasDpopKey = typeof sanitizedFapi2.dpopPrivateJwkEncrypted === 'string';
+    delete sanitizedFapi2.clientAssertionPrivateJwkEncrypted;
+    delete sanitizedFapi2.dpopPrivateJwkEncrypted;
+    delete sanitizedFapi2.clientAssertionPrivateJwk;
+    delete sanitizedFapi2.dpopPrivateJwk;
+    quirks.fapi2 = { ...sanitizedFapi2, hasClientAssertionKey, hasDpopKey };
+  }
+  return {
+    ...provider,
+    clientSecretEncrypted: undefined,
+    privateKeyJwkEncrypted: undefined,
+    providerQuirks: quirks,
+    hasSecret: !!provider.clientSecretEncrypted,
+    hasPrivateKey,
+    hasPrivateKeyJwk: !!provider.privateKeyJwkEncrypted,
+  };
+}
+
 /**
  * List all providers (admin)
  * GET /external-idp/admin/providers
@@ -169,11 +342,7 @@ export async function handleAdminListProviders(c: AdminProviderContext): Promise
     const providers = await listAllProviders(c.env, tenantId);
 
     // Remove encrypted secrets from response
-    const sanitized = providers.map((p) => ({
-      ...p,
-      clientSecretEncrypted: undefined,
-      hasSecret: !!p.clientSecretEncrypted,
-    }));
+    const sanitized = providers.map(sanitizeProvider);
 
     return c.json({ providers: sanitized });
   } catch (error) {
@@ -388,6 +557,19 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
       (defaults.attributeMapping as Record<string, string> | undefined) || {};
     const defaultProviderQuirks =
       (defaults.providerQuirks as Record<string, unknown> | undefined) || {};
+    const requestedProviderQuirks = body.provider_quirks || defaultProviderQuirks;
+    if (hasClientSuppliedEncryptedProviderSecret(requestedProviderQuirks)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+        variables: {
+          field: 'provider_quirks encrypted secret',
+          reason: 'encrypted secret fields cannot be supplied through this API',
+        },
+      });
+    }
+    const providerQuirks = await protectProviderQuirks(
+      mergeProviderQuirksPreservingSecrets(requestedProviderQuirks),
+      encryptionKey
+    );
     const defaultIconUrl = (defaults.iconUrl as string | undefined) || undefined;
     const defaultButtonColor = (defaults.buttonColor as string | undefined) || undefined;
     const defaultButtonColorDark = (defaults.buttonColorDark as string | undefined) || undefined;
@@ -425,12 +607,13 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
       scopes: body.scopes || defaultScopes,
       tokenEndpointAuthMethod: body.token_endpoint_auth_method,
       attributeMapping: body.attribute_mapping || defaultAttributeMapping,
-      autoLinkEmail: body.auto_link_email !== false,
+      autoLinkEmail:
+        body.auto_link_email ?? (defaults.autoLinkEmail as boolean | undefined) ?? true,
       jitProvisioning: body.jit_provisioning !== false,
       requireEmailVerified: body.require_email_verified !== false,
       alwaysFetchUserinfo: body.always_fetch_userinfo === true,
       enableSso: body.enable_sso !== false,
-      providerQuirks: body.provider_quirks || defaultProviderQuirks,
+      providerQuirks,
       iconUrl: body.icon_url || defaultIconUrl,
       iconName: normalizeLoginProviderIconName(body.icon_name),
       buttonColor: body.button_color || defaultButtonColor,
@@ -444,11 +627,7 @@ export async function handleAdminCreateProvider(c: AdminProviderContext): Promis
     });
 
     // Remove secret from response
-    const response = {
-      ...provider,
-      clientSecretEncrypted: undefined,
-      hasSecret: true,
-    };
+    const response = sanitizeProvider(provider);
 
     return c.json(response, 201);
   } catch (error) {
@@ -482,16 +661,81 @@ export async function handleAdminGetProvider(c: AdminProviderContext): Promise<R
     }
 
     // Remove secret from response
-    const response = {
-      ...provider,
-      clientSecretEncrypted: undefined,
-      hasSecret: !!provider.clientSecretEncrypted,
-    };
+    const response = sanitizeProvider(provider);
 
     return c.json(response);
   } catch (error) {
     log.error('Failed to get provider', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+  }
+}
+
+/** Explicitly discover and dynamically register this RP at its configured OP. */
+export async function handleAdminRegisterProvider(c: AdminProviderContext): Promise<Response> {
+  const log = getLogger(c).module('ADMIN-PROVIDERS');
+  let diagnosticLogger: Awaited<ReturnType<typeof createDiagnosticLoggerFromContext>> = null;
+  const forbidden = await requireAdminProviderPermission(
+    c,
+    ADMIN_PERMISSIONS.EXTERNAL_PROVIDERS_WRITE
+  );
+  if (forbidden) return forbidden;
+
+  const id = c.req.param('id');
+  if (!id) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+  try {
+    const tenantId = getTenantIdFromContext(c);
+    const provider = await getProvider(c.env, tenantId, id);
+    if (!provider) return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    diagnosticLogger = await createDiagnosticLoggerFromContext(c, {
+      tenantId,
+      clientId: provider.clientId,
+    });
+    const providerIdentifier = provider.slug || provider.id;
+    const callbackUri = `${buildIssuerUrl(c.env, tenantId)}/auth/external/${providerIdentifier}/callback`;
+    const result = await ensureDynamicClientRegistration({
+      env: c.env,
+      tenantId,
+      provider,
+      callbackUri,
+      force: true,
+    });
+    await diagnosticLogger?.logAuthDecision({
+      diagnosticSessionId: getDiagnosticSessionId(c),
+      decision: 'allow',
+      reason: 'dynamic_client_registration',
+      flow: 'external_idp',
+      context: {
+        provider: provider.slug || provider.id,
+        issuer: provider.issuer,
+        registered_client_id: result.provider.clientId,
+      },
+    });
+    return c.json({ registered: result.registered, provider: sanitizeProvider(result.provider) });
+  } catch (error) {
+    await diagnosticLogger
+      ?.logAuthDecision({
+        diagnosticSessionId: getDiagnosticSessionId(c),
+        decision: 'deny',
+        reason: 'dynamic_client_registration_failed',
+        flow: 'external_idp',
+        context: { error_name: error instanceof Error ? error.name : 'Error' },
+      })
+      .catch(() => undefined);
+    log.error('Failed to dynamically register provider', {}, error as Error);
+    return c.json(
+      {
+        error: 'dynamic_registration_failed',
+        error_description:
+          c.env.ENABLE_CONFORMANCE_MODE === 'true'
+            ? error instanceof Error
+              ? error.message
+              : String(error)
+            : 'Dynamic client registration failed',
+      },
+      502
+    );
+  } finally {
+    await diagnosticLogger?.cleanup().catch(() => undefined);
   }
 }
 
@@ -598,6 +842,14 @@ export async function handleAdminUpdateProvider(c: AdminProviderContext): Promis
       updates.tokenEndpointAuthMethod = body.token_endpoint_auth_method;
     if (body.attribute_mapping !== undefined) updates.attributeMapping = body.attribute_mapping;
     if (body.provider_quirks !== undefined) {
+      if (hasClientSuppliedEncryptedProviderSecret(body.provider_quirks)) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
+          variables: {
+            field: 'provider_quirks encrypted secret',
+            reason: 'encrypted secret fields cannot be supplied through this API',
+          },
+        });
+      }
       // Validate Microsoft tenant type if present
       const quirks = body.provider_quirks as { tenantType?: string } | undefined;
       if (quirks?.tenantType) {
@@ -612,7 +864,20 @@ export async function handleAdminUpdateProvider(c: AdminProviderContext): Promis
           return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
         }
       }
-      updates.providerQuirks = body.provider_quirks;
+      // Secret fields are intentionally omitted from GET/list responses. Keep
+      // existing secret values when an admin round-trips the sanitized quirks,
+      // and never accept a caller-supplied value named as an encrypted secret.
+      const existingProvider = await getProvider(c.env, getTenantIdFromContext(c), id);
+      const existingQuirks = existingProvider?.providerQuirks as
+        | Record<string, unknown>
+        | undefined;
+      const mergedQuirks = mergeProviderQuirksPreservingSecrets(
+        body.provider_quirks,
+        existingQuirks
+      );
+      updates.providerQuirks = hasPlaintextProviderSecret(body.provider_quirks)
+        ? await protectProviderQuirks(mergedQuirks, getEncryptionKey(c.env))
+        : mergedQuirks;
     }
 
     // Request Object (JAR - RFC 9101) settings
@@ -635,11 +900,7 @@ export async function handleAdminUpdateProvider(c: AdminProviderContext): Promis
     }
 
     // Remove secret from response
-    const response = {
-      ...provider,
-      clientSecretEncrypted: undefined,
-      hasSecret: !!provider.clientSecretEncrypted,
-    };
+    const response = sanitizeProvider(provider);
 
     return c.json(response);
   } catch (error) {

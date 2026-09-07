@@ -4,11 +4,19 @@ export async function readStreamTextWithLimit(
   stream: ReadableStream<Uint8Array> | null,
   maxBytes = DEFAULT_BODY_LIMIT_BYTES
 ): Promise<string> {
+  const body = await readStreamBytesWithLimit(stream, maxBytes);
+  return new TextDecoder().decode(body);
+}
+
+export async function readStreamBytesWithLimit(
+  stream: ReadableStream<Uint8Array> | null,
+  maxBytes = DEFAULT_BODY_LIMIT_BYTES
+): Promise<ArrayBuffer> {
   if (maxBytes <= 0) {
     throw new Error('Body size limit must be greater than zero');
   }
   if (!stream) {
-    return '';
+    return new ArrayBuffer(0);
   }
 
   const reader = stream.getReader();
@@ -43,13 +51,13 @@ export async function readStreamTextWithLimit(
     offset += chunk.byteLength;
   }
 
-  return new TextDecoder().decode(body);
+  return body.buffer;
 }
 
-export async function readRequestTextWithLimit(
+export async function readRequestBytesWithLimit(
   request: Request,
   maxBytes = DEFAULT_BODY_LIMIT_BYTES
-): Promise<string> {
+): Promise<ArrayBuffer> {
   const contentLength = request.headers.get('content-length');
   if (contentLength) {
     const parsed = Number.parseInt(contentLength, 10);
@@ -58,7 +66,15 @@ export async function readRequestTextWithLimit(
     }
   }
 
-  return readStreamTextWithLimit(request.body, maxBytes);
+  return readStreamBytesWithLimit(request.body, maxBytes);
+}
+
+export async function readRequestTextWithLimit(
+  request: Request,
+  maxBytes = DEFAULT_BODY_LIMIT_BYTES
+): Promise<string> {
+  const body = await readRequestBytesWithLimit(request, maxBytes);
+  return new TextDecoder().decode(body);
 }
 
 export async function readRequestJsonWithLimit<T>(

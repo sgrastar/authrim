@@ -24,7 +24,6 @@ describe('PII Encryption', () => {
   describe('isEncrypted', () => {
     it('should return true for encrypted values', () => {
       expect(isEncrypted('enc:v1:gcm:somebase64data')).toBe(true);
-      expect(isEncrypted('enc:v2:cbc:anotherbase64data')).toBe(true);
     });
 
     it('should return false for plaintext values', () => {
@@ -37,6 +36,7 @@ describe('PII Encryption', () => {
 
     it('should return false for malformed encrypted values', () => {
       expect(isEncrypted('enc:v1:gcm')).toBe(false);
+      expect(isEncrypted('enc:v2:cbc:anotherbase64data')).toBe(false);
       expect(isEncrypted('enc:gcm:data')).toBe(false);
       expect(isEncrypted('encrypted:v1:gcm:data')).toBe(false);
     });
@@ -52,17 +52,9 @@ describe('PII Encryption', () => {
       });
     });
 
-    it('should parse encrypted value with version 2', () => {
-      const result = parseEncryptedValue('enc:v2:cbc:anotherbase64data');
-      expect(result).toEqual({
-        keyVersion: 2,
-        algorithm: 'cbc',
-        payload: 'anotherbase64data',
-      });
-    });
-
     it('should return null for invalid format', () => {
       expect(parseEncryptedValue('plain text')).toBeNull();
+      expect(parseEncryptedValue('enc:v2:cbc:anotherbase64data')).toBeNull();
       expect(parseEncryptedValue('enc:v1:unknown:data')).toBeNull();
     });
   });
@@ -114,26 +106,6 @@ describe('PII Encryption', () => {
     });
   });
 
-  describe('encryptValue / decryptValue - AES-256-CBC', () => {
-    it('should encrypt and decrypt a value correctly', async () => {
-      const plaintext = 'phone: +81-90-1234-5678';
-      const algorithm: EncryptionAlgorithm = 'AES-256-CBC';
-
-      const { encrypted } = await encryptValue(plaintext, TEST_KEY, algorithm, 1);
-      expect(isEncrypted(encrypted)).toBe(true);
-      expect(encrypted).toMatch(/^enc:v1:cbc:/);
-
-      const {
-        decrypted,
-        wasEncrypted,
-        algorithm: detectedAlgo,
-      } = await decryptValue(encrypted, TEST_KEY);
-      expect(decrypted).toBe(plaintext);
-      expect(wasEncrypted).toBe(true);
-      expect(detectedAlgo).toBe('AES-256-CBC');
-    });
-  });
-
   describe('encryptValue - NONE algorithm', () => {
     it('should return plaintext when algorithm is NONE', async () => {
       const plaintext = 'not encrypted';
@@ -165,6 +137,12 @@ describe('PII Encryption', () => {
       );
       expect(decryptedUndef).toBeUndefined();
       expect(wasUndef).toBe(false);
+    });
+
+    it('should fail closed for removed encrypted formats', async () => {
+      await expect(decryptValue('enc:v2:cbc:anotherbase64data', TEST_KEY)).rejects.toThrow(
+        'Unsupported encrypted value format'
+      );
     });
   });
 
@@ -378,7 +356,7 @@ describe('EncryptionConfigManager', () => {
   });
 
   describe('environment variable override', () => {
-    it('should use environment variables when set', async () => {
+    it('should fall back to GCM when the removed CBC algorithm is configured', async () => {
       const env: Partial<Env> = {
         ENABLE_PII_ENCRYPTION: 'false', // Explicitly disable
         PII_ENCRYPTION_ALGORITHM: 'AES-256-CBC',
@@ -388,7 +366,7 @@ describe('EncryptionConfigManager', () => {
       const manager = new EncryptionConfigManager(env);
 
       expect(await manager.isEncryptionEnabled()).toBe(false);
-      expect(await manager.getAlgorithm()).toBe('AES-256-CBC');
+      expect(await manager.getAlgorithm()).toBe('AES-256-GCM');
       expect(await manager.getEncryptionFields()).toEqual(['email', 'phone_number']);
       expect(await manager.getKeyVersion()).toBe(5);
     });
@@ -701,7 +679,7 @@ describe('PIIEncryptionService', () => {
   });
 
   describe('reEncryptField', () => {
-    it('should re-encrypt with new algorithm', async () => {
+    it('should re-encrypt with a new key version', async () => {
       const env: Partial<Env> = {
         PII_ENCRYPTION_KEY: TEST_KEY,
         ENABLE_PII_ENCRYPTION: 'true',
@@ -716,13 +694,12 @@ describe('PIIEncryptionService', () => {
       const gcmEncrypted = await service.encryptField('email', 'test@example.com');
       expect((gcmEncrypted as string).includes(':gcm:')).toBe(true);
 
-      // Re-encrypt with CBC
-      const cbcEncrypted = await service.reEncryptField(gcmEncrypted, 'AES-256-CBC', 2);
-      expect((cbcEncrypted as string).includes(':cbc:')).toBe(true);
-      expect((cbcEncrypted as string).includes(':v2:')).toBe(true);
+      const reEncrypted = await service.reEncryptField(gcmEncrypted, 'AES-256-GCM', 2);
+      expect((reEncrypted as string).includes(':gcm:')).toBe(true);
+      expect((reEncrypted as string).includes(':v2:')).toBe(true);
 
       // Verify decryption still works
-      const decrypted = await service.decryptField(cbcEncrypted);
+      const decrypted = await service.decryptField(reEncrypted);
       expect(decrypted).toBe('test@example.com');
     });
   });

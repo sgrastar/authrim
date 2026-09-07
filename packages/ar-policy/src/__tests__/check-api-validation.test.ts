@@ -13,34 +13,38 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import app from '../index';
+import { createPolicyRuntimeEnv } from './helpers/runtime-env';
 
 // Mock environment with all required services
-const createMockEnv = () => ({
-  POLICY_API_SECRET: 'test-secret-key',
-  ENABLE_CHECK_API: 'true',
-  DEFAULT_TENANT_ID: 'default',
-  VERSION_MANAGER: {
-    idFromName: vi.fn(() => ({ toString: () => 'mock-id' })),
-    get: vi.fn(() => ({
-      fetch: vi.fn(() => Promise.resolve(new Response(JSON.stringify({ uuid: 'test-uuid' })))),
-    })),
-  },
-  CODE_VERSION_UUID: '',
-  DB: {
-    prepare: vi.fn(() => ({
-      bind: vi.fn().mockReturnThis(),
-      all: vi.fn(() => Promise.resolve({ results: [] })),
-      first: vi.fn(() => Promise.resolve(null)),
-      run: vi.fn(() => Promise.resolve({ success: true })),
-    })),
-    batch: vi.fn(() => Promise.resolve([])),
-  },
-  CHECK_CACHE_KV: {
-    get: vi.fn(() => Promise.resolve(null)),
-    put: vi.fn(() => Promise.resolve()),
-    getWithMetadata: vi.fn(() => Promise.resolve({ value: null, metadata: null })),
-  },
-});
+const createMockEnv = () =>
+  createPolicyRuntimeEnv(
+    {
+      prepare: vi.fn(() => ({
+        bind: vi.fn().mockReturnThis(),
+        all: vi.fn(() => Promise.resolve({ results: [] })),
+        first: vi.fn(() => Promise.resolve(null)),
+        run: vi.fn(() => Promise.resolve({ success: true })),
+      })),
+      batch: vi.fn(() => Promise.resolve([])),
+    } as unknown as D1Database,
+    {
+      POLICY_API_SECRET: 'test-secret-key',
+      ENABLE_CHECK_API: 'true',
+      DEFAULT_TENANT_ID: 'default',
+      VERSION_MANAGER: {
+        idFromName: vi.fn(() => ({ toString: () => 'mock-id' })),
+        get: vi.fn(() => ({
+          fetch: vi.fn(() => Promise.resolve(new Response(JSON.stringify({ uuid: 'test-uuid' })))),
+        })),
+      },
+      CODE_VERSION_UUID: '',
+      CHECK_CACHE_KV: {
+        get: vi.fn(() => Promise.resolve(null)),
+        put: vi.fn(() => Promise.resolve()),
+        getWithMetadata: vi.fn(() => Promise.resolve({ value: null, metadata: null })),
+      },
+    }
+  );
 
 // Helper to create authenticated request
 function createRequest(

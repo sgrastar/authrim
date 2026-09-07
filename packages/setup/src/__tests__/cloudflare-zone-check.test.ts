@@ -94,7 +94,7 @@ describe('checkZoneExists', () => {
 
   it('returns api_error when the Cloudflare API responds with a server error', async () => {
     process.env.CLOUDFLARE_API_TOKEN = 'test-token';
-    fetchMock.mockResolvedValueOnce(jsonResponse({ success: false }, 500));
+    fetchMock.mockResolvedValue(jsonResponse({ success: false }, 500));
 
     const result = await checkZoneExists('auth.example.com');
 
@@ -103,20 +103,27 @@ describe('checkZoneExists', () => {
 
   it('returns network_error when fetch rejects', async () => {
     process.env.CLOUDFLARE_API_TOKEN = 'test-token';
-    fetchMock.mockRejectedValueOnce(new Error('socket hang up'));
+    fetchMock.mockRejectedValue(new Error('socket hang up at https://api.cloudflare.test/secret'));
 
     const result = await checkZoneExists('auth.example.com');
 
     expectDiagnostic(result, 'network_error', false);
-    expect(result.error).toContain('socket hang up');
+    expect(result.error).toContain('failed after 4 attempts (network failure)');
+    expect(result.error).not.toContain('https://api.cloudflare.test/secret');
   });
 
   it('returns not_logged_in when Cloudflare auth is missing', async () => {
-    execaMock.mockResolvedValueOnce({
-      exitCode: 0,
-      stdout: 'Not logged in. Run `wrangler login`.',
-      stderr: '',
-    } as Awaited<ReturnType<typeof execa>>);
+    execaMock
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: '',
+        stderr: 'Not logged in. Run `wrangler login`.',
+      } as Awaited<ReturnType<typeof execa>>)
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: 'Not logged in. Run `wrangler login`.',
+        stderr: '',
+      } as Awaited<ReturnType<typeof execa>>);
 
     const result = await checkZoneExists('auth.example.com');
 
@@ -125,11 +132,18 @@ describe('checkZoneExists', () => {
   });
 
   it('returns token_unavailable when login exists but no API token can be read', async () => {
-    execaMock.mockResolvedValueOnce({
-      exitCode: 0,
-      stdout: 'You are logged in with an OAuth token, associated with the email test@example.com.',
-      stderr: '',
-    } as Awaited<ReturnType<typeof execa>>);
+    execaMock
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        stdout: '',
+        stderr: 'Authentication token is unavailable.',
+      } as Awaited<ReturnType<typeof execa>>)
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout:
+          'You are logged in with an OAuth token, associated with the email test@example.com.',
+        stderr: '',
+      } as Awaited<ReturnType<typeof execa>>);
 
     const result = await checkZoneExists('auth.example.com');
 

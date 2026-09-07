@@ -112,7 +112,7 @@ describe('common-entry routing', () => {
 				config: {
 					tenant_id: 'default',
 					mode: 'discovery_optional',
-					discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+					discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 					selection_policy: 'select_if_multiple',
 					allow_manual_tenant_entry: true,
 					remember_last_tenant: true,
@@ -170,7 +170,7 @@ describe('common-entry routing', () => {
 					config: {
 						tenant_id: 'default',
 						mode: 'discovery_optional',
-						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
@@ -210,7 +210,7 @@ describe('common-entry routing', () => {
 				config: {
 					tenant_id: 'default',
 					mode: 'discovery_optional',
-					discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+					discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 					selection_policy: 'select_if_multiple',
 					allow_manual_tenant_entry: true,
 					remember_last_tenant: true,
@@ -452,8 +452,7 @@ describe('common-entry routing', () => {
 			} as never)
 		).rejects.toMatchObject({
 			status: 303,
-			location:
-				'/error?error=invalid_request&error_description=Authorization%20challenge%20is%20invalid%20or%20expired'
+			location: '/error?error=invalid_request'
 		});
 		expect(fetch).toHaveBeenCalledTimes(1);
 	});
@@ -464,7 +463,7 @@ describe('common-entry routing', () => {
 				config: {
 					tenant_id: 'first',
 					mode: 'discovery_optional',
-					discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+					discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 					selection_policy: 'select_if_multiple',
 					allow_manual_tenant_entry: true,
 					remember_last_tenant: true,
@@ -725,7 +724,7 @@ describe('common-entry routing', () => {
 					config: {
 						tenant_id: 'first',
 						mode: 'discovery_optional',
-						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
@@ -877,7 +876,7 @@ describe('common-entry routing', () => {
 					config: {
 						tenant_id: 'first',
 						mode: 'discovery_optional',
-						discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+						discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 						selection_policy: 'select_if_multiple',
 						allow_manual_tenant_entry: true,
 						remember_last_tenant: true,
@@ -935,7 +934,7 @@ describe('common-entry routing', () => {
 				config: {
 					tenant_id: 'first',
 					mode: 'discovery_optional',
-					discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+					discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 					selection_policy: 'select_if_multiple',
 					allow_manual_tenant_entry: true,
 					remember_last_tenant: true,
@@ -974,7 +973,7 @@ describe('common-entry routing', () => {
 				config: {
 					tenant_id: 'default',
 					mode: 'discovery_optional',
-					discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+					discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 					selection_policy: 'select_if_multiple',
 					allow_manual_tenant_entry: true,
 					remember_last_tenant: true,
@@ -1007,7 +1006,7 @@ describe('common-entry routing', () => {
 				config: {
 					tenant_id: 'default',
 					mode: 'discovery_optional',
-					discovery_methods: ['email_domain', 'tenant_code', 'tenant_slug'],
+					discovery_methods: ['email_exact', 'tenant_code', 'tenant_slug'],
 					selection_policy: 'select_if_multiple',
 					allow_manual_tenant_entry: true,
 					remember_last_tenant: true,

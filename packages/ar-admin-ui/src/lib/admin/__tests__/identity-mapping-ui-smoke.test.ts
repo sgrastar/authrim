@@ -86,6 +86,10 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('onCompileDraft');
 		expect(flowEditor).toContain('transform_input');
 		expect(flowEditor).toContain('admin_identity_mapping_flow_transform_step');
+		expect(flowEditor).toContain('admin_identity_mapping_flow_profile_status');
+		expect(pageShell).toContain('admin_identity_mapping_editor_active');
+		expect(pageShell).toContain('aria-pressed={selectedFieldMappingActive}');
+		expect(pageShell).toContain('role="status" aria-live="polite"');
 		expect(flowEditor).toContain('admin_identity_mapping_flow_operation');
 		expect(flowEditor).toContain('copy');
 		expect(flowEditor).toContain('concat');
@@ -151,7 +155,7 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(flowEditor).toContain('nodeVisualOffset');
 		expect(flowEditor).toContain('animateNextSampleSourceNodes = true');
 		expect(flowEditor).toContain('animateVisibleNodeSwap');
-		expect(flowEditor).toContain('if (option.id === selectedSourcePolicyId) continue');
+		expect(flowEditor).toContain('if (option.id === resolvedSourcePolicyId) continue');
 		expect(flowEditor).toContain('swappingNodeIds');
 		expect(flowEditor).toContain('node-swap-enter');
 		expect(flowEditor).toContain('node-handle output');
@@ -319,6 +323,10 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(profileEditor).toContain('listAttributeGroups');
 		expect(profileEditor).toContain('listAttributeFields');
 		expect(profileEditor).toContain('destinationTemplates');
+		expect(profileEditor).toContain('sourceTemplates');
+		expect(profileEditor).toContain("setSourceKind('scim')");
+		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_source_method_aria');
+		expect(profileEditor).toContain('copyScimSourceTemplate');
 		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_create_from_existing');
 		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_create_from_template');
 		expect(profileEditor).not.toContain(
@@ -331,6 +339,13 @@ describe('field mapping Admin UI smoke checks', () => {
 		expect(profileEditor).toContain('deleteCurrentProfile');
 		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_delete');
 		expect(profileEditor).toContain('parseCsvSourceProfile');
+		expect(profileEditor).toContain('const stagedProfileLifecycleControlsEnabled = false');
+		expect(profileEditor).toContain('completingProfileLifecycle');
+		expect(profileEditor).toContain('saveAndActivateCurrentProfile');
+		expect(profileEditor).toContain('completeProfileLifecycle');
+		expect(profileEditor).toContain('reviewDraft: reviewCurrentProfileVersion');
+		expect(profileEditor).toContain('activateVersion: activateCurrentProfileVersion');
+		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_save()');
 		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_save_draft_profile');
 		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_save_destination_draft');
 		expect(profileEditor).toContain('admin_identity_mapping_profile_edit_manual');

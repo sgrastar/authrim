@@ -14,8 +14,19 @@
 	import { API_BASE_URL, adminFetch } from '$lib/api/admin-request';
 	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
 	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
+	import SanitizedHtmlPreview from '$lib/components/admin/SanitizedHtmlPreview.svelte';
+	import {
+		DEFAULT_LOGIN_UI_FOOTER_TEXTS,
+		DEFAULT_LOGIN_UI_PAGE_TITLES,
+		DEFAULT_LOGIN_UI_TAGLINES,
+		LOGIN_UI_LOCALE_OPTIONS,
+		isLoginUILocale,
+		resolveEnabledLoginUILocalesByEnglishName,
+		type LoginUILocale
+	} from '$lib/login-ui/locales';
+	import { sanitizeFooterHtml } from '$lib/login-ui/footer-html';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
-	import { LL } from '$i18n/i18n-svelte';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import { createAccordion, melt } from '@melt-ui/svelte';
 
 	const CATEGORY = 'login-ui';
@@ -27,6 +38,7 @@
 		'login-ui.font_family',
 		'login-ui.font_scale',
 		'login-ui.background_color',
+		'login-ui.accent_color',
 		'login-ui.title_color',
 		'login-ui.text_color',
 		'login-ui.copy_color',
@@ -64,6 +76,7 @@
 		'login-ui.brand_position',
 		'login-ui.brand_align',
 		'login-ui.header_text',
+		'login-ui.text_localizations',
 		'login-ui.footer_text',
 		'login-ui.footer_links',
 		'login-ui.custom_blocks',
@@ -93,13 +106,24 @@
 		brandPanelTitle?: string;
 		brandPanelText?: string;
 	};
-	type ThemePreviewSurface = 'login' | 'registration' | 'code' | 'consent' | 'error';
+	type ThemePreviewSurface = 'login' | 'registration' | 'code' | 'consent' | 'account' | 'error';
 	type ThemePreviewColorMode = 'light' | 'dark';
 	type ThemePreviewViewport = 'desktop' | 'mobile';
 	type FooterLinkPreview = {
 		label: string;
 		href: string;
 	};
+	type ThemeTextField =
+		| 'tagline'
+		| 'brandPanelTitle'
+		| 'brandPanelText'
+		| 'footerText'
+		| 'loginTitle'
+		| 'registrationTitle'
+		| 'accountTitle';
+	type ThemeTextLocalizations = Partial<
+		Record<LoginUILocale, Partial<Record<ThemeTextField, string>>>
+	>;
 
 	const themeTemplateOptions: ThemeTemplateOption[] = [
 		{
@@ -168,6 +192,7 @@
 		created_at: number;
 		updated_at: number;
 		values: Record<string, unknown>;
+		account_page_id?: string | null;
 	};
 	type CustomThemesDoc = { themes: CustomTheme[]; active: string | null };
 	type AssetUrlKey =
@@ -186,9 +211,11 @@
 		'login-ui.font_family',
 		'login-ui.font_scale',
 		'login-ui.background_color',
+		'login-ui.accent_color',
 		'login-ui.title_color',
 		'login-ui.text_color',
 		'login-ui.copy_color',
+		'login-ui.brand_name',
 		'login-ui.logo_url',
 		'login-ui.background_image_url',
 		'login-ui.login_panel_background_image_url',
@@ -221,6 +248,7 @@
 		'login-ui.brand_position',
 		'login-ui.brand_align',
 		'login-ui.header_text',
+		'login-ui.text_localizations',
 		'login-ui.footer_text',
 		'login-ui.footer_links',
 		'login-ui.custom_blocks'
@@ -347,10 +375,14 @@
 	let editorValues = $state<Record<string, unknown>>({});
 	let editorName = $state('');
 	let editorDirty = $state(false);
+	let brandNameValidationError = $state('');
 	let applyingTheme = $state(false);
 	let previewSurface = $state<ThemePreviewSurface>('login');
 	let previewColorMode = $state<ThemePreviewColorMode>('light');
 	let previewViewport = $state<ThemePreviewViewport>('desktop');
+	let textEditorLocale = $state<LoginUILocale>('en');
+	let editorAccountPageId = $state('');
+	let selectedPublishThemeId = $state<string | null>(null);
 
 	let scopeContext = $derived(settingsContext.scopeContext as ScopeContext);
 	let currentLevel = $derived(settingsContext.currentLevel);
@@ -363,6 +395,16 @@
 		) ?? themeTemplateOptions[0]
 	);
 	let customThemesDoc = $derived(parseCustomThemesDoc(getLiveString('login-ui.custom_themes', '')));
+	let publishedAccountPages = $derived.by(() => {
+		try {
+			const document = JSON.parse(getLiveString('login-ui.account_pages', '')) as {
+				pages?: Array<{ id: string; name: string; published?: unknown }>;
+			};
+			return (document.pages ?? []).filter((page) => Boolean(page.published));
+		} catch {
+			return [];
+		}
+	});
 	let customThemes = $derived(customThemesDoc.themes);
 	let activeCustomThemeId = $derived(
 		customThemesDoc.active && customThemesDoc.themes.some((t) => t.id === customThemesDoc.active)
@@ -386,8 +428,9 @@
 				: currentThemeTemplate)
 	);
 	let publishedThemeVersion = $derived(getNumberSetting('login-ui.published_version', 0));
-	let publishedThemeAt = $derived(getLiveString('login-ui.published_at', ''));
-	let hasRollbackSnapshot = $derived(!!getLiveString('login-ui.rollback_snapshot', ''));
+	let enabledTextEditorLocales = $derived(
+		resolveEnabledLoginUILocalesByEnglishName(getCurrentValue('login-ui.supported_locales'))
+	);
 	let footerLinks = $derived(getPreviewFooterLinks());
 	let logoUrl = $derived(
 		assetPreviewOverrides.logo ?? getSafePreviewUrl(getThemeAwareValue('login-ui.logo_url'))
@@ -407,11 +450,43 @@
 		assetPreviewOverrides['panel-background'] ??
 			getSafePreviewUrl(getThemeAwareValue('login-ui.login_panel_background_image_url'))
 	);
-	let previewBrandName = $derived(getLiveString('login-ui.brand_name', 'Authrim'));
+	let previewBrandName = $derived(getEditableStringSetting('login-ui.brand_name', 'Authrim'));
 	let previewHeaderText = $derived(
-		getStringSetting('login-ui.header_text', 'OpenID Connect Provider on Cloudflare Workers')
+		getLocalizedThemeText(
+			textEditorLocale,
+			'tagline',
+			getStringSetting('login-ui.header_text', DEFAULT_LOGIN_UI_TAGLINES[textEditorLocale])
+		)
 	);
-	let previewFooterText = $derived(getStringSetting('login-ui.footer_text', 'Powered by Authrim'));
+	let previewFooterText = $derived(
+		getLocalizedThemeText(
+			textEditorLocale,
+			'footerText',
+			getStringSetting('login-ui.footer_text', DEFAULT_LOGIN_UI_FOOTER_TEXTS[textEditorLocale])
+		)
+	);
+	let previewFooterHtml = $derived(sanitizeFooterHtml(previewFooterText));
+	let previewLoginTitle = $derived(
+		getLocalizedThemeText(
+			textEditorLocale,
+			'loginTitle',
+			DEFAULT_LOGIN_UI_PAGE_TITLES[textEditorLocale].loginTitle
+		)
+	);
+	let previewRegistrationTitle = $derived(
+		getLocalizedThemeText(
+			textEditorLocale,
+			'registrationTitle',
+			DEFAULT_LOGIN_UI_PAGE_TITLES[textEditorLocale].registrationTitle
+		)
+	);
+	let previewAccountTitle = $derived(
+		getLocalizedThemeText(
+			textEditorLocale,
+			'accountTitle',
+			DEFAULT_LOGIN_UI_PAGE_TITLES[textEditorLocale].accountTitle
+		)
+	);
 	let previewHeaderEnabled = $derived(getBooleanSetting('login-ui.header_enabled', true));
 	let previewSubtitleEnabled = $derived(getBooleanSetting('login-ui.subtitle_enabled', true));
 	let previewFooterEnabled = $derived(getBooleanSetting('login-ui.footer_enabled', true));
@@ -449,11 +524,24 @@
 	let previewBackgroundColor = $derived(
 		getStringSetting('login-ui.background_color', previewTemplate.backgroundColor)
 	);
+	let previewAccentColor = $derived(getStringSetting('login-ui.accent_color', ''));
 	let previewTitleColor = $derived(getStringSetting('login-ui.title_color', ''));
 	let previewTextColor = $derived(getStringSetting('login-ui.text_color', ''));
 	let previewCopyColor = $derived(getStringSetting('login-ui.copy_color', ''));
-	let previewBrandPanelTitle = $derived(getOptionalStringSetting('login-ui.brand_panel_title'));
-	let previewBrandPanelText = $derived(getOptionalStringSetting('login-ui.brand_panel_text'));
+	let previewBrandPanelTitle = $derived(
+		getLocalizedThemeText(
+			textEditorLocale,
+			'brandPanelTitle',
+			getOptionalStringSetting('login-ui.brand_panel_title')
+		)
+	);
+	let previewBrandPanelText = $derived(
+		getLocalizedThemeText(
+			textEditorLocale,
+			'brandPanelText',
+			getOptionalStringSetting('login-ui.brand_panel_text')
+		)
+	);
 	let previewLogoDisplay = $derived(
 		readEnum(
 			getStringSetting('login-ui.logo_display', 'auto'),
@@ -560,6 +648,7 @@
 	let previewStyle = $derived(
 		[
 			previewBackgroundColor ? `--preview-background-color:${previewBackgroundColor}` : '',
+			previewAccentColor ? `--preview-primary:${previewAccentColor}` : '',
 			previewTitleColor ? `--preview-title-color:${previewTitleColor}` : '',
 			previewTextColor ? `--preview-text-color:${previewTextColor}` : '',
 			previewCopyColor ? `--preview-copy-color:${previewCopyColor}` : '',
@@ -611,6 +700,22 @@
 		}
 	});
 
+	$effect(() => {
+		if (!enabledTextEditorLocales.includes(textEditorLocale)) {
+			textEditorLocale = enabledTextEditorLocales[0] ?? 'en';
+		}
+	});
+
+	$effect(() => {
+		if (
+			selectedPublishThemeId &&
+			customThemes.some((theme) => theme.id === selectedPublishThemeId)
+		) {
+			return;
+		}
+		selectedPublishThemeId = activeCustomThemeId;
+	});
+
 	async function loadData() {
 		loading = true;
 		error = '';
@@ -631,7 +736,7 @@
 				currentThemeTemplate.theme
 			);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load theme settings.';
+			error = err instanceof Error ? err.message : $LL.admin_theme_error_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -664,6 +769,7 @@
 			'login-ui.page_layout': option.layout,
 			'login-ui.font_family': option.fontFamily,
 			'login-ui.background_color': option.backgroundColor,
+			'login-ui.accent_color': '',
 			'login-ui.title_color': '',
 			'login-ui.text_color': '',
 			'login-ui.copy_color': ''
@@ -699,6 +805,98 @@
 	function getStringSetting(key: string, fallback: string): string {
 		const value = themeSource(key);
 		return typeof value === 'string' && value.trim() ? value : fallback;
+	}
+
+	function getEditableStringSetting(key: string, fallback: string): string {
+		const value = themeSource(key);
+		return typeof value === 'string' ? value : fallback;
+	}
+
+	function parseThemeTextLocalizations(value: unknown): ThemeTextLocalizations {
+		try {
+			const parsed = typeof value === 'string' ? JSON.parse(value || '{}') : value;
+			if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+			return Object.fromEntries(
+				Object.entries(parsed).flatMap(([locale, localized]) => {
+					if (
+						!isLoginUILocale(locale) ||
+						!localized ||
+						typeof localized !== 'object' ||
+						Array.isArray(localized)
+					) {
+						return [];
+					}
+					const fields = Object.fromEntries(
+						Object.entries(localized)
+							.filter(
+								([field, text]) =>
+									(field === 'tagline' ||
+										field === 'brandPanelTitle' ||
+										field === 'brandPanelText' ||
+										field === 'footerText' ||
+										field === 'loginTitle' ||
+										field === 'registrationTitle' ||
+										field === 'accountTitle') &&
+									typeof text === 'string'
+							)
+							.map(([field, text]) => [field, (text as string).trim()])
+					);
+					return Object.keys(fields).length > 0 ? [[locale, fields]] : [];
+				})
+			);
+		} catch {
+			return {};
+		}
+	}
+
+	function getThemeTextOverride(locale: LoginUILocale, field: ThemeTextField): string | undefined {
+		return parseThemeTextLocalizations(getThemeAwareValue('login-ui.text_localizations'))[locale]?.[
+			field
+		];
+	}
+
+	function getLocalizedThemeText(
+		locale: LoginUILocale,
+		field: ThemeTextField,
+		fallback: string
+	): string {
+		return getThemeTextOverride(locale, field) ?? fallback;
+	}
+
+	function themeTextFallback(field: ThemeTextField): string {
+		if (field === 'tagline') {
+			return getStringSetting('login-ui.header_text', DEFAULT_LOGIN_UI_TAGLINES[textEditorLocale]);
+		}
+		if (field === 'brandPanelTitle') {
+			return getOptionalStringSetting('login-ui.brand_panel_title');
+		}
+		if (field === 'brandPanelText') {
+			return getOptionalStringSetting('login-ui.brand_panel_text');
+		}
+		if (field === 'footerText') {
+			return getStringSetting(
+				'login-ui.footer_text',
+				DEFAULT_LOGIN_UI_FOOTER_TEXTS[textEditorLocale]
+			);
+		}
+		return DEFAULT_LOGIN_UI_PAGE_TITLES[textEditorLocale][field];
+	}
+
+	function updateThemeTextLocalization(field: ThemeTextField, value: string) {
+		const localizations = parseThemeTextLocalizations(
+			getThemeAwareValue('login-ui.text_localizations')
+		);
+		const localized = { ...(localizations[textEditorLocale] ?? {}) };
+		localized[field] = value.trim() ? value : '';
+
+		const next = { ...localizations };
+		next[textEditorLocale] = localized;
+		const serialized = Object.keys(next).length > 0 ? JSON.stringify(next) : '';
+		if (view === 'editor' && editingCustomTheme) {
+			handleEditorChange('login-ui.text_localizations', serialized);
+			return;
+		}
+		handleChange('login-ui.text_localizations', serialized);
 	}
 
 	function getBooleanSetting(key: string, fallback: boolean): boolean {
@@ -767,6 +965,7 @@
 						base,
 						created_at: typeof item.created_at === 'number' ? item.created_at : 0,
 						updated_at: typeof item.updated_at === 'number' ? item.updated_at : 0,
+						account_page_id: typeof item.account_page_id === 'string' ? item.account_page_id : null,
 						values
 					};
 				})
@@ -805,10 +1004,23 @@
 		return $LL.admin_theme_template_classic_description();
 	}
 
+	function formatThemeTimestamp(value: number): string {
+		if (!Number.isFinite(value) || value <= 0) return $LL.admin_theme_date_unknown();
+		return new Intl.DateTimeFormat(getLocale() === 'ja' ? 'ja-JP' : 'en-US', {
+			dateStyle: 'medium',
+			timeStyle: 'short'
+		}).format(value);
+	}
+
+	function themeTimestampIso(value: number): string | undefined {
+		return Number.isFinite(value) && value > 0 ? new Date(value).toISOString() : undefined;
+	}
+
 	function previewSurfaceLabel(surface: ThemePreviewSurface): string {
 		if (surface === 'registration') return $LL.admin_theme_preview_surface_registration();
 		if (surface === 'code') return $LL.admin_theme_preview_surface_code();
 		if (surface === 'consent') return $LL.admin_theme_preview_surface_consent();
+		if (surface === 'account') return $LL.admin_theme_preview_surface_account();
 		if (surface === 'error') return $LL.admin_theme_preview_surface_error();
 		return $LL.admin_theme_preview_surface_login();
 	}
@@ -906,6 +1118,7 @@
 					base: custom!.base,
 					created_at: now,
 					updated_at: now,
+					account_page_id: custom!.account_page_id ?? null,
 					values: { ...custom!.values }
 				};
 		const doc: CustomThemesDoc = {
@@ -919,18 +1132,6 @@
 		if (ok) openEditor(newTheme.id);
 	}
 
-	async function deleteCustomTheme(theme: CustomTheme) {
-		if (!window.confirm($LL.admin_theme_delete_confirm({ name: theme.name }))) return;
-		const doc: CustomThemesDoc = {
-			themes: customThemes.filter((t) => t.id !== theme.id),
-			active: customThemesDoc.active === theme.id ? null : customThemesDoc.active
-		};
-		await persistThemeSettings(
-			{ 'login-ui.custom_themes': serializeCustomThemesDoc(doc) },
-			$LL.admin_theme_deleted_success({ name: theme.name })
-		);
-	}
-
 	function openEditor(id: string) {
 		const custom = customThemes.find((t) => t.id === id) ?? null;
 		const builtin = themeTemplateOptions.find((o) => o.id === id) ?? null;
@@ -938,7 +1139,9 @@
 		editingThemeId = id;
 		editorValues = custom ? { ...custom.values } : {};
 		editorName = custom ? custom.name : (builtin?.name ?? '');
+		editorAccountPageId = custom?.account_page_id ?? '';
 		editorDirty = false;
+		brandNameValidationError = '';
 		previewSurface = 'login';
 		previewViewport = 'desktop';
 		const baseOption = custom
@@ -955,6 +1158,7 @@
 		editingThemeId = null;
 		editorValues = {};
 		editorDirty = false;
+		brandNameValidationError = '';
 		clearAssetPreviewOverrides();
 	}
 
@@ -1003,9 +1207,6 @@
 		const set: Record<string, unknown> = {
 			'login-ui.custom_themes': serializeCustomThemesDoc(doc)
 		};
-		if (editingActive) {
-			set[key] = value;
-		}
 		const result = await scopedSettingsAPI.updateSettingsForScope(CATEGORY, scopeContext, {
 			ifMatch: settings.version,
 			set
@@ -1065,29 +1266,47 @@
 		}
 	}
 
-	async function saveAndApplyCustomTheme() {
+	async function saveCustomTheme() {
 		if (!editingCustomTheme) return;
+		const rawBrandName = editorValues['login-ui.brand_name'];
+		const brandName = typeof rawBrandName === 'string' ? rawBrandName.trim() : 'Authrim';
+		if (!brandName) {
+			brandNameValidationError = $LL.admin_theme_text_brand_name_required();
+			error = brandNameValidationError;
+			return;
+		}
+		brandNameValidationError = '';
+		if (error === $LL.admin_theme_text_brand_name_required()) error = '';
 		const name = editorName.trim() || editingCustomTheme.name;
 		const updated: CustomTheme = {
 			...editingCustomTheme,
 			name: name.slice(0, 80),
-			values: { ...editorValues },
+			values: { ...editorValues, 'login-ui.brand_name': brandName },
+			account_page_id: editorAccountPageId || null,
 			updated_at: Date.now()
 		};
 		const doc: CustomThemesDoc = {
 			themes: customThemes.map((t) => (t.id === updated.id ? updated : t)),
-			active: updated.id
+			active: customThemesDoc.active
 		};
+		const customThemesValue = serializeCustomThemesDoc(doc);
 		const set: Record<string, unknown> = {
-			'login-ui.custom_themes': serializeCustomThemesDoc(doc),
-			'login-ui.theme_template': updated.base
+			'login-ui.custom_themes': customThemesValue
 		};
-		for (const [key, value] of Object.entries(updated.values)) {
-			if (THEME_VALUE_KEYS.has(key)) set[key] = value;
+		if (activeCustomThemeId === updated.id) {
+			Object.assign(
+				set,
+				buildPublishedThemeSettings(
+					updated,
+					customThemesValue,
+					publishedThemeVersion + 1,
+					new Date().toISOString()
+				)
+			);
 		}
 		const ok = await persistThemeSettings(
 			set,
-			$LL.admin_theme_saved_applied_success({ name: updated.name })
+			$LL.admin_theme_saved_success({ name: updated.name })
 		);
 		if (ok) editorDirty = false;
 	}
@@ -1141,10 +1360,12 @@
 		}
 	}
 
-	function buildLoginUiSnapshot(): string {
+	function buildLoginUiSnapshot(overrides: Record<string, unknown>): string {
 		const values: Record<string, unknown> = {};
 		for (const key of LOGIN_UI_PUBLISH_KEYS) {
-			values[key] = getCurrentValue(key);
+			values[key] = Object.prototype.hasOwnProperty.call(overrides, key)
+				? overrides[key]
+				: settings?.values[key];
 		}
 		return JSON.stringify({
 			schema_version: 'authrim.login_ui.theme_publish.v1',
@@ -1153,52 +1374,66 @@
 		});
 	}
 
-	function parseLoginUiSnapshot(raw: string): Record<string, unknown> | null {
-		if (!raw.trim()) return null;
-		try {
-			const parsed = JSON.parse(raw) as { values?: unknown };
-			if (
-				!parsed ||
-				typeof parsed !== 'object' ||
-				!parsed.values ||
-				typeof parsed.values !== 'object'
-			) {
-				return null;
+	function resolveThemeValuesForPublish(theme: CustomTheme): Record<string, unknown> {
+		const resolved: Record<string, unknown> = {};
+		const preset = builtinPresetValues(baseOptionOf(theme));
+		for (const key of THEME_VALUE_KEYS) {
+			if (Object.prototype.hasOwnProperty.call(theme.values, key)) {
+				resolved[key] = theme.values[key];
+				continue;
 			}
-			const values: Record<string, unknown> = {};
-			const source = parsed.values as Record<string, unknown>;
-			for (const key of LOGIN_UI_PUBLISH_KEYS) {
-				if (key in source) values[key] = source[key];
+			if (Object.prototype.hasOwnProperty.call(preset, key)) {
+				resolved[key] = preset[key];
+				continue;
 			}
-			return values;
-		} catch {
-			return null;
+			if (meta?.settings[key]) resolved[key] = meta.settings[key].default;
 		}
+		return resolved;
 	}
 
-	async function publishThemeSettings() {
+	function buildPublishedThemeSettings(
+		theme: CustomTheme,
+		customThemesValue: string,
+		nextVersion: number,
+		publishedAt: string
+	): Record<string, unknown> {
+		const selectedThemeSettings: Record<string, unknown> = {
+			...resolveThemeValuesForPublish(theme),
+			'login-ui.custom_themes': customThemesValue,
+			'login-ui.theme_template': theme.base
+		};
+		return {
+			...selectedThemeSettings,
+			'login-ui.published_version': nextVersion,
+			'login-ui.published_at': publishedAt,
+			'login-ui.published_snapshot': buildLoginUiSnapshot(selectedThemeSettings)
+		};
+	}
+
+	async function publishSelectedTheme() {
 		if (!settings) return;
 		if (!canEditLoginUiSettings) {
 			themePublishError = $LL.admin_login_ui_error_no_settings_permission();
+			return;
+		}
+		const selectedTheme = customThemes.find((theme) => theme.id === selectedPublishThemeId);
+		if (!selectedTheme) {
+			themePublishError = $LL.admin_theme_publish_select_required();
 			return;
 		}
 		publishingTheme = true;
 		themePublishError = '';
 		successMessage = '';
 		try {
-			const currentPublishedSnapshot = getLiveString('login-ui.published_snapshot', '');
 			const nextVersion = publishedThemeVersion + 1;
 			const publishedAt = new Date().toISOString();
+			const customThemesValue = serializeCustomThemesDoc({
+				themes: customThemes,
+				active: selectedTheme.id
+			});
 			const result = await scopedSettingsAPI.updateSettingsForScope(CATEGORY, scopeContext, {
 				ifMatch: settings.version,
-				...convertPatchesToAPIRequest(pendingPatches),
-				set: {
-					...(convertPatchesToAPIRequest(pendingPatches).set ?? {}),
-					'login-ui.published_version': nextVersion,
-					'login-ui.published_at': publishedAt,
-					'login-ui.published_snapshot': buildLoginUiSnapshot(),
-					'login-ui.rollback_snapshot': currentPublishedSnapshot
-				}
+				set: buildPublishedThemeSettings(selectedTheme, customThemesValue, nextVersion, publishedAt)
 			});
 			const rejectedMessage = rejectedSettingsMessage(result);
 			if (rejectedMessage) {
@@ -1207,52 +1442,10 @@
 				return;
 			}
 			pendingPatches = [];
-			successMessage = `Published Login UI theme v${nextVersion}. Applied ${
-				result.applied.length + result.cleared.length + result.disabled.length
-			} settings.`;
-			await loadData();
-		} catch (err) {
-			themePublishError =
-				err instanceof SettingsConflictError
-					? $LL.admin_login_ui_settings_conflict()
-					: err instanceof Error
-						? err.message
-						: 'Failed to publish Login UI theme.';
-		} finally {
-			publishingTheme = false;
-		}
-	}
-
-	async function rollbackThemeSettings() {
-		if (!settings) return;
-		if (!canEditLoginUiSettings) {
-			themePublishError = $LL.admin_login_ui_error_no_settings_permission();
-			return;
-		}
-		const rollbackRaw = getLiveString('login-ui.rollback_snapshot', '');
-		const rollbackValues = parseLoginUiSnapshot(rollbackRaw);
-		if (!rollbackValues) {
-			themePublishError = 'No previous published theme snapshot is available.';
-			return;
-		}
-		publishingTheme = true;
-		themePublishError = '';
-		successMessage = '';
-		try {
-			const currentPublishedSnapshot = getLiveString('login-ui.published_snapshot', '');
-			const nextVersion = publishedThemeVersion + 1;
-			await scopedSettingsAPI.updateSettingsForScope(CATEGORY, scopeContext, {
-				ifMatch: settings.version,
-				set: {
-					...rollbackValues,
-					'login-ui.published_version': nextVersion,
-					'login-ui.published_at': new Date().toISOString(),
-					'login-ui.published_snapshot': rollbackRaw,
-					'login-ui.rollback_snapshot': currentPublishedSnapshot
-				}
+			successMessage = $LL.admin_theme_publish_success({
+				name: selectedTheme.name,
+				version: nextVersion
 			});
-			pendingPatches = [];
-			successMessage = `Rolled back Login UI theme and published v${nextVersion}.`;
 			await loadData();
 		} catch (err) {
 			themePublishError =
@@ -1260,7 +1453,7 @@
 					? $LL.admin_login_ui_settings_conflict()
 					: err instanceof Error
 						? err.message
-						: 'Failed to roll back Login UI theme.';
+						: $LL.admin_theme_publish_failed();
 		} finally {
 			publishingTheme = false;
 		}
@@ -1288,7 +1481,7 @@
 			});
 			const body = (await response.json()) as { url?: string; error_description?: string };
 			if (!response.ok || !body.url) {
-				throw new Error(body.error_description || 'Failed to upload asset');
+				throw new Error(body.error_description || $LL.admin_theme_asset_upload_failed());
 			}
 			updateAssetSetting(assetKey, body.url, { keepPreviewOverride: true });
 			await persistUploadedThemeAsset(assetKey, body.url);
@@ -1297,7 +1490,7 @@
 			}
 		} catch (err) {
 			clearAssetPreviewOverride(kind);
-			assetUploadError = err instanceof Error ? err.message : 'Failed to upload asset';
+			assetUploadError = err instanceof Error ? err.message : $LL.admin_theme_asset_upload_failed();
 		} finally {
 			assetUploading = null;
 		}
@@ -1416,6 +1609,94 @@
 			</div>
 		{:else if meta && settings}
 			{#if view === 'list'}
+				<section class="settings-form-card custom-theme-card">
+					<div class="theme-section-header">
+						<div>
+							<h2>{$LL.admin_theme_custom_title()}</h2>
+							<p>{$LL.admin_theme_custom_description()}</p>
+						</div>
+						<button
+							type="button"
+							class="btn btn-primary theme-publish-button"
+							disabled={!selectedPublishThemeId ||
+								selectedPublishThemeId === activeCustomThemeId ||
+								publishingTheme ||
+								applyingTheme ||
+								!canEditLoginUiSettings}
+							onclick={publishSelectedTheme}
+						>
+							{publishingTheme ? $LL.admin_theme_publishing() : $LL.admin_theme_publish()}
+						</button>
+					</div>
+					{#if themePublishError}
+						<div class="alert alert-error theme-publish-error">{themePublishError}</div>
+					{/if}
+					{#if customThemes.length > 0}
+						<div class="custom-theme-list">
+							{#each customThemes as theme (theme.id)}
+								{@const active = activeCustomThemeId === theme.id}
+								{@const publishRadioId = `theme-to-publish-${theme.id}`}
+								<div class="custom-theme-row" class:selected={selectedPublishThemeId === theme.id}>
+									<input
+										id={publishRadioId}
+										type="radio"
+										name="theme-to-publish"
+										value={theme.id}
+										checked={selectedPublishThemeId === theme.id}
+										disabled={publishingTheme || applyingTheme || !canEditLoginUiSettings}
+										aria-label={$LL.admin_theme_select_for_publish({ name: theme.name })}
+										onchange={() => {
+											selectedPublishThemeId = theme.id;
+											themePublishError = '';
+										}}
+									/>
+									<label class="custom-theme-selection" for={publishRadioId}>
+										<span class="custom-theme-swatch" aria-hidden="true">
+											{#each themeSwatch(theme) as color, index (index)}
+												<span style={`background: ${color};`}></span>
+											{/each}
+										</span>
+										<span class="custom-theme-summary">
+											<span class="theme-card-head">
+												<span class="theme-template-name">{theme.name}</span>
+												{#if active}
+													<span class="theme-badge active">{$LL.admin_theme_badge_active()}</span>
+												{/if}
+											</span>
+											<span class="theme-template-description">
+												{$LL.admin_theme_based_on({ name: baseOptionOf(theme).name })}
+											</span>
+										</span>
+										<span class="custom-theme-timestamps">
+											<span>
+												<span>{$LL.admin_theme_created_at()}</span>
+												<time datetime={themeTimestampIso(theme.created_at)}
+													>{formatThemeTimestamp(theme.created_at)}</time
+												>
+											</span>
+											<span>
+												<span>{$LL.admin_theme_updated_at()}</span>
+												<time datetime={themeTimestampIso(theme.updated_at)}
+													>{formatThemeTimestamp(theme.updated_at)}</time
+												>
+											</span>
+										</span>
+									</label>
+									<button
+										type="button"
+										class="btn btn-secondary btn-sm custom-theme-edit"
+										onclick={() => openEditor(theme.id)}
+									>
+										{$LL.admin_theme_edit()}
+									</button>
+								</div>
+							{/each}
+						</div>
+					{:else}
+						<p class="custom-theme-empty">{$LL.admin_theme_custom_empty()}</p>
+					{/if}
+				</section>
+
 				<section class="settings-form-card">
 					<div class="theme-section-header">
 						<div>
@@ -1454,100 +1735,6 @@
 								<span class="theme-template-description">{themeTemplateDescription(option)}</span>
 							</div>
 						{/each}
-						{#each customThemes as theme (theme.id)}
-							{@const active = activeCustomThemeId === theme.id}
-							<div
-								class="theme-template-option"
-								class:selected={active}
-								role="button"
-								tabindex="0"
-								onclick={() => openEditor(theme.id)}
-								onkeydown={(e) => {
-									if (e.key === 'Enter' || e.key === ' ') {
-										e.preventDefault();
-										openEditor(theme.id);
-									}
-								}}
-							>
-								<span class="theme-template-preview">
-									{#each themeSwatch(theme) as color, index (index)}
-										<span style={`background: ${color};`}></span>
-									{/each}
-								</span>
-								<span class="theme-card-head">
-									<span class="theme-template-name">{theme.name}</span>
-									{#if active}<span class="theme-badge active"
-											>{$LL.admin_theme_badge_active()}</span
-										>{/if}
-								</span>
-								<span class="theme-template-description">
-									{$LL.admin_theme_based_on({ name: baseOptionOf(theme).name })}
-								</span>
-								<span class="theme-template-actions">
-									<button
-										type="button"
-										class="btn btn-danger btn-sm"
-										disabled={applyingTheme || !canEditLoginUiSettings}
-										onclick={(e) => {
-											e.stopPropagation();
-											deleteCustomTheme(theme);
-										}}
-									>
-										{$LL.admin_theme_delete()}
-									</button>
-								</span>
-							</div>
-						{/each}
-					</div>
-				</section>
-
-				<section class="settings-form-card theme-publish-card">
-					<div class="theme-section-header">
-						<div>
-							<h2>Publish and rollback</h2>
-							<p>
-								Publish current theme settings after previewing them, or roll back to the previous
-								published snapshot.
-							</p>
-						</div>
-						<span class="publish-version-badge">v{publishedThemeVersion}</span>
-					</div>
-					{#if themePublishError}
-						<div class="alert alert-error">{themePublishError}</div>
-					{/if}
-					<div class="theme-publish-grid">
-						<div class="theme-publish-status">
-							<span>Published version</span>
-							<strong>v{publishedThemeVersion}</strong>
-							<small>{publishedThemeAt || 'Not published yet'}</small>
-						</div>
-						<div class="theme-publish-status">
-							<span>Pending draft changes</span>
-							<strong>{pendingPatches.length}</strong>
-							<small
-								>{hasChanges
-									? 'Publish will save these changes first.'
-									: 'No unsaved theme changes.'}</small
-							>
-						</div>
-						<div class="theme-publish-actions">
-							<button
-								type="button"
-								class="btn btn-primary"
-								disabled={publishingTheme || !canEditLoginUiSettings}
-								onclick={publishThemeSettings}
-							>
-								{publishingTheme ? 'Publishing...' : 'Publish current theme'}
-							</button>
-							<button
-								type="button"
-								class="btn btn-secondary"
-								disabled={publishingTheme || !hasRollbackSnapshot || !canEditLoginUiSettings}
-								onclick={rollbackThemeSettings}
-							>
-								Roll back previous version
-							</button>
-						</div>
 					</div>
 				</section>
 			{:else}
@@ -1571,6 +1758,19 @@
 							<span class="theme-template-description"
 								>{$LL.admin_theme_based_on({ name: previewTemplate.name })}</span
 							>
+							<label class="account-page-association">
+								<span>Account page</span>
+								<select
+									bind:value={editorAccountPageId}
+									onchange={() => (editorDirty = true)}
+									disabled={!canEditLoginUiSettings}
+								>
+									<option value="">Use tenant default</option>
+									{#each publishedAccountPages as page (page.id)}<option value={page.id}
+											>{page.name}</option
+										>{/each}
+								</select>
+							</label>
 						{:else}
 							<strong class="editor-builtin-name">{previewTemplate.name}</strong>
 							<span class="theme-badge">{$LL.admin_theme_badge_builtin()}</span>
@@ -1587,9 +1787,9 @@
 								type="button"
 								class="btn btn-primary"
 								disabled={applyingTheme || !canEditLoginUiSettings}
-								onclick={saveAndApplyCustomTheme}
+								onclick={saveCustomTheme}
 							>
-								{applyingTheme ? $LL.admin_theme_saving() : $LL.admin_theme_save_apply()}
+								{applyingTheme ? $LL.admin_theme_saving() : $LL.admin_theme_save()}
 							</button>
 						{:else}
 							<button
@@ -1612,7 +1812,7 @@
 						</div>
 						<div class="theme-preview-controls" aria-label={$LL.admin_theme_preview_controls()}>
 							<div class="segmented-control" aria-label={$LL.admin_theme_preview_screen()}>
-								{#each ['login', 'registration', 'code', 'consent', 'error'] as surface (surface)}
+								{#each ['login', 'registration', 'code', 'consent', 'account', 'error'] as surface (surface)}
 									<button
 										type="button"
 										class:active={previewSurface === surface}
@@ -1737,7 +1937,7 @@
 
 											<section
 												class="preview-auth-container"
-												class:wide={previewSurface === 'consent'}
+												class:wide={previewSurface === 'consent' || previewSurface === 'account'}
 											>
 												{#if previewHeaderEnabled}
 													<header class="preview-auth-header">
@@ -1769,7 +1969,7 @@
 														{#if previewSurface === 'registration'}
 															<div class="runtime-screen">
 																<div class="runtime-screen-heading">
-																	<h2>Create your account</h2>
+																	<h2>{previewRegistrationTitle}</h2>
 																	<p>Register with the tenant default no-consent screen.</p>
 																</div>
 																<button class="auth-method-button" type="button">
@@ -1818,6 +2018,26 @@
 																	<button class="preview-btn primary" type="button">Allow</button>
 																</div>
 															</div>
+														{:else if previewSurface === 'account'}
+															<div class="runtime-screen">
+																<div class="runtime-screen-heading">
+																	<h2>{previewAccountTitle}</h2>
+																	<p>Profile and security settings use the same theme tokens.</p>
+																</div>
+																<div class="consent-item">
+																	<strong>User profile</strong>
+																	<span>Name, verified email address, and save states.</span>
+																</div>
+																<label class="runtime-screen-field">
+																	<span>Display name</span>
+																	<input value="Aoi Tanaka" readonly tabindex="-1" />
+																</label>
+																<div class="preview-actions">
+																	<button class="preview-btn secondary" type="button">Cancel</button
+																	>
+																	<button class="preview-btn primary" type="button">Save</button>
+																</div>
+															</div>
 														{:else if previewSurface === 'error'}
 															<div class="runtime-screen">
 																<div class="runtime-screen-heading">
@@ -1838,7 +2058,7 @@
 														{:else}
 															<div class="runtime-screen">
 																<div class="runtime-screen-heading">
-																	<h2>Sign in</h2>
+																	<h2>{previewLoginTitle}</h2>
 																	<p>Use one of the available methods for this tenant.</p>
 																</div>
 																<button class="auth-method-button" type="button">
@@ -1910,7 +2130,7 @@
 													</div>
 												{/if}
 												{#if previewPoweredByEnabled}
-													<div>{previewFooterText || 'Powered by Authrim'}</div>
+													<div><SanitizedHtmlPreview html={previewFooterHtml} /></div>
 												{/if}
 											</footer>
 										{/if}
@@ -2169,57 +2389,6 @@
 												</div>
 											</div>
 										</div>
-
-										<div
-											use:melt={$previewInspectorItem('brand-copy')}
-											class="preview-accordion-item"
-										>
-											<h3 use:melt={$previewInspectorHeading(3)} class="preview-accordion-heading">
-												<button
-													use:melt={$previewInspectorTrigger('brand-copy')}
-													type="button"
-													class="preview-accordion-trigger"
-												>
-													<span>Brand copy</span>
-													<span class="preview-accordion-chevron" aria-hidden="true">⌄</span>
-												</button>
-											</h3>
-											<div
-												use:melt={$previewInspectorContent('brand-copy')}
-												class="preview-accordion-content"
-											>
-												<div class="inspector-fields">
-													<label class="inspector-field">
-														<span class="inspector-field-label">Title</span>
-														<input
-															type="text"
-															value={getStringSetting('login-ui.brand_panel_title', '')}
-															placeholder="Welcome to your account."
-															disabled={!canEditLoginUiSettings}
-															oninput={(e) =>
-																handleEditorChange(
-																	'login-ui.brand_panel_title',
-																	e.currentTarget.value
-																)}
-														/>
-													</label>
-													<label class="inspector-field">
-														<span class="inspector-field-label">Text</span>
-														<input
-															type="text"
-															value={getStringSetting('login-ui.brand_panel_text', '')}
-															placeholder="Add supporting guidance or brand messaging."
-															disabled={!canEditLoginUiSettings}
-															oninput={(e) =>
-																handleEditorChange(
-																	'login-ui.brand_panel_text',
-																	e.currentTarget.value
-																)}
-														/>
-													</label>
-												</div>
-											</div>
-										</div>
 									{/if}
 
 									<div use:melt={$previewInspectorItem('colors')} class="preview-accordion-item">
@@ -2253,7 +2422,7 @@
 														</select>
 													</label>
 												{/if}
-												{#each [{ label: 'Background', key: 'login-ui.background_color', fallback: previewColorMode === 'dark' ? '#0b0e16' : '#eef1f6' }, { label: 'Title', key: 'login-ui.title_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Text', key: 'login-ui.text_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Copy', key: 'login-ui.copy_color', fallback: previewColorMode === 'dark' ? '#aeb9d0' : '#55617c' }] as field (field.key)}
+												{#each [{ label: 'Background', key: 'login-ui.background_color', fallback: previewColorMode === 'dark' ? '#0b0e16' : '#eef1f6' }, { label: 'Accent', key: 'login-ui.accent_color', fallback: previewTemplate.id === 'fullbleed-glass' ? (previewColorMode === 'dark' ? '#e8623f' : '#c93a22') : previewColorMode === 'dark' ? '#93aef2' : '#2f52c4' }, { label: 'Title', key: 'login-ui.title_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Text', key: 'login-ui.text_color', fallback: previewColorMode === 'dark' ? '#eef2fa' : '#182238' }, { label: 'Copy', key: 'login-ui.copy_color', fallback: previewColorMode === 'dark' ? '#aeb9d0' : '#55617c' }] as field (field.key)}
 													<div class="inspector-color-row">
 														<span class="inspector-field-label">{field.label}</span>
 														<input
@@ -2448,28 +2617,6 @@
 														</select>
 													</label>
 												</div>
-												<label class="inspector-field">
-													<span class="inspector-field-label">Header text</span>
-													<input
-														type="text"
-														value={getStringSetting('login-ui.header_text', '')}
-														placeholder="Sign in to continue"
-														disabled={!canEditLoginUiSettings}
-														oninput={(e) =>
-															handleEditorChange('login-ui.header_text', e.currentTarget.value)}
-													/>
-												</label>
-												<label class="inspector-field">
-													<span class="inspector-field-label">Footer text</span>
-													<input
-														type="text"
-														value={getStringSetting('login-ui.footer_text', '')}
-														placeholder="Powered by Authrim"
-														disabled={!canEditLoginUiSettings}
-														oninput={(e) =>
-															handleEditorChange('login-ui.footer_text', e.currentTarget.value)}
-													/>
-												</label>
 											</div>
 										</div>
 									</div>
@@ -2639,6 +2786,185 @@
 						assignments.
 					</p>
 				</aside>
+
+				<section class="settings-form-card text-card">
+					<div class="theme-section-header text-section-header">
+						<div>
+							<h2>{$LL.admin_theme_text_title()}</h2>
+							<p>{$LL.admin_theme_text_description()}</p>
+						</div>
+						<label class="text-locale-control">
+							<span>{$LL.admin_theme_text_language()}</span>
+							<select
+								class="settings-input"
+								value={textEditorLocale}
+								disabled={!canEditLoginUiSettings}
+								onchange={(event) => {
+									if (isLoginUILocale(event.currentTarget.value)) {
+										textEditorLocale = event.currentTarget.value;
+									}
+								}}
+							>
+								{#each enabledTextEditorLocales as locale (locale)}
+									<option value={locale}>
+										{LOGIN_UI_LOCALE_OPTIONS.find((option) => option.code === locale)?.label ??
+											locale}
+									</option>
+								{/each}
+							</select>
+						</label>
+					</div>
+					<div class="text-editor-grid">
+						<label class="editor-field">
+							<span class="editor-field-label">{$LL.admin_theme_text_brand_name()}</span>
+							<input
+								type="text"
+								class="settings-input"
+								dir="auto"
+								maxlength="128"
+								value={getEditableStringSetting('login-ui.brand_name', 'Authrim')}
+								class:form-input-error={Boolean(brandNameValidationError)}
+								aria-invalid={Boolean(brandNameValidationError)}
+								aria-describedby={brandNameValidationError ? 'brand-name-error' : undefined}
+								disabled={!canEditLoginUiSettings}
+								oninput={(event) => {
+									handleEditorChange('login-ui.brand_name', event.currentTarget.value);
+									if (event.currentTarget.value.trim()) {
+										if (error === brandNameValidationError) error = '';
+										brandNameValidationError = '';
+									}
+								}}
+							/>
+							{#if brandNameValidationError}
+								<span id="brand-name-error" class="field-error">{brandNameValidationError}</span>
+							{/if}
+						</label>
+						<label class="editor-field">
+							<span class="editor-field-label">{$LL.admin_theme_text_tagline()}</span>
+							<input
+								type="text"
+								class="settings-input"
+								dir="auto"
+								maxlength="256"
+								value={getLocalizedThemeText(
+									textEditorLocale,
+									'tagline',
+									themeTextFallback('tagline')
+								)}
+								disabled={!canEditLoginUiSettings}
+								oninput={(event) =>
+									updateThemeTextLocalization('tagline', event.currentTarget.value)}
+							/>
+						</label>
+						<label class="editor-field">
+							<span class="editor-field-label">{$LL.admin_theme_text_brand_panel_title()}</span>
+							<input
+								type="text"
+								class="settings-input"
+								dir="auto"
+								maxlength="256"
+								value={getLocalizedThemeText(
+									textEditorLocale,
+									'brandPanelTitle',
+									themeTextFallback('brandPanelTitle')
+								)}
+								disabled={!canEditLoginUiSettings}
+								oninput={(event) =>
+									updateThemeTextLocalization('brandPanelTitle', event.currentTarget.value)}
+							/>
+						</label>
+						<label class="editor-field text-editor-wide">
+							<span class="editor-field-label">{$LL.admin_theme_text_brand_panel_text()}</span>
+							<textarea
+								rows="3"
+								class="settings-textarea compact"
+								dir="auto"
+								maxlength="256"
+								value={getLocalizedThemeText(
+									textEditorLocale,
+									'brandPanelText',
+									themeTextFallback('brandPanelText')
+								)}
+								disabled={!canEditLoginUiSettings}
+								oninput={(event) =>
+									updateThemeTextLocalization('brandPanelText', event.currentTarget.value)}
+							></textarea>
+						</label>
+						<label class="editor-field">
+							<span class="editor-field-label">{$LL.admin_theme_text_footer()}</span>
+							<input
+								type="text"
+								class="settings-input"
+								dir="auto"
+								maxlength="256"
+								value={getLocalizedThemeText(
+									textEditorLocale,
+									'footerText',
+									themeTextFallback('footerText')
+								)}
+								disabled={!canEditLoginUiSettings}
+								oninput={(event) =>
+									updateThemeTextLocalization('footerText', event.currentTarget.value)}
+							/>
+							<small class="editor-field-note">{$LL.admin_theme_text_footer_help()}</small>
+						</label>
+					</div>
+					<p class="text-editor-help">{$LL.admin_theme_text_help()}</p>
+				</section>
+
+				<section class="settings-form-card page-title-card">
+					<div class="theme-section-header text-section-header">
+						<div>
+							<h2>{$LL.admin_theme_page_titles_title()}</h2>
+							<p>{$LL.admin_theme_page_titles_description()}</p>
+						</div>
+						<label class="text-locale-control">
+							<span>{$LL.admin_theme_text_language()}</span>
+							<select
+								class="settings-input"
+								value={textEditorLocale}
+								disabled={!canEditLoginUiSettings}
+								onchange={(event) => {
+									if (isLoginUILocale(event.currentTarget.value)) {
+										textEditorLocale = event.currentTarget.value;
+									}
+								}}
+							>
+								{#each enabledTextEditorLocales as locale (locale)}
+									<option value={locale}>
+										{LOGIN_UI_LOCALE_OPTIONS.find((option) => option.code === locale)?.label ??
+											locale}
+									</option>
+								{/each}
+							</select>
+						</label>
+					</div>
+					<div class="page-title-fields">
+						{#each [{ field: 'loginTitle', label: $LL.admin_theme_page_titles_login() }, { field: 'registrationTitle', label: $LL.admin_theme_page_titles_registration() }, { field: 'accountTitle', label: $LL.admin_theme_page_titles_account() }] as titleField (titleField.field)}
+							<label class="editor-field">
+								<span class="editor-field-label">{titleField.label}</span>
+								<input
+									type="text"
+									class="settings-input"
+									dir="auto"
+									maxlength="128"
+									value={getLocalizedThemeText(
+										textEditorLocale,
+										titleField.field as ThemeTextField,
+										themeTextFallback(titleField.field as ThemeTextField)
+									)}
+									disabled={!canEditLoginUiSettings}
+									oninput={(event) =>
+										updateThemeTextLocalization(
+											titleField.field as ThemeTextField,
+											event.currentTarget.value
+										)}
+								/>
+							</label>
+						{/each}
+					</div>
+					<p class="text-editor-help">{$LL.admin_theme_page_titles_help()}</p>
+				</section>
 
 				<section class="settings-form-card asset-card">
 					<div class="theme-section-header">
@@ -2840,6 +3166,111 @@
 		gap: 12px;
 	}
 
+	.custom-theme-list {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 8px;
+	}
+
+	.custom-theme-row {
+		display: grid;
+		grid-template-columns: 18px minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 14px;
+		min-width: 0;
+		padding: 12px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-surface-muted);
+		color: var(--color-text);
+	}
+
+	.custom-theme-row:hover,
+	.custom-theme-row.selected,
+	.custom-theme-row:focus-within {
+		border-color: var(--color-accent);
+		background: var(--color-accent-muted);
+	}
+
+	.custom-theme-row > input[type='radio'] {
+		width: 16px;
+		height: 16px;
+		margin: 0;
+		accent-color: var(--color-accent);
+	}
+
+	.custom-theme-selection {
+		display: grid;
+		grid-template-columns: 48px minmax(0, 1fr) minmax(210px, auto);
+		align-items: center;
+		gap: 14px;
+		min-width: 0;
+		cursor: pointer;
+	}
+
+	.custom-theme-swatch {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		width: 48px;
+		height: 48px;
+		overflow: hidden;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+	}
+
+	.custom-theme-summary {
+		display: grid;
+		gap: 4px;
+		min-width: 0;
+	}
+
+	.custom-theme-summary .theme-template-name,
+	.custom-theme-summary .theme-template-description {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.custom-theme-timestamps {
+		display: grid;
+		gap: 4px;
+		min-width: 210px;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.custom-theme-timestamps > span {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		gap: 10px;
+		align-items: baseline;
+	}
+
+	.custom-theme-timestamps span > span {
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
+		font-weight: 700;
+	}
+
+	.custom-theme-timestamps time {
+		text-align: right;
+		font-size: 0.8125rem;
+		white-space: nowrap;
+	}
+
+	.custom-theme-edit,
+	.theme-publish-button {
+		white-space: nowrap;
+	}
+
+	.custom-theme-empty {
+		margin: 0;
+		padding: 16px;
+		border: 1px dashed var(--color-border);
+		border-radius: var(--radius-sm);
+		color: var(--color-text-muted);
+		font-size: 0.875rem;
+	}
+
 	.theme-template-option,
 	.asset-item {
 		display: grid;
@@ -2878,13 +3309,6 @@
 		color: var(--color-text-muted);
 		font-size: 0.8125rem;
 		line-height: 1.4;
-	}
-
-	.theme-template-actions {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 8px;
-		margin-top: 4px;
 	}
 
 	.asset-label-row {
@@ -3788,6 +4212,13 @@
 		font-weight: 700;
 	}
 
+	.preview-footer > div a {
+		color: inherit;
+		font-weight: 600;
+		text-decoration: underline;
+		text-underline-offset: 0.18em;
+	}
+
 	.login-preview-page.footer-bar .preview-footer {
 		width: min(100%, 420px);
 		padding: 12px 16px;
@@ -3869,6 +4300,9 @@
 	}
 
 	.preview-brand-panel {
+		--preview-brand-panel-title-color: #f4f7ff;
+		--preview-brand-panel-copy-color: #c7d2eb;
+
 		display: flex;
 		align-items: center;
 		justify-content: flex-start;
@@ -3941,21 +4375,21 @@
 
 	.preview-brand-eyebrow {
 		margin: 0 0 16px;
-		color: var(--preview-copy-color, #ffffff);
+		color: var(--preview-brand-panel-copy-color);
 		font-size: 0.82rem;
 		font-weight: 800;
 		text-transform: uppercase;
 	}
 
 	.preview-brand-panel h2 {
-		color: var(--preview-title-color, #ffffff);
+		color: var(--preview-brand-panel-title-color);
 		font-size: 2.5rem;
 		line-height: 1.05;
 	}
 
 	.preview-brand-panel p:last-child {
 		margin: 18px 0 0;
-		color: var(--preview-copy-color, rgba(255, 255, 255, 0.82));
+		color: var(--preview-brand-panel-copy-color);
 		font-size: 1rem;
 		line-height: 1.7;
 	}
@@ -4295,55 +4729,8 @@
 		text-shadow: 0 1px 16px rgba(0, 0, 0, 0.5);
 	}
 
-	.publish-version-badge {
-		display: inline-flex;
-		align-items: center;
-		padding: 4px 10px;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-full);
-		background: var(--color-surface-muted);
-		color: var(--color-text);
-		font-size: 0.8125rem;
-		font-weight: 800;
-	}
-
-	.theme-publish-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-		gap: 12px;
-		align-items: stretch;
-	}
-
-	.theme-publish-status,
-	.theme-publish-actions {
-		display: grid;
-		gap: 6px;
-		padding: 12px;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		background: var(--color-surface-muted);
-	}
-
-	.theme-publish-status span {
-		color: var(--color-text-muted);
-		font-size: 0.75rem;
-		font-weight: 700;
-		text-transform: uppercase;
-	}
-
-	.theme-publish-status strong {
-		color: var(--color-text);
-		font-size: 1.25rem;
-		line-height: 1.2;
-	}
-
-	.theme-publish-status small {
-		color: var(--color-text-muted);
-		line-height: 1.35;
-	}
-
-	.theme-publish-actions {
-		align-content: center;
+	.theme-publish-error {
+		margin-bottom: 12px;
 	}
 
 	.settings-actions {
@@ -4360,6 +4747,44 @@
 	}
 
 	@media (max-width: 720px) {
+		.theme-section-header {
+			align-items: center;
+		}
+
+		.custom-theme-card .theme-section-header {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr);
+			align-items: start;
+		}
+
+		.custom-theme-card .theme-publish-button {
+			width: 100%;
+		}
+
+		.custom-theme-row {
+			grid-template-columns: 18px minmax(0, 1fr) auto;
+			gap: 10px;
+		}
+
+		.custom-theme-selection {
+			grid-template-columns: 42px minmax(0, 1fr);
+			gap: 10px;
+		}
+
+		.custom-theme-swatch {
+			width: 42px;
+			height: 42px;
+		}
+
+		.custom-theme-timestamps {
+			grid-column: 1 / -1;
+			min-width: 0;
+		}
+
+		.custom-theme-timestamps time {
+			white-space: normal;
+		}
+
 		.login-preview-page,
 		.login-preview-page.split {
 			display: flex;
@@ -4483,6 +4908,49 @@
 		justify-self: start;
 	}
 
+	.text-section-header {
+		align-items: end;
+	}
+
+	.text-locale-control {
+		display: grid;
+		gap: 6px;
+		min-width: min(100%, 240px);
+		color: var(--color-text-muted);
+		font-size: 0.8125rem;
+		font-weight: 700;
+	}
+
+	.text-editor-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 16px 20px;
+	}
+
+	.page-title-fields {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 16px;
+	}
+
+	.editor-field-note {
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
+		font-weight: 400;
+		line-height: 1.5;
+	}
+
+	.text-editor-wide {
+		grid-column: 1 / -1;
+	}
+
+	.text-editor-help {
+		margin: 14px 0 0;
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
+		line-height: 1.5;
+	}
+
 	.color-field {
 		display: flex;
 		align-items: center;
@@ -4501,5 +4969,24 @@
 	.color-field input[type='text'] {
 		flex: 1;
 		min-width: 0;
+	}
+
+	@media (max-width: 720px) {
+		.text-section-header {
+			align-items: stretch;
+			flex-direction: column;
+		}
+
+		.text-locale-control {
+			width: 100%;
+		}
+
+		.text-editor-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.text-editor-wide {
+			grid-column: auto;
+		}
 	}
 </style>

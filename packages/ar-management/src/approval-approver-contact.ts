@@ -8,7 +8,7 @@ import type {
 import {
   CanonicalRuntimeUserStore,
   ensureDatabaseAdapter,
-  resolveUserStoreRuntimeSourcesFromEnv,
+  resolveAccountDataContext,
 } from '@authrim/ar-lib-core';
 
 type AdminContext = Context<any, any, any>;
@@ -34,16 +34,15 @@ async function resolveUserContact(
   subjectId: string,
   method: 'email_otp' | 'sms_otp'
 ): Promise<string> {
-  const userStoreSources = await resolveUserStoreRuntimeSourcesFromEnv(c.env, request.tenant_id, {
-    requestPath: c.req?.path,
+  const account = await resolveAccountDataContext(c.env, {
+    tenantId: request.tenant_id,
+    accountId: `account:${subjectId}`,
   });
-  const coreAdapter = ensureDatabaseAdapter(userStoreSources.coreDb, 'approval-contact-core');
-  if (!userStoreSources.piiDb) {
-    throw new ApprovalTransportChannelResolutionError(
-      'Approval transport resolution requires a configured PII user store.'
-    );
+  if (account.legacyUserId !== subjectId) {
+    throw new ApprovalTransportChannelResolutionError('Approval approver route is inconsistent.');
   }
-  const piiAdapter = ensureDatabaseAdapter(userStoreSources.piiDb, 'approval-contact-pii');
+  const coreAdapter = ensureDatabaseAdapter(account.coreDb, 'approval-contact-core');
+  const piiAdapter = ensureDatabaseAdapter(account.piiDb, 'approval-contact-pii');
   const runtimeUsers = new CanonicalRuntimeUserStore({
     coreAdapter,
     piiAdapter,

@@ -35,18 +35,6 @@ GRADUAL_ROLLOUT=false
 GRADUAL_STAGES="10,50,100"    # Default gradual rollout stages (percentage)
 GRADUAL_WAIT=3                 # Wait time between stages in minutes
 KEYS_DIR_OVERRIDE=""
-VERSIONED_WORKERS=(
-    "ar-auth"
-    "ar-token"
-    "ar-management"
-    "ar-userinfo"
-    "ar-async"
-    "ar-discovery"
-    "ar-policy"
-    "ar-saml"
-    "ar-bridge"
-    "ar-vc"
-)
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -260,154 +248,6 @@ deploy_package() {
     fi
 }
 
-# Register version in VersionManager DO after deployment
-register_versions() {
-    local issuer_url=$1
-    local admin_secret=$2
-    local max_retries=8
-    local retry_delay=5
-
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "📝 Registering versions in VersionManager DO"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-    local success_count=0
-    local fail_count=0
-    local skip_count=0
-
-    for worker in "${VERSIONED_WORKERS[@]}"; do
-        echo -n "  • Registering $worker... "
-
-        local attempt=1
-        local registered=false
-
-        while [ $attempt -le $max_retries ] && [ "$registered" = false ]; do
-            local response=$(curl -s -w "\n%{http_code}" -X POST "${issuer_url}/api/internal/versions/${worker}" \
-                -H "Authorization: Bearer ${admin_secret}" \
-                -H "Content-Type: application/json" \
-                -d "{\"uuid\":\"${VERSION_UUID}\",\"deployTime\":\"${DEPLOY_TIME}\"}" \
-                --connect-timeout 10 \
-                --max-time 30 2>/dev/null)
-
-            local http_code=$(echo "$response" | tail -n1)
-            local body=$(echo "$response" | sed '$d')
-
-            if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
-                echo "✅"
-                ((success_count++))
-                registered=true
-            elif [ "$http_code" = "000" ] || [ "$http_code" = "502" ] || [ "$http_code" = "503" ] || [ "$http_code" = "504" ]; then
-                # Connection error or service unavailable - retry
-                if [ $attempt -lt $max_retries ]; then
-                    echo -n "⏳ (retry $attempt/$max_retries)... "
-                    sleep $retry_delay
-                    ((attempt++))
-                else
-                    echo "⏭️  (skipped - service not ready)"
-                    ((skip_count++))
-                    registered=true  # Exit retry loop
-                fi
-            elif [ "$http_code" = "404" ]; then
-                # Endpoint not found - first deploy or route not configured
-                echo "⏭️  (skipped - endpoint not available yet)"
-                ((skip_count++))
-                registered=true  # Exit retry loop
-            else
-                # Other error - don't retry
-                echo "⚠️  (HTTP $http_code - non-critical)"
-                ((fail_count++))
-                registered=true  # Exit retry loop
-            fi
-        done
-    done
-
-    echo ""
-    if [ $success_count -gt 0 ]; then
-        echo "   ✅ Registered: $success_count/${#VERSIONED_WORKERS[@]} workers"
-    fi
-    if [ $skip_count -gt 0 ]; then
-        echo "   ⏭️  Skipped: $skip_count (first deploy or service not ready)"
-    fi
-    if [ $fail_count -gt 0 ]; then
-        echo "   ⚠️  Failed: $fail_count (non-critical - workers will continue)"
-    fi
-    echo ""
-    echo "   💡 Note: Version registration is required for PoP cache forcing. This script fails if any worker is not registered."
-
-    # Bubble up a failure when not all workers were registered so deployers notice immediately
-    if [ $success_count -lt ${#VERSIONED_WORKERS[@]} ]; then
-        return 1
-    fi
-
-    return 0
-}
-
-verify_versions_registered() {
-    local issuer_url=$1
-    local admin_secret=$2
-    local expected_uuid=$3
-    local max_retries=5
-    local retry_delay=5
-
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "🔎 Verifying VersionManager entries"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-
-    local attempt=1
-    while [ $attempt -le $max_retries ]; do
-        local response=$(
-            curl -s -w "\n%{http_code}" -X GET "${issuer_url}/api/internal/version-manager/status" \
-                -H "Authorization: Bearer ${admin_secret}" \
-                --connect-timeout 10 \
-                --max-time 30 2>/dev/null
-        )
-
-        local http_code=$(echo "$response" | tail -n1)
-        local body=$(echo "$response" | sed '$d')
-
-        if [ "$http_code" = "200" ]; then
-            local missing=()
-            local mismatched=()
-
-            for worker in "${VERSIONED_WORKERS[@]}"; do
-                local worker_uuid
-                worker_uuid=$(echo "$body" | jq -r --arg w "$worker" '.versions[$w].uuid // empty')
-
-                if [ -z "$worker_uuid" ]; then
-                    missing+=("$worker")
-                elif [ "$worker_uuid" != "$expected_uuid" ]; then
-                    mismatched+=("$worker ($worker_uuid)")
-                fi
-            done
-
-            if [ ${#missing[@]} -eq 0 ] && [ ${#mismatched[@]} -eq 0 ]; then
-                echo "✅ VersionManager reports expected UUID for all workers"
-                return 0
-            fi
-
-            if [ ${#missing[@]} -gt 0 ]; then
-                echo "⚠️  Missing entries: ${missing[*]}"
-            fi
-            if [ ${#mismatched[@]} -gt 0 ]; then
-                echo "⚠️  Mismatched UUIDs: ${mismatched[*]}"
-            fi
-        else
-            echo "⚠️  Version status check failed (HTTP ${http_code})"
-        fi
-
-        if [ $attempt -lt $max_retries ]; then
-            echo "   Retrying in ${retry_delay}s..."
-            sleep $retry_delay
-        fi
-
-        ((attempt++))
-    done
-
-    echo "❌ VersionManager verification failed after retries"
-    return 1
-}
-
 # Main deployment sequence
 echo "🚀 Starting deployment for environment: $DEPLOY_ENV"
 echo ""
@@ -542,6 +382,7 @@ PACKAGES=(
     "ar-vc:packages/ar-vc"
     "ar-auth:packages/ar-auth"
     "ar-management:packages/ar-management"
+    "ar-agent-access:packages/ar-agent-access"
     "ar-router:packages/ar-router"
 )
 
@@ -621,6 +462,24 @@ elif [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
     done
 fi
 
+if [ ${#FAILED_PACKAGES[@]} -eq 0 ] && [ "$GRADUAL_ROLLOUT" = true ]; then
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "🧹 Finalizing legacy static secret cleanup"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    FINALIZE_ARGS=(
+        "--env=${DEPLOY_ENV}"
+        "--concurrency=2"
+        "--finalize-legacy-static-secret-cleanup"
+    )
+    if [ -n "$ISSUER_URL" ]; then
+        FINALIZE_ARGS+=("--health-url=${ISSUER_URL}")
+    fi
+    if ! pnpm exec tsx scripts/deploy-api.ts "${FINALIZE_ARGS[@]}"; then
+        FAILED_PACKAGES+=("legacy static secret cleanup")
+    fi
+    echo ""
+fi
+
 # Summary
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📊 Deployment Summary"
@@ -630,15 +489,12 @@ if [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
     echo "✅ All packages deployed successfully!"
     echo ""
 
-    # Post-deployment steps are best-effort.
-    # Disable set -e so that non-critical failures (JWKS fetch, secret update)
-    # do not cause the deployment to report as failed.
+    # Post-deployment endpoint display is best-effort.
     set +e
 
-    # Get ISSUER_URL and ADMIN_API_SECRET
+    # Get ISSUER_URL
     # Priority: 1. .authrim/{env}/config.json, 2. wrangler.toml [env.xxx.vars]
     ISSUER_URL=""
-    ADMIN_API_SECRET=""
 
     # Get ISSUER_URL
     if type get_issuer_url &>/dev/null; then
@@ -650,92 +506,8 @@ if [ ${#FAILED_PACKAGES[@]} -eq 0 ]; then
     fi
     # Validate URL before use (security: prevent command injection)
     if [ -n "$ISSUER_URL" ] && ! validate_url "$ISSUER_URL"; then
-        echo "⚠️  ISSUER_URL validation failed. Skipping version registration and endpoint display."
+        echo "⚠️  ISSUER_URL validation failed. Skipping endpoint display."
         ISSUER_URL=""
-    fi
-
-    # Get ADMIN_API_SECRET (from keys directory or wrangler.toml)
-    if [ -n "$KEYS_DIR_OVERRIDE" ]; then
-        KEYS_DIR="$KEYS_DIR_OVERRIDE"
-    elif type find_keys_dir &>/dev/null; then
-        KEYS_DIR=$(find_keys_dir "$DEPLOY_ENV" 2>/dev/null)
-    fi
-    if [ -n "${KEYS_DIR:-}" ] && [ -f "${KEYS_DIR}/admin_api_secret.txt" ]; then
-        ADMIN_API_SECRET=$(cat "${KEYS_DIR}/admin_api_secret.txt" 2>/dev/null)
-    fi
-    # Fallback to wrangler.toml
-    if [ -z "$ADMIN_API_SECRET" ] && [ -f "packages/ar-management/wrangler.toml" ]; then
-        ADMIN_API_SECRET=$(grep -A 100 "\\[env\\.${DEPLOY_ENV}\\.vars\\]" "packages/ar-management/wrangler.toml" 2>/dev/null | grep 'ADMIN_API_SECRET = ' | head -1 | sed 's/.*ADMIN_API_SECRET = "\(.*\)"/\1/')
-        # Fallback to KEY_MANAGER_SECRET if ADMIN_API_SECRET not found
-        if [ -z "$ADMIN_API_SECRET" ]; then
-            ADMIN_API_SECRET=$(grep -A 100 "\\[env\\.${DEPLOY_ENV}\\.vars\\]" "packages/ar-management/wrangler.toml" 2>/dev/null | grep 'KEY_MANAGER_SECRET = ' | head -1 | sed 's/.*KEY_MANAGER_SECRET = "\(.*\)"/\1/')
-        fi
-    fi
-
-    # Register versions in VersionManager DO
-    # NOTE: VersionManager is deprecated. versionCheckMiddleware has been removed from all Workers.
-    # Cloudflare Versions Deploy (--gradual) is used instead. These calls are kept for reference only.
-    # if [ -n "$ISSUER_URL" ] && [ -n "$ADMIN_API_SECRET" ]; then
-    #     # Wait a moment for workers to be fully available
-    #     echo "⏳ Waiting 15 seconds for workers to be available..."
-    #     sleep 15
-    #     register_versions "$ISSUER_URL" "$ADMIN_API_SECRET"
-    #     verify_versions_registered "$ISSUER_URL" "$ADMIN_API_SECRET" "$VERSION_UUID"
-    # else
-    #     echo "⚠️  Skipping version registration: ISSUER_URL or ADMIN_API_SECRET not found"
-    # fi
-
-    # Set PUBLIC_JWK_JSON secret for workers that need JWT verification
-    # This ensures tokens can be verified even when KeyManager DO is slow
-    echo ""
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "🔑 Setting PUBLIC_JWK_JSON secret for workers"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    if [ -n "$ISSUER_URL" ]; then
-        echo "   Fetching JWKS from ${ISSUER_URL}/.well-known/jwks.json..."
-        JWKS=$(curl -s "${ISSUER_URL}/.well-known/jwks.json" --connect-timeout 10 --max-time 30 2>/dev/null)
-        if [ -n "$JWKS" ] && echo "$JWKS" | jq -e '.keys' > /dev/null 2>&1; then
-            # Extract the most recent (active) key from JWKS
-            ACTIVE_KEY=$(echo "$JWKS" | jq -c '.keys | last')
-            if [ -n "$ACTIVE_KEY" ] && [ "$ACTIVE_KEY" != "null" ]; then
-                ACTIVE_KID=$(echo "$ACTIVE_KEY" | jq -r '.kid')
-                echo "   Active key: $ACTIVE_KID"
-
-                LOCAL_KID=""
-                if [ -n "${KEYS_DIR:-}" ] && [ -f "${KEYS_DIR}/public.jwk.json" ]; then
-                    LOCAL_KID=$(jq -r '.kid // empty' "${KEYS_DIR}/public.jwk.json" 2>/dev/null)
-                fi
-
-                if [ -n "$LOCAL_KID" ] && [ "$LOCAL_KID" = "$ACTIVE_KID" ]; then
-                    echo "   ✅ Active key already shipped with the Worker versions; no extra secret deployment needed."
-                else
-                    JWK_SECRET_FILE=$(mktemp)
-                    jq -n --arg value "$ACTIVE_KEY" '{PUBLIC_JWK_JSON: $value}' > "$JWK_SECRET_FILE"
-
-                    # Workers that need PUBLIC_JWK_JSON. secret bulk performs one
-                    # mutation per Worker instead of an interactive secret put.
-                    WORKERS_NEEDING_JWK=("ar-discovery" "ar-auth" "ar-token" "ar-userinfo" "ar-management" "ar-vc")
-
-                    for worker in "${WORKERS_NEEDING_JWK[@]}"; do
-                        WORKER_NAME="${DEPLOY_ENV}-${worker}"
-                        echo "   Setting PUBLIC_JWK_JSON for ${worker}..."
-                        if pnpm exec wrangler secret bulk "$JWK_SECRET_FILE" --name "$WORKER_NAME" 2>/dev/null; then
-                            echo "   ✅ ${worker}: Updated"
-                        else
-                            echo "   ⚠️  ${worker}: Skipped (may not exist or already set)"
-                        fi
-                    done
-                    rm -f "$JWK_SECRET_FILE"
-                fi
-            else
-                echo "   ⚠️  Could not extract active key from JWKS"
-            fi
-        else
-            echo "   ⚠️  Could not fetch valid JWKS from ${ISSUER_URL}/.well-known/jwks.json"
-            echo "   💡 You may need to manually set PUBLIC_JWK_JSON after deployment"
-        fi
-    else
-        echo "   ⚠️  Skipping: ISSUER_URL not configured"
     fi
 
     if [ -n "$ISSUER_URL" ]; then

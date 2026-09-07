@@ -69,6 +69,17 @@ export interface PluginRegistryEntry {
 	source: PluginSource;
 	trustLevel: PluginTrustLevel;
 	registeredAt: number;
+	backendKind?: 'dynamic_worker';
+	capabilityManifestDigest?: string;
+	activeVersionDigest?: string;
+	credentialSlots?: Array<{ configKey: string; required: boolean }>;
+	resources?: Array<{
+		logicalResourceId: string;
+		binding: string;
+		kind: 'd1' | 'kv_namespace' | 'r2_bucket';
+		access: 'read_only' | 'read_write';
+		allowExisting: boolean;
+	}>;
 }
 
 /**
@@ -89,6 +100,11 @@ export interface PluginStatus {
 	configSource: 'kv' | 'env' | 'default';
 	configured: boolean;
 	missingRequiredFields: string[];
+	provisioning?: {
+		operationId: string;
+		state: 'pending' | 'blocked';
+		kind: 'provisioning' | 'cleanup';
+	};
 	loadedAt?: number;
 	lastHealthCheck?: PluginHealthStatus;
 }
@@ -101,6 +117,7 @@ export interface PluginWithStatus extends PluginRegistryEntry {
 	configSource: 'kv' | 'env' | 'default';
 	configured: boolean;
 	missingRequiredFields: string[];
+	provisioning?: PluginStatus['provisioning'];
 	loadedAt?: number;
 	lastHealthCheck?: PluginHealthStatus;
 }
@@ -139,7 +156,53 @@ export interface PluginTestEmailResponse {
 	tenantId: string | null;
 	to: string;
 	messageId: string | null;
-	providerResponse: unknown;
+	deliveryState: 'delivered' | 'pending';
+}
+
+export interface PluginResourceSelection {
+	logicalResourceId: string;
+	mode: 'existing';
+	providerResourceId: string;
+	providerName: string;
+}
+
+export interface PluginResourceCleanup {
+	operationId: string;
+	environmentId: string;
+	pluginInstallationId: string;
+	tenantId: string;
+	pluginId: string;
+	sourceOperationId: string;
+	lifecycleGeneration: number;
+	reason: 'uninstall' | 'canceled_pre_activation';
+	state:
+		| 'requested'
+		| 'removing_bindings'
+		| 'quarantined'
+		| 'deleting_resources'
+		| 'verifying_absence'
+		| 'succeeded'
+		| 'blocked';
+	drainNotBefore: number | null;
+	managedResourceCount: number;
+	detachedResourceCount: number;
+	lastErrorCode: string | null;
+	createdAt: number;
+	updatedAt: number;
+	completedAt: number | null;
+}
+
+export interface ProviderProjectionJob {
+	pluginId: string;
+	revision: string;
+	status: 'pending' | 'processing' | 'completed' | 'failed' | 'superseded';
+	total: number;
+	processed: number;
+	succeeded: number;
+	skipped: number;
+	failed: number;
+	lastErrorCode: string | null;
+	updatedAt: number;
 }
 
 /**
@@ -179,6 +242,24 @@ export const PLUGIN_CATEGORIES = [
 ];
 
 export const adminPluginsAPI = {
+	async getProviderProjectionStatus(): Promise<{ jobs: ProviderProjectionJob[] }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/platform/plugins/provider-projection/status`,
+			{
+				credentials: 'include',
+				skipTenantHeader: true
+			}
+		);
+
+		if (!response.ok) {
+			const error = await response.json().catch(() => ({}));
+			throw new Error(
+				error.error_description || error.message || 'Failed to fetch provider projection status'
+			);
+		}
+		return response.json();
+	},
+
 	/**
 	 * List all registered plugins
 	 */
@@ -276,7 +357,11 @@ export const adminPluginsAPI = {
 	/**
 	 * Enable a plugin
 	 */
-	async enable(id: string, tenantId?: string): Promise<PluginStatus> {
+	async enable(
+		id: string,
+		tenantId?: string,
+		resourceSelections: readonly PluginResourceSelection[] = []
+	): Promise<PluginStatus> {
 		const response = await adminFetch(
 			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/enable`,
 			{
@@ -284,7 +369,19 @@ export const adminPluginsAPI = {
 				credentials: 'include',
 				tenantId,
 				includeJsonContentType: true,
-				body: JSON.stringify(tenantId ? { tenant_id: tenantId } : {})
+				body: JSON.stringify({
+					...(tenantId ? { tenant_id: tenantId } : {}),
+					...(resourceSelections.length > 0
+						? {
+								resource_selections: resourceSelections.map((selection) => ({
+									logical_resource_id: selection.logicalResourceId,
+									mode: selection.mode,
+									provider_resource_id: selection.providerResourceId,
+									provider_name: selection.providerName
+								}))
+							}
+						: {})
+				})
 			}
 		);
 
@@ -315,6 +412,41 @@ export const adminPluginsAPI = {
 			throw new Error(error.error_description || error.message || 'Failed to disable plugin');
 		}
 		return response.json();
+	},
+
+	async uninstall(
+		id: string,
+		tenantId: string,
+		idempotencyKey: string
+	): Promise<{ success: true; enabled: false; cleanup: PluginResourceCleanup | null }> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/plugins/${encodeURIComponent(id)}/uninstall`,
+			{
+				method: 'POST',
+				credentials: 'include',
+				tenantId,
+				includeJsonContentType: true,
+				body: JSON.stringify({
+					tenant_id: tenantId,
+					idempotency_key: idempotencyKey,
+					confirmation: 'UNINSTALL'
+				})
+			}
+		);
+		if (!response.ok) {
+			const error: unknown = await response.json().catch(() => null);
+			const message =
+				error && typeof error === 'object' && !Array.isArray(error)
+					? ((error as Record<string, unknown>).error_description ??
+						(error as Record<string, unknown>).message)
+					: null;
+			throw new Error(typeof message === 'string' ? message : 'Failed to uninstall plugin');
+		}
+		return response.json() as Promise<{
+			success: true;
+			enabled: false;
+			cleanup: PluginResourceCleanup | null;
+		}>;
 	},
 
 	/**
@@ -354,7 +486,6 @@ export const adminPluginsAPI = {
 		id: string,
 		payload: {
 			to: string;
-			config?: Record<string, unknown>;
 			tenantId?: string;
 		}
 	): Promise<PluginTestEmailResponse> {
@@ -367,7 +498,6 @@ export const adminPluginsAPI = {
 				includeJsonContentType: true,
 				body: JSON.stringify({
 					to: payload.to,
-					config: payload.config,
 					...(payload.tenantId ? { tenant_id: payload.tenantId } : {})
 				})
 			}

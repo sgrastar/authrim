@@ -25,7 +25,7 @@ describe('runtime-profile-audit-editor helpers', () => {
 		expect(parsed.error).toBeUndefined();
 		expect(parsed.profile?.archive).toEqual({
 			type: 'r2',
-			bucketRef: 'DIAGNOSTIC_LOGS',
+			bucketRef: 'AUDIT_ARCHIVE',
 			prefix: 'audit/'
 		});
 		expect(parsed.profile?.sinks).toHaveLength(1);
@@ -55,7 +55,7 @@ describe('runtime-profile-audit-editor helpers', () => {
 
 		expect(parsed.profile?.archive).toEqual({
 			type: 'r2',
-			bucketRef: 'DIAGNOSTIC_LOGS',
+			bucketRef: 'AUDIT_ARCHIVE',
 			prefix: 'audit/'
 		});
 	});
@@ -92,9 +92,9 @@ describe('runtime-profile-audit-editor helpers', () => {
 	it('updates primary target and retention fields through form helpers', () => {
 		const draft = JSON.stringify({ label: 'Draft', primary: null, archive: null, sinks: [] });
 		const withPrimary = updateAuditPrimaryField(
-			updateAuditPrimaryType(draft, 'postgres'),
-			'connectionRef',
-			'AUDIT_PRIMARY_PG'
+			updateAuditPrimaryType(draft, 'd1'),
+			'bindingRef',
+			'AUDIT_PRIMARY_D1'
 		);
 		const withRetentionDays = updateAuditRetentionNumber(
 			updateAuditRetentionNumber(withPrimary, 'eventLogRetentionDays', '30'),
@@ -109,8 +109,8 @@ describe('runtime-profile-audit-editor helpers', () => {
 		const parsed = parseAuditProfileEditorDraft(withArchiveBeforeDelete);
 
 		expect(parsed.profile?.primary).toMatchObject({
-			type: 'postgres',
-			connectionRef: 'AUDIT_PRIMARY_PG'
+			type: 'd1',
+			bindingRef: 'AUDIT_PRIMARY_D1'
 		});
 		expect(parsed.profile?.retention).toMatchObject({
 			eventLogRetentionDays: 30,

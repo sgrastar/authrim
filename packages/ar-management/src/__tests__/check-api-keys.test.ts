@@ -5,6 +5,7 @@ const mocked = vi.hoisted(() => ({
   createAuthContextFromHono: vi.fn(),
   getTenantIdFromContext: vi.fn(),
   getLogger: vi.fn(),
+  getTenantMetadataContextFromHono: vi.fn(),
 }));
 
 vi.mock('@authrim/ar-lib-core', async () => {
@@ -15,6 +16,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     createAuthContextFromHono: mocked.createAuthContextFromHono,
     getTenantIdFromContext: mocked.getTenantIdFromContext,
     getLogger: mocked.getLogger,
+    getTenantMetadataContextFromHono: mocked.getTenantMetadataContextFromHono,
   };
 });
 
@@ -88,6 +90,10 @@ describe('check-api-keys rotate', () => {
         info: vi.fn(),
         error: vi.fn(),
       }),
+    });
+    mocked.getTenantMetadataContextFromHono.mockReturnValue({
+      tenantId: 'tenant-a',
+      coreDb: {},
     });
   });
 

@@ -723,6 +723,18 @@ adminRolesRouter.delete('/:id', async (c) => {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
+    // Completed invitations retain a role snapshot for audit history, but a pending invitation
+    // must be revoked before its role can be deleted or the recipient could never activate it.
+    const pendingInvitation = await adapter.queryOne<{ id: string }>(
+      `SELECT id FROM admin_invitations
+        WHERE tenant_id = ? AND admin_role_id = ? AND status = 'pending' AND expires_at > ?
+        LIMIT 1`,
+      [tenantId, id, Date.now()]
+    );
+    if (pendingInvitation) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
+    }
+
     await roleRepo.deleteRole(id);
 
     // Create audit log
@@ -801,12 +813,71 @@ adminRolesRouter.get('/permissions/list', async (c) => {
     { key: ADMIN_PERMISSIONS.IP_ALLOWLIST_WRITE, description: 'Manage IP allowlist' },
     { key: ADMIN_PERMISSIONS.USERS_READ, description: 'View end users' },
     { key: ADMIN_PERMISSIONS.USERS_WRITE, description: 'Create and update end users' },
+    { key: ADMIN_PERMISSIONS.USERS_SUSPEND, description: 'Suspend end users' },
     { key: ADMIN_PERMISSIONS.USERS_DELETE, description: 'Delete end users' },
+    {
+      key: ADMIN_PERMISSIONS.EMAIL_DELIVERIES_READ,
+      description: 'View email delivery status without recipient addresses',
+    },
+    {
+      key: ADMIN_PERMISSIONS.EMAIL_DELIVERIES_RECIPIENT_MASKED_READ,
+      description: 'View masked recipients in email delivery status',
+    },
+    {
+      key: ADMIN_PERMISSIONS.EMAIL_DELIVERIES_RECIPIENT_FULL_READ,
+      description: 'View full recipients in email delivery status',
+    },
     { key: ADMIN_PERMISSIONS.CLIENTS_READ, description: 'View OAuth clients' },
     { key: ADMIN_PERMISSIONS.CLIENTS_WRITE, description: 'Create and update OAuth clients' },
+    { key: ADMIN_PERMISSIONS.CLIENTS_CREATE, description: 'Create OAuth clients' },
+    { key: ADMIN_PERMISSIONS.CLIENTS_UPDATE, description: 'Update OAuth clients' },
+    {
+      key: ADMIN_PERMISSIONS.CLIENTS_SECRET_ROTATE,
+      description: 'Rotate OAuth client secrets',
+    },
     { key: ADMIN_PERMISSIONS.CLIENTS_DELETE, description: 'Delete OAuth clients' },
     { key: ADMIN_PERMISSIONS.SETTINGS_READ, description: 'View system settings' },
     { key: ADMIN_PERMISSIONS.SETTINGS_WRITE, description: 'Update system settings' },
+    {
+      key: ADMIN_PERMISSIONS.SETTINGS_ASSURANCE_UPDATE,
+      description: 'Update tenant authentication assurance settings',
+    },
+    {
+      key: ADMIN_PERMISSIONS.SETTINGS_SECURITY_UPDATE,
+      description: 'Update tenant protocol security settings',
+    },
+    {
+      key: ADMIN_PERMISSIONS.SETTINGS_TOKEN_EXCHANGE_UPDATE,
+      description: 'Update tenant token exchange settings',
+    },
+    {
+      key: ADMIN_PERMISSIONS.SETTINGS_OAUTH_UPDATE,
+      description: 'Update tenant OAuth settings',
+    },
+    {
+      key: ADMIN_PERMISSIONS.SETTINGS_SESSION_UPDATE,
+      description: 'Update tenant session and logout settings',
+    },
+    {
+      key: ADMIN_PERMISSIONS.SETTINGS_LOGIN_UI_UPDATE,
+      description: 'Update tenant login UI settings',
+    },
+    {
+      key: ADMIN_PERMISSIONS.POLICY_SIMULATE,
+      description: 'Simulate tenant authorization policies',
+    },
+    {
+      key: ADMIN_PERMISSIONS.FLOWS_VALIDATE,
+      description: 'Validate authentication Flows',
+    },
+    {
+      key: ADMIN_PERMISSIONS.FLOWS_COMPILE,
+      description: 'Compile authentication Flows',
+    },
+    {
+      key: ADMIN_PERMISSIONS.FLOWS_PUBLISH,
+      description: 'Publish authentication Flows',
+    },
     { key: ADMIN_PERMISSIONS.WEBHOOKS_READ, description: 'View webhook configurations' },
     { key: ADMIN_PERMISSIONS.WEBHOOKS_WRITE, description: 'Create and update webhooks' },
     { key: ADMIN_PERMISSIONS.WEBHOOKS_DELETE, description: 'Delete webhooks' },
@@ -1066,10 +1137,54 @@ adminRolesRouter.get('/permissions/list', async (c) => {
       key: ADMIN_PERMISSIONS.APPROVALS_APPROVE,
       description: 'Approve or deny approval and elevation requests',
     },
-    { key: ADMIN_PERMISSIONS.AI_GRANTS_READ, description: 'View AI grants' },
-    { key: ADMIN_PERMISSIONS.AI_GRANTS_CREATE, description: 'Create AI grants' },
-    { key: ADMIN_PERMISSIONS.AI_GRANTS_UPDATE, description: 'Update AI grants' },
-    { key: ADMIN_PERMISSIONS.AI_GRANTS_REVOKE, description: 'Revoke AI grants' },
+    { key: ADMIN_PERMISSIONS.AGENT_USE, description: 'Use delegated Agent Access' },
+    { key: ADMIN_PERMISSIONS.AGENT_GRANTS_READ, description: 'View Agent Access grants' },
+    { key: ADMIN_PERMISSIONS.AGENT_GRANTS_WRITE, description: 'Create and update Agent grants' },
+    { key: ADMIN_PERMISSIONS.AGENT_GRANTS_REVOKE, description: 'Revoke Agent grants' },
+    { key: ADMIN_PERMISSIONS.AGENT_SETTINGS_READ, description: 'View Agent Access settings' },
+    { key: ADMIN_PERMISSIONS.AGENT_SETTINGS_WRITE, description: 'Update Agent Access settings' },
+    {
+      key: ADMIN_PERMISSIONS.AGENT_ELEVATION_RECONCILE,
+      description: 'Reconcile indeterminate Agent executions',
+    },
+    { key: ADMIN_PERMISSIONS.AGENT_TASK_SETS_READ, description: 'View Agent Task Sets' },
+    { key: ADMIN_PERMISSIONS.AGENT_TASK_SETS_WRITE, description: 'Manage Agent Task Sets' },
+    {
+      key: ADMIN_PERMISSIONS.AGENT_SCOPE_POLICIES_READ,
+      description: 'View Agent Scope Policies',
+    },
+    {
+      key: ADMIN_PERMISSIONS.AGENT_SCOPE_POLICIES_WRITE,
+      description: 'Manage Agent Scope Policies',
+    },
+    {
+      key: ADMIN_PERMISSIONS.AGENT_TEMPLATES_PUBLISH,
+      description: 'Publish Agent templates across explicitly selected tenants',
+    },
+    { key: ADMIN_PERMISSIONS.AGENT_BASELINES_READ, description: 'View Agent baselines and drift' },
+    { key: ADMIN_PERMISSIONS.AGENT_BASELINES_WRITE, description: 'Manage Agent baselines' },
+    {
+      key: ADMIN_PERMISSIONS.AGENT_BASELINES_APPLY,
+      description: 'Assign Agent baselines and approve exceptions',
+    },
+    { key: ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_READ, description: 'View auth configuration plans' },
+    {
+      key: ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_CREATE,
+      description: 'Create auth configuration plans',
+    },
+    {
+      key: ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_APPLY,
+      description: 'Apply auth configuration plans',
+    },
+    {
+      key: ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_CANCEL,
+      description: 'Cancel auth configuration plans',
+    },
+    { key: ADMIN_PERMISSIONS.BULK_PLANS_READ, description: 'View cross-tenant bulk plans' },
+    { key: ADMIN_PERMISSIONS.BULK_PLANS_CREATE, description: 'Create cross-tenant bulk plans' },
+    { key: ADMIN_PERMISSIONS.BULK_PLANS_APPLY, description: 'Apply cross-tenant bulk plans' },
+    { key: ADMIN_PERMISSIONS.BULK_PLANS_PAUSE, description: 'Pause cross-tenant bulk plans' },
+    { key: ADMIN_PERMISSIONS.BULK_PLANS_RESUME, description: 'Resume cross-tenant bulk plans' },
     {
       key: ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_READ,
       description: 'View Admin Machine Access principals and credentials',

@@ -7,11 +7,15 @@
 		adminSAMLAPI,
 		type CreateSAMLProviderRequest,
 		type SAMLAttributeReleaseConfirmationValueDisplay,
+		type SAMLDestinationFieldReleaseMode,
 		type SAMLFederationTrustProfile,
+		type SAMLFederationRuntimeResolutionPolicy,
+		type SAMLAttributePresetId,
 		type SAMLMetadataAggregatePreviewResponse,
 		type SAMLMetadataBatchStatus,
 		type SAMLMetadataEntitySummary,
 		type SAMLMetadataKeywordFacet,
+		type SAMLMetadataRefreshPolicy,
 		type SAMLJitEmailLinkingPolicy,
 		type SAMLProvider,
 		type SAMLProviderConfig,
@@ -23,7 +27,8 @@
 	} from '$lib/api/admin-consent-statements';
 	import {
 		adminIdentityMappingAPI,
-		type IdentityMappingFieldMappingSetSummary
+		type IdentityMappingFieldMappingSetSummary,
+		type IdentityMappingFieldMappingVersionSummary
 	} from '$lib/api/admin-identity-mapping';
 	import {
 		AdminDataTable,
@@ -32,11 +37,22 @@
 		AdminSection
 	} from '$lib/components/admin';
 	import LoginProviderIconPicker from '$lib/components/admin/LoginProviderIconPicker.svelte';
+	import SAMLMappingSetReleasePolicy from '$lib/components/saml/SAMLMappingSetReleasePolicy.svelte';
+	import {
+		buildSAMLFieldReleasePolicies,
+		resolveSAMLMappingSetDestinationProfileIds,
+		resolveSAMLMappingSetReleaseFields,
+		type SAMLMappingSetReleaseField
+	} from '$lib/saml/mapping-set-release-policy';
+	import {
+		isMetadataUrlPreviewCurrent,
+		type SAMLMetadataAggregateImportMode
+	} from '$lib/saml/metadata-aggregate-import';
+	import { filterCompatibleActiveFieldMappingSets } from '$lib/saml/field-mapping-options';
 	import { selectMetadataNameIdFormat } from '$lib/saml/metadata-nameid';
 	import { onMount } from 'svelte';
 
 	type SetupMode = 'metadata_url' | 'metadata_xml' | 'manual';
-	type AggregateImportMode = 'selected_entities' | 'trust_profile';
 	type SetupTarget = SAMLProvider['providerType'] | 'federation';
 	type AttributeReleaseConfirmationMode =
 		| 'disabled'
@@ -71,6 +87,10 @@
 	];
 
 	let fieldMappingSets = $state<IdentityMappingFieldMappingSetSummary[]>([]);
+	let fieldMappingVersionsByFieldMappingSetId = $state<
+		Record<string, IdentityMappingFieldMappingVersionSummary[]>
+	>({});
+	let loadingFieldMappingSets = $state(true);
 	let setupTarget = $state<SetupTarget>('saml_idp');
 	let providerType = $state<SAMLProvider['providerType']>('saml_idp');
 	let setupMode = $state<SetupMode>('metadata_url');
@@ -108,9 +128,14 @@
 	);
 	let passkeyAuthnContextClassRef = $state('urn:authrim:acr:phishing-resistant');
 	let identityMappingFieldMappingSetId = $state('');
-	let attributeReleaseConfirmationMode = $state<AttributeReleaseConfirmationMode>(
-		'uapprove_until_attributes_change'
-	);
+	let identityMappingDestinationProfileId = $state('');
+	let destinationFieldPolicies = $state<Record<string, SAMLDestinationFieldReleaseMode>>({});
+	let mappingReleaseFields = $state<SAMLMappingSetReleaseField[]>([]);
+	let loadingMappingReleaseFields = $state(false);
+	let mappingReleaseFieldsError = $state('');
+	let mappingReleaseLoadSequence = 0;
+	let metadataRequestedAttributes = $state<SAMLProviderConfig['metadataRequestedAttributes']>([]);
+	let attributeReleaseConfirmationMode = $state<AttributeReleaseConfirmationMode>('disabled');
 	let attributeReleaseValueDisplay =
 		$state<SAMLAttributeReleaseConfirmationValueDisplay>('masked_values');
 	let attributeReleaseTemplateStatementId = $state('');
@@ -136,12 +161,28 @@
 	let selectedAggregateEntityIds = $state<string[]>([]);
 	let aggregateBatch = $state<SAMLMetadataBatchStatus | null>(null);
 	let aggregateBatchPolling: ReturnType<typeof setInterval> | undefined;
-	let aggregateImportMode = $state<AggregateImportMode>('selected_entities');
+	let aggregateImportMode = $state<SAMLMetadataAggregateImportMode>('selected_entities');
 	let federationProfileName = $state('');
+	let federationProfileMetadataUrl = $state('');
+	let federationOriginalMetadataUrl = $state('');
 	let federationProfileUrlPattern = $state('');
 	let federationProfileCertificateUrl = $state('');
 	let federationProfileCertificate = $state('');
 	let federationProfilePolicy = $state<'strict' | 'warn' | 'disabled'>('strict');
+	let federationAutoPolling = $state(true);
+	let federationPollingIntervalSeconds = $state(6 * 60 * 60);
+	let federationExistingPolling = $state<SAMLMetadataRefreshPolicy | undefined>(undefined);
+	let federationProfileExpectedUpdatedAt = $state<number | undefined>(undefined);
+	let federationRuntimeAutomatic = $state(false);
+	let federationRuntimeIdP = $state(false);
+	let federationRuntimeSP = $state(false);
+	let federationRuntimePriority = $state(0);
+	let federationRuntimeIdPMappingSetId = $state('');
+	let federationRuntimeSPMappingSetId = $state('');
+	let federationRuntimeDefaultAttributePresetId = $state<'' | SAMLAttributePresetId>('');
+	let federationRuntimeRegistrationAuthorities = $state('');
+	let federationRuntimeDefaultCategoryDecision = $state<'allow' | 'deny'>('deny');
+	let federationRuntimeCategoryRules = $state('');
 	let federationProfileCreated = $state<SAMLFederationTrustProfile | null>(null);
 	let federationProfileSavedMessage = $state('');
 	let providerSavedMessage = $state('');
@@ -155,6 +196,13 @@
 	let loadingFederationProfile = $state(false);
 	let activeAggregateKeywordFacet = $derived(
 		aggregateKeywordFacets.find((facet) => facet.category === aggregateKeywordCategory) ?? null
+	);
+	let compatibleActiveFieldMappingSets = $derived(
+		filterCompatibleActiveFieldMappingSets(
+			fieldMappingSets,
+			fieldMappingVersionsByFieldMappingSetId,
+			providerType
+		)
 	);
 	let isEditingFederationProfile = $derived(Boolean(editingFederationProfileId));
 	let saving = $state(false);
@@ -189,12 +237,59 @@
 	});
 
 	async function loadFieldMappingSets() {
+		loadingFieldMappingSets = true;
 		try {
 			const result = await adminIdentityMappingAPI.listFieldMappingSets();
 			fieldMappingSets = result.fieldMappingSets || [];
+			const versionPairs = await Promise.all(
+				fieldMappingSets.map(async (fieldMappingSet) => {
+					const versions = await adminIdentityMappingAPI
+						.listFieldMappingVersions(fieldMappingSet.id)
+						.catch(() => null);
+					if (!versions) return null;
+					return [fieldMappingSet.id, versions.fieldMappingVersions] as const;
+				})
+			);
+			fieldMappingVersionsByFieldMappingSetId = Object.fromEntries(
+				versionPairs.filter((entry) => entry !== null)
+			);
+			ensureCompatibleIdentityMappingSelection(providerType);
 		} catch {
 			fieldMappingSets = [];
+			fieldMappingVersionsByFieldMappingSetId = {};
+		} finally {
+			loadingFieldMappingSets = false;
 		}
+	}
+
+	function compatibleFieldMappingSetsForProviderType(
+		mappingProviderType: SAMLProvider['providerType']
+	) {
+		return filterCompatibleActiveFieldMappingSets(
+			fieldMappingSets,
+			fieldMappingVersionsByFieldMappingSetId,
+			mappingProviderType
+		);
+	}
+
+	function ensureCompatibleIdentityMappingSelection(
+		mappingProviderType: SAMLProvider['providerType']
+	) {
+		if (
+			!identityMappingFieldMappingSetId ||
+			compatibleFieldMappingSetsForProviderType(mappingProviderType).some(
+				(fieldMappingSet) => fieldMappingSet.id === identityMappingFieldMappingSetId
+			)
+		) {
+			return;
+		}
+		identityMappingFieldMappingSetId = '';
+		identityMappingDestinationProfileId = '';
+		destinationFieldPolicies = {};
+		mappingReleaseFields = [];
+		mappingReleaseFieldsError = '';
+		loadingMappingReleaseFields = false;
+		mappingReleaseLoadSequence += 1;
 	}
 
 	async function loadConsentStatements() {
@@ -226,6 +321,31 @@
 			description = profile.description ?? '';
 			enabled = profile.enabled;
 			federationProfilePolicy = profile.policy ?? 'strict';
+			federationProfileMetadataUrl = profile.metadataUrl ?? '';
+			federationOriginalMetadataUrl = profile.metadataUrl ?? '';
+			federationAutoPolling = profile.polling?.mode !== 'manual';
+			federationPollingIntervalSeconds = profile.polling?.intervalSeconds ?? 6 * 60 * 60;
+			federationExistingPolling = profile.polling;
+			federationProfileExpectedUpdatedAt = profile.updatedAt;
+			const runtimeResolution = profile.runtimeResolution;
+			federationRuntimeAutomatic = runtimeResolution?.mode === 'automatic';
+			federationRuntimeIdP = runtimeResolution?.roles.includes('saml_idp') ?? false;
+			federationRuntimeSP = runtimeResolution?.roles.includes('saml_sp') ?? false;
+			federationRuntimePriority = runtimeResolution?.priority ?? 0;
+			federationRuntimeIdPMappingSetId = runtimeResolution?.idpFieldMappingSetId ?? '';
+			federationRuntimeSPMappingSetId = runtimeResolution?.spFieldMappingSetId ?? '';
+			federationRuntimeDefaultAttributePresetId = runtimeResolution?.defaultAttributePresetId ?? '';
+			federationRuntimeRegistrationAuthorities =
+				runtimeResolution?.registrationAuthorities?.join('\n') ?? '';
+			federationRuntimeDefaultCategoryDecision =
+				runtimeResolution?.entityCategoryPolicy?.defaultDecision ?? 'deny';
+			federationRuntimeCategoryRules =
+				runtimeResolution?.entityCategoryPolicy?.rules
+					.map(
+						(rule) =>
+							`${rule.decision} ${rule.entityCategory}${rule.attributePresetId ? ` ${rule.attributePresetId}` : ''}`
+					)
+					.join('\n') ?? '';
 			federationProfileUrlPattern = profile.metadataUrlPatterns.join('\n');
 			federationProfileCertificate = profile.certificates
 				.map((certificate) => certificate.certificate.trim())
@@ -280,14 +400,89 @@
 		};
 	}
 
-	function identityMappingConfig(): Partial<SAMLProviderConfig> {
+	function identityMappingConfig(
+		mappingProviderType: SAMLProvider['providerType'] = providerType
+	): Partial<SAMLProviderConfig> {
 		if (!identityMappingFieldMappingSetId) return {};
 		return {
 			identityMapping: {
 				fieldMappingSetId: identityMappingFieldMappingSetId,
-				destinationNamespace: providerType === 'saml_sp' ? 'saml.attribute' : undefined
+				destinationNamespace: mappingProviderType === 'saml_sp' ? 'saml.attribute' : undefined,
+				destinationFieldPolicies:
+					mappingProviderType === 'saml_sp' ? destinationFieldPolicies : undefined
 			}
 		};
+	}
+
+	async function handleFieldMappingSetChange(
+		event: Event,
+		mappingProviderType: SAMLProvider['providerType'] = providerType
+	) {
+		identityMappingFieldMappingSetId = (event.currentTarget as HTMLSelectElement).value;
+		await loadMappingReleaseFields(mappingProviderType);
+	}
+
+	async function loadMappingReleaseFields(
+		mappingProviderType: SAMLProvider['providerType'] = providerType
+	) {
+		const sequence = ++mappingReleaseLoadSequence;
+		mappingReleaseFieldsError = '';
+		if (mappingProviderType !== 'saml_sp' || !identityMappingFieldMappingSetId) {
+			loadingMappingReleaseFields = false;
+			mappingReleaseFields = [];
+			if (mappingProviderType === 'saml_sp') {
+				destinationFieldPolicies = {};
+				identityMappingDestinationProfileId = '';
+			}
+			return;
+		}
+		loadingMappingReleaseFields = true;
+		try {
+			const cachedVersions =
+				fieldMappingVersionsByFieldMappingSetId[identityMappingFieldMappingSetId];
+			const [versionResult, destinationResult] = await Promise.all([
+				cachedVersions
+					? Promise.resolve({ fieldMappingVersions: cachedVersions })
+					: adminIdentityMappingAPI.listFieldMappingVersions(identityMappingFieldMappingSetId),
+				adminIdentityMappingAPI.listDestinationProfiles()
+			]);
+			if (sequence !== mappingReleaseLoadSequence) return;
+			const releaseInput = {
+				versions: versionResult.fieldMappingVersions,
+				destinationProfiles: destinationResult.destinationProfiles
+			};
+			const destinationProfileIds = resolveSAMLMappingSetDestinationProfileIds(releaseInput);
+			if (destinationProfileIds.length !== 1) {
+				throw new Error(
+					getLocale() === 'ja'
+						? 'Mapping Setには有効なSAML Destination Profileが1つ必要です。'
+						: 'The Mapping Set must reference exactly one active SAML destination profile.'
+				);
+			}
+			identityMappingDestinationProfileId = destinationProfileIds[0];
+			mappingReleaseFields = resolveSAMLMappingSetReleaseFields(releaseInput);
+			destinationFieldPolicies = buildSAMLFieldReleasePolicies({
+				fields: mappingReleaseFields,
+				existing: destinationFieldPolicies,
+				metadataRequestedAttributes
+			});
+		} catch (err) {
+			if (sequence !== mappingReleaseLoadSequence) return;
+			mappingReleaseFields = [];
+			identityMappingDestinationProfileId = '';
+			mappingReleaseFieldsError =
+				err instanceof Error
+					? err.message
+					: getLocale() === 'ja'
+						? 'Mapping Setの属性を読み込めませんでした。'
+						: 'Failed to load Mapping Set attributes.';
+		} finally {
+			if (sequence === mappingReleaseLoadSequence) loadingMappingReleaseFields = false;
+		}
+	}
+
+	function updateDestinationFieldPolicy(key: string, mode: SAMLDestinationFieldReleaseMode) {
+		destinationFieldPolicies = { ...destinationFieldPolicies, [key]: mode };
 	}
 
 	function tAttributeRelease(key: string): string {
@@ -449,7 +644,7 @@
 		};
 	}
 
-	function applyPreviewConfig(config: SAMLProviderConfig) {
+	async function applyPreviewConfig(config: SAMLProviderConfig) {
 		providerName = config.providerName || providerName;
 		logoUrl = config.logoUrl || '';
 		iconName = config.iconName || iconName;
@@ -493,6 +688,8 @@
 		passkeyAuthnContextClassRef =
 			config.passkeyAuthnContextClassRef || 'urn:authrim:acr:phishing-resistant';
 		identityMappingFieldMappingSetId = config.identityMapping?.fieldMappingSetId || '';
+		metadataRequestedAttributes = config.metadataRequestedAttributes ?? [];
+		if (identityMappingFieldMappingSetId) await loadMappingReleaseFields();
 		if (!name.trim() && config.entityId) {
 			name = config.entityId;
 		}
@@ -584,12 +781,17 @@
 		}
 		providerType = nextProviderType;
 		setupTarget = nextProviderType;
+		ensureCompatibleIdentityMappingSelection(nextProviderType);
+		if (identityMappingFieldMappingSetId) void loadMappingReleaseFields();
 	}
 
 	function chooseFederation() {
 		setupTarget = 'federation';
 		if (metadataUrl.trim() && !federationProfileUrlPattern.trim()) {
 			federationProfileUrlPattern = metadataUrl.trim();
+		}
+		if (metadataUrl.trim() && !federationProfileMetadataUrl.trim()) {
+			federationProfileMetadataUrl = metadataUrl.trim();
 		}
 		if (metadataUrl.trim() && !federationProfileName.trim()) {
 			federationProfileName = buildFederationProfileName(metadataUrl.trim());
@@ -621,7 +823,14 @@
 			return;
 		}
 
-		if (metadataImported && lastImportedMetadataUrl === metadataUrl.trim()) {
+		if (
+			isMetadataUrlPreviewCurrent({
+				requestedUrl: metadataUrl.trim(),
+				lastImportedUrl: lastImportedMetadataUrl,
+				hasProviderPreview: metadataImported,
+				hasAggregatePreview: Boolean(aggregatePreview)
+			})
+		) {
 			return;
 		}
 
@@ -691,9 +900,11 @@
 			if (options.sourceUrl) {
 				federationProfileName =
 					federationProfileName || buildFederationProfileName(options.sourceUrl);
+				federationProfileMetadataUrl = federationProfileMetadataUrl || options.sourceUrl;
 				federationProfileUrlPattern = federationProfileUrlPattern || options.sourceUrl;
 			} else {
 				federationProfileName = federationProfileName || 'SAML federation';
+				federationAutoPolling = false;
 			}
 			metadataImportTone = preview.verification.status === 'verified' ? 'success' : 'warning';
 			metadataImportMessage = $LL.admin_saml_new_aggregate_loaded({
@@ -708,7 +919,7 @@
 		providerType = preview.providerType;
 		setupTarget = preview.providerType;
 		setupMode = 'manual';
-		applyPreviewConfig(preview.config);
+		await applyPreviewConfig(preview.config);
 		await previewProviderCertificate({ quiet: true });
 		metadataImported = true;
 		metadataImportedProviderType = preview.providerType;
@@ -736,10 +947,26 @@
 		aggregateBatch = null;
 		aggregateImportMode = 'selected_entities';
 		federationProfileName = '';
+		federationProfileMetadataUrl = '';
+		federationOriginalMetadataUrl = '';
 		federationProfileUrlPattern = '';
 		federationProfileCertificateUrl = '';
 		federationProfileCertificate = '';
 		federationProfilePolicy = 'strict';
+		federationAutoPolling = true;
+		federationPollingIntervalSeconds = 6 * 60 * 60;
+		federationExistingPolling = undefined;
+		federationProfileExpectedUpdatedAt = undefined;
+		federationRuntimeAutomatic = false;
+		federationRuntimeIdP = false;
+		federationRuntimeSP = false;
+		federationRuntimePriority = 0;
+		federationRuntimeIdPMappingSetId = '';
+		federationRuntimeSPMappingSetId = '';
+		federationRuntimeDefaultAttributePresetId = '';
+		federationRuntimeRegistrationAuthorities = '';
+		federationRuntimeDefaultCategoryDecision = 'deny';
+		federationRuntimeCategoryRules = '';
 		federationProfileCreated = null;
 		federationProfileSavedMessage = '';
 		providerSavedMessage = '';
@@ -823,6 +1050,76 @@
 		}));
 	}
 
+	function buildFederationRuntimeResolution(): SAMLFederationRuntimeResolutionPolicy | null {
+		if (!federationRuntimeAutomatic) return { mode: 'inventory_only', roles: [] };
+		const roles: Array<'saml_idp' | 'saml_sp'> = [];
+		if (federationRuntimeIdP) roles.push('saml_idp');
+		if (federationRuntimeSP) roles.push('saml_sp');
+		if (
+			roles.length === 0 ||
+			(federationRuntimeIdP && !federationRuntimeIdPMappingSetId.trim()) ||
+			(federationRuntimeSP && !federationRuntimeSPMappingSetId.trim())
+		) {
+			error = $LL.admin_saml_federation_runtime_mapping_error();
+			return null;
+		}
+		const presetIds = new Set<SAMLAttributePresetId>([
+			'basic.v1',
+			'academic_publisher.v1',
+			'enterprise_saas.v1',
+			'research_federation.v1'
+		]);
+		const rules = federationRuntimeCategoryRules
+			.split(/\r?\n/)
+			.map((value) => value.trim())
+			.filter(Boolean)
+			.map((line) => {
+				const [decision, entityCategory, attributePresetId, ...extra] = line.split(/\s+/);
+				if (
+					(decision !== 'allow' && decision !== 'deny') ||
+					!entityCategory ||
+					extra.length > 0 ||
+					(attributePresetId && !presetIds.has(attributePresetId as SAMLAttributePresetId))
+				) {
+					return null;
+				}
+				const normalizedDecision: 'allow' | 'deny' = decision;
+				return {
+					entityCategory,
+					decision: normalizedDecision,
+					...(attributePresetId
+						? { attributePresetId: attributePresetId as SAMLAttributePresetId }
+						: {})
+				};
+			});
+		if (rules.some((rule) => rule === null)) {
+			error = $LL.admin_saml_federation_runtime_category_rule_error();
+			return null;
+		}
+		return {
+			mode: 'automatic',
+			roles,
+			priority: federationRuntimePriority,
+			...(federationRuntimeIdP
+				? { idpFieldMappingSetId: federationRuntimeIdPMappingSetId.trim() }
+				: {}),
+			...(federationRuntimeSP
+				? { spFieldMappingSetId: federationRuntimeSPMappingSetId.trim() }
+				: {}),
+			...(federationRuntimeDefaultAttributePresetId
+				? { defaultAttributePresetId: federationRuntimeDefaultAttributePresetId }
+				: {}),
+			registrationAuthorities: federationRuntimeRegistrationAuthorities
+				.split(/\r?\n/)
+				.map((value) => value.trim())
+				.filter(Boolean),
+			entityCategoryPolicy: {
+				defaultDecision: federationRuntimeDefaultCategoryDecision,
+				rules: rules.filter((rule) => rule !== null)
+			}
+		};
+	}
+
 	async function createFederationTrustProfile() {
 		if (!federationProfileName.trim()) {
 			error = $LL.admin_saml_new_federation_name_error();
@@ -833,11 +1130,17 @@
 			error = $LL.admin_saml_new_metadata_pattern_error();
 			return;
 		}
+		if (federationAutoPolling && !federationProfileMetadataUrl.trim()) {
+			error = $LL.admin_saml_new_metadata_url_error();
+			return;
+		}
 		const certificates = parseFederationProfileCertificates();
 		if (certificates.length === 0) {
 			error = $LL.admin_saml_new_federation_certificate_error();
 			return;
 		}
+		const runtimeResolution = buildFederationRuntimeResolution();
+		if (!runtimeResolution) return;
 
 		saving = true;
 		error = '';
@@ -848,14 +1151,26 @@
 				description: aggregatePreview
 					? `Created from aggregate metadata preview ${aggregatePreview.previewId}`
 					: description.trim() || undefined,
+				metadataUrl: federationProfileMetadataUrl.trim() || undefined,
 				metadataUrlPatterns,
 				certificates,
 				policy: federationProfilePolicy,
+				polling: {
+					...(federationProfileMetadataUrl.trim() === federationOriginalMetadataUrl
+						? (federationExistingPolling ?? {})
+						: {}),
+					mode: federationAutoPolling ? ('automatic' as const) : ('manual' as const),
+					intervalSeconds: federationPollingIntervalSeconds
+				},
+				runtimeResolution,
 				enabled
 			};
 			federationProfileCreated =
 				isEditingFederationProfile && !aggregatePreview
-					? await adminSAMLAPI.updateFederationTrustProfile(editingFederationProfileId, request)
+					? await adminSAMLAPI.updateFederationTrustProfile(editingFederationProfileId, {
+							...request,
+							expectedUpdatedAt: federationProfileExpectedUpdatedAt ?? 0
+						})
 					: await adminSAMLAPI.createFederationTrustProfile(request);
 			saving = false;
 			federationProfileSavedMessage = isEditingFederationProfile
@@ -1012,7 +1327,7 @@
 			aggregateBatch = await adminSAMLAPI.startAggregateBatchCreate(aggregatePreview.previewId, {
 				entityIds: selectedAggregateEntityIds,
 				samlProfile,
-				enabled
+				enabled: false
 			});
 			if (aggregateBatchPolling) clearInterval(aggregateBatchPolling);
 			aggregateBatchPolling = setInterval(() => {
@@ -1061,10 +1376,35 @@
 				return $LL.admin_saml_detail_sp_required();
 			}
 		}
+		return enabled ? validateIdentityMappingSelection() : '';
+	}
+
+	function validateIdentityMappingSelection(
+		mappingProviderType: SAMLProvider['providerType'] = providerType
+	) {
 		if (!identityMappingFieldMappingSetId) {
+			return compatibleFieldMappingSetsForProviderType(mappingProviderType).length === 0
+				? $LL.admin_saml_detail_identity_mapping_policy_no_compatible()
+				: $LL.admin_saml_detail_identity_mapping_policy_required();
+		}
+		if (
+			!compatibleFieldMappingSetsForProviderType(mappingProviderType).some(
+				(fieldMappingSet) => fieldMappingSet.id === identityMappingFieldMappingSetId
+			)
+		) {
+			return $LL.admin_saml_detail_identity_mapping_policy_no_compatible();
+		}
+		if (mappingProviderType === 'saml_sp' && mappingReleaseFieldsError)
+			return mappingReleaseFieldsError;
+		if (mappingProviderType === 'saml_sp' && !identityMappingDestinationProfileId) {
 			return getLocale() === 'ja'
-				? 'Field Mapping Setを選択してください。'
-				: 'Select a Field Mapping Set.';
+				? 'Mapping SetのSAML Destination Profileを特定できません。'
+				: 'The Mapping Set SAML destination profile could not be resolved.';
+		}
+		if (mappingProviderType === 'saml_sp' && mappingReleaseFields.length === 0) {
+			return getLocale() === 'ja'
+				? '選択したMapping Setに有効なSAML Destination属性がありません。'
+				: 'The selected Mapping Set has no active SAML destination attributes.';
 		}
 		return '';
 	}
@@ -1073,9 +1413,9 @@
 		if (aggregatePreview) {
 			if (aggregateImportMode === 'trust_profile') {
 				await createFederationTrustProfile();
-			} else {
-				await startAggregateBatchCreate();
+				return;
 			}
+			await startAggregateBatchCreate();
 			return;
 		}
 		const validationError = validate();
@@ -1171,6 +1511,122 @@
 				{#each preview.warnings as warning (warning)}
 					<div><i class="i-ph-warning-circle"></i>{warning}</div>
 				{/each}
+			</div>
+		{/if}
+	</div>
+{/snippet}
+
+{#snippet federationRuntimeFields(idPrefix: string)}
+	<div class="admin-field admin-field--full federation-runtime-fields">
+		<ToggleSwitch
+			bind:checked={federationRuntimeAutomatic}
+			label={$LL.admin_saml_federation_runtime_automatic()}
+			description={$LL.admin_saml_federation_runtime_automatic_desc()}
+		/>
+		{#if federationRuntimeAutomatic}
+			<div class="form-grid federation-runtime-grid">
+				<div class="admin-field admin-field--full">
+					<span class="admin-field__label">{$LL.admin_saml_federation_runtime_roles()}</span>
+					<label class="checkbox-row">
+						<input type="checkbox" bind:checked={federationRuntimeIdP} />
+						<span>{$LL.admin_saml_federation_runtime_idp_role()}</span>
+					</label>
+					<label class="checkbox-row">
+						<input type="checkbox" bind:checked={federationRuntimeSP} />
+						<span>{$LL.admin_saml_federation_runtime_sp_role()}</span>
+					</label>
+				</div>
+				{#if federationRuntimeIdP}
+					<div class="admin-field">
+						<label for={`${idPrefix}RuntimeIdPMapping`} class="admin-field__label">
+							{$LL.admin_saml_federation_runtime_idp_mapping()}
+						</label>
+						<input
+							id={`${idPrefix}RuntimeIdPMapping`}
+							bind:value={federationRuntimeIdPMappingSetId}
+							class="admin-input"
+						/>
+					</div>
+				{/if}
+				{#if federationRuntimeSP}
+					<div class="admin-field">
+						<label for={`${idPrefix}RuntimeSPMapping`} class="admin-field__label">
+							{$LL.admin_saml_federation_runtime_sp_mapping()}
+						</label>
+						<input
+							id={`${idPrefix}RuntimeSPMapping`}
+							bind:value={federationRuntimeSPMappingSetId}
+							class="admin-input"
+						/>
+					</div>
+				{/if}
+				<div class="admin-field">
+					<label for={`${idPrefix}RuntimePriority`} class="admin-field__label">
+						{$LL.admin_saml_federation_runtime_priority()}
+					</label>
+					<input
+						id={`${idPrefix}RuntimePriority`}
+						type="number"
+						min="-1000"
+						max="1000"
+						bind:value={federationRuntimePriority}
+						class="admin-input"
+					/>
+				</div>
+				<div class="admin-field">
+					<label for={`${idPrefix}RuntimePreset`} class="admin-field__label">
+						{$LL.admin_saml_federation_runtime_default_preset()}
+					</label>
+					<select
+						id={`${idPrefix}RuntimePreset`}
+						bind:value={federationRuntimeDefaultAttributePresetId}
+						class="admin-select"
+					>
+						<option value="">—</option>
+						<option value="basic.v1">basic.v1</option>
+						<option value="academic_publisher.v1">academic_publisher.v1</option>
+						<option value="enterprise_saas.v1">enterprise_saas.v1</option>
+						<option value="research_federation.v1">research_federation.v1</option>
+					</select>
+				</div>
+				<div class="admin-field">
+					<label for={`${idPrefix}RuntimeDefaultDecision`} class="admin-field__label">
+						{$LL.admin_saml_federation_runtime_default_decision()}
+					</label>
+					<select
+						id={`${idPrefix}RuntimeDefaultDecision`}
+						bind:value={federationRuntimeDefaultCategoryDecision}
+						class="admin-select"
+					>
+						<option value="deny">deny</option>
+						<option value="allow">allow</option>
+					</select>
+				</div>
+				<div class="admin-field admin-field--full">
+					<label for={`${idPrefix}RuntimeAuthorities`} class="admin-field__label">
+						{$LL.admin_saml_federation_runtime_authorities()}
+					</label>
+					<textarea
+						id={`${idPrefix}RuntimeAuthorities`}
+						bind:value={federationRuntimeRegistrationAuthorities}
+						class="admin-input form-textarea monospace"
+						rows="3"
+					></textarea>
+					<p class="field-hint">{$LL.admin_saml_federation_runtime_authorities_hint()}</p>
+				</div>
+				<div class="admin-field admin-field--full">
+					<label for={`${idPrefix}RuntimeCategoryRules`} class="admin-field__label">
+						{$LL.admin_saml_federation_runtime_category_rules()}
+					</label>
+					<textarea
+						id={`${idPrefix}RuntimeCategoryRules`}
+						bind:value={federationRuntimeCategoryRules}
+						class="admin-input form-textarea monospace"
+						rows="5"
+						placeholder="allow http://refeds.org/category/research-and-scholarship research_federation.v1"
+					></textarea>
+					<p class="field-hint">{$LL.admin_saml_federation_runtime_category_rules_hint()}</p>
+				</div>
 			</div>
 		{/if}
 	</div>
@@ -1354,6 +1810,41 @@
 								</select>
 							</div>
 							<div class="admin-field admin-field--full">
+								<label for="federationProfileMetadataUrl" class="admin-field__label">
+									{$LL.admin_saml_metadata_source_url()}
+								</label>
+								<input
+									id="federationProfileMetadataUrl"
+									type="url"
+									bind:value={federationProfileMetadataUrl}
+									class="admin-input"
+								/>
+								<p class="field-hint">{$LL.admin_saml_federation_source_url_hint()}</p>
+							</div>
+							<div class="admin-field admin-field--full">
+								<ToggleSwitch
+									bind:checked={federationAutoPolling}
+									label={$LL.admin_saml_metadata_auto_polling()}
+									description={$LL.admin_saml_metadata_auto_polling_desc()}
+								/>
+								{#if federationAutoPolling}
+									<label for="federationPollingInterval" class="admin-field__label">
+										{$LL.admin_saml_metadata_polling_interval()}
+									</label>
+									<select
+										id="federationPollingInterval"
+										bind:value={federationPollingIntervalSeconds}
+										class="admin-select"
+									>
+										<option value={3600}>{$LL.admin_saml_metadata_interval_1h()}</option>
+										<option value={21600}>{$LL.admin_saml_metadata_interval_6h()}</option>
+										<option value={43200}>{$LL.admin_saml_metadata_interval_12h()}</option>
+										<option value={86400}>{$LL.admin_saml_metadata_interval_24h()}</option>
+									</select>
+								{/if}
+							</div>
+							{@render federationRuntimeFields('aggregateFederation')}
+							<div class="admin-field admin-field--full">
 								<label for="federationProfileUrlPattern" class="admin-field__label">
 									{$LL.admin_saml_new_metadata_url_pattern_required()}
 								</label>
@@ -1430,6 +1921,10 @@
 						{/if}
 					</div>
 				{:else}
+					<div class="alert alert-info">
+						{$LL.admin_saml_new_aggregate_mapping_after_create()}
+					</div>
+
 					<div class="metadata-import-row">
 						<div class="admin-field metadata-import-input">
 							<label for="aggregateSearch" class="admin-field__label">
@@ -1526,8 +2021,26 @@
 										aria-hidden="true"
 									></div>
 								{/if}
-								<span>
-									<strong>{entity.displayName || entity.entityId}</strong>
+								<span class="aggregate-entity-content">
+									<span class="aggregate-entity-title">
+										{#if entity.role === 'saml_idp' || entity.role === 'ambiguous'}
+											<span
+												class="aggregate-entity-role-badge aggregate-entity-role-badge--idp"
+												title={$LL.admin_saml_detail_identity_provider()}
+											>
+												IdP
+											</span>
+										{/if}
+										{#if entity.role === 'saml_sp' || entity.role === 'ambiguous'}
+											<span
+												class="aggregate-entity-role-badge aggregate-entity-role-badge--sp"
+												title={$LL.admin_saml_detail_service_provider()}
+											>
+												SP
+											</span>
+										{/if}
+										<strong>{entity.displayName || entity.entityId}</strong>
+									</span>
 									<small>{entity.role} · {entity.entityId}</small>
 									{#if entity.acsUrl || entity.ssoUrl}
 										<small>{entity.acsUrl || entity.ssoUrl}</small>
@@ -1563,6 +2076,29 @@
 								})}
 							</div>
 							<progress value={aggregateBatch.processed} max={aggregateBatch.total}></progress>
+							{#if aggregateBatch.status === 'completed' && aggregateBatch.results.length > 0}
+								<p class="field-hint">{$LL.admin_saml_new_batch_mapping_next()}</p>
+								<ul class="aggregate-batch-results">
+									{#each aggregateBatch.results as result (result.entityId)}
+										<li>
+											{#if result.success && result.providerId}
+												<a href={`/admin/saml/${encodeURIComponent(result.providerId)}`}>
+													{$LL.admin_saml_new_configure_created_provider({
+														name: result.name ?? result.entityId
+													})}
+												</a>
+											{:else}
+												<span class="form-error">
+													{$LL.admin_saml_new_provider_import_failed({
+														entityId: result.entityId,
+														error: result.error ?? '-'
+													})}
+												</span>
+											{/if}
+										</li>
+									{/each}
+								</ul>
+							{/if}
 						</div>
 					{/if}
 				{/if}
@@ -1653,6 +2189,42 @@
 								<option value="disabled">{$LL.admin_saml_detail_disabled()}</option>
 							</select>
 						</div>
+						<div class="admin-field admin-field--full">
+							<label for="manualFederationMetadataUrl" class="admin-field__label">
+								{$LL.admin_saml_metadata_source_url()}
+							</label>
+							<input
+								id="manualFederationMetadataUrl"
+								type="url"
+								bind:value={federationProfileMetadataUrl}
+								class="admin-input"
+								placeholder="https://metadata.example.org/federation.xml"
+							/>
+							<p class="field-hint">{$LL.admin_saml_federation_source_url_hint()}</p>
+						</div>
+						<div class="admin-field admin-field--full">
+							<ToggleSwitch
+								bind:checked={federationAutoPolling}
+								label={$LL.admin_saml_metadata_auto_polling()}
+								description={$LL.admin_saml_metadata_auto_polling_desc()}
+							/>
+							{#if federationAutoPolling}
+								<label for="manualFederationPollingInterval" class="admin-field__label">
+									{$LL.admin_saml_metadata_polling_interval()}
+								</label>
+								<select
+									id="manualFederationPollingInterval"
+									bind:value={federationPollingIntervalSeconds}
+									class="admin-select"
+								>
+									<option value={3600}>{$LL.admin_saml_metadata_interval_1h()}</option>
+									<option value={21600}>{$LL.admin_saml_metadata_interval_6h()}</option>
+									<option value={43200}>{$LL.admin_saml_metadata_interval_12h()}</option>
+									<option value={86400}>{$LL.admin_saml_metadata_interval_24h()}</option>
+								</select>
+							{/if}
+						</div>
+						{@render federationRuntimeFields('manualFederation')}
 						<div class="admin-field admin-field--full">
 							<label for="manualFederationDescription" class="admin-field__label">
 								{$LL.admin_saml_detail_description()}
@@ -2040,10 +2612,17 @@
 									id="identityMappingFieldMappingInbound"
 									bind:value={identityMappingFieldMappingSetId}
 									class="admin-select"
+									disabled={loadingFieldMappingSets ||
+										compatibleActiveFieldMappingSets.length === 0}
 								>
-									<option value="">{$LL.admin_saml_detail_identity_mapping_policy_default()}</option
-									>
-									{#each fieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
+									<option value="">
+										{loadingFieldMappingSets
+											? $LL.common_loading()
+											: compatibleActiveFieldMappingSets.length === 0
+												? $LL.admin_saml_detail_identity_mapping_policy_no_compatible()
+												: $LL.admin_saml_detail_identity_mapping_policy_default()}
+									</option>
+									{#each compatibleActiveFieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
 										<option value={fieldMappingSet.id}>
 											{fieldMappingSet.displayName} ({fieldMappingSet.lifecycleState})
 										</option>
@@ -2151,12 +2730,20 @@
 								</label>
 								<select
 									id="identityMappingFieldMapping"
-									bind:value={identityMappingFieldMappingSetId}
+									value={identityMappingFieldMappingSetId}
+									onchange={handleFieldMappingSetChange}
 									class="admin-select"
+									disabled={loadingFieldMappingSets ||
+										compatibleActiveFieldMappingSets.length === 0}
 								>
-									<option value="">{$LL.admin_saml_detail_identity_mapping_policy_default()}</option
-									>
-									{#each fieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
+									<option value="">
+										{loadingFieldMappingSets
+											? $LL.common_loading()
+											: compatibleActiveFieldMappingSets.length === 0
+												? $LL.admin_saml_detail_identity_mapping_policy_no_compatible()
+												: $LL.admin_saml_detail_identity_mapping_policy_default()}
+									</option>
+									{#each compatibleActiveFieldMappingSets as fieldMappingSet (fieldMappingSet.id)}
 										<option value={fieldMappingSet.id}>
 											{fieldMappingSet.displayName} ({fieldMappingSet.lifecycleState})
 										</option>
@@ -2168,6 +2755,16 @@
 										{$LL.admin_saml_detail_identity_mapping_policy_link()}
 									</a>
 								</p>
+							</div>
+
+							<div class="admin-field admin-field--full">
+								<SAMLMappingSetReleasePolicy
+									fields={mappingReleaseFields}
+									policies={destinationFieldPolicies}
+									loading={loadingMappingReleaseFields}
+									error={mappingReleaseFieldsError}
+									onChange={updateDestinationFieldPolicy}
+								/>
 							</div>
 
 							<div class="admin-field admin-field--full attribute-release-confirmation">
@@ -2494,8 +3091,13 @@
 				type="submit"
 				class="btn btn-primary"
 				disabled={saving ||
+					importingMetadata ||
 					Boolean(federationProfileSavedMessage) ||
 					Boolean(providerSavedMessage) ||
+					(!aggregatePreview &&
+						setupTarget !== 'federation' &&
+						enabled &&
+						(loadingFieldMappingSets || loadingMappingReleaseFields)) ||
 					(Boolean(aggregatePreview) &&
 						aggregateImportMode === 'selected_entities' &&
 						selectedAggregateEntityIds.length === 0)}
@@ -2966,10 +3568,52 @@
 		background: var(--color-surface-muted);
 	}
 
-	.aggregate-entity-row span {
+	.aggregate-entity-content {
 		display: grid;
 		gap: 2px;
 		min-width: 0;
+	}
+
+	.aggregate-entity-title {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+	}
+
+	.aggregate-entity-title strong {
+		min-width: 0;
+		overflow-wrap: anywhere;
+	}
+
+	.aggregate-entity-role-badge {
+		display: inline-flex;
+		flex: 0 0 2.75rem;
+		align-items: center;
+		justify-content: center;
+		width: 2.75rem;
+		min-height: 1.5rem;
+		padding: 1px 6px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-full, 999px);
+		font-family: var(--font-mono);
+		font-size: 0.6875rem;
+		font-weight: 700;
+		line-height: 1;
+		letter-spacing: 0.04em;
+		white-space: nowrap;
+	}
+
+	.aggregate-entity-role-badge--idp {
+		border-color: color-mix(in srgb, var(--color-info) 55%, var(--color-border));
+		background: color-mix(in srgb, var(--color-info) 14%, transparent);
+		color: var(--color-info);
+	}
+
+	.aggregate-entity-role-badge--sp {
+		border-color: color-mix(in srgb, var(--color-success) 55%, var(--color-border));
+		background: color-mix(in srgb, var(--color-success) 14%, transparent);
+		color: var(--color-success);
 	}
 
 	.aggregate-entity-row small {
@@ -2985,6 +3629,15 @@
 		display: flex;
 		justify-content: center;
 		padding: 8px 0 2px;
+	}
+
+	.aggregate-batch-results {
+		margin: 12px 0 0;
+		padding-left: 20px;
+	}
+
+	.aggregate-batch-results li + li {
+		margin-top: 6px;
 	}
 
 	.batch-progress {

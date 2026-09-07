@@ -4,7 +4,7 @@
  * Provides both CLI and Web UI modes for setting up Authrim.
  */
 
-import { input, select, confirm, password } from '@inquirer/prompts';
+import { input, select, confirm as inquirerConfirm, password } from '@inquirer/prompts';
 import chalk from 'chalk';
 import ora from 'ora';
 import {
@@ -26,6 +26,7 @@ import {
   saveKeysToDirectory,
   generateKeyId,
   keysExistForEnvironment,
+  loadKeysFromDirectory,
 } from '../../core/keys.js';
 import { isRunningFromSource, getCommandPrefix } from '../../core/source-context.js';
 import {
@@ -36,15 +37,42 @@ import {
   getAccountId,
   detectEnvironments,
   getWorkersSubdomain,
+  getRequiredR2Buckets,
+  getRequiredQueues,
   checkZoneExists,
   extractZoneName,
   type ZoneCheckResult,
+  type EnvironmentInventoryResource,
+  assertR2BucketOwnershipForUse,
 } from '../../core/cloudflare.js';
-import { createLockFile, saveLockFile, loadLockFile } from '../../core/lock.js';
+import {
+  D1_DATABASES,
+  KV_NAMESPACES,
+  getD1DatabaseName,
+  getEnabledComponents,
+  getKVNamespaceName,
+  getWorkerName,
+} from '../../core/naming.js';
+import {
+  acquireDeployConfigLock,
+  acquireEnvironmentOperationForEnvironment,
+  createLockFile,
+  hasPostProvisioningLockState,
+  mergeProvisionedResourcesIntoLock,
+  saveLockFile,
+  loadLockFile,
+  type AuthrimLock,
+} from '../../core/lock.js';
+import {
+  environmentOperationBlockMessage,
+  evaluateEnvironmentOperation,
+} from '../../core/environment-operation-policy.js';
+import { hasDatabaseTopologyChange } from '../../core/environment-config-policy.js';
 import {
   getEnvironmentPaths,
   getExternalKeysDir,
   getExternalKeysPathForConfig,
+  deriveExternalKeysBaseDirFromConfigPath,
   AUTHRIM_DIR,
   LEGACY_CONFIG_FILE,
   LEGACY_LOCK_FILE,
@@ -53,6 +81,7 @@ import {
   getLegacyConfigFileName,
   getLegacyLockFileName,
   listEnvironments,
+  findAuthrimBaseDir,
 } from '../../core/paths.js';
 import {
   downloadSource,
@@ -64,12 +93,39 @@ import { saveUiEnv, buildInitialUiEnvConfig } from '../../core/ui-env.js';
 import { buildUrlsConfig, getUiWorkersDevUrl, getWorkersDevUrl } from '../../core/url-config.js';
 import { uiCustomDomainRequiresOwnRoute } from '../../core/ui-deployment.js';
 import { generateRandomTenantId, isValidTenantId } from '../../core/tenant-id.js';
-import {
-  DEFAULT_TENANT_D1_PREALLOCATED_SLOTS,
-  MAX_TENANT_D1_PREALLOCATED_SLOTS,
-} from '../../core/tenant-database.js';
 import { printCliCapabilitySummary } from '../capability-summary.js';
-import { isValidCustomDomain, validateSetupDomainInputs } from '../../web/domain-form-state.js';
+import { inspectLocalEnvironmentState } from '../../core/local-environment-state.js';
+import { writePrivateFileAtomically } from '../../core/atomic-file.js';
+import {
+  promotePendingEmailSecrets,
+  recoverLegacyPreBundleEmailSecrets,
+  stagePendingEmailSecrets,
+  type PendingEmailSecretsInput,
+} from '../../core/pending-email-secrets.js';
+import { checkWranglerStatus } from '../../core/wrangler-sync.js';
+import {
+  assertLocalDeploymentCapacity,
+  MINIMUM_PROVISIONING_FREE_BYTES,
+} from '../../core/local-deployment-capacity.js';
+import {
+  beginOrResumeProvisioningIntent,
+  calculateProvisioningResourceSpecDigest,
+  completeProvisioningIntent,
+  hasExactProvisioningResourceIdentity,
+  loadProvisioningIntent,
+  recordProvisionedResource,
+  recordProvisioningResourceCreateIssued,
+  recordProvisioningResourceCreateRejected,
+  recordProvisioningResourceIdentified,
+  recordProvisioningKeyId,
+  type ProvisioningIntent,
+  type ProvisioningResourceSpec,
+} from '../../core/provisioning-intent.js';
+import {
+  isValidCustomDomain,
+  validateSetupDomainInputs,
+  type SetupDomainValidationIssue,
+} from '../../web/domain-form-state.js';
 
 // =============================================================================
 // Zone Check Helper
@@ -82,45 +138,353 @@ interface ZoneDomainConfig {
 
 let cliCapabilitySummaryShown = false;
 
-async function promptCloudflareCustomHostnameToken(): Promise<string | null> {
-  console.log('');
-  console.log(chalk.blue('━━━ Cloudflare Custom Hostnames ━━━'));
-  console.log(
-    chalk.gray('Use Cloudflare Custom Hostnames to automate tenant vanity domain setup.')
-  );
-  console.log(chalk.gray('Authrim will not store this token in D1, KV, or config files.'));
-  console.log('');
+type PendingEmailSecretFiles = PendingEmailSecretsInput;
 
-  const enableAutomation = await confirm({
-    message: 'Enable Cloudflare Custom Hostnames automation?',
-    default: false,
+interface ExecuteSetupOptions {
+  /**
+   * The caller entered through the canonical interrupted-provisioning recovery path. Re-read
+   * that config only after both setup operation locks are held so a pre-lock snapshot can never
+   * overwrite a concurrent, completed local mutation.
+   */
+  requireCanonicalConfigAfterLock?: boolean;
+}
+
+const PROVISIONING_COLLISION_INVENTORY: readonly EnvironmentInventoryResource[] = [
+  'Workers',
+  'D1 databases',
+  'KV namespaces',
+  'Queues',
+  'R2 buckets',
+];
+
+async function confirm(config: Parameters<typeof inquirerConfirm>[0]): Promise<boolean> {
+  return inquirerConfirm({
+    ...config,
+    transformer: config.transformer ?? ((value) => t(value ? 'common.yes' : 'common.no')),
   });
-  if (!enableAutomation) return null;
+}
 
-  const token = await password({
-    message: 'Cloudflare API token for Custom Hostnames:',
-    mask: '*',
-    validate: (value) => {
-      if (!value.trim()) return 'Cloudflare API token is required';
-      return true;
+async function ensureNewEnvironmentNameIsAvailable(input: {
+  environment: string;
+  baseDir: string;
+}): Promise<boolean> {
+  const checkSpinner = ora(t('env.checking')).start();
+  const provisioningIntent = await loadProvisioningIntent({
+    baseDir: input.baseDir,
+    environment: input.environment,
+  });
+  const localState = inspectLocalEnvironmentState({
+    baseDir: input.baseDir,
+    environment: input.environment,
+  });
+  const pendingEmailOnly =
+    localState.paths.length === 1 &&
+    localState.paths[0] ===
+      getEnvironmentPaths({ baseDir: input.baseDir, env: input.environment }).pendingEmailSecrets;
+  if (localState.exists && !provisioningIntent && !pendingEmailOnly) {
+    checkSpinner.fail(t('env.alreadyExists', { env: input.environment }));
+    console.log('');
+    console.log(chalk.yellow('  ' + t('env.existingResources')));
+    for (const path of localState.paths) console.log(chalk.gray(`    ${path}`));
+    console.log('');
+    console.log(chalk.yellow('  ' + t('env.chooseAnother', { command: getCommandPrefix() })));
+    return false;
+  }
+
+  try {
+    const existingEnvironments = await detectEnvironments(undefined, {
+      requiredResources: PROVISIONING_COLLISION_INVENTORY,
+      includeControlManagedResourcesForEnvironment: input.environment,
+    });
+    const existingEnvironment = existingEnvironments.find(
+      (candidate) => candidate.env === input.environment
+    );
+    if (existingEnvironment && !provisioningIntent) {
+      checkSpinner.fail(t('env.alreadyExists', { env: input.environment }));
+      console.log('');
+      console.log(chalk.yellow('  ' + t('env.existingResources')));
+      console.log(
+        `    ${t('env.workers', { count: String(existingEnvironment?.workers.length ?? 0) })}`
+      );
+      console.log(
+        `    ${t('env.d1Databases', { count: String(existingEnvironment?.d1.length ?? 0) })}`
+      );
+      console.log(
+        `    ${t('env.kvNamespaces', { count: String(existingEnvironment?.kv.length ?? 0) })}`
+      );
+      console.log('');
+      console.log(chalk.yellow('  ' + t('env.chooseAnother', { command: getCommandPrefix() })));
+      return false;
+    }
+    checkSpinner.succeed(
+      provisioningIntent
+        ? 'Interrupted provisioning attempt found; resuming safely'
+        : t('env.available')
+    );
+  } catch (error) {
+    checkSpinner.fail(t('env.checkFailed'));
+    throw new Error('cloudflare_environment_inventory_unavailable', { cause: error });
+  }
+  return true;
+}
+
+export function buildProvisioningResourceSpec(config: AuthrimConfig): ProvisioningResourceSpec {
+  const environment = config.environment.prefix;
+  const { createdAt: _createdAt, updatedAt: _updatedAt, ...stableConfig } = config;
+  const normalizedConfig = {
+    ...stableConfig,
+    keys: {
+      ...stableConfig.keys,
+      keyId: undefined,
+      publicKeyJwk: undefined,
     },
+  };
+  return JSON.parse(
+    JSON.stringify({
+      config: normalizedConfig,
+      resources: {
+        d1: D1_DATABASES.map((database) => ({
+          binding: database.binding,
+          name: getD1DatabaseName(environment, database.dbType),
+        })),
+        kv: KV_NAMESPACES.map((binding) => ({
+          binding,
+          name: getKVNamespaceName(environment, binding),
+        })),
+        queues: config.features.queue?.enabled === true ? getRequiredQueues(environment) : [],
+        r2: getRequiredR2Buckets(environment, {
+          includeFeatureBuckets: config.features.r2?.enabled === true,
+        }),
+        workers: Array.from(getEnabledComponents(config.components)).map((component) => ({
+          binding: component,
+          name: getWorkerName(environment, component),
+        })),
+      },
+    })
+  ) as ProvisioningResourceSpec;
+}
+
+export function resolveProvisioningKeysBaseDir(input: {
+  environment: string;
+  secretsPath: string;
+  resuming: boolean;
+  currentWorkingDirectory?: string;
+}): string {
+  return input.resuming
+    ? deriveExternalKeysBaseDirFromConfigPath(input.environment, input.secretsPath)
+    : resolve(input.currentWorkingDirectory ?? process.cwd());
+}
+
+async function persistProvisioningConfig(config: AuthrimConfig, configPath: string): Promise<void> {
+  config.updatedAt = new Date().toISOString();
+  await writePrivateFileAtomically(configPath, `${JSON.stringify(config, null, 2)}\n`);
+}
+
+async function hasCompleteProvisioningArtifacts(input: {
+  baseDir: string;
+  environment: string;
+  config: AuthrimConfig;
+  lock: AuthrimLock;
+  intent?: ProvisioningIntent;
+}): Promise<boolean> {
+  const paths = getEnvironmentPaths({ baseDir: input.baseDir, env: input.environment });
+  if (
+    !existsSync(paths.config) ||
+    !input.config.keys.keyId ||
+    hasPostProvisioningLockState(input.lock) ||
+    (input.intent && input.intent.keyId !== input.config.keys.keyId)
+  ) {
+    return false;
+  }
+  const expectedResources = [
+    ...D1_DATABASES.map((database) => ({
+      kind: 'd1' as const,
+      binding: database.binding,
+      name: getD1DatabaseName(input.environment, database.dbType),
+      lock: input.lock.d1[database.binding],
+    })),
+    ...KV_NAMESPACES.map((binding) => ({
+      kind: 'kv' as const,
+      binding,
+      name: getKVNamespaceName(input.environment, binding),
+      lock: input.lock.kv[binding],
+    })),
+    ...(input.config.features.queue?.enabled === true
+      ? getRequiredQueues(input.environment).map((resource) => ({
+          kind: 'queue' as const,
+          ...resource,
+          lock: input.lock.queues?.[resource.binding],
+        }))
+      : []),
+    ...getRequiredR2Buckets(input.environment, {
+      includeFeatureBuckets: input.config.features.r2?.enabled === true,
+    }).map((resource) => ({
+      kind: 'r2' as const,
+      ...resource,
+      lock: input.lock.r2?.[resource.binding],
+    })),
+  ];
+  for (const resource of expectedResources) {
+    const checkpoint = input.intent?.resources[`${resource.kind}:${resource.binding}`];
+    if (
+      !hasExactProvisioningResourceIdentity({
+        kind: resource.kind,
+        binding: resource.binding,
+        expectedName: resource.name,
+        lock: resource.lock,
+        checkpoint,
+        requireCheckpoint: input.intent !== undefined,
+      })
+    ) {
+      return false;
+    }
+    if (resource.kind === 'r2') {
+      try {
+        await assertR2BucketOwnershipForUse({
+          ...resource.lock!,
+          environment: input.environment,
+          binding: resource.binding,
+        });
+      } catch {
+        return false;
+      }
+    }
+  }
+  const expectedBindingsByKind = {
+    d1: expectedResources
+      .filter((resource) => resource.kind === 'd1')
+      .map((resource) => resource.binding),
+    kv: expectedResources
+      .filter((resource) => resource.kind === 'kv')
+      .map((resource) => resource.binding),
+    queue: expectedResources
+      .filter((resource) => resource.kind === 'queue')
+      .map((resource) => resource.binding),
+    r2: expectedResources
+      .filter((resource) => resource.kind === 'r2')
+      .map((resource) => resource.binding),
+  };
+  const hasExactBindings = (actual: string[], expected: string[]): boolean =>
+    actual.length === expected.length && expected.every((binding) => actual.includes(binding));
+  if (
+    !hasExactBindings(Object.keys(input.lock.d1), expectedBindingsByKind.d1) ||
+    !hasExactBindings(Object.keys(input.lock.kv), expectedBindingsByKind.kv) ||
+    !hasExactBindings(Object.keys(input.lock.queues ?? {}), expectedBindingsByKind.queue) ||
+    !hasExactBindings(Object.keys(input.lock.r2 ?? {}), expectedBindingsByKind.r2)
+  ) {
+    return false;
+  }
+  const wranglerStatuses = await checkWranglerStatus({
+    baseDir: input.baseDir,
+    env: input.environment,
+    packagesDir: join(input.baseDir, 'packages'),
+    components: Array.from(getEnabledComponents(input.config.components)),
   });
-  return token.trim();
+  if (
+    wranglerStatuses.some(
+      (status) => !status.masterExists || !status.deployExists || !status.inSync
+    )
+  ) {
+    return false;
+  }
+  const remoteEnvironment = (
+    await detectEnvironments(undefined, {
+      requiredResources: ['D1 databases', 'KV namespaces', 'Queues', 'R2 buckets'],
+    })
+  ).find((candidate) => candidate.env === input.environment);
+  if (!remoteEnvironment) return false;
+  const expectedNamesByKind = {
+    d1: expectedResources
+      .filter((resource) => resource.kind === 'd1')
+      .map((resource) => resource.name),
+    kv: expectedResources
+      .filter((resource) => resource.kind === 'kv')
+      .map((resource) => resource.name),
+    queue: expectedResources
+      .filter((resource) => resource.kind === 'queue')
+      .map((resource) => resource.name),
+    r2: expectedResources
+      .filter((resource) => resource.kind === 'r2')
+      .map((resource) => resource.name),
+  };
+  const hasExactRemoteNames = (actual: Array<{ name: string }>, expected: string[]): boolean =>
+    actual.length === expected.length &&
+    expected.every((name) => actual.some((item) => item.name === name));
+  if (
+    !hasExactRemoteNames(remoteEnvironment.d1, expectedNamesByKind.d1) ||
+    !hasExactRemoteNames(remoteEnvironment.kv, expectedNamesByKind.kv) ||
+    !hasExactRemoteNames(remoteEnvironment.queues, expectedNamesByKind.queue) ||
+    !hasExactRemoteNames(remoteEnvironment.r2, expectedNamesByKind.r2)
+  ) {
+    return false;
+  }
+  for (const resource of expectedResources) {
+    const remote =
+      resource.kind === 'd1'
+        ? remoteEnvironment.d1.find((candidate) => candidate.name === resource.name)
+        : resource.kind === 'kv'
+          ? remoteEnvironment.kv.find((candidate) => candidate.name === resource.name)
+          : resource.kind === 'queue'
+            ? remoteEnvironment.queues.find((candidate) => candidate.name === resource.name)
+            : remoteEnvironment.r2.find((candidate) => candidate.name === resource.name);
+    if (!remote) return false;
+    if (
+      !hasExactProvisioningResourceIdentity({
+        kind: resource.kind,
+        binding: resource.binding,
+        expectedName: resource.name,
+        lock: resource.lock,
+        checkpoint: input.intent?.resources[`${resource.kind}:${resource.binding}`],
+        requireCheckpoint: input.intent !== undefined,
+        remote,
+      })
+    ) {
+      return false;
+    }
+  }
+  try {
+    const persisted = parseConfig(JSON.parse(await readFile(paths.config, 'utf-8')));
+    if (
+      persisted.environment.prefix !== input.environment ||
+      persisted.cloudflare?.accountId !== input.config.cloudflare?.accountId ||
+      persisted.keys.keyId !== input.config.keys.keyId
+    ) {
+      return false;
+    }
+    if (
+      input.intent &&
+      calculateProvisioningResourceSpecDigest(buildProvisioningResourceSpec(persisted)) !==
+        input.intent.resourceSpecDigest
+    ) {
+      return false;
+    }
+    const keysBaseDir = deriveExternalKeysBaseDirFromConfigPath(
+      input.environment,
+      persisted.keys.secretsPath
+    );
+    const keys = await loadKeysFromDirectory({
+      baseDir: input.baseDir,
+      env: input.environment,
+      keysBaseDir,
+    });
+    return keys.keyPair?.keyId === persisted.keys.keyId;
+  } catch {
+    return false;
+  }
 }
 
-async function saveCloudflareCustomHostnameToken(env: string, token: string | null): Promise<void> {
-  if (!token) return;
-
-  const keysDir = getExternalKeysDir(env, process.cwd());
-  await mkdir(keysDir, { recursive: true, mode: 0o700 });
-  const tokenPath = join(keysDir, 'cloudflare_api_token.txt');
-  await writeFile(tokenPath, token);
-  await import('node:fs/promises').then((fs) => fs.chmod(tokenPath, 0o600));
-  console.log(chalk.gray('☁️  Cloudflare Custom Hostnames token staged for Worker secret upload.'));
-}
-
-function formatSetupDomainValidationIssue(issue: { message: string; suggestion?: string }): string {
-  return issue.suggestion ? `${issue.message} Suggested host: ${issue.suggestion}` : issue.message;
+function formatSetupDomainValidationIssue(issue: SetupDomainValidationIssue): string {
+  const message =
+    issue.kind === 'baseDomainDepth'
+      ? t('domain.baseDomainDepthError', { hostname: issue.hostname })
+      : t('domain.uiDomainDepthError', {
+          label:
+            issue.field === 'loginUiDomain' ? t('web.domain.loginUi') : t('web.domain.adminUi'),
+          hostname: issue.hostname,
+        });
+  return issue.suggestion
+    ? `${message} ${t('domain.suggestedHost', { hostname: issue.suggestion })}`
+    : message;
 }
 
 function validateCliApiDomainInput(value: string, tenantName = 'default'): true | string {
@@ -165,7 +529,7 @@ async function showCliCapabilitySummaryOnce(options?: {
 
   const installed = options?.installed ?? (await isWranglerInstalled());
   const auth = options?.auth ?? (installed ? await checkAuth() : { isLoggedIn: false });
-  const workersSubdomain =
+  workersSubdomain =
     options?.workersSubdomain ??
     (installed && auth.isLoggedIn ? await getWorkersSubdomain() : null);
 
@@ -199,6 +563,7 @@ async function checkAndPromptZone(domain: string, domainConfig: ZoneDomainConfig
       );
       domainConfig.zoneId = result.zone.id;
       console.log('');
+      console.log(chalk.gray(`  ${t('domain.configureBindingDesc')}`));
 
       const bind = await confirm({ message: t('domain.configureBinding'), default: true });
       domainConfig.customDomainBinding = bind;
@@ -209,6 +574,7 @@ async function checkAndPromptZone(domain: string, domainConfig: ZoneDomainConfig
 
     if (result.diagnostic?.allowBinding) {
       console.log('');
+      console.log(chalk.gray(`  ${t('domain.configureBindingDesc')}`));
       const bind = await confirm({ message: t('domain.configureBinding'), default: true });
       domainConfig.customDomainBinding = bind;
       return;
@@ -274,7 +640,7 @@ async function checkUiCustomDomainZoneIfNeeded(params: {
       return true;
     }
 
-    console.log(chalk.yellow(`  ⚠ ${params.label} custom domain requires its own Worker route.`));
+    console.log(chalk.yellow(`  ⚠ ${t('domain.uiRequiresOwnRoute', { label: params.label })}`));
     printCliZoneDiagnostic(result, { domain, zoneName });
 
     if (result.diagnostic?.code === 'zone_not_found') {
@@ -344,6 +710,15 @@ interface InitOptions {
   keep?: string;
   env?: string;
   lang?: string;
+  tenantPlacement?: 'tenant_exclusive' | 'shared_pool';
+}
+
+export function resolveInitialTenantPlacement(
+  value: string | undefined
+): 'tenant_exclusive' | 'shared_pool' {
+  if (value === undefined || value === 'tenant_exclusive') return 'tenant_exclusive';
+  if (value === 'shared_pool') return 'shared_pool';
+  throw new Error('invalid_initial_tenant_placement');
 }
 
 // =============================================================================
@@ -880,6 +1255,14 @@ export async function initCommand(options: InitOptions): Promise<void> {
   if (options.cli) {
     const sourceDir = await ensureAuthrimSource(options);
     process.chdir(sourceDir);
+    if (
+      await resumeInterruptedProvisioningForEnvironment({
+        baseDir: sourceDir,
+        environment: options.env ?? 'prod',
+      })
+    ) {
+      return;
+    }
     await runCliSetup(options);
     return;
   }
@@ -1133,37 +1516,26 @@ async function runLoadConfig(): Promise<boolean> {
   const environments = listEnvironments(baseDir);
 
   // Build list of found configs
-  const foundConfigs: { path: string; env: string; type: 'new' | 'legacy' }[] = [];
+  const foundConfigs: { path: string; env: string }[] = [];
 
   // Check new structure (.authrim/{env}/config.json)
   for (const env of environments) {
     const newPaths = getEnvironmentPaths({ baseDir, env });
     if (existsSync(newPaths.config)) {
-      foundConfigs.push({ path: newPaths.config, env, type: 'new' });
+      foundConfigs.push({ path: newPaths.config, env });
     }
   }
 
-  // Check legacy structure (authrim-{env}-config.json or authrim-config.json)
-  for (const env of environments) {
-    const legacyConfigPath = findLegacyConfigPath(baseDir, env);
-    if (existsSync(legacyConfigPath) && !foundConfigs.some((c) => c.path === legacyConfigPath)) {
-      foundConfigs.push({ path: legacyConfigPath, env, type: 'legacy' });
-    }
-  }
-
-  const fallbackLegacyConfigPath = findLegacyConfigPath(baseDir);
-  if (
-    existsSync(fallbackLegacyConfigPath) &&
-    !foundConfigs.some((c) => c.path === fallbackLegacyConfigPath)
-  ) {
-    try {
-      const legacyContent = await readFile(fallbackLegacyConfigPath, 'utf-8');
-      const legacyConfig = JSON.parse(legacyContent);
-      const legacyEnv = legacyConfig.environment?.prefix || 'unknown';
-      foundConfigs.push({ path: fallbackLegacyConfigPath, env: legacyEnv, type: 'legacy' });
-    } catch {
-      foundConfigs.push({ path: fallbackLegacyConfigPath, env: 'unknown', type: 'legacy' });
-    }
+  const legacyConfigPaths = new Set([
+    findLegacyConfigPath(baseDir),
+    ...environments.map((env) => findLegacyConfigPath(baseDir, env)),
+  ]);
+  const detectedLegacyConfig = [...legacyConfigPaths].find((path) => existsSync(path));
+  if (detectedLegacyConfig) {
+    console.log(chalk.red('Legacy Setup configuration is not supported by this release.'));
+    console.log(chalk.gray(`  Detected: ${detectedLegacyConfig}`));
+    console.log(chalk.gray('  Create a fresh environment with authrim-setup init.'));
+    return false;
   }
 
   let configPath: string;
@@ -1171,86 +1543,9 @@ async function runLoadConfig(): Promise<boolean> {
   if (foundConfigs.length > 0) {
     console.log(chalk.green(`✓ Found ${foundConfigs.length} configuration(s):`));
     for (const cfg of foundConfigs) {
-      const typeLabel = cfg.type === 'new' ? chalk.blue('(new)') : chalk.yellow('(legacy)');
-      console.log(`  • ${cfg.path} ${typeLabel} - env: ${cfg.env}`);
+      console.log(`  • ${cfg.path} - env: ${cfg.env}`);
     }
     console.log('');
-
-    // Check if there are legacy configs that could be migrated
-    const legacyConfigs = foundConfigs.filter((c) => c.type === 'legacy');
-    if (legacyConfigs.length > 0) {
-      console.log(chalk.yellow('━━━ Legacy Structure Detected ━━━'));
-      console.log(chalk.gray('Legacy files:'));
-      console.log(chalk.gray('  • authrim-{env}-config.json (or authrim-config.json)'));
-      console.log(chalk.gray('  • authrim-{env}-lock.json (or authrim-lock.json)'));
-      console.log(chalk.gray('  • .keys/{env}/'));
-      console.log('');
-      console.log(chalk.gray('New structure benefits:'));
-      console.log(chalk.gray('  • Environment portability (zip .authrim/prod/)'));
-      console.log(chalk.gray('  • Version tracking per environment'));
-      console.log(chalk.gray('  • Cleaner project structure'));
-      console.log('');
-
-      const migrateAction = await select({
-        message: 'Would you like to migrate to the new structure?',
-        choices: [
-          { value: 'migrate', name: '🔄 Migrate to new structure (.authrim/{env}/)' },
-          { value: 'continue', name: '📂 Continue with legacy structure' },
-          { value: 'back', name: '← Back to Main Menu' },
-        ],
-      });
-
-      if (migrateAction === 'back') {
-        return false;
-      }
-
-      if (migrateAction === 'migrate') {
-        const { migrateToNewStructure, validateMigration } = await import('../../core/migrate.js');
-
-        console.log('');
-        const envToMigrate = legacyConfigs[0].env;
-
-        const result = await migrateToNewStructure({
-          baseDir,
-          env: envToMigrate,
-          onProgress: (msg) => console.log(msg),
-        });
-
-        if (result.success) {
-          console.log('');
-          console.log(chalk.green('✓ Migration completed successfully!'));
-
-          // Validate
-          const validation = await validateMigration(baseDir, envToMigrate);
-          if (validation.valid) {
-            console.log(chalk.green('✓ Validation passed'));
-          } else {
-            console.log(chalk.yellow('⚠ Validation issues:'));
-            for (const issue of validation.issues) {
-              console.log(chalk.yellow(`  • ${issue}`));
-            }
-          }
-
-          console.log('');
-          console.log(chalk.cyan('New configuration location:'));
-          console.log(chalk.cyan(`  .authrim/${envToMigrate}/config.json`));
-          console.log('');
-
-          // Update foundConfigs to use new path
-          const newPaths = getEnvironmentPaths({ baseDir, env: envToMigrate });
-          foundConfigs.length = 0;
-          foundConfigs.push({ path: newPaths.config, env: envToMigrate, type: 'new' });
-        } else {
-          console.log('');
-          console.log(chalk.red('✗ Migration failed:'));
-          for (const error of result.errors) {
-            console.log(chalk.red(`  • ${error}`));
-          }
-          console.log('');
-          console.log(chalk.yellow('Continuing with legacy structure...'));
-        }
-      }
-    }
 
     if (foundConfigs.length === 1) {
       configPath = foundConfigs[0].path;
@@ -1283,7 +1578,7 @@ async function runLoadConfig(): Promise<boolean> {
       const choices = [
         ...foundConfigs.map((cfg) => ({
           value: cfg.path,
-          name: `📂 ${cfg.env} (${cfg.path}) ${cfg.type === 'legacy' ? chalk.yellow('legacy') : ''}`,
+          name: `📂 ${cfg.env} (${cfg.path})`,
         })),
         { value: '__other__', name: '📁 Specify different file' },
         { value: '__back__', name: '← Back to Main Menu' },
@@ -1348,83 +1643,19 @@ async function runLoadConfig(): Promise<boolean> {
 // Quick Setup
 // =============================================================================
 
-const SETUP_STORAGE_PROFILE_CHOICES = [
-  {
-    value: 'builtin:storage:shared-d1',
-    name: 'Shared D1 - small/default deployment',
-    description: 'One deployment-wide core D1 and PII D1. Lowest setup cost.',
-  },
-  {
-    value: 'builtin:storage:tenant-d1',
-    name: 'Tenant D1 - one core/PII D1 pair per tenant',
-    description: 'Requires tenant-db provisioning before tenant activation.',
-  },
-] as const;
-
-type SetupStorageProfileId = (typeof SETUP_STORAGE_PROFILE_CHOICES)[number]['value'];
-
-function normalizeSetupStorageProfileId(value: string | undefined): SetupStorageProfileId {
-  return value === 'builtin:storage:tenant-d1'
-    ? 'builtin:storage:tenant-d1'
-    : 'builtin:storage:shared-d1';
-}
-
-async function promptStorageDeploymentProfile(
-  current?: string,
-  options: { allowCustom?: boolean } = {}
-): Promise<string> {
-  const selected = await select({
-    message: 'Storage deployment profile',
-    choices: [
-      ...SETUP_STORAGE_PROFILE_CHOICES,
-      ...(options.allowCustom
-        ? [
-            {
-              value: '__custom__',
-              name: 'Custom profile ID',
-              description: 'Use an existing seeded/custom runtime storage profile.',
-            },
-          ]
-        : []),
-    ],
-    default: normalizeSetupStorageProfileId(current),
+async function promptAutomaticProvisioning(): Promise<boolean> {
+  const enabled = await confirm({
+    message: t('web.db.automaticProvisioningTitle'),
+    default: true,
   });
-
-  if (selected === '__custom__') {
-    return input({
-      message: 'Default storage profile ID',
-      default: current || 'builtin:storage:shared-d1',
-      validate: (value) => {
-        if (!value.trim()) return 'Profile ID is required';
-        return true;
-      },
-    });
-  }
-
-  if (selected === 'builtin:storage:tenant-d1') {
-    console.log(
-      chalk.yellow(
-        '  tenant-d1 pre-creates tenant D1 slots during setup. Increase capacity later with tenant-db-pool-expand.'
-      )
-    );
-  }
-
-  return selected;
-}
-
-async function promptTenantD1PreallocatedSlots(current?: number): Promise<number> {
-  const value = await input({
-    message: 'Preallocated tenant D1 slots',
-    default: String(current ?? DEFAULT_TENANT_D1_PREALLOCATED_SLOTS),
-    validate: (inputValue) => {
-      const parsed = Number.parseInt(inputValue, 10);
-      if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_TENANT_D1_PREALLOCATED_SLOTS) {
-        return `Enter a number from 1 to ${MAX_TENANT_D1_PREALLOCATED_SLOTS}`;
-      }
-      return true;
-    },
-  });
-  return Number.parseInt(value, 10);
+  console.log(
+    chalk.gray(
+      enabled
+        ? `  ${t('web.db.automaticProvisioningOnDesc')}`
+        : `  ${t('web.db.automaticProvisioningOffDesc')}`
+    )
+  );
+  return enabled;
 }
 
 async function runQuickSetup(options: InitOptions): Promise<void> {
@@ -1446,40 +1677,16 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
     },
   });
 
-  // Check if environment already exists
-  const checkSpinner = ora(t('env.checking')).start();
-  try {
-    const existingEnvs = await detectEnvironments();
-    const existingEnv = existingEnvs.find((e) => e.env === envPrefix);
-    if (existingEnv) {
-      checkSpinner.fail(t('env.alreadyExists', { env: envPrefix }));
-      console.log('');
-      console.log(chalk.yellow('  ' + t('env.existingResources')));
-      console.log(`    ${t('env.workers', { count: String(existingEnv.workers.length) })}`);
-      console.log(`    ${t('env.d1Databases', { count: String(existingEnv.d1.length) })}`);
-      console.log(`    ${t('env.kvNamespaces', { count: String(existingEnv.kv.length) })}`);
-      console.log('');
-      console.log(chalk.yellow('  ' + t('env.chooseAnother', { command: getCommandPrefix() })));
-      return;
-    }
-    checkSpinner.succeed(t('env.available'));
-  } catch {
-    checkSpinner.warn(t('env.checkFailed'));
+  if (
+    !(await ensureNewEnvironmentNameIsAvailable({
+      environment: envPrefix,
+      baseDir: resolve(options.keep || '.'),
+    }))
+  ) {
+    return;
   }
 
-  // Step 2: Cloudflare API Token
-  const cfApiToken = await password({
-    message: t('cf.apiTokenPrompt'),
-    mask: '*',
-    validate: (value) => {
-      if (!value || value.length < 10) {
-        return t('cf.apiTokenValidation');
-      }
-      return true;
-    },
-  });
-
-  // Step 3: Show infrastructure info
+  // Step 2: Show infrastructure info
   console.log('');
   console.log(
     chalk.gray(
@@ -1545,7 +1752,7 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
       console.log('');
       if (
         !(await checkUiCustomDomainZoneIfNeeded({
-          label: 'Login UI',
+          label: t('web.domain.loginUi'),
           domain: loginUiDomain,
           apiDomain,
           multiTenant: false,
@@ -1555,7 +1762,7 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
       }
       if (
         !(await checkUiCustomDomainZoneIfNeeded({
-          label: 'Admin UI',
+          label: t('web.domain.adminUi'),
           domain: adminUiDomain,
           apiDomain,
           multiTenant: false,
@@ -1567,14 +1774,12 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
     }
   }
 
-  // Storage deployment profile
+  // Unified Control Plane provisioning mode
   console.log('');
-  console.log(chalk.blue('━━━ Storage Deployment Profile ━━━'));
-  const storageProfileId = await promptStorageDeploymentProfile('builtin:storage:shared-d1');
-  const tenantD1PreallocatedSlots =
-    storageProfileId === 'builtin:storage:tenant-d1'
-      ? await promptTenantD1PreallocatedSlots()
-      : DEFAULT_TENANT_D1_PREALLOCATED_SLOTS;
+  console.log(chalk.blue('━━━ ' + t('web.db.controlPlaneTitle') + ' ━━━'));
+  console.log(chalk.gray('  ' + t('web.db.controlPlaneDesc')));
+  console.log(chalk.gray('  ' + t('web.db.controlPlaneTenantPlacement')));
+  const automaticProvisioning = await promptAutomaticProvisioning();
 
   // Database Configuration
   console.log('');
@@ -1648,7 +1853,7 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
     const provider = (await select({
       message: t('email.title'),
       choices: [
-        { value: 'cloudflare', name: 'Cloudflare Email Service' },
+        { value: 'cloudflare', name: t('web.email.cloudflareSetup') },
         { value: 'resend', name: t('email.resendOption') },
         { value: 'none', name: t('email.skipOption') },
       ],
@@ -1658,9 +1863,9 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
     let resendApiKey: string | undefined;
 
     if (provider === 'cloudflare') {
-      console.log(chalk.gray('Workers Paid Plan required'));
-      console.log(chalk.gray('Cloudflare DNS/domain onboarding required'));
-      console.log(chalk.gray('Domain setup in the Cloudflare dashboard is still manual'));
+      console.log(chalk.gray(t('web.email.cloudflareRequirementPaid')));
+      console.log(chalk.gray(t('web.email.cloudflareRequirementDns')));
+      console.log(chalk.gray(t('web.email.cloudflareRequirementManual')));
       console.log('');
     } else if (provider === 'resend') {
       console.log(chalk.gray(t('email.resendDesc')));
@@ -1709,14 +1914,13 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
     }
   }
 
-  const cloudflareCustomHostnameToken = await promptCloudflareCustomHostnameToken();
-
   // Create configuration
   const config = createDefaultConfig(envPrefix);
-  config.profiles.defaults.storage = storageProfileId;
-  config.tenantD1 = {
-    preallocatedSlots: tenantD1PreallocatedSlots,
+  config.tenant = {
+    ...config.tenant,
+    placementPolicy: resolveInitialTenantPlacement(options.tenantPlacement),
   };
+  config.controlPlane = { automaticProvisioning };
   config.database = {
     core: parseDbLocation(coreDbLocation),
     pii: parseDbLocation(piiDbLocation),
@@ -1743,81 +1947,62 @@ async function runQuickSetup(options: InitOptions): Promise<void> {
   // Show summary
   console.log('');
   console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
-  console.log(chalk.bold('📋 Configuration Summary'));
+  console.log(chalk.bold(`📋 ${t('config.summary')}`));
   console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
   console.log('');
-  console.log(chalk.bold('Infrastructure:'));
-  console.log(`  Environment:   ${chalk.cyan(envPrefix)}`);
-  console.log(`  Worker Prefix: ${chalk.cyan(envPrefix + '-ar-*')}`);
-  console.log(`  Storage:       ${chalk.cyan(config.profiles.defaults.storage)}`);
-  if (config.profiles.defaults.storage === 'builtin:storage:tenant-d1') {
-    console.log(`  Tenant D1:     ${chalk.cyan(`${config.tenantD1.preallocatedSlots} slots`)}`);
-  }
-  console.log('');
-  console.log(chalk.bold('URLs (Single-tenant):'));
-  console.log(`  Issuer URL:    ${chalk.cyan(config.urls.api.custom || config.urls.api.auto)}`);
+  console.log(chalk.bold(t('config.infrastructure')));
+  console.log(`  ${t('config.environment')}   ${chalk.cyan(envPrefix)}`);
+  console.log(`  ${t('config.workerPrefix')} ${chalk.cyan(envPrefix + '-ar-*')}`);
+  console.log(`  ${t('config.d1Routing')} ${chalk.cyan('Control Plane')}`);
+  console.log(`  ${t('config.placement')} ${chalk.cyan(config.tenant.placementPolicy)}`);
   console.log(
-    `  Login UI:      ${chalk.cyan(config.urls.loginUi.custom || config.urls.loginUi.auto)}`
-  );
-  console.log(
-    `  Admin UI:      ${chalk.cyan(config.urls.adminUi.custom || config.urls.adminUi.auto)}`
+    `  ${t('config.provisioning')} ${automaticProvisioning ? chalk.green(t('web.db.automaticProvisioningOn')) : chalk.yellow(t('web.db.automaticProvisioningOff'))}`
   );
   console.log('');
-  console.log(chalk.bold('Email:'));
+  console.log(chalk.bold(`${t('config.publicUrls')} (${t('config.singleTenant')})`));
+  console.log(
+    `  ${t('config.issuerUrl')} ${chalk.cyan(config.urls.api.custom || config.urls.api.auto)}`
+  );
+  console.log(
+    `  ${t('config.loginUi')} ${chalk.cyan(config.urls.loginUi.custom || config.urls.loginUi.auto)}`
+  );
+  console.log(
+    `  ${t('config.adminUi')} ${chalk.cyan(config.urls.adminUi.custom || config.urls.adminUi.auto)}`
+  );
+  console.log('');
+  console.log(chalk.bold(t('config.emailSettings')));
   if (emailConfig.provider === 'cloudflare') {
-    console.log(`  Provider:      ${chalk.cyan('Cloudflare Email Service')}`);
-    console.log(`  Requirements:  ${chalk.yellow('Workers Paid Plan + Cloudflare DNS')}`);
-    console.log(`  From Address:  ${chalk.cyan(emailConfig.fromAddress)}`);
+    console.log(`  ${t('email.provider')} ${chalk.cyan(t('web.email.cloudflareSetup'))}`);
+    console.log(
+      `  ${t('web.email.cloudflareRequirements')}: ${chalk.yellow(t('web.email.cloudflareRequirementPaid'))}`
+    );
+    console.log(`  ${t('email.fromAddress')} ${chalk.cyan(emailConfig.fromAddress)}`);
     if (emailConfig.fromName) {
-      console.log(`  From Name:     ${chalk.cyan(emailConfig.fromName)}`);
+      console.log(`  ${t('email.fromName')} ${chalk.cyan(emailConfig.fromName)}`);
     }
   } else if (emailConfig.provider === 'resend') {
-    console.log(`  Provider:      ${chalk.cyan('Resend')}`);
-    console.log(`  From Address:  ${chalk.cyan(emailConfig.fromAddress)}`);
+    console.log(`  ${t('email.provider')} ${chalk.cyan('Resend')}`);
+    console.log(`  ${t('email.fromAddress')} ${chalk.cyan(emailConfig.fromAddress)}`);
     if (emailConfig.fromName) {
-      console.log(`  From Name:     ${chalk.cyan(emailConfig.fromName)}`);
+      console.log(`  ${t('email.fromName')} ${chalk.cyan(emailConfig.fromName)}`);
     }
   } else {
-    console.log(`  Provider:      ${chalk.gray('Not configured (configure later)')}`);
+    console.log(`  ${t('email.provider')} ${chalk.gray(t('config.notConfigured'))}`);
   }
   console.log('');
 
   const proceed = await confirm({
-    message: 'Start setup with this configuration?',
+    message: t('deploy.prompt'),
     default: true,
   });
 
   if (!proceed) {
-    console.log(chalk.yellow('Setup cancelled.'));
+    console.log(chalk.yellow(t('deploy.cancelled')));
     return;
   }
 
-  // Save email secrets if configured
-  if (emailConfig.provider !== 'none' && emailConfig.fromAddress) {
-    // Save to external keys directory: {cwd}/.authrim-keys/{env}/
-    const keysDir = getExternalKeysDir(envPrefix, process.cwd());
-    await import('node:fs/promises').then(async (fs) => {
-      await fs.mkdir(keysDir, { recursive: true, mode: 0o700 });
-      const emailFromPath = join(keysDir, 'email_from.txt');
-      await fs.writeFile(emailFromPath, emailConfig.fromAddress!.trim());
-      await fs.chmod(emailFromPath, 0o600);
-      if (emailConfig.fromName) {
-        const emailFromNamePath = join(keysDir, 'email_from_name.txt');
-        await fs.writeFile(emailFromNamePath, emailConfig.fromName.trim());
-        await fs.chmod(emailFromNamePath, 0o600);
-      }
-      if (emailConfig.provider === 'resend' && emailConfig.apiKey) {
-        const resendApiKeyPath = join(keysDir, 'resend_api_key.txt');
-        await fs.writeFile(resendApiKeyPath, emailConfig.apiKey.trim());
-        await fs.chmod(resendApiKeyPath, 0o600);
-      }
-    });
-    console.log(chalk.gray(`📧 Email bootstrap settings saved to ${keysDir}/`));
-  }
-  await saveCloudflareCustomHostnameToken(envPrefix, cloudflareCustomHostnameToken);
-
   // Run setup
-  await executeSetup(config, cfApiToken, options.keep);
+  await executeSetup(config, options.keep, emailConfig);
 }
 
 // =============================================================================
@@ -1843,61 +2028,14 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     },
   });
 
-  // Check if environment already exists
-  const checkSpinner = ora(t('env.checking')).start();
-  try {
-    const existingEnvs = await detectEnvironments();
-    const existingEnv = existingEnvs.find((e) => e.env === envPrefix);
-    if (existingEnv) {
-      checkSpinner.fail(t('env.alreadyExists', { env: envPrefix }));
-      console.log('');
-      console.log(chalk.yellow('  ' + t('env.existingResources')));
-      console.log(`    ${t('env.workers', { count: String(existingEnv.workers.length) })}`);
-      console.log(`    ${t('env.d1Databases', { count: String(existingEnv.d1.length) })}`);
-      console.log(`    ${t('env.kvNamespaces', { count: String(existingEnv.kv.length) })}`);
-      console.log('');
-      console.log(chalk.yellow('  ' + t('env.chooseAnother', { command: getCommandPrefix() })));
-      return;
-    }
-    checkSpinner.succeed(t('env.available'));
-  } catch {
-    checkSpinner.warn(t('env.checkFailed'));
+  if (
+    !(await ensureNewEnvironmentNameIsAvailable({
+      environment: envPrefix,
+      baseDir: resolve(options.keep || '.'),
+    }))
+  ) {
+    return;
   }
-
-  // Step 2: Cloudflare API Token
-  const cfApiToken = await password({
-    message: t('cf.apiTokenPrompt'),
-    mask: '*',
-    validate: (value) => {
-      if (!value || value.length < 10) {
-        return t('cf.apiTokenValidation');
-      }
-      return true;
-    },
-  });
-
-  // Step 3: Profile selection
-  const profile = await select({
-    message: t('profile.prompt'),
-    choices: [
-      {
-        value: 'basic-op',
-        name: t('profile.basicOp'),
-        description: t('profile.basicOpDesc'),
-      },
-      {
-        value: 'fapi-rw',
-        name: t('profile.fapiRw'),
-        description: t('profile.fapiRwDesc'),
-      },
-      {
-        value: 'fapi2-security',
-        name: t('profile.fapi2Security'),
-        description: t('profile.fapi2SecurityDesc'),
-      },
-    ],
-    default: 'basic-op',
-  });
 
   // Step 4: Infrastructure overview (Workers are auto-generated from env)
   console.log('');
@@ -1940,10 +2078,10 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log('');
   console.log(chalk.blue('━━━ ' + t('tenant.multiTenantTitle') + ' ━━━'));
   console.log('');
-  console.log(chalk.gray('  Leave empty to use workers.dev and single-tenant mode.'));
-  console.log(chalk.gray('  With a custom domain:'));
-  console.log(chalk.gray('    • https://example.com (naked domain issuer)'));
-  console.log(chalk.gray('    • https://acme.example.com (tenant subdomain issuer)'));
+  console.log(chalk.gray('  ' + t('tenant.domainSetupHint')));
+  console.log(chalk.gray('  ' + t('tenant.customDomainExamples')));
+  console.log(chalk.gray('    • ' + t('tenant.nakedDomainExample')));
+  console.log(chalk.gray('    • ' + t('tenant.subdomainExample')));
   console.log('');
 
   baseDomain = await input({
@@ -1956,9 +2094,9 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   baseDomain = baseDomain || undefined;
   console.log('');
   if (baseDomain) {
-    console.log(chalk.green('  ✓ Base domain: ' + baseDomain));
+    console.log(chalk.green(`  ✓ ${t('config.baseDomain')} ${baseDomain}`));
   } else {
-    console.log(chalk.green('  ✓ Using workers.dev (single-tenant mode)'));
+    console.log(chalk.green(`  ✓ ${t('domain.usingWorkersDev')}`));
   }
 
   // Check Cloudflare zone for the base domain
@@ -1974,26 +2112,18 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   // API domain is the base domain
   apiDomain = baseDomain || null;
 
-  console.log(
-    chalk.gray(
-      '  Tenant ID rules: 1-63 chars, must start with a lowercase letter, and may contain only lowercase letters, numbers, and hyphens.'
-    )
-  );
-  console.log(
-    chalk.gray(
-      '  Tip: A random tenant ID helps avoid exposing a customer or business name in the issuer URL. Generated IDs use readable lowercase letters only.'
-    )
-  );
+  console.log(chalk.gray('  ' + t('tenant.idRules')));
+  console.log(chalk.gray('  ' + t('tenant.randomIdHint')));
 
   const suggestedTenantId = generateRandomTenantId();
   const useRandomTenantId = await confirm({
-    message: `Generate a random tenant ID? (${suggestedTenantId})`,
+    message: t('tenant.randomIdPrompt', { id: suggestedTenantId }),
     default: !!baseDomain,
   });
 
   if (useRandomTenantId) {
     tenantName = suggestedTenantId;
-    console.log(chalk.green(`  ✓ Tenant ID: ${tenantName}`));
+    console.log(chalk.green(`  ✓ ${t('web.form.tenantId')}: ${tenantName}`));
   } else {
     tenantName = await input({
       message: t('tenant.defaultTenantPrompt'),
@@ -2009,25 +2139,25 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
 
   tenantDisplayName = await input({
     message: t('tenant.displayNamePrompt'),
-    default: 'Initial Tenant',
+    default: t('tenant.initialDisplayName'),
   });
 
   if (baseDomain) {
     nakedDomain = await confirm({
-      message: 'Use naked domain as the issuer for the primary tenant?',
+      message: t('tenant.nakedDomainPrompt'),
       default: false,
     });
 
     if (nakedDomain) {
       primaryTenant = await input({
-        message: 'Primary tenant ID for naked domain (leave empty for initial tenant)',
+        message: t('tenant.primaryTenantPrompt'),
         default: '',
         validate: (value) => {
           if (!value) {
             return true;
           }
           if (!isValidTenantId(value)) {
-            return 'Tenant ID must start with a letter and contain only lowercase letters, numbers, and hyphens';
+            return t('tenant.defaultTenantValidation');
           }
           return true;
         },
@@ -2090,7 +2220,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
       console.log('');
       if (
         !(await checkUiCustomDomainZoneIfNeeded({
-          label: 'Login UI',
+          label: t('web.domain.loginUi'),
           domain: loginUiDomain,
           apiDomain,
           baseDomain,
@@ -2101,7 +2231,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
       }
       if (
         !(await checkUiCustomDomainZoneIfNeeded({
-          label: 'Admin UI',
+          label: t('web.domain.adminUi'),
           domain: adminUiDomain,
           apiDomain,
           baseDomain,
@@ -2124,38 +2254,21 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   console.log('');
   console.log(chalk.blue('━━━ ' + t('features.title') + ' ━━━'));
   console.log('');
-  const queueHelpText = getLocale().startsWith('ja')
-    ? [
-        'Cloudflare Queuesは任意機能で、デフォルトは無効です。',
-        'Workers Freeの目安は約3,000配信メッセージ/日です。1 queued messageは通常write + read + delete operationsを消費します。',
-        'Authrimでは非同期audit fan-out、logging delivery retry、export build job、key rewrap retry jobなどで1 queued messageを使います。',
-      ]
-    : [
-        'Cloudflare Queues are optional and disabled by default.',
-        'Workers Free includes roughly 3,000 delivered messages/day because one queued message usually costs write + read + delete operations.',
-        'Authrim uses one queued message for events such as async audit fan-out, logging delivery retries, export build jobs, and rewrap retry jobs.',
-      ];
-  queueHelpText.forEach((line) => console.log(chalk.gray(line)));
-  console.log('');
-
   const enableQueue = await confirm({
     message: t('features.queuePrompt'),
     default: false,
   });
 
-  const enableR2 = await confirm({
-    message: t('features.r2Prompt'),
-    default: false,
-  });
+  const enableR2 = true;
 
   const emailProviderChoice = await select({
     message: t('email.title'),
     choices: [
-      { value: 'cloudflare', name: 'Cloudflare Email Service' },
+      { value: 'cloudflare', name: t('web.email.cloudflareSetup') },
       { value: 'resend', name: t('email.resendOption') },
       { value: 'none', name: t('email.skipOption') },
-      { value: 'sendgrid', name: 'SendGrid (coming soon)', disabled: true },
-      { value: 'ses', name: t('email.sesOption') + ' (coming soon)', disabled: true },
+      { value: 'sendgrid', name: `SendGrid (${t('common.comingSoon')})`, disabled: true },
+      { value: 'ses', name: `${t('email.sesOption')} (${t('common.comingSoon')})`, disabled: true },
     ],
     default: 'cloudflare',
   });
@@ -2180,9 +2293,9 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
       )
     );
     if (emailProviderChoice === 'cloudflare') {
-      console.log(chalk.gray('Workers Paid Plan required'));
-      console.log(chalk.gray('Cloudflare DNS/domain onboarding required'));
-      console.log(chalk.gray('Domain setup in the Cloudflare dashboard is still manual'));
+      console.log(chalk.gray(t('web.email.cloudflareRequirementPaid')));
+      console.log(chalk.gray(t('web.email.cloudflareRequirementDns')));
+      console.log(chalk.gray(t('web.email.cloudflareRequirementManual')));
     } else {
       console.log(chalk.gray(t('email.apiKeyHint')));
       console.log(chalk.gray(t('email.domainHint')));
@@ -2232,63 +2345,6 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     }
   }
 
-  const cloudflareCustomHostnameToken = await promptCloudflareCustomHostnameToken();
-
-  // Step 7: Advanced OIDC settings
-  const configureOidc = await confirm({
-    message: t('oidc.configurePrompt'),
-    default: false,
-  });
-
-  let accessTokenTtl = 3600; // 1 hour
-  let refreshTokenTtl = 604800; // 7 days
-  let authCodeTtl = 600; // 10 minutes
-  let pkceRequired = true;
-
-  if (configureOidc) {
-    console.log('');
-    console.log(chalk.blue('━━━ ' + t('oidc.title') + ' ━━━'));
-    console.log('');
-
-    const accessTokenTtlStr = await input({
-      message: t('oidc.accessTokenTtl'),
-      default: '3600',
-      validate: (value) => {
-        const num = parseInt(value, 10);
-        if (isNaN(num) || num <= 0) return t('oidc.positiveInteger');
-        return true;
-      },
-    });
-    accessTokenTtl = parseInt(accessTokenTtlStr, 10);
-
-    const refreshTokenTtlStr = await input({
-      message: t('oidc.refreshTokenTtl'),
-      default: '604800',
-      validate: (value) => {
-        const num = parseInt(value, 10);
-        if (isNaN(num) || num <= 0) return t('oidc.positiveInteger');
-        return true;
-      },
-    });
-    refreshTokenTtl = parseInt(refreshTokenTtlStr, 10);
-
-    const authCodeTtlStr = await input({
-      message: t('oidc.authCodeTtl'),
-      default: '600',
-      validate: (value) => {
-        const num = parseInt(value, 10);
-        if (isNaN(num) || num <= 0) return t('oidc.positiveInteger');
-        return true;
-      },
-    });
-    authCodeTtl = parseInt(authCodeTtlStr, 10);
-
-    pkceRequired = await confirm({
-      message: t('oidc.pkceRequired'),
-      default: true,
-    });
-  }
-
   // Step 8: Sharding settings
   const configureSharding = await confirm({
     message: t('sharding.configurePrompt'),
@@ -2329,15 +2385,13 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     refreshTokenShards = parseInt(refreshTokenShardsStr, 10);
   }
 
-  // Step 9: Storage Deployment Profile
+  // Step 9: Unified Control Plane provisioning mode
   console.log('');
-  console.log(chalk.blue('━━━ Storage Deployment Profile ━━━'));
+  console.log(chalk.blue('━━━ ' + t('web.db.controlPlaneTitle') + ' ━━━'));
+  console.log(chalk.gray('  ' + t('web.db.controlPlaneDesc')));
+  console.log(chalk.gray('  ' + t('web.db.controlPlaneTenantPlacement')));
   console.log('');
-  const storageProfileId = await promptStorageDeploymentProfile('builtin:storage:shared-d1');
-  const tenantD1PreallocatedSlots =
-    storageProfileId === 'builtin:storage:tenant-d1'
-      ? await promptTenantD1PreallocatedSlots()
-      : DEFAULT_TENANT_D1_PREALLOCATED_SLOTS;
+  const automaticProvisioning = await promptAutomaticProvisioning();
 
   // Step 10: Database Configuration
   console.log('');
@@ -2378,47 +2432,6 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     default: 'auto',
   });
 
-  // Step 10: Security Configuration
-  console.log('');
-  console.log(chalk.blue('━━━ ' + t('security.title') + ' ━━━'));
-  console.log(chalk.yellow('⚠️  ' + t('security.warning')));
-  console.log('');
-
-  console.log(chalk.gray('  ' + t('security.description')));
-  const piiEncryptionEnabled = await select({
-    message: t('security.piiEncryption'),
-    choices: [
-      {
-        name: t('security.piiEncryptionEnabled'),
-        value: true,
-        description: t('security.piiEncryptionEnabledDesc'),
-      },
-      {
-        name: t('security.piiEncryptionDisabled'),
-        value: false,
-        description: t('security.piiEncryptionDisabledDesc'),
-      },
-    ],
-    default: true,
-  });
-
-  const domainHashEnabled = await select({
-    message: t('security.domainHash'),
-    choices: [
-      {
-        name: t('security.domainHashEnabled'),
-        value: true,
-        description: t('security.domainHashEnabledDesc'),
-      },
-      {
-        name: t('security.domainHashDisabled'),
-        value: false,
-        description: t('security.domainHashDisabledDesc'),
-      },
-    ],
-    default: true,
-  });
-
   // Parse location vs jurisdiction
   function parseDbLocationNormal(value: string) {
     if (value === 'eu') {
@@ -2432,11 +2445,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
 
   // Create configuration
   const config = createDefaultConfig(envPrefix);
-  config.profile = profile as 'basic-op' | 'fapi-rw' | 'fapi2-security';
-  config.profiles.defaults.storage = storageProfileId;
-  config.tenantD1 = {
-    preallocatedSlots: tenantD1PreallocatedSlots,
-  };
+  config.controlPlane = { automaticProvisioning };
   config.database = {
     core: parseDbLocationNormal(coreDbLocation),
     pii: parseDbLocationNormal(piiDbLocation),
@@ -2444,6 +2453,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   config.tenant = {
     name: tenantName,
     displayName: tenantDisplayName,
+    placementPolicy: resolveInitialTenantPlacement(options.tenantPlacement),
     multiTenant: !!baseDomain,
     baseDomain,
     userIdFormat,
@@ -2467,13 +2477,6 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
     customDomainBinding: fullDomainConfig.customDomainBinding ?? false,
     workersSubdomain,
   });
-  config.oidc = {
-    ...config.oidc,
-    accessTokenTtl,
-    refreshTokenTtl,
-    authCodeTtl,
-    pkceRequired,
-  };
   config.sharding = {
     authCodeShards,
     refreshTokenShards,
@@ -2483,6 +2486,7 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
   config.features = {
     queue: { enabled: enableQueue },
     r2: { enabled: enableR2 },
+    pluginDynamicWorkers: config.features.pluginDynamicWorkers,
     email: {
       provider: emailConfigNormal.provider,
       fromAddress: emailConfigNormal.fromAddress,
@@ -2490,163 +2494,156 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
       configured: emailConfigNormal.provider !== 'none',
     },
   };
-  config.security = {
-    piiEncryptionEnabled,
-    domainHashEnabled,
-  };
 
   // Show summary
   console.log('');
   console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
-  console.log(chalk.bold('📋 Configuration Summary'));
+  console.log(chalk.bold(`📋 ${t('config.summary')}`));
   console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
   console.log('');
 
   // Infrastructure
-  console.log(chalk.bold('Infrastructure:'));
-  console.log(`  Environment:   ${chalk.cyan(envPrefix)}`);
-  console.log(`  Worker Prefix: ${chalk.cyan(envPrefix + '-ar-*')}`);
-  console.log(`  Profile:       ${chalk.cyan(profile)}`);
+  console.log(chalk.bold(t('config.infrastructure')));
+  console.log(`  ${t('config.environment')} ${chalk.cyan(envPrefix)}`);
+  console.log(`  ${t('config.workerPrefix')} ${chalk.cyan(envPrefix + '-ar-*')}`);
   console.log('');
 
   // Tenant mode and Issuer
-  console.log(chalk.bold('Tenant & Issuer:'));
-  console.log(`  Mode:          ${chalk.cyan(baseDomain ? 'Multi-tenant' : 'Single-tenant')}`);
+  console.log(chalk.bold(t('config.tenantIssuer')));
+  console.log(
+    `  ${t('config.mode')} ${chalk.cyan(baseDomain ? t('config.multiTenant') : t('config.singleTenant'))}`
+  );
   if (baseDomain) {
-    console.log(`  Base Domain:   ${chalk.cyan(baseDomain)}`);
-    console.log(`  Domain Pattern: ${chalk.cyan('{tenant}.' + baseDomain)}`);
+    console.log(`  ${t('config.baseDomain')} ${chalk.cyan(baseDomain)}`);
+    console.log(`  ${t('config.issuerFormat')} ${chalk.cyan('{tenant}.' + baseDomain)}`);
     console.log(
-      `  Example:       ${chalk.gray(nakedDomain ? 'https://' + baseDomain : 'https://acme.' + baseDomain)}`
+      `  ${t('common.example')}: ${chalk.gray(nakedDomain ? 'https://' + baseDomain : 'https://acme.' + baseDomain)}`
     );
     if (nakedDomain) {
-      console.log(
-        `  Naked Domain:  ${chalk.cyan(primaryTenant || tenantName)} ${chalk.gray('(primary tenant issuer)')}`
-      );
+      console.log(`  ${t('web.form.nakedDomain')}: ${chalk.cyan(primaryTenant || tenantName)}`);
     }
   } else {
     const issuerUrl = config.urls?.api?.custom || config.urls?.api?.auto;
-    console.log(`  Issuer URL:    ${chalk.cyan(issuerUrl)}`);
+    console.log(`  ${t('config.issuerUrl')} ${chalk.cyan(issuerUrl)}`);
   }
-  console.log(`  Initial Tenant: ${chalk.cyan(tenantName)}`);
-  console.log(`  Display Name:  ${chalk.cyan(tenantDisplayName)}`);
+  console.log(`  ${t('config.defaultTenant')} ${chalk.cyan(tenantName)}`);
+  console.log(`  ${t('config.displayName')} ${chalk.cyan(tenantDisplayName)}`);
   console.log('');
 
   // Public URLs
-  console.log(chalk.bold('Public URLs:'));
+  console.log(chalk.bold(t('config.publicUrls')));
   if (baseDomain) {
     console.log(
-      `  API Router:    ${chalk.cyan('*.' + baseDomain)} → ${chalk.gray(envPrefix + '-ar-router')}`
+      `  ${t('config.apiRouter')} ${chalk.cyan('*.' + baseDomain)} → ${chalk.gray(envPrefix + '-ar-router')}`
     );
     if (nakedDomain) {
       console.log(
-        `  API Router:    ${chalk.cyan(baseDomain + ' (naked)')} → ${chalk.gray(envPrefix + '-ar-router')}`
+        `  ${t('config.apiRouter')} ${chalk.cyan(baseDomain)} → ${chalk.gray(envPrefix + '-ar-router')}`
       );
     }
   } else {
-    console.log(`  API Router:    ${chalk.cyan(config.urls.api.custom || config.urls.api.auto)}`);
+    console.log(
+      `  ${t('config.apiRouter')} ${chalk.cyan(config.urls.api.custom || config.urls.api.auto)}`
+    );
   }
   console.log(
-    `  Login UI:      ${chalk.cyan(config.urls.loginUi.custom || config.urls.loginUi.auto)}`
+    `  ${t('config.loginUi')} ${chalk.cyan(config.urls.loginUi.custom || config.urls.loginUi.auto)}`
   );
   console.log(
-    `  Admin UI:      ${chalk.cyan(config.urls.adminUi.custom || config.urls.adminUi.auto)}`
+    `  ${t('config.adminUi')} ${chalk.cyan(config.urls.adminUi.custom || config.urls.adminUi.auto)}`
   );
   console.log('');
-  console.log(chalk.bold('Components:'));
-  console.log(`  SAML:          ${chalk.green('Enabled')} ${chalk.gray('(standard)')}`);
-  console.log(`  Async/CIBA:    ${chalk.green('Enabled')} ${chalk.gray('(standard)')}`);
-  console.log(`  VC:            ${chalk.green('Enabled')} ${chalk.gray('(standard)')}`);
-  console.log(`  Social Login:  ${chalk.green('Enabled')} ${chalk.gray('(standard)')}`);
-  console.log(`  Policy Engine: ${chalk.green('Enabled')} ${chalk.gray('(standard)')}`);
+  console.log(chalk.bold(t('config.components')));
+  const enabledStandard = `${chalk.green(t('config.enabled'))} ${chalk.gray(t('config.standard'))}`;
+  console.log(`  ${t('components.saml')} ${enabledStandard}`);
+  console.log(`  Async/CIBA: ${enabledStandard}`);
+  console.log(`  ${t('components.vc')} ${enabledStandard}`);
+  console.log(`  ${t('components.socialLogin')} ${enabledStandard}`);
+  console.log(`  ${t('components.policyEngine')} ${enabledStandard}`);
   console.log('');
-  console.log(chalk.bold('Feature Flags:'));
-  console.log(`  Queue:         ${enableQueue ? chalk.green('Enabled') : chalk.gray('Disabled')}`);
-  console.log(`  R2:            ${enableR2 ? chalk.green('Enabled') : chalk.gray('Disabled')}`);
+  console.log(chalk.bold(t('config.featureFlags')));
+  console.log(
+    `  ${t('features.queue')} ${enableQueue ? chalk.green(t('config.enabled')) : chalk.gray(t('config.disabled'))}`
+  );
+  console.log(
+    `  ${t('features.r2')} ${enableR2 ? chalk.green(t('config.enabled')) : chalk.gray(t('config.disabled'))}`
+  );
   console.log('');
-  console.log(chalk.bold('Email:'));
+  console.log(chalk.bold(t('config.emailSettings')));
   if (emailConfigNormal.provider === 'cloudflare') {
-    console.log(`  Provider:      ${chalk.cyan('Cloudflare Email Service')}`);
-    console.log(`  Requirements:  ${chalk.yellow('Workers Paid Plan + Cloudflare DNS')}`);
-    console.log(`  From Address:  ${chalk.cyan(emailConfigNormal.fromAddress)}`);
+    console.log(`  ${t('email.provider')} ${chalk.cyan(t('web.email.cloudflareSetup'))}`);
+    console.log(
+      `  ${t('web.email.cloudflareRequirements')}: ${chalk.yellow(t('web.email.cloudflareRequirementPaid'))}`
+    );
+    console.log(`  ${t('email.fromAddress')} ${chalk.cyan(emailConfigNormal.fromAddress)}`);
     if (emailConfigNormal.fromName) {
-      console.log(`  From Name:     ${chalk.cyan(emailConfigNormal.fromName)}`);
+      console.log(`  ${t('email.fromName')} ${chalk.cyan(emailConfigNormal.fromName)}`);
     }
   } else if (emailConfigNormal.provider === 'resend') {
-    console.log(`  Provider:      ${chalk.cyan('Resend')}`);
-    console.log(`  From Address:  ${chalk.cyan(emailConfigNormal.fromAddress)}`);
+    console.log(`  ${t('email.provider')} ${chalk.cyan('Resend')}`);
+    console.log(`  ${t('email.fromAddress')} ${chalk.cyan(emailConfigNormal.fromAddress)}`);
     if (emailConfigNormal.fromName) {
-      console.log(`  From Name:     ${chalk.cyan(emailConfigNormal.fromName)}`);
+      console.log(`  ${t('email.fromName')} ${chalk.cyan(emailConfigNormal.fromName)}`);
     }
   } else {
-    console.log(`  Provider:      ${chalk.gray('Not configured (configure later)')}`);
+    console.log(`  ${t('email.provider')} ${chalk.gray(t('config.notConfigured'))}`);
   }
   console.log('');
-  console.log(chalk.bold('OIDC Settings:'));
-  console.log(`  Access TTL:    ${chalk.cyan(accessTokenTtl + 'sec')}`);
-  console.log(`  Refresh TTL:   ${chalk.cyan(refreshTokenTtl + 'sec')}`);
-  console.log(`  Auth Code TTL: ${chalk.cyan(authCodeTtl + 'sec')}`);
-  console.log(`  PKCE Required:      ${pkceRequired ? chalk.green('Yes') : chalk.yellow('No')}`);
+  console.log(chalk.bold(t('config.oidcSettings')));
+  console.log(
+    `  ${t('config.accessTtl')} ${chalk.cyan(`${config.oidc.accessTokenTtl} ${t('config.sec')}`)}`
+  );
+  console.log(
+    `  ${t('config.refreshTtl')} ${chalk.cyan(`${config.oidc.refreshTokenTtl} ${t('config.sec')}`)}`
+  );
+  console.log(
+    `  ${t('config.authCodeTtl')} ${chalk.cyan(`${config.oidc.authCodeTtl} ${t('config.sec')}`)}`
+  );
+  console.log(
+    `  ${t('config.pkceRequired')} ${config.oidc.pkceRequired ? chalk.green(t('common.yes')) : chalk.yellow(t('common.no'))}`
+  );
   console.log('');
-  console.log(chalk.bold('Sharding:'));
-  console.log(`  Auth Code:     ${chalk.cyan(authCodeShards)} shards`);
-  console.log(`  Refresh Token: ${chalk.cyan(refreshTokenShards)} shards`);
+  console.log(chalk.bold(t('config.sharding')));
+  console.log(
+    `  ${t('config.authCodeShards')} ${chalk.cyan(authCodeShards)} ${t('config.shards')}`
+  );
+  console.log(
+    `  ${t('config.refreshTokenShards')} ${chalk.cyan(refreshTokenShards)} ${t('config.shards')}`
+  );
   console.log('');
-  console.log(chalk.bold('Database:'));
-  console.log(`  Storage:       ${chalk.cyan(config.profiles.defaults.storage)}`);
-  if (config.profiles.defaults.storage === 'builtin:storage:tenant-d1') {
-    console.log(`  Tenant D1:     ${chalk.cyan(`${config.tenantD1.preallocatedSlots} slots`)}`);
-  }
+  console.log(chalk.bold(t('config.database')));
+  console.log(`  ${t('config.d1Routing')} ${chalk.cyan('Control Plane')}`);
+  console.log(`  ${t('config.placement')} ${chalk.cyan(config.tenant.placementPolicy)}`);
+  console.log(
+    `  ${t('config.provisioning')} ${automaticProvisioning ? chalk.green(t('web.db.automaticProvisioningOn')) : chalk.yellow(t('web.db.automaticProvisioningOff'))}`
+  );
   const coreDbDisplay =
     coreDbLocation === 'eu'
-      ? 'EU Jurisdiction'
+      ? t('region.euJurisdiction')
       : coreDbLocation === 'auto'
-        ? 'Automatic'
+        ? t('region.auto')
         : coreDbLocation.toUpperCase();
   const piiDbDisplay =
     piiDbLocation === 'eu'
-      ? 'EU Jurisdiction'
+      ? t('region.euJurisdiction')
       : piiDbLocation === 'auto'
-        ? 'Automatic'
+        ? t('region.auto')
         : piiDbLocation.toUpperCase();
-  console.log(`  Core DB:       ${chalk.cyan(coreDbDisplay)}`);
-  console.log(`  PII DB:        ${chalk.cyan(piiDbDisplay)}`);
+  console.log(`  ${t('config.coreDb')} ${chalk.cyan(coreDbDisplay)}`);
+  console.log(`  ${t('config.piiDb')} ${chalk.cyan(piiDbDisplay)}`);
   console.log('');
 
   const proceed = await confirm({
-    message: 'Start setup with this configuration?',
+    message: t('deploy.prompt'),
     default: true,
   });
 
   if (!proceed) {
-    console.log(chalk.yellow('Setup cancelled.'));
+    console.log(chalk.yellow(t('deploy.cancelled')));
     return;
   }
 
-  // Save email secrets if configured
-  if (emailConfigNormal.provider !== 'none' && emailConfigNormal.fromAddress) {
-    // Save to external keys directory: {cwd}/.authrim-keys/{env}/
-    const keysDir = getExternalKeysDir(envPrefix, process.cwd());
-    await import('node:fs/promises').then(async (fs) => {
-      await fs.mkdir(keysDir, { recursive: true, mode: 0o700 });
-      const emailFromPath = join(keysDir, 'email_from.txt');
-      await fs.writeFile(emailFromPath, emailConfigNormal.fromAddress!.trim());
-      await fs.chmod(emailFromPath, 0o600);
-      if (emailConfigNormal.fromName) {
-        const emailFromNamePath = join(keysDir, 'email_from_name.txt');
-        await fs.writeFile(emailFromNamePath, emailConfigNormal.fromName.trim());
-        await fs.chmod(emailFromNamePath, 0o600);
-      }
-      if (emailConfigNormal.provider === 'resend' && emailConfigNormal.apiKey) {
-        const resendApiKeyPath = join(keysDir, 'resend_api_key.txt');
-        await fs.writeFile(resendApiKeyPath, emailConfigNormal.apiKey.trim());
-        await fs.chmod(resendApiKeyPath, 0o600);
-      }
-    });
-    console.log(chalk.gray(`📧 Email bootstrap settings saved to ${keysDir}/`));
-  }
-  await saveCloudflareCustomHostnameToken(envPrefix, cloudflareCustomHostnameToken);
-
-  await executeSetup(config, cfApiToken, options.keep);
+  await executeSetup(config, options.keep, emailConfigNormal);
 }
 
 // =============================================================================
@@ -2655,8 +2652,9 @@ async function runNormalSetup(options: InitOptions): Promise<void> {
 
 async function executeSetup(
   config: AuthrimConfig,
-  cfApiToken: string,
-  keepPath?: string
+  keepPath?: string,
+  pendingEmailSecrets?: PendingEmailSecretFiles,
+  options: ExecuteSetupOptions = {}
 ): Promise<void> {
   const outputDir = resolve(keepPath || '.');
   const env = config.environment.prefix;
@@ -2664,42 +2662,46 @@ async function executeSetup(
 
   console.log('');
   console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
-  console.log(chalk.bold('🚀 Running Setup...'));
+  console.log(chalk.bold(`🚀 ${t('deploy.starting')}`));
   console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
   console.log('');
 
   // Step 0: Check wrangler and auth
-  const wranglerCheck = ora('Checking wrangler status...').start();
+  const wranglerCheck = ora(t('prereq.checking')).start();
   try {
     const installed = await isWranglerInstalled();
     if (!installed) {
-      wranglerCheck.fail('wrangler is not installed');
+      wranglerCheck.fail(t('prereq.wranglerNotInstalled'));
       console.log('');
-      console.log(chalk.yellow('  Run the following command to install:'));
+      console.log(chalk.yellow(`  ${t('prereq.wranglerInstallHint')}`));
       console.log('');
       console.log(chalk.cyan('    npm install -g wrangler'));
       console.log('');
-      return;
+      throw new Error('wrangler_not_installed');
     }
 
     const auth = await checkAuth();
     if (!auth.isLoggedIn) {
-      wranglerCheck.fail('Not logged in to Cloudflare');
+      wranglerCheck.fail(t('prereq.notLoggedIn'));
       console.log('');
-      console.log(chalk.yellow('  Run the following command to authenticate:'));
+      console.log(chalk.yellow(`  ${t('prereq.loginHint')}`));
       console.log('');
       console.log(chalk.cyan('    wrangler login'));
       console.log('');
-      return;
+      throw new Error('cloudflare_authentication_required');
     }
 
-    wranglerCheck.succeed(`Connected to Cloudflare (${auth.email || 'authenticated'})`);
+    wranglerCheck.succeed(
+      auth.email ? t('prereq.loggedInAs', { email: auth.email }) : t('prereq.authenticated')
+    );
 
     // Get account ID and workers subdomain
     const accountId = await getAccountId();
-    if (accountId) {
-      config.cloudflare = { accountId };
+    if (!accountId) throw new Error('cloudflare_account_id_required_for_provisioning');
+    if (config.cloudflare?.accountId && config.cloudflare.accountId !== accountId) {
+      throw new Error('cloudflare_config_account_id_mismatch');
     }
+    config.cloudflare = { accountId };
 
     // Get workers.dev subdomain for correct URL generation
     workersSubdomain = await getWorkersSubdomain();
@@ -2709,245 +2711,645 @@ async function executeSetup(
       workersSubdomain,
     });
   } catch (error) {
-    wranglerCheck.fail('Failed to check wrangler');
+    wranglerCheck.fail(t('prereq.checkFailed'));
     console.error(error);
-    return;
+    throw error;
   }
 
-  // Step 1: Generate keys (external directory: .authrim-keys/{env}/)
-  // Check if keys already exist for this environment
-  const cwdDir = process.cwd();
-  if (keysExistForEnvironment(outputDir, env, cwdDir)) {
-    console.log(chalk.yellow(`⚠️  Warning: Keys already exist for environment "${env}"`));
-    console.log(chalk.yellow('   Existing keys will be overwritten.'));
-    console.log('');
-  }
-
-  const keysSpinner = ora('Generating cryptographic keys...').start();
+  const environmentOperation = await acquireEnvironmentOperationForEnvironment({
+    baseDir: outputDir,
+    env,
+    operation: 'init-provision',
+  });
+  let deployConfigLock: Awaited<ReturnType<typeof acquireDeployConfigLock>> | undefined;
   try {
-    const keyId = generateKeyId(env);
-    secrets = generateAllSecrets(keyId);
-
-    // Save to external structure: {cwd}/.authrim-keys/{env}/
-    const externalKeysDir = getExternalKeysDir(env, cwdDir);
-    await saveKeysToDirectory(secrets, { keysBaseDir: cwdDir, env });
-
+    // Package-level wrangler.toml files are shared by every environment in this checkout.
+    // Serialize the complete provisioning projection so another environment cannot replace the
+    // config between generation and the final durable provisioning checkpoint.
+    deployConfigLock = await acquireDeployConfigLock({
+      baseDir: outputDir,
+      env,
+      operation: 'init-provision',
+    });
+    const authenticatedAccountId = config.cloudflare?.accountId;
+    if (!authenticatedAccountId) {
+      throw new Error('cloudflare_account_id_required_for_provisioning');
+    }
+    const existingIntent = await loadProvisioningIntent({
+      baseDir: outputDir,
+      environment: env,
+    });
+    if (options.requireCanonicalConfigAfterLock) {
+      const canonicalConfigPath = getEnvironmentPaths({ baseDir: outputDir, env }).config;
+      if (!existsSync(canonicalConfigPath)) {
+        throw new Error('canonical_provisioning_config_missing_after_operation_lock');
+      }
+      const persistedConfig = parseConfig(JSON.parse(await readFile(canonicalConfigPath, 'utf-8')));
+      config = reconcileCanonicalProvisioningConfigAfterLock({
+        environment: env,
+        authenticatedAccountId,
+        persistedConfig,
+        intent: existingIntent,
+      });
+    }
+    const accountId = config.cloudflare?.accountId;
+    if (!accountId) {
+      throw new Error('cloudflare_account_id_required_for_provisioning');
+    }
+    const provisioningOnlyLock =
+      environmentOperation.lock && !hasPostProvisioningLockState(environmentOperation.lock)
+        ? environmentOperation.lock
+        : null;
+    const keysBaseDir = resolveProvisioningKeysBaseDir({
+      environment: env,
+      secretsPath: config.keys.secretsPath,
+      resuming: existingIntent !== null || provisioningOnlyLock !== null,
+    });
     config.keys = {
-      keyId: secrets.keyPair.keyId,
-      publicKeyJwk: secrets.keyPair.publicKeyJwk as Record<string, unknown>,
-      secretsPath: getExternalKeysPathForConfig(env, cwdDir),
+      ...config.keys,
+      secretsPath: getExternalKeysPathForConfig(env, keysBaseDir),
       includeSecrets: false,
       storageType: 'external',
     };
-
-    keysSpinner.succeed(`Keys generated (${externalKeysDir})`);
-  } catch (error) {
-    keysSpinner.fail('Failed to generate keys');
-    throw error;
-  }
-
-  // Step 2: Provision Cloudflare resources
-  console.log('');
-  console.log(chalk.blue('⏳ Creating Cloudflare resources...'));
-  console.log('');
-
-  let provisionedResources;
-  try {
-    provisionedResources = await provisionResources({
-      env,
-      createD1: true,
-      createKV: true,
-      createQueues: config.features.queue?.enabled,
-      createR2: config.features.r2?.enabled,
-      databaseConfig: config.database,
-      config,
-      onProgress: (msg) => console.log(`  ${msg}`),
+    const resourceSpec = buildProvisioningResourceSpec(config);
+    let provisioningAttempt = existingIntent
+      ? await beginOrResumeProvisioningIntent({
+          baseDir: outputDir,
+          environment: env,
+          accountId,
+          resourceSpec,
+        })
+      : undefined;
+    let repairingIncompleteProvisioningLock = false;
+    if (environmentOperation.lock && (provisioningAttempt || provisioningOnlyLock)) {
+      const complete = await hasCompleteProvisioningArtifacts({
+        baseDir: outputDir,
+        environment: env,
+        config,
+        lock: environmentOperation.lock,
+        intent: provisioningAttempt?.intent,
+      });
+      if (complete) {
+        if (pendingEmailSecrets) {
+          await stagePendingEmailSecrets({
+            baseDir: outputDir,
+            environment: env,
+            email: pendingEmailSecrets,
+          });
+        }
+        const emailPromotion = await promotePendingEmailSecrets({
+          baseDir: outputDir,
+          environment: env,
+          keysDir: getExternalKeysDir(env, keysBaseDir),
+          configuredEmail: config.features.email,
+        });
+        if (emailPromotion.promoted) {
+          console.log(
+            chalk.gray(
+              `📧 ${t('deploy.emailSecretsSaved', {
+                path: `${getExternalKeysDir(env, keysBaseDir)}/`,
+              })}`
+            )
+          );
+        }
+        if (provisioningAttempt) {
+          await completeProvisioningIntent({
+            baseDir: outputDir,
+            environment: env,
+            expectedIntentId: provisioningAttempt.intent.id,
+          });
+        }
+        console.log(
+          chalk.green(
+            provisioningAttempt
+              ? 'Provisioning was already complete; finalized the interrupted journal.'
+              : 'Provisioning was already complete; recovered the interrupted success acknowledgement.'
+          )
+        );
+        return;
+      }
+      if (hasPostProvisioningLockState(environmentOperation.lock)) {
+        throw new Error('stale_provisioning_intent_after_environment_activation');
+      }
+      if (!provisioningAttempt) {
+        throw new Error('provisioning_completion_evidence_mismatch');
+      }
+      repairingIncompleteProvisioningLock = true;
+    }
+    const provisionDecision = evaluateEnvironmentOperation({
+      operation: 'provision',
+      lock: repairingIncompleteProvisioningLock ? null : environmentOperation.lock,
     });
-  } catch (error) {
-    console.log(chalk.red('  ✗ Failed to create resources'));
-    console.error(error);
-
-    // Ask if user wants to continue without provisioning
-    const continueWithoutProvisioning = await confirm({
-      message: 'Continue without provisioning? (you will need to create resources manually)',
-      default: false,
-    });
-
-    if (!continueWithoutProvisioning) {
-      return;
+    if (!provisionDecision.allowed) {
+      throw new Error(environmentOperationBlockMessage(provisionDecision));
     }
 
-    // Create empty resources
-    provisionedResources = { d1: [], kv: [], queues: [], r2: [] };
-  }
-
-  // Step 3: Create lock file (save to new structure: .authrim/{env}/lock.json)
-  const envPaths = getEnvironmentPaths({ baseDir: outputDir, env });
-  const lockSpinner = ora('Generating lock file...').start();
-  try {
-    const lockFile = createLockFile(env, provisionedResources);
-    await saveLockFile(lockFile, { baseDir: outputDir, env });
-    lockSpinner.succeed(`Lock file saved (${envPaths.lock})`);
-  } catch (error) {
-    lockSpinner.fail('Lock file save failed');
-    console.error(error);
-  }
-
-  // Step 4: Save configuration (save to new structure: .authrim/{env}/config.json)
-  const configSpinner = ora('Saving configuration...').start();
-  try {
-    // Ensure environment directory exists
-    await mkdir(envPaths.root, { recursive: true });
-
-    const configPath = envPaths.config;
-    config.updatedAt = new Date().toISOString();
-    await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
-
-    // Also save version.txt
-    const setupVersion = getVersion();
-    await writeFile(envPaths.version, setupVersion, 'utf-8');
-
-    configSpinner.succeed(`Configuration saved (${configPath})`);
-  } catch (error) {
-    configSpinner.fail('Configuration save failed');
-    throw error;
-  }
-
-  // Step 4.5: Generate ui.env for UI builds
-  const uiEnvSpinner = ora('Generating UI environment file...').start();
-  try {
-    const initialUiEnv = buildInitialUiEnvConfig(config);
-    if (initialUiEnv) {
-      await saveUiEnv(envPaths.uiEnv, initialUiEnv);
-      uiEnvSpinner.succeed(`UI env saved (${envPaths.uiEnv})`);
-    } else {
-      uiEnvSpinner.warn('Skipped ui.env generation (no API URL configured)');
-      console.log(chalk.gray('  Tip: ui.env will be created when API URL is configured'));
-    }
-  } catch (error) {
-    uiEnvSpinner.fail('UI env generation failed');
-    console.error(error);
-    // Non-fatal: continue with setup
-  }
-
-  // Step 5: Generate wrangler.toml files
-  const resourceIds = toResourceIds(provisionedResources);
-  const packagesDir = join(outputDir, 'packages');
-  const baseDir = process.cwd();
-
-  // Step 5a: Save master wrangler configs to .authrim/{env}/wrangler/
-  const wranglerSpinner = ora('Saving wrangler.toml master configs...').start();
-  try {
-    const { saveMasterWranglerConfigs, syncWranglerConfigs } =
-      await import('../../core/wrangler-sync.js');
-
-    const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
-      baseDir,
-      env,
-      dryRun: false,
-      onProgress: (msg) => {
-        wranglerSpinner.text = msg;
-      },
+    await assertLocalDeploymentCapacity({
+      rootDir: outputDir,
+      phase: 'environment provisioning',
+      minimumFreeBytes: MINIMUM_PROVISIONING_FREE_BYTES,
     });
 
-    if (masterResult.success) {
-      wranglerSpinner.succeed(`Saved ${masterResult.files.length} wrangler.toml master configs`);
-    } else {
-      wranglerSpinner.warn('Some wrangler configs failed to save');
-      for (const error of masterResult.errors) {
-        console.log(chalk.yellow(`  • ${error}`));
+    if (!existingIntent) {
+      const remoteEnvironments = await detectEnvironments(undefined, {
+        requiredResources: PROVISIONING_COLLISION_INVENTORY,
+        includeControlManagedResourcesForEnvironment: env,
+      });
+      if (remoteEnvironments.some((candidate) => candidate.env === env)) {
+        throw new Error('cloudflare_environment_already_exists');
       }
     }
+    const envPaths = getEnvironmentPaths({ baseDir: outputDir, env });
+    if (pendingEmailSecrets) {
+      await stagePendingEmailSecrets({
+        baseDir: outputDir,
+        environment: env,
+        email: pendingEmailSecrets,
+      });
+    }
+    // Publish the journal before the config. If setup stops between these writes, the intent pins
+    // the exact account and resource plan and a retry can safely recreate the same config without
+    // treating a config-only directory as an unrelated environment.
+    provisioningAttempt ??= await beginOrResumeProvisioningIntent({
+      baseDir: outputDir,
+      environment: env,
+      accountId,
+      resourceSpec,
+    });
+    await persistProvisioningConfig(config, envPaths.config);
+    console.log(
+      chalk.gray(
+        provisioningAttempt.resumed
+          ? `Resuming provisioning attempt ${provisioningAttempt.intent.id}`
+          : `Provisioning attempt recorded: ${provisioningAttempt.intent.id}`
+      )
+    );
 
-    // Step 5b: Sync to deployment locations (if packages directory exists)
-    if (existsSync(packagesDir)) {
-      const syncSpinner = ora('Syncing wrangler configs to packages...').start();
+    // Step 1: Generate keys (external directory: .authrim-keys/{env}/)
+    // Check if keys already exist for this environment
+    const externalKeysDir = getExternalKeysDir(env, keysBaseDir);
+    await recoverLegacyPreBundleEmailSecrets({
+      baseDir: outputDir,
+      environment: env,
+      keysDir: externalKeysDir,
+      configuredProvider: config.features.email?.provider,
+    });
+    const existingKeys = keysExistForEnvironment(outputDir, env, keysBaseDir);
+    if (existingKeys) {
+      console.log(chalk.yellow(`⚠️  ${t('keys.existing', { env })}`));
+      console.log(chalk.yellow('   Existing environment keys will be reused for this retry.'));
+      console.log('');
+    }
 
-      const syncResult = await syncWranglerConfigs(
-        {
-          baseDir,
+    const keysSpinner = ora(t('keys.generating')).start();
+    try {
+      if (existingKeys) {
+        const loaded = await loadKeysFromDirectory({
+          baseDir: outputDir,
           env,
-          packagesDir,
-          force: true, // First time setup, always overwrite
-          dryRun: false,
-          onProgress: (msg) => {
-            syncSpinner.text = msg;
-          },
-        },
-        undefined // No manual edit callback for init
-      );
-
-      if (syncResult.success) {
-        syncSpinner.succeed(`Synced wrangler configs to ${syncResult.synced.length} components`);
+          keysBaseDir,
+        });
+        if (!loaded.keyPair?.keyId || !loaded.keyPair.publicKeyJwk) {
+          throw new Error('existing_environment_keys_incomplete');
+        }
+        config.keys = {
+          keyId: loaded.keyPair.keyId,
+          publicKeyJwk: loaded.keyPair.publicKeyJwk as Record<string, unknown>,
+          secretsPath: getExternalKeysPathForConfig(env, keysBaseDir),
+          includeSecrets: false,
+          storageType: 'external',
+        };
+        keysSpinner.succeed(`Existing environment keys reused (${externalKeysDir})`);
       } else {
-        syncSpinner.fail('wrangler config sync failed');
-        for (const error of syncResult.errors) {
+        const keyId = generateKeyId(env);
+        secrets = generateAllSecrets(keyId);
+        await saveKeysToDirectory(secrets, { keysBaseDir, env });
+        config.keys = {
+          keyId: secrets.keyPair.keyId,
+          publicKeyJwk: secrets.keyPair.publicKeyJwk as Record<string, unknown>,
+          secretsPath: getExternalKeysPathForConfig(env, keysBaseDir),
+          includeSecrets: false,
+          storageType: 'external',
+        };
+        keysSpinner.succeed(t('keys.generated', { path: externalKeysDir }));
+      }
+      const emailPromotion = await promotePendingEmailSecrets({
+        baseDir: outputDir,
+        environment: env,
+        keysDir: externalKeysDir,
+        configuredEmail: config.features.email,
+      });
+      if (emailPromotion.promoted) {
+        console.log(
+          chalk.gray(`📧 ${t('deploy.emailSecretsSaved', { path: `${externalKeysDir}/` })}`)
+        );
+      }
+    } catch (error) {
+      keysSpinner.fail(t('keys.error'));
+      throw error;
+    }
+    if (!config.keys.keyId) throw new Error('environment_key_id_required_for_provisioning');
+    await recordProvisioningKeyId({
+      baseDir: outputDir,
+      environment: env,
+      expectedIntentId: provisioningAttempt.intent.id,
+      keyId: config.keys.keyId,
+    });
+    // Persist generated/reloaded public key metadata before the first remote resource mutation.
+    await persistProvisioningConfig(config, envPaths.config);
+
+    // Step 2: Provision Cloudflare resources
+    console.log('');
+    console.log(chalk.blue(`⏳ ${t('deploy.creatingResources')}`));
+    console.log('');
+
+    let provisionedResources;
+    try {
+      provisionedResources = await provisionResources({
+        env,
+        createD1: true,
+        createKV: true,
+        createQueues: config.features.queue?.enabled,
+        createR2: config.features.r2?.enabled,
+        provisioningIntentResources: provisioningAttempt.intent.resources,
+        databaseConfig: config.database,
+        onProgress: (msg) => console.log(`  ${msg}`),
+        onResourceCreateIssued: (resource) =>
+          recordProvisioningResourceCreateIssued({
+            baseDir: outputDir,
+            environment: env,
+            expectedIntentId: provisioningAttempt.intent.id,
+            resource,
+          }),
+        onResourceCreateRejected: (resource) =>
+          recordProvisioningResourceCreateRejected({
+            baseDir: outputDir,
+            environment: env,
+            expectedIntentId: provisioningAttempt.intent.id,
+            resource,
+          }),
+        onResourceIdentified: (resource) =>
+          recordProvisioningResourceIdentified({
+            baseDir: outputDir,
+            environment: env,
+            expectedIntentId: provisioningAttempt.intent.id,
+            resource,
+          }),
+        onResourceProvisioned: (resource) =>
+          recordProvisionedResource({
+            baseDir: outputDir,
+            environment: env,
+            expectedIntentId: provisioningAttempt.intent.id,
+            resource,
+          }),
+      });
+    } catch (error) {
+      console.log(chalk.red(`  ✗ ${t('deploy.resourcesFailed')}`));
+      console.error(error);
+      throw new Error(t('deploy.initialProvisioningFailed'), { cause: error });
+    }
+
+    // Keep the final lock in memory until every required local deployment artifact is durable.
+    // If setup stops before then, a retry can safely rediscover the deterministic remote names.
+    const provisionedLock = createLockFile(env, provisionedResources);
+    const lockFile = environmentOperation.lock
+      ? mergeProvisionedResourcesIntoLock(environmentOperation.lock, provisionedLock)
+      : provisionedLock;
+
+    // Step 4: Save configuration (save to new structure: .authrim/{env}/config.json)
+    const configSpinner = ora(t('config.saving')).start();
+    try {
+      // Ensure environment directory exists
+      await mkdir(envPaths.root, { recursive: true });
+
+      const configPath = envPaths.config;
+      await persistProvisioningConfig(config, configPath);
+
+      // Also save version.txt
+      const setupVersion = getVersion();
+      await writePrivateFileAtomically(envPaths.version, `${setupVersion}\n`);
+
+      configSpinner.succeed(t('config.saved', { path: configPath }));
+    } catch (error) {
+      configSpinner.fail(t('config.error'));
+      throw error;
+    }
+
+    // Step 4.5: Generate ui.env for UI builds
+    const uiEnvSpinner = ora(t('resource.provisioning', { resource: 'ui.env' })).start();
+    try {
+      const initialUiEnv = buildInitialUiEnvConfig(config);
+      if (initialUiEnv) {
+        await saveUiEnv(envPaths.uiEnv, initialUiEnv);
+        uiEnvSpinner.succeed(t('resource.provisioned', { resource: `ui.env (${envPaths.uiEnv})` }));
+      } else {
+        uiEnvSpinner.warn(t('resource.skipped', { resource: 'ui.env' }));
+        console.log(chalk.gray(`  ${t('config.uiEnvNoApi')}`));
+      }
+    } catch (error) {
+      uiEnvSpinner.fail(t('resource.failed', { resource: 'ui.env' }));
+      console.error(error);
+      throw error;
+    }
+
+    // Step 5: Generate wrangler.toml files
+    const resourceIds = toResourceIds(provisionedResources);
+    const packagesDir = join(outputDir, 'packages');
+    const baseDir = outputDir;
+
+    // Step 5a: Save master wrangler configs to .authrim/{env}/wrangler/
+    const wranglerSpinner = ora(t('resource.provisioning', { resource: 'wrangler.toml' })).start();
+    try {
+      const { saveMasterWranglerConfigs, syncWranglerConfigs } =
+        await import('../../core/wrangler-sync.js');
+
+      const masterResult = await saveMasterWranglerConfigs(config, resourceIds, {
+        baseDir,
+        env,
+        dryRun: false,
+        onProgress: (msg) => {
+          wranglerSpinner.text = msg;
+        },
+      });
+
+      if (masterResult.success) {
+        wranglerSpinner.succeed(
+          t('config.wranglerConfigsSaved', { count: masterResult.files.length })
+        );
+      } else {
+        wranglerSpinner.fail(t('config.wranglerConfigsPartial'));
+        for (const error of masterResult.errors) {
           console.log(chalk.red(`  • ${error}`));
         }
+        throw new Error(
+          `master_wrangler_config_generation_failed:${masterResult.errors.join(';')}`
+        );
       }
+
+      // Step 5b: Sync to deployment locations (if packages directory exists)
+      if (existsSync(packagesDir)) {
+        const syncSpinner = ora(t('config.wranglerConfigsSyncing')).start();
+
+        const syncResult = await syncWranglerConfigs(
+          {
+            baseDir,
+            env,
+            packagesDir,
+            force: true, // First time setup, always overwrite
+            dryRun: false,
+            onProgress: (msg) => {
+              syncSpinner.text = msg;
+            },
+          },
+          undefined // No manual edit callback for init
+        );
+
+        if (syncResult.success) {
+          syncSpinner.succeed(
+            t('config.wranglerConfigsSynced', { count: syncResult.synced.length })
+          );
+        } else {
+          syncSpinner.fail(t('config.wranglerConfigsSyncFailed'));
+          for (const error of syncResult.errors) {
+            console.log(chalk.red(`  • ${error}`));
+          }
+          throw new Error(`wrangler_config_sync_failed:${syncResult.errors.join(';')}`);
+        }
+      }
+    } catch (error) {
+      wranglerSpinner.fail(t('resource.failed', { resource: 'wrangler.toml' }));
+      console.error(error);
+      throw error;
     }
-  } catch (error) {
-    wranglerSpinner.fail('wrangler.toml generation failed');
-    console.error(error);
-  }
 
-  // Summary
-  console.log('');
-  console.log(chalk.green('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
-  console.log(chalk.bold.green('🎉 Setup Complete！'));
-  console.log(chalk.green('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
-  console.log('');
+    // The lock is the local declaration that provisioning completed. Persist it last so a
+    // partially generated environment remains safely retryable instead of looking complete.
+    const lockSpinner = ora(t('resource.provisioning', { resource: 'lock.json' })).start();
+    try {
+      await saveLockFile(lockFile, { baseDir: outputDir, env });
+      await completeProvisioningIntent({
+        baseDir: outputDir,
+        environment: env,
+        expectedIntentId: provisioningAttempt.intent.id,
+      });
+      lockSpinner.succeed(t('resource.provisioned', { resource: `lock.json (${envPaths.lock})` }));
+    } catch (error) {
+      lockSpinner.fail(t('resource.failed', { resource: 'lock.json' }));
+      console.error(error);
+      throw error;
+    }
 
-  // Show provisioned resources
-  if (provisionedResources.d1.length > 0 || provisionedResources.kv.length > 0) {
-    console.log(chalk.bold('📦 Created Resources:'));
+    // Summary
+    console.log('');
+    console.log(chalk.green('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+    console.log(chalk.bold.green(`🎉 ${t('complete.title')}`));
+    console.log(chalk.green('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
     console.log('');
 
-    if (provisionedResources.d1.length > 0) {
-      console.log('  D1 Databases:');
-      for (const db of provisionedResources.d1) {
-        console.log(`    ✓ ${db.name} (${db.id.slice(0, 8)}...)`);
+    // Show provisioned resources
+    if (provisionedResources.d1.length > 0 || provisionedResources.kv.length > 0) {
+      console.log(chalk.bold(`📦 ${t('complete.createdResources')}`));
+      console.log('');
+
+      if (provisionedResources.d1.length > 0) {
+        console.log(`  ${t('web.provision.d1Databases')}:`);
+        for (const db of provisionedResources.d1) {
+          console.log(`    ✓ ${db.name} (${db.id.slice(0, 8)}...)`);
+        }
       }
+
+      if (provisionedResources.kv.length > 0) {
+        console.log(`  ${t('web.provision.kvNamespaces')}:`);
+        for (const kv of provisionedResources.kv) {
+          console.log(`    ✓ ${kv.name} (${kv.id.slice(0, 8)}...)`);
+        }
+      }
+
+      console.log('');
     }
 
-    if (provisionedResources.kv.length > 0) {
-      console.log('  KV Namespaces:');
-      for (const kv of provisionedResources.kv) {
-        console.log(`    ✓ ${kv.name} (${kv.id.slice(0, 8)}...)`);
-      }
-    }
-
+    console.log(chalk.bold(`📁 ${t('complete.generatedFiles')}`));
+    console.log(`  - ${envPaths.config}`);
+    console.log(`  - ${envPaths.lock}`);
+    console.log(`  - ${envPaths.version}`);
+    console.log(`  - ${envPaths.keys}/ ${chalk.gray(`(${t('web.provision.keepSafe')})`)}`);
     console.log('');
+
+    // Show URLs
+    console.log(chalk.bold(`🌐 ${t('complete.urls')}`));
+    const apiUrl = config.urls?.api?.custom || config.urls?.api?.auto || '';
+    const loginUrl = config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || '';
+    const adminUrl = config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || '';
+    console.log(`  ${t('complete.issuerUrl', { url: chalk.cyan(apiUrl) })}`);
+    console.log(`  ${t('complete.uiUrl', { url: chalk.cyan(loginUrl) })}`);
+    console.log(`  ${t('complete.adminUrl', { url: chalk.cyan(adminUrl) })}`);
+    console.log('');
+
+    // Next steps
+    console.log(chalk.bold(`📋 ${t('complete.nextSteps')}`));
+    console.log('');
+    for (const line of buildSetupCompletionNextSteps({
+      env,
+      automaticProvisioning: config.controlPlane?.automaticProvisioning === true,
+      commandPrefix: getCommandPrefix(),
+    })) {
+      console.log(line);
+    }
+    console.log('');
+  } finally {
+    try {
+      await deployConfigLock?.release();
+    } finally {
+      await environmentOperation.release();
+    }
+  }
+}
+
+export function buildSetupCompletionNextSteps(input: {
+  env: string;
+  automaticProvisioning: boolean;
+  commandPrefix: string;
+}): string[] {
+  const deployCommand = `${input.commandPrefix} deploy --env ${input.env}`;
+  if (input.automaticProvisioning) {
+    return [
+      `  ${t('complete.automaticStep1')}`,
+      `     ${deployCommand}`,
+      '',
+      `  ${t('complete.automaticStep2')}`,
+      `     ${t('complete.automaticStep2Detail')}`,
+    ];
+  }
+  return [
+    `  ${t('complete.manualStep1')}`,
+    `     ${deployCommand}`,
+    '',
+    `  ${t('complete.manualStep2')}`,
+    `     ${t('complete.manualStep2Detail')}`,
+  ];
+}
+
+type ProvisioningResumeRunner = (config: AuthrimConfig, baseDir: string) => Promise<void>;
+
+/**
+ * Select the durable config as the sole authority after the operation locks are acquired.
+ *
+ * A config-only interrupted setup has no journal digest to compare, so adopting the freshly read
+ * canonical file is what prevents a stale pre-lock snapshot from overwriting another actor's
+ * completed config mutation. Journal-backed retries additionally require the canonical plan to
+ * remain byte-semantically pinned by the intent digest.
+ */
+export function reconcileCanonicalProvisioningConfigAfterLock(input: {
+  environment: string;
+  authenticatedAccountId: string;
+  persistedConfig: AuthrimConfig;
+  intent: ProvisioningIntent | null;
+}): AuthrimConfig {
+  if (input.persistedConfig.environment.prefix !== input.environment) {
+    throw new Error('provisioning_config_environment_mismatch_after_operation_lock');
+  }
+  const persistedAccountId = input.persistedConfig.cloudflare?.accountId;
+  if (!persistedAccountId || persistedAccountId !== input.authenticatedAccountId) {
+    throw new Error('provisioning_config_account_id_mismatch_after_operation_lock');
+  }
+  if (input.intent) {
+    if (
+      input.intent.environment !== input.environment ||
+      input.intent.accountId !== input.authenticatedAccountId
+    ) {
+      throw new Error('provisioning_intent_authority_mismatch_after_operation_lock');
+    }
+    if (
+      calculateProvisioningResourceSpecDigest(
+        buildProvisioningResourceSpec(input.persistedConfig)
+      ) !== input.intent.resourceSpecDigest
+    ) {
+      throw new Error('provisioning_intent_resource_spec_mismatch_after_operation_lock');
+    }
+  }
+  return input.persistedConfig;
+}
+
+/**
+ * Resume a fresh-install attempt from its durable config and provisioning journal.
+ *
+ * Only the canonical `.authrim/<env>/config.json` path is eligible. A copied config or a
+ * completed environment must continue through the ordinary existing-config flow instead of
+ * inheriting another environment's retry authority.
+ */
+export async function resumeInterruptedProvisioningFromConfig(input: {
+  config: AuthrimConfig;
+  configPath: string;
+  runProvisioning?: ProvisioningResumeRunner;
+}): Promise<boolean> {
+  const configPath = resolve(input.configPath);
+  const baseDir = dirname(dirname(dirname(configPath)));
+  const paths = getEnvironmentPaths({
+    baseDir,
+    env: input.config.environment.prefix,
+  });
+  if (resolve(paths.config) !== configPath) return false;
+
+  const intent = await loadProvisioningIntent({
+    baseDir,
+    environment: input.config.environment.prefix,
+  });
+  const lock = await loadLockFile({ baseDir, env: input.config.environment.prefix });
+  if (!intent && lock && hasPostProvisioningLockState(lock)) return false;
+
+  const accountId = input.config.cloudflare?.accountId;
+  if (!accountId) throw new Error('cloudflare_account_id_required_for_provisioning_resume');
+
+  if (intent) {
+    // Validate the persisted account and complete resource plan locally before any Cloudflare
+    // prerequisite check or mutation. executeSetup repeats this check under the operation lock.
+    await beginOrResumeProvisioningIntent({
+      baseDir,
+      environment: input.config.environment.prefix,
+      accountId,
+      resourceSpec: buildProvisioningResourceSpec(input.config),
+    });
   }
 
-  console.log(chalk.bold('📁 Generated Files:'));
-  console.log(`  - ${envPaths.config}`);
-  console.log(`  - ${envPaths.lock}`);
-  console.log(`  - ${envPaths.version}`);
-  console.log(
-    `  - ${envPaths.keys}/ ${chalk.gray('(private keys - add .authrim/ to .gitignore)')}`
-  );
-  console.log('');
+  console.log(chalk.yellow('Interrupted provisioning attempt found; resuming safely.'));
+  if (input.runProvisioning) {
+    await input.runProvisioning(input.config, baseDir);
+  } else {
+    await executeSetup(input.config, baseDir, undefined, {
+      requireCanonicalConfigAfterLock: true,
+    });
+  }
+  return true;
+}
 
-  // Show URLs
-  console.log(chalk.bold('🌐 Endpoints:'));
-  const apiUrl = config.urls?.api?.custom || config.urls?.api?.auto || '';
-  const loginUrl = config.urls?.loginUi?.custom || config.urls?.loginUi?.auto || '';
-  const adminUrl = config.urls?.adminUi?.custom || config.urls?.adminUi?.auto || '';
-  console.log(`  OIDC Provider: ${chalk.cyan(apiUrl)}`);
-  console.log(`  Login UI:      ${chalk.cyan(loginUrl)}`);
-  console.log(`  Admin UI:      ${chalk.cyan(adminUrl)}`);
-  console.log('');
+type ExistingConfigHandler = (configPath: string) => Promise<void>;
 
-  // Next steps
-  console.log(chalk.bold('📋 Next Steps:'));
-  console.log('');
-  console.log('  1. Upload secrets to Cloudflare:');
-  console.log(chalk.cyan(`     ${getCommandPrefix()} secrets --env=${env}`));
-  console.log('');
-  console.log('  2. Deploy Workers:');
-  console.log(chalk.cyan(`     pnpm deploy --env=${env}`));
-  console.log('');
+/** Route `init --cli --env` directly to the canonical interrupted-provisioning recovery path. */
+export async function resumeInterruptedProvisioningForEnvironment(input: {
+  baseDir: string;
+  environment: string;
+  handleConfig?: ExistingConfigHandler;
+}): Promise<boolean> {
+  const paths = getEnvironmentPaths({ baseDir: input.baseDir, env: input.environment });
+  if (!existsSync(paths.config)) return false;
+  const intent = await loadProvisioningIntent({
+    baseDir: input.baseDir,
+    environment: input.environment,
+  });
+  const lock = await loadLockFile({ baseDir: input.baseDir, env: input.environment });
+  if (!intent && lock && hasPostProvisioningLockState(lock)) {
+    return false;
+  }
+
+  // A journal under one environment must never authorize a copied or misfiled config belonging
+  // to another environment. handleExistingConfig performs the complete digest/account validation.
+  const config = parseConfig(JSON.parse(await readFile(paths.config, 'utf-8')));
+  if (config.environment.prefix !== input.environment) {
+    throw new Error('provisioning_config_environment_mismatch');
+  }
+
+  await (input.handleConfig ?? handleExistingConfig)(paths.config);
+  return true;
 }
 
 // =============================================================================
@@ -2962,13 +3364,14 @@ async function handleExistingConfig(configPath: string): Promise<void> {
     const config = parseConfig(JSON.parse(content));
     spinner.succeed('Configuration loaded');
 
+    if (await resumeInterruptedProvisioningFromConfig({ config, configPath })) return;
+
     console.log('');
     console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
     console.log(chalk.bold('📋 Configuration Summary'));
     console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
     console.log('');
     console.log(`  Environment:        ${chalk.cyan(config.environment.prefix)}`);
-    console.log(`  Profile: ${chalk.cyan(config.profile)}`);
     console.log(`  Version:   ${chalk.cyan(config.version)}`);
     if (config.urls?.api) {
       const apiUrl = config.urls.api.custom || config.urls.api.auto;
@@ -3004,6 +3407,7 @@ async function handleExistingConfig(configPath: string): Promise<void> {
   } catch (error) {
     spinner.fail('Failed to load configuration');
     console.error(error);
+    throw error;
   }
 }
 
@@ -3078,42 +3482,9 @@ async function handleRedeploy(config: AuthrimConfig, configPath: string): Promis
 
   if (!hasLock) {
     console.log(chalk.yellow(`\n⚠️  Lock file not found (${lockPath})`));
-    const createResources = await confirm({
-      message: 'Create new Cloudflare resources?',
-      default: true,
-    });
-
-    if (!createResources) {
-      console.log(chalk.yellow('Cancelled.'));
-      return;
-    }
-
-    // Provision new resources
-    console.log('');
-    console.log(chalk.blue('⏳ Creating Cloudflare resources...'));
-    console.log('');
-
-    try {
-      const provisionedResources = await provisionResources({
-        env,
-        createD1: true,
-        createKV: true,
-        createQueues: config.features.queue?.enabled,
-        createR2: config.features.r2?.enabled,
-        databaseConfig: config.database,
-        config,
-        onProgress: (msg) => console.log(`  ${msg}`),
-      });
-
-      // Create and save lock file
-      const newLock = createLockFile(env, provisionedResources);
-      await saveLockFile(newLock, lockPath);
-      console.log(chalk.green(`\n✓ Lock file saved (${lockPath})`));
-    } catch (error) {
-      console.log(chalk.red('  ✗ Failed to create resources'));
-      console.error(error);
-      return;
-    }
+    console.log(chalk.red('Redeploy cannot provision a missing environment.'));
+    console.log(chalk.yellow(`Run ${getCommandPrefix()} init to provision it explicitly.`));
+    return;
   } else {
     // Show existing resources summary
     console.log(chalk.bold('\n📦 Existing Resources:'));
@@ -3173,6 +3544,8 @@ async function handleRedeploy(config: AuthrimConfig, configPath: string): Promis
 // =============================================================================
 
 async function handleEditConfig(config: AuthrimConfig, configPath: string): Promise<void> {
+  const originalConfig = structuredClone(config);
+  const originalConfigText = JSON.stringify(originalConfig);
   console.log('');
   console.log(chalk.blue('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
   console.log(chalk.bold('✏️  Edit Configuration'));
@@ -3184,7 +3557,6 @@ async function handleEditConfig(config: AuthrimConfig, configPath: string): Prom
     choices: [
       { value: 'urls', name: '🌐 URL Settings' },
       { value: 'components', name: '📦 Components' },
-      { value: 'profile', name: '🔐 OIDCProfile' },
       { value: 'oidc', name: '⚙️  OIDC Settings (TTL, etc.)' },
       { value: 'features', name: '🎛️  Feature Flags' },
       { value: 'runtimeProfiles', name: '🧭 Runtime Profiles' },
@@ -3206,9 +3578,6 @@ async function handleEditConfig(config: AuthrimConfig, configPath: string): Prom
       break;
     case 'components':
       configModified = await editComponents(config);
-      break;
-    case 'profile':
-      configModified = await editProfile(config);
       break;
     case 'oidc':
       configModified = await editOidcSettings(config);
@@ -3233,8 +3602,40 @@ async function handleEditConfig(config: AuthrimConfig, configPath: string): Prom
     });
 
     if (saveChanges) {
-      await writeFile(configPath, JSON.stringify(config, null, 2), 'utf-8');
-      console.log(chalk.green(`\n✓ Configuration saved: ${configPath}`));
+      const env = config.environment.prefix;
+      const baseDir = findAuthrimBaseDir(dirname(resolve(configPath)));
+      const operation = await acquireEnvironmentOperationForEnvironment({
+        baseDir,
+        env,
+        operation: 'init-config-edit',
+      });
+      try {
+        const targetProductVersion = operation.lock ? getVersion() : undefined;
+        const decision = evaluateEnvironmentOperation({
+          operation: 'config_mutation',
+          lock: operation.lock,
+          targetVersion: targetProductVersion,
+        });
+        if (!decision.allowed) {
+          throw new Error(environmentOperationBlockMessage(decision, targetProductVersion));
+        }
+
+        const persistedConfigText = await readFile(configPath, 'utf-8');
+        const persistedConfig = parseConfig(JSON.parse(persistedConfigText));
+        if (JSON.stringify(persistedConfig) !== originalConfigText) {
+          throw new Error('config_changed_while_waiting_for_init_config_lock');
+        }
+        if (operation.lock?.productVersion && hasDatabaseTopologyChange(originalConfig, config)) {
+          throw new Error(
+            'Database topology changes require a dedicated topology command for a deployed environment.'
+          );
+        }
+
+        await writePrivateFileAtomically(configPath, `${JSON.stringify(config, null, 2)}\n`);
+        console.log(chalk.green(`\n✓ Configuration saved: ${configPath}`));
+      } finally {
+        await operation.release();
+      }
 
       const redeploy = await confirm({
         message: 'Redeploy to apply changes?',
@@ -3320,7 +3721,7 @@ async function editUrls(config: AuthrimConfig): Promise<boolean> {
     const baseDomain = multiTenant ? apiDomain : config.tenant?.baseDomain;
     if (
       !(await checkUiCustomDomainZoneIfNeeded({
-        label: 'Login UI',
+        label: t('web.domain.loginUi'),
         domain: checkedLoginUiDomain,
         apiDomain,
         baseDomain,
@@ -3331,7 +3732,7 @@ async function editUrls(config: AuthrimConfig): Promise<boolean> {
     }
     if (
       !(await checkUiCustomDomainZoneIfNeeded({
-        label: 'Admin UI',
+        label: t('web.domain.adminUi'),
         domain: checkedAdminUiDomain,
         apiDomain,
         baseDomain,
@@ -3376,40 +3777,6 @@ async function editComponents(config: AuthrimConfig): Promise<boolean> {
   console.log(`  Policy Engine: ${chalk.green('Enabled')} ${chalk.gray('(standard - always on)')}`);
   console.log('');
 
-  return true;
-}
-
-// =============================================================================
-// Edit Profile
-// =============================================================================
-
-async function editProfile(config: AuthrimConfig): Promise<boolean> {
-  console.log(`\nCurrent profile: ${chalk.cyan(config.profile)}`);
-  console.log('');
-
-  const profile = await select({
-    message: 'Select OIDC profile',
-    choices: [
-      {
-        value: 'basic-op',
-        name: 'Basic OP (Standard OIDC Provider)',
-        description: 'Standard OIDC features',
-      },
-      {
-        value: 'fapi-rw',
-        name: 'FAPI Read-Write (Financial Grade)',
-        description: 'FAPI 1.0 Read-Write Security Profile compliant',
-      },
-      {
-        value: 'fapi2-security',
-        name: 'FAPI 2.0 Security Profile',
-        description: 'FAPI 2.0 Security Profile compliant (highest security)',
-      },
-    ],
-    default: config.profile,
-  });
-
-  config.profile = profile as 'basic-op' | 'fapi-rw' | 'fapi2-security';
   return true;
 }
 
@@ -3492,8 +3859,8 @@ async function editFeatures(config: AuthrimConfig): Promise<boolean> {
   });
 
   const r2Enabled = await confirm({
-    message: 'Enable Cloudflare R2? (for avatars and logging artifacts)',
-    default: config.features.r2?.enabled || false,
+    message: 'Enable Cloudflare R2 object storage?',
+    default: config.features.r2?.enabled ?? true,
   });
 
   const emailProvider = await select({
@@ -3581,21 +3948,6 @@ async function configureRequiredHyperdriveReferences(
       | null;
   }
 ): Promise<void> {
-  if (config.profiles.defaults.storage === 'builtin:storage:external-postgres') {
-    await ensureHyperdriveReference(config, {
-      refKey: 'core-primary',
-      driver: 'postgres',
-      label: 'Storage identity core/custom claims/registration fields',
-      suggestedBinding: 'HYPERDRIVE_CORE_PRIMARY',
-    });
-    await ensureHyperdriveReference(config, {
-      refKey: 'pii-primary',
-      driver: 'postgres',
-      label: 'Storage identity PII/custom PII',
-      suggestedBinding: 'HYPERDRIVE_PII_PRIMARY',
-    });
-  }
-
   const refs = new Map<
     string,
     { refKey: string; driver: 'postgres' | 'mysql'; label: string; suggestedBinding?: string }
@@ -3650,9 +4002,6 @@ async function configureRequiredHyperdriveReferences(
 async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
   console.log(chalk.bold('\nCurrent Runtime Profile Settings:'));
   console.log(
-    `  Default Storage Profile: ${chalk.cyan(config.profiles.defaults.storage || 'builtin:storage:shared-d1')}`
-  );
-  console.log(
     `  Default Audit Profile: ${chalk.cyan(config.profiles.defaults.audit || 'builtin:audit:standard')}`
   );
   console.log(
@@ -3664,24 +4013,6 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
     `  Hyperdrive Refs:       ${chalk.cyan(Object.keys(config.profiles.references.hyperdrive).length)}`
   );
   console.log('');
-
-  const defaultStorageProfileId = await promptStorageDeploymentProfile(
-    config.profiles.defaults.storage || 'builtin:storage:shared-d1',
-    {
-      allowCustom: true,
-    }
-  );
-
-  if (defaultStorageProfileId === 'builtin:storage:tenant-d1') {
-    console.log(
-      chalk.yellow(
-        '  Existing tenants need tenant-db registry rows and runtime D1 bindings before this profile is usable.'
-      )
-    );
-    config.tenantD1 = {
-      preallocatedSlots: await promptTenantD1PreallocatedSlots(config.tenantD1?.preallocatedSlots),
-    };
-  }
 
   const defaultAuditProfileId = await input({
     message: 'Default audit profile ID',
@@ -3707,7 +4038,6 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
     },
   });
 
-  config.profiles.defaults.storage = defaultStorageProfileId.trim();
   config.profiles.defaults.audit = defaultAuditProfileId.trim();
   config.profiles.defaults.residency = defaultResidencyProfileId.trim();
 
@@ -3768,25 +4098,8 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
         name: 'D1 primary + archive + HTTP sink',
         description: 'Keep hot queries in D1 and also archive / forward.',
       },
-      {
-        value: 'postgres-primary',
-        name: 'PostgreSQL primary + archive + HTTP sink',
-        description: 'Use Hyperdrive / PostgreSQL as the primary audit store.',
-      },
-      {
-        value: 'mysql-primary',
-        name: 'MySQL primary + archive + HTTP sink',
-        description: 'Use Hyperdrive / MySQL as the primary audit store.',
-      },
     ],
-    default:
-      existingProfile?.primary == null
-        ? 'archive-only'
-        : existingProfile?.primary.type === 'postgres'
-          ? 'postgres-primary'
-          : existingProfile?.primary.type === 'mysql'
-            ? 'mysql-primary'
-            : 'd1-primary',
+    default: existingProfile?.primary == null ? 'archive-only' : 'd1-primary',
   });
 
   const useDirectUrl = await confirm({
@@ -3851,35 +4164,19 @@ async function editRuntimeProfiles(config: AuthrimConfig): Promise<boolean> {
     description:
       deliveryMode === 'archive-only'
         ? 'Archive-only audit profile with a generic HTTP forwarding sink.'
-        : deliveryMode === 'postgres-primary'
-          ? 'PostgreSQL-backed audit profile with archive and generic HTTP forwarding sink.'
-          : deliveryMode === 'mysql-primary'
-            ? 'MySQL-backed audit profile with archive and generic HTTP forwarding sink.'
-            : 'D1-backed audit profile with archive and generic HTTP forwarding sink.',
+        : 'D1-backed audit profile with archive and generic HTTP forwarding sink.',
     primary:
       deliveryMode === 'archive-only'
         ? null
-        : deliveryMode === 'postgres-primary'
-          ? {
-              type: 'postgres' as const,
-              connectionRef: 'audit-primary',
-              dataset: 'event_log',
-            }
-          : deliveryMode === 'mysql-primary'
-            ? {
-                type: 'mysql' as const,
-                connectionRef: 'audit-primary-mysql',
-                dataset: 'event_log',
-              }
-            : {
-                type: 'd1' as const,
-                bindingRef: 'DB',
-                dataset: 'event_log',
-              },
+        : {
+            type: 'd1' as const,
+            bindingRef: 'DB',
+            dataset: 'event_log',
+          },
     archive: {
       type: 'r2' as const,
-      bucketRef: 'DIAGNOSTIC_LOGS',
-      prefix: 'audit/',
+      bucketRef: 'AUDIT_ARCHIVE',
+      prefix: 'logs/v1',
     },
     sinks: [
       {

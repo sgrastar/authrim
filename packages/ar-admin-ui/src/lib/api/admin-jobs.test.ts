@@ -146,6 +146,61 @@ describe('adminJobsAPI partial failure handling', () => {
 		expect(response.job_types[4]).toMatchObject({ type: 'tenant_delete' });
 	});
 
+	it('normalizes recurring maintenance state and R2 metrics for the Jobs screen', async () => {
+		const fetchMock = vi.fn().mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					schedules: [
+						{
+							id: 'r2_diagnostic_log_retention',
+							name: 'Diagnostic log retention',
+							enabled: true,
+							cron: '0 */6 * * *',
+							status: 'succeeded',
+							lastCompletedAt: 1_800_000_000_000,
+							nextRunAt: 1_800_021_600_000
+						}
+					],
+					storageMetrics: [
+						{
+							binding: 'DIAGNOSTIC_LOGS',
+							objectCount: 10,
+							totalBytes: 1024,
+							oldestObjectAt: 1_799_000_000_000,
+							encryptionMethods: { 'privacy-sanitized-plaintext': 10 },
+							retentionOverdueObjects: 2,
+							retentionPolicy: '30 days',
+							scanComplete: true,
+							measuredAt: 1_800_000_000_000
+						}
+					]
+				}),
+				{ status: 200, headers: { 'Content-Type': 'application/json' } }
+			)
+		);
+		vi.stubGlobal('fetch', fetchMock);
+
+		const response = await adminJobsAPI.listSchedules();
+
+		expect(fetchMock).toHaveBeenCalledWith(
+			expect.stringContaining('/api/admin/jobs/schedules'),
+			expect.objectContaining({ method: 'GET' })
+		);
+		expect(response.schedules[0]).toMatchObject({
+			enabled: true,
+			status: 'succeeded',
+			last_completed_at: new Date(1_800_000_000_000).toISOString(),
+			next_run_at: new Date(1_800_021_600_000).toISOString()
+		});
+		expect(response.storage_metrics[0]).toMatchObject({
+			binding: 'DIAGNOSTIC_LOGS',
+			object_count: 10,
+			total_bytes: 1024,
+			retention_overdue_objects: 2,
+			scan_complete: true
+		});
+	});
+
 	it('creates report jobs with top-level date range and result delivery', async () => {
 		const fetchMock = vi.fn().mockResolvedValue(
 			new Response(
@@ -188,147 +243,6 @@ describe('adminJobsAPI partial failure handling', () => {
 					result_delivery: 'artifact'
 				})
 			})
-		);
-	});
-
-	it('creates tenant database provisioning request jobs', async () => {
-		const fetchMock = vi.fn().mockResolvedValue(
-			new Response(
-				JSON.stringify({
-					job_id: 'job-1',
-					job_type: 'tenant-database/provision',
-					status: 'pending',
-					created_by: 'admin',
-					created_at: '2026-05-16T00:00:00.000Z'
-				}),
-				{
-					status: 202,
-					headers: {
-						'Content-Type': 'application/json'
-					}
-				}
-			)
-		);
-
-		vi.stubGlobal('fetch', fetchMock);
-
-		const job = await adminJobsAPI.createTenantDatabaseProvision({
-			tenant_slug: 'example-library',
-			generation: 2,
-			activate: false,
-			execution_mode: 'operator_cli'
-		});
-
-		expect(job.type).toBe('tenant_database_provision');
-		expect(fetchMock).toHaveBeenCalledWith(
-			expect.stringContaining('/api/admin/jobs/tenant-databases/provision'),
-			expect.objectContaining({
-				method: 'POST',
-				body: JSON.stringify({
-					tenant_slug: 'example-library',
-					generation: 2,
-					activate: false,
-					execution_mode: 'operator_cli'
-				})
-			})
-		);
-	});
-
-	it('creates tenant database activation batch request jobs', async () => {
-		const fetchMock = vi.fn().mockResolvedValue(
-			new Response(
-				JSON.stringify({
-					job_id: 'job-1',
-					job_type: 'tenant-database/activate-batch',
-					status: 'pending',
-					created_by: 'admin',
-					created_at: '2026-05-16T00:00:00.000Z'
-				}),
-				{
-					status: 202,
-					headers: {
-						'Content-Type': 'application/json'
-					}
-				}
-			)
-		);
-
-		vi.stubGlobal('fetch', fetchMock);
-
-		const job = await adminJobsAPI.createTenantDatabaseActivateBatch({
-			targets: [{ tenant_id: 'tenant-a', generation: 2, roles: ['tenant_core', 'tenant_pii'] }],
-			execution_mode: 'plan_only'
-		});
-
-		expect(job.type).toBe('tenant_database_activate_batch');
-		expect(fetchMock).toHaveBeenCalledWith(
-			expect.stringContaining('/api/admin/jobs/tenant-databases/activate-batch'),
-			expect.objectContaining({
-				method: 'POST',
-				body: JSON.stringify({
-					targets: [{ tenant_id: 'tenant-a', generation: 2, roles: ['tenant_core', 'tenant_pii'] }],
-					execution_mode: 'plan_only'
-				})
-			})
-		);
-	});
-
-	it('surfaces unsupported storage profile errors for user import creation', async () => {
-		const fetchMock = vi.fn().mockResolvedValue(
-			new Response(
-				JSON.stringify({
-					error: 'unsupported_storage_profile',
-					storage_profile: 'builtin:storage:tenant-d1',
-					route: '/api/admin/jobs/users/import',
-					tenant_id: 'tenant-1'
-				}),
-				{
-					status: 409,
-					headers: {
-						'Content-Type': 'application/json'
-					}
-				}
-			)
-		);
-
-		vi.stubGlobal('fetch', fetchMock);
-
-		await expect(
-			adminJobsAPI.createUserImport({
-				file_key: 'imports/users.csv'
-			})
-		).rejects.toThrow(
-			'This operation is not available for builtin:storage:tenant-d1. Route /api/admin/jobs/users/import is blocked by the storage profile boundary.'
-		);
-	});
-
-	it('surfaces unsupported storage profile errors for bulk update creation', async () => {
-		const fetchMock = vi.fn().mockResolvedValue(
-			new Response(
-				JSON.stringify({
-					error: 'unsupported_storage_profile',
-					storage_profile: 'builtin:storage:tenant-d1',
-					route: '/api/admin/jobs/users/bulk-update',
-					tenant_id: 'tenant-1'
-				}),
-				{
-					status: 409,
-					headers: {
-						'Content-Type': 'application/json'
-					}
-				}
-			)
-		);
-
-		vi.stubGlobal('fetch', fetchMock);
-
-		await expect(
-			adminJobsAPI.createBulkUpdate({
-				fields: ['status'],
-				values: { status: 'suspended' }
-			})
-		).rejects.toThrow(
-			'This operation is not available for builtin:storage:tenant-d1. Route /api/admin/jobs/users/bulk-update is blocked by the storage profile boundary.'
 		);
 	});
 });

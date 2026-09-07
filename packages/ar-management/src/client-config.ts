@@ -35,8 +35,18 @@ import {
   getTenantIdFromContext,
   validateWebhookUrl,
   GRANT_TYPES,
+  SUPPORTED_JWE_ALG,
+  SUPPORTED_JWE_ENC,
+  CLIENT_ASSERTION_SIGNING_ALGS,
+  FAPI2_MESSAGE_SIGNING_ALGS,
+  getTenantSystemSettings,
 } from '@authrim/ar-lib-core';
+import { isOIDCSigningAlgorithm } from '@authrim/ar-lib-core/utils/oidc-signing';
 import { getRequestAwareIssuerUrl } from './request-issuer';
+import {
+  disableTenantDiscoveryAliasDirectory,
+  resolveTenantDiscoveryAliasDirectoryInput,
+} from './tenant-alias-directory';
 
 const VALID_GRANT_TYPES: ReadonlySet<string> = new Set([
   GRANT_TYPES.AUTHORIZATION_CODE,
@@ -155,6 +165,84 @@ function isCharArrayLike(value: unknown): boolean {
 function validateUpdateRequest(
   body: Partial<ClientMetadata>
 ): { error: string; error_description: string } | null {
+  if (body.jwks !== undefined && body.jwks_uri !== undefined) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description: 'jwks and jwks_uri must not both be provided',
+    };
+  }
+  if (
+    body.token_endpoint_auth_signing_alg !== undefined &&
+    !CLIENT_ASSERTION_SIGNING_ALGS.includes(
+      body.token_endpoint_auth_signing_alg as (typeof CLIENT_ASSERTION_SIGNING_ALGS)[number]
+    )
+  ) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description: `token_endpoint_auth_signing_alg must be one of: ${CLIENT_ASSERTION_SIGNING_ALGS.join(', ')}`,
+    };
+  }
+  if (
+    body.id_token_signed_response_alg !== undefined &&
+    !isOIDCSigningAlgorithm(body.id_token_signed_response_alg)
+  ) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description: 'id_token_signed_response_alg must be one of: RS256, ES256',
+    };
+  }
+  if (
+    body.userinfo_signed_response_alg !== undefined &&
+    body.userinfo_signed_response_alg !== 'none' &&
+    !isOIDCSigningAlgorithm(body.userinfo_signed_response_alg)
+  ) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description: 'userinfo_signed_response_alg must be one of: none, RS256, ES256',
+    };
+  }
+  if (
+    body.authorization_signed_response_alg !== undefined &&
+    !isOIDCSigningAlgorithm(body.authorization_signed_response_alg)
+  ) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description: 'authorization_signed_response_alg must be one of: RS256, ES256',
+    };
+  }
+  if (
+    body.authorization_encrypted_response_alg !== undefined &&
+    !SUPPORTED_JWE_ALG.includes(
+      body.authorization_encrypted_response_alg as (typeof SUPPORTED_JWE_ALG)[number]
+    )
+  ) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description: `authorization_encrypted_response_alg must be one of: ${SUPPORTED_JWE_ALG.join(', ')}`,
+    };
+  }
+  if (
+    body.authorization_encrypted_response_enc !== undefined &&
+    !SUPPORTED_JWE_ENC.includes(
+      body.authorization_encrypted_response_enc as (typeof SUPPORTED_JWE_ENC)[number]
+    )
+  ) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description: `authorization_encrypted_response_enc must be one of: ${SUPPORTED_JWE_ENC.join(', ')}`,
+    };
+  }
+  if (
+    (body.authorization_encrypted_response_alg === undefined) !==
+    (body.authorization_encrypted_response_enc === undefined)
+  ) {
+    return {
+      error: 'invalid_client_metadata',
+      error_description:
+        'authorization_encrypted_response_alg and authorization_encrypted_response_enc must be provided together',
+    };
+  }
+
   // Validate grant_types if provided
   if (body.grant_types !== undefined) {
     if (!Array.isArray(body.grant_types)) {
@@ -405,6 +493,8 @@ function buildClientResponse(
   if (client.response_types) response.response_types = client.response_types as string[];
   if (client.token_endpoint_auth_method)
     response.token_endpoint_auth_method = client.token_endpoint_auth_method as string;
+  if (client.token_endpoint_auth_signing_alg)
+    response.token_endpoint_auth_signing_alg = client.token_endpoint_auth_signing_alg;
   if (client.scope) response.scope = client.scope as string;
   if (client.contacts) response.contacts = client.contacts as string[];
   if (client.logo_uri) response.logo_uri = client.logo_uri as string;
@@ -422,6 +512,12 @@ function buildClientResponse(
     response.id_token_signed_response_alg = client.id_token_signed_response_alg as string;
   if (client.request_object_signing_alg)
     response.request_object_signing_alg = client.request_object_signing_alg as string;
+  if (client.authorization_signed_response_alg)
+    response.authorization_signed_response_alg = client.authorization_signed_response_alg;
+  if (client.authorization_encrypted_response_alg)
+    response.authorization_encrypted_response_alg = client.authorization_encrypted_response_alg;
+  if (client.authorization_encrypted_response_enc)
+    response.authorization_encrypted_response_enc = client.authorization_encrypted_response_enc;
   if (client.post_logout_redirect_uris)
     response.post_logout_redirect_uris = client.post_logout_redirect_uris as string[];
   if (client.backchannel_logout_uri)
@@ -580,6 +676,51 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
       return c.json(validationError, 400);
     }
 
+    const systemSettings = (await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
+      failOnError: true,
+    })) as {
+      fapi?: {
+        enabled?: boolean;
+        messageSigning?: {
+          enabled?: boolean;
+          authorizationSigningAlgorithms?: string[];
+        };
+      };
+    } | null;
+    if (
+      systemSettings?.fapi?.enabled === true &&
+      body.token_endpoint_auth_signing_alg &&
+      !FAPI2_MESSAGE_SIGNING_ALGS.includes(
+        body.token_endpoint_auth_signing_alg as (typeof FAPI2_MESSAGE_SIGNING_ALGS)[number]
+      )
+    ) {
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description:
+            'token_endpoint_auth_signing_alg is not allowed by the active FAPI profile',
+        },
+        400
+      );
+    }
+    const messageSigning = systemSettings?.fapi?.messageSigning;
+    if (
+      messageSigning?.enabled === true &&
+      body.authorization_signed_response_alg &&
+      !(messageSigning.authorizationSigningAlgorithms ?? ['ES256']).includes(
+        body.authorization_signed_response_alg
+      )
+    ) {
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description:
+            'authorization_signed_response_alg is not allowed by the active FAPI profile',
+        },
+        400
+      );
+    }
+
     // Fetch existing client
     const existingClient = await getClientCached(c, c.env, clientId);
     if (!existingClient) {
@@ -589,6 +730,20 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
           error_description: 'Client not found',
         },
         404
+      );
+    }
+    if (
+      systemSettings?.fapi?.enabled === true &&
+      (body.token_endpoint_auth_method ?? existingClient.token_endpoint_auth_method) !==
+        'private_key_jwt'
+    ) {
+      return c.json(
+        {
+          error: 'invalid_client_metadata',
+          error_description:
+            'token_endpoint_auth_method must be private_key_jwt for the active FAPI profile',
+        },
+        400
       );
     }
 
@@ -627,9 +782,13 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
           jwks = ?,
           subject_type = ?,
           sector_identifier_uri = ?,
+          token_endpoint_auth_signing_alg = ?,
           id_token_signed_response_alg = ?,
           userinfo_signed_response_alg = ?,
           request_object_signing_alg = ?,
+          authorization_signed_response_alg = ?,
+          authorization_encrypted_response_alg = ?,
+          authorization_encrypted_response_enc = ?,
           post_logout_redirect_uris = ?,
           backchannel_logout_uri = ?,
           backchannel_logout_session_required = ?,
@@ -638,7 +797,7 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
           initiate_login_uri = ?,
           login_ui_url = ?,
           updated_at = ?
-        WHERE client_id = ?
+        WHERE tenant_id = ? AND client_id = ?
         `,
         [
           // Basic client info
@@ -670,6 +829,10 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
           ),
           // Algorithm preferences
           coalesceNullable(
+            body.token_endpoint_auth_signing_alg,
+            existingClient.token_endpoint_auth_signing_alg
+          ),
+          coalesceNullable(
             body.id_token_signed_response_alg,
             existingClient.id_token_signed_response_alg as string | null | undefined
           ),
@@ -680,6 +843,18 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
           coalesceNullable(
             body.request_object_signing_alg,
             existingClient.request_object_signing_alg as string | null | undefined
+          ),
+          coalesceNullable(
+            body.authorization_signed_response_alg,
+            existingClient.authorization_signed_response_alg
+          ),
+          coalesceNullable(
+            body.authorization_encrypted_response_alg,
+            existingClient.authorization_encrypted_response_alg
+          ),
+          coalesceNullable(
+            body.authorization_encrypted_response_enc,
+            existingClient.authorization_encrypted_response_enc
           ),
           // Logout URIs
           serializeField(body.post_logout_redirect_uris, existingClient.post_logout_redirect_uris),
@@ -717,6 +892,7 @@ export async function clientConfigUpdateHandler(c: Context<{ Bindings: Env }>): 
           // Timestamp
           now,
           // WHERE clause
+          tenantId,
           clientId,
         ]
       );
@@ -803,6 +979,15 @@ export async function clientConfigDeleteHandler(c: Context<{ Bindings: Env }>): 
         401
       );
     }
+
+    await disableTenantDiscoveryAliasDirectory(
+      c.env,
+      await resolveTenantDiscoveryAliasDirectoryInput(c.env, {
+        tenantId,
+        aliasKind: 'client_id',
+        aliasValue: clientId,
+      })
+    );
 
     // Delete client from D1
     const coreAdapter: DatabaseAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;

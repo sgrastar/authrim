@@ -29,6 +29,23 @@ import {
 import { generateSecureSessionId } from './crypto';
 
 /**
+ * Derive the RP-specific OIDC session identifier from the internal OP session key.
+ * The internal session key must never be exposed to the relying party.
+ */
+export async function deriveOidcSid(
+  sessionId: string,
+  clientId: string,
+  issuer: string
+): Promise<string> {
+  const data = new TextEncoder().encode(`${issuer}\u0000${clientId}\u0000${sessionId}`);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+/**
  * Type alias for SessionStore stub returned from region-aware functions
  */
 type SessionStoreStub = DurableObjectStub<SessionStore>;

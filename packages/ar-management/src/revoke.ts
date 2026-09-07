@@ -143,7 +143,8 @@ export async function revokeHandler(c: Context<{ Bindings: Env }>) {
     const assertionValidation = await validateClientAssertion(
       client_assertion,
       `${issuerUrl}/revoke`, // Revocation endpoint URL
-      clientMetadata
+      clientMetadata,
+      { replayProtection: { env: c.env, tenantId } }
     );
 
     if (!assertionValidation.valid) {

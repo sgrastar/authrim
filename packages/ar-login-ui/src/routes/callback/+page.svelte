@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Card, Alert, Spinner } from '$lib/components';
-	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
 	import { LL } from '$i18n/i18n-svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { isValidRedirectUrl, isValidReturnUrl } from '$lib/utils/url-validation';
@@ -22,8 +22,8 @@
 	const { brandingStore } = useLoginUIStores();
 
 	let status = $state<'processing' | 'success' | 'error'>('processing');
-	let errorMessage = $state('');
 	let errorCode = $state('');
+	let errorMessage = $derived(getErrorMessage(errorCode));
 
 	/**
 	 * Handle Smart Handoff SSO callback
@@ -46,7 +46,6 @@
 		try {
 			if (!state) {
 				errorCode = 'missing_state';
-				errorMessage = 'Handoff state is missing';
 				status = 'error';
 				getDiagnosticLogger()?.logAuthDecision({
 					decision: 'deny',
@@ -74,7 +73,6 @@
 			if (!finalizeResponse.ok) {
 				const data = await finalizeResponse.json().catch(() => ({}));
 				errorCode = data.error || 'handoff_finalize_failed';
-				errorMessage = data.error_description || 'Handoff session could not be finalized securely';
 				status = 'error';
 				getDiagnosticLogger()?.logAuthDecision({
 					decision: 'deny',
@@ -90,7 +88,6 @@
 				assertNoBrowserTokenMaterial(finalizeData, 'handoff finalize');
 			} catch {
 				errorCode = 'handoff_finalize_invalid_response';
-				errorMessage = 'Handoff finalize returned token material unexpectedly';
 				status = 'error';
 				getDiagnosticLogger()?.logAuthDecision({
 					decision: 'deny',
@@ -105,7 +102,6 @@
 
 			if (!auth.checkAuth()) {
 				errorCode = 'handoff_cookie_session_missing';
-				errorMessage = 'Handoff session could not be restored from the secure session cookie';
 				status = 'error';
 				getDiagnosticLogger()?.logAuthDecision({
 					decision: 'deny',
@@ -170,12 +166,59 @@
 		} catch (error) {
 			console.error('[Authrim] Handoff error:', error);
 			errorCode = 'network_error';
-			errorMessage = 'An error occurred during handoff authentication';
 			status = 'error';
 			getDiagnosticLogger()?.logAuthDecision({
 				decision: 'deny',
 				reason: 'network_error',
 				flow: 'smart-handoff'
+			});
+		}
+	}
+
+	async function handleProvisioningCallback(token: string, tenantId: string): Promise<void> {
+		history.replaceState(null, '', window.location.pathname);
+		const deadline = Date.now() + 5 * 60 * 1000;
+		let pollingDelay = 250;
+		try {
+			while (Date.now() < deadline) {
+				const response = await authrimFetch('/api/external/provisioning/status', {
+					baseUrl: API_BASE_URL,
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ provisioning_token: token, tenant_id: tenantId })
+				});
+				const data = await response.json().catch(() => ({}));
+				if (response.status === 202 && data.status === 'pending') {
+					const serverRetryAfter =
+						typeof data.retry_after_ms === 'number'
+							? Math.min(2000, Math.max(250, data.retry_after_ms))
+							: 500;
+					pollingDelay = Math.min(2000, Math.max(serverRetryAfter, Math.ceil(pollingDelay * 1.5)));
+					await new Promise((resolve) => setTimeout(resolve, pollingDelay));
+					continue;
+				}
+				if (response.ok && data.status === 'ready' && typeof data.resume_url === 'string') {
+					const apiOrigin = new URL(API_BASE_URL, window.location.origin).origin;
+					const resumeUrl = new URL(data.resume_url, apiOrigin);
+					if (
+						resumeUrl.origin !== apiOrigin ||
+						resumeUrl.pathname !== '/auth/external/provisioning/resume'
+					) {
+						throw new Error('invalid provisioning resume URL');
+					}
+					window.location.assign(resumeUrl.toString());
+					return;
+				}
+				throw new Error('external provisioning failed');
+			}
+			throw new Error('external provisioning timed out');
+		} catch {
+			errorCode = 'temporarily_unavailable';
+			status = 'error';
+			getDiagnosticLogger()?.logAuthDecision({
+				decision: 'deny',
+				reason: 'external_idp_provisioning_resume_failed',
+				flow: 'external_idp'
 			});
 		}
 	}
@@ -187,8 +230,14 @@
 		const error = params.get('error');
 		if (error) {
 			errorCode = error;
-			errorMessage = params.get('error_description') || getErrorMessage(error);
 			status = 'error';
+			return;
+		}
+
+		const provisioningToken = params.get('provisioning_token');
+		const provisioningTenant = params.get('provisioning_tenant');
+		if (provisioningToken && provisioningTenant) {
+			await handleProvisioningCallback(provisioningToken, provisioningTenant);
 			return;
 		}
 
@@ -219,8 +268,6 @@
 				// Storage cleanup is best-effort after an unsupported callback shape.
 			}
 			errorCode = 'external_handoff_required';
-			errorMessage =
-				'This Login UI requires cookie-session handoff. Enable external IdP SSO/handoff for this provider or use a token-capable SDK client.';
 			status = 'error';
 			getDiagnosticLogger()?.logAuthDecision({
 				decision: 'deny',
@@ -232,7 +279,6 @@
 		}
 
 		errorCode = 'missing_handoff_token';
-		errorMessage = $LL.callback_errorMissingCode();
 		status = 'error';
 	});
 
@@ -240,9 +286,18 @@
 		const messages: Record<string, () => string> = {
 			access_denied: () => $LL.error_access_denied(),
 			invalid_request: () => $LL.error_invalid_request(),
+			missing_state: () => $LL.error_invalid_request(),
+			unauthorized_client: () => $LL.error_unauthorized_client(),
+			unsupported_response_type: () => $LL.error_unsupported_response_type(),
+			invalid_scope: () => $LL.error_invalid_scope(),
 			server_error: () => $LL.error_server_error(),
+			handoff_finalize_invalid_response: () => $LL.error_server_error(),
+			handoff_cookie_session_missing: () => $LL.error_server_error(),
+			external_handoff_required: () => $LL.error_server_error(),
 			temporarily_unavailable: () => $LL.error_temporarily_unavailable(),
-			login_required: () => $LL.error_login_required()
+			login_required: () => $LL.error_login_required(),
+			missing_handoff_token: () => $LL.callback_errorMissingCode(),
+			network_error: () => $LL.error_unknown()
 		};
 		return (messages[code] || (() => $LL.error_unknown()))();
 	}
@@ -256,80 +311,64 @@
 	<title>{$LL.callback_title()} - {brandingStore.brandName || $LL.app_title()}</title>
 </svelte:head>
 
-<div class="auth-page">
-	<LanguageSwitcher />
-
-	<div class="auth-container">
-		<!-- Header -->
-		<div class="auth-header">
-			<h1 class="auth-header__title">
-				{brandingStore.brandName || $LL.app_title()}
-			</h1>
-		</div>
-
-		<Card class="text-center">
-			{#if status === 'processing'}
-				<!-- Processing -->
-				<div class="py-8">
-					<Spinner size="lg" color="primary" class="mb-4" />
-					<h2 class="auth-section-title text-center">
-						{$LL.callback_processing()}
-					</h2>
-					<p class="auth-section-subtitle text-center">
-						{$LL.callback_pleaseWait()}
-					</p>
-				</div>
-			{:else if status === 'success'}
-				<!-- Success -->
-				<div class="py-8">
-					<div class="auth-icon-badge">
-						<div class="auth-icon-badge__circle">
-							<span class="i-heroicons-check-circle h-9 w-9 auth-icon-badge__icon"></span>
-						</div>
-					</div>
-					<h2 class="auth-section-title text-center">
-						{$LL.callback_success()}
-					</h2>
-					<p class="auth-section-subtitle text-center">
-						{$LL.callback_redirecting()}
-					</p>
-				</div>
-			{:else}
-				<!-- Error -->
-				<div class="auth-icon-badge">
-					<div class="auth-icon-badge__circle auth-icon-badge__circle--danger">
-						<span class="i-heroicons-exclamation-circle h-9 w-9 auth-icon-badge__icon"></span>
-					</div>
-				</div>
-
+<AuthPageShell>
+	<Card class="text-center">
+		{#if status === 'processing'}
+			<!-- Processing -->
+			<div class="py-8">
+				<Spinner size="lg" color="primary" class="mb-4" />
 				<h2 class="auth-section-title text-center">
-					{$LL.callback_errorTitle()}
+					{$LL.callback_processing()}
 				</h2>
-
-				<Alert variant="error" class="mb-4 text-left">
-					<p>{errorMessage}</p>
-				</Alert>
-
-				{#if errorCode}
-					<div class="auth-error-code-box mb-6">
-						<p class="auth-error-code-box__label">
-							{$LL.error_errorCode()}
-						</p>
-						<p class="auth-error-code-box__value">
-							{errorCode}
-						</p>
+				<p class="auth-section-subtitle text-center">
+					{$LL.callback_pleaseWait()}
+				</p>
+			</div>
+		{:else if status === 'success'}
+			<!-- Success -->
+			<div class="py-8">
+				<div class="auth-icon-badge">
+					<div class="auth-icon-badge__circle">
+						<span class="i-heroicons-check-circle h-9 w-9 auth-icon-badge__icon"></span>
 					</div>
-				{/if}
+				</div>
+				<h2 class="auth-section-title text-center">
+					{$LL.callback_success()}
+				</h2>
+				<p class="auth-section-subtitle text-center">
+					{$LL.callback_redirecting()}
+				</p>
+			</div>
+		{:else}
+			<!-- Error -->
+			<div class="auth-icon-badge">
+				<div class="auth-icon-badge__circle auth-icon-badge__circle--danger">
+					<span class="i-heroicons-exclamation-circle h-9 w-9 auth-icon-badge__icon"></span>
+				</div>
+			</div>
 
-				<button class="btn-primary w-full" onclick={handleRetry}>
-					{$LL.common_backToLogin()}
-				</button>
+			<h2 class="auth-section-title text-center">
+				{$LL.callback_errorTitle()}
+			</h2>
+
+			<Alert variant="error" class="mb-4 text-left">
+				<p>{errorMessage}</p>
+			</Alert>
+
+			{#if errorCode}
+				<div class="auth-error-code-box mb-6">
+					<p class="auth-error-code-box__label">
+						{$LL.error_errorCode()}
+					</p>
+					<p class="auth-error-code-box__value">
+						{errorCode}
+					</p>
+				</div>
 			{/if}
-		</Card>
-	</div>
 
-	<!-- Footer -->
-	<footer class="auth-footer">
-		<p>{$LL.footer_stack()}</p>
-	</footer>
-</div>
+			<button class="btn-primary w-full" onclick={handleRetry}>
+				{$LL.common_backToLogin()}
+			</button>
+		{/if}
+	</Card>
+</AuthPageShell>

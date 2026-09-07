@@ -124,8 +124,8 @@ export const DEFAULTS = {
   /**
    * Strict InResponseTo validation mode
    * When enabled, InResponseTo MUST match a stored AuthnRequest ID
-   * This prevents assertion theft/injection attacks but breaks IdP-initiated SSO
-   * Default: false (for backward compatibility with IdP-initiated SSO)
+   * This prevents unsolicited assertion injection. Deployments that intentionally support
+   * IdP-initiated SSO must explicitly disable this setting.
    */
-  STRICT_INRESPONSETO: false,
+  STRICT_INRESPONSETO: true,
 } as const;

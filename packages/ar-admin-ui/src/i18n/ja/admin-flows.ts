@@ -5,17 +5,6 @@ const adminFlows = {
 	admin_flows_description: 'ログイン、属性送信、同意、出力までの流れを一覧から確認します。',
 	admin_flows_consent_policies: '同意ポリシー',
 	admin_flows_field_mapping: 'Field Mapping',
-	admin_flows_overview_title: 'Flow overview',
-	admin_flows_overview_description:
-		'まずはSAML/OIDCの代表的な導線を、Mapping、Consent、Outputまで通して確認します。',
-	admin_flows_overview_request_title: 'Request',
-	admin_flows_overview_request_subtitle: 'protocol request',
-	admin_flows_overview_mapping_title: 'Mapping',
-	admin_flows_overview_mapping_subtitle: 'schema / field set',
-	admin_flows_overview_consent_title: 'Consent',
-	admin_flows_overview_consent_subtitle: 'statement / policy',
-	admin_flows_overview_output_title: 'Output',
-	admin_flows_overview_output_subtitle: 'response / grant',
 	admin_flows_list_title: 'Flow list',
 	admin_flows_list_description: '詳細で設定要素を確認し、Flow画面で全体像を見ます。',
 	admin_flows_status_preview: 'Preview',
@@ -182,7 +171,6 @@ const adminFlows = {
 	admin_flows_cancel: 'キャンセル',
 	admin_flows_apply: '反映',
 	admin_flows_node_settings_aria: '{title} の設定',
-	admin_flows_node_description_aria: '{title} の説明',
 	admin_flows_node_outputs_aria: '{title} outputs',
 	admin_flows_template_saml_attribute_release_title: 'SAML Attribute Release',
 	admin_flows_template_saml_attribute_release_subtitle: 'SAML SPへの属性送信確認',
@@ -241,6 +229,56 @@ const adminFlows = {
 		'既存アカウントでログインし、必要に応じてscope/claim提供を確認',
 	admin_flows_template_oidc_login_recorded_state:
 		'tenant + user + OIDC Client + session/authentication event + User Decision',
+	admin_flows_template_oidc_registration_no_consent_title: 'Registration (No consent)',
+	admin_flows_template_oidc_registration_no_consent_subtitle:
+		'プロフィール入力と登録同意なしの新規登録',
+	admin_flows_template_oidc_registration_no_consent_description:
+		'登録リクエストから登録方法の選択、アカウント作成、アプリケーションへの継続までを確認します。',
+	admin_flows_template_oidc_registration_no_consent_primary_entry:
+		'Registration Request / Sign-up entry',
+	admin_flows_template_oidc_registration_no_consent_primary_output:
+		'Application continuation / New account session',
+	admin_flows_template_oidc_registration_no_consent_mapping_set: 'OIDC registration profile fields',
+	admin_flows_template_oidc_registration_no_consent_user_action:
+		'登録方法を選び、プロフィール入力と登録同意なしでアカウントを作成',
+	admin_flows_template_oidc_registration_no_consent_recorded_state:
+		'tenant + user + OIDC Client + credential binding + audit event',
+	admin_flows_template_academic_saml_login_title: 'Academic SAML Login',
+	admin_flows_template_academic_saml_login_subtitle: '学術出版社・図書館系SP向けログイン',
+	admin_flows_template_academic_saml_login_description:
+		'SAML AuthnRequestからセッション確認、認証方式選択、属性送信確認、SAML Responseまでを確認します。',
+	admin_flows_template_academic_saml_login_primary_entry: 'SAML AuthnRequest',
+	admin_flows_template_academic_saml_login_primary_output: 'SAML Response / Assertion',
+	admin_flows_template_academic_saml_login_mapping_set:
+		'GakuNin application standard Field Mapping Set',
+	admin_flows_template_academic_saml_login_consent_policy: 'SAML attribute release policy',
+	admin_flows_template_academic_saml_login_consent_statement: 'saml_attribute_release_uapprove',
+	admin_flows_template_academic_saml_login_user_action:
+		'既存アカウントでログインし、SPへ送信する属性を確認して許可',
+	admin_flows_template_academic_saml_login_recorded_state:
+		'tenant + user + SAML SP + statement/version + User Decision',
+	admin_flows_template_oidc_login_no_consent_title: 'Authentication-only Login',
+	admin_flows_template_oidc_login_no_consent_subtitle: '対話的な同意ノードを含まないログイン',
+	admin_flows_template_oidc_login_no_consent_description:
+		'ログインリクエストからセッション確認、認証方式選択、ログイン、アプリケーションへの継続までを確認します。',
+	admin_flows_template_oidc_login_no_consent_primary_entry: 'Login Request / Login entry',
+	admin_flows_template_oidc_login_no_consent_primary_output:
+		'Application continuation / Existing account session',
+	admin_flows_template_oidc_login_no_consent_mapping_set: 'OIDC login/session claims',
+	admin_flows_template_oidc_login_no_consent_user_action: '既存アカウントでログイン',
+	admin_flows_template_oidc_login_no_consent_recorded_state:
+		'tenant + user + OIDC Client + session/authentication event + audit event',
+	admin_flows_template_saml_sp_oidc_rp_title: 'SAML SP/OIDC RP Flow',
+	admin_flows_template_saml_sp_oidc_rp_subtitle: 'SAML SP・OIDC RP向けログイン',
+	admin_flows_template_saml_sp_oidc_rp_description:
+		'Authentication-only Login と同じログイン処理を行い、認証後にリクエスト元のプロトコルを判定してSAML ResponseまたはOIDC authorization responseへ進みます。',
+	admin_flows_template_saml_sp_oidc_rp_primary_entry:
+		'SAML AuthnRequest / OIDC Authorization Request',
+	admin_flows_template_saml_sp_oidc_rp_primary_output:
+		'SAML Response / OIDC Authorization Response',
+	admin_flows_template_saml_sp_oidc_rp_user_action: '既存アカウントでログイン',
+	admin_flows_template_saml_sp_oidc_rp_recorded_state:
+		'tenant + user + protocol target + session/authentication event + audit event',
 	admin_flows_kind_release_confirmation: '属性送信確認',
 	admin_flows_kind_authorization: '認可',
 	admin_flows_kind_registration: '新規登録',
@@ -405,7 +443,6 @@ const adminFlows = {
 	admin_flows_output_complete: 'Complete',
 	admin_flows_output_matched: 'Matched',
 	admin_flows_output_otherwise: 'Otherwise',
-	admin_flows_editor_start_description: 'リクエスト、直リンク、LoginUIの入口を受け取ります。',
 	admin_flows_editor_registration_request_description:
 		'新規登録リクエストまたはLoginUIの新規登録入口を受け取り、アプリケーション文脈を解決します。',
 	admin_flows_editor_login_request_description:
@@ -421,20 +458,20 @@ const adminFlows = {
 		'Flowを完了し、結果となるセッション、レスポンス、リダイレクトへ接続します。',
 	admin_flows_editor_setting_prompt_create: 'prompt=create',
 	admin_flows_editor_setting_signup_entry: 'signup entry',
-	admin_flows_editor_setting_default_profile: 'Default profile',
 	admin_flows_editor_setting_basic_profile: 'Basic profile',
 	admin_flows_editor_setting_email: 'email',
 	admin_flows_editor_setting_name: 'name',
 	admin_flows_editor_setting_redirect: 'redirect',
-	admin_flows_trust_policy_title: '同意ポリシー',
+	admin_flows_trust_policy_title: 'Client Trust Policy',
 	admin_flows_trust_policy_description:
-		'信頼設定を構成します。Flowの割り当てはFlow設定で管理します。',
+		'OIDC ClientまたはSAML Service Providerの信頼動作を決める唯一のポリシーです。',
 	admin_flows_trust_policy_loading: '同意ポリシー設定を読み込んでいます...',
 	admin_flows_trust_policy_load_failed: '同意ポリシー設定を読み込めませんでした',
 	admin_flows_trust_policy_saved: 'Trust policy設定を保存しました。',
 	admin_flows_trust_policy_save_failed: 'Trust policy設定を保存できませんでした',
 	admin_flows_trust_policy_flow_hint:
-		'この対象で利用するLoginまたはRegistration FlowはFlow設定で選択します。同意ポリシーはFlow内のConsent nodeに紐付けます。',
+		'このゲートは認可プロトコルの権威を読み取り専用で表示します。Flowの編集や公開ではClient Trust Policyは変更されません。',
+	admin_flows_authoritative_consent_gate_output: '認可 / 属性送信',
 	admin_flows_trust_policy_first_party_label: 'ファーストパーティアプリケーション',
 	admin_flows_trust_policy_first_party_description:
 		'同じサービス運営者が提供するアプリケーションとして扱います。',

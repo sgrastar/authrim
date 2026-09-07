@@ -23,11 +23,14 @@ import {
   requestContextMiddleware,
   pluginContextMiddleware,
   diagnosticLoggingMiddleware,
+  rateLimitMiddleware,
+  getRateLimitProfileAsync,
   createErrorResponse,
   AR_ERROR_CODES,
   // Health Check
   createHealthCheckHandlers,
   getLogger,
+  createActiveAccessTokenProtectedResourceMiddleware,
 } from '@authrim/ar-lib-core';
 import type { Env } from './types';
 
@@ -36,6 +39,12 @@ import { verifierMetadataRoute } from './verifier/routes/metadata';
 import { vpAuthorizeRoute } from './verifier/routes/authorize';
 import { vpResponseRoute } from './verifier/routes/response';
 import { vpRequestStatusRoute } from './verifier/routes/request-status';
+import { vpRequestObjectRoute } from './verifier/routes/request-object';
+import {
+  initiateAttributeVerification,
+  attributeVerifyResponse,
+  getAttributes,
+} from './verifier/routes/attribute-verify';
 
 // Issuer routes
 import { issuerMetadataRoute } from './issuer/routes/metadata';
@@ -44,6 +53,7 @@ import { credentialRoute } from './issuer/routes/credential';
 import { deferredCredentialRoute } from './issuer/routes/deferred';
 import { statusListRoute, statusListJsonRoute } from './issuer/routes/status-list';
 import { vciTokenRoute } from './issuer/routes/token';
+import { vciNonceRoute } from './issuer/routes/nonce';
 
 // DID routes
 import { didDocumentRoute } from './did/routes/document';
@@ -65,6 +75,59 @@ app.use(
 );
 app.use('*', pluginContextMiddleware());
 app.use('*', cors());
+
+async function applyRateLimit(
+  c: Parameters<ReturnType<typeof rateLimitMiddleware>>[0],
+  next: () => Promise<void>,
+  profileName: 'strict' | 'moderate' | 'lenient',
+  endpoints: string[]
+): Promise<Response | void> {
+  const profile = await getRateLimitProfileAsync(c.env, profileName);
+  return rateLimitMiddleware({ ...profile, endpoints })(c, next);
+}
+
+app.use('/vci/token', (c, next) => applyRateLimit(c as never, next, 'strict', ['/vci/token']));
+app.use('/vci/credential', (c, next) =>
+  applyRateLimit(c as never, next, 'strict', ['/vci/credential'])
+);
+app.use('/vp/response', (c, next) => applyRateLimit(c as never, next, 'strict', ['/vp/response']));
+app.use('/vp/attribute-response', (c, next) =>
+  applyRateLimit(c as never, next, 'strict', ['/vp/attribute-response'])
+);
+app.use('/vp/initiate', (c, next) => applyRateLimit(c as never, next, 'strict', ['/vp/initiate']));
+app.use('/vp/attributes', (c, next) =>
+  applyRateLimit(c as never, next, 'moderate', ['/vp/attributes'])
+);
+const attributeProtectedResource = createActiveAccessTokenProtectedResourceMiddleware({
+  audience: (c) => c.env.VC_ATTRIBUTE_ELEVATION_AUDIENCE ?? 'svc://op-vc/attribute-elevation',
+  requiredScopes: ['vc.attribute'],
+});
+app.use('/vp/initiate', attributeProtectedResource as never);
+app.use('/vp/attribute-response', attributeProtectedResource as never);
+app.use('/vp/attributes', attributeProtectedResource as never);
+app.use('/vci/nonce', (c, next) => applyRateLimit(c as never, next, 'moderate', ['/vci/nonce']));
+app.use('/vp/authorize', (c, next) =>
+  applyRateLimit(c as never, next, 'moderate', ['/vp/authorize'])
+);
+app.use('/vp/requests/*', (c, next) =>
+  applyRateLimit(c as never, next, 'moderate', ['/vp/requests/'])
+);
+app.use('/vp/request/*', (c, next) =>
+  applyRateLimit(c as never, next, 'lenient', ['/vp/request/'])
+);
+app.use('/vci/deferred', (c, next) =>
+  applyRateLimit(c as never, next, 'moderate', ['/vci/deferred'])
+);
+app.use('/vci/status-lists/*', (c, next) =>
+  applyRateLimit(c as never, next, 'moderate', ['/vci/status-lists/'])
+);
+app.use('/.well-known/*', (c, next) =>
+  applyRateLimit(c as never, next, 'lenient', ['/.well-known/'])
+);
+app.use('/vci/offers/*', (c, next) =>
+  applyRateLimit(c as never, next, 'lenient', ['/vci/offers/'])
+);
+app.use('/did/*', (c, next) => applyRateLimit(c as never, next, 'lenient', ['/did/']));
 
 // =============================================================================
 // Health Check
@@ -102,8 +165,17 @@ app.post('/vp/authorize', vpAuthorizeRoute);
 // VP Response (receives vp_token via direct_post)
 app.post('/vp/response', vpResponseRoute);
 
+// Wallet-facing authorization request referenced by request_uri
+app.get('/vp/request/:id', vpRequestObjectRoute);
+
 // Request status (for polling)
 app.get('/vp/requests/:id', vpRequestStatusRoute);
+
+// Authenticated attribute elevation. All three routes use the shared token
+// introspector; the response rechecks the active subject before persistence.
+app.post('/vp/initiate', initiateAttributeVerification);
+app.post('/vp/attribute-response', attributeVerifyResponse);
+app.get('/vp/attributes', getAttributes);
 
 // =============================================================================
 // OpenID4VCI Issuer Endpoints
@@ -114,6 +186,9 @@ app.get('/.well-known/openid-credential-issuer', issuerMetadataRoute);
 
 // Token endpoint (pre-authorized_code grant)
 app.post('/vci/token', vciTokenRoute);
+
+// Independent proof nonce endpoint (OpenID4VCI 1.0 Final)
+app.post('/vci/nonce', vciNonceRoute);
 
 // Credential offer
 app.get('/vci/offers/:id', credentialOfferRoute);
@@ -143,8 +218,7 @@ app.get('/did/resolve/:did', didResolveRoute);
 // =============================================================================
 
 app.onError((err, c) => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const log = getLogger(c as any).module('VC');
+  const log = getLogger(c).module('VC');
   log.error('Unhandled error in VC worker', {}, err as Error);
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 });
@@ -157,8 +231,12 @@ app.notFound((c) => {
 // Durable Object Exports
 // =============================================================================
 
-export { VPRequestStore } from './verifier/durable-objects/VPRequestStore';
-export { CredentialOfferStore } from './issuer/durable-objects/CredentialOfferStore';
+export { VPRequestStore, VPRequestStoreV2 } from './verifier/durable-objects/VPRequestStore';
+export {
+  CredentialOfferStore,
+  CredentialOfferStoreV2,
+} from './issuer/durable-objects/CredentialOfferStore';
+export { VCIssuerEntrypoint } from './entrypoints/VCIssuerEntrypoint';
 // Re-export KeyManager from shared for EC key management
 export { KeyManager } from '@authrim/ar-lib-core';
 
@@ -167,3 +245,4 @@ export { KeyManager } from '@authrim/ar-lib-core';
 // =============================================================================
 
 export default app;
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

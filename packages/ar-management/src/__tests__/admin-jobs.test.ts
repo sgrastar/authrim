@@ -70,8 +70,6 @@ import {
   adminJobsImportUploadUrlHandler,
   adminJobsUsersImportHandler,
   adminJobsUsersBulkUpdateHandler,
-  adminJobsTenantDatabaseProvisionHandler,
-  adminJobsTenantDatabaseActivateBatchHandler,
   adminJobsReportsGenerateHandler,
   adminJobsOrgBulkMembersHandler,
 } from '../admin-jobs';
@@ -85,6 +83,7 @@ interface StoredR2Object {
   body: Uint8Array;
   contentType?: string;
   customMetadata?: Record<string, string>;
+  etag?: string;
 }
 
 function createMockR2Bucket(initial: Record<string, StoredR2Object> = {}) {
@@ -98,10 +97,14 @@ function createMockR2Bucket(initial: Record<string, StoredR2Object> = {}) {
           key: string,
           value: ArrayBuffer | ArrayBufferView | string,
           options?: {
+            onlyIf?: { etagDoesNotMatch?: string };
             httpMetadata?: { contentType?: string };
             customMetadata?: Record<string, string>;
           }
         ) => {
+          if (options?.onlyIf?.etagDoesNotMatch === '*' && store.has(key)) {
+            return null;
+          }
           const body =
             typeof value === 'string'
               ? new TextEncoder().encode(value)
@@ -112,11 +115,14 @@ function createMockR2Bucket(initial: Record<string, StoredR2Object> = {}) {
                   : new Uint8Array(
                       value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength)
                     );
+          const etag = `etag-${body.byteLength}`;
           store.set(key, {
             body,
             contentType: options?.httpMetadata?.contentType,
             customMetadata: options?.customMetadata,
+            etag,
           });
+          return { etag };
         }
       ),
       get: vi.fn(async (key: string) => {
@@ -125,6 +131,7 @@ function createMockR2Bucket(initial: Record<string, StoredR2Object> = {}) {
           return null;
         }
         return {
+          etag: object.etag ?? `etag-${object.body.byteLength}`,
           body: new Blob([object.body]).stream(),
           arrayBuffer: async () =>
             object.body.buffer.slice(
@@ -177,11 +184,6 @@ function createTestApp(envOverrides: Partial<Env> = {}) {
   app.put('/api/admin/jobs/users/import/upload/:upload_id', adminJobsImportUploadHandler);
   app.post('/api/admin/jobs/users/import', adminJobsUsersImportHandler);
   app.post('/api/admin/jobs/users/bulk-update', adminJobsUsersBulkUpdateHandler);
-  app.post('/api/admin/jobs/tenant-databases/provision', adminJobsTenantDatabaseProvisionHandler);
-  app.post(
-    '/api/admin/jobs/tenant-databases/activate-batch',
-    adminJobsTenantDatabaseActivateBatchHandler
-  );
   app.post('/api/admin/jobs/reports/generate', adminJobsReportsGenerateHandler);
   app.post('/api/admin/jobs/organizations/:id/bulk-members', adminJobsOrgBulkMembersHandler);
   app.get('/api/admin/jobs', adminJobsListHandler);
@@ -315,25 +317,11 @@ describe('admin-jobs handlers', () => {
       processorStatus: 'scheduled',
       creatableFromAdminApi: true,
     });
-    expect(ADMIN_JOB_TYPE_REGISTRY['tenant-database/provision']).toMatchObject({
-      processorStatus: 'scheduled',
-      creatableFromAdminApi: true,
-      createEndpoint: '/api/admin/jobs/tenant-databases/provision',
-    });
-    expect(ADMIN_JOB_TYPE_REGISTRY['tenant-database/activate-batch']).toMatchObject({
-      processorStatus: 'disabled',
-      creatableFromAdminApi: true,
-      createEndpoint: '/api/admin/jobs/tenant-databases/activate-batch',
-    });
     expect(ADMIN_JOB_TYPE_REGISTRY['tenant-database/export']).toMatchObject({
       processorStatus: 'scheduled',
       creatableFromAdminApi: false,
     });
     expect(ADMIN_JOB_TYPE_REGISTRY['tenant-database/final-purge']).toMatchObject({
-      processorStatus: 'disabled',
-      creatableFromAdminApi: false,
-    });
-    expect(ADMIN_JOB_TYPE_REGISTRY['tenant-database/storage-profile-change']).toMatchObject({
       processorStatus: 'disabled',
       creatableFromAdminApi: false,
     });
@@ -377,138 +365,6 @@ describe('admin-jobs handlers', () => {
           fields: ['email'],
           values: { email: 'alice@example.com' },
           dry_run: true,
-        }),
-      },
-      env
-    );
-
-    expect(res.status).toBe(400);
-    expect(mockAdapter.execute).not.toHaveBeenCalled();
-  });
-
-  it('creates a tenant database provisioning request job', async () => {
-    const { app, env } = createTestApp();
-
-    const res = await app.request(
-      '/api/admin/jobs/tenant-databases/provision',
-      {
-        method: 'POST',
-        headers: buildHeaders(),
-        body: JSON.stringify({
-          tenant_slug: 'example-library',
-          generation: 2,
-          activate: false,
-          execution_mode: 'operator_cli',
-          reason: 'prepare tenant-d1 resources',
-        }),
-      },
-      env
-    );
-
-    expect(res.status).toBe(202);
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_jobs'),
-      expect.arrayContaining(['job-123', 'tenant-a', 'tenant-database/provision'])
-    );
-    const values = mockAdapter.execute.mock.calls[0]?.[1] as unknown[];
-    expect(JSON.parse(values[5] as string)).toMatchObject({
-      tenant_id: 'tenant-a',
-      tenant_slug: 'example-library',
-      generation: 2,
-      execution_mode: 'operator_cli',
-      requested_from: 'admin_ui',
-    });
-  });
-
-  it('rejects Cloudflare API execution mode for tenant database provisioning requests', async () => {
-    const { app, env } = createTestApp();
-
-    const res = await app.request(
-      '/api/admin/jobs/tenant-databases/provision',
-      {
-        method: 'POST',
-        headers: buildHeaders(),
-        body: JSON.stringify({
-          tenant_slug: 'example-library',
-          execution_mode: 'cloudflare_api',
-        }),
-      },
-      env
-    );
-
-    expect(res.status).toBe(400);
-    expect(mockAdapter.execute).not.toHaveBeenCalled();
-  });
-
-  it('rejects tenant database provisioning jobs in tenant D1 pool mode', async () => {
-    const { app, env } = createTestApp({
-      DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
-    });
-
-    const res = await app.request(
-      '/api/admin/jobs/tenant-databases/provision',
-      {
-        method: 'POST',
-        headers: buildHeaders(),
-        body: JSON.stringify({
-          tenant_slug: 'example-library',
-          generation: 2,
-          activate: false,
-          execution_mode: 'operator_cli',
-        }),
-      },
-      env
-    );
-
-    expect(res.status).toBe(400);
-    expect(mockAdapter.execute).not.toHaveBeenCalled();
-  });
-
-  it('creates a tenant database activation batch request job', async () => {
-    const { app, env } = createTestApp();
-
-    const res = await app.request(
-      '/api/admin/jobs/tenant-databases/activate-batch',
-      {
-        method: 'POST',
-        headers: buildHeaders(),
-        body: JSON.stringify({
-          targets: [{ tenant_id: 'tenant-a', generation: 2, roles: ['tenant_core', 'tenant_pii'] }],
-          scheduled_window: { not_before: '2026-05-16T18:00:00.000Z', timezone: 'Asia/Tokyo' },
-          execution_mode: 'plan_only',
-          reason: 'activate after deploy',
-        }),
-      },
-      env
-    );
-
-    expect(res.status).toBe(202);
-    expect(mockAdapter.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO admin_jobs'),
-      expect.arrayContaining(['job-123', 'tenant-a', 'tenant-database/activate-batch'])
-    );
-    const values = mockAdapter.execute.mock.calls[0]?.[1] as unknown[];
-    expect(JSON.parse(values[5] as string)).toMatchObject({
-      targets: [{ tenant_id: 'tenant-a', generation: 2, roles: ['tenant_core', 'tenant_pii'] }],
-      require_health_check: true,
-      require_binding_reconciliation: true,
-      requested_from: 'admin_ui',
-    });
-  });
-
-  it('rejects tenant database activation jobs in tenant D1 pool mode', async () => {
-    const { app, env } = createTestApp({
-      DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
-    });
-
-    const res = await app.request(
-      '/api/admin/jobs/tenant-databases/activate-batch',
-      {
-        method: 'POST',
-        headers: buildHeaders(),
-        body: JSON.stringify({
-          targets: [{ tenant_id: 'tenant-a', generation: 2, roles: ['tenant_core', 'tenant_pii'] }],
-          execution_mode: 'plan_only',
         }),
       },
       env
@@ -661,6 +517,36 @@ describe('admin-jobs handlers', () => {
         content_type: 'text/csv',
       })
     );
+    expect(bucket.put).toHaveBeenCalledWith(
+      buildUserImportUploadKey('tenant-a', 'upload-123', 'users.csv'),
+      expect.any(ArrayBuffer),
+      expect.objectContaining({ onlyIf: { etagDoesNotMatch: '*' } })
+    );
+  });
+
+  it('rejects replacing an immutable import artifact upload', async () => {
+    const key = buildUserImportUploadKey('tenant-a', 'upload-123', 'users.csv');
+    const { bucket, store } = createMockR2Bucket({
+      [key]: { body: new TextEncoder().encode('email\noriginal@example.com\n') },
+    });
+    const { app, env } = createTestApp({ IMPORT_ARTIFACTS: bucket });
+
+    const res = await app.request(
+      '/api/admin/jobs/users/import/upload/upload-123?filename=users.csv',
+      {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'text/csv',
+          'X-Tenant-Id': 'tenant-a',
+        },
+        body: 'email\nalice@example.com\n',
+      },
+      env
+    );
+
+    expect(res.status).toBe(409);
+    expect(bucket.put).toHaveBeenCalledOnce();
+    expect(new TextDecoder().decode(store.get(key)?.body)).toBe('email\noriginal@example.com\n');
   });
 
   it('creates a user import job only when the artifact belongs to the tenant', async () => {

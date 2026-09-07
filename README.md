@@ -9,19 +9,24 @@ An open-source, serverless **Identity Hub** that combines authentication, author
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange?logo=cloudflare)](https://workers.cloudflare.com/)
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fsgrastar%2Fauthrim.svg?type=shield)](https://app.fossa.com/projects/git%2Bgithub.com%2Fsgrastar%2Fauthrim?ref=badge_shield)
 
-<table>
-<tr>
-<td>
+<table style="border:none">
+<tbody><tr style="border:none">
+<td style="border:none">
 <a href="https://openid.net/certification/">
-  <img src="./docs/images/openid-certified.jpg" alt="OpenID Certified" height="100">
+  <img src="https://github.com/sgrastar/authrim/raw/main/docs/images/openid-certified.jpg" alt="OpenID Certified" height="100">
 </a>
 </td>
-<td>
-✓ <a href="https://openid.net/certification/certified-openid-providers-profiles/">OpenID Provider</a> (7 profiles)<br>
-✓ <a href="https://openid.net/certification/certified-openid-providers-for-logout-profiles/">Logout Profiles</a> (4 profiles)
+<td style="font-size:75%;border:none">
+✓ <a href="https://openid.net/certification/certified-openid-providers-profiles/">OpenID Provider &amp; Profiles</a> (7 profiles)<br>
+✓ <a href="https://openid.net/certification/certified-openid-providers-for-logout-profiles/">OpenID Provider Logout Profiles</a> (4 profiles)<br>
+✓ <a href="https://openid.net/certification/certified-openid-relying-parties-profiles/">OpenID Relying Parties &amp; Profiles</a> (4 profiles)<br>
+✓ <a href="https://openid.net/certification/certified-openid-relying-parties-logout-profiles/">OpenID Relying Parties &amp; Logout Profiles</a> (2 profiles)<br>
+✓ <a href="https://openid.net/certification/certified-fapi-2-0-op-security-profile-final-message-signing-final/">FAPI 2.0 OP &amp; Message Signing</a> (5 profiles)<br>
+✓ <a href="https://openid.net/certification/certified-fapi-2-0-rp-security-profile-final-message-signing-final/">FAPI 2.0 RP &amp; Message Signing</a> (4 profiles)<br>
+✓ <a href="https://openid.net/certification/certified-fapi-ciba-openid-providers-profiles/">FAPI-CIBA OP</a> (2 profiles)
 </td>
 </tr>
-</table>
+</tbody></table>
 
 ## ⚠️ Pre-1.0 Software
 
@@ -31,17 +36,6 @@ Production hardening is tracked against documented deployment, operations, recov
 
 Authrim is still under active development, and breaking changes, including database schema changes, are expected until at least 0.5.0 and possibly until 1.0.0.
 
-### Security Hardening Status
-
-Recent internal security review work has remediated several pre-1.0 findings across
-selected management API authorization paths, CIBA client authentication, admin setup-token recovery,
-Admin WebAuthn origin/RP ID validation, OTP HMAC secret handling, VCI holder binding,
-device-flow token issuance, and SCIM filter handling. These fixes include negative
-regression coverage in the affected packages.
-
-Security validation remains active. The main remaining authorization hardening task is
-a declarative, fail-closed Admin API permission table with CI coverage for undeclared
-routes. Low/Info hardening items and an external audit/penetration test are still pending.
 
 ### For Organizations Considering Adoption
 
@@ -67,74 +61,34 @@ npx @authrim/setup
 
 ## Quick Start
 
-### Option 1: Using the published setup package (Recommended)
+### Published setup package (Recommended)
 
 ```bash
-# Interactive setup from npm
 npx @authrim/setup
-
-# Or CLI mode for terminal-based setup
+# Terminal-based setup
 npx @authrim/setup --cli
 ```
 
-The setup package can download the Authrim source into a local project directory before provisioning and deployment.
+The local Web UI guides you through Cloudflare authentication, resource provisioning, key generation,
+Worker deployment, optional UI deployment, and initial admin creation.
 
-The setup wizard will guide you through:
-- Cloudflare authentication
-- Resource provisioning (D1, KV, Queues, R2)
-- Key generation
-- Standard API capability deployment, including SAML IdP, Device Flow / CIBA, and VC SD-JWT
-- Optional Admin UI and Login UI deployment
-- Tenant discovery, including domain, email-domain, and WAYF-style tenant selection modes
-- Worker deployment
-- Initial admin creation
-
-### Option 2: Clone the source and run the setup tool
-
-Use this path when you want to inspect or modify the source code while still using the setup workflow.
+### From source
 
 ```bash
-# 1. Clone and install
 git clone https://github.com/sgrastar/authrim.git
 cd authrim
 pnpm install
-
-# 2. Launch the local setup tool
 pnpm run setup
 ```
-
-The local setup command runs the same setup package from the workspace source.
-
-### Option 3: Scripted Setup (Development)
-
-```bash
-# 1. Clone and install
-git clone https://github.com/sgrastar/authrim.git
-cd authrim
-pnpm install
-
-# 2. Initialize a dev environment from the current setup implementation
-pnpm run setup:init --env=dev --cli
-
-# Optional: deploy or inspect the generated environment from source
-pnpm run setup:deploy --env=dev
-pnpm run setup:info --env=dev
-
-# 3. Run locally
-pnpm run dev
-# → http://localhost:8787/.well-known/openid-configuration
-```
-
-The setup command creates `.authrim/dev`, generates keys, provisions current Cloudflare resources
-including D1, KV, Queues, and R2, writes generated Wrangler configuration, applies the current root
-migration set, and keeps optional Admin UI / Login UI deployment settings aligned with the setup
-configuration.
 
 📚 **Full guides:** [Development](./docs/getting-started/development.md) | [Deployment](./docs/getting-started/deployment.md) | [Testing](./docs/getting-started/testing.md) | [Setup CLI](./packages/setup/README.md)
 
 ## Performance
 
-K6 Cloud distributed load testing in December 2025 validated Authrim's current sharded Workers architecture under representative OIDC workloads.
+### OIDC benchmarks (December 2025)
+
+K6 Cloud distributed load testing in December 2025 validated the sharded Workers architecture in
+use at that time under representative OIDC workloads.
 
 Observed benchmark results include:
 
@@ -142,14 +96,96 @@ Observed benchmark results include:
 - Full 5-step OAuth login flow: **150 logins/sec** with P95 around 756ms
 - CPU time: typically **1-4ms** in the tested scenarios
 
-Capacity depends on workload shape, Cloudflare plan limits, storage usage, and sharding configuration.
+[View the December 2025 reports](./load-testing/reports/Dec2025/)
 
-[View detailed reports](./load-testing/reports/Dec2025/)
+### SCIM attribute updates (August 2026)
 
-## Approximate Cloudflare Cost (Reference Only)
+An August 2026 test of mapped `displayName` updates found:
 
-⚠️ The following table is a **rough reference only**.  
-Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
+- Individual PATCH: approximately **13 successful updates/sec** near a 14/sec offer; a no-drop
+  14/sec run was not demonstrated.
+- Bulk PATCH: **30 updates/sec** completed successfully in a one-minute trial, with P95 request
+  latency around 111.5 seconds due to queueing.
+- Provisional operating guidance remains **10 updates/sec** until longer soak testing is complete.
+
+[View the August 2026 SCIM report](./load-testing/reports/Aug2026/scim-attribute-update.md)
+
+Capacity depends on workload shape, Cloudflare plan limits, storage usage, sharding configuration,
+and test duration. These results are benchmark evidence, not an SLA.
+
+---
+
+## Current Status
+
+Authrim is currently pre-1.0. Core protocol and platform capabilities are implemented, but production hardening is still in progress.
+
+**Target release window:** Summer/Fall 2026
+
+| Area                             | Implementation    | Operational maturity | Notes                                                                                                                                                                                                             |
+| -------------------------------- | ----------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenID Provider / RP certification | Complete          | Ready                | Certified OpenID Provider, Session OP, Logout, Relying Party, and Relying Party Logout profiles                                                                                                                   |
+| OAuth/OIDC advanced profiles     | Complete          | In progress          | PAR, DPoP, JAR, JARM, JWE, claims policy, token exchange, session management, introspection, and revocation; OIDC Session Management is covered by the certified Session OP profile, while token exchange is not separately certified |
+| FAPI profiles                    | Complete          | Ready                | Certified FAPI 2.0 OP/RP Security Profile, Message Signing, and Client Credentials profiles                                                                                                                       |
+| SAML 2.0 IdP/SP                  | Hardening active  | In progress          | Tenant-scoped IdP/SP endpoints, metadata import/export, configurable entityIDs, signing certificate rollover, encryption options, SSO/SLO correlation, and Admin UI operations                                   |
+| SCIM 2.0                         | Inbound complete  | In progress          | Users, Groups, and Bulk receiver with Mapping Set-based writes; outbound provisioning is out of scope                                                                                                             |
+| Authentication                   | Complete          | In progress          | Passkey, email code, social login, anonymous login and upgrade, Direct Auth, device flow, and CIBA                                                                                                                 |
+| CIBA                             | Complete          | Ready                | Certified FAPI-CIBA Poll and Ping profiles using private-key authentication                                                                                                                                        |
+| Native SSO                       | Complete          | In progress          | `device_secret`, `ds_hash`, DPoP-bound token exchange, token revocation/introspection, and device management                                                                                                       |
+| Authorization                    | Complete          | In progress          | RBAC, ABAC, ReBAC, token embedding, real-time check API, and authorization update push                                                                                                                             |
+| Identity Hub                     | Complete          | In progress          | External IdP integration, account linking, identity stitching, and tenant discovery                                                                                                                               |
+| Account lifecycle and governance | Baseline complete | In progress          | Durable account lifecycle, identifier replacement, support context, legal holds, retention controls, and email delivery history                                                                                   |
+| VC/DID                           | Partial           | Experimental         | OpenID4VCI/OpenID4VP endpoint baselines and did:web/did:key support exist; OpenID4VCI/VP 1.0 + HAIP certification has not been obtained and Suite validation continues |
+| JavaScript SDKs                  | Complete          | In progress          | Core, web, server, and SvelteKit packages                                                                                                                                                                         |
+| Admin/Login UI                   | Basic complete    | In progress          | Admin operations cover identity, SAML, storage, logging, governance, and Control Plane surfaces; Login UI production-flow hardening continues                                                                     |
+| Unified Control Plane            | Basic complete    | In progress          | Signed Runtime Registry and Lookup routes resolve single- or multi-shard D1 assignments with `shared_pool` or `tenant_exclusive` placement                                                                         |
+| Setup and release updates        | Baseline complete | In progress          | Setup and Control include resumable database-before-Worker release-operation paths; end-to-end production validation and deployment documentation continue                                                       |
+| Runtime storage profiles         | Basic complete    | In progress          | Setup-managed D1/R2 inventory and Hyperdrive-backed user core, PII, custom/extension, and audit paths exist; control-plane storage remains D1/KV-biased                                                          |
+| Multi-tenancy isolation          | Baseline complete | In progress          | Tenant-scoped issuer routing, storage access, admin boundaries, job artifacts, and regression coverage are in place                                                                                               |
+| Logging and operational evidence | Basic complete    | In progress          | Structured runtime logs, admin/user audit logs, sensitive-detail chunks, delivery events, exports, DLQ replay, retention jobs, and storage-destination controls are implemented                                  |
+| Security, QA, and validation     | Active            | In progress          | Security regression matrices and internal review remediation are active; a formal external audit and penetration test have not yet been completed                                                                 |
+
+[View the detailed roadmap](./docs/ROADMAP.md) and [feature matrix](./docs/FEATURES.md).
+
+---
+
+## Technical Stack
+
+### Backend (API)
+
+| Layer          | Technology                             | Version               | Purpose                                                                    |
+| ------------- | ------------------------- | -------- | ---------------------------------- |
+| **Runtime**    | Cloudflare Workers                     | -                     | Global edge deployment                                                     |
+| **Framework**  | Hono                                   | 4.13.x                | Fast, lightweight web framework                                            |
+| **Language**   | TypeScript                             | 5.9.x                 | Type-safe development                                                      |
+| **Build**      | Turbo + pnpm                           | 2.9.x / 9.x           | Monorepo, parallel builds, caching                                         |
+| **Deployment** | Wrangler                               | 4.110.x               | Workers deployment and local runtime                                       |
+| **Storage**    | KV / D1 / Durable Objects / Hyperdrive | -                     | Cloudflare-native persistence with external database paths where supported |
+| **Crypto**     | JOSE                                   | 6.2.x                 | JWT/JWS/JWE/JWK (RS256, ES256)                                             |
+| **WebAuthn**   | SimpleWebAuthn                         | 13.2.x                | Passkey authentication                                                     |
+| **SAML**       | xmldom + xml-crypto + pako             | 0.8.x / 6.1.x / 2.1.x | SAML 2.0 XML processing, signatures, and bindings                          |
+| **Email**      | Cloudflare Email Sending               | -                     | Workers `send_email` binding for transactional email                       |
+| **Email**      | Resend                                 | 6.8.x                 | Magic Link, OTP delivery                                                   |
+| **Testing**    | Vitest + Playwright                    | 4.1.x / 1.57.x        | Unit, integration, and E2E tests                                           |
+
+### Frontend (UI)
+
+| Layer          | Technology                                         | Version            | Purpose                                                     |
+| -------------- | ------------------------ | --------- | ------------------------------ |
+| **Framework**  | SvelteKit + Svelte                                 | 2.70.x / 5.56.x    | Modern reactive framework                                   |
+| **Deployment** | Cloudflare Workers static assets                   | -                  | UI Workers and global edge delivery                         |
+| **Build**      | Vite                                               | 7.3.x              | UI build and dev server                                     |
+| **CSS**        | UnoCSS                                             | 66.6.x             | Utility-first CSS                                           |
+| **Components** | Melt UI                                            | 0.86.x             | Headless, accessible components                             |
+| **Icons**      | UnoCSS preset-icons + Iconify Heroicons / Phosphor | 66.6.x / 1.2.x     | Utility icon classes and selectable Login UI provider icons |
+| **i18n**       | typesafe-i18n                                      | 5.26.x             | Type-safe internationalization                              |
+| **WebAuthn**   | SimpleWebAuthn Browser                             | 13.2.x             | Client-side passkey support                                 |
+| **Testing**    | Vitest + Testing Library                           | 4.1.x / 5.2.x-next | Component tests                                             |
+
+## Approximate Cloudflare Cost (December 2025 Reference)
+
+⚠️ The following estimates use the workload assumptions and Cloudflare pricing considered for the
+December 2025 benchmark. They are historical reference values, not current quotes. Actual costs
+depend on request volume, CPU time, and usage of KV, D1, Durable Objects, and R2.
 
 | Product Scale                   | Users (Total) | Est. CF Cost | Notes                                |
 | ------------------------------- | ------------: | -----------: | ------------------------------------ |
@@ -162,16 +198,16 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 | High-traffic consumer service   |           ~5M | ~$150–300/mo | Heavy auth traffic                   |
 | Large-scale platform            |          ~10M | ~$300–600/mo | 150 login/sec tested                 |
 
-### Assumptions
+### December 2025 assumptions
 
-- Workers Paid plan ($5/month)
+- Workers Paid plan base fee used in the estimate: $5/month
 - Optimized request patterns (caching, batching)
 - Typical authentication flows (OIDC, token refresh)
 - Excludes large R2 storage and excessive KV/D1 writes
 - Assumes ~20% DAU with weekly logins
 - Authrim scales primarily with **requests and CPU time**, not with user count
 
-### Verified by Load Testing (Dec 2025)
+### December 2025 benchmark estimate
 
 | Metric                 | Value                 | Cost         |
 | ---------------------- | --------------------- | ------------ |
@@ -182,99 +218,17 @@ Actual costs depend on request volume, CPU time, and usage of KV / D1 / R2.
 | Base fee               | —                     | $5.00 (6%)   |
 | **Total (excl. tax)**  | **≈ 5M users equiv.** | **$79.78**   |
 
-**Request-to-User conversion:**
+**Request-to-user conversion used in the estimate:**
 
 - 1 OIDC login ≈ 4 requests (authorize → token → userinfo → discovery)
 - 18M requests ≈ 4.5M logins/month
 - With 20% DAU and weekly login assumption → **~5M total users equivalent**
 
-> Infrastructure cost only (self-hosted). No vendor fees. See [Cloudflare pricing](https://developers.cloudflare.com/workers/platform/pricing/) for details.
-
----
-
-## Current Status
-
-Authrim is currently pre-1.0. Core protocol and platform capabilities are implemented, but production hardening is still in progress.
-
-**Target release window:** Summer/Fall 2026
-
-| Area | Status |
-| ----- | ------ |
-| Core OIDC/OAuth implementation | Implemented |
-| FAPI profiles | Implemented; certification target |
-| CIBA | Implemented; certification target |
-| SAML 2.0 IdP/SP | Active; implementation substantially complete with local entity metadata, signing rollover, and Admin UI operations |
-| SCIM 2.0 | Implemented |
-| RBAC / ABAC / ReBAC policy engine | Implemented |
-| Identity Hub and external IdP integration | Implemented |
-| Passkey / email auth / local auth | Implemented; production flow hardening in progress |
-| JavaScript SDKs | Implemented |
-| Setup tooling | Implemented; production deployment docs in progress |
-| UI consolidation | Active; Admin/Login/setup flows are being polished against the current Workers deployment model |
-| Security, QA, and validation | Active; internal review remediation landed for selected management authorization, CIBA, setup-token, WebAuthn, OTP, VCI, device-flow, and SCIM findings |
-| Storage portability | Implementation baseline complete; validation active |
-| Multi-tenant isolation | Implementation baseline complete; validation active |
-| Operational logging and evidence | Implementation baseline complete; validation active |
-
-[View detailed roadmap](./docs/ROADMAP.md)
-
----
-
-## Technical Stack
-
-### Backend (API)
-
-| Layer         | Technology                | Version  | Purpose                            |
-| ------------- | ------------------------- | -------- | ---------------------------------- |
-| **Runtime**   | Cloudflare Workers        | -        | Global edge deployment             |
-| **Framework** | Hono                      | 4.12.x   | Fast, lightweight web framework    |
-| **Language**  | TypeScript                | 5.9.x    | Type-safe development              |
-| **Build**     | Turbo + pnpm              | 2.7.x / 9.x | Monorepo, parallel builds, caching |
-| **Deployment** | Wrangler                 | 4.59.x   | Workers deployment and local runtime |
-| **Storage**   | KV / D1 / Durable Objects / Hyperdrive | - | Cloudflare-native persistence with external database paths where supported |
-| **Crypto**    | JOSE                      | 6.1.x    | JWT/JWS/JWE/JWK (RS256, ES256)     |
-| **WebAuthn**  | SimpleWebAuthn            | 13.2.x   | Passkey authentication             |
-| **SAML**      | xmldom + xml-crypto + pako | 0.8.x / 6.1.x / 2.1.x | SAML 2.0 XML processing, signatures, and bindings |
-| **Email**     | Cloudflare Email Sending  | -        | Workers `send_email` binding for transactional email |
-| **Email**     | Resend                    | 6.8.x    | Magic Link, OTP delivery           |
-| **Testing**   | Vitest + Playwright       | 4.0.x / 1.57.x | Unit, integration, and E2E tests |
-
-### Frontend (UI)
-
-| Layer          | Technology               | Version   | Purpose                        |
-| -------------- | ------------------------ | --------- | ------------------------------ |
-| **Framework**  | SvelteKit + Svelte       | 2.53.x / 5.53.x | Modern reactive framework |
-| **Deployment** | Cloudflare Workers static assets | - | UI Workers and global edge delivery |
-| **Build**      | Vite                     | 7.3.x     | UI build and dev server        |
-| **CSS**        | UnoCSS                   | 66.6.x    | Utility-first CSS              |
-| **Components** | Melt UI                  | 0.86.x    | Headless, accessible components |
-| **Icons**      | UnoCSS preset-icons + Iconify Heroicons / Phosphor | 66.6.x / 1.2.x | Utility icon classes and selectable Login UI provider icons |
-| **i18n**       | typesafe-i18n            | 5.26.x    | Type-safe internationalization |
-| **WebAuthn**   | SimpleWebAuthn Browser   | 13.2.x    | Client-side passkey support    |
-| **Testing**    | Vitest + Testing Library | 4.0.x / 5.2.x-next | Component tests                |
-
-## Features
-
-| Area | Implementation | Operational maturity | Notes |
-| --- | --- | --- | --- |
-| OpenID Provider | Complete | Ready | Certified OpenID Provider and Logout profiles |
-| OAuth/OIDC advanced profiles | Complete | In progress | PAR, DPoP, JAR, JARM, JWE, claims policy, token exchange |
-| FAPI profiles | Complete | In progress | FAPI 2.0 policy controls and certification profiles; formal certification is planned |
-| SAML 2.0 IdP/SP | Hardening active | In progress | Tenant-scoped IdP/SP endpoints, metadata import/export, configurable entityIDs, interactive login redirect policy, signing certificate subject/rollover, encryption options, SSO/SLO correlation, and DR planning |
-| SCIM 2.0 | Complete | In progress | User provisioning |
-| Authentication | Complete | In progress | Passkey, email code, social login, Direct Auth, device flow, CIBA |
-| CIBA | Complete | In progress | Backchannel authentication, approval, polling, and request storage paths |
-| Native SSO | Complete | In progress | `device_secret`, `ds_hash`, and DPoP-bound token exchange support |
-| Authorization | Complete | In progress | RBAC, ABAC, ReBAC, token embedding, real-time check API |
-| Identity Hub | Complete | In progress | External IdP integration, account linking, identity stitching |
-| VC/DID | Complete | Experimental | OpenID4VP, OpenID4VCI, did:web, did:key |
-| SDKs | Complete | In progress | Core, web, server, and SvelteKit packages |
-| Admin/Login UI | Basic complete | In progress | Admin UI includes SAML entity info, database connections, storage destinations, logging controls, and tenant discovery settings; Login UI supports configured provider logos/icons |
-| Runtime storage profiles | Basic complete | In progress | Runtime profiles, setup-managed D1/R2 inventory, tenant D1 assignment visibility, and Hyperdrive-backed user core, PII, custom/extension, and audit paths exist; control-plane storage remains D1/KV-biased |
-| Multi-tenancy isolation | Baseline complete | In progress | Tenant-scoped issuer routing, storage access, admin boundaries, job artifacts, and regression coverage are in place |
-| Logging and operational evidence | Basic complete | In progress | Structured runtime logs, admin/user audit logs, diagnostic detail, sensitive detail chunks, delivery events, DLQ replay, and storage-destination controls are implemented |
-
-See [Feature Matrix](./docs/FEATURES.md) for a more detailed capability and SDK overview.
+> Infrastructure cost only (self-hosted). Check the current Cloudflare pricing for
+> [Workers](https://developers.cloudflare.com/workers/platform/pricing/),
+> [D1](https://developers.cloudflare.com/d1/platform/pricing/),
+> [Workers KV](https://developers.cloudflare.com/kv/platform/pricing/), and
+> [R2](https://developers.cloudflare.com/r2/pricing/) before estimating a deployment.
 
 ---
 
@@ -305,15 +259,3 @@ See [LICENSE](./LICENSE) for details.
 - **Issues**: [Report bugs](https://github.com/sgrastar/authrim/issues)
 - **Discussions**: [Feature requests](https://github.com/sgrastar/authrim/discussions)
 - **Email**: yuta@sgrastar.org
-
----
-
-> **Authrim** — _Identity & Access at the edge of everywhere_
->
-> **Status:** Pre-1.0 | Target release window: Summer/Fall 2026 | Production hardening in progress
->
-> _A self-hosted Identity & Access Platform for modern applications._
->
-> ```bash
-> npx @authrim/setup
-> ```

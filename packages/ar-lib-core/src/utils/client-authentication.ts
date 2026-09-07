@@ -1,26 +1,29 @@
 /**
  * Client Authentication Utilities
- * Implements private_key_jwt and client_secret_jwt authentication methods
+ * Implements private_key_jwt authentication and fail-closed handling for legacy methods
  * RFC 7523: JSON Web Token (JWT) Profile for OAuth 2.0 Client Authentication
  */
 
 import { jwtVerify, importJWK, type JWK } from 'jose';
 import type { ClientMetadata } from '../types/oidc';
+import type { Env } from '../types/env';
 import { isInternalUrl, safeFetchJson } from './url-security';
 import { ALLOWED_ASYMMETRIC_ALGS } from '../constants';
 import { timingSafeEqual, verifyClientSecretHash } from './crypto';
 import { createLogger } from './logger';
 import { parseBasicAuth } from './basic-auth';
 import { parseToken } from './jwt';
+import { getDPoPJTIStoreForNewJTI } from './dpop-jti-sharding';
 
 const log = createLogger().module('CLIENT_AUTH');
 const MAX_CLIENT_ASSERTION_SIZE_BYTES = 16 * 1024;
 const MAX_CLIENT_ASSERTION_SEGMENT_SIZE_BYTES = 8 * 1024;
 const CLIENT_ASSERTION_TYPE_JWT_BEARER = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
+const MAX_CLIENT_ASSERTION_LIFETIME_SECONDS = 5 * 60;
 
 /**
  * Client Assertion Claims (RFC 7523 Section 3)
- * Used for private_key_jwt and client_secret_jwt authentication
+ * Used for private_key_jwt authentication
  */
 export interface ClientAssertionClaims {
   iss: string; // Issuer - MUST be the client_id
@@ -47,12 +50,77 @@ export interface ClientAssertionValidationResult {
  */
 export interface ClientAssertionValidationOptions {
   /**
+   * Accepted audience policy. FAPI 2.0 Security Profile Final requires exactly one string
+   * containing the authorization server issuer identifier.
+   * Default: endpoint-or-issuer (backward-compatible RFC 7523/OIDC interoperability mode)
+   */
+  audiencePolicy?: 'endpoint-or-issuer' | 'issuer-only';
+  /**
    * Whether to accept Issuer ID as a valid audience value (in addition to token endpoint URL).
    * RFC 7523 Section 3 recommends the token endpoint URL, but OIDC Core and industry practice
    * also accept the Issuer ID for interoperability (Google, Microsoft, Okta, Auth0, Keycloak).
    * Default: true (industry standard)
    */
   acceptIssuerIdAsAudience?: boolean;
+  /** Explicit authorization server issuer, for endpoints other than `/token` (for example PAR). */
+  issuer?: string;
+  /** Additional endpoint URLs accepted as audience values. */
+  additionalAudiences?: string[];
+  /** Allowed positive clock skew for nbf, in seconds. Default: 0. */
+  clockSkewSeconds?: number;
+  /**
+   * Explicit JWS algorithm allowlist for the calling security profile.
+   * FAPI callers use this to exclude RS256 and other algorithms that are valid in generic OIDC.
+   */
+  allowedAlgorithms?: readonly string[];
+  /** Atomic single-use enforcement for OIDC private_key_jwt assertions. */
+  replayProtection?: { env: Env; tenantId: string };
+}
+
+function isVerificationKeyForAlgorithm(key: JWK, algorithm: string): boolean {
+  if (key.use !== undefined && key.use !== 'sig') {
+    return false;
+  }
+  if (Array.isArray(key.key_ops) && !key.key_ops.includes('verify')) {
+    return false;
+  }
+  if (key.alg !== undefined && key.alg !== algorithm) {
+    return false;
+  }
+
+  if (algorithm.startsWith('RS') || algorithm.startsWith('PS')) {
+    return key.kty === 'RSA' && typeof key.n === 'string' && typeof key.e === 'string';
+  }
+  if (algorithm.startsWith('ES')) {
+    const expectedCurve =
+      algorithm === 'ES256' ? 'P-256' : algorithm === 'ES384' ? 'P-384' : 'P-521';
+    return (
+      key.kty === 'EC' &&
+      key.crv === expectedCurve &&
+      typeof key.x === 'string' &&
+      typeof key.y === 'string'
+    );
+  }
+  if (algorithm === 'EdDSA') {
+    return (
+      key.kty === 'OKP' &&
+      (key.crv === 'Ed25519' || key.crv === 'Ed448') &&
+      typeof key.x === 'string'
+    );
+  }
+  return false;
+}
+
+function selectClientAssertionVerificationKey(
+  keys: JWK[],
+  algorithm: string,
+  kid?: string
+): JWK | undefined {
+  const candidates = keys.filter((key) => isVerificationKeyForAlgorithm(key, algorithm));
+  if (kid) {
+    return candidates.find((key) => key.kid === kid);
+  }
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 export interface OAuthClientAuthenticationParams {
@@ -68,6 +136,7 @@ export interface ParsedOAuthClientAuthentication {
   clientSecret?: string;
   clientAssertion?: string;
   clientAssertionType?: string;
+  presentation: ClientAuthenticationPresentation;
 }
 
 export type ParseOAuthClientAuthenticationResult =
@@ -77,6 +146,84 @@ export type ParseOAuthClientAuthenticationResult =
 export type ConfidentialOAuthClientAuthenticationResult =
   | { ok: true; method: 'client_secret' | 'client_assertion'; clientId: string }
   | { ok: false; error: 'invalid_client'; errorDescription: string };
+
+export interface ClientAuthenticationPresentation {
+  basic: boolean;
+  clientSecretPost: boolean;
+  clientAssertion: boolean;
+  clientAssertionType?: string;
+}
+
+export type ClientAuthenticationMethodValidationResult =
+  | { valid: true }
+  | { valid: false; errorDescription: string };
+
+/**
+ * Enforce the authentication method registered for a client.
+ *
+ * A valid secret is not interchangeable with a registered JWT key, and RFC 6749
+ * forbids using more than one client authentication mechanism in one request.
+ */
+export function validateRegisteredClientAuthenticationMethod(
+  client: ClientMetadata,
+  presentation: ClientAuthenticationPresentation
+): ClientAuthenticationMethodValidationResult {
+  const presentedCount =
+    Number(presentation.basic) +
+    Number(presentation.clientSecretPost) +
+    Number(presentation.clientAssertion);
+
+  if (presentedCount > 1) {
+    return {
+      valid: false,
+      errorDescription: 'Multiple client authentication methods are not allowed',
+    };
+  }
+
+  // Preserve compatibility for legacy records that predate explicit method metadata.
+  // Newly registered clients always have an explicit token_endpoint_auth_method.
+  const registeredMethod = client.token_endpoint_auth_method;
+  if (!registeredMethod) {
+    return { valid: true };
+  }
+
+  const hasJwtBearerAssertion =
+    presentation.clientAssertion &&
+    presentation.clientAssertionType === CLIENT_ASSERTION_TYPE_JWT_BEARER;
+
+  switch (registeredMethod) {
+    case 'private_key_jwt':
+      if (presentedCount === 1 && hasJwtBearerAssertion) return { valid: true };
+      break;
+    case 'client_secret_jwt':
+      // Legacy rows may still contain this method. Authrim stores only a one-way
+      // client_secret_hash, which cannot serve as the OIDC Core section 9 HMAC key.
+      // Fail closed before assertion validation instead of treating the hash as a secret.
+      return {
+        valid: false,
+        errorDescription: 'Client authentication configuration is invalid',
+      };
+    case 'client_secret_basic':
+      if (presentedCount === 1 && presentation.basic) return { valid: true };
+      break;
+    case 'client_secret_post':
+      if (presentedCount === 1 && presentation.clientSecretPost) return { valid: true };
+      break;
+    case 'none':
+      if (presentedCount === 0) return { valid: true };
+      break;
+    default:
+      return {
+        valid: false,
+        errorDescription: 'Client authentication configuration is invalid',
+      };
+  }
+
+  return {
+    valid: false,
+    errorDescription: `Client must authenticate using ${registeredMethod}`,
+  };
+}
 
 /**
  * Extract OAuth client authentication credentials from request parameters and Basic auth.
@@ -88,6 +235,8 @@ export function parseOAuthClientAuthenticationParams(
   let clientSecret = params.clientSecret;
   const clientAssertion = params.clientAssertion;
   const clientAssertionType = params.clientAssertionType;
+  const clientSecretPostPresented = params.clientSecret !== undefined;
+  const clientAssertionPresented = params.clientAssertion !== undefined;
 
   if (clientAssertion && clientAssertionType === CLIENT_ASSERTION_TYPE_JWT_BEARER && !clientId) {
     try {
@@ -109,8 +258,22 @@ export function parseOAuthClientAuthenticationParams(
 
   const basicAuth = parseBasicAuth(params.authorizationHeader);
   if (basicAuth.success) {
-    clientId = clientId || basicAuth.credentials.username;
-    clientSecret = clientSecret || basicAuth.credentials.password;
+    if (clientAssertion || clientSecret) {
+      return {
+        ok: false,
+        error: 'invalid_client',
+        errorDescription: 'Multiple client authentication methods are not allowed',
+      };
+    }
+    if (clientId && !timingSafeEqual(clientId, basicAuth.credentials.username)) {
+      return {
+        ok: false,
+        error: 'invalid_client',
+        errorDescription: 'Client authentication failed',
+      };
+    }
+    clientId = basicAuth.credentials.username;
+    clientSecret = basicAuth.credentials.password;
   } else if (basicAuth.error === 'malformed_credentials' || basicAuth.error === 'decode_error') {
     return {
       ok: false,
@@ -126,6 +289,12 @@ export function parseOAuthClientAuthenticationParams(
       clientSecret,
       clientAssertion,
       clientAssertionType,
+      presentation: {
+        basic: basicAuth.success,
+        clientSecretPost: clientSecretPostPresented,
+        clientAssertion: clientAssertionPresented,
+        clientAssertionType,
+      },
     },
   };
 }
@@ -138,8 +307,21 @@ export function parseOAuthClientAuthenticationParams(
 export async function authenticateConfidentialOAuthClient(
   client: ClientMetadata,
   endpoint: string,
-  credentials: ParsedOAuthClientAuthentication
+  credentials: ParsedOAuthClientAuthentication,
+  assertionOptions: ClientAssertionValidationOptions = {}
 ): Promise<ConfidentialOAuthClientAuthenticationResult> {
+  const methodValidation = validateRegisteredClientAuthenticationMethod(
+    client,
+    credentials.presentation
+  );
+  if (!methodValidation.valid) {
+    return {
+      ok: false,
+      error: 'invalid_client',
+      errorDescription: 'Client authentication failed',
+    };
+  }
+
   if (credentials.clientId && !timingSafeEqual(credentials.clientId, client.client_id)) {
     return {
       ok: false,
@@ -155,7 +337,8 @@ export async function authenticateConfidentialOAuthClient(
     const assertionValidation = await validateClientAssertion(
       credentials.clientAssertion,
       endpoint,
-      client
+      client,
+      assertionOptions
     );
 
     if (!assertionValidation.valid) {
@@ -189,7 +372,7 @@ export async function authenticateConfidentialOAuthClient(
 /**
  * Validate Client Assertion JWT
  *
- * Validates private_key_jwt or client_secret_jwt authentication
+ * Validates private_key_jwt authentication
  * per RFC 7523 Section 3
  *
  * @param assertion - JWT assertion string
@@ -205,7 +388,14 @@ export async function validateClientAssertion(
   options: ClientAssertionValidationOptions = {}
 ): Promise<ClientAssertionValidationResult> {
   // Default: Accept Issuer ID as audience (industry standard for interoperability)
-  const { acceptIssuerIdAsAudience = true } = options;
+  const {
+    audiencePolicy = 'endpoint-or-issuer',
+    acceptIssuerIdAsAudience = true,
+    issuer,
+    additionalAudiences = [],
+    clockSkewSeconds = 0,
+    allowedAlgorithms = ALLOWED_ASYMMETRIC_ALGS,
+  } = options;
 
   try {
     const sizeError = validateAssertionSize(assertion);
@@ -261,6 +451,23 @@ export async function validateClientAssertion(
         error_description: 'Unsigned client assertions (alg=none) are not allowed',
       };
     }
+    if (!allowedAlgorithms.includes(header.alg)) {
+      return {
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Client assertion signing algorithm is not allowed',
+      };
+    }
+    if (
+      client.token_endpoint_auth_signing_alg &&
+      client.token_endpoint_auth_signing_alg !== header.alg
+    ) {
+      return {
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Client assertion signing algorithm does not match client metadata',
+      };
+    }
 
     // Decode payload
     const payloadBase64 = parts[1];
@@ -276,11 +483,19 @@ export async function validateClientAssertion(
     const claims = JSON.parse(payloadJson) as ClientAssertionClaims;
 
     // Step 2: Verify required claims exist
-    if (!claims.iss || !claims.sub || !claims.aud || !claims.exp) {
+    if (
+      !claims.iss ||
+      !claims.sub ||
+      !claims.aud ||
+      typeof claims.exp !== 'number' ||
+      !Number.isFinite(claims.exp) ||
+      typeof claims.jti !== 'string' ||
+      claims.jti.length === 0
+    ) {
       return {
         valid: false,
         error: 'invalid_client',
-        error_description: 'Client assertion is missing required claims (iss, sub, aud, exp)',
+        error_description: 'Client assertion is missing required claims (iss, sub, aud, exp, jti)',
       };
     }
 
@@ -310,20 +525,39 @@ export async function validateClientAssertion(
     // RFC 7523 Section 3 recommends token endpoint URL, but OIDC Core and industry practice
     // also accept the Issuer ID (token endpoint without /token suffix)
     // See: https://openid.net/specs/openid-connect-core-1_0.html#ClientAuthentication
-    const issuerUrl = tokenEndpoint.replace(/\/token$/, '');
+    const issuerUrl = issuer || tokenEndpoint.replace(/\/token$/, '');
     const normalizedIssuer = normalizeUrl(issuerUrl);
+    const normalizedAdditionalAudiences = additionalAudiences.map(normalizeUrl);
+
+    if (audiencePolicy === 'issuer-only' && Array.isArray(claims.aud)) {
+      return {
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Audience must be the authorization server issuer identifier',
+      };
+    }
 
     const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
 
     // SECURITY: Use timing-safe comparison to prevent timing attacks on audience values
     const audienceMatches = audiences.some((aud) => {
       const normalizedAud = normalizeUrl(aud);
+      if (audiencePolicy === 'issuer-only') {
+        return timingSafeEqual(normalizedAud, normalizedIssuer);
+      }
       // Check if audience matches token endpoint URL (RFC 7523 recommended)
       if (timingSafeEqual(normalizedAud, normalizedEndpoint)) {
         return true;
       }
       // Also accept Issuer ID if option is enabled (industry standard for interoperability)
       if (acceptIssuerIdAsAudience && timingSafeEqual(normalizedAud, normalizedIssuer)) {
+        return true;
+      }
+      if (
+        normalizedAdditionalAudiences.some((acceptedAudience) =>
+          timingSafeEqual(normalizedAud, acceptedAudience)
+        )
+      ) {
         return true;
       }
       return false;
@@ -347,9 +581,32 @@ export async function validateClientAssertion(
         error_description: 'Client assertion has expired',
       };
     }
+    if (claims.exp > now + MAX_CLIENT_ASSERTION_LIFETIME_SECONDS + Math.max(0, clockSkewSeconds)) {
+      return {
+        valid: false,
+        error: 'invalid_client',
+        error_description: 'Client assertion lifetime exceeds 5 minutes',
+      };
+    }
+    if (claims.iat !== undefined) {
+      if (claims.iat > now + Math.max(0, clockSkewSeconds)) {
+        return {
+          valid: false,
+          error: 'invalid_client',
+          error_description: 'Client assertion was issued in the future',
+        };
+      }
+      if (claims.exp - claims.iat > MAX_CLIENT_ASSERTION_LIFETIME_SECONDS) {
+        return {
+          valid: false,
+          error: 'invalid_client',
+          error_description: 'Client assertion lifetime exceeds 5 minutes',
+        };
+      }
+    }
 
     // Step 6: Verify not before time (if present)
-    if (claims.nbf && claims.nbf > now) {
+    if (claims.nbf && claims.nbf > now + Math.max(0, clockSkewSeconds)) {
       return {
         valid: false,
         error: 'invalid_client',
@@ -357,22 +614,7 @@ export async function validateClientAssertion(
       };
     }
 
-    // Step 7: Get public key for signature verification
-    // Helper function to find key by kid (RFC 7517 Section 4.5)
-    const findKeyByKid = (keys: JWK[], targetKid?: string): JWK | undefined => {
-      if (targetKid) {
-        // Find key with matching kid
-        const matchingKey = keys.find((k) => k.kid === targetKid);
-        if (matchingKey) {
-          return matchingKey;
-        }
-        // If kid is specified but not found, return undefined (will trigger error)
-        return undefined;
-      }
-      // If no kid specified, use first key (backward compatibility)
-      return keys[0];
-    };
-
+    // Step 7: Get a verification key matching kid, algorithm, key type, and intended use.
     let publicKey: JWK | null = null;
     let jwksKeys: JWK[] = [];
 
@@ -398,6 +640,7 @@ export async function validateClientAssertion(
           },
           timeoutMs: 5000,
           maxResponseSize: 256 * 1024,
+          redirect: 'error',
         });
         if (jwks.keys && jwks.keys.length > 0) {
           jwksKeys = jwks.keys;
@@ -405,17 +648,11 @@ export async function validateClientAssertion(
         }
       } catch (fetchError) {
         log.error('Failed to fetch JWKS from URI', {}, fetchError as Error);
-        // If jwks_uri fetch fails but we have embedded jwks, fall back to it
-        if (client.jwks?.keys && client.jwks.keys.length > 0) {
-          log.warn('Falling back to embedded JWKS');
-          jwksKeys = client.jwks.keys as JWK[];
-        } else {
-          return {
-            valid: false,
-            error: 'invalid_client',
-            error_description: 'Failed to fetch client JWKS from jwks_uri',
-          };
-        }
+        return {
+          valid: false,
+          error: 'invalid_client',
+          error_description: 'Failed to fetch client JWKS from jwks_uri',
+        };
       }
     } else if (client.jwks?.keys && client.jwks.keys.length > 0) {
       // Use embedded JWKS only if jwks_uri is not provided
@@ -434,7 +671,7 @@ export async function validateClientAssertion(
         })),
       });
 
-      const foundKey = findKeyByKid(jwksKeys, kid);
+      const foundKey = selectClientAssertionVerificationKey(jwksKeys, header.alg, kid);
       if (foundKey) {
         publicKey = foundKey;
         log.debug('Selected key', { kid: foundKey.kid, kty: foundKey.kty });
@@ -454,20 +691,53 @@ export async function validateClientAssertion(
 
     // Step 8: Verify JWT signature
     // SECURITY: Use algorithm whitelist to prevent algorithm confusion attacks
-    const cryptoKey = await importJWK(publicKey, publicKey.alg || 'RS256');
+    const cryptoKey = await importJWK(publicKey, header.alg);
 
     // Build acceptable audiences array based on options
     // - Token endpoint URL (RFC 7523 recommended)
     // - Issuer ID (if acceptIssuerIdAsAudience is enabled - industry standard)
-    const acceptableAudiences = acceptIssuerIdAsAudience
-      ? [normalizedEndpoint, normalizedIssuer]
-      : [normalizedEndpoint];
+    const acceptableAudiences = [
+      normalizedEndpoint,
+      ...(acceptIssuerIdAsAudience ? [normalizedIssuer] : []),
+      ...normalizedAdditionalAudiences,
+    ];
 
     await jwtVerify(assertion, cryptoKey, {
       issuer: client.client_id,
       audience: acceptableAudiences,
-      algorithms: [...ALLOWED_ASYMMETRIC_ALGS],
+      algorithms: [...allowedAlgorithms],
+      clockTolerance: Math.max(0, clockSkewSeconds),
     });
+
+    if (options.replayProtection) {
+      const { env, tenantId } = options.replayProtection;
+      const { stub } = await getDPoPJTIStoreForNewJTI(
+        env,
+        tenantId,
+        client.client_id,
+        `client-assertion:${claims.jti}`
+      );
+      const replayResponse = await stub.fetch('https://jti-store/check-and-store', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jti: `client-assertion:${claims.jti}`,
+          client_id: client.client_id,
+          iat: claims.iat ?? now,
+          ttl: Math.max(1, claims.exp - now + Math.max(0, clockSkewSeconds)),
+        }),
+      });
+      if (!replayResponse.ok) {
+        return {
+          valid: false,
+          error: replayResponse.status === 400 ? 'invalid_client' : 'server_error',
+          error_description:
+            replayResponse.status === 400
+              ? 'Client assertion replay detected'
+              : 'Client assertion replay protection unavailable',
+        };
+      }
+    }
 
     // All validations passed
     return {

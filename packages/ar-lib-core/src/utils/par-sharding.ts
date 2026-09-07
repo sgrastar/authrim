@@ -51,7 +51,10 @@ interface PARRequestStoreStub extends DurableObjectStub {
     requestUri: string;
     tenant_id: string;
     client_id: string;
+    expected_authorization_server?: 'default' | 'admin_agent';
+    expected_resource?: string;
   }): Promise<PARRequestData>;
+  getRequestRpc(requestUri: string): Promise<PARRequestData | null>;
 }
 
 /**

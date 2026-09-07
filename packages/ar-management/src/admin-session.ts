@@ -120,7 +120,8 @@ export async function adminSessionStatusHandler(c: Context<{ Bindings: Env }>) {
       c.env,
       'admin-session'
     );
-    const adminSessionRepo = new AdminSessionRepository(adminAdapter);
+    const tenantId = getTenantIdFromContext(c);
+    const adminSessionRepo = new AdminSessionRepository(adminAdapter, tenantId);
     const session = await adminSessionRepo.getSession(sessionId);
 
     if (!session) {
@@ -356,7 +357,8 @@ export async function adminLogoutHandler(c: Context<{ Bindings: Env }>) {
           c.env,
           'admin-session'
         );
-        const adminSessionRepo = new AdminSessionRepository(adminAdapter);
+        const tenantId = getTenantIdFromContext(c);
+        const adminSessionRepo = new AdminSessionRepository(adminAdapter, tenantId);
         const session = await adminSessionRepo.getSessionIncludingExpired(sessionId);
         const userId = session?.admin_user_id;
 
@@ -364,8 +366,6 @@ export async function adminLogoutHandler(c: Context<{ Bindings: Env }>) {
         const deleted = await adminSessionRepo.deleteSession(sessionId);
 
         if (deleted && userId) {
-          const tenantId = getTenantIdFromContext(c);
-
           // Publish user.logout event (non-blocking)
           publishEvent(c, {
             type: USER_EVENTS.LOGOUT,

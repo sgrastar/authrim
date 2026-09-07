@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
-  mockResolveAuthCorePersistenceAdapterFromEnv,
   mockTombstoneObjectCatalogEntryForTenant,
   mockListDeletedObjectCatalogObjectsForSystemCleanup,
   mockPurgeDeletedObjectCatalogObjectsForSystemCleanup,
@@ -13,7 +12,6 @@ const {
   };
 
   return {
-    mockResolveAuthCorePersistenceAdapterFromEnv: vi.fn().mockResolvedValue(adapter),
     mockTombstoneObjectCatalogEntryForTenant: vi.fn(),
     mockListDeletedObjectCatalogObjectsForSystemCleanup: vi.fn(),
     mockPurgeDeletedObjectCatalogObjectsForSystemCleanup: vi.fn(),
@@ -25,7 +23,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
-    resolveAuthCorePersistenceAdapterFromEnv: mockResolveAuthCorePersistenceAdapterFromEnv,
+    ensureDatabaseAdapter: vi.fn(() => mockAdapter),
+    isD1DatabaseLike: vi.fn((value) => value !== undefined),
     tombstoneObjectCatalogEntryForTenant: mockTombstoneObjectCatalogEntryForTenant,
     listDeletedObjectCatalogObjectsForSystemCleanup:
       mockListDeletedObjectCatalogObjectsForSystemCleanup,
@@ -48,13 +47,27 @@ describe('artifact cleanup', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockResolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue(mockAdapter);
     mockAdapter.query.mockReset();
     mockAdapter.execute.mockReset();
     mockTombstoneObjectCatalogEntryForTenant.mockReset();
     mockListDeletedObjectCatalogObjectsForSystemCleanup.mockReset();
     mockPurgeDeletedObjectCatalogObjectsForSystemCleanup.mockReset();
+    mockListDeletedObjectCatalogObjectsForSystemCleanup.mockResolvedValue([]);
+    mockPurgeDeletedObjectCatalogObjectsForSystemCleanup.mockResolvedValue(0);
   });
+
+  function accountCleanupEnv(extra: Record<string, unknown> = {}) {
+    return {
+      CONTROL: {
+        listAccountDirectorySourceShards: vi.fn(async () => [
+          { shardId: 'users-1', bindingRef: 'TDB_USERS_1', routeGeneration: 1 },
+        ]),
+      },
+      AUTHRIM_CONFIG: { get: vi.fn(async () => null), put: vi.fn(async () => undefined) },
+      TDB_USERS_1: {},
+      ...extra,
+    };
+  }
 
   it('tombstones expired data export object catalogs', async () => {
     mockAdapter.query.mockResolvedValue([
@@ -67,11 +80,11 @@ describe('artifact cleanup', () => {
     ]);
 
     const cleaned = await cleanupExpiredDataExportArtifacts(
-      {
+      accountCleanupEnv({
         EXPORT_ARTIFACTS: {
           delete: vi.fn(),
         } as unknown as R2Bucket,
-      } as any,
+      }) as any,
       logger
     );
 
@@ -100,11 +113,11 @@ describe('artifact cleanup', () => {
     ]);
 
     const cleaned = await cleanupExpiredDataExportArtifacts(
-      {
+      accountCleanupEnv({
         EXPORT_ARTIFACTS: {
           delete: deleteObject,
         } as unknown as R2Bucket,
-      } as any,
+      }) as any,
       logger
     );
 
@@ -126,6 +139,7 @@ describe('artifact cleanup', () => {
 
     const cleaned = await cleanupExpiredAdminJobArtifacts(
       {
+        DB_ADMIN: {},
         EXPORT_ARTIFACTS: {
           delete: vi.fn(),
         } as unknown as R2Bucket,
@@ -144,6 +158,18 @@ describe('artifact cleanup', () => {
       'job-1',
       'default',
     ]);
+  });
+
+  it('fails closed when an account source binding is missing', async () => {
+    const env = accountCleanupEnv({
+      EXPORT_ARTIFACTS: { delete: vi.fn() } as unknown as R2Bucket,
+      TDB_USERS_1: undefined,
+    });
+
+    await expect(cleanupExpiredDataExportArtifacts(env as any, logger)).rejects.toThrow(
+      'artifact_cleanup_source_binding_unavailable'
+    );
+    expect(mockAdapter.query).not.toHaveBeenCalled();
   });
 
   it('purges deleted object artifacts from configured buckets', async () => {

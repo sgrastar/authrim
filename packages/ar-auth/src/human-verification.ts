@@ -1,18 +1,19 @@
-import type { Context } from 'hono';
-import {
-  verifyHumanVerificationToken,
-  type HumanVerificationAction,
-} from '@authrim/ar-lib-plugin/builtin/security';
+import type { Context, Env as HonoEnv } from 'hono';
 import {
   AR_ERROR_CODES,
   createErrorResponse,
   getTenantIdFromContext,
+  verifyHumanVerificationWithRunner,
   type Env,
 } from '@authrim/ar-lib-core';
 
-export type { HumanVerificationAction } from '@authrim/ar-lib-plugin/builtin/security';
+export type HumanVerificationAction = 'login' | 'signup' | 'reauth';
 
-function remoteIp(c: Context<{ Bindings: Env }>): string | undefined {
+type AuthContext<TContextEnv extends HonoEnv & { Bindings: Env }> = Context<TContextEnv>;
+
+function remoteIp<TContextEnv extends HonoEnv & { Bindings: Env }>(
+  c: AuthContext<TContextEnv>
+): string | undefined {
   return (
     c.req.header('CF-Connecting-IP') ||
     c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
@@ -20,23 +21,32 @@ function remoteIp(c: Context<{ Bindings: Env }>): string | undefined {
   );
 }
 
-function failedValidationResponse(c: Context<{ Bindings: Env }>) {
+function failedValidationResponse<TContextEnv extends HonoEnv & { Bindings: Env }>(
+  c: AuthContext<TContextEnv>
+) {
   return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
     variables: { field: 'human_verification_response' },
   });
 }
 
-export async function verifyHumanVerificationForAction(
-  c: Context<{ Bindings: Env }>,
+export async function verifyHumanVerificationForAction<
+  TContextEnv extends HonoEnv & { Bindings: Env },
+>(
+  c: AuthContext<TContextEnv>,
   action: HumanVerificationAction,
   responseToken: unknown
 ): Promise<Response | null> {
-  const result = await verifyHumanVerificationToken({
-    env: c.env,
-    tenantId: getTenantIdFromContext(c),
-    actions: action,
-    response: responseToken,
-    remoteIp: remoteIp(c),
-  });
-  return result.ok ? null : failedValidationResponse(c);
+  const tenantId = getTenantIdFromContext(c);
+  try {
+    const ip = remoteIp(c);
+    const result = await verifyHumanVerificationWithRunner(c.env, {
+      tenantId,
+      action,
+      responseToken,
+      ...(ip ? { remoteIp: ip } : {}),
+    });
+    return result.verified ? null : failedValidationResponse(c);
+  } catch {
+    return failedValidationResponse(c);
+  }
 }

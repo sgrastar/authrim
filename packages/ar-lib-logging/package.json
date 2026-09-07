@@ -1,14 +1,12 @@
 {
   "name": "@authrim/ar-lib-logging",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "exports": {
-    ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts",
-      "default": "./src/index.ts"
+    "./contract": {
+      "import": "./dist/contract/index.js",
+      "types": "./dist/contract/index.d.ts",
+      "default": "./src/contract/index.ts"
     },
     "./archive": {
       "import": "./dist/archive.js",

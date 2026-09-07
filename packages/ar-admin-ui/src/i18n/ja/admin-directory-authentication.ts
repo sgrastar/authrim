@@ -21,8 +21,6 @@ const adminDirectoryAuthentication = {
 	admin_directory_authentication_load_failed: 'Directory Connectorを読み込めませんでした',
 	admin_directory_authentication_save_failed: 'Directory Connectorを保存できませんでした',
 	admin_directory_authentication_saved: 'Directory Connector設定を保存しました。',
-	admin_directory_authentication_back_to_settings: '設定へ戻る',
-	admin_directory_authentication_open_fleet: 'Connector Fleet',
 	admin_directory_authentication_select_tenant:
 		'ディレクトリ認証を管理するテナントを選択してください。',
 	admin_directory_authentication_loading: 'Directory Connectorを読み込み中...',

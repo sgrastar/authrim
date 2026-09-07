@@ -17,6 +17,29 @@ const CANONICAL_TABLES = [
   'contact_points',
 ];
 
+class ConcurrencyTrackingAdapter extends MockDatabaseAdapter {
+  coreReadsInFlight = 0;
+  maxCoreReadsInFlight = 0;
+
+  override async query<T>(sql: string, params?: unknown[]): Promise<T[]> {
+    return this.trackCoreRead(sql, () => super.query<T>(sql, params));
+  }
+
+  private async trackCoreRead<T>(sql: string, read: () => Promise<T>): Promise<T> {
+    if (!/FROM\s+(identity_subjects|profiles|contact_points)\b/i.test(sql)) {
+      return read();
+    }
+    this.coreReadsInFlight += 1;
+    this.maxCoreReadsInFlight = Math.max(this.maxCoreReadsInFlight, this.coreReadsInFlight);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return await read();
+    } finally {
+      this.coreReadsInFlight -= 1;
+    }
+  }
+}
+
 describe('CanonicalRuntimeUserProjectionRepository', () => {
   let adapter: MockDatabaseAdapter;
   let valueResolver: CanonicalRuntimeValueResolver;
@@ -74,6 +97,61 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
     );
   });
 
+  it('parallelizes independent core and sensitive-value reads without changing projection order', async () => {
+    const trackingAdapter = new ConcurrencyTrackingAdapter();
+    adapter = trackingAdapter;
+    for (const tableName of CANONICAL_TABLES) {
+      adapter.initTable(tableName, 'id');
+    }
+    let sensitiveReadsInFlight = 0;
+    let maxSensitiveReadsInFlight = 0;
+    valueResolver = {
+      async resolveValue(valueStorageRef) {
+        sensitiveReadsInFlight += 1;
+        maxSensitiveReadsInFlight = Math.max(maxSensitiveReadsInFlight, sensitiveReadsInFlight);
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          return valueStorageRef.includes('/email/')
+            ? 'person@example.test'
+            : valueStorageRef.includes('/phone/')
+              ? '+819012345678'
+              : valueStorageRef.includes('/name/')
+                ? 'Example Person'
+                : null;
+        } finally {
+          sensitiveReadsInFlight -= 1;
+        }
+      },
+    };
+    repository = new CanonicalRuntimeUserProjectionRepository(adapter, 'tenant-a', valueResolver);
+    seedActiveCanonicalUser();
+    adapter.seed(
+      'profile_attribute_values',
+      Array.from({ length: 8 }, (_, index) => ({
+        id: `profile-attribute-bounded-${index}`,
+        tenant_id: 'tenant-a',
+        profile_id: 'profile-1',
+        catalog_entry_id: `field.custom.bounded_${index}`,
+        value_type: 'reference',
+        value_json: null,
+        value_storage_ref: `pii://tenant-a/bounded-${index}/user-1`,
+        lifecycle_state: 'active',
+        display_order: 10 + index,
+        created_at: 1_700_000_010 + index,
+      }))
+    );
+
+    const projection = await repository.findByLegacyUserId('user-1');
+
+    expect(trackingAdapter.maxCoreReadsInFlight).toBe(3);
+    expect(maxSensitiveReadsInFlight).toBe(4);
+    expect(projection).toMatchObject({
+      name: 'Example Person',
+      email: 'person@example.test',
+      phone_number: '+819012345678',
+    });
+  });
+
   it('does not read legacy users_core or users_pii tables', async () => {
     seedActiveCanonicalUser();
 
@@ -90,7 +168,14 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
   });
 
   it('returns null for inactive accounts unless explicitly requested', async () => {
-    seedActiveCanonicalUser({ accountLifecycleState: 'suspended' });
+    seedActiveCanonicalUser({
+      accountLifecycleState: 'suspended',
+      accountMetadata: {
+        status: 'suspended',
+        suspended_at: 1_752_700_000,
+        suspended_until: 1_752_786_400,
+      },
+    });
 
     await expect(repository.findByLegacyUserId('user-1')).resolves.toBeNull();
 
@@ -98,7 +183,21 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
     expect(projection).toMatchObject({
       id: 'user-1',
       active: 0,
+      account_status: 'suspended',
+      suspended_at: 1_752_700_000,
+      suspended_until: 1_752_786_400,
+      locked_at: null,
+      locked_until: null,
     });
+  });
+
+  it('hides accounts until directory publication is active', async () => {
+    seedActiveCanonicalUser({ directoryPublicationState: 'active_pending_directory' });
+
+    await expect(repository.findByLegacyUserId('user-1')).resolves.toBeNull();
+    await expect(
+      repository.findByLegacyUserId('user-1', { includeInactive: true })
+    ).resolves.toMatchObject({ id: 'user-1', account_id: 'account-1' });
   });
 
   it('normalizes millisecond timestamps and retains the last login timestamp', async () => {
@@ -163,6 +262,7 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
   function seedActiveCanonicalUser(
     options: {
       accountLifecycleState?: string;
+      directoryPublicationState?: 'pending' | 'active_pending_directory' | 'active' | 'disabled';
       subjectLifecycleState?: string;
       accountTimestamp?: number;
       accountMetadata?: Record<string, unknown>;
@@ -195,6 +295,8 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
         primary_subject_id: 'subject-1',
         display_label: null,
         metadata_json: options.accountMetadata ? JSON.stringify(options.accountMetadata) : null,
+        directory_publication_state: options.directoryPublicationState ?? 'active',
+        account_route_generation: 1,
         created_at: accountTimestamp,
         updated_at: accountTimestamp + 20,
         deleted_at: null,

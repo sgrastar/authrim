@@ -34,6 +34,10 @@
 			getLabel: () => $LL.admin_notifications_category_tenant_database_health()
 		},
 		{
+			value: 'control_plane_drift',
+			getLabel: () => $LL.admin_notifications_category_control_plane_drift()
+		},
+		{
 			value: 'logging_destination_health',
 			getLabel: () => $LL.admin_notifications_category_logging_destination_health()
 		},

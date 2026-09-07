@@ -95,8 +95,10 @@ export class RoleAssignmentStore implements IRoleAssignmentStore {
     const now = Math.floor(Date.now() / 1000); // UNIX seconds
     const updated: RoleAssignment = {
       ...existing,
-      ...updates,
-      id: assignmentId, // Prevent changing ID
+      scope_type: updates.scope_type ?? existing.scope_type,
+      scope_target: updates.scope_target ?? existing.scope_target,
+      expires_at: updates.expires_at ?? existing.expires_at,
+      metadata_json: updates.metadata_json ?? existing.metadata_json,
       updated_at: now,
     };
 

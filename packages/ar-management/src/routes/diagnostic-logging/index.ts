@@ -9,7 +9,6 @@ import type { Env } from '@authrim/ar-lib-core';
 import { rateLimitMiddleware, getRateLimitProfileAsync } from '@authrim/ar-lib-core';
 import { testDiagnosticLogR2Connection } from './test-connection';
 import exportLogsRouter from './export-logs.js';
-import ingestRouter from './ingest.js';
 
 const diagnosticLoggingRouter = new Hono<{
   Bindings: Env;
@@ -51,12 +50,5 @@ diagnosticLoggingRouter.post('/test-connection', testDiagnosticLogR2Connection);
  * Export diagnostic logs
  */
 diagnosticLoggingRouter.route('/export', exportLogsRouter);
-
-/**
- * POST /api/v1/diagnostic-logs/ingest
- * Ingest diagnostic logs from SDK
- * Note: This is a public API (no admin auth required)
- */
-diagnosticLoggingRouter.route('/ingest', ingestRouter);
 
 export default diagnosticLoggingRouter;

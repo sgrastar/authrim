@@ -3,6 +3,7 @@ import {
 	apiProxy,
 	buildProxyHeaders,
 	clearBffAdminAccessTokenCacheForTests,
+	readBoundedProxyBody,
 	securityHeaders
 } from './hooks.server';
 
@@ -110,6 +111,62 @@ describe('securityHeaders', () => {
 });
 
 describe('apiProxy', () => {
+	it('preserves binary proxy request bodies and enforces a byte limit', async () => {
+		const expected = new Uint8Array([0x00, 0xff, 0xfe, 0x41]);
+		const accepted = new Request('https://admin.example.com/api/admin/import', {
+			method: 'POST',
+			body: expected
+		});
+		const rejected = new Request('https://admin.example.com/api/admin/import', {
+			method: 'POST',
+			body: new Uint8Array([1, 2, 3, 4, 5])
+		});
+
+		const body = await readBoundedProxyBody(accepted, expected.byteLength);
+
+		expect(body).toBeInstanceOf(ArrayBuffer);
+		expect(new Uint8Array(body as ArrayBuffer)).toEqual(expected);
+		await expect(readBoundedProxyBody(rejected, 4)).resolves.toBe('__TOO_LARGE__');
+	});
+
+	it('forwards exact binary bytes through the configured upstream proxy path', async () => {
+		const expected = new Uint8Array([0x00, 0xff, 0xfe, 0x41]);
+		let upstreamRequest: Request | undefined;
+		const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			upstreamRequest = new Request(input, init);
+			return new Response('proxied');
+		});
+		vi.stubGlobal('fetch', fetch);
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const url = new URL('http://localhost:5173/api/admin/import');
+		const event = {
+			url,
+			request: new Request(url, {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/octet-stream',
+					origin: url.origin
+				},
+				body: expected
+			}),
+			platform: {
+				env: {
+					AUTHRIM_ALLOW_LOCAL_ADMIN_PROXY: 'true',
+					API_BACKEND_URL: 'http://127.0.0.1:8786'
+				}
+			},
+			getClientAddress: () => '127.0.0.1'
+		} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const response = await apiProxy({ event, resolve });
+
+		expect(response.status).toBe(200);
+		expect(fetch).toHaveBeenCalledOnce();
+		expect(upstreamRequest).toBeDefined();
+		expect(new Uint8Array(await upstreamRequest!.arrayBuffer())).toEqual(expected);
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
 	it('serves the explicit Admin UI dev mock only on loopback origins', async () => {
 		const resolve = vi.fn(async () => new Response('resolved'));
 		const event = {
@@ -135,6 +192,324 @@ describe('apiProxy', () => {
 			tenant_id: 'dev-tenant',
 			is_platform_admin: true
 		});
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('serves the read replication aggregate from the loopback-only Admin UI dev mock', async () => {
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const event = {
+			url: new URL('http://localhost:5173/api/admin/platform/read-replication'),
+			request: new Request('http://localhost:5173/api/admin/platform/read-replication'),
+			platform: { env: { AUTHRIM_ADMIN_UI_DEV_MOCK: 'true' } },
+			getClientAddress: () => '127.0.0.1'
+		} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const response = await apiProxy({ event, resolve });
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			readReplication: {
+				environmentId: 'dev',
+				desiredMode: 'disabled',
+				aggregateStatus: 'off',
+				targetCount: 8
+			}
+		});
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('reports an idle release rollout from the loopback Admin UI dev mock', async () => {
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const event = {
+			url: new URL('http://localhost:5173/api/admin/platform/control-plane/release-rollout'),
+			request: new Request(
+				'http://localhost:5173/api/admin/platform/control-plane/release-rollout'
+			),
+			platform: { env: { AUTHRIM_ADMIN_UI_DEV_MOCK: 'true' } },
+			getClientAddress: () => '127.0.0.1'
+		} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const response = await apiProxy({ event, resolve });
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({
+			rollout: {
+				operationId: null,
+				sourceVersion: null,
+				targetVersion: null,
+				phase: 'idle',
+				completedTargets: 0,
+				totalTargets: 0,
+				adminMutationMode: 'available',
+				lastErrorCode: null,
+				updatedAt: null,
+				blockedTargetCount: 0,
+				blockedTargets: []
+			}
+		});
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('serves strict capacity preview and request fixtures from the loopback dev mock', async () => {
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const request = async (
+			path: string,
+			body: Record<string, unknown>,
+			idempotencyKey?: string
+		) => {
+			const url = `http://localhost:5173${path}`;
+			const headers = new Headers({
+				'content-type': 'application/json',
+				origin: 'http://localhost:5173'
+			});
+			if (idempotencyKey) headers.set('idempotency-key', idempotencyKey);
+			const event = {
+				url: new URL(url),
+				request: new Request(url, { method: 'POST', headers, body: JSON.stringify(body) }),
+				platform: { env: { AUTHRIM_ADMIN_UI_DEV_MOCK: 'true' } },
+				getClientAddress: () => '127.0.0.1'
+			} as unknown as Parameters<typeof apiProxy>[0]['event'];
+			return apiProxy({ event, resolve });
+		};
+		const body = { profile: 'extra_headroom', scope: 'shared_pool', tenantId: null };
+
+		const previewResponse = await request(
+			'/api/admin/platform/control-plane/capacity/preview',
+			body
+		);
+		expect(previewResponse.status).toBe(200);
+		const previewPayload = (await previewResponse.json()) as {
+			preview: { capacityUnitsAdded: number; d1DatabasesAdded: number; targets: unknown[] };
+		};
+		expect(previewPayload.preview).toMatchObject({
+			capacityUnitsAdded: 2,
+			d1DatabasesAdded: 2
+		});
+		expect(previewPayload.preview.targets).toHaveLength(2);
+		expect(previewPayload.preview.targets[0]).toMatchObject({ environmentId: 'development' });
+
+		const mutationResponse = await request(
+			'/api/admin/platform/control-plane/capacity/requests',
+			body,
+			'dev-capacity-request'
+		);
+		expect(mutationResponse.status).toBe(202);
+		expect(await mutationResponse.json()).toMatchObject({
+			result: { operations: [{ status: 'queued' }, { status: 'queued' }] },
+			auditId: 'dev-capacity-request-audit'
+		});
+
+		const rawResourceResponse = await request(
+			'/api/admin/platform/control-plane/capacity/preview',
+			{ ...body, databaseName: 'operator-selected' }
+		);
+		expect(rawResourceResponse.status).toBe(400);
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('serves review-only control-plane drift operations from the loopback dev mock', async () => {
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const request = async (path: string, init?: RequestInit) => {
+			const url = `http://localhost:5173${path}`;
+			const headers = new Headers(init?.headers);
+			headers.set('origin', 'http://localhost:5173');
+			const event = {
+				url: new URL(url),
+				request: new Request(url, { ...init, headers }),
+				platform: { env: { AUTHRIM_ADMIN_UI_DEV_MOCK: 'true' } },
+				getClientAddress: () => '127.0.0.1'
+			} as unknown as Parameters<typeof apiProxy>[0]['event'];
+			return apiProxy({ event, resolve });
+		};
+
+		const listResponse = await request('/api/admin/platform/control-plane/drift-findings');
+		expect(listResponse.status).toBe(200);
+		const list = await listResponse.json();
+		expect(list).toMatchObject({
+			count: 1,
+			items: [
+				{
+					findingId: 'drift:dev:actual_only:dev-unmanaged-worker',
+					reviewState: expect.any(String)
+				}
+			]
+		});
+
+		const reviewResponse = await request(
+			'/api/admin/platform/control-plane/drift-findings/drift%3Adev%3Aactual_only%3Adev-unmanaged-worker/review',
+			{
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+					origin: 'http://localhost:5173'
+				},
+				body: JSON.stringify({ disposition: 'reviewed' })
+			}
+		);
+		expect(reviewResponse.status).toBe(200);
+		expect(await reviewResponse.json()).toMatchObject({
+			finding: { reviewState: 'reviewed' },
+			auditId: 'dev-control-plane-review-audit'
+		});
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('serves a redacted control-plane operation inspection from the loopback dev mock', async () => {
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const url = 'http://localhost:5173/api/admin/platform/control-plane/operations/dev-operation-1';
+		const event = {
+			url: new URL(url),
+			request: new Request(url),
+			platform: { env: { AUTHRIM_ADMIN_UI_DEV_MOCK: 'true' } },
+			getClientAddress: () => '127.0.0.1'
+		} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const response = await apiProxy({ event, resolve });
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			operation: {
+				operationId: 'dev-operation-1',
+				status: 'blocked',
+				steps: [
+					{ stepKey: 'create_d1', status: 'blocked' },
+					{ stepKey: 'apply_migrations', status: 'queued' }
+				]
+			}
+		});
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('serves secret-free provisioning authority from the loopback dev mock', async () => {
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const url = 'http://localhost:5173/api/admin/platform/control-plane/provisioning-authority';
+		const event = {
+			url: new URL(url),
+			request: new Request(url),
+			platform: { env: { AUTHRIM_ADMIN_UI_DEV_MOCK: 'true' } },
+			getClientAddress: () => '127.0.0.1'
+		} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const response = await apiProxy({ event, resolve });
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({
+			authority: {
+				automaticProvisioningEnabled: true,
+				tokenOwnership: 'account',
+				capabilityState: 'ready',
+				automaticExecutionAvailable: true,
+				activeExecutor: 'control'
+			}
+		});
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('retries an allowlisted control-plane step in the loopback dev mock', async () => {
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const url =
+			'http://localhost:5173/api/admin/platform/control-plane/operations/dev-operation-1/retry-step';
+		const event = {
+			url: new URL(url),
+			request: new Request(url, {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/json',
+					origin: 'http://localhost:5173'
+				},
+				body: JSON.stringify({ stepKey: 'create_d1' })
+			}),
+			platform: { env: { AUTHRIM_ADMIN_UI_DEV_MOCK: 'true' } },
+			getClientAddress: () => '127.0.0.1'
+		} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const response = await apiProxy({ event, resolve });
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			auditId: 'dev-control-plane-retry-audit',
+			operation: {
+				operationId: 'dev-operation-1',
+				status: 'running',
+				steps: expect.arrayContaining([
+					expect.objectContaining({
+						stepKey: 'create_d1',
+						status: 'running',
+						lastErrorCode: null
+					})
+				])
+			}
+		});
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('models asynchronous tenant provisioning in the loopback-only Admin UI dev mock', async () => {
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const tenantId = 'dev-provisioning-test';
+		const request = async (path: string, init?: RequestInit) => {
+			const url = `http://localhost:5173${path}`;
+			const headers = new Headers(init?.headers);
+			headers.set('origin', 'http://localhost:5173');
+			const event = {
+				url: new URL(url),
+				request: new Request(url, { ...init, headers }),
+				platform: { env: { AUTHRIM_ADMIN_UI_DEV_MOCK: 'true' } },
+				getClientAddress: () => '127.0.0.1'
+			} as unknown as Parameters<typeof apiProxy>[0]['event'];
+			return apiProxy({ event, resolve });
+		};
+
+		const createdResponse = await request('/api/admin/tenants', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ id: tenantId, name: 'Provisioning test tenant' })
+		});
+		const created = await createdResponse.json();
+
+		expect(createdResponse.status).toBe(202);
+		expect(created).toMatchObject({
+			id: tenantId,
+			isolation_policy: 'tenant_exclusive',
+			lifecycle_state: 'provisioning',
+			provisioning: {
+				mode: 'control-plane',
+				operation_id: `tenant-create-dev-${tenantId}`,
+				status: 'running',
+				current_step: 'request_accepted'
+			}
+		});
+
+		let status: Record<string, unknown> = {};
+		for (let poll = 0; poll < 8; poll += 1) {
+			const statusResponse = await request(`/api/admin/tenants/${tenantId}/provisioning`);
+			expect(statusResponse.status).toBe(200);
+			status = (await statusResponse.json()) as Record<string, unknown>;
+		}
+		expect(status).toMatchObject({
+			tenant_id: tenantId,
+			status: 'succeeded',
+			current_step: 'tenant_active'
+		});
+
+		const tenantResponse = await request(`/api/admin/tenants/${tenantId}`);
+		expect(tenantResponse.status).toBe(200);
+		expect(await tenantResponse.json()).toMatchObject({
+			id: tenantId,
+			isolation_policy: 'tenant_exclusive',
+			lifecycle_state: 'active'
+		});
+		const sharedTenantResponse = await request('/api/admin/tenants/dev-shared');
+		expect(sharedTenantResponse.status).toBe(200);
+		expect(await sharedTenantResponse.json()).toMatchObject({
+			id: 'dev-shared',
+			isolation_policy: 'shared_pool',
+			lifecycle_state: 'active'
+		});
+		const latestMigrationResponse = await request(
+			'/api/admin/tenants/dev-shared/placement-migrations/latest'
+		);
+		expect(latestMigrationResponse.status).toBe(404);
+		const lifecycleJobsResponse = await request(`/api/admin/tenants/${tenantId}/lifecycle/jobs`);
+		expect(lifecycleJobsResponse.status).toBe(200);
+		expect(await lifecycleJobsResponse.json()).toEqual({ jobs: [] });
 		expect(resolve).not.toHaveBeenCalled();
 	});
 
@@ -366,6 +741,42 @@ describe('apiProxy', () => {
 		expect(proxiedRequest.url).toBe('https://api.authrim.example/api/admin/auth/passkey/options');
 		expect(proxiedRequest.headers.get('Authorization')).toBeNull();
 		expect(proxiedRequest.headers.get('X-Authrim-Admin-UI-Api-Mode')).toBe('cross-site-proxy-bff');
+		expect(proxiedRequest.headers.get('X-Authrim-Forwarded-Origin')).toBe(
+			'https://mt-ar-admin-ui.pages.dev'
+		);
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('does not require a BFF machine token for Admin invitation enrollment', async () => {
+		const bffEnv = await createBffEnv();
+		const fetch = vi.fn().mockResolvedValueOnce(new Response('redeemed'));
+		const resolve = vi.fn(async () => new Response('resolved'));
+		const event = {
+			url: new URL('https://mt-ar-admin-ui.pages.dev/api/admin/invitations/redeem'),
+			request: new Request('https://mt-ar-admin-ui.pages.dev/api/admin/invitations/redeem', {
+				method: 'POST',
+				headers: {
+					Origin: 'https://mt-ar-admin-ui.pages.dev',
+					'Content-Type': 'application/json'
+				},
+				body: '{}'
+			}),
+			platform: {
+				env: {
+					AR_ROUTER: { fetch },
+					PUBLIC_AUTHRIM_ISSUER: 'https://api.authrim.example',
+					...bffEnv
+				}
+			},
+			getClientAddress: () => '203.0.113.10'
+		} as unknown as Parameters<typeof apiProxy>[0]['event'];
+
+		const response = await apiProxy({ event, resolve });
+		const proxiedRequest = fetch.mock.calls[0][0] as Request;
+
+		expect(response.status).toBe(200);
+		expect(proxiedRequest.url).toBe('https://api.authrim.example/api/admin/invitations/redeem');
+		expect(proxiedRequest.headers.get('Authorization')).toBeNull();
 		expect(proxiedRequest.headers.get('X-Authrim-Forwarded-Origin')).toBe(
 			'https://mt-ar-admin-ui.pages.dev'
 		);

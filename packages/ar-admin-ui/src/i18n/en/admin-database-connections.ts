@@ -15,7 +15,7 @@ const adminDatabaseConnections = {
 	admin_database_connections_create_title: 'Create Connection',
 	admin_database_connections_detail_title: 'Database Connection',
 	admin_database_connections_create_description:
-		'Register a database target for runtime profiles, audits, and tenant storage routing.',
+		'Register a database target for audits and future backend integrations. Tenant D1 placement is managed by the Control Plane.',
 	admin_database_connections_detail_description: 'View and manage database connection metadata.',
 	admin_database_connections_test_connection: 'Test connection',
 	admin_database_connections_save_changes: 'Save changes',

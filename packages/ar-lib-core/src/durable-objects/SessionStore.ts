@@ -1,7 +1,7 @@
 /**
  * SessionStore Durable Object
  *
- * Manages active user sessions with in-memory hot data and D1 database fallback.
+ * Manages active user sessions with Durable Object storage as the sole authority.
  * Provides instant session invalidation and ITP-compatible session management.
  *
  * Storage Architecture (v2):
@@ -9,35 +9,27 @@
  * - O(1) reads/writes per session operation
  * - Sharding support: Multiple DO instances distribute load
  *
- * Hot/Cold Pattern:
+ * Storage pattern:
  * 1. Active sessions stored in-memory for sub-millisecond access (hot)
- * 2. Cold sessions loaded from D1 database on demand
- * 3. Sessions promoted to hot storage on access
- * 4. Expired sessions cleaned up periodically
+ * 2. Durable Object storage survives actor eviction and restart
+ * 3. Sessions are validated against the per-user SessionRevocationStore
+ * 4. Expired sessions are cleaned up periodically
  *
  * Security Features:
  * - Instant session revocation (security requirement)
  * - Automatic expiration handling
  * - Multi-device session management
- * - Audit trail via D1 storage
  */
 
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types/env';
-import { retryD1Operation } from '../utils/d1-retry';
 import type { ActorContext } from '../actor';
 import { CloudflareActorContext } from '../actor';
 import { createLogger } from '../utils/logger';
 import {
-  AUTH_CORE_PERSISTENCE_CONTEXT_KEY,
-  resolveAuthCorePersistenceContextFromEnv,
-  resolveAuthCorePersistenceSourceFromContext,
-  type AuthCorePersistenceContext,
-} from '../services/auth-core-persistence-context';
-import {
-  createSessionPersistenceAdapter,
-  type SessionPersistenceAdapter,
-} from '../services/session-persistence';
+  getSessionRevocationStore,
+  SESSION_REVOCATION_AUTHORITY,
+} from '../services/session-revocation-store';
 
 const log = createLogger().module('DO-SESSION-STORE');
 
@@ -48,8 +40,13 @@ export interface Session {
   id: string;
   tenantId?: string;
   userId: string;
+  accountId: string;
   expiresAt: number;
   createdAt: number;
+  revocationAuthority: typeof SESSION_REVOCATION_AUTHORITY;
+  revocationBoundAtMs: number;
+  /** Version 2 separates the internal OP session key from every RP-facing OIDC sid. */
+  sessionClientNamespaceVersion?: number;
   data?: SessionData;
 }
 
@@ -62,6 +59,8 @@ export interface SessionData {
   deviceName?: string;
   ipAddress?: string;
   userAgent?: string;
+  /** ISO 3166-1 alpha-2 country captured from trusted edge metadata, when available */
+  countryCode?: string;
 
   // Anonymous authentication (architecture-decisions.md §17)
   /** Whether this session belongs to an anonymous user */
@@ -92,6 +91,7 @@ export interface SessionResponse {
   id: string;
   tenantId?: string;
   userId: string;
+  accountId: string;
   expiresAt: number;
   createdAt: number;
   data?: SessionData; // Include session data for OIDC conformance (authTime etc.)
@@ -101,28 +101,9 @@ export interface SessionResponse {
  * Storage key prefix for sessions
  */
 const SESSION_KEY_PREFIX = 'session:';
-
-/**
- * Storage key prefix for tombstones (deleted session markers)
- * Used to prevent D1 fallback from returning stale sessions after deletion
- */
-const TOMBSTONE_KEY_PREFIX = 'tombstone:';
-
-/**
- * Tombstone TTL in milliseconds (24 hours)
- * After this period, tombstones are automatically cleaned up
- */
-const TOMBSTONE_TTL_MS = 24 * 60 * 60 * 1000;
-const SESSION_STORE_TENANT_CONTEXT_KEY = 'session-store:tenant-context';
-const USER_SESSION_REVOCATION_CACHE_TTL_MS = 1000;
-
-/**
- * Tombstone data interface
- */
-interface Tombstone {
-  deletedAt: number;
-  expiresAt: number;
-}
+const SESSION_STORE_TENANT_CONTEXT_KEY = 'meta:tenant-context';
+const SESSION_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+export const SESSION_CLIENT_NAMESPACE_VERSION = 2;
 
 /**
  * SessionStore Durable Object
@@ -137,22 +118,18 @@ interface Tombstone {
  */
 export class SessionStore extends DurableObject<Env> {
   private sessionCache: Map<string, Session> = new Map();
-  private userSessionRevocationCache: Map<
-    string,
-    { revokedAfterMs: number | null; checkedAtMs: number }
-  > = new Map();
-  private cleanupInterval: number | null = null;
   private actorCtx: ActorContext;
-  private sessionPersistence: SessionPersistenceAdapter | null = null;
-  private persistenceContext: AuthCorePersistenceContext | null = null;
   private tenantId: string | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.actorCtx = new CloudflareActorContext(ctx);
 
-    // Start periodic cleanup
-    this.startCleanup();
+    ctx.blockConcurrencyWhile(async () => {
+      if ((await ctx.storage.getAlarm()) === null) {
+        await ctx.storage.setAlarm(Date.now() + SESSION_CLEANUP_INTERVAL_MS);
+      }
+    });
   }
 
   // ==========================================
@@ -261,107 +238,7 @@ export class SessionStore extends DurableObject<Env> {
   }
 
   /**
-   * Build storage key for a tombstone
-   */
-  private buildTombstoneKey(sessionId: string): string {
-    return `${TOMBSTONE_KEY_PREFIX}${sessionId}`;
-  }
-
-  /**
-   * Create a tombstone for a deleted session
-   * Tombstones prevent D1 fallback from returning stale sessions after deletion
-   * This is critical for OIDC RP-Initiated Logout security
-   */
-  private async createTombstone(sessionId: string): Promise<void> {
-    const tombstone: Tombstone = {
-      deletedAt: Date.now(),
-      expiresAt: Date.now() + TOMBSTONE_TTL_MS,
-    };
-    await this.actorCtx.storage.put(this.buildTombstoneKey(sessionId), tombstone);
-    log.debug('Created tombstone for session', { sessionId });
-  }
-
-  /**
-   * Create tombstones for multiple deleted sessions (batch)
-   */
-  private async createTombstonesBatch(sessionIds: string[]): Promise<void> {
-    if (sessionIds.length === 0) return;
-
-    const now = Date.now();
-    const expiresAt = now + TOMBSTONE_TTL_MS;
-
-    // Create tombstones individually (actor abstraction doesn't support batch put)
-    for (const sessionId of sessionIds) {
-      await this.actorCtx.storage.put(this.buildTombstoneKey(sessionId), {
-        deletedAt: now,
-        expiresAt,
-      } as Tombstone);
-    }
-    log.debug('Created tombstones', { count: sessionIds.length });
-  }
-
-  /**
-   * Check if a tombstone exists for a session
-   * Returns true if the session has been deleted and should not be loaded from D1
-   */
-  private async hasTombstone(sessionId: string): Promise<boolean> {
-    const tombstone = await this.actorCtx.storage.get<Tombstone>(this.buildTombstoneKey(sessionId));
-    if (!tombstone) {
-      return false;
-    }
-    // Tombstone exists and is not expired
-    if (tombstone.expiresAt > Date.now()) {
-      return true;
-    }
-    // Tombstone expired, clean it up
-    await this.actorCtx.storage.delete(this.buildTombstoneKey(sessionId));
-    return false;
-  }
-
-  /**
-   * Cleanup expired tombstones
-   */
-  private async cleanupTombstones(): Promise<number> {
-    const now = Date.now();
-    let cleaned = 0;
-
-    const tombstones = await this.actorCtx.storage.list<Tombstone>({
-      prefix: TOMBSTONE_KEY_PREFIX,
-    });
-
-    const keysToDelete: string[] = [];
-    for (const [key, tombstone] of tombstones) {
-      if (tombstone.expiresAt <= now) {
-        keysToDelete.push(key);
-        cleaned++;
-      }
-    }
-
-    if (keysToDelete.length > 0) {
-      await this.actorCtx.storage.deleteMany(keysToDelete);
-    }
-
-    return cleaned;
-  }
-
-  /**
-   * Start periodic cleanup of expired sessions
-   */
-  private startCleanup(): void {
-    // Cleanup every 5 minutes
-    if (this.cleanupInterval === null) {
-      this.cleanupInterval = setInterval(
-        () => {
-          void this.cleanupExpiredSessions();
-        },
-        5 * 60 * 1000
-      ) as unknown as number;
-    }
-  }
-
-  /**
    * Cleanup expired sessions from memory and Durable Storage
-   * Also cleans up expired tombstones
    */
   private async cleanupExpiredSessions(): Promise<void> {
     const now = Date.now();
@@ -389,15 +266,14 @@ export class SessionStore extends DurableObject<Env> {
       }
     }
 
-    // Clean expired tombstones
-    const cleanedTombstones = await this.cleanupTombstones();
-
-    if (cleanedSessions > 0 || cleanedTombstones > 0) {
-      log.info('Cleaned up expired sessions and tombstones', {
-        sessions: cleanedSessions,
-        tombstones: cleanedTombstones,
-      });
+    if (cleanedSessions > 0) {
+      log.info('Cleaned up expired sessions', { sessions: cleanedSessions });
     }
+  }
+
+  async alarm(): Promise<void> {
+    await this.cleanupExpiredSessions();
+    await this.ctx.storage.setAlarm(Date.now() + SESSION_CLEANUP_INTERVAL_MS);
   }
 
   /**
@@ -425,7 +301,6 @@ export class SessionStore extends DurableObject<Env> {
       return;
     }
     this.tenantId = normalizedTenantId;
-    this.sessionPersistence = null;
     await this.actorCtx.storage.put(SESSION_STORE_TENANT_CONTEXT_KEY, normalizedTenantId);
   }
 
@@ -443,114 +318,85 @@ export class SessionStore extends DurableObject<Env> {
     return undefined;
   }
 
-  /**
-   * Load session from cold persistence
-   * Checks for tombstones first to prevent returning deleted sessions
-   * This is critical for OIDC RP-Initiated Logout security
-   */
-  private async loadFromPersistence(sessionId: string): Promise<Session | null> {
-    // Check for tombstone first - if exists, session was deleted
-    // This prevents cold persistence from returning stale sessions after logout
-    if (await this.hasTombstone(sessionId)) {
-      log.debug('Tombstone found for session, skipping persistence load', { sessionId });
-      return null;
-    }
-
-    const persistence = await this.ensureSessionPersistence();
-    if (!persistence) {
-      return null;
-    }
-
-    try {
-      const result = await persistence.loadSession(sessionId, Date.now());
-      return result;
-    } catch (error) {
-      log.error('Persistence load error', { sessionId }, error as Error);
-      return null;
-    }
-  }
-
-  private async getUserSessionsRevokedAfter(userId: string): Promise<number | null> {
-    const now = Date.now();
-    const cached = this.userSessionRevocationCache.get(userId);
-    if (cached && now - cached.checkedAtMs < USER_SESSION_REVOCATION_CACHE_TTL_MS) {
-      return cached.revokedAfterMs;
-    }
-
-    const persistence = await this.ensureSessionPersistence();
-    if (!persistence) {
-      return null;
-    }
-
-    try {
-      const revokedAfterMs = await persistence.getUserSessionsRevokedAfter(userId);
-      this.userSessionRevocationCache.set(userId, { revokedAfterMs, checkedAtMs: now });
-      return revokedAfterMs;
-    } catch (error) {
-      log.error('Session revocation epoch lookup error', { userId }, error as Error);
-      return null;
-    }
-  }
-
   private async isRevokedByUserEpoch(session: Session): Promise<boolean> {
-    const revokedAfterMs = await this.getUserSessionsRevokedAfter(session.userId);
-    return revokedAfterMs !== null && session.createdAt <= revokedAfterMs;
+    const tenantId = this.requireTenantId(session.tenantId, 'Session revocation validation');
+    if (session.accountId !== `account:${session.userId}`) {
+      throw new Error('session_revocation_binding_invalid');
+    }
+    if (
+      session.revocationAuthority !== SESSION_REVOCATION_AUTHORITY ||
+      !Number.isSafeInteger(session.revocationBoundAtMs) ||
+      session.revocationBoundAtMs < 1
+    ) {
+      throw new Error('session_revocation_binding_invalid');
+    }
+
+    let state: { revokedAfterMs: number | null; lifecycle: string | null };
+    try {
+      state = await getSessionRevocationStore(
+        this.env,
+        tenantId,
+        session.userId
+      ).getSessionValidationStateRpc(tenantId, session.userId, session.accountId);
+    } catch (error) {
+      log.error('Session revocation store lookup error', {}, error as Error);
+      throw new Error('session_revocation_store_unavailable');
+    }
+
+    if (state.lifecycle !== null && state.lifecycle !== 'active') return true;
+    return state.revokedAfterMs !== null && session.revocationBoundAtMs <= state.revokedAfterMs;
   }
 
   private async dropRevokedSession(session: Session): Promise<void> {
     this.sessionCache.delete(session.id);
     await this.actorCtx.storage.delete(this.buildSessionKey(session.id));
-    await this.createTombstone(session.id);
   }
 
-  /**
-   * Save session to cold persistence
-   * Uses retry logic with exponential backoff for reliability
-   */
-  private async saveToPersistence(session: Session): Promise<void> {
-    const persistence = await this.ensureSessionPersistence();
-    if (!persistence) {
-      return;
-    }
+  private async dropLegacySessionClientNamespace(session: Session): Promise<void> {
+    await this.dropRevokedSession(session);
+    this.unregisterSessionIndex(session);
+  }
 
-    await retryD1Operation(
-      () =>
-        persistence.saveSession({
-          id: session.id,
-          tenantId: session.tenantId,
-          userId: session.userId,
-          expiresAt: session.expiresAt,
-          createdAt: session.createdAt,
-        }),
-      'SessionStore.saveToPersistence',
-      { maxRetries: 3 }
+  private usesCurrentSessionClientNamespace(session: Session): boolean {
+    return session.sessionClientNamespaceVersion === SESSION_CLIENT_NAMESPACE_VERSION;
+  }
+
+  private async persistSession(session: Session): Promise<void> {
+    await this.actorCtx.storage.put(this.buildSessionKey(session.id), session);
+  }
+
+  private unregisterSessionIndex(session: Session): void {
+    const tenantId = this.requireTenantId(session.tenantId, 'Session index removal');
+    this.ctx.waitUntil(
+      getSessionRevocationStore(this.env, tenantId, session.userId)
+        .unregisterSessionRpc(tenantId, session.userId, session.accountId, session.id)
+        .catch((error) => {
+          log.warn('Failed to remove asynchronous session index entry', {
+            error: error instanceof Error ? error.message : 'unknown_error',
+          });
+        })
     );
   }
 
-  /**
-   * Delete session from cold persistence
-   * Uses retry logic with exponential backoff for reliability
-   */
-  private async deleteFromPersistence(sessionId: string): Promise<void> {
-    const persistence = await this.ensureSessionPersistence();
-    if (!persistence) {
-      return;
+  private async validateStoredSessionBinding(sessionId: string, session: Session): Promise<void> {
+    const tenantId = await this.ensureTenantContext();
+    if (!tenantId || session.id !== sessionId || session.tenantId !== tenantId) {
+      throw new Error('session_storage_binding_invalid');
     }
-
-    await retryD1Operation(
-      () => persistence.deleteSession(sessionId),
-      'SessionStore.deleteFromPersistence',
-      { maxRetries: 3 }
-    );
   }
 
   /**
-   * Get session by ID (cache → storage → D1 fallback)
+   * Get session by ID (cache → Durable Object storage)
    */
   async getSession(sessionId: string): Promise<Session | null> {
     // 1. Check in-memory cache (hot)
     let session = this.sessionCache.get(sessionId);
     if (session) {
+      await this.validateStoredSessionBinding(sessionId, session);
+      if (!this.usesCurrentSessionClientNamespace(session)) {
+        await this.dropLegacySessionClientNamespace(session);
+        return null;
+      }
       if (await this.isRevokedByUserEpoch(session)) {
         await this.dropRevokedSession(session);
         return null;
@@ -567,6 +413,11 @@ export class SessionStore extends DurableObject<Env> {
     // 2. Check Durable Storage
     const storedSession = await this.actorCtx.storage.get<Session>(this.buildSessionKey(sessionId));
     if (storedSession) {
+      await this.validateStoredSessionBinding(sessionId, storedSession);
+      if (!this.usesCurrentSessionClientNamespace(storedSession)) {
+        await this.dropLegacySessionClientNamespace(storedSession);
+        return null;
+      }
       if (await this.isRevokedByUserEpoch(storedSession)) {
         await this.dropRevokedSession(storedSession);
         return null;
@@ -579,27 +430,6 @@ export class SessionStore extends DurableObject<Env> {
       // Cleanup expired session
       await this.actorCtx.storage.delete(this.buildSessionKey(sessionId));
       return null;
-    }
-
-    // 3. Check cold persistence with timeout
-    try {
-      const persistedSession = await Promise.race([
-        this.loadFromPersistence(sessionId),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), 100)),
-      ]);
-
-      if (persistedSession && !this.isExpired(persistedSession)) {
-        if (await this.isRevokedByUserEpoch(persistedSession)) {
-          await this.dropRevokedSession(persistedSession);
-          return null;
-        }
-        // Promote to cache and storage
-        this.sessionCache.set(sessionId, persistedSession);
-        await this.actorCtx.storage.put(this.buildSessionKey(sessionId), persistedSession);
-        return persistedSession;
-      }
-    } catch (error) {
-      log.error('Persistence fallback error', { sessionId }, error as Error);
     }
 
     return null;
@@ -619,25 +449,50 @@ export class SessionStore extends DurableObject<Env> {
     const resolvedTenantId = this.requireTenantId(tenantId, 'Session creation');
     await this.setTenantContext(resolvedTenantId);
 
+    const accountId = `account:${userId}`;
+    const createdAt = Date.now();
+    const expiresAt = createdAt + ttl * 1000;
+    const revocationStore = getSessionRevocationStore(this.env, resolvedTenantId, userId);
+    const registration = await revocationStore.registerSessionRpc(
+      resolvedTenantId,
+      userId,
+      accountId,
+      createdAt,
+      sessionId,
+      expiresAt,
+      {
+        ipAddress: data?.ipAddress,
+        userAgent: data?.userAgent,
+      }
+    );
     const session: Session = {
       id: sessionId,
       tenantId: resolvedTenantId,
       userId,
-      expiresAt: Date.now() + ttl * 1000,
-      createdAt: Date.now(),
+      accountId,
+      expiresAt,
+      createdAt,
+      revocationAuthority: SESSION_REVOCATION_AUTHORITY,
+      revocationBoundAtMs: registration.revocationBoundAtMs,
+      sessionClientNamespaceVersion: SESSION_CLIENT_NAMESPACE_VERSION,
       data,
     };
 
-    // 1. Store in memory cache (hot)
+    // Promote only after the authoritative actor storage write succeeds. If that write fails,
+    // compensate the cross-DO index registration so a nonexistent session is not listed.
+    try {
+      await this.persistSession(session);
+    } catch (error) {
+      try {
+        await revocationStore.unregisterSessionRpc(resolvedTenantId, userId, accountId, sessionId);
+      } catch (cleanupError) {
+        log.warn('Failed to compensate session index registration', {
+          error: cleanupError instanceof Error ? cleanupError.message : 'unknown_error',
+        });
+      }
+      throw new Error('session_storage_write_failed', { cause: error });
+    }
     this.sessionCache.set(sessionId, session);
-
-    // 2. Persist to Durable Storage (individual key - O(1))
-    await this.actorCtx.storage.put(this.buildSessionKey(sessionId), session);
-
-    // 3. Persist to cold storage (backup & audit) - async, don't wait
-    this.saveToPersistence(session).catch((error) => {
-      log.error('Failed to save to persistence', { sessionId }, error as Error);
-    });
 
     return session;
   }
@@ -645,52 +500,16 @@ export class SessionStore extends DurableObject<Env> {
   /**
    * Invalidate session immediately
    *
-   * Optimized: No read-before-delete pattern.
-   * storage.delete() is idempotent and works safely on non-existent keys.
-   *
-   * Security: Creates tombstone if D1 deletion fails to prevent stale sessions
-   * from being loaded via D1 fallback (OIDC RP-Initiated Logout protection)
+   * Durable Object storage is authoritative, so deletion cannot be undone by a D1 fallback.
    */
   async invalidateSession(sessionId: string): Promise<boolean> {
-    // 1. Remove from memory cache
-    const hadSession = this.sessionCache.has(sessionId);
-    this.sessionCache.delete(sessionId);
-
-    // 2. Delete from Durable Storage (individual key - O(1))
-    // No need to check existence first - delete() is idempotent
     const storageKey = this.buildSessionKey(sessionId);
+    const session =
+      this.sessionCache.get(sessionId) ?? (await this.actorCtx.storage.get<Session>(storageKey));
+    const hadSession = Boolean(session);
+    this.sessionCache.delete(sessionId);
     await this.actorCtx.storage.delete(storageKey);
-
-    // 3. Delete from cold persistence - MUST await to prevent race condition
-    // Without await, getSession could still find the session in cold persistence
-    // before the deletion completes, causing prompt=none to succeed
-    // when it should fail with login_required (OIDC RP-Initiated Logout)
-    let persistenceDeleteFailed = false;
-    try {
-      await this.deleteFromPersistence(sessionId);
-    } catch (error) {
-      log.error('Failed to delete from persistence', { sessionId }, error as Error);
-      persistenceDeleteFailed = true;
-    }
-
-    // 4. Create tombstone if persistence deletion failed
-    // This prevents cold persistence fallback from returning stale sessions
-    // Critical for OIDC RP-Initiated Logout security
-    if (persistenceDeleteFailed) {
-      try {
-        await this.createTombstone(sessionId);
-      } catch (tombstoneError) {
-        log.error(
-          'CRITICAL - Failed to create tombstone for session',
-          { sessionId },
-          tombstoneError as Error
-        );
-        // This is a critical error - session may be resurrected via persistence fallback
-        // In production, this should trigger an alert
-      }
-    }
-
-    // Return based on cache only - sufficient for logging/debugging purposes
+    if (session) this.unregisterSessionIndex(session);
     return hadSession;
   }
 
@@ -698,11 +517,7 @@ export class SessionStore extends DurableObject<Env> {
    * Batch invalidate multiple sessions
    * Optimized for admin operations (e.g., delete all user sessions)
    *
-   * Optimized: No read-before-delete pattern. Uses batch delete for efficiency.
-   * Uses chunking to prevent timeout on large batches.
-   *
-   * Security: Creates tombstones if D1 deletion fails to prevent stale sessions
-   * from being loaded via D1 fallback (OIDC RP-Initiated Logout protection)
+   * Uses chunking to keep each storage operation bounded.
    */
   async invalidateSessionsBatch(
     sessionIds: string[]
@@ -710,15 +525,19 @@ export class SessionStore extends DurableObject<Env> {
     const MAX_BATCH_SIZE = 1000;
     const failed: string[] = [];
     let deleted = 0;
-    const failedPersistenceDeleteIds: string[] = [];
 
     // Process in chunks to prevent timeout on large batches
     for (let i = 0; i < sessionIds.length; i += MAX_BATCH_SIZE) {
       const chunk = sessionIds.slice(i, i + MAX_BATCH_SIZE);
       const storageKeysToDelete: string[] = [];
+      const sessionsToUnregister: Session[] = [];
 
       // Process each session in chunk - remove from cache and collect storage keys
       for (const sessionId of chunk) {
+        const stored =
+          this.sessionCache.get(sessionId) ??
+          (await this.actorCtx.storage.get<Session>(this.buildSessionKey(sessionId)));
+        if (stored) sessionsToUnregister.push(stored);
         // Remove from memory cache
         this.sessionCache.delete(sessionId);
         // Collect storage keys for batch delete
@@ -731,40 +550,11 @@ export class SessionStore extends DurableObject<Env> {
           await this.actorCtx.storage.deleteMany(storageKeysToDelete);
         }
         deleted += chunk.length;
+        for (const session of sessionsToUnregister) this.unregisterSessionIndex(session);
       } catch (error) {
         log.error('Failed to delete chunk', { chunkIndex: i }, error as Error);
         failed.push(...chunk);
         continue;
-      }
-
-      // Delete from cold persistence in batch - MUST await to prevent race condition
-      if (chunk.length > 0) {
-        try {
-          await this.batchDeleteFromPersistence(chunk);
-        } catch (error) {
-          log.error(
-            'Failed to batch delete from persistence',
-            { count: chunk.length },
-            error as Error
-          );
-          failedPersistenceDeleteIds.push(...chunk);
-        }
-      }
-    }
-
-    // Create tombstones for sessions where persistence deletion failed
-    // This prevents persistence fallback from returning stale sessions
-    if (failedPersistenceDeleteIds.length > 0) {
-      try {
-        await this.createTombstonesBatch(failedPersistenceDeleteIds);
-      } catch (tombstoneError) {
-        log.error(
-          'CRITICAL - Failed to create tombstones',
-          { count: failedPersistenceDeleteIds.length },
-          tombstoneError as Error
-        );
-        // This is a critical error - sessions may be resurrected via persistence fallback
-        // In production, this should trigger an alert
       }
     }
 
@@ -772,27 +562,6 @@ export class SessionStore extends DurableObject<Env> {
       deleted,
       failed,
     };
-  }
-
-  /**
-   * Batch delete sessions from cold persistence
-   * Uses a single SQL statement with IN clause for efficiency
-   */
-  private async batchDeleteFromPersistence(sessionIds: string[]): Promise<void> {
-    if (sessionIds.length === 0) {
-      return;
-    }
-
-    const persistence = await this.ensureSessionPersistence();
-    if (!persistence) {
-      return;
-    }
-
-    await retryD1Operation(
-      () => persistence.batchDeleteSessions(sessionIds),
-      'SessionStore.batchDeleteFromPersistence',
-      { maxRetries: 3 }
-    );
   }
 
   /**
@@ -809,36 +578,24 @@ export class SessionStore extends DurableObject<Env> {
     });
 
     for (const [, session] of storedSessions) {
-      if (session.userId === userId && session.expiresAt > now) {
+      await this.validateStoredSessionBinding(session.id, session);
+      if (!this.usesCurrentSessionClientNamespace(session)) {
+        await this.dropLegacySessionClientNamespace(session);
+        continue;
+      }
+      if (
+        session.userId === userId &&
+        session.expiresAt > now &&
+        !(await this.isRevokedByUserEpoch(session))
+      ) {
         sessions.push({
           id: session.id,
           tenantId: session.tenantId,
           userId: session.userId,
+          accountId: session.accountId,
           expiresAt: session.expiresAt,
           createdAt: session.createdAt,
         });
-      }
-    }
-
-    // 2. Get from cold persistence - optional, for audit/completeness
-    const persistence = await this.ensureSessionPersistence();
-    if (persistence) {
-      try {
-        const result = await persistence.listUserSessions(userId, now);
-        const existingIds = new Set(sessions.map((s) => s.id));
-        for (const row of result) {
-          if (!existingIds.has(row.id)) {
-            sessions.push({
-              id: row.id,
-              tenantId: row.tenantId,
-              userId: row.userId,
-              expiresAt: row.expiresAt,
-              createdAt: row.createdAt,
-            });
-          }
-        }
-      } catch (error) {
-        log.error('Persistence list error', { userId }, error as Error);
       }
     }
 
@@ -849,24 +606,36 @@ export class SessionStore extends DurableObject<Env> {
    * Extend session expiration (Active TTL)
    */
   async extendSession(sessionId: string, additionalSeconds: number): Promise<Session | null> {
-    const session = await this.getSession(sessionId);
-    if (!session) {
+    const current = await this.getSession(sessionId);
+    if (!current) {
       return null;
     }
 
-    // Extend expiration
-    session.expiresAt += additionalSeconds * 1000;
-
-    // Update in memory cache
+    const session = {
+      ...current,
+      expiresAt: current.expiresAt + additionalSeconds * 1000,
+    };
+    const tenantId = this.requireTenantId(current.tenantId, 'Session extension');
+    let indexUpdated: boolean;
+    try {
+      indexUpdated = await getSessionRevocationStore(
+        this.env,
+        tenantId,
+        current.userId
+      ).updateSessionExpirationRpc(
+        tenantId,
+        current.userId,
+        current.accountId,
+        current.id,
+        session.expiresAt
+      );
+    } catch (error) {
+      log.error('Session index expiration update failed', {}, error as Error);
+      throw new Error('session_revocation_store_unavailable');
+    }
+    if (!indexUpdated) throw new Error('session_revocation_index_missing');
+    await this.persistSession(session);
     this.sessionCache.set(sessionId, session);
-
-    // Persist to Durable Storage
-    await this.actorCtx.storage.put(this.buildSessionKey(sessionId), session);
-
-    // Update in cold persistence - async
-    this.saveToPersistence(session).catch((error) => {
-      log.error('Failed to extend session in persistence', { sessionId }, error as Error);
-    });
 
     return session;
   }
@@ -879,22 +648,20 @@ export class SessionStore extends DurableObject<Env> {
     sessionId: string,
     dataUpdates: Partial<SessionData>
   ): Promise<Session | null> {
-    const session = await this.getSession(sessionId);
-    if (!session) {
+    const current = await this.getSession(sessionId);
+    if (!current) {
       return null;
     }
 
-    // Merge new data with existing data
-    session.data = {
-      ...session.data,
-      ...dataUpdates,
+    const session = {
+      ...current,
+      data: {
+        ...current.data,
+        ...dataUpdates,
+      },
     };
-
-    // Update in memory cache
-    this.sessionCache.set(sessionId, session);
-
-    // Persist to Durable Storage
     await this.actorCtx.storage.put(this.buildSessionKey(sessionId), session);
+    this.sessionCache.set(sessionId, session);
 
     return session;
   }
@@ -902,40 +669,52 @@ export class SessionStore extends DurableObject<Env> {
   /**
    * Update session user ID
    * Used when anonymous user sub changes during upgrade (preserve_sub=false)
-   * NOTE: D1 does not store full session data, only basic fields
    */
   async updateSessionUserId(sessionId: string, newUserId: string): Promise<Session | null> {
-    const session = await this.getSession(sessionId);
-    if (!session) {
+    const current = await this.getSession(sessionId);
+    if (!current) {
       return null;
     }
 
-    const oldUserId = session.userId;
-    session.userId = newUserId;
-
-    // Update in memory cache
-    this.sessionCache.set(sessionId, session);
-
-    // Persist to Durable Storage
-    await this.actorCtx.storage.put(this.buildSessionKey(sessionId), session);
-
-    // Update in cold persistence - async
-    const persistence = await this.ensureSessionPersistence();
-    if (persistence) {
-      retryD1Operation(
-        () => persistence.updateSessionUserId(sessionId, newUserId),
-        'SessionStore.updateSessionUserId.persistence',
-        { maxRetries: 3 }
-      ).catch((error) => {
-        log.error(
-          'Failed to update user_id in persistence',
-          { sessionId, newUserId },
-          error as Error
-        );
-      });
+    const accountId = `account:${newUserId}`;
+    const tenantId = this.requireTenantId(current.tenantId, 'Session user update');
+    const registeredAt = Date.now();
+    const revocationStore = getSessionRevocationStore(this.env, tenantId, newUserId);
+    const registration = await revocationStore.registerSessionRpc(
+      tenantId,
+      newUserId,
+      accountId,
+      registeredAt,
+      sessionId,
+      current.expiresAt,
+      {
+        ipAddress: current.data?.ipAddress,
+        userAgent: current.data?.userAgent,
+      }
+    );
+    const session = {
+      ...current,
+      userId: newUserId,
+      accountId,
+      revocationAuthority: SESSION_REVOCATION_AUTHORITY,
+      revocationBoundAtMs: registration.revocationBoundAtMs,
+    };
+    try {
+      await this.persistSession(session);
+    } catch (error) {
+      try {
+        await revocationStore.unregisterSessionRpc(tenantId, newUserId, accountId, sessionId);
+      } catch (cleanupError) {
+        log.warn('Failed to compensate updated session index registration', {
+          error: cleanupError instanceof Error ? cleanupError.message : 'unknown_error',
+        });
+      }
+      throw new Error('session_storage_write_failed', { cause: error });
     }
+    this.sessionCache.set(sessionId, session);
+    this.unregisterSessionIndex(current);
 
-    log.info('Updated session user', { sessionId, oldUserId, newUserId });
+    log.info('Updated session user binding');
 
     return session;
   }
@@ -947,53 +726,13 @@ export class SessionStore extends DurableObject<Env> {
   private sanitizeSession(session: Session): SessionResponse {
     return {
       id: session.id,
+      tenantId: session.tenantId,
       userId: session.userId,
+      accountId: session.accountId,
       expiresAt: session.expiresAt,
       createdAt: session.createdAt,
       data: session.data, // Include data for OIDC conformance (prompt=none authTime consistency)
     };
-  }
-
-  private async ensurePersistenceContext(): Promise<AuthCorePersistenceContext> {
-    if (this.persistenceContext) {
-      return this.persistenceContext;
-    }
-
-    const stored = await this.actorCtx.storage.get<AuthCorePersistenceContext>(
-      AUTH_CORE_PERSISTENCE_CONTEXT_KEY
-    );
-    if (stored) {
-      this.persistenceContext = stored;
-      return stored;
-    }
-
-    const resolved = await resolveAuthCorePersistenceContextFromEnv(this.env);
-    await this.actorCtx.storage.put(AUTH_CORE_PERSISTENCE_CONTEXT_KEY, resolved);
-    this.persistenceContext = resolved;
-    return resolved;
-  }
-
-  private async initializeSessionPersistence(): Promise<SessionPersistenceAdapter | null> {
-    const context = await this.ensurePersistenceContext();
-    if (context.transientAuth?.sessionColdPersistence === 'disabled') {
-      return null;
-    }
-
-    const source = resolveAuthCorePersistenceSourceFromContext(this.env, context);
-    const tenantId = await this.ensureTenantContext();
-    if (!tenantId) {
-      throw new Error('Session persistence requires tenant context');
-    }
-    return createSessionPersistenceAdapter(source, 'session-store', tenantId);
-  }
-
-  private async ensureSessionPersistence(): Promise<SessionPersistenceAdapter | null> {
-    if (this.sessionPersistence) {
-      return this.sessionPersistence;
-    }
-
-    this.sessionPersistence = await this.initializeSessionPersistence();
-    return this.sessionPersistence;
   }
 
   /**

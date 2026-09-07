@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import {
   ensureDatabaseAdapter,
   recordDirectoryConnectorHeartbeat,
+  resolveTenantDatabaseSourceFromRegistry,
   type Env,
 } from '@authrim/ar-lib-core';
 import {
@@ -489,7 +490,14 @@ export class DirectoryConnectorRelay extends DurableObject<Env> {
   ): Promise<boolean> {
     const instanceId = sanitizeRelayInstanceId(message.instance_id);
     if (!instanceId) return false;
-    const adapter = ensureDatabaseAdapter(this.env.DB, 'core');
+    const store = await resolveTenantDatabaseSourceFromRegistry(this.env, {
+      tenantId: attachment.tenantId,
+      role: 'tenant_core',
+      dataRole: 'tenant_core/default',
+      shardGroup: 'default',
+      shardIndex: 0,
+    });
+    const adapter = ensureDatabaseAdapter(store.source, 'directory-relay-heartbeat');
     const result = await recordDirectoryConnectorHeartbeat(adapter, {
       tenantId: attachment.tenantId,
       connectorId: attachment.connectorId,

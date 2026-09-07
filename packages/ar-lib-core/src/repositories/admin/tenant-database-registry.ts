@@ -31,9 +31,8 @@ export interface TenantDatabaseRegistryKey {
  * Runtime-facing database assignment.
  *
  * This table is the source of truth used by workers to resolve the active
- * database binding for a tenant. It intentionally does not model free capacity.
- * Preallocated-but-unassigned D1 capacity lives in `tenant_database_slots` and
- * is managed by setup/ar-management before a registry row is activated.
+ * database binding for a tenant. It intentionally does not model free capacity;
+ * desired resources, placement ownership, and capacity are controlled by the Control Worker.
  */
 export interface TenantDatabaseRegistryRow extends Required<TenantDatabaseRegistryKey> {
   provider: TenantDatabaseProvider;
@@ -140,7 +139,9 @@ export interface TenantRuntimeRegistrySnapshotRow {
   snapshot_scope: TenantRuntimeRegistrySnapshotScope;
   deployment_target: string;
   runtime_generation: number;
-  storage_profile_id: string;
+  backend_provider: 'd1';
+  placement_policy: 'shared_pool' | 'tenant_exclusive';
+  placement_policy_generation: number;
   snapshot_version: number;
   status: TenantRuntimeRegistrySnapshotStatus;
   object_ref: string | null;
@@ -156,7 +157,9 @@ export interface TenantRuntimeRegistrySnapshotInput {
   snapshot_scope?: TenantRuntimeRegistrySnapshotScope;
   deployment_target?: string;
   runtime_generation: number;
-  storage_profile_id: string;
+  backend_provider: 'd1';
+  placement_policy: 'shared_pool' | 'tenant_exclusive';
+  placement_policy_generation: number;
   snapshot_version?: number;
   status?: TenantRuntimeRegistrySnapshotStatus;
   object_ref?: string | null;
@@ -592,23 +595,86 @@ export class TenantDatabaseRegistryRepository {
     return saved;
   }
 
+  async getRuntimeCacheGeneration(
+    tenantId: string,
+    cacheNamespace: TenantRuntimeCacheNamespace
+  ): Promise<TenantRuntimeCacheGenerationRow | null> {
+    return this.adapter.queryOne<TenantRuntimeCacheGenerationRow>(
+      `SELECT * FROM tenant_runtime_cache_generations
+        WHERE tenant_id = ? AND cache_namespace = ?`,
+      [tenantId, cacheNamespace]
+    );
+  }
+
+  async compareAndSetRuntimeCacheGeneration(
+    input: TenantRuntimeCacheGenerationInput,
+    expected: TenantRuntimeCacheGenerationRow | null
+  ): Promise<boolean> {
+    const now = nowIso();
+    if (!expected) {
+      const inserted = await this.adapter.execute(
+        `INSERT OR IGNORE INTO tenant_runtime_cache_generations (
+           tenant_id, cache_namespace, generation, updated_at, updated_by, metadata_json
+         ) VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          input.tenant_id,
+          input.cache_namespace,
+          input.generation,
+          now,
+          input.updated_by ?? null,
+          input.metadata_json ?? null,
+        ]
+      );
+      return inserted.rowsAffected === 1;
+    }
+
+    const updated = await this.adapter.execute(
+      `UPDATE tenant_runtime_cache_generations
+          SET generation = ?, updated_at = ?, updated_by = ?, metadata_json = ?
+        WHERE tenant_id = ? AND cache_namespace = ?
+          AND generation = ? AND updated_at = ? AND metadata_json IS ?`,
+      [
+        input.generation,
+        now,
+        input.updated_by ?? null,
+        input.metadata_json ?? null,
+        input.tenant_id,
+        input.cache_namespace,
+        expected.generation,
+        expected.updated_at,
+        expected.metadata_json,
+      ]
+    );
+    return updated.rowsAffected === 1;
+  }
+
+  async commitRuntimeCacheGenerationPublication(
+    input: TenantRuntimeCacheGenerationInput,
+    expected: TenantRuntimeCacheGenerationRow | null
+  ): Promise<boolean> {
+    return this.compareAndSetRuntimeCacheGeneration(input, expected);
+  }
+
   async upsertRuntimeRegistrySnapshot(
     input: TenantRuntimeRegistrySnapshotInput
   ): Promise<TenantRuntimeRegistrySnapshotRow> {
     const snapshotScope = input.snapshot_scope ?? 'tenant';
     const deploymentTarget = input.deployment_target ?? 'default';
-    const snapshotVersion = input.snapshot_version ?? 1;
+    const snapshotVersion = input.snapshot_version ?? 3;
     const status = input.status ?? 'active';
 
     await this.adapter.execute(
       `INSERT INTO tenant_runtime_registry_snapshots (
          tenant_id, snapshot_scope, deployment_target, runtime_generation,
-         storage_profile_id, snapshot_version, status, object_ref, published_at,
+         backend_provider, placement_policy, placement_policy_generation,
+         snapshot_version, status, object_ref, published_at,
          expires_at, signature, signature_key_id, metadata_json
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(tenant_id, snapshot_scope, deployment_target, runtime_generation)
        DO UPDATE SET
-         storage_profile_id = excluded.storage_profile_id,
+         backend_provider = excluded.backend_provider,
+         placement_policy = excluded.placement_policy,
+         placement_policy_generation = excluded.placement_policy_generation,
          snapshot_version = excluded.snapshot_version,
          status = excluded.status,
          object_ref = excluded.object_ref,
@@ -622,7 +688,9 @@ export class TenantDatabaseRegistryRepository {
         snapshotScope,
         deploymentTarget,
         input.runtime_generation,
-        input.storage_profile_id,
+        input.backend_provider,
+        input.placement_policy,
+        input.placement_policy_generation,
         snapshotVersion,
         status,
         input.object_ref ?? null,

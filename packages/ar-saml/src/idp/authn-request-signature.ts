@@ -3,6 +3,8 @@ import {
   hasSignature,
   verifyRedirectBindingSignature,
   verifyXmlSignature,
+  verifyXmlSignatureAndGetReferences,
+  type VerifiedXmlReference,
 } from '../common/signature';
 import { DIGEST_ALGORITHMS, SAML_NAMESPACES, SIGNATURE_ALGORITHMS } from '../common/constants';
 import { getAttribute, parseXml } from '../common/xml-utils';
@@ -28,6 +30,7 @@ export interface SAMLAuthnRequestSignatureValidationInput {
 export interface SAMLAuthnRequestSignatureVerifiers {
   hasSignature?: (xml: string) => boolean;
   verifyXmlSignature?: typeof verifyXmlSignature;
+  verifyXmlSignatureAndGetReferences?: typeof verifyXmlSignatureAndGetReferences;
   verifyRedirectBindingSignature?: typeof verifyRedirectBindingSignature;
 }
 
@@ -53,11 +56,11 @@ export class SAMLAuthnRequestSignatureValidationError extends Error {
 export async function validateSAMLAuthnRequestSignature(
   input: SAMLAuthnRequestSignatureValidationInput,
   verifiers: SAMLAuthnRequestSignatureVerifiers = {}
-): Promise<void> {
+): Promise<VerifiedXmlReference[] | undefined> {
   const policy = input.spConfig.authnRequestSignaturePolicy ?? 'optional';
 
   if (policy === 'disabled') {
-    return;
+    return undefined;
   }
 
   const requestIsSigned = isAuthnRequestSigned(input, verifiers.hasSignature ?? hasSignature);
@@ -69,7 +72,7 @@ export async function validateSAMLAuthnRequestSignature(
         'Signed AuthnRequest is required for this Service Provider'
       );
     }
-    return;
+    return undefined;
   }
 
   const certificates = getSPVerificationCertificates(input.spConfig);
@@ -87,7 +90,7 @@ export async function validateSAMLAuthnRequestSignature(
       certificates,
       verifiers.verifyRedirectBindingSignature ?? verifyRedirectBindingSignature
     );
-    return;
+    return undefined;
   }
 
   validateXmlSignatureAlgorithms(input.xml, input.spConfig);
@@ -100,7 +103,10 @@ export async function validateSAMLAuthnRequestSignature(
   const allowSha1DigestAlgorithm =
     input.spConfig.authnRequestLegacyAlgorithmPolicy === 'explicit_opt_in' &&
     (input.spConfig.acceptedAuthnRequestDigestAlgorithms ?? []).includes(DIGEST_ALGORITHMS.SHA1);
-  const verifier = verifiers.verifyXmlSignature ?? verifyXmlSignature;
+  const verifier = verifiers.verifyXmlSignature;
+  const referenceVerifier =
+    verifiers.verifyXmlSignatureAndGetReferences ??
+    (verifier ? undefined : verifyXmlSignatureAndGetReferences);
   let lastError: unknown;
   for (const certificate of certificates) {
     const verifyOptions: Parameters<typeof verifyXmlSignature>[1] = {
@@ -116,8 +122,11 @@ export async function validateSAMLAuthnRequestSignature(
     }
 
     try {
-      if (verifier(input.xml, verifyOptions)) {
-        return;
+      if (referenceVerifier) {
+        return referenceVerifier(input.xml, verifyOptions);
+      }
+      if (verifier?.(input.xml, verifyOptions)) {
+        return undefined;
       }
     } catch (error) {
       lastError = error;

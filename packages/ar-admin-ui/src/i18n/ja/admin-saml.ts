@@ -30,6 +30,53 @@ const adminSaml = {
 	admin_saml_metadata_not_checked: '未確認',
 	admin_saml_metadata_changed: '変更あり',
 	admin_saml_metadata_current: '最新',
+	admin_saml_metadata_source_url: 'メタデータ配布元URL',
+	admin_saml_federation_source_url_hint:
+		'Authrimが取得するaggregateメタデータの正確なURLです。URL patternはtrust scopeの制限として使用します。',
+	admin_saml_metadata_auto_polling: 'メタデータの自動更新',
+	admin_saml_metadata_auto_polling_desc:
+		'配布元を定期取得して検証します。オフの場合は「今すぐ更新」でのみ更新します。',
+	admin_saml_metadata_polling: 'ポーリング',
+	admin_saml_metadata_polling_interval: '正常更新時の間隔',
+	admin_saml_metadata_interval_1h: '1時間ごと',
+	admin_saml_metadata_interval_6h: '6時間ごと',
+	admin_saml_metadata_interval_12h: '12時間ごと',
+	admin_saml_metadata_interval_24h: '24時間ごと',
+	admin_saml_metadata_refresh_now: '今すぐ更新',
+	admin_saml_metadata_refreshing: '更新中...',
+	admin_saml_metadata_refresh_failed: 'SAMLメタデータを更新できませんでした',
+	admin_saml_metadata_refreshed_changed: 'メタデータを更新し、変更を反映しました。',
+	admin_saml_metadata_refreshed_unchanged: 'メタデータを更新しました。変更はありません。',
+	admin_saml_metadata_last_success: '最終成功',
+	admin_saml_metadata_next_refresh: '次回更新',
+	admin_saml_metadata_last_error: '最終エラー',
+	admin_saml_metadata_never: '未実行',
+	admin_saml_metadata_manual_mode: '手動',
+	admin_saml_metadata_automatic_mode: '自動',
+	admin_saml_federation_runtime_automatic: '検証済みaggregateをruntimeで利用',
+	admin_saml_federation_runtime_automatic_desc:
+		'最新の有効なaggregateからentityIDを解決します。オフの場合はインベントリとしてのみ保持します。',
+	admin_saml_federation_runtime_roles: 'Runtimeロール',
+	admin_saml_federation_runtime_idp_role: '上流IdPを解決',
+	admin_saml_federation_runtime_sp_role: '下流SPを解決',
+	admin_saml_federation_runtime_idp_mapping: 'IdP用Field Mapping Set ID',
+	admin_saml_federation_runtime_sp_mapping: 'SP用Field Mapping Set ID',
+	admin_saml_federation_runtime_priority: 'ソース優先度',
+	admin_saml_federation_runtime_default_preset: 'SP属性のデフォルトプリセット',
+	admin_saml_federation_runtime_default_decision: 'Entity Categoryのデフォルト判定',
+	admin_saml_federation_runtime_authorities: '許可するRegistration Authority',
+	admin_saml_federation_runtime_authorities_hint:
+		'任意の許可リストです。Registration Authority URIを1行に1件入力します。',
+	admin_saml_federation_runtime_category_rules: 'Entity Categoryルール',
+	admin_saml_federation_runtime_category_rules_hint:
+		'1行に1ルールを、allow|deny、Category URI、任意のSP属性プリセットIDの順で入力します。',
+	admin_saml_federation_runtime_mapping_error:
+		'Runtimeロールを1つ以上選択し、対応するField Mapping Set IDを入力してください。',
+	admin_saml_federation_runtime_category_rule_error:
+		'Entity Categoryルールが不正です。allow|deny category-uri [preset-id] の形式で入力してください。',
+	admin_saml_actions: '操作',
+	admin_saml_federation_refresh_complete:
+		'フェデレーションメタデータを更新しました: エンティティ {entities} 件、更新 {updated} 件、未検出 {missing} 件、失敗 {failed} 件。',
 	admin_saml_federation_trust_profiles: 'フェデレーション信頼プロファイル',
 	admin_saml_federation_trust_desc:
 		'フェデレーションエンティティをインポートする前に、署名済みaggregateメタデータを検証するための信頼アンカーです。',
@@ -54,7 +101,6 @@ const adminSaml = {
 	admin_saml_local_settings_updated: 'SAML設定を更新しました',
 	admin_saml_local_certificate_settings_updated: 'SAML署名証明書の設定を更新しました',
 	admin_saml_local_copy: 'コピー',
-	admin_saml_local_download: 'ダウンロード',
 	admin_saml_local_download_xml: 'メタデータ',
 	admin_saml_local_copy_pem: 'コピー',
 	admin_saml_local_download_pem: 'PEM',
@@ -216,9 +262,7 @@ const adminSaml = {
 		'切り替え後、メタデータのキャッシュ期間中に一時的に残しておく証明書です。',
 	admin_saml_local_rollover_status_default_active: '既定の現在使用中証明書',
 	admin_saml_local_rollover_status_not_configured: '未設定',
-	admin_saml_local_rollover_status_signing_published: '使用中',
 	admin_saml_local_rollover_status_signing: '使用中',
-	admin_saml_local_rollover_status_stored_published: '保存済み',
 	admin_saml_local_rollover_status_stored_only: '保存済み',
 	admin_saml_local_yes: 'はい',
 	admin_saml_local_no: 'いいえ',
@@ -256,6 +300,10 @@ const adminSaml = {
 	admin_saml_detail_delete: '削除',
 	admin_saml_detail_provider_status: 'Provider状態',
 	admin_saml_detail_provider_status_desc: 'このSAML providerを有効化または無効化します。',
+	admin_saml_detail_provider_status_mapping_required:
+		'このproviderを有効化する前にField Mapping Setを選択して保存してください。',
+	admin_saml_detail_mapping_pending:
+		'このproviderは無効状態で登録されています。以下で適切なField Mapping Setを選択し、providerを有効化して保存してください。',
 	admin_saml_detail_basic_information: '基本情報',
 	admin_saml_detail_name_required: '名前 *',
 	admin_saml_detail_name_required_error: '名前は必須です',
@@ -278,8 +326,6 @@ const adminSaml = {
 		'PEMまたはbase64 DER形式のX.509証明書を受け付けます。通常はメタデータimportで自動入力されます。',
 	admin_saml_detail_checking: '確認中...',
 	admin_saml_detail_validate_certificate: '証明書を検証',
-	admin_saml_detail_attribute_mapping_json: 'Attribute Mapping JSON',
-	admin_saml_detail_mapping_object_error: 'Attribute mappingはJSON objectである必要があります',
 	admin_saml_detail_allowed_bindings: '許可するSAML Bindings',
 	admin_saml_detail_allowed_bindings_hint:
 		'このproviderがSSO/SLOメッセージで使えるSAML protocol bindingを制御します。',
@@ -314,21 +360,14 @@ const adminSaml = {
 		'出版社・図書館系SP向けにStrict相当の既定値を使います。Assertion署名、AuthnRequest/Logout署名必須、Persistent NameIDを設定します。SPがmail、displayName、eduPersonScopedAffiliation、eduPersonEntitlementを求める場合は属性マッピングも合わせて設定してください。',
 	admin_saml_detail_profile_hint_legacy:
 		'Legacyは古いSPとの互換性が必要な場合だけ使う緩和設定です。',
-	admin_saml_detail_attribute_preset: 'Attribute Preset',
-	admin_saml_detail_none: 'なし',
 	admin_saml_detail_identity_mapping_policy: 'Field Mapping Set',
 	admin_saml_detail_identity_mapping_policy_default: '選択してください',
+	admin_saml_detail_identity_mapping_policy_required: '有効なField Mapping Setを選択してください。',
+	admin_saml_detail_identity_mapping_policy_no_compatible:
+		'利用可能な有効なField Mapping Setがありません。',
 	admin_saml_detail_identity_mapping_policy_hint:
 		'Inbound/Outbound SAML属性変換に使うactiveなField Mapping Setを選択します。',
 	admin_saml_detail_identity_mapping_policy_link: 'Field Mapping Set設定を開く',
-	admin_saml_detail_attribute_release_consent: '属性提供の同意',
-	admin_saml_detail_attribute_release_consent_disabled: '属性提供前に確認しない',
-	admin_saml_detail_attribute_release_consent_once: '初回だけ確認し、以後は記憶する',
-	admin_saml_detail_attribute_release_consent_every_time: 'SSOのたびに確認する',
-	admin_saml_detail_attribute_release_consent_until_attributes_change:
-		'提供する属性が変わった時に再確認する',
-	admin_saml_detail_attribute_release_consent_hint:
-		'このSPへSAML assertionを送信する前に、Authrimが属性提供の確認を必須にするかを制御します。同じpolicy形状をOIDC clientにも再利用できます。',
 	admin_saml_detail_authn_request_signature: 'AuthnRequest署名検証',
 	admin_saml_detail_authn_request_signature_hint:
 		'SPから届くAuthnRequestの署名を必須にするかを制御します。通常はOptionalまたはRequiredを使い、Disabledは明示的な例外時だけ使ってください。',
@@ -406,6 +445,8 @@ const adminSaml = {
 	admin_saml_new_signature_via: 'via {profile}',
 	admin_saml_new_create_providers: 'Providersを作成',
 	admin_saml_new_create_providers_desc: 'このaggregateからentityを選択します',
+	admin_saml_new_aggregate_mapping_after_create:
+		'選択したIdPとSPは無効なproviderとして登録されます。登録後に各providerの詳細画面で適切なField Mapping Setを選択し、providerを有効化してください。',
 	admin_saml_new_federation_trust_profile: 'Federation Trust Profile',
 	admin_saml_new_federation_trust_profile_desc: 'このaggregateのtrust anchorを登録します',
 	admin_saml_new_profile_name_required: 'Profile Name *',
@@ -434,6 +475,10 @@ const adminSaml = {
 	admin_saml_new_load_more: 'さらに読み込む',
 	admin_saml_new_batch_progress:
 		'処理済み {processed} / {total} · 成功 {succeeded} · 失敗 {failed}',
+	admin_saml_new_batch_mapping_next:
+		'登録が完了しました。各providerを有効化する前にField Mapping Setを設定してください。',
+	admin_saml_new_configure_created_provider: '{name} を設定',
+	admin_saml_new_provider_import_failed: '{entityId} を登録できませんでした: {error}',
 	admin_saml_new_choose_provider_type: 'Provider種別を選択',
 	admin_saml_new_choose_provider_type_hint:
 		'単一のSAML counterpartyにはIdPまたはSPを、aggregateメタデータのtrust anchorにはFederationを選択します。',

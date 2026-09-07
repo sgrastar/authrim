@@ -34,6 +34,12 @@ const {
   sqlTracker,
   mockJoinOrganization,
   mockAssignRoleToUser,
+  mockResolveAccountDataContextByIdentifier,
+  mockResolveTenantMetadataContext,
+  mockProvisionExternalIdpAccount,
+  provisioningState,
+  mockFindPendingIdentity,
+  mockActivatePendingIdentity,
 } = vi.hoisted(() => {
   // Storage for tracking SQL calls
   const tracker = {
@@ -81,7 +87,14 @@ const {
     allow_unverified_domain_mappings: false,
   });
 
-  const validateCustomClaimWriteMock = vi.fn().mockResolvedValue({ ok: true });
+  const validateCustomClaimWriteMock = vi.fn().mockResolvedValue({
+    ok: true,
+    schemas: [],
+    nonPiiValues: {},
+    piiValues: {},
+    nonPiiKeysToDelete: [],
+    piiKeysToDelete: [],
+  });
   const persistCustomClaimWriteMock = vi.fn().mockResolvedValue(undefined);
   const syncUserLifecycleStateMock = vi.fn().mockResolvedValue({
     lifecycleState: 'active',
@@ -152,6 +165,41 @@ const {
   // Mock functions for role/org operations
   const joinOrgMock = vi.fn().mockResolvedValue({ success: true });
   const assignRoleMock = vi.fn().mockResolvedValue(undefined);
+  const resolveAccountDataContextByIdentifierMock = vi.fn();
+  const resolveTenantMetadataContextMock = vi.fn();
+  type ProvisioningRequest = {
+    operationId: string;
+    candidateUserId: string;
+    tenantId: string;
+    runtimeUser: Record<string, unknown>;
+    externalIdentity: {
+      id: string;
+      providerId: string;
+      providerUserId: string;
+      profileDataEncrypted: string;
+    };
+  };
+  const state = {
+    request: undefined as ProvisioningRequest | undefined,
+  };
+  const provisionExternalIdpAccountMock = vi.fn(async (request: ProvisioningRequest) => {
+    state.request = request;
+    return {
+      status: 201,
+      operationId: request.operationId,
+      accountId: `account:${request.candidateUserId}`,
+      userId: request.candidateUserId,
+    };
+  });
+  const findPendingIdentityMock = vi.fn(async () => ({
+    id: state.request?.externalIdentity?.id,
+    tenantId: state.request?.tenantId,
+    userId: state.request?.candidateUserId,
+    providerId: state.request?.externalIdentity?.providerId,
+    providerUserId: state.request?.externalIdentity?.providerUserId,
+    profileDataEncrypted: state.request?.externalIdentity?.profileDataEncrypted,
+  }));
+  const activatePendingIdentityMock = vi.fn().mockResolvedValue(undefined);
 
   return {
     mockCoreQueryOne: coreQueryOneMock,
@@ -171,6 +219,12 @@ const {
     sqlTracker: tracker,
     mockJoinOrganization: joinOrgMock,
     mockAssignRoleToUser: assignRoleMock,
+    mockResolveAccountDataContextByIdentifier: resolveAccountDataContextByIdentifierMock,
+    mockResolveTenantMetadataContext: resolveTenantMetadataContextMock,
+    mockProvisionExternalIdpAccount: provisionExternalIdpAccountMock,
+    provisioningState: state,
+    mockFindPendingIdentity: findPendingIdentityMock,
+    mockActivatePendingIdentity: activatePendingIdentityMock,
   };
 });
 
@@ -204,26 +258,16 @@ vi.mock('@authrim/ar-lib-core', () => ({
   persistCustomClaimWrite: mockPersistCustomClaimWrite,
   syncUserLifecycleState: mockSyncUserLifecycleState,
   createAuditLog: mockCreateAuditLog,
+  resolveAccountDataContextByIdentifier: mockResolveAccountDataContextByIdentifier,
+  resolveTenantMetadataContext: mockResolveTenantMetadataContext,
   resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
-    storageProfile: {
-      id: 'builtin:storage:standard',
-      kind: 'storage',
-      label: 'Standard D1 Split',
-      slices: {},
-    },
     schemaDb: env.DB,
     nonPiiDb: env.DB,
     piiDb: env.DB_PII ?? null,
   })),
-  resolveUserStoreRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
-    storageProfile: {
-      id: 'builtin:storage:standard',
-      kind: 'storage',
-      label: 'Standard D1 Split',
-      slices: {},
-    },
+  resolveTenantUserStoreSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
     coreDb: env.DB,
-    piiDb: env.DB_PII ?? env.DB ?? null,
+    piiDb: env.DB_PII ?? env.DB,
   })),
   DEFAULT_JIT_CONFIG: {
     enabled: true,
@@ -240,6 +284,8 @@ vi.mock('../services/linked-identity-store', () => ({
   findLinkedIdentity: vi.fn().mockResolvedValue(null),
   createLinkedIdentity: vi.fn().mockResolvedValue({ id: 'linked-id-123' }),
   updateLinkedIdentity: vi.fn(),
+  findPendingLinkedIdentityProvisioning: mockFindPendingIdentity,
+  activatePendingLinkedIdentity: mockActivatePendingIdentity,
 }));
 
 import { handleIdentity } from '../services/identity-stitching';
@@ -296,6 +342,10 @@ const mockEnv = {
     get: mockSettingsGet,
     put: vi.fn(),
   },
+  RP_TOKEN_ENCRYPTION_KEY: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+  EXTERNAL_IDP_ACCOUNT_PROVISIONER: {
+    provisionExternalIdpAccount: mockProvisionExternalIdpAccount,
+  },
 };
 
 // =============================================================================
@@ -317,12 +367,38 @@ describe('JIT Provisioning Integration', () => {
       hash: 'mock-domain-hash-abc123',
       version: 1,
     });
-    mockValidateCustomClaimWrite.mockReset().mockResolvedValue({ ok: true });
+    mockValidateCustomClaimWrite.mockReset().mockResolvedValue({
+      ok: true,
+      schemas: [],
+      nonPiiValues: {},
+      piiValues: {},
+      nonPiiKeysToDelete: [],
+      piiKeysToDelete: [],
+    });
     mockPersistCustomClaimWrite.mockReset().mockResolvedValue(undefined);
     mockRuntimeSyncUser.mockReset().mockResolvedValue({ accountId: 'account-id' });
+    provisioningState.request = undefined;
+    mockProvisionExternalIdpAccount.mockClear();
+    mockFindPendingIdentity.mockClear();
+    mockActivatePendingIdentity.mockClear();
     mockSyncUserLifecycleState.mockReset().mockResolvedValue({
       lifecycleState: 'active',
       missingRequiredFields: [],
+    });
+    mockResolveAccountDataContextByIdentifier.mockReset().mockImplementation(async () => {
+      if (!provisioningState.request) throw new Error('account_data_route_not_found');
+      return {
+        tenantId: provisioningState.request.tenantId,
+        accountId: `account:${provisioningState.request.candidateUserId}`,
+        legacyUserId: provisioningState.request.candidateUserId,
+        coreDb: mockEnv.DB,
+        piiDb: mockEnv.DB_PII,
+      };
+    });
+    mockResolveTenantMetadataContext.mockReset().mockResolvedValue({
+      tenantId: 'default',
+      coreDb: mockEnv.DB,
+      route: {},
     });
     // Default: return null from SETTINGS.get (will use DEFAULT_JIT_CONFIG)
     mockSettingsGet.mockResolvedValue(null);
@@ -708,11 +784,13 @@ describe('JIT Provisioning Integration', () => {
         tenantId: 'default',
       });
 
-      expect(mockRuntimeSyncUser).toHaveBeenCalledWith(
+      expect(mockProvisionExternalIdpAccount).toHaveBeenCalledWith(
         expect.objectContaining({
-          inlineProfileFields: expect.objectContaining({
-            email_domain_hash: 'generated-hash-xyz',
-            email_domain_hash_version: 2,
+          runtimeUser: expect.objectContaining({
+            inlineProfileFields: expect.objectContaining({
+              email_domain_hash: 'generated-hash-xyz',
+              email_domain_hash_version: 2,
+            }),
           }),
         })
       );
@@ -755,6 +833,13 @@ describe('JIT Provisioning Integration', () => {
 
   describe('Existing User - No JIT Processing', () => {
     it('should not run rule evaluation for existing linked identity', async () => {
+      mockResolveAccountDataContextByIdentifier.mockResolvedValue({
+        tenantId: 'default',
+        accountId: 'account:user-existing-123',
+        legacyUserId: 'user-existing-123',
+        coreDb: mockEnv.DB,
+        piiDb: mockEnv.DB_PII,
+      });
       // Setup: Existing linked identity found
       vi.mocked(linkedIdentityStore.findLinkedIdentity).mockResolvedValue({
         id: 'linked-id-existing',

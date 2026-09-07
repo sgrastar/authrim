@@ -24,7 +24,8 @@ import {
   persistCustomClaimWrite,
   syncUserLifecycleState,
   resolveCustomClaimRuntimeSourcesFromEnv,
-  resolveUserStoreRuntimeSourcesFromEnv,
+  resolveAccountDataContextByIdentifier,
+  type AuthAccountProvisioningInput,
   getChallengeStoreByChallengeId,
   CanonicalRuntimeUserStore,
   resolveRuntimeIdentityMappingBinding,
@@ -37,10 +38,11 @@ import {
   // Audit Log
   createAuditLog,
 } from '@authrim/ar-lib-core';
-import { executeRuntimeMapping, type SourceValueEnvelope } from '@authrim/ar-lib-field-mapping';
+import { executeRuntimeMapping } from '@authrim/ar-lib-field-mapping/runtime';
+import type { SourceValueEnvelope } from '@authrim/ar-lib-field-mapping/contract';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
 import {
-  parseXml,
+  parseSAMLXml,
   getAttribute,
   getTextContent,
   findDirectChildElement,
@@ -51,10 +53,18 @@ import {
   parsePostBindingFormDataWithLimit,
 } from '../common/message-limits';
 import { SAML_NAMESPACES, STATUS_CODES, DEFAULTS } from '../common/constants';
-import { verifyXmlSignature, hasSignature } from '../common/signature';
+import {
+  verifyXmlSignatureAndGetReferences,
+  hasSignature,
+  type VerifiedXmlReference,
+} from '../common/signature';
 import { getIdPConfigByEntityId } from '../admin/providers';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize, SAMLRelayStateTooLargeError } from '../common/relay-state';
+import {
+  buildSAMLRequestBindingClearCookie,
+  hasSAMLRequestBrowserBinding,
+} from './request-browser-binding';
 
 const SESSION_COOKIE_NAME = 'authrim_session';
 const SESSION_COOKIE_MAX_AGE_SECONDS = 3600;
@@ -95,29 +105,46 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
     const responseXml = decodePostBindingMessage(samlResponse, 'SAML Response');
 
     // Parse and validate Response
-    const { responseId, issuer, assertion, inResponseTo } = parseAndValidateResponse(
-      responseXml,
-      issuerUrl,
-      spEntityId
-    );
-    auditProviderId = issuer;
+    const preliminaryResponse = parseAndValidateResponse(responseXml, issuerUrl, spEntityId);
+    auditProviderId = preliminaryResponse.issuer;
 
     // Get IdP configuration
-    const idpConfig = await getIdPConfigByEntityId(env, tenantId, issuer);
+    const idpConfig = await getIdPConfigByEntityId(env, tenantId, preliminaryResponse.issuer);
     if (!idpConfig) {
       return createErrorResponse(c, AR_ERROR_CODES.SAML_INVALID_RESPONSE);
     }
 
+    let verifiedResponse: ParsedResponse;
     try {
-      validateSAMLResponseSignature(responseXml, idpConfig, responseId, assertion.id);
+      const verifiedReferences = validateSAMLResponseSignature(
+        responseXml,
+        idpConfig,
+        preliminaryResponse.responseId,
+        preliminaryResponse.assertion.id
+      );
+      verifiedResponse = parseVerifiedSAMLResponse(
+        preliminaryResponse,
+        verifiedReferences,
+        issuerUrl,
+        spEntityId
+      );
+      if (verifiedResponse.issuer !== preliminaryResponse.issuer) {
+        throw new Error('Verified SAML Response Issuer does not match the routed IdP');
+      }
     } catch (error) {
       log.error('Signature verification failed', {}, error as Error);
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
+    const { issuer, assertion, inResponseTo } = verifiedResponse;
+
     // Validate InResponseTo (if we sent an AuthnRequest)
     let validatedRequest: SAMLRequestData | null = null;
     if (inResponseTo) {
+      if (!hasSAMLRequestBrowserBinding(c.req.header('Cookie'), inResponseTo)) {
+        log.error('SAML Response browser binding validation failed', { inResponseTo });
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
       validatedRequest = await consumeInResponseTo(env, tenantId, inResponseTo, issuer);
       if (!validatedRequest) {
         log.error('InResponseTo validation failed', { inResponseTo });
@@ -231,16 +258,24 @@ export async function handleSPACS(c: Context<{ Bindings: Env }>): Promise<Respon
       returnUrl
     );
     if (handoffResponse) {
+      if (inResponseTo) {
+        handoffResponse.headers.append(
+          'Set-Cookie',
+          buildSAMLRequestBindingClearCookie(inResponseTo)
+        );
+      }
       return handoffResponse;
     }
 
     // Set session cookie and redirect
+    const headers = new Headers({ Location: returnUrl });
+    headers.append('Set-Cookie', buildSessionCookie(sessionId));
+    if (inResponseTo) {
+      headers.append('Set-Cookie', buildSAMLRequestBindingClearCookie(inResponseTo));
+    }
     return new Response(null, {
       status: 302,
-      headers: {
-        Location: returnUrl,
-        'Set-Cookie': buildSessionCookie(sessionId),
-      },
+      headers,
     });
   } catch (error) {
     log.error('ACS Error', {}, error as Error);
@@ -499,6 +534,7 @@ interface ParsedResponse {
 interface ParsedSAMLAssertion extends SAMLAssertion {
   subjectConfirmationData: {
     notOnOrAfter: string;
+    inResponseTo?: string;
   };
 }
 
@@ -510,7 +546,7 @@ function parseAndValidateResponse(
   issuerUrl: string,
   spEntityId: string
 ): ParsedResponse {
-  const doc = parseXml(xml);
+  const doc = parseSAMLXml(xml);
 
   const responseElement = doc.documentElement;
   if (
@@ -682,14 +718,20 @@ function parseAssertion(
       SAML_NAMESPACES.SAML2,
       'AudienceRestriction'
     );
-    const audienceElements = audienceRestrictionElements.flatMap((audienceRestriction) =>
+    const audienceGroups = audienceRestrictionElements.map((audienceRestriction) =>
       findDirectChildElements(audienceRestriction, SAML_NAMESPACES.SAML2, 'Audience')
+        .map((audience) => getTextContent(audience) || '')
+        .filter(Boolean)
     );
-    const audiences = audienceElements.map((el) => getTextContent(el) || '').filter(Boolean);
+    const audiences = audienceGroups.flat();
 
-    // Validate audience
+    // Audience values within one restriction are alternatives (OR), while separate
+    // AudienceRestriction elements are cumulative (AND).
     const expectedAudience = spEntityId;
-    if (audiences.length === 0 || !audiences.includes(expectedAudience)) {
+    if (
+      audienceGroups.length === 0 ||
+      audienceGroups.some((group) => !group.includes(expectedAudience))
+    ) {
       // SECURITY: Do not expose endpoint URLs in error message
       throw new Error('Invalid Audience in SAML Assertion');
     }
@@ -927,7 +969,10 @@ function validateSubjectConfirmation(
     }
   }
 
-  return { notOnOrAfter };
+  return {
+    notOnOrAfter,
+    inResponseTo: subjectConfirmationInResponseTo || undefined,
+  };
 }
 
 /**
@@ -941,55 +986,32 @@ async function checkAndRecordBearerAssertionUse(
   assertionId: string,
   notOnOrAfter?: string
 ): Promise<boolean> {
-  // Use NONCE_STORE KV for tracking used assertions
-  const kvStore = env.NONCE_STORE;
-  const key = buildOneTimeUseAssertionReplayKey(tenantId, idpEntityId, assertionId);
+  try {
+    const assertionExpiresAt = notOnOrAfter
+      ? parseSAMLDateTimeMs(notOnOrAfter, 'SubjectConfirmationData NotOnOrAfter') +
+        DEFAULTS.CLOCK_SKEW_SECONDS * 1000
+      : Date.now() + 5 * 60 * 1000;
+    const storeId = env.SAML_REQUEST_STORE.idFromName(
+      buildSAMLRequestStoreInstanceName(tenantId, 'sp', idpEntityId)
+    );
+    const store = env.SAML_REQUEST_STORE.get(storeId);
+    const response = await store.fetch('https://saml-request-store/assertion/consume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assertionId, expiresAt: assertionExpiresAt }),
+    });
 
-  // Check if assertion ID has been used
-  const existingEntry = await kvStore.get(key);
-  if (existingEntry) {
-    const log = createLogger().module('SAML-SP-ACS');
-    log.warn('Bearer assertion already used', { assertionId });
+    if (response.status === 409) {
+      createLogger().module('SAML-SP-ACS').warn('Bearer assertion already used', { assertionId });
+      return false;
+    }
+    return response.ok;
+  } catch (error) {
+    createLogger()
+      .module('SAML-SP-ACS')
+      .error('Bearer assertion replay validation unavailable', { assertionId }, error as Error);
     return false;
   }
-
-  // Calculate TTL based on SubjectConfirmationData NotOnOrAfter.
-  let expirationTtl = 300; // Default 5 minutes
-  if (notOnOrAfter) {
-    const notOnOrAfterTime = parseSAMLDateTimeMs(
-      notOnOrAfter,
-      'SubjectConfirmationData NotOnOrAfter'
-    );
-    const now = Date.now();
-    const clockSkewMs = DEFAULTS.CLOCK_SKEW_SECONDS * 1000;
-    // Keep the record until after the assertion would have expired anyway
-    expirationTtl = Math.max(
-      60, // Minimum 1 minute
-      Math.ceil((notOnOrAfterTime + clockSkewMs - now) / 1000)
-    );
-  }
-
-  // Record the assertion ID with TTL
-  await kvStore.put(key, Date.now().toString(), { expirationTtl });
-
-  return true;
-}
-
-function buildOneTimeUseAssertionReplayKey(
-  tenantId: string,
-  idpEntityId: string,
-  assertionId: string
-): string {
-  // Assertion IDs are issuer-controlled, so replay markers must be scoped by tenant and IdP.
-  return [
-    'saml:assertion',
-    'tenant',
-    encodeURIComponent(tenantId),
-    'idp',
-    encodeURIComponent(idpEntityId),
-    'id',
-    encodeURIComponent(assertionId),
-  ].join(':');
 }
 
 /**
@@ -1015,7 +1037,7 @@ async function getStrictInResponseToSetting(env: Env): Promise<boolean> {
     return envValue.toLowerCase() === 'true';
   }
 
-  // Return default (false for backward compatibility)
+  // Return the secure default. IdP-initiated SSO requires an explicit compatibility opt-out.
   return DEFAULTS.STRICT_INRESPONSETO;
 }
 
@@ -1055,8 +1077,11 @@ function validateSAMLResponseSignature(
   idpConfig: SAMLIdPConfig,
   responseId: string,
   assertionId: string
-): void {
-  if (!idpConfig.certificate) {
+): VerifiedXmlReference[] {
+  const certificates = Array.from(
+    new Set([idpConfig.certificate, ...(idpConfig.certificates ?? [])].filter(Boolean))
+  );
+  if (certificates.length === 0) {
     throw new Error('IdP certificate is required to verify SAML Response signatures');
   }
 
@@ -1064,31 +1089,80 @@ function validateSAMLResponseSignature(
     throw new Error('Signed SAML Response or Assertion is required for configured IdP');
   }
 
-  verifyXmlSignature(xml, {
-    certificateOrKey: idpConfig.certificate,
-    strictXswProtection: true,
-  });
-
-  const signedReferences = getSignatureReferenceUris(xml);
-  if (!signedReferences.has(`#${responseId}`) && !signedReferences.has(`#${assertionId}`)) {
-    throw new Error('SAML signature does not cover the processed Response or Assertion');
-  }
-}
-
-function getSignatureReferenceUris(xml: string): Set<string> {
-  const doc = parseXml(xml);
-  const signatures = doc.getElementsByTagNameNS(SAML_NAMESPACES.DS, 'Signature');
-  const uris = new Set<string>();
-  for (let i = 0; i < signatures.length; i++) {
-    const references = signatures[i].getElementsByTagNameNS(SAML_NAMESPACES.DS, 'Reference');
-    for (let j = 0; j < references.length; j++) {
-      const uri = getAttribute(references[j], 'URI');
-      if (uri) {
-        uris.add(uri);
-      }
+  let verifiedReferences: VerifiedXmlReference[] | undefined;
+  let lastError: unknown;
+  for (const certificate of certificates) {
+    try {
+      verifiedReferences = verifyXmlSignatureAndGetReferences(xml, {
+        certificateOrKey: certificate,
+        strictXswProtection: true,
+      });
+      break;
+    } catch (error) {
+      lastError = error;
     }
   }
-  return uris;
+  if (!verifiedReferences) {
+    throw lastError instanceof Error ? lastError : new Error('SAML signature verification failed');
+  }
+
+  if (
+    !verifiedReferences.some(
+      (reference) => reference.uri === `#${responseId}` || reference.uri === `#${assertionId}`
+    )
+  ) {
+    throw new Error('SAML signature does not cover the processed Response or Assertion');
+  }
+
+  return verifiedReferences;
+}
+
+function parseVerifiedSAMLResponse(
+  preliminary: ParsedResponse,
+  verifiedReferences: VerifiedXmlReference[],
+  issuerUrl: string,
+  spEntityId: string
+): ParsedResponse {
+  const signedResponse = verifiedReferences.find(
+    (reference) => reference.uri === `#${preliminary.responseId}`
+  );
+  if (signedResponse) {
+    return parseAndValidateResponse(signedResponse.xml, issuerUrl, spEntityId);
+  }
+
+  const signedAssertion = verifiedReferences.find(
+    (reference) => reference.uri === `#${preliminary.assertion.id}`
+  );
+  if (!signedAssertion) {
+    throw new Error('SAML signature does not contain the processed Assertion');
+  }
+
+  const doc = parseSAMLXml(signedAssertion.xml);
+  const assertionElement = doc.documentElement;
+  if (
+    !assertionElement ||
+    assertionElement.namespaceURI !== SAML_NAMESPACES.SAML2 ||
+    assertionElement.localName !== 'Assertion'
+  ) {
+    throw new Error('Signed SAML reference is not an Assertion');
+  }
+
+  const assertion = parseAssertion(
+    assertionElement,
+    issuerUrl,
+    spEntityId,
+    preliminary.inResponseTo
+  );
+  if (assertion.id !== preliminary.assertion.id || assertion.issuer !== preliminary.issuer) {
+    throw new Error('Signed Assertion does not match the routed SAML Response');
+  }
+
+  return {
+    responseId: preliminary.responseId,
+    issuer: assertion.issuer,
+    inResponseTo: assertion.subjectConfirmationData.inResponseTo,
+    assertion,
+  };
 }
 
 function parseSAMLDateTimeMs(value: string, label: string): number {
@@ -1161,6 +1235,8 @@ type SAMLIdentityResolutionFailureReason =
   | 'missing_email'
   | 'pii_database_unavailable'
   | 'custom_claim_validation_failed'
+  | 'account_provisioning_pending'
+  | 'account_route_inconsistent'
   | 'linked_identity_subject_conflict';
 
 class SamlProvisioningError extends Error {
@@ -1310,8 +1386,23 @@ function applySAMLInboundMappedValues(userInfo: UserInfo, values: SourceValueEnv
       userInfo.email = value;
       continue;
     }
-    if (path === 'name') {
+    if (path === 'name' || path === 'display_name') {
       userInfo.name = value;
+      if (path === 'display_name') userInfo.customClaims.display_name = value;
+      continue;
+    }
+    if (
+      namespace === 'authrim.profile' &&
+      [
+        'email_verified',
+        'given_name',
+        'family_name',
+        'preferred_username',
+        'picture_url',
+        'locale',
+      ].includes(path)
+    ) {
+      userInfo.customClaims[path] = value;
       continue;
     }
     if (
@@ -1348,30 +1439,56 @@ async function findOrCreateUser(
   idpConfig: SAMLIdPConfig,
   tenantId: string
 ): Promise<SAMLIdentityResolution> {
-  const userStoreSources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId);
-  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(
-    userStoreSources.coreDb,
-    'saml-acs-core'
-  );
-  const piiAdapter: DatabaseAdapter | null = userStoreSources.piiDb
-    ? ensureDatabaseAdapter(userStoreSources.piiDb, 'saml-acs-pii')
-    : null;
-  if (!piiAdapter) {
-    throw new SamlProvisioningError(
-      'SAML ACS canonical runtime user store requires a PII database',
-      'pii_database_unavailable'
-    );
+  const providerId = idpConfig.entityId;
+  const providerUserKey = buildSAMLProviderUserKey(userInfo);
+  const normalizedEmail = normalizeEmail(userInfo.email);
+  const jitEmailLinkingPolicy = resolveJitEmailLinkingPolicy(idpConfig);
+  let account = null;
+  try {
+    account = await resolveAccountDataContextByIdentifier(env, {
+      tenantId,
+      indexKind: 'external_subject',
+      identifier: { issuer: providerId, subject: providerUserKey },
+    });
+  } catch (error) {
+    if (!(error instanceof Error && error.message === 'account_data_route_not_found')) throw error;
   }
+  if (!account && normalizedEmail) {
+    try {
+      account = await resolveAccountDataContextByIdentifier(env, {
+        tenantId,
+        indexKind: 'email_exact',
+        identifier: normalizedEmail,
+      });
+    } catch (error) {
+      if (!(error instanceof Error && error.message === 'account_data_route_not_found'))
+        throw error;
+    }
+  }
+  if (!account) {
+    if (jitEmailLinkingPolicy === 'disabled') {
+      throw new SamlProvisioningError(
+        'SAML JIT provisioning is disabled for this IdP',
+        'jit_disabled'
+      );
+    }
+    return provisionSamlJitAccount(env, {
+      tenantId,
+      providerId,
+      providerUserKey,
+      normalizedEmail: normalizedEmail ?? null,
+      userInfo,
+      allowSyntheticEmailFallback: idpConfig.allowSyntheticEmailFallback === true,
+    });
+  }
+  const coreAdapter: DatabaseAdapter = ensureDatabaseAdapter(account.coreDb, 'saml-acs-core');
+  const piiAdapter = ensureDatabaseAdapter(account.piiDb, 'saml-acs-pii');
   const runtimeUsers = new CanonicalRuntimeUserStore({
     coreAdapter,
     piiAdapter,
     tenantId,
   });
-  const linkedIdentityAdapter = piiAdapter ?? coreAdapter;
-  const providerId = idpConfig.entityId;
-  const providerUserKey = buildSAMLProviderUserKey(userInfo);
-  const normalizedEmail = normalizeEmail(userInfo.email);
-  const jitEmailLinkingPolicy = resolveJitEmailLinkingPolicy(idpConfig);
+  const linkedIdentityAdapter = piiAdapter;
 
   const existingLink = await findSAMLLinkedIdentity(
     linkedIdentityAdapter,
@@ -1483,6 +1600,14 @@ async function findOrCreateUser(
         userInfo: { ...userInfo, email: normalizedEmail },
         piiShape: Boolean(piiAdapter),
       });
+      await publishSamlExternalRoute(env, {
+        tenantId,
+        accountId: account.accountId,
+        userId: activeUser.id,
+        linkedIdentityId,
+        providerId,
+        providerUserKey,
+      });
 
       return {
         userId: activeUser.id,
@@ -1499,16 +1624,89 @@ async function findOrCreateUser(
     );
   }
 
-  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, tenantId);
+  throw new SamlProvisioningError(
+    'SAML account route did not resolve to a usable linked identity',
+    'account_route_inconsistent'
+  );
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function publishSamlExternalRoute(
+  env: Env,
+  input: {
+    tenantId: string;
+    accountId: string;
+    userId: string;
+    linkedIdentityId: string;
+    providerId: string;
+    providerUserKey: string;
+  }
+): Promise<void> {
+  const provisioner = env.SAML_ACCOUNT_PROVISIONER;
+  if (!provisioner) throw new Error('saml_account_provisioner_unavailable');
+  const digest = await sha256Hex(
+    JSON.stringify({
+      tenantId: input.tenantId,
+      accountId: input.accountId,
+      linkedIdentityId: input.linkedIdentityId,
+      providerId: input.providerId,
+      providerUserKey: input.providerUserKey,
+    })
+  );
+  const operationId = `saml-route-${digest.slice(0, 32)}`;
+  const result = await provisioner.publishExternalIdpRoute({
+    schemaVersion: 1,
+    operationId,
+    idempotencyKey: `saml-route:${digest}`,
+    tenantId: input.tenantId,
+    accountId: input.accountId,
+    userId: input.userId,
+    linkedIdentityId: input.linkedIdentityId,
+    providerId: input.providerId,
+    providerUserId: input.providerUserKey,
+  });
+  if (
+    result.operationId !== operationId ||
+    result.accountId !== input.accountId ||
+    (result.status !== 201 && result.status !== 202)
+  ) {
+    throw new Error('saml_external_route_publication_invalid');
+  }
+}
+
+async function provisionSamlJitAccount(
+  env: Env,
+  input: {
+    tenantId: string;
+    providerId: string;
+    providerUserKey: string;
+    normalizedEmail: string | null;
+    userInfo: UserInfo;
+    allowSyntheticEmailFallback: boolean;
+  }
+): Promise<SAMLIdentityResolution> {
+  const provisioner = env.SAML_ACCOUNT_PROVISIONER;
+  if (!provisioner) throw new Error('saml_account_provisioner_unavailable');
+  if (!input.normalizedEmail && !input.allowSyntheticEmailFallback) {
+    throw new SamlProvisioningError(
+      'SAML JIT provisioning requires an email unless synthetic email fallback is explicitly enabled',
+      'missing_email'
+    );
+  }
+  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(env, input.tenantId);
   const customClaimValidation = await validateCustomClaimWrite({
-    db: customClaimSources.nonPiiDb,
-    dbPii: customClaimSources.piiDb,
+    db: customClaimSources.schemaDb,
+    dbPii: null,
+    piiStorageAvailable: true,
     schemaDb: customClaimSources.schemaDb,
-    tenantId,
-    submitted: userInfo.customClaims,
+    tenantId: input.tenantId,
+    submitted: input.userInfo.customClaims,
     requireCompleteRecord: true,
   });
-
   if (!customClaimValidation.ok) {
     throw new SamlProvisioningError(
       customClaimValidation.error,
@@ -1516,92 +1714,90 @@ async function findOrCreateUser(
       customClaimValidation.missingRequiredFields
     );
   }
-
-  // Create new user (JIT provisioning - canonical graph + PII sensitive value store)
-  const userId = crypto.randomUUID();
-  if (!normalizedEmail && !idpConfig.allowSyntheticEmailFallback) {
-    throw new SamlProvisioningError(
-      'SAML JIT provisioning requires an email unless synthetic email fallback is explicitly enabled',
-      'missing_email'
-    );
-  }
-  const email = normalizedEmail || (await buildSyntheticSAMLEmail(providerUserKey));
-  await runtimeUsers.syncUser({
-    userId,
-    email,
-    name: userInfo.name || null,
+  const candidateUserId = crypto.randomUUID();
+  const subjectDigest = await sha256Hex(
+    `${input.tenantId}\u0000${input.providerId}\u0000${input.providerUserKey}`
+  );
+  const email =
+    input.normalizedEmail ?? (await buildSyntheticSAMLEmail(`${subjectDigest.slice(0, 32)}`));
+  const runtimeUser: AuthAccountProvisioningInput['runtimeUser'] = {
     active: true,
     emailVerified: true,
     userType: 'end_user',
-    sourceRef: `saml:${providerId}`,
+    displayName: input.userInfo.name ?? null,
+    sourceRef: 'auth:saml',
+    piiFields: { email: true, name: Boolean(input.userInfo.name) },
+    sensitiveValues: { email, name: input.userInfo.name ?? null },
+  };
+  const stableRequest = JSON.stringify({
+    tenantId: input.tenantId,
+    providerId: input.providerId,
+    providerUserKey: input.providerUserKey,
+    email,
+    runtimeUser,
   });
-
-  try {
-    await persistCustomClaimWrite({
-      db: customClaimSources.nonPiiDb,
-      dbPii: customClaimSources.piiDb,
-      tenantId,
-      userId,
-      validation: customClaimValidation,
-    });
-
-    await syncUserLifecycleState({
-      db: customClaimSources.nonPiiDb,
-      dbPii: customClaimSources.piiDb,
-      schemaDb: customClaimSources.schemaDb,
-      stateDb: coreAdapter,
-      tenantId,
-      userId,
-    });
-
-    const linkedIdentityId = await createSAMLLinkedIdentity({
-      adapter: linkedIdentityAdapter,
-      tenantId,
-      userId,
-      providerId,
-      providerUserKey,
-      userInfo: { ...userInfo, email },
-      piiShape: Boolean(piiAdapter),
-    });
-
-    return {
-      userId,
-      action: 'jit_create',
-      linkedIdentityId,
-    };
-  } catch (jitError) {
-    await cleanupSAMLJitUser({
-      coreAdapter,
-      piiAdapter,
-      runtimeUsers,
-      customClaimDb: customClaimSources.nonPiiDb,
-      userId,
-      tenantId,
-    });
-    throw jitError;
+  const requestDigest = await sha256Hex(stableRequest);
+  const provisioned = await provisioner.provisionAuthAccount({
+    schemaVersion: 1,
+    operationId: `saml-account-${crypto.randomUUID()}`,
+    idempotencyKey: `saml-account:${requestDigest}`,
+    tenantId: input.tenantId,
+    candidateUserId,
+    flow: 'saml',
+    email,
+    externalSubject: { issuer: input.providerId, subject: input.providerUserKey },
+    runtimeUser,
+  });
+  if (provisioned.status === 202) {
+    throw new SamlProvisioningError(
+      'SAML account provisioning is still pending',
+      'account_provisioning_pending'
+    );
   }
-}
-
-async function cleanupSAMLJitUser(params: {
-  coreAdapter: DatabaseAdapter;
-  piiAdapter: DatabaseAdapter | null;
-  runtimeUsers: CanonicalRuntimeUserStore;
-  customClaimDb: Parameters<typeof ensureDatabaseAdapter>[0];
-  userId: string;
-  tenantId: string;
-}): Promise<void> {
-  const operations: Array<Promise<unknown>> = [];
-  void params.coreAdapter;
-  void params.piiAdapter;
-  operations.push(params.runtimeUsers.deleteUser(params.userId));
-  operations.push(
-    ensureDatabaseAdapter(params.customClaimDb, 'saml-acs-custom-claim-cleanup').execute(
-      'DELETE FROM user_custom_fields WHERE user_id = ? AND tenant_id = ?',
-      [params.userId, params.tenantId]
-    )
-  );
-
-  await Promise.allSettled(operations);
+  const account = await resolveAccountDataContextByIdentifier(env, {
+    tenantId: input.tenantId,
+    indexKind: 'external_subject',
+    identifier: { issuer: input.providerId, subject: input.providerUserKey },
+    expectedAccountId: provisioned.accountId,
+  });
+  if (account.legacyUserId !== provisioned.userId) {
+    throw new Error('saml_account_provisioning_route_mismatch');
+  }
+  await persistCustomClaimWrite({
+    db: account.coreDb,
+    dbPii: account.piiDb,
+    schemaDb: customClaimSources.schemaDb,
+    tenantId: input.tenantId,
+    userId: account.legacyUserId,
+    validation: customClaimValidation,
+  });
+  await syncUserLifecycleState({
+    db: account.coreDb,
+    dbPii: account.piiDb,
+    schemaDb: customClaimSources.schemaDb,
+    stateDb: ensureDatabaseAdapter(account.coreDb, 'saml-jit-lifecycle'),
+    tenantId: input.tenantId,
+    userId: account.legacyUserId,
+    accountAuthenticationEnv: env,
+  });
+  const linkedIdentityId = await createSAMLLinkedIdentity({
+    adapter: ensureDatabaseAdapter(account.piiDb, 'saml-jit-linked-identity'),
+    tenantId: input.tenantId,
+    userId: account.legacyUserId,
+    providerId: input.providerId,
+    providerUserKey: input.providerUserKey,
+    userInfo: { ...input.userInfo, email },
+    piiShape: true,
+  });
+  await publishSamlExternalRoute(env, {
+    tenantId: input.tenantId,
+    accountId: account.accountId,
+    userId: account.legacyUserId,
+    linkedIdentityId,
+    providerId: input.providerId,
+    providerUserKey: input.providerUserKey,
+  });
+  return { userId: account.legacyUserId, action: 'jit_create', linkedIdentityId };
 }
 
 function buildSAMLProviderUserKey(userInfo: UserInfo): string {

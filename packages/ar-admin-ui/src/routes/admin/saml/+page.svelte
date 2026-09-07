@@ -18,6 +18,7 @@
 	let loading = $state(true);
 	let error = $state('');
 	let actionMessage = $state('');
+	let refreshingFederationSourceId = $state('');
 
 	onMount(() => {
 		void initializeAndLoadSAML();
@@ -126,6 +127,26 @@
 
 	function trustProfilePolicy(profile: SAMLFederationTrustProfile) {
 		return profile.policy ?? 'strict';
+	}
+
+	async function refreshFederationSource(profile: SAMLFederationTrustProfile) {
+		refreshingFederationSourceId = profile.id;
+		error = '';
+		actionMessage = '';
+		try {
+			const result = await adminSAMLAPI.refreshFederationMetadataSource(profile.id);
+			actionMessage = $LL.admin_saml_federation_refresh_complete({
+				entities: result.entityCount,
+				updated: result.providersUpdated,
+				missing: result.providersMissing,
+				failed: result.providersFailed
+			});
+			await loadSAML();
+		} catch (err) {
+			error = err instanceof Error ? err.message : $LL.admin_saml_metadata_refresh_failed();
+		} finally {
+			refreshingFederationSourceId = '';
+		}
 	}
 </script>
 
@@ -272,8 +293,10 @@
 							<th>{$LL.admin_saml_profile()}</th>
 							<th>{$LL.admin_saml_status()}</th>
 							<th>{$LL.admin_saml_policy()}</th>
-							<th>{$LL.admin_saml_metadata_url_pattern()}</th>
+							<th>{$LL.admin_saml_metadata_source_url()}</th>
+							<th>{$LL.admin_saml_metadata_polling()}</th>
 							<th>{$LL.admin_saml_updated()}</th>
+							<th>{$LL.admin_saml_actions()}</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -301,9 +324,49 @@
 									<span class="badge badge-info">{trustProfilePolicy(profile)}</span>
 								</td>
 								<td class="mono admin-data-table__truncate trust-profile-url-cell">
-									{profile.metadataUrlPatterns.join(', ')}
+									{profile.metadataUrl || '-'}
+									<div class="cell-secondary">
+										{$LL.admin_saml_metadata_url_pattern()}:
+										{profile.metadataUrlPatterns.join(', ')}
+									</div>
+								</td>
+								<td>
+									<span
+										class={profile.polling?.mode === 'manual'
+											? 'badge badge-neutral'
+											: 'badge badge-success'}
+									>
+										{profile.polling?.mode === 'manual'
+											? $LL.admin_saml_metadata_manual_mode()
+											: $LL.admin_saml_metadata_automatic_mode()}
+									</span>
+									<div class="cell-secondary">
+										{$LL.admin_saml_metadata_last_success()}:
+										{formatDateTime(profile.polling?.lastSuccessAt)}
+									</div>
+									{#if profile.polling?.lastErrorCode}
+										<div class="form-error">
+											{$LL.admin_saml_metadata_last_error()}:
+											{profile.polling.lastErrorCode}
+										</div>
+									{/if}
 								</td>
 								<td>{formatDateTime(profile.updatedAt)}</td>
+								<td>
+									<button
+										type="button"
+										class="btn btn-secondary btn-sm"
+										onclick={(event) => {
+											event.stopPropagation();
+											void refreshFederationSource(profile);
+										}}
+										disabled={!profile.metadataUrl || refreshingFederationSourceId === profile.id}
+									>
+										{refreshingFederationSourceId === profile.id
+											? $LL.admin_saml_metadata_refreshing()
+											: $LL.admin_saml_metadata_refresh_now()}
+									</button>
+								</td>
 							</tr>
 						{/each}
 					</tbody>

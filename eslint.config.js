@@ -20,7 +20,12 @@ export default [
       parserOptions: {
         ecmaVersion: 'latest',
         sourceType: 'module',
-        project: ['./packages/*/tsconfig.json', './tools/*/tsconfig.json'],
+        tsconfigRootDir: import.meta.dirname,
+        project: [
+          './packages/*/tsconfig.json',
+          './tools/*/tsconfig.json',
+          './test/scale-out-correctness-phase1/tsconfig.json',
+        ],
       },
       globals: {
         ...globals.node,

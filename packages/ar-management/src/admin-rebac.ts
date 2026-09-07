@@ -646,7 +646,7 @@ export async function adminRelationshipCheckHandler(c: AdminContext) {
     }
 
     // Import ReBACService dynamically to avoid circular dependencies
-    const { ReBACService } = await import('@authrim/ar-lib-core');
+    const { ReBACService } = await import('@authrim/ar-lib-core/rebac/rebac-service');
 
     const rebacService = new ReBACService(storageAdapter);
     const result = await rebacService.check({

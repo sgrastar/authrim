@@ -6,20 +6,42 @@
 		adminPluginsAPI,
 		type PluginWithStatus,
 		type PluginHealthResponse,
+		type ProviderProjectionJob,
+		type PluginResourceSelection,
 		PLUGIN_CATEGORIES
 	} from '$lib/api/admin-plugins';
+	import {
+		adminControlPlaneAPI,
+		type ControlProvisioningOperation
+	} from '$lib/api/admin-control-plane';
 	import { Modal, ToggleSwitch } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
 	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
 	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
 	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
+	import { shouldShowProviderProjectionStatus } from '$lib/admin/provider-projection';
 
 	let plugins: PluginWithStatus[] = $state([]);
 	let loading = $state(true);
 	let error = $state('');
 	let successMessage = $state('');
 	let lastLoadedTenantId = $state('');
+	let providerProjectionJobs: ProviderProjectionJob[] = $state([]);
+	let providerProjectionVisible = $state(false);
+	let providerProjectionTimer: ReturnType<typeof setTimeout> | undefined;
+	let provisioningTimer: ReturnType<typeof setTimeout> | undefined;
+	let provisioningOperations: Record<
+		string,
+		{
+			kind: 'activate' | 'cleanup';
+			operationId: string;
+			tenantId: string;
+			resourceSelections: PluginResourceSelection[];
+			operation: ControlProvisioningOperation | null;
+			activationRetrying: boolean;
+		}
+	> = $state({});
 
 	// Filter state
 	let filterCategory = $state('');
@@ -37,11 +59,15 @@
 	let testEmailAddress = $state('');
 	let sendingTestEmail = $state(false);
 	let testEmailMessage = $state('');
+	let useExistingResources: Record<string, boolean> = $state({});
+	let existingResourceIds: Record<string, string> = $state({});
+	let existingResourceNames: Record<string, string> = $state({});
 
 	// Health check state
 	let healthStatus: Record<string, PluginHealthResponse> = $state({});
 	let checkingHealth: Record<string, boolean> = $state({});
 	let togglingPlugins: Record<string, boolean> = $state({});
+	let uninstallingPlugin = $state(false);
 
 	const pluginIconClasses: Record<string, string> = {
 		mail: 'i-ph-envelope-simple',
@@ -61,6 +87,16 @@
 			return true;
 		})
 	);
+	const activeProviderProjectionJobs = $derived(
+		providerProjectionJobs.filter((job) => job.status === 'pending' || job.status === 'processing')
+	);
+	const failedProviderProjectionJobs = $derived(
+		providerProjectionJobs.filter((job) => job.status === 'failed')
+	);
+	const visibleProviderProjectionJobs = $derived([
+		...failedProviderProjectionJobs,
+		...activeProviderProjectionJobs
+	]);
 
 	function getSelectedTenantId(): string | undefined {
 		return settingsContext.tenantId || undefined;
@@ -104,6 +140,20 @@
 		try {
 			const response = await adminPluginsAPI.list({ tenantId: getSelectedTenantId() });
 			plugins = response.plugins;
+			const tenantId = getSelectedTenantId();
+			if (tenantId) {
+				for (const plugin of response.plugins) {
+					if (plugin.provisioning && !provisioningOperations[plugin.id]) {
+						trackProvisioning(
+							plugin.id,
+							plugin.provisioning.operationId,
+							tenantId,
+							[],
+							plugin.provisioning.kind === 'cleanup' ? 'cleanup' : 'activate'
+						);
+					}
+				}
+			}
 
 			const pluginId = $page.url.searchParams.get('plugin');
 			if (pluginId) {
@@ -120,8 +170,32 @@
 		}
 	}
 
+	async function loadProviderProjectionStatus() {
+		if (providerProjectionTimer) {
+			clearTimeout(providerProjectionTimer);
+			providerProjectionTimer = undefined;
+		}
+		try {
+			const response = await adminPluginsAPI.getProviderProjectionStatus();
+			providerProjectionJobs = response.jobs;
+			providerProjectionVisible = shouldShowProviderProjectionStatus(response.jobs);
+			if (response.jobs.some((job) => job.status === 'pending' || job.status === 'processing')) {
+				providerProjectionTimer = setTimeout(() => void loadProviderProjectionStatus(), 5000);
+			}
+		} catch {
+			// Tenant administrators cannot read platform-wide rollout progress.
+			providerProjectionJobs = [];
+			providerProjectionVisible = false;
+		}
+	}
+
 	onMount(() => {
-		loadPlugins();
+		void loadPlugins();
+		void loadProviderProjectionStatus();
+		return () => {
+			if (providerProjectionTimer) clearTimeout(providerProjectionTimer);
+			if (provisioningTimer) clearTimeout(provisioningTimer);
+		};
 	});
 
 	$effect(() => {
@@ -165,6 +239,7 @@
 			missingRequiredFields: string[];
 			loadedAt?: number;
 			lastHealthCheck?: PluginWithStatus['lastHealthCheck'];
+			provisioning?: PluginWithStatus['provisioning'];
 		}
 	) {
 		plugins = plugins.map((plugin) =>
@@ -194,6 +269,100 @@
 		}
 	}
 
+	function scheduleProvisioningPoll(delay = 3000) {
+		if (provisioningTimer) clearTimeout(provisioningTimer);
+		if (
+			!Object.values(provisioningOperations).some(
+				(entry) =>
+					!entry.operation ||
+					['queued', 'running', 'waiting_retry'].includes(entry.operation.status)
+			)
+		) {
+			provisioningTimer = undefined;
+			return;
+		}
+		provisioningTimer = setTimeout(() => void pollProvisioningOperations(), delay);
+	}
+
+	async function pollProvisioningOperations() {
+		if (provisioningTimer) {
+			clearTimeout(provisioningTimer);
+			provisioningTimer = undefined;
+		}
+		const entries = Object.entries(provisioningOperations);
+		await Promise.all(
+			entries.map(async ([pluginId, tracked]) => {
+				if (
+					tracked.activationRetrying ||
+					(tracked.operation && ['blocked', 'canceled'].includes(tracked.operation.status))
+				) {
+					return;
+				}
+				try {
+					const { operation } = await adminControlPlaneAPI.getProvisioningOperation(
+						tracked.operationId
+					);
+					provisioningOperations = {
+						...provisioningOperations,
+						[pluginId]: { ...tracked, operation }
+					};
+					if (operation.status !== 'succeeded') return;
+					if (tracked.kind === 'cleanup') {
+						const next = { ...provisioningOperations };
+						delete next[pluginId];
+						provisioningOperations = next;
+						return;
+					}
+					provisioningOperations = {
+						...provisioningOperations,
+						[pluginId]: { ...tracked, operation, activationRetrying: true }
+					};
+					const status = await adminPluginsAPI.enable(
+						pluginId,
+						tracked.tenantId,
+						tracked.resourceSelections
+					);
+					if (status.provisioning) throw new Error('plugin_resource_activation_not_ready');
+					applyPluginStatus(pluginId, status);
+					const next = { ...provisioningOperations };
+					delete next[pluginId];
+					provisioningOperations = next;
+				} catch (caught) {
+					const current = provisioningOperations[pluginId];
+					if (current?.operation?.status === 'succeeded') {
+						provisioningOperations = {
+							...provisioningOperations,
+							[pluginId]: { ...current, activationRetrying: false }
+						};
+						error = caught instanceof Error ? caught.message : $LL.admin_plugins_update_failed();
+					}
+				}
+			})
+		);
+		scheduleProvisioningPoll();
+	}
+
+	function trackProvisioning(
+		pluginId: string,
+		operationId: string,
+		tenantId: string,
+		resourceSelections: PluginResourceSelection[],
+		kind: 'activate' | 'cleanup' = 'activate'
+	) {
+		provisioningOperations = {
+			...provisioningOperations,
+			[pluginId]: {
+				kind,
+				operationId,
+				tenantId,
+				resourceSelections,
+				operation: null,
+				activationRetrying: false
+			}
+		};
+		scheduleProvisioningPoll(0);
+	}
+
 	async function toggleEnabled(plugin: PluginWithStatus, enabled: boolean) {
 		if (plugin.enabled === enabled || togglingPlugins[plugin.id]) return;
 
@@ -201,16 +370,89 @@
 		error = '';
 		successMessage = '';
 		try {
+			const resourceSelections = enabled ? selectedResourceSelections(plugin) : [];
+			const tenantId = getSelectedTenantId();
 			const status = enabled
-				? await adminPluginsAPI.enable(plugin.id, getSelectedTenantId())
-				: await adminPluginsAPI.disable(plugin.id, getSelectedTenantId());
+				? await adminPluginsAPI.enable(plugin.id, tenantId, resourceSelections)
+				: await adminPluginsAPI.disable(plugin.id, tenantId);
 			applyPluginStatus(plugin.id, status);
+			if (enabled && status.provisioning) {
+				if (!tenantId) throw new Error('plugin_provisioning_tenant_required');
+				trackProvisioning(plugin.id, status.provisioning.operationId, tenantId, resourceSelections);
+			} else if (provisioningOperations[plugin.id]) {
+				const next = { ...provisioningOperations };
+				delete next[plugin.id];
+				provisioningOperations = next;
+			}
+			void loadProviderProjectionStatus();
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_plugins_update_failed();
 			await loadPlugins();
 		} finally {
 			togglingPlugins = { ...togglingPlugins, [plugin.id]: false };
 		}
+	}
+
+	async function uninstallSelectedPlugin() {
+		if (!selectedPlugin || selectedPlugin.backendKind !== 'dynamic_worker') return;
+		const tenantId = getSelectedTenantId();
+		if (!tenantId || !window.confirm($LL.admin_plugins_uninstall_confirm())) return;
+		uninstallingPlugin = true;
+		error = '';
+		successMessage = '';
+		try {
+			const result = await adminPluginsAPI.uninstall(
+				selectedPlugin.id,
+				tenantId,
+				`admin-plugin-uninstall:${crypto.randomUUID()}`
+			);
+			applyPluginStatus(selectedPlugin.id, {
+				enabled: false,
+				configSource: selectedPlugin.configSource,
+				configured: selectedPlugin.configured,
+				missingRequiredFields: selectedPlugin.missingRequiredFields
+			});
+			if (result.cleanup) {
+				trackProvisioning(selectedPlugin.id, result.cleanup.operationId, tenantId, [], 'cleanup');
+			}
+			successMessage = $LL.admin_plugins_uninstall_requested();
+		} catch (caught) {
+			error = caught instanceof Error ? caught.message : $LL.admin_plugins_update_failed();
+		} finally {
+			uninstallingPlugin = false;
+		}
+	}
+
+	function selectedResourceSelections(plugin: PluginWithStatus): PluginResourceSelection[] {
+		if (selectedPlugin?.id !== plugin.id) return [];
+		return (plugin.resources ?? []).flatMap((resource) => {
+			if (!resource.allowExisting || !useExistingResources[resource.logicalResourceId]) return [];
+			const providerResourceId = existingResourceIds[resource.logicalResourceId]?.trim();
+			const providerName = existingResourceNames[resource.logicalResourceId]?.trim();
+			if (!providerResourceId || !providerName) {
+				throw new Error($LL.admin_plugins_existing_resource_required());
+			}
+			return [
+				{
+					logicalResourceId: resource.logicalResourceId,
+					mode: 'existing' as const,
+					providerResourceId,
+					providerName
+				}
+			];
+		});
+	}
+
+	function setUseExistingResource(logicalResourceId: string, enabled: boolean) {
+		useExistingResources = { ...useExistingResources, [logicalResourceId]: enabled };
+	}
+
+	function setExistingResourceId(logicalResourceId: string, value: string) {
+		existingResourceIds = { ...existingResourceIds, [logicalResourceId]: value };
+	}
+
+	function setExistingResourceName(logicalResourceId: string, value: string) {
+		existingResourceNames = { ...existingResourceNames, [logicalResourceId]: value };
 	}
 
 	async function checkHealth(plugin: PluginWithStatus, event: Event) {
@@ -239,6 +481,9 @@
 		pluginSchema = null;
 		editedConfig = {};
 		isEditMode = false;
+		useExistingResources = {};
+		existingResourceIds = {};
+		existingResourceNames = {};
 		loadingConfig = true;
 		showDetailDialog = true;
 		error = '';
@@ -254,6 +499,16 @@
 				...detail.plugin,
 				...detail.status
 			};
+			const tenantId = getSelectedTenantId();
+			if (detail.status.provisioning && tenantId) {
+				trackProvisioning(
+					plugin.id,
+					detail.status.provisioning.operationId,
+					tenantId,
+					[],
+					detail.status.provisioning.kind === 'cleanup' ? 'cleanup' : 'activate'
+				);
+			}
 			pluginConfig = detail.config;
 			editedConfig = { ...detail.config };
 			testEmailAddress = '';
@@ -280,6 +535,9 @@
 		pluginSchema = null;
 		editedConfig = {};
 		isEditMode = false;
+		useExistingResources = {};
+		existingResourceIds = {};
+		existingResourceNames = {};
 		testEmailAddress = '';
 		testEmailMessage = '';
 	}
@@ -319,6 +577,7 @@
 			editedConfig = { ...refreshed.config };
 			isEditMode = false;
 			successMessage = $LL.admin_plugins_config_saved();
+			void loadProviderProjectionStatus();
 
 			// Clear success message after 3 seconds
 			setTimeout(() => {
@@ -348,14 +607,27 @@
 		testEmailMessage = '';
 
 		try {
+			if (isEditMode) {
+				await adminPluginsAPI.updateConfig(
+					selectedPlugin.id,
+					{ config: editedConfig },
+					getSelectedTenantId()
+				);
+				pluginConfig = { ...editedConfig };
+				isEditMode = false;
+			}
 			const result = await adminPluginsAPI.sendTestEmail(selectedPlugin.id, {
 				to: testEmailAddress.trim(),
-				config: editedConfig,
 				tenantId: getSelectedTenantId()
 			});
-			testEmailMessage = result.messageId
-				? $LL.admin_plugins_test_email_sent_with_id({ messageId: result.messageId })
-				: $LL.admin_plugins_test_email_sent();
+			testEmailMessage =
+				result.deliveryState === 'pending'
+					? result.messageId
+						? $LL.admin_plugins_test_email_pending_with_id({ messageId: result.messageId })
+						: $LL.admin_plugins_test_email_pending()
+					: result.messageId
+						? $LL.admin_plugins_test_email_sent_with_id({ messageId: result.messageId })
+						: $LL.admin_plugins_test_email_sent();
 		} catch (err) {
 			error = err instanceof Error ? err.message : $LL.admin_plugins_test_email_failed();
 		} finally {
@@ -363,12 +635,12 @@
 		}
 	}
 
-	function getInputType(prop: JSONSchemaProperty): string {
+	function getInputType(prop: JSONSchemaProperty, key?: string): string {
 		if (prop.type === 'boolean') return 'checkbox';
 		if (prop.type === 'integer' || prop.type === 'number') return 'number';
 		if (prop.format === 'email') return 'email';
 		if (prop.format === 'uri') return 'url';
-		if (isSecretField(prop)) return 'password';
+		if (isSecretField(prop, key)) return 'password';
 		return 'text';
 	}
 
@@ -430,6 +702,37 @@
 				return $LL.admin_plugins_health_degraded();
 			default:
 				return $LL.admin_plugins_health_unknown();
+		}
+	}
+
+	function providerProjectionSummary(): string {
+		if (failedProviderProjectionJobs.length > 0) {
+			return $LL.admin_plugins_provider_projection_failed({
+				count: failedProviderProjectionJobs.length
+			});
+		}
+		if (activeProviderProjectionJobs.length > 0) {
+			const processed = activeProviderProjectionJobs.reduce((sum, job) => sum + job.processed, 0);
+			const total = activeProviderProjectionJobs.reduce((sum, job) => sum + job.total, 0);
+			return $LL.admin_plugins_provider_projection_running({
+				count: activeProviderProjectionJobs.length,
+				processed,
+				total
+			});
+		}
+		return $LL.admin_plugins_provider_projection_complete();
+	}
+
+	function providerProjectionStatusLabel(status: ProviderProjectionJob['status']): string {
+		switch (status) {
+			case 'pending':
+				return $LL.admin_plugins_provider_projection_pending();
+			case 'processing':
+				return $LL.admin_plugins_provider_projection_processing();
+			case 'failed':
+				return $LL.admin_plugins_provider_projection_status_failed();
+			default:
+				return $LL.admin_plugins_provider_projection_complete();
 		}
 	}
 
@@ -510,6 +813,38 @@
 		title={$LL.admin_plugins_page_title()}
 		description={$LL.admin_plugins_description()}
 	/>
+
+	{#if providerProjectionVisible}
+		<div
+			class:provider-projection-status--failed={failedProviderProjectionJobs.length > 0}
+			class:provider-projection-status--active={activeProviderProjectionJobs.length > 0}
+			class="provider-projection-status"
+			role={failedProviderProjectionJobs.length > 0 ? 'alert' : 'status'}
+		>
+			<span class="provider-projection-status__icon" aria-hidden="true">
+				<i
+					class={failedProviderProjectionJobs.length > 0
+						? 'i-ph-warning-circle'
+						: activeProviderProjectionJobs.length > 0
+							? 'i-ph-spinner-gap'
+							: 'i-ph-check-circle'}
+				></i>
+			</span>
+			<div class="provider-projection-status__body">
+				<strong>{$LL.admin_plugins_provider_projection_title()}</strong>
+				<span>{providerProjectionSummary()}</span>
+				{#if visibleProviderProjectionJobs.length > 0}
+					<div class="provider-projection-status__jobs">
+						{#each visibleProviderProjectionJobs as job (job.pluginId)}
+							<span>
+								{job.pluginId}: {providerProjectionStatusLabel(job.status)} ({job.processed}/{job.total})
+							</span>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		</div>
+	{/if}
 
 	<!-- Filters -->
 	<AdminSection>
@@ -763,6 +1098,133 @@
 		</div>
 	{/if}
 
+	{#if selectedPlugin?.backendKind === 'dynamic_worker' && (selectedPlugin.resources?.length ?? 0) > 0 && !selectedPlugin.enabled}
+		{#if selectedPlugin && provisioningOperations[selectedPlugin.id]}
+			{@const selectedProvisioning = provisioningOperations[selectedPlugin.id]}
+			{@const operation = selectedProvisioning.operation}
+			<section
+				class="plugin-section"
+				role={operation?.status === 'blocked' || operation?.status === 'canceled'
+					? 'alert'
+					: 'status'}
+			>
+				<div class="plugin-section-title">
+					{selectedProvisioning.kind === 'cleanup'
+						? $LL.admin_plugins_cleanup_title()
+						: $LL.admin_plugins_provisioning_title()}
+				</div>
+				<p class="plugin-info-subvalue">
+					{#if selectedProvisioning.kind === 'cleanup' && (operation?.status === 'blocked' || operation?.status === 'canceled')}
+						{$LL.admin_plugins_cleanup_blocked()}
+					{:else if selectedProvisioning.kind === 'cleanup' && operation?.status === 'succeeded'}
+						{$LL.admin_plugins_cleanup_complete()}
+					{:else if selectedProvisioning.kind === 'cleanup'}
+						{$LL.admin_plugins_cleanup_pending()}
+					{:else if operation?.status === 'blocked' || operation?.status === 'canceled'}
+						{$LL.admin_plugins_provisioning_blocked()}
+					{:else if operation?.status === 'succeeded'}
+						{$LL.admin_plugins_provisioning_activation()}
+					{:else}
+						{$LL.admin_plugins_provisioning_pending()}
+					{/if}
+				</p>
+				<div class="plugin-info-value">
+					{$LL.admin_plugins_provisioning_operation()}:
+					<code>{selectedProvisioning.operationId}</code>
+					{#if operation}
+						<span class="badge badge-neutral">{operation.status}</span>
+					{/if}
+				</div>
+				{#if operation?.lastErrorCode}
+					<p><code>{operation.lastErrorCode}</code></p>
+				{/if}
+				{#if operation && operation.steps.length > 0}
+					<div class="plugin-info-subvalue">
+						{#each operation.steps as step (step.stepKey)}
+							<div>{step.stepKey}: {step.status}</div>
+						{/each}
+					</div>
+				{/if}
+				<a
+					class="btn btn-secondary btn-sm"
+					href={`/admin/control-plane?operation=${encodeURIComponent(selectedProvisioning.operationId)}`}
+				>
+					{$LL.admin_plugins_provisioning_open()}
+				</a>
+			</section>
+		{/if}
+		<details class="plugin-section plugin-resource-settings">
+			<summary class="plugin-section-title">{$LL.admin_plugins_resource_advanced()}</summary>
+			<p class="plugin-info-subvalue">{$LL.admin_plugins_resource_managed_default()}</p>
+			{#each selectedPlugin.resources ?? [] as resource (resource.logicalResourceId)}
+				<div class="plugin-resource-row">
+					<div class="plugin-info-value">
+						{resource.logicalResourceId} · {resource.kind} · {resource.access}
+					</div>
+					{#if resource.allowExisting}
+						<label class="plugin-resource-existing-toggle">
+							<input
+								type="checkbox"
+								checked={useExistingResources[resource.logicalResourceId] ?? false}
+								onchange={(event) =>
+									setUseExistingResource(
+										resource.logicalResourceId,
+										(event.currentTarget as HTMLInputElement).checked
+									)}
+							/>
+							{$LL.admin_plugins_use_existing_resource()}
+						</label>
+						{#if useExistingResources[resource.logicalResourceId]}
+							<div class="plugin-resource-fields">
+								<div class="admin-field">
+									<label
+										class="admin-field__label"
+										for={`plugin-resource-id-${resource.logicalResourceId}`}
+									>
+										{$LL.admin_plugins_provider_resource_id()}
+									</label>
+									<input
+										id={`plugin-resource-id-${resource.logicalResourceId}`}
+										class="admin-input"
+										type="text"
+										autocomplete="off"
+										value={existingResourceIds[resource.logicalResourceId] ?? ''}
+										oninput={(event) =>
+											setExistingResourceId(
+												resource.logicalResourceId,
+												(event.currentTarget as HTMLInputElement).value
+											)}
+									/>
+								</div>
+								<div class="admin-field">
+									<label
+										class="admin-field__label"
+										for={`plugin-resource-name-${resource.logicalResourceId}`}
+									>
+										{$LL.admin_plugins_provider_resource_name()}
+									</label>
+									<input
+										id={`plugin-resource-name-${resource.logicalResourceId}`}
+										class="admin-input"
+										type="text"
+										autocomplete="off"
+										value={existingResourceNames[resource.logicalResourceId] ?? ''}
+										oninput={(event) =>
+											setExistingResourceName(
+												resource.logicalResourceId,
+												(event.currentTarget as HTMLInputElement).value
+											)}
+									/>
+								</div>
+							</div>
+							<p class="plugin-info-subvalue">{$LL.admin_plugins_existing_resource_retained()}</p>
+						{/if}
+					{/if}
+				</div>
+			{/each}
+		</details>
+	{/if}
+
 	{#if selectedPlugin?.meta?.author}
 		{@const authorUrl = safePluginUrl(selectedPlugin.meta.author.url)}
 		<div class="plugin-section">
@@ -870,7 +1332,8 @@
 							</select>
 						{:else}
 							<input
-								type={getInputType(prop)}
+								type={getInputType(prop, key)}
+								autocomplete={isSecretField(prop, key) ? 'new-password' : 'off'}
 								class="plugin-config-input"
 								value={String(editedConfig[key] ?? prop.default ?? '')}
 								disabled={!isEditMode}
@@ -937,6 +1400,15 @@
 	{/if}
 
 	{#snippet footer()}
+		{#if selectedPlugin?.backendKind === 'dynamic_worker' && !selectedPlugin.enabled && (selectedPlugin.resources?.length ?? 0) > 0}
+			<button
+				class="btn btn-danger"
+				onclick={uninstallSelectedPlugin}
+				disabled={uninstallingPlugin}
+			>
+				{uninstallingPlugin ? $LL.admin_plugins_uninstalling() : $LL.admin_plugins_uninstall()}
+			</button>
+		{/if}
 		<button class="btn btn-secondary" onclick={closeDetailDialog}
 			>{$LL.admin_plugins_close()}</button
 		>

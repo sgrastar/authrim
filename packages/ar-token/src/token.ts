@@ -4,10 +4,11 @@ import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalSensitiveValueResolver,
   CanonicalIdentityRepository,
+  createAccountAuthContextFromHono,
   createAuthContextFromHono,
   createPIIContextFromHono,
-  getRuntimeUserStoreSourcesFromHonoContext,
-  resolveCustomClaimRuntimeSourcesFromEnv,
+  ensureAccountAuthenticationState,
+  findCanonicalAccountAuthenticationState,
   registerSessionClientInStore,
   createRefreshTokenFamily,
   getRefreshTokenRotatorStubByJti,
@@ -57,7 +58,18 @@ import {
   OIDCIdentityMappingRuntimeError,
   enforceOIDCAttributeReleaseConsent,
   OIDCAttributeReleaseConsentRequiredError,
+  FAPI2_MESSAGE_SIGNING_ALGS,
+  validateClientCertificateBinding,
+  setBoundedMapEntry,
+  getTenantMetadataContextFromHono,
+  resolveAccountDataContextFromHono,
+  recordDeviceSecretRouteHint,
+  resolveDeviceSecretRouteHint,
 } from '@authrim/ar-lib-core';
+import {
+  resolveIDTokenSigningAlgorithm,
+  type OIDCSigningAlgorithm,
+} from '@authrim/ar-lib-core/utils/oidc-signing';
 import {
   revokeToken,
   getCachedUser,
@@ -88,6 +100,7 @@ import {
   validateClientAssertion,
   parseOAuthClientAuthenticationParams,
   authenticateConfidentialOAuthClient,
+  validateRegisteredClientAuthenticationMethod,
   parseTrustedIssuers,
   getIDTokenRBACClaims,
   getAccessTokenRBACClaims,
@@ -114,10 +127,12 @@ import {
   type DeviceInstallation,
   type DeviceSecret,
   type NativeSSOErrorDetailCode,
+  type ClientAssertionValidationOptions,
   type Phase1ErrorDetailSeverity,
   type Phase1ErrorDetailUserAction,
 } from '@authrim/ar-lib-core';
 import { importPKCS8, importJWK, type CryptoKey } from 'jose';
+import { verifyExternalIdJagSubjectToken } from './external-id-jag-verifier';
 import {
   extractDPoPProof,
   validateDPoPProof,
@@ -126,13 +141,12 @@ import {
 } from '@authrim/ar-lib-core';
 import { parseDeviceCodeId, getDeviceCodeStoreById } from '@authrim/ar-lib-core';
 import { parseCIBARequestId, getCIBARequestStoreById } from '@authrim/ar-lib-core';
+import { timeTokenRequestDiagnosticOperation } from './request-diagnostics';
 // Custom Claim Schema Resolver
-import {
-  loadFeatureConfig,
-  createCustomClaimSchemaResolverFromSources,
-} from '@authrim/ar-lib-core';
+import {} from '@authrim/ar-lib-core';
 // Tenant context
 import { getTenantIdFromContext, hasPIIDatabase } from '@authrim/ar-lib-core';
+import { getDefaultTenantId } from '@authrim/ar-lib-core/utils/issuer';
 // Event System
 import { publishEvent, TOKEN_EVENTS, type TokenEventData } from '@authrim/ar-lib-core';
 // ID-JAG (Identity Assertion Authorization Grant)
@@ -169,6 +183,25 @@ const DIRECT_AUTH_GRANT_REDIRECT_URI = 'https://authrim.local/direct-auth/callba
 type DirectAuthChannel = 'browser' | 'native' | 'server';
 type BrowserPublicClientMode = 'strict' | 'cookie_fallback' | 'legacy';
 type BrowserRefreshTokenPolicy = 'disabled' | 'dpop_bound';
+
+class SecurityProfileSettingsUnavailableError extends Error {
+  constructor() {
+    super('Security profile settings are temporarily unavailable');
+    this.name = 'SecurityProfileSettingsUnavailableError';
+  }
+}
+
+let cachedOAuthConfigManager: ReturnType<typeof createOAuthConfigManager> | null = null;
+let cachedOAuthConfigBinding: Env['AUTHRIM_CONFIG'] | null = null;
+
+function getOAuthConfigManager(env: Env): ReturnType<typeof createOAuthConfigManager> {
+  const binding = env.AUTHRIM_CONFIG ?? null;
+  if (!cachedOAuthConfigManager || cachedOAuthConfigBinding !== binding) {
+    cachedOAuthConfigManager = createOAuthConfigManager(env);
+    cachedOAuthConfigBinding = binding;
+  }
+  return cachedOAuthConfigManager;
+}
 
 async function loadOIDCClaimsUser(
   c: Context<{ Bindings: Env }>,
@@ -496,6 +529,15 @@ function getDPoPJktFromCnfClaim(payload: Record<string, unknown>): string | unde
   return typeof jkt === 'string' && jkt.length > 0 ? jkt : undefined;
 }
 
+function getMTLSCertificateThumbprintFromCnfClaim(
+  payload: Record<string, unknown>
+): string | undefined {
+  const cnf = payload.cnf;
+  if (!cnf || typeof cnf !== 'object' || Array.isArray(cnf)) return undefined;
+  const thumbprint = (cnf as Record<string, unknown>)['x5t#S256'];
+  return typeof thumbprint === 'string' && thumbprint.length > 0 ? thumbprint : undefined;
+}
+
 async function resolveBrowserPublicClientMode(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -517,6 +559,26 @@ async function resolveBrowserPublicClientMode(
   }
 
   return TENANT_DEFAULTS['tenant.browser_public_client_mode'];
+}
+
+interface TenantRBACClaimsConfig {
+  accessToken: string | undefined;
+  idToken: string | undefined;
+}
+
+async function resolveTenantRBACClaimsConfig(
+  env: Env,
+  tenantId: string
+): Promise<TenantRBACClaimsConfig> {
+  const authrimSettings = await getTenantSettings(env.AUTHRIM_CONFIG, tenantId, 'tokens');
+  const settings = authrimSettings ?? (await getTenantSettings(env.SETTINGS, tenantId, 'tokens'));
+  const accessToken = settings?.['tokens.rbac_access_token_claims'];
+  const idToken = settings?.['tokens.rbac_id_token_claims'];
+
+  return {
+    accessToken: typeof accessToken === 'string' ? accessToken : env.RBAC_ACCESS_TOKEN_CLAIMS,
+    idToken: typeof idToken === 'string' ? idToken : env.RBAC_ID_TOKEN_CLAIMS,
+  };
 }
 
 function getBrowserRefreshTokenPolicy(clientMetadata: ClientMetadata): BrowserRefreshTokenPolicy {
@@ -545,7 +607,7 @@ function oauthError(
   c: Context<{ Bindings: Env }>,
   error: string,
   errorDescription: string,
-  status: 400 | 401 | 403 | 500 = 400
+  status: 400 | 401 | 403 | 500 | 503 = 400
 ): Response {
   // Set cache control headers (RFC 6749 Section 5.2)
   c.header('Cache-Control', 'no-store');
@@ -571,12 +633,37 @@ function oauthError(
   );
 }
 
+async function resolveTrustedSubjectAccountRoute(
+  c: Context<{ Bindings: Env }>,
+  subject: string
+): Promise<Response | null> {
+  try {
+    await resolveAccountDataContextFromHono(c, subject);
+    return null;
+  } catch (error) {
+    const code = error instanceof Error ? error.message : 'account_data_route_unavailable';
+    getLogger(c).module('TOKEN').warn('Token subject account route resolution failed', {
+      error: code,
+    });
+    if (code === 'account_data_route_not_found') {
+      return oauthError(
+        c,
+        'invalid_grant',
+        'The provided authorization grant is invalid, expired, or revoked',
+        400
+      );
+    }
+    return oauthError(c, 'temporarily_unavailable', 'Account data is unavailable', 503);
+  }
+}
+
 async function applyOIDCIdentityMappingToIDTokenClaims(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
   clientId: string,
   clientMetadata: ClientMetadata,
-  claims: Record<string, unknown>
+  claims: Record<string, unknown>,
+  grantedScopes?: string[]
 ): Promise<{ ok: true; claims: Record<string, unknown> } | { ok: false; response: Response }> {
   try {
     const authCtx = createAuthContextFromHono(c, tenantId);
@@ -587,6 +674,8 @@ async function applyOIDCIdentityMappingToIDTokenClaims(
       clientId,
       sectorIdentifier: clientMetadata.sector_identifier_uri,
       selector: clientMetadata.identity_mapping,
+      destinationSurface: 'id_token',
+      grantedScopes,
       claims,
     });
     return { ok: true, claims: mapped.claims };
@@ -793,15 +882,16 @@ async function isDPoPRequiredForTokenRequest(
 ): Promise<boolean> {
   let fapiRequiresDpop = false;
   try {
-    const settings = await getSystemSettingsCached(c, c.env);
+    const settings = await getSystemSettingsCached(c, c.env, { failOnError: true });
     if (settings) {
-      const fapi = settings.fapi || {};
+      const fapi = (settings.fapi || {}) as { enabled?: boolean; requireDpop?: boolean };
       fapiRequiresDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
     }
   } catch (error) {
     getLogger(c)
       .module('TOKEN')
       .error('Failed to load FAPI settings for DPoP', {}, error as Error);
+    throw new SecurityProfileSettingsUnavailableError();
   }
 
   const requestPath = new URL(c.req.url).pathname;
@@ -812,6 +902,95 @@ async function isDPoPRequiredForTokenRequest(
   );
 
   return fapiRequiresDpop || clientRequiresDpop;
+}
+
+async function resolveClientAssertionValidationOptions(
+  c: Context<{ Bindings: Env }>
+): Promise<ClientAssertionValidationOptions | undefined> {
+  let settings: { fapi?: { enabled?: boolean } } | null;
+  try {
+    settings = await getSystemSettingsCached(c, c.env, { failOnError: true });
+  } catch {
+    throw new SecurityProfileSettingsUnavailableError();
+  }
+  if (settings?.fapi?.enabled !== true) {
+    return undefined;
+  }
+
+  return {
+    audiencePolicy: 'issuer-only',
+    issuer: getRequestIssuer(c),
+    allowedAlgorithms: [...FAPI2_MESSAGE_SIGNING_ALGS],
+    clockSkewSeconds: 60,
+  };
+}
+
+async function resolveTokenClientAuthenticationPolicy(
+  c: Context<{ Bindings: Env }>,
+  clientMetadata: ClientMetadata,
+  clientAssertion: string | undefined,
+  clientAssertionType: string | undefined,
+  presentation: {
+    basic: boolean;
+    clientSecretPost: boolean;
+  }
+): Promise<
+  | { ok: true; assertionOptions: ClientAssertionValidationOptions | undefined }
+  | { ok: false; response: Response }
+> {
+  const assertionOptions = await resolveClientAssertionValidationOptions(c);
+  if (!assertionOptions) {
+    const methodValidation = validateRegisteredClientAuthenticationMethod(clientMetadata, {
+      ...presentation,
+      clientAssertion: Boolean(clientAssertion),
+      clientAssertionType,
+    });
+    if (!methodValidation.valid) {
+      return {
+        ok: false,
+        response: oauthError(c, 'invalid_client', methodValidation.errorDescription, 401),
+      };
+    }
+    return { ok: true, assertionOptions };
+  }
+
+  const grantTypes = clientMetadata.grant_types;
+  const isCIBAClient = Array.isArray(grantTypes)
+    ? grantTypes.includes('urn:openid:params:grant-type:ciba')
+    : grantTypes === 'urn:openid:params:grant-type:ciba';
+  const effectiveAssertionOptions = isCIBAClient
+    ? { ...assertionOptions, audiencePolicy: 'endpoint-or-issuer' as const }
+    : assertionOptions;
+
+  if (
+    clientMetadata.token_endpoint_auth_method !== 'private_key_jwt' ||
+    !clientAssertion ||
+    clientAssertionType !== 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+  ) {
+    return {
+      ok: false,
+      response: oauthError(
+        c,
+        'invalid_client',
+        'The active FAPI profile requires private_key_jwt client authentication',
+        401
+      ),
+    };
+  }
+
+  const methodValidation = validateRegisteredClientAuthenticationMethod(clientMetadata, {
+    ...presentation,
+    clientAssertion: Boolean(clientAssertion),
+    clientAssertionType,
+  });
+  if (!methodValidation.valid) {
+    return {
+      ok: false,
+      response: oauthError(c, 'invalid_client', methodValidation.errorDescription, 401),
+    };
+  }
+
+  return { ok: true, assertionOptions: effectiveAssertionOptions };
 }
 
 // ===== Module-level Logger for Helper Functions =====
@@ -840,6 +1019,7 @@ const signingKeyCache = new Map<
   }
 >();
 const KEY_CACHE_TTL = 30 * 60 * 1000; // 30 minutes - safe with 24h rotation overlap
+const MAX_TENANT_KEY_CACHE_ENTRIES = 128;
 
 // ===== JWKS (Public Key) Caching for Refresh Token Verification =====
 // Per-tenant Map cache for JWKS (avoids KeyManager DO hop on every refresh token request)
@@ -933,11 +1113,16 @@ async function getVerificationKeyFromJWKS(
       const envKeys = new Map<string, CryptoKey>();
       envKeys.set(keyKid, importedKey);
 
-      cachedJWKSMap.set(tenantId, {
-        keys: envKeys,
-        fetchedAt: now,
-        source: 'env',
-      });
+      setBoundedMapEntry(
+        cachedJWKSMap,
+        tenantId,
+        {
+          keys: envKeys,
+          fetchedAt: now,
+          source: 'env',
+        },
+        MAX_TENANT_KEY_CACHE_ENTRIES
+      );
 
       // If kid is specified and doesn't match env key, we have a problem
       // This means rotation happened but env wasn't updated
@@ -996,11 +1181,16 @@ async function getVerificationKeyFromJWKS(
   }
 
   // Update per-tenant cache
-  cachedJWKSMap.set(tenantId, {
-    keys: newKeys,
-    fetchedAt: now,
-    source: 'do',
-  });
+  setBoundedMapEntry(
+    cachedJWKSMap,
+    tenantId,
+    {
+      keys: newKeys,
+      fetchedAt: now,
+      source: 'do',
+    },
+    MAX_TENANT_KEY_CACHE_ENTRIES
+  );
 
   // Return requested key or first key
   if (kid) {
@@ -1035,6 +1225,7 @@ interface AuthCodeStoreResponse {
   cHash?: string; // OIDC c_hash for hybrid flows
   dpopJkt?: string; // DPoP JWK thumbprint (RFC 9449)
   sid?: string; // OIDC Session Management: Session ID for RP-Initiated Logout
+  sessionId?: string; // Internal OP session storage key
   authorizationDetails?: string; // RFC 9396: Rich Authorization Requests (JSON string)
   // Present when replay attack is detected (RFC 6749 Section 4.1.2)
   replayAttack?: {
@@ -1064,10 +1255,12 @@ interface AuthCodeStoreResponse {
 async function getSigningKeyFromKeyManager(
   env: Env,
   tenantId: string,
-  expectedKid?: string
+  expectedKid?: string,
+  algorithm: OIDCSigningAlgorithm = 'RS256'
 ): Promise<{ privateKey: CryptoKey; kid: string }> {
   const now = Date.now();
-  const cached = signingKeyCache.get(tenantId);
+  const cacheKey = `${tenantId}:${algorithm}`;
+  const cached = signingKeyCache.get(cacheKey);
 
   // Check cache with kid mismatch logic + KV version check
   if (cached) {
@@ -1103,17 +1296,16 @@ async function getSigningKeyFromKeyManager(
     throw new Error('KEY_MANAGER binding not available');
   }
 
-  if (!env.KEY_MANAGER_SECRET) {
-    throw new Error('KEY_MANAGER_SECRET not configured');
-  }
-
   const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
   // Try to get active key via RPC
-  let keyData = await keyManager.getActiveKeyWithPrivateRpc();
+  let keyData =
+    algorithm === 'RS256'
+      ? await keyManager.getActiveKeyWithPrivateRpc()
+      : await keyManager.getActiveOIDCSigningKeyWithPrivateRpc(algorithm);
 
-  if (!keyData) {
+  if (!keyData && algorithm === 'RS256') {
     // No active key, generate and activate one
     moduleLogger.info('No active signing key found, generating new key', {
       action: 'KeyManager',
@@ -1124,13 +1316,21 @@ async function getSigningKeyFromKeyManager(
   }
 
   // Import private key (expensive operation: 5-7ms)
-  const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
+  if (!keyData) {
+    throw new Error('OIDC signing key is unavailable');
+  }
+  const privateKey = await importPKCS8(keyData.privatePEM, algorithm);
 
   // Fetch current version for cache coherence
   const version =
     (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
 
-  signingKeyCache.set(tenantId, { privateKey, kid: keyData.kid, timestamp: now, version });
+  setBoundedMapEntry(
+    signingKeyCache,
+    cacheKey,
+    { privateKey, kid: keyData.kid, timestamp: now, version },
+    MAX_TENANT_KEY_CACHE_ENTRIES
+  );
   moduleLogger.debug('Signing key cached', {
     kid: keyData.kid,
     ttlMs: KEY_CACHE_TTL,
@@ -1138,6 +1338,48 @@ async function getSigningKeyFromKeyManager(
   });
 
   return { privateKey, kid: keyData.kid };
+}
+
+async function createClientIDToken(
+  env: Env,
+  tenantId: string,
+  clientMetadata: ClientMetadata,
+  claims: Omit<IDTokenClaims, 'iat' | 'exp'>,
+  expiresIn: number
+): Promise<string> {
+  const algorithm = resolveIDTokenSigningAlgorithm(clientMetadata);
+  const { privateKey, kid } = await getSigningKeyFromKeyManager(
+    env,
+    tenantId,
+    undefined,
+    algorithm
+  );
+  return createIDToken(claims, privateKey, kid, expiresIn, algorithm);
+}
+
+async function createClientSDJWTIDToken(
+  env: Env,
+  tenantId: string,
+  clientMetadata: ClientMetadata,
+  claims: Omit<IDTokenClaims, 'iat' | 'exp'>,
+  expiresIn: number,
+  selectiveClaims: string[]
+): Promise<string> {
+  const algorithm = resolveIDTokenSigningAlgorithm(clientMetadata);
+  const { privateKey, kid } = await getSigningKeyFromKeyManager(
+    env,
+    tenantId,
+    undefined,
+    algorithm
+  );
+  return createSDJWTIDTokenFromClaims(
+    claims,
+    privateKey,
+    kid,
+    expiresIn,
+    selectiveClaims,
+    algorithm
+  );
 }
 
 /**
@@ -1185,26 +1427,39 @@ export async function tokenHandler(c: Context<{ Bindings: Env }>) {
 
   const grant_type = formData.grant_type;
 
-  // Route to appropriate handler based on grant_type
-  if (grant_type === 'refresh_token') {
-    return await handleRefreshTokenGrant(c, formData);
-  } else if (grant_type === 'authorization_code') {
-    return await handleAuthorizationCodeGrant(c, formData);
-  } else if (grant_type === DIRECT_AUTH_FINISH_GRANT_TYPE) {
-    return await handleDirectAuthFinishGrant(c, formData);
-  } else if (grant_type === 'urn:ietf:params:oauth:grant-type:jwt-bearer') {
-    return await handleJWTBearerGrant(c, formData);
-  } else if (grant_type === 'urn:ietf:params:oauth:grant-type:device_code') {
-    return await handleDeviceCodeGrant(c, formData);
-  } else if (grant_type === 'urn:openid:params:grant-type:ciba') {
-    return await handleCIBAGrant(c, formData);
-  } else if (grant_type === 'urn:ietf:params:oauth:grant-type:token-exchange') {
-    // RFC 8693: Token Exchange (Feature Flag controlled)
-    // Reuse the initially parsed body so multi-value params are preserved.
-    return await handleTokenExchangeGrant(c, formData, parsedBody);
-  } else if (grant_type === 'client_credentials') {
-    // RFC 6749 Section 4.4: Client Credentials Grant
-    return await handleClientCredentialsGrant(c, formData);
+  try {
+    // Route to appropriate handler based on grant_type
+    if (grant_type === 'refresh_token') {
+      return await handleRefreshTokenGrant(c, formData);
+    } else if (grant_type === 'authorization_code') {
+      return await handleAuthorizationCodeGrant(c, formData);
+    } else if (grant_type === DIRECT_AUTH_FINISH_GRANT_TYPE) {
+      return await handleDirectAuthFinishGrant(c, formData);
+    } else if (grant_type === 'urn:ietf:params:oauth:grant-type:jwt-bearer') {
+      return await handleJWTBearerGrant(c, formData);
+    } else if (grant_type === 'urn:ietf:params:oauth:grant-type:device_code') {
+      return await handleDeviceCodeGrant(c, formData);
+    } else if (grant_type === 'urn:openid:params:grant-type:ciba') {
+      return await handleCIBAGrant(c, formData);
+    } else if (grant_type === 'urn:ietf:params:oauth:grant-type:token-exchange') {
+      // RFC 8693: Token Exchange (Feature Flag controlled)
+      // Reuse the initially parsed body so multi-value params are preserved.
+      return await handleTokenExchangeGrant(c, formData, parsedBody);
+    } else if (grant_type === 'client_credentials') {
+      // RFC 6749 Section 4.4: Client Credentials Grant
+      return await handleClientCredentialsGrant(c, formData);
+    }
+  } catch (error) {
+    if (error instanceof SecurityProfileSettingsUnavailableError) {
+      log.error('Security profile settings unavailable', { grantType: grant_type });
+      return oauthError(
+        c,
+        'temporarily_unavailable',
+        'Security profile settings are temporarily unavailable',
+        503
+      );
+    }
+    throw error;
   }
 
   // If grant_type is not supported
@@ -1407,6 +1662,9 @@ async function handleAuthorizationCodeGrant(
   }
 
   // Validate redirect_uri
+  if (!redirect_uri) {
+    return oauthError(c, 'invalid_request', 'redirect_uri is required', 400);
+  }
   const allowHttp = c.env.ENABLE_HTTP_REDIRECT === 'true';
   const redirectUriValidation = validateRedirectUri(redirect_uri, allowHttp);
   if (!redirectUriValidation.valid) {
@@ -1414,7 +1672,9 @@ async function handleAuthorizationCodeGrant(
   }
 
   // Fetch client metadata early (needed for FAPI/DPoP checks) - request-level cached
-  const clientMetadata = await getClientCached(c, c.env, client_id);
+  const clientMetadata = await timeTokenRequestDiagnosticOperation(c, 'token_client', () =>
+    getClientCached(c, c.env, client_id)
+  );
   if (!clientMetadata) {
     // Security: Generic message to prevent client_id enumeration
     return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
@@ -1422,19 +1682,24 @@ async function handleAuthorizationCodeGrant(
 
   // Load TenantProfile for TTL limits (Human Auth / AI Ephemeral Auth two-layer model) - request-level cached
   const tenantId = (clientMetadata.tenant_id as string) || getTenantIdFromContext(c);
-  const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
+  const tenantProfile = await timeTokenRequestDiagnosticOperation(c, 'token_tenant_profile', () =>
+    loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId)
+  );
 
   // DPoP requirement (FAPI 2.0 / sender-constrained tokens) - request-level cached
   let fapiRequiresDpop = false;
   try {
-    const settings = await getSystemSettingsCached(c, c.env);
+    const settings = await timeTokenRequestDiagnosticOperation(c, 'token_security_settings', () =>
+      getSystemSettingsCached(c, c.env, { failOnError: true })
+    );
     if (settings) {
-      const fapi = settings.fapi || {};
+      const fapi = (settings.fapi || {}) as { enabled?: boolean; requireDpop?: boolean };
       // If FAPI is enabled, default to requiring DPoP unless explicitly disabled
       fapiRequiresDpop = Boolean(fapi.requireDpop || (fapi.enabled && fapi.requireDpop !== false));
     }
   } catch (error) {
     log.error('Failed to load FAPI settings for DPoP', {}, error as Error);
+    throw new SecurityProfileSettingsUnavailableError();
   }
 
   // Client-level DPoP mode (disabled | critical_only | all)
@@ -1516,6 +1781,93 @@ async function handleAuthorizationCodeGrant(
     dpopJkt = dpopValidation.jkt;
   }
 
+  // Authenticate the client before atomically consuming the authorization code. Otherwise an
+  // attacker with a leaked code could invalidate it using deliberately bad client credentials.
+  const clientAuthenticationPolicy = await timeTokenRequestDiagnosticOperation(
+    c,
+    'token_client_auth_policy',
+    () =>
+      resolveTokenClientAuthenticationPolicy(
+        c,
+        clientMetadata as unknown as ClientMetadata,
+        client_assertion,
+        client_assertion_type,
+        {
+          basic: basicAuth.success,
+          clientSecretPost: typeof formData.client_secret === 'string',
+        }
+      )
+  );
+  if (!clientAuthenticationPolicy.ok) {
+    return clientAuthenticationPolicy.response;
+  }
+  if (
+    client_assertion &&
+    client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+  ) {
+    const assertionValidation = await validateClientAssertion(
+      client_assertion,
+      `${getRequestIssuer(c)}/token`,
+      clientMetadata as unknown as ClientMetadata,
+      {
+        ...clientAuthenticationPolicy.assertionOptions,
+        replayProtection: { env: c.env, tenantId: getTenantIdFromContext(c) },
+      }
+    );
+
+    if (!assertionValidation.valid) {
+      log.error('Client assertion validation failed', {
+        errorDescription: assertionValidation.error_description,
+      });
+      return oauthError(
+        c,
+        assertionValidation.error || 'invalid_client',
+        'Client assertion validation failed',
+        401
+      );
+    }
+  } else if (
+    clientMetadata.token_endpoint_auth_method !== 'none' &&
+    clientMetadata.client_secret_hash
+  ) {
+    const storedHash = (clientMetadata.client_secret_hash as string) ?? '';
+    if (
+      !client_secret ||
+      !(await timeTokenRequestDiagnosticOperation(c, 'token_client_secret_verify', () =>
+        verifyClientSecretHash(client_secret, storedHash)
+      ))
+    ) {
+      return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+    }
+  } else if (!isPublicClientMetadata(clientMetadata as ClientMetadata)) {
+    return oauthError(c, 'invalid_client', 'Client authentication configuration is invalid', 401);
+  }
+
+  // Authorization-code grants are created for the client's configured default target. A token
+  // request may repeat that target, but it must not retarget the user's grant to another resource.
+  const audienceResolution = resolveAccessTokenAudience(c, clientMetadata, {
+    resource: formData.resource,
+    audience: formData.audience,
+    rejectResourceAudienceMismatch: true,
+  });
+  if (!audienceResolution.ok) {
+    return oauthError(c, 'invalid_target', audienceResolution.description, 400);
+  }
+  const authorizationGrantResource = getClientDefaultResource(clientMetadata).value;
+  const requestedGrantResources = [...new Set(audienceResolution.targets)];
+  if (
+    !authorizationGrantResource ||
+    requestedGrantResources.length !== 1 ||
+    requestedGrantResources[0] !== authorizationGrantResource
+  ) {
+    return oauthError(
+      c,
+      'invalid_target',
+      'Requested resource does not match the authorization grant',
+      400
+    );
+  }
+
   // Consume authorization code using AuthorizationCodeStore Durable Object
   // This replaces KV-based getAuthCode() with strong consistency guarantees
   // Parse shard index from code to route to the correct DO instance
@@ -1527,7 +1879,11 @@ async function handleAuthorizationCodeGrant(
 
   if (shardInfo) {
     // Get current shard count (KV priority, with caching)
-    currentShardCount = await getShardCount(c.env);
+    currentShardCount = await timeTokenRequestDiagnosticOperation(
+      c,
+      'token_code_shard_config',
+      () => getShardCount(c.env)
+    );
 
     // Remap shard index for scale-down compatibility
     actualShardIndex = remapShardIndex(shardInfo.shardIndex, currentShardCount);
@@ -1567,12 +1923,22 @@ async function handleAuthorizationCodeGrant(
   let authCodeData;
   try {
     // Use RPC for auth code consumption (atomic single-use guarantee)
-    const consumedData = (await authCodeStore.consumeCodeRpc({
-      code: validCode,
-      tenantId: getTenantIdFromContext(c),
-      clientId: client_id,
-      codeVerifier: code_verifier,
-    })) as AuthCodeStoreResponse;
+    const consumedData = (await timeTokenRequestDiagnosticOperation(c, 'token_code_consume', () =>
+      authCodeStore.consumeCodeRpc({
+        code: validCode,
+        tenantId: getTenantIdFromContext(c),
+        clientId: client_id,
+        codeVerifier: code_verifier,
+        expectedAuthorizationServer: 'default',
+        expectedSubjectType: 'end_user',
+        ...(redirect_uri === DIRECT_AUTH_GRANT_REDIRECT_URI
+          ? {}
+          : { expectedResource: authorizationGrantResource }),
+        expectedRedirectUri: redirect_uri,
+        enforceDpopBinding: true,
+        expectedDpopJkt: dpopJkt,
+      })
+    )) as AuthCodeStoreResponse;
 
     // RFC 6749 Section 4.1.2: Handle replay attack detection
     // If authorization code was already used, revoke previously issued tokens
@@ -1646,6 +2012,7 @@ async function handleAuthorizationCodeGrant(
       claimsRequestProtected: consumedData.claimsRequestProtected === true,
       dpopJkt: consumedData.dpopJkt, // DPoP JWK thumbprint for binding verification
       sid: consumedData.sid, // OIDC Session Management: Session ID for RP-Initiated Logout
+      sessionId: consumedData.sessionId,
       authorizationDetails: consumedData.authorizationDetails, // RFC 9396: Rich Authorization Requests
     };
   } catch (error) {
@@ -1672,6 +2039,33 @@ async function handleAuthorizationCodeGrant(
         c,
         'invalid_grant',
         'The provided authorization grant is invalid, expired, or revoked',
+        400
+      );
+    }
+
+    if (errorMessage.includes('Redirect URI mismatch')) {
+      return oauthError(
+        c,
+        'invalid_grant',
+        'redirect_uri does not match the one used in authorization request',
+        400
+      );
+    }
+
+    if (errorMessage.includes('DPoP proof required')) {
+      return oauthError(
+        c,
+        'invalid_grant',
+        'DPoP proof required (authorization code is bound to DPoP key)',
+        400
+      );
+    }
+
+    if (errorMessage.includes('DPoP key mismatch')) {
+      return oauthError(
+        c,
+        'invalid_grant',
+        'DPoP key mismatch (authorization code is bound to different key)',
         400
       );
     }
@@ -1723,90 +2117,124 @@ async function handleAuthorizationCodeGrant(
     log.debug('Authorization code binding verified successfully', { action: 'DPoP' });
   }
 
-  // Client authentication verification
-  // Supports: client_secret_basic, client_secret_post, client_secret_jwt, private_key_jwt
-  if (
-    client_assertion &&
-    client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
-  ) {
-    // private_key_jwt or client_secret_jwt authentication
-    const assertionValidation = await validateClientAssertion(
-      client_assertion,
-      `${getRequestIssuer(c)}/token`,
-      clientMetadata as unknown as import('@authrim/ar-lib-core').ClientMetadata
-    );
-
-    if (!assertionValidation.valid) {
-      // Security: Log detailed error but return generic message to prevent information leakage
-      log.error('Client assertion validation failed', {
-        errorDescription: assertionValidation.error_description,
-      });
-      return oauthError(
-        c,
-        assertionValidation.error || 'invalid_client',
-        'Client assertion validation failed',
-        401
-      );
-    }
-  } else if (clientMetadata.client_secret_hash) {
-    // client_secret_basic or client_secret_post authentication
-    // Security: Verify client secret against stored SHA-256 hash
-    const storedHash = (clientMetadata.client_secret_hash as string) ?? '';
-    if (!client_secret || !(await verifyClientSecretHash(client_secret, storedHash))) {
-      return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
-    }
-  } else if (!isPublicClientMetadata(clientMetadata as ClientMetadata)) {
-    return oauthError(c, 'invalid_client', 'Client authentication configuration is invalid', 401);
+  const parsedClaimsRequest = parseClaimsRequest(authCodeData.claims);
+  if (!parsedClaimsRequest.ok) {
+    return oauthError(c, parsedClaimsRequest.error, parsedClaimsRequest.error_description, 400);
   }
-  // Public clients (no client_secret_hash and no client_assertion) are allowed
+  const tokenPIIRequirement = resolveOIDCPIIRequirement({
+    scopes: authCodeData.scope,
+    claimsRequest: parsedClaimsRequest.request,
+    targets: ['userinfo', 'id_token'],
+  });
 
-  // Load private key for signing tokens from KeyManager
-  // NOTE: Key loading moved BEFORE code deletion to avoid losing code on key loading failure
-  let privateKey: CryptoKey;
-  let keyId: string;
+  const tokenType: 'Bearer' | 'DPoP' = dpopProof ? 'DPoP' : 'Bearer';
+  const browserRefreshTokenPolicy = getBrowserRefreshTokenPolicy(clientMetadata);
+  const shouldIssueRefreshToken =
+    !isBrowserPublicClientRequest ||
+    (browserRefreshTokenPolicy === 'dpop_bound' && tokenType === 'DPoP' && Boolean(dpopJkt));
+  const configManager = getOAuthConfigManager(c.env);
+  const optionalFeatureStatePromise = timeTokenRequestDiagnosticOperation(
+    c,
+    'token_optional_features',
+    () =>
+      Promise.all([
+        isPolicyEmbeddingEnabled(c.env),
+        isIdLevelPermissionsEnabled(c.env),
+        isCustomClaimsEnabled(c.env),
+        isNativeSSOEnabled(c.env),
+      ])
+  ).then(
+    (value) => ({ ok: true as const, value }),
+    (error: unknown) => ({ ok: false as const, error })
+  );
 
-  try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
-    privateKey = signingKey.privateKey;
-    keyId = signingKey.kid;
-  } catch (error) {
-    log.error('Failed to get signing key from KeyManager', {}, error as Error);
+  const [signingKeyResult, accessTtlResult, accountRouteResult, refreshTtlResult] =
+    await Promise.allSettled([
+      timeTokenRequestDiagnosticOperation(c, 'token_signing_key', () =>
+        getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c))
+      ),
+      timeTokenRequestDiagnosticOperation(c, 'token_access_ttl', () =>
+        configManager.getTokenExpiry()
+      ),
+      timeTokenRequestDiagnosticOperation(c, 'token_account_route', () =>
+        resolveTrustedSubjectAccountRoute(c, authCodeData.sub)
+      ),
+      shouldIssueRefreshToken
+        ? timeTokenRequestDiagnosticOperation(c, 'token_refresh_ttl', () =>
+            configManager.getRefreshTokenExpiry()
+          )
+        : Promise.resolve(undefined),
+    ] as const);
+
+  if (signingKeyResult.status === 'rejected') {
+    log.error('Failed to get signing key from KeyManager', {}, signingKeyResult.reason as Error);
     return oauthError(c, 'server_error', 'Failed to load signing key', 500);
   }
+  const privateKey = signingKeyResult.value.privateKey;
+  const keyId = signingKeyResult.value.kid;
 
-  // Token expiration (KV > env > default priority)
-  const configManager = createOAuthConfigManager(c.env);
-  const baseExpiresIn = await configManager.getTokenExpiry();
+  if (accessTtlResult.status === 'rejected') {
+    log.error('Failed to load access token lifetime', {}, accessTtlResult.reason as Error);
+    return oauthError(c, 'server_error', 'Failed to load token configuration', 500);
+  }
+  const baseExpiresIn = accessTtlResult.value;
   // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
   const expiresIn = Math.min(baseExpiresIn, tenantProfile.max_token_ttl_seconds);
 
-  // DPoP support (RFC 9449)
-  // dpopJkt was already validated earlier for authorization code binding verification
-  const tokenType: 'Bearer' | 'DPoP' = dpopProof ? 'DPoP' : 'Bearer';
+  if (accountRouteResult.status === 'rejected') {
+    log.error(
+      'Token subject account route resolution failed',
+      {},
+      accountRouteResult.reason as Error
+    );
+    return oauthError(c, 'temporarily_unavailable', 'Account data is unavailable', 503);
+  }
+  if (accountRouteResult.value) return accountRouteResult.value;
+
+  let configuredRefreshTokenExpiresIn: number | undefined;
+  if (shouldIssueRefreshToken) {
+    if (refreshTtlResult.status === 'rejected') {
+      log.error('Failed to load refresh token lifetime', {}, refreshTtlResult.reason as Error);
+      return oauthError(c, 'server_error', 'Failed to load token configuration', 500);
+    }
+    configuredRefreshTokenExpiresIn = refreshTtlResult.value;
+  }
 
   // Note: For Authorization Code Flow (response_type=code), scope-based claims
   // (profile, email, etc.) should be returned from the UserInfo endpoint, NOT in the ID token.
   // Only response_type=id_token (Implicit Flow) should include these claims in the ID token.
   // See OpenID Connect Core 5.4: "The Claims requested by the profile, email, address, and
   // phone scope values are returned from the UserInfo Endpoint"
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  const parsedClaimsRequest = parseClaimsRequest(authCodeData.claims);
-  if (!parsedClaimsRequest.ok) {
-    return oauthError(c, parsedClaimsRequest.error, parsedClaimsRequest.error_description, 400);
-  }
-
-  const tokenPIIRequirement = resolveOIDCPIIRequirement({
-    scopes: authCodeData.scope,
-    claimsRequest: parsedClaimsRequest.request,
-    targets: ['userinfo', 'id_token'],
-  });
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   try {
-    const subjectAccount = await findCanonicalRuntimeAccount(
-      authCtx.coreAdapter,
-      tenantId,
-      authCodeData.sub
+    await timeTokenRequestDiagnosticOperation(c, 'token_account_state_assert', () =>
+      ensureAccountAuthenticationState(c.env, tenantId, authCodeData.sub, () =>
+        findCanonicalAccountAuthenticationState(authCtx.coreAdapter, tenantId, authCodeData.sub)
+      )
     );
+  } catch (error) {
+    if (error instanceof Error && error.message === 'account_authentication_not_allowed') {
+      return oauthError(
+        c,
+        'invalid_grant',
+        'The provided authorization grant is invalid, expired, or revoked',
+        400
+      );
+    }
+    return oauthError(c, 'temporarily_unavailable', 'Authentication state is unavailable', 503);
+  }
+  let subjectAccount: Awaited<ReturnType<typeof findCanonicalRuntimeAccount>> = null;
+  const [subjectAccountResult, tenantRBACClaimsConfigResult] = await Promise.allSettled([
+    timeTokenRequestDiagnosticOperation(c, 'token_subject_account', () =>
+      findCanonicalRuntimeAccount(authCtx.coreAdapter, tenantId, authCodeData.sub)
+    ),
+    timeTokenRequestDiagnosticOperation(c, 'token_rbac_config', () =>
+      resolveTenantRBACClaimsConfig(c.env, tenantId)
+    ),
+  ] as const);
+  if (subjectAccountResult.status === 'fulfilled') {
+    subjectAccount = subjectAccountResult.value;
     if (!subjectAccount && tokenPIIRequirement.requiresPII) {
       const piiAccess = canIssueTokenWithPIIStatus('failed', {
         requiresPII: tokenPIIRequirement.requiresPII,
@@ -1815,11 +2243,11 @@ async function handleAuthorizationCodeGrant(
         return oauthError(c, piiAccess.error, piiAccess.error_description, 400);
       }
     }
-  } catch (piiStatusError) {
+  } else {
     log.error(
       'Failed to evaluate subject PII status for token issuance',
       {},
-      piiStatusError as Error
+      subjectAccountResult.reason as Error
     );
     if (tokenPIIRequirement.requiresPII) {
       return oauthError(
@@ -1831,22 +2259,40 @@ async function handleAuthorizationCodeGrant(
     }
   }
 
+  if (tenantRBACClaimsConfigResult.status === 'rejected') {
+    throw tenantRBACClaimsConfigResult.reason;
+  }
+  const tenantRBACClaimsConfig = tenantRBACClaimsConfigResult.value;
+  const optionalFeatureState = await optionalFeatureStatePromise;
+  if (!optionalFeatureState.ok) throw optionalFeatureState.error;
+  const [
+    policyEmbeddingEnabled,
+    idLevelPermissionsEnabled,
+    customClaimsEnabled,
+    nativeSSOGloballyEnabled,
+  ] = optionalFeatureState.value;
+
   // Phase 1 RBAC: Fetch RBAC claims for tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
   try {
-    [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
-      getAccessTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
-        cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
-        tenantId,
-      }),
-      getIDTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
-        cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
-        tenantId,
-      }),
-    ]);
+    [accessTokenRBACClaims, idTokenRBACClaims] = await timeTokenRequestDiagnosticOperation(
+      c,
+      'token_rbac_claims',
+      () =>
+        Promise.all([
+          getAccessTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
+            cache: c.env.REBAC_CACHE,
+            claimsConfig: tenantRBACClaimsConfig.accessToken,
+            tenantId,
+          }),
+          getIDTokenRBACClaims(authCtx.coreAdapter, authCodeData.sub, {
+            cache: c.env.REBAC_CACHE,
+            claimsConfig: tenantRBACClaimsConfig.idToken,
+            tenantId,
+          }),
+        ])
+    );
   } catch (rbacError) {
     // Log but don't fail - RBAC claims are optional for backward compatibility
     log.error('Failed to fetch RBAC claims', {}, rbacError as Error);
@@ -1856,7 +2302,6 @@ async function handleAuthorizationCodeGrant(
   let policyEmbeddingPermissions: string[] = [];
   let policyEmbeddingScopedPermissions: AccessTokenScopedPermission[] = [];
   try {
-    const policyEmbeddingEnabled = await isPolicyEmbeddingEnabled(c.env);
     if (policyEmbeddingEnabled && authCodeData.scope) {
       const policyEmbedding = await evaluatePermissionEmbeddingForScope(
         authCtx.coreAdapter,
@@ -1875,8 +2320,7 @@ async function handleAuthorizationCodeGrant(
   // Phase 8.2: ID-level Resource Permissions
   let idLevelPermissions: string[] = [];
   try {
-    const idLevelEnabled = await isIdLevelPermissionsEnabled(c.env);
-    if (idLevelEnabled) {
+    if (idLevelPermissionsEnabled) {
       const limits = await getEmbeddingLimits(c.env);
       const allIdPerms = await evaluateIdLevelPermissions(
         authCtx.coreAdapter,
@@ -1904,12 +2348,7 @@ async function handleAuthorizationCodeGrant(
   // Anonymous user claims (architecture-decisions.md §17)
   let anonymousClaims: { user_type?: string; upgrade_eligible?: boolean } = {};
   try {
-    const userAccount = await findCanonicalRuntimeAccount(
-      authCtx.coreAdapter,
-      tenantId,
-      authCodeData.sub
-    );
-    if (userAccount?.account_type === 'anonymous') {
+    if (subjectAccount?.account_type === 'anonymous') {
       anonymousClaims = {
         user_type: 'anonymous',
         upgrade_eligible: true, // Anonymous users can always upgrade
@@ -1923,7 +2362,6 @@ async function handleAuthorizationCodeGrant(
   // Phase 8.2: Custom Claims Evaluation
   let customClaims: Record<string, unknown> = {};
   try {
-    const customClaimsEnabled = await isCustomClaimsEnabled(c.env);
     if (customClaimsEnabled) {
       const limits = await getEmbeddingLimits(c.env);
       const evaluator = createTokenClaimEvaluator(authCtx.coreAdapter, c.env.REBAC_CACHE, {
@@ -1960,15 +2398,6 @@ async function handleAuthorizationCodeGrant(
     log.error('Failed to evaluate custom claims', {}, customClaimsError as Error);
   }
 
-  const audienceResolution = resolveAccessTokenAudience(c, clientMetadata, {
-    resource: formData.resource,
-    audience: formData.audience,
-    rejectResourceAudienceMismatch: true,
-  });
-  if (!audienceResolution.ok) {
-    return oauthError(c, 'invalid_target', audienceResolution.description, 400);
-  }
-
   // Generate Access Token FIRST (needed for at_hash in ID token)
   const accessTokenClaims: {
     iss: string;
@@ -1991,17 +2420,19 @@ async function handleAuthorizationCodeGrant(
     // Phase 8.2: Custom Claims (dynamic via [key: string]: unknown)
     [key: string]: unknown;
   } = {
-    iss: getRequestIssuer(c),
-    sub: authCodeData.sub,
-    aud: audienceResolution.audience,
-    scope: authCodeData.scope,
-    client_id: client_id,
     // Phase 1 RBAC: Add RBAC claims to access token
     ...accessTokenRBACClaims,
     // Phase 8.2: Add custom claims from rule evaluation
     ...customClaims,
     // Anonymous user claims (architecture-decisions.md §17)
     ...anonymousClaims,
+    // Protocol claims are assigned last so no evaluated or derived claim can replace the grant.
+    iss: getRequestIssuer(c),
+    sub: authCodeData.sub,
+    aud: audienceResolution.audience,
+    scope: authCodeData.scope,
+    client_id: client_id,
+    token_use: 'access',
   };
 
   // Phase 2 Policy Embedding: Add evaluated permissions
@@ -2041,14 +2472,13 @@ async function handleAuthorizationCodeGrant(
   let tokenJti: string;
   try {
     // Generate region-aware JTI for token revocation sharding
-    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
-    const result = await createAccessToken(
-      accessTokenClaims,
-      privateKey,
-      keyId,
-      expiresIn,
-      regionAwareJti
-    );
+    const result = await timeTokenRequestDiagnosticOperation(c, 'token_access_create', async () => {
+      const { jti: regionAwareJti } = await generateRegionAwareJti(
+        c.env,
+        getTenantIdFromContext(c)
+      );
+      return createAccessToken(accessTokenClaims, privateKey, keyId, expiresIn, regionAwareJti);
+    });
     accessToken = result.token;
     tokenJti = result.jti;
   } catch (error) {
@@ -2087,7 +2517,6 @@ async function handleAuthorizationCodeGrant(
   let issuedDeviceSecretEntity: DeviceSecret | undefined;
 
   // Check if Native SSO is enabled (feature flag + client configuration)
-  const nativeSSOGloballyEnabled = await isNativeSSOEnabled(c.env);
   const clientNativeSSOIssuanceEligible = isNativeSSOIssuanceEligible(
     clientMetadata,
     formData.channel
@@ -2185,12 +2614,33 @@ async function handleAuthorizationCodeGrant(
           dsHash = await calculateDsHash(deviceSecret);
           await deviceInstallationRepo.ensureForDeviceSecret(result.entity);
 
-          log.info('Created device secret', {
-            userIdPrefix: authCodeData.sub.substring(0, 8),
-            sessionIdPrefix: authCodeData.sid.substring(0, 8),
-            expiresInDays: nativeSSOConfig.deviceSecretTTLDays,
-            action: 'NativeSSO',
-          });
+          try {
+            await recordDeviceSecretRouteHint(c.env, {
+              secret: deviceSecret,
+              tenantId,
+              accountId: `account:${authCodeData.sub}`,
+              issuedAt: result.entity.created_at,
+              expiresAt: result.entity.expires_at,
+            });
+          } catch (error) {
+            await deviceSecretRepo.revoke(result.entity.id, 'route_hint_write_failed', tenantId);
+            deviceSecret = undefined;
+            issuedDeviceSecretEntity = undefined;
+            dsHash = undefined;
+            log.error('Failed to create device secret route hint', {
+              action: 'NativeSSO',
+              errorType: error instanceof Error ? error.name : 'Unknown',
+            });
+          }
+
+          if (deviceSecret) {
+            log.info('Created device secret', {
+              userIdPrefix: authCodeData.sub.substring(0, 8),
+              sessionIdPrefix: authCodeData.sid.substring(0, 8),
+              expiresInDays: nativeSSOConfig.deviceSecretTTLDays,
+              action: 'NativeSSO',
+            });
+          }
         } else if ('ok' in result && result.ok === false) {
           // Creation failed (likely limit_exceeded)
           log.warn('Device secret creation returned failure', {
@@ -2206,38 +2656,11 @@ async function handleAuthorizationCodeGrant(
     }
   }
 
-  // Custom Claim Schema: resolve claims for ID Token
-  let idTokenCustomClaims: Record<string, unknown> = {};
-  try {
-    const ccFeatureConfig = await loadFeatureConfig(c.env.AUTHRIM_CONFIG || null);
-    if (ccFeatureConfig.enabled) {
-      const ccSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
-      const ccResolver = createCustomClaimSchemaResolverFromSources({
-        schemaDb: ccSources.schemaDb,
-        nonPiiDb: ccSources.nonPiiDb,
-        piiDb: ccSources.piiDb,
-        cache: c.env.AUTHRIM_CONFIG || null,
-        featureConfig: ccFeatureConfig,
-      });
-      const ccScopes = (authCodeData.scope || '').split(' ').filter(Boolean);
-      const ccResult = await ccResolver.resolveClaimsForTarget(
-        tenantId,
-        authCodeData.sub,
-        ccScopes,
-        'id_token'
-      );
-      idTokenCustomClaims = ccResult.claims;
-    }
-  } catch (ccError) {
-    log.error('Failed to resolve custom claims for ID token', {}, ccError as Error);
-  }
-
   // Generate ID Token with at_hash and auth_time
   // Phase 1 RBAC: Include RBAC claims in ID Token
   // Note: sid is required for RP-Initiated Logout per OIDC Session Management 1.0
   // Note: ds_hash is included when Native SSO is enabled (OIDC Native SSO 1.0)
   let idTokenClaims: Record<string, unknown> = {
-    ...idTokenCustomClaims, // Custom claims (first, so standard claims override on collision)
     iss: getRequestIssuer(c),
     sub: authCodeData.sub,
     aud: client_id,
@@ -2295,23 +2718,34 @@ async function handleAuthorizationCodeGrant(
     }
   }
 
-  const mappedIdTokenClaims = await applyOIDCIdentityMappingToIDTokenClaims(
+  const mappedIdTokenClaims = await timeTokenRequestDiagnosticOperation(
     c,
-    tenantId,
-    client_id,
-    clientMetadata as ClientMetadata,
-    idTokenClaims
+    'token_identity_mapping',
+    () =>
+      applyOIDCIdentityMappingToIDTokenClaims(
+        c,
+        tenantId,
+        client_id,
+        clientMetadata as ClientMetadata,
+        idTokenClaims,
+        splitScope(authCodeData.scope)
+      )
   );
   if (!mappedIdTokenClaims.ok) {
     return mappedIdTokenClaims.response;
   }
   idTokenClaims = mappedIdTokenClaims.claims;
 
-  const idTokenConsent = await enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+  const idTokenConsent = await timeTokenRequestDiagnosticOperation(
     c,
-    tenantId,
-    clientMetadata as ClientMetadata,
-    idTokenClaims
+    'token_attribute_consent',
+    () =>
+      enforceOIDCAttributeReleaseConsentForIDTokenClaims(
+        c,
+        tenantId,
+        clientMetadata as ClientMetadata,
+        idTokenClaims
+      )
   );
   if (!idTokenConsent.ok) {
     return idTokenConsent.response;
@@ -2329,10 +2763,11 @@ async function handleAuthorizationCodeGrant(
       const selectiveClaims: string[] = Array.isArray(rawSelectiveClaims)
         ? rawSelectiveClaims
         : ['email', 'phone_number', 'address', 'birthdate'];
-      idToken = await createSDJWTIDTokenFromClaims(
+      idToken = await createClientSDJWTIDToken(
+        c.env,
+        tenantId,
+        clientMetadata as ClientMetadata,
         idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        privateKey,
-        keyId,
         expiresIn,
         selectiveClaims
       );
@@ -2340,11 +2775,14 @@ async function handleAuthorizationCodeGrant(
     } else {
       // For Authorization Code Flow, ID token should only contain standard claims
       // Scope-based claims (profile, email) are returned from UserInfo endpoint
-      idToken = await createIDToken(
-        idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        privateKey,
-        keyId,
-        expiresIn
+      idToken = await timeTokenRequestDiagnosticOperation(c, 'token_id_create', () =>
+        createClientIDToken(
+          c.env,
+          tenantId,
+          clientMetadata as ClientMetadata,
+          idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
+          expiresIn
+        )
       );
     }
 
@@ -2371,7 +2809,7 @@ async function handleAuthorizationCodeGrant(
       }
 
       // Get client's public key for encryption
-      const publicKey = await getClientPublicKey(clientMetadata);
+      const publicKey = await getClientPublicKey(clientMetadata, undefined, alg as JWEAlgorithm);
       if (!publicKey) {
         log.error('Client requires encryption but no public key available', {});
         return c.json(
@@ -2416,17 +2854,15 @@ async function handleAuthorizationCodeGrant(
 
   // Generate Refresh Token
   // https://tools.ietf.org/html/rfc6749#section-6
-  const browserRefreshTokenPolicy = getBrowserRefreshTokenPolicy(clientMetadata);
-  const shouldIssueRefreshToken =
-    !isBrowserPublicClientRequest ||
-    (browserRefreshTokenPolicy === 'dpop_bound' && tokenType === 'DPoP' && Boolean(dpopJkt));
   let refreshToken: string | undefined;
   let refreshTokenJti: string | undefined;
-  let refreshTokenExpiresIn: number | undefined;
+  let refreshTokenExpiresIn = configuredRefreshTokenExpiresIn;
 
   if (shouldIssueRefreshToken) {
-    refreshTokenExpiresIn = await configManager.getRefreshTokenExpiry();
-
+    if (refreshTokenExpiresIn === undefined) {
+      return oauthError(c, 'server_error', 'Failed to load token configuration', 500);
+    }
+    const refreshTokenTtl = refreshTokenExpiresIn;
     try {
       const refreshTokenClaims = {
         iss: getRequestIssuer(c),
@@ -2445,14 +2881,16 @@ async function handleAuthorizationCodeGrant(
 
       if (c.env.REFRESH_TOKEN_ROTATOR) {
         try {
-          familyResult = await createRefreshTokenFamily(c.env, {
-            userId: authCodeData.sub,
-            clientId: client_id,
-            scope: authCodeData.scope,
-            ttl: refreshTokenExpiresIn,
-            tenantId: getTenantIdFromContext(c),
-            resourceAudience: audienceResolution.audience,
-          });
+          familyResult = await timeTokenRequestDiagnosticOperation(c, 'token_refresh_family', () =>
+            createRefreshTokenFamily(c.env, {
+              userId: authCodeData.sub,
+              clientId: client_id,
+              scope: authCodeData.scope,
+              ttl: refreshTokenTtl,
+              tenantId: getTenantIdFromContext(c),
+              resourceAudience: audienceResolution.audience,
+            })
+          );
           refreshTokenJti = familyResult.jti;
         } catch (error) {
           log.error('Failed to register refresh token family', {}, error as Error);
@@ -2466,29 +2904,32 @@ async function handleAuthorizationCodeGrant(
         }
         rtv = familyResult.family.version;
 
-        // V3: Record in the token family index for user-wide revocation support
-        // (non-blocking, fire-and-forget for performance)
-        void recordTokenFamilyIndex(
-          authCtx.coreAdapter,
-          getTenantIdFromContext(c),
-          refreshTokenJti,
-          authCodeData.sub,
-          client_id,
-          familyResult.resolution.generation,
-          refreshTokenExpiresIn
+        // Keep issuance non-blocking while extending the Worker event until the index write settles.
+        c.executionCtx.waitUntil(
+          recordTokenFamilyIndex(
+            authCtx.coreAdapter,
+            getTenantIdFromContext(c),
+            refreshTokenJti,
+            authCodeData.sub,
+            client_id,
+            familyResult.resolution.generation,
+            refreshTokenTtl
+          )
         );
       } else {
         refreshTokenJti = `rt_${crypto.randomUUID()}`;
       }
 
       // Create JWT with rtv (Refresh Token Version) claim
-      const result = await createRefreshToken(
-        refreshTokenClaims,
-        privateKey,
-        keyId,
-        refreshTokenExpiresIn,
-        refreshTokenJti,
-        rtv // V2: Include version for theft detection
+      const result = await timeTokenRequestDiagnosticOperation(c, 'token_refresh_create', () =>
+        createRefreshToken(
+          refreshTokenClaims,
+          privateKey,
+          keyId,
+          refreshTokenTtl,
+          refreshTokenJti,
+          rtv // V2: Include version for theft detection
+        )
       );
       refreshToken = result.token;
       // V2: Family is already registered via RefreshTokenRotator DO above
@@ -2525,15 +2966,66 @@ async function handleAuthorizationCodeGrant(
   // This registration enables token revocation when a replay attack is detected.
   // The additional DO hop is acceptable as it's required for OIDC Conformance.
   try {
-    await authCodeStore.registerIssuedTokensRpc(validCode, tokenJti, refreshTokenJti);
+    const registrationAccepted = await timeTokenRequestDiagnosticOperation(
+      c,
+      'token_code_register',
+      () => authCodeStore.registerIssuedTokensRpc(validCode, tokenJti, refreshTokenJti)
+    );
+    if (registrationAccepted === false) {
+      await Promise.allSettled([
+        revokeToken(
+          c.env,
+          tokenJti,
+          expiresIn,
+          'Authorization code replay raced token issuance',
+          getTenantIdFromContext(c)
+        ),
+        ...(refreshTokenJti
+          ? [
+              revokeToken(
+                c.env,
+                refreshTokenJti,
+                refreshTokenExpiresIn ?? 86400 * 30,
+                'Authorization code replay raced token issuance',
+                getTenantIdFromContext(c)
+              ),
+            ]
+          : []),
+      ]);
+      return oauthError(
+        c,
+        'invalid_grant',
+        'The provided authorization grant is invalid, expired, or revoked',
+        400
+      );
+    }
   } catch (error) {
-    // Log but don't fail the request - token issuance succeeded
-    // This is a "SHOULD" requirement, not a "MUST"
     log.error(
       'Failed to register token JTIs for replay attack revocation',
       { action: 'RFC6749-4.1.2' },
       error as Error
     );
+    await Promise.allSettled([
+      revokeToken(
+        c.env,
+        tokenJti,
+        expiresIn,
+        'Authorization code token registration failed',
+        getTenantIdFromContext(c)
+      ),
+      ...(refreshTokenJti
+        ? [
+            revokeToken(
+              c.env,
+              refreshTokenJti,
+              refreshTokenExpiresIn ?? 86400 * 30,
+              'Authorization code token registration failed',
+              getTenantIdFromContext(c)
+            ),
+          ]
+        : []),
+    ]);
+    return oauthError(c, 'server_error', 'Failed to finalize token issuance', 500);
   }
 
   // OIDC Session Management: Register session-client association for logout
@@ -2543,19 +3035,17 @@ async function handleAuthorizationCodeGrant(
     dbPresent: !!authCtx.coreAdapter,
     action: 'Logout',
   });
-  if (authCodeData.sid) {
+  if (authCodeData.sessionId && authCodeData.sid) {
     try {
       log.debug('Attempting to register session-client', {
         sid: authCodeData.sid,
         clientId: client_id,
         action: 'Logout',
       });
-      const mirrorMode =
-        getRuntimeUserStoreSourcesFromHonoContext(c)?.storageProfile.transientAuth
-          ?.sessionClientMirror ?? 'async';
       const registrationInput = {
-        session_id: authCodeData.sid,
+        session_id: authCodeData.sessionId,
         client_id: client_id,
+        oidc_sid: authCodeData.sid,
       };
       const storeRegistrationPromise = registerSessionClientInStore(
         c.env,
@@ -2580,32 +3070,7 @@ async function handleAuthorizationCodeGrant(
             error as Error
           );
         });
-      const mirrorPromise =
-        mirrorMode === 'disabled'
-          ? Promise.resolve()
-          : authCtx.repositories.sessionClient
-              .createOrUpdate(registrationInput)
-              .then((result) => {
-                log.debug('Successfully mirrored session-client', {
-                  id: result.id,
-                  sidPrefix: authCodeData.sid?.substring(0, 25),
-                  clientIdPrefix: client_id.substring(0, 25),
-                  action: 'Logout',
-                });
-              })
-              .catch((error) => {
-                // Log error but don't fail the token request - logout tracking is non-critical
-                log.error('Failed to mirror session-client', { action: 'Logout' }, error as Error);
-              });
-      const registrationPromise = Promise.all([storeRegistrationPromise, mirrorPromise]).then(
-        () => undefined
-      );
-
-      if (mirrorMode === 'sync') {
-        await registrationPromise;
-      } else {
-        c.executionCtx?.waitUntil(registrationPromise);
-      }
+      c.executionCtx?.waitUntil(storeRegistrationPromise);
     } catch (error) {
       // Log error but don't fail the token request - logout tracking is non-critical
       log.error('Failed to register session-client', { action: 'Logout' }, error as Error);
@@ -2791,7 +3256,11 @@ async function handleRefreshTokenGrant(
   // Cast to ClientMetadata for type safety
   const typedClient = clientMetadata as unknown as ClientMetadata;
   const dpopProof = extractDPoPProof(c.req.raw.headers);
-  if ((await isDPoPRequiredForTokenRequest(c, typedClient)) && !dpopProof) {
+  if (
+    typedClient.tls_client_certificate_bound_access_tokens !== true &&
+    (await isDPoPRequiredForTokenRequest(c, typedClient)) &&
+    !dpopProof
+  ) {
     return oauthError(c, 'invalid_request', 'DPoP proof is required for this request', 400);
   }
 
@@ -2808,8 +3277,35 @@ async function handleRefreshTokenGrant(
     );
   }
 
+  // FAPI 2.0 Security Profile 5.3.2.1-9 prohibits routine refresh-token rotation.
+  // Sender-constrained access tokens and confidential-client authentication provide the
+  // required protections without making a client lose its session when the rotated response is
+  // not received or persisted. Non-FAPI tenants keep Authrim's rotation default.
+  let prohibitRefreshTokenRotation = false;
+  try {
+    const settings = await getSystemSettingsCached(c, c.env, { failOnError: true });
+    const fapi = (settings?.fapi || {}) as { enabled?: boolean };
+    prohibitRefreshTokenRotation = fapi.enabled === true;
+  } catch (error) {
+    log.error('Failed to load FAPI refresh-token policy', {}, error as Error);
+    throw new SecurityProfileSettingsUnavailableError();
+  }
+
   // Client authentication verification
   // Supports: client_secret_basic, client_secret_post, client_secret_jwt, private_key_jwt
+  const clientAuthenticationPolicy = await resolveTokenClientAuthenticationPolicy(
+    c,
+    typedClient,
+    client_assertion,
+    client_assertion_type,
+    {
+      basic: basicAuth.success,
+      clientSecretPost: typeof formData.client_secret === 'string',
+    }
+  );
+  if (!clientAuthenticationPolicy.ok) {
+    return clientAuthenticationPolicy.response;
+  }
   if (
     client_assertion &&
     client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
@@ -2818,7 +3314,11 @@ async function handleRefreshTokenGrant(
     const assertionValidation = await validateClientAssertion(
       client_assertion,
       `${getRequestIssuer(c)}/token`,
-      typedClient
+      typedClient,
+      {
+        ...clientAuthenticationPolicy.assertionOptions,
+        replayProtection: { env: c.env, tenantId: getTenantIdFromContext(c) },
+      }
     );
 
     if (!assertionValidation.valid) {
@@ -2847,43 +3347,22 @@ async function handleRefreshTokenGrant(
   }
   // Public clients (no client_secret_hash and no client_assertion) are allowed
 
-  // Parse refresh token to get JTI (without verification yet)
+  let refreshMTLSThumbprint: string | undefined;
+  if (typedClient.tls_client_certificate_bound_access_tokens === true) {
+    const certificateBinding = await validateClientCertificateBinding(c.req.raw, typedClient);
+    if (!certificateBinding.valid || !certificateBinding.thumbprint) {
+      return oauthError(c, 'invalid_client', 'Client certificate authentication failed', 401);
+    }
+    refreshMTLSThumbprint = certificateBinding.thumbprint;
+  }
+
+  // Parse the refresh token only to obtain its header and candidate claims. Do not use claims for
+  // binding checks or state lookups until the signature has been verified.
   let refreshTokenPayload;
   try {
     refreshTokenPayload = parseToken(refreshTokenValue);
   } catch {
     return oauthError(c, 'invalid_grant', 'Invalid refresh token format', 400);
-  }
-
-  const jti = refreshTokenPayload.jti as string;
-  if (!jti) {
-    return oauthError(c, 'invalid_grant', 'Refresh token missing JTI', 400);
-  }
-
-  // V2: Extract userId (sub) and version (rtv) from JWT for validation
-  const userId = refreshTokenPayload.sub as string;
-  const version = typeof refreshTokenPayload.rtv === 'number' ? refreshTokenPayload.rtv : 1;
-
-  if (!userId) {
-    return oauthError(c, 'invalid_grant', 'Refresh token missing subject', 400);
-  }
-
-  // Retrieve refresh token metadata from RefreshTokenRotator DO (V2)
-  const refreshTokenData = await getRefreshToken(
-    c.env,
-    userId,
-    version,
-    client_id,
-    jti,
-    getTenantIdFromContext(c)
-  );
-  if (!refreshTokenData) {
-    return oauthError(c, 'invalid_grant', 'Refresh token is invalid or expired', 400);
-  }
-
-  // Verify client_id matches
-  if (refreshTokenData.client_id !== client_id) {
-    return oauthError(c, 'invalid_grant', 'Refresh token was issued to a different client', 400);
   }
 
   // Load public key for verification using cached JWKS
@@ -2915,6 +3394,44 @@ async function handleRefreshTokenGrant(
   } catch (error) {
     log.error('Refresh token verification failed', {}, error as Error);
     return oauthError(c, 'invalid_grant', 'Refresh token signature verification failed', 400);
+  }
+
+  if (
+    refreshMTLSThumbprint &&
+    getMTLSCertificateThumbprintFromCnfClaim(refreshTokenPayload) !== refreshMTLSThumbprint
+  ) {
+    return oauthError(c, 'invalid_grant', 'Refresh token certificate binding mismatch', 400);
+  }
+
+  const jti = refreshTokenPayload.jti as string;
+  if (!jti) {
+    return oauthError(c, 'invalid_grant', 'Refresh token missing JTI', 400);
+  }
+
+  // V2: Extract userId (sub) and version (rtv) from the verified JWT for validation
+  const userId = refreshTokenPayload.sub as string;
+  const version = typeof refreshTokenPayload.rtv === 'number' ? refreshTokenPayload.rtv : 1;
+
+  if (!userId) {
+    return oauthError(c, 'invalid_grant', 'Refresh token missing subject', 400);
+  }
+
+  // Retrieve refresh token metadata from RefreshTokenRotator DO (V2) only after verification.
+  const refreshTokenData = await getRefreshToken(
+    c.env,
+    userId,
+    version,
+    client_id,
+    jti,
+    getTenantIdFromContext(c)
+  );
+  if (!refreshTokenData) {
+    return oauthError(c, 'invalid_grant', 'Refresh token is invalid or expired', 400);
+  }
+
+  // Verify client_id matches
+  if (refreshTokenData.client_id !== client_id) {
+    return oauthError(c, 'invalid_grant', 'Refresh token was issued to a different client', 400);
   }
 
   // If scope is requested, validate it's a subset of the original scope
@@ -2951,27 +3468,30 @@ async function handleRefreshTokenGrant(
   }
 
   // Token expiration (KV > env > default priority)
-  const configManager = createOAuthConfigManager(c.env);
+  const configManager = getOAuthConfigManager(c.env);
   const baseExpiresIn = await configManager.getTokenExpiry();
   // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
   const expiresIn = Math.min(baseExpiresIn, tenantProfile.max_token_ttl_seconds);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const accountRouteError = await resolveTrustedSubjectAccountRoute(c, refreshTokenData.sub);
+  if (accountRouteError) return accountRouteError;
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
 
   // Phase 2 RBAC: Fetch fresh RBAC claims for token refresh
   // User's roles/organization may have changed since the original token was issued
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
+  const tenantRBACClaimsConfig = await resolveTenantRBACClaimsConfig(c.env, tenantId);
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
       getAccessTokenRBACClaims(authCtx.coreAdapter, refreshTokenData.sub, {
         cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
+        claimsConfig: tenantRBACClaimsConfig.accessToken,
         tenantId,
       }),
       getIDTokenRBACClaims(authCtx.coreAdapter, refreshTokenData.sub, {
         cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
+        claimsConfig: tenantRBACClaimsConfig.idToken,
         tenantId,
       }),
     ]);
@@ -3062,7 +3582,15 @@ async function handleRefreshTokenGrant(
     dpopJkt = dpopValidation.jkt;
     tokenType = 'DPoP';
 
-    if (refreshTokenDpopJkt && dpopJkt !== refreshTokenDpopJkt) {
+    // Public clients have no independent client authentication credential, so their refresh
+    // token remains bound to the original DPoP key. Confidential clients are already bound by
+    // their authenticated client identity and may rotate the DPoP key when refreshing; the new
+    // access/refresh tokens are then bound to the newly proven key.
+    if (
+      isPublicClientMetadata(typedClient) &&
+      refreshTokenDpopJkt &&
+      dpopJkt !== refreshTokenDpopJkt
+    ) {
       return oauthError(
         c,
         'invalid_dpop_proof',
@@ -3093,7 +3621,7 @@ async function handleRefreshTokenGrant(
       aud: AccessTokenAudience;
       scope: string;
       client_id: string;
-      cnf?: { jkt: string };
+      cnf?: { jkt: string } | { 'x5t#S256': string };
       authrim_permissions?: string[];
       authrim_scoped_permissions?: AccessTokenScopedPermission[];
       [key: string]: unknown;
@@ -3120,6 +3648,8 @@ async function handleRefreshTokenGrant(
     // Add DPoP confirmation (cnf) claim if DPoP is used
     if (dpopJkt) {
       accessTokenClaims.cnf = { jkt: dpopJkt };
+    } else if (refreshMTLSThumbprint) {
+      accessTokenClaims.cnf = { 'x5t#S256': refreshMTLSThumbprint };
     }
 
     // Generate region-aware JTI for token revocation sharding
@@ -3158,7 +3688,8 @@ async function handleRefreshTokenGrant(
       tenantId,
       client_id,
       clientMetadata as ClientMetadata,
-      idTokenClaims
+      idTokenClaims,
+      splitScope(grantedScope)
     );
     if (!mappedIdTokenClaims.ok) {
       return mappedIdTokenClaims.response;
@@ -3184,18 +3715,20 @@ async function handleRefreshTokenGrant(
       const selectiveClaims: string[] = Array.isArray(rawSelectiveClaims)
         ? rawSelectiveClaims
         : ['email', 'phone_number', 'address', 'birthdate'];
-      idToken = await createSDJWTIDTokenFromClaims(
+      idToken = await createClientSDJWTIDToken(
+        c.env,
+        tenantId,
+        clientMetadata as ClientMetadata,
         idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        privateKey,
-        keyId,
         expiresIn,
         selectiveClaims
       );
     } else {
-      idToken = await createIDToken(
+      idToken = await createClientIDToken(
+        c.env,
+        tenantId,
+        clientMetadata as ClientMetadata,
         idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-        privateKey,
-        keyId,
         expiresIn
       );
     }
@@ -3204,9 +3737,10 @@ async function handleRefreshTokenGrant(
     return oauthError(c, 'server_error', 'Failed to create ID token', 500);
   }
 
-  // Check if Token Rotation is enabled (default: true for security)
-  // Set ENABLE_REFRESH_TOKEN_ROTATION=false to disable (for load testing only!)
-  const rotationEnabled = c.env.ENABLE_REFRESH_TOKEN_ROTATION !== 'false';
+  // Rotation remains enabled by default except for FAPI 2.0 tenants, where routine rotation is
+  // explicitly prohibited by the security profile.
+  const rotationEnabled =
+    !prohibitRefreshTokenRotation && c.env.ENABLE_REFRESH_TOKEN_ROTATION !== 'false';
 
   let newRefreshToken: string;
   const refreshTokenExpiresIn = await configManager.getRefreshTokenExpiry();
@@ -3256,7 +3790,11 @@ async function handleRefreshTokenGrant(
         scope: grantedScope,
         client_id: client_id,
         resource_aud: refreshedAccessTokenAudience,
-        ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
+        ...(dpopJkt
+          ? { cnf: { jkt: dpopJkt } }
+          : refreshMTLSThumbprint
+            ? { cnf: { 'x5t#S256': refreshMTLSThumbprint } }
+            : {}),
       };
 
       // V2: Include rtv (Refresh Token Version) for theft detection
@@ -3306,10 +3844,12 @@ async function handleRefreshTokenGrant(
       );
     }
   } else {
-    // Token Rotation disabled - return the same refresh token
-    // WARNING: This is less secure and should only be used for testing!
+    // A FAPI tenant uses stable refresh tokens by profile requirement. Other tenants may reach
+    // this branch only through the explicit environment override.
     newRefreshToken = refreshTokenValue;
-    log.debug('Refresh token rotation disabled - returning same token', {});
+    log.debug('Refresh token rotation disabled - returning same token', {
+      fapiProfile: prohibitRefreshTokenRotation,
+    });
   }
 
   // Publish token events (non-blocking, use waitUntil to ensure completion)
@@ -3329,19 +3869,27 @@ async function handleRefreshTokenGrant(
     }).catch((err: unknown) => {
       log.error('Failed to publish token.access.issued event', { action: 'Event' }, err as Error);
     }),
-    publishEvent(c, {
-      type: TOKEN_EVENTS.REFRESH_ROTATED,
-      tenantId,
-      data: {
-        clientId: client_id,
-        userId: refreshTokenData.sub,
-        scopes: grantedScope.split(' '),
-        grantType: 'refresh_token',
-      } satisfies TokenEventData,
-    }).catch((err: unknown) => {
-      log.error('Failed to publish token.refresh.rotated event', { action: 'Event' }, err as Error);
-    }),
   ];
+  if (rotationEnabled) {
+    eventPromises.push(
+      publishEvent(c, {
+        type: TOKEN_EVENTS.REFRESH_ROTATED,
+        tenantId,
+        data: {
+          clientId: client_id,
+          userId: refreshTokenData.sub,
+          scopes: grantedScope.split(' '),
+          grantType: 'refresh_token',
+        } satisfies TokenEventData,
+      }).catch((err: unknown) => {
+        log.error(
+          'Failed to publish token.refresh.rotated event',
+          { action: 'Event' },
+          err as Error
+        );
+      })
+    );
+  }
 
   // ID Token issued event (refresh grant can also issue new ID token)
   if (idToken) {
@@ -3549,7 +4097,7 @@ async function handleJWTBearerGrant(
   }
 
   // Token expiration (KV > env > default priority)
-  const configManager = createOAuthConfigManager(c.env);
+  const configManager = getOAuthConfigManager(c.env);
   const expiresIn = await configManager.getTokenExpiry();
 
   // Generate Access Token
@@ -3633,7 +4181,17 @@ async function handleDeviceCodeGrant(
 ) {
   const log = getLogger(c).module('TOKEN');
   const deviceCode = formData.device_code;
-  const client_id = formData.client_id;
+  const clientAuth = parseOAuthClientAuthenticationParams({
+    clientId: formData.client_id,
+    clientSecret: formData.client_secret,
+    clientAssertion: formData.client_assertion,
+    clientAssertionType: formData.client_assertion_type,
+    authorizationHeader: c.req.header('Authorization') ?? undefined,
+  });
+  if (!clientAuth.ok) {
+    return oauthError(c, clientAuth.error, clientAuth.errorDescription, 401);
+  }
+  const client_id = clientAuth.credentials.clientId;
   const tenantId = getTenantIdFromContext(c);
   const internalHeaders = {
     'Content-Type': 'application/json',
@@ -3659,6 +4217,31 @@ async function handleDeviceCodeGrant(
       },
       400
     );
+  }
+
+  const clientMetadata = await getClientCached(c, c.env, client_id);
+  if (!clientMetadata) {
+    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+  }
+
+  if (clientMetadata.token_endpoint_auth_method === 'none') {
+    const methodValidation = validateRegisteredClientAuthenticationMethod(
+      clientMetadata as unknown as ClientMetadata,
+      clientAuth.credentials.presentation
+    );
+    if (!methodValidation.valid) {
+      return oauthError(c, 'invalid_client', methodValidation.errorDescription, 401);
+    }
+  } else {
+    const authenticated = await authenticateConfidentialOAuthClient(
+      clientMetadata as unknown as ClientMetadata,
+      `${getRequestIssuer(c)}/token`,
+      clientAuth.credentials,
+      { replayProtection: { env: c.env, tenantId: getTenantIdFromContext(c) } }
+    );
+    if (!authenticated.ok) {
+      return oauthError(c, authenticated.error, authenticated.errorDescription, 401);
+    }
   }
 
   // Get device code metadata from DeviceCodeStore
@@ -3741,7 +4324,7 @@ async function handleDeviceCodeGrant(
   if (metadata.status === 'pending') {
     // User has not yet approved - check if polling too fast
     const { isDeviceFlowPollingTooFast, DEVICE_FLOW_CONSTANTS } =
-      await import('@authrim/ar-lib-core');
+      await import('@authrim/ar-lib-core/utils/device-flow');
 
     if (isDeviceFlowPollingTooFast(metadata, DEVICE_FLOW_CONSTANTS.DEFAULT_INTERVAL)) {
       return c.json(
@@ -3802,11 +4385,6 @@ async function handleDeviceCodeGrant(
     );
   }
 
-  const clientMetadata = await getClientCached(c, c.env, metadata.client_id);
-  if (!clientMetadata) {
-    return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
-  }
-
   const dpopProof = extractDPoPProof(c.req.raw.headers);
   if (
     (await isDPoPRequiredForTokenRequest(c, clientMetadata as unknown as ClientMetadata)) &&
@@ -3840,6 +4418,9 @@ async function handleDeviceCodeGrant(
   if (!audienceResolution.ok) {
     return oauthError(c, 'invalid_target', audienceResolution.description, 400);
   }
+
+  const accountRouteError = await resolveTrustedSubjectAccountRoute(c, metadata.sub);
+  if (accountRouteError) return accountRouteError;
 
   // Atomically reserve the approved device code before issuing tokens. This closes
   // the get-then-delete race where concurrent polls could both observe approved.
@@ -3879,23 +4460,24 @@ async function handleDeviceCodeGrant(
   }
 
   // Token expiration (KV > env > default priority)
-  const configManager = createOAuthConfigManager(c.env);
+  const configManager = getOAuthConfigManager(c.env);
   const expiresIn = await configManager.getTokenExpiry();
-  const authCtx = createAuthContextFromHono(c, getTenantIdFromContext(c));
+  const authCtx = createAccountAuthContextFromHono(c, getTenantIdFromContext(c));
 
   // Phase 2 RBAC: Fetch RBAC claims for device flow tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
+  const tenantRBACClaimsConfig = await resolveTenantRBACClaimsConfig(c.env, authCtx.tenantId);
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
       getAccessTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
+        claimsConfig: tenantRBACClaimsConfig.accessToken,
         tenantId: authCtx.tenantId,
       }),
       getIDTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
+        claimsConfig: tenantRBACClaimsConfig.idToken,
         tenantId: authCtx.tenantId,
       }),
     ]);
@@ -3940,7 +4522,8 @@ async function handleDeviceCodeGrant(
     getTenantIdFromContext(c),
     client_id,
     clientMetadata as ClientMetadata,
-    idTokenClaims
+    idTokenClaims,
+    splitScope(metadata.scope)
   );
   if (!mappedIdTokenClaims.ok) {
     return mappedIdTokenClaims.response;
@@ -3959,10 +4542,11 @@ async function handleDeviceCodeGrant(
 
   let idToken: string;
   try {
-    idToken = await createIDToken(
+    idToken = await createClientIDToken(
+      c.env,
+      getTenantIdFromContext(c),
+      clientMetadata as ClientMetadata,
       idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-      privateKey,
-      keyId,
       expiresIn
     );
   } catch (error) {
@@ -4046,14 +4630,16 @@ async function handleDeviceCodeGrant(
         resourceAudience: audienceResolution.audience,
       });
       refreshJti = familyResult.jti;
-      void recordTokenFamilyIndex(
-        authCtx.coreAdapter,
-        getTenantIdFromContext(c),
-        refreshJti,
-        metadata.sub!,
-        client_id,
-        familyResult.resolution.generation,
-        refreshTokenExpiry
+      c.executionCtx.waitUntil(
+        recordTokenFamilyIndex(
+          authCtx.coreAdapter,
+          getTenantIdFromContext(c),
+          refreshJti,
+          metadata.sub!,
+          client_id,
+          familyResult.resolution.generation,
+          refreshTokenExpiry
+        )
       );
     } else {
       refreshJti = `rt_${crypto.randomUUID()}`;
@@ -4221,11 +4807,27 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const clientAuthentication = await authenticateConfidentialOAuthClient(
     clientMetadata as unknown as ClientMetadata,
     `${getRequestIssuer(c)}/token`,
-    clientAuth.credentials
+    clientAuth.credentials,
+    { replayProtection: { env: c.env, tenantId: getTenantIdFromContext(c) } }
   );
 
   if (!clientAuthentication.ok) {
     return oauthError(c, clientAuthentication.error, clientAuthentication.errorDescription, 401);
+  }
+
+  let mtlsThumbprint: string | undefined;
+  if (clientMetadata.tls_client_certificate_bound_access_tokens === true) {
+    const certificateBinding = await validateClientCertificateBinding(
+      c.req.raw,
+      clientMetadata as unknown as ClientMetadata
+    );
+    if (!certificateBinding.valid || !certificateBinding.thumbprint) {
+      log.warn('CIBA client certificate binding failed', {
+        reason: certificateBinding.error ?? 'missing_thumbprint',
+      });
+      return oauthError(c, 'invalid_client', 'Client certificate authentication failed', 401);
+    }
+    mtlsThumbprint = certificateBinding.thumbprint;
   }
 
   const grantTypes = clientMetadata.grant_types as string[] | string | undefined;
@@ -4284,6 +4886,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     sub?: string;
     user_id?: string;
     nonce?: string;
+    authenticated_acr?: string;
     last_poll_at?: number;
     poll_count?: number;
     created_at: number;
@@ -4327,7 +4930,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   if (metadata.status === 'pending') {
     // User has not yet approved - check if polling too fast (poll mode only)
     if (metadata.delivery_mode === 'poll') {
-      const { isPollingTooFast } = await import('@authrim/ar-lib-core');
+      const { isPollingTooFast } = await import('@authrim/ar-lib-core/utils/ciba');
 
       if (isPollingTooFast(metadata)) {
         return c.json(
@@ -4364,7 +4967,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
         error: 'access_denied',
         error_description: 'User denied the authentication request',
       },
-      403
+      400
     );
   }
 
@@ -4391,6 +4994,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 
   const dpopProof = extractDPoPProof(c.req.raw.headers);
   if (
+    clientMetadata.tls_client_certificate_bound_access_tokens !== true &&
     (await isDPoPRequiredForTokenRequest(c, clientMetadata as unknown as ClientMetadata)) &&
     !dpopProof
   ) {
@@ -4424,6 +5028,9 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     return oauthError(c, 'invalid_target', audienceResolution.description, 400);
   }
 
+  const accountRouteError = await resolveTrustedSubjectAccountRoute(c, metadata.sub);
+  if (accountRouteError) return accountRouteError;
+
   // Mark tokens as issued (one-time use enforcement)
   const markIssuedResponse = await cibaRequestStore.fetch(
     new Request('https://internal/mark-token-issued', {
@@ -4434,24 +5041,23 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   );
 
   if (!markIssuedResponse.ok) {
-    const error = (await markIssuedResponse.json()) as {
-      error?: string;
-      error_description?: string;
-    };
-    log.error('Failed to mark tokens as issued', {}, error as Error);
-    // If tokens were already issued, return error
-    if (error.error_description?.includes('already issued')) {
-      return c.json(
-        {
-          error: 'invalid_grant',
-          error_description: 'Tokens have already been issued for this auth_req_id',
-        },
-        400
-      );
-    }
+    // The reservation is the atomic one-time-use boundary. Never continue to signing when the
+    // store cannot prove that this request exclusively reserved the auth_req_id. Do not depend on
+    // the response body: the Durable Object intentionally hides internal errors, and other
+    // failures might not contain JSON at all.
+    log.error('Failed to reserve CIBA request for token issuance', {
+      status: markIssuedResponse.status,
+    });
+    return c.json(
+      {
+        error: 'invalid_grant',
+        error_description: 'CIBA request has already been used or is not approved',
+      },
+      400
+    );
   }
 
-  const authCtx = createAuthContextFromHono(c, getTenantIdFromContext(c));
+  const authCtx = createAccountAuthContextFromHono(c, getTenantIdFromContext(c));
 
   // Verify user exists in canonical runtime account tables without reading PII.
   const userAccount = await findCanonicalRuntimeAccount(
@@ -4475,23 +5081,24 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
   const { privateKey, kid } = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
 
   // Token expiration times (KV > env > default priority)
-  const configManager = createOAuthConfigManager(c.env);
+  const configManager = getOAuthConfigManager(c.env);
   const expiresIn = await configManager.getTokenExpiry();
   const refreshExpiresIn = await configManager.getRefreshTokenExpiry();
 
   // Phase 2 RBAC: Fetch RBAC claims for CIBA flow tokens
   let accessTokenRBACClaims: Awaited<ReturnType<typeof getAccessTokenRBACClaims>> = {};
   let idTokenRBACClaims: Awaited<ReturnType<typeof getIDTokenRBACClaims>> = {};
+  const tenantRBACClaimsConfig = await resolveTenantRBACClaimsConfig(c.env, authCtx.tenantId);
   try {
     [accessTokenRBACClaims, idTokenRBACClaims] = await Promise.all([
       getAccessTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ACCESS_TOKEN_CLAIMS,
+        claimsConfig: tenantRBACClaimsConfig.accessToken,
         tenantId: authCtx.tenantId,
       }),
       getIDTokenRBACClaims(authCtx.coreAdapter, metadata.sub!, {
         cache: c.env.REBAC_CACHE,
-        claimsConfig: c.env.RBAC_ID_TOKEN_CLAIMS,
+        claimsConfig: tenantRBACClaimsConfig.idToken,
         tenantId: authCtx.tenantId,
       }),
     ]);
@@ -4527,7 +5134,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     aud: AccessTokenAudience;
     scope: string | undefined;
     client_id: string;
-    cnf?: { jkt: string };
+    cnf?: { jkt: string } | { 'x5t#S256': string };
     authrim_permissions?: string[];
     authrim_scoped_permissions?: AccessTokenScopedPermission[];
     [key: string]: unknown;
@@ -4537,7 +5144,11 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     aud: audienceResolution.audience,
     scope: metadata.scope,
     client_id: metadata.client_id,
-    ...(dpopJkt && { cnf: { jkt: dpopJkt } }),
+    ...(dpopJkt
+      ? { cnf: { jkt: dpopJkt } }
+      : mtlsThumbprint
+        ? { cnf: { 'x5t#S256': mtlsThumbprint } }
+        : {}),
     // Phase 2 RBAC: Add RBAC claims to access token
     ...accessTokenRBACClaims,
   };
@@ -4569,6 +5180,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     sub: metadata.sub!,
     aud: metadata.client_id,
     ...(metadata.nonce && { nonce: metadata.nonce }),
+    ...(metadata.authenticated_acr && { acr: metadata.authenticated_acr }),
     at_hash: atHash,
     // Phase 2 RBAC: Add RBAC claims to ID token
     ...idTokenRBACClaims,
@@ -4579,7 +5191,8 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     getTenantIdFromContext(c),
     metadata.client_id,
     clientMetadata as ClientMetadata,
-    idTokenClaims
+    idTokenClaims,
+    splitScope(metadata.scope)
   );
   if (!mappedIdTokenClaims.ok) {
     return mappedIdTokenClaims.response;
@@ -4596,16 +5209,19 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     return idTokenConsent.response;
   }
 
-  let idToken = await createIDToken(
+  let idToken = await createClientIDToken(
+    c.env,
+    getTenantIdFromContext(c),
+    clientMetadata as ClientMetadata,
     idTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-    privateKey,
-    kid,
     expiresIn
   );
 
   // Encrypt ID token if required
   if (isIDTokenEncryptionRequired(clientMetadata)) {
-    const clientPublicKey = await getClientPublicKey(clientMetadata);
+    const alg = clientMetadata.id_token_encrypted_response_alg as JWEAlgorithm;
+    const enc = clientMetadata.id_token_encrypted_response_enc as JWEEncryption;
+    const clientPublicKey = await getClientPublicKey(clientMetadata, undefined, alg);
 
     if (!clientPublicKey) {
       return c.json(
@@ -4616,9 +5232,6 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
         500
       );
     }
-
-    const alg = clientMetadata.id_token_encrypted_response_alg as JWEAlgorithm;
-    const enc = clientMetadata.id_token_encrypted_response_enc as JWEEncryption;
 
     if (!validateJWEOptions(alg, enc)) {
       return c.json(
@@ -4646,14 +5259,16 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
       resourceAudience: audienceResolution.audience,
     });
     refreshTokenJti = cibaFamilyResult.jti;
-    void recordTokenFamilyIndex(
-      authCtx.coreAdapter,
-      getTenantIdFromContext(c),
-      refreshTokenJti,
-      metadata.sub!,
-      metadata.client_id,
-      cibaFamilyResult.resolution.generation,
-      refreshExpiresIn
+    c.executionCtx.waitUntil(
+      recordTokenFamilyIndex(
+        authCtx.coreAdapter,
+        getTenantIdFromContext(c),
+        refreshTokenJti,
+        metadata.sub!,
+        metadata.client_id,
+        cibaFamilyResult.resolution.generation,
+        refreshExpiresIn
+      )
     );
   } else {
     refreshTokenJti = `rt_${crypto.randomUUID()}`;
@@ -4666,6 +5281,7 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     client_id: metadata.client_id,
     scope: metadata.scope,
     resource_aud: audienceResolution.audience,
+    ...(mtlsThumbprint ? { cnf: { 'x5t#S256': mtlsThumbprint } } : {}),
   };
 
   const { token: refreshToken } = await createRefreshToken(
@@ -4693,14 +5309,8 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
     );
   }
 
-  // Delete the CIBA request after successful token issuance
-  await cibaRequestStore.fetch(
-    new Request('https://internal/delete', {
-      method: 'POST',
-      headers: internalHeaders,
-      body: JSON.stringify({ auth_req_id: authReqId }),
-    })
-  );
+  // Keep the issued request as a short-lived tombstone until its original expiry. This lets a
+  // replay receive invalid_grant instead of being indistinguishable from an unknown/expired ID.
 
   // Publish token events (non-blocking, use waitUntil to ensure completion)
   const nowEpoch = Math.floor(Date.now() / 1000);
@@ -4770,11 +5380,11 @@ async function handleCIBAGrant(c: Context<{ Bindings: Env }>, formData: Record<s
 /**
  * Record token family in the relational index for user-wide revocation support (V3 Sharding)
  *
- * This is a non-blocking operation that records the token family in the
+ * This waitUntil-backed operation records the token family in the
  * user_token_families table. This enables efficient user-wide token revocation
  * by allowing the admin API to query all token families for a user.
  *
- * Note: This is fire-and-forget for performance. Failure does not affect
+ * Failure does not affect
  * token issuance, but may impact user-wide revocation functionality.
  */
 async function recordTokenFamilyIndex(
@@ -5125,6 +5735,19 @@ async function handleTokenExchangeGrant(
     typedClient.token_endpoint_auth_method === 'none';
 
   // 3. Authenticate client
+  const clientAuthenticationPolicy = await resolveTokenClientAuthenticationPolicy(
+    c,
+    typedClient,
+    client_assertion,
+    client_assertion_type,
+    {
+      basic: basicAuth.success,
+      clientSecretPost: typeof formData.client_secret === 'string',
+    }
+  );
+  if (!clientAuthenticationPolicy.ok) {
+    return clientAuthenticationPolicy.response;
+  }
   if (isNativeSSOPublicClientAuthException) {
     if (nativeSSOChannel !== 'native') {
       return oauthError(
@@ -5171,7 +5794,11 @@ async function handleTokenExchangeGrant(
     const assertionValidation = await validateClientAssertion(
       client_assertion,
       `${getRequestIssuer(c)}/token`,
-      typedClient
+      typedClient,
+      {
+        ...clientAuthenticationPolicy.assertionOptions,
+        replayProtection: { env: c.env, tenantId: getTenantIdFromContext(c) },
+      }
     );
     if (!assertionValidation.valid) {
       // Security: Log detailed error but return generic message to prevent information leakage
@@ -5354,26 +5981,27 @@ async function handleTokenExchangeGrant(
 
     originalIssuer = subjectIssuer;
 
-    // For external IdP tokens, we need to fetch their JWKS
-    // Note: This is a simplified implementation; production would cache JWKS
-    log.info('ID-JAG: Accepting external IdP token', {
-      subjectIssuer,
-      subjectTokenKid,
-      action: 'TokenExchange',
-    });
-
-    // External IdP signature verification is deferred for trusted issuers
-    //
-    // Current behavior: External IdP tokens from `allowedIssuers` are accepted without
-    // signature verification. This is acceptable because:
-    // 1. allowedIssuers is explicitly configured by the admin
-    // 2. Token claims (iss, sub, aud, exp) are still validated
-    // 3. Token exchange policies apply regardless of signature verification
-    //
-    // Future enhancement: Implement JWKS discovery and caching for external IdPs
-    // - Fetch .well-known/openid-configuration from subjectIssuer
-    // - Cache JWKS with TTL
-    // - Verify signature using fetched keys
+    const externalAudiences = [client_id!, ...(typedClient.allowed_subject_token_clients || [])];
+    try {
+      subjectTokenPayload = (await verifyExternalIdJagSubjectToken({
+        token: subject_token,
+        issuer: subjectIssuer,
+        audiences: [...new Set(externalAudiences)],
+      })) as Record<string, unknown>;
+      log.info('ID-JAG: Verified external IdP subject token', {
+        subjectIssuer,
+        subjectTokenKid,
+        action: 'TokenExchange',
+      });
+    } catch (error) {
+      log.warn('ID-JAG: External subject token verification failed', {
+        subjectIssuer,
+        subjectTokenKid,
+        reason: error instanceof Error ? error.message : 'unknown_error',
+        action: 'TokenExchange',
+      });
+      return oauthError(c, 'invalid_grant', 'Subject token verification failed', 400);
+    }
   }
 
   // For non-ID-JAG requests or when verifying our own tokens
@@ -5387,8 +6015,8 @@ async function handleTokenExchangeGrant(
       : Promise.resolve(false),
   ]);
 
-  // Verify subject_token signature (issuer only, aud validated separately)
-  // Skip verification for ID-JAG with external IdP tokens (trusted via allowedIssuers)
+  // Verify first-party subject_token signature (aud validated separately).
+  // ID-JAG external tokens were verified against the issuer's discovered JWKS above.
   if (!isIdJagTokenRequest && publicKey) {
     try {
       // Verify signature and issuer only; audience is validated in the authorization check below
@@ -5458,7 +6086,9 @@ async function handleTokenExchangeGrant(
   // 7. Audience validation (Cross-tenant escalation prevention)
   // This is CRITICAL for security - prevents stealing tokens meant for other clients
   const subjectAud = subjectTokenPayload.aud as string | string[] | undefined;
-  const subjectClientId = subjectTokenPayload.client_id as string | undefined;
+  const subjectClientId =
+    (subjectTokenPayload.client_id as string | undefined) ??
+    (subjectTokenPayload.azp as string | undefined);
   const allowedSubjectClients = typedClient.allowed_subject_token_clients || [];
   const subjectAudArray = Array.isArray(subjectAud) ? subjectAud : subjectAud ? [subjectAud] : [];
 
@@ -5468,7 +6098,9 @@ async function handleTokenExchangeGrant(
 
   // Check 2: Is the subject_token's issuing client in our allowed list?
   const isAllowedSubjectClient =
-    allowedSubjectClients.length > 0 && allowedSubjectClients.includes(subjectClientId || '');
+    allowedSubjectClients.length > 0 &&
+    allowedSubjectClients.includes(subjectClientId || '') &&
+    subjectAudArray.includes(subjectClientId || '');
 
   // SECURITY: Reject if neither condition is met
   // - Client must be explicitly authorized via audience or allowed_subject_token_clients
@@ -5486,11 +6118,15 @@ async function handleTokenExchangeGrant(
   // 7. Scope handling (RFC 8693 §2.1)
   // Options: inherit from subject_token, explicitly request subset, or let client.allowed_scopes limit
   const subjectScope = subjectTokenPayload.scope as string | undefined;
-  const subjectScopes = subjectScope ? subjectScope.split(' ') : [];
+  const subjectScopes = subjectScope ? subjectScope.split(' ').filter(Boolean) : [];
 
   // Track scope source for audit logging
   const scopeSource: 'explicit' | 'inherited' = requestedScope ? 'explicit' : 'inherited';
-  const requestedScopes = requestedScope ? requestedScope.split(' ') : subjectScopes;
+  const requestedScopes = requestedScope
+    ? requestedScope.split(' ').filter(Boolean)
+    : subjectScopes.length > 0
+      ? subjectScopes
+      : ['openid'];
   const allowedScopes = typedClient.allowed_scopes || [];
 
   // Intersection: requested ∩ subject ∩ client.allowed_scopes
@@ -5503,7 +6139,19 @@ async function handleTokenExchangeGrant(
     grantedScopes = grantedScopes.filter((s) => allowedScopes.includes(s));
   }
 
-  const grantedScope = grantedScopes.join(' ') || 'openid';
+  // An absent subject scope can be constrained by explicit client policy, but when both policy
+  // bounds are absent there is no authority from which to grant caller-controlled scopes.
+  if ((subjectScopes.length === 0 && allowedScopes.length === 0) || grantedScopes.length === 0) {
+    return c.json(
+      {
+        error: 'invalid_scope',
+        error_description: 'Requested scope is not permitted for this token exchange',
+      },
+      400
+    );
+  }
+
+  const grantedScope = grantedScopes.join(' ');
 
   // Detect scope changes for security audit
   const scopeDowngraded = subjectScopes.length > 0 && grantedScopes.length < subjectScopes.length;
@@ -5771,7 +6419,7 @@ async function handleTokenExchangeGrant(
     );
   }
 
-  const configManager = createOAuthConfigManager(c.env);
+  const configManager = getOAuthConfigManager(c.env);
   const baseExpiresIn = await configManager.getTokenExpiry();
   // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
@@ -5993,7 +6641,7 @@ async function handleNativeSSOTokenExchange(
     error: string,
     errorDescription: string,
     code: NativeSSOErrorDetailCode,
-    status: 400 | 401 | 403 | 429 | 500 = 400,
+    status: 400 | 401 | 403 | 429 | 500 | 503 = 400,
     userAction: Phase1ErrorDetailUserAction = 'reauthenticate',
     options: {
       retryable?: boolean;
@@ -6032,9 +6680,20 @@ async function handleNativeSSOTokenExchange(
     );
   }
 
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
-  const deviceInstallationRepo = new DeviceInstallationRepository(authCtx.coreAdapter, tenantId);
+  const explicitRequestedScopes = requestedScope
+    ? requestedScope.split(' ').filter(Boolean)
+    : undefined;
+  // Native SSO draft-07 requires every explicit scope request to include openid.
+  if (explicitRequestedScopes && !explicitRequestedScopes.includes('openid')) {
+    return exchangeError(
+      'invalid_scope',
+      'Native SSO scope must include openid',
+      'native_sso_scope_invalid',
+      400,
+      'contact_support'
+    );
+  }
+
   const nativeSSOConfig = await getNativeSSOConfig(c.env);
 
   const dpopProof = extractDPoPProof(c.req.raw.headers);
@@ -6166,6 +6825,34 @@ async function handleNativeSSOTokenExchange(
 
   // 4. Validate device_secret (this also marks it as used)
   // Pass maxUseCountPerSecret from config for replay attack prevention
+  let deviceSecretRouteHint: Awaited<ReturnType<typeof resolveDeviceSecretRouteHint>> = null;
+  {
+    try {
+      deviceSecretRouteHint = await resolveDeviceSecretRouteHint(c.env, {
+        secret: deviceSecret,
+        tenantId,
+      });
+      if (!deviceSecretRouteHint) {
+        return exchangeInvalidGrant('Device secret not found or invalid', 'device_secret_inactive');
+      }
+      await resolveAccountDataContextFromHono(c, deviceSecretRouteHint.accountId);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'account_data_route_not_found') {
+        return exchangeInvalidGrant('Device secret not found or invalid', 'device_secret_inactive');
+      }
+      return exchangeError(
+        'temporarily_unavailable',
+        'Native SSO account data is unavailable',
+        'native_sso_server_error',
+        503,
+        'retry',
+        { retryable: true, severity: 'warning' }
+      );
+    }
+  }
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
+  const deviceSecretRepo = new DeviceSecretRepository(authCtx.coreAdapter, tenantId);
+  const deviceInstallationRepo = new DeviceInstallationRepository(authCtx.coreAdapter, tenantId);
   const deviceSecretValidation = await deviceSecretRepo.validateAndUse(deviceSecret, {
     maxUseCount: nativeSSOConfig.maxUseCountPerSecret,
     tenantId,
@@ -6186,6 +6873,12 @@ async function handleNativeSSOTokenExchange(
 
   const validatedDeviceSecret = deviceSecretValidation.entity;
   const deviceSecretUserId = validatedDeviceSecret.user_id;
+  if (
+    deviceSecretRouteHint &&
+    deviceSecretRouteHint.accountId !== `account:${deviceSecretUserId}`
+  ) {
+    return exchangeInvalidGrant('Device secret validation failed', 'device_secret_binding_failed');
+  }
 
   // 5. Parse and validate ID Token
   let idTokenPayload: Record<string, unknown>;
@@ -6359,8 +7052,8 @@ async function handleNativeSSOTokenExchange(
   // 8. Scope handling
   // Native SSO inherits scope from original ID Token or uses requested scope
   const idTokenScope = idTokenPayload.scope as string | undefined;
-  const originalScopes = idTokenScope ? idTokenScope.split(' ') : ['openid'];
-  const requestedScopes = requestedScope ? requestedScope.split(' ') : originalScopes;
+  const originalScopes = idTokenScope ? idTokenScope.split(' ').filter(Boolean) : ['openid'];
+  const requestedScopes = explicitRequestedScopes ?? originalScopes;
   const allowedScopes = clientMetadata.allowed_scopes || [];
 
   // Intersection: requested ∩ original ∩ client.allowed_scopes
@@ -6372,9 +7065,15 @@ async function handleNativeSSOTokenExchange(
     grantedScopes = grantedScopes.filter((s) => allowedScopes.includes(s));
   }
 
-  // Ensure openid is always included for OIDC
+  // Do not add openid after applying policy: that would bypass the subject or client ceiling.
   if (!grantedScopes.includes('openid')) {
-    grantedScopes.unshift('openid');
+    return exchangeError(
+      'invalid_scope',
+      'openid scope is not permitted for this Native SSO token exchange',
+      'native_sso_scope_invalid',
+      400,
+      'contact_support'
+    );
   }
 
   const grantedScope = grantedScopes.join(' ');
@@ -6408,7 +7107,7 @@ async function handleNativeSSOTokenExchange(
     );
   }
 
-  const configManager = createOAuthConfigManager(c.env);
+  const configManager = getOAuthConfigManager(c.env);
   const expiresIn = await configManager.getTokenExpiry();
   const refreshTokenExpiresIn = await configManager.getRefreshTokenExpiry();
 
@@ -6499,6 +7198,8 @@ async function handleNativeSSOTokenExchange(
       clientId,
       sectorIdentifier: clientMetadata.sector_identifier_uri,
       selector: clientMetadata.identity_mapping,
+      destinationSurface: 'id_token',
+      grantedScopes,
       claims: newIdTokenClaims,
     });
     if (mapped.claims !== newIdTokenClaims) {
@@ -6560,10 +7261,11 @@ async function handleNativeSSOTokenExchange(
 
   let newIdToken: string;
   try {
-    newIdToken = await createIDToken(
+    newIdToken = await createClientIDToken(
+      c.env,
+      tenantId,
+      clientMetadata,
       newIdTokenClaims as Omit<IDTokenClaims, 'iat' | 'exp'>,
-      privateKey,
-      keyId,
       expiresIn
     );
   } catch (error) {
@@ -6609,14 +7311,16 @@ async function handleNativeSSOTokenExchange(
         });
         refreshTokenJti = familyResult.jti;
         rtv = familyResult.family.version;
-        void recordTokenFamilyIndex(
-          authCtx.coreAdapter,
-          tenantId,
-          refreshTokenJti,
-          idTokenSub,
-          clientId,
-          familyResult.resolution.generation,
-          refreshTokenExpiresIn
+        c.executionCtx.waitUntil(
+          recordTokenFamilyIndex(
+            authCtx.coreAdapter,
+            tenantId,
+            refreshTokenJti,
+            idTokenSub,
+            clientId,
+            familyResult.resolution.generation,
+            refreshTokenExpiresIn
+          )
         );
       } else {
         refreshTokenJti = `rt_${crypto.randomUUID()}`;
@@ -6894,6 +7598,19 @@ async function handleClientCredentialsGrant(
   }
 
   // 2. Authenticate client (client_credentials REQUIRES authentication)
+  const clientAuthenticationPolicy = await resolveTokenClientAuthenticationPolicy(
+    c,
+    typedClient,
+    client_assertion,
+    client_assertion_type,
+    {
+      basic: basicAuth.success,
+      clientSecretPost: typeof formData.client_secret === 'string',
+    }
+  );
+  if (!clientAuthenticationPolicy.ok) {
+    return clientAuthenticationPolicy.response;
+  }
   if (
     client_assertion &&
     client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
@@ -6901,7 +7618,11 @@ async function handleClientCredentialsGrant(
     const assertionValidation = await validateClientAssertion(
       client_assertion,
       `${getRequestIssuer(c)}/token`,
-      typedClient
+      typedClient,
+      {
+        ...clientAuthenticationPolicy.assertionOptions,
+        replayProtection: { env: c.env, tenantId: getTenantIdFromContext(c) },
+      }
     );
     if (!assertionValidation.valid) {
       // Security: Log detailed error but return generic message to prevent information leakage
@@ -6979,7 +7700,7 @@ async function handleClientCredentialsGrant(
     return oauthError(c, 'server_error', 'Failed to load signing key', 500);
   }
 
-  const configManager = createOAuthConfigManager(c.env);
+  const configManager = getOAuthConfigManager(c.env);
   const baseExpiresIn = await configManager.getTokenExpiry();
   // Apply Profile-based TTL limit (Human Auth / AI Ephemeral Auth two-layer model)
   // RFC 6749 §4.2.2: Access token lifetime is controlled by the authorization server
@@ -7246,10 +7967,11 @@ async function handleAdminMachineClientCredentialsGrant(
   const credentialTenantScopes = await machineRepo.getCredentialTenantScopes(credential.id);
   const tenantScope = resolveMachineTenantScope(principalTenantScopes, credentialTenantScopes);
 
+  const adminSigningTenantId = getDefaultTenantId(c.env);
   let privateKey: CryptoKey;
   let keyId: string;
   try {
-    const signingKey = await getSigningKeyFromKeyManager(c.env, getTenantIdFromContext(c));
+    const signingKey = await getSigningKeyFromKeyManager(c.env, adminSigningTenantId);
     privateKey = signingKey.privateKey;
     keyId = signingKey.kid;
   } catch (error) {
@@ -7257,7 +7979,26 @@ async function handleAdminMachineClientCredentialsGrant(
     return oauthError(c, 'server_error', 'Failed to load signing key', 500);
   }
 
-  const expiresIn = Math.min(principal.tokenTtlSeconds, 900);
+  let expiresIn = Math.min(principal.tokenTtlSeconds, 900);
+  const dpopProof = extractDPoPProof(c.req.raw.headers);
+  let dpopJkt: string | undefined;
+  if (dpopProof) {
+    const dpopValidation = await validateDPoPProof(
+      dpopProof,
+      c.req.method,
+      c.req.url,
+      undefined,
+      c.env,
+      principal.clientId,
+      getTenantIdFromContext(c)
+    );
+    if (!dpopValidation.valid || !dpopValidation.jkt) {
+      return dpopValidationErrorResponse(c, dpopValidation, {
+        fallbackDescription: 'DPoP validation failed',
+      });
+    }
+    dpopJkt = dpopValidation.jkt;
+  }
   const accessTokenClaims: Record<string, unknown> = {
     iss: getRequestIssuer(c),
     sub: `machine:${principal.id}`,
@@ -7269,15 +8010,28 @@ async function handleAdminMachineClientCredentialsGrant(
     credential_id: credential.id,
     client_auth_method: 'private_key_jwt',
     credential_strength: 'asymmetric_key',
-    sender_constrained: false,
+    sender_constrained: dpopJkt !== undefined,
     scope: grantedScopes.join(' '),
     tenant_scope: tenantScope,
+    signing_tenant_id: adminSigningTenantId,
+    ...(dpopJkt ? { cnf: { jkt: dpopJkt } } : {}),
   };
 
   let accessToken: string;
   let accessTokenJti = '';
   try {
-    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, getTenantIdFromContext(c));
+    const { jti: regionAwareJti } = await generateRegionAwareJti(c.env, adminSigningTenantId);
+    if (credential.expiresAt !== null) {
+      // Keep an issued bearer token strictly inside the credential's hard
+      // lifetime. The one-second margin accounts for JWT NumericDate rounding
+      // between this calculation and createAccessToken's own clock read.
+      const remainingCredentialLifetimeSeconds =
+        Math.floor((credential.expiresAt - Date.now()) / 1000) - 1;
+      if (remainingCredentialLifetimeSeconds < 1) {
+        return oauthError(c, 'invalid_client', 'Client authentication failed', 401);
+      }
+      expiresIn = Math.min(expiresIn, remainingCredentialLifetimeSeconds);
+    }
     const result = await createAccessToken(
       accessTokenClaims as Parameters<typeof createAccessToken>[0],
       privateKey,
@@ -7330,7 +8084,7 @@ async function handleAdminMachineClientCredentialsGrant(
 
   return c.json({
     access_token: accessToken,
-    token_type: 'Bearer',
+    token_type: dpopJkt ? 'DPoP' : 'Bearer',
     expires_in: expiresIn,
     scope: grantedScopes.join(' '),
   });

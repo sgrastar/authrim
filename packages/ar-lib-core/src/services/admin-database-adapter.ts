@@ -2,10 +2,10 @@ import type { DatabaseAdapter } from '../db/adapter';
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db/adapter-source';
 import type { Env } from '../types/env';
 
-type AdminDatabaseBindings = Partial<Pick<Env, 'DB' | 'DB_ADMIN'>>;
+type AdminDatabaseBindings = Partial<Pick<Env, 'DB_ADMIN'>>;
 
 export function resolveAdminDatabaseSource(env: AdminDatabaseBindings): DatabaseSource | null {
-  return env.DB_ADMIN ?? env.DB ?? null;
+  return env.DB_ADMIN ?? null;
 }
 
 export function ensureAdminDatabaseAdapter(

@@ -1,6 +1,8 @@
 // Import DO classes for type-safe RPC bindings
 import type { KeyManager } from '../durable-objects/KeyManager';
+import type { VersionManager } from '../durable-objects/VersionManager';
 import type { SessionStore } from '../durable-objects/SessionStore';
+import type { SessionRevocationStore } from '../durable-objects/SessionRevocationStore';
 import type { SessionClientStore } from '../durable-objects/SessionClientStore';
 import type { AuthorizationCodeStore } from '../durable-objects/AuthorizationCodeStore';
 import type { RefreshTokenRotator } from '../durable-objects/RefreshTokenRotator';
@@ -8,6 +10,18 @@ import type { RateLimiterCounter } from '../durable-objects/RateLimiterCounter';
 import type { PARRequestStore } from '../durable-objects/PARRequestStore';
 import type { ChallengeStore } from '../durable-objects/ChallengeStore';
 import type { SAMLAggregateMetadataStore } from '../durable-objects/SAMLAggregateMetadataStore';
+import type { JWK } from 'jose';
+import type { VCIssuerServiceBinding } from './vc-service';
+import type { ControlServiceBinding } from '../services/control-plane/control-plane-contracts';
+import type { AccountDirectoryServiceBinding } from '../services/lookup-directory/publication';
+import type {
+  AuthAccountProvisioningServiceBinding,
+  ExternalIdpAccountProvisioningServiceBinding,
+} from '../services/account-provisioning';
+
+export interface KeyManagerPublicServiceBinding {
+  getAllPublicKeys(tenantId: string): Promise<JWK[]>;
+}
 
 export interface EmailServiceBinding {
   send(message: {
@@ -21,6 +35,296 @@ export interface EmailServiceBinding {
     replyTo?: string | { email: string; name: string };
     headers?: Record<string, string>;
   }): Promise<{ messageId?: string }>;
+}
+
+export type ImmediateNotificationDeliveryResult = 'delivered' | 'pending' | 'permanent_failure';
+
+export interface ImmediateNotificationDeliveryInput {
+  tenantId: string;
+  intentId: string;
+  outboxId: string;
+  pluginInstallationId: string;
+  bindingRef: string;
+}
+
+export interface HumanVerificationHookInput {
+  tenantId: string;
+  pluginInstallationId: string;
+  requestId: string;
+  action: 'login' | 'signup' | 'reauth';
+  responseToken: string;
+  remoteIp?: string;
+}
+
+export interface PolicyDecisionHookInput {
+  tenantId: string;
+  pluginInstallationId: string;
+  requestId: string;
+  subjectId: string;
+  action: string;
+  resourceType: string;
+  resourceId: string;
+  attributes: Record<string, string | number | boolean>;
+}
+
+export interface FlowHookInput {
+  tenantId: string;
+  pluginInstallationId: string;
+  requestId: string;
+  flowId: string;
+  hookName: string;
+  accountId?: string;
+  stateVersion: number;
+}
+
+export interface PluginRunnerDecisionResult {
+  decision: 'allow' | 'deny';
+  reasonCode: string;
+}
+
+export interface PluginRunnerFlowResult {
+  decision: 'continue' | 'deny';
+  reasonCode: string;
+}
+
+export interface ConfigureNotificationInstallationInput {
+  installationId: string;
+  tenantId: string;
+  pluginId: string;
+  backendKind: 'in_process' | 'dynamic_worker';
+  scriptName?: string;
+  enabled: boolean;
+}
+
+export interface ConfigureNotificationInstallationResult {
+  installationId: string;
+  tenantId: string;
+  pluginId: string;
+  state: 'enabled' | 'disabled';
+  configVersion: number;
+}
+
+export interface ConfigureDynamicPluginInstallationInput {
+  tenantId: string;
+  pluginId: string;
+  enabled: boolean;
+  activationRequestId?: string;
+}
+
+export interface StageDynamicPluginActivationInput {
+  tenantId: string;
+  pluginId: string;
+  activationRequestId: string;
+}
+
+export interface StageDynamicPluginActivationResult {
+  installationId: string;
+  tenantId: string;
+  pluginId: string;
+  activationRequestId: string;
+  state: 'pending';
+}
+
+export interface DynamicPluginInstallationResult {
+  installationId: string;
+  tenantId: string;
+  pluginId: string;
+  state: 'enabled' | 'disabled';
+  configVersion: number;
+  pinnedVersionDigest: string | null;
+}
+
+export interface ApprovedDynamicPlugin {
+  pluginId: string;
+  capabilityManifestDigest: string;
+  activeVersionDigest: string;
+  visibility: 'tenant' | 'platform';
+  capabilities: string[];
+  credentials: Array<{ configKey: string; required: boolean }>;
+  resources: Array<{
+    logicalResourceId: string;
+    binding: string;
+    kind: 'd1' | 'kv_namespace' | 'r2_bucket';
+    access: 'read_only' | 'read_write';
+    allowExisting: boolean;
+  }>;
+  updatedAt: number;
+}
+
+export interface DynamicPluginInstallationStatus {
+  installationId: string;
+  tenantId: string;
+  pluginId: string;
+  state: 'absent' | 'enabled' | 'disabled' | 'blocked';
+  configVersion: number;
+  configuredKeys: string[];
+  missingRequiredFields: string[];
+  pinnedVersionDigest: string | null;
+}
+
+export interface DynamicPluginRolloutBatchInput {
+  operationId: string;
+  pluginId: string;
+  batchSize: number;
+}
+
+export interface DynamicPluginRolloutBatchResult {
+  operationId: string;
+  pluginId: string;
+  targetVersionDigest: string;
+  state: 'running' | 'completed' | 'completed_with_errors' | 'blocked';
+  cursorInstallationId: string | null;
+  processedThisBatch: number;
+  succeededCount: number;
+  blockedCount: number;
+  failedCount: number;
+  hasMore: boolean;
+  lastErrorCode: string | null;
+}
+
+export interface ReplaceDynamicPluginCredentialsInput {
+  operationId: string;
+  tenantId: string;
+  pluginId: string;
+  expectedConfigVersion: number;
+  credentials: Record<string, string>;
+}
+
+export interface PluginCredentialInput {
+  configKey: string;
+  destinationHost: string;
+  injectionKind: 'header' | 'bearer' | 'json_field' | 'form_field';
+  injectionName: string;
+  value: string;
+}
+
+export interface ConfigureHumanVerificationInstallationInput {
+  operationId: string;
+  installationId: string;
+  tenantId: string;
+  pluginId: string;
+  enabled: boolean;
+  config?: {
+    siteKey: string;
+    secretKey: string;
+    expectedHostname?: string;
+    widgetMode?: 'managed' | 'checkbox' | 'invisible' | 'score';
+    scoreThreshold?: number;
+  };
+}
+
+export interface ConfigureHumanVerificationInstallationResult {
+  installationId: string;
+  tenantId: string;
+  pluginId: string;
+  state: 'enabled' | 'disabled';
+  configVersion: number;
+}
+
+export interface ReplacePluginCredentialsInput {
+  operationId: string;
+  tenantId: string;
+  installationId: string;
+  expectedConfigVersion: number;
+  credentials: PluginCredentialInput[];
+}
+
+export interface ReplacePluginCredentialsResult {
+  operationId: string;
+  installationId: string;
+  configVersion: number;
+  credentialCount: number;
+}
+
+export interface ReplaceNotificationProviderOrderInput {
+  operationId: string;
+  tenantId: string;
+  channel: 'email' | 'sms' | 'push';
+  expectedConfigVersion: number;
+  installationIds: string[];
+}
+
+export interface ResolveNotificationProviderOrderInput {
+  tenantId: string;
+  channel: 'email' | 'sms' | 'push';
+}
+
+export interface NotificationProviderOrder {
+  tenantId: string;
+  channel: 'email' | 'sms' | 'push';
+  configVersion: number;
+  state: 'enabled' | 'disabled';
+  installationIds: string[];
+}
+
+export interface ResolveAccountEventInstallationsInput {
+  tenantId: string;
+  eventType: 'account.created';
+}
+
+export interface AccountEventInstallation {
+  installationId: string;
+  capability: 'hook.account.lifecycle';
+}
+
+export interface PluginRunnerServiceBinding {
+  runHumanVerification(input: HumanVerificationHookInput): Promise<PluginRunnerDecisionResult>;
+  runPolicyDecision(input: PolicyDecisionHookInput): Promise<PluginRunnerDecisionResult>;
+  runFlowHook(input: FlowHookInput): Promise<PluginRunnerFlowResult>;
+  deliverNotification(
+    input: ImmediateNotificationDeliveryInput
+  ): Promise<ImmediateNotificationDeliveryResult>;
+  configureNotificationInstallation(
+    input: ConfigureNotificationInstallationInput
+  ): Promise<ConfigureNotificationInstallationResult>;
+  configureHumanVerificationInstallation(
+    input: ConfigureHumanVerificationInstallationInput
+  ): Promise<ConfigureHumanVerificationInstallationResult>;
+  configureDynamicPluginInstallation(
+    input: ConfigureDynamicPluginInstallationInput
+  ): Promise<DynamicPluginInstallationResult>;
+  stageDynamicPluginActivation(
+    input: StageDynamicPluginActivationInput
+  ): Promise<StageDynamicPluginActivationResult>;
+  rolloutDynamicPluginInstallation(
+    input: ConfigureDynamicPluginInstallationInput
+  ): Promise<DynamicPluginInstallationResult>;
+  rolloutDynamicPluginBatch(
+    input: DynamicPluginRolloutBatchInput
+  ): Promise<DynamicPluginRolloutBatchResult>;
+  listApprovedDynamicPlugins(): Promise<ApprovedDynamicPlugin[]>;
+  getDynamicPluginInstallationStatus(input: {
+    tenantId: string;
+    pluginId: string;
+  }): Promise<DynamicPluginInstallationStatus>;
+  replaceDynamicPluginCredentials(
+    input: ReplaceDynamicPluginCredentialsInput
+  ): Promise<ReplacePluginCredentialsResult>;
+  replacePluginCredentials(
+    input: ReplacePluginCredentialsInput
+  ): Promise<ReplacePluginCredentialsResult>;
+  replaceNotificationProviderOrder(
+    input: ReplaceNotificationProviderOrderInput
+  ): Promise<NotificationProviderOrder>;
+  resolveNotificationProviderOrder(
+    input: ResolveNotificationProviderOrderInput
+  ): Promise<NotificationProviderOrder>;
+  encryptNotificationPayload(input: {
+    context: {
+      environmentId: string;
+      tenantId: string;
+      intentId: string;
+      notificationKind: string;
+      payloadVersion: 1;
+    };
+    payload: unknown;
+  }): Promise<{
+    activeKeyId: string;
+    envelope: string;
+  }>;
+  resolveAccountEventInstallations(
+    input: ResolveAccountEventInstallationsInput
+  ): Promise<AccountEventInstallation[]>;
 }
 
 /**
@@ -51,14 +355,15 @@ export interface EmailServiceBinding {
  */
 export interface Env {
   // D1 Databases
-  DB: D1Database; // Core DB (non-PII data: canonical identity graph, sessions, passkeys, clients, roles)
-  DB_PII: D1Database; // PII DB (personal information: canonical sensitive values, linked identities, subject identifiers)
+  DB: D1Database; // Fixed platform metadata, profile registry, and non-PII audit store; never a tenant identity route
+  PLATFORM_NOTIFICATION_DB?: D1Database; // Platform-owned notification intent store; never a tenant route
+  DB_PII: D1Database; // Fixed PII audit and anonymization store; never a tenant identity route
   DB_ADMIN: D1Database; // Admin DB (admin_users, admin_roles, admin_sessions, admin_audit_log, admin_ip_allowlist)
+  LOOKUP_DB?: D1Database; // Account and tenant discovery directory owned by ar-management
   LOGGING_INDEX_DB?: D1Database; // Optional tenant-local hot chunk index DB binding
 
   // R2 Buckets
-  AVATARS: R2Bucket;
-  PUBLIC_ASSETS?: R2Bucket; // Public Login UI assets such as logos, backgrounds, and favicons
+  PUBLIC_ASSETS?: R2Bucket; // Public Login UI assets and tenant-scoped user avatars
   DIAGNOSTIC_LOGS?: R2Bucket; // Diagnostic logs for debugging and OIDF conformance testing
   AUDIT_ARCHIVE?: R2Bucket; // Canonical R2 archive for audit/admin audit/runtime log chunks and DLQ backup
   IMPORT_ARTIFACTS?: R2Bucket; // Dedicated import input artifacts
@@ -85,6 +390,7 @@ export interface Env {
   // Durable Objects with RPC type support
   KEY_MANAGER: DurableObjectNamespace<KeyManager>;
   SESSION_STORE: DurableObjectNamespace<SessionStore>;
+  SESSION_REVOCATION_STORE: DurableObjectNamespace<SessionRevocationStore>;
   SESSION_CLIENT_STORE?: DurableObjectNamespace<SessionClientStore>;
   AUTH_CODE_STORE: DurableObjectNamespace<AuthorizationCodeStore>;
   REFRESH_TOKEN_ROTATOR: DurableObjectNamespace<RefreshTokenRotator>;
@@ -96,7 +402,8 @@ export interface Env {
   TOKEN_REVOCATION_STORE: DurableObjectNamespace; // Token revocation list
   DEVICE_CODE_STORE: DurableObjectNamespace; // RFC 8628: Device Authorization Grant
   CIBA_REQUEST_STORE: DurableObjectNamespace; // OpenID Connect CIBA Flow
-  VERSION_MANAGER: DurableObjectNamespace; // Worker bundle version management
+  DEVICE_SECRET_ROUTE_STORE?: DurableObjectNamespace; // Native SSO secret-hash routing hints
+  VERSION_MANAGER: DurableObjectNamespace<VersionManager>; // Worker bundle version management
   SAML_REQUEST_STORE: DurableObjectNamespace; // SAML 2.0 request/artifact store
   SAML_AGGREGATE_METADATA_STORE?: DurableObjectNamespace<SAMLAggregateMetadataStore>; // SAML aggregate metadata previews and batch imports
   PERMISSION_CHANGE_HUB?: DurableObjectNamespace; // Phase 8.3: Real-time permission change notifications
@@ -104,7 +411,18 @@ export interface Env {
   DIRECTORY_CONNECTOR_RELAY?: DurableObjectNamespace; // Wordwarden outbound connector relay
 
   // Service Bindings (Worker-to-Worker communication)
+  KEY_MANAGER_PUBLIC?: KeyManagerPublicServiceBinding; // Public-key-only KeyManager RPC facade
   EXTERNAL_IDP?: Fetcher; // External IdP worker (ar-bridge) for social login and enterprise IdP
+  CONTROL?: ControlServiceBinding; // Narrow Control Worker RPC facade for ar-management
+  ACCOUNT_DIRECTORY?: AccountDirectoryServiceBinding; // Named ar-management directory coordinator RPC
+  ACCOUNT_PROVISIONER?: AuthAccountProvisioningServiceBinding; // Narrow ar-auth account-creation RPC
+  SAML_ACCOUNT_PROVISIONER?: AuthAccountProvisioningServiceBinding &
+    Pick<ExternalIdpAccountProvisioningServiceBinding, 'publishExternalIdpRoute'>;
+  EXTERNAL_IDP_ACCOUNT_PROVISIONER?: ExternalIdpAccountProvisioningServiceBinding;
+  PLUGIN_RUNNER?: PluginRunnerServiceBinding; // Narrow Plugin Runner RPC facade
+  VC_ISSUER?: VCIssuerServiceBinding; // Least-privilege credential-offer creation facade
+  VC_PROFILE_CONTRACT_HMAC_SECRET?: string;
+  VC_ATTRIBUTE_ELEVATION_AUDIENCE?: string;
   EMAIL?: EmailServiceBinding; // Cloudflare Email Service send_email binding
 
   // ============================================================
@@ -123,6 +441,7 @@ export interface Env {
   NONCE_EXPIRY: string; // OIDC nonce lifetime in seconds (default: 300)
   REFRESH_TOKEN_EXPIRY: string; // Refresh token lifetime in seconds (default: 7776000 = 90 days)
   AUTH_CODE_CLEANUP_INTERVAL?: string; // Auth code cleanup interval in seconds (default: 30)
+  AUTHRIM_R2_MAINTENANCE_CRON_ENABLED?: string; // setup-owned proof that the 6-hour maintenance trigger is deployed
 
   // ============================================================
   // Feature Flags (ENABLE_* prefix)
@@ -199,13 +518,15 @@ export interface Env {
   // PII Encryption
   ENABLE_PII_ENCRYPTION?: string; // "true" to enable PII field encryption
   PII_ENCRYPTION_KEY?: string; // 32-byte hex string (64 characters) for AES-256
-  PII_ENCRYPTION_ALGORITHM?: string; // AES-256-GCM (default), AES-256-CBC, or NONE
+  PII_ENCRYPTION_ALGORITHM?: string; // AES-256-GCM (default) or NONE
   PII_ENCRYPTION_FIELDS?: string; // Comma-separated list of fields to encrypt
   PII_ENCRYPTION_KEY_VERSION?: string; // Key version for rotation (default: 1)
 
   // Object Artifact Encryption
   OBJECT_ENCRYPTION_ROOT_KEY?: string; // 32-byte hex string (64 characters) for object plane envelope encryption
   OBJECT_ENCRYPTION_KEY_VERSION?: string; // Key version for object plane encryption (default: 1)
+  AGENT_ELEVATION_ENCRYPTION_KEY?: string; // Dedicated 32-byte hex key for Agent elevation payloads
+  AGENT_ELEVATION_KEY_VERSION?: string; // Agent elevation envelope key version (default: v1)
   LOGGING_TENANT_KEY_SALT?: string; // Optional salt while logging tenant_key is derived before registry-backed keys
   PII_CACHE_MODE?: string; // merged, encrypted_short_ttl, or no_cross_request_pii
   PII_CACHE_TTL?: string; // Encrypted PII cache TTL in seconds (default: 300)
@@ -238,9 +559,9 @@ export interface Env {
 
   // Runtime Profile Registry / Defaults
   PROFILE_REGISTRY_BACKEND?: string; // "kv" | "database"
-  DEFAULT_STORAGE_PROFILE_ID?: string; // Environment default storage profile pointer
   DEFAULT_AUDIT_PROFILE_ID?: string; // Environment default audit profile pointer
   DEFAULT_RESIDENCY_PROFILE_ID?: string; // Environment default residency profile pointer
+  AUTHRIM_REGISTERED_SCHEMA_REFS?: string; // JSON list of setup-managed binding/connection release-stream registrations
 
   // Mock/Anonymous Authentication
   ENABLE_MOCK_AUTH?: string; // "true" to enable mock authentication (NEVER in production!)
@@ -282,6 +603,9 @@ export interface Env {
   CONSENT_CACHE_TTL?: string; // Consent cache TTL in seconds (default: 86400 = 24 hours)
   CONFIG_CACHE_TTL?: string; // Config in-memory cache TTL in seconds (default: 180 = 3 minutes)
   SETTINGS_CACHE_TTL?: string; // Settings/config in-memory cache TTL in seconds (default: 300 = 5 minutes)
+  AUTHENTICATION_METHODS_CACHE_TTL?: string; // Browser/client TTL for public authentication methods (default: 60)
+  AUTHENTICATION_METHODS_EDGE_CACHE_TTL?: string; // Edge Cache API TTL for public authentication methods (default: 86400)
+  AUTHENTICATION_METHODS_ROUTER_CACHE_TTL?: string; // Router Cache API TTL for public authentication methods (default: edge TTL)
 
   // Unified Identity Mapping runtime cutover guard
   ENABLE_CANONICAL_IDENTITY_RUNTIME?: string; // "true" to read SCIM user runtime projection from canonical identity tables
@@ -313,24 +637,27 @@ export interface Env {
   PAIRWISE_SALT?: string; // Pairwise subject identifier salt (OIDC Core 8.1)
   OTP_HMAC_SECRET?: string; // Email OTP HMAC secret for code hashing
   DEVICE_HMAC_SECRET?: string; // Device ID HMAC secret for anonymous authentication
-  KEY_MANAGER_SECRET?: string; // Scoped secret for KeyManager Durable Object access
+  KEY_MANAGER_SECRET?: string; // Legacy HTTP compatibility only; new deployments use the DO RPC binding
   LOGGING_CURSOR_HMAC_SECRET?: string; // HMAC secret for opaque logging Admin API cursors
+  LOOKUP_HMAC_KEY_SLOT_A?: string; // Dedicated Lookup blind-index HMAC key slot A
+  LOOKUP_HMAC_KEY_SLOT_B?: string; // Dedicated Lookup blind-index HMAC key slot B
+  LOOKUP_HMAC_ACTIVE_SLOT?: string; // Active Lookup blind-index key slot (A or B)
+  LOOKUP_HMAC_ACTIVE_GENERATION?: string; // Positive integer generation for the active slot
   PLUGIN_ENCRYPTION_KEY?: string; // Dedicated encryption key for plugin configuration secrets
+  NOTIFICATION_PAYLOAD_ENCRYPTION_PUBLIC_JWKS?: string; // Public-only RSA-OAEP keys for notification intents
+  NOTIFICATION_PAYLOAD_ENCRYPTION_ACTIVE_KID?: string; // Current notification payload encryption key id
+  NOTIFICATION_INTENT_HMAC_KEY?: string; // Notification intent idempotency fingerprint key
   PLUGIN_ENCRYPTION_SALT?: string; // Optional salt override for plugin configuration secret encryption
-  VERSION_MANAGER_SECRET?: string; // Scoped secret for VersionManager Durable Object access
-  TENANT_RUNTIME_REGISTRY_SIGNING_PRIVATE_JWK?: string; // Ed25519 private JWK for control/management snapshot publishing only
-  TENANT_RUNTIME_REGISTRY_SIGNING_KEY_ID?: string; // Key ID for runtime registry snapshot signatures
+  VERSION_MANAGER_SECRET?: string; // Legacy HTTP compatibility only; new deployments use the DO RPC binding
   TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWK?: string; // Ed25519 public JWK for runtime snapshot verification
   TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS?: string; // JWKS with current/previous runtime snapshot verification keys
   TENANT_RUNTIME_REGISTRY_PREVIOUS_VERIFYING_PUBLIC_JWK?: string; // Optional previous public JWK during key rotation
-  ADMIN_API_SECRET?: string; // Deprecated bootstrap/break-glass secret, not accepted by Admin API
   EMAIL_DOMAIN_HASH_SECRET?: string; // HMAC secret for email domain blind index
   CLOUDFLARE_API_TOKEN?: string; // Cloudflare Custom Hostnames automation token
   CLOUDFLARE_D1_API_TOKEN?: string; // Optional Cloudflare D1 read/provisioning token
   CLOUDFLARE_WORKERS_API_TOKEN?: string; // Optional Workers Scripts read/edit token for generated binding deployment
   CLOUDFLARE_ACCOUNT_ID?: string; // Cloudflare account ID for account-scoped APIs
   CF_ACCOUNT_ID?: string; // Legacy/setup-compatible Cloudflare account ID alias
-  TENANT_D1_DEPLOYMENT_WORKER_SCRIPTS?: string; // Comma-separated Worker script names eligible for generated tenant D1 binding deployment
 
   // ============================================================
   // Email Configuration
@@ -347,6 +674,9 @@ export interface Env {
   ADMIN_UI_URL?: string; // URL of the Admin UI deployment (e.g., https://admin.example.com)
   ADMIN_WEBAUTHN_ALLOWED_ORIGINS?: string; // Optional extra Admin WebAuthn origins
   LOGIN_UI_ENABLED?: string; // "true" when Login UI is deployed/enabled for this environment
+  // Where browser Login UI flows execute: 'issuer' keeps the stable tenant issuer origin.
+  // When unset, legacy deployments infer issuer hosting from BASE_DOMAIN.
+  LOGIN_UI_EXECUTION_HOST_MODE?: 'issuer' | 'dedicated';
   TRUSTED_JWT_ISSUERS?: string; // Comma-separated list of trusted issuers for JWT Bearer flow
   TRUSTED_DOMAINS?: string; // Comma-separated trusted client domains
 
@@ -366,12 +696,14 @@ export interface Env {
   LOG_LEVEL?: string; // "debug", "info", "warn", "error" (default: "info")
   LOG_FORMAT?: string; // "json" (structured), "pretty" (human-readable) (default: "json")
   ENABLE_LOG_HASH_USER_ID?: string; // "true" to hash user IDs in logs for privacy
+  AUTHRIM_DIAGNOSTIC_TIMING_ENABLED?: string; // "true" to allow header-gated Server-Timing diagnostics
   AUTHRIM_FLOW_RUNTIME_TIMING?: string; // Temporary: "true" to emit Flow runtime timing diagnostics
 
   // ============================================================
   // Environment Detection & Version Management
   // ============================================================
   ENVIRONMENT?: string; // "production", "staging", "development"
+  AUTHRIM_ENVIRONMENT_NAME?: string; // Stable deployment label for public product metadata
   NODE_ENV?: string; // "production", "development" (fallback for ENVIRONMENT)
   CODE_VERSION_UUID?: string; // UUID v4 identifying this deployed bundle (set by deploy script)
   DEPLOY_TIME_UTC?: string; // ISO 8601 timestamp of deployment (set by deploy script)

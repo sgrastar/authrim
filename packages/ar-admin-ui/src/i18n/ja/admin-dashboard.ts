@@ -1,9 +1,8 @@
 const adminDashboard = {
-	admin_dashboard_title: 'ダッシュボード',
-	admin_dashboard_activeUsers: 'アクティブユーザー',
+	admin_dashboard_activeUsers: '過去30日のアクティブユーザー',
 	admin_dashboard_totalUsers: '総ユーザー数',
 	admin_dashboard_clients: 'OAuthクライアント',
-	admin_dashboard_todayLogins: '今日のログイン',
+	admin_dashboard_todayLogins: '今日ログインしたユーザー',
 	admin_dashboard_recentActivity: '最近のアクティビティ',
 	admin_dashboard_page_title: '管理ダッシュボード - Authrim',
 	admin_dashboard_welcome_title: 'おかえりなさい',
@@ -32,8 +31,12 @@ const adminDashboard = {
 	admin_login_page_title: '管理者ログイン - Authrim',
 	admin_login_panel: '管理パネル',
 	admin_login_authenticating: '認証中...',
+	admin_login_timeout: '認証がタイムアウトしました。もう一度お試しください。',
 	admin_login_with_passkey: 'パスキーでログイン',
-	admin_login_hint: '登録済みパスキーを持つ管理者のみ、この領域にアクセスできます。'
+	admin_login_hint: '登録済みパスキーを持つ管理者のみ、この領域にアクセスできます。',
+	admin_login_theme_label: 'テーマ',
+	admin_login_theme_light: 'ライト',
+	admin_login_theme_dark: 'ダーク'
 } as const;
 
 export default adminDashboard;

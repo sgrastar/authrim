@@ -32,6 +32,7 @@ const adminNotifications = {
 	admin_notifications_category_storage_registry_health: 'Storage registry health',
 	admin_notifications_category_tenant_database_stats: 'Tenant database stats',
 	admin_notifications_category_tenant_database_health: 'Tenant database health',
+	admin_notifications_category_control_plane_drift: 'Control plane drift',
 	admin_notifications_category_logging_destination_health: 'Logging destination health',
 	admin_notifications_category_logging_delivery_failure: 'Logging delivery failure',
 	admin_notifications_category_logging_fallback_used: 'Logging fallback used',
@@ -54,7 +55,10 @@ const adminNotifications = {
 	admin_notifications_load_failed: 'Notification centerの読み込みに失敗しました',
 	admin_notifications_resolve_failed: 'Notificationのresolveに失敗しました',
 	admin_notifications_deliver_failed: 'Notificationのdeliverに失敗しました',
-	admin_notifications_run_delivery_failed: 'Notification deliveryの実行に失敗しました'
+	admin_notifications_run_delivery_failed: 'Notification deliveryの実行に失敗しました',
+	admin_notifications_control_plane_drift_banner:
+		'Control planeで未知のWorker scriptを{count}件検出しました。',
+	admin_notifications_review_control_plane_drift: 'Drift findingを確認'
 } as const;
 
 export default adminNotifications;

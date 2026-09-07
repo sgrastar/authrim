@@ -1,21 +1,51 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { Context, Next } from 'hono';
 import app from '../index';
 import type { Env, OIDCProviderMetadata } from '@authrim/ar-lib-core';
+
+// These tests cover the Discovery app's route, handler, and security-header stack.
+// Tenant metadata routing is exercised independently by request-context and security
+// matrix tests, so provide a resolved request context without requiring a signed
+// Runtime Registry snapshot in every route-level fixture.
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    requestContextMiddleware:
+      () =>
+      async (c: Context<{ Bindings: Env }>, next: Next): Promise<void> => {
+        const context = c as unknown as {
+          set(key: string, value: unknown): void;
+        };
+        context.set('requestId', 'discovery-route-test');
+        context.set('tenantId', 'default');
+        context.set(
+          'logger',
+          actual.createLogger({ requestId: 'discovery-route-test', tenantId: 'default' })
+        );
+        context.set('startTime', Date.now());
+        await next();
+      },
+  };
+});
 
 function createMockEnv(): Env {
   return {
     ISSUER_URL: 'https://auth.example.com',
-    DB: {
-      prepare: () => {
-        throw new Error('DB should not be queried by discovery app route tests');
-      },
-      batch: async () => [],
-    } as unknown as D1Database,
+  } as unknown as Env;
+}
+
+function createAgentMetadataEnv(flagValue: unknown = true): Env {
+  return {
+    ...createMockEnv(),
+    AUTHRIM_CONFIG: {
+      get: vi.fn(async () => JSON.stringify({ 'agent.mcp.enabled': flagValue })),
+    } as unknown as KVNamespace,
   } as Env;
 }
 
 function createHealthEnv(options: { keyManagerError?: Error } = {}): Env {
-  const getAllPublicKeysRpc = options.keyManagerError
+  const getAllPublicKeys = options.keyManagerError
     ? vi.fn(async () => {
         throw options.keyManagerError;
       })
@@ -24,11 +54,8 @@ function createHealthEnv(options: { keyManagerError?: Error } = {}): Env {
     KV: {
       get: vi.fn(async () => null),
     } as unknown as KVNamespace,
-    KEY_MANAGER: {
-      idFromName: vi.fn((name: string) => ({ name }) as unknown as DurableObjectId),
-      get: vi.fn(() => ({ getAllPublicKeysRpc })),
-    } as unknown as Env['KEY_MANAGER'],
-  } as Env;
+    KEY_MANAGER_PUBLIC: { getAllPublicKeys },
+  } as unknown as Env;
 }
 
 describe('discovery app routes', () => {
@@ -47,6 +74,72 @@ describe('discovery app routes', () => {
     expect(metadata.issuer).toBe('https://auth.example.com');
     expect(metadata.authorization_endpoint).toBe('https://auth.example.com/authorize');
     expect(metadata.jwks_uri).toBe('https://auth.example.com/.well-known/jwks.json');
+  });
+
+  it('serves RFC 9728 path metadata for the MCP protected resource', async () => {
+    const response = await app.fetch(
+      new Request('https://auth.example.com/.well-known/oauth-protected-resource/mcp'),
+      createAgentMetadataEnv()
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      resource: 'https://auth.example.com/mcp',
+      resource_name: 'Authrim',
+      authorization_servers: ['https://auth.example.com/oauth/admin-agent'],
+      scopes_supported: ['agent:read', 'agent:user-data:read', 'agent:write'],
+      bearer_methods_supported: ['header'],
+    });
+  });
+
+  it('includes the configured environment in the MCP resource display name', async () => {
+    const response = await app.fetch(
+      new Request('https://auth.example.com/.well-known/oauth-protected-resource/mcp'),
+      { ...createAgentMetadataEnv(), AUTHRIM_ENVIRONMENT_NAME: 'test' }
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      resource_name: 'Authrim (test)',
+    });
+  });
+
+  it('serves dedicated Admin Agent authorization server metadata', async () => {
+    const response = await app.fetch(
+      new Request(
+        'https://auth.example.com/.well-known/oauth-authorization-server/oauth/admin-agent'
+      ),
+      createAgentMetadataEnv()
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      issuer: 'https://auth.example.com/oauth/admin-agent',
+      authorization_endpoint: 'https://auth.example.com/oauth/admin-agent/authorize',
+      token_endpoint: 'https://auth.example.com/oauth/admin-agent/token',
+      agent_delegation_endpoint: 'https://auth.example.com/oauth/admin-agent/delegation',
+      grant_types_supported: [
+        'authorization_code',
+        'refresh_token',
+        'urn:ietf:params:oauth:grant-type:token-exchange',
+      ],
+      pushed_authorization_request_endpoint: 'https://auth.example.com/oauth/admin-agent/par',
+      require_pushed_authorization_requests: false,
+      code_challenge_methods_supported: ['S256'],
+    });
+  });
+
+  it('does not advertise Agent endpoints while the tenant flag is disabled', async () => {
+    const response = await app.fetch(
+      new Request('https://auth.example.com/.well-known/oauth-protected-resource/mcp'),
+      createAgentMetadataEnv(false)
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it('fails closed when the Agent feature flag has an invalid type', async () => {
+    const response = await app.fetch(
+      new Request('https://auth.example.com/.well-known/oauth-protected-resource/mcp'),
+      createAgentMetadataEnv('true')
+    );
+    expect(response.status).toBe(503);
   });
 
   it('returns JSON 404 responses through the full app stack', async () => {
@@ -86,7 +179,7 @@ describe('discovery app routes', () => {
       },
     });
     expect((env.KV as KVNamespace).get).toHaveBeenCalledWith('__health_check__');
-    expect(env.KEY_MANAGER.idFromName).toHaveBeenCalledWith('default-v3');
+    expect(env.KEY_MANAGER_PUBLIC?.getAllPublicKeys).toHaveBeenCalledWith('default');
   });
 
   it('returns not_ready when a readiness dependency fails', async () => {

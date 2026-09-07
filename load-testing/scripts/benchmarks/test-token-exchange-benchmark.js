@@ -318,7 +318,7 @@ function validateJWTStructure(token) {
 
 // Setup (runs once before test starts)
 export function setup() {
-  console.log("");
+  console.log('');
   console.log(`🚀 ${TEST_NAME}`);
   console.log(`📋 Preset: ${PRESET} - ${selectedPreset.description}`);
   console.log(`🎯 Target: ${BASE_URL}`);
@@ -327,13 +327,13 @@ export function setup() {
     console.log(`🎯 Target Audience: ${TARGET_AUDIENCE}`);
   }
   console.log(`📝 Target Scope: ${TARGET_SCOPE}`);
-  console.log("");
-  console.log("📊 Token Mix (per specification):");
-  console.log("   Valid:   70%");
-  console.log("   Expired: 10%");
-  console.log("   Invalid: 10%");
-  console.log("   Revoked: 10%");
-  console.log("");
+  console.log('');
+  console.log('📊 Token Mix (per specification):');
+  console.log('   Valid:   70%');
+  console.log('   Expired: 10%');
+  console.log('   Invalid: 10%');
+  console.log('   Revoked: 10%');
+  console.log('');
 
   let tokens = [];
 
@@ -366,7 +366,7 @@ export function setup() {
   };
 
   // Warmup: Initialize Token Exchange endpoint
-  console.log("🔥 Warming up Token Exchange endpoint...");
+  console.log('🔥 Warming up Token Exchange endpoint...');
   const validToken = tokens.find((t) => t.type === 'valid');
   if (validToken) {
     for (let i = 0; i < 5; i++) {
@@ -386,8 +386,8 @@ export function setup() {
           body.error === 'unsupported_grant_type' &&
           body.error_description?.includes('not enabled')
         ) {
-          console.error("❌ Token Exchange is not enabled!");
-          console.error("   Set ENABLE_TOKEN_EXCHANGE=true or enable via KV settings.");
+          console.error('❌ Token Exchange is not enabled!');
+          console.error('   Set ENABLE_TOKEN_EXCHANGE=true or enable via KV settings.');
           throw new Error('Token Exchange feature is disabled');
         }
       }
@@ -396,15 +396,15 @@ export function setup() {
       if (response.status === 403) {
         const body = JSON.parse(response.body);
         if (body.error === 'unauthorized_client') {
-          console.error("❌ Client is not allowed to use Token Exchange!");
+          console.error('❌ Client is not allowed to use Token Exchange!');
           console.error(`   Set token_exchange_allowed=true for client ${CLIENT_ID}`);
           throw new Error('Client not authorized for Token Exchange');
         }
       }
     }
   }
-  console.log("   Warmup complete");
-  console.log("");
+  console.log('   Warmup complete');
+  console.log('');
 
   return {
     tokens: useRemoteData ? tokens : null,
@@ -578,12 +578,12 @@ export default function (data) {
 
 // Teardown (runs once after test ends)
 export function teardown(data) {
-  console.log("");
+  console.log('');
   console.log(`✅ ${TEST_NAME} Test completed`);
   console.log(`📊 Preset: ${data.preset}`);
   console.log(`🎯 Target: ${data.baseUrl}`);
   console.log(`📈 Token count: ${data.tokenCount}`);
-  console.log("📊 Token distribution:");
+  console.log('📊 Token distribution:');
   console.log(`   Valid:   ${data.counts.valid}`);
   console.log(`   Expired: ${data.counts.expired}`);
   console.log(`   Invalid: ${data.counts.invalid}`);

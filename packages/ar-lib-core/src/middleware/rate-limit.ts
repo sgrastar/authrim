@@ -2,13 +2,14 @@
  * Rate Limiting Middleware
  *
  * Provides per-IP rate limiting to protect against abuse and DDoS attacks.
- * Uses Cloudflare KV for distributed rate limit tracking.
+ * Uses the RateLimiterCounter Durable Object for atomic tracking, with KV only
+ * as a fallback when atomic enforcement is not required.
  *
- * Configuration Priority:
- * 1. In-memory cache (default 5min TTL, configurable via SETTINGS_CACHE_TTL)
- * 2. KV (AUTHRIM_CONFIG namespace) - Dynamic override without deployment
- * 3. Environment variables (RATE_LIMIT_PROFILE)
- * 4. Default profiles (RateLimitProfiles)
+ * Configuration design:
+ * - Cold isolates return safe built-in defaults immediately.
+ * - KV overrides are refreshed asynchronously via waitUntil when available.
+ * - Admin writes clear the current isolate cache immediately, while other
+ *   isolates converge on the next refresh window.
  */
 
 import type { Context, Next } from 'hono';
@@ -35,6 +36,16 @@ export interface RateLimitConfig {
   // For low-risk read-only endpoints, allow low-volume GET requests without
   // waiting for the RateLimiter DO. The DO is still incremented via waitUntil.
   nonBlockingRead?: boolean;
+  // Whether the caller can safely receive a separate counter per tenant. Public
+  // capability endpoints should use global so changing tenant context cannot
+  // multiply brute-force attempts from the same client IP.
+  keyScope?: 'tenant' | 'global';
+  // Optional bucket class. Use this to keep read-only bootstrap traffic from
+  // consuming the same shared-IP bucket as login/token/credential actions.
+  endpointClass?: string;
+  // Fail closed instead of falling back to eventually consistent KV when the
+  // atomic RateLimiter Durable Object is unavailable.
+  requireAtomic?: boolean;
 }
 
 /**
@@ -55,14 +66,40 @@ interface DiagnosticTimingSpan {
   durationMs: number;
 }
 
+type HonoExecutionContext = Context<{ Bindings: Env }>['executionCtx'];
+
 const fastPathRecords = new Map<string, LocalFastPathRecord>();
 const FAST_PATH_MAX_RECORDS = 10000;
+const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
+const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
+const DIAGNOSTIC_TIMING_PATHS = new Set([
+  '/api/auth/authentication-methods',
+  '/api/v1/login/interactions/start',
+]);
 
-function isRateLimitTimingEnabled(env: Env, path: string): boolean {
+function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+}
+
+function isRateLimitTimingEnabled(env: Env, path: string, request: Request): boolean {
+  if (
+    DIAGNOSTIC_TIMING_PATHS.has(path) &&
+    isDiagnosticTimingEnabled(env) &&
+    sanitizeDiagnosticSessionId(request.headers.get(DIAGNOSTIC_SESSION_ID_HEADER))
+  ) {
+    return true;
+  }
   if (path !== '/api/v1/login/interactions/start') {
     return false;
   }
   const value = env.AUTHRIM_FLOW_RUNTIME_TIMING?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+function isDiagnosticTimingEnabled(env: Env): boolean {
+  const value = env.AUTHRIM_DIAGNOSTIC_TIMING_ENABLED?.trim().toLowerCase();
   return value === 'true' || value === '1' || value === 'yes';
 }
 
@@ -107,6 +144,7 @@ function finishRateLimitTiming(
   metadata: {
     mode: 'skipped_endpoint' | 'skipped_ip' | 'fast_path' | 'sync' | 'denied' | 'error';
     tenantId?: string;
+    endpointClass?: string | undefined;
     cloudProvider?: CloudProvider;
     allowed?: boolean;
   }
@@ -121,9 +159,13 @@ function finishRateLimitTiming(
   });
   appendServerTiming(c, spans);
   log.info('Rate limit timing', {
+    diagnosticSessionId: sanitizeDiagnosticSessionId(
+      c.req.raw.headers.get(DIAGNOSTIC_SESSION_ID_HEADER)
+    ),
     path: c.req.path,
     mode: metadata.mode,
     tenantId: metadata.tenantId,
+    endpointClass: metadata.endpointClass,
     cloud_provider: metadata.cloudProvider,
     allowed: metadata.allowed,
     duration_ms: roundDiagnosticDurationMs(Date.now() - startedAtMs),
@@ -163,6 +205,7 @@ const DEFAULT_CLOUD_PROVIDER: CloudProvider = 'cloudflare';
 interface CachedCloudProviderSetting {
   provider: CloudProvider;
   cachedAt: number;
+  source: 'default' | 'kv';
 }
 let cloudProviderCache: CachedCloudProviderSetting | null = null;
 
@@ -170,9 +213,9 @@ let cloudProviderCache: CachedCloudProviderSetting | null = null;
  * Default cache TTL in milliseconds (5 minutes)
  * Can be overridden via SETTINGS_CACHE_TTL environment variable
  *
- * Design note: Admin API clears cache immediately on settings change,
- * so this TTL only affects direct KV edits (emergency operations).
- * Longer TTL = fewer KV reads = lower cost and latency.
+ * Design note: Runtime paths prefer default-first reads and refresh KV overrides
+ * asynchronously. Admin API clears the current isolate cache immediately; other
+ * isolates converge within this TTL.
  */
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -213,7 +256,12 @@ export function getDefaultCloudProvider(): CloudProvider {
 export const VALID_CLOUD_PROVIDERS: CloudProvider[] = ['cloudflare', 'aws', 'azure', 'gcp', 'none'];
 
 /**
- * Get the configured cloud provider
+ * Get the configured cloud provider.
+ *
+ * Runtime paths default to Cloudflare immediately to avoid a cold-isolate KV
+ * read before IP extraction. KV overrides are refreshed out of band by
+ * rateLimitMiddleware().
+ *
  * @param env - Environment with KV bindings
  * @returns Cloud provider setting
  */
@@ -226,6 +274,13 @@ export async function getCloudProvider(env: Env): Promise<CloudProvider> {
     return cloudProviderCache.provider;
   }
 
+  // The Authrim runtime is normally served by Cloudflare Workers. Do not block
+  // the first request in a cold isolate just to confirm the default from KV.
+  cloudProviderCache = { provider: DEFAULT_CLOUD_PROVIDER, cachedAt: now, source: 'default' };
+  return DEFAULT_CLOUD_PROVIDER;
+}
+
+async function refreshCloudProviderFromKV(env: Env): Promise<void> {
   // Default: cloudflare (most secure)
   let provider: CloudProvider = DEFAULT_CLOUD_PROVIDER;
 
@@ -242,9 +297,32 @@ export async function getCloudProvider(env: Env): Promise<CloudProvider> {
   }
 
   // Update cache
-  cloudProviderCache = { provider, cachedAt: now };
+  cloudProviderCache = { provider, cachedAt: Date.now(), source: 'kv' };
+}
 
-  return provider;
+function scheduleCloudProviderRefresh(env: Env, ctx?: HonoExecutionContext): void {
+  const now = Date.now();
+  const cacheTTL = getCacheTTLMs(env);
+  if (
+    !env.AUTHRIM_CONFIG ||
+    (cloudProviderCache &&
+      cloudProviderCache.source === 'kv' &&
+      now - cloudProviderCache.cachedAt < cacheTTL)
+  ) {
+    return;
+  }
+  const refresh = refreshCloudProviderFromKV(env).catch(() => {
+    cloudProviderCache = {
+      provider: DEFAULT_CLOUD_PROVIDER,
+      cachedAt: Date.now(),
+      source: 'default',
+    };
+  });
+  if (ctx) {
+    ctx.waitUntil(refresh);
+    return;
+  }
+  void refresh;
 }
 
 /**
@@ -400,8 +478,21 @@ export function getClientIP(c: Context, provider: CloudProvider): string {
   }
 }
 
-function buildRateLimitKey(clientIP: string, tenantId?: string): string {
-  return tenantId?.trim() ? `tenant:${tenantId.trim()}:rate-limit:${clientIP}` : clientIP;
+function normalizeEndpointClass(value: string | undefined): string | null {
+  const normalized = value
+    ?.trim()
+    .replace(/[^A-Za-z0-9_-]/g, '_')
+    .slice(0, 64);
+  return normalized || null;
+}
+
+function buildRateLimitKey(clientIP: string, tenantId?: string, endpointClass?: string): string {
+  const normalizedClass = normalizeEndpointClass(endpointClass);
+  if (tenantId?.trim()) {
+    const prefix = `tenant:${tenantId.trim()}:rate-limit`;
+    return normalizedClass ? `${prefix}:${normalizedClass}:${clientIP}` : `${prefix}:${clientIP}`;
+  }
+  return normalizedClass ? `rate-limit:${normalizedClass}:${clientIP}` : clientIP;
 }
 
 function cleanupFastPathRecords(now: number): void {
@@ -473,7 +564,7 @@ function shouldUseNonBlockingReadRateLimit(
   return cloudProvider !== 'none';
 }
 
-function getExecutionContext(c: Context<{ Bindings: Env }>): ExecutionContext | undefined {
+function getExecutionContext(c: Context<{ Bindings: Env }>): HonoExecutionContext | undefined {
   try {
     return c.executionCtx;
   } catch {
@@ -493,6 +584,7 @@ function scheduleNonBlockingRateLimit(
         log.warn('Non-blocking read rate limit exceeded after response', {
           path: c.req.path,
           tenantId,
+          endpointClass: config.endpointClass,
           resetAt: result.resetAt,
         });
       }
@@ -531,7 +623,7 @@ export async function checkRateLimit(
   config: RateLimitConfig,
   tenantId?: string
 ): Promise<{ allowed: boolean; remaining: number; resetAt: number }> {
-  const rateLimitKey = buildRateLimitKey(clientIP, tenantId);
+  const rateLimitKey = buildRateLimitKey(clientIP, tenantId, config.endpointClass);
 
   // Try DO-based rate limiting first
   try {
@@ -553,7 +645,14 @@ export async function checkRateLimit(
       };
     }
   } catch (error) {
+    if (config.requireAtomic) {
+      throw error;
+    }
     log.error('Rate limiting DO error, falling back to KV', {}, error as Error);
+  }
+
+  if (config.requireAtomic) {
+    throw new Error('Atomic rate limiter is unavailable');
   }
 
   // Fallback to KV-based rate limiting
@@ -618,7 +717,7 @@ async function checkRateLimitKV(
 export function rateLimitMiddleware(config: RateLimitConfig) {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const path = new URL(c.req.url).pathname;
-    const timingEnabled = isRateLimitTimingEnabled(c.env, path);
+    const timingEnabled = isRateLimitTimingEnabled(c.env, path, c.req.raw);
     const timingSpans: DiagnosticTimingSpan[] | null = timingEnabled ? [] : null;
     const timingStartedAtMs = Date.now();
 
@@ -628,7 +727,10 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
 
       if (!shouldApply) {
         await next();
-        finishRateLimitTiming(c, timingSpans, timingStartedAtMs, { mode: 'skipped_endpoint' });
+        finishRateLimitTiming(c, timingSpans, timingStartedAtMs, {
+          mode: 'skipped_endpoint',
+          endpointClass: config.endpointClass,
+        });
         return;
       }
     }
@@ -637,6 +739,7 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
     const cloudProvider = await timeDiagnosticSpan(timingSpans, 'rl_cloud_provider', () =>
       getCloudProvider(c.env)
     );
+    scheduleCloudProviderRefresh(c.env, getExecutionContext(c));
     const clientIP = getClientIP(c, cloudProvider);
 
     // Skip rate limiting for whitelisted IPs
@@ -644,14 +747,15 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
       await next();
       finishRateLimitTiming(c, timingSpans, timingStartedAtMs, {
         mode: 'skipped_ip',
+        endpointClass: config.endpointClass,
         cloudProvider,
       });
       return;
     }
 
     try {
-      const tenantId = getTenantIdFromContext(c);
-      const rateLimitKey = buildRateLimitKey(clientIP, tenantId);
+      const tenantId = config.keyScope === 'global' ? undefined : getTenantIdFromContext(c);
+      const rateLimitKey = buildRateLimitKey(clientIP, tenantId, config.endpointClass);
 
       if (shouldUseNonBlockingReadRateLimit(c, c.env, config, clientIP, cloudProvider)) {
         const fastPath = consumeFastPathRecord(rateLimitKey, config);
@@ -665,6 +769,7 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
           finishRateLimitTiming(c, timingSpans, timingStartedAtMs, {
             mode: 'fast_path',
             tenantId,
+            endpointClass: config.endpointClass,
             cloudProvider,
             allowed: true,
           });
@@ -672,14 +777,29 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
         }
       }
 
-      const { allowed, remaining, resetAt } = await timeDiagnosticSpan(
-        timingSpans,
-        'rl_check',
-        () => checkRateLimit(c.env, clientIP, config, tenantId)
+      let activeConfig = config;
+      let result = await timeDiagnosticSpan(timingSpans, 'rl_check', () =>
+        checkRateLimit(c.env, clientIP, config, tenantId)
       );
 
+      if (!result.allowed) {
+        const relaxedOverride = await timeDiagnosticSpan(
+          timingSpans,
+          'rl_denied_override_refresh',
+          () => refreshRelaxedRateLimitOverrideAfterDenial(c.env, config)
+        );
+        if (relaxedOverride) {
+          activeConfig = { ...config, ...relaxedOverride };
+          result = await timeDiagnosticSpan(timingSpans, 'rl_override_recheck', () =>
+            checkRateLimit(c.env, clientIP, activeConfig, tenantId)
+          );
+        }
+      }
+
+      const { allowed, remaining, resetAt } = result;
+
       // Add rate limit headers to response
-      c.header('X-RateLimit-Limit', config.maxRequests.toString());
+      c.header('X-RateLimit-Limit', activeConfig.maxRequests.toString());
       c.header('X-RateLimit-Remaining', remaining.toString());
       c.header('X-RateLimit-Reset', resetAt.toString());
 
@@ -690,6 +810,7 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
         finishRateLimitTiming(c, timingSpans, timingStartedAtMs, {
           mode: 'denied',
           tenantId,
+          endpointClass: config.endpointClass,
           cloudProvider,
           allowed: false,
         });
@@ -712,9 +833,10 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
             endpoint: c.req.path,
             clientIpHash: ipHash,
             rateLimit: {
-              maxRequests: config.maxRequests,
-              windowSeconds: config.windowSeconds,
+              maxRequests: activeConfig.maxRequests,
+              windowSeconds: activeConfig.windowSeconds,
               retryAfter,
+              endpointClass: config.endpointClass,
             },
           } satisfies SecurityEventData,
         }).catch((err: unknown) => {
@@ -735,13 +857,17 @@ export function rateLimitMiddleware(config: RateLimitConfig) {
       finishRateLimitTiming(c, timingSpans, timingStartedAtMs, {
         mode: 'sync',
         tenantId,
+        endpointClass: config.endpointClass,
         cloudProvider,
         allowed: true,
       });
       return;
     } catch (error) {
       log.error('Rate limiting error', {}, error as Error);
-      finishRateLimitTiming(c, timingSpans, timingStartedAtMs, { mode: 'error' });
+      finishRateLimitTiming(c, timingSpans, timingStartedAtMs, {
+        mode: 'error',
+        endpointClass: config.endpointClass,
+      });
       // Security: Fail-close - deny request on error to prevent bypass attacks
       // RFC 6749 5.2: Use 'temporarily_unavailable' for 503 responses
       // RFC 6749: All error responses MUST include Cache-Control: no-store
@@ -790,6 +916,33 @@ export const RateLimitProfiles = {
   },
 
   /**
+   * Public read-only bootstrap endpoints. Kept intentionally loose for school,
+   * corporate, dormitory, and library NATs where many users share one IP.
+   */
+  publicRead: {
+    maxRequests: 600,
+    windowSeconds: 60,
+  },
+
+  /**
+   * Login runtime interaction start. This writes flow state, but shared-IP
+   * environments can legitimately generate bursts during class or event logins.
+   */
+  loginStart: {
+    maxRequests: 300,
+    windowSeconds: 60,
+  },
+
+  /**
+   * Challenge sending endpoints such as email OTP. Keep tighter because they
+   * can create cost, inbox noise, or account probing pressure.
+   */
+  sendChallenge: {
+    maxRequests: 30,
+    windowSeconds: 60,
+  },
+
+  /**
    * Load testing profile - very high limits
    * Default: 10000 requests per minute
    * Can be overridden via KV: rate_limit_loadtest_max_requests, rate_limit_loadtest_window_seconds
@@ -813,6 +966,21 @@ interface CachedRateLimitConfig {
   cachedAt: number;
 }
 const rateLimitConfigCache = new Map<string, CachedRateLimitConfig>();
+let rateLimitProfileOverrideCache: {
+  profile: keyof typeof RateLimitProfiles | null;
+  cachedAt: number;
+} | null = null;
+let deniedOverrideRefreshCache: { config: RateLimitConfig | null; checkedAt: number } | null = null;
+const DENIED_OVERRIDE_REFRESH_TTL_MS = 1_000;
+const RATE_LIMIT_PROFILE_KV_NAMES: Record<keyof typeof RateLimitProfiles, string> = {
+  strict: 'strict',
+  moderate: 'moderate',
+  lenient: 'lenient',
+  publicRead: 'public_read',
+  loginStart: 'login_start',
+  sendChallenge: 'send_challenge',
+  loadTest: 'loadtest',
+};
 
 /**
  * KV keys for rate limit configuration
@@ -829,49 +997,23 @@ function getRateLimitKVKeys(profileName: string): {
   maxRequestsKey: string;
   windowSecondsKey: string;
 } {
-  const normalizedName = profileName
-    .toLowerCase()
-    .replace(/([A-Z])/g, '_$1')
-    .toLowerCase();
+  const normalizedName =
+    RATE_LIMIT_PROFILE_KV_NAMES[profileName as keyof typeof RateLimitProfiles] ??
+    profileName.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
   return {
     maxRequestsKey: `rate_limit_${normalizedName}_max_requests`,
     windowSecondsKey: `rate_limit_${normalizedName}_window_seconds`,
   };
 }
 
-/**
- * Get rate limit config from KV with fallback to defaults.
- *
- * Priority:
- * 1. Cache (if within TTL)
- * 2. KV (AUTHRIM_CONFIG namespace)
- * 3. Environment variable (RATE_LIMIT_PROFILE for profile selection)
- * 4. Default profile
- *
- * @param env - Environment object with KV bindings
- * @param profileName - Profile name
- * @returns Rate limit configuration
- */
-async function getRateLimitConfigFromKV(
+async function readRateLimitConfigFromKV(
   env: Env,
   profileName: keyof typeof RateLimitProfiles
 ): Promise<RateLimitConfig> {
-  const cacheKey = profileName;
-  const now = Date.now();
-
-  // Check cache first
-  const cached = rateLimitConfigCache.get(cacheKey);
-  const cacheTTL = getCacheTTLMs(env);
-  if (cached && now - cached.cachedAt < cacheTTL) {
-    return cached.config;
-  }
-
-  // Get default values from profile (widen type from const literals to number)
   const defaultConfig = RateLimitProfiles[profileName];
   let maxRequests: number = defaultConfig.maxRequests;
   let windowSeconds: number = defaultConfig.windowSeconds;
 
-  // Try to get from KV
   if (env.AUTHRIM_CONFIG) {
     const { maxRequestsKey, windowSecondsKey } = getRateLimitKVKeys(profileName);
 
@@ -895,20 +1037,39 @@ async function getRateLimitConfigFromKV(
         }
       }
     } catch (error) {
-      log.error('Failed to read rate limit config from KV', {}, error as Error);
-      // Fall through to use defaults
+      log.error('Failed to refresh rate limit config from KV', {}, error as Error);
     }
   }
 
-  const config: RateLimitConfig = {
-    maxRequests,
-    windowSeconds,
-  };
+  return { maxRequests, windowSeconds };
+}
 
-  // Update cache
-  rateLimitConfigCache.set(cacheKey, { config, cachedAt: now });
-
-  return config;
+async function refreshRelaxedRateLimitOverrideAfterDenial(
+  env: Env,
+  current: RateLimitConfig
+): Promise<RateLimitConfig | null> {
+  if (!env.AUTHRIM_CONFIG) return null;
+  const now = Date.now();
+  if (
+    deniedOverrideRefreshCache &&
+    now - deniedOverrideRefreshCache.checkedAt < DENIED_OVERRIDE_REFRESH_TTL_MS
+  ) {
+    return deniedOverrideRefreshCache.config;
+  }
+  try {
+    const value = await env.AUTHRIM_CONFIG.get(PROFILE_OVERRIDE_KV_KEY);
+    if (!value || !(value in RateLimitProfiles)) return null;
+    const profile = value as keyof typeof RateLimitProfiles;
+    const refreshed = await readRateLimitConfigFromKV(env, profile);
+    rateLimitProfileOverrideCache = { profile, cachedAt: Date.now() };
+    rateLimitConfigCache.set(profile, { config: refreshed, cachedAt: Date.now() });
+    const config = refreshed.maxRequests > current.maxRequests ? refreshed : null;
+    deniedOverrideRefreshCache = { config, checkedAt: Date.now() };
+    return config;
+  } catch {
+    deniedOverrideRefreshCache = { config: null, checkedAt: Date.now() };
+    return null;
+  }
 }
 
 /**
@@ -940,12 +1101,14 @@ const PROFILE_OVERRIDE_KV_KEY = 'rate_limit_profile_override';
 /**
  * Get rate limit profile with KV override support (async version)
  *
- * Priority:
- * 1. Cache (default 5min TTL, configurable via SETTINGS_CACHE_TTL)
- * 2. KV profile override (rate_limit_profile_override) - switches ALL endpoints to specified profile
- * 3. KV per-profile settings (rate_limit_{profile}_max_requests, rate_limit_{profile}_window_seconds)
- * 4. Environment variable (RATE_LIMIT_PROFILE for profile selection)
- * 5. Default profile values
+ * Runtime priority:
+ * 1. Fresh in-memory cache, when present
+ * 2. RATE_LIMIT_PROFILE environment override, when present
+ * 3. Built-in default profile values
+ *
+ * KV profile overrides and per-profile settings are refreshed asynchronously.
+ * This keeps the login cold path from blocking on SETTINGS/AUTHRIM_CONFIG KV
+ * while preserving eventual Admin-driven runtime changes.
  *
  * @param env - Environment bindings with AUTHRIM_CONFIG KV
  * @param profileName - Profile name (strict, moderate, lenient, loadTest)
@@ -964,30 +1127,84 @@ const PROFILE_OVERRIDE_KV_KEY = 'rate_limit_profile_override';
  */
 export async function getRateLimitProfileAsync(
   env: Env,
-  profileName: keyof typeof RateLimitProfiles
+  profileName: keyof typeof RateLimitProfiles,
+  ctx?: HonoExecutionContext
 ): Promise<RateLimitConfig> {
+  const now = Date.now();
+  const cacheTTL = getCacheTTLMs(env);
+  const envProfile =
+    env.RATE_LIMIT_PROFILE && env.RATE_LIMIT_PROFILE in RateLimitProfiles
+      ? (env.RATE_LIMIT_PROFILE as keyof typeof RateLimitProfiles)
+      : null;
+  const cachedOverride =
+    rateLimitProfileOverrideCache && now - rateLimitProfileOverrideCache.cachedAt < cacheTTL
+      ? rateLimitProfileOverrideCache.profile
+      : null;
+  const overrideCacheFresh =
+    !!rateLimitProfileOverrideCache && now - rateLimitProfileOverrideCache.cachedAt < cacheTTL;
+  const effectiveProfile = cachedOverride ?? envProfile ?? profileName;
+  const cached = rateLimitConfigCache.get(effectiveProfile);
+
+  if (!overrideCacheFresh || !cached || now - cached.cachedAt >= cacheTTL) {
+    scheduleRateLimitProfileRefresh(env, profileName, ctx);
+  }
+
+  if (cached && now - cached.cachedAt < cacheTTL) {
+    return cached.config;
+  }
+
+  const config = RateLimitProfiles[effectiveProfile];
+  rateLimitConfigCache.set(effectiveProfile, { config, cachedAt: now });
+  return config;
+}
+
+async function refreshRateLimitProfileFromKV(
+  env: Env,
+  profileName: keyof typeof RateLimitProfiles
+): Promise<void> {
+  const now = Date.now();
   let effectiveProfile: keyof typeof RateLimitProfiles = profileName;
 
-  // Priority 1: Check KV for global profile override
   if (env.AUTHRIM_CONFIG) {
     try {
       const kvProfileOverride = await env.AUTHRIM_CONFIG.get(PROFILE_OVERRIDE_KV_KEY);
       if (kvProfileOverride && kvProfileOverride in RateLimitProfiles) {
         effectiveProfile = kvProfileOverride as keyof typeof RateLimitProfiles;
+        rateLimitProfileOverrideCache = { profile: effectiveProfile, cachedAt: now };
+      } else {
+        rateLimitProfileOverrideCache = { profile: null, cachedAt: now };
       }
     } catch {
-      // KV read error - continue with other sources
+      rateLimitProfileOverrideCache = { profile: null, cachedAt: now };
     }
   }
 
-  // Priority 2: Check environment variable (only if no KV override)
   if (effectiveProfile === profileName) {
     if (env.RATE_LIMIT_PROFILE && env.RATE_LIMIT_PROFILE in RateLimitProfiles) {
       effectiveProfile = env.RATE_LIMIT_PROFILE as keyof typeof RateLimitProfiles;
     }
   }
 
-  return await getRateLimitConfigFromKV(env, effectiveProfile);
+  const config = await readRateLimitConfigFromKV(env, effectiveProfile);
+  rateLimitConfigCache.set(effectiveProfile, { config, cachedAt: Date.now() });
+}
+
+function scheduleRateLimitProfileRefresh(
+  env: Env,
+  profileName: keyof typeof RateLimitProfiles,
+  ctx?: HonoExecutionContext
+): void {
+  if (!env.AUTHRIM_CONFIG) {
+    return;
+  }
+  const refresh = refreshRateLimitProfileFromKV(env, profileName).catch((error) => {
+    log.error('Failed to refresh rate limit profile from KV', {}, error as Error);
+  });
+  if (ctx) {
+    ctx.waitUntil(refresh);
+    return;
+  }
+  void refresh;
 }
 
 /**
@@ -1004,4 +1221,6 @@ export function getProfileOverrideKVKey(): string {
  */
 export function clearRateLimitConfigCache(): void {
   rateLimitConfigCache.clear();
+  rateLimitProfileOverrideCache = null;
+  deniedOverrideRefreshCache = null;
 }

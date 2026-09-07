@@ -741,10 +741,7 @@ function normalizeTenantEmailSettings(
   const providerOrder =
     available.length === 0
       ? dedupedOrder
-      : [
-          ...dedupedOrder.filter((providerId) => available.includes(providerId)),
-          ...available.filter((providerId) => !dedupedOrder.includes(providerId)),
-        ];
+      : dedupedOrder.filter((providerId) => available.includes(providerId));
 
   return {
     strategy: input?.strategy === 'priority_failover' ? 'priority_failover' : 'priority_failover',
@@ -1017,11 +1014,12 @@ function createCompositeEmailNotifier(
         emailSettings.providerOrder.map((providerId, index) => [providerId, index])
       );
 
-      const orderedHandlers = [...handlers].sort((a, b) => {
-        const aIndex = priorityOrder.get(a.pluginId) ?? Number.MAX_SAFE_INTEGER;
-        const bIndex = priorityOrder.get(b.pluginId) ?? Number.MAX_SAFE_INTEGER;
-        return aIndex - bIndex;
-      });
+      const orderedHandlers = handlers
+        .filter((handler) => priorityOrder.has(handler.pluginId))
+        .sort(
+          (a, b) =>
+            (priorityOrder.get(a.pluginId) as number) - (priorityOrder.get(b.pluginId) as number)
+        );
 
       let lastFailure:
         | {

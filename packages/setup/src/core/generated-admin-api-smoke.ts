@@ -57,6 +57,7 @@ async function runAdminJsonRequest(options: {
   tenantId?: string;
   timeoutMs: number;
   body?: Record<string, unknown>;
+  headers?: Record<string, string>;
   expectedStatus?: number;
   validate?: (payload: unknown, check: SmokeCheck) => void;
 }): Promise<unknown> {
@@ -65,7 +66,10 @@ async function runAdminJsonRequest(options: {
     options.timeoutMs,
     {
       method: options.method ?? 'GET',
-      headers: getAdminHeaders(options.adminSecret, options.tenantId),
+      headers: {
+        ...getAdminHeaders(options.adminSecret, options.tenantId),
+        ...options.headers,
+      },
       body: options.body ? JSON.stringify(options.body) : undefined,
     }
   );
@@ -176,6 +180,7 @@ export async function runGeneratedAdminApiSmoke(
       tenantId,
       timeoutMs,
       expectedStatus: 201,
+      headers: { 'Idempotency-Key': `setup-admin-smoke-client-${smokeRunId}` },
       body: {
         client_name: clientName,
         description: 'Generated environment validation smoke client',

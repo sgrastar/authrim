@@ -14,6 +14,10 @@ import {
   getTenantIdFromContext,
   hashIpAddress,
   isShardedSessionId,
+  loadDestinationProfileConsentDescriptor,
+  resolveDestinationProfileConsentVersion,
+  resolveRuntimeIdentityMappingBinding,
+  requireDedicatedAdminDatabaseAdapter,
   CanonicalRuntimeUserStore,
   type DatabaseAdapter,
   type Env,
@@ -28,6 +32,8 @@ import {
   type FlowRuntimeErrorAction,
   type FlowRuntimeErrorCategory,
   type FlowRuntimeStep,
+  type DestinationProfileConsentDescriptor,
+  type DestinationFieldReleasePolicies,
   type Session,
 } from '@authrim/ar-lib-core';
 
@@ -185,6 +191,23 @@ interface RuntimeConsentPolicyContent extends FlowRuntimeJsonObject {
   items: RuntimeConsentPolicyItem[];
 }
 
+interface RuntimeDestinationFieldConsentContent extends FlowRuntimeJsonObject {
+  profile_id: string;
+  profile_version_id: string;
+  consent_version: string;
+  destination_type: 'oidc' | 'saml';
+  consent_mode: 'once' | 'every_time' | 'until_attributes_change' | null;
+  fields: Array<{
+    key: string;
+    label: string;
+    required: boolean;
+    nullable: boolean;
+    classification: string;
+    surfaces: string[];
+    required_scopes: string[];
+  }>;
+}
+
 interface RuntimeScreenRow {
   id: string;
   screen_key: string;
@@ -264,6 +287,7 @@ interface RuntimeStartTimingSpan {
 interface RuntimeStartTiming {
   startedAtMs: number;
   spans: RuntimeStartTimingSpan[];
+  diagnosticSessionId: string | null;
 }
 
 interface CachedLoginRuntimeFeatureFlag {
@@ -278,6 +302,8 @@ const LOGIN_RUNTIME_FEATURE_KEYS = [
 ];
 
 const STANDARD_FLOW_KINDS = new Set<FlowKind>(['login', 'registration', 'approve', 'account']);
+const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
+const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
 const FLOW_VERSION_CACHE_TTL_SECONDS = 180;
 const FLOW_VERSION_CACHE_MAX_ENTRIES = 256;
 const EMAIL_VERIFICATION_PROTOCOL_CHALLENGE_TTL_SECONDS = 300;
@@ -352,6 +378,16 @@ function parseJsonObjectArray(value: string | null): FlowRuntimeJsonObject[] {
       (item): item is FlowRuntimeJsonObject =>
         Boolean(item) && typeof item === 'object' && !Array.isArray(item)
     );
+  } catch {
+    return [];
+  }
+}
+
+function parseStoredStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) return parseStringList(value);
+  if (typeof value !== 'string' || !value) return [];
+  try {
+    return parseStringList(JSON.parse(value) as unknown);
   } catch {
     return [];
   }
@@ -459,6 +495,49 @@ function applyRuntimeScreenDefaultMetadata(
   });
 }
 
+function normalizeRegistrationFieldKey(field: string): string {
+  const normalized = field.trim().toLowerCase();
+  return normalized.startsWith('field.canonical.')
+    ? normalized.slice('field.canonical.'.length)
+    : normalized;
+}
+
+function registrationIdentityFieldKey(field: FlowRuntimeJsonObject): string | null {
+  const fieldName = readString(field.field, 200);
+  const blockType = readString(field.block_type, 80) ?? 'identity_field';
+  if (blockType !== 'identity_field' || !fieldName) return null;
+  return normalizeRegistrationFieldKey(fieldName);
+}
+
+async function applyRegistrationSchemaRequirements(
+  db: DatabaseAdapter,
+  tenantId: string,
+  fields: FlowRuntimeJsonObject[]
+): Promise<FlowRuntimeJsonObject[]> {
+  const schemas = await db.query<{ field_key: string; registration_required: number }>(
+    `SELECT field_key, registration_required
+     FROM custom_claim_schemas
+     WHERE tenant_id = ? AND is_active = 1`,
+    [tenantId]
+  );
+  const schemaRequirements = new Map<string, boolean>();
+  for (const schema of schemas) {
+    const fieldKey = normalizeRegistrationFieldKey(schema.field_key);
+    schemaRequirements.set(
+      fieldKey,
+      (schemaRequirements.get(fieldKey) ?? false) || schema.registration_required === 1
+    );
+  }
+
+  return fields.map((field) => {
+    const fieldKey = registrationIdentityFieldKey(field);
+    if (!fieldKey) return field;
+    const required = schemaRequirements.get(fieldKey);
+    if (required === undefined) return field;
+    return { ...field, required };
+  });
+}
+
 function jsonError(
   c: AuthContext,
   status: 400 | 403 | 404 | 409 | 500,
@@ -499,8 +578,25 @@ function runtimeError(
   );
 }
 
-function isRuntimeStartTimingEnabled(env: FlowRuntimeEnv): boolean {
+function sanitizeRuntimeStartDiagnosticSessionId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+}
+
+function isRuntimeStartTimingEnabled(env: FlowRuntimeEnv, request?: Request): boolean {
+  if (
+    isDiagnosticTimingEnabled(env) &&
+    sanitizeRuntimeStartDiagnosticSessionId(request?.headers.get(DIAGNOSTIC_SESSION_ID_HEADER))
+  ) {
+    return true;
+  }
   const value = env.AUTHRIM_FLOW_RUNTIME_TIMING?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+function isDiagnosticTimingEnabled(env: FlowRuntimeEnv): boolean {
+  const value = env.AUTHRIM_DIAGNOSTIC_TIMING_ENABLED?.trim().toLowerCase();
   return value === 'true' || value === '1' || value === 'yes';
 }
 
@@ -512,13 +608,20 @@ function roundRuntimeStartDurationMs(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
-function createRuntimeStartTiming(env: FlowRuntimeEnv): RuntimeStartTiming | null {
-  if (!isRuntimeStartTimingEnabled(env)) {
+function createRuntimeStartTiming(
+  env: FlowRuntimeEnv,
+  request?: Request
+): RuntimeStartTiming | null {
+  const diagnosticSessionId = sanitizeRuntimeStartDiagnosticSessionId(
+    request?.headers.get(DIAGNOSTIC_SESSION_ID_HEADER)
+  );
+  if (!isRuntimeStartTimingEnabled(env, request)) {
     return null;
   }
   return {
     startedAtMs: runtimeStartTimingNowMs(),
     spans: [],
+    diagnosticSessionId,
   };
 }
 
@@ -582,9 +685,13 @@ function writeRuntimeStartTiming(
     'Server-Timing',
     allSpans.map((span) => `${span.name};dur=${span.durationMs.toFixed(1)}`).join(', ')
   );
+  if (timing.diagnosticSessionId) {
+    c.header('X-Authrim-Diagnostic-Session-Id', timing.diagnosticSessionId);
+  }
   getLogger(c)
     .module('LOGIN-RUNTIME-FLOW-TIMING')
     .info('LoginUI runtime Flow start timing', {
+      diagnosticSessionId: timing.diagnosticSessionId,
       result: metadata.result,
       flow_kind: metadata.flowKind,
       target_type: metadata.targetType,
@@ -660,14 +767,14 @@ async function isLoginRuntimeFlowEnabled(env: Env, tenantId: string): Promise<bo
   return cacheValue(await getFeatureFlag('ENABLE_LOGIN_RUNTIME_FLOW', env, false));
 }
 
-function normalizeFlowKind(value: unknown): FlowKind {
+function normalizeFlowKind(value: unknown): FlowKind | null {
   if (typeof value === 'string' && STANDARD_FLOW_KINDS.has(value as FlowKind)) {
     return value as FlowKind;
   }
   if (typeof value === 'string' && value.startsWith('custom:')) {
     return value as FlowKind;
   }
-  return 'login';
+  return value === undefined || value === null ? 'login' : null;
 }
 
 function resolveTarget(body: StartRequest): ResolvedTarget | null {
@@ -1146,6 +1253,36 @@ function externalProviderUsageEnabled(
   return providerEnabled && usageEnabled;
 }
 
+function hasExplicitReadableExternalProviderUsage(value: unknown): boolean {
+  if (Array.isArray(value)) return true;
+  if (typeof value !== 'string') return false;
+  if (!value.trim()) return true;
+  try {
+    return Array.isArray(JSON.parse(value));
+  } catch {
+    return false;
+  }
+}
+
+function isSAMLProviderUsage(provider: Record<string, unknown>): boolean {
+  const providerId = readString(provider.id, 200) ?? readString(provider.providerId, 200);
+  return providerId?.startsWith('saml:') === true;
+}
+
+function shouldFetchRuntimeExternalProviderHandles(
+  rawProviderUsage: unknown,
+  providerUsage: Array<Record<string, unknown>>,
+  usage: 'login' | 'signup'
+): boolean {
+  if (!hasExplicitReadableExternalProviderUsage(rawProviderUsage)) {
+    // Legacy tenant: bridge providers may exist before external_provider_usage is saved.
+    return true;
+  }
+  return providerUsage.some(
+    (provider) => !isSAMLProviderUsage(provider) && externalProviderUsageEnabled(provider, usage)
+  );
+}
+
 function getExternalProviderUsageOverride(
   usageById: Map<string, Record<string, unknown>>,
   providerId: string,
@@ -1261,9 +1398,8 @@ async function resolveRuntimeAuthenticationHandles(
     handles.push('directory_password');
   }
 
-  const providerUsage = parseAuthProviderUsage(
-    settings['authentication-methods.external_provider_usage']
-  );
+  const rawProviderUsage = settings['authentication-methods.external_provider_usage'];
+  const providerUsage = parseAuthProviderUsage(rawProviderUsage);
   const usageById = indexExternalProviderUsage(providerUsage);
   for (const provider of providerUsage) {
     const providerId = readString(provider.id, 200);
@@ -1272,7 +1408,9 @@ async function resolveRuntimeAuthenticationHandles(
       handles.push(normalizeOutputHandle(providerId));
     }
   }
-  handles.push(...(await fetchRuntimeExternalProviderHandles(c, tenantId, usage, usageById)));
+  if (shouldFetchRuntimeExternalProviderHandles(rawProviderUsage, providerUsage, usage)) {
+    handles.push(...(await fetchRuntimeExternalProviderHandles(c, tenantId, usage, usageById)));
+  }
 
   return [...new Set(handles)];
 }
@@ -1507,10 +1645,13 @@ async function resolveRuntimeScreenContent(
       ? await queryScreen('default', fallbackScreenRef, true)
       : null);
   if (!row) return null;
-  const fields = applyRuntimeScreenDefaultMetadata(
+  let fields = applyRuntimeScreenDefaultMetadata(
     row.screen_key,
     parseJsonObjectArray(row.fields_json)
   );
+  if (row.screen_kind === 'registration') {
+    fields = await applyRegistrationSchemaRequirements(db, tenantId, fields);
+  }
   const localizations = parseRuntimeJsonObject(row.localizations_json);
   const localized = applyRuntimeScreenLocalization(
     fields,
@@ -1530,6 +1671,207 @@ async function resolveRuntimeScreenContent(
   };
 }
 
+async function resolveRuntimeDestinationFieldConsent(
+  c: AuthContext,
+  db: DatabaseAdapter,
+  tenantId: string,
+  requestContext: FlowRequestContext
+): Promise<RuntimeDestinationFieldConsentContent | null> {
+  if (!c.env.DB_ADMIN || requestContext.protocol === 'direct') return null;
+
+  const adminAdapter = requireDedicatedAdminDatabaseAdapter(
+    c.env,
+    'flow-destination-profile-consent'
+  );
+  const selector = await resolveRuntimeDestinationProfileSelector(
+    db,
+    adminAdapter,
+    tenantId,
+    requestContext
+  );
+  if (!selector) return null;
+  const descriptor = await loadDestinationProfileConsentDescriptor(
+    adminAdapter,
+    tenantId,
+    selector.profileId
+  );
+  if (!descriptor || descriptor.destinationType !== requestContext.protocol) return null;
+
+  const fields = applicableDestinationConsentFields(
+    descriptor,
+    requestContext,
+    selector.fieldPolicies
+  );
+  if (fields.length === 0) return null;
+  return {
+    profile_id: descriptor.profileId,
+    profile_version_id: descriptor.profileVersionId,
+    consent_version: resolveDestinationProfileConsentVersion(
+      descriptor.profileVersionId,
+      selector.fieldPolicies
+    ),
+    destination_type: descriptor.destinationType,
+    consent_mode: selector.consentMode ?? null,
+    fields: fields.map((field) => ({
+      key: field.key,
+      label: field.label,
+      required: field.required,
+      nullable: field.nullable,
+      classification: field.classification,
+      surfaces: field.surfaces,
+      required_scopes: field.requiredScopes,
+    })),
+  };
+}
+
+async function resolveRuntimeDestinationProfileSelector(
+  db: DatabaseAdapter,
+  adminDb: DatabaseAdapter,
+  tenantId: string,
+  requestContext: FlowRequestContext
+): Promise<{
+  profileId: string;
+  fieldPolicies?: DestinationFieldReleasePolicies;
+  consentMode?: 'once' | 'every_time' | 'until_attributes_change';
+} | null> {
+  if (requestContext.protocol === 'oidc' && requestContext.client_id) {
+    const row = await db.queryOne<{
+      identity_mapping: string | null;
+      attribute_release_consent: string | null;
+    }>(
+      `SELECT identity_mapping, attribute_release_consent
+         FROM oauth_clients
+        WHERE tenant_id = ? AND client_id = ?`,
+      [tenantId, requestContext.client_id]
+    );
+    const selector = parseJsonRecord(row?.identity_mapping);
+    const fieldMappingSetId = readString(selector.fieldMappingSetId, 200);
+    if (fieldMappingSetId) {
+      const binding = await resolveRuntimeIdentityMappingBinding(adminDb, {
+        tenantId,
+        protocol: 'oidc',
+        role: 'op',
+        fieldMappingSetId,
+        fieldMappingVersionId: readString(selector.fieldMappingVersionId, 200) ?? undefined,
+        partnerEntityId: requestContext.client_id,
+        clientId: requestContext.client_id,
+      });
+      if (!binding || binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
+        throw new Error('OIDC Mapping Set must resolve exactly one Destination Profile');
+      }
+      return {
+        profileId: binding.destinationProfileId,
+        consentMode: readAttributeReleaseConsentMode(row?.attribute_release_consent),
+      };
+    }
+    const legacyProfileId = readString(selector.destinationProfileId, 200);
+    return legacyProfileId
+      ? {
+          profileId: legacyProfileId,
+          consentMode: readAttributeReleaseConsentMode(row?.attribute_release_consent),
+        }
+      : null;
+  }
+
+  if (requestContext.protocol === 'saml' && requestContext.saml_sp_id) {
+    const rows = await db.query<{ id: string; config_json: string }>(
+      `SELECT id, config_json
+         FROM identity_providers
+        WHERE tenant_id = ? AND provider_type = 'saml_sp' AND enabled = 1`,
+      [tenantId]
+    );
+    const expectedIds = new Set(
+      [requestContext.saml_sp_id, requestContext.saml_sp_entity_id].filter(
+        (value): value is string => Boolean(value)
+      )
+    );
+    for (const row of rows) {
+      const config = parseJsonRecord(row.config_json);
+      if (!expectedIds.has(row.id) && !expectedIds.has(readString(config.entityId, 512) ?? '')) {
+        continue;
+      }
+      const selector = parseJsonRecord(config.identityMapping);
+      const fieldMappingSetId = readString(selector.fieldMappingSetId, 200);
+      let profileId: string | undefined;
+      if (fieldMappingSetId) {
+        const binding = await resolveRuntimeIdentityMappingBinding(adminDb, {
+          tenantId,
+          protocol: 'saml',
+          role: 'idp',
+          fieldMappingSetId,
+          fieldMappingVersionId: readString(selector.fieldMappingVersionId, 200) ?? undefined,
+          partnerEntityId: readString(config.entityId, 512) ?? undefined,
+        });
+        if (
+          !binding ||
+          binding.destinationProfileIds.length !== 1 ||
+          !binding.destinationProfileId
+        ) {
+          throw new Error('SAML Mapping Set must resolve exactly one Destination Profile');
+        }
+        profileId = binding.destinationProfileId;
+      } else {
+        profileId = readString(selector.destinationProfileId, 200) ?? undefined;
+      }
+      return profileId
+        ? {
+            profileId,
+            fieldPolicies: readDestinationFieldReleasePolicies(selector.destinationFieldPolicies),
+            consentMode: readAttributeReleaseConsentMode(config.attributeReleaseConsent),
+          }
+        : null;
+    }
+  }
+  return null;
+}
+
+function readAttributeReleaseConsentMode(
+  value: unknown
+): 'once' | 'every_time' | 'until_attributes_change' | undefined {
+  const policy = parseJsonRecord(value);
+  if (policy.enabled !== true) return undefined;
+  return policy.mode === 'every_time' || policy.mode === 'until_attributes_change'
+    ? policy.mode
+    : 'once';
+}
+
+function applicableDestinationConsentFields(
+  descriptor: DestinationProfileConsentDescriptor,
+  requestContext: FlowRequestContext,
+  fieldPolicies?: DestinationFieldReleasePolicies
+) {
+  if (descriptor.destinationType === 'saml') {
+    return descriptor.fields
+      .filter((field) => fieldPolicies?.[field.key] !== 'hidden')
+      .map((field) => ({
+        ...field,
+        required: fieldPolicies?.[field.key] === 'required',
+        nullable: fieldPolicies?.[field.key] === 'required' ? false : true,
+      }));
+  }
+  if (requestContext.requested_scope.length === 0) {
+    return descriptor.fields;
+  }
+  const scopes = new Set(requestContext.requested_scope);
+  return descriptor.fields.filter(
+    (field) =>
+      field.requiredScopes.length === 0 || field.requiredScopes.some((scope) => scopes.has(scope))
+  );
+}
+
+function readDestinationFieldReleasePolicies(
+  value: unknown
+): DestinationFieldReleasePolicies | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const policies: DestinationFieldReleasePolicies = {};
+  for (const [key, mode] of Object.entries(value)) {
+    if (mode === 'required' || mode === 'optional' || mode === 'hidden') {
+      policies[key] = mode;
+    }
+  }
+  return policies;
+}
+
 function defaultScreenKeyForRuntimeComponent(component?: string): string {
   if (component === 'registration_method_selector') return 'registration';
   if (component === 'authentication_method_selector') return 'login';
@@ -1546,6 +1888,12 @@ async function hydrateRuntimeContract(
   runtime: FlowRuntimeContract,
   requestContext: FlowRequestContext
 ): Promise<FlowRuntimeContract> {
+  const destinationFieldConsent = await resolveRuntimeDestinationFieldConsent(
+    c,
+    db,
+    tenantId,
+    requestContext
+  );
   const steps = await Promise.all(
     runtime.ui.steps.map(async (step) => {
       const config = parseJsonRecord(step.config);
@@ -1588,6 +1936,9 @@ async function hydrateRuntimeContract(
           ? await resolveRuntimeConsentPolicyContent(db, tenantId, policyId, requestContext)
           : null;
         nextContent.consent_policy = policy;
+      }
+      if (step.component === 'consent_policy' && destinationFieldConsent) {
+        nextContent.destination_field_consent = destinationFieldConsent;
       }
 
       return {
@@ -1766,7 +2117,7 @@ async function hmacBase64Url(secret: string, value: string): Promise<string> {
 }
 
 function getRuntimeHmacSecret(env: FlowRuntimeEnv): string | null {
-  return readString(env.FLOW_RUNTIME_HMAC_SECRET, 2048) ?? readString(env.KEY_MANAGER_SECRET, 2048);
+  return readString(env.FLOW_RUNTIME_HMAC_SECRET, 2048);
 }
 
 async function signContract(input: {
@@ -1943,6 +2294,38 @@ function withRuntimeConsentPolicyContent(
   };
 }
 
+function withoutRuntimeDestinationFieldConsent(step: FlowRuntimeStep): FlowRuntimeStep {
+  const remainingContent = {
+    ...(parseJsonRecord(step.content) as FlowRuntimeJsonObject),
+  };
+  delete remainingContent.destination_field_consent;
+  return {
+    ...step,
+    content: remainingContent,
+  };
+}
+
+function readRuntimeDestinationFieldConsent(
+  step: FlowRuntimeStep
+): RuntimeDestinationFieldConsentContent | null {
+  const content = parseJsonRecord(step.content);
+  const consent = parseJsonRecord(content.destination_field_consent);
+  const profileId = readString(consent.profile_id, 200);
+  const profileVersionId = readString(consent.profile_version_id, 200);
+  if (
+    !profileId ||
+    !profileVersionId ||
+    (consent.destination_type !== 'oidc' && consent.destination_type !== 'saml') ||
+    !Array.isArray(consent.fields)
+  ) {
+    return null;
+  }
+  return {
+    ...consent,
+    consent_version: readString(consent.consent_version, 240) ?? profileVersionId,
+  } as RuntimeDestinationFieldConsentContent;
+}
+
 function parseConditionConfig(value: unknown): FlowConditionConfig | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const config = value as FlowConditionConfig;
@@ -2002,6 +2385,10 @@ async function buildConditionEvaluationContext(
     runtime
   );
   return {
+    protocol:
+      requestContext.protocol === 'oidc' || requestContext.protocol === 'saml'
+        ? requestContext.protocol
+        : undefined,
     authenticated: Boolean(authenticationMethod),
     client_id: interaction.client_id ?? undefined,
     saml_sp_id: interaction.saml_sp_id ?? undefined,
@@ -2349,7 +2736,7 @@ async function resolveCompletedProtocolRedirect(input: {
   }
 
   const continuation = await consumeAuthorizationChallengeContinuation(
-    input.c.env,
+    input.c,
     input.tenantId,
     input.requestContext.authorization_challenge_id,
     userId,
@@ -2555,6 +2942,14 @@ function readConsentSelectedValueMap(input: unknown): Record<string, string> {
   return selectedValues;
 }
 
+function readDestinationFieldDecisionMap(input: unknown): Record<string, boolean> {
+  const inputRecord = parseJsonRecord(input);
+  const raw = parseJsonRecord(inputRecord.destination_field_decisions);
+  return Object.fromEntries(
+    Object.entries(raw).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean')
+  );
+}
+
 function consentOptionValueSet(item: RuntimeConsentPolicyItem): Set<string> {
   return new Set(item.options.map((option) => option.value));
 }
@@ -2736,6 +3131,56 @@ async function hasActiveAcceptedConsentRecord(input: {
   return Boolean(row);
 }
 
+async function hasActiveDestinationFieldConsentRecord(input: {
+  db: DatabaseAdapter;
+  tenantId: string;
+  interaction: FlowInteractionRow;
+  requestContext: FlowRequestContext;
+  userId: string;
+  consent: RuntimeDestinationFieldConsentContent;
+}): Promise<boolean> {
+  if (input.consent.consent_mode === 'every_time') return false;
+  const { recipientType, recipientId } = consentRecordRecipient(input);
+  const destinationRecipientId =
+    input.consent.destination_type === 'saml'
+      ? (input.requestContext.saml_sp_entity_id ?? recipientId)
+      : recipientId;
+  const row = await input.db.queryOne<{ id: string; released_scopes_json: unknown }>(
+    `SELECT id, released_scopes_json
+       FROM consent_records
+      WHERE tenant_id = ?
+        AND subject_user_id = ?
+        AND protocol = ?
+        AND recipient_type = ?
+        AND ((recipient_id = ?) OR (recipient_id IS NULL AND ? IS NULL))
+        AND binding_type = 'destination_field_mapping_set'
+        AND binding_key = ?
+        AND statement_id = ?
+        AND statement_version = ?
+        AND decision = 'selected'
+        AND status = 'active'
+        AND (expires_at IS NULL OR expires_at > ?)
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [
+      input.tenantId,
+      input.userId,
+      input.requestContext.protocol,
+      recipientType,
+      destinationRecipientId,
+      destinationRecipientId,
+      input.consent.profile_id,
+      `destination_profile:${input.consent.profile_id}`,
+      input.consent.consent_version,
+      nowSeconds(),
+    ]
+  );
+  if (!row) return false;
+  if (input.consent.destination_type !== 'oidc') return true;
+  const releasedScopes = new Set(parseStoredStringArray(row.released_scopes_json));
+  return input.requestContext.requested_scope.every((scope) => releasedScopes.has(scope));
+}
+
 async function removeAcceptedConsentItems(input: {
   db: DatabaseAdapter;
   tenantId: string;
@@ -2762,10 +3207,25 @@ async function removeAcceptedConsentItems(input: {
       remainingItems.push(item);
     }
   }
-  return withRuntimeConsentPolicyContent(input.step, {
+  let step = withRuntimeConsentPolicyContent(input.step, {
     ...policy,
     items: remainingItems,
   });
+  const destinationFieldConsent = readRuntimeDestinationFieldConsent(step);
+  if (
+    destinationFieldConsent &&
+    (await hasActiveDestinationFieldConsentRecord({
+      db: input.db,
+      tenantId: input.tenantId,
+      interaction: input.interaction,
+      requestContext: input.requestContext,
+      userId: input.userId,
+      consent: destinationFieldConsent,
+    }))
+  ) {
+    step = withoutRuntimeDestinationFieldConsent(step);
+  }
+  return step;
 }
 
 async function resolveNextDisplayStep(input: {
@@ -2886,7 +3346,8 @@ async function resolveNextDisplayStep(input: {
         step,
       });
       const policy = readRuntimeConsentPolicyContent(filteredStep);
-      if (!policy || policy.items.length > 0) {
+      const destinationFieldConsent = readRuntimeDestinationFieldConsent(filteredStep);
+      if (!policy || policy.items.length > 0 || destinationFieldConsent) {
         return { step: filteredStep, terminalStep: null, userId, autoAdvancedSteps };
       }
 
@@ -3134,6 +3595,114 @@ async function insertFlowConsentRecords(input: {
   }
 }
 
+async function insertDestinationFieldConsentRecord(input: {
+  db: DatabaseAdapter;
+  tenantId: string;
+  interaction: FlowInteractionRow;
+  step: FlowRuntimeStep;
+  policyId: string;
+  requestContext: FlowRequestContext;
+  userId: string;
+  consent: RuntimeDestinationFieldConsentContent;
+  selectedFields: string[];
+  ipHash?: string;
+  userAgent?: string;
+}): Promise<void> {
+  const now = nowSeconds();
+  const { recipientType, recipientId } = consentRecordRecipient(input);
+  const destinationRecipientId =
+    input.consent.destination_type === 'saml'
+      ? (input.requestContext.saml_sp_entity_id ?? recipientId)
+      : recipientId;
+  const releasedScopes =
+    input.requestContext.protocol === 'oidc' && input.requestContext.requested_scope.length > 0
+      ? JSON.stringify(input.requestContext.requested_scope)
+      : null;
+  const releasedClaims =
+    input.consent.destination_type === 'oidc' ? JSON.stringify(input.selectedFields) : null;
+  const releasedAttributes =
+    input.consent.destination_type === 'saml' ? JSON.stringify(input.selectedFields) : null;
+
+  await input.db.execute(
+    `UPDATE consent_records
+        SET status = 'superseded', updated_at = ?
+      WHERE tenant_id = ?
+        AND subject_user_id = ?
+        AND protocol = ?
+        AND recipient_type = ?
+        AND ((recipient_id = ?) OR (recipient_id IS NULL AND ? IS NULL))
+        AND binding_type = 'destination_field_mapping_set'
+        AND binding_key = ?
+        AND status = 'active'`,
+    [
+      now,
+      input.tenantId,
+      input.userId,
+      input.requestContext.protocol,
+      recipientType,
+      destinationRecipientId,
+      destinationRecipientId,
+      input.consent.profile_id,
+    ]
+  );
+  await input.db.execute(
+    `INSERT INTO consent_records (
+      id, tenant_id, subject_user_id, actor_user_id, protocol, consent_kind,
+      client_id, saml_sp_id, recipient_type, recipient_id, binding_type, binding_key,
+      resource_type, resource_id, purpose_key, statement_id, statement_version, policy_id,
+      flow_id, flow_version_id, flow_node_id, decision, selected_value, selected_options_json,
+      released_scopes_json, released_claims_json, released_attributes_json, status, expires_at,
+      revoked_at, evidence_json, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      generateId(),
+      input.tenantId,
+      input.userId,
+      input.userId,
+      input.requestContext.protocol,
+      input.consent.destination_type === 'oidc' ? 'scope_claim_release' : 'attribute_release',
+      input.interaction.client_id,
+      input.interaction.saml_sp_id,
+      recipientType,
+      destinationRecipientId,
+      'destination_field_mapping_set',
+      input.consent.profile_id,
+      input.consent.destination_type === 'oidc' ? 'userinfo' : 'saml_attributes',
+      input.consent.profile_id,
+      'destination_field_release',
+      `destination_profile:${input.consent.profile_id}`,
+      input.consent.consent_version,
+      input.policyId,
+      input.interaction.flow_id,
+      input.interaction.flow_version_id,
+      input.step.source_node_id,
+      'selected',
+      null,
+      JSON.stringify(input.selectedFields),
+      releasedScopes,
+      releasedClaims,
+      releasedAttributes,
+      'active',
+      null,
+      null,
+      JSON.stringify({
+        source: 'flow_runtime',
+        interaction_id: input.interaction.id,
+        step_id: input.step.id,
+        node_id: input.step.source_node_id,
+        destination_profile_id: input.consent.profile_id,
+        destination_profile_version_id: input.consent.profile_version_id,
+        selected_field_keys: input.selectedFields,
+        saml_request_id: input.requestContext.saml_request_id,
+        user_agent: input.userAgent,
+        ip_address_hash: input.ipHash,
+      }),
+      now,
+      now,
+    ]
+  );
+}
+
 async function persistRuntimeConsentStep(input: {
   c: AuthContext;
   db: DatabaseAdapter;
@@ -3143,6 +3712,7 @@ async function persistRuntimeConsentStep(input: {
   submitInput: unknown;
 }): Promise<{ ok: boolean; response?: Response; userId?: string | null }> {
   const requestContext = getRequestContextFromInteraction(input.interaction);
+  const destinationFieldConsent = readRuntimeDestinationFieldConsent(input.step);
   const config = parseJsonRecord(input.step.config);
   const policyId = readString(config.consent_policy_ref, 200);
   if (!policyId) {
@@ -3209,6 +3779,7 @@ async function persistRuntimeConsentStep(input: {
 
   const submitted = readConsentDecisionMap(input.submitInput);
   const submittedSelectedValues = readConsentSelectedValueMap(input.submitInput);
+  const submittedDestinationFields = readDestinationFieldDecisionMap(input.submitInput);
   const decisions = Object.fromEntries(
     policy.items.map((item) => [
       item.statement_id,
@@ -3237,6 +3808,24 @@ async function persistRuntimeConsentStep(input: {
       ),
     };
   }
+  const missingRequiredDestinationFields = destinationFieldConsent?.fields.filter(
+    (field) => field.required && submittedDestinationFields[field.key] !== true
+  );
+  if (missingRequiredDestinationFields && missingRequiredDestinationFields.length > 0) {
+    return {
+      ok: false,
+      response: runtimeError(
+        input.c,
+        400,
+        'consent_required',
+        'Required destination fields must be granted',
+        'AR_FLOW_DESTINATION_FIELD_CONSENT_REQUIRED',
+        'recoverable',
+        'retry_step',
+        input.interaction.id
+      ),
+    };
+  }
 
   const ipAddress =
     getRequestHeader(input.c, 'CF-Connecting-IP') ||
@@ -3257,6 +3846,24 @@ async function persistRuntimeConsentStep(input: {
     ipHash,
     userAgent: getRequestHeader(input.c, 'User-Agent'),
   });
+  if (destinationFieldConsent) {
+    const selectedFields = destinationFieldConsent.fields
+      .filter((field) => field.required || submittedDestinationFields[field.key] === true)
+      .map((field) => field.key);
+    await insertDestinationFieldConsentRecord({
+      db: input.db,
+      tenantId: input.tenantId,
+      interaction: input.interaction,
+      step: input.step,
+      policyId: policy.id,
+      requestContext,
+      userId,
+      consent: destinationFieldConsent,
+      selectedFields,
+      ipHash,
+      userAgent: getRequestHeader(input.c, 'User-Agent'),
+    });
+  }
 
   await input.db.execute(
     `UPDATE flow_interactions
@@ -3309,7 +3916,8 @@ async function resumeInteraction(
   tenantId: string,
   interactionId: string,
   submittedContractHash: string | null,
-  submittedSignature: string | null
+  submittedSignature: string | null,
+  requestedLocale: string | null
 ) {
   const now = nowSeconds();
   const interaction = await db.queryOne<FlowInteractionRow>(
@@ -3370,7 +3978,13 @@ async function resumeInteraction(
     return jsonError(c, 409, 'flow_version_unavailable', 'Published Flow version is unavailable');
   }
 
-  const requestContext = getRequestContextFromInteraction(interaction);
+  const storedRequestContext = getRequestContextFromInteraction(interaction);
+  const requestContext = requestedLocale
+    ? { ...storedRequestContext, locale: requestedLocale }
+    : storedRequestContext;
+  const nextContextJson = requestedLocale
+    ? JSON.stringify({ ...parseJsonObject(interaction.context_json), locale: requestedLocale })
+    : interaction.context_json;
   const assignment: FlowAssignmentRow = {
     flow_id: interaction.flow_id,
     flow_kind: runtime.flow_kind,
@@ -3399,9 +4013,9 @@ async function resumeInteraction(
   });
   await db.execute(
     `UPDATE flow_interactions
-       SET contract_hash = ?, signature = ?, updated_at = ?
-     WHERE tenant_id = ? AND id = ?`,
-    [contractHash, signature, now, tenantId, interaction.id]
+			 SET context_json = ?, contract_hash = ?, signature = ?, updated_at = ?
+		 WHERE tenant_id = ? AND id = ?`,
+    [nextContextJson, contractHash, signature, now, tenantId, interaction.id]
   );
 
   return c.json({
@@ -3424,7 +4038,7 @@ async function resumeInteraction(
 }
 
 export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
-  const timing = createRuntimeStartTiming(c.env);
+  const timing = createRuntimeStartTiming(c.env, c.req.raw);
   const tenantId = getTenantIdFromContext(c);
   const enabled = await timeRuntimeStartSpan(timing, 'feature_flag', () =>
     isLoginRuntimeFlowEnabled(c.env, tenantId)
@@ -3451,7 +4065,8 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
         tenantId,
         resumeInteractionId,
         readString(body.contract_hash, 256),
-        readString(body.signature, 512)
+        readString(body.signature, 512),
+        readOptionalString(body.requested_locale ?? body.locale, 64)
       )
     );
     writeRuntimeStartTiming(c, timing, { result: 'resume' });
@@ -3467,6 +4082,15 @@ export async function loginRuntimeInteractionStartHandler(c: AuthContext) {
   const flowKind = timeRuntimeStartValue(timing, 'normalize_flow', () =>
     normalizeFlowKind(body.flow_kind)
   );
+  if (!flowKind) {
+    writeRuntimeStartTiming(c, timing, { result: 'error', error: 'unsupported_flow_kind' });
+    return jsonError(
+      c,
+      400,
+      'unsupported_flow_kind',
+      'This flow kind is not executed by the LoginUI runtime'
+    );
+  }
   const requestContext = timeRuntimeStartValue(timing, 'request_context', () =>
     createRequestContext(target, body)
   );

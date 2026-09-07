@@ -7,6 +7,7 @@
  */
 
 import { API_BASE_URL, adminFetch } from './admin-request';
+import { ACCOUNT_AUDIT_ACTIONS } from '$lib/admin/account-audit-action-label';
 
 /**
  * Pagination info
@@ -83,6 +84,9 @@ export const AUDIT_ACTION_TYPES = [
 	// ── Session Management ──
 	{ value: 'session.created', label: 'Session Created' },
 	{ value: 'session.revoked', label: 'Session Revoked' },
+
+	// ── Account Page Self-Service ──
+	...ACCOUNT_AUDIT_ACTIONS.map((value) => ({ value, label: value })),
 
 	// ── Token Management ──
 	{ value: 'scim.token.create', label: 'SCIM Token Created' },

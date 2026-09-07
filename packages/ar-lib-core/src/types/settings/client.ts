@@ -22,9 +22,7 @@ export interface ClientSettings {
   'client.par_required': boolean;
   'client.dpop_required': boolean;
 
-  // Consent Settings
-  'client.consent_required': boolean;
-  'client.first_party': boolean;
+  // App Login Settings (first-party authority lives in Client Trust Policy)
   'client.app_login_enabled': boolean;
 
   // SSO Override
@@ -190,24 +188,6 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
     description: 'Require DPoP for this client',
     visibility: 'public',
   },
-  'client.consent_required': {
-    key: 'client.consent_required',
-    type: 'boolean',
-    default: true,
-    envKey: 'CLIENT_CONSENT_REQUIRED',
-    label: 'Consent Required',
-    description: 'Require user consent for this client',
-    visibility: 'public',
-  },
-  'client.first_party': {
-    key: 'client.first_party',
-    type: 'boolean',
-    default: false,
-    envKey: 'CLIENT_FIRST_PARTY',
-    label: 'First Party App',
-    description: 'Mark this client as a first-party application',
-    visibility: 'admin',
-  },
   'client.app_login_enabled': {
     key: 'client.app_login_enabled',
     type: 'boolean',
@@ -337,11 +317,12 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
   },
   'client.userinfo_signed_response_alg': {
     key: 'client.userinfo_signed_response_alg',
-    type: 'string',
+    type: 'enum',
     default: 'none',
     envKey: 'CLIENT_USERINFO_SIGNED_RESPONSE_ALG',
     label: 'UserInfo Signed Response Alg',
     description: 'Algorithm for signed UserInfo responses (none, RS256, ES256)',
+    enum: ['none', 'RS256', 'ES256'],
     visibility: 'admin',
   },
 
@@ -353,13 +334,7 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
     envKey: 'CLIENT_TOKEN_ENDPOINT_AUTH_METHOD',
     label: 'Token Endpoint Auth Method',
     description: 'Client authentication method for token endpoint',
-    enum: [
-      'none',
-      'client_secret_basic',
-      'client_secret_post',
-      'client_secret_jwt',
-      'private_key_jwt',
-    ],
+    enum: ['none', 'client_secret_basic', 'client_secret_post', 'private_key_jwt'],
     visibility: 'public',
   },
 
@@ -730,18 +705,7 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
     envKey: 'CLIENT_ID_TOKEN_SIGNING_ALG',
     label: 'ID Token Signing Algorithm',
     description: 'Algorithm for signing ID tokens',
-    enum: [
-      'RS256',
-      'RS384',
-      'RS512',
-      'ES256',
-      'ES384',
-      'ES512',
-      'PS256',
-      'PS384',
-      'PS512',
-      'EdDSA',
-    ],
+    enum: ['RS256', 'ES256'],
     visibility: 'public',
   },
   'client.id_token_encrypted_response_alg': {
@@ -840,7 +804,7 @@ export const CLIENT_SETTINGS_META: Record<keyof ClientSettings, SettingMeta> = {
     default: 'RS256',
     envKey: 'CLIENT_TOKEN_ENDPOINT_AUTH_SIGNING_ALG',
     label: 'Token Auth Signing Alg',
-    description: 'Signing algorithm for private_key_jwt/client_secret_jwt authentication',
+    description: 'Signing algorithm for private_key_jwt authentication',
     enum: ['RS256', 'ES256', 'PS256', 'EdDSA'],
     visibility: 'admin',
   },
@@ -866,8 +830,6 @@ export const CLIENT_DEFAULTS: ClientSettings = {
   'client.pkce_required': false,
   'client.par_required': false,
   'client.dpop_required': false,
-  'client.consent_required': true,
-  'client.first_party': false,
   'client.app_login_enabled': false,
   'client.sso_enabled': false,
   'client.refresh_token_rotation': true,

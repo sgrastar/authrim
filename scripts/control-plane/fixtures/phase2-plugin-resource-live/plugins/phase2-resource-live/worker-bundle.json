@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "pluginId": "phase2-resource-live",
+  "compatibilityDate": "2026-08-01",
+  "compatibilityFlags": [],
+  "mainModule": "index.js",
+  "modules": {
+    "index.js": "export default { async fetch() { return new Response(null, { status: 204 }); } };"
+  }
+}

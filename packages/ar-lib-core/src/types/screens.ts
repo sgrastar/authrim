@@ -4,6 +4,7 @@ export type ScreenKind =
   | 'login'
   | 'consent'
   | 'code_input'
+  | 'account'
   | 'custom';
 export type ScreenBlockType =
   | 'identity_field'
@@ -14,7 +15,17 @@ export type ScreenBlockType =
   | 'text'
   | 'security_verification'
   | 'divider'
-  | 'layout_row';
+  | 'layout_row'
+  | 'link'
+  | 'account_profile_widget'
+  | 'account_device_list_widget'
+  | 'account_session_widget'
+  | 'account_passkey_widget'
+  | 'account_totp_widget'
+  | 'account_consent_widget'
+  | 'account_activity_widget'
+  | 'account_social_account_widget'
+  | 'account_launcher_widget';
 
 export type ScreenValueType = 'text' | 'boolean';
 export type ScreenCanvasLayout = 'narrow' | 'wide';
@@ -35,6 +46,8 @@ export interface ScreenDisplayCondition {
 
 export interface ScreenSettings {
   canvas_layout?: ScreenCanvasLayout;
+  base_preset_key?: string;
+  base_preset_version?: number;
 }
 
 export interface ScreenField {
@@ -50,6 +63,7 @@ export interface ScreenField {
   text?: string | null;
   help_text?: string | null;
   placeholder?: string | null;
+  href?: string | null;
   human_verification_timing?: ScreenHumanVerificationTiming | null;
   display_condition?: ScreenDisplayCondition | null;
   layout_columns?: number | null;
@@ -90,3 +104,135 @@ export interface ScreenResponse extends Omit<
   localizations: Record<string, ScreenLocalization>;
   settings: ScreenSettings;
 }
+
+export type AccountPagePlacementWidth = 'full' | 'half';
+
+export type AccountPageVisibilityCondition =
+  | 'always'
+  | 'hidden'
+  | 'passkey_enabled'
+  | 'totp_enabled'
+  | 'external_idp_enabled'
+  | 'consent_records_available'
+  | 'multiple_sessions';
+
+export interface AccountPageScreenPlacement {
+  id: string;
+  screen_key: string;
+  width: AccountPagePlacementWidth;
+  enabled: boolean;
+  condition: AccountPageVisibilityCondition;
+}
+
+export interface AccountPageLocalization {
+  title?: string;
+  description?: string;
+}
+
+export interface AccountPageDefinition {
+  schema_version: 'authrim.account_page.v1';
+  base_preset_id?: 'authrim-default';
+  base_preset_version?: number;
+  title?: string;
+  description?: string;
+  localizations?: Record<string, AccountPageLocalization>;
+  screens: AccountPageScreenPlacement[];
+}
+
+export interface PublishedAccountPageDefinition extends AccountPageDefinition {
+  resolved_at: string;
+  screen_snapshots: Record<string, ScreenResponse>;
+}
+
+export interface AccountPageRecord {
+  id: string;
+  name: string;
+  base_preset_id: 'authrim-default';
+  base_preset_version: number;
+  draft: AccountPageDefinition;
+  published?: PublishedAccountPageDefinition;
+  rollback?: PublishedAccountPageDefinition;
+  published_version: number;
+  published_at: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface AccountPagesDocument {
+  schema_version: 'authrim.account_pages.v1';
+  default_page_id: string | null;
+  pages: AccountPageRecord[];
+}
+
+export const ACCOUNT_PAGE_PRESET_VERSION = 2;
+
+export const DEFAULT_ACCOUNT_PAGE_DEFINITION: AccountPageDefinition = {
+  schema_version: 'authrim.account_page.v1',
+  base_preset_id: 'authrim-default',
+  base_preset_version: ACCOUNT_PAGE_PRESET_VERSION,
+  screens: [
+    {
+      id: 'overview',
+      screen_key: 'account_overview',
+      width: 'full',
+      enabled: true,
+      condition: 'always',
+    },
+    {
+      id: 'launchers',
+      screen_key: 'account_launchers',
+      width: 'full',
+      enabled: true,
+      condition: 'always',
+    },
+    {
+      id: 'profile',
+      screen_key: 'account_profile',
+      width: 'half',
+      enabled: true,
+      condition: 'always',
+    },
+    {
+      id: 'devices',
+      screen_key: 'account_devices',
+      width: 'half',
+      enabled: true,
+      condition: 'always',
+    },
+    {
+      id: 'sessions',
+      screen_key: 'account_sessions',
+      width: 'half',
+      enabled: true,
+      condition: 'always',
+    },
+    {
+      id: 'passkeys',
+      screen_key: 'account_passkeys',
+      width: 'half',
+      enabled: true,
+      condition: 'passkey_enabled',
+    },
+    {
+      id: 'totp',
+      screen_key: 'account_totp',
+      width: 'full',
+      enabled: true,
+      condition: 'totp_enabled',
+    },
+    {
+      id: 'consents',
+      screen_key: 'account_consents',
+      width: 'full',
+      enabled: true,
+      condition: 'always',
+    },
+    {
+      id: 'activity',
+      screen_key: 'account_activity',
+      width: 'full',
+      enabled: true,
+      condition: 'always',
+    },
+  ],
+};

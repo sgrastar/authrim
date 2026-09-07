@@ -139,6 +139,7 @@ function createTestApp() {
 describe('adminRolesRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    repoMocks.adminAdapterQueryOne.mockResolvedValue(null);
   });
 
   it('should hide tenant-scoped system role copies when listing roles', async () => {
@@ -736,5 +737,561 @@ describe('adminRolesRouter', () => {
     expect(response.status).toBe(403);
     expect(body.error_code).toBe(AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
     expect(repoMocks.deleteRole).not.toHaveBeenCalled();
+  });
+
+  it('should list tenant-only roles deterministically when system roles are excluded', async () => {
+    repoMocks.getRolesByTenant.mockResolvedValue([
+      { id: 'b', name: 'beta', hierarchy_level: 10 },
+      { id: 'a', name: 'alpha', hierarchy_level: 10 },
+      { id: 'top', name: 'top', hierarchy_level: 20 },
+    ]);
+    const { app, env } = createTestApp();
+
+    const response = await app.request('/api/admin/admin-roles?include_system=false', {}, env);
+    const body = (await response.json()) as RoleListResponseBody;
+
+    expect(response.status).toBe(200);
+    expect(body.items.map((role) => role.name)).toEqual(['top', 'alpha', 'beta']);
+    expect(repoMocks.getSystemRoles).not.toHaveBeenCalled();
+  });
+
+  it('should expose the permission catalog as a stable public contract', async () => {
+    const { app, env } = createTestApp();
+
+    const response = await app.request('/api/admin/admin-roles/permissions/list', {}, env);
+    const body = (await response.json()) as { items: Array<{ key: string }>; total: number };
+
+    expect(response.status).toBe(200);
+    expect(body.total).toBe(body.items.length);
+    expect(body.items.map((item) => item.key)).toEqual(
+      expect.arrayContaining(['*', ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE])
+    );
+  });
+
+  it('should return effective permissions only for a tenant-accessible role', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_support',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      name: 'support',
+      permissions: ['admin:users:read'],
+      inherits_from: 'role_viewer',
+    });
+    repoMocks.getEffectivePermissions.mockResolvedValue(['admin:users:read', 'admin:clients:read']);
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/role_support/effective-permissions',
+      {},
+      env
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body.effective_permissions).toEqual(['admin:users:read', 'admin:clients:read']);
+  });
+
+  it.each([
+    ['missing role', null],
+    ['foreign custom role', { id: 'foreign', tenant_id: 'other', is_system: false }],
+  ])('should hide effective permissions for a %s', async (_label, role) => {
+    repoMocks.getRole.mockResolvedValue(role);
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/foreign/effective-permissions',
+      {},
+      env
+    );
+
+    expect(response.status).toBe(404);
+    expect(repoMocks.getEffectivePermissions).not.toHaveBeenCalled();
+  });
+
+  it('should create a custom role without exceeding the caller permissions', async () => {
+    repoMocks.findByName.mockResolvedValue(null);
+    repoMocks.createRole.mockResolvedValue({
+      id: 'role_auditor',
+      tenant_id: 'tenant_123',
+      name: 'auditor',
+      permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_READ],
+      hierarchy_level: 5,
+    });
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': `${ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE},${ADMIN_PERMISSIONS.ADMIN_USERS_READ}`,
+          'x-test-hierarchy-level': '10',
+        },
+        body: JSON.stringify({
+          name: 'auditor',
+          permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_READ],
+          hierarchy_level: 5,
+        }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(201);
+    expect(repoMocks.createRole).toHaveBeenCalledWith(
+      expect.objectContaining({ tenant_id: 'tenant_123', role_type: 'custom' })
+    );
+    expect(repoMocks.createAuditLog).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing name', { permissions: [] }, 400],
+    ['non-array permissions', { name: 'bad', permissions: 'admin:users:read' }, 400],
+    ['duplicate name', { name: 'duplicate', permissions: [] }, 409],
+  ])('should reject role creation with %s', async (_label, body, status) => {
+    repoMocks.findByName.mockResolvedValue({ id: 'existing' });
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': '*',
+        },
+        body: JSON.stringify(body),
+      },
+      env
+    );
+
+    expect(response.status).toBe(status);
+    expect(repoMocks.createRole).not.toHaveBeenCalled();
+  });
+
+  it('should update a tenant custom role and audit the exact changes', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_custom',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      role_type: 'custom',
+    });
+    repoMocks.updateRole.mockResolvedValue({ id: 'role_custom', display_name: 'Updated' });
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/role_custom',
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': '*',
+          'x-test-hierarchy-level': '50',
+        },
+        body: JSON.stringify({ display_name: 'Updated', hierarchy_level: 10 }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(repoMocks.updateRole).toHaveBeenCalledWith(
+      'role_custom',
+      expect.objectContaining({ display_name: 'Updated', hierarchy_level: 10 })
+    );
+    expect(repoMocks.createAuditLog).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing role', null, 404],
+    ['foreign role', { id: 'role_foreign', tenant_id: 'other', is_system: false }, 404],
+    ['system role', { id: 'role_system', tenant_id: 'tenant_123', is_system: true }, 403],
+  ])('should reject updates to a %s', async (_label, role, status) => {
+    repoMocks.getRole.mockResolvedValue(role);
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/role_target',
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-test-permissions': '*' },
+        body: JSON.stringify({ display_name: 'Updated' }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(status);
+    expect(repoMocks.updateRole).not.toHaveBeenCalled();
+  });
+
+  it('should delete only an unassigned tenant custom role and audit it', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_custom',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      role_type: 'custom',
+      name: 'custom',
+    });
+    repoMocks.getUsersByRole.mockResolvedValue([]);
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/role_custom',
+      { method: 'DELETE', headers: { 'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE } },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(repoMocks.deleteRole).toHaveBeenCalledWith('role_custom');
+    expect(repoMocks.createAuditLog).toHaveBeenCalled();
+  });
+
+  it('should reject deletion while a custom role remains assigned', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_custom',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      role_type: 'custom',
+    });
+    repoMocks.getUsersByRole.mockResolvedValue(['admin_2']);
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/role_custom',
+      { method: 'DELETE', headers: { 'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE } },
+      env
+    );
+
+    expect(response.status).toBe(409);
+    expect(repoMocks.deleteRole).not.toHaveBeenCalled();
+  });
+
+  it('should reject deletion while a pending invitation still targets the role', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_custom',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      role_type: 'custom',
+    });
+    repoMocks.getUsersByRole.mockResolvedValue([]);
+    repoMocks.adminAdapterQueryOne.mockResolvedValue({ id: 'invitation_1' });
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/role_custom',
+      { method: 'DELETE', headers: { 'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE } },
+      env
+    );
+
+    expect(response.status).toBe(409);
+    expect(repoMocks.adminAdapterQueryOne).toHaveBeenCalledWith(
+      expect.stringContaining("status = 'pending'"),
+      ['tenant_123', 'role_custom', expect.any(Number)]
+    );
+    expect(repoMocks.deleteRole).not.toHaveBeenCalled();
+  });
+
+  it('should remove a non-platform assignment and leave audit evidence', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_support',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      name: 'support',
+    });
+    repoMocks.getAssignment.mockResolvedValue({
+      id: 'assignment_1',
+      admin_role_id: 'role_support',
+      admin_user_id: 'admin_2',
+      scope_type: 'tenant',
+      scope_id: 'tenant_123',
+    });
+    repoMocks.removeAssignmentById.mockResolvedValue(true);
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/role_support/assignments/assignment_1',
+      { method: 'DELETE', headers: { 'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE } },
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(repoMocks.removeAssignmentById).toHaveBeenCalledWith('assignment_1');
+    expect(repoMocks.createAuditLog).toHaveBeenCalled();
+  });
+
+  it('should protect the final platform role assignment from deletion', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_super_admin',
+      tenant_id: 'default',
+      is_system: true,
+      name: 'super_admin',
+    });
+    repoMocks.getAssignment.mockResolvedValue({
+      id: 'assignment_1',
+      admin_role_id: 'role_super_admin',
+      admin_user_id: 'admin_2',
+    });
+    repoMocks.adminAdapterQueryOne.mockResolvedValue({ count: 1 });
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/role_super_admin/assignments/assignment_1',
+      { method: 'DELETE', headers: { 'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE } },
+      env
+    );
+
+    expect(response.status).toBe(409);
+    expect(repoMocks.removeAssignmentById).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['POST', '/api/admin/admin-roles/role_support/assignments'],
+    ['PATCH', '/api/admin/admin-roles/role_support/assignments/assignment_1'],
+    ['DELETE', '/api/admin/admin-roles/role_support/assignments/assignment_1'],
+    ['POST', '/api/admin/admin-roles'],
+    ['PATCH', '/api/admin/admin-roles/role_support'],
+    ['DELETE', '/api/admin/admin-roles/role_support'],
+  ])('should reject %s %s without role-write authority', async (method, path) => {
+    const { app, env } = createTestApp();
+    const response = await app.request(
+      path,
+      {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: method === 'POST' || method === 'PATCH' ? '{}' : undefined,
+      },
+      env
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  it.each([
+    ['missing role', null, { admin_user_id: 'admin_2' }, { id: 'admin_2' }, 404],
+    [
+      'foreign role',
+      { id: 'foreign', tenant_id: 'other', is_system: false },
+      { admin_user_id: 'admin_2' },
+      { id: 'admin_2' },
+      404,
+    ],
+    [
+      'missing user id',
+      { id: 'role_support', tenant_id: 'tenant_123', hierarchy_level: 1 },
+      {},
+      null,
+      400,
+    ],
+    [
+      'foreign user',
+      { id: 'role_support', tenant_id: 'tenant_123', hierarchy_level: 1 },
+      { admin_user_id: 'admin_foreign' },
+      null,
+      404,
+    ],
+    [
+      'peer hierarchy role',
+      { id: 'role_support', tenant_id: 'tenant_123', hierarchy_level: 50 },
+      { admin_user_id: 'admin_2' },
+      { id: 'admin_2' },
+      403,
+    ],
+    [
+      'invalid expiry',
+      { id: 'role_support', tenant_id: 'tenant_123', hierarchy_level: 1 },
+      { admin_user_id: 'admin_2', expires_at: 0 },
+      { id: 'admin_2' },
+      400,
+    ],
+  ])('should reject assignment creation for %s', async (_label, role, body, user, status) => {
+    repoMocks.getRole.mockResolvedValue(role);
+    repoMocks.findAdminUserByTenantAndId.mockResolvedValue(user);
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/role_support/assignments',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+          'x-test-hierarchy-level': '50',
+        },
+        body: JSON.stringify(body),
+      },
+      env
+    );
+
+    expect(response.status).toBe(status);
+    expect(repoMocks.assignRole).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing role', null, null, {}, 404],
+    [
+      'assignment for another role',
+      { id: 'role_support', tenant_id: 'tenant_123' },
+      { id: 'assignment_1', admin_role_id: 'other', admin_user_id: 'admin_2' },
+      {},
+      404,
+    ],
+    [
+      'foreign tenant scope',
+      { id: 'role_support', tenant_id: 'tenant_123' },
+      {
+        id: 'assignment_1',
+        admin_role_id: 'role_support',
+        admin_user_id: 'admin_2',
+        scope_type: 'tenant',
+        scope_id: 'tenant_123',
+      },
+      { scope_id: 'other' },
+      400,
+    ],
+    [
+      'global escalation',
+      { id: 'role_support', tenant_id: 'tenant_123' },
+      {
+        id: 'assignment_1',
+        admin_role_id: 'role_support',
+        admin_user_id: 'admin_2',
+        scope_type: 'tenant',
+        scope_id: 'tenant_123',
+      },
+      { scope_type: 'global' },
+      403,
+    ],
+    [
+      'invalid expiry',
+      { id: 'role_support', tenant_id: 'tenant_123' },
+      {
+        id: 'assignment_1',
+        admin_role_id: 'role_support',
+        admin_user_id: 'admin_2',
+        scope_type: 'tenant',
+        scope_id: 'tenant_123',
+      },
+      { expires_at: -1 },
+      400,
+    ],
+  ])('should reject assignment update for %s', async (_label, role, assignment, body, status) => {
+    repoMocks.getRole.mockResolvedValue(role);
+    repoMocks.getAssignment.mockResolvedValue(assignment);
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/role_support/assignments/assignment_1',
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+        },
+        body: JSON.stringify(body),
+      },
+      env
+    );
+
+    expect(response.status).toBe(status);
+    expect(repoMocks.updateAssignment).not.toHaveBeenCalled();
+  });
+
+  it('should reject an assignment update that duplicates another scope binding', async () => {
+    repoMocks.getRole.mockResolvedValue({ id: 'role_support', tenant_id: 'tenant_123' });
+    repoMocks.getAssignment.mockResolvedValue({
+      id: 'assignment_1',
+      admin_role_id: 'role_support',
+      admin_user_id: 'admin_2',
+      scope_type: 'tenant',
+      scope_id: 'tenant_123',
+    });
+    repoMocks.assignmentExists.mockResolvedValue(true);
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/role_support/assignments/assignment_1',
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+        },
+        body: JSON.stringify({ expires_at: null }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(409);
+    expect(repoMocks.updateAssignment).not.toHaveBeenCalled();
+  });
+
+  it('should pass the explicit expired-assignment flag to the tenant-scoped repository', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_support',
+      tenant_id: 'tenant_123',
+      is_system: false,
+    });
+    repoMocks.getAssignmentsByRole.mockResolvedValue([]);
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/role_support/assignments?include_expired=true',
+      {},
+      env
+    );
+
+    expect(response.status).toBe(200);
+    expect(repoMocks.getAssignmentsByRole).toHaveBeenCalledWith('role_support', true);
+  });
+
+  it('should report a concurrently removed assignment instead of claiming an update', async () => {
+    repoMocks.getRole.mockResolvedValue({ id: 'role_support', tenant_id: 'tenant_123' });
+    repoMocks.getAssignment.mockResolvedValue({
+      id: 'assignment_1',
+      admin_role_id: 'role_support',
+      admin_user_id: 'admin_2',
+      scope_type: 'tenant',
+      scope_id: 'tenant_123',
+    });
+    repoMocks.assignmentExists.mockResolvedValue(false);
+    repoMocks.updateAssignment.mockResolvedValue(null);
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/role_support/assignments/assignment_1',
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE,
+        },
+        body: JSON.stringify({ expires_at: null }),
+      },
+      env
+    );
+
+    expect(response.status).toBe(404);
+    expect(repoMocks.createAuditLog).not.toHaveBeenCalled();
+  });
+
+  it('should map repository-protected role deletion to insufficient permissions', async () => {
+    repoMocks.getRole.mockResolvedValue({
+      id: 'role_protected',
+      tenant_id: 'tenant_123',
+      is_system: false,
+      role_type: 'custom',
+      name: 'protected',
+    });
+    repoMocks.getUsersByRole.mockResolvedValue([]);
+    repoMocks.deleteRole.mockRejectedValue(new Error('Cannot delete protected role'));
+    const { app, env } = createTestApp();
+
+    const response = await app.request(
+      '/api/admin/admin-roles/role_protected',
+      { method: 'DELETE', headers: { 'x-test-permissions': ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE } },
+      env
+    );
+
+    expect(response.status).toBe(403);
+    expect(repoMocks.createAuditLog).not.toHaveBeenCalled();
   });
 });

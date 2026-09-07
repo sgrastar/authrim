@@ -334,34 +334,15 @@ done
 echo ""
 echo "✅ All wrangler.${DEPLOY_ENV}.toml files updated!"
 
-# Ask if user wants to run migrations
+# Initial migrations are intentionally not exposed as a per-database operation.
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "📊 Database Migrations"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
-read -p "Run database migrations now? (y/N): " -n 1 -r
-echo
-
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    echo ""
-    echo "🚀 Running migrations..."
-    echo ""
-
-    # Run migrations using apply-migrations.sh
-    if [ -f "scripts/apply-migrations.sh" ]; then
-        echo "📝 Using apply-migrations.sh script..."
-        bash scripts/apply-migrations.sh --env="$DEPLOY_ENV"
-    else
-        echo "⚠️  apply-migrations.sh not found. Please run migrations manually."
-    fi
-else
-    echo ""
-    echo "⊗ Migrations skipped"
-    echo ""
-    echo "To run migrations later:"
-    echo "  bash scripts/apply-migrations.sh --env=$DEPLOY_ENV"
-fi
+echo "⊗ Per-database initial migrations are disabled."
+echo "  After this script records the resource lock, run the complete schema-first deployment:"
+echo "  authrim-setup deploy --env=$DEPLOY_ENV"
 
 # Save D1 IDs to lock.json
 echo ""
@@ -406,11 +387,10 @@ done
 echo ""
 echo "Next steps:"
 echo "  1. Verify D1 bindings in wrangler.${DEPLOY_ENV}.toml files"
-echo "  2. Run 'pnpm run deploy -- --env=$DEPLOY_ENV' to deploy"
+echo "  2. Run 'authrim-setup deploy --env=$DEPLOY_ENV' for schema-first initial deployment"
 echo ""
-echo "Useful commands:"
-echo "  • Run migrations: bash scripts/apply-migrations.sh --env=$DEPLOY_ENV"
-echo "  • Check status:   bash scripts/apply-migrations.sh --env=$DEPLOY_ENV --status"
+echo "Post-deployment maintenance commands:"
+echo "  • Check a role:   bash scripts/apply-migrations.sh --env=$DEPLOY_ENV --role=core --status"
 echo "  • List tables:    wrangler d1 execute ${D1_DATABASES[DB]} --remote --command=\"SELECT name FROM sqlite_master WHERE type='table';\""
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

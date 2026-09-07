@@ -5,10 +5,10 @@ import {
   buildEnvForTopology,
   createTenantSystemDiscoveryApp,
   expectDiscoveryConfig,
-  loadMatrixCsv,
   makeCommonHost,
   makeTenantRequest,
 } from './helpers';
+import { loadMatrixCsv } from './fixtures/matrix-loader';
 
 interface NegativeMatrixRow {
   case_id: string;
@@ -84,6 +84,63 @@ describe('tenant-system negative case matrix', () => {
     });
   });
 
-  it.todo('NEG-002 should reject or normalize non-disabled email policy without email_domain');
-  it.todo('NEG-003 should reject manual_only with email_domain or exclude email discovery');
+  it('NEG-002 denies exact-email discovery when the email method is absent', async () => {
+    const env = await buildEnvForTopology('D3_custom_subdomain');
+    const settings: LoginEntrySettings = {
+      'login-entry.mode': 'discovery_optional',
+      'login-entry.email_resolution_policy': 'exact_email_only',
+      'login-entry.selection_policy': 'select_if_multiple',
+      'login-entry.discovery_methods': '["tenant_code"]',
+      'login-entry.allow_manual_tenant_entry': true,
+      'login-entry.remember_last_tenant': true,
+      'login-entry.redirect_default_login_to_discovery': true,
+      'login-entry.require_common_discovery_before_login': true,
+      'login-entry.skip_discovery_if_only_one_tenant': false,
+      'login-entry.redirect_tenant_discover_to_common_entry': true,
+    };
+    await applyLoginEntryProfile(env, 'first', settings);
+
+    const response = await createTenantSystemDiscoveryApp('first').request(
+      makeTenantRequest(makeCommonHost('D3_custom_subdomain'), '/api/auth/discovery/email/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'user@example.com' }),
+      }),
+      {},
+      env
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: 'discovery_disabled' });
+  });
+
+  it('NEG-003 denies exact-email discovery when selection is manual-only', async () => {
+    const env = await buildEnvForTopology('D3_custom_subdomain');
+    const settings: LoginEntrySettings = {
+      'login-entry.mode': 'discovery_optional',
+      'login-entry.email_resolution_policy': 'exact_email_only',
+      'login-entry.selection_policy': 'manual_only',
+      'login-entry.discovery_methods': '["email_exact","tenant_code"]',
+      'login-entry.allow_manual_tenant_entry': true,
+      'login-entry.remember_last_tenant': true,
+      'login-entry.redirect_default_login_to_discovery': true,
+      'login-entry.require_common_discovery_before_login': true,
+      'login-entry.skip_discovery_if_only_one_tenant': false,
+      'login-entry.redirect_tenant_discover_to_common_entry': true,
+    };
+    await applyLoginEntryProfile(env, 'first', settings);
+
+    const response = await createTenantSystemDiscoveryApp('first').request(
+      makeTenantRequest(makeCommonHost('D3_custom_subdomain'), '/api/auth/discovery/email/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'user@example.com' }),
+      }),
+      {},
+      env
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: 'discovery_disabled' });
+  });
 });

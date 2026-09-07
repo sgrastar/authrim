@@ -1,14 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
-  mockCoreAdapter,
   mockIdentityAdapter,
   mockAdminAdapter,
   mockEnsureDatabaseAdapter,
   mockEnsureAdminDatabaseAdapter,
-  mockCreateObjectCatalogEntry,
-  mockResolveAuthCorePersistenceAdapterFromEnv,
-  mockResolveUserStoreRuntimeSourcesFromEnv,
+  mockStoreImmediateChunkedSensitiveDetailJson,
+  mockListEnvironmentTenantDefaultStores,
+  mockListExternalIdpPiiSourceShards,
   mockGetDefaultTenantId,
   mockIsMultiTenantEnabled,
   mockLogger,
@@ -19,9 +18,6 @@ const {
     error: vi.fn(),
   };
   return {
-    mockCoreAdapter: {
-      query: vi.fn(),
-    },
     mockIdentityAdapter: {
       query: vi.fn(),
     },
@@ -31,9 +27,9 @@ const {
     },
     mockEnsureDatabaseAdapter: vi.fn(),
     mockEnsureAdminDatabaseAdapter: vi.fn(),
-    mockCreateObjectCatalogEntry: vi.fn(),
-    mockResolveAuthCorePersistenceAdapterFromEnv: vi.fn(),
-    mockResolveUserStoreRuntimeSourcesFromEnv: vi.fn(),
+    mockStoreImmediateChunkedSensitiveDetailJson: vi.fn(),
+    mockListEnvironmentTenantDefaultStores: vi.fn(),
+    mockListExternalIdpPiiSourceShards: vi.fn(),
     mockGetDefaultTenantId: vi.fn(),
     mockIsMultiTenantEnabled: vi.fn(),
     mockLogger: logger,
@@ -41,7 +37,6 @@ const {
 });
 
 vi.mock('@authrim/ar-lib-core', () => ({
-  createObjectCatalogEntry: mockCreateObjectCatalogEntry,
   createLogger: () => ({
     module: () => mockLogger,
   }),
@@ -50,21 +45,29 @@ vi.mock('@authrim/ar-lib-core', () => ({
   getDefaultTenantId: mockGetDefaultTenantId,
   isMultiTenantEnabled: mockIsMultiTenantEnabled,
   isValidTenantIdentifier: (value: string) => /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(value),
-  resolveAuthCorePersistenceAdapterFromEnv: mockResolveAuthCorePersistenceAdapterFromEnv,
-  resolveUserStoreRuntimeSourcesFromEnv: mockResolveUserStoreRuntimeSourcesFromEnv,
+  listEnvironmentTenantDefaultStores: mockListEnvironmentTenantDefaultStores,
+  storeImmediateChunkedSensitiveDetailJson: mockStoreImmediateChunkedSensitiveDetailJson,
 }));
 
-import { refreshExpiringTokensForScheduledTenants } from '../services/token-refresh';
+import {
+  refreshExpiringTokensForScheduledTenants,
+  refreshExpiringTokensForTenant,
+  refreshExpiringTokensForTenantManual,
+} from '../services/token-refresh';
 import { resolveInternalTokenRefreshTenantId } from '../internal-token-refresh';
 
 const TOKEN_REFRESH_CONFIG_KEY = 'external_idp_token_refresh';
 const TOKEN_REFRESH_TENANT_CURSOR_KEY = 'external_idp_token_refresh:tenant_cursor';
+const TOKEN_REFRESH_PII_SHARD_CURSOR_KEY = 'external_idp_token_refresh:pii_shard_cursor:tenant-a';
 const VALID_ENCRYPTION_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+const VALID_OBJECT_ENCRYPTION_KEY =
+  'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789';
 
 function createSettingsKv(values: Record<string, string | null> = {}) {
   return {
     get: vi.fn(async (key: string) => values[key] ?? null),
     put: vi.fn(async () => undefined),
+    delete: vi.fn(async () => undefined),
   };
 }
 
@@ -73,26 +76,39 @@ function createEnv(settings = createSettingsKv()) {
     SETTINGS: settings,
     DB: {},
     RP_TOKEN_ENCRYPTION_KEY: VALID_ENCRYPTION_KEY,
+    EXTERNAL_IDP_ACCOUNT_PROVISIONER: {
+      listExternalIdpPiiSourceShards: mockListExternalIdpPiiSourceShards,
+    },
+    TDB_PII_001: {},
   } as never;
 }
 
 describe('scheduled bridge token refresh', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockCoreAdapter.query.mockReset();
     mockIdentityAdapter.query.mockReset().mockResolvedValue([]);
     mockAdminAdapter.query.mockReset().mockResolvedValue([]);
     mockAdminAdapter.execute.mockReset().mockResolvedValue({ rowsAffected: 1 });
     mockEnsureDatabaseAdapter.mockReset().mockReturnValue(mockIdentityAdapter);
     mockEnsureAdminDatabaseAdapter.mockReset().mockReturnValue(mockAdminAdapter);
-    mockCreateObjectCatalogEntry.mockReset().mockResolvedValue({
+    mockStoreImmediateChunkedSensitiveDetailJson.mockReset().mockResolvedValue({
       catalogId: 'catalog-1',
       publicArtifactId: 'oa_test',
+      objectKey: 'sensitive-details/v1/test.ndjson',
+      lineNumber: 0,
+      checksumSha256: 'a'.repeat(64),
+      totalBytes: 1,
+      queued: false,
     });
-    mockResolveAuthCorePersistenceAdapterFromEnv.mockReset().mockResolvedValue(mockCoreAdapter);
-    mockResolveUserStoreRuntimeSourcesFromEnv
-      .mockReset()
-      .mockResolvedValue({ coreDb: {}, piiDb: {} });
+    mockListEnvironmentTenantDefaultStores.mockReset().mockResolvedValue([]);
+    mockListExternalIdpPiiSourceShards.mockReset().mockResolvedValue([
+      {
+        shardId: 'pii-001',
+        bindingRef: 'TDB_PII_001',
+        residencyPartition: 'default',
+        routeGeneration: 1,
+      },
+    ]);
     mockGetDefaultTenantId.mockReset().mockReturnValue('default');
     mockIsMultiTenantEnabled.mockReset().mockImplementation((env) => !!env.BASE_DOMAIN);
   });
@@ -100,27 +116,24 @@ describe('scheduled bridge token refresh', () => {
   it('processes the next active tenant batch after the stored cursor', async () => {
     const settings = createSettingsKv({
       [TOKEN_REFRESH_CONFIG_KEY]: JSON.stringify({
+        enabled: true,
         scheduledTenantBatchSize: 2,
         batchSize: 7,
       }),
       [TOKEN_REFRESH_TENANT_CURSOR_KEY]: 'tenant-a',
     });
-    mockCoreAdapter.query.mockResolvedValue([{ id: 'tenant-b' }, { id: 'tenant-c' }]);
+    mockListEnvironmentTenantDefaultStores.mockResolvedValue([
+      { tenantId: 'tenant-b', store: {} },
+      { tenantId: 'tenant-c', store: {} },
+    ]);
 
     const result = await refreshExpiringTokensForScheduledTenants(createEnv(settings));
 
-    expect(mockCoreAdapter.query).toHaveBeenCalledWith(
-      "SELECT id FROM tenants WHERE lifecycle_state = 'active' AND id > ? ORDER BY id ASC LIMIT ?",
-      ['tenant-a', 2]
-    );
-    expect(mockResolveUserStoreRuntimeSourcesFromEnv).toHaveBeenCalledWith(
-      expect.anything(),
-      'tenant-b'
-    );
-    expect(mockResolveUserStoreRuntimeSourcesFromEnv).toHaveBeenCalledWith(
-      expect.anything(),
-      'tenant-c'
-    );
+    expect(mockListEnvironmentTenantDefaultStores).toHaveBeenCalledWith(expect.anything(), {
+      limit: 2,
+      afterTenantId: 'tenant-a',
+    });
+    expect(mockListExternalIdpPiiSourceShards).toHaveBeenCalledTimes(2);
     expect(mockIdentityAdapter.query).toHaveBeenCalledWith(expect.any(String), [
       'tenant-b',
       expect.any(Number),
@@ -145,23 +158,25 @@ describe('scheduled bridge token refresh', () => {
 
   it('wraps to the first active tenant when the cursor reached the end', async () => {
     const settings = createSettingsKv({
-      [TOKEN_REFRESH_CONFIG_KEY]: JSON.stringify({ scheduledTenantBatchSize: 2 }),
+      [TOKEN_REFRESH_CONFIG_KEY]: JSON.stringify({
+        enabled: true,
+        scheduledTenantBatchSize: 2,
+      }),
       [TOKEN_REFRESH_TENANT_CURSOR_KEY]: 'tenant-z',
     });
-    mockCoreAdapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 'tenant-a' }]);
+    mockListEnvironmentTenantDefaultStores
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ tenantId: 'tenant-a', store: {} }]);
 
     const result = await refreshExpiringTokensForScheduledTenants(createEnv(settings));
 
-    expect(mockCoreAdapter.query).toHaveBeenNthCalledWith(
-      1,
-      "SELECT id FROM tenants WHERE lifecycle_state = 'active' AND id > ? ORDER BY id ASC LIMIT ?",
-      ['tenant-z', 2]
-    );
-    expect(mockCoreAdapter.query).toHaveBeenNthCalledWith(
-      2,
-      "SELECT id FROM tenants WHERE lifecycle_state = 'active' ORDER BY id ASC LIMIT ?",
-      [2]
-    );
+    expect(mockListEnvironmentTenantDefaultStores).toHaveBeenNthCalledWith(1, expect.anything(), {
+      limit: 2,
+      afterTenantId: 'tenant-z',
+    });
+    expect(mockListEnvironmentTenantDefaultStores).toHaveBeenNthCalledWith(2, expect.anything(), {
+      limit: 2,
+    });
     expect(settings.put).toHaveBeenCalledWith(TOKEN_REFRESH_TENANT_CURSOR_KEY, 'tenant-a');
     expect(result.selectedTenants).toEqual(['tenant-a']);
   });
@@ -173,8 +188,8 @@ describe('scheduled bridge token refresh', () => {
 
     const result = await refreshExpiringTokensForScheduledTenants(createEnv(settings));
 
-    expect(mockResolveAuthCorePersistenceAdapterFromEnv).not.toHaveBeenCalled();
-    expect(mockResolveUserStoreRuntimeSourcesFromEnv).not.toHaveBeenCalled();
+    expect(mockListEnvironmentTenantDefaultStores).not.toHaveBeenCalled();
+    expect(mockListExternalIdpPiiSourceShards).not.toHaveBeenCalled();
     expect(settings.put).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       runId: null,
@@ -188,78 +203,240 @@ describe('scheduled bridge token refresh', () => {
     });
   });
 
-  it('uses production-safe default batch sizes for scheduled tenant scanning', async () => {
+  it('keeps proactive scheduled scanning disabled by default', async () => {
     const settings = createSettingsKv();
-    mockCoreAdapter.query.mockResolvedValue([{ id: 'tenant-a' }]);
 
-    await refreshExpiringTokensForScheduledTenants(createEnv(settings));
+    const result = await refreshExpiringTokensForScheduledTenants(createEnv(settings));
 
-    expect(mockCoreAdapter.query).toHaveBeenCalledWith(
-      "SELECT id FROM tenants WHERE lifecycle_state = 'active' ORDER BY id ASC LIMIT ?",
-      [100]
-    );
-    expect(mockIdentityAdapter.query).toHaveBeenCalledWith(expect.any(String), [
-      'tenant-a',
-      expect.any(Number),
-      expect.any(Number),
-      100,
-    ]);
+    expect(mockListEnvironmentTenantDefaultStores).not.toHaveBeenCalled();
+    expect(mockIdentityAdapter.query).not.toHaveBeenCalled();
+    expect(result.selectedTenants).toEqual([]);
   });
 
-  it('falls back to the deployment default tenant when SETTINGS is unavailable', async () => {
-    mockEnsureAdminDatabaseAdapter.mockReturnValue(null);
+  it('allows an explicit manual tenant run while scheduled scanning is disabled', async () => {
+    const settings = createSettingsKv({
+      [TOKEN_REFRESH_CONFIG_KEY]: JSON.stringify({ enabled: false }),
+    });
 
-    const result = await refreshExpiringTokensForScheduledTenants({
-      DB: {},
-      RP_TOKEN_ENCRYPTION_KEY: VALID_ENCRYPTION_KEY,
-    } as never);
+    const result = await refreshExpiringTokensForTenantManual(createEnv(settings), 'tenant-a');
 
-    expect(mockResolveAuthCorePersistenceAdapterFromEnv).not.toHaveBeenCalled();
-    expect(mockResolveUserStoreRuntimeSourcesFromEnv).toHaveBeenCalledWith(
-      expect.anything(),
-      'default'
-    );
-    expect(mockLogger.warn).toHaveBeenCalledWith(
-      'Token refresh tenant cursor unavailable; falling back to default tenant'
-    );
-    expect(result.selectedTenants).toEqual(['default']);
+    expect(mockListExternalIdpPiiSourceShards).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      tenantId: 'tenant-a',
+      tokensRefreshed: 0,
+      status: 'completed',
+    });
   });
 
   it('keeps scheduled refresh working when run storage is unavailable', async () => {
     mockEnsureAdminDatabaseAdapter.mockReturnValue(null);
-    mockCoreAdapter.query.mockResolvedValue([{ id: 'tenant-a' }]);
+    mockListEnvironmentTenantDefaultStores.mockResolvedValue([{ tenantId: 'tenant-a', store: {} }]);
 
-    const result = await refreshExpiringTokensForScheduledTenants(createEnv());
+    const settings = createSettingsKv({
+      [TOKEN_REFRESH_CONFIG_KEY]: JSON.stringify({ enabled: true }),
+    });
+    const result = await refreshExpiringTokensForScheduledTenants(createEnv(settings));
 
     expect(result.runId).toBeNull();
     expect(result.selectedTenants).toEqual(['tenant-a']);
-    expect(mockResolveUserStoreRuntimeSourcesFromEnv).toHaveBeenCalledWith(
-      expect.anything(),
-      'tenant-a'
+    expect(mockListExternalIdpPiiSourceShards).toHaveBeenCalledOnce();
+  });
+
+  it('stores scheduled run details through the encrypted sensitive-detail catalog path', async () => {
+    const settings = createSettingsKv({
+      [TOKEN_REFRESH_CONFIG_KEY]: JSON.stringify({ enabled: true }),
+    });
+    mockListEnvironmentTenantDefaultStores.mockResolvedValue([{ tenantId: 'tenant-a', store: {} }]);
+    const sensitiveDetails = { put: vi.fn() };
+    const env = {
+      ...(createEnv(settings) as unknown as Record<string, unknown>),
+      DB_ADMIN: {},
+      SENSITIVE_DETAILS: sensitiveDetails,
+      OBJECT_ENCRYPTION_ROOT_KEY: VALID_OBJECT_ENCRYPTION_KEY,
+    } as never;
+
+    await refreshExpiringTokensForScheduledTenants(env);
+
+    expect(mockStoreImmediateChunkedSensitiveDetailJson).toHaveBeenCalledWith(
+      expect.objectContaining({
+        adapter: mockAdminAdapter,
+        bucket: sensitiveDetails,
+        rootKeyHex: VALID_OBJECT_ENCRYPTION_KEY,
+        tenantId: 'default',
+        objectClass: 'operational_log_detail',
+        contentType: 'application/json',
+        surface: 'external_token_refresh',
+      })
+    );
+    expect(mockAdminAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('detail_object_catalog_id = ?'),
+      expect.arrayContaining(['catalog-1'])
+    );
+  });
+
+  it('never writes token refresh details when the object encryption key is missing', async () => {
+    const settings = createSettingsKv({
+      [TOKEN_REFRESH_CONFIG_KEY]: JSON.stringify({ enabled: true }),
+    });
+    mockListEnvironmentTenantDefaultStores.mockResolvedValue([{ tenantId: 'tenant-a', store: {} }]);
+    const sensitiveDetails = { put: vi.fn() };
+
+    await refreshExpiringTokensForScheduledTenants({
+      ...(createEnv(settings) as unknown as Record<string, unknown>),
+      DB_ADMIN: {},
+      SENSITIVE_DETAILS: sensitiveDetails,
+    } as never);
+
+    expect(sensitiveDetails.put).not.toHaveBeenCalled();
+    expect(mockStoreImmediateChunkedSensitiveDetailJson).not.toHaveBeenCalled();
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      'Token refresh detail artifact unavailable: encrypted object storage is not configured'
     );
   });
 
   it('caps configured tenant and token refresh batch sizes', async () => {
     const settings = createSettingsKv({
       [TOKEN_REFRESH_CONFIG_KEY]: JSON.stringify({
+        enabled: true,
         scheduledTenantBatchSize: 9999,
         batchSize: 9999,
       }),
     });
-    mockCoreAdapter.query.mockResolvedValue([{ id: 'tenant-a' }]);
+    mockListEnvironmentTenantDefaultStores.mockResolvedValue([{ tenantId: 'tenant-a', store: {} }]);
 
     await refreshExpiringTokensForScheduledTenants(createEnv(settings));
 
-    expect(mockCoreAdapter.query).toHaveBeenCalledWith(
-      "SELECT id FROM tenants WHERE lifecycle_state = 'active' ORDER BY id ASC LIMIT ?",
-      [100]
-    );
+    expect(mockListEnvironmentTenantDefaultStores).toHaveBeenCalledWith(expect.anything(), {
+      limit: 100,
+    });
     expect(mockIdentityAdapter.query).toHaveBeenCalledWith(expect.any(String), [
       'tenant-a',
       expect.any(Number),
       expect.any(Number),
       1000,
     ]);
+  });
+
+  it('walks routed PII shards through the narrow Management inventory RPC', async () => {
+    const settings = createSettingsKv({
+      [TOKEN_REFRESH_CONFIG_KEY]: JSON.stringify({ enabled: true }),
+      [TOKEN_REFRESH_PII_SHARD_CURSOR_KEY]: 'pii-000',
+    });
+    const shards = Array.from({ length: 4 }, (_, index) => ({
+      shardId: `pii-00${index + 1}`,
+      bindingRef: `TDB_PII_00${index + 1}`,
+      residencyPartition: 'default',
+      routeGeneration: 1,
+    }));
+    const listExternalIdpPiiSourceShards = vi.fn().mockResolvedValue(shards);
+    mockIdentityAdapter.query.mockResolvedValue([]);
+    const env = {
+      SETTINGS: settings,
+      DB: {},
+      RP_TOKEN_ENCRYPTION_KEY: VALID_ENCRYPTION_KEY,
+      EXTERNAL_IDP_ACCOUNT_PROVISIONER: { listExternalIdpPiiSourceShards },
+      TDB_PII_001: {},
+      TDB_PII_002: {},
+      TDB_PII_003: {},
+      TDB_PII_004: {},
+    } as never;
+
+    await expect(refreshExpiringTokensForTenant(env, 'tenant-a')).resolves.toBe(0);
+
+    expect(listExternalIdpPiiSourceShards).toHaveBeenCalledWith({
+      schemaVersion: 1,
+      afterShardId: 'pii-000',
+      limit: 4,
+    });
+    expect(mockIdentityAdapter.query).toHaveBeenCalledTimes(4);
+    expect(mockIdentityAdapter.query).toHaveBeenCalledWith(
+      expect.stringContaining("provisioning_state = 'active'"),
+      ['tenant-a', expect.any(Number), expect.any(Number), 100]
+    );
+    expect(settings.put).toHaveBeenCalledWith(TOKEN_REFRESH_PII_SHARD_CURSOR_KEY, 'pii-004');
+  });
+
+  it('allows a larger bounded PII shard page and caps it at 32', async () => {
+    const settings = createSettingsKv({
+      [TOKEN_REFRESH_CONFIG_KEY]: JSON.stringify({ enabled: true, piiShardPageSize: 999 }),
+    });
+    const listExternalIdpPiiSourceShards = vi.fn().mockResolvedValue([]);
+    const env = {
+      SETTINGS: settings,
+      DB: {},
+      RP_TOKEN_ENCRYPTION_KEY: VALID_ENCRYPTION_KEY,
+      EXTERNAL_IDP_ACCOUNT_PROVISIONER: { listExternalIdpPiiSourceShards },
+    } as never;
+
+    await expect(refreshExpiringTokensForTenant(env, 'tenant-a')).rejects.toThrow(
+      'external_idp_token_refresh_shard_inventory_empty'
+    );
+    expect(listExternalIdpPiiSourceShards).toHaveBeenCalledWith({
+      schemaVersion: 1,
+      afterShardId: null,
+      limit: 32,
+    });
+  });
+
+  it('fails closed when a routed PII shard binding is unavailable', async () => {
+    const settings = createSettingsKv({
+      [TOKEN_REFRESH_CONFIG_KEY]: JSON.stringify({ enabled: true }),
+    });
+    const env = {
+      SETTINGS: settings,
+      DB: {},
+      RP_TOKEN_ENCRYPTION_KEY: VALID_ENCRYPTION_KEY,
+      EXTERNAL_IDP_ACCOUNT_PROVISIONER: {
+        listExternalIdpPiiSourceShards: vi.fn().mockResolvedValue([
+          {
+            shardId: 'pii-001',
+            bindingRef: 'TDB_PII_MISSING',
+            residencyPartition: 'default',
+            routeGeneration: 1,
+          },
+        ]),
+      },
+    } as never;
+    mockEnsureDatabaseAdapter.mockImplementation((source) => {
+      if (!source) throw new Error('database source missing');
+      return mockIdentityAdapter;
+    });
+
+    await expect(refreshExpiringTokensForTenant(env, 'tenant-a')).rejects.toThrow(
+      'database source missing'
+    );
+    expect(settings.delete).not.toHaveBeenCalled();
+  });
+
+  it('does not advance the routed shard cursor when a shard query fails', async () => {
+    const settings = createSettingsKv({
+      [TOKEN_REFRESH_CONFIG_KEY]: JSON.stringify({ enabled: true }),
+      [TOKEN_REFRESH_PII_SHARD_CURSOR_KEY]: 'pii-000',
+    });
+    mockIdentityAdapter.query.mockRejectedValueOnce(new Error('d1 unavailable'));
+    const env = {
+      SETTINGS: settings,
+      DB: {},
+      RP_TOKEN_ENCRYPTION_KEY: VALID_ENCRYPTION_KEY,
+      EXTERNAL_IDP_ACCOUNT_PROVISIONER: {
+        listExternalIdpPiiSourceShards: vi.fn().mockResolvedValue([
+          {
+            shardId: 'pii-001',
+            bindingRef: 'TDB_PII_001',
+            residencyPartition: 'default',
+            routeGeneration: 1,
+          },
+        ]),
+      },
+      TDB_PII_001: {},
+    } as never;
+
+    await expect(refreshExpiringTokensForTenant(env, 'tenant-a')).rejects.toThrow('d1 unavailable');
+    expect(settings.put).not.toHaveBeenCalledWith(
+      TOKEN_REFRESH_PII_SHARD_CURSOR_KEY,
+      expect.any(String)
+    );
+    expect(settings.delete).not.toHaveBeenCalled();
   });
 });
 

@@ -5,23 +5,26 @@ import {
   LOGIN_ENTRY_DEFAULTS,
   LOGIN_UI_DEFAULTS,
   TENANT_DISCOVERY_UI_DEFAULTS,
+  createLookupAliasIndex,
   ensureDatabaseAdapter,
   getDefaultTenantId,
   getUIConfig,
-  resolveAuthCorePersistenceAdapterFromEnv,
-  resolveUserStoreRuntimeSourcesFromEnv,
-  resolveTenantCandidatesFromEmailDomain,
+  loadVerifiedLookupBucketAssignmentProvider,
+  LookupRouteResolver,
+  resolveTenantDatabaseSourceFromRegistry,
   usesNakedDomainIssuer,
   validateTenantRequestBinding,
-  CanonicalRuntimeUserStore,
+  type LookupAliasKind,
+  type ResolvedLookupAlias,
 } from '@authrim/ar-lib-core';
 import { getLogger } from '@authrim/ar-lib-core';
 import { SignJWT, jwtVerify } from 'jose';
 import { getSingleTenantId, isSingleTenantMode } from './single-tenant-guard';
 import { getCanonicalTenantBaseUrlAsync } from './request-issuer';
+import { DiscoveryEmailOtpService, type DiscoveryEmailOtpTimingName } from './discovery-email-otp';
 
 const DISCOVERY_METHODS = [
-  'email_domain',
+  'email_exact',
   'tenant_code',
   'tenant_slug',
   'wayf',
@@ -42,12 +45,116 @@ const DISCOVERY_GRANT_VERIFY_SCHEMA = z.object({
   grant: z.string().min(1).max(8192),
   current_url: z.string().url().max(2048),
 });
+const DISCOVERY_EMAIL_START_SCHEMA = z.object({ email: z.string().min(3).max(320) });
+const DISCOVERY_EMAIL_VERIFY_SCHEMA = z.object({
+  challenge_id: z.string().min(1).max(128),
+  code: z.string().regex(/^\d{6}$/u),
+});
 const DISCOVERY_GRANT_ISSUER = 'authrim:discovery-grant';
 const DISCOVERY_GRANT_AUDIENCE = 'authrim:tenant-login';
 const DISCOVERY_GRANT_TTL_SECONDS = 300;
+const TENANT_CANDIDATE_PRESENTATION_CACHE_TTL_MS = 1_000;
+const MAX_TENANT_CANDIDATE_PRESENTATION_CACHE_ENTRIES = 1_000;
+const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
+const PHASE0C_DIAGNOSTIC_SESSION = /^phase0c-[0-9]{14}-[a-f0-9]{6}$/u;
+const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
+
+type DiscoveryDiagnosticTimingName =
+  | 'discovery_settings'
+  | DiscoveryEmailOtpTimingName
+  | 'tenant_registry'
+  | 'tenant_primary_recheck'
+  | 'candidate_build'
+  | 'handler_total';
+
+interface DiscoveryDiagnosticSpan {
+  name: DiscoveryDiagnosticTimingName;
+  durationMs: number;
+}
+
+interface DiscoveryDiagnosticTiming {
+  enabled: boolean;
+  sessionId: string | null;
+  startedAt: number;
+  spans: DiscoveryDiagnosticSpan[];
+}
+
+function diagnosticFlagEnabled(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+}
+
+function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/[^A-Za-z0-9._:-]/gu, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+}
+
+function roundDiagnosticDuration(durationMs: number): number {
+  return Math.round(Math.max(0, durationMs) * 100) / 100;
+}
+
+function createDiscoveryDiagnosticTiming(c: Context<{ Bindings: Env }>): DiscoveryDiagnosticTiming {
+  const sessionId = sanitizeDiagnosticSessionId(c.req.header(DIAGNOSTIC_SESSION_ID_HEADER));
+  const explicitlyEnabled = diagnosticFlagEnabled(c.env.AUTHRIM_DIAGNOSTIC_TIMING_ENABLED);
+  const phase0cTestProbe =
+    c.env.AUTHRIM_ENVIRONMENT_NAME === 'test' &&
+    sessionId !== null &&
+    PHASE0C_DIAGNOSTIC_SESSION.test(sessionId);
+  const enabled = sessionId !== null && (explicitlyEnabled || phase0cTestProbe);
+  return {
+    enabled,
+    sessionId: enabled ? sessionId : null,
+    startedAt: enabled ? performance.now() : 0,
+    spans: [],
+  };
+}
+
+function recordDiscoveryDiagnosticTiming(
+  timing: DiscoveryDiagnosticTiming,
+  name: DiscoveryDiagnosticTimingName,
+  durationMs: number
+): void {
+  if (!timing.enabled) return;
+  timing.spans.push({ name, durationMs: roundDiagnosticDuration(durationMs) });
+}
+
+async function measureDiscoveryDiagnosticTiming<T>(
+  timing: DiscoveryDiagnosticTiming,
+  name: DiscoveryDiagnosticTimingName,
+  operation: () => Promise<T>
+): Promise<T> {
+  if (!timing.enabled) return operation();
+  const startedAt = performance.now();
+  try {
+    return await operation();
+  } finally {
+    recordDiscoveryDiagnosticTiming(timing, name, performance.now() - startedAt);
+  }
+}
+
+function attachDiscoveryDiagnosticTiming(
+  response: Response,
+  timing: DiscoveryDiagnosticTiming
+): Response {
+  if (!timing.enabled || !timing.sessionId) return response;
+  recordDiscoveryDiagnosticTiming(timing, 'handler_total', performance.now() - timing.startedAt);
+  const headers = new Headers(response.headers);
+  const value = timing.spans
+    .map((span) => `${span.name};dur=${span.durationMs.toFixed(2)}`)
+    .join(', ');
+  const existing = headers.get('Server-Timing');
+  headers.set('Server-Timing', existing ? `${existing}, ${value}` : value);
+  headers.set('X-Authrim-Diagnostic-Session-Id', timing.sessionId);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
 
 type DiscoverySource =
-  | 'email_domain'
+  | 'email_exact'
   | 'tenant_code'
   | 'tenant_slug'
   | 'wayf'
@@ -118,13 +225,158 @@ interface DiscoveryConfigResponse {
   default_candidate?: DiscoveryCandidate;
 }
 
-interface ClientLookupRow {
-  client_id: string;
-  tenant_id: string;
+const MAX_DISCOVERY_TENANTS = 64;
+const DISCOVERY_TENANT_READ_CONCURRENCY = 4;
+
+async function resolveTenantDefaultStore(env: Env, tenantId: string) {
+  return resolveTenantDatabaseSourceFromRegistry(env, {
+    tenantId,
+    role: 'tenant_core',
+    shardGroup: 'default',
+    shardIndex: 0,
+  });
 }
 
-async function getDiscoveryCoreAdapter(env: Env) {
-  return resolveAuthCorePersistenceAdapterFromEnv(env, 'discovery-core');
+async function queryActiveTenantFromStore(
+  tenantId: string,
+  source: Awaited<ReturnType<typeof resolveTenantDefaultStore>>['source']
+): Promise<TenantLookupRow | null> {
+  return ensureDatabaseAdapter(source, 'tenant-discovery-default').queryOne<TenantLookupRow>(
+    "SELECT id, tenant_code, name, lifecycle_state FROM tenants WHERE id = ? AND lifecycle_state = 'active'",
+    [tenantId]
+  );
+}
+
+async function resolveTenantAliasFromLookup(
+  env: Env,
+  aliasKind: LookupAliasKind,
+  value: string
+): Promise<TenantLookupRow | null> {
+  if (
+    !env.AUTHRIM_ENVIRONMENT_NAME ||
+    !env.TENANT_RUNTIME_REGISTRY ||
+    !env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS
+  ) {
+    throw new Error('tenant_alias_lookup_unavailable');
+  }
+  const index = await createLookupAliasIndex(aliasKind, value);
+  const assignments = await loadVerifiedLookupBucketAssignmentProvider({
+    store: env.TENANT_RUNTIME_REGISTRY,
+    environmentId: env.AUTHRIM_ENVIRONMENT_NAME,
+    publicJwks: env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS,
+  });
+  const alias = await new LookupRouteResolver(
+    env as unknown as Record<string, unknown>,
+    assignments
+  ).resolveAlias({ index });
+  if (!alias) return null;
+
+  const store = await resolveTenantDefaultStore(env, alias.tenantId);
+  const target = alias.routeProjection.target;
+  if (
+    target.bindingRef !== store.bindingRef ||
+    target.shardId !== store.shardId ||
+    target.residencyPartition !== store.residencyPartition ||
+    alias.routeProjection.residencyPolicyId !== store.residencyPolicyId ||
+    target.requiredBindingRouteGeneration !== store.bindingRouteGeneration ||
+    alias.routeProjection.tenantRouteGeneration !== store.bindingRouteGeneration
+  ) {
+    throw new Error('tenant_alias_route_revalidation_failed');
+  }
+  const tenant = await queryActiveTenantFromStore(alias.tenantId, store.source);
+  const normalizedValue = value.trim().toLowerCase();
+  const destinationAlias = aliasKind === 'tenant_code' ? tenant?.tenant_code : tenant?.id;
+  if (
+    !tenant ||
+    tenant.id !== alias.tenantId ||
+    destinationAlias?.trim().toLowerCase() !== normalizedValue
+  ) {
+    throw new Error('tenant_alias_destination_revalidation_failed');
+  }
+  return tenant;
+}
+
+async function resolveDiscoveryAliasesFromLookup(
+  env: Env,
+  aliasKind: Extract<LookupAliasKind, 'environment_tenant' | 'client_id'>,
+  value: string
+) {
+  if (
+    !env.AUTHRIM_ENVIRONMENT_NAME ||
+    !env.TENANT_RUNTIME_REGISTRY ||
+    !env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS
+  ) {
+    throw new Error('tenant_alias_lookup_unavailable');
+  }
+  const index = await createLookupAliasIndex(aliasKind, value);
+  const assignments = await loadVerifiedLookupBucketAssignmentProvider({
+    store: env.TENANT_RUNTIME_REGISTRY,
+    environmentId: env.AUTHRIM_ENVIRONMENT_NAME,
+    publicJwks: env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS,
+  });
+  return new LookupRouteResolver(
+    env as unknown as Record<string, unknown>,
+    assignments
+  ).resolveAliases({ index, maximumResults: MAX_DISCOVERY_TENANTS });
+}
+
+async function resolveUniqueDiscoveryAliasFromLookup(
+  env: Env,
+  aliasKind: Extract<LookupAliasKind, 'invitation_token'>,
+  value: string
+) {
+  if (
+    !env.AUTHRIM_ENVIRONMENT_NAME ||
+    !env.TENANT_RUNTIME_REGISTRY ||
+    !env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS
+  ) {
+    throw new Error('tenant_alias_lookup_unavailable');
+  }
+  const index = await createLookupAliasIndex(aliasKind, value);
+  const assignments = await loadVerifiedLookupBucketAssignmentProvider({
+    store: env.TENANT_RUNTIME_REGISTRY,
+    environmentId: env.AUTHRIM_ENVIRONMENT_NAME,
+    publicJwks: env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS,
+  });
+  return new LookupRouteResolver(
+    env as unknown as Record<string, unknown>,
+    assignments
+  ).resolveAlias({ index });
+}
+
+async function mapDiscoveryTenantsBounded<T, R>(
+  values: readonly T[],
+  operation: (value: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(DISCOVERY_TENANT_READ_CONCURRENCY, values.length) }, async () => {
+      while (cursor < values.length) {
+        const index = cursor++;
+        results[index] = await operation(values[index]!);
+      }
+    })
+  );
+  return results;
+}
+
+function assertDynamicAliasRouteNotAhead(
+  alias: ResolvedLookupAlias,
+  store: Awaited<ReturnType<typeof resolveTenantDefaultStore>>
+): void {
+  const projection = alias.routeProjection;
+  if (
+    projection.tenantRouteGeneration > store.bindingRouteGeneration ||
+    (projection.tenantRouteGeneration === store.bindingRouteGeneration &&
+      (projection.residencyPolicyId !== store.residencyPolicyId ||
+        projection.target.residencyPartition !== store.residencyPartition ||
+        projection.target.shardId !== store.shardId ||
+        projection.target.bindingRef !== store.bindingRef ||
+        projection.target.requiredBindingRouteGeneration !== store.bindingRouteGeneration))
+  ) {
+    throw new Error('tenant_alias_route_revalidation_failed');
+  }
 }
 
 type DiscoveryMethod = DiscoveryConfigResponse['config']['discovery_methods'][number];
@@ -156,12 +408,12 @@ async function readSettingsRecord(
 }
 
 function normalizeDiscoveryMethods(raw: string | undefined): DiscoveryMethod[] {
-  if (!raw) return ['email_domain', 'tenant_code', 'tenant_slug'];
+  if (!raw) return ['email_exact', 'tenant_code', 'tenant_slug'];
 
   try {
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) {
-      return ['email_domain', 'tenant_code', 'tenant_slug'];
+      return ['email_exact', 'tenant_code', 'tenant_slug'];
     }
 
     return parsed.filter(
@@ -169,7 +421,7 @@ function normalizeDiscoveryMethods(raw: string | undefined): DiscoveryMethod[] {
         typeof value === 'string' && DISCOVERY_METHODS.includes(value)
     );
   } catch {
-    return ['email_domain', 'tenant_code', 'tenant_slug'];
+    return ['email_exact', 'tenant_code', 'tenant_slug'];
   }
 }
 
@@ -199,7 +451,7 @@ async function getDiscoverySettings(
       | undefined) ?? LOGIN_ENTRY_DEFAULTS['login-entry.email_resolution_policy'];
   const discoveryMethods = normalizeDiscoveryMethods(
     stored?.['login-entry.discovery_methods'] as string | undefined
-  ).filter((method) => emailResolutionPolicy !== 'disabled' || method !== 'email_domain');
+  ).filter((method) => emailResolutionPolicy !== 'disabled' || method !== 'email_exact');
 
   return {
     tenant_id: scope.type === 'tenant' ? scope.id : getDefaultTenantId(env),
@@ -316,12 +568,8 @@ async function getCommonDiscoverUrl(env: Env): Promise<string | null> {
   return null;
 }
 
-function getDiscoveryGrantSecret(env: Env): string | null {
-  return env.KEY_MANAGER_SECRET || env.ADMIN_API_SECRET || env.OTP_HMAC_SECRET || null;
-}
-
 async function getDiscoveryGrantKey(env: Env): Promise<Uint8Array> {
-  const secret = getDiscoveryGrantSecret(env);
+  const secret = env.OTP_HMAC_SECRET;
   if (!secret) {
     throw new Error('Discovery grant secret is not configured');
   }
@@ -354,7 +602,7 @@ async function resolveGrantTargetLoginUrl(
     loginHint?: string;
   }
 ): Promise<string> {
-  const fallback = `${await getCanonicalTenantBaseUrlAsync(env, tenantId)}/login`;
+  const fallback = await resolveTenantLoginUrl(env, tenantId);
   if (!options.returnTo || !options.expectedTenantId || options.expectedTenantId !== tenantId) {
     return appendLoginHint(fallback, options.loginHint);
   }
@@ -382,6 +630,25 @@ async function resolveGrantTargetLoginUrl(
   return appendLoginHint(bindingAllowed ? parsedReturnTo.toString() : fallback, options.loginHint);
 }
 
+async function resolveTenantLoginUrl(env: Env, tenantId: string): Promise<string> {
+  const canonicalLoginUrl = `${await getCanonicalTenantBaseUrlAsync(env, tenantId)}/login`;
+  if (!isSingleTenantMode(env) || env.LOGIN_UI_EXECUTION_HOST_MODE !== 'dedicated') {
+    return canonicalLoginUrl;
+  }
+
+  const uiConfig = await getUIConfig(env).catch(() => null);
+  const uiBaseUrl = uiConfig?.baseUrl || env.UI_URL;
+  if (!uiBaseUrl) {
+    return canonicalLoginUrl;
+  }
+
+  try {
+    return new URL('/login', uiBaseUrl).toString();
+  } catch {
+    return canonicalLoginUrl;
+  }
+}
+
 function appendLoginHint(url: string, loginHint?: string): string {
   if (!loginHint) {
     return url;
@@ -393,34 +660,45 @@ function appendLoginHint(url: string, loginHint?: string): string {
 }
 
 async function getSingleActiveTenantCandidate(env: Env): Promise<DiscoveryCandidate | null> {
-  const adapter = await getDiscoveryCoreAdapter(env);
-  const tenants = await adapter.query<TenantLookupRow>(
-    `SELECT id, tenant_code, name, lifecycle_state
-     FROM tenants
-     WHERE lifecycle_state = 'active'
-     ORDER BY id ASC
-     LIMIT 2`,
-    []
-  );
+  const tenants = (
+    await mapDiscoveryTenantsBounded(
+      await resolveDiscoveryAliasesFromLookup(
+        env,
+        'environment_tenant',
+        env.AUTHRIM_ENVIRONMENT_NAME ?? ''
+      ),
+      async (alias) => {
+        const store = await resolveTenantDefaultStore(env, alias.tenantId);
+        return queryActiveTenantFromStore(alias.tenantId, store.source);
+      }
+    )
+  ).filter((tenant): tenant is TenantLookupRow => tenant !== null);
 
   if (tenants.length !== 1) {
     return null;
   }
 
-  return await buildCandidate(env, tenants[0], 'tenant_slug');
+  return buildCandidate(env, tenants[0], 'tenant_slug');
 }
 
 async function getActiveTenantWayfCandidates(env: Env): Promise<DiscoveryCandidate[]> {
-  const adapter = await getDiscoveryCoreAdapter(env);
-  const tenants = await adapter.query<TenantLookupRow>(
-    `SELECT id, tenant_code, name, lifecycle_state
-     FROM tenants
-     WHERE lifecycle_state = 'active'
-     ORDER BY name ASC, id ASC`,
-    []
-  );
+  const tenants = (
+    await mapDiscoveryTenantsBounded(
+      await resolveDiscoveryAliasesFromLookup(
+        env,
+        'environment_tenant',
+        env.AUTHRIM_ENVIRONMENT_NAME ?? ''
+      ),
+      async (alias) => {
+        const store = await resolveTenantDefaultStore(env, alias.tenantId);
+        return queryActiveTenantFromStore(alias.tenantId, store.source);
+      }
+    )
+  )
+    .filter((tenant): tenant is TenantLookupRow => tenant !== null)
+    .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
 
-  return Promise.all(tenants.map((tenant) => buildCandidate(env, tenant, 'wayf')));
+  return mapDiscoveryTenantsBounded(tenants, (tenant) => buildCandidate(env, tenant, 'wayf'));
 }
 
 function readSettingString(record: Record<string, unknown> | null, key: string): string | null {
@@ -596,10 +874,33 @@ async function getDiscoveryUiConfig(
 }
 
 async function getTenantRowById(env: Env, tenantId: string): Promise<TenantLookupRow | null> {
-  const adapter = await getDiscoveryCoreAdapter(env);
-  return adapter.queryOne<TenantLookupRow>(
-    "SELECT id, tenant_code, name, lifecycle_state FROM tenants WHERE id = ? AND lifecycle_state = 'active'",
-    [tenantId]
+  const store = await resolveTenantDefaultStore(env, tenantId);
+  const tenant = await queryActiveTenantFromStore(tenantId, store.source);
+  if (tenant && tenant.id !== tenantId) {
+    throw new Error('tenant_route_destination_revalidation_failed');
+  }
+  return tenant;
+}
+
+async function getTenantRowsByIdWithDiagnosticTiming(
+  env: Env,
+  tenantIds: string[],
+  timing: DiscoveryDiagnosticTiming
+): Promise<Array<TenantLookupRow | null>> {
+  const stores = await measureDiscoveryDiagnosticTiming(timing, 'tenant_registry', () =>
+    mapDiscoveryTenantsBounded(tenantIds, async (tenantId) => ({
+      tenantId,
+      store: await resolveTenantDefaultStore(env, tenantId),
+    }))
+  );
+  return measureDiscoveryDiagnosticTiming(timing, 'tenant_primary_recheck', () =>
+    mapDiscoveryTenantsBounded(stores, async ({ tenantId, store }) => {
+      const tenant = await queryActiveTenantFromStore(tenantId, store.source);
+      if (tenant && tenant.id !== tenantId) {
+        throw new Error('tenant_route_destination_revalidation_failed');
+      }
+      return tenant;
+    })
   );
 }
 
@@ -607,104 +908,136 @@ async function getTenantRowByTenantCode(
   env: Env,
   tenantCode: string
 ): Promise<TenantLookupRow | null> {
-  const adapter = await getDiscoveryCoreAdapter(env);
-  return adapter.queryOne<TenantLookupRow>(
-    "SELECT id, tenant_code, name, lifecycle_state FROM tenants WHERE tenant_code = ? AND lifecycle_state = 'active'",
-    [tenantCode]
-  );
+  return resolveTenantAliasFromLookup(env, 'tenant_code', tenantCode);
 }
 
-async function getTenantRowsByExactEmail(env: Env, email: string): Promise<TenantLookupRow[]> {
-  const coreAdapter = await getDiscoveryCoreAdapter(env);
+interface TenantCandidatePresentation {
+  brandName: string | null;
+  logoUrl: string | null;
+  loginUrl: string;
+}
 
-  try {
-    const activeTenants = await coreAdapter.query<TenantLookupRow>(
-      "SELECT id, tenant_code, name, lifecycle_state FROM tenants WHERE lifecycle_state = 'active' ORDER BY id ASC",
-      []
-    );
-    const matchedTenants = await Promise.all(
-      activeTenants.map(async (tenant) => {
-        const userStoreSources = await resolveUserStoreRuntimeSourcesFromEnv(env, tenant.id);
-        if (!userStoreSources.piiDb) {
-          return null;
-        }
+interface TenantCandidatePresentationCacheEntry {
+  value: TenantCandidatePresentation;
+  expiresAt: number;
+}
 
-        const piiAdapter = ensureDatabaseAdapter(
-          userStoreSources.piiDb,
-          `discovery-pii-${tenant.id}`
-        );
-        const userCoreAdapter = ensureDatabaseAdapter(
-          userStoreSources.coreDb,
-          `discovery-user-core-${tenant.id}`
-        );
-        const runtimeUsers = new CanonicalRuntimeUserStore({
-          coreAdapter: userCoreAdapter,
-          piiAdapter,
-          tenantId: tenant.id,
-        });
-        const activeUser = await runtimeUsers.findByEmail(email);
+const tenantCandidatePresentationCache = new Map<string, TenantCandidatePresentationCacheEntry>();
+let tenantCandidatePresentationScopeIds = new WeakMap<object, number>();
+let nextTenantCandidatePresentationScopeId = 1;
 
-        return activeUser ? tenant : null;
-      })
-    );
+export function clearTenantCandidatePresentationCacheForTest(): void {
+  tenantCandidatePresentationCache.clear();
+  tenantCandidatePresentationScopeIds = new WeakMap();
+  nextTenantCandidatePresentationScopeId = 1;
+}
 
-    const resolvedTenants = matchedTenants.filter(
-      (tenant): tenant is TenantLookupRow => tenant !== null
-    );
-    if (resolvedTenants.length === 0) {
-      return [];
-    }
+function cloneTenantCandidatePresentation(
+  value: TenantCandidatePresentation
+): TenantCandidatePresentation {
+  return { ...value };
+}
 
-    const uniqueTenantIds = new Set<string>();
-    return resolvedTenants.filter((tenant) => {
-      if (uniqueTenantIds.has(tenant.id)) {
-        return false;
-      }
-      uniqueTenantIds.add(tenant.id);
-      return true;
-    });
-  } catch {
-    return [];
+function cacheTenantCandidatePresentation(
+  cacheKey: string,
+  value: TenantCandidatePresentation,
+  now: number
+): void {
+  for (const [key, entry] of tenantCandidatePresentationCache) {
+    if (entry.expiresAt <= now) tenantCandidatePresentationCache.delete(key);
   }
+  while (tenantCandidatePresentationCache.size >= MAX_TENANT_CANDIDATE_PRESENTATION_CACHE_ENTRIES) {
+    const oldest = tenantCandidatePresentationCache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    tenantCandidatePresentationCache.delete(oldest);
+  }
+  tenantCandidatePresentationCache.set(cacheKey, {
+    value: cloneTenantCandidatePresentation(value),
+    expiresAt: now + TENANT_CANDIDATE_PRESENTATION_CACHE_TTL_MS,
+  });
 }
 
-async function getClientRowsByClientId(env: Env, clientId: string): Promise<ClientLookupRow[]> {
-  const adapter = await getDiscoveryCoreAdapter(env);
-  return adapter.query<ClientLookupRow>(
-    'SELECT client_id, tenant_id FROM oauth_clients WHERE client_id = ? ORDER BY tenant_id ASC',
-    [clientId]
-  );
+function tenantCandidatePresentationCacheKey(env: Env, tenantId: string): string {
+  const scopeId = (value: unknown): string => {
+    if (!value || (typeof value !== 'object' && typeof value !== 'function')) return '';
+    const scope = value as object;
+    let id = tenantCandidatePresentationScopeIds.get(scope);
+    if (!id) {
+      id = nextTenantCandidatePresentationScopeId;
+      nextTenantCandidatePresentationScopeId += 1;
+      tenantCandidatePresentationScopeIds.set(scope, id);
+    }
+    return String(id);
+  };
+  return [
+    env.AUTHRIM_ENVIRONMENT_NAME ?? '',
+    env.BASE_DOMAIN ?? '',
+    env.ISSUER_URL ?? '',
+    env.UI_URL ?? '',
+    env.LOGIN_UI_EXECUTION_HOST_MODE ?? '',
+    env.DEFAULT_TENANT_ID ?? '',
+    env.NAKED_DOMAIN_AS_ISSUER ?? '',
+    scopeId(env.SETTINGS),
+    scopeId(env.AUTHRIM_CONFIG),
+    scopeId(env.TENANT_RUNTIME_REGISTRY),
+    tenantId,
+  ].join('\0');
 }
 
-async function getTenantBranding(
+async function getTenantCandidatePresentation(
   env: Env,
-  tenant: TenantLookupRow
-): Promise<{ display_name: string; logo_url: string | null }> {
-  const loginUiKey = `settings:tenant:${tenant.id}:login-ui`;
-  const tenantKey = `settings:tenant:${tenant.id}:tenant`;
-  const [loginUiSettings, tenantSettingsFromSettings, tenantSettingsFromLegacy] = await Promise.all(
-    [
+  tenantId: string
+): Promise<TenantCandidatePresentation> {
+  const now = Date.now();
+  const cacheKey = tenantCandidatePresentationCacheKey(env, tenantId);
+  const cached = tenantCandidatePresentationCache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    tenantCandidatePresentationCache.delete(cacheKey);
+    tenantCandidatePresentationCache.set(cacheKey, cached);
+    return cloneTenantCandidatePresentation(cached.value);
+  }
+  if (cached) tenantCandidatePresentationCache.delete(cacheKey);
+
+  const loginUiKey = `settings:tenant:${tenantId}:login-ui`;
+  const tenantKey = `settings:tenant:${tenantId}:tenant`;
+  const [loginUiSettings, tenantSettingsFromSettings, tenantSettingsFromLegacy, loginUrl] =
+    await Promise.all([
       readSettingsRecord(env.SETTINGS, loginUiKey),
       readSettingsRecord(env.SETTINGS, tenantKey),
       readSettingsRecord(env.AUTHRIM_CONFIG, tenantKey),
-    ]
-  );
+      resolveTenantLoginUrl(env, tenantId),
+    ]);
   const tenantSettings = tenantSettingsFromSettings ?? tenantSettingsFromLegacy ?? {};
 
   const brandName = loginUiSettings?.['login-ui.brand_name'];
   const loginUiLogoUrl = loginUiSettings?.['login-ui.logo_url'];
   const tenantLogoUri = tenantSettings['tenant.logo_uri'];
 
-  return {
-    display_name:
-      typeof brandName === 'string' && brandName.trim().length > 0
-        ? brandName
-        : tenant.name || tenant.id,
-    logo_url:
+  const presentation = {
+    brandName: typeof brandName === 'string' && brandName.trim().length > 0 ? brandName : null,
+    logoUrl:
       (typeof loginUiLogoUrl === 'string' && loginUiLogoUrl.trim().length > 0
         ? loginUiLogoUrl
         : null) ||
       (typeof tenantLogoUri === 'string' && tenantLogoUri.trim().length > 0 ? tenantLogoUri : null),
+    loginUrl,
+  };
+  cacheTenantCandidatePresentation(cacheKey, presentation, now);
+  return presentation;
+}
+
+function buildCandidateFromPresentation(
+  tenant: TenantLookupRow,
+  source: DiscoverySource,
+  presentation: TenantCandidatePresentation
+): DiscoveryCandidate {
+  return {
+    tenant_id: tenant.id,
+    tenant_code: tenant.tenant_code,
+    display_name: (presentation.brandName ?? tenant.name) || tenant.id,
+    logo_url: presentation.logoUrl,
+    login_url: presentation.loginUrl,
+    source,
   };
 }
 
@@ -713,16 +1046,11 @@ async function buildCandidate(
   tenant: TenantLookupRow,
   source: DiscoverySource
 ): Promise<DiscoveryCandidate> {
-  const branding = await getTenantBranding(env, tenant);
-
-  return {
-    tenant_id: tenant.id,
-    tenant_code: tenant.tenant_code,
-    display_name: branding.display_name,
-    logo_url: branding.logo_url,
-    login_url: `${await getCanonicalTenantBaseUrlAsync(env, tenant.id)}/login`,
+  return buildCandidateFromPresentation(
+    tenant,
     source,
-  };
+    await getTenantCandidatePresentation(env, tenant.id)
+  );
 }
 
 function buildManualRequiredResponse(
@@ -749,58 +1077,15 @@ async function getSingleTenantCandidate(env: Env): Promise<DiscoveryCandidate | 
   return buildCandidate(env, tenant, 'tenant_slug');
 }
 
-async function resolveEmailDiscovery(
-  env: Env,
-  email: string,
-  policy: LoginEntrySettings['login-entry.email_resolution_policy']
-): Promise<Exclude<DiscoveryResponse, { result: 'not_found' | 'manual_required' }> | null> {
-  const exactEmailTenants = await getTenantRowsByExactEmail(env, email);
-  if (exactEmailTenants.length > 0) {
-    const exactEmailCandidates = await Promise.all(
-      exactEmailTenants.map((tenant) => buildCandidate(env, tenant, 'email_domain'))
-    );
-
-    if (exactEmailCandidates.length === 1) {
-      return { result: 'resolved', candidate: exactEmailCandidates[0] };
-    }
-
-    return { result: 'multiple', candidates: exactEmailCandidates };
-  }
-
-  if (policy !== 'exact_email_then_domain') {
-    return null;
-  }
-
-  const candidates = await resolveTenantCandidatesFromEmailDomain(
-    await getDiscoveryCoreAdapter(env),
-    email,
-    env
-  );
-  if (candidates.length === 0) {
-    return null;
-  }
-
-  const tenantRows = await Promise.all(
-    candidates.map((candidate) => getTenantRowById(env, candidate.tenant_id))
-  );
-  const resolvedCandidates = await Promise.all(
-    tenantRows
-      .filter((tenant): tenant is TenantLookupRow => !!tenant)
-      .map((tenant) => buildCandidate(env, tenant, 'email_domain'))
-  );
-
-  if (resolvedCandidates.length === 1) {
-    return { result: 'resolved', candidate: resolvedCandidates[0] };
-  }
-
-  return { result: 'multiple', candidates: resolvedCandidates };
-}
-
 async function resolveInvitationDiscovery(
   env: Env,
   token: string
 ): Promise<Extract<DiscoveryResponse, { result: 'resolved' }> | null> {
-  const adapter = await getDiscoveryCoreAdapter(env);
+  const alias = await resolveUniqueDiscoveryAliasFromLookup(env, 'invitation_token', token);
+  if (!alias) return null;
+  const store = await resolveTenantDefaultStore(env, alias.tenantId);
+  assertDynamicAliasRouteNotAhead(alias, store);
+  const adapter = ensureDatabaseAdapter(store.source, 'tenant-discovery-invitation');
   const now = Math.floor(Date.now() / 1000);
 
   const invitation = await adapter.queryOne<InvitationLookupRow>(
@@ -812,6 +1097,9 @@ async function resolveInvitationDiscovery(
 
   if (!invitation) {
     return null;
+  }
+  if (invitation.tenant_id !== alias.tenantId || invitation.token !== token) {
+    throw new Error('tenant_alias_destination_revalidation_failed');
   }
 
   if (invitation.max_uses !== -1 && invitation.use_count >= invitation.max_uses) {
@@ -846,25 +1134,9 @@ async function resolveDiscoveryRequest(
 
   switch (mode) {
     case 'email': {
-      if (
-        !settings.discovery_methods.includes('email_domain') ||
-        settings.email_resolution_policy === 'disabled'
-      ) {
-        return buildManualRequiredResponse(settings);
-      }
-
-      const resolved = await resolveEmailDiscovery(env, value, settings.email_resolution_policy);
-      if (resolved) {
-        return resolved;
-      }
-
-      if (settings.email_resolution_policy === 'exact_email_only') {
-        return buildNotFoundResponse('email_not_found');
-      }
-
-      return settings.allow_manual_tenant_entry
-        ? buildManualRequiredResponse(settings)
-        : buildNotFoundResponse('email_domain_not_found');
+      // Exact-email discovery is only available through the OTP start/verify endpoints.
+      // The legacy generic endpoint must never query membership data from a raw email.
+      return buildManualRequiredResponse(settings);
     }
 
     case 'tenant_code': {
@@ -925,17 +1197,26 @@ async function resolveDiscoveryRequest(
         return buildNotFoundResponse('app_hint_not_found');
       }
 
-      const clients = await getClientRowsByClientId(env, value);
-      if (clients.length === 0) {
+      const aliases = await resolveDiscoveryAliasesFromLookup(env, 'client_id', value);
+      if (aliases.length === 0) {
         return buildNotFoundResponse('app_hint_not_found');
       }
 
-      const candidates = await Promise.all(
-        clients.map(async (client) => {
-          const tenant = await getTenantRowById(env, client.tenant_id);
-          return tenant ? buildCandidate(env, tenant, 'app_hint') : null;
-        })
-      );
+      const candidates = await mapDiscoveryTenantsBounded(aliases, async (alias) => {
+        const store = await resolveTenantDefaultStore(env, alias.tenantId);
+        assertDynamicAliasRouteNotAhead(alias, store);
+        const adapter = ensureDatabaseAdapter(store.source, 'tenant-discovery-client');
+        const client = await adapter.queryOne<{ client_id: string; tenant_id: string }>(
+          'SELECT client_id, tenant_id FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+          [alias.tenantId, value]
+        );
+        if (!client) return null;
+        if (client.tenant_id !== alias.tenantId || client.client_id !== value) {
+          throw new Error('tenant_alias_destination_revalidation_failed');
+        }
+        const tenant = await queryActiveTenantFromStore(alias.tenantId, store.source);
+        return tenant ? buildCandidate(env, tenant, 'app_hint') : null;
+      });
       const resolvedCandidates = candidates.filter(
         (candidate): candidate is DiscoveryCandidate => candidate !== null
       );
@@ -1080,6 +1361,104 @@ export async function postDiscoveryHandler(c: Context<{ Bindings: Env }>) {
   } catch (error) {
     log.error('Failed to resolve discovery request', { error: String(error) });
     return c.json({ error: 'server_error', message: 'Failed to resolve discovery request' }, 500);
+  }
+}
+
+function discoveryClientIp(c: Context<{ Bindings: Env }>): string {
+  return (
+    c.req.header('CF-Connecting-IP') ||
+    c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+    'unknown'
+  );
+}
+
+function discoveryEmailUnavailable(c: Context<{ Bindings: Env }>) {
+  c.header('Cache-Control', 'no-store');
+  return c.json({ error: 'temporarily_unavailable' }, 503);
+}
+
+async function requireEmailExactDiscovery(c: Context<{ Bindings: Env }>): Promise<boolean> {
+  const commonEntryHost = await isCommonEntryHost(c);
+  const settings = await getDiscoverySettings(c.env, getDiscoverySettingsScope(c, commonEntryHost));
+  return (
+    settings.email_resolution_policy === 'exact_email_only' &&
+    settings.discovery_methods.includes('email_exact') &&
+    settings.selection_policy !== 'manual_only'
+  );
+}
+
+export async function postDiscoveryEmailStartHandler(c: Context<{ Bindings: Env }>) {
+  c.header('Cache-Control', 'no-store');
+  try {
+    if (!(await requireEmailExactDiscovery(c))) {
+      return c.json({ error: 'discovery_disabled' }, 403);
+    }
+    const parsed = DISCOVERY_EMAIL_START_SCHEMA.safeParse(await c.req.json<unknown>());
+    if (!parsed.success) return c.json({ error: 'invalid_request' }, 400);
+    const result = await new DiscoveryEmailOtpService(c.env).start({
+      email: parsed.data.email,
+      clientIp: discoveryClientIp(c),
+    });
+    return c.json(
+      { challenge_id: result.challengeId, expires_in: result.expiresIn, status: 'code_sent' },
+      202
+    );
+  } catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    if (code === 'discovery_rate_limited') return c.json({ error: 'rate_limited' }, 429);
+    if (code === 'lookup_email_invalid') return c.json({ error: 'invalid_request' }, 400);
+    return discoveryEmailUnavailable(c);
+  }
+}
+
+export async function postDiscoveryEmailVerifyHandler(c: Context<{ Bindings: Env }>) {
+  c.header('Cache-Control', 'no-store');
+  const timing = createDiscoveryDiagnosticTiming(c);
+  const respond = (response: Response) => attachDiscoveryDiagnosticTiming(response, timing);
+  try {
+    if (
+      !(await measureDiscoveryDiagnosticTiming(timing, 'discovery_settings', () =>
+        requireEmailExactDiscovery(c)
+      ))
+    ) {
+      return respond(c.json({ error: 'discovery_disabled' }, 403));
+    }
+    const parsed = DISCOVERY_EMAIL_VERIFY_SCHEMA.safeParse(await c.req.json<unknown>());
+    if (!parsed.success) return respond(c.json({ error: 'invalid_request' }, 400));
+    const memberships = await new DiscoveryEmailOtpService(
+      c.env,
+      timing.enabled
+        ? {
+            recordTiming: (name, durationMs) =>
+              recordDiscoveryDiagnosticTiming(timing, name, durationMs),
+          }
+        : undefined
+    ).verify({ challengeId: parsed.data.challenge_id, code: parsed.data.code });
+    const tenantIds = [...new Set(memberships.map((membership) => membership.tenantId))];
+    const [rows, presentations] = await Promise.all([
+      getTenantRowsByIdWithDiagnosticTiming(c.env, tenantIds, timing),
+      measureDiscoveryDiagnosticTiming(timing, 'candidate_build', () =>
+        Promise.all(tenantIds.map((tenantId) => getTenantCandidatePresentation(c.env, tenantId)))
+      ),
+    ]);
+    const candidates = rows.flatMap((row, index) =>
+      row ? [buildCandidateFromPresentation(row, 'email_exact', presentations[index])] : []
+    );
+    if (candidates.length === 0) {
+      return respond(c.json(buildNotFoundResponse('email_not_found')));
+    }
+    if (candidates.length === 1) {
+      return respond(
+        c.json({ result: 'resolved', candidate: candidates[0] } satisfies DiscoveryResponse)
+      );
+    }
+    return respond(c.json({ result: 'multiple', candidates } satisfies DiscoveryResponse));
+  } catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    if (code === 'discovery_challenge_invalid') {
+      return respond(c.json({ error: 'invalid_or_expired_code' }, 400));
+    }
+    return respond(discoveryEmailUnavailable(c));
   }
 }
 

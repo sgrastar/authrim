@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "packageName": "@authrim/ar-agent-access",
+  "worker": "ar-agent-access",
+  "requiredDataRoles": ["tenant_core/default", "tenant_core/users"],
+  "bindings": [
+    {
+      "name": "DB_ADMIN",
+      "kind": "d1",
+      "required": true,
+      "capability": "agent_grants.read_write"
+    },
+    { "name": "SETTINGS", "kind": "kv_namespace", "required": true },
+    { "name": "AUTHRIM_CONFIG", "kind": "kv_namespace", "required": true },
+    { "name": "TENANT_RUNTIME_REGISTRY", "kind": "kv_namespace", "required": true },
+    { "name": "KEY_MANAGER", "kind": "durable_object_namespace", "required": true },
+    { "name": "RATE_LIMITER", "kind": "durable_object_namespace", "required": true },
+    { "name": "DPOP_JTI_STORE", "kind": "durable_object_namespace", "required": true },
+    { "name": "AGENT_ACCESS_MCP", "kind": "durable_object_namespace", "required": true },
+    { "name": "OP_MANAGEMENT", "kind": "service", "required": true },
+    { "name": "OP_DISCOVERY", "kind": "service", "required": true },
+    { "name": "AGENT_DOWNSCOPE", "kind": "service", "required": true },
+    { "name": "CONTROL_SMOKE_VERSION", "kind": "version_metadata", "required": true }
+  ],
+  "secrets": [
+    {
+      "name": "AGENT_ELEVATION_ENCRYPTION_KEY",
+      "capability": "agent_elevation.decrypt",
+      "required": true
+    },
+    {
+      "name": "TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS",
+      "capability": "runtime_registry.verify",
+      "required": true
+    },
+    {
+      "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
+      "capability": "control_smoke.verify",
+      "required": true
+    }
+  ]
+}

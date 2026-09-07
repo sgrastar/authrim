@@ -10,14 +10,16 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { AuditProfile, Env, ResidencyProfile } from '@authrim/ar-lib-core';
 import {
-  createAuthContextFromHono,
+  createD1Adapter,
   createErrorResponse,
   AR_ERROR_CODES,
   getUIConfig,
   getLogger,
-  resolveTenantRuntimeProfilesFromEnv,
+  createRuntimeProfileRegistryFromEnv,
+  loadEnvironmentProfileDefaultsFromEnv,
+  loadTenantProfileOverridesFromEnv,
   usesNakedDomainIssuer as usesNakedDomainIssuerCore,
 } from '@authrim/ar-lib-core';
 import { ensureSupportedTenantId } from './single-tenant-guard';
@@ -67,7 +69,10 @@ export async function adminTenantInfoHandler(c: Context<{ Bindings: Env }>) {
   }
 
   try {
-    const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
+    // /api/admin/tenants/:id/info is a tenant-inventory route and therefore
+    // deliberately has no request-scoped tenant metadata context. Read the
+    // platform tenant directory through the deployment Core binding.
+    const adapter = createD1Adapter(c.env.DB, 'tenant-info');
 
     // Verify tenant exists
     const tenant = await adapter.queryOne<{ id: string; name: string }>(
@@ -132,7 +137,6 @@ async function resolveRuntimeProfileInfo(
   profiles: {
     registry_backend: string;
     effective: {
-      storage: { id: string; label: string; inherited: boolean };
       audit: { id: string; label: string; inherited: boolean };
       residency: { id: string; label: string; inherited: boolean };
     };
@@ -140,25 +144,32 @@ async function resolveRuntimeProfileInfo(
   error: string | null;
 }> {
   try {
-    const resolved = await resolveTenantRuntimeProfilesFromEnv(env, tenantId);
+    const [defaults, overrides] = await Promise.all([
+      loadEnvironmentProfileDefaultsFromEnv(env),
+      loadTenantProfileOverridesFromEnv(env, tenantId),
+    ]);
+    const auditProfileId = overrides.auditProfileId ?? defaults.auditProfileId;
+    const residencyProfileId = overrides.residencyProfileId ?? defaults.residencyProfileId;
+    const registry = createRuntimeProfileRegistryFromEnv(env);
+    const [auditProfile, residencyProfile] = await Promise.all([
+      registry.get<AuditProfile>('audit', auditProfileId),
+      registry.get<ResidencyProfile>('residency', residencyProfileId),
+    ]);
+    if (!auditProfile) throw new Error(`audit_profile_not_found:${auditProfileId}`);
+    if (!residencyProfile) throw new Error(`residency_profile_not_found:${residencyProfileId}`);
     return {
       profiles: {
         registry_backend: env.PROFILE_REGISTRY_BACKEND ?? 'kv',
         effective: {
-          storage: {
-            id: resolved.storageProfile.id,
-            label: resolved.storageProfile.label,
-            inherited: resolved.refs.inherited.storage,
-          },
           audit: {
-            id: resolved.auditProfile.id,
-            label: resolved.auditProfile.label,
-            inherited: resolved.refs.inherited.audit,
+            id: auditProfile.id,
+            label: auditProfile.label,
+            inherited: !overrides.auditProfileId,
           },
           residency: {
-            id: resolved.residencyProfile.id,
-            label: resolved.residencyProfile.label,
-            inherited: resolved.refs.inherited.residency,
+            id: residencyProfile.id,
+            label: residencyProfile.label,
+            inherited: !overrides.residencyProfileId,
           },
         },
       },

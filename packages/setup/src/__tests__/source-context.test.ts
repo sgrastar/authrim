@@ -66,17 +66,17 @@ describe('source-context', () => {
       const prefix = getCommandPrefix();
       expect(typeof prefix).toBe('string');
       // Should be one of the two expected values
-      expect(['pnpm setup', 'npx @authrim/setup']).toContain(prefix);
+      expect(['pnpm run setup', 'npx @authrim/setup']).toContain(prefix);
     });
 
-    it('should return "pnpm setup" when running from source repo', () => {
-      // Since tests run from within the source repo, this should return 'pnpm setup'
+    it('should return "pnpm run setup" when running from source repo', () => {
+      // Since tests run from within the source repo, this should return 'pnpm run setup'
       // Note: This test depends on the CWD being the monorepo root.
       // In CI or different setups, vitest may set CWD differently.
       const prefix = getCommandPrefix();
       // We just verify it returns a valid value rather than asserting a specific one,
       // since CWD during tests may not be the monorepo root
-      expect(['pnpm setup', 'npx @authrim/setup']).toContain(prefix);
+      expect(['pnpm run setup', 'npx @authrim/setup']).toContain(prefix);
     });
   });
 });

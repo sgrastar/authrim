@@ -20,6 +20,23 @@ const log = createLogger().module('EXTERNAL-IDP');
 
 const STATE_TTL_SECONDS = 600; // 10 minutes
 
+export async function getAuthStateCookieName(state: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(state));
+  const suffix = Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, '0')
+  ).join('');
+  return `authrim_external_state_${suffix}`;
+}
+
+export function matchesAuthStateCookie(state: string, cookieValue: string | undefined): boolean {
+  if (!cookieValue || cookieValue.length !== state.length) return false;
+  let difference = 0;
+  for (let index = 0; index < state.length; index++) {
+    difference |= state.charCodeAt(index) ^ cookieValue.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
 /**
  * Store auth state in D1
  */
@@ -32,7 +49,8 @@ export async function storeAuthState(
 
   const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
     env,
-    'bridge-auth-state:store'
+    'bridge-auth-state:store',
+    { tenantId: state.tenantId }
   );
   await coreAdapter.execute(
     `INSERT INTO external_idp_auth_states (
@@ -64,6 +82,52 @@ export async function storeAuthState(
   );
 
   return id;
+}
+
+/** Attach a request object to an existing, unconsumed authorization state. */
+export async function setAuthStateRequestObject(
+  env: Env,
+  tenantId: string,
+  providerId: string,
+  state: string,
+  requestObject: string
+): Promise<void> {
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    'bridge-auth-state:set-request-object',
+    { tenantId }
+  );
+  const result = await adapter.execute(
+    `UPDATE external_idp_auth_states
+     SET original_auth_request = ?
+     WHERE tenant_id = ? AND provider_id = ? AND state = ?
+       AND expires_at > ? AND consumed_at IS NULL`,
+    [requestObject, tenantId, providerId, state, Date.now()]
+  );
+  if (result.rowsAffected !== 1) {
+    throw new Error('Unable to bind request object to authorization state');
+  }
+}
+
+/** Read the request object without consuming the callback state. */
+export async function getAuthStateRequestObject(
+  env: Env,
+  tenantId: string,
+  providerId: string,
+  state: string
+): Promise<string | null> {
+  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    'bridge-auth-state:get-request-object',
+    { tenantId }
+  );
+  const row = await adapter.queryOne<{ original_auth_request: string | null }>(
+    `SELECT original_auth_request FROM external_idp_auth_states
+     WHERE tenant_id = ? AND provider_id = ? AND state = ?
+       AND expires_at > ? AND consumed_at IS NULL`,
+    [tenantId, providerId, state, Date.now()]
+  );
+  return row?.original_auth_request ?? null;
 }
 
 /**
@@ -105,13 +169,15 @@ interface DbAuthState {
  */
 export async function consumeAuthState(
   env: Env,
+  tenantId: string,
   state: string
 ): Promise<ExternalIdpAuthState | null> {
   const now = Date.now();
 
   const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
     env,
-    'bridge-auth-state:consume'
+    'bridge-auth-state:consume',
+    { tenantId }
   );
 
   // Phase 1: Atomically mark as consumed using UPDATE with conditions
@@ -119,10 +185,11 @@ export async function consumeAuthState(
   const updateResult = await coreAdapter.execute(
     `UPDATE external_idp_auth_states
      SET consumed_at = ?
-     WHERE state = ?
+     WHERE tenant_id = ?
+       AND state = ?
        AND expires_at > ?
        AND consumed_at IS NULL`,
-    [now, state, now]
+    [now, tenantId, state, now]
   );
 
   // If no rows were updated, state is invalid, expired, or already consumed
@@ -133,8 +200,8 @@ export async function consumeAuthState(
   // Phase 2: Retrieve the state we just consumed
   // This is safe because we only reach here if we successfully marked it as consumed
   const result = await coreAdapter.queryOne<DbAuthState>(
-    'SELECT * FROM external_idp_auth_states WHERE state = ? AND consumed_at = ?',
-    [state, now]
+    'SELECT * FROM external_idp_auth_states WHERE tenant_id = ? AND state = ? AND consumed_at = ?',
+    [tenantId, state, now]
   );
 
   if (!result) {

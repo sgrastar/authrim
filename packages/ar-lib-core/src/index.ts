@@ -16,8 +16,15 @@ export * from './types/support-ops';
 export * from './types/runtime-profile';
 export * from './types/approval';
 export * from './types/screens';
+export * from './types/login-ui-languages';
 export * from './types/oidc-scopes';
 export * from './types/consent-records';
+export * from './services/notification-intent-routing';
+export * from './services/notification-delivery-producer';
+export * from './services/notification-installation-id';
+export * from './services/plugin-installation-id';
+export * from './services/plugin-host-interface-contract.js';
+export * from './services/human-verification-runner';
 
 // RFC 7517: JWK Types
 export * from './types/jwk';
@@ -26,6 +33,8 @@ export * from './types/jwk';
 export * from './types/did';
 export * from './types/openid4vp';
 export * from './types/openid4vci';
+export * from './types/vc-service';
+export * from './types/credential-profile';
 
 // Phase A-6: Logout Types
 export * from './types/logout';
@@ -71,6 +80,8 @@ export * from './utils/errors';
 export * from './utils/issuer';
 export * from './utils/jwe';
 export * from './utils/jwt';
+export * from './utils/oidc-signing';
+export * from './utils/mtls';
 export * from './utils/jwt-bearer';
 export * from './utils/keys';
 export * from './utils/kv';
@@ -82,6 +93,7 @@ export * from './utils/sd-jwt';
 export * from './utils/ec-keys';
 export * from './utils/session-state';
 export * from './utils/session-helper';
+export * from './utils/session-client';
 export * from './utils/authcode-helper';
 export * from './utils/tenant-context';
 export * from './utils/tenant-request-policy';
@@ -131,9 +143,13 @@ export * from './utils/totp-backup-codes';
 
 // Runtime services
 export * from './services/identity-mapping-runtime-resolver';
+export * from './services/server-flow-execution';
+export * from './services/active-access-token-protected-resource';
+export * from './services/lookup-directory';
 export * from './services/directory-auth';
 export * from './services/directory-connector-fleet';
 export * from './services/oidc-identity-mapping';
+export * from './services/introspection-identity-mapping';
 export * from './services/oidc-attribute-release-consent';
 export * from './services/persistent-identifiers';
 export * from './utils/ui-config';
@@ -211,6 +227,7 @@ export * from './utils/setup-session';
 export * from './utils/system-init';
 export * from './utils/contract-loader';
 export * from './utils/cache-config';
+export * from './utils/authentication-methods-cache';
 export * from './utils/request-cache';
 export * from './utils/health-check';
 export * from './utils/dns-verification';
@@ -220,10 +237,15 @@ export * from './utils/cookie-config';
 // Settings History (Configuration Rollback)
 export * from './services/settings-history';
 export * from './services/auth-core-persistence-context';
+export * from './services/runtime-data-context';
+export * from './services/account-provisioning';
+export * from './services/device-secret-route';
 export * from './services/consent-store';
 export * from './services/refresh-token-family-index';
 export * from './services/object-artifact-crypto';
 export * from './services/object-artifact-store';
+export * from './services/notification-intent-envelope';
+export * from './services/notification-delivery-intent';
 export * from './services/object-catalog';
 export * from './services/sensitive-detail-chunk-store';
 export * from './services/identity-identifier-bridge';
@@ -233,9 +255,6 @@ export * from './services/logging-runtime-policy';
 export * from './services/logging-runtime-emitter';
 export * from './services/pii-compensation-policy';
 export * from './services/pii-write-compensation';
-export * from './services/storage-boundary-policy';
-export * from './services/storage-profile-capabilities';
-export * from './services/storage-profile-health';
 export * from './services/approval-governance';
 export * from './services/step-up';
 export * from './services/downstream-elevation-grant';
@@ -307,10 +326,19 @@ export { errorResponse, redirectErrorResponse, determineFormat, createSerializer
 export {
   AuthrimError,
   RFCError,
+  errorHandler,
   errorMiddleware,
   createErrorFactoryFromContext,
   createErrorResponse,
   createRFCErrorResponse,
+} from './errors';
+export {
+  createTenantPlacementWriteFenceResponse,
+  isTenantPlacementWriteFenceError,
+  TENANT_PLACEMENT_WRITE_FENCE_RETRY_AFTER_MS,
+  createDataTemporarilyUnavailableResponse,
+  isDataTemporarilyUnavailableError,
+  DATA_TEMPORARILY_UNAVAILABLE_RETRY_AFTER_MS,
 } from './errors';
 
 // Phase 9: VC (Verifiable Credentials)
@@ -330,6 +358,7 @@ export * from './services/support-ops';
 export * from './services/check-audit-service';
 export * from './services/permission-change-notifier';
 export * from './services/admin-database-adapter';
+export * from './services/destination-profile-consent';
 export * from './services/backchannel-logout-sender';
 export * from './services/frontchannel-logout';
 export * from './services/logout-webhook-sender';
@@ -340,7 +369,18 @@ export * from './services/custom-claim-schema-history';
 export * from './services/profile-registry';
 export * from './services/runtime-profile-resolver';
 export * from './services/session-client-store';
-export * from './services/storage-target-resolver';
+export * from './services/external-provider-session-store';
+export {
+  advancePasskeyAuthenticationState,
+  consumeTotpAuthenticationState,
+  ensureAccountAuthenticationState,
+  getSessionRevocationStore,
+  isAccountAuthenticationDeniedError,
+  recordUserSessionRevocation,
+  recordHybridUserSessionRevocationEpoch,
+  SESSION_REVOCATION_AUTHORITY,
+  transitionAccountAuthenticationState,
+} from './services/session-revocation-store';
 export * from './services/tenant-database-health';
 export * from './services/tenant-backup-policy';
 export * from './services/tenant-database-naming';
@@ -349,12 +389,19 @@ export * from './services/tenant-database-registry-signature';
 export * from './services/tenant-database-reconciliation';
 export * from './services/tenant-database-migration-validation';
 export * from './services/tenant-database-resolver';
+export * from './services/environment-tenant-directory';
 export * from './services/tenant-database-sharding-policy';
 export * from './services/tenant-database-stats';
 export * from './services/tenant-runtime-config-snapshot';
 export * from './services/tenant-runtime-registry-security-events';
 export * from './services/tenant-runtime-registry-snapshot';
-export * from './services/user-store-runtime-sources';
+export * from './services/control-plane/cloudflare-worker-settings';
+export * from './services/control-plane/cloudflare-control-api-client';
+export * from './services/control-plane/control-plane-contracts';
+export * from './services/control-plane/migration-history-contract';
+export * from './services/control-plane/plugin-hook-outbox-retention';
+export * from './services/control-plane/runtime-smoke-rpc';
+export * from './services/control-plane/bootstrap-accelerator-proof';
 export * from './services/refresh-token-family-store';
 
 // Repositories
@@ -373,6 +420,7 @@ export {
 export * from './services/diagnostic';
 export * from './utils/diagnostic-security';
 export * from './utils/diagnostic-log-formatter';
+export * from './utils/admin-invitation-security';
 
 // Event System (Unified Event System)
 // Note: types/events exports are namespaced to avoid conflicts with types/contracts
@@ -456,6 +504,11 @@ export * from './db';
 export * from './repositories';
 export {
   CanonicalRuntimeUserStore,
+  findCanonicalAccountAuthenticationState,
+  markOtpLoginEmailVerified,
+  type CanonicalAccountAuthenticationState,
+  type CanonicalAuthenticationResponseUser,
+  type CanonicalOtpLoginUser,
   type CanonicalRuntimeUserCreateInput,
   type CanonicalRuntimeUserStoreOptions,
 } from './repositories/identity';
@@ -471,6 +524,8 @@ export { CloudflareActorContext } from './actor';
 // Durable Objects
 export { KeyManager } from './durable-objects/KeyManager';
 export { ChallengeStore } from './durable-objects/ChallengeStore';
+export { DeviceSecretRouteStore } from './durable-objects/DeviceSecretRouteStore';
+export type { DeviceSecretRouteHint } from './durable-objects/DeviceSecretRouteStore';
 export type {
   ChallengeType,
   Challenge,
@@ -485,6 +540,12 @@ export { SAMLRequestStore } from './durable-objects/SAMLRequestStore';
 export { SAMLAggregateMetadataStore } from './durable-objects/SAMLAggregateMetadataStore';
 export { SessionStore } from './durable-objects/SessionStore';
 export type { Session, SessionData, SessionResponse } from './durable-objects/SessionStore';
+export { SessionRevocationStore } from './durable-objects/SessionRevocationStore';
+export type {
+  AccountAuthenticationLifecycle,
+  AccountAuthenticationSnapshot,
+  SessionRegistrationResult,
+} from './durable-objects/SessionRevocationStore';
 export { AuthorizationCodeStore } from './durable-objects/AuthorizationCodeStore';
 export { RefreshTokenRotator } from './durable-objects/RefreshTokenRotator';
 export { RateLimiterCounter } from './durable-objects/RateLimiterCounter';
@@ -573,4 +634,39 @@ export type {
   ScreenResponse,
   ScreenSettings,
   ScreenValueType,
+  AccountPageDefinition,
+  AccountPageLocalization,
+  AccountPageRecord,
+  AccountPageScreenPlacement,
+  AccountPagePlacementWidth,
+  AccountPageVisibilityCondition,
+  AccountPagesDocument,
+  PublishedAccountPageDefinition,
 } from './types/screens';
+
+export { ACCOUNT_PAGE_PRESET_VERSION, DEFAULT_ACCOUNT_PAGE_DEFINITION } from './types/screens';
+export type {
+  AccountLauncher,
+  ApplicationLauncher,
+  LauncherApplicationType,
+  LauncherAttributeMatch,
+  LauncherAttributeOperator,
+  LauncherAttributeRule,
+  LauncherIconType,
+  LauncherLaunchType,
+  LauncherVisibility,
+  LauncherVisibilityMode,
+} from './types/launchers';
+
+export { setBoundedMapEntry } from './utils/bounded-cache';
+
+export { RuntimeSmokeEntrypoint } from './entrypoints/RuntimeSmokeEntrypoint';
+export type {
+  RuntimeControlKeyVerificationResult,
+  RuntimeLookupHmacCandidateVerificationResult,
+  RuntimeLookupHmacGenerationObservationResult,
+  RuntimeLookupHmacKeyMetadata,
+  RuntimeSmokeEntrypointEnv,
+  RuntimeSmokeEntrypointProps,
+} from './entrypoints/RuntimeSmokeEntrypoint';
+export { RUNTIME_LOOKUP_HMAC_TEST_VECTOR } from './entrypoints/RuntimeSmokeEntrypoint';

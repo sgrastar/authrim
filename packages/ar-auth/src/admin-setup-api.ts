@@ -586,7 +586,13 @@ adminSetupApiApp.post('/api/admin/auth/passkey/options', async (c) => {
   try {
     const browserOrigin = resolveAdminWebAuthnBrowserOrigin(c);
     if (!browserOrigin) {
-      return c.json({ error: 'invalid_request', error_description: 'Origin header required' }, 400);
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Admin WebAuthn Origin header is missing or not allowed',
+        },
+        400
+      );
     }
 
     const originUrl = new URL(browserOrigin);
@@ -733,7 +739,7 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
     const tenantId = getDefaultTenantId(c.env);
     const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'admin_passkey');
     const expiresAt = now + sessionTtl.milliseconds;
-    const adminSessionRepo = new AdminSessionRepository(adminAdapter);
+    const adminSessionRepo = new AdminSessionRepository(adminAdapter, tenantId);
 
     try {
       await adminSessionRepo.createSession({
@@ -744,6 +750,9 @@ adminSetupApiApp.post('/api/admin/auth/passkey/verify', async (c) => {
           c.req.header('cf-connecting-ip') || c.req.header('x-forwarded-for') || undefined,
         user_agent: c.req.header('user-agent') || undefined,
         expires_at: expiresAt,
+        // A verified passkey assertion includes required user verification and
+        // is the fresh MFA event used by high-risk Admin operations.
+        mfa_verified: true,
       });
     } catch (error) {
       logger.error('Failed to create admin session', { action: 'session_create' }, error as Error);

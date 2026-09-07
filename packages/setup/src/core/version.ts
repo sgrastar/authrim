@@ -55,6 +55,13 @@ export async function getPackageVersion(packageDir: string): Promise<string | nu
   }
 }
 
+/** Read the Authrim product version from the repository root package.json. */
+export async function getRootProductVersion(rootDir: string): Promise<string> {
+  const version = await getPackageVersion(rootDir);
+  if (!version) throw new Error(`Could not read Authrim product version from ${rootDir}`);
+  return version;
+}
+
 /**
  * Get versions for all worker packages
  *

@@ -6,7 +6,7 @@
  *
  * Included repositories:
  * - TombstoneRepository: GDPR deletion tracking
- * - SubjectIdentifierRepository: Pairwise subject identifiers
+ * - SubjectIdentifierRepository: General and destination-scoped subject identifiers
  * - LinkedIdentityRepository: External IdP linked identities
  * - PIIAuditLogRepository: PII access audit log
  */

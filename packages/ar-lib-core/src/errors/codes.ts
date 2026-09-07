@@ -151,6 +151,7 @@ export const AR_ERROR_CODES = {
   USER_NOT_FOUND: 'AR030004', // Internal only - masked in response
   USER_EMAIL_NOT_VERIFIED: 'AR030005',
   USER_PHONE_NOT_VERIFIED: 'AR030006',
+  USER_EMAIL_DELIVERY_FAILED: 'AR030007',
 
   // ============================================
   // SESSION (AR040001 ~ AR049999)
@@ -701,6 +702,16 @@ export const ERROR_DEFINITIONS: Record<ARErrorCode, ErrorCodeDefinition> = {
     titleKey: 'user.phone_not_verified.title',
     detailKey: 'user.phone_not_verified.detail',
     meta: { retryable: false, user_action: 'retry', severity: 'info' },
+    securityLevel: 'public',
+  },
+  [AR_ERROR_CODES.USER_EMAIL_DELIVERY_FAILED]: {
+    code: 'AR030007',
+    rfcError: RFC_ERROR_CODES.TEMPORARILY_UNAVAILABLE,
+    status: 503,
+    typeSlug: 'user/email-delivery-failed',
+    titleKey: 'user.email_delivery_failed.title',
+    detailKey: 'user.email_delivery_failed.detail',
+    meta: { retryable: true, user_action: 'retry', severity: 'error' },
     securityLevel: 'public',
   },
 

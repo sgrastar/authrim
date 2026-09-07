@@ -118,6 +118,30 @@ function buildEventArchiveSummary(
   };
 }
 
+function buildEventArchiveResource(entry: EventLogEntry): Record<string, unknown> | null {
+  if (!entry.detailsJson) return null;
+  try {
+    const details = JSON.parse(entry.detailsJson) as unknown;
+    if (!details || typeof details !== 'object' || Array.isArray(details)) return null;
+    const record = details as Record<string, unknown>;
+    const type =
+      typeof record.resourceType === 'string'
+        ? record.resourceType
+        : typeof record.resource_type === 'string'
+          ? record.resource_type
+          : null;
+    const id =
+      typeof record.resourceId === 'string'
+        ? record.resourceId
+        : typeof record.resource_id === 'string'
+          ? record.resource_id
+          : null;
+    return type || id ? { ...(type ? { type } : {}), ...(id ? { id } : {}) } : null;
+  } catch {
+    return null;
+  }
+}
+
 function buildPiiArchiveSummary(
   entry: PIILogEntry,
   options?: {
@@ -183,6 +207,7 @@ export function buildCanonicalAuditArchiveRecordFromEntry(
       ? ((entry as EventLogEntry).requestId ?? (entry as EventLogEntry).sessionId ?? null)
       : ((entry as PIILogEntry).requestId ?? null),
     result: isEvent ? (entry as EventLogEntry).result : (entry as PIILogEntry).changeType,
+    resource: isEvent ? buildEventArchiveResource(entry as EventLogEntry) : null,
     summary: isEvent
       ? buildEventArchiveSummary(entry as EventLogEntry, options)
       : buildPiiArchiveSummary(entry as PIILogEntry, options),

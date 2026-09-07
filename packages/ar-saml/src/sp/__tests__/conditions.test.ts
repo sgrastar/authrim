@@ -14,7 +14,35 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { Env } from '@authrim/ar-lib-core';
+import { buildPolicyConstrainedRegionShardConfig, type Env } from '@authrim/ar-lib-core';
+
+type SamlTestEnv = Partial<Env> & {
+  TDB_TEST_CORE?: D1Database;
+  TDB_TEST_PII?: D1Database;
+  SAML_STRICT_INRESPONSETO?: string;
+};
+
+const TEST_REGION_CONFIG = buildPolicyConstrainedRegionShardConfig({
+  residency: {
+    version: 1,
+    residencyPolicyId: 'test-residency',
+    residencyPartition: 'default',
+    policyGeneration: 1,
+    allowedRegions: ['apac'],
+    jurisdiction: null,
+  },
+  totalShards: 1,
+  now: 1,
+  updatedBy: 'test',
+});
+
+function createTestConfigKv(): KVNamespace {
+  return {
+    get: vi.fn(async (key: string) =>
+      key.startsWith('region_shard_config:') ? TEST_REGION_CONFIG : null
+    ),
+  } as unknown as KVNamespace;
+}
 
 // Mock modules
 const mockGetIdPConfigByEntityId = vi.fn();
@@ -34,6 +62,9 @@ vi.mock('../../admin/providers', () => ({
 
 vi.mock('../../common/signature', () => ({
   verifyXmlSignature: vi.fn().mockReturnValue(true),
+  verifyXmlSignatureAndGetReferences: vi.fn((xml: string) => [
+    { uri: `#${/\bID="([^"]+)"/.exec(xml)?.[1]}`, xml },
+  ]),
   hasSignature: vi.fn((xml: string) => xml.includes('<ds:Signature')),
 }));
 
@@ -93,6 +124,50 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       module: () => mockLogger,
     }),
     publishEvent: vi.fn().mockResolvedValue(undefined),
+    resolveTenantUserStoreSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+      coreDb: env.TDB_TEST_CORE ?? env.DB,
+      piiDb: env.TDB_TEST_PII ?? env.DB_PII ?? env.TDB_TEST_CORE ?? env.DB,
+    })),
+    resolveUserStoreRuntimeSourcesFromEnv: vi.fn(async (env: Record<string, unknown>) => ({
+      coreDb: env.TDB_TEST_CORE ?? env.DB,
+      piiDb: env.TDB_TEST_PII ?? env.DB_PII ?? env.TDB_TEST_CORE ?? env.DB,
+    })),
+    resolveAccountDataContextByIdentifier: vi.fn(async () => {
+      const adapter = (linkedIdentity: boolean) => ({
+        query: vi.fn().mockResolvedValue([]),
+        queryOne: vi.fn(async (sql: string) =>
+          linkedIdentity && sql.includes('FROM linked_identities')
+            ? {
+                id: 'linked-identity-1',
+                user_id: 'user-001',
+                provider_user_id: 'saml-user@example.com',
+              }
+            : null
+        ),
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        transaction: vi.fn(),
+        batch: vi.fn().mockResolvedValue([]),
+        isHealthy: vi.fn().mockResolvedValue(true),
+        getType: vi.fn().mockReturnValue('mock'),
+        close: vi.fn().mockResolvedValue(undefined),
+      });
+      return { coreDb: adapter(false), piiDb: adapter(true) };
+    }),
+    CanonicalRuntimeUserStore: class {
+      async findById() {
+        return {
+          id: 'user-001',
+          email: 'user@example.com',
+          email_verified: 1,
+          active: true,
+          lifecycle_state: 'active',
+        };
+      }
+
+      async findByEmail() {
+        return null;
+      }
+    },
     resolveRuntimeIdentityMappingBinding: vi
       .fn()
       .mockResolvedValue(createTestSAMLInboundMappingBinding()),
@@ -112,6 +187,7 @@ function createSAMLResponseWithConditions(options: {
   notBefore?: string | null;
   notOnOrAfter?: string | null;
   audiences?: string[];
+  audienceRestrictions?: string[][];
   includeConditions?: boolean;
   includeOneTimeUse?: boolean;
   includeProxyRestriction?: boolean;
@@ -126,18 +202,21 @@ function createSAMLResponseWithConditions(options: {
     notBefore = new Date(Date.now() - 60000).toISOString(),
     notOnOrAfter = new Date(Date.now() + 300000).toISOString(),
     audiences = ['https://auth.example.com/saml/sp/metadata'],
+    audienceRestrictions = [audiences],
     includeConditions = true,
     includeOneTimeUse = false,
     includeProxyRestriction = false,
     proxyCount = 0,
   } = options;
 
-  const audienceRestriction =
-    audiences.length > 0
-      ? `<saml:AudienceRestriction>
-        ${audiences.map((a) => `<saml:Audience>${a}</saml:Audience>`).join('\n        ')}
+  const audienceRestriction = audienceRestrictions
+    .filter((restriction) => restriction.length > 0)
+    .map(
+      (restriction) => `<saml:AudienceRestriction>
+        ${restriction.map((audience) => `<saml:Audience>${audience}</saml:Audience>`).join('\n        ')}
       </saml:AudienceRestriction>`
-      : '';
+    )
+    .join('\n');
 
   const oneTimeUse = includeOneTimeUse ? '<saml:OneTimeUse/>' : '';
   const proxyRestriction = includeProxyRestriction
@@ -194,13 +273,13 @@ function createSAMLResponseWithConditions(options: {
 }
 
 describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
-  let mockEnv: Partial<Env>;
-  // Track used assertions for OneTimeUse testing
-  let usedAssertions: Map<string, string>;
+  let mockEnv: SamlTestEnv;
+  // Model the tenant/IdP-scoped SAMLRequestStore atomic assertion consume operation.
+  let usedAssertions: Set<string>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    usedAssertions = new Map();
+    usedAssertions = new Set();
 
     // Mock IdP config
     mockGetIdPConfigByEntityId.mockImplementation(
@@ -223,7 +302,9 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
     mockEnv = {
       ISSUER_URL: 'https://auth.example.com',
       UI_URL: 'https://ui.example.com',
-      DB: {
+      SAML_STRICT_INRESPONSETO: 'false',
+      AUTHRIM_CONFIG: createTestConfigKv(),
+      TDB_TEST_CORE: {
         prepare: vi.fn().mockImplementation(function () {
           return {
             bind: vi.fn().mockReturnThis(),
@@ -232,24 +313,58 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
             run: vi.fn().mockResolvedValue({ success: true }),
           };
         }),
-        batch: vi.fn().mockResolvedValue([]),
-      } as unknown as Env['DB'],
-      DB_PII: {
-        prepare: vi.fn().mockImplementation(function () {
+        batch: vi
+          .fn()
+          .mockImplementation(async (statements: unknown[]) =>
+            statements.map(() => ({ success: true, meta: { changes: 1 } }))
+          ),
+      } as unknown as D1Database,
+      TDB_TEST_PII: {
+        prepare: vi.fn().mockImplementation(function (sql: string) {
           return {
             bind: vi.fn().mockReturnThis(),
-            first: vi.fn().mockResolvedValue(null),
+            first: vi.fn().mockResolvedValue(
+              sql.includes('FROM linked_identities')
+                ? {
+                    id: 'linked-identity-1',
+                    user_id: 'user-001',
+                    provider_user_id: 'saml-user@example.com',
+                  }
+                : null
+            ),
             all: vi.fn().mockResolvedValue({ results: [] }),
             run: vi.fn().mockResolvedValue({ success: true }),
           };
         }),
-        batch: vi.fn().mockResolvedValue([]),
-      } as unknown as Env['DB_PII'],
+        batch: vi
+          .fn()
+          .mockImplementation(async (statements: unknown[]) =>
+            statements.map(() => ({ success: true, meta: { changes: 1 } }))
+          ),
+      } as unknown as D1Database,
       SAML_REQUEST_STORE: {
-        idFromName: vi.fn().mockReturnValue('mock-store-id'),
-        get: vi.fn().mockReturnValue({
-          fetch: vi.fn().mockResolvedValue(new Response('OK', { status: 200 })),
-        }),
+        idFromName: vi.fn().mockImplementation((name: string) => name),
+        get: vi.fn().mockImplementation((storeId: string) => ({
+          fetch: vi
+            .fn()
+            .mockImplementation(async (_input: RequestInfo | URL, init?: RequestInit) => {
+              const body = JSON.parse(String(init?.body)) as {
+                assertionId: string;
+                expiresAt?: number;
+              };
+              if (typeof body.expiresAt !== 'number' || !Number.isFinite(body.expiresAt)) {
+                return new Response(JSON.stringify({ error: 'missing_expiration' }), {
+                  status: 400,
+                });
+              }
+              const key = `${storeId}:${body.assertionId}`;
+              if (usedAssertions.has(key)) {
+                return new Response(JSON.stringify({ success: false }), { status: 409 });
+              }
+              usedAssertions.add(key);
+              return new Response(JSON.stringify({ success: true }), { status: 200 });
+            }),
+        })),
       } as unknown as Env['SAML_REQUEST_STORE'],
       SESSION_STORE: {
         idFromName: vi.fn().mockReturnValue('mock-session-store-id'),
@@ -257,17 +372,12 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
           fetch: vi.fn().mockResolvedValue(new Response('OK', { status: 200 })),
         }),
       } as unknown as Env['SESSION_STORE'],
-      // Mock NONCE_STORE for OneTimeUse tracking
       NONCE_STORE: {
-        get: vi.fn().mockImplementation((key: string) => {
-          return Promise.resolve(usedAssertions.get(key) ?? null);
-        }),
-        put: vi.fn().mockImplementation((key: string, value: string) => {
-          usedAssertions.set(key, value);
-          return Promise.resolve();
-        }),
+        get: vi.fn().mockResolvedValue(null),
+        put: vi.fn().mockResolvedValue(undefined),
       } as unknown as Env['NONCE_STORE'],
     };
+    mockEnv.DB_ADMIN = mockEnv.TDB_TEST_CORE as Env['DB_ADMIN'];
   });
 
   /**
@@ -410,6 +520,19 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
       expect(res.status).toBe(302);
     });
 
+    it('should require every AudienceRestriction to allow our SP', async () => {
+      const samlResponse = createSAMLResponseWithConditions({
+        audienceRestrictions: [
+          ['https://auth.example.com/saml/sp/metadata'],
+          ['https://other-sp.example.com/sp'],
+        ],
+      });
+
+      const res = await callACS(samlResponse);
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+    });
+
     it('should reject assertion with empty AudienceRestriction', async () => {
       const samlResponse = createSAMLResponseWithConditions({
         audiences: [],
@@ -495,16 +618,22 @@ describe('Conditions Validation - SAML 2.0 Core Section 2.5', () => {
       const res3 = await callACS(samlResponse, { tenantId: 'tenant-a' });
       expect(res3.status).toBe(400);
 
-      expect([...usedAssertions.keys()]).toEqual(
+      expect([...usedAssertions]).toEqual(
         expect.arrayContaining([
-          `saml:assertion:tenant:tenant-a:idp:${encodeURIComponent(issuer)}:id:${encodeURIComponent(
-            assertionId
-          )}`,
-          `saml:assertion:tenant:tenant-b:idp:${encodeURIComponent(issuer)}:id:${encodeURIComponent(
-            assertionId
-          )}`,
+          `tenant:tenant-a:saml:sp:idp:${encodeURIComponent(issuer)}:${assertionId}`,
+          `tenant:tenant-b:saml:sp:idp:${encodeURIComponent(issuer)}:${assertionId}`,
         ])
       );
+    });
+
+    it('atomically permits only one of two concurrent uses of the same assertion', async () => {
+      const samlResponse = createSAMLResponseWithConditions({
+        assertionId: '_assertion_concurrent_replay',
+      });
+
+      const responses = await Promise.all([callACS(samlResponse), callACS(samlResponse)]);
+
+      expect(responses.map((response) => response.status).sort()).toEqual([302, 400]);
     });
   });
 

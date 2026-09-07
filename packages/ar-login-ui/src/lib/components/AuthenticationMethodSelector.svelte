@@ -31,7 +31,7 @@
 		passkeyEnabled,
 		emailCodeEnabled,
 		directoryPasswordEnabled = false,
-		directoryPasswordLabel = 'Organization ID',
+		directoryPasswordLabel = $LL.login_organizationId(),
 		externalEnabled,
 		externalProviders,
 		passkeyLoading = false,

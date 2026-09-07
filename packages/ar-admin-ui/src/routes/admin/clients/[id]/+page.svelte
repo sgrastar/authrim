@@ -71,8 +71,6 @@
 		token_exchange_allowed?: boolean;
 		delegation_mode?: string;
 		// Security tab
-		consent_required?: boolean;
-		first_party?: boolean;
 		app_login_enabled?: boolean;
 		sso_enabled?: boolean;
 		strict_redirect_matching?: boolean;
@@ -208,8 +206,6 @@
 		token_exchange_allowed?: boolean;
 		delegation_mode?: string;
 		// Security tab
-		consent_required?: boolean;
-		first_party?: boolean;
 		app_login_enabled?: boolean;
 		sso_enabled?: boolean;
 		strict_redirect_matching?: boolean;
@@ -387,7 +383,6 @@
 	function setIdentityMappingFieldMappingSet(fieldMappingSetId: string) {
 		editForm.identity_mapping = fieldMappingSetId
 			? {
-					...(editForm.identity_mapping ?? {}),
 					fieldMappingSetId,
 					destinationNamespace: editForm.identity_mapping?.destinationNamespace ?? 'oidc.claim'
 				}
@@ -513,8 +508,6 @@
 			dpop_bound_access_tokens?: boolean;
 			token_exchange_allowed?: boolean;
 			delegation_mode?: string;
-			consent_required?: boolean;
-			first_party?: boolean;
 			sso_enabled?: boolean;
 			strict_redirect_matching?: boolean;
 			allow_localhost_redirect?: boolean;
@@ -574,8 +567,6 @@
 			dpop_bound_access_tokens?: boolean;
 			token_exchange_allowed?: boolean;
 			delegation_mode?: string;
-			consent_required?: boolean;
-			first_party?: boolean;
 			sso_enabled?: boolean;
 			strict_redirect_matching?: boolean;
 			allow_localhost_redirect?: boolean;
@@ -640,8 +631,6 @@
 			Boolean(a.token_exchange_allowed) === Boolean(b.token_exchange_allowed) &&
 			(a.delegation_mode ?? 'delegation') === (b.delegation_mode ?? 'delegation') &&
 			// Security tab
-			Boolean(a.consent_required) === Boolean(b.consent_required) &&
-			Boolean(a.first_party) === Boolean(b.first_party) &&
 			Boolean(a.sso_enabled) === Boolean(b.sso_enabled) &&
 			Boolean(a.strict_redirect_matching) === Boolean(b.strict_redirect_matching) &&
 			Boolean(a.allow_localhost_redirect) === Boolean(b.allow_localhost_redirect) &&
@@ -973,8 +962,6 @@
 				(clientSettings.values['client.token_exchange_allowed'] as boolean) ?? false,
 			delegation_mode: (clientSettings.values['client.delegation_mode'] as string) ?? 'delegation',
 			// Security tab
-			consent_required: (clientSettings.values['client.consent_required'] as boolean) ?? false,
-			first_party: (clientSettings.values['client.first_party'] as boolean) ?? false,
 			app_login_enabled: (clientSettings.values['client.app_login_enabled'] as boolean) ?? false,
 			sso_enabled: (clientSettings.values['client.sso_enabled'] as boolean) ?? false,
 			strict_redirect_matching:
@@ -1028,13 +1015,17 @@
 				(clientSettings.values['client.sector_identifier_uri'] as string) ?? '',
 			// Advanced tab
 			id_token_signing_alg:
-				(clientSettings.values['client.id_token_signing_alg'] as string) ?? 'RS256',
+				client.id_token_signed_response_alg ??
+				(clientSettings.values['client.id_token_signing_alg'] as string) ??
+				'RS256',
 			id_token_encrypted_response_alg:
 				(clientSettings.values['client.id_token_encrypted_response_alg'] as string) ?? '',
 			id_token_encrypted_response_enc:
 				(clientSettings.values['client.id_token_encrypted_response_enc'] as string) ?? 'A256GCM',
 			userinfo_signed_response_alg:
-				(clientSettings.values['client.userinfo_signed_response_alg'] as string) ?? 'none',
+				client.userinfo_signed_response_alg ??
+				(clientSettings.values['client.userinfo_signed_response_alg'] as string) ??
+				'none',
 			userinfo_encrypted_response_alg:
 				(clientSettings.values['client.userinfo_encrypted_response_alg'] as string) ?? '',
 			userinfo_encrypted_response_enc:
@@ -1108,7 +1099,12 @@
 					...toClientDownstreamGrantUpdateInput(downstreamGrantEditForm),
 					login_ui_url: settingsEditForm.login_ui_url?.trim()
 						? settingsEditForm.login_ui_url.trim()
-						: null
+						: null,
+					id_token_signed_response_alg: settingsEditForm.id_token_signing_alg as 'RS256' | 'ES256',
+					userinfo_signed_response_alg: settingsEditForm.userinfo_signed_response_alg as
+						| 'none'
+						| 'RS256'
+						| 'ES256'
 				})
 			);
 
@@ -1131,8 +1127,6 @@
 							'client.reuse_refresh_token': settingsEditForm.reuse_refresh_token,
 							'client.dpop_bound_access_tokens': settingsEditForm.dpop_bound_access_tokens,
 							// Security tab
-							'client.consent_required': settingsEditForm.consent_required,
-							'client.first_party': settingsEditForm.first_party,
 							'client.app_login_enabled': settingsEditForm.app_login_enabled,
 							'client.sso_enabled': settingsEditForm.sso_enabled,
 							'client.strict_redirect_matching': settingsEditForm.strict_redirect_matching,
@@ -2112,24 +2106,6 @@
 					<h2 class="section-title-border">{$LL.admin_client_detail_security_settings()}</h2>
 
 					<div class="form-grid">
-						<!-- Consent Required -->
-						<div class="form-group">
-							{#if isEditing}
-								<ToggleSwitch
-									bind:checked={settingsEditForm.consent_required}
-									label={$LL.admin_client_detail_consent_required()}
-									description={$LL.admin_client_detail_consent_required_desc()}
-								/>
-							{:else}
-								<!-- svelte-ignore a11y_label_has_associated_control -->
-								<label class="form-label">{$LL.admin_client_detail_consent_required()}</label>
-								<p class="display-text">
-									{formatEnabled(clientSettings?.values['client.consent_required'] as boolean)}
-								</p>
-								<p class="form-hint">{$LL.admin_client_detail_consent_required_desc()}</p>
-							{/if}
-						</div>
-
 						<!-- SSO Enabled -->
 						<div class="form-group">
 							{#if isEditing}
@@ -2149,29 +2125,6 @@
 						</div>
 
 						{#if showAdminSettings}
-							<!-- First Party App -->
-							<div class="form-group">
-								{#if isEditing}
-									<ToggleSwitch
-										bind:checked={settingsEditForm.first_party}
-										label={$LL.admin_client_detail_first_party_app()}
-										description={$LL.admin_client_detail_first_party_app_desc()}
-										onchange={(newValue) => {
-											if (!newValue) {
-												settingsEditForm.app_login_enabled = false;
-											}
-										}}
-									/>
-								{:else}
-									<!-- svelte-ignore a11y_label_has_associated_control -->
-									<label class="form-label">{$LL.admin_client_detail_first_party_app()}</label>
-									<p class="display-text">
-										{formatEnabled(clientSettings?.values['client.first_party'] as boolean)}
-									</p>
-									<p class="form-hint">{$LL.admin_client_detail_first_party_app_desc()}</p>
-								{/if}
-							</div>
-
 							<!-- App Login Enabled -->
 							<div class="form-group">
 								{#if isEditing}
@@ -2179,7 +2132,6 @@
 										bind:checked={settingsEditForm.app_login_enabled}
 										label={$LL.admin_client_detail_app_login_enabled()}
 										description={$LL.admin_client_detail_app_login_enabled_desc()}
-										disabled={!settingsEditForm.first_party}
 									/>
 								{:else}
 									<!-- svelte-ignore a11y_label_has_associated_control -->
@@ -3267,14 +3219,7 @@
 							{#if isEditing}
 								<select class="form-select" bind:value={settingsEditForm.id_token_signing_alg}>
 									<option value="RS256">RS256</option>
-									<option value="RS384">RS384</option>
-									<option value="RS512">RS512</option>
 									<option value="ES256">ES256</option>
-									<option value="ES384">ES384</option>
-									<option value="ES512">ES512</option>
-									<option value="PS256">PS256</option>
-									<option value="PS384">PS384</option>
-									<option value="PS512">PS512</option>
 								</select>
 								<p class="form-hint">{$LL.admin_client_detail_id_token_signing_alg_hint()}</p>
 							{:else}
@@ -3361,14 +3306,7 @@
 									>
 										<option value="none">{$LL.admin_clients_new_delegation_none()}</option>
 										<option value="RS256">RS256</option>
-										<option value="RS384">RS384</option>
-										<option value="RS512">RS512</option>
 										<option value="ES256">ES256</option>
-										<option value="ES384">ES384</option>
-										<option value="ES512">ES512</option>
-										<option value="PS256">PS256</option>
-										<option value="PS384">PS384</option>
-										<option value="PS512">PS512</option>
 									</select>
 									<p class="form-hint">{$LL.admin_client_detail_userinfo_signed_alg_hint()}</p>
 								{:else}
@@ -3562,14 +3500,9 @@
 								{#if isEditing}
 									<select class="form-select" bind:value={settingsEditForm.jwt_bearer_signing_alg}>
 										<option value="RS256">RS256</option>
-										<option value="RS384">RS384</option>
-										<option value="RS512">RS512</option>
 										<option value="ES256">ES256</option>
-										<option value="ES384">ES384</option>
-										<option value="ES512">ES512</option>
 										<option value="PS256">PS256</option>
-										<option value="PS384">PS384</option>
-										<option value="PS512">PS512</option>
+										<option value="EdDSA">EdDSA</option>
 									</select>
 									<p class="form-hint">
 										{$LL.admin_client_detail_jwt_bearer_signing_alg_hint()}
@@ -3596,14 +3529,9 @@
 										bind:value={settingsEditForm.token_endpoint_auth_signing_alg}
 									>
 										<option value="RS256">RS256</option>
-										<option value="RS384">RS384</option>
-										<option value="RS512">RS512</option>
 										<option value="ES256">ES256</option>
-										<option value="ES384">ES384</option>
-										<option value="ES512">ES512</option>
 										<option value="PS256">PS256</option>
-										<option value="PS384">PS384</option>
-										<option value="PS512">PS512</option>
+										<option value="EdDSA">EdDSA</option>
 									</select>
 									<p class="form-hint">
 										{$LL.admin_client_detail_token_endpoint_auth_signing_alg_hint()}

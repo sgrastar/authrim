@@ -353,6 +353,174 @@ describe('flow runtime schema helpers', () => {
     });
   });
 
+  it('evaluates explicit OIDC and SAML protocol branches', async () => {
+    const config: FlowConditionConfig = {
+      rows: ['oidc', 'saml'].map((protocol) => ({
+        id: protocol,
+        condition: { type: 'protocol', value: protocol },
+        output_handle: protocol,
+      })),
+      otherwise: { terminal_error: { error: 'unsupported_protocol' } },
+    };
+
+    for (const protocol of ['oidc', 'saml'] as const) {
+      await expect(evaluateFlowConditionRows(config, { protocol })).resolves.toMatchObject({
+        matched: true,
+        output_handle: protocol,
+      });
+    }
+  });
+
+  it('allows a protocol condition to define only the supported Flow branches', () => {
+    const issues = validateFlowEditorState(
+      {
+        nodes: [
+          { id: 'entry', type: 'entry' },
+          {
+            id: 'protocol',
+            type: 'condition',
+            config: {
+              conditions: {
+                rows: [
+                  {
+                    id: 'oidc',
+                    condition: { type: 'protocol', value: 'oidc' },
+                    output_handle: 'oidc',
+                  },
+                ],
+                otherwise: { terminal_error: { error: 'unsupported_protocol' } },
+              },
+            },
+          },
+          {
+            id: 'complete',
+            type: 'complete',
+            config: { completion_block: { id: 'oidc', protocol: 'oidc' } },
+          },
+        ],
+        edges: [
+          { id: 'entry-protocol', source: 'entry', target: 'protocol' },
+          {
+            id: 'protocol-complete',
+            source: 'protocol',
+            source_handle: 'oidc',
+            target: 'complete',
+          },
+        ],
+      },
+      { for_publish: true }
+    );
+
+    expect(issues).toEqual([]);
+  });
+
+  it('rejects a Direct Auth branch in an SAML/OIDC protocol condition', () => {
+    const issues = validateFlowEditorState(
+      {
+        nodes: [
+          { id: 'entry', type: 'entry' },
+          {
+            id: 'protocol',
+            type: 'condition',
+            config: {
+              conditions: {
+                rows: [
+                  {
+                    id: 'direct',
+                    condition: { type: 'protocol', value: 'direct' },
+                    output_handle: 'direct',
+                  },
+                ],
+                otherwise: { terminal_error: { error: 'unsupported_protocol' } },
+              },
+            },
+          },
+          {
+            id: 'complete',
+            type: 'complete',
+            config: { completion_block: { id: 'direct', protocol: 'direct' } },
+          },
+        ],
+        edges: [
+          { id: 'entry-protocol', source: 'entry', target: 'protocol' },
+          {
+            id: 'protocol-complete',
+            source: 'protocol',
+            source_handle: 'direct',
+            target: 'complete',
+          },
+        ],
+      },
+      { for_publish: true }
+    );
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'invalid_protocol_condition_value' }),
+      ])
+    );
+  });
+
+  it('rejects a protocol branch that reaches another protocol completion', () => {
+    const protocolRows = ['oidc', 'saml'].map((protocol) => ({
+      id: protocol,
+      condition: { type: 'protocol', value: protocol },
+      output_handle: protocol,
+    }));
+    const issues = validateFlowEditorState(
+      {
+        nodes: [
+          { id: 'entry', type: 'entry' },
+          {
+            id: 'protocol',
+            type: 'condition',
+            config: {
+              conditions: {
+                rows: protocolRows,
+                otherwise: { terminal_error: { error: 'unsupported_protocol' } },
+              },
+            },
+          },
+          {
+            id: 'oidc-complete',
+            type: 'complete',
+            config: { completion_block: { id: 'oidc', protocol: 'oidc' } },
+          },
+          {
+            id: 'saml-complete',
+            type: 'complete',
+            config: { completion_block: { id: 'saml', protocol: 'saml' } },
+          },
+        ],
+        edges: [
+          { id: 'entry-protocol', source: 'entry', target: 'protocol' },
+          {
+            id: 'protocol-oidc',
+            source: 'protocol',
+            source_handle: 'oidc',
+            target: 'saml-complete',
+          },
+          {
+            id: 'protocol-saml',
+            source: 'protocol',
+            source_handle: 'saml',
+            target: 'saml-complete',
+          },
+        ],
+      },
+      { for_publish: true }
+    );
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'protocol_condition_completion_mismatch',
+          node_id: 'saml-complete',
+        }),
+      ])
+    );
+  });
+
   it('uses policy and organization resolvers only when a condition requires them', async () => {
     const config: FlowConditionConfig = {
       rows: [

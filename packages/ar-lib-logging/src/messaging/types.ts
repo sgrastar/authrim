@@ -18,8 +18,7 @@ export type LoggingMessageJobCriticality = 'standard' | 'critical';
 
 export type LoggingMessageJobTopologyType =
   | 'platform'
-  | 'shared_d1'
-  | 'tenant_d1'
+  | 'control_plane_d1'
   | 'external_db'
   | 'unknown';
 

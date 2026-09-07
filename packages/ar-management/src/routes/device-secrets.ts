@@ -18,6 +18,7 @@ import {
   AR_ERROR_CODES,
   getLogger,
   createAuthContextFromHono,
+  createAuditLogFromContext,
   getTenantIdFromContext,
 } from '@authrim/ar-lib-core';
 
@@ -53,6 +54,36 @@ function validateReason(
   const sanitized = reason.replace(REASON_SANITIZE_PATTERN, '').trim();
 
   return { valid: true, reason: sanitized || defaultValue };
+}
+
+async function parseOptionalReason(
+  c: Context<{ Bindings: Env }>,
+  defaultValue: string
+): Promise<{ valid: true; reason: string } | { valid: false }> {
+  const rawBody = await c.req.text();
+  if (!rawBody.trim()) {
+    return { valid: true, reason: defaultValue };
+  }
+
+  try {
+    const body = JSON.parse(rawBody) as { reason?: unknown };
+    const validation = validateReason(body?.reason, defaultValue);
+    return validation.valid ? validation : { valid: false };
+  } catch {
+    return { valid: false };
+  }
+}
+
+function parsePaginationValue(
+  value: string | undefined,
+  defaultValue: number,
+  maximum?: number
+): number | null {
+  if (value === undefined) return defaultValue;
+  if (!/^\d+$/u.test(value)) return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) return null;
+  return maximum === undefined ? parsed : Math.min(parsed, maximum);
 }
 
 /**
@@ -137,8 +168,11 @@ export async function listUserDeviceSecrets(c: Context<{ Bindings: Env }>): Prom
 
   try {
     const includeRevoked = c.req.query('include_revoked') === 'true';
-    const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
-    const offset = parseInt(c.req.query('offset') || '0', 10);
+    const limit = parsePaginationValue(c.req.query('limit'), 50, 100);
+    const offset = parsePaginationValue(c.req.query('offset'), 0);
+    if (limit === null || limit < 1 || offset === null) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
 
     const repo = getDeviceSecretRepository(c);
 
@@ -231,19 +265,11 @@ export async function revokeDeviceSecret(c: Context<{ Bindings: Env }>): Promise
   }
 
   try {
-    let reason = 'admin_revocation';
-
-    // Try to get reason from body (optional)
-    try {
-      const body = await c.req.json();
-      const validation = validateReason(body?.reason, 'admin_revocation');
-      if (!validation.valid) {
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-      }
-      reason = validation.reason;
-    } catch {
-      // Body is optional, ignore parse errors
+    const parsedReason = await parseOptionalReason(c, 'admin_revocation');
+    if (!parsedReason.valid) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
+    const reason = parsedReason.reason;
 
     const repo = getDeviceSecretRepository(c);
 
@@ -262,6 +288,11 @@ export async function revokeDeviceSecret(c: Context<{ Bindings: Env }>): Promise
     if (!success) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
+
+    await createAuditLogFromContext(c, 'device_secret.revoke', 'device_secret', id, {
+      user_id: existing.user_id,
+      reason,
+    });
 
     log.info('Revoked device secret', { id, userId: existing.user_id, reason });
 
@@ -297,23 +328,20 @@ export async function revokeAllUserDeviceSecrets(c: Context<{ Bindings: Env }>):
   }
 
   try {
-    let reason = 'admin_bulk_revocation';
-
-    // Try to get reason from body (optional)
-    try {
-      const body = await c.req.json();
-      const validation = validateReason(body?.reason, 'admin_bulk_revocation');
-      if (!validation.valid) {
-        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-      }
-      reason = validation.reason;
-    } catch {
-      // Body is optional, ignore parse errors
+    const parsedReason = await parseOptionalReason(c, 'admin_bulk_revocation');
+    if (!parsedReason.valid) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
+    const reason = parsedReason.reason;
 
     const repo = getDeviceSecretRepository(c);
 
     const revokedCount = await repo.revokeByUserId(userId, getTenantIdFromContext(c), reason);
+
+    await createAuditLogFromContext(c, 'device_secret.revoke_all', 'user', userId, {
+      revoked_count: revokedCount,
+      reason,
+    });
 
     log.info('Revoked user device secrets', { userId, revokedCount, reason });
 
@@ -344,6 +372,10 @@ export async function cleanupExpiredDeviceSecrets(
     const repo = getDeviceSecretRepository(c);
 
     const cleanedCount = await repo.cleanupExpired();
+
+    await createAuditLogFromContext(c, 'device_secret.cleanup', 'device_secret', 'expired', {
+      cleaned_count: cleanedCount,
+    });
 
     log.info('Cleaned up expired device secrets', { cleanedCount });
 

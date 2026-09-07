@@ -22,6 +22,9 @@ import {
   getKeyByKid,
   verifyClientSecretHash,
   DeviceSecretRepository,
+  applyIntrospectionIdentityMapping,
+  filterIntrospectionProtocolEnvelopeClaims,
+  requireDedicatedAdminDatabaseAdapter,
   createPhase1ErrorDetails,
   getDeviceSecretInstallationId,
 } from '@authrim/ar-lib-core';
@@ -60,13 +63,71 @@ function normalizeDeviceSecretPlatform(platform: string | undefined): string {
   return platform && platform.length > 0 ? platform : 'unknown';
 }
 
+function normalizeStringClaim(value: unknown): string[] {
+  if (typeof value === 'string') {
+    return value.length > 0 ? [value] : [];
+  }
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
+}
+
+function isIntrospectionCallerAuthorized(
+  callerClientId: string,
+  tokenClientId: unknown,
+  audiences: string[],
+  resources: string[]
+): boolean {
+  return (
+    tokenClientId === callerClientId ||
+    audiences.includes(callerClientId) ||
+    resources.includes(callerClientId)
+  );
+}
+
+type IntrospectableTokenUse = 'access' | 'refresh';
+
+function resolveIntrospectableTokenUse(
+  tokenPayload: Record<string, unknown>,
+  tokenTypeHint: string | undefined
+): IntrospectableTokenUse | null {
+  if (
+    typeof tokenPayload.client_id !== 'string' ||
+    tokenPayload.client_id.length === 0 ||
+    typeof tokenPayload.jti !== 'string' ||
+    tokenPayload.jti.length === 0 ||
+    typeof tokenPayload.sub !== 'string' ||
+    tokenPayload.sub.length === 0 ||
+    typeof tokenPayload.scope !== 'string' ||
+    typeof tokenPayload.iat !== 'number' ||
+    !Number.isFinite(tokenPayload.iat) ||
+    typeof tokenPayload.exp !== 'number' ||
+    !Number.isFinite(tokenPayload.exp)
+  ) {
+    return null;
+  }
+
+  const explicitTokenUse = tokenPayload.token_use;
+  if (explicitTokenUse !== undefined) {
+    return explicitTokenUse === 'access' || explicitTokenUse === 'refresh'
+      ? explicitTokenUse
+      : null;
+  }
+
+  // Compatibility for tokens issued before token_use was introduced. The complete legacy shape
+  // excludes ID tokens and other protocol JWTs while allowing existing access/refresh tokens to
+  // remain usable until their normal expiry.
+  return tokenTypeHint === 'refresh_token' ? 'refresh' : 'access';
+}
+
 /**
  * Generate cache key for introspection response
  * Uses SHA-256 hash of JTI to prevent key enumeration attacks
  */
-async function getIntrospectCacheKey(jti: string): Promise<string> {
+async function getIntrospectCacheKey(jti: string, resourceServerId: string): Promise<string> {
   const encoder = new TextEncoder();
-  const data = encoder.encode(jti);
+  const data = encoder.encode(`${jti}\u0000${resourceServerId}`);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -165,7 +226,8 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     const assertionValidation = await validateClientAssertion(
       client_assertion,
       `${issuerUrl}/introspect`, // Introspection endpoint URL
-      clientMetadata
+      clientMetadata,
+      { replayProtection: { env: c.env, tenantId } }
     );
 
     if (!assertionValidation.valid) {
@@ -274,21 +336,28 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   const sub = tokenPayload.sub as string;
   // RFC 7519: aud can be a string or array of strings
   const audRaw = tokenPayload.aud;
-  const audArray = Array.isArray(audRaw) ? audRaw : audRaw ? [audRaw] : [];
-  const aud = audArray[0] as string; // Primary audience for response
+  const audArray = normalizeStringClaim(audRaw);
+  const aud = audArray[0]; // Primary audience for response
   const scope = tokenPayload.scope as string;
   const iss = tokenPayload.iss as string;
   const exp = tokenPayload.exp as number;
   const iat = tokenPayload.iat as number;
   // RFC 7519: nbf (not before) claim - token SHOULD NOT be valid before this time
   const nbf = tokenPayload.nbf as number | undefined;
-  const tokenClientId = tokenPayload.client_id as string;
+  const tokenClientId =
+    typeof tokenPayload.client_id === 'string' ? tokenPayload.client_id : undefined;
   // V2: Extract version for refresh token validation
   const rtv = typeof tokenPayload.rtv === 'number' ? tokenPayload.rtv : 1;
   // RFC 8693: Actor claim for delegation (Token Exchange)
   const act = tokenPayload.act as IntrospectionResponse['act'];
   // RFC 8693: Resource server URI (Token Exchange)
-  const resource = tokenPayload.resource as string | undefined;
+  const resourceArray = normalizeStringClaim(tokenPayload.resource);
+  const resource =
+    typeof tokenPayload.resource === 'string'
+      ? tokenPayload.resource
+      : resourceArray.length > 0
+        ? resourceArray
+        : undefined;
   // P1: RFC 9449: DPoP confirmation claim (cnf.jkt)
   const cnf = tokenPayload.cnf as { jkt: string } | undefined;
   // P2: RFC 7662 recommends including username for human-readable identifier
@@ -310,7 +379,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   let cacheKey: string | null = null;
 
   if (cacheConfig.enabled && jti && c.env.AUTHRIM_CONFIG) {
-    cacheKey = await getIntrospectCacheKey(jti);
+    cacheKey = await getIntrospectCacheKey(jti, client_id);
   }
   // ========== Introspection Response Cache Setup END ==========
 
@@ -365,6 +434,27 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     });
   }
 
+  // A valid AS signature does not establish JWT purpose. Authrim signs ID tokens and other
+  // protocol artifacts with the same key family, so classify the token before caller
+  // authorization or revocation processing. Explicit token_use is authoritative; legacy tokens
+  // must satisfy the complete OAuth token shape.
+  const introspectedTokenUse = resolveIntrospectableTokenUse(tokenPayload, token_type_hint);
+  if (!introspectedTokenUse) {
+    return c.json<IntrospectionResponse>({
+      active: false,
+    });
+  }
+
+  // RFC 7662 requires the authorization server to determine whether the authenticated caller may
+  // introspect this token. Token ownership is sufficient; cross-client Resource Servers must be
+  // explicitly named by a signed audience or resource claim. Unauthorized callers receive the same
+  // inactive response as an invalid token to avoid exposing token metadata or ownership.
+  if (!isIntrospectionCallerAuthorized(client_id, tokenClientId, audArray, resourceArray)) {
+    return c.json<IntrospectionResponse>({
+      active: false,
+    });
+  }
+
   // ========== Strict Validation Mode (KV-controlled) ==========
   // RFC 7662 does not require aud/client_id validation, but strictValidation
   // enables additional security checks for Token Introspection Control Plane Test
@@ -383,7 +473,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     // 2. Client ID existence validation via Repository
     // Optimization: Skip D1 query if tokenClientId matches the already-authenticated client_id
     // (client_id was already verified in the client authentication step above)
-    if (tokenClientId && tokenClientId !== client_id) {
+    if (typeof tokenClientId === 'string' && tokenClientId && tokenClientId !== client_id) {
       const clientExists = await authCtx.repositories.client.findByClientId(tokenClientId);
 
       if (!clientExists) {
@@ -414,41 +504,25 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // ========== Token Revocation/Existence Check ==========
-  // Logic depends on token_type_hint:
-  // - 'access_token': Check access token revocation store only
-  // - 'refresh_token': Check refresh token existence in DO only
-  // - undefined: Default to access token behavior (most common use case)
-  //
-  // Note: Without a hint, we cannot reliably determine token type.
-  // RFC 7662 Section 2.1 recommends clients provide token_type_hint for optimal handling.
-  // Defaulting to access token revocation check is the safest approach.
+  // A signed token_use claim determines the authoritative store. For legacy tokens that predate
+  // token_use, RFC 7662's advisory token_type_hint selects the compatible lookup path after the
+  // complete OAuth token shape has been validated above.
 
-  if (jti) {
-    if (token_type_hint === 'refresh_token') {
-      // Explicitly refresh token - check existence in DO
-      if (sub) {
-        const refreshTokenData = await getRefreshToken(
-          c.env,
-          sub,
-          rtv,
-          tokenClientId,
-          jti,
-          tenantId
-        );
-        if (!refreshTokenData) {
-          return c.json<IntrospectionResponse>({
-            active: false,
-          });
-        }
-      }
-    } else {
-      // Access token (explicit or default) - check revocation store
-      const revoked = await isTokenRevoked(c.env, jti, tenantId);
-      if (revoked) {
-        return c.json<IntrospectionResponse>({
-          active: false,
-        });
-      }
+  if (introspectedTokenUse === 'refresh') {
+    // Refresh tokens are active only while their authoritative family entry exists. token_type_hint
+    // is advisory; a signed token_use claim takes precedence when present.
+    const refreshTokenData = await getRefreshToken(c.env, sub, rtv, tokenClientId!, jti, tenantId);
+    if (!refreshTokenData) {
+      return c.json<IntrospectionResponse>({
+        active: false,
+      });
+    }
+  } else {
+    const revoked = await isTokenRevoked(c.env, jti, tenantId);
+    if (revoked) {
+      return c.json<IntrospectionResponse>({
+        active: false,
+      });
     }
   }
   // ========== Token Revocation/Existence Check END ==========
@@ -487,7 +561,7 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
   // P1: Determine token_type based on cnf claim presence (RFC 9449)
   const tokenType: 'Bearer' | 'DPoP' = cnf ? 'DPoP' : 'Bearer';
 
-  const response: IntrospectionResponse = {
+  let response: Record<string, unknown> = {
     active: true,
     scope,
     client_id: tokenClientId,
@@ -514,6 +588,46 @@ export async function introspectHandler(c: Context<{ Bindings: Env }>) {
     // Authrim downstream elevation context for high-risk service-side checks
     ...(authrimElevation && { authrim_elevation: authrimElevation }),
   };
+
+  // A Resource Server profile is the only authority for introspection extension claims.
+  // The token payload may contain claims released to its original audience; only claims
+  // explicitly allowed for the authenticated caller survive this separate boundary.
+  let introspectionProfileAdapter: ReturnType<typeof requireDedicatedAdminDatabaseAdapter> | null =
+    null;
+  try {
+    introspectionProfileAdapter = requireDedicatedAdminDatabaseAdapter(
+      c.env,
+      'introspection-destination-profile'
+    );
+  } catch (error) {
+    log.error(
+      'Failed to apply Resource Server destination profile; returning protocol claims only',
+      { action: 'introspection_destination_profile', resourceServerId: client_id },
+      error as Error
+    );
+  }
+  if (introspectionProfileAdapter) {
+    try {
+      response = await applyIntrospectionIdentityMapping({
+        coreAdapter: authCtx.coreAdapter,
+        adminAdapter: introspectionProfileAdapter,
+        env: c.env,
+        tenantId,
+        resourceServerId: client_id,
+        grantedScopes: scope ? scope.split(' ').filter(Boolean) : [],
+        claims: { ...tokenPayload, ...response },
+      });
+    } catch (error) {
+      log.error(
+        'Resource Server destination profile rejected the introspection response',
+        { action: 'introspection_destination_profile', resourceServerId: client_id },
+        error as Error
+      );
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
+  } else {
+    response = filterIntrospectionProtocolEnvelopeClaims(response);
+  }
 
   // ========== Cache active=true Response ==========
   // Store validated response in cache for future requests

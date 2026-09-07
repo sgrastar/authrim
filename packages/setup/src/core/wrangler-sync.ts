@@ -12,13 +12,18 @@
  */
 
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat } from 'node:fs/promises';
 import { join, basename } from 'node:path';
+import { writePrivateFileAtomically } from './atomic-file.js';
 import { getEnvironmentPaths } from './paths.js';
 import { generateWranglerConfig, toToml, type ResourceIds } from './wrangler.js';
 import type { AuthrimConfig } from './config.js';
 import { getEnabledComponents, WORKER_COMPONENTS, type WorkerComponent } from './naming.js';
 import { getWorkersSubdomain } from './cloudflare.js';
+import {
+  loadWorkerCapabilityManifests,
+  validateGeneratedWorkerCapabilities,
+} from './worker-capabilities.js';
 
 // =============================================================================
 // Types
@@ -72,6 +77,43 @@ export interface WranglerFileStatus {
 // =============================================================================
 // Utility Functions
 // =============================================================================
+
+const DEFAULT_WRANGLER_FILE_MODE = 0o644;
+
+async function readSafeWranglerFileMode(path: string): Promise<number | null> {
+  try {
+    const metadata = await stat(path);
+    if (!metadata.isFile()) {
+      throw new Error(`wrangler_config_path_not_regular_file:${path}`);
+    }
+    // Wrangler configs are non-secret deployment inputs. Preserve existing
+    // restrictions without retaining executable or group/other write bits.
+    return metadata.mode & 0o777 & DEFAULT_WRANGLER_FILE_MODE;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+export async function writeWranglerFileAtomically(
+  path: string,
+  content: string,
+  sourceModePath?: string
+): Promise<void> {
+  const targetMode = await readSafeWranglerFileMode(path);
+  const sourceMode = sourceModePath ? await readSafeWranglerFileMode(sourceModePath) : null;
+  const mode =
+    targetMode !== null && sourceMode !== null
+      ? targetMode & sourceMode
+      : (targetMode ?? sourceMode ?? DEFAULT_WRANGLER_FILE_MODE);
+  await writePrivateFileAtomically(path, content, mode);
+}
+
+// Atomic rename prevents a crash from publishing a truncated individual file.
+// It does not serialize read-merge-write or make a multi-component update a
+// transaction. Every caller that reads, merges, writes, or subsequently uses
+// package wrangler.toml files must hold the workspace deploy-config lock for
+// that entire interval.
 
 /**
  * Normalize TOML content for comparison (remove comments, whitespace variations)
@@ -233,13 +275,13 @@ function getWranglerComponentsForConfig(config: AuthrimConfig): WorkerComponent[
  * in the deploy file matches the master config content.
  */
 export async function checkWranglerStatus(
-  options: Pick<WranglerSyncOptions, 'baseDir' | 'env' | 'packagesDir'>
+  options: Pick<WranglerSyncOptions, 'baseDir' | 'env' | 'packagesDir' | 'components'>
 ): Promise<WranglerFileStatus[]> {
   const { baseDir, env, packagesDir } = options;
   const envPaths = getEnvironmentPaths({ baseDir, env });
   const results: WranglerFileStatus[] = [];
 
-  for (const component of WORKER_COMPONENTS) {
+  for (const component of options.components ?? WORKER_COMPONENTS) {
     const masterPath = getMasterWranglerPath(envPaths, component);
     const deployPath = getDeployWranglerPath(packagesDir, component);
 
@@ -250,10 +292,13 @@ export async function checkWranglerStatus(
     if (masterExists && deployExists) {
       const masterContent = await readFile(masterPath, 'utf-8');
       const deployContent = await readFile(deployPath, 'utf-8');
-      // Compare only the relevant [env.xxx] section content.
+      // The selected environment and generated top-level settings are both deployment inputs.
+      // Other environment sections intentionally remain independent in the shared package file.
       inSync =
+        normalizeToml(extractTopLevelPreamble(masterContent)) ===
+          normalizeToml(extractTopLevelPreamble(deployContent)) &&
         normalizeToml(extractEnvironmentSectionFromToml(masterContent, env)) ===
-        normalizeToml(extractEnvironmentSectionFromToml(deployContent, env));
+          normalizeToml(extractEnvironmentSectionFromToml(deployContent, env));
     } else if (masterExists !== deployExists) {
       inSync = false;
     }
@@ -284,6 +329,9 @@ export async function saveMasterWranglerConfigs(
   options: Pick<WranglerSyncOptions, 'baseDir' | 'env' | 'dryRun' | 'onProgress'> & {
     includeDurableObjectMigrations?: boolean;
     components?: WorkerComponent[];
+    validateCapabilities?: boolean;
+    capabilityManifestBaseDir?: string;
+    placementModeByComponent?: Partial<Record<WorkerComponent, 'off' | 'smart'>>;
   }
 ): Promise<{ success: boolean; files: string[]; errors: string[] }> {
   const { baseDir, env, dryRun, onProgress, includeDurableObjectMigrations } = options;
@@ -305,6 +353,24 @@ export async function saveMasterWranglerConfigs(
     ? options.components.filter((component) => configuredComponents.includes(component))
     : configuredComponents;
 
+  const capabilityManifests = new Map();
+  if (options.validateCapabilities !== false) {
+    try {
+      for (const manifest of await loadWorkerCapabilityManifests({
+        baseDir: options.capabilityManifestBaseDir ?? baseDir,
+        components,
+      })) {
+        capabilityManifests.set(manifest.component, manifest);
+      }
+    } catch (error) {
+      return {
+        success: false,
+        files,
+        errors: [error instanceof Error ? error.message : String(error)],
+      };
+    }
+  }
+
   for (const component of components) {
     try {
       const wranglerConfig = generateWranglerConfig(
@@ -312,14 +378,27 @@ export async function saveMasterWranglerConfigs(
         config,
         resourceIds,
         workersSubdomain ?? undefined,
-        { includeDurableObjectMigrations }
+        {
+          includeDurableObjectMigrations,
+          placementMode: options.placementModeByComponent?.[component],
+        }
       );
+      if (options.validateCapabilities !== false) {
+        const capabilityManifest = capabilityManifests.get(component);
+        if (!capabilityManifest) {
+          throw new Error(`worker_capability_manifest_missing:${component}`);
+        }
+        validateGeneratedWorkerCapabilities({
+          compiled: capabilityManifest,
+          config: wranglerConfig,
+        });
+      }
       // Generate TOML with [env.{env}] section format
       const tomlContent = toToml(wranglerConfig, env);
       const masterPath = getMasterWranglerPath(envPaths, component);
 
       if (!dryRun) {
-        await writeFile(masterPath, tomlContent, 'utf-8');
+        await writeWranglerFileAtomically(masterPath, tomlContent);
         onProgress?.(`  Saved ${component}.toml`);
       } else {
         onProgress?.(`  Would save ${component}.toml`);
@@ -419,7 +498,7 @@ export async function syncWranglerConfigs(
             case 'backup':
               if (!dryRun) {
                 const backupPath = deployPath + '.backup';
-                await writeFile(backupPath, deployContent, 'utf-8');
+                await writeWranglerFileAtomically(backupPath, deployContent, deployPath);
                 onProgress?.(`  ${component}: Backed up to ${basename(backupPath)}`);
               }
               // Fall through to overwrite
@@ -434,7 +513,7 @@ export async function syncWranglerConfigs(
 
       // Write master content to deploy location
       if (!dryRun) {
-        await writeFile(deployPath, nextDeployContent, 'utf-8');
+        await writeWranglerFileAtomically(deployPath, nextDeployContent, masterPath);
         onProgress?.(`  ${component}: Synced to wrangler.toml`);
       } else {
         onProgress?.(`  ${component}: Would sync to wrangler.toml`);
@@ -468,7 +547,7 @@ export async function backupDeployConfigs(
     if (existsSync(deployPath)) {
       const content = await readFile(deployPath, 'utf-8');
       const backupPath = deployPath + '.backup';
-      await writeFile(backupPath, content, 'utf-8');
+      await writeWranglerFileAtomically(backupPath, content, deployPath);
       backedUp.push(component);
       onProgress?.(`  Backed up ${component}/wrangler.toml`);
     }
@@ -492,7 +571,7 @@ export async function restoreDeployConfigs(
 
     if (existsSync(backupPath)) {
       const content = await readFile(backupPath, 'utf-8');
-      await writeFile(deployPath, content, 'utf-8');
+      await writeWranglerFileAtomically(deployPath, content, backupPath);
       restored.push(component);
       onProgress?.(`  Restored ${component}/wrangler.toml`);
     }

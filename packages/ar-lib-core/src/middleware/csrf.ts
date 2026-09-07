@@ -112,6 +112,12 @@ export interface CsrfProtectionOptions {
   excludePaths?: string[];
 
   /**
+   * Optional request-level exclusion for protocol endpoints whose dynamic path
+   * segments cannot be represented safely by a broad prefix exclusion.
+   */
+  excludeRequest?: (request: Request) => boolean;
+
+  /**
    * Skip CSRF check when Bearer token is present in Authorization header.
    * Server-to-server requests use Bearer tokens, not cookies, so they
    * are inherently not vulnerable to CSRF.
@@ -209,7 +215,7 @@ function isExcludedPath(requestPath: string, excludePaths: string[]): boolean {
  * }));
  */
 export function csrfProtectionMiddleware(options: CsrfProtectionOptions = {}) {
-  const { excludePaths = [], skipForBearerToken = true } = options;
+  const { excludePaths = [], excludeRequest, skipForBearerToken = true } = options;
 
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const path = new URL(c.req.url).pathname;
@@ -221,6 +227,12 @@ export function csrfProtectionMiddleware(options: CsrfProtectionOptions = {}) {
     if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
       await next();
       finishCsrfTiming(c, timingSpans, timingStartedAtMs, 'safe_method');
+      return;
+    }
+
+    if (excludeRequest?.(c.req.raw)) {
+      await next();
+      finishCsrfTiming(c, timingSpans, timingStartedAtMs, 'excluded_request');
       return;
     }
 

@@ -204,11 +204,12 @@ export class SqlLoggingDeliveryEventStore implements LoggingDeliveryEventStore {
     };
 
     if (shouldPersistIndividualDeliveryEvent(record)) {
-      await this.executor.execute(
+      const insert = await this.executor.execute(
         `INSERT INTO logging_delivery_events (
           id, tenant_key, destination_id, log_type, plane, lane, status, attempt_count,
           error_class, object_catalog_id, created_at, updated_at, next_retry_at, metadata
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO NOTHING`,
         [
           record.id,
           record.tenantKey,
@@ -226,6 +227,11 @@ export class SqlLoggingDeliveryEventStore implements LoggingDeliveryEventStore {
           metadataToJson(record.metadata ?? undefined),
         ]
       );
+      // Only an explicit conflict result suppresses the aggregate update. Executors
+      // that do not report rowsAffected retain the historical insert-and-aggregate behavior.
+      if (readRowsAffected(insert) === 0) {
+        return record;
+      }
     }
     await this.upsertAggregate({
       tenantKey: record.tenantKey,

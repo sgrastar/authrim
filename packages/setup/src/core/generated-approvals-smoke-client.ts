@@ -64,14 +64,18 @@ export async function resolveGeneratedApprovalSmokeClient(
     'approval smoke service client bootstrap',
     `${options.baseUrl}/api/admin/clients`
   );
+  const smokeRunId = Date.now();
   const response = await fetchJsonWithTimeout(
     `${options.baseUrl}/api/admin/clients`,
     options.timeoutMs,
     {
       method: 'POST',
-      headers: getAdminHeaders(options.adminSecret, options.tenantId),
+      headers: {
+        ...getAdminHeaders(options.adminSecret, options.tenantId),
+        'Idempotency-Key': `setup-approval-smoke-client-${smokeRunId}`,
+      },
       body: JSON.stringify({
-        client_name: `Approval Smoke Service Client ${Date.now()}`,
+        client_name: `Approval Smoke Service Client ${smokeRunId}`,
         redirect_uris: ['https://approval-smoke.example.invalid/callback'],
         grant_types: ['authorization_code', 'refresh_token', 'client_credentials'],
         response_types: ['code'],

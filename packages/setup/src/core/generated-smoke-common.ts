@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { execa } from 'execa';
+import { executeD1Command } from './cloudflare.js';
 import { parseConfig, type AuthrimConfig } from './config.js';
 import { resolveGeneratedEnvValidationTarget } from './generated-env-validator.js';
 import { resolveIssuerUrl } from './url-config.js';
@@ -14,7 +14,7 @@ import {
   requestAdminMachineAccessToken,
 } from './admin-machine-access.js';
 import { generateEs256KeyPair, type JWK } from './keys.js';
-import { getD1DatabaseName } from './naming.js';
+import { loadLockFileAuto } from './lock.js';
 
 export type SmokeCheckStatus = 'pass' | 'warn' | 'fail';
 
@@ -254,39 +254,97 @@ export async function readGeneratedAdminApiSecret(options: {
     if (!options.baseUrl || !options.config) {
       throw new Error('validation_machine_access_requires_base_url_and_config');
     }
+    const databaseIdentifier = await resolveGeneratedValidationAdminDatabaseIdentifier({
+      baseDir: options.baseDir,
+      env: options.env,
+    });
     return createGeneratedValidationMachineAccess({
       env: options.env,
       config: options.config,
       baseUrl: options.baseUrl,
       tenantId: options.tenantId,
+      databaseIdentifier,
     });
   }
 
   const secretPath = options.adminSecretPath;
   const secret = (await readFile(secretPath, 'utf-8')).trim();
   if (!secret) {
-    throw new Error(`admin_api_secret_empty:${secretPath}`);
+    throw new Error(`admin_access_token_empty:${secretPath}`);
   }
 
   return { secret, path: secretPath };
 }
 
-async function executeGeneratedValidationMachineSql(env: string, sql: string): Promise<void> {
-  const dbName = getD1DatabaseName(env, 'admin-db');
-  const result = await execa(
-    'wrangler',
-    ['d1', 'execute', dbName, '--remote', '--yes', '--command', sql],
-    {
-      all: true,
-      reject: false,
-      timeout: 30_000,
-    }
-  );
+export async function resolveGeneratedValidationAdminDatabaseIdentifier(input: {
+  baseDir: string;
+  env: string;
+}): Promise<string> {
+  const { lock } = await loadLockFileAuto(input.baseDir, input.env);
+  const databaseIdentifier = lock?.d1.DB_ADMIN?.id?.trim();
+  if (!databaseIdentifier) throw new Error('validation_machine_admin_database_id_missing');
+  return databaseIdentifier;
+}
 
-  if (result.exitCode !== 0) {
-    throw new Error(
-      `validation_machine_sql_failed:${result.all || result.stderr || result.stdout}`
-    );
+export async function executeGeneratedValidationMachineSql(
+  databaseIdentifier: string,
+  sql: string,
+  execute: typeof executeD1Command = executeD1Command
+): Promise<void> {
+  if (!databaseIdentifier.trim()) {
+    throw new Error('validation_machine_admin_database_id_missing');
+  }
+  try {
+    await execute(databaseIdentifier, sql, { timeout: 30_000 });
+  } catch (error) {
+    throw new Error('validation_machine_sql_failed', { cause: error });
+  }
+}
+
+export async function cleanupGeneratedValidationMachineAccess(input: {
+  databaseIdentifier: string;
+  cleanupSql: string;
+  keysDir: string;
+  maxAttempts?: number;
+  execute?: typeof executeD1Command;
+  wait?: (delayMs: number) => Promise<void>;
+}): Promise<void> {
+  const maxAttempts = Math.max(1, Math.min(5, input.maxAttempts ?? 3));
+  const wait =
+    input.wait ?? ((delayMs: number) => new Promise((resolve) => setTimeout(resolve, delayMs)));
+  let databaseCleanupError: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await executeGeneratedValidationMachineSql(
+        input.databaseIdentifier,
+        input.cleanupSql,
+        input.execute
+      );
+      databaseCleanupError = undefined;
+      break;
+    } catch (error) {
+      databaseCleanupError = error;
+      if (attempt < maxAttempts) await wait(100 * attempt);
+    }
+  }
+
+  let localCleanupError: unknown;
+  try {
+    // Remove the private key material even when remote credential revocation failed. The caller
+    // still receives the remote cleanup failure and must not report successful verification.
+    await rm(input.keysDir, { recursive: true, force: true });
+  } catch (error) {
+    localCleanupError = error;
+  }
+
+  const errors = [databaseCleanupError, localCleanupError].filter(
+    (error): error is NonNullable<unknown> => error !== undefined
+  );
+  if (errors.length === 1) {
+    throw new Error('validation_machine_cleanup_failed', { cause: errors[0] });
+  }
+  if (errors.length > 1) {
+    throw new AggregateError(errors, 'validation_machine_cleanup_failed');
   }
 }
 
@@ -307,6 +365,7 @@ async function createGeneratedValidationMachineAccess(options: {
   config: AuthrimConfig;
   baseUrl: string;
   tenantId?: string;
+  databaseIdentifier: string;
 }): Promise<GeneratedAdminApiAccess> {
   const runId = `${Date.now()}-${randomBytes(6).toString('base64url')}`;
   const clientId = `authrim-validation-${runId}`;
@@ -317,14 +376,12 @@ async function createGeneratedValidationMachineAccess(options: {
     principalId,
     principalType: 'ci',
   });
-  const cleanup = async (): Promise<void> => {
-    try {
-      await executeGeneratedValidationMachineSql(options.env, cleanupSql);
-    } catch {
-      // Validation cleanup is best-effort; the credential is short-lived and scoped.
-    }
-    await rm(keysDir, { recursive: true, force: true });
-  };
+  const cleanup = async (): Promise<void> =>
+    cleanupGeneratedValidationMachineAccess({
+      databaseIdentifier: options.databaseIdentifier,
+      cleanupSql,
+      keysDir,
+    });
 
   try {
     await writeGeneratedValidationMachineKeys(keysDir, `${clientId}-key`);
@@ -337,12 +394,12 @@ async function createGeneratedValidationMachineAccess(options: {
       principalId,
       principalType: 'ci',
       displayName: 'Authrim Generated Environment Validation',
-      description: 'Temporary machine principal created by environment-validation smoke tests.',
+      description: 'Temporary machine principal created by generated-environment smoke tests.',
       permissions,
       tokenTtlSeconds: 600,
-      createdByActorId: 'environment-validation',
+      createdByActorId: 'generated-environment',
     });
-    await executeGeneratedValidationMachineSql(options.env, bootstrapSql);
+    await executeGeneratedValidationMachineSql(options.databaseIdentifier, bootstrapSql);
     const token = await requestAdminMachineAccessToken({
       apiBaseUrl: options.baseUrl,
       keysDir,
@@ -356,7 +413,14 @@ async function createGeneratedValidationMachineAccess(options: {
       cleanup,
     };
   } catch (error) {
-    await cleanup();
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        'validation_machine_access_failed_and_cleanup_failed'
+      );
+    }
     throw error;
   }
 }

@@ -5,7 +5,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { createErrorResponse, AR_ERROR_CODES } from '@authrim/ar-lib-core';
+import { createErrorResponse, AR_ERROR_CODES, shouldUseBuiltinForms } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import { resolveAsyncTenantId } from './tenant';
 
@@ -14,6 +14,12 @@ import { resolveAsyncTenantId } from './tenant';
  * Simple test page for CIBA flow
  */
 export async function cibaTestPageHandler(c: Context<{ Bindings: Env }>) {
+  const testEndpointsEnabled = c.env.ENABLE_TEST_ENDPOINTS === 'true';
+  const builtinFormsEnabled = await shouldUseBuiltinForms(c.env);
+  if (!testEndpointsEnabled && !builtinFormsEnabled) {
+    return c.notFound();
+  }
+
   const tenantId = resolveAsyncTenantId(c);
   if (!tenantId) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {

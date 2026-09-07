@@ -403,48 +403,20 @@ if [ "$SKIP_MIGRATIONS" = false ] && [ "$BINDING_ONLY" = false ]; then
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 
-    ADMIN_MIGRATION_DIR="migrations/admin"
+    ADMIN_MIGRATION_DIR="migrations/admin/d1"
 
     if [ ! -d "$ADMIN_MIGRATION_DIR" ]; then
         echo -e "${RED}❌ Migration directory not found: $ADMIN_MIGRATION_DIR${NC}"
         exit 1
     fi
 
-    # Get list of migration files
-    MIGRATION_FILES=$(ls -1 ${ADMIN_MIGRATION_DIR}/*.sql 2>/dev/null | sort)
-
-    if [ -z "$MIGRATION_FILES" ]; then
+    if ! ls -1 "${ADMIN_MIGRATION_DIR}"/*.sql >/dev/null 2>&1; then
         echo -e "${YELLOW}⚠️  No migration files found in ${ADMIN_MIGRATION_DIR}/${NC}"
     else
-        TOTAL=$(echo "$MIGRATION_FILES" | wc -l | tr -d ' ')
-        echo -e "${BLUE}📦 Found ${TOTAL} admin migration files${NC}"
-        echo ""
-
-        CURRENT=0
-        for migration_file in $MIGRATION_FILES; do
-            CURRENT=$((CURRENT + 1))
-            filename=$(basename "$migration_file")
-
-            printf "[%d/%d] Applying %-40s " "$CURRENT" "$TOTAL" "$filename"
-
-            # Execute migration
-            output=$(wrangler d1 execute "$DB_NAME" ${REMOTE_FLAG} --file="$migration_file" --yes 2>&1)
-            exit_code=$?
-
-            if [ $exit_code -eq 0 ]; then
-                echo -e "${GREEN}✓ Applied${NC}"
-            elif echo "$output" | grep -qE "already exists|UNIQUE constraint failed|duplicate column name"; then
-                echo -e "${GREEN}✓ Already exists${NC}"
-            else
-                echo -e "${RED}✗ Failed${NC}"
-                echo -e "${RED}$output${NC}"
-            fi
-
-            # Small delay to avoid rate limits
-            sleep 0.5
-        done
-
-        echo ""
+        pnpm exec tsx scripts/run-d1-migrations.ts \
+            --database "$DB_NAME" \
+            --directory "$ADMIN_MIGRATION_DIR" \
+            --role admin
         echo -e "${GREEN}✅ All admin migrations applied!${NC}"
     fi
 fi

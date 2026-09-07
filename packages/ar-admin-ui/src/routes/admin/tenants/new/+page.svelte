@@ -1,8 +1,6 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { adminTenantsAPI } from '$lib/api/admin-tenants';
-	import { getTenantD1CreateUiState } from '$lib/admin/tenant-d1-ui-state';
 	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
 	import { tenantStore } from '$lib/stores/tenants.svelte';
 	import { LL } from '$i18n/i18n-svelte';
@@ -15,19 +13,11 @@
 	let newTenantCode = $state('');
 	let newName = $state('');
 	let newDescription = $state('');
+	let isolationPolicy = $state<'shared_pool' | 'tenant_exclusive'>('tenant_exclusive');
 	let creating = $state(false);
 	let createError = $state('');
 	let idValidationError = $state('');
 	let tenantCodeValidationError = $state('');
-	let creatingStep = $state('');
-
-	const provisioningSteps = ['reserve', 'seed', 'registry', 'snapshot', 'smoke', 'activate'];
-	let tenantD1Pool = $derived(tenantStore.tenantD1Pool);
-	let tenantD1CreateState = $derived(getTenantD1CreateUiState(tenantD1Pool));
-
-	onMount(async () => {
-		await tenantStore.reload();
-	});
 
 	// ==========================================================================
 	// Validation
@@ -72,51 +62,21 @@
 
 		creating = true;
 		createError = '';
-		creatingStep = 'reserve';
-		let stepTimer: number | undefined;
 
 		try {
-			stepTimer = window.setInterval(() => {
-				const currentIndex = Math.max(0, provisioningSteps.indexOf(creatingStep));
-				creatingStep = provisioningSteps[Math.min(currentIndex + 1, provisioningSteps.length - 1)];
-			}, 1800);
 			const created = await adminTenantsAPI.create({
 				id: newId,
 				tenant_code: newTenantCode.trim() || undefined,
 				name: newName.trim(),
-				description: newDescription.trim() || undefined
+				description: newDescription.trim() || undefined,
+				isolation_policy: isolationPolicy
 			});
-			window.clearInterval(stepTimer);
-			creatingStep = 'activate';
 			tenantStore.add(created);
-			goto(`/admin/tenants/${encodeURIComponent(created.id)}`);
+			await goto(`/admin/tenants/${encodeURIComponent(created.id)}`);
 		} catch (err) {
 			createError = err instanceof Error ? err.message : $LL.admin_tenants_create_failed();
 		} finally {
-			if (stepTimer !== undefined) {
-				window.clearInterval(stepTimer);
-			}
 			creating = false;
-			creatingStep = '';
-		}
-	}
-
-	function provisioningStepLabel(step: string): string {
-		switch (step) {
-			case 'reserve':
-				return $LL.admin_tenants_step_reserve();
-			case 'seed':
-				return $LL.admin_tenants_step_seed();
-			case 'registry':
-				return $LL.admin_tenants_step_registry();
-			case 'snapshot':
-				return $LL.admin_tenants_step_snapshot();
-			case 'smoke':
-				return $LL.admin_tenants_step_smoke();
-			case 'activate':
-				return $LL.admin_tenants_step_activate();
-			default:
-				return step;
 		}
 	}
 </script>
@@ -137,51 +97,10 @@
 	/>
 
 	<section class="tenant-create-panel">
-		{#if tenantD1CreateState.showPool}
-			<div class="alert alert-info">
-				<i class="i-ph-database"></i>
-				<div>
-					<strong>{$LL.admin_tenants_d1_slots()}</strong>
-					<p>
-						{$LL.admin_tenants_d1_slots_available({
-							available: tenantD1Pool?.available_slots ?? 0,
-							capacity: tenantD1Pool?.capacity ?? 0
-						})}
-					</p>
-				</div>
-			</div>
-		{/if}
-
-		{#if tenantD1CreateState.exhausted}
-			<div class="alert alert-error">
-				<i class="i-ph-warning-circle"></i>
-				<div>
-					<strong>{$LL.admin_tenants_d1_exhausted_title()}</strong>
-					<p>{$LL.admin_tenants_d1_exhausted_message()}</p>
-				</div>
-			</div>
-		{/if}
-
 		{#if createError}
 			<div class="alert alert-error">
 				<i class="i-ph-warning-circle"></i>
 				{createError}
-			</div>
-		{/if}
-
-		{#if creating}
-			<div class="provisioning-steps">
-				{#each provisioningSteps as step (step)}
-					<div
-						class:active={step === creatingStep}
-						class:done={provisioningSteps.indexOf(step) < provisioningSteps.indexOf(creatingStep)}
-					>
-						<i
-							class={step === creatingStep ? 'i-ph-circle-notch animate-spin' : 'i-ph-check-circle'}
-						></i>
-						<span>{provisioningStepLabel(step)}</span>
-					</div>
-				{/each}
 			</div>
 		{/if}
 
@@ -261,6 +180,28 @@
 					maxlength="500"
 				></textarea>
 			</div>
+
+			<fieldset class="admin-field admin-field--full placement-field">
+				<legend class="admin-field__label">{$LL.admin_tenants_placement_label()}</legend>
+				<div class="placement-options">
+					<label class:active={isolationPolicy === 'shared_pool'}>
+						<input type="radio" bind:group={isolationPolicy} value="shared_pool" />
+						<i class="i-ph-stack"></i>
+						<span>
+							<strong>{$LL.admin_tenants_placement_shared()}</strong>
+							<small>{$LL.admin_tenants_placement_shared_hint()}</small>
+						</span>
+					</label>
+					<label class:active={isolationPolicy === 'tenant_exclusive'}>
+						<input type="radio" bind:group={isolationPolicy} value="tenant_exclusive" />
+						<i class="i-ph-database"></i>
+						<span>
+							<strong>{$LL.admin_tenants_placement_exclusive()}</strong>
+							<small>{$LL.admin_tenants_placement_exclusive_hint()}</small>
+						</span>
+					</label>
+				</div>
+			</fieldset>
 		</div>
 
 		<div class="form-actions">
@@ -268,10 +209,7 @@
 			<button
 				class="btn btn-primary"
 				onclick={handleCreate}
-				disabled={creating ||
-					tenantD1CreateState.exhausted ||
-					!!idValidationError ||
-					!!tenantCodeValidationError}
+				disabled={creating || !!idValidationError || !!tenantCodeValidationError}
 			>
 				{#if creating}
 					<i class="i-ph-circle-notch animate-spin"></i>
@@ -342,6 +280,58 @@
 		margin: 0;
 	}
 
+	.placement-field {
+		margin: 0;
+		padding: 0;
+		border: 0;
+	}
+
+	.placement-options {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.75rem;
+	}
+
+	.placement-options label {
+		display: grid;
+		grid-template-columns: auto auto minmax(0, 1fr);
+		align-items: start;
+		gap: 0.65rem;
+		min-height: 5.25rem;
+		padding: 0.85rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		background: var(--color-surface);
+		cursor: pointer;
+	}
+
+	.placement-options label.active {
+		border-color: var(--color-accent);
+		box-shadow: 0 0 0 1px var(--color-accent);
+	}
+
+	.placement-options label > :global(i) {
+		width: 1.15rem;
+		height: 1.15rem;
+		color: var(--color-text-muted);
+	}
+
+	.placement-options span {
+		display: grid;
+		gap: 0.25rem;
+		min-width: 0;
+	}
+
+	.placement-options strong,
+	.placement-options small {
+		font-size: 0.82rem;
+		line-height: 1.35;
+	}
+
+	.placement-options small {
+		color: var(--color-text-muted);
+	}
+
 	.form-actions {
 		display: flex;
 		justify-content: flex-end;
@@ -378,62 +368,13 @@
 		color: var(--color-danger);
 	}
 
-	.alert-info {
-		border-color: color-mix(in srgb, var(--color-accent) 26%, var(--color-border));
-		background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
-		color: var(--color-text);
-	}
-
-	.alert-info :global(i) {
-		color: var(--color-accent);
-	}
-
-	.alert p {
-		margin: 0.2rem 0 0;
-		color: var(--color-text-muted);
-		line-height: 1.6;
-	}
-
-	.provisioning-steps {
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 0.5rem;
-		margin-bottom: 1rem;
-	}
-
-	.provisioning-steps > div {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-		min-width: 0;
-		padding: 0.55rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-control, var(--radius-md));
-		background: var(--color-surface-muted);
-		color: var(--color-text-muted);
-		font-size: 0.75rem;
-	}
-
-	.provisioning-steps > div.active,
-	.provisioning-steps > div.done {
-		color: var(--color-text);
-		border-color: var(--color-accent);
-		background: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
-	}
-
-	.provisioning-steps :global(i) {
-		width: 14px;
-		height: 14px;
-		flex-shrink: 0;
-	}
-
 	@media (max-width: 640px) {
 		.form-grid {
 			grid-template-columns: 1fr;
 		}
 
-		.provisioning-steps {
-			grid-template-columns: 1fr 1fr;
+		.placement-options {
+			grid-template-columns: 1fr;
 		}
 
 		.form-actions {

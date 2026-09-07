@@ -2,7 +2,7 @@
 project: Authrim
 lang: en
 date: 2025-12-23
-description: "This is the unified storage abstraction layer implemented in Phase 5. It provides a unified interface for Cloudflare Workers environment (D1, KV, Durable Objects)."
+description: 'This is the unified storage abstraction layer implemented in Phase 5. It provides a unified interface for Cloudflare Workers environment (D1, KV, Durable Objects).'
 type: reference
 tags:
   - authrim
@@ -12,6 +12,7 @@ tags:
   - cloudflare-workers
   - storage
 ---
+
 # Storage Abstraction Layer
 
 This is the unified storage abstraction layer implemented in Phase 5. It provides a unified interface for Cloudflare Workers environment (D1, KV, Durable Objects).
@@ -22,14 +23,14 @@ The storage abstraction layer integrates multiple storage backends and provides 
 
 ### Routing Strategy
 
-| Prefix           | Routing Target                            | Description                     |
-| ---------------- | ----------------------------------------- | ------------------------------- |
-| `session:*`      | SessionStore Durable Object               | Region-sharded hot path + cold persistence adapter |
-| `client:*`       | D1 + KV Cache                             | Read-through cache pattern      |
-| `user:*`         | D1 Database                               | User data                       |
-| `authcode:*`     | AuthorizationCodeStore Durable Object     | One-time use guarantee          |
-| `refreshtoken:*` | Deprecated low-level shim                 | Use refresh token helpers instead |
-| Others           | Unsupported                               | Legacy KV fallback removed      |
+| Prefix           | Routing Target                        | Description                                        |
+| ---------------- | ------------------------------------- | -------------------------------------------------- |
+| `session:*`      | SessionStore Durable Object           | Region-sharded hot path + cold persistence adapter |
+| `client:*`       | D1 + KV Cache                         | Read-through cache pattern                         |
+| `user:*`         | D1 Database                           | User data                                          |
+| `authcode:*`     | AuthorizationCodeStore Durable Object | One-time use guarantee                             |
+| `refreshtoken:*` | Deprecated low-level shim             | Use refresh token helpers instead                  |
+| Others           | Unsupported                           | Legacy KV fallback removed                         |
 
 ## Architecture
 
@@ -121,7 +122,7 @@ await adapter.delete('session:abc123');
 const users = await adapter.query<UserPII>('SELECT * FROM users_pii WHERE email = ?', [
   'user@example.com',
 ]);
-await adapter.execute('DELETE FROM sessions WHERE expires_at < ?', [Date.now()]);
+await adapter.execute('DELETE FROM audit_events WHERE created_at < ?', [retentionCutoff]);
 ```
 
 ### Store-Specific APIs

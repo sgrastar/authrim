@@ -15,6 +15,10 @@ import {
 import { discoveryHandler } from './discovery';
 import { jwksHandler } from './jwks';
 import { webfingerHandler } from './webfinger';
+import {
+  adminAgentAuthorizationServerMetadataHandler,
+  agentProtectedResourceMetadataHandler,
+} from './agent-access-metadata';
 
 // Create Hono app with Cloudflare Workers types
 const app = new Hono<{ Bindings: Env }>();
@@ -82,6 +86,15 @@ app.get('/.well-known/openid-configuration', discoveryHandler);
 // Returns the same metadata as openid-configuration for OAuth 2.0 clients
 app.get('/.well-known/oauth-authorization-server', discoveryHandler);
 
+// RFC 8414 metadata for the dedicated Admin Agent issuer.
+app.get(
+  '/.well-known/oauth-authorization-server/oauth/admin-agent',
+  adminAgentAuthorizationServerMetadataHandler
+);
+
+// RFC 9728 path-form metadata for the protected MCP resource at /mcp.
+app.get('/.well-known/oauth-protected-resource/mcp', agentProtectedResourceMetadataHandler);
+
 // OpenID Connect Discovery via WebFinger
 app.get('/.well-known/webfinger', webfingerHandler);
 
@@ -102,3 +115,4 @@ app.onError((err, c) => {
 
 // Export for Cloudflare Workers
 export default app;
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

@@ -6,14 +6,21 @@
  * admin/tenants/+page.svelte (management page) to stay in sync.
  */
 
-import { adminTenantsAPI, type Tenant, type TenantListResponse } from '$lib/api/admin-tenants';
+import { adminTenantsAPI, type Tenant } from '$lib/api/admin-tenants';
 
 function createTenantStore() {
 	let tenants = $state<Tenant[]>([]);
-	let tenantD1Pool = $state<TenantListResponse['tenant_d1_pool']>({ enabled: false });
 	let loaded = $state(false);
 	let singleTenantMode = $state(false);
 	let singleTenantReason = $state<string | null>(null);
+
+	async function fetchTenants() {
+		const response = await adminTenantsAPI.list();
+		tenants = response.tenants;
+		singleTenantMode = response.single_tenant_mode ?? false;
+		singleTenantReason = response.single_tenant_reason ?? null;
+		loaded = true;
+	}
 
 	return {
 		get tenants() {
@@ -28,10 +35,6 @@ function createTenantStore() {
 		get singleTenantReason() {
 			return singleTenantReason;
 		},
-		get tenantD1Pool() {
-			return tenantD1Pool;
-		},
-
 		/** Active tenants suitable for the header selector */
 		get activeTenants(): { id: string; name: string }[] {
 			return tenants
@@ -47,12 +50,7 @@ function createTenantStore() {
 		/** Fetch the full tenant list from the API */
 		async load() {
 			try {
-				const response = await adminTenantsAPI.list();
-				tenants = response.tenants;
-				tenantD1Pool = response.tenant_d1_pool ?? { enabled: false };
-				singleTenantMode = response.single_tenant_mode ?? false;
-				singleTenantReason = response.single_tenant_reason ?? null;
-				loaded = true;
+				await fetchTenants();
 			} catch {
 				// Non-critical: selector simply won't appear
 			}
@@ -60,7 +58,9 @@ function createTenantStore() {
 
 		/** Reload the tenant list (e.g. after create/update/delete operations) */
 		async reload() {
-			await this.load();
+			// Management pages need the failure so they do not present a failed
+			// request as a valid empty tenant inventory.
+			await fetchTenants();
 		},
 
 		/** Optimistically update a single tenant in the list */

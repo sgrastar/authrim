@@ -3,10 +3,12 @@ import type { DatabaseAdapter } from '@authrim/ar-lib-core';
 
 const {
   mockAdapter,
+  mockAdminDb,
   mockTenantCoreAdapter,
   mockTenantPiiAdapter,
+  mockTenantMetadataAdapter,
   mockResolveAuthCorePersistenceAdapterFromEnv,
-  mockResolveUserStoreRuntimeSourcesFromEnv,
+  mockResolveTenantAssignedDatabaseSourcesFromRegistry,
   mockEmitRuntimeLogRecords,
 } = vi.hoisted(() => {
   const adapter = {
@@ -27,26 +29,34 @@ const {
     }) satisfies DatabaseAdapter;
   const tenantCoreAdapter = createRuntimeAdapter();
   const tenantPiiAdapter = createRuntimeAdapter();
+  const tenantMetadataAdapter = createRuntimeAdapter();
   return {
     mockAdapter: adapter,
+    mockAdminDb: {},
     mockTenantCoreAdapter: tenantCoreAdapter,
     mockTenantPiiAdapter: tenantPiiAdapter,
-    mockResolveAuthCorePersistenceAdapterFromEnv: vi.fn().mockResolvedValue(adapter),
+    mockTenantMetadataAdapter: tenantMetadataAdapter,
+    mockResolveAuthCorePersistenceAdapterFromEnv: vi.fn(
+      async (_env: unknown, partition?: string) =>
+        partition === 'management-generic-job-lifecycle' ? tenantMetadataAdapter : adapter
+    ),
     mockEmitRuntimeLogRecords: vi
       .fn()
       .mockResolvedValue({ tenantKey: 'tk_test', targetResults: [] }),
-    mockResolveUserStoreRuntimeSourcesFromEnv: vi.fn().mockResolvedValue({
-      storageProfile: { id: 'builtin:storage:shared-d1' },
-      coreDb: tenantCoreAdapter,
-      piiDb: tenantPiiAdapter,
-      policyDb: tenantCoreAdapter,
-      userCacheScope: {
-        storageProfileId: 'builtin:storage:shared-d1',
-        sourceGeneration: 'core:0:pii:0',
-        schemaVersion: 'core:1:pii:1',
-      },
-      piiCacheMode: 'encrypted_short_ttl',
-    }),
+    mockResolveTenantAssignedDatabaseSourcesFromRegistry: vi.fn(
+      async (_env: unknown, options: { role: string }) => [
+        {
+          source: options.role === 'tenant_pii' ? tenantPiiAdapter : tenantCoreAdapter,
+          dataRole: options.role === 'tenant_pii' ? 'tenant_pii' : 'tenant_core/users',
+          residencyPartition: 'default',
+          shardId: options.role === 'tenant_pii' ? 'pii-0' : 'core-0',
+          bindingRef: options.role === 'tenant_pii' ? 'TENANT_PII_0' : 'TENANT_CORE_0',
+          bindingRouteGeneration: 1,
+          schemaVersion: 1,
+          runtimeGeneration: 1,
+        },
+      ]
+    ),
   };
 });
 
@@ -54,14 +64,31 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    ensureDatabaseAdapter: vi.fn((source, partition) =>
+      partition === 'management-generic-jobs' || source === mockAdminDb
+        ? mockAdapter
+        : actual.ensureDatabaseAdapter(source, partition)
+    ),
     resolveAuthCorePersistenceAdapterFromEnv: mockResolveAuthCorePersistenceAdapterFromEnv,
-    resolveUserStoreRuntimeSourcesFromEnv: mockResolveUserStoreRuntimeSourcesFromEnv,
+    resolveTenantAssignedDatabaseSourcesFromRegistry:
+      mockResolveTenantAssignedDatabaseSourcesFromRegistry,
     emitRuntimeLogRecords: mockEmitRuntimeLogRecords,
+    transitionAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'suspended' })),
   };
 });
 
 import { encryptObjectArtifact } from '@authrim/ar-lib-core';
-import { processPendingGenericAdminJobs } from '../admin-job-executor';
+import {
+  isAdminJobAllowedForTenantLifecycle,
+  processPendingGenericAdminJobs as processPendingGenericAdminJobsImpl,
+} from '../admin-job-executor';
+
+function processPendingGenericAdminJobs(
+  env: Record<string, unknown>,
+  logger: Parameters<typeof processPendingGenericAdminJobsImpl>[1]
+) {
+  return processPendingGenericAdminJobsImpl({ DB_ADMIN: mockAdminDb, ...env } as never, logger);
+}
 
 function createMockR2Bucket() {
   const objects = new Map<string, string>();
@@ -131,7 +158,10 @@ describe('generic admin job executor', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
-    mockResolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue(mockAdapter);
+    mockResolveAuthCorePersistenceAdapterFromEnv.mockImplementation(
+      async (_env: unknown, partition?: string) =>
+        partition === 'management-generic-job-lifecycle' ? mockTenantMetadataAdapter : mockAdapter
+    );
     mockAdapter.query.mockReset();
     mockAdapter.queryOne.mockReset();
     mockAdapter.execute.mockReset();
@@ -139,99 +169,171 @@ describe('generic admin job executor', () => {
     mockEmitRuntimeLogRecords.mockReset();
     mockEmitRuntimeLogRecords.mockResolvedValue({ tenantKey: 'tk_test', targetResults: [] });
     mockTenantCoreAdapter.query.mockReset();
+    mockTenantCoreAdapter.queryOne.mockReset();
+    mockTenantCoreAdapter.execute.mockReset();
+    mockTenantCoreAdapter.queryOne.mockResolvedValue(null);
+    mockTenantCoreAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
     mockTenantPiiAdapter.query.mockReset();
     mockTenantCoreAdapter.query.mockResolvedValue([]);
     mockTenantPiiAdapter.query.mockResolvedValue([]);
-    mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValue({
-      storageProfile: { id: 'builtin:storage:shared-d1' },
-      coreDb: mockTenantCoreAdapter,
-      piiDb: mockTenantPiiAdapter,
-      policyDb: mockTenantCoreAdapter,
-      userCacheScope: {
-        storageProfileId: 'builtin:storage:shared-d1',
-        sourceGeneration: 'core:0:pii:0',
-        schemaVersion: 'core:1:pii:1',
-      },
-      piiCacheMode: 'encrypted_short_ttl',
-    });
+    mockTenantMetadataAdapter.query.mockReset();
+    mockTenantMetadataAdapter.queryOne.mockReset();
+    mockTenantMetadataAdapter.execute.mockReset();
+    mockTenantMetadataAdapter.queryOne.mockResolvedValue({ lifecycle_state: 'active' });
+    mockResolveTenantAssignedDatabaseSourcesFromRegistry.mockClear();
   });
 
-  it('generates tenant database provisioning binding and deployment plans', async () => {
+  it('fails closed before job discovery when the dedicated Admin DB is missing', async () => {
+    await expect(processPendingGenericAdminJobsImpl({} as never, logger)).rejects.toThrow(
+      'management_admin_jobs_database_unavailable'
+    );
+    expect(mockAdapter.query).not.toHaveBeenCalled();
+  });
+
+  it('allows only pre-purge exports while a tenant is deleting', () => {
+    expect(isAdminJobAllowedForTenantLifecycle('deleting', 'tenant-database/export')).toBe(true);
+    expect(isAdminJobAllowedForTenantLifecycle('deleting', 'reports/generate')).toBe(false);
+    expect(isAdminJobAllowedForTenantLifecycle('deleted', 'tenant-database/export')).toBe(false);
+  });
+
+  it('records lifecycle-blocked jobs in the deployed error_message column', async () => {
     mockAdapter.query.mockResolvedValueOnce([
       {
-        id: 'job-tenant-db',
+        id: 'job-blocked',
         tenant_id: 'tenant-a',
-        job_type: 'tenant-database/provision',
+        job_type: 'reports/generate',
         status: 'pending',
         progress: null,
-        config: JSON.stringify({
-          tenant_slug: 'tenant-a',
-          generation: 2,
-          activate: false,
-          execution_mode: 'plan_only',
-        }),
+        config: '{}',
         created_at: 1,
+        tenant_lifecycle_state: 'deleting',
       },
     ]);
 
-    await processPendingGenericAdminJobs({ DEPLOY_ENV: 'dev' } as never, logger);
+    await processPendingGenericAdminJobs({} as never, logger);
 
-    const finalUpdate = mockAdapter.execute.mock.calls.at(-1);
-    expect(finalUpdate?.[0]).toEqual(
-      expect.stringContaining('SET status = ?, progress = ?, result = ?')
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('error_message = ?'),
+      expect.arrayContaining(['tenant_lifecycle_blocked:deleting'])
     );
-    expect(finalUpdate?.[1]).toEqual(
-      expect.arrayContaining(['completed', expect.any(String), expect.any(String)])
+    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining(' error = ?'),
+      expect.anything()
     );
-    const resultJson = (finalUpdate?.[1] as unknown[])[2] as string;
-    expect(JSON.parse(resultJson)).toMatchObject({
-      summary: { execution_mode: 'plan_only', succeeded: 2 },
-      tenant_database_provisioning: {
-        tenant_id: 'tenant-a',
-        generation: 2,
-        impact: {
-          added_bindings: 2,
-          capacity: { state: 'ok' },
-        },
-        generated_config: {
-          wrangler_toml: expect.stringContaining('[[d1_databases]]'),
-        },
-        operator_cli: {
-          command: expect.stringContaining('authrim-setup tenant-db'),
-        },
-      },
+  });
+
+  it('completes lifecycle restore validation only after real storage and protocol probes', async () => {
+    const r2 = createMockR2Bucket();
+    const tenantSettings = JSON.stringify({
+      'tenant.allowed_identifiers': 'https://tenant-a.auth.example.com',
     });
-    expect(mockEmitRuntimeLogRecords).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tenantId: 'tenant-a',
-        logType: 'job',
-        surface: 'admin_job',
-        records: [
-          expect.objectContaining({
-            payload: expect.objectContaining({
-              job_id: 'job-tenant-db',
-              job_type: 'tenant-database/provision',
-              status: 'processing',
-            }),
-          }),
-        ],
-      })
+    const kv = {
+      get: vi.fn(async () => tenantSettings),
+      put: vi.fn(async () => undefined),
+      delete: vi.fn(async () => undefined),
+    };
+    const tokenKv = {
+      list: vi.fn(async () => ({ keys: [] })),
+      get: vi.fn(async () => null),
+    };
+    mockAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-lifecycle-restore',
+        tenant_id: 'tenant-a',
+        job_type: 'tenants/lifecycle-validation',
+        status: 'pending',
+        progress: null,
+        config: JSON.stringify({
+          command: 'restore-validate',
+          validation_kind: 'restore',
+          source_state: 'restore_pending',
+          target_state: 'active',
+          reason: 'restore completed',
+          idempotency_key: 'restore-key',
+          actor_id: 'admin-1',
+        }),
+        created_at: 1,
+        tenant_lifecycle_state: 'restore_validating',
+      },
+    ]);
+    mockAdapter.queryOne
+      .mockResolvedValueOnce({ id: 'tenant-a', lifecycle_state: 'restore_validating' })
+      .mockResolvedValueOnce({ ok: 1 })
+      .mockResolvedValueOnce({ id: 'lifecycle:job-lifecycle-restore', tenant_id: 'tenant-a' })
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ id: 'audit-1' })
+      .mockResolvedValueOnce({ updated_at: 10 });
+
+    await processPendingGenericAdminJobs(
+      {
+        BASE_DOMAIN: 'auth.example.com',
+        AUTHRIM_CONFIG: kv,
+        INITIAL_ACCESS_TOKENS: tokenKv,
+        EXPORT_ARTIFACTS: r2.bucket,
+        DB_ADMIN: mockTenantCoreAdapter,
+      } as never,
+      logger
     );
-    expect(mockEmitRuntimeLogRecords).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tenantId: 'tenant-a',
-        logType: 'job',
-        surface: 'admin_job',
-        records: [
-          expect.objectContaining({
-            payload: expect.objectContaining({
-              job_id: 'job-tenant-db',
-              job_type: 'tenant-database/provision',
-              status: 'completed',
-            }),
-          }),
-        ],
-      })
+
+    expect(r2.put).toHaveBeenCalledOnce();
+    expect(kv.get).toHaveBeenCalledWith('settings:tenant:tenant-a:tenant');
+    expect(kv.put).toHaveBeenCalledWith('v1:tenant-exists:tenant-a', 'true', {
+      expirationTtl: 3600,
+    });
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE tenants SET lifecycle_state = ?'),
+      expect.arrayContaining(['active', 'tenant-a', 'restore_validating'])
+    );
+    expect(mockTenantCoreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO admin_audit_log'),
+      expect.arrayContaining(['tenant.lifecycle.validation_completed'])
+    );
+  });
+
+  it('keeps the safe lifecycle state and audits retry when a required probe fails', async () => {
+    mockAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'job-lifecycle-failure',
+        tenant_id: 'tenant-a',
+        job_type: 'tenants/lifecycle-validation',
+        status: 'pending',
+        progress: null,
+        config: JSON.stringify({
+          command: 'unfreeze',
+          validation_kind: 'unfreeze',
+          source_state: 'frozen',
+          target_state: 'active',
+          reason: 'incident resolved',
+          idempotency_key: 'unfreeze-key',
+          actor_id: 'admin-1',
+        }),
+        created_at: 1,
+        attempt_count: 0,
+        max_attempts: 3,
+        tenant_lifecycle_state: 'frozen',
+      },
+    ]);
+    mockAdapter.queryOne
+      .mockResolvedValueOnce({ id: 'tenant-a', lifecycle_state: 'frozen' })
+      .mockResolvedValueOnce({ ok: 1 })
+      .mockResolvedValueOnce({ id: 'lifecycle:job-lifecycle-failure', tenant_id: 'tenant-a' });
+
+    await processPendingGenericAdminJobs(
+      { BASE_DOMAIN: 'auth.example.com', DB_ADMIN: mockTenantCoreAdapter } as never,
+      logger
+    );
+
+    expect(mockAdapter.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE tenants SET lifecycle_state = ?'),
+      expect.anything()
+    );
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'pending'"),
+      expect.arrayContaining([expect.stringContaining('kv_binding_missing'), 1, 3])
+    );
+    expect(mockTenantCoreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO admin_audit_log'),
+      expect.arrayContaining(['tenant.lifecycle.validation_retry_scheduled'])
     );
   });
 
@@ -246,7 +348,15 @@ describe('generic admin job executor', () => {
         progress: null,
         config: JSON.stringify({
           policy: 'deletion_before_purge',
-          tables: { core: ['identity_accounts'], pii: ['identity_sensitive_values'] },
+          tables: {
+            core: ['identity_accounts'],
+            pii: [
+              'identity_sensitive_values',
+              'subject_identifiers',
+              'pairwise_subject_identifiers',
+              'audit_log_pii',
+            ],
+          },
           reason: 'tenant deletion pre-purge backup',
         }),
         created_at: 1,
@@ -258,6 +368,20 @@ describe('generic admin job executor', () => {
     mockTenantPiiAdapter.query.mockResolvedValueOnce([
       { tenant_id: 'tenant-a', user_id: 'user-1', email: 'user@example.test' },
     ]);
+    mockTenantPiiAdapter.query.mockResolvedValueOnce([
+      { id: 'identifier-1', tenant_id: 'tenant-a', subject_id: 'user-1' },
+    ]);
+    mockTenantPiiAdapter.query.mockResolvedValueOnce([
+      {
+        id: 'subject-1',
+        tenant_id: 'tenant-a',
+        user_id: 'user-1',
+        subject: 'pairwise-subject',
+      },
+    ]);
+    mockTenantPiiAdapter.query.mockResolvedValueOnce([
+      { id: 'audit-1', tenant_id: 'tenant-a', action: 'pii_accessed' },
+    ]);
 
     await processPendingGenericAdminJobs(
       {
@@ -268,11 +392,7 @@ describe('generic admin job executor', () => {
       logger
     );
 
-    expect(mockResolveUserStoreRuntimeSourcesFromEnv).toHaveBeenCalledWith(
-      expect.any(Object),
-      'tenant-a',
-      { requestPath: '/internal/admin-jobs/tenant-database/export' }
-    );
+    expect(mockResolveTenantAssignedDatabaseSourcesFromRegistry).toHaveBeenCalledTimes(2);
     expect(mockTenantCoreAdapter.query).toHaveBeenCalledWith(
       'SELECT * FROM identity_accounts WHERE tenant_id = ? LIMIT ?',
       ['tenant-a', 50001]
@@ -281,13 +401,27 @@ describe('generic admin job executor', () => {
       'SELECT * FROM identity_sensitive_values WHERE tenant_id = ? LIMIT ?',
       ['tenant-a', 50001]
     );
+    expect(mockTenantPiiAdapter.query).toHaveBeenCalledWith(
+      'SELECT * FROM subject_identifiers WHERE tenant_id = ? LIMIT ?',
+      ['tenant-a', 50001]
+    );
+    expect(mockTenantPiiAdapter.query).toHaveBeenCalledWith(
+      `SELECT scoped.* FROM pairwise_subject_identifiers AS scoped
+           INNER JOIN users_pii AS tenant_parent ON tenant_parent.id = scoped.user_id
+           WHERE scoped.tenant_id = ? AND tenant_parent.tenant_id = ? LIMIT ?`,
+      ['tenant-a', 'tenant-a', 50001]
+    );
+    expect(mockTenantPiiAdapter.query).toHaveBeenCalledWith(
+      'SELECT * FROM audit_log_pii WHERE tenant_id = ? LIMIT ?',
+      ['tenant-a', 50001]
+    );
     expect(put).toHaveBeenCalledWith(
-      'exports/tenant-a/tenant-backup/job-backup/core/identity_accounts.jsonl',
+      'exports/tenant-a/tenant-backup/job-backup/core/core-0/identity_accounts.jsonl',
       expect.any(String),
       expect.any(Object)
     );
     expect(put).toHaveBeenCalledWith(
-      'exports/tenant-a/tenant-backup/job-backup/pii/identity_sensitive_values.jsonl',
+      'exports/tenant-a/tenant-backup/job-backup/pii/pii-0/identity_sensitive_values.jsonl',
       expect.any(String),
       expect.any(Object)
     );
@@ -300,8 +434,8 @@ describe('generic admin job executor', () => {
     const resultJson = (finalUpdate?.[1] as unknown[])[2] as string;
     expect(JSON.parse(resultJson)).toMatchObject({
       summary: {
-        total_tables: 2,
-        total_rows: 2,
+        total_tables: 5,
+        total_rows: 5,
         policy: 'deletion_before_purge',
         consistency: 'maintenance_read_only',
       },
@@ -311,6 +445,13 @@ describe('generic admin job executor', () => {
       table_artifacts: [
         expect.objectContaining({ plane: 'core', table: 'identity_accounts', row_count: 1 }),
         expect.objectContaining({ plane: 'pii', table: 'identity_sensitive_values', row_count: 1 }),
+        expect.objectContaining({ plane: 'pii', table: 'subject_identifiers', row_count: 1 }),
+        expect.objectContaining({
+          plane: 'pii',
+          table: 'pairwise_subject_identifiers',
+          row_count: 1,
+        }),
+        expect.objectContaining({ plane: 'pii', table: 'audit_log_pii', row_count: 1 }),
       ],
     });
   });
@@ -324,7 +465,8 @@ describe('generic admin job executor', () => {
       id: 'user-1',
       status: 'active',
     });
-    const tableObjectKey = 'exports/tenant-a/tenant-backup/job-backup/core/identity_accounts.jsonl';
+    const tableObjectKey =
+      'exports/tenant-a/tenant-backup/job-backup/core/core-0/identity_accounts.jsonl';
     const tableEnvelope = await encryptObjectArtifact(tableContent, {
       rootKeyHex: tenantRootKey,
       plane: 'EXPORT_ARTIFACTS',
@@ -341,22 +483,35 @@ describe('generic admin job executor', () => {
 
     const tableChecksum = await sha256Hex(tableContent);
     const manifest = {
-      version: 1,
+      version: 2,
       tenant_id: 'tenant-a',
       job_id: 'job-backup',
-      profile: 'builtin:storage:tenant-d1',
-      schema_version: 'core:1:pii:1',
+      runtime_generation: 1,
       export_format: 'jsonl_per_table',
       consistency: 'maintenance_read_only',
       policy: 'manual',
       started_at: '2026-05-16T00:00:00.000Z',
       completed_at: '2026-05-16T00:00:01.000Z',
       retention_days: 30,
-      restore_order: [{ plane: 'core', table: 'identity_accounts' }],
+      restore_order: [
+        {
+          plane: 'core',
+          data_role: 'tenant_core/users',
+          residency_partition: 'default',
+          shard_id: 'core-0',
+          table: 'identity_accounts',
+        },
+      ],
       tables: [
         {
           plane: 'core',
           table: 'identity_accounts',
+          data_role: 'tenant_core/users',
+          residency_partition: 'default',
+          shard_id: 'core-0',
+          binding_ref: 'TENANT_CORE_0',
+          binding_route_generation: 1,
+          schema_version: 1,
           row_count: 1,
           plaintext_bytes: new TextEncoder().encode(tableContent).byteLength,
           plaintext_sha256: tableChecksum,
@@ -547,7 +702,7 @@ describe('generic admin job executor', () => {
     const finalUpdate = mockAdapter.execute.mock.calls.at(-1);
     expect(finalUpdate?.[0]).toEqual(expect.stringContaining("SET status = 'pending'"));
     expect((finalUpdate?.[1] as unknown[])[0]).toContain('Invalid tenant backup retention_days');
-    expect(mockResolveUserStoreRuntimeSourcesFromEnv).not.toHaveBeenCalled();
+    expect(mockResolveTenantAssignedDatabaseSourcesFromRegistry).not.toHaveBeenCalled();
   });
 
   it('reserves future tenant backup export formats as fail-closed config values', async () => {
@@ -583,7 +738,7 @@ describe('generic admin job executor', () => {
     expect((finalUpdate?.[1] as unknown[])[0]).toContain(
       'tenant_database_export_format_not_implemented:parquet'
     );
-    expect(mockResolveUserStoreRuntimeSourcesFromEnv).not.toHaveBeenCalled();
+    expect(mockResolveTenantAssignedDatabaseSourcesFromRegistry).not.toHaveBeenCalled();
   });
 
   it('reserves temporary database restore validation as a fail-closed dry-run mode', async () => {

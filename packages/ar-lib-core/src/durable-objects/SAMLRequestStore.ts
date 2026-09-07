@@ -24,6 +24,8 @@ interface SAMLRequestStoreState {
   artifacts: Map<string, SAMLArtifactData>;
   /** Consumed assertion IDs (for replay prevention) */
   consumedAssertionIds: Set<string>;
+  /** Expiration time for each consumed assertion replay marker. */
+  consumedAssertionExpirations: Map<string, number>;
 }
 
 /**
@@ -41,6 +43,7 @@ const ARTIFACT_EXPIRY_MS = 5 * 60 * 1000;
  * Kept longer than assertion validity for overlap protection
  */
 const ASSERTION_ID_RETENTION_MS = 30 * 60 * 1000;
+const ASSERTION_CLEANUP_INTERVAL_MS = 60 * 1000;
 
 /**
  * SAMLRequestStore Durable Object
@@ -49,6 +52,7 @@ export class SAMLRequestStore {
   private state: DurableObjectState;
   private env: Env;
   private storeState: SAMLRequestStoreState | null = null;
+  private lastAssertionCleanupAt = 0;
   private readonly log: Logger = createLogger().module('SAMLRequestStore');
 
   constructor(state: DurableObjectState, env: Env) {
@@ -67,20 +71,33 @@ export class SAMLRequestStore {
     const stored = await this.state.storage.get<{
       requests: Array<[string, SAMLRequestData]>;
       artifacts: Array<[string, SAMLArtifactData]>;
-      consumedAssertionIds: string[];
+      consumedAssertionIds?: string[];
+      consumedAssertionExpirations?: Array<[string, number]>;
     }>('state');
 
     if (stored) {
+      const now = Date.now();
+      const consumedAssertionIds = new Set(stored.consumedAssertionIds ?? []);
+      const consumedAssertionExpirations = new Map(stored.consumedAssertionExpirations ?? []);
+      for (const assertionId of consumedAssertionIds) {
+        if (!consumedAssertionExpirations.has(assertionId)) {
+          // Legacy state did not record expiration. Retain it for one normal replay window
+          // after migration instead of keeping it forever or dropping it immediately.
+          consumedAssertionExpirations.set(assertionId, now + ASSERTION_ID_RETENTION_MS);
+        }
+      }
       this.storeState = {
         requests: new Map(stored.requests),
         artifacts: new Map(stored.artifacts),
-        consumedAssertionIds: new Set(stored.consumedAssertionIds),
+        consumedAssertionIds,
+        consumedAssertionExpirations,
       };
     } else {
       this.storeState = {
         requests: new Map(),
         artifacts: new Map(),
         consumedAssertionIds: new Set(),
+        consumedAssertionExpirations: new Map(),
       };
     }
 
@@ -108,6 +125,9 @@ export class SAMLRequestStore {
       requests: Array.from(this.storeState.requests.entries()),
       artifacts: Array.from(this.storeState.artifacts.entries()),
       consumedAssertionIds: Array.from(this.storeState.consumedAssertionIds),
+      consumedAssertionExpirations: Array.from(
+        this.storeState.consumedAssertionExpirations.entries()
+      ),
     });
   }
 
@@ -229,24 +249,50 @@ export class SAMLRequestStore {
     await this.initializeState();
     const state = this.getState();
 
+    const expiresAt = state.consumedAssertionExpirations.get(assertionId);
+    if (expiresAt !== undefined && expiresAt <= Date.now()) {
+      state.consumedAssertionIds.delete(assertionId);
+      state.consumedAssertionExpirations.delete(assertionId);
+      await this.saveState();
+      return false;
+    }
+
     return state.consumedAssertionIds.has(assertionId);
   }
 
   /**
    * Mark an assertion ID as consumed
    */
-  async consumeAssertionId(assertionId: string): Promise<boolean> {
+  async consumeAssertionId(assertionId: string, assertionExpiresAt?: number): Promise<boolean> {
     await this.initializeState();
     const state = this.getState();
+    const now = Date.now();
+
+    if (now - this.lastAssertionCleanupAt >= ASSERTION_CLEANUP_INTERVAL_MS) {
+      await this.cleanupExpired();
+    }
 
     // Check if already consumed (replay attack)
-    if (state.consumedAssertionIds.has(assertionId)) {
+    const existingExpiresAt = state.consumedAssertionExpirations.get(assertionId);
+    if (
+      state.consumedAssertionIds.has(assertionId) &&
+      (existingExpiresAt === undefined || existingExpiresAt > now)
+    ) {
       this.log.warn('SAML assertion replay detected', { assertionId });
       return false;
     }
 
     // Mark as consumed
     state.consumedAssertionIds.add(assertionId);
+    state.consumedAssertionExpirations.set(
+      assertionId,
+      Math.max(
+        now + ASSERTION_ID_RETENTION_MS,
+        typeof assertionExpiresAt === 'number' && Number.isFinite(assertionExpiresAt)
+          ? assertionExpiresAt
+          : 0
+      )
+    );
     await this.saveState();
 
     return true;
@@ -258,6 +304,7 @@ export class SAMLRequestStore {
   private async cleanupExpired(): Promise<void> {
     const state = this.getState();
     const now = Date.now();
+    this.lastAssertionCleanupAt = now;
     let changed = false;
 
     // Clean up expired requests
@@ -277,8 +324,13 @@ export class SAMLRequestStore {
       }
     }
 
-    // Note: consumedAssertionIds are not automatically cleaned up
-    // In production, you might want a scheduled cleanup based on timestamp
+    for (const [assertionId, expiresAt] of state.consumedAssertionExpirations) {
+      if (expiresAt <= now) {
+        state.consumedAssertionExpirations.delete(assertionId);
+        state.consumedAssertionIds.delete(assertionId);
+        changed = true;
+      }
+    }
 
     if (changed) {
       await this.saveState();
@@ -357,8 +409,8 @@ export class SAMLRequestStore {
 
       // POST /assertion/consume - Consume an assertion ID
       if (path === '/assertion/consume' && request.method === 'POST') {
-        const body = (await request.json()) as { assertionId: string };
-        const success = await this.consumeAssertionId(body.assertionId);
+        const body = (await request.json()) as { assertionId: string; expiresAt?: number };
+        const success = await this.consumeAssertionId(body.assertionId, body.expiresAt);
 
         return new Response(JSON.stringify({ success }), {
           headers: { 'Content-Type': 'application/json' },

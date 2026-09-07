@@ -2,12 +2,12 @@ import * as pako from 'pako';
 import { base64Decode, base64DecodeToBytes } from './xml-utils';
 
 export const SAML_MESSAGE_LIMITS = {
-  postBodyBytes: 3 * 1024 * 1024,
-  postEncodedChars: 2 * 1024 * 1024,
-  postDecodedChars: 768 * 1024,
+  postBodyBytes: 512 * 1024,
+  postEncodedChars: 384 * 1024,
+  postDecodedChars: 256 * 1024,
   redirectEncodedChars: 128 * 1024,
   redirectCompressedBytes: 64 * 1024,
-  redirectInflatedChars: 512 * 1024,
+  redirectInflatedChars: 256 * 1024,
 } as const;
 
 type PostBindingRequestLike =

@@ -71,4 +71,18 @@ describe('ClaimValueCaster', () => {
       expect(caster.cast(undefined, 'string')).toEqual({ value: undefined, valid: false });
     });
   });
+
+  describe('multi-valued fields', () => {
+    it('casts each JSON array item using the scalar field type', () => {
+      expect(caster.cast('["1","2"]', 'number', 'multi')).toEqual({
+        value: [1, 2],
+        valid: true,
+      });
+    });
+
+    it('rejects malformed or complex arrays', () => {
+      expect(caster.cast('not-json', 'string', 'multi').valid).toBe(false);
+      expect(caster.cast('[{"value":"admin"}]', 'string', 'multi').valid).toBe(false);
+    });
+  });
 });

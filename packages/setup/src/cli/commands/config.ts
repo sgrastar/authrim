@@ -177,9 +177,8 @@ async function showConfig(configPath: string, jsonOutput?: boolean, env?: string
 
     // Runtime Profiles
     console.log(chalk.bold('\n🧭 Runtime Profiles'));
-    console.log(
-      `  Default Storage:   ${chalk.cyan(config.profiles.defaults.storage || 'builtin:storage:shared-d1')}`
-    );
+    console.log(`  D1 Routing:         ${chalk.cyan('Control Plane')}`);
+    console.log(`  Tenant Placement:   ${chalk.cyan(config.tenant.placementPolicy)}`);
     console.log(
       `  Default Audit:     ${chalk.cyan(config.profiles.defaults.audit || 'builtin:audit:standard')}`
     );
@@ -187,7 +186,6 @@ async function showConfig(configPath: string, jsonOutput?: boolean, env?: string
       `  Default Residency: ${chalk.cyan(config.profiles.defaults.residency || 'builtin:residency:auto')}`
     );
     console.log(`  Registry Backend:  ${chalk.cyan(config.profiles.registry.backend || 'kv')}`);
-    console.log(`  Seeded Storage:    ${chalk.cyan(config.profiles.seed.storage.length)}`);
     console.log(`  Seeded Audit:      ${chalk.cyan(config.profiles.seed.audit.length)}`);
     console.log(`  Seeded Residency:  ${chalk.cyan(config.profiles.seed.residency.length)}`);
 

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { LL } from '$i18n/i18n-svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import {
 		adminCacheModeAPI,
@@ -41,7 +42,7 @@
 			modeInfo = infoResult;
 			selectedMode = modeResult.effective;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load cache mode settings';
+			error = err instanceof Error ? err.message : $LL.admin_settings_cache_mode_load_failed();
 		} finally {
 			loading = false;
 		}
@@ -56,13 +57,13 @@
 
 		try {
 			await adminCacheModeAPI.setPlatformCacheMode(selectedMode);
-			successMessage = `Cache mode changed to ${selectedMode}`;
+			successMessage = $LL.admin_settings_cache_mode_updated({ mode: selectedMode });
 			await loadData();
 			setTimeout(() => {
 				successMessage = '';
 			}, 5000);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to save cache mode';
+			error = err instanceof Error ? err.message : $LL.admin_settings_cache_mode_save_failed();
 		} finally {
 			saving = false;
 		}

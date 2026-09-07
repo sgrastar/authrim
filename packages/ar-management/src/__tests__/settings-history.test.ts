@@ -18,18 +18,17 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getTenantIdFromContext: vi.fn((c: { get?: (key: string) => unknown }) => {
       return (c.get?.('tenantId') as string | undefined) ?? 'default';
     }),
-    calculateChanges: vi.fn((from: Record<string, unknown>, to: Record<string, unknown>) => ({
-      changed: Object.keys({ ...from, ...to }).filter((key) => from[key] !== to[key]),
-    })),
   };
 });
 
-import {
-  calculateChanges,
-  createSettingsHistoryManager,
-  publishEvent,
-  SETTINGS_EVENTS,
-} from '@authrim/ar-lib-core';
+vi.mock('@authrim/ar-lib-core/services/settings-history', () => ({
+  calculateChanges: vi.fn((from: Record<string, unknown>, to: Record<string, unknown>) => ({
+    changed: Object.keys({ ...from, ...to }).filter((key) => from[key] !== to[key]),
+  })),
+}));
+
+import { createSettingsHistoryManager, publishEvent, SETTINGS_EVENTS } from '@authrim/ar-lib-core';
+import { calculateChanges } from '@authrim/ar-lib-core/services/settings-history';
 import {
   compareSettingsVersions,
   getCurrentSettings,
@@ -85,8 +84,21 @@ function createMockContext(options: {
   envOverrides?: Partial<Env>;
 }) {
   const kv = createMockKV();
+  const env = {
+    DB: {} as D1Database,
+    KV: kv,
+    ...options.envOverrides,
+  } as unknown as Env;
   const store = new Map<string, unknown>([
     ['tenantId', options.tenantId ?? 'tenant_123'],
+    [
+      'tenantMetadataContext',
+      {
+        tenantId: options.tenantId ?? 'tenant_123',
+        coreDb: env.DB,
+        route: {},
+      },
+    ],
     [
       'adminAuth',
       options.adminAuth ?? {
@@ -105,11 +117,7 @@ function createMockContext(options: {
         ? vi.fn().mockRejectedValue(options.jsonError)
         : vi.fn().mockResolvedValue(options.body ?? {}),
     },
-    env: {
-      DB: {} as D1Database,
-      KV: kv,
-      ...options.envOverrides,
-    } as unknown as Env,
+    env,
     json: (body: unknown, status = 200) => new Response(JSON.stringify(body), { status }),
     get: (key: string) => store.get(key),
     _kv: kv,

@@ -232,18 +232,20 @@
 </script>
 
 <svelte:head>
-	<title>Default profile - Admin Dashboard - Authrim</title>
+	<title
+		>{$LL.admin_authentication_methods_default_profile_title()} - Admin Dashboard - Authrim</title
+	>
 </svelte:head>
 
 <AdminPageShell>
 	<AdminPageHeader
-		title="Default profile"
-		description={`既存の認証方式設定です。Flowから選択するDefault profileとして扱います。現在のテナント: ${currentTenantId || '-'}`}
+		title={$LL.admin_authentication_methods_default_profile_title()}
+		description={`${$LL.admin_authentication_methods_default_profile_description()} ${$LL.admin_admin_rebac_tenant({ tenant: currentTenantId || '-' })}`}
 	>
 		{#snippet actions()}
 			<a class="btn btn-secondary" href="/admin/authentication-methods">
 				<i class="i-ph-arrow-left" aria-hidden="true"></i>
-				一覧へ戻る
+				{$LL.admin_authentication_methods_back_to_list()}
 			</a>
 			<span class="cache-notice">{$LL.admin_authentication_methods_cache_notice()}</span>
 			<button class="btn btn-secondary" disabled={!hasChanges || saving} onclick={loadData}>
@@ -390,7 +392,9 @@
 				<label class="field">
 					<span>{$LL.admin_authentication_methods_totp_preset()}</span>
 					<select bind:value={builtIn.totpPreset} disabled={!canEdit}>
-						<option value="compatible">{$LL.admin_authentication_methods_totp_preset_compatible()}</option>
+						<option value="compatible"
+							>{$LL.admin_authentication_methods_totp_preset_compatible()}</option
+						>
 						<option value="strong">{$LL.admin_authentication_methods_totp_preset_strong()}</option>
 					</select>
 				</label>

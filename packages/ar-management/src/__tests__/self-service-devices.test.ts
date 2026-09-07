@@ -10,6 +10,7 @@ const {
   mockSessionStore,
   mockGetTenantIdFromContext,
   mockCreateAuthContextFromHono,
+  mockRecordAccountOperation,
 } = vi.hoisted(() => {
   const repo = {
     findByUserId: vi.fn(),
@@ -46,8 +47,13 @@ const {
         client: clientRepository,
       },
     }),
+    mockRecordAccountOperation: vi.fn(),
   };
 });
+
+vi.mock('../account-operation-log', () => ({
+  recordAccountOperation: mockRecordAccountOperation,
+}));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
@@ -104,7 +110,7 @@ function createMockContext(options: MockContextOptions = {}) {
   });
   return {
     env: {
-      KEY_MANAGER_SECRET: 'cursor-secret',
+      LOGGING_CURSOR_HMAC_SECRET: 'cursor-secret',
       ...options.env,
     } as Env,
     req: {
@@ -450,6 +456,13 @@ describe('/me/devices handlers', () => {
       app_display_name: 'Authrim Wallet',
     });
     expect(body.device.fallback_display_name).toBeUndefined();
+    expect(mockRecordAccountOperation).toHaveBeenCalledWith(expect.anything(), {
+      userId: 'user-001',
+      action: 'account.device.updated',
+      resourceType: 'device',
+      resourceId: 'inst-current',
+      metadata: { fields: ['display_name'] },
+    });
   });
 
   it('rejects empty display names', async () => {
@@ -504,6 +517,13 @@ describe('/me/devices handlers', () => {
         signed_out_required: true,
         status: 'completed',
       },
+    });
+    expect(mockRecordAccountOperation).toHaveBeenCalledWith(expect.anything(), {
+      userId: 'user-001',
+      action: 'account.device.unlinked',
+      resourceType: 'device',
+      resourceId: 'inst-current',
+      metadata: { current: true },
     });
   });
 

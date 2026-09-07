@@ -22,6 +22,7 @@ import {
   getLogger,
   getWebOriginRegistry,
   isIframeOidcAuthEnabled,
+  resolveAuthCorePersistenceAdapterFromEnv,
   type WebOriginRegistryDocument,
 } from '@authrim/ar-lib-core';
 
@@ -205,14 +206,19 @@ async function resolveWebOriginRegistry(
 ): Promise<WebOriginRegistryDocument> {
   const iframeFeatureEnabled = await isIframeOidcAuthEnabled(env, tenantId);
 
-  if (env.DB && metadata.client_id) {
+  if (metadata.client_id) {
     try {
-      const registry = await getWebOriginRegistry(env, tenantId, metadata.client_id);
+      const source = await resolveAuthCorePersistenceAdapterFromEnv(
+        env,
+        'login-challenge-web-origin-registry',
+        { tenantId }
+      );
+      const registry = await getWebOriginRegistry(env, tenantId, metadata.client_id, source);
       if (registry.origins.length > 0) {
         return applyIframePolicy(registry, iframeFeatureEnabled);
       }
     } catch {
-      // Fall back to challenge metadata so older deployments continue to render LoginUI.
+      // The challenge carries a bounded origin snapshot for temporary registry read failures.
     }
   }
 

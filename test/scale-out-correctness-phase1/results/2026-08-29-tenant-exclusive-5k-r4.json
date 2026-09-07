@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-08-29",
+  "environment": "scaleout",
+  "scenario": "tenant-exclusive",
+  "profile": "accelerated-5k",
+  "evidenceStatus": "remediation_validated_clean_rerun_required",
+  "initialRun": {
+    "startedAt": "2026-08-28T23:08:33.701Z",
+    "injectionFinishedAt": "2026-08-29T00:31:01.478Z",
+    "integrityVerifiedAt": "2026-08-29T00:58:34.625Z",
+    "submittedAccounts": 5000,
+    "createdAccounts": 5000,
+    "attempts": 20025,
+    "immediate201": 1943,
+    "capacity503": 14389,
+    "registryPropagation503": 404,
+    "unexpectedServer5xx": 50,
+    "terminalFailures": 0,
+    "lostAccounts": 0,
+    "duplicateCoreAccounts": 0,
+    "duplicatePiiAccounts": 0,
+    "lookupRouteMismatches": 0,
+    "crossTenantWrites": 0,
+    "orphanD1Resources": 0,
+    "manualIntervention": 0,
+    "corePhysicalAdditions": 10,
+    "piiPhysicalAdditions": 10,
+    "lookupPhysicalAdditions": 4,
+    "readyLatencySeconds": {
+      "count": 22,
+      "minimum": 44,
+      "p50": 61,
+      "p95": 116,
+      "maximum": 119
+    },
+    "result": "failed",
+    "originalFailedChecks": ["unexpected_server_5xx", "lookup_used_assignment_transitions_0_of_4"],
+    "correctedAcceptanceCriterion": "at_least_one_new_d1_assignment_transition"
+  },
+  "predictiveLookupEvidence": {
+    "observedAt": "2026-08-28T23:41:05.289Z",
+    "decisionAt": "2026-08-28T23:40:55.000Z",
+    "readyAt": "2026-08-28T23:41:40.000Z",
+    "observedActiveRoutes": 35939,
+    "forecastNewRoutes": 126,
+    "projectedRoutes": 36065,
+    "usableRoutesBeforeAddition": 36000,
+    "observedHeadroomRoutes": 61,
+    "decisionToReadySeconds": 45
+  },
+  "postRemediationProbes": {
+    "scheduledAccounts": 1000,
+    "createdAccounts": 1000,
+    "attempts": 2415,
+    "capacity503": 1404,
+    "registryPropagation503": 0,
+    "runtimeBindingPropagation503": 0,
+    "unexpectedServer5xx": 0,
+    "transportRetries": 11,
+    "terminalFailures": 0
+  },
+  "tenantInventory": {
+    "allocatedAccounts": 6000,
+    "coreUsersD1": { "active": 13, "used": 12, "readySpare": 1 },
+    "piiD1": { "active": 13, "used": 12, "readySpare": 1 }
+  },
+  "lookupCutover": {
+    "dualWriteStartedAt": "2026-08-29T01:30:56.000Z",
+    "cutoverStartedAt": "2026-08-29T01:39:29.000Z",
+    "graceExpiredAt": "2026-08-29T01:54:29.000Z",
+    "completedAt": "2026-08-29T01:54:55.000Z",
+    "sourceGeneration": 1,
+    "targetGeneration": 2,
+    "finalState": "complete",
+    "lastErrorCode": null
+  },
+  "finalLookupForecast": {
+    "updatedAt": "2026-08-29T02:11:00.000Z",
+    "observedActiveRoutes": 43939,
+    "forecastNewRoutes": 141,
+    "projectedRoutes": 44080,
+    "usableRoutes": 45600,
+    "activeCapacityUnits": 19,
+    "decisionState": "stable",
+    "lastErrorCode": null
+  },
+  "inventoryReconciliation": {
+    "desiredResources": 140,
+    "readyResources": 140,
+    "observedResources": 140,
+    "uniqueObservedProviderIds": 140,
+    "providerControlSetMatch": true,
+    "duplicateProviderIds": 0,
+    "duplicateProviderNames": 0,
+    "orphanManagedD1Resources": 0,
+    "duplicateD1Resources": 0,
+    "stuckProvisioningResources": 0,
+    "manualIntervention": 0
+  }
+}

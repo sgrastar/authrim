@@ -27,14 +27,15 @@ import {
   invalidateUserCache,
   getTenantIdFromContext,
   createAuthContextFromHono,
-  createPIIContextFromHono,
-  hasPIIDatabase,
   getLogger,
   DEFAULT_TENANT_ID,
+  isDatabaseSource,
+  resolveAccountDataContext,
+  resolveAccountDataContextFromHono,
 } from '@authrim/ar-lib-core';
 import {
   type DatabaseAdapter,
-  type IdentityAccountRow,
+  type CanonicalRuntimeUserWriteInput,
   CanonicalIdentityRepository,
   CanonicalRuntimeUserProjectionRepository,
   CanonicalRuntimeUserWriter,
@@ -45,9 +46,40 @@ import {
   persistCustomClaimWrite,
   syncUserLifecycleState,
   resolveCustomClaimRuntimeSourcesFromEnv,
+  ensureDatabaseAdapter,
+  transitionAccountAuthenticationState,
 } from '@authrim/ar-lib-core';
 import { logScimAudit } from '@authrim/ar-lib-scim';
 import { canonicalProjectionToScimInternalUser } from './identity-canonical-runtime';
+import {
+  AccountCreationOperationRepository,
+  hashAccountCreationRequest,
+} from './account-creation-operation';
+import {
+  executeDurableInitialAccountDirectoryWrite,
+  resolveInitialAccountDirectoryWriteTargets,
+  type DurableInitialAccountDirectoryWriteResult,
+} from './account-directory-producer';
+import {
+  isAccountDirectoryWriteBindingUnavailable,
+  isLookupRegistryGenerationPropagating,
+} from './account-directory-errors';
+import { writeCanonicalAccountAuthoritative } from './account-authoritative-write';
+import {
+  attemptImmediateAccountDirectoryRemovals,
+  eraseAccountPiiAfterDirectoryRemovalPrepared,
+  markAccountDirectoryRemovalsReady,
+  prepareAccountDirectoryRemoval,
+} from './account-directory-removal-producer';
+import {
+  CrossShardAccountExactSearchService,
+  CrossShardAccountListService,
+  type CrossShardAccountListItem,
+} from './cross-shard-account-list';
+import { applyScimInboundIdentityMapping, ScimIdentityMappingError } from './scim-identity-mapping';
+import { getScimInboundSettings } from './scim-settings';
+import { syncScimIdentifierReplacements } from './scim-identifier-replacement';
+import { findActiveAccountLegalHold } from './account-legal-hold-guard';
 
 interface ScimUserReadOptions {
   canonicalProjectionRepository?: CanonicalRuntimeUserProjectionRepository | null;
@@ -56,33 +88,21 @@ interface ScimUserReadOptions {
 
 type CanonicalUserFilterValue = string | number | boolean | null | undefined;
 
-/**
- * Create database adapters from Hono context.
- * Keeping this at the route edge lets the shared custom-claims logic stay
- * backend-agnostic while Workers still supply raw D1 bindings today.
- */
-function createAdaptersFromContext(c: Context<{ Bindings: Env }>): {
+interface ScimAccountAdapters {
   coreAdapter: DatabaseAdapter;
-  piiAdapter: DatabaseAdapter | null;
-} {
+  piiAdapter: DatabaseAdapter;
+}
+
+function createTenantMetadataAdapterFromContext(c: Context<{ Bindings: Env }>): DatabaseAdapter {
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  const coreAdapter = authCtx.coreAdapter;
-  const piiAdapter = hasPIIDatabase(c)
-    ? createPIIContextFromHono(c, tenantId).defaultPiiAdapter
-    : null;
-  return { coreAdapter, piiAdapter };
+  return createAuthContextFromHono(c, tenantId).coreAdapter;
 }
 
 function createCanonicalProjectionRepository(
-  _c: Context<{ Bindings: Env }>,
   coreAdapter: DatabaseAdapter,
-  piiAdapter: DatabaseAdapter | null,
+  piiAdapter: DatabaseAdapter,
   tenantId: string
-): CanonicalRuntimeUserProjectionRepository | null {
-  if (!piiAdapter) {
-    return null;
-  }
+): CanonicalRuntimeUserProjectionRepository {
   return new CanonicalRuntimeUserProjectionRepository(
     coreAdapter,
     tenantId,
@@ -90,21 +110,124 @@ function createCanonicalProjectionRepository(
   );
 }
 
-async function maybeCreateCanonicalRuntimeUser(
+function adaptersFromAccountRoute(
+  route: Awaited<ReturnType<typeof resolveAccountDataContext>>
+): ScimAccountAdapters {
+  return {
+    coreAdapter: ensureDatabaseAdapter(route.coreDb, 'scim-account-core'),
+    piiAdapter: ensureDatabaseAdapter(route.piiDb, 'scim-account-pii'),
+  };
+}
+
+type ScimAccountSearchPurpose = 'active_search' | 'account_lifecycle' | 'account_delete_retry';
+
+async function resolveScimAccountAdaptersFromContext(
   c: Context<{ Bindings: Env }>,
-  coreAdapter: DatabaseAdapter,
-  piiAdapter: DatabaseAdapter,
+  userId: string,
+  purpose: ScimAccountSearchPurpose = 'active_search'
+): Promise<ScimAccountAdapters | null> {
+  // The standard runtime resolver intentionally revalidates only active accounts. Lifecycle
+  // operations must use the canonical cross-shard route so deprovisioned/deleting accounts stay
+  // addressable without relying on an active-only loopback RPC.
+  if (purpose !== 'active_search') {
+    return resolveScimAccountAdapters(c.env, getTenantIdFromContext(c), userId, purpose);
+  }
+  try {
+    return adaptersFromAccountRoute(await resolveAccountDataContextFromHono(c, userId));
+  } catch (error) {
+    if (
+      purpose === 'active_search' &&
+      error instanceof Error &&
+      ['account_data_route_not_found', 'lookup_destination_revalidation_failed'].includes(
+        error.message
+      )
+    ) {
+      return null;
+    }
+    if (
+      !(error instanceof Error) ||
+      !['account_data_route_not_found', 'lookup_destination_revalidation_failed'].includes(
+        error.message
+      )
+    ) {
+      throw error;
+    }
+    return resolveScimAccountAdapters(c.env, getTenantIdFromContext(c), userId, purpose);
+  }
+}
+
+async function resolveScimAccountAdapters(
+  env: Env,
   tenantId: string,
   userId: string,
-  internalUser: Partial<InternalUser>
-): Promise<void> {
-  const writer = new CanonicalRuntimeUserWriter(
-    new CanonicalIdentityRepository(coreAdapter, tenantId),
-    piiAdapter
-  );
-  await writer.createFromRuntimeUser({
-    userId,
+  purpose: ScimAccountSearchPurpose = 'active_search'
+): Promise<ScimAccountAdapters | null> {
+  if (purpose === 'active_search') {
+    try {
+      return adaptersFromAccountRoute(
+        await resolveAccountDataContext(env, { tenantId, accountId: userId })
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        ['account_data_route_not_found', 'lookup_destination_revalidation_failed'].includes(
+          error.message
+        )
+      ) {
+        return null;
+      }
+      throw error;
+    }
+  }
+  const routes = await new CrossShardAccountExactSearchService(env).find({
     tenantId,
+    identifier: userId,
+    purpose,
+  });
+  if (routes.length === 0) return null;
+  if (routes.length !== 1 || routes[0].legacyUserId !== userId) {
+    throw new Error('scim_account_route_projection_invalid');
+  }
+  return adaptersFromCrossShardItem(env, routes[0]);
+}
+
+function adaptersFromCrossShardItem(
+  env: Env,
+  item: CrossShardAccountListItem
+): ScimAccountAdapters {
+  const core = (env as unknown as Record<string, unknown>)[item.coreBindingRef];
+  const pii = (env as unknown as Record<string, unknown>)[item.piiBindingRef];
+  if (!isDatabaseSource(core) || !isDatabaseSource(pii)) {
+    throw new Error('scim_account_route_binding_unavailable');
+  }
+  return {
+    coreAdapter: ensureDatabaseAdapter(core, 'scim-list-account-core'),
+    piiAdapter: ensureDatabaseAdapter(pii, 'scim-list-account-pii'),
+  };
+}
+
+async function mapScimConcurrent<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (next < values.length) {
+      const index = next;
+      next += 1;
+      results[index] = await mapper(values[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+function canonicalScimRuntimeUser(
+  internalUser: Partial<InternalUser>
+): Omit<CanonicalRuntimeUserWriteInput, 'userId' | 'tenantId'> {
+  return {
     active: internalUser.active === undefined ? true : internalUser.active !== 0,
     emailVerified: Boolean(internalUser.email_verified),
     phoneNumberVerified: Boolean(internalUser.phone_number_verified),
@@ -151,7 +274,7 @@ async function maybeCreateCanonicalRuntimeUser(
       zoneinfo: internalUser.zoneinfo,
       locale: internalUser.locale,
     },
-  });
+  };
 }
 
 async function maybeSyncCanonicalRuntimeUser(
@@ -162,6 +285,18 @@ async function maybeSyncCanonicalRuntimeUser(
   userId: string,
   internalUser: Partial<InternalUser>
 ): Promise<void> {
+  const active = internalUser.active === undefined ? true : internalUser.active !== 0;
+  const lifecycleVersionMs = Date.now();
+  if (!active) {
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'inactive',
+      sourceVersionMs: lifecycleVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: true,
+    });
+  }
   const writer = new CanonicalRuntimeUserWriter(
     new CanonicalIdentityRepository(coreAdapter, tenantId),
     piiAdapter
@@ -169,7 +304,7 @@ async function maybeSyncCanonicalRuntimeUser(
   await writer.syncFromRuntimeUser({
     userId,
     tenantId,
-    active: internalUser.active === undefined ? true : internalUser.active !== 0,
+    active,
     emailVerified: Boolean(internalUser.email_verified),
     phoneNumberVerified: Boolean(internalUser.phone_number_verified),
     userType: 'end_user',
@@ -216,6 +351,16 @@ async function maybeSyncCanonicalRuntimeUser(
       locale: internalUser.locale,
     },
   });
+  if (active) {
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'active',
+      sourceVersionMs: lifecycleVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: false,
+    });
+  }
 }
 
 async function maybeDeleteCanonicalRuntimeUser(
@@ -225,11 +370,28 @@ async function maybeDeleteCanonicalRuntimeUser(
   tenantId: string,
   userId: string
 ): Promise<void> {
+  const deletingVersionMs = Date.now();
+  await transitionAccountAuthenticationState(c.env, {
+    tenantId,
+    userId,
+    lifecycle: 'deleting',
+    sourceVersionMs: deletingVersionMs,
+    operationId: crypto.randomUUID(),
+    revokeSessions: true,
+  });
   const writer = new CanonicalRuntimeUserWriter(
     new CanonicalIdentityRepository(coreAdapter, tenantId),
     piiAdapter
   );
   await writer.deleteRuntimeUser(userId);
+  await transitionAccountAuthenticationState(c.env, {
+    tenantId,
+    userId,
+    lifecycle: 'deleted',
+    sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
+    operationId: crypto.randomUUID(),
+    revokeSessions: true,
+  });
 }
 
 /**
@@ -243,6 +405,9 @@ async function fetchUserWithPII(
     userId,
     { includeInactive: options.includeInactive }
   );
+  if (canonicalProjection?.lifecycle_state === 'deleted') {
+    return null;
+  }
   return canonicalProjection ? canonicalProjectionToScimInternalUser(canonicalProjection) : null;
 }
 
@@ -265,6 +430,27 @@ function parseScimCustomAttributes(
   return {};
 }
 
+async function resolveScimCustomClaimSources(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId?: string,
+  accountAdapters?: ScimAccountAdapters
+) {
+  if (!accountAdapters) {
+    return resolveCustomClaimRuntimeSourcesFromEnv(
+      c.env,
+      tenantId,
+      userId ? { accountId: userId } : {}
+    );
+  }
+  const metadataSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+  return {
+    schemaDb: metadataSources.schemaDb,
+    nonPiiDb: accountAdapters.coreAdapter,
+    piiDb: accountAdapters.piiAdapter,
+  };
+}
+
 async function validateScimCustomClaimWrite(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
@@ -273,12 +459,21 @@ async function validateScimCustomClaimWrite(
     userId?: string;
     mergeExistingValues?: boolean;
     deleteMissingFields?: boolean;
+    accountAdapters?: ScimAccountAdapters;
   }
 ) {
-  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+  const customClaimSources = await resolveScimCustomClaimSources(
+    c,
+    tenantId,
+    options?.userId,
+    options?.accountAdapters
+  );
+  const creating = !options?.userId;
+  const nonPiiDb = customClaimSources.nonPiiDb ?? customClaimSources.schemaDb;
   return validateCustomClaimWrite({
-    db: customClaimSources.nonPiiDb,
+    db: nonPiiDb,
     dbPii: customClaimSources.piiDb,
+    piiStorageAvailable: creating,
     schemaDb: customClaimSources.schemaDb,
     tenantId,
     userId: options?.userId,
@@ -293,60 +488,300 @@ async function persistScimCustomClaimWrite(
   c: Context<{ Bindings: Env }>,
   tenantId: string,
   userId: string,
-  validation: Awaited<ReturnType<typeof validateScimCustomClaimWrite>>
+  validation: Awaited<ReturnType<typeof validateScimCustomClaimWrite>>,
+  accountAdapters?: ScimAccountAdapters
 ) {
   if (!validation.ok) {
     return;
   }
 
-  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+  const customClaimSources = await resolveScimCustomClaimSources(
+    c,
+    tenantId,
+    userId,
+    accountAdapters
+  );
+  if (!customClaimSources.nonPiiDb) throw new Error('scim_account_route_incomplete');
   await persistCustomClaimWrite({
     db: customClaimSources.nonPiiDb,
     dbPii: customClaimSources.piiDb,
+    schemaDb: customClaimSources.schemaDb,
     tenantId,
     userId,
     validation,
   });
 
+  // Validation requires a complete custom-claim record. Keep this lifecycle write D1-only; the
+  // caller performs the single ordered AccountAuthState transition from the SCIM `active` value.
   await syncUserLifecycleState({
     db: customClaimSources.nonPiiDb,
     dbPii: customClaimSources.piiDb,
     schemaDb: customClaimSources.schemaDb,
-    stateDb: createAuthContextFromHono(c, tenantId).coreAdapter,
+    stateDb: ensureDatabaseAdapter(customClaimSources.nonPiiDb, 'scim-account-state'),
     tenantId,
     userId,
   });
 }
 
-async function fetchCanonicalUsers(
-  coreAdapter: DatabaseAdapter,
-  projectionRepository: CanonicalRuntimeUserProjectionRepository,
-  tenantId: string,
-  options: { includeInactive?: boolean } = {}
-): Promise<InternalUser[]> {
-  const lifecycleClause = options.includeInactive ? '' : " AND lifecycle_state = 'active'";
-  const accounts = await coreAdapter.query<IdentityAccountRow>(
-    `SELECT *
-       FROM identity_accounts
-      WHERE tenant_id = ?
-        AND legacy_user_id IS NOT NULL${lifecycleClause}
-      ORDER BY created_at DESC`,
-    [tenantId]
-  );
+const SCIM_ACCOUNT_CREATION_OPERATION_SCHEMA =
+  'urn:authrim:params:scim:api:messages:2.0:AccountCreationOperation';
 
-  const users: InternalUser[] = [];
-  for (const account of accounts) {
-    if (!account.legacy_user_id) {
-      continue;
-    }
-    const projection = await projectionRepository.findByLegacyUserId(account.legacy_user_id, {
-      includeInactive: options.includeInactive,
-    });
-    if (projection) {
-      users.push(canonicalProjectionToScimInternalUser(projection));
-    }
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function scimActorId(c: ScimContext): Promise<string> {
+  const authorization = c.req.header('Authorization');
+  const match = authorization?.match(/^Bearer ([^\s]+)$/u);
+  if (!match) throw new Error('scim_account_actor_unavailable');
+  return `scim-token:${await sha256Hex(match[1])}`;
+}
+
+function explicitScimIdempotencyKey(c: ScimContext): string | null {
+  const header = c.req.header('Idempotency-Key');
+  if (header === undefined) return null;
+  const value = header.trim();
+  if (
+    value.length < 8 ||
+    value.length > 128 ||
+    // eslint-disable-next-line no-control-regex -- reject header control bytes before persistence
+    /[\x00-\x1f\x7f]/u.test(value)
+  ) {
+    throw new Error('scim_account_idempotency_key_invalid');
   }
-  return users;
+  return value;
+}
+
+type ScimAccountCreationSource = { kind: 'single' } | { kind: 'bulk'; bulkId: string };
+
+type ValidScimCustomClaimWrite = Extract<
+  Awaited<ReturnType<typeof validateScimCustomClaimWrite>>,
+  { ok: true }
+>;
+
+async function executeScimAccountCreation(
+  c: ScimContext,
+  tenantId: string,
+  scimUser: Partial<ScimUser>,
+  internalUser: Partial<InternalUser>,
+  customFieldValidation: ValidScimCustomClaimWrite,
+  source: ScimAccountCreationSource
+): Promise<DurableInitialAccountDirectoryWriteResult> {
+  const requestHash = await hashAccountCreationRequest({ source, user: scimUser });
+  const explicitKey = source.kind === 'single' ? explicitScimIdempotencyKey(c) : null;
+  const idempotencyKey = explicitKey ?? `scim-create:${requestHash}`;
+  const actorId = await scimActorId(c);
+  const candidateUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+  const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+  const operationRepository = new AccountCreationOperationRepository(
+    createAuthContextFromHono(c, tenantId).coreAdapter
+  );
+  const userName =
+    typeof scimUser.userName === 'string' ? normalizedScimUserName(scimUser.userName) : '';
+
+  return executeDurableInitialAccountDirectoryWrite(
+    c.env,
+    {
+      tenantId,
+      actorId,
+      idempotencyKey,
+      requestHash,
+      candidateOperationId: `account-create-${crypto.randomUUID()}`,
+      candidateUserId,
+      email: typeof internalUser.email === 'string' ? internalUser.email : null,
+      externalSubject: scimUserNameSubject(tenantId, userName),
+      residencyPolicyId: c.env.DEFAULT_RESIDENCY_PROFILE_ID ?? 'builtin:residency:default',
+      residencyPartition: 'default',
+    },
+    {
+      operationRepository,
+      async writeAuthoritative(context) {
+        const { userId } = await writeCanonicalAccountAuthoritative({
+          publication: context.publication,
+          tenantCoreUsers: context.tenantCoreUsers,
+          tenantPii: context.tenantPii,
+          runtimeUser: canonicalScimRuntimeUser(internalUser),
+        });
+        await persistCustomClaimWrite({
+          db: context.tenantCoreUsers,
+          dbPii: context.tenantPii,
+          schemaDb: customClaimSources.schemaDb,
+          tenantId,
+          userId,
+          validation: customFieldValidation,
+        });
+        if (internalUser.active === 0) {
+          await transitionAccountAuthenticationState(c.env, {
+            tenantId,
+            userId,
+            lifecycle: 'inactive',
+            sourceVersionMs: Date.now(),
+            operationId: context.publication.operationId,
+            revokeSessions: true,
+          });
+        } else {
+          await syncUserLifecycleState({
+            db: context.tenantCoreUsers,
+            dbPii: context.tenantPii,
+            schemaDb: customClaimSources.schemaDb,
+            stateDb: context.tenantCoreUsers,
+            tenantId,
+            userId,
+            accountAuthenticationEnv: c.env,
+          });
+        }
+      },
+    }
+  );
+}
+
+function scimAccountCreationPending(baseUrl: string, operationId: string): Record<string, unknown> {
+  return {
+    schemas: [SCIM_ACCOUNT_CREATION_OPERATION_SCHEMA],
+    id: operationId,
+    status: 'directory_pending',
+    operationId,
+    meta: {
+      resourceType: 'AccountCreationOperation',
+      location: `${baseUrl}/scim/v2/Operations/${encodeURIComponent(operationId)}`,
+    },
+  };
+}
+
+const SCIM_ACCOUNT_PAGE_SIZE = 100;
+const SCIM_MAX_ACCOUNT_SCAN_PAGES = 10_000;
+
+async function fetchCrossShardCanonicalUsers(env: Env, tenantId: string): Promise<InternalUser[]> {
+  const service = new CrossShardAccountListService(env, () => Math.floor(Date.now() / 1000));
+  const users: InternalUser[] = [];
+  let cursor: string | undefined;
+  const seenCursors = new Set<string>();
+
+  for (let pageNumber = 0; pageNumber < SCIM_MAX_ACCOUNT_SCAN_PAGES; pageNumber += 1) {
+    const page = await service.list({
+      tenantId,
+      accountType: 'user',
+      includeInactive: true,
+      limit: SCIM_ACCOUNT_PAGE_SIZE,
+      cursor,
+    });
+    const projected = await mapScimConcurrent(page.items, 4, async (item) => {
+      const { coreAdapter, piiAdapter } = adaptersFromCrossShardItem(env, item);
+      const projection = await createCanonicalProjectionRepository(
+        coreAdapter,
+        piiAdapter,
+        tenantId
+      ).findByAccountId(item.id, { includeInactive: true });
+      if (!projection || projection.id !== item.legacyUserId || projection.tenant_id !== tenantId) {
+        throw new Error('scim_account_route_projection_invalid');
+      }
+      return canonicalProjectionToScimInternalUser(projection);
+    });
+    users.push(...projected);
+    if (!page.nextCursor) return users;
+    if (page.nextCursor === cursor || seenCursors.has(page.nextCursor)) {
+      throw new Error('scim_account_cursor_stalled');
+    }
+    seenCursors.add(page.nextCursor);
+    cursor = page.nextCursor;
+  }
+
+  throw new Error('scim_account_scan_limit_exceeded');
+}
+
+async function projectCrossShardCanonicalUsers(
+  env: Env,
+  tenantId: string,
+  items: CrossShardAccountListItem[]
+): Promise<InternalUser[]> {
+  return mapScimConcurrent(items, 4, async (item) => {
+    const { coreAdapter, piiAdapter } = adaptersFromCrossShardItem(env, item);
+    const projection = await createCanonicalProjectionRepository(
+      coreAdapter,
+      piiAdapter,
+      tenantId
+    ).findByAccountId(item.id, { includeInactive: true });
+    if (!projection || projection.id !== item.legacyUserId || projection.tenant_id !== tenantId) {
+      throw new Error('scim_account_route_projection_invalid');
+    }
+    return canonicalProjectionToScimInternalUser(projection);
+  });
+}
+
+async function fetchCrossShardCanonicalUserPage(
+  env: Env,
+  tenantId: string,
+  offset: number,
+  count: number
+): Promise<InternalUser[]> {
+  if (count === 0) return [];
+  const service = new CrossShardAccountListService(env, () => Math.floor(Date.now() / 1000));
+  const selected: CrossShardAccountListItem[] = [];
+  let remainingOffset = offset;
+  let cursor: string | undefined;
+  const seenCursors = new Set<string>();
+
+  for (let pageNumber = 0; pageNumber < SCIM_MAX_ACCOUNT_SCAN_PAGES; pageNumber += 1) {
+    const page = await service.list({
+      tenantId,
+      accountType: 'user',
+      includeInactive: true,
+      limit: SCIM_ACCOUNT_PAGE_SIZE,
+      cursor,
+    });
+    const start = Math.min(remainingOffset, page.items.length);
+    remainingOffset -= start;
+    selected.push(...page.items.slice(start, start + (count - selected.length)));
+    if (selected.length >= count || !page.nextCursor) {
+      return projectCrossShardCanonicalUsers(env, tenantId, selected);
+    }
+    if (page.nextCursor === cursor || seenCursors.has(page.nextCursor)) {
+      throw new Error('scim_account_cursor_stalled');
+    }
+    seenCursors.add(page.nextCursor);
+    cursor = page.nextCursor;
+  }
+
+  throw new Error('scim_account_scan_limit_exceeded');
+}
+
+async function fetchCrossShardExactCanonicalUsers(
+  env: Env,
+  tenantId: string,
+  filter: ScimFilterNode
+): Promise<InternalUser[] | null> {
+  if (
+    filter.type !== 'comparison' ||
+    filter.operator !== 'eq' ||
+    typeof filter.value !== 'string'
+  ) {
+    return null;
+  }
+  const attribute = filter.attribute;
+  const indexKind =
+    attribute === 'id'
+      ? 'account_id'
+      : attribute === 'userName' || attribute === 'preferred_username'
+        ? 'external_subject'
+        : attribute === 'emails.value' || attribute === 'email'
+          ? 'email_exact'
+          : null;
+  if (!indexKind) return null;
+  const identifier =
+    indexKind === 'external_subject' ? normalizedScimUserName(filter.value) : filter.value;
+  const routes = await new CrossShardAccountExactSearchService(env).find({
+    tenantId,
+    identifier,
+    purpose: 'account_lifecycle',
+    indexKind,
+    ...(indexKind === 'external_subject'
+      ? { externalSubjectIssuer: `urn:authrim:scim:${tenantId}:username` }
+      : {}),
+  });
+  return (await projectCrossShardCanonicalUsers(env, tenantId, routes)).filter((user) =>
+    userMatchesScimFilter(user, filter)
+  );
 }
 
 function getScimUserFilterValue(user: InternalUser, attribute: string): CanonicalUserFilterValue {
@@ -378,19 +813,54 @@ function getScimUserFilterValue(user: InternalUser, attribute: string): Canonica
   }
 }
 
-function userMatchesScimFilter(user: InternalUser, filter: string): boolean {
-  const match = filter.match(/^([\w.]+)\s+(eq|co|sw|ew)\s+"?([^"]+)"?$/i);
-  if (!match) {
+const SUPPORTED_USER_FILTER_ATTRIBUTES = new Set([
+  'id',
+  'userName',
+  'preferred_username',
+  'emails.value',
+  'email',
+  'name',
+  'displayName',
+  'name.givenName',
+  'given_name',
+  'name.familyName',
+  'family_name',
+  'active',
+  'externalId',
+  'external_id',
+]);
+
+function parseSupportedUserFilter(filter: string): ScimFilterNode {
+  const parsed = parseScimFilter(filter);
+  if (
+    parsed.type !== 'comparison' ||
+    !parsed.attribute ||
+    !SUPPORTED_USER_FILTER_ATTRIBUTES.has(parsed.attribute) ||
+    !parsed.operator ||
+    !['eq', 'co', 'sw', 'ew'].includes(parsed.operator)
+  ) {
     throw new Error('Unsupported SCIM filter');
   }
-  const [, attribute, operator, rawExpected] = match;
+  if (parsed.attribute === 'active') {
+    if (parsed.operator !== 'eq' || typeof parsed.value !== 'boolean') {
+      throw new Error('Unsupported SCIM active filter');
+    }
+  } else if (typeof parsed.value !== 'string') {
+    throw new Error('SCIM filter value must be a string');
+  }
+  return parsed;
+}
+
+function userMatchesScimFilter(user: InternalUser, filter: ScimFilterNode): boolean {
+  const attribute = filter.attribute!;
+  const operator = filter.operator!;
   const actual = getScimUserFilterValue(user, attribute);
-  if (operator.toLowerCase() === 'eq' && attribute === 'active') {
-    return Boolean(actual) === (rawExpected.toLowerCase() === 'true');
+  if (operator === 'eq' && attribute === 'active') {
+    return Boolean(actual) === filter.value;
   }
   const actualString = actual == null ? '' : String(actual).toLowerCase();
-  const expected = rawExpected.toLowerCase();
-  switch (operator.toLowerCase()) {
+  const expected = String(filter.value).toLowerCase();
+  switch (operator) {
     case 'eq':
       return actualString === expected;
     case 'co':
@@ -409,8 +879,8 @@ function userMatchesScimFilter(user: InternalUser, filter: string): boolean {
  * PII/Non-PII DB separation: Cannot JOIN, so query user_roles and PII DB separately
  */
 async function fetchGroupMembersWithPII(
+  env: Env,
   coreAdapter: DatabaseAdapter,
-  projectionRepository: CanonicalRuntimeUserProjectionRepository | null,
   roleId: string,
   tenantId: string
 ): Promise<{ user_id: string; email: string }[]> {
@@ -424,25 +894,44 @@ async function fetchGroupMembersWithPII(
     return [];
   }
 
-  const emailMap = new Map<string, string>();
-  if (projectionRepository) {
-    for (const member of roleMembers) {
-      const projection = await projectionRepository.findByLegacyUserId(member.user_id);
-      if (projection?.email) {
-        emailMap.set(member.user_id, projection.email);
-      }
+  return mapScimConcurrent(roleMembers, 4, async (member) => {
+    const adapters = await resolveScimAccountAdapters(env, tenantId, member.user_id);
+    if (!adapters) {
+      return { user_id: member.user_id, email: '' };
     }
-  }
+    const projection = await createCanonicalProjectionRepository(
+      adapters.coreAdapter,
+      adapters.piiAdapter,
+      tenantId
+    ).findByLegacyUserId(member.user_id);
+    return { user_id: member.user_id, email: projection?.email ?? '' };
+  });
+}
 
-  // Merge results
-  return roleMembers.map((r) => ({
-    user_id: r.user_id,
-    email: emailMap.get(r.user_id) || '',
+async function fetchUserGroups(
+  coreAdapter: DatabaseAdapter,
+  userId: string,
+  tenantId: string,
+  baseUrl: string
+): Promise<NonNullable<ScimUser['groups']>> {
+  const roles = await coreAdapter.query<{ id: string; name: string }>(
+    `SELECT r.id, r.name
+       FROM user_roles ur
+       INNER JOIN roles r ON r.id = ur.role_id AND r.tenant_id = ur.tenant_id
+      WHERE ur.tenant_id = ? AND ur.user_id = ?
+      ORDER BY r.name ASC`,
+    [tenantId, userId]
+  );
+  return roles.map((role) => ({
+    value: role.id,
+    $ref: `${baseUrl}/scim/v2/Groups/${encodeURIComponent(role.id)}`,
+    display: role.name,
+    type: 'direct',
   }));
 }
 
 async function findMissingTenantUserIds(
-  coreAdapter: DatabaseAdapter,
+  env: Env,
   tenantId: string,
   userIds: string[]
 ): Promise<string[]> {
@@ -451,17 +940,10 @@ async function findMissingTenantUserIds(
     return [];
   }
 
-  const placeholders = uniqueUserIds.map(() => '?').join(',');
-  const rows = await coreAdapter.query<{ id: string }>(
-    `SELECT legacy_user_id as id
-       FROM identity_accounts
-      WHERE tenant_id = ?
-        AND legacy_user_id IN (${placeholders})
-        AND lifecycle_state = 'active'`,
-    [tenantId, ...uniqueUserIds]
+  const resolved = await mapScimConcurrent(uniqueUserIds, 4, async (userId) =>
+    resolveScimAccountAdapters(env, tenantId, userId)
   );
-  const found = new Set(rows.map((row) => row.id));
-  return uniqueUserIds.filter((userId) => !found.has(userId));
+  return uniqueUserIds.filter((_userId, index) => resolved[index] === null);
 }
 
 function resolveScimGroupMemberIds(
@@ -524,9 +1006,9 @@ import {
   type ScimBulkOperationResponse,
   type ScimBulkMethod,
   type BulkOperationConfig,
+  type ScimFilterNode,
   // Mapper utilities
   userToScim,
-  scimToUser,
   groupToScim,
   scimToGroup,
   generateEtag,
@@ -534,6 +1016,7 @@ import {
   applyPatchOperations,
   validateScimUser,
   validateScimGroup,
+  validateScimPatchOp,
   type InternalUser,
   type InternalGroup,
   // Filter utilities
@@ -577,6 +1060,20 @@ const app = new Hono<{ Bindings: Env }>();
 // SCIM Discovery endpoints that should be accessible without authentication (RFC 7644 Section 4)
 const SCIM_DISCOVERY_PATHS = ['/ServiceProviderConfig', '/ResourceTypes', '/Schemas'];
 
+function isScimDiscoveryRequest(method: string, pathname: string): boolean {
+  if (method !== 'GET') return false;
+
+  const mountIndex = pathname.indexOf('/scim/v2');
+  const routePath = mountIndex >= 0 ? pathname.slice(mountIndex + '/scim/v2'.length) : pathname;
+  return SCIM_DISCOVERY_PATHS.some(
+    (discoveryPath) =>
+      routePath === discoveryPath ||
+      (discoveryPath !== '/ServiceProviderConfig' &&
+        routePath.startsWith(`${discoveryPath}/`) &&
+        !routePath.slice(discoveryPath.length + 1).includes('/'))
+  );
+}
+
 function resolveScimTenantId(c: ScimContext): string | null {
   const contextTenantId = (c as any).get?.('tenantId');
   if (typeof contextTenantId === 'string' && contextTenantId.trim()) {
@@ -617,13 +1114,29 @@ app.use('*', async (c, next) => {
 // Apply SCIM authentication to all routes EXCEPT discovery endpoints
 app.use('*', async (c, next) => {
   const path = new URL(c.req.url).pathname;
-  // Skip auth for discovery endpoints (RFC 7644 Section 4 recommends unauthenticated access)
-  for (const discoveryPath of SCIM_DISCOVERY_PATHS) {
-    if (path.endsWith(discoveryPath) || path.includes(`${discoveryPath}/`)) {
-      return next();
-    }
+  // Skip auth only for anchored GET discovery routes. Reserved-looking resource
+  // IDs such as /Users/Schemas must still pass through SCIM authentication.
+  if (isScimDiscoveryRequest(c.req.method, path)) {
+    return next();
   }
   return scimAuthMiddleware(c, next);
+});
+
+app.use('*', async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  if (isScimDiscoveryRequest(c.req.method, path)) return next();
+  const settings = await getScimInboundSettings(c.env, getTenantIdFromContext(c));
+  if (!settings.enabled) return scimError(c, 403, 'SCIM inbound provisioning is disabled');
+  if (path.includes('/Users') && !settings.usersEnabled) {
+    return scimError(c, 403, 'SCIM User provisioning is disabled');
+  }
+  if (path.includes('/Groups') && !settings.groupsEnabled) {
+    return scimError(c, 403, 'SCIM Group provisioning is disabled');
+  }
+  if (path.endsWith('/Bulk') && !settings.bulkEnabled) {
+    return scimError(c, 403, 'SCIM Bulk operations are disabled');
+  }
+  return next();
 });
 
 /**
@@ -644,7 +1157,7 @@ function getBaseUrl(c: ScimContext): string {
  */
 function scimError(
   c: ScimContext,
-  status: 400 | 401 | 403 | 404 | 409 | 412 | 413 | 500,
+  status: 400 | 401 | 403 | 404 | 409 | 412 | 413 | 500 | 503,
   detail: string,
   scimType?: ScimErrorType,
   extensions?: Record<string, unknown>
@@ -664,6 +1177,115 @@ function scimError(
   }
 
   return c.json(error, status);
+}
+
+function scimMappingError(c: ScimContext, error: unknown): Response | null {
+  if (!(error instanceof ScimIdentityMappingError)) return null;
+  const status = error.code === 'mapping_required_output_missing' ? 400 : 503;
+  return scimError(c, status, error.message, 'invalidValue');
+}
+
+function scimLookupInputError(c: ScimContext, error: unknown): Response | null {
+  if (!(error instanceof Error) || error.message !== 'lookup_email_invalid') return null;
+  return scimError(c, 400, 'A mapped email address is invalid', 'invalidValue');
+}
+
+function scimIdentifierReplacementError(c: ScimContext, error: unknown): Response | null {
+  if (!(error instanceof Error)) return null;
+  if (
+    [
+      'identifier_replacement_reservation_conflict',
+      'identifier_replacement_operation_active',
+      'identifier_replacement_idempotency_conflict',
+      'identifier_replacement_old_route_invalid',
+    ].includes(error.message)
+  ) {
+    return scimError(c, 409, 'User identifier already exists or is being changed', 'uniqueness');
+  }
+  if (error.message.startsWith('identifier_replacement_')) {
+    return scimError(c, 503, 'User identifier update is temporarily unavailable');
+  }
+  return null;
+}
+
+async function syncUpdatedScimIdentifiers(
+  c: ScimContext,
+  tenantId: string,
+  userId: string,
+  adapters: ScimAccountAdapters,
+  existingUser: InternalUser,
+  internalUser: Partial<InternalUser>
+): Promise<void> {
+  await syncScimIdentifierReplacements({
+    env: c.env,
+    core: adapters.coreAdapter,
+    pii: adapters.piiAdapter,
+    tenantId,
+    accountId: userId,
+    actorRef: await scimActorId(c),
+    oldValues: {
+      email: existingUser.email,
+      userName: existingUser.preferred_username,
+    },
+    newValues: {
+      email: internalUser.email,
+      userName: internalUser.preferred_username,
+    },
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+async function readScimJson<T>(
+  c: ScimContext
+): Promise<{ ok: true; value: T } | { ok: false; response: Response }> {
+  try {
+    const text = await c.req.text();
+    if (!text.trim()) {
+      return {
+        ok: false,
+        response: scimError(c, 400, 'Request body must contain JSON', 'invalidSyntax'),
+      };
+    }
+    return { ok: true, value: JSON.parse(text) as T };
+  } catch {
+    return {
+      ok: false,
+      response: scimError(c, 400, 'Request body contains invalid JSON', 'invalidSyntax'),
+    };
+  }
+}
+
+function validateScimResourceSchemas(value: unknown, requiredSchema: string): string[] {
+  if (!isRecord(value) || !Array.isArray(value.schemas)) {
+    return [`schemas must include ${requiredSchema}`];
+  }
+  if (
+    !value.schemas.every((schema) => typeof schema === 'string') ||
+    !value.schemas.includes(requiredSchema)
+  ) {
+    return [`schemas must include ${requiredSchema}`];
+  }
+  return [];
+}
+
+function normalizedScimUserName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function scimUserNameSubject(
+  tenantId: string,
+  userName: string
+): {
+  issuer: string;
+  subject: string;
+} {
+  return {
+    issuer: `urn:authrim:scim:${tenantId}:username`,
+    subject: normalizedScimUserName(userName),
+  };
 }
 
 const SCIM_PASSWORD_UNSUPPORTED_DETAIL =
@@ -769,10 +1391,10 @@ function parseQueryParams(c: ScimContext): ScimQueryParams {
   if (sortOrder) params.sortOrder = sortOrder as 'ascending' | 'descending';
 
   const startIndex = c.req.query('startIndex');
-  if (startIndex) params.startIndex = parseInt(startIndex, 10);
+  if (startIndex) params.startIndex = Number(startIndex);
 
   const count = c.req.query('count');
-  if (count) params.count = parseInt(count, 10);
+  if (count) params.count = Number(count);
 
   const attributes = c.req.query('attributes');
   if (attributes) params.attributes = attributes.split(',').map((a: string) => a.trim());
@@ -784,6 +1406,95 @@ function parseQueryParams(c: ScimContext): ScimQueryParams {
   return params;
 }
 
+function invalidPaginationParameters(params: ScimQueryParams): string | null {
+  if (
+    params.startIndex !== undefined &&
+    (!Number.isSafeInteger(params.startIndex) || params.startIndex < 1)
+  ) {
+    return 'startIndex must be a positive integer';
+  }
+  if (params.count !== undefined && (!Number.isSafeInteger(params.count) || params.count < 0)) {
+    return 'count must be a non-negative integer';
+  }
+  if (
+    params.sortOrder !== undefined &&
+    params.sortOrder !== 'ascending' &&
+    params.sortOrder !== 'descending'
+  ) {
+    return 'sortOrder must be ascending or descending';
+  }
+  return null;
+}
+
+function projectScimResource<T extends object>(
+  resource: T,
+  params: Pick<ScimQueryParams, 'attributes' | 'excludedAttributes'>
+): T {
+  const source = resource as Record<string, unknown>;
+  let projected: Record<string, unknown> = structuredClone(source);
+  if (params.attributes?.length) {
+    projected = {};
+    for (const alwaysReturned of ['schemas', 'id', 'meta']) {
+      if (alwaysReturned in source)
+        projected[alwaysReturned] = structuredClone(source[alwaysReturned]);
+    }
+    for (const path of params.attributes) copyScimPath(source, projected, path);
+  }
+  for (const path of params.excludedAttributes ?? []) {
+    const [topLevel] = scimPathParts(path);
+    if (topLevel && ['schemas', 'id', 'meta'].includes(topLevel)) continue;
+    deleteScimPath(projected, path);
+  }
+  return projected as T;
+}
+
+function scimPathParts(path: string): string[] {
+  const enterprisePrefix = `${SCIM_SCHEMAS.ENTERPRISE_USER}:`;
+  if (path.startsWith(enterprisePrefix)) {
+    return [SCIM_SCHEMAS.ENTERPRISE_USER, ...path.slice(enterprisePrefix.length).split('.')];
+  }
+  return path.split('.').filter(Boolean);
+}
+
+function copyScimPath(
+  source: Record<string, unknown>,
+  destination: Record<string, unknown>,
+  path: string
+): void {
+  const parts = scimPathParts(path);
+  let sourceCursor: unknown = source;
+  let destinationCursor = destination;
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index]!;
+    if (!sourceCursor || typeof sourceCursor !== 'object' || !(part in sourceCursor)) return;
+    const value = (sourceCursor as Record<string, unknown>)[part];
+    if (index === parts.length - 1) {
+      destinationCursor[part] = structuredClone(value);
+      return;
+    }
+    if (!destinationCursor[part] || typeof destinationCursor[part] !== 'object') {
+      destinationCursor[part] = {};
+    }
+    destinationCursor = destinationCursor[part] as Record<string, unknown>;
+    sourceCursor = value;
+  }
+}
+
+function deleteScimPath(resource: Record<string, unknown>, path: string): void {
+  const parts = scimPathParts(path);
+  let cursor = resource;
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    const next = cursor[parts[index]!];
+    if (!next || typeof next !== 'object' || Array.isArray(next)) return;
+    cursor = next as Record<string, unknown>;
+  }
+  delete cursor[parts.at(-1)!];
+}
+
+function invalidProjectionParameters(params: ScimQueryParams): boolean {
+  return Boolean(params.attributes?.length && params.excludedAttributes?.length);
+}
+
 // ============================================================================
 // SCIM Discovery Endpoints (RFC 7644 Section 4)
 // ============================================================================
@@ -792,8 +1503,9 @@ function parseQueryParams(c: ScimContext): ScimQueryParams {
  * GET /scim/v2/ServiceProviderConfig - Service Provider Configuration
  * RFC 7644 Section 4 - REQUIRED endpoint
  */
-app.get('/ServiceProviderConfig', (c) => {
+app.get('/ServiceProviderConfig', async (c) => {
   const baseUrl = getBaseUrl(c);
+  const settings = await getScimInboundSettings(c.env, getTenantIdFromContext(c));
 
   const config: ScimServiceProviderConfig = {
     schemas: [SCIM_SCHEMAS.SERVICE_PROVIDER_CONFIG],
@@ -802,9 +1514,9 @@ app.get('/ServiceProviderConfig', (c) => {
       supported: true,
     },
     bulk: {
-      supported: true,
-      maxOperations: 100, // Configurable via KV: SCIM_BULK_MAX_OPERATIONS
-      maxPayloadSize: 1048576, // 1MB, configurable via KV: SCIM_BULK_MAX_PAYLOAD_SIZE
+      supported: settings.enabled && settings.bulkEnabled,
+      maxOperations: settings.bulkMaxOperations,
+      maxPayloadSize: settings.bulkMaxPayloadSize,
     },
     filter: {
       supported: true,
@@ -831,8 +1543,6 @@ app.get('/ServiceProviderConfig', (c) => {
     meta: {
       location: `${baseUrl}/scim/v2/ServiceProviderConfig`,
       resourceType: 'ServiceProviderConfig',
-      created: '2024-01-01T00:00:00Z',
-      lastModified: '2024-12-22T00:00:00Z',
     },
   };
 
@@ -939,7 +1649,7 @@ app.get('/ResourceTypes/:name', (c) => {
 app.get('/Schemas', (c) => {
   const baseUrl = getBaseUrl(c);
 
-  // Simplified schema definitions - full SCIM Core Schema
+  // Supported SCIM Core and Enterprise User schema definitions.
   const schemas = {
     schemas: [SCIM_SCHEMAS.LIST_RESPONSE],
     totalResults: 3,
@@ -961,6 +1671,16 @@ app.get('/Schemas', (c) => {
             uniqueness: 'server',
           },
           {
+            name: 'externalId',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            caseExact: true,
+            mutability: 'readWrite',
+            returned: 'default',
+            uniqueness: 'none',
+          },
+          {
             name: 'name',
             type: 'complex',
             multiValued: false,
@@ -978,6 +1698,63 @@ app.get('/Schemas', (c) => {
           },
           {
             name: 'displayName',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'nickName',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'profileUrl',
+            type: 'reference',
+            referenceTypes: ['external'],
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'title',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'userType',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'preferredLanguage',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'locale',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'timezone',
             type: 'string',
             multiValued: false,
             required: false,
@@ -1006,6 +1783,24 @@ app.get('/Schemas', (c) => {
             returned: 'default',
             subAttributes: [
               { name: 'value', type: 'string', multiValued: false, required: false },
+              { name: 'type', type: 'string', multiValued: false, required: false },
+              { name: 'primary', type: 'boolean', multiValued: false, required: false },
+            ],
+          },
+          {
+            name: 'addresses',
+            type: 'complex',
+            multiValued: true,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+            subAttributes: [
+              { name: 'formatted', type: 'string', multiValued: false, required: false },
+              { name: 'streetAddress', type: 'string', multiValued: false, required: false },
+              { name: 'locality', type: 'string', multiValued: false, required: false },
+              { name: 'region', type: 'string', multiValued: false, required: false },
+              { name: 'postalCode', type: 'string', multiValued: false, required: false },
+              { name: 'country', type: 'string', multiValued: false, required: false },
               { name: 'type', type: 'string', multiValued: false, required: false },
               { name: 'primary', type: 'boolean', multiValued: false, required: false },
             ],
@@ -1072,6 +1867,14 @@ app.get('/Schemas', (c) => {
             returned: 'default',
           },
           {
+            name: 'costCenter',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
             name: 'organization',
             type: 'string',
             multiValued: false,
@@ -1086,6 +1889,27 @@ app.get('/Schemas', (c) => {
             required: false,
             mutability: 'readWrite',
             returned: 'default',
+          },
+          {
+            name: 'division',
+            type: 'string',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+          },
+          {
+            name: 'manager',
+            type: 'complex',
+            multiValued: false,
+            required: false,
+            mutability: 'readWrite',
+            returned: 'default',
+            subAttributes: [
+              { name: 'value', type: 'string', multiValued: false, required: false },
+              { name: '$ref', type: 'reference', multiValued: false, required: false },
+              { name: 'displayName', type: 'string', multiValued: false, required: false },
+            ],
           },
         ],
         meta: {
@@ -1125,6 +1949,16 @@ app.get('/Schemas/:id', (c) => {
           uniqueness: 'server',
         },
         {
+          name: 'externalId',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          caseExact: true,
+          mutability: 'readWrite',
+          returned: 'default',
+          uniqueness: 'none',
+        },
+        {
           name: 'name',
           type: 'complex',
           multiValued: false,
@@ -1142,6 +1976,63 @@ app.get('/Schemas/:id', (c) => {
         },
         {
           name: 'displayName',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'nickName',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'profileUrl',
+          type: 'reference',
+          referenceTypes: ['external'],
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'title',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'userType',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'preferredLanguage',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'locale',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'timezone',
           type: 'string',
           multiValued: false,
           required: false,
@@ -1170,6 +2061,24 @@ app.get('/Schemas/:id', (c) => {
           returned: 'default',
           subAttributes: [
             { name: 'value', type: 'string', multiValued: false, required: false },
+            { name: 'type', type: 'string', multiValued: false, required: false },
+            { name: 'primary', type: 'boolean', multiValued: false, required: false },
+          ],
+        },
+        {
+          name: 'addresses',
+          type: 'complex',
+          multiValued: true,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+          subAttributes: [
+            { name: 'formatted', type: 'string', multiValued: false, required: false },
+            { name: 'streetAddress', type: 'string', multiValued: false, required: false },
+            { name: 'locality', type: 'string', multiValued: false, required: false },
+            { name: 'region', type: 'string', multiValued: false, required: false },
+            { name: 'postalCode', type: 'string', multiValued: false, required: false },
+            { name: 'country', type: 'string', multiValued: false, required: false },
             { name: 'type', type: 'string', multiValued: false, required: false },
             { name: 'primary', type: 'boolean', multiValued: false, required: false },
           ],
@@ -1242,6 +2151,14 @@ app.get('/Schemas/:id', (c) => {
           returned: 'default',
         },
         {
+          name: 'costCenter',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
           name: 'organization',
           type: 'string',
           multiValued: false,
@@ -1256,6 +2173,27 @@ app.get('/Schemas/:id', (c) => {
           required: false,
           mutability: 'readWrite',
           returned: 'default',
+        },
+        {
+          name: 'division',
+          type: 'string',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+        },
+        {
+          name: 'manager',
+          type: 'complex',
+          multiValued: false,
+          required: false,
+          mutability: 'readWrite',
+          returned: 'default',
+          subAttributes: [
+            { name: 'value', type: 'string', multiValued: false, required: false },
+            { name: '$ref', type: 'reference', multiValued: false, required: false },
+            { name: 'displayName', type: 'string', multiValued: false, required: false },
+          ],
         },
       ],
       meta: {
@@ -1281,27 +2219,28 @@ app.get('/Users', async (c) => {
     const tenantId = getTenantIdFromContext(c);
     const params = parseQueryParams(c);
     const baseUrl = getBaseUrl(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
-    const canonicalProjectionRepository = createCanonicalProjectionRepository(
-      c,
-      coreAdapter,
-      piiAdapter,
-      tenantId
-    );
-    if (!canonicalProjectionRepository) {
-      return scimError(c, 500, 'Configured PII store is not available');
+    if (invalidProjectionParameters(params)) {
+      return scimError(
+        c,
+        400,
+        'attributes and excludedAttributes are mutually exclusive',
+        'invalidValue'
+      );
+    }
+    const paginationError = invalidPaginationParameters(params);
+    if (paginationError) {
+      return scimError(c, 400, paginationError, 'invalidValue');
     }
 
     // Pagination defaults
-    const startIndex = params.startIndex || 1; // SCIM uses 1-based indexing
-    const count = Math.min(params.count || 100, 1000); // Max 1000 per page
+    const startIndex = params.startIndex ?? 1; // SCIM uses 1-based indexing
+    const count = Math.min(params.count ?? 100, 1000); // Max 1000 per page
     const offset = startIndex - 1;
 
-    let users = await fetchCanonicalUsers(coreAdapter, canonicalProjectionRepository, tenantId);
+    let userFilter: ScimFilterNode | undefined;
     if (params.filter) {
       try {
-        parseScimFilter(params.filter);
-        users = users.filter((user) => userMatchesScimFilter(user, params.filter!));
+        userFilter = parseSupportedUserFilter(params.filter);
       } catch (error) {
         // Log full error for debugging but don't expose to client
         const log = getLogger(c).module('SCIM');
@@ -1311,18 +2250,39 @@ app.get('/Users', async (c) => {
       }
     }
 
-    const totalResults = users.length;
+    const sortColumn = params.sortBy
+      ? validateSortColumn(params.sortBy, ALLOWED_USER_SORT_COLUMNS)
+      : null;
+    if (params.sortBy && !sortColumn) {
+      return scimError(
+        c,
+        400,
+        `Invalid sortBy attribute: ${params.sortBy}. Allowed values: ${Object.keys(ALLOWED_USER_SORT_COLUMNS).join(', ')}`,
+        'invalidValue'
+      );
+    }
 
-    if (params.sortBy) {
-      const sortColumn = validateSortColumn(params.sortBy, ALLOWED_USER_SORT_COLUMNS);
-      if (!sortColumn) {
-        return scimError(
-          c,
-          400,
-          `Invalid sortBy attribute: ${params.sortBy}. Allowed values: ${Object.keys(ALLOWED_USER_SORT_COLUMNS).join(', ')}`,
-          'invalidValue'
-        );
-      }
+    const exactUsers = userFilter
+      ? await fetchCrossShardExactCanonicalUsers(c.env, tenantId, userFilter)
+      : null;
+    let users: InternalUser[];
+    let totalResults: number;
+    if (exactUsers) {
+      totalResults = exactUsers.length;
+      users = exactUsers.slice(offset, offset + count);
+    } else if (!userFilter && !sortColumn) {
+      const service = new CrossShardAccountListService(c.env, () => Math.floor(Date.now() / 1000));
+      [totalResults, users] = await Promise.all([
+        service.count({ tenantId, accountType: 'user', includeInactive: true }),
+        fetchCrossShardCanonicalUserPage(c.env, tenantId, offset, count),
+      ]);
+    } else {
+      users = await fetchCrossShardCanonicalUsers(c.env, tenantId);
+      if (userFilter) users = users.filter((user) => userMatchesScimFilter(user, userFilter));
+      totalResults = users.length;
+    }
+
+    if (sortColumn && exactUsers === null) {
       const sortDirection = params.sortOrder === 'descending' ? -1 : 1;
       users.sort((a, b) => {
         const aValue = getScimUserFilterValue(a, sortColumn);
@@ -1331,10 +2291,13 @@ app.get('/Users', async (c) => {
       });
     }
 
-    const pageUsers = users.slice(offset, offset + count);
+    const pageUsers =
+      exactUsers || (!userFilter && !sortColumn) ? users : users.slice(offset, offset + count);
 
     // Convert to SCIM format
-    const scimUsers = pageUsers.map((user) => userToScim(user, { baseUrl, includeGroups: false }));
+    const scimUsers = pageUsers.map((user) =>
+      projectScimResource(userToScim(user, { baseUrl, includeGroups: false }), params)
+    );
 
     const response: ScimListResponse<ScimUser> = {
       schemas: [SCIM_SCHEMAS.LIST_RESPONSE],
@@ -1360,19 +2323,29 @@ app.get('/Users/:id', async (c) => {
   try {
     const userId = c.req.param('id')!;
     const baseUrl = getBaseUrl(c);
+    const params = parseQueryParams(c);
+    if (invalidProjectionParameters(params)) {
+      return scimError(
+        c,
+        400,
+        'attributes and excludedAttributes are mutually exclusive',
+        'invalidValue'
+      );
+    }
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const adapters = await resolveScimAccountAdaptersFromContext(c, userId, 'account_lifecycle');
+    if (!adapters) {
+      return scimError(c, 404, 'The requested resource was not found');
+    }
+    const { coreAdapter, piiAdapter } = adapters;
     const canonicalProjectionRepository = createCanonicalProjectionRepository(
-      c,
       coreAdapter,
       piiAdapter,
       tenantId
     );
-    if (!canonicalProjectionRepository || !piiAdapter) {
-      return scimError(c, 500, 'Configured PII store is not available');
-    }
     const user = await fetchUserWithPII(userId, {
       canonicalProjectionRepository,
+      includeInactive: true,
     });
 
     if (!user) {
@@ -1388,15 +2361,58 @@ app.get('/Users/:id', async (c) => {
       }
     }
 
-    const scimUser = userToScim(user, { baseUrl, includeGroups: true });
+    const groups = await fetchUserGroups(
+      createTenantMetadataAdapterFromContext(c),
+      userId,
+      tenantId,
+      baseUrl
+    );
+    const scimUser = userToScim(user, { baseUrl, includeGroups: true, groups });
 
     // Set ETag header
     c.header('ETag', scimUser.meta.version || '');
 
-    return c.json(scimUser);
+    return c.json(projectScimResource(scimUser, params));
   } catch (error) {
     const log = getLogger(c).module('SCIM');
     log.error('SCIM get user error', { action: 'get_user' }, error as Error);
+    return scimError(c, 500, 'Internal server error');
+  }
+});
+
+/**
+ * GET /scim/v2/Operations/{id} - Read one account creation operation.
+ */
+app.get('/Operations/:id', async (c) => {
+  try {
+    const tenantId = getTenantIdFromContext(c);
+    const actorId = await scimActorId(c);
+    const operation = await new AccountCreationOperationRepository(
+      createAuthContextFromHono(c, tenantId).coreAdapter
+    ).findForActor({ tenantId, actorId, operationId: c.req.param('id')! });
+    if (!operation) {
+      return scimError(c, 404, 'The requested resource was not found');
+    }
+    const baseUrl = getBaseUrl(c);
+    return c.json({
+      ...scimAccountCreationPending(baseUrl, operation.operationId),
+      status: operation.status,
+      ...(operation.status === 'succeeded'
+        ? {
+            userId: operation.userId,
+            resourceLocation: `${baseUrl}/scim/v2/Users/${encodeURIComponent(operation.userId)}`,
+          }
+        : {}),
+    });
+  } catch (error) {
+    const log = getLogger(c).module('SCIM');
+    log.error('SCIM account creation operation error', { action: 'get_operation' }, error as Error);
+    if (
+      error instanceof Error &&
+      /^(account_creation_(tenant|actor|operation)_id_invalid)$/u.test(error.message)
+    ) {
+      return scimError(c, 404, 'The requested resource was not found');
+    }
     return scimError(c, 500, 'Internal server error');
   }
 });
@@ -1407,50 +2423,33 @@ app.get('/Users/:id', async (c) => {
  */
 app.post('/Users', async (c) => {
   try {
-    const scimUser = await c.req.json<Partial<ScimUser>>();
+    const parsed = await readScimJson<unknown>(c);
+    if (!parsed.ok) return parsed.response;
+    if (!isRecord(parsed.value)) {
+      return scimError(c, 400, 'SCIM User must be an object', 'invalidSyntax');
+    }
+    const scimUser = parsed.value as Partial<ScimUser>;
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const coreAdapter = authCtx.coreAdapter;
-    const piiCtx = hasPIIDatabase(c) ? createPIIContextFromHono(c, tenantId) : null;
-    const piiAdapter = piiCtx?.defaultPiiAdapter ?? null;
-    if (!piiAdapter) {
-      return scimError(c, 500, 'Configured PII store is not available');
-    }
 
     // Validate required fields
     const validation = validateScimUser(scimUser);
-    if (!validation.valid) {
-      return scimError(c, 400, validation.errors.join(', '), 'invalidValue');
+    const validationErrors = [
+      ...validateScimResourceSchemas(scimUser, SCIM_SCHEMAS.USER),
+      ...validation.errors,
+    ];
+    if (validationErrors.length > 0) {
+      return scimError(c, 400, validationErrors.join(', '), 'invalidValue');
     }
     if (hasScimPasswordCredential(scimUser)) {
       return scimPasswordUnsupportedError(c);
     }
-
-    // Check for duplicate userName or email in PII DB via Adapter
-    const primaryEmail =
-      scimUser.emails?.find((e) => e.primary)?.value || scimUser.emails?.[0]?.value;
-
-    if (primaryEmail) {
-      const existing = await piiAdapter.queryOne<{ id: string }>(
-        `SELECT owner_id as id
-           FROM identity_sensitive_values
-          WHERE tenant_id = ?
-            AND owner_type = 'runtime_user'
-            AND value_key = 'email'
-            AND value_json = ?
-            AND lifecycle_state = 'active'
-          LIMIT 1`,
-        [tenantId, JSON.stringify(primaryEmail)]
-      );
-
-      if (existing) {
-        return scimError(c, 409, 'User with this email already exists', 'uniqueness');
-      }
-    }
-
     // Convert SCIM user to internal format
-    const internalUser = scimToUser(scimUser);
+    const internalUser = await applyScimInboundIdentityMapping({
+      env: c.env,
+      tenantId,
+      user: scimUser,
+    });
     const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser);
     if (!customFieldValidation.ok) {
       return scimError(
@@ -1462,53 +2461,41 @@ app.post('/Users', async (c) => {
       );
     }
 
-    // Generate ID
-    const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
-
     // Set defaults
     if (!internalUser.email_verified) internalUser.email_verified = 0;
     if (internalUser.active === undefined) internalUser.active = 1;
 
-    try {
-      await maybeCreateCanonicalRuntimeUser(
-        c,
-        coreAdapter,
-        piiAdapter,
-        tenantId,
-        userId,
-        internalUser
+    const result = await executeScimAccountCreation(
+      c,
+      tenantId,
+      scimUser,
+      internalUser,
+      customFieldValidation,
+      { kind: 'single' }
+    );
+    if (result.delivery.status === 202) {
+      c.header(
+        'Location',
+        `${baseUrl}/scim/v2/Operations/${encodeURIComponent(result.operation.operationId)}`
       );
-      await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
-    } catch (customFieldError) {
-      const log = getLogger(c).module('SCIM');
-      log.error(
-        'SCIM create canonical/custom claim persistence failed',
-        { action: 'create_user' },
-        customFieldError as Error
-      );
-
-      try {
-        await maybeDeleteCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId);
-      } catch (cleanupError) {
-        log.error(
-          'SCIM create rollback failed after custom claim persistence error',
-          { action: 'create_user' },
-          cleanupError as Error
-        );
-      }
-
-      throw customFieldError;
+      logScimAudit(c, 'scim.user.create', 'scim_user', result.operation.userId, {
+        externalId: scimUser.externalId,
+        operationId: result.operation.operationId,
+        status: 'directory_pending',
+      });
+      return c.json(scimAccountCreationPending(baseUrl, result.operation.operationId), 202);
     }
 
-    const canonicalProjectionRepository = createCanonicalProjectionRepository(
-      c,
-      coreAdapter,
-      piiAdapter,
-      tenantId
+    const targets = await resolveInitialAccountDirectoryWriteTargets(c.env, result.publication);
+    const canonicalProjectionRepository = new CanonicalRuntimeUserProjectionRepository(
+      ensureDatabaseAdapter(targets.tenantCoreUsers, 'scim-user-create-result-core'),
+      tenantId,
+      new CanonicalSensitiveValueResolver(
+        ensureDatabaseAdapter(targets.tenantPii, 'scim-user-create-result-pii')
+      )
     );
 
-    // Fetch created user from the configured runtime source.
-    const createdUser = await fetchUserWithPII(userId, {
+    const createdUser = await fetchUserWithPII(result.operation.userId, {
       canonicalProjectionRepository,
       includeInactive: true,
     });
@@ -1523,12 +2510,44 @@ app.post('/Users', async (c) => {
     c.header('Location', responseUser.meta.location);
 
     // Audit log (non-blocking)
-    logScimAudit(c, 'scim.user.create', 'scim_user', userId, {
+    logScimAudit(c, 'scim.user.create', 'scim_user', result.operation.userId, {
       externalId: scimUser.externalId,
+      operationId: result.operation.operationId,
     });
 
     return c.json(responseUser, 201);
   } catch (error) {
+    const mappingResponse = scimMappingError(c, error);
+    if (mappingResponse) return mappingResponse;
+    const lookupInputResponse = scimLookupInputError(c, error);
+    if (lookupInputResponse) return lookupInputResponse;
+    if (error instanceof Error) {
+      if (error.message === 'scim_account_idempotency_key_invalid') {
+        return scimError(
+          c,
+          400,
+          'Idempotency-Key must contain 8 to 128 safe characters',
+          'invalidValue'
+        );
+      }
+      if (
+        error.message === 'account_creation_operation_idempotency_conflict' ||
+        error.message === 'directory_identifier_reservation_conflict'
+      ) {
+        return scimError(c, 409, 'User identifier already exists', 'uniqueness');
+      }
+      if (error.message === 'control_account_allocation_capacity_unavailable') {
+        return scimError(c, 503, 'Account storage capacity is temporarily unavailable');
+      }
+    }
+    if (isAccountDirectoryWriteBindingUnavailable(error)) {
+      c.header('Retry-After', '1');
+      return scimError(c, 503, 'Runtime database binding is propagating; retry shortly');
+    }
+    if (isLookupRegistryGenerationPropagating(error)) {
+      c.header('Retry-After', '1');
+      return scimError(c, 503, 'Runtime lookup registry generation is propagating; retry shortly');
+    }
     const log = getLogger(c).module('SCIM');
     log.error('SCIM create user error', { action: 'create_user' }, error as Error);
     return scimError(c, 500, 'Internal server error');
@@ -1542,36 +2561,47 @@ app.post('/Users', async (c) => {
 app.put('/Users/:id', async (c) => {
   try {
     const userId = c.req.param('id')!;
-    const scimUser = await c.req.json<Partial<ScimUser>>();
+    const parsed = await readScimJson<unknown>(c);
+    if (!parsed.ok) return parsed.response;
+    if (!isRecord(parsed.value)) {
+      return scimError(c, 400, 'SCIM User must be an object', 'invalidSyntax');
+    }
+    const scimUser = parsed.value as Partial<ScimUser>;
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const adapters = await resolveScimAccountAdaptersFromContext(c, userId, 'account_lifecycle');
+    if (!adapters) {
+      return scimError(c, 404, 'The requested resource was not found');
+    }
+    const { coreAdapter, piiAdapter } = adapters;
     const canonicalProjectionRepository = createCanonicalProjectionRepository(
-      c,
       coreAdapter,
       piiAdapter,
       tenantId
     );
-    if (!canonicalProjectionRepository || !piiAdapter) {
-      return scimError(c, 500, 'Configured PII store is not available');
-    }
 
     // Validate required fields
     const validation = validateScimUser(scimUser);
-    if (!validation.valid) {
-      return scimError(c, 400, validation.errors.join(', '), 'invalidValue');
+    const validationErrors = [
+      ...validateScimResourceSchemas(scimUser, SCIM_SCHEMAS.USER),
+      ...validation.errors,
+    ];
+    if (validationErrors.length > 0) {
+      return scimError(c, 400, validationErrors.join(', '), 'invalidValue');
     }
     if (hasScimPasswordCredential(scimUser)) {
       return scimPasswordUnsupportedError(c);
     }
 
     // Check if user exists - fetch from both DBs
-    const existingUser = await fetchUserWithPII(userId, { canonicalProjectionRepository });
+    const existingUser = await fetchUserWithPII(userId, {
+      canonicalProjectionRepository,
+      includeInactive: true,
+    });
 
     if (!existingUser) {
       return scimError(c, 404, 'The requested resource was not found');
     }
-
     // Check ETag if If-Match header is present
     const ifMatch = c.req.header('If-Match');
     if (ifMatch) {
@@ -1583,11 +2613,16 @@ app.put('/Users/:id', async (c) => {
     }
 
     // Convert SCIM user to internal format
-    const internalUser = scimToUser(scimUser);
+    const internalUser = await applyScimInboundIdentityMapping({
+      env: c.env,
+      tenantId,
+      user: scimUser,
+    });
     const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser, {
       userId,
       mergeExistingValues: false,
       deleteMissingFields: true,
+      accountAdapters: adapters,
     });
     if (!customFieldValidation.ok) {
       return scimError(
@@ -1600,7 +2635,8 @@ app.put('/Users/:id', async (c) => {
     }
     internalUser.updated_at = new Date().toISOString();
 
-    await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
+    await syncUpdatedScimIdentifiers(c, tenantId, userId, adapters, existingUser, internalUser);
+    await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation, adapters);
     await maybeSyncCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId, internalUser);
 
     // Invalidate user cache (cache invalidation hook)
@@ -1628,6 +2664,12 @@ app.put('/Users/:id', async (c) => {
 
     return c.json(responseUser);
   } catch (error) {
+    const mappingResponse = scimMappingError(c, error);
+    if (mappingResponse) return mappingResponse;
+    const lookupInputResponse = scimLookupInputError(c, error);
+    if (lookupInputResponse) return lookupInputResponse;
+    const identifierResponse = scimIdentifierReplacementError(c, error);
+    if (identifierResponse) return identifierResponse;
     const log = getLogger(c).module('SCIM');
     log.error('SCIM replace user error', { action: 'replace_user' }, error as Error);
     return scimError(c, 500, 'Internal server error');
@@ -1641,22 +2683,31 @@ app.put('/Users/:id', async (c) => {
 app.patch('/Users/:id', async (c) => {
   try {
     const userId = c.req.param('id')!;
-    const patchOp = await c.req.json<ScimPatchOp>();
+    const parsed = await readScimJson<unknown>(c);
+    if (!parsed.ok) return parsed.response;
+    const patchValidation = validateScimPatchOp(parsed.value);
+    if (!patchValidation.valid) {
+      return scimError(c, 400, patchValidation.errors.join(', '), 'invalidSyntax');
+    }
+    const patchOp = parsed.value as ScimPatchOp;
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const adapters = await resolveScimAccountAdaptersFromContext(c, userId, 'account_lifecycle');
+    if (!adapters) {
+      return scimError(c, 404, 'The requested resource was not found');
+    }
+    const { coreAdapter, piiAdapter } = adapters;
     const canonicalProjectionRepository = createCanonicalProjectionRepository(
-      c,
       coreAdapter,
       piiAdapter,
       tenantId
     );
-    if (!canonicalProjectionRepository || !piiAdapter) {
-      return scimError(c, 500, 'Configured PII store is not available');
-    }
 
-    // Check if user exists - fetch from both DBs
-    const existingUser = await fetchUserWithPII(userId, { canonicalProjectionRepository });
+    // Keep inactive users addressable so SCIM can reactivate or further update them.
+    const existingUser = await fetchUserWithPII(userId, {
+      canonicalProjectionRepository,
+      includeInactive: true,
+    });
 
     if (!existingUser) {
       return scimError(c, 404, 'The requested resource was not found');
@@ -1686,12 +2737,16 @@ app.patch('/Users/:id', async (c) => {
     if (hasScimPasswordCredential(scimUser)) {
       return scimPasswordUnsupportedError(c);
     }
-
     // Convert back to internal format
-    const internalUser = scimToUser(scimUser);
+    const internalUser = await applyScimInboundIdentityMapping({
+      env: c.env,
+      tenantId,
+      user: scimUser,
+    });
     const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser, {
       userId,
       mergeExistingValues: true,
+      accountAdapters: adapters,
     });
     if (!customFieldValidation.ok) {
       return scimError(
@@ -1704,7 +2759,8 @@ app.patch('/Users/:id', async (c) => {
     }
     internalUser.updated_at = new Date().toISOString();
 
-    await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
+    await syncUpdatedScimIdentifiers(c, tenantId, userId, adapters, existingUser, internalUser);
+    await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation, adapters);
     await maybeSyncCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId, internalUser);
 
     // Invalidate user cache (cache invalidation hook)
@@ -1732,6 +2788,12 @@ app.patch('/Users/:id', async (c) => {
 
     return c.json(responseUser);
   } catch (error) {
+    const mappingResponse = scimMappingError(c, error);
+    if (mappingResponse) return mappingResponse;
+    const lookupInputResponse = scimLookupInputError(c, error);
+    if (lookupInputResponse) return lookupInputResponse;
+    const identifierResponse = scimIdentifierReplacementError(c, error);
+    if (identifierResponse) return identifierResponse;
     const log = getLogger(c).module('SCIM');
     log.error('SCIM patch user error', { action: 'patch_user' }, error as Error);
     return scimError(c, 500, 'Internal server error');
@@ -1746,22 +2808,30 @@ app.delete('/Users/:id', async (c) => {
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const adapters = await resolveScimAccountAdaptersFromContext(c, userId, 'account_delete_retry');
+    if (!adapters) {
+      return scimError(c, 404, 'The requested resource was not found');
+    }
+    const { coreAdapter, piiAdapter } = adapters;
     const canonicalProjectionRepository = createCanonicalProjectionRepository(
-      c,
       coreAdapter,
       piiAdapter,
       tenantId
     );
-    if (!canonicalProjectionRepository || !piiAdapter) {
-      return scimError(c, 500, 'Configured PII store is not available');
-    }
 
-    // Check if user exists - fetch from both DBs
-    const existingUser = await fetchUserWithPII(userId, { canonicalProjectionRepository });
+    // Deactivated users remain addressable so a subsequent DELETE can complete deprovisioning.
+    const existingUser = await fetchUserWithPII(userId, {
+      canonicalProjectionRepository,
+      includeInactive: true,
+    });
 
     if (!existingUser) {
       return scimError(c, 404, 'The requested resource was not found');
+    }
+
+    const legalHold = await findActiveAccountLegalHold(coreAdapter, tenantId, userId);
+    if (legalHold) {
+      return scimError(c, 409, 'User is under legal hold and cannot be deleted');
     }
 
     // Check ETag if If-Match header is present
@@ -1776,6 +2846,12 @@ app.delete('/Users/:id', async (c) => {
 
     const now = Date.now();
     const retentionDays = 90; // GDPR retention period
+    const directoryRemovals = await prepareAccountDirectoryRemoval(c.env, {
+      tenantId,
+      userId,
+      core: coreAdapter,
+      pii: piiAdapter,
+    });
 
     // Step 1: Create tombstone record in PII DB for GDPR audit trail
     if (piiAdapter) {
@@ -1796,7 +2872,15 @@ app.delete('/Users/:id', async (c) => {
         });
     }
 
+    await eraseAccountPiiAfterDirectoryRemovalPrepared(
+      piiAdapter,
+      { tenantId, userId },
+      Math.floor(now / 1000)
+    );
+
     await maybeDeleteCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId);
+    await markAccountDirectoryRemovalsReady(coreAdapter, directoryRemovals);
+    await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, directoryRemovals);
 
     // Audit log (non-blocking) - severity: warning for deletion
     logScimAudit(
@@ -1828,12 +2912,24 @@ app.delete('/Users/:id', async (c) => {
 app.get('/Groups', async (c) => {
   try {
     const params = parseQueryParams(c);
+    if (invalidProjectionParameters(params)) {
+      return scimError(
+        c,
+        400,
+        'attributes and excludedAttributes are mutually exclusive',
+        'invalidValue'
+      );
+    }
+    const paginationError = invalidPaginationParameters(params);
+    if (paginationError) {
+      return scimError(c, 400, paginationError, 'invalidValue');
+    }
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
-    const startIndex = params.startIndex || 1;
-    const count = Math.min(params.count || 100, 1000);
+    const startIndex = params.startIndex ?? 1;
+    const count = Math.min(params.count ?? 100, 1000);
     const offset = startIndex - 1;
 
     let sql = 'SELECT * FROM roles WHERE tenant_id = ?';
@@ -1889,20 +2985,22 @@ app.get('/Groups', async (c) => {
     sqlParams.push(count, offset);
 
     // Execute query
-    const groups = await coreAdapter.query<InternalGroup>(sql, sqlParams);
+    const groups = count === 0 ? [] : await coreAdapter.query<InternalGroup>(sql, sqlParams);
 
     // Convert to SCIM format
     const scimGroups: ScimGroup[] = [];
     for (const group of groups) {
       // Fetch members if needed (PII/Non-PII DB separation)
       const members = await fetchGroupMembersWithPII(
+        c.env,
         coreAdapter,
-        createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
         group.id as string,
         tenantId
       );
 
-      scimGroups.push(groupToScim(group, { baseUrl, includeMembers: true }, members));
+      scimGroups.push(
+        projectScimResource(groupToScim(group, { baseUrl, includeMembers: true }, members), params)
+      );
     }
 
     const response: ScimListResponse<ScimGroup> = {
@@ -1928,8 +3026,17 @@ app.get('/Groups/:id', async (c) => {
   try {
     const groupId = c.req.param('id')!;
     const baseUrl = getBaseUrl(c);
+    const params = parseQueryParams(c);
+    if (invalidProjectionParameters(params)) {
+      return scimError(
+        c,
+        400,
+        'attributes and excludedAttributes are mutually exclusive',
+        'invalidValue'
+      );
+    }
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
     const group = await coreAdapter.queryOne<InternalGroup>(
       'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
@@ -1950,19 +3057,14 @@ app.get('/Groups/:id', async (c) => {
     }
 
     // Fetch members (PII/Non-PII DB separation)
-    const members = await fetchGroupMembersWithPII(
-      coreAdapter,
-      createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
-      groupId,
-      tenantId
-    );
+    const members = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
 
     const scimGroup = groupToScim(group, { baseUrl, includeMembers: true }, members);
 
     // Set ETag header
     c.header('ETag', scimGroup.meta.version || '');
 
-    return c.json(scimGroup);
+    return c.json(projectScimResource(scimGroup, params));
   } catch (error) {
     const log = getLogger(c).module('SCIM');
     log.error('SCIM get group error', { action: 'get_group' }, error as Error);
@@ -1975,15 +3077,24 @@ app.get('/Groups/:id', async (c) => {
  */
 app.post('/Groups', async (c) => {
   try {
-    const scimGroup = await c.req.json<Partial<ScimGroup>>();
+    const parsed = await readScimJson<unknown>(c);
+    if (!parsed.ok) return parsed.response;
+    if (!isRecord(parsed.value)) {
+      return scimError(c, 400, 'SCIM Group must be an object', 'invalidSyntax');
+    }
+    const scimGroup = parsed.value as Partial<ScimGroup>;
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
     // Validate required fields
     const validation = validateScimGroup(scimGroup);
-    if (!validation.valid) {
-      return scimError(c, 400, validation.errors.join(', '), 'invalidValue');
+    const validationErrors = [
+      ...validateScimResourceSchemas(scimGroup, SCIM_SCHEMAS.GROUP),
+      ...validation.errors,
+    ];
+    if (validationErrors.length > 0) {
+      return scimError(c, 400, validationErrors.join(', '), 'invalidValue');
     }
 
     // Check for duplicate displayName
@@ -2006,7 +3117,7 @@ app.post('/Groups', async (c) => {
     const now = new Date().toISOString();
 
     const memberIds = resolveScimGroupMemberIds(scimGroup.members);
-    const missingMemberIds = await findMissingTenantUserIds(coreAdapter, tenantId, memberIds);
+    const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
     if (missingMemberIds.length > 0) {
       return scimError(c, 400, 'Group member does not exist in this tenant', 'invalidValue');
     }
@@ -2021,7 +3132,7 @@ app.post('/Groups', async (c) => {
         internalGroup.name,
         internalGroup.description || null,
         JSON.stringify([]), // Empty permissions by default
-        internalGroup.external_id,
+        internalGroup.external_id ?? null,
         now,
       ]
     );
@@ -2039,12 +3150,7 @@ app.post('/Groups', async (c) => {
     }
 
     // Fetch members (PII/Non-PII DB separation)
-    const members = await fetchGroupMembersWithPII(
-      coreAdapter,
-      createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
-      groupId,
-      tenantId
-    );
+    const members = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
 
     const responseGroup = groupToScim(createdGroup, { baseUrl, includeMembers: true }, members);
 
@@ -2072,15 +3178,24 @@ app.post('/Groups', async (c) => {
 app.put('/Groups/:id', async (c) => {
   try {
     const groupId = c.req.param('id')!;
-    const scimGroup = await c.req.json<Partial<ScimGroup>>();
+    const parsed = await readScimJson<unknown>(c);
+    if (!parsed.ok) return parsed.response;
+    if (!isRecord(parsed.value)) {
+      return scimError(c, 400, 'SCIM Group must be an object', 'invalidSyntax');
+    }
+    const scimGroup = parsed.value as Partial<ScimGroup>;
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
     // Validate required fields
     const validation = validateScimGroup(scimGroup);
-    if (!validation.valid) {
-      return scimError(c, 400, validation.errors.join(', '), 'invalidValue');
+    const validationErrors = [
+      ...validateScimResourceSchemas(scimGroup, SCIM_SCHEMAS.GROUP),
+      ...validation.errors,
+    ];
+    if (validationErrors.length > 0) {
+      return scimError(c, 400, validationErrors.join(', '), 'invalidValue');
     }
 
     // Check if group exists
@@ -2106,23 +3221,29 @@ app.put('/Groups/:id', async (c) => {
     // Convert SCIM group to internal format
     const internalGroup = scimToGroup(scimGroup);
 
+    const memberIds = resolveScimGroupMemberIds(scimGroup.members);
+    const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
+    if (missingMemberIds.length > 0) {
+      return scimError(c, 400, 'Group member does not exist in this tenant', 'invalidValue');
+    }
+
     // Update group
     await coreAdapter.execute(
       `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ? AND tenant_id = ?`,
-      [internalGroup.name, internalGroup.description, internalGroup.external_id, groupId, tenantId]
+      [
+        internalGroup.name,
+        internalGroup.description ?? null,
+        internalGroup.external_id ?? null,
+        groupId,
+        tenantId,
+      ]
     );
 
-    // Update members (replace all)
+    // Update members only after every routed account has been validated.
     await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
       tenantId,
       groupId,
     ]);
-
-    const memberIds = resolveScimGroupMemberIds(scimGroup.members);
-    const missingMemberIds = await findMissingTenantUserIds(coreAdapter, tenantId, memberIds);
-    if (missingMemberIds.length > 0) {
-      return scimError(c, 400, 'Group member does not exist in this tenant', 'invalidValue');
-    }
 
     if (memberIds.length > 0) {
       const now = new Date().toISOString();
@@ -2140,12 +3261,7 @@ app.put('/Groups/:id', async (c) => {
     }
 
     // Fetch members (PII/Non-PII DB separation)
-    const members = await fetchGroupMembersWithPII(
-      coreAdapter,
-      createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
-      groupId,
-      tenantId
-    );
+    const members = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
 
     const responseGroup = groupToScim(updatedGroup, { baseUrl, includeMembers: true }, members);
 
@@ -2173,10 +3289,16 @@ app.put('/Groups/:id', async (c) => {
 app.patch('/Groups/:id', async (c) => {
   try {
     const groupId = c.req.param('id')!;
-    const patchOp = await c.req.json<ScimPatchOp>();
+    const parsed = await readScimJson<unknown>(c);
+    if (!parsed.ok) return parsed.response;
+    const patchValidation = validateScimPatchOp(parsed.value);
+    if (!patchValidation.valid) {
+      return scimError(c, 400, patchValidation.errors.join(', '), 'invalidSyntax');
+    }
+    const patchOp = parsed.value as ScimPatchOp;
     const baseUrl = getBaseUrl(c);
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
     // Check if group exists
     const existingGroup = await coreAdapter.queryOne<InternalGroup>(
@@ -2199,12 +3321,7 @@ app.patch('/Groups/:id', async (c) => {
     }
 
     // Fetch current members (PII/Non-PII DB separation)
-    const currentMembers = await fetchGroupMembersWithPII(
-      coreAdapter,
-      createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
-      groupId,
-      tenantId
-    );
+    const currentMembers = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
 
     // Convert to SCIM format
     let scimGroup = groupToScim(existingGroup, { baseUrl, includeMembers: true }, currentMembers);
@@ -2221,20 +3338,29 @@ app.patch('/Groups/:id', async (c) => {
     // Convert back to internal format
     const internalGroup = scimToGroup(scimGroup);
 
-    // Update group
-    await coreAdapter.execute(
-      `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ? AND tenant_id = ?`,
-      [internalGroup.name, internalGroup.description, internalGroup.external_id, groupId, tenantId]
-    );
-
-    // Update members if changed
-    if (scimGroup.members !== undefined) {
-      const memberIds = resolveScimGroupMemberIds(scimGroup.members);
-      const missingMemberIds = await findMissingTenantUserIds(coreAdapter, tenantId, memberIds);
+    const memberIds =
+      scimGroup.members === undefined ? null : resolveScimGroupMemberIds(scimGroup.members);
+    if (memberIds) {
+      const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
       if (missingMemberIds.length > 0) {
         return scimError(c, 400, 'Group member does not exist in this tenant', 'invalidValue');
       }
+    }
 
+    // Update group
+    await coreAdapter.execute(
+      `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ? AND tenant_id = ?`,
+      [
+        internalGroup.name,
+        internalGroup.description ?? null,
+        internalGroup.external_id ?? null,
+        groupId,
+        tenantId,
+      ]
+    );
+
+    // Update members if changed
+    if (memberIds) {
       await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
         tenantId,
         groupId,
@@ -2257,12 +3383,7 @@ app.patch('/Groups/:id', async (c) => {
     }
 
     // Fetch updated members (PII/Non-PII DB separation)
-    const updatedMembers = await fetchGroupMembersWithPII(
-      coreAdapter,
-      createCanonicalProjectionRepository(c, coreAdapter, piiAdapter, tenantId),
-      groupId,
-      tenantId
-    );
+    const updatedMembers = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
 
     const responseGroup = groupToScim(
       updatedGroup,
@@ -2293,7 +3414,7 @@ app.delete('/Groups/:id', async (c) => {
   try {
     const groupId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const coreAdapter = createTenantMetadataAdapterFromContext(c);
 
     // Check if group exists
     const existingGroup = await coreAdapter.queryOne<InternalGroup>(
@@ -2351,43 +3472,6 @@ app.delete('/Groups/:id', async (c) => {
 // ============================================================================
 
 /**
- * Default bulk operation limits
- */
-const DEFAULT_BULK_MAX_OPERATIONS = 100;
-const DEFAULT_BULK_MAX_PAYLOAD_SIZE = 1048576; // 1MB
-
-/**
- * Get bulk operation config from KV with defaults
- */
-async function getBulkConfig(env: Env): Promise<BulkOperationConfig> {
-  let maxOperations = DEFAULT_BULK_MAX_OPERATIONS;
-  let maxPayloadSize = DEFAULT_BULK_MAX_PAYLOAD_SIZE;
-
-  if (env.KV) {
-    try {
-      const maxOpsStr = await env.KV.get('SCIM_BULK_MAX_OPERATIONS');
-      if (maxOpsStr) {
-        const parsed = parseInt(maxOpsStr, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          maxOperations = parsed;
-        }
-      }
-      const maxSizeStr = await env.KV.get('SCIM_BULK_MAX_PAYLOAD_SIZE');
-      if (maxSizeStr) {
-        const parsed = parseInt(maxSizeStr, 10);
-        if (!isNaN(parsed) && parsed > 0) {
-          maxPayloadSize = parsed;
-        }
-      }
-    } catch {
-      // Use defaults on error
-    }
-  }
-
-  return { maxOperations, maxPayloadSize };
-}
-
-/**
  * Resolve bulkId references in request data
  *
  * Replaces "bulkId:xyz" references with actual created resource IDs
@@ -2429,6 +3513,34 @@ function resolveBulkIdReferences(
   return result;
 }
 
+function containsBulkIdReference(value: unknown): boolean {
+  if (typeof value === 'string') return value.startsWith('bulkId:');
+  if (Array.isArray(value)) return value.some(containsBulkIdReference);
+  if (!value || typeof value !== 'object') return false;
+  return Object.values(value as Record<string, unknown>).some(containsBulkIdReference);
+}
+
+function canProcessBulkOperationsConcurrently(
+  operations: readonly ScimBulkOperation[],
+  failOnErrors: number
+): boolean {
+  if (failOnErrors !== 0 || operations.length < 2) return false;
+  const bulkIds = new Set<string>();
+  for (const operation of operations) {
+    if (
+      operation.method !== 'POST' ||
+      operation.path !== '/Users' ||
+      typeof operation.bulkId !== 'string' ||
+      bulkIds.has(operation.bulkId) ||
+      containsBulkIdReference(operation.data)
+    ) {
+      return false;
+    }
+    bulkIds.add(operation.bulkId);
+  }
+  return true;
+}
+
 /**
  * POST /scim/v2/Bulk - Bulk Operations
  *
@@ -2439,10 +3551,14 @@ app.post('/Bulk', async (c) => {
   try {
     const tenantId = getTenantIdFromContext(c);
     const baseUrl = getBaseUrl(c);
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
+    const metadataAdapter = createTenantMetadataAdapterFromContext(c);
 
     // Get bulk config from KV
-    const bulkConfig = await getBulkConfig(c.env);
+    const inboundSettings = await getScimInboundSettings(c.env, tenantId);
+    const bulkConfig: BulkOperationConfig = {
+      maxOperations: inboundSettings.bulkMaxOperations,
+      maxPayloadSize: inboundSettings.bulkMaxPayloadSize,
+    };
 
     // Check Content-Length if available
     const contentLength = c.req.header('Content-Length');
@@ -2458,10 +3574,19 @@ app.post('/Bulk', async (c) => {
       }
     }
 
-    // Parse request body
+    // Measure the actual body too. Content-Length can be absent or inaccurate.
     let bulkRequest: ScimBulkRequest;
     try {
-      bulkRequest = await c.req.json<ScimBulkRequest>();
+      const body = await c.req.text();
+      if (new TextEncoder().encode(body).byteLength > bulkConfig.maxPayloadSize) {
+        return scimError(
+          c,
+          413,
+          `Request payload exceeds maximum size of ${bulkConfig.maxPayloadSize} bytes`,
+          'tooMany'
+        );
+      }
+      bulkRequest = JSON.parse(body) as ScimBulkRequest;
     } catch {
       return scimError(c, 400, 'Invalid JSON request body', 'invalidSyntax');
     }
@@ -2497,28 +3622,41 @@ app.post('/Bulk', async (c) => {
     const results: ScimBulkOperationResponse[] = [];
     const bulkIdMap = new Map<string, string>(); // bulkId -> created resource ID
 
-    for (const operation of bulkRequest.Operations) {
-      // Check if we should stop processing
-      if (failOnErrors > 0 && errorCount >= failOnErrors) {
-        break;
-      }
-
-      const result = await processOperation(
-        operation,
-        bulkIdMap,
-        tenantId,
-        baseUrl,
-        coreAdapter,
-        piiAdapter,
-        c
+    const permissions = {
+      usersEnabled: inboundSettings.usersEnabled,
+      groupsEnabled: inboundSettings.groupsEnabled,
+    };
+    if (canProcessBulkOperationsConcurrently(bulkRequest.Operations, failOnErrors)) {
+      results.push(
+        ...(await mapScimConcurrent(bulkRequest.Operations, 4, (operation) =>
+          processOperation(operation, bulkIdMap, tenantId, baseUrl, metadataAdapter, c, permissions)
+        ))
       );
+      errorCount = results.filter((result) => parseInt(result.status, 10) >= 400).length;
+    } else {
+      for (const operation of bulkRequest.Operations) {
+        // Check if we should stop processing
+        if (failOnErrors > 0 && errorCount >= failOnErrors) {
+          break;
+        }
 
-      results.push(result);
+        const result = await processOperation(
+          operation,
+          bulkIdMap,
+          tenantId,
+          baseUrl,
+          metadataAdapter,
+          c,
+          permissions
+        );
 
-      // Track errors
-      const statusCode = parseInt(result.status, 10);
-      if (statusCode >= 400) {
-        errorCount++;
+        results.push(result);
+
+        // Track errors
+        const statusCode = parseInt(result.status, 10);
+        if (statusCode >= 400) {
+          errorCount++;
+        }
       }
     }
 
@@ -2551,9 +3689,9 @@ async function processOperation(
   bulkIdMap: Map<string, string>,
   tenantId: string,
   baseUrl: string,
-  coreAdapter: DatabaseAdapter,
-  piiAdapter: DatabaseAdapter | null,
-  c: Context<{ Bindings: Env }>
+  metadataAdapter: DatabaseAdapter,
+  c: Context<{ Bindings: Env }>,
+  permissions: { usersEnabled: boolean; groupsEnabled: boolean }
 ): Promise<ScimBulkOperationResponse> {
   const { method, path, bulkId, version, data } = operation;
 
@@ -2575,6 +3713,22 @@ async function processOperation(
   const resourceType = pathMatch[1] as 'Users' | 'Groups';
   const resourceId = pathMatch[3]; // May be undefined for POST
 
+  if (
+    (resourceType === 'Users' && !permissions.usersEnabled) ||
+    (resourceType === 'Groups' && !permissions.groupsEnabled)
+  ) {
+    return {
+      method,
+      bulkId,
+      status: '403',
+      response: {
+        schemas: [SCIM_SCHEMAS.ERROR],
+        status: '403',
+        detail: `SCIM ${resourceType} provisioning is disabled`,
+      },
+    };
+  }
+
   // Validate method requirements
   if (method === 'POST' && resourceId) {
     return {
@@ -2585,6 +3739,27 @@ async function processOperation(
         schemas: [SCIM_SCHEMAS.ERROR],
         status: '400',
         detail: 'POST operations must not include resource ID in path',
+      },
+    };
+  }
+
+  if (
+    method === 'POST' &&
+    (typeof bulkId !== 'string' ||
+      bulkId.length < 1 ||
+      bulkId.length > 128 ||
+      // eslint-disable-next-line no-control-regex -- bulkId is persisted in the derived operation hash
+      /[\x00-\x1f\x7f]/u.test(bulkId))
+  ) {
+    return {
+      method,
+      bulkId,
+      status: '400',
+      response: {
+        schemas: [SCIM_SCHEMAS.ERROR],
+        status: '400',
+        detail: 'POST operations require a valid bulkId',
+        scimType: 'invalidValue',
       },
     };
   }
@@ -2628,8 +3803,6 @@ async function processOperation(
         version,
         tenantId,
         baseUrl,
-        coreAdapter,
-        piiAdapter,
         bulkIdMap,
         c
       );
@@ -2642,8 +3815,7 @@ async function processOperation(
         version,
         tenantId,
         baseUrl,
-        coreAdapter,
-        piiAdapter,
+        metadataAdapter,
         bulkIdMap,
         c
       );
@@ -2655,14 +3827,48 @@ async function processOperation(
       { action: 'bulk_operation', method, path },
       error as Error
     );
+    const mappingError = error instanceof ScimIdentityMappingError ? error : null;
+    const lookupInputError =
+      error instanceof Error && error.message === 'lookup_email_invalid' ? error : null;
+    const identifierConflict =
+      error instanceof Error &&
+      [
+        'identifier_replacement_reservation_conflict',
+        'identifier_replacement_operation_active',
+        'identifier_replacement_idempotency_conflict',
+        'identifier_replacement_old_route_invalid',
+      ].includes(error.message);
+    const identifierUnavailable =
+      error instanceof Error && error.message.startsWith('identifier_replacement_');
+    const mappingStatus = identifierConflict
+      ? '409'
+      : mappingError?.code === 'mapping_required_output_missing' || lookupInputError
+        ? '400'
+        : mappingError
+          ? '503'
+          : identifierUnavailable
+            ? '503'
+            : '500';
     return {
       method,
       bulkId,
-      status: '500',
+      status: mappingStatus,
       response: {
         schemas: [SCIM_SCHEMAS.ERROR],
-        status: '500',
-        detail: 'Internal server error processing operation',
+        status: mappingStatus,
+        detail: identifierConflict
+          ? 'User identifier already exists or is being changed'
+          : (mappingError?.message ??
+            (lookupInputError
+              ? 'A mapped email address is invalid'
+              : identifierUnavailable
+                ? 'User identifier update is temporarily unavailable'
+                : 'Internal server error processing operation')),
+        ...(identifierConflict
+          ? { scimType: 'uniqueness' as ScimErrorType }
+          : mappingError || lookupInputError
+            ? { scimType: 'invalidValue' as ScimErrorType }
+            : {}),
       },
     };
   }
@@ -2679,36 +3885,19 @@ async function processUserOperation(
   version: string | undefined,
   tenantId: string,
   baseUrl: string,
-  coreAdapter: DatabaseAdapter,
-  piiAdapter: DatabaseAdapter | null,
   bulkIdMap: Map<string, string>,
   c: Context<{ Bindings: Env }>
 ): Promise<ScimBulkOperationResponse> {
-  const canonicalProjectionRepository = createCanonicalProjectionRepository(
-    c,
-    coreAdapter,
-    piiAdapter,
-    tenantId
-  );
-  if (!canonicalProjectionRepository || !piiAdapter) {
-    return {
-      method: method as ScimBulkMethod,
-      bulkId,
-      status: '500',
-      response: {
-        schemas: [SCIM_SCHEMAS.ERROR],
-        status: '500',
-        detail: 'Configured PII store is not available',
-      },
-    };
-  }
-
   switch (method) {
     case 'POST': {
       // Create user
       const scimUser = data as Partial<ScimUser>;
       const validation = validateScimUser(scimUser);
-      if (!validation.valid) {
+      const validationErrors = [
+        ...validateScimResourceSchemas(scimUser, SCIM_SCHEMAS.USER),
+        ...validation.errors,
+      ];
+      if (validationErrors.length > 0) {
         return {
           method: 'POST',
           bulkId,
@@ -2716,7 +3905,7 @@ async function processUserOperation(
           response: {
             schemas: [SCIM_SCHEMAS.ERROR],
             status: '400',
-            detail: validation.errors.join(', '),
+            detail: validationErrors.join(', '),
             scimType: 'invalidValue',
           },
         };
@@ -2724,39 +3913,12 @@ async function processUserOperation(
       if (hasScimPasswordCredential(scimUser)) {
         return scimPasswordUnsupportedBulkResponse('POST', bulkId);
       }
-
-      // Check for duplicate email
-      const primaryEmail =
-        scimUser.emails?.find((e) => e.primary)?.value || scimUser.emails?.[0]?.value;
-      if (primaryEmail) {
-        const existing = await piiAdapter.queryOne<{ id: string }>(
-          `SELECT owner_id as id
-             FROM identity_sensitive_values
-            WHERE tenant_id = ?
-              AND owner_type = 'runtime_user'
-              AND value_key = 'email'
-              AND value_json = ?
-              AND lifecycle_state = 'active'
-            LIMIT 1`,
-          [tenantId, JSON.stringify(primaryEmail)]
-        );
-        if (existing) {
-          return {
-            method: 'POST',
-            bulkId,
-            status: '409',
-            response: {
-              schemas: [SCIM_SCHEMAS.ERROR],
-              status: '409',
-              detail: 'User with this email already exists',
-              scimType: 'uniqueness',
-            },
-          };
-        }
-      }
-
       // Convert and create
-      const internalUser = scimToUser(scimUser);
+      const internalUser = await applyScimInboundIdentityMapping({
+        env: c.env,
+        tenantId,
+        user: scimUser,
+      });
       const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser);
       if (!customFieldValidation.ok) {
         return {
@@ -2772,31 +3934,142 @@ async function processUserOperation(
           },
         };
       }
-      const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
       const now = new Date().toISOString();
       internalUser.created_at = now;
       internalUser.updated_at = now;
       if (!internalUser.email_verified) internalUser.email_verified = 0;
       if (internalUser.active === undefined) internalUser.active = 1;
 
-      await maybeCreateCanonicalRuntimeUser(
-        c,
-        coreAdapter,
-        piiAdapter,
-        tenantId,
-        userId,
-        internalUser
-      );
-      await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation);
+      let result: DurableInitialAccountDirectoryWriteResult;
+      try {
+        result = await executeScimAccountCreation(
+          c,
+          tenantId,
+          scimUser,
+          internalUser,
+          customFieldValidation,
+          { kind: 'bulk', bulkId: bulkId! }
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          (error.message === 'account_creation_operation_idempotency_conflict' ||
+            error.message === 'directory_identifier_reservation_conflict')
+        ) {
+          return {
+            method: 'POST',
+            bulkId,
+            status: '409',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '409',
+              detail: 'User identifier already exists',
+              scimType: 'uniqueness',
+            },
+          };
+        }
+        if (
+          error instanceof Error &&
+          error.message === 'control_account_allocation_capacity_unavailable'
+        ) {
+          return {
+            method: 'POST',
+            bulkId,
+            status: '503',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '503',
+              detail: 'Account storage capacity is temporarily unavailable',
+            },
+          };
+        }
+        if (isAccountDirectoryWriteBindingUnavailable(error)) {
+          return {
+            method: 'POST',
+            bulkId,
+            status: '503',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '503',
+              detail: 'Runtime database binding is propagating; retry shortly',
+            },
+          };
+        }
+        if (isLookupRegistryGenerationPropagating(error)) {
+          return {
+            method: 'POST',
+            bulkId,
+            status: '503',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '503',
+              detail: 'Runtime lookup registry generation is propagating; retry shortly',
+            },
+          };
+        }
+        throw error;
+      }
+      const userId = result.operation.userId;
 
       // Store bulkId mapping for cross-references
       if (bulkId) {
         bulkIdMap.set(bulkId, userId);
       }
 
-      // Fetch created user from the configured runtime source.
+      if (result.delivery.status === 202) {
+        return {
+          method: 'POST',
+          bulkId,
+          location: `${baseUrl}/scim/v2/Operations/${encodeURIComponent(
+            result.operation.operationId
+          )}`,
+          status: '202',
+          response: scimAccountCreationPending(baseUrl, result.operation.operationId) as Record<
+            string,
+            unknown
+          >,
+        };
+      }
+
+      let targets: Awaited<ReturnType<typeof resolveInitialAccountDirectoryWriteTargets>>;
+      try {
+        targets = await resolveInitialAccountDirectoryWriteTargets(c.env, result.publication);
+      } catch (error) {
+        if (isAccountDirectoryWriteBindingUnavailable(error)) {
+          return {
+            method: 'POST',
+            bulkId,
+            status: '503',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '503',
+              detail: 'Runtime database binding is propagating; retry shortly',
+            },
+          };
+        }
+        if (isLookupRegistryGenerationPropagating(error)) {
+          return {
+            method: 'POST',
+            bulkId,
+            status: '503',
+            response: {
+              schemas: [SCIM_SCHEMAS.ERROR],
+              status: '503',
+              detail: 'Runtime lookup registry generation is propagating; retry shortly',
+            },
+          };
+        }
+        throw error;
+      }
+      const createdProjectionRepository = new CanonicalRuntimeUserProjectionRepository(
+        ensureDatabaseAdapter(targets.tenantCoreUsers, 'scim-bulk-user-create-result-core'),
+        tenantId,
+        new CanonicalSensitiveValueResolver(
+          ensureDatabaseAdapter(targets.tenantPii, 'scim-bulk-user-create-result-pii')
+        )
+      );
       const createdUser = await fetchUserWithPII(userId, {
-        canonicalProjectionRepository,
+        canonicalProjectionRepository: createdProjectionRepository,
         includeInactive: true,
       });
       const responseUser = createdUser
@@ -2814,8 +4087,34 @@ async function processUserOperation(
     }
 
     case 'PUT': {
+      const adapters = await resolveScimAccountAdapters(
+        c.env,
+        tenantId,
+        resourceId!,
+        'account_lifecycle'
+      );
+      if (!adapters) {
+        return {
+          method: 'PUT',
+          status: '404',
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status: '404',
+            detail: 'Resource not found',
+          },
+        };
+      }
+      const { coreAdapter, piiAdapter } = adapters;
+      const canonicalProjectionRepository = createCanonicalProjectionRepository(
+        coreAdapter,
+        piiAdapter,
+        tenantId
+      );
       // Replace user
-      const existingUser = await fetchUserWithPII(resourceId!, { canonicalProjectionRepository });
+      const existingUser = await fetchUserWithPII(resourceId!, {
+        canonicalProjectionRepository,
+        includeInactive: true,
+      });
       if (!existingUser) {
         return {
           method: 'PUT',
@@ -2847,14 +4146,18 @@ async function processUserOperation(
 
       const scimUser = data as Partial<ScimUser>;
       const validation = validateScimUser(scimUser);
-      if (!validation.valid) {
+      const validationErrors = [
+        ...validateScimResourceSchemas(scimUser, SCIM_SCHEMAS.USER),
+        ...validation.errors,
+      ];
+      if (validationErrors.length > 0) {
         return {
           method: 'PUT',
           status: '400',
           response: {
             schemas: [SCIM_SCHEMAS.ERROR],
             status: '400',
-            detail: validation.errors.join(', '),
+            detail: validationErrors.join(', '),
             scimType: 'invalidValue',
           },
         };
@@ -2862,12 +4165,16 @@ async function processUserOperation(
       if (hasScimPasswordCredential(scimUser)) {
         return scimPasswordUnsupportedBulkResponse('PUT');
       }
-
-      const internalUser = scimToUser(scimUser);
+      const internalUser = await applyScimInboundIdentityMapping({
+        env: c.env,
+        tenantId,
+        user: scimUser,
+      });
       const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser, {
         userId: resourceId,
         mergeExistingValues: false,
         deleteMissingFields: true,
+        accountAdapters: adapters,
       });
       if (!customFieldValidation.ok) {
         return {
@@ -2884,7 +4191,15 @@ async function processUserOperation(
       }
       internalUser.updated_at = new Date().toISOString();
 
-      await persistScimCustomClaimWrite(c, tenantId, resourceId!, customFieldValidation);
+      await syncUpdatedScimIdentifiers(
+        c,
+        tenantId,
+        resourceId!,
+        adapters,
+        existingUser,
+        internalUser
+      );
+      await persistScimCustomClaimWrite(c, tenantId, resourceId!, customFieldValidation, adapters);
       await maybeSyncCanonicalRuntimeUser(
         c,
         coreAdapter,
@@ -2914,8 +4229,34 @@ async function processUserOperation(
     }
 
     case 'PATCH': {
+      const adapters = await resolveScimAccountAdapters(
+        c.env,
+        tenantId,
+        resourceId!,
+        'account_lifecycle'
+      );
+      if (!adapters) {
+        return {
+          method: 'PATCH',
+          status: '404',
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status: '404',
+            detail: 'Resource not found',
+          },
+        };
+      }
+      const { coreAdapter, piiAdapter } = adapters;
+      const canonicalProjectionRepository = createCanonicalProjectionRepository(
+        coreAdapter,
+        piiAdapter,
+        tenantId
+      );
       // Partial update user
-      const existingUser = await fetchUserWithPII(resourceId!, { canonicalProjectionRepository });
+      const existingUser = await fetchUserWithPII(resourceId!, {
+        canonicalProjectionRepository,
+        includeInactive: true,
+      });
       if (!existingUser) {
         return {
           method: 'PATCH',
@@ -2946,6 +4287,19 @@ async function processUserOperation(
       }
 
       const patchOp = data as unknown as ScimPatchOp;
+      const patchValidation = validateScimPatchOp(patchOp);
+      if (!patchValidation.valid) {
+        return {
+          method: 'PATCH',
+          status: '400',
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status: '400',
+            detail: patchValidation.errors.join(', '),
+            scimType: 'invalidSyntax',
+          },
+        };
+      }
       let scimUser = userToScim(existingUser, { baseUrl, includeGroups: false });
       scimUser = applyPatchOperations(scimUser, patchOp.Operations);
 
@@ -2965,11 +4319,15 @@ async function processUserOperation(
       if (hasScimPasswordCredential(scimUser)) {
         return scimPasswordUnsupportedBulkResponse('PATCH');
       }
-
-      const internalUser = scimToUser(scimUser);
+      const internalUser = await applyScimInboundIdentityMapping({
+        env: c.env,
+        tenantId,
+        user: scimUser,
+      });
       const customFieldValidation = await validateScimCustomClaimWrite(c, tenantId, internalUser, {
         userId: resourceId,
         mergeExistingValues: true,
+        accountAdapters: adapters,
       });
       if (!customFieldValidation.ok) {
         return {
@@ -2986,7 +4344,15 @@ async function processUserOperation(
       }
       internalUser.updated_at = new Date().toISOString();
 
-      await persistScimCustomClaimWrite(c, tenantId, resourceId!, customFieldValidation);
+      await syncUpdatedScimIdentifiers(
+        c,
+        tenantId,
+        resourceId!,
+        adapters,
+        existingUser,
+        internalUser
+      );
+      await persistScimCustomClaimWrite(c, tenantId, resourceId!, customFieldValidation, adapters);
       await maybeSyncCanonicalRuntimeUser(
         c,
         coreAdapter,
@@ -3016,8 +4382,34 @@ async function processUserOperation(
     }
 
     case 'DELETE': {
+      const adapters = await resolveScimAccountAdapters(
+        c.env,
+        tenantId,
+        resourceId!,
+        'account_delete_retry'
+      );
+      if (!adapters) {
+        return {
+          method: 'DELETE',
+          status: '404',
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status: '404',
+            detail: 'Resource not found',
+          },
+        };
+      }
+      const { coreAdapter, piiAdapter } = adapters;
+      const canonicalProjectionRepository = createCanonicalProjectionRepository(
+        coreAdapter,
+        piiAdapter,
+        tenantId
+      );
       // Delete user
-      const existingUser = await fetchUserWithPII(resourceId!, { canonicalProjectionRepository });
+      const existingUser = await fetchUserWithPII(resourceId!, {
+        canonicalProjectionRepository,
+        includeInactive: true,
+      });
       if (!existingUser) {
         return {
           method: 'DELETE',
@@ -3026,6 +4418,19 @@ async function processUserOperation(
             schemas: [SCIM_SCHEMAS.ERROR],
             status: '404',
             detail: 'Resource not found',
+          },
+        };
+      }
+
+      const legalHold = await findActiveAccountLegalHold(coreAdapter, tenantId, resourceId!);
+      if (legalHold) {
+        return {
+          method: 'DELETE',
+          status: '409',
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status: '409',
+            detail: 'User is under legal hold and cannot be deleted',
           },
         };
       }
@@ -3080,35 +4485,19 @@ async function processGroupOperation(
   tenantId: string,
   baseUrl: string,
   coreAdapter: DatabaseAdapter,
-  piiAdapter: DatabaseAdapter | null,
   bulkIdMap: Map<string, string>,
   c: Context<{ Bindings: Env }>
 ): Promise<ScimBulkOperationResponse> {
-  const canonicalProjectionRepository = createCanonicalProjectionRepository(
-    c,
-    coreAdapter,
-    piiAdapter,
-    tenantId
-  );
-  if (!canonicalProjectionRepository) {
-    return {
-      method: method as ScimBulkMethod,
-      bulkId,
-      status: '500',
-      response: {
-        schemas: [SCIM_SCHEMAS.ERROR],
-        status: '500',
-        detail: 'Configured PII store is not available',
-      },
-    };
-  }
-
   switch (method) {
     case 'POST': {
       // Create group
       const scimGroup = data as Partial<ScimGroup>;
       const validation = validateScimGroup(scimGroup);
-      if (!validation.valid) {
+      const validationErrors = [
+        ...validateScimResourceSchemas(scimGroup, SCIM_SCHEMAS.GROUP),
+        ...validation.errors,
+      ];
+      if (validationErrors.length > 0) {
         return {
           method: 'POST',
           bulkId,
@@ -3116,7 +4505,7 @@ async function processGroupOperation(
           response: {
             schemas: [SCIM_SCHEMAS.ERROR],
             status: '400',
-            detail: validation.errors.join(', '),
+            detail: validationErrors.join(', '),
             scimType: 'invalidValue',
           },
         };
@@ -3146,7 +4535,7 @@ async function processGroupOperation(
       const now = new Date().toISOString();
 
       const memberIds = resolveScimGroupMemberIds(scimGroup.members, bulkIdMap);
-      const missingMemberIds = await findMissingTenantUserIds(coreAdapter, tenantId, memberIds);
+      const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
       if (missingMemberIds.length > 0) {
         return invalidGroupMemberBulkResponse('POST', bulkId);
       }
@@ -3160,7 +4549,7 @@ async function processGroupOperation(
           internalGroup.name,
           internalGroup.description || null,
           JSON.stringify([]),
-          internalGroup.external_id,
+          internalGroup.external_id ?? null,
           now,
         ]
       );
@@ -3176,12 +4565,7 @@ async function processGroupOperation(
         'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
         [groupId, tenantId]
       );
-      const members = await fetchGroupMembersWithPII(
-        coreAdapter,
-        canonicalProjectionRepository,
-        groupId,
-        tenantId
-      );
+      const members = await fetchGroupMembersWithPII(c.env, coreAdapter, groupId, tenantId);
       const responseGroup = createdGroup
         ? groupToScim(createdGroup, { baseUrl, includeMembers: true }, members)
         : null;
@@ -3232,14 +4616,18 @@ async function processGroupOperation(
 
       const scimGroup = data as Partial<ScimGroup>;
       const validation = validateScimGroup(scimGroup);
-      if (!validation.valid) {
+      const validationErrors = [
+        ...validateScimResourceSchemas(scimGroup, SCIM_SCHEMAS.GROUP),
+        ...validation.errors,
+      ];
+      if (validationErrors.length > 0) {
         return {
           method: 'PUT',
           status: '400',
           response: {
             schemas: [SCIM_SCHEMAS.ERROR],
             status: '400',
-            detail: validation.errors.join(', '),
+            detail: validationErrors.join(', '),
             scimType: 'invalidValue',
           },
         };
@@ -3247,27 +4635,28 @@ async function processGroupOperation(
 
       const internalGroup = scimToGroup(scimGroup);
 
+      const memberIds = resolveScimGroupMemberIds(scimGroup.members, bulkIdMap);
+      const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
+      if (missingMemberIds.length > 0) {
+        return invalidGroupMemberBulkResponse('PUT');
+      }
+
       await coreAdapter.execute(
         `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ? AND tenant_id = ?`,
         [
           internalGroup.name,
-          internalGroup.description,
-          internalGroup.external_id,
+          internalGroup.description ?? null,
+          internalGroup.external_id ?? null,
           resourceId,
           tenantId,
         ]
       );
 
-      // Update members
+      // Update members only after every routed account has been validated.
       await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
         tenantId,
         resourceId,
       ]);
-      const memberIds = resolveScimGroupMemberIds(scimGroup.members, bulkIdMap);
-      const missingMemberIds = await findMissingTenantUserIds(coreAdapter, tenantId, memberIds);
-      if (missingMemberIds.length > 0) {
-        return invalidGroupMemberBulkResponse('PUT');
-      }
 
       if (memberIds.length > 0) {
         const now = new Date().toISOString();
@@ -3278,12 +4667,7 @@ async function processGroupOperation(
         'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
         [resourceId, tenantId]
       );
-      const members = await fetchGroupMembersWithPII(
-        coreAdapter,
-        canonicalProjectionRepository,
-        resourceId!,
-        tenantId
-      );
+      const members = await fetchGroupMembersWithPII(c.env, coreAdapter, resourceId!, tenantId);
       const responseGroup = updatedGroup
         ? groupToScim(updatedGroup, { baseUrl, includeMembers: true }, members)
         : null;
@@ -3332,14 +4716,27 @@ async function processGroupOperation(
       }
 
       const currentMembers = await fetchGroupMembersWithPII(
+        c.env,
         coreAdapter,
-        canonicalProjectionRepository,
         resourceId!,
         tenantId
       );
       let scimGroup = groupToScim(existingGroup, { baseUrl, includeMembers: true }, currentMembers);
 
       const patchOp = data as unknown as ScimPatchOp;
+      const patchValidation = validateScimPatchOp(patchOp);
+      if (!patchValidation.valid) {
+        return {
+          method: 'PATCH',
+          status: '400',
+          response: {
+            schemas: [SCIM_SCHEMAS.ERROR],
+            status: '400',
+            detail: patchValidation.errors.join(', '),
+            scimType: 'invalidSyntax',
+          },
+        };
+      }
       scimGroup = applyPatchOperations(scimGroup, patchOp.Operations);
 
       const validation = validateScimGroup(scimGroup);
@@ -3358,25 +4755,30 @@ async function processGroupOperation(
 
       const internalGroup = scimToGroup(scimGroup);
 
+      const memberIds =
+        scimGroup.members === undefined
+          ? null
+          : resolveScimGroupMemberIds(scimGroup.members, bulkIdMap);
+      if (memberIds) {
+        const missingMemberIds = await findMissingTenantUserIds(c.env, tenantId, memberIds);
+        if (missingMemberIds.length > 0) {
+          return invalidGroupMemberBulkResponse('PATCH');
+        }
+      }
+
       await coreAdapter.execute(
         `UPDATE roles SET name = ?, description = ?, external_id = ? WHERE id = ? AND tenant_id = ?`,
         [
           internalGroup.name,
-          internalGroup.description,
-          internalGroup.external_id,
+          internalGroup.description ?? null,
+          internalGroup.external_id ?? null,
           resourceId,
           tenantId,
         ]
       );
 
       // Update members if changed
-      if (scimGroup.members !== undefined) {
-        const memberIds = resolveScimGroupMemberIds(scimGroup.members, bulkIdMap);
-        const missingMemberIds = await findMissingTenantUserIds(coreAdapter, tenantId, memberIds);
-        if (missingMemberIds.length > 0) {
-          return invalidGroupMemberBulkResponse('PATCH');
-        }
-
+      if (memberIds) {
         await coreAdapter.execute('DELETE FROM user_roles WHERE tenant_id = ? AND role_id = ?', [
           tenantId,
           resourceId,
@@ -3391,12 +4793,7 @@ async function processGroupOperation(
         'SELECT * FROM roles WHERE id = ? AND tenant_id = ?',
         [resourceId, tenantId]
       );
-      const members = await fetchGroupMembersWithPII(
-        coreAdapter,
-        canonicalProjectionRepository,
-        resourceId!,
-        tenantId
-      );
+      const members = await fetchGroupMembersWithPII(c.env, coreAdapter, resourceId!, tenantId);
       const responseGroup = updatedGroup
         ? groupToScim(updatedGroup, { baseUrl, includeMembers: true }, members)
         : null;

@@ -60,6 +60,10 @@ import {
   consumeAuthState,
   cleanupExpiredStates,
   getStateExpiresAt,
+  getAuthStateCookieName,
+  matchesAuthStateCookie,
+  setAuthStateRequestObject,
+  getAuthStateRequestObject,
 } from '../utils/state';
 import type { Env } from '@authrim/ar-lib-core';
 
@@ -70,6 +74,23 @@ describe('Auth State Management', () => {
     // Reset mock implementations to defaults
     mockExecute.mockResolvedValue({ rowsAffected: 1 });
     mockQueryOne.mockResolvedValue(null);
+  });
+
+  describe('browser binding', () => {
+    it('uses a distinct non-plaintext cookie name for each state', async () => {
+      const first = await getAuthStateCookieName('state-one');
+      const second = await getAuthStateCookieName('state-two');
+
+      expect(first).toMatch(/^authrim_external_state_[a-f0-9]{64}$/);
+      expect(first).not.toContain('state-one');
+      expect(second).not.toBe(first);
+    });
+
+    it('requires the initiating browser cookie to match the callback state', () => {
+      expect(matchesAuthStateCookie('expected-state', 'expected-state')).toBe(true);
+      expect(matchesAuthStateCookie('expected-state', 'attacker-state')).toBe(false);
+      expect(matchesAuthStateCookie('expected-state', undefined)).toBe(false);
+    });
   });
 
   describe('storeAuthState', () => {
@@ -273,7 +294,7 @@ describe('Auth State Management', () => {
         consumed_at: now,
       });
 
-      const result = await consumeAuthState(mockEnv, 'valid-state');
+      const result = await consumeAuthState(mockEnv, 'default', 'valid-state');
 
       expect(result).not.toBeNull();
       expect(result?.state).toBe('valid-state');
@@ -287,6 +308,7 @@ describe('Auth State Management', () => {
         c.sql.includes('UPDATE external_idp_auth_states')
       );
       expect(updateCall).toBeDefined();
+      expect(updateCall!.sql).toContain('tenant_id = ?');
       expect(updateCall!.sql).toContain('consumed_at IS NULL');
     });
 
@@ -296,7 +318,7 @@ describe('Auth State Management', () => {
       // Simulate state already consumed (UPDATE affects 0 rows)
       mockExecute.mockResolvedValueOnce({ rowsAffected: 0 });
 
-      const result = await consumeAuthState(mockEnv, 'already-consumed-state');
+      const result = await consumeAuthState(mockEnv, 'default', 'already-consumed-state');
 
       expect(result).toBeNull();
       // Should not attempt SELECT if UPDATE failed
@@ -310,7 +332,7 @@ describe('Auth State Management', () => {
       // Simulate expired state (UPDATE affects 0 rows)
       mockExecute.mockResolvedValueOnce({ rowsAffected: 0 });
 
-      const result = await consumeAuthState(mockEnv, 'expired-state');
+      const result = await consumeAuthState(mockEnv, 'default', 'expired-state');
 
       expect(result).toBeNull();
     });
@@ -321,7 +343,7 @@ describe('Auth State Management', () => {
       // Simulate non-existent state (UPDATE affects 0 rows)
       mockExecute.mockResolvedValueOnce({ rowsAffected: 0 });
 
-      const result = await consumeAuthState(mockEnv, 'nonexistent-state');
+      const result = await consumeAuthState(mockEnv, 'default', 'nonexistent-state');
 
       expect(result).toBeNull();
     });
@@ -349,7 +371,7 @@ describe('Auth State Management', () => {
         consumed_at: now,
       });
 
-      const result = await consumeAuthState(mockEnv, 'state-with-maxage');
+      const result = await consumeAuthState(mockEnv, 'default', 'state-with-maxage');
 
       expect(result).not.toBeNull();
       expect(result?.maxAge).toBe(300);
@@ -381,7 +403,7 @@ describe('Auth State Management', () => {
         consumed_at: now,
       });
 
-      const result = await consumeAuthState(mockEnv, 'state-with-prompt');
+      const result = await consumeAuthState(mockEnv, 'default', 'state-with-prompt');
 
       expect(result).not.toBeNull();
       expect(result?.prompt).toBe('none');
@@ -412,7 +434,7 @@ describe('Auth State Management', () => {
         consumed_at: now,
       });
 
-      const result = await consumeAuthState(mockEnv, 'state-with-enable-sso');
+      const result = await consumeAuthState(mockEnv, 'default', 'state-with-enable-sso');
 
       expect(result).not.toBeNull();
       expect(result?.enableSso).toBe(false);
@@ -454,13 +476,61 @@ describe('Auth State Management', () => {
 
       // Simulate concurrent requests
       const [result1, result2] = await Promise.all([
-        consumeAuthState(mockEnv, 'race-condition-state'),
-        consumeAuthState(mockEnv, 'race-condition-state'),
+        consumeAuthState(mockEnv, 'default', 'race-condition-state'),
+        consumeAuthState(mockEnv, 'default', 'race-condition-state'),
       ]);
 
       // Only one should succeed
       const successCount = [result1, result2].filter((r) => r !== null).length;
       expect(successCount).toBe(1);
+    });
+  });
+
+  describe('request object binding', () => {
+    it('binds and reads a request object only for a live unconsumed tenant/provider state', async () => {
+      const env = { DB: {} } as unknown as Env;
+      await setAuthStateRequestObject(
+        env,
+        'tenant-1',
+        'provider-1',
+        'state-1',
+        'header.payload.signature'
+      );
+      const update = sqlTracker.calls.find(
+        (call) => call.method === 'execute' && call.sql.includes('SET original_auth_request')
+      );
+      expect(update?.sql).toContain('tenant_id = ?');
+      expect(update?.sql).toContain('provider_id = ?');
+      expect(update?.sql).toContain('consumed_at IS NULL');
+      expect(update?.params.slice(0, 4)).toEqual([
+        'header.payload.signature',
+        'tenant-1',
+        'provider-1',
+        'state-1',
+      ]);
+
+      mockQueryOne.mockResolvedValueOnce({ original_auth_request: 'header.payload.signature' });
+      expect(await getAuthStateRequestObject(env, 'tenant-1', 'provider-1', 'state-1')).toBe(
+        'header.payload.signature'
+      );
+      const select = sqlTracker.calls.find(
+        (call) => call.method === 'queryOne' && call.sql.includes('original_auth_request')
+      );
+      expect(select?.sql).toContain('expires_at > ?');
+      expect(select?.sql).toContain('consumed_at IS NULL');
+    });
+
+    it('rejects a request object update when the state boundary does not match', async () => {
+      mockExecute.mockResolvedValueOnce({ rowsAffected: 0 });
+      await expect(
+        setAuthStateRequestObject(
+          { DB: {} } as unknown as Env,
+          'other-tenant',
+          'provider-1',
+          'state-1',
+          'jwt'
+        )
+      ).rejects.toThrow('Unable to bind request object');
     });
   });
 
@@ -521,7 +591,7 @@ describe('Security considerations', () => {
     // The SQL must include consumed_at IS NULL to prevent replay attacks
     const mockEnv = { DB: {} } as unknown as Env;
 
-    await consumeAuthState(mockEnv, 'test-state');
+    await consumeAuthState(mockEnv, 'default', 'test-state');
 
     const updateCall = sqlTracker.calls.find(
       (c) => c.method === 'execute' && c.sql.includes('UPDATE')

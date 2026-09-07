@@ -2,10 +2,11 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { Button, Card, Spinner } from '$lib/components';
-	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
+	import AuthPageShell from '$lib/components/AuthPageShell.svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { LL } from '$i18n/i18n-svelte';
 	import { API_BASE_URL, consentAPI, type ConsentSubmission } from '$lib/api/client';
+	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
 	import { isValidRedirectUrl, isValidImageUrl, isValidLinkUrl } from '$lib/utils/url-validation';
 
 	const { brandingStore } = useLoginUIStores();
@@ -133,7 +134,7 @@
 	// ---------------------------------------------------------------------------
 	onMount(async () => {
 		if (!challengeId) {
-			error = 'Missing challenge_id parameter';
+			error = $LL.error_invalid_request();
 			loading = false;
 			return;
 		}
@@ -149,7 +150,7 @@
 		try {
 			const { data, error: apiError } = await consentAPI.getData(challengeId);
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to load consent data');
+				throw loginUiDisplayError($LL.error_server_error());
 			}
 
 			consentData = data as ConsentScreenData;
@@ -169,7 +170,7 @@
 			}
 			loading = false;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load consent data';
+			error = messageForCaughtError(err, $LL.error_unknown());
 			loading = false;
 		}
 	}
@@ -207,17 +208,17 @@
 			const { data, error: apiError } = await consentAPI.submit(submitPayload);
 
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to approve consent');
+				throw loginUiDisplayError($LL.error_server_error());
 			}
 			if (data?.redirect_url) {
 				if (isValidRedirectUrl(data.redirect_url)) {
 					window.location.href = data.redirect_url;
 				} else {
-					error = 'Invalid redirect URL received from server';
+					error = $LL.device_errorInvalidRedirect();
 				}
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to approve consent';
+			error = messageForCaughtError(err, $LL.error_unknown());
 		} finally {
 			allowLoading = false;
 		}
@@ -234,17 +235,17 @@
 			});
 
 			if (apiError) {
-				throw new Error(apiError.error_description || 'Failed to deny consent');
+				throw loginUiDisplayError($LL.error_server_error());
 			}
 			if (data?.redirect_url) {
 				if (isValidRedirectUrl(data.redirect_url)) {
 					window.location.href = data.redirect_url;
 				} else {
-					error = 'Invalid redirect URL received from server';
+					error = $LL.device_errorInvalidRedirect();
 				}
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to deny consent';
+			error = messageForCaughtError(err, $LL.error_unknown());
 		} finally {
 			denyLoading = false;
 		}
@@ -275,469 +276,460 @@
 	>
 </svelte:head>
 
-<div class="auth-page">
-	<LanguageSwitcher />
-
-	<div class="auth-container auth-container--wide">
-		{#if loading}
-			<!-- Loading State -->
-			<Card class="text-center py-12">
-				<Spinner size="xl" color="primary" class="mb-4" />
-				<p style="color: var(--text-secondary);">{$LL.common_loading()}</p>
-			</Card>
-		{:else if consentData}
-			<!-- Consent Screen -->
-			<Card>
-				<!-- Client Logo and Name -->
-				<div class="text-center mb-6">
-					{#if consentData.client.logo_uri && isValidImageUrl(consentData.client.logo_uri)}
-						<img
-							src={consentData.client.logo_uri}
-							alt={consentData.client.client_name}
-							class="h-16 w-16 mx-auto mb-4 rounded-lg"
-						/>
-					{:else}
-						<div class="auth-icon-badge" style="margin-bottom: 16px;">
-							<div class="auth-icon-badge__circle" style="width: 64px; height: 64px;">
-								<div class="i-heroicons-building-office h-8 w-8 auth-icon-badge__icon"></div>
-							</div>
+<AuthPageShell wide>
+	{#if loading}
+		<!-- Loading State -->
+		<Card class="text-center py-12">
+			<Spinner size="xl" color="primary" class="mb-4" />
+			<p style="color: var(--text-secondary);">{$LL.common_loading()}</p>
+		</Card>
+	{:else if consentData}
+		<!-- Consent Screen -->
+		<Card>
+			<!-- Client Logo and Name -->
+			<div class="text-center mb-6">
+				{#if consentData.client.logo_uri && isValidImageUrl(consentData.client.logo_uri)}
+					<img
+						src={consentData.client.logo_uri}
+						alt={consentData.client.client_name}
+						class="h-16 w-16 mx-auto mb-4 rounded-lg"
+					/>
+				{:else}
+					<div class="auth-icon-badge" style="margin-bottom: 16px;">
+						<div class="auth-icon-badge__circle" style="width: 64px; height: 64px;">
+							<div class="i-heroicons-building-office h-8 w-8 auth-icon-badge__icon"></div>
 						</div>
-					{/if}
+					</div>
+				{/if}
 
-					<h2 class="auth-section-title" style="text-align: center;">
-						{$LL.consent_title({ clientName: consentData.client.client_name })}
-					</h2>
+				<h2 class="auth-section-title" style="text-align: center;">
+					{$LL.consent_title({ clientName: consentData.client.client_name })}
+				</h2>
 
-					<p class="auth-section-subtitle" style="text-align: center;">
-						{$LL.consent_subtitle()}
+				<p class="auth-section-subtitle" style="text-align: center;">
+					{$LL.consent_subtitle()}
+				</p>
+
+				{#if consentData.client.is_trusted}
+					<div class="mt-2">
+						<span class="auth-badge--trusted">
+							<span class="i-heroicons-shield-check h-3 w-3"></span>
+							{$LL.consent_trustedClient()}
+						</span>
+					</div>
+				{/if}
+
+				{#if consentData.client.client_uri && isValidLinkUrl(consentData.client.client_uri)}
+					<a
+						href={consentData.client.client_uri}
+						target="_blank"
+						rel="noopener noreferrer"
+						class="inline-flex items-center gap-1 text-sm mt-2"
+						style="color: var(--primary);"
+					>
+						{consentData.client.client_uri}
+						<span class="i-heroicons-arrow-top-right-on-square h-3 w-3"></span>
+					</a>
+				{/if}
+			</div>
+
+			<!-- Acting-As Warning Banner -->
+			{#if consentData.acting_as && consentData.features.acting_as_enabled}
+				<div class="auth-warning-banner mb-6">
+					<div class="flex items-start gap-3">
+						<div
+							class="i-heroicons-exclamation-triangle h-5 w-5 flex-shrink-0 mt-0.5"
+							style="color: var(--warning);"
+						></div>
+						<div>
+							<h3 class="auth-warning-banner__title">
+								{$LL.consent_delegatedAccess()}
+							</h3>
+							<p class="auth-warning-banner__text">
+								{$LL.consent_actingOnBehalfOf({
+									name: getActingAsDisplayName(consentData.acting_as)
+								})}
+							</p>
+							<p class="auth-warning-banner__text" style="margin-top: 8px; font-size: 0.75rem;">
+								{$LL.consent_delegatedAccessWarning({
+									name: getActingAsDisplayName(consentData.acting_as)
+								})}
+							</p>
+						</div>
+					</div>
+				</div>
+			{/if}
+
+			<div style="border-top: 1px solid var(--border); padding-top: 24px; margin-bottom: 24px;">
+				<!-- Organization Selector -->
+				{#if consentData.features.org_selector_enabled && consentData.organizations.length > 1}
+					<div class="mb-6">
+						<label
+							for="org-select"
+							class="block text-sm font-medium mb-2"
+							style="color: var(--text-secondary);"
+						>
+							{$LL.consent_organizationSelect()}
+						</label>
+						<select
+							id="org-select"
+							class="auth-lang-select"
+							style="width: 100%; padding: 10px 12px; font-size: 0.875rem;"
+							value={selectedOrgId || ''}
+							onchange={handleOrgChange}
+						>
+							{#each consentData.organizations as org (org.id)}
+								<option value={org.id}>
+									{org.name}
+									{#if org.is_primary}
+										({$LL.consent_primaryOrg()})
+									{/if}
+								</option>
+							{/each}
+						</select>
+					</div>
+				{/if}
+
+				<!-- Current Organization Display -->
+				{#if !consentData.features.org_selector_enabled && selectedOrg}
+					<div class="auth-info-box mb-6">
+						<p class="auth-info-box__label">
+							{$LL.consent_currentOrganization()}
+						</p>
+						<p class="auth-info-box__value">
+							{selectedOrg.name}
+							{#if selectedOrg.is_primary}
+								<span style="margin-inline-start: 8px; font-size: 0.75rem; color: var(--primary);">
+									({$LL.consent_primaryOrg()})
+								</span>
+							{/if}
+						</p>
+					</div>
+				{/if}
+
+				<!-- Roles Display -->
+				{#if consentData.features.show_roles && consentData.roles.length > 0}
+					<div class="mb-6">
+						<p class="text-xs mb-2" style="color: var(--text-muted);">
+							{$LL.consent_yourRoles()}
+						</p>
+						<div class="flex flex-wrap gap-2">
+							{#each consentData.roles as role (role)}
+								<span
+									class="px-2 py-1 rounded-full text-xs"
+									style="background: var(--primary-light); color: var(--primary);"
+								>
+									{role}
+								</span>
+							{/each}
+						</div>
+					</div>
+				{/if}
+
+				<!-- Consent Items (Required) -->
+				{#if consentData.consent_management_enabled && consentData.consent_items?.some((i) => i.is_required)}
+					<div class="mb-6">
+						<h3 class="text-sm font-medium mb-3" style="color: var(--text-primary);">
+							{$LL.consent_items_required_title()}
+						</h3>
+						{#each consentData.consent_items.filter((i) => i.is_required) as item (item.statement_id)}
+							<div
+								class="flex items-start gap-3 p-3 rounded-lg mb-2"
+								style="background: var(--surface-secondary);"
+							>
+								{#if item.checkbox_mode !== 'none'}
+									<input
+										type="checkbox"
+										checked={consentItemDecisions[item.statement_id] === 'granted'}
+										onchange={() => {
+											consentItemDecisions[item.statement_id] =
+												consentItemDecisions[item.statement_id] === 'granted'
+													? 'denied'
+													: 'granted';
+										}}
+										class="mt-1 flex-shrink-0"
+									/>
+								{/if}
+								<div class="flex-1 min-w-0">
+									<div class="flex items-center gap-2 flex-wrap">
+										<span class="text-sm font-medium" style="color: var(--text-primary);">
+											{item.title}
+										</span>
+										<span
+											class="px-1.5 py-0.5 rounded text-xs"
+											style="background: var(--danger-light, #fef2f2); color: var(--danger);"
+										>
+											{$LL.consent_item_required_badge()}
+										</span>
+										{#if item.needs_version_upgrade && item.current_version}
+											<span
+												class="px-1.5 py-0.5 rounded text-xs"
+												style="background: var(--warning-light, #fffbeb); color: var(--warning);"
+											>
+												{$LL.consent_item_version_updated({
+													oldVersion: item.current_version,
+													newVersion: item.version
+												})}
+											</span>
+										{/if}
+									</div>
+									<p class="text-xs mt-1" style="color: var(--text-secondary);">
+										{item.description}
+									</p>
+									{#if item.processing_purpose}
+										<p class="text-xs mt-1" style="color: var(--text-secondary);">
+											<strong>{$LL.consent_item_processing_purpose()}:</strong>
+											{item.processing_purpose}
+										</p>
+									{/if}
+									{#if item.withdrawal_impact}
+										<p class="text-xs mt-1" style="color: var(--text-secondary);">
+											<strong>{$LL.consent_item_withdrawal_impact()}:</strong>
+											{item.withdrawal_impact}
+										</p>
+									{/if}
+									{#if item.document_url && isValidLinkUrl(item.document_url)}
+										<a
+											href={item.document_url}
+											target="_blank"
+											rel="noopener noreferrer"
+											class="inline-flex items-center gap-1 text-xs mt-1"
+											style="color: var(--primary);"
+										>
+											{$LL.consent_item_view_document()}
+											<span class="i-heroicons-arrow-top-right-on-square h-3 w-3"></span>
+										</a>
+									{/if}
+								</div>
+							</div>
+						{/each}
+					</div>
+				{/if}
+
+				<!-- Consent Items (Optional) -->
+				{#if consentData.consent_management_enabled && consentData.consent_items?.some((i) => !i.is_required)}
+					<div class="mb-6">
+						<h3 class="text-sm font-medium mb-3" style="color: var(--text-primary);">
+							{$LL.consent_items_optional_title()}
+						</h3>
+						{#each consentData.consent_items.filter((i) => !i.is_required) as item (item.statement_id)}
+							<div
+								class="flex items-start gap-3 p-3 rounded-lg mb-2"
+								style="background: var(--surface-secondary);"
+							>
+								{#if item.checkbox_mode !== 'none'}
+									<input
+										type="checkbox"
+										checked={consentItemDecisions[item.statement_id] === 'granted'}
+										onchange={() => {
+											consentItemDecisions[item.statement_id] =
+												consentItemDecisions[item.statement_id] === 'granted'
+													? 'denied'
+													: 'granted';
+										}}
+										class="mt-1 flex-shrink-0"
+									/>
+								{/if}
+								<div class="flex-1 min-w-0">
+									<div class="flex items-center gap-2 flex-wrap">
+										<span class="text-sm font-medium" style="color: var(--text-primary);">
+											{item.title}
+										</span>
+										<span
+											class="px-1.5 py-0.5 rounded text-xs"
+											style="background: var(--primary-light, #eff6ff); color: var(--primary);"
+										>
+											{$LL.consent_item_optional_badge()}
+										</span>
+										{#if item.needs_version_upgrade && item.current_version}
+											<span
+												class="px-1.5 py-0.5 rounded text-xs"
+												style="background: var(--warning-light, #fffbeb); color: var(--warning);"
+											>
+												{$LL.consent_item_version_updated({
+													oldVersion: item.current_version,
+													newVersion: item.version
+												})}
+											</span>
+										{/if}
+									</div>
+									<p class="text-xs mt-1" style="color: var(--text-secondary);">
+										{item.description}
+									</p>
+									{#if item.processing_purpose}
+										<p class="text-xs mt-1" style="color: var(--text-secondary);">
+											<strong>{$LL.consent_item_processing_purpose()}:</strong>
+											{item.processing_purpose}
+										</p>
+									{/if}
+									{#if item.withdrawal_impact}
+										<p class="text-xs mt-1" style="color: var(--text-secondary);">
+											<strong>{$LL.consent_item_withdrawal_impact()}:</strong>
+											{item.withdrawal_impact}
+										</p>
+									{/if}
+									{#if item.document_url && isValidLinkUrl(item.document_url)}
+										<a
+											href={item.document_url}
+											target="_blank"
+											rel="noopener noreferrer"
+											class="inline-flex items-center gap-1 text-xs mt-1"
+											style="color: var(--primary);"
+										>
+											{$LL.consent_item_view_document()}
+											<span class="i-heroicons-arrow-top-right-on-square h-3 w-3"></span>
+										</a>
+									{/if}
+								</div>
+							</div>
+						{/each}
+					</div>
+				{/if}
+
+				<!-- Scopes -->
+				<h3 class="text-sm font-medium mb-4" style="color: var(--text-primary);">
+					{$LL.consent_scopesTitle()}
+				</h3>
+
+				<ul class="auth-scopes-list mb-6">
+					{#each consentData.scopes as scope (scope.name)}
+						<li>
+							<div class="i-heroicons-check-circle h-5 w-5 auth-scopes-list__icon"></div>
+							<span>{getScopeLabel(scope.name)}</span>
+						</li>
+					{/each}
+				</ul>
+
+				<!-- User Info -->
+				<div class="auth-info-box">
+					<p class="auth-info-box__label mb-2">
+						{$LL.consent_userInfo()}
 					</p>
 
-					{#if consentData.client.is_trusted}
-						<div class="mt-2">
-							<span class="auth-badge--trusted">
-								<span class="i-heroicons-shield-check h-3 w-3"></span>
-								{$LL.consent_trustedClient()}
-							</span>
-						</div>
-					{/if}
+					<div class="auth-user-info">
+						{#if consentData.user.picture && isValidImageUrl(consentData.user.picture)}
+							<img
+								src={consentData.user.picture}
+								alt={consentData.user.name || consentData.user.email}
+								class="auth-user-info__avatar"
+							/>
+						{:else}
+							<div class="auth-user-info__avatar-placeholder">
+								<div class="i-heroicons-user h-5 w-5" style="color: var(--primary);"></div>
+							</div>
+						{/if}
 
-					{#if consentData.client.client_uri && isValidLinkUrl(consentData.client.client_uri)}
+						<div>
+							{#if consentData.user.name}
+								<p class="auth-user-info__name">{consentData.user.name}</p>
+							{/if}
+							<p class="auth-user-info__email">{consentData.user.email}</p>
+						</div>
+					</div>
+
+					<button
+						type="button"
+						onclick={handleSwitchAccount}
+						class="text-xs mt-2"
+						style="color: var(--primary); background: none; border: none; cursor: pointer; padding: 0;"
+					>
+						{$LL.consent_notYou()}
+					</button>
+				</div>
+			</div>
+
+			<!-- Action Buttons -->
+			<div class="auth-actions">
+				<Button
+					variant="secondary"
+					class="flex-1"
+					loading={denyLoading}
+					disabled={allowLoading}
+					onclick={handleDeny}
+				>
+					{$LL.consent_denyButton()}
+				</Button>
+
+				<Button
+					variant="primary"
+					class="flex-1"
+					loading={allowLoading}
+					disabled={denyLoading || hasBlockingConsentItems}
+					onclick={handleAllow}
+				>
+					{$LL.consent_allowButton()}
+				</Button>
+			</div>
+
+			<!-- Block Message and Deletion Link -->
+			{#if consentData.consent_management_enabled}
+				{#if hasBlockingConsentItems}
+					<div
+						class="mt-4 p-3 rounded-lg text-sm"
+						style="background: var(--warning-light, #fffbeb); color: var(--warning-dark, #92400e);"
+					>
+						<p>{$LL.consent_block_message()}</p>
+					</div>
+				{/if}
+				{@const deletionItem = consentData.consent_items?.find(
+					(i) => i.show_deletion_link && i.deletion_url && isValidLinkUrl(i.deletion_url)
+				)}
+				{#if deletionItem}
+					<div class="mt-3 text-center">
 						<a
-							href={consentData.client.client_uri}
+							href={deletionItem.deletion_url}
 							target="_blank"
 							rel="noopener noreferrer"
-							class="inline-flex items-center gap-1 text-sm mt-2"
-							style="color: var(--primary);"
+							class="text-xs"
+							style="color: var(--danger);"
 						>
-							{consentData.client.client_uri}
+							{$LL.consent_delete_account_link()}
+						</a>
+					</div>
+				{/if}
+			{/if}
+
+			<!-- Privacy Policy and ToS Links -->
+			{#if consentData.client.policy_uri || consentData.client.tos_uri}
+				<div
+					class="flex items-center justify-center gap-4 mt-4 text-xs"
+					style="color: var(--text-muted);"
+				>
+					{#if consentData.client.policy_uri && isValidLinkUrl(consentData.client.policy_uri)}
+						<a
+							href={consentData.client.policy_uri}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="inline-flex items-center gap-1"
+							style="color: var(--text-muted);"
+						>
+							{$LL.consent_privacyPolicy()}
+							<span class="i-heroicons-arrow-top-right-on-square h-3 w-3"></span>
+						</a>
+					{/if}
+					{#if consentData.client.tos_uri && isValidLinkUrl(consentData.client.tos_uri)}
+						<a
+							href={consentData.client.tos_uri}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="inline-flex items-center gap-1"
+							style="color: var(--text-muted);"
+						>
+							{$LL.consent_termsOfService()}
 							<span class="i-heroicons-arrow-top-right-on-square h-3 w-3"></span>
 						</a>
 					{/if}
 				</div>
-
-				<!-- Acting-As Warning Banner -->
-				{#if consentData.acting_as && consentData.features.acting_as_enabled}
-					<div class="auth-warning-banner mb-6">
-						<div class="flex items-start gap-3">
-							<div
-								class="i-heroicons-exclamation-triangle h-5 w-5 flex-shrink-0 mt-0.5"
-								style="color: var(--warning);"
-							></div>
-							<div>
-								<h3 class="auth-warning-banner__title">
-									{$LL.consent_delegatedAccess()}
-								</h3>
-								<p class="auth-warning-banner__text">
-									{$LL.consent_actingOnBehalfOf({
-										name: getActingAsDisplayName(consentData.acting_as)
-									})}
-								</p>
-								<p class="auth-warning-banner__text" style="margin-top: 8px; font-size: 0.75rem;">
-									{$LL.consent_delegatedAccessWarning({
-										name: getActingAsDisplayName(consentData.acting_as)
-									})}
-								</p>
-							</div>
-						</div>
-					</div>
-				{/if}
-
-				<div style="border-top: 1px solid var(--border); padding-top: 24px; margin-bottom: 24px;">
-					<!-- Organization Selector -->
-					{#if consentData.features.org_selector_enabled && consentData.organizations.length > 1}
-						<div class="mb-6">
-							<label
-								for="org-select"
-								class="block text-sm font-medium mb-2"
-								style="color: var(--text-secondary);"
-							>
-								{$LL.consent_organizationSelect()}
-							</label>
-							<select
-								id="org-select"
-								class="auth-lang-select"
-								style="width: 100%; padding: 10px 12px; font-size: 0.875rem;"
-								value={selectedOrgId || ''}
-								onchange={handleOrgChange}
-							>
-								{#each consentData.organizations as org (org.id)}
-									<option value={org.id}>
-										{org.name}
-										{#if org.is_primary}
-											({$LL.consent_primaryOrg()})
-										{/if}
-									</option>
-								{/each}
-							</select>
-						</div>
-					{/if}
-
-					<!-- Current Organization Display -->
-					{#if !consentData.features.org_selector_enabled && selectedOrg}
-						<div class="auth-info-box mb-6">
-							<p class="auth-info-box__label">
-								{$LL.consent_currentOrganization()}
-							</p>
-							<p class="auth-info-box__value">
-								{selectedOrg.name}
-								{#if selectedOrg.is_primary}
-									<span style="margin-left: 8px; font-size: 0.75rem; color: var(--primary);">
-										({$LL.consent_primaryOrg()})
-									</span>
-								{/if}
-							</p>
-						</div>
-					{/if}
-
-					<!-- Roles Display -->
-					{#if consentData.features.show_roles && consentData.roles.length > 0}
-						<div class="mb-6">
-							<p class="text-xs mb-2" style="color: var(--text-muted);">
-								{$LL.consent_yourRoles()}
-							</p>
-							<div class="flex flex-wrap gap-2">
-								{#each consentData.roles as role (role)}
-									<span
-										class="px-2 py-1 rounded-full text-xs"
-										style="background: var(--primary-light); color: var(--primary);"
-									>
-										{role}
-									</span>
-								{/each}
-							</div>
-						</div>
-					{/if}
-
-					<!-- Consent Items (Required) -->
-					{#if consentData.consent_management_enabled && consentData.consent_items?.some((i) => i.is_required)}
-						<div class="mb-6">
-							<h3 class="text-sm font-medium mb-3" style="color: var(--text-primary);">
-								{$LL.consent_items_required_title()}
-							</h3>
-							{#each consentData.consent_items.filter((i) => i.is_required) as item (item.statement_id)}
-								<div
-									class="flex items-start gap-3 p-3 rounded-lg mb-2"
-									style="background: var(--surface-secondary);"
-								>
-									{#if item.checkbox_mode !== 'none'}
-										<input
-											type="checkbox"
-											checked={consentItemDecisions[item.statement_id] === 'granted'}
-											onchange={() => {
-												consentItemDecisions[item.statement_id] =
-													consentItemDecisions[item.statement_id] === 'granted'
-														? 'denied'
-														: 'granted';
-											}}
-											class="mt-1 flex-shrink-0"
-										/>
-									{/if}
-									<div class="flex-1 min-w-0">
-										<div class="flex items-center gap-2 flex-wrap">
-											<span class="text-sm font-medium" style="color: var(--text-primary);">
-												{item.title}
-											</span>
-											<span
-												class="px-1.5 py-0.5 rounded text-xs"
-												style="background: var(--danger-light, #fef2f2); color: var(--danger);"
-											>
-												{$LL.consent_item_required_badge()}
-											</span>
-											{#if item.needs_version_upgrade && item.current_version}
-												<span
-													class="px-1.5 py-0.5 rounded text-xs"
-													style="background: var(--warning-light, #fffbeb); color: var(--warning);"
-												>
-													{$LL.consent_item_version_updated({
-														oldVersion: item.current_version,
-														newVersion: item.version
-													})}
-												</span>
-											{/if}
-										</div>
-										<p class="text-xs mt-1" style="color: var(--text-secondary);">
-											{item.description}
-										</p>
-										{#if item.processing_purpose}
-											<p class="text-xs mt-1" style="color: var(--text-secondary);">
-												<strong>{$LL.consent_item_processing_purpose()}:</strong>
-												{item.processing_purpose}
-											</p>
-										{/if}
-										{#if item.withdrawal_impact}
-											<p class="text-xs mt-1" style="color: var(--text-secondary);">
-												<strong>{$LL.consent_item_withdrawal_impact()}:</strong>
-												{item.withdrawal_impact}
-											</p>
-										{/if}
-										{#if item.document_url && isValidLinkUrl(item.document_url)}
-											<a
-												href={item.document_url}
-												target="_blank"
-												rel="noopener noreferrer"
-												class="inline-flex items-center gap-1 text-xs mt-1"
-												style="color: var(--primary);"
-											>
-												{$LL.consent_item_view_document()}
-												<span class="i-heroicons-arrow-top-right-on-square h-3 w-3"></span>
-											</a>
-										{/if}
-									</div>
-								</div>
-							{/each}
-						</div>
-					{/if}
-
-					<!-- Consent Items (Optional) -->
-					{#if consentData.consent_management_enabled && consentData.consent_items?.some((i) => !i.is_required)}
-						<div class="mb-6">
-							<h3 class="text-sm font-medium mb-3" style="color: var(--text-primary);">
-								{$LL.consent_items_optional_title()}
-							</h3>
-							{#each consentData.consent_items.filter((i) => !i.is_required) as item (item.statement_id)}
-								<div
-									class="flex items-start gap-3 p-3 rounded-lg mb-2"
-									style="background: var(--surface-secondary);"
-								>
-									{#if item.checkbox_mode !== 'none'}
-										<input
-											type="checkbox"
-											checked={consentItemDecisions[item.statement_id] === 'granted'}
-											onchange={() => {
-												consentItemDecisions[item.statement_id] =
-													consentItemDecisions[item.statement_id] === 'granted'
-														? 'denied'
-														: 'granted';
-											}}
-											class="mt-1 flex-shrink-0"
-										/>
-									{/if}
-									<div class="flex-1 min-w-0">
-										<div class="flex items-center gap-2 flex-wrap">
-											<span class="text-sm font-medium" style="color: var(--text-primary);">
-												{item.title}
-											</span>
-											<span
-												class="px-1.5 py-0.5 rounded text-xs"
-												style="background: var(--primary-light, #eff6ff); color: var(--primary);"
-											>
-												{$LL.consent_item_optional_badge()}
-											</span>
-											{#if item.needs_version_upgrade && item.current_version}
-												<span
-													class="px-1.5 py-0.5 rounded text-xs"
-													style="background: var(--warning-light, #fffbeb); color: var(--warning);"
-												>
-													{$LL.consent_item_version_updated({
-														oldVersion: item.current_version,
-														newVersion: item.version
-													})}
-												</span>
-											{/if}
-										</div>
-										<p class="text-xs mt-1" style="color: var(--text-secondary);">
-											{item.description}
-										</p>
-										{#if item.processing_purpose}
-											<p class="text-xs mt-1" style="color: var(--text-secondary);">
-												<strong>{$LL.consent_item_processing_purpose()}:</strong>
-												{item.processing_purpose}
-											</p>
-										{/if}
-										{#if item.withdrawal_impact}
-											<p class="text-xs mt-1" style="color: var(--text-secondary);">
-												<strong>{$LL.consent_item_withdrawal_impact()}:</strong>
-												{item.withdrawal_impact}
-											</p>
-										{/if}
-										{#if item.document_url && isValidLinkUrl(item.document_url)}
-											<a
-												href={item.document_url}
-												target="_blank"
-												rel="noopener noreferrer"
-												class="inline-flex items-center gap-1 text-xs mt-1"
-												style="color: var(--primary);"
-											>
-												{$LL.consent_item_view_document()}
-												<span class="i-heroicons-arrow-top-right-on-square h-3 w-3"></span>
-											</a>
-										{/if}
-									</div>
-								</div>
-							{/each}
-						</div>
-					{/if}
-
-					<!-- Scopes -->
-					<h3 class="text-sm font-medium mb-4" style="color: var(--text-primary);">
-						{$LL.consent_scopesTitle()}
-					</h3>
-
-					<ul class="auth-scopes-list mb-6">
-						{#each consentData.scopes as scope (scope.name)}
-							<li>
-								<div class="i-heroicons-check-circle h-5 w-5 auth-scopes-list__icon"></div>
-								<span>{getScopeLabel(scope.name)}</span>
-							</li>
-						{/each}
-					</ul>
-
-					<!-- User Info -->
-					<div class="auth-info-box">
-						<p class="auth-info-box__label mb-2">
-							{$LL.consent_userInfo()}
-						</p>
-
-						<div class="auth-user-info">
-							{#if consentData.user.picture && isValidImageUrl(consentData.user.picture)}
-								<img
-									src={consentData.user.picture}
-									alt={consentData.user.name || consentData.user.email}
-									class="auth-user-info__avatar"
-								/>
-							{:else}
-								<div class="auth-user-info__avatar-placeholder">
-									<div class="i-heroicons-user h-5 w-5" style="color: var(--primary);"></div>
-								</div>
-							{/if}
-
-							<div>
-								{#if consentData.user.name}
-									<p class="auth-user-info__name">{consentData.user.name}</p>
-								{/if}
-								<p class="auth-user-info__email">{consentData.user.email}</p>
-							</div>
-						</div>
-
-						<button
-							type="button"
-							onclick={handleSwitchAccount}
-							class="text-xs mt-2"
-							style="color: var(--primary); background: none; border: none; cursor: pointer; padding: 0;"
-						>
-							{$LL.consent_notYou()}
-						</button>
-					</div>
-				</div>
-
-				<!-- Action Buttons -->
-				<div class="auth-actions">
-					<Button
-						variant="secondary"
-						class="flex-1"
-						loading={denyLoading}
-						disabled={allowLoading}
-						onclick={handleDeny}
-					>
-						{$LL.consent_denyButton()}
-					</Button>
-
-					<Button
-						variant="primary"
-						class="flex-1"
-						loading={allowLoading}
-						disabled={denyLoading || hasBlockingConsentItems}
-						onclick={handleAllow}
-					>
-						{$LL.consent_allowButton()}
-					</Button>
-				</div>
-
-				<!-- Block Message and Deletion Link -->
-				{#if consentData.consent_management_enabled}
-					{#if hasBlockingConsentItems}
-						<div
-							class="mt-4 p-3 rounded-lg text-sm"
-							style="background: var(--warning-light, #fffbeb); color: var(--warning-dark, #92400e);"
-						>
-							<p>{$LL.consent_block_message()}</p>
-						</div>
-					{/if}
-					{@const deletionItem = consentData.consent_items?.find(
-						(i) => i.show_deletion_link && i.deletion_url && isValidLinkUrl(i.deletion_url)
-					)}
-					{#if deletionItem}
-						<div class="mt-3 text-center">
-							<a
-								href={deletionItem.deletion_url}
-								target="_blank"
-								rel="noopener noreferrer"
-								class="text-xs"
-								style="color: var(--danger);"
-							>
-								{$LL.consent_delete_account_link()}
-							</a>
-						</div>
-					{/if}
-				{/if}
-
-				<!-- Privacy Policy and ToS Links -->
-				{#if consentData.client.policy_uri || consentData.client.tos_uri}
-					<div
-						class="flex items-center justify-center gap-4 mt-4 text-xs"
-						style="color: var(--text-muted);"
-					>
-						{#if consentData.client.policy_uri && isValidLinkUrl(consentData.client.policy_uri)}
-							<a
-								href={consentData.client.policy_uri}
-								target="_blank"
-								rel="noopener noreferrer"
-								class="inline-flex items-center gap-1"
-								style="color: var(--text-muted);"
-							>
-								{$LL.consent_privacyPolicy()}
-								<span class="i-heroicons-arrow-top-right-on-square h-3 w-3"></span>
-							</a>
-						{/if}
-						{#if consentData.client.tos_uri && isValidLinkUrl(consentData.client.tos_uri)}
-							<a
-								href={consentData.client.tos_uri}
-								target="_blank"
-								rel="noopener noreferrer"
-								class="inline-flex items-center gap-1"
-								style="color: var(--text-muted);"
-							>
-								{$LL.consent_termsOfService()}
-								<span class="i-heroicons-arrow-top-right-on-square h-3 w-3"></span>
-							</a>
-						{/if}
-					</div>
-				{/if}
-			</Card>
-		{:else}
-			<!-- Error State -->
-			<Card class="text-center py-12">
-				<div
-					class="i-heroicons-exclamation-circle h-12 w-12 mx-auto mb-4"
-					style="color: var(--danger);"
-				></div>
-				<p style="color: var(--danger);">{error || 'Failed to load consent data'}</p>
-			</Card>
-		{/if}
-	</div>
-
-	<!-- Footer -->
-	<footer class="auth-footer">
-		<p>{$LL.footer_stack()}</p>
-	</footer>
-</div>
+			{/if}
+		</Card>
+	{:else}
+		<!-- Error State -->
+		<Card class="text-center py-12">
+			<div
+				class="i-heroicons-exclamation-circle h-12 w-12 mx-auto mb-4"
+				style="color: var(--danger);"
+			></div>
+			<p style="color: var(--danger);">{error || $LL.error_unknown()}</p>
+		</Card>
+	{/if}
+</AuthPageShell>

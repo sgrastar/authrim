@@ -2,15 +2,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   getWorkerDeployments: vi.fn(),
+  fetchWithPublicDns: vi.fn(),
 }));
 
 vi.mock('../core/cloudflare.js', () => ({
   getWorkerDeployments: mocks.getWorkerDeployments,
 }));
 
+vi.mock('../core/public-dns-fetch.js', () => ({
+  fetchWithPublicDns: mocks.fetchWithPublicDns,
+  isDnsResolutionError: (error: unknown) =>
+    (error as { cause?: { code?: string } })?.cause?.code === 'ENOTFOUND',
+}));
+
 import {
   buildWorkerHttpReadinessTargets,
   waitForRouterWorkerReady,
+  waitForTenantRoutingReady,
   waitForWorkerDeploymentsReady,
   waitForWorkerHttpReady,
 } from '../core/worker-readiness.js';
@@ -29,6 +37,7 @@ describe('waitForRouterWorkerReady', () => {
     vi.stubGlobal('fetch', fetchMock);
     fetchMock.mockReset();
     mocks.getWorkerDeployments.mockReset();
+    mocks.fetchWithPublicDns.mockReset();
   });
 
   afterEach(() => {
@@ -115,6 +124,7 @@ describe('waitForRouterWorkerReady', () => {
 
     const result = await waitForRouterWorkerReady({
       apiBaseUrl: 'https://api.example.com',
+      allowPublicDnsFallback: false,
       maxWaitMs: 0,
       initialDelayMs: 1,
     });
@@ -123,6 +133,122 @@ describe('waitForRouterWorkerReady', () => {
     expect(result.error).toContain('fetch failed');
     expect(result.error).toContain('ENOTFOUND');
     expect(result.error).toContain('api.example.com');
+  });
+
+  it('uses public DNS immediately after the system resolver misses the router hostname', async () => {
+    const details: string[] = [];
+    fetchMock.mockRejectedValueOnce(
+      Object.assign(new Error('fetch failed'), { cause: { code: 'ENOTFOUND' } })
+    );
+    mocks.fetchWithPublicDns.mockResolvedValueOnce(
+      textResponse(JSON.stringify({ status: 'ok' }), 200)
+    );
+
+    const result = await waitForRouterWorkerReady({
+      apiBaseUrl: 'https://api.example.com',
+      maxWaitMs: 0,
+      onDetail: (message) => details.push(message),
+    });
+
+    expect(result).toMatchObject({ ready: true, attempts: 1 });
+    expect(mocks.fetchWithPublicDns).toHaveBeenCalledWith(
+      'https://api.example.com/api/health',
+      expect.objectContaining({ method: 'GET' }),
+      expect.any(Number)
+    );
+    expect(details.join('\n')).toContain('Cloudflare public DNS');
+  });
+
+  it('does not use public DNS to bypass an HTTP routing failure', async () => {
+    fetchMock.mockResolvedValueOnce(textResponse('not found', 404));
+
+    const result = await waitForRouterWorkerReady({
+      apiBaseUrl: 'https://api.example.com',
+      maxWaitMs: 0,
+    });
+
+    expect(result).toMatchObject({ ready: false, attempts: 1 });
+    expect(mocks.fetchWithPublicDns).not.toHaveBeenCalled();
+  });
+});
+
+describe('waitForTenantRoutingReady', () => {
+  const fetchMock = vi.fn<typeof fetch>();
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', fetchMock);
+    fetchMock.mockReset();
+    mocks.fetchWithPublicDns.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('waits through tenant directory propagation without exposing raw errors in progress', async () => {
+    const progress: string[] = [];
+    const details: string[] = [];
+    fetchMock
+      .mockResolvedValueOnce(
+        textResponse(JSON.stringify({ error: 'not_found', message: 'Tenant not found' }), 404)
+      )
+      .mockResolvedValueOnce(
+        textResponse(JSON.stringify({ issuer: 'https://first.example.com' }), 200)
+      );
+
+    const result = await waitForTenantRoutingReady({
+      apiBaseUrl: 'https://first.example.com',
+      maxWaitMs: 1_000,
+      initialDelayMs: 1,
+      maxDelayMs: 1,
+      onProgress: (message) => progress.push(message),
+      onDetail: (message) => details.push(message),
+    });
+
+    expect(result).toMatchObject({ ready: true, attempts: 2, issuer: 'https://first.example.com' });
+    expect(progress.some((message) => message.includes('Waiting for tenant routing'))).toBe(true);
+    expect(progress.join('\n')).not.toContain('Tenant not found');
+    expect(details.join('\n')).toContain('Tenant not found');
+  });
+
+  it('rejects discovery metadata for a different issuer', async () => {
+    fetchMock.mockResolvedValueOnce(
+      textResponse(JSON.stringify({ issuer: 'https://other.example.com' }), 200)
+    );
+
+    const result = await waitForTenantRoutingReady({
+      apiBaseUrl: 'https://first.example.com',
+      maxWaitMs: 0,
+    });
+
+    expect(result).toMatchObject({ ready: false });
+    expect(result.error).toContain('Unexpected issuer');
+  });
+
+  it('reads discovery metadata returned through public DNS fallback', async () => {
+    fetchMock.mockRejectedValueOnce(
+      Object.assign(new Error('fetch failed'), { cause: { code: 'ENOTFOUND' } })
+    );
+    mocks.fetchWithPublicDns.mockResolvedValueOnce(
+      textResponse(JSON.stringify({ issuer: 'https://first.example.com' }), 200)
+    );
+
+    const result = await waitForTenantRoutingReady({
+      apiBaseUrl: 'https://first.example.com',
+      maxWaitMs: 0,
+    });
+
+    expect(result).toMatchObject({
+      ready: true,
+      attempts: 1,
+      issuer: 'https://first.example.com',
+    });
+    expect(mocks.fetchWithPublicDns).toHaveBeenCalledWith(
+      'https://first.example.com/.well-known/openid-configuration',
+      expect.objectContaining({ method: 'GET' }),
+      expect.any(Number)
+    );
   });
 });
 
@@ -171,7 +297,7 @@ describe('waitForWorkerDeploymentsReady', () => {
     expect(result.error).toContain('stale: dev-ar-router');
   });
 
-  it('treats existing workers as visible by default even when deployment timestamps are older', async () => {
+  it('requires fresh evidence by default when the target has a deployment timestamp', async () => {
     mocks.getWorkerDeployments.mockResolvedValue({
       exists: true,
       lastDeployedAt: '2026-05-17T23:00:00.000Z',
@@ -179,6 +305,44 @@ describe('waitForWorkerDeploymentsReady', () => {
 
     const result = await waitForWorkerDeploymentsReady({
       targets: [{ workerName: 'dev-ar-router', deployedAt: '2026-05-18T00:00:00.000Z' }],
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(false);
+    expect(result.staleWorkers).toEqual(['dev-ar-router']);
+  });
+
+  it('requires the exact Cloudflare version when deployment returned one', async () => {
+    mocks.getWorkerDeployments.mockResolvedValue({
+      exists: true,
+      lastDeployedAt: '2026-05-18T00:01:00.000Z',
+      versionId: 'old-version-id',
+    });
+
+    const result = await waitForWorkerDeploymentsReady({
+      targets: [
+        {
+          workerName: 'dev-ar-router',
+          deployedAt: '2026-05-18T00:00:00.000Z',
+          expectedVersionId: 'new-version-id',
+        },
+      ],
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(false);
+    expect(result.staleWorkers).toEqual(['dev-ar-router']);
+  });
+
+  it('allows pure existence inspection to opt out of freshness', async () => {
+    mocks.getWorkerDeployments.mockResolvedValue({
+      exists: true,
+      lastDeployedAt: '2026-05-17T23:00:00.000Z',
+    });
+
+    const result = await waitForWorkerDeploymentsReady({
+      targets: [{ workerName: 'dev-ar-router', deployedAt: '2026-05-18T00:00:00.000Z' }],
+      requireFreshDeployment: false,
       maxWaitMs: 0,
     });
 
@@ -258,6 +422,69 @@ describe('Worker HTTP readiness helpers', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('treats a browser-entry redirect as reachable without following a redirect loop', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { Location: 'https://default.dev.example.com/login' },
+      })
+    );
+
+    const result = await waitForWorkerHttpReady({
+      targets: [
+        {
+          workerName: 'dev-ar-login-ui',
+          url: 'https://login.dev.example.com',
+          allowRedirectResponse: true,
+        },
+      ],
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://login.dev.example.com',
+      expect.objectContaining({ redirect: 'manual' })
+    );
+  });
+
+  it('does not accept a redirect from an API health target by default', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 302 }));
+
+    const result = await waitForWorkerHttpReady({
+      targets: [
+        {
+          workerName: 'dev-ar-auth',
+          url: 'https://dev-ar-auth.example.workers.dev/api/auth/health',
+        },
+      ],
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(false);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://dev-ar-auth.example.workers.dev/api/auth/health',
+      expect.objectContaining({ redirect: 'follow' })
+    );
+  });
+
+  it('does not treat a non-redirect 3xx response as browser-entry readiness', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 304 }));
+
+    const result = await waitForWorkerHttpReady({
+      targets: [
+        {
+          workerName: 'dev-ar-login-ui',
+          url: 'https://login.dev.example.com',
+          allowRedirectResponse: true,
+        },
+      ],
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(false);
+  });
+
   it('reports failed worker health endpoints after timeout', async () => {
     fetchMock.mockResolvedValue(textResponse(JSON.stringify({ status: 'starting' }), 503));
 
@@ -279,5 +506,103 @@ describe('Worker HTTP readiness helpers', () => {
       }),
     ]);
     expect(result.error).toContain('dev-ar-auth');
+  });
+
+  it('allows the initial tenant registry bootstrap gap only for dependent health checks', async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        textResponse(JSON.stringify({ error: 'missing_snapshot', tenant_id: 'default' }), 409)
+      )
+      .mockResolvedValueOnce(
+        textResponse(JSON.stringify({ error: 'missing_generation', tenant_id: 'default' }), 409)
+      )
+      .mockResolvedValueOnce(
+        textResponse(JSON.stringify({ error: 'missing_generation', tenant_id: 'default' }), 409)
+      );
+
+    const result = await waitForWorkerHttpReady({
+      targets: [
+        {
+          workerName: 'dev-ar-auth',
+          url: 'https://dev-ar-auth.example.workers.dev/api/auth/health',
+        },
+        {
+          workerName: 'dev-ar-policy',
+          url: 'https://dev-ar-policy.example.workers.dev/api/check/health',
+        },
+        {
+          workerName: 'dev-ar-saml',
+          url: 'https://dev-ar-saml.example.workers.dev/saml/health',
+        },
+      ],
+      allowTenantRegistryBootstrapGap: true,
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(true);
+  });
+
+  it('does not hide a tenant registry bootstrap gap for an unrelated worker', async () => {
+    fetchMock.mockResolvedValue(
+      textResponse(JSON.stringify({ error: 'missing_generation', tenant_id: 'default' }), 409)
+    );
+
+    const result = await waitForWorkerHttpReady({
+      targets: [
+        {
+          workerName: 'dev-ar-token',
+          url: 'https://dev-ar-token.example.workers.dev/api/health',
+        },
+      ],
+      allowTenantRegistryBootstrapGap: true,
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(false);
+    expect(result.error).toContain('missing_generation');
+  });
+
+  it('verifies a new custom domain through public DNS after a system DNS miss', async () => {
+    fetchMock.mockRejectedValueOnce(
+      Object.assign(new Error('fetch failed'), { cause: { code: 'ENOTFOUND' } })
+    );
+    mocks.fetchWithPublicDns.mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+    const result = await waitForWorkerHttpReady({
+      targets: [
+        {
+          workerName: 'dev-ar-admin-ui',
+          url: 'https://admin.dev.example.com',
+        },
+      ],
+      allowPublicDnsFallback: true,
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(true);
+    expect(mocks.fetchWithPublicDns).toHaveBeenCalledWith(
+      'https://admin.dev.example.com',
+      expect.objectContaining({ method: 'GET' }),
+      expect.any(Number)
+    );
+  });
+
+  it('does not hide a missing tenant snapshot outside the initial deploy gate', async () => {
+    fetchMock.mockResolvedValue(
+      textResponse(JSON.stringify({ error: 'missing_snapshot', tenant_id: 'default' }), 409)
+    );
+
+    const result = await waitForWorkerHttpReady({
+      targets: [
+        {
+          workerName: 'dev-ar-auth',
+          url: 'https://dev-ar-auth.example.workers.dev/api/auth/health',
+        },
+      ],
+      maxWaitMs: 0,
+    });
+
+    expect(result.ready).toBe(false);
+    expect(result.error).toContain('missing_snapshot');
   });
 });

@@ -2,6 +2,13 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { adminAdminsAPI, type AdminUser, type AdminUserListParams } from '$lib/api/admin-admins';
+	import {
+		adminInvitationsAPI,
+		AdminInvitationDeliveryError,
+		type AdminInvitation
+	} from '$lib/api/admin-invitations';
+	import { adminAdminRolesAPI, type AdminRole } from '$lib/api/admin-admin-roles';
+	import { adminAuth } from '$lib/stores/admin-auth.svelte';
 	import { Modal } from '$lib/components';
 	import { LL } from '$i18n/i18n-svelte';
 	import AdminDataTable from '$lib/components/admin/AdminDataTable.svelte';
@@ -16,6 +23,25 @@
 	let totalPages = $state(0);
 	let loading = $state(true);
 	let error = $state('');
+	let invitationError = $state('');
+	let invitations: AdminInvitation[] = $state([]);
+	let availableRoles: AdminRole[] = $state([]);
+	const canReadRoles = $derived(adminAuth.hasPermission('admin:admin_roles:read'));
+	const canInviteAdmins = $derived(
+		adminAuth.hasAllPermissions([
+			'admin:admin_users:read',
+			'admin:admin_users:write',
+			'admin:admin_roles:read',
+			'admin:admin_roles:write'
+		])
+	);
+	const canManageInvitations = $derived(
+		adminAuth.hasAllPermissions([
+			'admin:admin_users:read',
+			'admin:admin_users:write',
+			'admin:admin_roles:write'
+		])
+	);
 
 	// Search and filter state
 	let searchQuery = $state('');
@@ -30,6 +56,9 @@
 	let createError = $state('');
 	let newAdminEmail = $state('');
 	let newAdminName = $state('');
+	let newAdminRoleId = $state('');
+	let ipRestrictionEnabled = $state(false);
+	let allowedIpRanges: string[] = $state(['']);
 
 	// Debounce timer for search
 	let searchTimeout: ReturnType<typeof setTimeout>;
@@ -65,8 +94,40 @@
 		}
 	}
 
+	async function loadInvitationsAndRoles() {
+		invitationError = '';
+		const [invitationResult, roleResult] = await Promise.allSettled([
+			adminInvitationsAPI.list(),
+			canReadRoles ? adminAdminRolesAPI.list() : Promise.resolve({ items: [], total: 0 })
+		]);
+
+		if (invitationResult.status === 'fulfilled') {
+			invitations = invitationResult.value.items;
+		} else {
+			invitationError =
+				invitationResult.reason instanceof Error
+					? invitationResult.reason.message
+					: $LL.admin_admins_invitations_load_failed();
+		}
+
+		if (roleResult.status === 'fulfilled') {
+			availableRoles = roleResult.value.items;
+			if (!newAdminRoleId && availableRoles.length > 0) {
+				newAdminRoleId =
+					availableRoles.find((role) => role.name === 'admin')?.id ?? availableRoles[0].id;
+			}
+		} else if (canReadRoles) {
+			availableRoles = [];
+			invitationError =
+				roleResult.reason instanceof Error
+					? roleResult.reason.message
+					: $LL.admin_admins_invitations_load_failed();
+		}
+	}
+
 	onMount(() => {
 		loadAdmins();
+		loadInvitationsAndRoles();
 	});
 
 	function handleSearch() {
@@ -129,9 +190,24 @@
 		}
 	}
 
+	function deliveryLabel(status: AdminInvitation['last_delivery_status']): string {
+		switch (status) {
+			case 'sent':
+				return $LL.admin_admins_delivery_sent();
+			case 'failed':
+				return $LL.admin_admins_delivery_failed();
+			default:
+				return $LL.admin_admins_delivery_pending();
+		}
+	}
+
 	function openCreateDialog() {
 		newAdminEmail = '';
 		newAdminName = '';
+		newAdminRoleId =
+			availableRoles.find((role) => role.name === 'admin')?.id ?? availableRoles[0]?.id ?? '';
+		ipRestrictionEnabled = false;
+		allowedIpRanges = [''];
 		createError = '';
 		showCreateDialog = true;
 	}
@@ -145,21 +221,75 @@
 			createError = $LL.admin_admins_email_required();
 			return;
 		}
+		if (!newAdminRoleId) {
+			createError = $LL.admin_admins_role_required();
+			return;
+		}
+		const ranges = allowedIpRanges.map((range) => range.trim()).filter(Boolean);
+		if (ipRestrictionEnabled && ranges.length === 0) {
+			createError = $LL.admin_admins_ip_range_required();
+			return;
+		}
 
 		creating = true;
 		createError = '';
 
 		try {
-			await adminAdminsAPI.create({
+			const role = availableRoles.find((candidate) => candidate.id === newAdminRoleId);
+			await adminInvitationsAPI.create({
 				email: newAdminEmail.trim(),
-				name: newAdminName.trim() || undefined
+				name: newAdminName.trim() || undefined,
+				role_id: newAdminRoleId,
+				scope_type: role?.name === 'super_admin' ? 'global' : 'tenant',
+				ip_restriction_enabled: ipRestrictionEnabled,
+				allowed_ip_ranges: ranges
 			});
 			closeCreateDialog();
-			loadAdmins();
+			await loadInvitationsAndRoles();
 		} catch (err) {
-			createError = err instanceof Error ? err.message : $LL.admin_admins_create_failed();
+			if (err instanceof AdminInvitationDeliveryError) {
+				closeCreateDialog();
+				await loadInvitationsAndRoles();
+				alert(err.message);
+			} else {
+				createError = err instanceof Error ? err.message : $LL.admin_admins_create_failed();
+			}
 		} finally {
 			creating = false;
+		}
+	}
+
+	function addIpRange() {
+		if (allowedIpRanges.length < 5) allowedIpRanges = [...allowedIpRanges, ''];
+	}
+
+	function updateIpRange(index: number, value: string) {
+		allowedIpRanges = allowedIpRanges.map((range, rangeIndex) =>
+			rangeIndex === index ? value : range
+		);
+	}
+
+	function removeIpRange(index: number) {
+		allowedIpRanges = allowedIpRanges.filter((_range, rangeIndex) => rangeIndex !== index);
+		if (allowedIpRanges.length === 0) allowedIpRanges = [''];
+	}
+
+	async function handleResendInvitation(invitation: AdminInvitation) {
+		try {
+			await adminInvitationsAPI.resend(invitation.id);
+			await loadInvitationsAndRoles();
+		} catch (err) {
+			alert(err instanceof Error ? err.message : $LL.admin_admins_invitation_resend_failed());
+		}
+	}
+
+	async function handleRevokeInvitation(invitation: AdminInvitation) {
+		if (!confirm($LL.admin_admins_invitation_revoke_confirm({ email: invitation.email }))) return;
+		try {
+			await adminInvitationsAPI.revoke(invitation.id);
+			await loadInvitationsAndRoles();
+		} catch (err) {
+			alert(err instanceof Error ? err.message : $LL.admin_admins_invitation_revoke_failed());
 		}
 	}
 
@@ -198,10 +328,12 @@
 </svelte:head>
 
 {#snippet headerActions()}
-	<button class="btn btn-primary" onclick={openCreateDialog}>
-		<i class="i-ph-plus"></i>
-		{$LL.admin_admins_add()}
-	</button>
+	{#if canInviteAdmins}
+		<button class="btn btn-primary" onclick={openCreateDialog}>
+			<i class="i-ph-plus"></i>
+			{$LL.admin_admins_add()}
+		</button>
+	{/if}
 {/snippet}
 
 <AdminPageShell>
@@ -210,6 +342,86 @@
 		description={$LL.admin_admins_description()}
 		actions={headerActions}
 	/>
+
+	{#if invitations.length > 0 || invitationError}
+		<AdminSection
+			title={$LL.admin_admins_pending_invitations()}
+			description={$LL.admin_admins_pending_invitations_description()}
+		>
+			{#if invitationError}
+				<div class="alert alert-danger invitation-error" role="alert">
+					<span>{invitationError}</span>
+					<button class="btn btn-sm btn-secondary" onclick={loadInvitationsAndRoles}>
+						{$LL.admin_admins_retry()}
+					</button>
+				</div>
+			{/if}
+			{#if invitations.length > 0}
+				<AdminDataTable width="wide">
+					<thead>
+						<tr>
+							<th>{$LL.admin_admins_email()}</th>
+							<th>{$LL.admin_admins_role()}</th>
+							<th>{$LL.admin_admins_invitation_ip_restriction()}</th>
+							<th>{$LL.admin_admins_invitation_expires()}</th>
+							<th>{$LL.admin_admins_invitation_delivery()}</th>
+							<th class="text-right">{$LL.admin_admins_actions()}</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each invitations as invitation (invitation.id)}
+							<tr>
+								<td>
+									<div>{invitation.email}</div>
+									{#if invitation.name}<small>{invitation.name}</small>{/if}
+								</td>
+								<td>{invitation.role.display_name || invitation.role.name}</td>
+								<td>
+									{#if invitation.ip_restriction_enabled}
+										<span class="badge badge-warning">
+											{$LL.admin_admins_invitation_ip_ranges({
+												count: invitation.allowed_ip_ranges.length
+											})}
+										</span>
+									{:else}
+										<span class="badge badge-neutral">{$LL.admin_admins_invitation_ip_off()}</span>
+									{/if}
+								</td>
+								<td>{formatDate(invitation.expires_at)}</td>
+								<td>
+									<span
+										class:badge-success={invitation.last_delivery_status === 'sent'}
+										class:badge-danger={invitation.last_delivery_status === 'failed'}
+										class="badge"
+									>
+										{deliveryLabel(invitation.last_delivery_status)}
+									</span>
+								</td>
+								<td class="text-right">
+									<div class="admin-row-actions">
+										{#if canManageInvitations}
+											<button
+												class="btn btn-sm btn-secondary"
+												onclick={() => handleResendInvitation(invitation)}
+											>
+												{$LL.admin_admins_invitation_resend()}
+											</button>
+											<button
+												class="btn btn-sm btn-danger"
+												onclick={() => handleRevokeInvitation(invitation)}
+											>
+												{$LL.admin_admins_invitation_revoke()}
+											</button>
+										{/if}
+									</div>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</AdminDataTable>
+			{/if}
+		</AdminSection>
+	{/if}
 
 	<AdminToolbar>
 		<div class="admin-field admin-field--search">
@@ -380,7 +592,7 @@
 	{/if}
 </AdminPageShell>
 
-<!-- Create Admin Dialog -->
+<!-- Invite Admin Dialog -->
 <Modal
 	open={showCreateDialog}
 	onClose={closeCreateDialog}
@@ -397,12 +609,62 @@
 			id="email"
 			class="input"
 			bind:value={newAdminEmail}
-			placeholder="admin@example.com"
+			placeholder={$LL.admin_admins_email_placeholder()}
 		/>
 	</div>
 	<div class="form-group">
+		<label for="admin-role">{$LL.admin_admins_role()} *</label>
+		<select id="admin-role" class="input" bind:value={newAdminRoleId}>
+			<option value="">{$LL.admin_admins_select_role_placeholder()}</option>
+			{#each availableRoles as role (role.id)}
+				<option value={role.id}>{role.display_name || role.name}</option>
+			{/each}
+		</select>
+	</div>
+	<div class="form-group invitation-ip-restriction">
+		<label class="checkbox-label">
+			<input type="checkbox" bind:checked={ipRestrictionEnabled} />
+			<span>{$LL.admin_admins_invitation_limit_ip()}</span>
+		</label>
+		<p class="field-hint">{$LL.admin_admins_invitation_limit_ip_hint()}</p>
+		{#if ipRestrictionEnabled}
+			<div class="ip-range-list">
+				{#each allowedIpRanges as range, index (`${index}-${allowedIpRanges.length}`)}
+					<div class="ip-range-row">
+						<input
+							type="text"
+							class="input"
+							value={range}
+							oninput={(event) => updateIpRange(index, event.currentTarget.value)}
+							placeholder={$LL.admin_admins_invitation_ip_placeholder()}
+						/>
+						<button
+							type="button"
+							class="btn btn-sm btn-secondary"
+							onclick={() => removeIpRange(index)}
+							aria-label={$LL.admin_admins_invitation_remove_ip_range()}
+						>
+							<i class="i-ph-x"></i>
+						</button>
+					</div>
+				{/each}
+				{#if allowedIpRanges.length < 5}
+					<button type="button" class="btn btn-sm btn-secondary" onclick={addIpRange}>
+						{$LL.admin_admins_invitation_add_ip_range()}
+					</button>
+				{/if}
+			</div>
+		{/if}
+	</div>
+	<div class="form-group">
 		<label for="name">{$LL.admin_admins_name()}</label>
-		<input type="text" id="name" class="input" bind:value={newAdminName} placeholder="John Doe" />
+		<input
+			type="text"
+			id="name"
+			class="input"
+			bind:value={newAdminName}
+			placeholder={$LL.admin_admins_name_placeholder()}
+		/>
 	</div>
 
 	{#snippet footer()}
@@ -410,7 +672,7 @@
 			{$LL.admin_admins_cancel()}
 		</button>
 		<button class="btn btn-primary" onclick={handleCreate} disabled={creating}>
-			{creating ? $LL.admin_admins_creating() : $LL.admin_admins_create()}
+			{creating ? $LL.admin_admins_inviting() : $LL.admin_admins_invite()}
 		</button>
 	{/snippet}
 </Modal>
@@ -446,5 +708,38 @@
 		background: color-mix(in srgb, var(--color-danger) 10%, var(--color-surface));
 		border: 1px solid color-mix(in srgb, var(--color-danger) 28%, transparent);
 		color: var(--color-danger);
+	}
+
+	.invitation-error {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		margin-bottom: 1rem;
+	}
+
+	.checkbox-label {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		font-weight: 600;
+	}
+
+	.field-hint {
+		margin: 0.35rem 0 0;
+		color: var(--color-text-muted);
+		font-size: 0.82rem;
+	}
+
+	.ip-range-list {
+		display: grid;
+		gap: 0.6rem;
+		margin-top: 0.8rem;
+	}
+
+	.ip-range-row {
+		display: grid;
+		grid-template-columns: 1fr auto;
+		gap: 0.5rem;
 	}
 </style>

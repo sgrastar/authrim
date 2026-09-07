@@ -1,12 +1,5 @@
-import type {
-  AuditProfile,
-  AuditTarget,
-  Env,
-  RuntimeProfile,
-  StorageProfile,
-  StorageTarget,
-} from '@authrim/ar-lib-core';
-import { resolveHyperdriveBindingForAuditTarget } from '@authrim/ar-lib-core';
+import type { AuditProfile, AuditTarget, Env, RuntimeProfile } from '@authrim/ar-lib-core';
+import { resolveHyperdriveBindingForAuditTarget, targetToBackendId } from '@authrim/ar-lib-core';
 
 export type RuntimeProfileReferenceResolution =
   | 'configured'
@@ -64,6 +57,78 @@ export const RUNTIME_PROFILE_REFERENCE_MANAGEMENT_POLICY: RuntimeProfileReferenc
     note: 'bindingRef and connectionRef resources are provisioned through setup today. Admin APIs may store profile references, but default activation is rejected when required runtime references are unresolved.',
   };
 
+function registeredSchemaReferences(env: Env): ReadonlySet<string> {
+  try {
+    const parsed = JSON.parse(env.AUTHRIM_REGISTERED_SCHEMA_REFS ?? '[]') as unknown;
+    return new Set(
+      Array.isArray(parsed)
+        ? parsed.filter((value): value is string => typeof value === 'string')
+        : []
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function registrationKeys(
+  target: { bindingRef?: string; connectionRef?: string },
+  streamId: string
+): string[] {
+  return [
+    ...(target.bindingRef ? [`binding:${target.bindingRef}:${streamId}`] : []),
+    ...(target.connectionRef ? [`connection:${target.connectionRef}:${streamId}`] : []),
+  ];
+}
+
+const AUDIT_BACKEND_MIGRATION_STREAMS: Readonly<Record<string, string>> = {
+  'd1-core': 'core-d1',
+  'd1-pii': 'pii-d1',
+  'd1-admin': 'admin-d1',
+};
+
+function blockUnregisteredDatabaseTargets(
+  env: Env,
+  profile: RuntimeProfile,
+  entries: RuntimeProfileReferenceStatusEntry[]
+): RuntimeProfileReferenceStatusEntry[] {
+  if (profile.builtin) return entries;
+  const registered = registeredSchemaReferences(env);
+
+  const requiredByPath = new Map<string, { streamId: string | null; keys: string[] }>();
+  if (profile.kind === 'audit') {
+    const audit = profile as AuditProfile;
+    const targets = [
+      ...(audit.primary ? ([['primary', audit.primary]] as const) : []),
+      ...(audit.archive ? ([['archive', audit.archive]] as const) : []),
+      ...audit.sinks.map((target, index) => [`sinks[${index}]`, target] as const),
+    ];
+    for (const [path, target] of targets) {
+      if (target.type !== 'd1' && target.type !== 'postgres' && target.type !== 'mysql') continue;
+      const backendId = target.type === 'd1' ? targetToBackendId(target) : null;
+      const streamId = backendId ? (AUDIT_BACKEND_MIGRATION_STREAMS[backendId] ?? null) : null;
+      requiredByPath.set(path, {
+        streamId,
+        keys: streamId ? registrationKeys(target, streamId) : [],
+      });
+    }
+  }
+
+  return entries.map((entry) => {
+    const required = requiredByPath.get(entry.path);
+    if (!required || entry.activation === 'blocked') return entry;
+    const registeredTarget = required.keys.some((key) => registered.has(key));
+    if (required.streamId && registeredTarget) return entry;
+    return {
+      ...entry,
+      severity: 'error',
+      activation: 'blocked',
+      reason: required.streamId
+        ? `Database target is not registered with setup for release stream ${required.streamId}.`
+        : `No published release migration stream is registered for this ${entry.type} database target.`,
+    };
+  });
+}
+
 function createEntry(
   entry: RuntimeProfileReferenceStatusEntry
 ): RuntimeProfileReferenceStatusEntry {
@@ -102,15 +167,6 @@ function isHyperdriveLike(value: unknown): boolean {
   );
 }
 
-function normalizeBindingCandidates(ref: string | undefined): string[] {
-  if (!ref) {
-    return [];
-  }
-
-  const normalized = ref.replace(/[^A-Za-z0-9]+/g, '_').toUpperCase();
-  return [...new Set([ref, normalized, `HYPERDRIVE_${normalized}`])];
-}
-
 function deriveConnectionAliasesFromBinding(ref: string): string[] {
   const trimmed = ref.trim();
   if (!trimmed) {
@@ -122,101 +178,6 @@ function deriveConnectionAliasesFromBinding(ref: string): string[] {
     : trimmed;
   const dashed = withoutPrefix.toLowerCase().replace(/_+/g, '-');
   return [...new Set([trimmed, dashed])].filter(Boolean);
-}
-
-function resolveStorageHyperdriveBinding(env: Env, target: StorageTarget): Hyperdrive | null {
-  if (target.driver !== 'postgres' && target.driver !== 'mysql') {
-    return null;
-  }
-
-  const refs = [
-    ...normalizeBindingCandidates(target.bindingRef),
-    ...normalizeBindingCandidates(target.connectionRef),
-  ];
-
-  for (const ref of refs) {
-    const binding = getEnvBinding(env, ref);
-    if (binding && typeof binding === 'object' && 'connectionString' in binding) {
-      return binding as Hyperdrive;
-    }
-  }
-
-  return null;
-}
-
-function describeStorageTarget(
-  env: Env,
-  path: string,
-  target: StorageTarget
-): RuntimeProfileReferenceStatusEntry {
-  if (target.bindingRef) {
-    if (getEnvBinding(env, target.bindingRef)) {
-      return createEntry({
-        path,
-        type: target.driver,
-        resolution: 'configured',
-        severity: 'info',
-        activation: 'ready',
-        bindingRef: target.bindingRef,
-        ...(target.connectionRef ? { connectionRef: target.connectionRef } : {}),
-      });
-    }
-
-    if (resolveStorageHyperdriveBinding(env, target)) {
-      return createEntry({
-        path,
-        type: target.driver,
-        resolution: 'configured',
-        severity: 'info',
-        activation: 'ready',
-        bindingRef: target.bindingRef,
-        ...(target.connectionRef ? { connectionRef: target.connectionRef } : {}),
-      });
-    }
-
-    return createEntry({
-      path,
-      type: target.driver,
-      resolution: 'not_configured',
-      severity: 'error',
-      activation: 'blocked',
-      bindingRef: target.bindingRef,
-      ...(target.connectionRef ? { connectionRef: target.connectionRef } : {}),
-      reason: `Runtime binding ${target.bindingRef} is not configured for this storage target.`,
-    });
-  }
-
-  if (target.connectionRef) {
-    if (resolveStorageHyperdriveBinding(env, target)) {
-      return createEntry({
-        path,
-        type: target.driver,
-        resolution: 'configured',
-        severity: 'info',
-        activation: 'ready',
-        connectionRef: target.connectionRef,
-      });
-    }
-
-    return createEntry({
-      path,
-      type: target.driver,
-      resolution: 'reference_only',
-      severity: 'warning',
-      activation: 'blocked',
-      connectionRef: target.connectionRef,
-      reason: `Storage connectionRef ${target.connectionRef} is setup-managed and no runtime Hyperdrive binding was resolved.`,
-    });
-  }
-
-  return createEntry({
-    path,
-    type: target.driver,
-    resolution: 'not_configured',
-    severity: 'error',
-    activation: 'blocked',
-    reason: 'Storage target is missing both bindingRef and connectionRef.',
-  });
 }
 
 function describeAuditTarget(
@@ -447,19 +408,13 @@ export function describeRuntimeProfileReferenceStatus(
   env: Env,
   profile: RuntimeProfile
 ): RuntimeProfileReferenceStatusEntry[] {
-  if (profile.kind === 'storage') {
-    return Object.entries((profile as StorageProfile).slices).flatMap(([slice, target]) =>
-      target ? [describeStorageTarget(env, `slices.${slice}`, target)] : []
-    );
-  }
-
   if (profile.kind === 'audit') {
     const auditProfile = profile as AuditProfile;
-    return [
+    return blockUnregisteredDatabaseTargets(env, profile, [
       ...(auditProfile.primary ? [describeAuditTarget(env, 'primary', auditProfile.primary)] : []),
       ...(auditProfile.archive ? [describeAuditTarget(env, 'archive', auditProfile.archive)] : []),
       ...auditProfile.sinks.map((sink, index) => describeAuditTarget(env, `sinks[${index}]`, sink)),
-    ];
+    ]);
   }
 
   return [];
@@ -562,21 +517,6 @@ export function buildRuntimeProfileReferenceCatalog(
   };
 
   for (const profile of profiles) {
-    if (profile.kind === 'storage') {
-      for (const target of Object.values((profile as StorageProfile).slices)) {
-        if (!target) {
-          continue;
-        }
-        if (target.driver === 'd1') {
-          addBindingRef(target.bindingRef, 'd1');
-        } else {
-          addBindingRef(target.bindingRef, 'hyperdrive');
-          addConnectionRef(target.connectionRef);
-        }
-      }
-      continue;
-    }
-
     if (profile.kind === 'audit') {
       const auditProfile = profile as AuditProfile;
       const targets: Array<AuditTarget | null | undefined> = [

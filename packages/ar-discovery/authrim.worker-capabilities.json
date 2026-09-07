@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "packageName": "@authrim/ar-discovery",
+  "worker": "ar-discovery",
+  "requiredDataRoles": ["tenant_core/default"],
+  "bindings": [
+    {
+      "name": "SETTINGS",
+      "kind": "kv_namespace",
+      "required": true,
+      "capability": "runtime_settings.read"
+    },
+    {
+      "name": "AUTHRIM_CONFIG",
+      "kind": "kv_namespace",
+      "required": true,
+      "capability": "runtime_config.read"
+    },
+    {
+      "name": "TENANT_RUNTIME_REGISTRY",
+      "kind": "kv_namespace",
+      "required": true,
+      "capability": "runtime_registry.read"
+    },
+    {
+      "name": "KEY_MANAGER_PUBLIC",
+      "kind": "service",
+      "required": true,
+      "capability": "signing_keys.public.read"
+    },
+    {
+      "name": "CONTROL_SMOKE_VERSION",
+      "kind": "version_metadata",
+      "required": true,
+      "capability": "control_smoke.version"
+    }
+  ],
+  "secrets": [
+    {
+      "name": "PUBLIC_JWK_JSON",
+      "capability": "legacy_public_jwk.read",
+      "required": true
+    },
+    {
+      "name": "TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS",
+      "capability": "runtime_registry.verify",
+      "required": true
+    },
+    {
+      "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
+      "capability": "control_smoke.verify",
+      "required": true
+    }
+  ]
+}

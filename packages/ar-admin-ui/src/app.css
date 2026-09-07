@@ -91,6 +91,17 @@
 	-moz-osx-font-smoothing: grayscale;
 }
 
+/* Successful action messages are presented by the shared Admin toast host. */
+:is(
+	.alert.alert-success,
+	.alert.alert--success,
+	.alert.success,
+	.message.success,
+	.notice.success
+) {
+	display: none !important;
+}
+
 /* === Base Styles === */
 html {
 	font-size: 16px;
@@ -4025,6 +4036,59 @@ tr.expired {
    ============================================ */
 
 /* Plugin Grid */
+.provider-projection-status {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: 10px 12px;
+	border: 1px solid var(--border);
+	border-left: 3px solid var(--success);
+	border-radius: var(--radius-sm);
+	background: var(--bg-secondary);
+	font-size: 0.8125rem;
+}
+
+.provider-projection-status--active {
+	border-left-color: var(--info);
+}
+
+.provider-projection-status--failed {
+	border-left-color: var(--danger);
+}
+
+.provider-projection-status__icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 18px;
+	font-size: 18px;
+	color: var(--text-secondary);
+	flex: 0 0 18px;
+}
+
+.provider-projection-status__body {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 10px;
+	min-width: 0;
+	color: var(--text-secondary);
+}
+
+.provider-projection-status__body strong {
+	color: var(--text-primary);
+}
+
+.provider-projection-status__jobs {
+	display: flex;
+	flex-basis: 100%;
+	flex-wrap: wrap;
+	gap: 4px 12px;
+	font-size: 0.75rem;
+	color: var(--text-muted);
+}
+
 .plugin-grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
@@ -4377,6 +4441,37 @@ tr.expired {
 	font-weight: 500;
 	color: var(--text-secondary);
 	margin-bottom: 8px;
+}
+
+.plugin-resource-settings > summary {
+	cursor: pointer;
+}
+
+.plugin-resource-row {
+	padding: 12px 0;
+	border-top: 1px solid var(--border);
+}
+
+.plugin-resource-existing-toggle {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 8px;
+	font-size: 0.8125rem;
+	color: var(--text-secondary);
+}
+
+.plugin-resource-fields {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px;
+	margin-top: 10px;
+}
+
+@media (max-width: 640px) {
+	.plugin-resource-fields {
+		grid-template-columns: minmax(0, 1fr);
+	}
 }
 
 /* Plugin Config Form */

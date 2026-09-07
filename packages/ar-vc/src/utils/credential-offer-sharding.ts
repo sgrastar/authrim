@@ -121,6 +121,98 @@ export function parseCredentialOfferId(
   }
 }
 
+export interface ParsedProofNonce {
+  nonceId: string;
+  secret: string;
+  parsed: ParsedRegionId;
+}
+
+/**
+ * Generate an opaque proof nonce whose prefix carries only the existing region routing tuple.
+ * The random secret is never persisted in plaintext.
+ */
+export async function generateProofNonce(
+  env: Env,
+  tenantId: string
+): Promise<{
+  nonce: string;
+  nonceId: string;
+  stub: CredentialOfferStoreStub;
+  resolution: ShardResolution;
+}> {
+  const config = await getRegionShardConfig(
+    { AUTHRIM_CONFIG: env.AUTHRIM_CONFIG } as Parameters<typeof getRegionShardConfig>[0],
+    tenantId
+  );
+  const random = crypto.randomUUID();
+  const resolution = resolveShardForNewResource(config, `${tenantId}:${random}`);
+  const nonceId = createRegionId(
+    resolution.generation,
+    resolution.regionKey,
+    resolution.shardIndex,
+    `cn_${random}`
+  );
+  const secretBytes = new Uint8Array(32);
+  crypto.getRandomValues(secretBytes);
+  const secret = btoa(String.fromCharCode(...secretBytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+  const instanceName = buildRegionInstanceName(
+    tenantId,
+    resolution.regionKey,
+    'credoffer',
+    resolution.shardIndex
+  );
+  const stub = getRegionAwareDOStub(
+    env.CREDENTIAL_OFFER_STORE as unknown as DurableObjectNamespace,
+    instanceName,
+    resolution.regionKey
+  ) as CredentialOfferStoreStub;
+  return { nonce: `${nonceId}.${secret}`, nonceId, stub, resolution };
+}
+
+export function parseProofNonce(nonce: string): ParsedProofNonce | null {
+  const separator = nonce.lastIndexOf('.');
+  if (separator <= 0 || separator === nonce.length - 1) return null;
+  const nonceId = nonce.slice(0, separator);
+  const secret = nonce.slice(separator + 1);
+  if (!/^[A-Za-z0-9_-]{32,128}$/.test(secret)) return null;
+  try {
+    const parsed = parseRegionId(nonceId);
+    if (!parsed.randomPart.startsWith('cn_')) return null;
+    return { nonceId, secret, parsed };
+  } catch {
+    return null;
+  }
+}
+
+export function getCredentialOfferStoreByProofNonce(
+  env: Env,
+  nonce: string,
+  tenantId: string
+): { stub: CredentialOfferStoreStub; nonceId: string; resolution: ShardResolution } {
+  const parsedNonce = parseProofNonce(nonce);
+  if (!parsedNonce) throw new Error('Invalid proof nonce format');
+  const resolution: ShardResolution = {
+    generation: parsedNonce.parsed.generation,
+    regionKey: parsedNonce.parsed.regionKey,
+    shardIndex: parsedNonce.parsed.shardIndex,
+  };
+  const instanceName = buildRegionInstanceName(
+    tenantId,
+    resolution.regionKey,
+    'credoffer',
+    resolution.shardIndex
+  );
+  const stub = getRegionAwareDOStub(
+    env.CREDENTIAL_OFFER_STORE as unknown as DurableObjectNamespace,
+    instanceName,
+    resolution.regionKey
+  ) as CredentialOfferStoreStub;
+  return { stub, nonceId: parsedNonce.nonceId, resolution };
+}
+
 /**
  * Get CredentialOfferStore Durable Object stub for an existing offer ID.
  *
@@ -228,37 +320,14 @@ export async function getCredentialOfferStoreForNewOffer(
 }
 
 /**
- * Generate pre-authorized code with region-sharding info.
- *
- * Pre-auth code format: g{gen}:{region}:{shard}:pac_{code}
- * This allows the token endpoint to route directly to the correct shard.
- *
- * @param env - Environment with KV binding
- * @param tenantId - Tenant ID
- * @param userId - User identifier
- * @param code - Random pre-authorized code
- * @returns Region-sharded pre-authorized code
+ * Bind a high-entropy secret to an existing credential offer ID.
+ * The offer ID supplies routing and the full value is hashed before storage.
  */
-export async function generatePreAuthorizedCode(
-  env: Env,
-  tenantId: string,
-  userId: string,
-  code: string
-): Promise<string> {
-  const config = await getRegionShardConfig(
-    { AUTHRIM_CONFIG: env.AUTHRIM_CONFIG } as Parameters<typeof getRegionShardConfig>[0],
-    tenantId
-  );
-
-  const shardKey = `${tenantId}:${userId}`;
-  const resolution = resolveShardForNewResource(config, shardKey);
-
-  return createRegionId(
-    resolution.generation,
-    resolution.regionKey,
-    resolution.shardIndex,
-    `pac_${code}`
-  );
+export function generatePreAuthorizedCode(offerId: string, secret: string): string {
+  if (!parseCredentialOfferId(offerId) || !/^[A-Za-z0-9_-]{32,128}$/.test(secret)) {
+    throw new Error('Invalid credential offer ID or pre-authorized code secret');
+  }
+  return `${offerId}.${secret}`;
 }
 
 /**
@@ -269,17 +338,12 @@ export async function generatePreAuthorizedCode(
  */
 export function parsePreAuthorizedCode(
   preAuthCode: string
-): (ParsedRegionId & { code: string }) | null {
-  try {
-    const parsed = parseRegionId(preAuthCode);
-    if (!parsed.randomPart.startsWith('pac_')) {
-      return null;
-    }
-    return {
-      ...parsed,
-      code: parsed.randomPart.substring(4), // Remove 'pac_' prefix
-    };
-  } catch {
-    return null;
-  }
+): (ParsedRegionId & { offerId: string; secret: string }) | null {
+  const separator = preAuthCode.lastIndexOf('.');
+  if (separator <= 0 || separator === preAuthCode.length - 1) return null;
+  const offerId = preAuthCode.slice(0, separator);
+  const secret = preAuthCode.slice(separator + 1);
+  const parsed = parseCredentialOfferId(offerId);
+  if (!parsed || !/^[A-Za-z0-9_-]{32,128}$/.test(secret)) return null;
+  return { ...parsed, offerId, secret };
 }

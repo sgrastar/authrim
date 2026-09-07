@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-saml",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "type": "module",
   "private": true,
   "scripts": {
@@ -16,11 +16,11 @@
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
     "@authrim/ar-lib-field-mapping": "workspace:*",
-    "@authrim/ar-lib-plugin": "workspace:*",
-    "@xmldom/xmldom": "^0.8.13",
-    "hono": "4.12.29",
-    "jose": "^6.1.2",
+    "@xmldom/xmldom": "^0.8.15",
+    "hono": "4.13.2",
+    "jose": "^6.2.9",
     "pako": "^2.1.0",
+    "saxes": "6.0.0",
     "xml-crypto": "^6.0.0"
   },
   "devDependencies": {

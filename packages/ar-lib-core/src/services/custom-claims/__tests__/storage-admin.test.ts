@@ -5,6 +5,7 @@ import {
   countUsersWithPiiCustomClaimData,
   listNonPiiFieldUsage,
   countUsersWithNonPiiFieldData,
+  countUsersWithPiiFieldData,
   deleteStoredCustomClaimData,
   renameStoredCustomClaimData,
 } from '../storage-admin';
@@ -50,6 +51,17 @@ describe('storage-admin', () => {
     vi.mocked(piiAdapter.query).mockResolvedValueOnce([{ count: 7 }]);
 
     await expect(countUsersWithPiiCustomClaimData(piiAdapter, 'tenant-1')).resolves.toBe(7);
+  });
+
+  it('counts PII users for one field-level value key', async () => {
+    const piiAdapter = createMockAdapter();
+    vi.mocked(piiAdapter.query).mockResolvedValueOnce([{ count: 2 }]);
+
+    await expect(countUsersWithPiiFieldData(piiAdapter, 'tenant-1', 'tax_id')).resolves.toBe(2);
+    expect(piiAdapter.query).toHaveBeenCalledWith(expect.stringContaining('value_key = ?'), [
+      'tenant-1',
+      'custom_attribute:tax_id',
+    ]);
   });
 
   it('deletes non-PII field storage via shared helper', async () => {
@@ -100,14 +112,26 @@ describe('storage-admin', () => {
       processedUsers: 2,
       failedUsers: 1,
     });
-    expect(piiAdapter.execute).toHaveBeenCalledWith(
-      `UPDATE identity_sensitive_values
-                SET value_json = ?, updated_at = ?
-              WHERE tenant_id = ?
-                AND owner_type = 'runtime_user'
-                AND owner_id = ?
-                AND value_key = 'custom_attributes_json'`,
-      [JSON.stringify({ new_key: 'value' }), 123, 'tenant-1', 'user-1']
+    expect(piiAdapter.batch).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sql: expect.stringContaining('DELETE FROM identity_sensitive_values'),
+          params: ['tenant-1', 'user-1', 'custom_attribute:old_key'],
+        }),
+        expect.objectContaining({
+          sql: expect.stringContaining('INSERT INTO identity_sensitive_values'),
+          params: expect.arrayContaining([
+            'tenant-1',
+            'user-1',
+            'custom_attribute:new_key',
+            JSON.stringify('value'),
+          ]),
+        }),
+        expect.objectContaining({
+          sql: expect.stringContaining("value_key = 'custom_attributes_json'"),
+          params: [JSON.stringify({ new_key: 'value' }), 123, 'tenant-1', 'user-1'],
+        }),
+      ])
     );
   });
 });

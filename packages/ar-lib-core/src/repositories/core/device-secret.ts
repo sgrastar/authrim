@@ -17,7 +17,7 @@
  * - Suitable for D1_CORE database
  *
  * Table: device_secrets
- * Schema: see migrations/017_native_sso_device_secrets.sql
+ * Schema: see migrations/core/d1/001_0_4_0_core_baseline.sql
  */
 
 import { BaseRepository, generateId, getCurrentTimestamp } from '../base';

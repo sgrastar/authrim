@@ -1,6 +1,5 @@
 const adminAdminPolicies = {
 	admin_admin_policies_head_title: 'Admin Policies - Authrim',
-	admin_admin_policies_access_control: 'Admin Access Control',
 	admin_admin_policies_breadcrumb: 'Policies',
 	admin_admin_policies_title: 'Admin Policies',
 	admin_admin_policies_description: 'RBAC、ABAC、ReBACを組み合わせた管理者向けアクセス制御ポリシー',
@@ -26,7 +25,6 @@ const adminAdminPolicies = {
 	admin_admin_policies_edit: '編集',
 	admin_admin_policies_delete: '削除',
 	admin_admin_policies_system_protected: 'システム保護',
-	admin_admin_policies_close_create_dialog: 'policy作成ダイアログを閉じる',
 	admin_admin_policies_create_title: 'Policyを作成',
 	admin_admin_policies_name_required: '名前',
 	admin_admin_policies_resource_pattern_required: 'Resource Pattern',
@@ -37,7 +35,6 @@ const adminAdminPolicies = {
 	admin_admin_policies_cancel: 'キャンセル',
 	admin_admin_policies_create: '作成',
 	admin_admin_policies_creating: '作成中...',
-	admin_admin_policies_close_simulation_dialog: 'policy simulationダイアログを閉じる',
 	admin_admin_policies_simulation_title: 'Policy Simulation',
 	admin_admin_policies_simulation_description: '任意のユーザーcontextでpolicy評価をテストします',
 	admin_admin_policies_resource_placeholder: 'Resource（例: admin:admin_users:read）',

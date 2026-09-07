@@ -22,6 +22,7 @@ import { extractDPoPProof, validateDPoPProof, isDPoPBoundToken, extractDPoPToken
 import { buildIssuerUrl } from './issuer';
 import { createLogger } from './logger';
 import { getTenantIdFromContext } from '../middleware/request-context';
+import { getPresentedClientCertificateThumbprint } from './mtls';
 
 const log = createLogger().module('TOKEN_INTROSPECTION');
 
@@ -57,12 +58,24 @@ export interface TokenValidationRequest {
   url: string;
   /** Request headers */
   headers: Headers;
+  /** Raw request used for trusted edge-provided client certificate metadata. */
+  rawRequest?: Request;
   /** Environment bindings */
   env: Env;
   /** Request body (for form-encoded POST requests) */
   body?: URLSearchParams;
   /** Tenant ID for multi-tenant key isolation */
   tenantId: string;
+  /**
+   * Expected access-token audience for this protected resource.
+   * Defaults to the issuer URL for backwards compatibility with issuer-scoped endpoints.
+   */
+  audience?: string | string[];
+}
+
+export interface TokenIntrospectionContextOptions {
+  /** Expected access-token audience for this protected resource. */
+  audience?: string | string[];
 }
 
 // ===== Key Caching for Performance Optimization =====
@@ -456,7 +469,7 @@ export async function introspectToken(
   let tokenClaims: JWTPayload;
   try {
     tokenClaims = await verifyToken(accessToken, publicKey, issuerUrl, {
-      audience: issuerUrl, // For MVP, access token audience is the issuer
+      audience: request.audience ?? issuerUrl,
     });
   } catch (error) {
     // Log full error for debugging but don't expose to client
@@ -558,6 +571,24 @@ export async function introspectToken(
         },
       };
     }
+
+    const mtlsConfirmation = tokenClaims.cnf as { 'x5t#S256'?: string } | undefined;
+    if (mtlsConfirmation?.['x5t#S256']) {
+      const presentedThumbprint = request.rawRequest
+        ? await getPresentedClientCertificateThumbprint(request.rawRequest)
+        : undefined;
+      if (!presentedThumbprint || presentedThumbprint !== mtlsConfirmation['x5t#S256']) {
+        return {
+          valid: false,
+          error: {
+            error: 'invalid_token',
+            error_description: 'Client certificate does not match access token binding',
+            wwwAuthenticate: 'Bearer error="invalid_token"',
+            statusCode: 401,
+          },
+        };
+      }
+    }
   }
 
   // Check if token has been revoked
@@ -601,7 +632,8 @@ export async function introspectToken(
  * ```
  */
 export async function introspectTokenFromContext(
-  c: Context<{ Bindings: Env }>
+  c: Context<{ Bindings: Env }>,
+  options: TokenIntrospectionContextOptions = {}
 ): Promise<TokenIntrospectionResult> {
   // Parse request body if it's a POST request with form-encoded content
   let body: URLSearchParams | undefined;
@@ -629,8 +661,10 @@ export async function introspectTokenFromContext(
     method: c.req.method,
     url: c.req.url,
     headers: c.req.raw.headers,
+    rawRequest: c.req.raw,
     env: c.env,
     body,
     tenantId: getTenantIdFromContext(c),
+    audience: options.audience,
   });
 }

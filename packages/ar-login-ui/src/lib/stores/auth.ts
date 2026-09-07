@@ -92,15 +92,15 @@ function createAuthStore() {
 		 */
 		logout: async () => {
 			if (browser) {
-				// Call logout endpoint to clear server-side session and cookie
-				try {
-					await authrimFetch('/logout', {
-						method: 'GET',
-						redirect: 'manual',
-						headers: buildDiagnosticHeaders()
-					});
-				} catch {
-					// Silently ignore logout API errors
+				const headers = buildDiagnosticHeaders();
+				headers.set('Content-Type', 'application/json');
+				const response = await authrimFetch('/api/v1/auth/direct/logout', {
+					method: 'POST',
+					headers,
+					body: '{}'
+				});
+				if (!response.ok) {
+					throw new Error('Logout request failed');
 				}
 			}
 

@@ -143,13 +143,12 @@ describe('admin-info tenant base URL resolution', () => {
     });
   });
 
-  it('includes global_login_ui_url in tenant info responses', async () => {
+  it('reads tenant inventory without requiring request-scoped tenant metadata', async () => {
     const env = {
       UI_URL: 'https://nodomain-ar-login-ui.pages.dev',
       ADMIN_UI_URL: 'https://nodomain-ar-admin-ui.pages.dev',
       BASE_DOMAIN: 'auth.example.com',
       PROFILE_REGISTRY_BACKEND: 'database',
-      DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:standard',
       DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard',
       DEFAULT_RESIDENCY_PROFILE_ID: 'builtin:residency:default',
       DB: {
@@ -174,9 +173,10 @@ describe('admin-info tenant base URL resolution', () => {
           status,
           headers: { 'Content-Type': 'application/json' },
         }),
-      get: vi.fn((key: string) =>
-        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
-      ),
+      get: vi.fn((key: string) => {
+        if (key === 'adminAuth') return { roles: ['system_admin'], tenantScope: ['*'] };
+        return undefined;
+      }),
     } as any);
 
     expect(response.status).toBe(200);
@@ -192,7 +192,6 @@ describe('admin-info tenant base URL resolution', () => {
       runtime_profiles: {
         registry_backend: string;
         effective: {
-          storage: { id: string };
           audit: { id: string };
           residency: { id: string };
         };
@@ -206,9 +205,9 @@ describe('admin-info tenant base URL resolution', () => {
     expect(body.saml.sp_metadata).toBe('https://default.auth.example.com/saml/sp/metadata');
     expect(body.saml.metadata).toBe(body.saml.sp_metadata);
     expect(body.runtime_profiles?.registry_backend).toBe('database');
-    expect(body.runtime_profiles?.effective.storage.id).toBe('builtin:storage:standard');
     expect(body.runtime_profiles?.effective.audit.id).toBe('builtin:audit:standard');
     expect(body.runtime_profiles?.effective.residency.id).toBe('builtin:residency:default');
+    expect(body.runtime_profiles?.effective).not.toHaveProperty('storage');
     expect(body.runtime_profiles_error).toBeNull();
   });
 
@@ -240,9 +239,13 @@ describe('admin-info tenant base URL resolution', () => {
           status,
           headers: { 'Content-Type': 'application/json' },
         }),
-      get: vi.fn((key: string) =>
-        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
-      ),
+      get: vi.fn((key: string) => {
+        if (key === 'adminAuth') return { roles: ['system_admin'], tenantScope: ['*'] };
+        if (key === 'tenantMetadataContext') {
+          return { tenantId: 'default', coreDb: env.DB, route: {} };
+        }
+        return undefined;
+      }),
     } as any);
 
     const body = (await response.json()) as { login_ui_url: string | null };
@@ -275,9 +278,13 @@ describe('admin-info tenant base URL resolution', () => {
           status,
           headers: { 'Content-Type': 'application/json' },
         }),
-      get: vi.fn((key: string) =>
-        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
-      ),
+      get: vi.fn((key: string) => {
+        if (key === 'adminAuth') return { roles: ['system_admin'], tenantScope: ['*'] };
+        if (key === 'tenantMetadataContext') {
+          return { tenantId: 'default', coreDb: env.DB, route: {} };
+        }
+        return undefined;
+      }),
     } as any);
 
     const body = (await response.json()) as {
@@ -316,9 +323,13 @@ describe('admin-info tenant base URL resolution', () => {
           status,
           headers: { 'Content-Type': 'application/json' },
         }),
-      get: vi.fn((key: string) =>
-        key === 'adminAuth' ? { roles: ['system_admin'], tenantScope: ['*'] } : undefined
-      ),
+      get: vi.fn((key: string) => {
+        if (key === 'adminAuth') return { roles: ['system_admin'], tenantScope: ['*'] };
+        if (key === 'tenantMetadataContext') {
+          return { tenantId: 'default', coreDb: env.DB, route: {} };
+        }
+        return undefined;
+      }),
     } as any);
 
     const body = (await response.json()) as {

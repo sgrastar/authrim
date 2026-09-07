@@ -1,0 +1,26 @@
+{
+  "name": "@authrim/ar-plugin-runner",
+  "version": "0.4.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "deploy": "test -n \"$DEPLOY_ENV\" && pnpm --dir ../.. exec tsx scripts/deploy-api.ts --env=\"$DEPLOY_ENV\" --component=ar-plugin-runner --mode=auto --concurrency=1",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@authrim/ar-lib-core": "workspace:*",
+    "@authrim/ar-lib-plugin": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251121.0",
+    "@types/node": "^22.19.7",
+    "jose": "^6.2.9",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.8",
+    "wrangler": "^4.110.0"
+  }
+}

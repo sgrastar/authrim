@@ -31,7 +31,7 @@ const ko: Translations = {
 
   // Main menu
   'menu.prompt': '무엇을 하시겠습니까?',
-  'menu.quick': '빠른 설정 (5분)',
+  'menu.quick': '빠른 설정',
   'menu.quickDesc': '최소 구성으로 Authrim 배포',
   'menu.custom': '사용자 정의 설정',
   'menu.customDesc': '모든 옵션을 단계별로 구성',
@@ -103,6 +103,8 @@ const ko: Translations = {
   'prereq.notLoggedIn': 'Cloudflare에 로그인되지 않았습니다',
   'prereq.loginHint': '다음 명령어를 실행하여 인증하세요:',
   'prereq.loggedInAs': 'Cloudflare에 연결됨 ({{email}})',
+  'prereq.authenticated': 'Cloudflare에 연결됨',
+  'prereq.checkFailed': 'wrangler 확인에 실패했습니다',
   'prereq.accountId': '계정 ID: {{accountId}}',
 
   // Environment
@@ -179,6 +181,13 @@ const ko: Translations = {
   'domain.zoneCheckSkipped': '영역 확인을 건너뛰고 설정을 계속합니다...',
   'domain.continueWithoutZone': '영역 확인 없이 계속하시겠습니까?',
   'domain.configureBinding': 'Workers에 대한 사용자 정의 도메인 바인딩 구성',
+  'domain.configureBindingDesc':
+    '기본 도메인을 라우터 Worker에 직접 할당하여 Cloudflare가 DNS와 TLS 인증서를 관리하도록 합니다. 테넌트 하위 도메인은 계속 와일드카드 라우팅을 사용합니다.',
+  'domain.customHostnamesDesc':
+    'Cloudflare Custom Hostnames로 테넌트 사용자 정의 도메인을 자동화합니다.',
+  'domain.customHostnamesPrivacy':
+    '토큰은 로컬 비밀 파일에만 저장되고 Worker 비밀로 업로드되며 D1, KV 또는 설정 구성에는 저장되지 않습니다.',
+  'domain.customHostnamesPrompt': 'Cloudflare Custom Hostnames 자동화를 활성화하시겠습니까?',
   'domain.action.retryCheck': '다시 확인',
   'domain.action.reloadPage': '페이지 새로고침',
   'domain.action.openCloudflareDashboard': 'Cloudflare 대시보드 열기',
@@ -224,6 +233,13 @@ const ko: Translations = {
   'domain.apiDomain': 'API / 발급자 도메인 (예: auth.example.com)',
   'domain.loginUiDomain': '로그인 UI 도메인 (건너뛰려면 Enter)',
   'domain.adminUiDomain': '관리자 UI 도메인 (건너뛰려면 Enter)',
+  'domain.baseDomainDepthError':
+    'Base Domain은 테넌트 URL에 사용되는 상위 도메인이어야 합니다. "{{hostname}}"에는 등록 도메인 앞에 너무 많은 레이블이 있습니다.',
+  'domain.uiDomainDepthError':
+    '{{label}} 도메인 "{{hostname}}"은 표준 테넌트 도메인 모델에 비해 너무 깊습니다.',
+  'domain.suggestedHost': '권장 호스트: {{hostname}}',
+  'domain.uiRequiresOwnRoute':
+    '{{label}} 사용자 지정 도메인에는 별도의 Worker 라우트가 필요합니다.',
   'domain.enterDomains': '사용자 정의 도메인 입력 (Cloudflare 기본값을 사용하려면 비워두세요)',
   'domain.singleTenantNote': '단일 테넌트 모드에서는 발급자 URL = API 도메인',
   'domain.usingWorkersDev': '(Cloudflare workers.dev 도메인 사용)',
@@ -237,9 +253,9 @@ const ko: Translations = {
   // Database
   'db.title': '데이터베이스 구성',
   'db.regionWarning': '데이터베이스 지역은 생성 후 변경할 수 없습니다.',
-  'db.coreDescription': 'Core DB: OAuth 클라이언트, 토큰, 세션, 감사 로그 저장',
+  'db.coreDescription': '플랫폼 DB: 메타데이터와 비PII 감사 로그 저장',
   'db.coreRegion': 'Core 데이터베이스 지역',
-  'db.piiDescription': 'PII DB: 사용자 프로필, 자격 증명, 개인 데이터 저장',
+  'db.piiDescription': '플랫폼 PII DB: PII 감사와 익명화 데이터 저장',
   'db.piiNote': '데이터 보호 요구사항을 고려하세요.',
   'db.piiRegion': 'PII 데이터베이스 지역',
   'db.creating': '데이터베이스 생성 중...',
@@ -272,6 +288,7 @@ const ko: Translations = {
   'keys.generated': '키 생성됨 ({{path}})',
   'keys.existing': '"{{env}}" 환경의 키가 이미 존재합니다',
   'keys.existingWarning': '기존 키가 덮어쓰기됩니다.',
+  'keys.replaced': '환경 이름을 사용할 수 있음을 확인한 후 기존 키를 교체했습니다.',
   'keys.error': '키 생성 실패',
   'keys.regeneratePrompt': '키를 재생성하시겠습니까?',
   'keys.regenerateWarning': '기존의 모든 토큰이 무효화됩니다!',
@@ -322,6 +339,15 @@ const ko: Translations = {
   'config.shards': '샤드',
   'config.sec': '초',
   'config.automatic': '자동',
+  'config.d1Routing': 'D1 라우팅:',
+  'config.placement': '배치:',
+  'config.provisioning': '프로비저닝:',
+  'config.uiEnvNoApi': 'API URL을 설정하면 ui.env가 생성됩니다.',
+  'config.wranglerConfigsSaved': 'wrangler.toml 마스터 설정 {{count}}개를 저장했습니다',
+  'config.wranglerConfigsPartial': '일부 wrangler 설정을 저장하지 못했습니다',
+  'config.wranglerConfigsSyncing': 'wrangler 설정을 패키지에 동기화하는 중...',
+  'config.wranglerConfigsSynced': 'wrangler 설정을 {{count}}개 컴포넌트에 동기화했습니다',
+  'config.wranglerConfigsSyncFailed': 'wrangler 설정 동기화에 실패했습니다',
 
   // Deploy
   'deploy.prompt': '이 구성으로 설정을 시작하시겠습니까?',
@@ -351,6 +377,8 @@ const ko: Translations = {
   'deploy.wranglerKeep': '📝 수동 변경 유지 (현재 상태로 배포)',
   'deploy.wranglerBackup': '💾 백업 후 마스터로 덮어쓰기',
   'deploy.wranglerOverwrite': '⚠️  마스터로 덮어쓰기 (변경 사항 손실)',
+  'deploy.initialProvisioningFailed':
+    'Cloudflare 프로비저닝이 완료되지 않았습니다. 환경 잠금은 생성되지 않았으며, init을 다시 실행하면 안전하게 재개할 수 있습니다.',
 
   // Email provider
   'email.title': '이메일 제공자',
@@ -406,15 +434,22 @@ const ko: Translations = {
   // Cloudflare API Token
   'cf.apiTokenPrompt': 'Cloudflare API 토큰 입력',
   'cf.apiTokenValidation': '유효한 API 토큰을 입력하세요',
-
-  // OIDC Profile
-  'profile.prompt': 'OIDC 프로필 선택',
-  'profile.basicOp': 'Basic OP (표준 OIDC 제공자)',
-  'profile.basicOpDesc': '표준 OIDC 기능',
-  'profile.fapiRw': 'FAPI Read-Write (금융 등급)',
-  'profile.fapiRwDesc': 'FAPI 1.0 Read-Write 보안 프로필 준수',
-  'profile.fapi2Security': 'FAPI 2.0 Security Profile',
-  'profile.fapi2SecurityDesc': 'FAPI 2.0 보안 프로필 준수 (최고 보안)',
+  'cf.apiTokenCreationMethod': 'API 토큰을 어떻게 생성하시겠습니까?',
+  'cf.apiTokenCreateFromLink': '미리 설정된 링크에서 생성(권장)',
+  'cf.apiTokenCreateFromLinkDesc': '필요한 권한과 Zone이 선택된 상태로 Cloudflare를 엽니다',
+  'cf.apiTokenCreateManually': '수동으로 생성',
+  'cf.apiTokenCreateManuallyDesc': '필요한 권한을 확인하고 토큰을 직접 설정합니다',
+  'cf.apiTokenTemplateUrl': 'Cloudflare 토큰 생성 URL:',
+  'cf.apiTokenTemplateOpenPrompt': 'Enter를 눌러 브라우저에서 Cloudflare 열기',
+  'cf.apiTokenTemplateOpened': 'Cloudflare 토큰 생성 페이지를 열었습니다',
+  'cf.apiTokenTemplateOpenFailed': '브라우저를 열 수 없습니다. 아래 URL을 직접 여세요.',
+  'cf.apiTokenManualTitle': '다음 설정으로 사용자 API 토큰을 생성하세요:',
+  'cf.apiTokenManualType': 'Global API Key가 아닌 API Token을 사용하세요.',
+  'cf.apiTokenManualPermission': '권한: Zone > SSL and Certificates > Edit',
+  'cf.apiTokenManualResource': 'Zone 리소스: Include > Specific zone > {{zone}}',
+  'cf.apiTokenManualLeastPrivilege': '관련 없는 권한이나 Zone을 추가하지 마세요.',
+  'cf.apiTokenSecretOnce': '토큰 비밀값은 한 번만 표시됩니다. Cloudflare를 나가기 전에 복사하세요.',
+  'cf.apiTokenSelectedZone': '이 환경에서 사용하는 Zone',
 
   // Tenant configuration
   'tenant.title': '테넌트 모드',
@@ -433,6 +468,18 @@ const ko: Translations = {
   'tenant.defaultTenantPrompt': '기본 테넌트 이름 (식별자)',
   'tenant.defaultTenantValidation': '소문자 영숫자와 하이픈만 허용됩니다',
   'tenant.displayNamePrompt': '기본 테넌트 표시 이름',
+  'tenant.domainSetupHint': '비워 두면 단일 테넌트 모드에서 workers.dev를 사용합니다.',
+  'tenant.customDomainExamples': '사용자 정의 도메인을 사용하는 경우:',
+  'tenant.nakedDomainExample': 'https://example.com (테넌트 하위 도메인 없는 issuer)',
+  'tenant.subdomainExample': 'https://acme.example.com (테넌트 하위 도메인이 있는 issuer)',
+  'tenant.idRules':
+    '테넌트 ID는 1~63자이며 소문자로 시작하고 소문자, 숫자, 하이픈만 포함해야 합니다.',
+  'tenant.randomIdHint':
+    '무작위 테넌트 ID를 사용하면 issuer URL에 고객명이나 회사명이 노출되지 않습니다.',
+  'tenant.randomIdPrompt': '무작위 테넌트 ID를 생성하시겠습니까? ({{id}})',
+  'tenant.initialDisplayName': '초기 테넌트',
+  'tenant.nakedDomainPrompt': '기본 테넌트의 issuer로 기본 도메인을 사용하시겠습니까?',
+  'tenant.primaryTenantPrompt': '기본 도메인용 기본 테넌트 ID (비워 두면 초기 테넌트 사용)',
   'tenant.singleTenantTitle': '단일 테넌트 URL 구성',
   'tenant.singleTenantNote1': '단일 테넌트 모드에서는:',
   'tenant.singleTenantNote2': '발급자 URL = API 사용자 정의 도메인 (또는 workers.dev 폴백)',
@@ -466,7 +513,7 @@ const ko: Translations = {
   // Feature flags
   'features.title': '기능 플래그',
   'features.queuePrompt': 'Cloudflare Queues를 활성화하시겠습니까? (감사 로그용)',
-  'features.r2Prompt': 'Cloudflare R2를 활성화하시겠습니까? (아바타용)',
+  'features.r2Prompt': 'Cloudflare R2 객체 스토리지를 활성화하시겠습니까?',
   'features.queue': '큐:',
   'features.r2': 'R2:',
 
@@ -515,6 +562,16 @@ const ko: Translations = {
   'complete.urls': 'URL:',
   'complete.configLocation': '구성:',
   'complete.keysLocation': '키:',
+  'complete.createdResources': '생성된 리소스:',
+  'complete.generatedFiles': '생성된 파일:',
+  'complete.automaticStep1': '1. 스키마를 적용하고 전체 릴리스를 배포합니다:',
+  'complete.automaticStep2': '2. 요청되면 일회용 Cloudflare 부트스트랩 토큰을 생성하여 입력합니다.',
+  'complete.automaticStep2Detail':
+    'Setup이 분할된 하위 토큰을 Control에 직접 등록하고 부트스트랩 토큰을 폐기합니다.',
+  'complete.manualStep1': '1. 현재 Wrangler OAuth 로그인으로 스키마를 적용하고 배포합니다:',
+  'complete.manualStep2': '2. Setup으로 Admin이 요청한 대기 중인 프로비저닝 작업을 실행합니다.',
+  'complete.manualStep2Detail':
+    '자동 프로비저닝은 꺼져 있으며 Cloudflare API 토큰은 Control에 저장되지 않습니다.',
 
   // Resource provisioning
   'resource.provisioning': '{{resource}} 프로비저닝 중...',
@@ -572,6 +629,8 @@ const ko: Translations = {
   // Common
   'common.yes': '예',
   'common.no': '아니오',
+  'common.example': '예',
+  'common.comingSoon': '출시 예정',
   'common.continue': '계속',
   'common.cancel': '취소',
   'common.skip': '건너뛰기',
@@ -615,7 +674,6 @@ const ko: Translations = {
   'delete.confirm': '"{{env}}"를 삭제하시겠습니까?',
   'delete.confirmPermanent':
     '⚠️  "{{env}}"의 모든 리소스가 영구적으로 삭제됩니다. 계속하시겠습니까?',
-  'delete.confirmWarning': '이 작업은 취소할 수 없습니다!',
   'delete.deleting': '{{resource}} 삭제 중...',
   'delete.deleted': '{{resource}} 삭제됨',
   'delete.error': '{{resource}} 삭제 실패',
@@ -627,6 +685,10 @@ const ko: Translations = {
   'delete.kvNamespaces': 'KV 네임스페이스',
   'delete.queues': '큐',
   'delete.r2Buckets': 'R2 버킷',
+  'delete.pages': 'Pages 프로젝트',
+  'delete.partialSuccess': '선택한 리소스를 삭제하고 나머지 환경 상태는 유지했습니다',
+  'delete.inventoryUnavailable':
+    'Cloudflare 리소스 목록을 확인할 수 없어 삭제를 시작하지 않았습니다',
 
   // Info command
   'info.title': '환경 정보',
@@ -773,19 +835,71 @@ const ko: Translations = {
   'web.db.name': '이름',
   'web.db.region': '지역',
   'web.db.regionAuto': '자동 (가장 가까운 지역)',
-  'web.db.storageProfileTitle': '스토리지 배포 프로필',
-  'web.db.storageProfileDesc': '이 배포에서 사용자 core/PII 데이터를 어떻게 배치할지 선택합니다.',
-  'web.db.sharedD1Title': '공유 D1',
-  'web.db.sharedD1Desc':
-    '배포 전체에서 하나의 core D1과 PII D1을 사용합니다. 설정 비용이 가장 낮은 기본 경로입니다.',
-  'web.db.tenantD1Title': '테넌트 D1',
-  'web.db.tenantD1Desc':
-    '테넌트마다 core/PII D1 쌍을 하나씩 사용합니다. 테넌트 활성화 전에 테넌트 데이터베이스 프로비저닝이 필요합니다.',
-  'web.db.preallocatedSlotsTitle': '사전 할당된 테넌트 슬롯',
-  'web.db.preallocatedSlotsDesc':
-    '각 테넌트 슬롯은 core와 PII 두 개의 D1 데이터베이스를 생성합니다.',
-  'web.db.slotsLabel': '슬롯',
-  'web.db.slotsHelp': '기본값은 3입니다. 최대 500 슬롯입니다.',
+  'web.db.controlPlaneTitle': 'D1 Control Plane',
+  'web.db.controlPlaneDesc':
+    'Control Plane과 초기 tenant shard를 구성하며 이후 용량은 필요할 때 자동으로 생성됩니다.',
+  'web.db.controlPlaneWorkerDesc':
+    '이 기능은 Authrim이 tenant 데이터베이스를 관리하도록 합니다. 필요한 관리 리소스는 설정 중 생성됩니다.',
+  'web.db.controlPlaneTenantPlacement':
+    '초기 tenant는 자체 저장 위치로 시작합니다. tenant가 추가되면 각 tenant의 저장 위치를 선택할 수 있습니다.',
+  'web.db.controlPlaneResolverNote':
+    'Authrim이 데이터베이스 생성과 연결 경로를 자동으로 관리합니다.',
+  'web.db.automaticProvisioningTitle': 'tenant 데이터베이스 자동 생성',
+  'web.db.automaticProvisioningOn': '켜짐 (자동 생성)',
+  'web.db.automaticProvisioningOnDesc':
+    'tenant 또는 데이터가 증가하면 Authrim이 필요한 데이터베이스를 자동으로 생성합니다.',
+  'web.db.automaticProvisioningTokenNote':
+    '전용 Control Worker가 tenant 데이터베이스 생성에 필요한 제한된 권한의 Cloudflare API token을 저장하고 사용합니다.',
+  'web.db.automaticProvisioningOff': '꺼짐 (Setup에서 생성)',
+  'web.db.automaticProvisioningOffDesc':
+    '데이터베이스를 자동으로 생성하지 않습니다. 필요할 때 Setup 도구에서 생성하세요.',
+  'web.db.automaticProvisioningNote': '이 옵션을 꺼도 tenant별 데이터 분리는 유지됩니다.',
+  'web.deploy.controlCredentialsTitle': 'Cloudflare 연결 정보',
+  'web.deploy.bootstrapTokenTitle': '자동 설정용 임시 Cloudflare 토큰',
+  'web.deploy.cloudflareLoginNote':
+    'Cloudflare Dashboard 로그인은 Wrangler OAuth와 별개이며 다시 로그인을 요청할 수 있습니다.',
+  'web.deploy.createBootstrapToken': '일회용 Cloudflare 토큰 생성',
+  'web.deploy.bootstrapTokenLabel': '임시 Cloudflare 토큰',
+  'web.deploy.bootstrapTokenPlaceholder': '임시 Cloudflare 토큰 입력',
+  'web.deploy.bootstrapTokenHelp': '이 토큰은 한 번 사용되며 필요한 토큰을 등록한 후 폐기됩니다.',
+  'web.deploy.bootstrapTokenDescription':
+    '이 임시 토큰은 Authrim이 테넌트 데이터베이스를 자동으로 만들 수 있도록 합니다. 계정 소유 토큰에는 Account API Tokens: Write/Edit, 사용자 소유 토큰에는 API Tokens: Write/Edit 권한이 필요합니다. Setup은 필요에 따라 D1, Workers, KV, R2용 범위 제한 API 토큰을 만들고 Control Worker에 등록한 뒤 임시 토큰을 폐기합니다.',
+  'web.deploy.manualDnsSectionTitle': 'DNS 설정',
+  'web.deploy.bootstrapTokenCreateStatus':
+    'Cloudflare Dashboard에서 End Date를 {{endDate}}(UTC)로 설정하고 임시 토큰을 만든 후 아래에 입력하세요.',
+  'web.deploy.bootstrapPopupBlocked':
+    '브라우저가 새 탭을 차단했습니다. 팝업을 허용하고 버튼을 다시 선택하세요.',
+  'web.deploy.bootstrapTokenRequired': '배포 전에 임시 Cloudflare 토큰을 생성하고 입력하세요.',
+  'web.envDetail.automaticProvisioningTitle': '자동 프로비저닝',
+  'web.envDetail.automaticProvisioningChecking': '확인 중...',
+  'web.envDetail.automaticProvisioningUnavailable': '사용할 수 없음',
+  'web.envDetail.createOneTimeCloudflareToken': '일회용 Cloudflare 토큰 생성',
+  'web.envDetail.oneTimeBootstrapTokenPlaceholder': '일회용 bootstrap 토큰',
+  'web.envDetail.enableAutomaticProvisioning': '활성화',
+  'web.envDetail.enterOneTimeTokenThenEnable':
+    'End Date를 {{endDate}}(UTC)로 설정하고 일회용 토큰을 만들어 입력한 후 활성화를 선택하세요.',
+  'web.envDetail.bootstrapPopupBlocked': '브라우저가 Cloudflare Dashboard 탭을 차단했습니다.',
+  'web.envDetail.enterOneTimeTokenFirst': '먼저 일회용 Cloudflare 토큰을 입력하세요.',
+  'web.envDetail.preparingControlAuthority': 'Control 프로비저닝 권한을 준비하는 중...',
+  'web.envDetail.deployingControlWorker': 'Control Worker 구성을 배포하는 중...',
+  'web.envDetail.registeringScopedCredentials': '범위 제한 자격 증명을 등록하는 중...',
+  'web.envDetail.automaticProvisioningOn': '켜짐',
+  'web.envDetail.automaticProvisioningOff': '꺼짐',
+  'web.envDetail.automaticProvisioningCredentialsRegistered':
+    '범위 제한 Control Worker 자격 증명이 등록되었습니다.',
+  'web.envDetail.automaticProvisioningBlocked': '자동 프로비저닝이 차단되었습니다.',
+  'web.envDetail.automaticProvisioningMissing': '(누락: {{missing}})',
+  'web.envDetail.automaticProvisioningRepairHint': '복구하려면 새 일회용 토큰을 입력하세요.',
+  'web.envDetail.bootstrapRetainedForRetry':
+    'Cloudflare에서 일시적인 오류가 발생했습니다. Bootstrap token은 계속 활성 상태입니다. 같은 token을 다시 입력하고 활성화를 선택하여 재개하세요.',
+  'web.envDetail.bootstrapNotSubmittedForRetry':
+    'Bootstrap token을 제출하기 전에 Setup이 중지되었습니다. 입력란에 그대로 남아 있어 다시 시도할 수 있습니다.',
+  'web.envDetail.revokeTokensBeforeRetry':
+    '재시도 전에 Cloudflare Dashboard에서 표시된 Authrim bootstrap 및 하위 토큰을 폐기하세요.',
+  'web.envDetail.bootstrapRevokedPendingReset':
+    'Bootstrap 토큰은 폐기되었지만 대기 상태를 초기화하지 못했습니다.',
+  'web.envDetail.bootstrapRevokedDisabled':
+    'Bootstrap 토큰을 폐기하고 자동 프로비저닝을 꺼짐으로 되돌렸습니다.',
 
   // Web UI Email
   'web.email.title': '이메일 제공자',
@@ -852,7 +966,7 @@ const ko: Translations = {
   'web.env.openSetup': '설정 열기',
   'web.env.copyUrl': '복사',
   'web.env.deleteTitle': '환경 삭제',
-  'web.env.deleteWarning': '이 작업은 취소할 수 없습니다. 다음 리소스가 영구적으로 삭제됩니다:',
+  'web.env.deleteWarning': '선택한 다음 리소스를 삭제합니다:',
   'web.env.confirmDelete': '선택 항목 삭제',
   'web.env.cancel': '취소',
 
@@ -921,7 +1035,8 @@ const ko: Translations = {
   'web.form.userIdFormat': '사용자 ID 형식',
   'web.form.userIdNanoid': 'NanoID (권장)',
   'web.form.userIdUuid': 'UUID v4',
-  'web.form.userIdFormatHint': '사용자 ID 생성 형식. 사용자 생성 후 변경할 수 없습니다.',
+  'web.form.userIdExample': '예:',
+  'web.form.userIdFormatHint': '사용자 생성 후 변경할 수 없습니다.',
   'web.form.loginDomainPlaceholder': 'login.example.com',
   'web.form.adminDomainPlaceholder': 'admin.example.com',
 
@@ -1058,6 +1173,27 @@ const ko: Translations = {
 
   // Web UI Environment Detail
   'web.envDetail.title': '환경 세부 정보',
+  'web.envDetail.initialDeployRecoveryTitle': '초기 배포가 완료되지 않았습니다',
+  'web.envDetail.initialDeployRecoveryDesc':
+    '이전 배포가 검증 전에 중지되었습니다. 재개할 때 생성된 리소스를 재사용합니다.',
+  'web.envDetail.initialDeployRecoveryAction': '초기 배포 재개',
+  'web.envDetail.initialDeployRecoveryVerified':
+    'Cloudflare 상태를 확인했습니다. 완료: {{completed}}. {{stage}}부터 재개합니다.',
+  'web.envDetail.initialDeployRecoveryStageMigrations': '데이터베이스 마이그레이션 검증',
+  'web.envDetail.initialDeployRecoveryStageControlPlane': '초기 배포 준비',
+  'web.envDetail.initialDeployRecoveryStageWorkers': 'Worker 배포',
+  'web.envDetail.initialDeployRecoveryStageVerification': '배포 후 검증',
+  'web.envDetail.initialDeployRecoveryResources': '리소스 프로비저닝',
+  'web.envDetail.initialDeployRecoverySchema': '데이터베이스 마이그레이션',
+  'web.envDetail.initialDeployRecoveryWorkers': 'Worker 배포',
+  'web.envDetail.initialDeployRecoveryRecreate':
+    '저장된 체크포인트가 Cloudflare 상태와 일치하지 않아 재개를 비활성화했습니다. 이 불완전한 환경을 삭제하고 다시 생성하세요.',
+  'web.envDetail.initialDeployRecoveryManifestChanged':
+    '초기 배포를 시작한 후 draft migration 정의가 변경되었습니다. 저장된 배포 상태가 데이터베이스와 더 이상 일치하지 않을 수 있어 재개를 비활성화했습니다. 이 불완전한 환경을 삭제하고 다시 생성하세요.',
+  'web.envDetail.initialDeployRecoveryBlocked':
+    '현재 상태를 확인할 수 없어 재개를 비활성화했습니다. Cloudflare 연결을 확인하고 환경을 다시 검사하세요. 계속 확인할 수 없다면 불완전한 환경을 삭제하고 다시 생성하세요.',
+  'web.envDetail.initialDeployRecoveryTokenRequired':
+    ' 배포 자격 증명을 갱신해야 하며 새 일회용 Cloudflare token을 요청합니다.',
   'web.envDetail.adminNotConfigured': '관리자 계정 미구성',
   'web.envDetail.adminNotConfiguredDesc': '이 환경에 초기 관리자가 설정되지 않았습니다.',
   'web.envDetail.startPasskey': 'Passkey로 관리자 계정 설정 시작',
@@ -1135,7 +1271,7 @@ const ko: Translations = {
 
   // Web UI Delete Section
   'web.delete.title': '환경 삭제',
-  'web.delete.warning': '이 작업은 되돌릴 수 없습니다. 선택한 모든 리소스가 영구적으로 삭제됩니다.',
+  'web.delete.warning': '선택한 리소스를 이 환경에서 삭제합니다.',
   'web.delete.environment': '환경:',
   'web.delete.selectResources': '삭제할 리소스 선택:',
   'web.delete.workers': 'Workers',
@@ -1180,6 +1316,9 @@ const ko: Translations = {
   'web.status.adminNotConfigured': '관리자 미구성',
   'web.status.initializing': '초기화 중...',
   'web.status.found': '{{count}}개 발견됨',
+  'web.status.operationInProgress':
+    '다른 설정 작업이 이미 진행 중입니다. 완료될 때까지 기다린 후 다시 시도하세요.',
+  'web.status.warning': '경고:',
 
   // Web UI Button Labels (dynamic)
   'web.btn.reprovision': '재프로비저닝 (삭제 및 생성)',

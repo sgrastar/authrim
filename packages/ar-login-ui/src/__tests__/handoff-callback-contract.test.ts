@@ -30,6 +30,21 @@ describe('hosted handoff callback contract', () => {
 
 	it('does not fall back to browser-side authorization code token exchange', () => {
 		expect(callbackSource).toContain('external_handoff_required');
-		expect(callbackSource).toContain('token-capable SDK client');
+		expect(callbackSource).toContain('external_handoff_required: () => $LL.error_server_error()');
+		expect(callbackSource).not.toContain('token-capable SDK client');
+	});
+
+	it('polls durable external IdP provisioning while keeping the existing processing spinner', () => {
+		expect(callbackSource).toContain("params.get('provisioning_token')");
+		expect(callbackSource).toContain('/api/external/provisioning/status');
+		expect(callbackSource).toContain('retry_after_ms');
+		expect(callbackSource).toContain("status === 'processing'");
+		expect(callbackSource).toContain("history.replaceState(null, '', window.location.pathname)");
+	});
+
+	it('allows only the fixed same-origin provisioning resume endpoint', () => {
+		expect(callbackSource).toContain('resumeUrl.origin !== apiOrigin');
+		expect(callbackSource).toContain("resumeUrl.pathname !== '/auth/external/provisioning/resume'");
+		expect(callbackSource).toContain('window.location.assign(resumeUrl.toString())');
 	});
 });

@@ -215,6 +215,50 @@ describe('DPoPJTIStore', () => {
       expect(body.error_description).toContain('JTI already used');
     });
 
+    it('fails closed when persisted replay state cannot be loaded', async () => {
+      vi.spyOn(mockState.storage, 'get').mockRejectedValueOnce(
+        new Error('durable storage read unavailable')
+      );
+
+      const response = await store.fetch(
+        new Request('http://localhost/check-and-store', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jti: 'load-failure-jti',
+            client_id: 'client_1',
+            iat: Math.floor(Date.now() / 1000),
+            ttl: 3600,
+          }),
+        })
+      );
+
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({ error: 'server_error' });
+    });
+
+    it('fails closed when a new replay marker cannot be persisted', async () => {
+      vi.spyOn(mockState.storage, 'put').mockRejectedValueOnce(
+        new Error('durable storage write unavailable')
+      );
+
+      const response = await store.fetch(
+        new Request('http://localhost/check-and-store', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jti: 'save-failure-jti',
+            client_id: 'client_1',
+            iat: Math.floor(Date.now() / 1000),
+            ttl: 3600,
+          }),
+        })
+      );
+
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toMatchObject({ error: 'server_error' });
+    });
+
     it('should detect immediate replay (same second)', async () => {
       const jti = 'immediate-replay-jti';
       const iat = Math.floor(Date.now() / 1000);

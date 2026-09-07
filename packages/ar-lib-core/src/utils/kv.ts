@@ -54,13 +54,13 @@ export interface UserCacheSources {
 export type UserPiiCacheMode = 'merged' | 'encrypted_short_ttl' | 'no_cross_request_pii';
 
 export interface UserCacheScope {
-  storageProfileId: string;
-  sourceGeneration?: string | number;
-  schemaVersion?: string | number;
+  routeGeneration: string | number;
+  bindingGeneration: string | number;
+  schemaGeneration: string | number;
 }
 
 interface EncryptedCachedUserEnvelope {
-  version: 1;
+  version: 2;
   algorithm: typeof PII_CACHE_ALGORITHM;
   purpose: typeof PII_CACHE_PURPOSE;
   tenantId: string;
@@ -69,9 +69,9 @@ interface EncryptedCachedUserEnvelope {
   iv: string;
   ciphertext: string;
   metadata: {
-    storageProfileId?: string;
-    sourceGeneration?: string | number;
-    schemaVersion?: string | number;
+    routeGeneration?: string | number;
+    bindingGeneration?: string | number;
+    schemaGeneration?: string | number;
   };
 }
 
@@ -116,10 +116,10 @@ export function buildUserCacheKey(
     return buildKVKey('user', userId, tenantId);
   }
 
-  const profile = encodeURIComponent(scope.storageProfileId);
-  const generation = encodeURIComponent(String(scope.sourceGeneration ?? 'default'));
-  const schema = encodeURIComponent(String(scope.schemaVersion ?? '1'));
-  return buildKVKey(`user:v2:sp:${profile}:gen:${generation}:schema:${schema}`, userId, tenantId);
+  const route = encodeURIComponent(String(scope.routeGeneration));
+  const binding = encodeURIComponent(String(scope.bindingGeneration));
+  const schema = encodeURIComponent(String(scope.schemaGeneration));
+  return buildKVKey(`user:v3:route:${route}:binding:${binding}:schema:${schema}`, userId, tenantId);
 }
 
 function hexToBytes(hex: string): Uint8Array {
@@ -196,9 +196,9 @@ function buildPiiCacheAdditionalData(
       cache_key: cacheKey,
       purpose: PII_CACHE_PURPOSE,
       key_version: keyVersion,
-      storage_profile_id: scope?.storageProfileId ?? null,
-      source_generation: scope?.sourceGeneration ?? null,
-      schema_version: scope?.schemaVersion ?? null,
+      route_generation: scope?.routeGeneration ?? null,
+      binding_generation: scope?.bindingGeneration ?? null,
+      schema_generation: scope?.schemaGeneration ?? null,
     })
   );
 }
@@ -249,7 +249,7 @@ async function encryptCachedUser(
     textEncoder.encode(JSON.stringify(user))
   );
   return {
-    version: 1,
+    version: 2,
     algorithm: PII_CACHE_ALGORITHM,
     purpose: PII_CACHE_PURPOSE,
     tenantId,
@@ -258,9 +258,9 @@ async function encryptCachedUser(
     iv: toBase64Url(iv),
     ciphertext: toBase64Url(new Uint8Array(ciphertext)),
     metadata: {
-      storageProfileId: scope?.storageProfileId,
-      sourceGeneration: scope?.sourceGeneration,
-      schemaVersion: scope?.schemaVersion,
+      routeGeneration: scope?.routeGeneration,
+      bindingGeneration: scope?.bindingGeneration,
+      schemaGeneration: scope?.schemaGeneration,
     },
   };
 }
@@ -275,7 +275,7 @@ async function decryptCachedUser(
 ): Promise<CachedUser> {
   const envelope = JSON.parse(cached) as EncryptedCachedUserEnvelope;
   if (
-    envelope.version !== 1 ||
+    envelope.version !== 2 ||
     envelope.algorithm !== PII_CACHE_ALGORITHM ||
     envelope.purpose !== PII_CACHE_PURPOSE ||
     envelope.tenantId !== tenantId
@@ -936,6 +936,7 @@ export async function getClient(
     response_types: string;
     scope: string | null;
     token_endpoint_auth_method: string | null;
+    token_endpoint_auth_signing_alg: string | null;
     contacts: string | null;
     logo_uri: string | null;
     client_uri: string | null;
@@ -948,6 +949,9 @@ export async function getClient(
     id_token_signed_response_alg: string | null;
     userinfo_signed_response_alg: string | null;
     request_object_signing_alg: string | null;
+    authorization_signed_response_alg: string | null;
+    authorization_encrypted_response_alg: string | null;
+    authorization_encrypted_response_enc: string | null;
     is_trusted: number | null;
     skip_consent: number | null;
     allow_claims_without_scope: number | null;
@@ -984,11 +988,18 @@ export async function getClient(
     software_id: string | null;
     software_version: string | null;
     requestable_scopes: string | null;
+    agent_access_registration_mode: string | null;
+    agent_access_expires_at: number | null;
+    agent_access_last_used_at: number | null;
+    client_metadata_url: string | null;
+    client_metadata_hash: string | null;
+    client_metadata_fetched_at: number | null;
     // CIBA (Client Initiated Backchannel Authentication) settings
     backchannel_token_delivery_mode: string | null;
     backchannel_client_notification_endpoint: string | null;
     backchannel_authentication_request_signing_alg: string | null;
     backchannel_user_code_parameter: number | null;
+    tls_client_certificate_bound_access_tokens: number | null;
     // Authrim Extension: Custom Redirect URIs
     allowed_redirect_origins: string | null;
     // PKCE settings
@@ -1063,6 +1074,7 @@ export async function getClient(
     response_types: normalizeStringArray(result.response_types, ['code']),
     scope: result.scope ?? undefined,
     token_endpoint_auth_method: result.token_endpoint_auth_method ?? undefined,
+    token_endpoint_auth_signing_alg: result.token_endpoint_auth_signing_alg ?? undefined,
     contacts: normalizeOptionalStringArray(result.contacts),
     logo_uri: result.logo_uri ?? undefined,
     client_uri: result.client_uri ?? undefined,
@@ -1075,6 +1087,9 @@ export async function getClient(
     id_token_signed_response_alg: result.id_token_signed_response_alg ?? undefined,
     userinfo_signed_response_alg: result.userinfo_signed_response_alg ?? undefined,
     request_object_signing_alg: result.request_object_signing_alg ?? undefined,
+    authorization_signed_response_alg: result.authorization_signed_response_alg ?? undefined,
+    authorization_encrypted_response_alg: result.authorization_encrypted_response_alg ?? undefined,
+    authorization_encrypted_response_enc: result.authorization_encrypted_response_enc ?? undefined,
     is_trusted: result.is_trusted === 1,
     skip_consent: result.skip_consent === 1,
     allow_claims_without_scope: result.allow_claims_without_scope === 1,
@@ -1136,13 +1151,30 @@ export async function getClient(
     software_id: result.software_id ?? undefined,
     software_version: result.software_version ?? undefined,
     requestable_scopes: normalizeOptionalStringArray(result.requestable_scopes),
+    agent_access_registration_mode:
+      result.agent_access_registration_mode === 'restricted_dcr' ||
+      result.agent_access_registration_mode === 'cimd'
+        ? result.agent_access_registration_mode
+        : undefined,
+    agent_access_expires_at: result.agent_access_expires_at ?? undefined,
+    agent_access_last_used_at: result.agent_access_last_used_at ?? undefined,
+    client_metadata_url: result.client_metadata_url ?? undefined,
+    client_metadata_hash: result.client_metadata_hash ?? undefined,
+    client_metadata_fetched_at: result.client_metadata_fetched_at ?? undefined,
     // CIBA (Client Initiated Backchannel Authentication) settings
-    backchannel_token_delivery_mode: result.backchannel_token_delivery_mode ?? undefined,
+    backchannel_token_delivery_mode:
+      result.backchannel_token_delivery_mode === 'poll' ||
+      result.backchannel_token_delivery_mode === 'ping' ||
+      result.backchannel_token_delivery_mode === 'push'
+        ? result.backchannel_token_delivery_mode
+        : undefined,
     backchannel_client_notification_endpoint:
       result.backchannel_client_notification_endpoint ?? undefined,
     backchannel_authentication_request_signing_alg:
       result.backchannel_authentication_request_signing_alg ?? undefined,
     backchannel_user_code_parameter: result.backchannel_user_code_parameter === 1,
+    tls_client_certificate_bound_access_tokens:
+      result.tls_client_certificate_bound_access_tokens === 1,
     // Authrim Extension: Custom Redirect URIs
     allowed_redirect_origins: normalizeOptionalStringArray(result.allowed_redirect_origins),
     // PKCE settings

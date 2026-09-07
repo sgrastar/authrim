@@ -1,11 +1,13 @@
 import type { DatabaseAdapter } from '../../db/adapter';
 import { getCurrentTimestamp } from '../base';
+import { createLogger } from '../../utils/logger';
 import {
   CanonicalIdentityRepository,
   type CanonicalIdentityGraph,
   type CreateProfileAttributeValueInput,
   type IdentityLifecycleState,
 } from './canonical-identity';
+import type { AccountDirectoryPublication } from '../../services/lookup-directory/publication';
 import {
   encodeCanonicalSensitiveValueRef,
   type CanonicalSensitiveUserField,
@@ -56,6 +58,7 @@ const PROFILE_FIELD_TO_CATALOG_ID: Partial<Record<CanonicalSensitiveUserField, s
 
 const ADDRESS_CATALOG_ENTRY_ID = 'field.canonical.address';
 const CUSTOM_ATTRIBUTES_CATALOG_ENTRY_ID = 'field.canonical.custom_attributes';
+const log = createLogger().module('CANONICAL-RUNTIME-USER-WRITER');
 
 function toLifecycleState(active: boolean): IdentityLifecycleState {
   return active ? 'active' : 'deprovisioned';
@@ -99,50 +102,57 @@ export class CanonicalRuntimeUserWriter {
   ) {}
 
   async createFromRuntimeUser(
-    input: CanonicalRuntimeUserWriteInput
+    input: CanonicalRuntimeUserWriteInput,
+    directoryPublication?: AccountDirectoryPublication
   ): Promise<CanonicalRuntimeUserWriteResult> {
     const lifecycleState = toLifecycleState(input.active);
-    const graph = await this.repository.createIdentityGraph({
-      subject: {
-        id: `subject:${input.userId}`,
-        tenant_id: input.tenantId,
-        subject_type: input.userType === 'm2m' ? 'service_account' : 'person',
-        lifecycle_state: lifecycleState,
-        display_label: null,
+    const graph = await this.repository.createIdentityGraph(
+      {
+        subject: {
+          id: `subject:${input.userId}`,
+          tenant_id: input.tenantId,
+          subject_type: input.userType === 'm2m' ? 'service_account' : 'person',
+          lifecycle_state: lifecycleState,
+          display_label: null,
+        },
+        account: {
+          id: `account:${input.userId}`,
+          tenant_id: input.tenantId,
+          account_type: accountTypeFromUserType(input.userType),
+          lifecycle_state: lifecycleState,
+          legacy_user_id: input.userId,
+          display_label: null,
+          metadata: buildAccountMetadata(input),
+        },
+        link: {
+          id: `subject-account-link:${input.userId}`,
+          tenant_id: input.tenantId,
+          lifecycle_state: lifecycleState,
+          source_ref: input.sourceRef ?? null,
+        },
+        profile: {
+          id: `profile:${input.userId}`,
+          tenant_id: input.tenantId,
+          lifecycle_state: lifecycleState,
+          locale: null,
+          zoneinfo: null,
+        },
       },
-      account: {
-        id: `account:${input.userId}`,
-        tenant_id: input.tenantId,
-        account_type: accountTypeFromUserType(input.userType),
-        lifecycle_state: lifecycleState,
-        legacy_user_id: input.userId,
-        display_label: null,
-        metadata: buildAccountMetadata(input),
-      },
-      link: {
-        id: `subject-account-link:${input.userId}`,
-        tenant_id: input.tenantId,
-        lifecycle_state: lifecycleState,
-        source_ref: input.sourceRef ?? null,
-      },
-      profile: {
-        id: `profile:${input.userId}`,
-        tenant_id: input.tenantId,
-        lifecycle_state: lifecycleState,
-        locale: null,
-        zoneinfo: null,
-      },
-    });
+      directoryPublication
+    );
+    log.info('Canonical identity graph created', { stage: 'core_graph_created' });
 
     let profileAttributeCount = 0;
     let contactPointCount = 0;
     if (graph.profile) {
+      log.info('Canonical PII/profile write started', { stage: 'pii_profile_started' });
       profileAttributeCount += await this.createPiiProfileAttributeRefs(input, graph.profile.id);
       profileAttributeCount += await this.createInlineProfileAttributes(input, graph.profile.id);
       profileAttributeCount += await this.createCustomAttributes(input, graph.profile.id);
       profileAttributeCount += await this.createAddressAttribute(input, graph.profile.id);
     }
     contactPointCount += await this.createContactRefs(input, graph.subject.id, graph.account.id);
+    log.info('Canonical runtime user write completed', { stage: 'pii_and_contacts_completed' });
 
     return {
       graph,
@@ -664,6 +674,7 @@ export class CanonicalRuntimeUserWriter {
     value: unknown
   ): Promise<void> {
     const now = getCurrentTimestamp();
+    log.info('Canonical sensitive value write started', { stage: 'pii_value_started', field });
     await this.sensitiveValueAdapter.execute(
       `INSERT INTO identity_sensitive_values (
         id, tenant_id, owner_type, owner_id, value_key, value_json, value_hash,
@@ -689,6 +700,7 @@ export class CanonicalRuntimeUserWriter {
         now,
       ]
     );
+    log.info('Canonical sensitive value write completed', { stage: 'pii_value_completed', field });
   }
 
   private async transitionSensitiveValue(

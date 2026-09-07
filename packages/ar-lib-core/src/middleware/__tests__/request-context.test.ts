@@ -2,6 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import { requestContextMiddleware, getTenantIdFromContext } from '../request-context';
 import type { Env } from '../../types/env';
+import { TenantDatabaseResolverError } from '../../services/tenant-database-resolver';
+
+const runtimeMocks = vi.hoisted(() => ({
+  resolveTenantMetadata: vi.fn(),
+}));
+
+vi.mock('../../services/runtime-data-context', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../services/runtime-data-context')>()),
+  resolveTenantMetadataContext: runtimeMocks.resolveTenantMetadata,
+}));
 
 // =============================================================================
 // Mock helpers
@@ -63,9 +73,25 @@ function buildApp(env: TestEnv, requireTenant = true) {
     const tenantId = getTenantIdFromContext(c);
     return c.json({ tenantId });
   });
+  app.get('/.well-known/oauth-protected-resource/mcp', (c) => {
+    const tenantId = getTenantIdFromContext(c);
+    return c.json({
+      tenantId,
+      hasTenantMetadataContext: Boolean(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (c as any).get('tenantMetadataContext')
+      ),
+    });
+  });
   app.get('/api/auth/authentication-methods', (c) => {
     const tenantId = getTenantIdFromContext(c);
-    return c.json({ tenantId });
+    return c.json({
+      tenantId,
+      hasTenantMetadataContext: Boolean(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (c as any).get('tenantMetadataContext')
+      ),
+    });
   });
   app.post('/api/auth/discovery/grant', (c) => {
     const tenantId = getTenantIdFromContext(c);
@@ -99,19 +125,25 @@ function buildApp(env: TestEnv, requireTenant = true) {
   app.get('/api/admin/tenants/:tenantId/info', (c) => {
     return c.json({
       tenantId: getTenantIdFromContext(c),
-      hasRuntimeUserStoreSources: Boolean(
+      hasTenantMetadataContext: Boolean(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (c as any).get('runtimeUserStoreSources')
+        (c as any).get('tenantMetadataContext')
       ),
     });
+  });
+  app.get('/api/admin/tenants/:tenantId/provisioning', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.post('/api/admin/tenants/:tenantId/provisioning/retry', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
+  });
+  app.post('/api/admin/tenants/:tenantId/provisioning/cleanup', (c) => {
+    return c.json({ tenantId: getTenantIdFromContext(c) });
   });
   app.get('/api/admin/users', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
   app.post('/api/admin/jobs/users/bulk-update', (c) => {
-    return c.json({ tenantId: getTenantIdFromContext(c) });
-  });
-  app.post('/api/admin/jobs/tenant-databases/provision', (c) => {
     return c.json({ tenantId: getTenantIdFromContext(c) });
   });
   app.get('/api/admin/tenants/:tenantId/settings/oauth', (c) => {
@@ -133,6 +165,11 @@ function makeRequest(host: string, path = '/test', headers: Record<string, strin
 describe('requestContextMiddleware – tenant existence check', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    runtimeMocks.resolveTenantMetadata.mockImplementation(async (env: Env, tenantId: string) => ({
+      tenantId,
+      coreDb: env.DB,
+      route: {},
+    }));
   });
 
   describe('single-tenant mode (no BASE_DOMAIN)', () => {
@@ -160,22 +197,44 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(body.tenantId).toBe('sample');
     });
 
+    it('resolves tenant storage for discovery after the positive KV cache expires', async () => {
+      const tenantDb = createMockDB({ tenantRow: { id: 'sample' } });
+      const controlPlaneDb = createMockDB({ tenantRow: null });
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = { BASE_DOMAIN, DB: controlPlaneDb, AUTHRIM_CONFIG: kv };
+      runtimeMocks.resolveTenantMetadata.mockResolvedValueOnce({
+        tenantId: 'sample',
+        coreDb: tenantDb,
+        route: {},
+      });
+      const app = buildApp(env);
+
+      const res = await app.request(
+        makeRequest(`sample.${BASE_DOMAIN}`, '/.well-known/oauth-protected-resource/mcp'),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        tenantId: 'sample',
+        hasTenantMetadataContext: true,
+      });
+      expect(runtimeMocks.resolveTenantMetadata).toHaveBeenCalledWith(env, 'sample');
+      expect(controlPlaneDb.prepare).not.toHaveBeenCalled();
+      expect(tenantDb.prepare).toHaveBeenCalledWith(
+        "SELECT id FROM tenants WHERE id = ? AND lifecycle_state = 'active'"
+      );
+    });
+
     it('caches positive tenant existence within the same isolate', async () => {
       const db = createMockDB({ tenantRow: { id: 'sample' } });
       const kv = createMockKV({ cachedValue: null }); // isolate cache must handle request 2
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
 
-      const first = await app.request(
-        makeRequest(`sample.${BASE_DOMAIN}`, '/api/auth/discovery'),
-        undefined,
-        env as Env
-      );
-      const second = await app.request(
-        makeRequest(`sample.${BASE_DOMAIN}`, '/api/auth/discovery'),
-        undefined,
-        env as Env
-      );
+      const first = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
+      const second = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
 
       expect(first.status).toBe(200);
       expect(second.status).toBe(200);
@@ -273,13 +332,21 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(db.prepare).not.toHaveBeenCalled();
     });
 
-    it('fail-open on D1 error (does not block request)', async () => {
+    it('fails closed for an uncached tenant when D1 is unavailable', async () => {
       const db = createMockDB({ shouldThrow: true });
       const kv = createMockKV({ cachedValue: null });
       const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
       const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
-      expect(res.status).toBe(200); // fail-open
+      expect(res.status).toBe(404);
+    });
+
+    it('fails closed for an uncached tenant when the D1 binding is absent', async () => {
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = { BASE_DOMAIN, AUTHRIM_CONFIG: kv };
+      const app = buildApp(env);
+      const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
+      expect(res.status).toBe(404);
     });
 
     it('allows discovery endpoint requests from a non-tenant common entry host', async () => {
@@ -427,7 +494,11 @@ describe('requestContextMiddleware – tenant existence check', () => {
 
     it('keeps the primary tenant issuer host tenant-scoped when it is also the configured UI host', async () => {
       const db = createMockDB({ tenantRow: { id: 'first' } });
-      const kv = createMockKV({ cachedValue: null });
+      const kv = createMockKV({
+        valuesByKey: {
+          'v1:tenant-exists:first': 'true',
+        },
+      });
       const env: TestEnv = {
         BASE_DOMAIN,
         DEFAULT_TENANT_ID: 'first',
@@ -445,14 +516,47 @@ describe('requestContextMiddleware – tenant existence check', () => {
       );
 
       expect(res.status).toBe(200);
-      await expect(res.json()).resolves.toEqual({ tenantId: 'first' });
+      await expect(res.json()).resolves.toEqual({
+        tenantId: 'first',
+        hasTenantMetadataContext: false,
+      });
+    });
+
+    it('skips tenant metadata resolution for the public authentication methods endpoint', async () => {
+      const db = createMockDB({ tenantRow: { id: 'first' } });
+      const kv = createMockKV({
+        valuesByKey: {
+          'v1:tenant-exists:first': 'true',
+        },
+      });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'first',
+        PRIMARY_TENANT_ID: 'first',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
+      const app = buildApp(env);
+
+      const res = await app.request(
+        makeRequest(`first.${BASE_DOMAIN}`, '/api/auth/authentication-methods'),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({
+        tenantId: 'first',
+        hasTenantMetadataContext: false,
+      });
+      expect(kv.get).not.toHaveBeenCalledWith('settings:tenant:first:tenant-database');
     });
 
     it('keeps tenant inventory admin requests on the control-plane database', async () => {
       const db = createMockDB({ tenantRow: { id: 'first' } });
       const kv = createMockKV({
         valuesByKey: {
-          'v1:tenant-exists:first': null,
+          'v1:tenant-exists:first': 'true',
         },
       });
       const env: TestEnv = {
@@ -462,7 +566,6 @@ describe('requestContextMiddleware – tenant existence check', () => {
         NAKED_DOMAIN_AS_ISSUER: 'true',
         DB: db,
         AUTHRIM_CONFIG: kv,
-        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
       };
       const app = buildApp(env);
 
@@ -475,81 +578,15 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(res.status).toBe(200);
       await expect(res.json()).resolves.toEqual({
         tenantId: 'first',
-        hasRuntimeUserStoreSources: false,
+        hasTenantMetadataContext: false,
       });
-    });
-
-    it('does not share a never-settling runtime user store source promise across requests', async () => {
-      const db = createMockDB({ tenantRow: { id: 'sample' } });
-      const tenantSettingsKey = 'settings:tenant:sample:tenant';
-      let tenantSettingsGetCount = 0;
-      let resolveFirstGetStarted: (() => void) | undefined;
-      let resolveFirstGet: ((value: string | null) => void) | undefined;
-      const firstGetStarted = new Promise<void>((resolve) => {
-        resolveFirstGetStarted = resolve;
-      });
-      const kv = {
-        get: vi.fn((key: string) => {
-          if (key === tenantSettingsKey) {
-            tenantSettingsGetCount += 1;
-            if (tenantSettingsGetCount === 1) {
-              resolveFirstGetStarted?.();
-              return new Promise<string | null>((resolve) => {
-                resolveFirstGet = resolve;
-              });
-            }
-          }
-          return Promise.resolve(null);
-        }),
-        put: vi.fn(async () => undefined),
-        delete: vi.fn(async () => undefined),
-      } as unknown as KVNamespace;
-      const env: TestEnv = {
-        BASE_DOMAIN,
-        DEFAULT_TENANT_ID: 'default',
-        DB: db,
-        AUTHRIM_CONFIG: kv,
-      };
-      const app = buildApp(env);
-      const request = () =>
-        app.request(
-          makeRequest('admin.pages.dev', '/api/admin/tenants/sample/settings/oauth', {
-            'X-Tenant-Id': 'sample',
-          }),
-          undefined,
-          env as Env
-        );
-
-      const firstRequest = request();
-      await firstGetStarted;
-
-      const secondRequest = request();
-      const secondResult = await Promise.race([
-        secondRequest,
-        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 50)),
-      ]);
-
-      resolveFirstGet?.(null);
-      await firstRequest;
-
-      if (secondResult === 'timeout') {
-        await secondRequest;
-        throw new Error('second request waited on the first pending runtime source resolution');
-      }
-
-      expect(secondResult.status).toBe(200);
-      await expect(secondResult.json()).resolves.toEqual({
-        tenantId: 'sample',
-        pathTenantId: 'sample',
-      });
-      expect(tenantSettingsGetCount).toBe(2);
     });
 
     it('uses X-Tenant-Id for tenant-scoped admin requests from the Admin UI host', async () => {
       const db = createMockDB({ tenantRow: { id: 'first' } });
       const kv = createMockKV({
         valuesByKey: {
-          'v1:tenant-exists:first': null,
+          'v1:tenant-exists:first': 'true',
         },
       });
       const env: TestEnv = {
@@ -558,13 +595,11 @@ describe('requestContextMiddleware – tenant existence check', () => {
         ADMIN_UI_URL: `https://admin.${BASE_DOMAIN}`,
         DB: db,
         AUTHRIM_CONFIG: kv,
-        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
       };
       const app = buildApp(env);
 
       const res = await app.request(
-        new Request(`https://admin.${BASE_DOMAIN}/api/admin/jobs/tenant-databases/provision`, {
-          method: 'POST',
+        new Request(`https://admin.${BASE_DOMAIN}/api/admin/users`, {
           headers: { Host: `admin.${BASE_DOMAIN}`, 'X-Tenant-Id': 'first' },
         }),
         undefined,
@@ -622,7 +657,7 @@ describe('requestContextMiddleware – tenant existence check', () => {
       const db = createMockDB({ tenantRow: { id: 'sample' } });
       const kv = createMockKV({
         valuesByKey: {
-          'v1:tenant-exists:sample': null,
+          'v1:tenant-exists:sample': 'true',
           'settings:tenant:sample:tenant': JSON.stringify({
             'tenant.allowed_domains': 'tenant.sample.example.com',
           }),
@@ -672,18 +707,20 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(res.status).toBe(200);
     });
 
-    it('returns a PII-free 409 when tenant database runtime source resolution fails', async () => {
+    it('returns a PII-free 409 when the signed tenant runtime snapshot is missing', async () => {
+      runtimeMocks.resolveTenantMetadata.mockRejectedValueOnce(
+        new TenantDatabaseResolverError('missing_generation', 'Runtime generation is missing')
+      );
       const db = createMockDB({ tenantRow: { id: 'sample' } });
       const kv = createMockKV({
         valuesByKey: {
-          'v1:tenant-exists:sample': null,
+          'v1:tenant-exists:sample': 'true',
         },
       });
       const env: TestEnv = {
         BASE_DOMAIN,
         DB: db,
         AUTHRIM_CONFIG: kv,
-        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
       };
       const app = buildApp(env);
 
@@ -692,76 +729,56 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(res.status).toBe(409);
       const body = await res.json<{
         error: string;
-        storage_profile: string;
         route: string;
         tenant_id: string;
         email?: string;
       }>();
       expect(body).toMatchObject({
-        error: 'missing_binding',
-        storage_profile: 'builtin:storage:tenant-d1',
+        error: 'missing_generation',
         route: '/test',
         tenant_id: 'sample',
       });
       expect(body.email).toBeUndefined();
     });
 
-    it('returns a PII-free 409 when tenant storage profile uses an unsupported resolver', async () => {
+    it('returns a retryable PII-free 503 while a signed snapshot generation propagates', async () => {
+      runtimeMocks.resolveTenantMetadata.mockRejectedValueOnce(
+        new TenantDatabaseResolverError(
+          'snapshot_generation_propagating',
+          'Runtime registry generation is propagating'
+        )
+      );
       const db = createMockDB({ tenantRow: { id: 'sample' } });
-      const badStorageProfile = {
-        id: 'custom:storage:unsupported-tenant-resolver',
-        kind: 'storage',
-        label: 'Unsupported Tenant Resolver',
-        scope: 'deployment',
-        deploymentProfile: 'tenant-d1',
-        slices: {
-          identity_core: {
-            driver: 'd1',
-            resolverRef: 'unsupported-registry',
-            role: 'tenant_core',
-          },
-          identity_pii: {
-            driver: 'd1',
-            resolverRef: 'unsupported-registry',
-            role: 'tenant_pii',
-          },
-        },
-      };
       const kv = createMockKV({
         valuesByKey: {
-          'v1:tenant-exists:sample': null,
-          'profile-registry:storage:custom:storage:unsupported-tenant-resolver':
-            JSON.stringify(badStorageProfile),
+          'v1:tenant-exists:sample': 'true',
         },
       });
-      const env: TestEnv = {
-        BASE_DOMAIN,
-        DB: db,
-        AUTHRIM_CONFIG: kv,
-        DEFAULT_STORAGE_PROFILE_ID: 'custom:storage:unsupported-tenant-resolver',
-      };
+      const env: TestEnv = { BASE_DOMAIN, DB: db, AUTHRIM_CONFIG: kv };
       const app = buildApp(env);
 
       const res = await app.request(makeRequest(`sample.${BASE_DOMAIN}`), undefined, env as Env);
 
-      expect(res.status).toBe(409);
+      expect(res.status).toBe(503);
+      expect(res.headers.get('Retry-After')).toBe('1');
       const body = await res.json<{
         error: string;
-        storage_profile: string;
         route: string;
         tenant_id: string;
         email?: string;
       }>();
       expect(body).toMatchObject({
-        error: 'unsupported_storage_profile',
-        storage_profile: 'custom:storage:unsupported-tenant-resolver',
+        error: 'snapshot_generation_propagating',
         route: '/test',
         tenant_id: 'sample',
       });
       expect(body.email).toBeUndefined();
     });
 
-    it('returns a PII-free 409 for tenant-d1 protocol routes that are not routed yet', async () => {
+    it('returns a PII-free 409 for protocol routes without a signed snapshot', async () => {
+      runtimeMocks.resolveTenantMetadata.mockRejectedValueOnce(
+        new TenantDatabaseResolverError('missing_generation', 'Runtime generation is missing')
+      );
       const db = createMockDB({ tenantRow: { id: 'sample' } });
       const kv = createMockKV({
         valuesByKey: {
@@ -772,7 +789,6 @@ describe('requestContextMiddleware – tenant existence check', () => {
         BASE_DOMAIN,
         DB: db,
         AUTHRIM_CONFIG: kv,
-        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
       };
       const app = buildApp(env);
 
@@ -785,21 +801,22 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(res.status).toBe(409);
       const body = await res.json<{
         error: string;
-        storage_profile: string;
         route: string;
         tenant_id: string;
         email?: string;
       }>();
       expect(body).toMatchObject({
-        error: 'unsupported_storage_profile',
-        storage_profile: 'builtin:storage:tenant-d1',
+        error: 'missing_generation',
         route: '/device_authorization',
         tenant_id: 'sample',
       });
       expect(body.email).toBeUndefined();
     });
 
-    it('returns a PII-free 409 for tenant-d1 admin-critical job routes that are not routed yet', async () => {
+    it('returns a PII-free 409 for tenant admin routes without a signed snapshot', async () => {
+      runtimeMocks.resolveTenantMetadata.mockRejectedValueOnce(
+        new TenantDatabaseResolverError('missing_generation', 'Runtime generation is missing')
+      );
       const db = createMockDB({ tenantRow: { id: 'sample' } });
       const kv = createMockKV({
         valuesByKey: {
@@ -810,7 +827,6 @@ describe('requestContextMiddleware – tenant existence check', () => {
         BASE_DOMAIN,
         DB: db,
         AUTHRIM_CONFIG: kv,
-        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
       };
       const app = buildApp(env);
 
@@ -825,49 +841,43 @@ describe('requestContextMiddleware – tenant existence check', () => {
       expect(res.status).toBe(409);
       const body = await res.json<{
         error: string;
-        storage_profile: string;
         route: string;
         tenant_id: string;
         email?: string;
       }>();
       expect(body).toMatchObject({
-        error: 'unsupported_storage_profile',
-        storage_profile: 'builtin:storage:tenant-d1',
+        error: 'missing_generation',
         route: '/api/admin/jobs/users/bulk-update',
         tenant_id: 'sample',
       });
       expect(body.email).toBeUndefined();
     });
 
-    it('allows tenant database provisioning control-plane job routes before tenant DB bindings exist', async () => {
-      const db = createMockDB({ tenantRow: { id: 'sample' } });
-      const kv = createMockKV({
-        valuesByKey: {
-          'v1:tenant-exists:sample': null,
-        },
-      });
+    it.each([
+      ['GET', '/api/admin/tenants/provisioning-tenant/provisioning'],
+      ['POST', '/api/admin/tenants/provisioning-tenant/provisioning/retry'],
+      ['POST', '/api/admin/tenants/provisioning-tenant/provisioning/cleanup'],
+    ])('allows %s %s before the tenant runtime snapshot exists', async (method, path) => {
+      const db = createMockDB({ tenantRow: null });
+      const kv = createMockKV({ cachedValue: null });
       const env: TestEnv = {
         BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'default',
         DB: db,
         AUTHRIM_CONFIG: kv,
-        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:tenant-d1',
       };
       const app = buildApp(env);
+      const request = makeRequest('admin.pages.dev', path);
 
-      const request = makeRequest('admin.pages.dev', '/api/admin/jobs/tenant-databases/provision', {
-        'X-Tenant-Id': 'sample',
-      });
       const res = await app.request(
-        new Request(request.url, {
-          method: 'POST',
-          headers: request.headers,
-        }),
+        new Request(request.url, { method, headers: request.headers }),
         undefined,
         env as Env
       );
 
       expect(res.status).toBe(200);
-      await expect(res.json()).resolves.toEqual({ tenantId: 'sample' });
+      await expect(res.json()).resolves.toEqual({ tenantId: 'default' });
+      expect(db.prepare).not.toHaveBeenCalled();
     });
 
     it('allows platform admin requests without X-Tenant-Id', async () => {
@@ -888,6 +898,29 @@ describe('requestContextMiddleware – tenant existence check', () => {
       );
 
       expect(res.status).toBe(200);
+      expect(db.prepare).not.toHaveBeenCalled();
+    });
+
+    it('does not validate tenant existence for platform admin requests on a tenant API host', async () => {
+      const db = createMockDB({ tenantRow: null });
+      const kv = createMockKV({ cachedValue: null });
+      const env: TestEnv = {
+        BASE_DOMAIN,
+        DEFAULT_TENANT_ID: 'first',
+        PRIMARY_TENANT_ID: 'first',
+        DB: db,
+        AUTHRIM_CONFIG: kv,
+      };
+      const app = buildApp(env);
+
+      const res = await app.request(
+        makeRequest(`first.${BASE_DOMAIN}`, '/api/admin/platform/tenant-domain-mappings'),
+        undefined,
+        env as Env
+      );
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toEqual({ tenantId: 'first' });
       expect(db.prepare).not.toHaveBeenCalled();
     });
 

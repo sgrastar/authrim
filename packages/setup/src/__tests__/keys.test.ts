@@ -3,17 +3,29 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  rmSync,
+  existsSync,
+  writeFileSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  cpSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import {
   generateKeyId,
   generateRsaKeyPair,
+  generateRsaOaepJwkKeyPair,
   generateEs256KeyPair,
+  generateEd25519JwkKeyPair,
   generateHexSecret,
   generateBase64Secret,
   generateAllSecrets,
   saveKeysToDirectory,
   keysExistForEnvironment,
+  loadKeysFromDirectory,
   validatePrivateKey,
   validatePublicKeyJwk,
   validateSetupMachinePublicKeyJwk,
@@ -21,6 +33,26 @@ import {
   ensureSupplementalKeyFiles,
 } from '../core/keys.js';
 import { AUTHRIM_KEYS_DIR, AUTHRIM_DIR, LEGACY_KEYS_DIR } from '../core/paths.js';
+
+function writeValidIdentityBundle(keysDir: string, keyId: string): void {
+  const keyPair = generateRsaKeyPair(keyId);
+  mkdirSync(keysDir, { recursive: true });
+  writeFileSync(join(keysDir, 'private.pem'), keyPair.privateKeyPem);
+  writeFileSync(join(keysDir, 'public.jwk.json'), JSON.stringify(keyPair.publicKeyJwk));
+  writeFileSync(
+    join(keysDir, 'metadata.json'),
+    JSON.stringify({
+      kid: keyId,
+      algorithm: 'RS256',
+      keySize: 3072,
+      createdAt: keyPair.createdAt,
+      files: {
+        privateKey: join(keysDir, 'private.pem'),
+        publicKey: join(keysDir, 'public.jwk.json'),
+      },
+    })
+  );
+}
 
 describe('generateKeyId', () => {
   it('should generate a key ID with default prefix', () => {
@@ -118,16 +150,40 @@ describe('generateAllSecrets', () => {
     expect(secrets.tenantRuntimeRegistryKeyPair.publicJwk.kty).toBe('OKP');
     expect(secrets.tenantRuntimeRegistryKeyPair.publicJwk.crv).toBe('Ed25519');
     expect(secrets.tenantRuntimeRegistryKeyPair.publicJwk.alg).toBe('EdDSA');
+    expect(secrets.notificationPayloadKeyPair.keyId).toBe('test-key-notification-payload');
+    expect(secrets.notificationPayloadKeyPair.publicJwk).toMatchObject({
+      kty: 'RSA',
+      use: 'enc',
+      alg: 'RSA-OAEP-256',
+      key_ops: ['encrypt'],
+    });
+    expect(secrets.notificationPayloadKeyPair.publicJwk).not.toHaveProperty('d');
+    expect(secrets.notificationPayloadKeyPair.privateJwk).toMatchObject({
+      kty: 'RSA',
+      use: 'enc',
+      alg: 'RSA-OAEP-256',
+      key_ops: ['decrypt'],
+    });
+    expect(secrets.notificationPayloadKeyPair.privateJwk.d).toEqual(expect.any(String));
     expect(secrets.rpTokenEncryptionKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.piiEncryptionKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.objectEncryptionRootKey).toMatch(/^[a-f0-9]{64}$/);
     expect(secrets.otpHmacSecret).toBeDefined();
-    expect(secrets.versionManagerSecret).toBeDefined();
     expect(secrets.loggingCursorHmacSecret).toBeDefined();
     expect(secrets.flowRuntimeHmacSecret).toBeDefined();
+    expect(secrets.vcTransactionCodeHmacSecret).toBeDefined();
+    expect(secrets.vcEvidenceHmacSecret).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(secrets.vcProfileContractHmacSecret).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(
+      new Set([
+        secrets.vcTransactionCodeHmacSecret,
+        secrets.vcEvidenceHmacSecret,
+        secrets.vcProfileContractHmacSecret,
+      ]).size
+    ).toBe(3);
     expect(secrets.pluginEncryptionKey).toBeDefined();
-    expect(secrets.adminApiSecret).toBeDefined();
-    expect(secrets.keyManagerSecret).toBeDefined();
+    expect(secrets.pluginMutationHmacKey).toMatch(/^[A-Za-z0-9_-]{43}$/u);
+    expect(secrets.notificationIntentHmacKey).toMatch(/^[A-Za-z0-9_-]{43}$/u);
     expect(secrets.setupToken).toBeDefined();
   });
 });
@@ -196,11 +252,11 @@ describe('saveKeysToDirectory with external keys', () => {
     expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'otp_hmac_secret.txt'))).toBe(true);
-    expect(existsSync(join(keysDir, 'version_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'vc_transaction_code_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'vc_evidence_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'vc_profile_contract_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'plugin_encryption_key.txt'))).toBe(true);
-    expect(existsSync(join(keysDir, 'admin_api_secret.txt'))).toBe(true);
-    expect(existsSync(join(keysDir, 'key_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_token.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_private.pem'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_public.jwk.json'))).toBe(true);
@@ -222,6 +278,280 @@ describe('saveKeysToDirectory with external keys', () => {
     expect(existsSync(join(keysDir, 'private.pem'))).toBe(true);
     expect(existsSync(join(keysDir, 'metadata.json'))).toBe(true);
   }, 15_000);
+
+  it('repairs truncated metadata on restart without changing the generated key bundle', async () => {
+    const secrets = generateAllSecrets('restart-test-key');
+    await saveKeysToDirectory(secrets, { keysBaseDir: testDir, env: 'prod' });
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    const privateKeyBefore = readFileSync(join(keysDir, 'private.pem'), 'utf-8');
+    const lookupKeyBefore = readFileSync(join(keysDir, 'lookup_hmac_key_slot_a.txt'), 'utf-8');
+
+    // Emulate the previous writer crashing while publishing metadata.
+    rmSync(join(keysDir, '.authrim-key-bundle-complete'));
+    writeFileSync(join(keysDir, 'metadata.json'), '{"kid":"restart-test-key"');
+
+    expect(keysExistForEnvironment(testDir, 'prod', testDir)).toBe(true);
+    const loaded = await loadKeysFromDirectory({
+      baseDir: testDir,
+      env: 'prod',
+      keysBaseDir: testDir,
+    });
+
+    expect(loaded.keyPair?.keyId).toBe('restart-test-key');
+    expect(loaded.keyPair?.publicKeyJwk).toEqual(secrets.keyPair.publicKeyJwk);
+    expect(JSON.parse(readFileSync(join(keysDir, 'metadata.json'), 'utf-8')).kid).toBe(
+      'restart-test-key'
+    );
+    expect(existsSync(join(keysDir, '.authrim-key-bundle-complete'))).toBe(true);
+    expect(readFileSync(join(keysDir, 'private.pem'), 'utf-8')).toBe(privateKeyBefore);
+    expect(readFileSync(join(keysDir, 'lookup_hmac_key_slot_a.txt'), 'utf-8')).toBe(
+      lookupKeyBefore
+    );
+    expect(
+      readdirSync(join(testDir, AUTHRIM_KEYS_DIR)).some((name) => name.includes('.prod.staging-'))
+    ).toBe(false);
+  }, 15_000);
+
+  it('resumes a fully staged bundle after a crash before the directory commit', async () => {
+    const secrets = generateAllSecrets('staged-restart-key');
+    await saveKeysToDirectory(secrets, { keysBaseDir: testDir, env: 'prod' });
+    const keysParent = join(testDir, AUTHRIM_KEYS_DIR);
+    const keysDir = join(keysParent, 'prod');
+    const stagedDir = join(keysParent, '.prod.staging-crashed-process');
+    const privateKeyBefore = readFileSync(join(keysDir, 'private.pem'), 'utf-8');
+    renameSync(keysDir, stagedDir);
+
+    expect(keysExistForEnvironment(testDir, 'prod', testDir)).toBe(true);
+    const loaded = await loadKeysFromDirectory({
+      baseDir: testDir,
+      env: 'prod',
+      keysBaseDir: testDir,
+    });
+
+    expect(loaded.keyPair?.keyId).toBe('staged-restart-key');
+    expect(loaded.keyPair?.publicKeyJwk).toEqual(secrets.keyPair.publicKeyJwk);
+    expect(readFileSync(join(keysDir, 'private.pem'), 'utf-8')).toBe(privateKeyBefore);
+    expect(existsSync(stagedDir)).toBe(false);
+  }, 15_000);
+
+  it('atomically publishes into an empty pre-created keys directory', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+
+    await saveKeysToDirectory(generateAllSecrets('fresh-retry-key'), {
+      keysBaseDir: testDir,
+      env: 'prod',
+    });
+
+    expect(JSON.parse(readFileSync(join(keysDir, 'metadata.json'), 'utf-8')).kid).toBe(
+      'fresh-retry-key'
+    );
+    expect(keysExistForEnvironment(testDir, 'prod', testDir)).toBe(true);
+    expect(
+      readdirSync(join(testDir, AUTHRIM_KEYS_DIR)).some((name) => name.includes('.prod.staging-'))
+    ).toBe(false);
+  }, 15_000);
+
+  it('allows only one concurrent publisher to commit a complete bundle', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+    const first = generateAllSecrets('concurrent-key-a');
+    const second = generateAllSecrets('concurrent-key-b');
+
+    const results = await Promise.allSettled([
+      saveKeysToDirectory(first, { keysBaseDir: testDir, env: 'prod' }),
+      saveKeysToDirectory(second, { keysBaseDir: testDir, env: 'prod' }),
+    ]);
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+    const loaded = await loadKeysFromDirectory({
+      baseDir: testDir,
+      env: 'prod',
+      keysBaseDir: testDir,
+    });
+    const winner = loaded.keyPair?.keyId === first.keyPair.keyId ? first : second;
+    expect(loaded.keyPair?.keyId).toBe(winner.keyPair.keyId);
+    expect(loaded.keyPair?.publicKeyJwk).toEqual(winner.keyPair.publicKeyJwk);
+    expect(readFileSync(join(keysDir, 'private.pem'), 'utf-8')).toBe(winner.keyPair.privateKeyPem);
+    expect(
+      readdirSync(join(testDir, AUTHRIM_KEYS_DIR)).some((name) => name.includes('.prod.staging-'))
+    ).toBe(false);
+  }, 20_000);
+
+  it('does not overwrite a complete existing bundle with newly generated keys', async () => {
+    const original = generateAllSecrets('original-key');
+    await saveKeysToDirectory(original, { keysBaseDir: testDir, env: 'prod' });
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    const privateKeyBefore = readFileSync(join(keysDir, 'private.pem'), 'utf-8');
+    const metadataBefore = readFileSync(join(keysDir, 'metadata.json'), 'utf-8');
+
+    await expect(
+      saveKeysToDirectory(generateAllSecrets('replacement-key'), {
+        keysBaseDir: testDir,
+        env: 'prod',
+      })
+    ).rejects.toThrow('existing_key_bundle_must_be_reused');
+
+    expect(readFileSync(join(keysDir, 'private.pem'), 'utf-8')).toBe(privateKeyBefore);
+    expect(readFileSync(join(keysDir, 'metadata.json'), 'utf-8')).toBe(metadataBefore);
+  }, 20_000);
+
+  it('fails closed instead of rotating a partial bundle with a valid base identity', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    const partialKeyPair = generateRsaKeyPair('partial-key');
+    mkdirSync(keysDir, { recursive: true });
+    writeFileSync(join(keysDir, 'private.pem'), partialKeyPair.privateKeyPem);
+    writeFileSync(join(keysDir, 'public.jwk.json'), JSON.stringify(partialKeyPair.publicKeyJwk));
+    writeFileSync(join(keysDir, 'metadata.json'), '{"kid":"partial-key"');
+    const privateKeyBefore = readFileSync(join(keysDir, 'private.pem'), 'utf-8');
+
+    await expect(
+      saveKeysToDirectory(generateAllSecrets('replacement-key'), {
+        keysBaseDir: testDir,
+        env: 'prod',
+      })
+    ).rejects.toThrow('existing_key_bundle_must_be_reused');
+
+    expect(readFileSync(join(keysDir, 'private.pem'), 'utf-8')).toBe(privateKeyBefore);
+  }, 15_000);
+
+  it('refuses to load a published bundle when any required file is missing', async () => {
+    const pristineDir = join(testDir, AUTHRIM_KEYS_DIR, 'pristine');
+    await saveKeysToDirectory(generateAllSecrets('required-files-key'), {
+      targetDir: pristineDir,
+    });
+    const requiredFiles = [
+      'private.pem',
+      'public.jwk.json',
+      'rp_token_encryption_key.txt',
+      'pii_encryption_key.txt',
+      'object_encryption_root_key.txt',
+      'otp_hmac_secret.txt',
+      'logging_cursor_hmac_secret.txt',
+      'lookup_hmac_key_slot_a.txt',
+      'flow_runtime_hmac_secret.txt',
+      'vc_transaction_code_hmac_secret.txt',
+      'vc_evidence_hmac_secret.txt',
+      'vc_profile_contract_hmac_secret.txt',
+      'plugin_encryption_key.txt',
+      'plugin_mutation_hmac_key.txt',
+      'notification_payload_decryption_jwk_slot_a.private.jwk.json',
+      'notification_payload_encryption_public.jwks.json',
+      'notification_intent_hmac_key.txt',
+      'agent_elevation_encryption_key.txt',
+      'setup_machine_private.pem',
+      'setup_machine_public.jwk.json',
+      'admin_ui_bff_private.pem',
+      'admin_ui_bff_public.jwk.json',
+      'tenant_runtime_registry_signing_private.jwk.json',
+      'tenant_runtime_registry_verify.jwks.json',
+      'tenant_runtime_registry_signing_key_id.txt',
+      'smoke_rpc_signing_jwk_slot_a.private.jwk.json',
+      'control_smoke_verify.jwks.json',
+      'metadata.json',
+    ];
+
+    for (const [index, fileName] of requiredFiles.entries()) {
+      const candidateDir = join(testDir, AUTHRIM_KEYS_DIR, `missing-${index}`);
+      cpSync(pristineDir, candidateDir, { recursive: true });
+      rmSync(join(candidateDir, fileName));
+      await expect(loadKeysFromDirectory({ targetDir: candidateDir })).resolves.toEqual({});
+    }
+  }, 20_000);
+
+  it('refuses mismatched main, setup, and Admin UI BFF key pairs', async () => {
+    const pristineDir = join(testDir, AUTHRIM_KEYS_DIR, 'pair-pristine');
+    await saveKeysToDirectory(generateAllSecrets('pair-validation-key'), {
+      targetDir: pristineDir,
+    });
+    const mismatches = [
+      {
+        fileName: 'public.jwk.json',
+        replacement: generateRsaKeyPair('different-main-key').publicKeyJwk,
+      },
+      {
+        fileName: 'setup_machine_public.jwk.json',
+        replacement: generateEs256KeyPair('different-setup-key').publicKeyJwk,
+      },
+      {
+        fileName: 'admin_ui_bff_public.jwk.json',
+        replacement: generateEs256KeyPair('different-admin-key').publicKeyJwk,
+      },
+    ];
+
+    for (const [index, mismatch] of mismatches.entries()) {
+      const candidateDir = join(testDir, AUTHRIM_KEYS_DIR, `mismatched-${index}`);
+      cpSync(pristineDir, candidateDir, { recursive: true });
+      writeFileSync(join(candidateDir, mismatch.fileName), JSON.stringify(mismatch.replacement));
+      await expect(loadKeysFromDirectory({ targetDir: candidateDir })).resolves.toEqual({});
+    }
+  }, 20_000);
+
+  it('refuses corrupted content in every required published-bundle file', async () => {
+    const pristineDir = join(testDir, AUTHRIM_KEYS_DIR, 'corruption-pristine');
+    await saveKeysToDirectory(generateAllSecrets('corruption-key'), {
+      targetDir: pristineDir,
+    });
+    const requiredFiles = [
+      'private.pem',
+      'public.jwk.json',
+      'rp_token_encryption_key.txt',
+      'pii_encryption_key.txt',
+      'object_encryption_root_key.txt',
+      'otp_hmac_secret.txt',
+      'logging_cursor_hmac_secret.txt',
+      'lookup_hmac_key_slot_a.txt',
+      'flow_runtime_hmac_secret.txt',
+      'vc_transaction_code_hmac_secret.txt',
+      'vc_evidence_hmac_secret.txt',
+      'vc_profile_contract_hmac_secret.txt',
+      'plugin_encryption_key.txt',
+      'plugin_mutation_hmac_key.txt',
+      'notification_payload_decryption_jwk_slot_a.private.jwk.json',
+      'notification_payload_encryption_public.jwks.json',
+      'notification_intent_hmac_key.txt',
+      'agent_elevation_encryption_key.txt',
+      'setup_machine_private.pem',
+      'setup_machine_public.jwk.json',
+      'admin_ui_bff_private.pem',
+      'admin_ui_bff_public.jwk.json',
+      'tenant_runtime_registry_signing_private.jwk.json',
+      'tenant_runtime_registry_verify.jwks.json',
+      'tenant_runtime_registry_signing_key_id.txt',
+      'smoke_rpc_signing_jwk_slot_a.private.jwk.json',
+      'control_smoke_verify.jwks.json',
+      'metadata.json',
+      '.authrim-key-bundle-complete',
+    ];
+
+    for (const [index, fileName] of requiredFiles.entries()) {
+      const candidateDir = join(testDir, AUTHRIM_KEYS_DIR, `corrupt-${index}`);
+      cpSync(pristineDir, candidateDir, { recursive: true });
+      writeFileSync(join(candidateDir, fileName), 'corrupt');
+      await expect(loadKeysFromDirectory({ targetDir: candidateDir })).resolves.toEqual({});
+    }
+  }, 20_000);
+
+  it('refuses marker and metadata identities that do not match the main key', async () => {
+    const pristineDir = join(testDir, AUTHRIM_KEYS_DIR, 'identity-pristine');
+    await saveKeysToDirectory(generateAllSecrets('identity-key'), { targetDir: pristineDir });
+
+    const markerMismatchDir = join(testDir, AUTHRIM_KEYS_DIR, 'marker-mismatch');
+    cpSync(pristineDir, markerMismatchDir, { recursive: true });
+    writeFileSync(
+      join(markerMismatchDir, '.authrim-key-bundle-complete'),
+      JSON.stringify({ version: 1, kid: 'another-key' })
+    );
+    await expect(loadKeysFromDirectory({ targetDir: markerMismatchDir })).resolves.toEqual({});
+
+    const metadataMismatchDir = join(testDir, AUTHRIM_KEYS_DIR, 'metadata-mismatch');
+    cpSync(pristineDir, metadataMismatchDir, { recursive: true });
+    const metadata = JSON.parse(readFileSync(join(metadataMismatchDir, 'metadata.json'), 'utf-8'));
+    metadata.kid = 'another-key';
+    writeFileSync(join(metadataMismatchDir, 'metadata.json'), JSON.stringify(metadata));
+    await expect(loadKeysFromDirectory({ targetDir: metadataMismatchDir })).resolves.toEqual({});
+  }, 20_000);
 });
 
 describe('keysExistForEnvironment with external keys', () => {
@@ -243,26 +573,31 @@ describe('keysExistForEnvironment with external keys', () => {
 
   it('should detect keys in external directory', () => {
     const externalDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
-    mkdirSync(externalDir, { recursive: true });
-    writeFileSync(join(externalDir, 'metadata.json'), '{}');
+    writeValidIdentityBundle(externalDir, 'external-key');
 
     expect(keysExistForEnvironment(testDir, 'prod', testDir)).toBe(true);
   });
 
   it('should detect keys in internal directory', () => {
     const internalDir = join(testDir, AUTHRIM_DIR, 'prod', 'keys');
-    mkdirSync(internalDir, { recursive: true });
-    writeFileSync(join(internalDir, 'metadata.json'), '{}');
+    writeValidIdentityBundle(internalDir, 'internal-key');
 
     expect(keysExistForEnvironment(testDir, 'prod')).toBe(true);
   });
 
   it('should detect keys in legacy directory', () => {
     const legacyDir = join(testDir, LEGACY_KEYS_DIR, 'prod');
-    mkdirSync(legacyDir, { recursive: true });
-    writeFileSync(join(legacyDir, 'metadata.json'), '{}');
+    writeValidIdentityBundle(legacyDir, 'legacy-key');
 
     expect(keysExistForEnvironment(testDir, 'prod')).toBe(true);
+  });
+
+  it('should fail closed for malformed metadata without enough key material to repair', () => {
+    const externalDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(externalDir, { recursive: true });
+    writeFileSync(join(externalDir, 'metadata.json'), '{"kid":');
+
+    expect(keysExistForEnvironment(testDir, 'prod', testDir)).toBe(true);
   });
 
   it('should return false when no keys exist', () => {
@@ -294,19 +629,32 @@ describe('ensureSupplementalKeyFiles', () => {
     writeFileSync(join(keysDir, 'private.pem'), keyPair.privateKeyPem);
     writeFileSync(join(keysDir, 'public.jwk.json'), JSON.stringify(keyPair.publicKeyJwk));
     writeFileSync(join(keysDir, 'metadata.json'), JSON.stringify({ kid: 'legacy-key', files: {} }));
-    writeFileSync(join(keysDir, 'admin_api_secret.txt'), 'legacy-admin-secret');
-    writeFileSync(join(keysDir, 'key_manager_secret.txt'), 'legacy-key-manager-secret');
 
     const result = await ensureSupplementalKeyFiles(keysDir);
 
-    expect(result.createdFiles).toHaveLength(14);
+    expect(result.createdFiles).toHaveLength(24);
     expect(existsSync(join(keysDir, 'object_encryption_root_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'pii_encryption_key.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'vc_transaction_code_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'vc_evidence_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'vc_profile_contract_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'otp_hmac_secret.txt'))).toBe(true);
-    expect(existsSync(join(keysDir, 'version_manager_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'logging_cursor_hmac_secret.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'lookup_hmac_key_slot_a.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'flow_runtime_hmac_secret.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'plugin_encryption_key.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'plugin_mutation_hmac_key.txt'))).toBe(true);
+    expect(
+      existsSync(join(keysDir, 'notification_payload_decryption_jwk_slot_a.private.jwk.json'))
+    ).toBe(true);
+    expect(
+      existsSync(join(keysDir, 'notification_payload_decryption_jwk_slot_b.private.jwk.json'))
+    ).toBe(false);
+    expect(existsSync(join(keysDir, 'notification_payload_encryption_public.jwks.json'))).toBe(
+      true
+    );
+    expect(existsSync(join(keysDir, 'notification_intent_hmac_key.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'agent_elevation_encryption_key.txt'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_private.pem'))).toBe(true);
     expect(existsSync(join(keysDir, 'setup_machine_public.jwk.json'))).toBe(true);
     expect(existsSync(join(keysDir, 'admin_ui_bff_private.pem'))).toBe(true);
@@ -316,6 +664,9 @@ describe('ensureSupplementalKeyFiles', () => {
     );
     expect(existsSync(join(keysDir, 'tenant_runtime_registry_verify.jwks.json'))).toBe(true);
     expect(existsSync(join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'))).toBe(true);
+    expect(existsSync(join(keysDir, 'smoke_rpc_signing_jwk_slot_a.private.jwk.json'))).toBe(true);
+    expect(existsSync(join(keysDir, 'smoke_rpc_signing_jwk_slot_b.private.jwk.json'))).toBe(false);
+    expect(existsSync(join(keysDir, 'control_smoke_verify.jwks.json'))).toBe(true);
 
     const setupJwk = JSON.parse(
       readFileSync(join(keysDir, 'setup_machine_public.jwk.json'), 'utf-8')
@@ -326,6 +677,44 @@ describe('ensureSupplementalKeyFiles', () => {
     const tenantRuntimeRegistryJwks = JSON.parse(
       readFileSync(join(keysDir, 'tenant_runtime_registry_verify.jwks.json'), 'utf-8')
     );
+    const controlSmokePrivateJwk = JSON.parse(
+      readFileSync(join(keysDir, 'smoke_rpc_signing_jwk_slot_a.private.jwk.json'), 'utf-8')
+    );
+    const controlSmokePublicJwks = JSON.parse(
+      readFileSync(join(keysDir, 'control_smoke_verify.jwks.json'), 'utf-8')
+    );
+    const notificationPayloadPrivateJwk = JSON.parse(
+      readFileSync(
+        join(keysDir, 'notification_payload_decryption_jwk_slot_a.private.jwk.json'),
+        'utf-8'
+      )
+    );
+    const notificationPayloadPublicJwks = JSON.parse(
+      readFileSync(join(keysDir, 'notification_payload_encryption_public.jwks.json'), 'utf-8')
+    );
+    expect(controlSmokePrivateJwk).toMatchObject({
+      kty: 'OKP',
+      crv: 'Ed25519',
+      kid: 'legacy-key-control-smoke',
+    });
+    expect(controlSmokePrivateJwk.d).toEqual(expect.any(String));
+    expect(controlSmokePublicJwks.keys).toHaveLength(1);
+    expect(controlSmokePublicJwks.keys[0]).not.toHaveProperty('d');
+    expect(notificationPayloadPrivateJwk).toMatchObject({
+      kid: 'legacy-key-notification-payload',
+      kty: 'RSA',
+      alg: 'RSA-OAEP-256',
+      key_ops: ['decrypt'],
+    });
+    expect(notificationPayloadPrivateJwk.d).toEqual(expect.any(String));
+    expect(notificationPayloadPublicJwks.keys).toHaveLength(1);
+    expect(notificationPayloadPublicJwks.keys[0]).toMatchObject({
+      kid: 'legacy-key-notification-payload',
+      kty: 'RSA',
+      alg: 'RSA-OAEP-256',
+      key_ops: ['encrypt'],
+    });
+    expect(notificationPayloadPublicJwks.keys[0]).not.toHaveProperty('d');
     const tenantRuntimeRegistryKeyId = readFileSync(
       join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'),
       'utf-8'
@@ -344,8 +733,82 @@ describe('ensureSupplementalKeyFiles', () => {
       })
     );
 
+    const staleMetadata = JSON.parse(readFileSync(join(keysDir, 'metadata.json'), 'utf-8'));
+    delete staleMetadata.files.vcEvidenceHmacSecret;
+    delete staleMetadata.files.vcProfileContractHmacSecret;
+    writeFileSync(join(keysDir, 'metadata.json'), JSON.stringify(staleMetadata));
+    const notificationPayloadSlotB = generateRsaOaepJwkKeyPair(
+      'legacy-key-notification-payload-previous',
+      2048
+    );
+    writeFileSync(
+      join(keysDir, 'notification_payload_decryption_jwk_slot_b.private.jwk.json'),
+      JSON.stringify(notificationPayloadSlotB.privateJwk)
+    );
+    writeFileSync(
+      join(keysDir, 'notification_payload_encryption_public.jwks.json'),
+      JSON.stringify({
+        keys: [notificationPayloadPublicJwks.keys[0], notificationPayloadSlotB.publicJwk],
+      })
+    );
+
     const secondResult = await ensureSupplementalKeyFiles(keysDir);
     expect(secondResult.createdFiles).toHaveLength(0);
+    const repairedMetadata = JSON.parse(readFileSync(join(keysDir, 'metadata.json'), 'utf-8'));
+    expect(repairedMetadata.files.vcEvidenceHmacSecret).toContain('vc_evidence_hmac_secret.txt');
+    expect(repairedMetadata.files.vcProfileContractHmacSecret).toContain(
+      'vc_profile_contract_hmac_secret.txt'
+    );
+  });
+
+  it('removes legacy static secret files and metadata references', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+    const keyPair = generateRsaKeyPair('legacy-key');
+    writeFileSync(join(keysDir, 'private.pem'), keyPair.privateKeyPem);
+    writeFileSync(join(keysDir, 'public.jwk.json'), JSON.stringify(keyPair.publicKeyJwk));
+    for (const fileName of [
+      'admin_api_secret.txt',
+      'key_manager_secret.txt',
+      'version_manager_secret.txt',
+    ]) {
+      writeFileSync(join(keysDir, fileName), 'legacy-secret');
+    }
+    writeFileSync(
+      join(keysDir, 'metadata.json'),
+      JSON.stringify({
+        kid: 'legacy-key',
+        files: {
+          adminApiSecret: 'admin_api_secret.txt',
+          keyManagerSecret: 'key_manager_secret.txt',
+          versionManagerSecret: 'version_manager_secret.txt',
+        },
+      })
+    );
+
+    await ensureSupplementalKeyFiles(keysDir);
+
+    expect(existsSync(join(keysDir, 'admin_api_secret.txt'))).toBe(false);
+    expect(existsSync(join(keysDir, 'key_manager_secret.txt'))).toBe(false);
+    expect(existsSync(join(keysDir, 'version_manager_secret.txt'))).toBe(false);
+    const metadata = JSON.parse(readFileSync(join(keysDir, 'metadata.json'), 'utf-8'));
+    expect(metadata.files).not.toHaveProperty('adminApiSecret');
+    expect(metadata.files).not.toHaveProperty('keyManagerSecret');
+    expect(metadata.files).not.toHaveProperty('versionManagerSecret');
+  });
+
+  it('does not create deploy-only setup credentials for a focused Worker deploy', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+
+    const result = await ensureSupplementalKeyFiles(keysDir, {
+      includeSetupMachineKeyPair: false,
+    });
+
+    expect(result.createdFiles).not.toContain(join(keysDir, 'setup_machine_private.pem'));
+    expect(existsSync(join(keysDir, 'setup_machine_private.pem'))).toBe(false);
+    expect(existsSync(join(keysDir, 'setup_machine_public.jwk.json'))).toBe(false);
+    expect(existsSync(join(keysDir, 'admin_ui_bff_private.pem'))).toBe(true);
   });
 
   it('rejects partial supplemental machine key pairs', async () => {
@@ -365,6 +828,135 @@ describe('ensureSupplementalKeyFiles', () => {
 
     await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(
       /Incomplete tenant runtime registry key set/
+    );
+  });
+
+  it('rejects mismatched existing notification payload key material', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'prod');
+    mkdirSync(keysDir, { recursive: true });
+    const privatePair = generateRsaOaepJwkKeyPair('notification-key-a', 2048);
+    const publicPair = generateRsaOaepJwkKeyPair('notification-key-a', 2048);
+    writeFileSync(
+      join(keysDir, 'notification_payload_decryption_jwk_slot_a.private.jwk.json'),
+      JSON.stringify(privatePair.privateJwk)
+    );
+    writeFileSync(
+      join(keysDir, 'notification_payload_encryption_public.jwks.json'),
+      JSON.stringify({ keys: [publicPair.publicJwk] })
+    );
+
+    await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(
+      'Invalid notification payload key set'
+    );
+  });
+
+  it('converges after interruption at every supplemental multi-file key-set boundary', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'crash-recovery');
+    await saveKeysToDirectory(generateAllSecrets('supplemental-crash-key'), {
+      targetDir: keysDir,
+    });
+    const interruptedFiles = [
+      'setup_machine_public.jwk.json',
+      'admin_ui_bff_public.jwk.json',
+      'notification_payload_encryption_public.jwks.json',
+      'tenant_runtime_registry_verify.jwks.json',
+      'tenant_runtime_registry_signing_key_id.txt',
+      'control_smoke_verify.jwks.json',
+    ];
+    for (const fileName of interruptedFiles) rmSync(join(keysDir, fileName));
+
+    const recovered = await ensureSupplementalKeyFiles(keysDir);
+    for (const fileName of interruptedFiles) {
+      expect(existsSync(join(keysDir, fileName))).toBe(true);
+      expect(recovered.createdFiles).toContain(join(keysDir, fileName));
+    }
+    await expect(loadKeysFromDirectory({ targetDir: keysDir })).resolves.toMatchObject({
+      keyPair: { keyId: 'supplemental-crash-key' },
+    });
+
+    const retried = await ensureSupplementalKeyFiles(keysDir);
+    expect(retried.createdFiles).toEqual([]);
+  }, 20_000);
+
+  it('fails closed for public-only supplemental key sets', async () => {
+    const cases = [
+      {
+        name: 'machine',
+        files: {
+          'setup_machine_public.jwk.json': JSON.stringify(
+            generateEs256KeyPair('public-only-machine').publicKeyJwk
+          ),
+        },
+      },
+      {
+        name: 'notification',
+        files: {
+          'notification_payload_encryption_public.jwks.json': JSON.stringify({
+            keys: [generateRsaOaepJwkKeyPair('public-only-notification').publicJwk],
+          }),
+        },
+      },
+      {
+        name: 'runtime',
+        files: {
+          'tenant_runtime_registry_verify.jwks.json': JSON.stringify({
+            keys: [generateEd25519JwkKeyPair('public-only-runtime').publicJwk],
+          }),
+        },
+      },
+      {
+        name: 'smoke',
+        files: {
+          'control_smoke_verify.jwks.json': JSON.stringify({
+            keys: [generateEd25519JwkKeyPair('public-only-smoke').publicJwk],
+          }),
+        },
+      },
+    ];
+
+    for (const item of cases) {
+      const keysDir = join(testDir, AUTHRIM_KEYS_DIR, `public-only-${item.name}`);
+      mkdirSync(keysDir, { recursive: true });
+      for (const [fileName, value] of Object.entries(item.files)) {
+        writeFileSync(join(keysDir, fileName), value);
+      }
+      await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(/Incomplete/);
+    }
+  }, 20_000);
+
+  it('fails closed for mismatched runtime and smoke key sets', async () => {
+    for (const kind of ['runtime', 'smoke'] as const) {
+      const keysDir = join(testDir, AUTHRIM_KEYS_DIR, `mismatched-${kind}`);
+      mkdirSync(keysDir, { recursive: true });
+      const privatePair = generateEd25519JwkKeyPair(`mismatched-${kind}`);
+      const publicPair = generateEd25519JwkKeyPair(`mismatched-${kind}`);
+      const privateName =
+        kind === 'runtime'
+          ? 'tenant_runtime_registry_signing_private.jwk.json'
+          : 'smoke_rpc_signing_jwk_slot_a.private.jwk.json';
+      const publicName =
+        kind === 'runtime'
+          ? 'tenant_runtime_registry_verify.jwks.json'
+          : 'control_smoke_verify.jwks.json';
+      writeFileSync(join(keysDir, privateName), JSON.stringify(privatePair.privateJwk));
+      writeFileSync(join(keysDir, publicName), JSON.stringify({ keys: [publicPair.publicJwk] }));
+      if (kind === 'runtime') {
+        writeFileSync(
+          join(keysDir, 'tenant_runtime_registry_signing_key_id.txt'),
+          privatePair.keyId
+        );
+      }
+      await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(/Mismatched/);
+    }
+  }, 20_000);
+
+  it('fails closed instead of accepting a truncated supplemental secret', async () => {
+    const keysDir = join(testDir, AUTHRIM_KEYS_DIR, 'truncated-secret');
+    mkdirSync(keysDir, { recursive: true });
+    writeFileSync(join(keysDir, 'otp_hmac_secret.txt'), 'truncated');
+
+    await expect(ensureSupplementalKeyFiles(keysDir)).rejects.toThrow(
+      'Invalid supplemental secret'
     );
   });
 });
@@ -387,13 +979,16 @@ describe('generateWranglerSecretCommands', () => {
       'echo -n "$(cat /tmp/keys/otp_hmac_secret.txt)" | wrangler secret put OTP_HMAC_SECRET --env dev'
     );
     expect(commands).toContain(
-      'echo -n "$(cat /tmp/keys/version_manager_secret.txt)" | wrangler secret put VERSION_MANAGER_SECRET --env dev'
-    );
-    expect(commands).toContain(
       'echo -n "$(cat /tmp/keys/logging_cursor_hmac_secret.txt)" | wrangler secret put LOGGING_CURSOR_HMAC_SECRET --env dev'
     );
     expect(commands).toContain(
       'echo -n "$(cat /tmp/keys/flow_runtime_hmac_secret.txt)" | wrangler secret put FLOW_RUNTIME_HMAC_SECRET --env dev'
+    );
+    expect(commands).toContain(
+      'echo -n "$(cat /tmp/keys/vc_evidence_hmac_secret.txt)" | wrangler secret put VC_EVIDENCE_HMAC_SECRET --env dev'
+    );
+    expect(commands).toContain(
+      'echo -n "$(cat /tmp/keys/vc_profile_contract_hmac_secret.txt)" | wrangler secret put VC_PROFILE_CONTRACT_HMAC_SECRET --env dev'
     );
     expect(commands).toContain(
       'echo -n "$(cat /tmp/keys/plugin_encryption_key.txt)" | wrangler secret put PLUGIN_ENCRYPTION_KEY --env dev'

@@ -7,7 +7,7 @@
 
 import type { Context } from 'hono';
 import type { Env } from '../../types';
-import { getRequestIssuerIdentifier, getRequestIssuerUrl } from '../../request-identifiers';
+import { getRequestIssuerUrl } from '../../request-identifiers';
 
 /**
  * Issuer Metadata Response
@@ -15,6 +15,7 @@ import { getRequestIssuerIdentifier, getRequestIssuerUrl } from '../../request-i
 interface IssuerMetadata {
   credential_issuer: string;
   credential_endpoint: string;
+  nonce_endpoint: string;
   deferred_credential_endpoint?: string;
   credential_configurations_supported: Record<string, CredentialConfiguration>;
   display?: IssuerDisplay[];
@@ -25,6 +26,7 @@ interface CredentialConfiguration {
   vct?: string;
   cryptographic_binding_methods_supported?: string[];
   credential_signing_alg_values_supported?: string[];
+  proof_types_supported?: Record<string, { proof_signing_alg_values_supported: string[] }>;
   claims?: Record<string, ClaimDefinition>;
   display?: CredentialDisplay[];
 }
@@ -37,7 +39,6 @@ interface ClaimDefinition {
 interface CredentialDisplay {
   name: string;
   locale: string;
-  logo?: { uri: string };
   background_color?: string;
   text_color?: string;
 }
@@ -45,7 +46,6 @@ interface CredentialDisplay {
 interface IssuerDisplay {
   name: string;
   locale: string;
-  logo?: { uri: string };
 }
 
 /**
@@ -54,12 +54,12 @@ interface IssuerDisplay {
  * Returns the Issuer's metadata including supported credential types.
  */
 export async function issuerMetadataRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
-  const issuerIdentifier = getRequestIssuerIdentifier(c);
   const baseUrl = getRequestIssuerUrl(c);
 
   const metadata: IssuerMetadata = {
-    credential_issuer: issuerIdentifier,
+    credential_issuer: baseUrl,
     credential_endpoint: `${baseUrl}/vci/credential`,
+    nonce_endpoint: `${baseUrl}/vci/nonce`,
     deferred_credential_endpoint: `${baseUrl}/vci/deferred`,
 
     credential_configurations_supported: {
@@ -69,6 +69,9 @@ export async function issuerMetadataRoute(c: Context<{ Bindings: Env }>): Promis
         vct: 'https://authrim.com/credentials/identity/v1',
         cryptographic_binding_methods_supported: ['jwk'],
         credential_signing_alg_values_supported: ['ES256', 'ES384', 'ES512'],
+        proof_types_supported: {
+          jwt: { proof_signing_alg_values_supported: ['ES256', 'ES384', 'ES512'] },
+        },
         claims: {
           given_name: {
             display: [{ name: 'Given Name', locale: 'en' }],
@@ -87,7 +90,6 @@ export async function issuerMetadataRoute(c: Context<{ Bindings: Env }>): Promis
           {
             name: 'Authrim Identity Credential',
             locale: 'en',
-            logo: { uri: `${baseUrl}/logo.png` },
             background_color: '#1E3A8A',
             text_color: '#FFFFFF',
           },
@@ -100,6 +102,9 @@ export async function issuerMetadataRoute(c: Context<{ Bindings: Env }>): Promis
         vct: 'https://authrim.com/credentials/age-verification/v1',
         cryptographic_binding_methods_supported: ['jwk'],
         credential_signing_alg_values_supported: ['ES256', 'ES384', 'ES512'],
+        proof_types_supported: {
+          jwt: { proof_signing_alg_values_supported: ['ES256', 'ES384', 'ES512'] },
+        },
         claims: {
           age_over_18: {
             mandatory: true,
@@ -124,7 +129,6 @@ export async function issuerMetadataRoute(c: Context<{ Bindings: Env }>): Promis
       {
         name: 'Authrim',
         locale: 'en',
-        logo: { uri: `${baseUrl}/logo.png` },
       },
     ],
   };

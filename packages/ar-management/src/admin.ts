@@ -13,7 +13,9 @@ import {
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
   createPIIContextFromHono,
+  resolveAccountDataContextFromHono,
   createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   hasPIIDatabase,
   generateId,
   type DatabaseAdapter,
@@ -40,6 +42,13 @@ import {
   // Write-Through KV Cache (Phase 3)
   readResponseTextWithLimit,
   CanonicalRuntimeUserStore,
+  buildTenantSystemSettingsKey,
+  getTenantMetadataContextFromHono,
+  resolveOtpAccountCoreDataContextByIdentifierFromHono,
+  createDataTemporarilyUnavailableResponse,
+  transitionAccountAuthenticationState,
+  produceNotificationDelivery,
+  type CanonicalOtpLoginUser,
 } from '@authrim/ar-lib-core';
 import {
   logSanitizedError,
@@ -65,6 +74,15 @@ import {
 } from './audit-archive-query';
 import { getAuditJsonTextExpr } from './audit-sql-dialect';
 import { createLoggingTenantKeyResolver } from './logging-tenant-key';
+import {
+  attemptImmediateAccountDirectoryRemovals,
+  eraseAccountPiiAfterDirectoryRemovalPrepared,
+  markAccountDirectoryRemovalsReady,
+  prepareAccountDirectoryRemoval,
+} from './account-directory-removal-producer';
+import { timeManagementRequestDiagnosticOperation } from './request-diagnostics';
+import { findActiveAccountLegalHold } from './account-legal-hold-guard';
+import { usesRoutedAccountStorage } from './tenant-routed-storage';
 
 const TOKEN_REGISTRATION_ERROR_BODY_MAX_BYTES = 64 * 1024;
 
@@ -148,10 +166,10 @@ async function updateCanonicalAccountStatus(
   tenantId: string,
   userId: string,
   status: string,
-  metadataPatch: Record<string, unknown> = {}
+  metadataPatch: Record<string, unknown> = {},
+  now = Date.now()
 ) {
   const lifecycleState = status === 'active' ? 'active' : status;
-  const now = Date.now();
   const account = await adapter.queryOne<{ id: string; primary_subject_id: string | null }>(
     'SELECT id, primary_subject_id FROM identity_accounts WHERE legacy_user_id = ? AND tenant_id = ?',
     [userId, tenantId]
@@ -201,12 +219,17 @@ export {
   adminUsersListHandler,
   adminUserGetHandler,
   adminUserCreateHandler,
+  adminUserCreationOperationHandler,
   adminUserUpdateHandler,
   adminUserDeleteHandler,
   adminUserTotpResetHandler,
   adminUserRetryPiiHandler,
   adminUserDeletePiiHandler,
 } from './admin-users';
+export {
+  adminUserIdentifierReplacementsHandler,
+  adminUserIdentifierReplacementResumeHandler,
+} from './admin-identifier-replacements';
 export {
   adminClientCreateHandler,
   adminClientsListHandler,
@@ -330,6 +353,7 @@ async function resolveAuditUserAnonymizedId(
   tenantId: string,
   userId: string
 ): Promise<string | null> {
+  await resolveAccountDataContextFromHono(c, userId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
   const row = await piiCtx.defaultPiiAdapter.queryOne<{ anonymized_user_id: string }>(
     'SELECT anonymized_user_id FROM user_anonymization_map WHERE tenant_id = ? AND user_id = ?',
@@ -635,27 +659,33 @@ export async function adminUserSuspendHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const previousStatus = user.status ?? 'active';
-    const nowTs = Math.floor(Date.now() / 1000);
+    const lifecycleVersionMs = Date.now();
+    const nowTs = Math.floor(lifecycleVersionMs / 1000);
     const expiresAt = body.duration_hours ? nowTs + body.duration_hours * 3600 : null;
 
-    await updateCanonicalAccountStatus(adapter, tenantId, userId, 'suspended', {
-      suspended_at: nowTs,
-      suspended_until: expiresAt,
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'suspended',
+      sourceVersionMs: lifecycleVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: true,
     });
+    await updateCanonicalAccountStatus(
+      adapter,
+      tenantId,
+      userId,
+      'suspended',
+      {
+        suspended_at: nowTs,
+        suspended_until: expiresAt,
+      },
+      lifecycleVersionMs
+    );
 
-    // Token/Session Revocation Strategy (Authrim Architecture):
-    // =========================================================
-    // Authrim uses user status-based token invalidation rather than individual token revocation.
-    // When user.status = 'suspended' or 'locked':
-    // 1. Introspection endpoint checks user status and returns active: false for all tokens
-    // 2. This is more efficient for distributed systems (no need to update each token in DO)
-    //
-    // Session invalidation via SessionStore DO is a future enhancement.
-    // For now, sessions will expire naturally. The login flow checks user status
-    // and blocks suspended/locked users from creating new sessions.
-    //
-    // The revoke_tokens/revoke_sessions flags are kept for API compatibility
-    // and future implementation of explicit DO-based revocation.
+    // AccountAuthState DO already rejects new authentication and advances the user session
+    // revocation epoch. Token introspection also retains its status-based invalidation check.
+    // The flags remain API-compatible indicators; -1 means the account-wide controls apply.
     const revokedTokens = body.revoke_tokens !== false ? -1 : 0; // -1 indicates implicit revocation via status
     const revokedSessions = body.revoke_sessions !== false ? -1 : 0;
 
@@ -814,16 +844,30 @@ export async function adminUserLockHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const previousStatus = user.status ?? 'active';
-    const nowTs = Math.floor(Date.now() / 1000);
+    const lifecycleVersionMs = Date.now();
+    const nowTs = Math.floor(lifecycleVersionMs / 1000);
 
-    await updateCanonicalAccountStatus(adapter, tenantId, userId, 'locked', {
-      locked_at: nowTs,
-      locked_until: unlockAtTs,
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'locked',
+      sourceVersionMs: lifecycleVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: true,
     });
+    await updateCanonicalAccountStatus(
+      adapter,
+      tenantId,
+      userId,
+      'locked',
+      {
+        locked_at: nowTs,
+        locked_until: unlockAtTs,
+      },
+      lifecycleVersionMs
+    );
 
-    // Token/Session Revocation Strategy (Authrim Architecture):
-    // Same as suspend - user status-based token invalidation via introspection.
-    // See suspend handler comments for details.
+    // Same account-wide DO session revocation and token status invalidation as suspension.
     const revokedTokens = body.revoke_tokens !== false ? -1 : 0; // -1 indicates implicit revocation via status
     const revokedSessions = body.revoke_sessions !== false ? -1 : 0;
 
@@ -1006,13 +1050,29 @@ export async function adminUserActivateHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const previousStatus = user.status;
-    const nowTs = Math.floor(Date.now() / 1000);
+    const lifecycleVersionMs = Date.now();
+    const nowTs = Math.floor(lifecycleVersionMs / 1000);
 
-    await updateCanonicalAccountStatus(adapter, tenantId, userId, 'active', {
-      suspended_at: null,
-      suspended_until: null,
-      locked_at: null,
-      locked_until: null,
+    await updateCanonicalAccountStatus(
+      adapter,
+      tenantId,
+      userId,
+      'active',
+      {
+        suspended_at: null,
+        suspended_until: null,
+        locked_at: null,
+        locked_until: null,
+      },
+      lifecycleVersionMs
+    );
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'active',
+      sourceVersionMs: lifecycleVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: false,
     });
 
     // Write audit log (reason_code only, not reason_detail for privacy)
@@ -1181,25 +1241,14 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    // Check for legal hold (block anonymization if active)
-    let legalHold: { id: string; reason: string } | null = null;
-    try {
-      legalHold = await authCtx.coreAdapter.queryOne<{ id: string; reason: string }>(
-        `SELECT id, reason FROM legal_holds
-         WHERE tenant_id = ? AND subject_type = 'user' AND subject_id = ?
-         AND (expires_at IS NULL OR expires_at > ?)`,
-        [tenantId, userId, nowTs]
-      );
-    } catch {
-      legalHold = null;
-    }
+    const legalHold = await findActiveAccountLegalHold(authCtx.coreAdapter, tenantId, userId);
 
     if (legalHold) {
       return c.json(
         {
           error: 'legal_hold_active',
           error_description: 'User is under legal hold and cannot be anonymized',
-          hold_id: legalHold.id,
+          hold_id: legalHold.holdId,
         },
         409
       );
@@ -1218,12 +1267,32 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       | { adminId?: string; userId?: string }
       | undefined;
     const deletedBy = adminAuth?.adminId ?? adminAuth?.userId ?? 'unknown';
+    const deletingVersionMs = Date.now();
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'deleting',
+      sourceVersionMs: deletingVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: true,
+    });
 
     let retentionUntil = nowTs + 90 * 24 * 60 * 60;
     let tombstoneId: string | null = null;
 
+    if (!hasPIIDatabase(c)) {
+      throw new Error('account_directory_removal_pii_unavailable');
+    }
+    const removalPiiContext = createPIIContextFromHono(c, tenantId);
+    const directoryRemovals = await prepareAccountDirectoryRemoval(c.env, {
+      tenantId,
+      userId,
+      core: authCtx.coreAdapter,
+      pii: removalPiiContext.defaultPiiAdapter,
+    });
+
     if (hasPIIDatabase(c)) {
-      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const piiCtx = removalPiiContext;
       const existingTombstone = await piiCtx.piiRepositories.tombstone.findByUserId(
         tenantId,
         userId,
@@ -1253,6 +1322,11 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
         tombstoneId = existingTombstone.id;
         retentionUntil = existingTombstone.retention_until;
       }
+      await eraseAccountPiiAfterDirectoryRemovalPrepared(
+        piiCtx.defaultPiiAdapter,
+        { tenantId, userId },
+        nowTs
+      );
       await piiCtx.piiRepositories.linkedIdentity.deleteByUserId(
         tenantId,
         userId,
@@ -1265,12 +1339,24 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    const sessions = await authCtx.repositories.session.findByUserId(userId);
-    await Promise.all(
-      sessions.map((session) => authCtx.repositories.sessionClient.deleteBySessionId(session.id))
+    const sessions = await authCtx.coreAdapter.query<{ id: string }>(
+      'SELECT * FROM sessions WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, userId]
     );
+    await Promise.all(
+      sessions.map((session) =>
+        authCtx.coreAdapter.execute(
+          'DELETE FROM session_clients WHERE tenant_id = ? AND session_id = ?',
+          [tenantId, session.id]
+        )
+      )
+    );
+
     await Promise.all([
-      authCtx.repositories.session.deleteByUserId(userId),
+      authCtx.coreAdapter.execute('DELETE FROM sessions WHERE tenant_id = ? AND user_id = ?', [
+        tenantId,
+        userId,
+      ]),
       authCtx.repositories.passkey.deleteByUserId(userId),
       authCtx.repositories.role.removeAllRolesFromUser(userId),
       authCtx.coreAdapter.execute(
@@ -1280,6 +1366,16 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
     ]);
 
     await runtimeUsers.deleteUser(userId);
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'deleted',
+      sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
+      operationId: crypto.randomUUID(),
+      revokeSessions: true,
+    });
+    await markAccountDirectoryRemovalsReady(authCtx.coreAdapter, directoryRemovals);
+    await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, directoryRemovals);
 
     // Step 6: Write audit log (user_id_hash only, no original ID)
     await createAuditLogFromContext(c, 'user.anonymized', 'user', userIdHash, {
@@ -1994,7 +2090,29 @@ export async function adminSettingsGetHandler(c: Context<{ Bindings: Env }>) {
       loginUI: {
         theme: 'light',
         variant: 'beige',
-        supportedLocales: ['en', 'ja'],
+        supportedLocales: [
+          'en',
+          'ja',
+          'zh-CN',
+          'zh-TW',
+          'es',
+          'pt',
+          'fr',
+          'de',
+          'ko',
+          'ru',
+          'id',
+          'ar',
+          'it',
+          'th',
+          'vi',
+          'hi',
+          'bn',
+          'tr',
+          'sw',
+          'am',
+          'pl',
+        ],
       },
     };
 
@@ -2146,6 +2264,7 @@ export async function adminApplyCertificationProfileHandler(c: Context<{ Binding
   try {
     const env = c.env as Env;
     const profileName = c.req.param('profileName')!;
+    const tenantId = getTenantIdFromContext(c);
 
     if (!profileName) {
       return c.json(
@@ -2170,8 +2289,10 @@ export async function adminApplyCertificationProfileHandler(c: Context<{ Binding
       );
     }
 
-    // Get current settings
-    const settingsJson = await env.SETTINGS?.get('system_settings');
+    // Certification profiles are tenant-scoped. The legacy global settings remain
+    // deployment defaults and must not be mutated by a tenant profile switch.
+    const settingsKey = buildTenantSystemSettingsKey(tenantId);
+    const settingsJson = await env.SETTINGS?.get(settingsKey);
     const currentSettings = settingsJson ? JSON.parse(settingsJson) : {};
 
     // Merge profile settings with current settings
@@ -2182,7 +2303,7 @@ export async function adminApplyCertificationProfileHandler(c: Context<{ Binding
 
     // Store updated settings
     if (env.SETTINGS) {
-      await env.SETTINGS.put('system_settings', JSON.stringify(updatedSettings));
+      await env.SETTINGS.put(settingsKey, JSON.stringify(updatedSettings));
     } else {
       return c.json(
         {
@@ -2200,6 +2321,7 @@ export async function adminApplyCertificationProfileHandler(c: Context<{ Binding
         name: profile.name,
         description: profile.description,
       },
+      tenant_id: tenantId,
       settings: updatedSettings,
     });
   } catch (error) {
@@ -2643,20 +2765,74 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const piiCtx = createPIIContextFromHono(c, tenantId);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const runtimeUsers = new CanonicalRuntimeUserStore({
-      coreAdapter: authCtx.coreAdapter,
-      piiAdapter: piiCtx.defaultPiiAdapter,
-      tenantId,
-    });
+    const createUser = body.create_user !== false;
+    const tenantMetadata = getTenantMetadataContextFromHono(c);
+    const tenantD1 = usesRoutedAccountStorage(tenantMetadata);
+    const effectiveStorageProfile = {
+      id: tenantD1 ? 'builtin:storage:tenant-d1' : 'builtin:storage:standard',
+      sessionColdPersistence: tenantD1 ? 'disabled' : 'enabled',
+    } as const;
+    let resolvedOtpUser: CanonicalOtpLoginUser | null = null;
+
+    if (tenantD1) {
+      try {
+        const accountData = await timeManagementRequestDiagnosticOperation(
+          c,
+          'mg_otp_route_lookup',
+          () =>
+            resolveOtpAccountCoreDataContextByIdentifierFromHono(c, {
+              indexKind: 'email_exact',
+              identifier: email.toLowerCase(),
+              trustedEmail: email,
+            })
+        );
+        resolvedOtpUser = accountData.user;
+      } catch (error) {
+        if (error instanceof Error && error.message === 'account_data_route_not_found') {
+          if (!createUser) {
+            return c.json(
+              {
+                error: 'invalid_request',
+                error_description: 'User does not exist and create_user is false',
+              },
+              404
+            );
+          }
+          return c.json(
+            {
+              error: 'conflict',
+              error_description:
+                'Tenant D1 test users must be provisioned before generating an email code',
+            },
+            409
+          );
+        }
+        throw error;
+      }
+    }
+
+    const runtimeUsers = tenantD1
+      ? null
+      : new CanonicalRuntimeUserStore({
+          coreAdapter: createAccountAuthContextFromHono(c, tenantId).coreAdapter,
+          piiAdapter: createPIIContextFromHono(c, tenantId).defaultPiiAdapter,
+          tenantId,
+        });
     let userId: string | null = null;
     let userEmail: string | null = null;
     let userName: string | null = null;
 
-    const existingUser = await runtimeUsers.findByEmail(email.toLowerCase(), {
-      includeInactive: true,
-    });
+    const lookupUser = await timeManagementRequestDiagnosticOperation(
+      c,
+      'mg_otp_user_lookup',
+      (): Promise<{ id: string; email: string | null; name: string | null } | null> =>
+        tenantD1
+          ? Promise.resolve(resolvedOtpUser)
+          : runtimeUsers
+            ? runtimeUsers.findByEmail(email.toLowerCase(), { includeInactive: true })
+            : Promise.reject(new Error('test_email_code_runtime_user_store_unavailable'))
+    );
+    const existingUser = lookupUser;
     if (existingUser) {
       userId = existingUser.id;
       userEmail = existingUser.email;
@@ -2664,8 +2840,6 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // create_user option: if false, don't create new user (for benchmarks with pre-seeded users)
-    const createUser = body.create_user !== false;
-
     if (!userId) {
       if (!createUser) {
         return c.json(
@@ -2680,6 +2854,9 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
       const preferredUsername = email.split('@')[0];
 
       userId = generateId();
+      if (!runtimeUsers) {
+        throw new Error('test_email_code_runtime_user_store_unavailable');
+      }
       await runtimeUsers.syncUser({
         userId,
         email: email.toLowerCase(),
@@ -2712,27 +2889,34 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
     const hmacSecret = c.env.OTP_HMAC_SECRET || c.env.ISSUER_URL;
 
     // Parallelize independent operations: hash computations + DO stub retrieval
-    const [codeHash, emailHash, challengeStore] = await Promise.all([
-      hashEmailCode(code, email.toLowerCase(), otpSessionId, issuedAt, hmacSecret),
-      hashEmail(email.toLowerCase()),
-      getChallengeStoreByChallengeId(c.env, otpSessionId, getTenantIdFromContext(c)),
-    ]);
+    const [codeHash, emailHash, challengeStore] = await timeManagementRequestDiagnosticOperation(
+      c,
+      'mg_otp_challenge_prepare',
+      () =>
+        Promise.all([
+          hashEmailCode(code, email.toLowerCase(), otpSessionId, issuedAt, hmacSecret),
+          hashEmail(email.toLowerCase()),
+          getChallengeStoreByChallengeId(c.env, otpSessionId, getTenantIdFromContext(c)),
+        ])
+    );
 
-    await challengeStore.storeChallengeRpc({
-      id: `email_code:${otpSessionId}`,
-      tenantId: getTenantIdFromContext(c),
-      type: 'email_code',
-      userId: userId as string,
-      challenge: codeHash,
-      ttl: EMAIL_CODE_TTL,
-      email: email.toLowerCase(),
-      metadata: {
-        email_hash: emailHash,
-        otp_session_id: otpSessionId,
-        issued_at: issuedAt,
-        purpose: 'login',
-      },
-    });
+    await timeManagementRequestDiagnosticOperation(c, 'mg_otp_challenge_store', () =>
+      challengeStore.storeChallengeRpc({
+        id: `email_code:${otpSessionId}`,
+        tenantId: getTenantIdFromContext(c),
+        type: 'email_code',
+        userId: userId as string,
+        challenge: codeHash,
+        ttl: EMAIL_CODE_TTL,
+        email: email.toLowerCase(),
+        metadata: {
+          email_hash: emailHash,
+          otp_session_id: otpSessionId,
+          issued_at: issuedAt,
+          purpose: 'login',
+        },
+      })
+    );
 
     const log = getLogger(c).module('ADMIN');
     log.info('Created test email code for user', {
@@ -2748,10 +2932,16 @@ export async function adminTestEmailCodeHandler(c: Context<{ Bindings: Env }>) {
         otpSessionId,
         expiresAt: Math.floor(expiresAt / 1000),
         userId: userId,
+        runtime_profile: {
+          storage_profile_id: effectiveStorageProfile.id,
+          session_cold_persistence: effectiveStorageProfile.sessionColdPersistence,
+        },
       },
       201
     );
   } catch (error) {
+    const unavailableResponse = createDataTemporarilyUnavailableResponse(c, error);
+    if (unavailableResponse) return unavailableResponse;
     logSanitizedError('Admin test email code error', error);
     return c.json(
       {
@@ -3305,6 +3495,53 @@ export async function adminUserActivityLogHandler(c: Context<{ Bindings: Env }>)
 // Phase 3: Send Email to User
 // =============================================================================
 
+const ADMIN_USER_EMAIL_SUBJECTS: Record<string, string> = {
+  password_reset: 'Reset your password',
+  welcome: 'Welcome to Authrim',
+  verification: 'Verify your email address',
+  notification: 'Account notification',
+  security_alert: 'Security alert',
+  account_locked: 'Your account was locked',
+  account_suspended: 'Your account was suspended',
+};
+
+function escapeAdminEmailHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function adminUserEmailContent(
+  template: string,
+  subject: string | undefined,
+  variables: Record<string, string> | undefined
+): { subject: string; html: string; text: string } {
+  const fallbackSubject = ADMIN_USER_EMAIL_SUBJECTS[template] ?? 'Account notification';
+  const normalizedSubject = (subject ?? fallbackSubject).replace(/[\r\n]+/gu, ' ').trim();
+  const safeSubject = (normalizedSubject || fallbackSubject).slice(0, 998);
+  const entries = Object.entries(variables ?? {}).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  const textDetails = entries.map(([key, value]) => `${key}: ${value}`).join('\n');
+  const htmlDetails = entries.length
+    ? `<dl>${entries
+        .map(
+          ([key, value]) =>
+            `<dt><strong>${escapeAdminEmailHtml(key)}</strong></dt><dd>${escapeAdminEmailHtml(value)}</dd>`
+        )
+        .join('')}</dl>`
+    : '';
+  const text = [safeSubject, textDetails].filter(Boolean).join('\n\n');
+  return {
+    subject: safeSubject,
+    html: `<!doctype html><html><body><h1>${escapeAdminEmailHtml(safeSubject)}</h1>${htmlDetails}</body></html>`,
+    text,
+  };
+}
+
 /**
  * POST /api/admin/users/:id/send-email
  * Send an email to a user (password reset, notification, etc.)
@@ -3346,8 +3583,6 @@ export async function adminUserSendEmailHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    const authCtx = createAuthContextFromHono(c, tenantId);
-
     const runtimeUser = await findCanonicalRuntimeUser(c, tenantId, userId, {
       includeInactive: true,
     });
@@ -3365,30 +3600,51 @@ export async function adminUserSendEmailHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    // Create email job (queued for async processing)
     const emailJobId = crypto.randomUUID();
     const nowTs = Math.floor(Date.now() / 1000);
+    const content = adminUserEmailContent(body.template, body.subject, body.variables);
+    const delivery = await produceNotificationDelivery(c.env, {
+      owner: { owner: 'tenant', tenantId },
+      intentId: `admin-user-email:${emailJobId}`,
+      outboxId: `notification:${emailJobId}`,
+      notificationKind: `admin.user-email.${body.template}`,
+      accountId: userId,
+      idempotencyKey: `admin-user-email:${emailJobId}`,
+      expiresAt: nowTs + 24 * 60 * 60,
+      payload: {
+        channel: 'email',
+        to: userEmail,
+        from: c.env.EMAIL_FROM || 'noreply@authrim.dev',
+        subject: content.subject,
+        body: content.html,
+        metadata: { textBody: content.text, template: body.template },
+      },
+    });
 
-    await authCtx.coreAdapter.execute(
-      `INSERT INTO email_queue (
-        id, tenant_id, user_id, template, subject, variables, status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        emailJobId,
-        tenantId,
-        userId,
-        body.template,
-        body.subject ?? null,
-        body.variables ? JSON.stringify(body.variables) : null,
-        'pending',
-        nowTs,
-      ]
-    );
+    if (delivery.delivery === 'permanent_failure') {
+      await createAuditLogFromContext(c, 'email.delivery_failed', 'user', userId, {
+        template: body.template,
+        email_job_id: emailJobId,
+        delivery_intent_id: delivery.reference.intentId,
+      });
+      return c.json(
+        {
+          error: 'email_delivery_failed',
+          error_description: 'The email delivery provider rejected the message.',
+          email_job_id: emailJobId,
+        },
+        502
+      );
+    }
+
+    const deliveryStatus = delivery.delivery === 'delivered' ? 'provider_accepted' : 'queued';
 
     // Write audit log
     await createAuditLogFromContext(c, 'email.queued', 'user', userId, {
       template: body.template,
       email_job_id: emailJobId,
+      delivery_intent_id: delivery.reference.intentId,
+      delivery_status: deliveryStatus,
     });
 
     return c.json({
@@ -3396,7 +3652,7 @@ export async function adminUserSendEmailHandler(c: Context<{ Bindings: Env }>) {
       email_job_id: emailJobId,
       user_id: userId,
       template: body.template,
-      status: 'queued',
+      status: deliveryStatus,
       created_at: new Date(nowTs * 1000).toISOString(),
     });
   } catch (error) {

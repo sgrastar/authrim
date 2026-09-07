@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"]
+  },
+  "include": [
+    "./create-migration.ts",
+    "./release-migrations.ts",
+    "./release-migrations-cli.ts",
+    "./semantic-baseline-migrations.ts",
+    "./run-d1-migrations.ts"
+  ]
+}

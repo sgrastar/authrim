@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim User Self-Service API
-  version: 0.3.4
+  version: 0.4.0
   summary: Authenticated user consent and data export endpoints.
   description: OpenAPI contract for user-facing self-service endpoints owned by the management Worker.
 servers:
@@ -73,12 +73,113 @@ paths:
         - Account Page
       operationId: getApiAccountCapabilities
       summary: Read Account Page feature capabilities.
-      description: Returns the Account Page sections, available features, planned Phase 4E features,
-        and the initial theme capability contract for the authenticated Account Page user.
+      description: Returns Account Page capabilities together with the published page composition,
+        resolved reusable screens, and theme integration status for the authenticated user.
       responses:
         '200':
           $ref: '#/components/responses/AccountCapabilities'
         '401':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security: *accountSession
+  /api/account/launchers:
+    get:
+      tags:
+        - Account Page
+      operationId: getApiAccountLaunchers
+      summary: List visible application launchers.
+      description: >-
+        Returns enabled launchers whose user, group, or attribute audience matches the current
+        account. Application identifiers, configured target URLs, and audience rules are omitted.
+      responses:
+        '200':
+          description: Visible application launchers and per-account favorite state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [launchers]
+                properties:
+                  launchers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AccountLauncher'
+        '401':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security: *accountSession
+  '/api/account/launchers/{id}/launch':
+    get:
+      tags:
+        - Account Page
+      operationId: getApiAccountLaunchersByIdLaunch
+      summary: Launch an assigned application.
+      description: >-
+        Re-evaluates the current account's audience assignment and redirects to the configured
+        bookmark, SP-initiated SAML, OIDC third-party initiated, or legacy IdP-initiated target.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '302':
+          description: Redirect to the resolved application launch target.
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+                format: uri
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+      security: *accountSession
+  '/api/account/launchers/{id}/favorite':
+    put:
+      tags:
+        - Account Page
+      operationId: putApiAccountLaunchersByIdFavorite
+      summary: Set launcher favorite state.
+      description: >-
+        Adds or removes the visible launcher from the current account's favorites. Browser clients
+        are subject to the Account Page Origin/Referer CSRF validation used by other account
+        mutations.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [favorite]
+              properties:
+                favorite: { type: boolean }
+      responses:
+        '200':
+          description: Updated favorite state.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [launcher_id, favorite]
+                properties:
+                  launcher_id: { type: string }
+                  favorite: { type: boolean }
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
           $ref: '#/components/responses/Error'
         '500':
           $ref: '#/components/responses/Error'
@@ -243,6 +344,116 @@ paths:
                 code:
                   type: string
                   pattern: '^(?:[0-9]{6}|[0-9]{8})$'
+      security: *accountSession
+  /api/account/identifier-replacements/start:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountIdentifierReplacementsStart
+      summary: Start an email address addition or replacement.
+      description: Requires authentication within the last five minutes and sends a one-time code to the new address. Adds the first email address when the account does not have one; otherwise replaces the current address.
+      responses:
+        '202':
+          description: Verification challenge accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - challenge_id
+                  - expires_in
+                properties:
+                  challenge_id:
+                    type: string
+                  expires_in:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  maxLength: 320
+      security: *accountSession
+  /api/account/identifier-replacements/complete:
+    post:
+      tags:
+        - Account Page
+      operationId: postApiAccountIdentifierReplacementsComplete
+      summary: Verify and apply an email address addition or replacement.
+      description: Consumes the new-address code. Initial additions publish the verified email route and complete immediately; replacements create a durable replacement operation and return after completion or durable forward repair handoff.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 200
+      responses:
+        '200':
+          $ref: '#/components/responses/IdentifierReplacementOperation'
+        '202':
+          $ref: '#/components/responses/IdentifierReplacementOperation'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - challenge_id
+                - code
+              properties:
+                challenge_id:
+                  type: string
+                code:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+      security: *accountSession
+  /api/account/identifier-replacements/{id}:
+    get:
+      tags:
+        - Account Page
+      operationId: getApiAccountIdentifierReplacement
+      summary: Read the current user's email replacement operation.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/IdentifierReplacementOperation'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
       security: *accountSession
   /api/account/operations:
     get:
@@ -1138,6 +1349,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/AccountOperationsResponse'
+    IdentifierReplacementOperation:
+      description: Durable identifier replacement operation response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/IdentifierReplacementOperationResponse'
     AccountConsents:
       description: Account Page consent confirmation response.
       content:
@@ -1398,6 +1615,51 @@ components:
               profile:
                 sub: user_123
   schemas:
+    AccountLauncher:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - description
+        - category
+        - launch_type
+        - open_in_new_tab
+        - icon_type
+        - icon_value
+        - icon_color
+        - background_color
+        - grid_width
+        - sort_order
+        - enabled
+        - allow_favorite
+        - created_at
+        - updated_at
+        - favorite
+        - launch_href
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: [string, 'null'] }
+        category: { type: [string, 'null'] }
+        launch_type:
+          type: string
+          enum: [bookmark, saml_sp_initiated, oidc_third_party_initiated, saml_idp_initiated]
+        open_in_new_tab: { type: boolean }
+        icon_type:
+          type: string
+          enum: [phosphor, image]
+        icon_value: { type: string }
+        icon_color: { type: string }
+        background_color: { type: string }
+        grid_width: { type: integer, minimum: 1, maximum: 8 }
+        sort_order: { type: integer, minimum: 0 }
+        enabled: { type: boolean }
+        allow_favorite: { type: boolean }
+        created_at: { type: integer, format: int64 }
+        updated_at: { type: integer, format: int64 }
+        favorite: { type: boolean }
+        launch_href: { type: string }
     JsonObject:
       type: object
       additionalProperties: true
@@ -1589,6 +1851,7 @@ components:
         - capabilities
         - sections
         - theme
+        - account_page
       properties:
         capabilities:
           type: array
@@ -1600,6 +1863,118 @@ components:
             $ref: '#/components/schemas/AccountSectionCapability'
         theme:
           $ref: '#/components/schemas/AccountThemeCapabilities'
+        account_page:
+          $ref: '#/components/schemas/PublishedAccountPage'
+    AccountPagePlacement:
+      type: object
+      required:
+        - id
+        - screen_key
+        - width
+        - enabled
+        - condition
+      properties:
+        id:
+          type: string
+        screen_key:
+          type: string
+        width:
+          type: string
+          enum:
+            - full
+            - half
+        enabled:
+          type: boolean
+        condition:
+          type: string
+          enum:
+            - always
+            - hidden
+            - passkey_enabled
+            - totp_enabled
+            - external_idp_enabled
+            - consent_records_available
+            - multiple_sessions
+    AccountPageDefinition:
+      type: object
+      required:
+        - schema_version
+        - screens
+      properties:
+        schema_version:
+          type: string
+          enum:
+            - authrim.account_page.v1
+        title:
+          type: string
+        description:
+          type: string
+        localizations:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              title:
+                type: string
+              description:
+                type: string
+        screens:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/AccountPagePlacement'
+    AccountPageScreen:
+      type: object
+      required:
+        - id
+        - screen_key
+        - display_name
+        - fields
+        - localizations
+      properties:
+        id:
+          type: string
+        screen_key:
+          type: string
+        display_name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        fields:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        localizations:
+          type: object
+          additionalProperties: true
+    PublishedAccountPage:
+      type: object
+      required:
+        - definition
+        - screens
+        - version
+        - published_at
+      properties:
+        page_id:
+          type:
+            - string
+            - 'null'
+        name:
+          type: string
+        definition:
+          $ref: '#/components/schemas/AccountPageDefinition'
+        screens:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountPageScreen'
+        version:
+          type: integer
+          minimum: 0
+        published_at:
+          type: string
     AccountOperation:
       type: object
       required:
@@ -1635,6 +2010,46 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AccountOperation'
+    IdentifierReplacementOperationResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - operation
+      properties:
+        operation:
+          type: object
+          additionalProperties: false
+          required:
+            - id
+            - state
+          properties:
+            id:
+              type: string
+            state:
+              type: string
+              enum:
+                - processing
+                - directory_pending
+                - authoritative_switch_pending
+                - authoritative_switched
+                - revocation_pending
+                - completed
+                - blocked_forward_repair
+                - canceled
+            status_url:
+              type: string
+            error_code:
+              type:
+                - string
+                - 'null'
+            created_at:
+              type: integer
+            updated_at:
+              type: integer
+            completed_at:
+              type:
+                - integer
+                - 'null'
     AccountStatementConsent:
       type: object
       required:
@@ -1754,6 +2169,10 @@ components:
         - current
         - created_at
         - expires_at
+        - browser
+        - os
+        - device_type
+        - country_code
       properties:
         id:
           type: string
@@ -1763,6 +2182,32 @@ components:
           type: integer
         expires_at:
           type: integer
+        browser:
+          type:
+            - string
+            - 'null'
+          description: Browser family parsed from the login request User-Agent, when available.
+        os:
+          type:
+            - string
+            - 'null'
+          description: Operating system family parsed from the login request User-Agent, when available.
+        device_type:
+          type:
+            - string
+            - 'null'
+          enum:
+            - desktop
+            - mobile
+            - tablet
+            - null
+          description: General device class parsed from the login request User-Agent, when available.
+        country_code:
+          type:
+            - string
+            - 'null'
+          pattern: '^[A-Z]{2}$'
+          description: ISO 3166-1 alpha-2 country captured from trusted edge metadata at login. This is null when the platform does not provide trusted country metadata, including non-Cloudflare deployments.
     AccountSessionsResponse:
       type: object
       required:
@@ -2246,7 +2691,6 @@ components:
             - none
             - client_secret_basic
             - client_secret_post
-            - client_secret_jwt
             - private_key_jwt
         subject_type:
           type: string
@@ -2771,6 +3215,14 @@ components:
           type: string
         error_description:
           type: string
+        error_code:
+          type: string
+          pattern: '^AR[0-9]{6}$'
+          description: Stable Authrim error category that can be provided to support.
+        error_id:
+          type: string
+          format: uuid
+          description: Opaque occurrence identifier that can be provided to support for correlation.
     UserConsent:
       type: object
       required:

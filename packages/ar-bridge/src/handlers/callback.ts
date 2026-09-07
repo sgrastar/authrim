@@ -7,10 +7,10 @@
  */
 
 import type { Context } from 'hono';
-import { setCookie } from 'hono/cookie';
+import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
+import * as jose from 'jose';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  type DatabaseAdapter,
   getSessionStoreForNewSession,
   getUIConfig,
   buildIssuerUrl,
@@ -19,9 +19,11 @@ import {
   getTenantIdFromContext,
   createDiagnosticLoggerFromContext,
   getDiagnosticSessionId,
-  createAuthContextFromHono,
+  DIAGNOSTIC_FLOW_ID_HEADER,
+  createAccountAuthContextFromHono,
   createPIIContextFromHono,
   CanonicalRuntimeUserStore,
+  resolveAccountDataContextByIdentifier,
   // Challenge Store for auth_code generation
   getChallengeStoreByChallengeId,
   // Event System
@@ -33,7 +35,7 @@ import {
   // Logger
   getLogger,
   createLogger,
-  resolveAuthCorePersistenceAdapterFromEnv,
+  registerExternalProviderSession,
   // Audit Log
   createAuditLog,
   // Errors
@@ -41,14 +43,19 @@ import {
   createErrorResponse,
   safeFetchJson,
 } from '@authrim/ar-lib-core';
+import { consumeAuthState, getAuthStateCookieName, matchesAuthStateCookie } from '../utils/state';
 import { getProviderByIdOrSlug } from '../services/provider-store';
 import { OIDCRPClient } from '../clients/oidc-client';
-import { consumeAuthState } from '../utils/state';
-import { handleIdentity } from '../services/identity-stitching';
-import { decrypt, getEncryptionKeyOrUndefined } from '../utils/crypto';
+import { Fapi2Client } from '../clients/fapi2-client';
+import { completeExternalIdpJIT, handleIdentity } from '../services/identity-stitching';
+import { decrypt, encrypt, getEncryptionKeyOrUndefined } from '../utils/crypto';
 import {
   ExternalIdPError,
   ExternalIdPErrorCode,
+  type ExternalIdpAuthState,
+  type HandleIdentityPendingResult,
+  type HandleIdentityReadyResult,
+  type TokenResponse,
   type UserInfo,
   type UpstreamProvider,
 } from '../types';
@@ -61,6 +68,16 @@ import { type FacebookProviderQuirks, generateAppSecretProof } from '../provider
 import { type TwitterProviderQuirks } from '../providers/twitter';
 import { isAppleProvider, type AppleProviderQuirks } from '../providers/apple';
 import { generateAppleClientSecret, parseAppleUserData } from '../utils/apple-jwt';
+import {
+  UserInfoSubjectMismatchError,
+  assertUserInfoSubjectMatches,
+} from '../utils/userinfo-validation';
+import {
+  isFapi2Provider,
+  loadFapi2ProviderConfig,
+  type Fapi2ProviderConfig,
+  validateFapi2ProviderMetadata,
+} from '../services/fapi2-provider';
 
 /**
  * Extract callback parameters from GET query string or POST form body
@@ -68,18 +85,24 @@ import { generateAppleClientSecret, parseAppleUserData } from '../utils/apple-jw
  */
 async function getCallbackParams(c: Context<{ Bindings: Env }>): Promise<{
   code: string | undefined;
+  idToken: string | undefined;
   state: string | undefined;
   error: string | undefined;
   errorDescription: string | undefined;
+  issuer: string | undefined;
+  responseJwt: string | undefined;
   tenantId: string;
   user: string | undefined; // Apple-specific: user data JSON
 }> {
   // Try GET parameters first (standard OAuth)
   const tenantId = getTenantIdFromContext(c);
   let code = c.req.query('code');
+  let idToken = c.req.query('id_token');
   let state = c.req.query('state');
   let error = c.req.query('error');
   let errorDescription = c.req.query('error_description');
+  let issuer = c.req.query('iss');
+  let responseJwt = c.req.query('response');
   let user = c.req.query('user');
 
   // If POST request (Apple form_post), try to get from body
@@ -88,18 +111,59 @@ async function getCallbackParams(c: Context<{ Bindings: Env }>): Promise<{
       const body = await c.req.parseBody();
       // POST body takes precedence over query params for OAuth response
       code = (body.code as string) || code;
+      idToken = (body.id_token as string) || idToken;
       state = (body.state as string) || state;
       error = (body.error as string) || error;
       errorDescription = (body.error_description as string) || errorDescription;
+      issuer = (body.iss as string) || issuer;
+      responseJwt = (body.response as string) || responseJwt;
       // Apple-specific: user data is only in POST body
       user = (body.user as string) || user;
-      // id_token may also be in body for Apple
     } catch {
       // Body parsing failed, fall back to query params
     }
   }
 
-  return { code, state, error, errorDescription, tenantId, user };
+  return { code, idToken, state, error, errorDescription, issuer, responseJwt, tenantId, user };
+}
+
+/**
+ * Hybrid responses use fragment encoding by default. Fragments are never sent
+ * to the server, so the browser relays an allowlisted set of parameters in a
+ * same-origin POST. No fragment value is interpolated into this HTML.
+ */
+export function createHybridFragmentRelayResponse(): Response {
+  const nonce = crypto.randomUUID().replaceAll('-', '');
+  const html = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Completing sign-in</title></head>
+<body><p>Completing sign-in…</p><script nonce="${nonce}">
+(() => {
+  const source = new URLSearchParams(location.hash.slice(1));
+  const form = document.createElement('form');
+  form.method = 'post';
+  form.action = location.pathname + location.search;
+  for (const name of ['code', 'id_token', 'state', 'error', 'error_description']) {
+    const value = source.get(name);
+    if (value === null) continue;
+    const input = document.createElement('input');
+    input.type = 'hidden'; input.name = name; input.value = value;
+    form.append(input);
+  }
+  history.replaceState(null, '', location.pathname + location.search);
+  document.body.append(form);
+  form.submit();
+})();
+</script></body></html>`;
+  return new Response(html, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+      'X-Frame-Options': 'DENY',
+      'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'none'; img-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    },
+  });
 }
 
 /**
@@ -132,6 +196,477 @@ async function generateAuthCode(
   return authCode;
 }
 
+async function completeExternalAuthentication(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    authState: ExternalIdpAuthState;
+    provider: UpstreamProvider;
+    userInfo: UserInfo;
+    upstreamIdToken?: string;
+    result: HandleIdentityReadyResult;
+  }
+): Promise<Response> {
+  const { authState, provider, userInfo, result } = input;
+  const account = await resolveAccountDataContextByIdentifier(c.env, {
+    tenantId: authState.tenantId,
+    indexKind: 'external_subject',
+    identifier: { issuer: provider.id, subject: userInfo.sub },
+    expectedAccountId: `account:${result.userId}`,
+  });
+  (c as unknown as { set(key: string, value: unknown): void }).set('accountDataContext', account);
+  publishEvent(c, {
+    type: AUTH_EVENTS.EXTERNAL_IDP_SUCCEEDED,
+    tenantId: authState.tenantId,
+    data: {
+      userId: result.userId,
+      method: 'external_idp',
+      clientId: provider.id,
+    } satisfies Omit<AuthEventData, 'sessionId'>,
+  }).catch((eventError: unknown) => {
+    getLogger(c)
+      .module('CALLBACK')
+      .error('Failed to publish auth.external_idp.succeeded', {}, eventError as Error);
+  });
+
+  const codeChallenge = authState.codeChallenge;
+  if (!codeChallenge) {
+    throw new ExternalIdPError(
+      ExternalIdPErrorCode.CALLBACK_FAILED,
+      'Missing code_challenge in auth state'
+    );
+  }
+  const clientId = authState.clientId;
+  if (!clientId) {
+    throw new ExternalIdPError(
+      ExternalIdPErrorCode.CALLBACK_FAILED,
+      'Missing client_id in auth state'
+    );
+  }
+
+  const tenantId = authState.tenantId;
+  if (authState.enableSso !== false) {
+    // The external identity was resolved above and attached as accountDataContext.
+    // SSO session creation must read the canonical runtime user from that same
+    // account-scoped core database; the metadata core database only contains
+    // tenant-level clients and provider configuration.
+    const authCtx = createAccountAuthContextFromHono(c, tenantId);
+    const piiCtx = createPIIContextFromHono(c, tenantId);
+    const runtimeUsers = new CanonicalRuntimeUserStore({
+      coreAdapter: authCtx.coreAdapter,
+      piiAdapter: piiCtx.defaultPiiAdapter,
+      tenantId,
+    });
+    const runtimeUser = await runtimeUsers.findById(result.userId);
+    if (!runtimeUser) return createErrorResponse(c, AR_ERROR_CODES.USER_INACTIVE);
+
+    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
+    const sessionTTL = 24 * 60 * 60;
+    const encryptionKey = getEncryptionKeyOrUndefined(c.env);
+    const upstreamIdTokenEncrypted =
+      input.upstreamIdToken && encryptionKey
+        ? await encrypt(input.upstreamIdToken, encryptionKey)
+        : undefined;
+    await sessionStore.createSessionRpc(
+      sessionId,
+      result.userId,
+      sessionTTL,
+      {
+        email: userInfo.email || null,
+        name: userInfo.name || null,
+        amr: ['external_idp'],
+        acr: 'urn:mace:incommon:iap:bronze',
+        client_id: clientId,
+        external_idp: provider.id,
+        external_provider_id: provider.id,
+        external_provider_sub: userInfo.sub,
+        external_provider_sid: typeof userInfo.sid === 'string' ? userInfo.sid : undefined,
+        upstream_id_token_encrypted: upstreamIdTokenEncrypted,
+      },
+      tenantId
+    );
+    const externalSessionIndex = recordExternalProviderSession(c.env, {
+      tenantId,
+      sessionId,
+      userId: result.userId,
+      providerId: provider.id,
+      providerSub: userInfo.sub,
+      providerSid: typeof userInfo.sid === 'string' ? userInfo.sid : undefined,
+      expiresAt: Date.now() + sessionTTL * 1000,
+    });
+    try {
+      c.executionCtx.waitUntil(externalSessionIndex);
+    } catch {
+      void externalSessionIndex;
+    }
+
+    const issuerUrl = buildIssuerUrl(c.env, tenantId);
+    setCookie(c, 'authrim_session', sessionId, {
+      path: '/',
+      httpOnly: true,
+      secure: issuerUrl.startsWith('https://'),
+      sameSite: 'Lax',
+      maxAge: sessionTTL,
+    });
+
+    const handoffToken = crypto.randomUUID();
+    const handoffStore = await getChallengeStoreByChallengeId(c.env, handoffToken, tenantId);
+    await handoffStore.storeChallengeRpc({
+      id: `handoff:${handoffToken}`,
+      tenantId,
+      type: 'handoff',
+      userId: result.userId,
+      challenge: sessionId,
+      ttl: 30,
+      metadata: {
+        client_id: clientId,
+        state: authState.state,
+        aud: 'handoff',
+        created_at: Date.now(),
+      },
+    });
+    const redirectUrl = new URL(authState.redirectUri);
+    redirectUrl.searchParams.set('handoff_token', handoffToken);
+    redirectUrl.searchParams.set('state', authState.state);
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: redirectUrl.toString(),
+        'Referrer-Policy': 'no-referrer',
+        'Cache-Control': 'no-store',
+      },
+    });
+  }
+
+  const authCode = await generateAuthCode(c.env, tenantId, result.userId, codeChallenge, {
+    method: 'external_idp',
+    provider: provider.id,
+    provider_id: provider.id,
+    provider_slug: provider.slug ?? provider.id,
+    client_id: clientId,
+    is_new_user: result.isNewUser,
+    stitched_from_existing: result.stitchedFromExisting,
+  });
+  const redirectUrl = new URL(authState.redirectUri);
+  redirectUrl.searchParams.set('code', authCode);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: redirectUrl.toString(),
+      'Referrer-Policy': 'no-referrer',
+      'Cache-Control': 'no-store',
+    },
+  });
+}
+
+const EXTERNAL_PROVISIONING_TTL_SECONDS = 5 * 60;
+const EXTERNAL_PROVISIONING_TOKEN = /^[A-Za-z0-9_-]{43}$/u;
+const SAFE_CONTINUATION_TENANT = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,255}$/u;
+
+interface ExternalIdpProvisioningContinuation {
+  schemaVersion: 1;
+  authState: ExternalIdpAuthState;
+  providerId: string;
+  userInfo: UserInfo;
+  upstreamIdToken?: string;
+  result: HandleIdentityPendingResult;
+}
+
+function randomContinuationToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/u, '');
+}
+
+async function continuationDigest(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function continuationCookieName(digest: string): string {
+  return `authrim_external_provisioning_${digest.slice(0, 24)}`;
+}
+
+async function beginExternalIdpProvisioningContinuation(
+  c: Context<{ Bindings: Env }>,
+  continuation: Omit<ExternalIdpProvisioningContinuation, 'schemaVersion'>
+): Promise<Response> {
+  const encryptionKey = getEncryptionKeyOrUndefined(c.env);
+  if (!encryptionKey) throw new Error('RP_TOKEN_ENCRYPTION_KEY is not configured');
+  const token = randomContinuationToken();
+  const digest = await continuationDigest(token);
+  const id = `external_idp_provisioning:${digest}`;
+  const payload = JSON.stringify({ schemaVersion: 1, ...continuation });
+  if (new TextEncoder().encode(payload).byteLength > 48 * 1024) {
+    throw new Error('external_idp_provisioning_continuation_too_large');
+  }
+  const store = await getChallengeStoreByChallengeId(c.env, id, continuation.authState.tenantId);
+  await store.storeChallengeRpc({
+    id,
+    tenantId: continuation.authState.tenantId,
+    type: 'external_idp_provisioning_resume',
+    userId: continuation.result.userId,
+    challenge: digest,
+    ttl: EXTERNAL_PROVISIONING_TTL_SECONDS,
+    metadata: { schema_version: 1, encrypted_payload: await encrypt(payload, encryptionKey) },
+  });
+  const issuerUrl = buildIssuerUrl(c.env, continuation.authState.tenantId);
+  setCookie(c, continuationCookieName(digest), digest, {
+    path: '/',
+    httpOnly: true,
+    secure: issuerUrl.startsWith('https://'),
+    sameSite: 'Lax',
+    maxAge: EXTERNAL_PROVISIONING_TTL_SECONDS,
+  });
+  const redirect = new URL(continuation.authState.redirectUri);
+  redirect.searchParams.set('provisioning_token', token);
+  redirect.searchParams.set('provisioning_tenant', continuation.authState.tenantId);
+  redirect.searchParams.set('state', continuation.authState.state);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: redirect.toString(),
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+    },
+  });
+}
+
+function parseContinuation(value: string): ExternalIdpProvisioningContinuation {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error('external_idp_provisioning_continuation_invalid');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('external_idp_provisioning_continuation_invalid');
+  }
+  const continuation = parsed as Partial<ExternalIdpProvisioningContinuation>;
+  const authState = continuation.authState as Partial<ExternalIdpAuthState> | undefined;
+  const result = continuation.result as Partial<HandleIdentityPendingResult> | undefined;
+  const userInfo = continuation.userInfo as Partial<UserInfo> | undefined;
+  const boundedString = (candidate: unknown, maximumLength = 2048): candidate is string =>
+    typeof candidate === 'string' && candidate.length > 0 && candidate.length <= maximumLength;
+  if (
+    continuation.schemaVersion !== 1 ||
+    !authState ||
+    !result ||
+    !userInfo ||
+    result.status !== 'pending' ||
+    result.isNewUser !== true ||
+    result.stitchedFromExisting !== false ||
+    !boundedString(authState.id, 256) ||
+    !boundedString(authState.tenantId, 256) ||
+    !SAFE_CONTINUATION_TENANT.test(authState.tenantId) ||
+    !boundedString(authState.providerId, 256) ||
+    !boundedString(authState.state, 2048) ||
+    !boundedString(authState.redirectUri, 4096) ||
+    !boundedString(authState.clientId, 256) ||
+    !boundedString(authState.codeChallenge, 2048) ||
+    !Number.isSafeInteger(authState.expiresAt) ||
+    !Number.isSafeInteger(authState.createdAt) ||
+    !boundedString(continuation.providerId, 256) ||
+    continuation.providerId !== authState.providerId ||
+    !boundedString(userInfo.sub) ||
+    !boundedString(result.userId, 256) ||
+    !boundedString(result.accountId, 256) ||
+    !boundedString(result.operationId, 256) ||
+    !boundedString(result.providerId, 256) ||
+    !boundedString(result.providerUserId) ||
+    result.accountId !== `account:${result.userId}` ||
+    continuation.providerId !== result.providerId ||
+    userInfo.sub !== result.providerUserId
+  ) {
+    throw new Error('external_idp_provisioning_continuation_invalid');
+  }
+  return continuation as ExternalIdpProvisioningContinuation;
+}
+
+async function loadExternalIdpContinuation(
+  c: Context<{ Bindings: Env }>,
+  token: string,
+  tenantId: string
+): Promise<{
+  digest: string;
+  id: string;
+  store: Awaited<ReturnType<typeof getChallengeStoreByChallengeId>>;
+  continuation: ExternalIdpProvisioningContinuation;
+}> {
+  if (!EXTERNAL_PROVISIONING_TOKEN.test(token) || !SAFE_CONTINUATION_TENANT.test(tenantId)) {
+    throw new Error('external_idp_provisioning_token_invalid');
+  }
+  const digest = await continuationDigest(token);
+  if (!matchesAuthStateCookie(digest, getCookie(c, continuationCookieName(digest)))) {
+    throw new Error('external_idp_provisioning_browser_binding_failed');
+  }
+  const id = `external_idp_provisioning:${digest}`;
+  const store = await getChallengeStoreByChallengeId(c.env, id, tenantId);
+  const challenge = await store.getChallengeRpc(id);
+  const encryptedPayload = challenge?.metadata?.encrypted_payload;
+  if (
+    !challenge ||
+    challenge.type !== 'external_idp_provisioning_resume' ||
+    challenge.tenantId !== tenantId ||
+    challenge.challenge !== digest ||
+    challenge.consumed ||
+    challenge.expiresAt <= Date.now() ||
+    typeof encryptedPayload !== 'string'
+  ) {
+    throw new Error('external_idp_provisioning_token_invalid');
+  }
+  const encryptionKey = getEncryptionKeyOrUndefined(c.env);
+  if (!encryptionKey) throw new Error('external_idp_provisioning_key_unavailable');
+  const continuation = parseContinuation(await decrypt(encryptedPayload, encryptionKey));
+  if (
+    continuation.authState.tenantId !== tenantId ||
+    continuation.result.userId !== challenge.userId
+  ) {
+    throw new Error('external_idp_provisioning_continuation_invalid');
+  }
+  return { digest, id, store, continuation };
+}
+
+export async function handleExternalProvisioningStatus(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
+  try {
+    const encodedBody = await c.req.text();
+    if (new TextEncoder().encode(encodedBody).byteLength > 4096) {
+      throw new Error('external_idp_provisioning_request_too_large');
+    }
+    const body = JSON.parse(encodedBody) as unknown;
+    if (
+      !body ||
+      typeof body !== 'object' ||
+      Array.isArray(body) ||
+      Object.keys(body).length !== 2 ||
+      !Object.hasOwn(body, 'provisioning_token') ||
+      !Object.hasOwn(body, 'tenant_id') ||
+      typeof (body as Record<string, unknown>).provisioning_token !== 'string' ||
+      typeof (body as Record<string, unknown>).tenant_id !== 'string'
+    ) {
+      throw new Error('external_idp_provisioning_token_invalid');
+    }
+    const request = body as { provisioning_token: string; tenant_id: string };
+    const loaded = await loadExternalIdpContinuation(
+      c,
+      request.provisioning_token,
+      request.tenant_id
+    );
+    const provisioner = c.env.EXTERNAL_IDP_ACCOUNT_PROVISIONER;
+    if (!provisioner) throw new Error('external_idp_account_provisioner_unavailable');
+    const expected = loaded.continuation.result;
+    const status = await provisioner.getExternalIdpAccountProvisioningStatus({
+      schemaVersion: 1,
+      tenantId: loaded.continuation.authState.tenantId,
+      operationId: expected.operationId,
+      flow: 'external_idp',
+    });
+    if (
+      status.operationId !== expected.operationId ||
+      status.accountId !== expected.accountId ||
+      status.userId !== expected.userId
+    ) {
+      throw new Error('external_idp_provisioning_status_mismatch');
+    }
+    if (status.status === 'failed') {
+      await loaded.store.consumeChallengeRpc({
+        id: loaded.id,
+        tenantId: loaded.continuation.authState.tenantId,
+        type: 'external_idp_provisioning_resume',
+        challenge: loaded.digest,
+      });
+      deleteCookie(c, continuationCookieName(loaded.digest), { path: '/' });
+    }
+    return c.json(
+      status.status === 'ready'
+        ? {
+            status: 'ready',
+            resume_url: `/auth/external/provisioning/resume?token=${encodeURIComponent(request.provisioning_token)}&tenant=${encodeURIComponent(request.tenant_id)}`,
+          }
+        : status.status === 'failed'
+          ? { status: 'failed' }
+          : { status: 'pending', retry_after_ms: 500 },
+      status.status === 'ready' ? 200 : status.status === 'failed' ? 409 : 202,
+      { 'Cache-Control': 'no-store' }
+    );
+  } catch {
+    return c.json({ error: 'invalid_or_expired_provisioning_continuation' }, 400, {
+      'Cache-Control': 'no-store',
+    });
+  }
+}
+
+export async function handleExternalProvisioningResume(
+  c: Context<{ Bindings: Env }>
+): Promise<Response> {
+  try {
+    const token = c.req.query('token');
+    const tenantId = c.req.query('tenant');
+    if (!token || !tenantId) throw new Error('external_idp_provisioning_token_invalid');
+    const loaded = await loadExternalIdpContinuation(c, token, tenantId);
+    const expected = loaded.continuation.result;
+    const provisioner = c.env.EXTERNAL_IDP_ACCOUNT_PROVISIONER;
+    if (!provisioner) throw new Error('external_idp_account_provisioner_unavailable');
+    const status = await provisioner.getExternalIdpAccountProvisioningStatus({
+      schemaVersion: 1,
+      tenantId,
+      operationId: expected.operationId,
+      flow: 'external_idp',
+    });
+    if (
+      status.status !== 'ready' ||
+      status.operationId !== expected.operationId ||
+      status.accountId !== expected.accountId ||
+      status.userId !== expected.userId
+    ) {
+      throw new Error('external_idp_provisioning_not_ready');
+    }
+    const completed = await completeExternalIdpJIT(c.env, {
+      tenantId,
+      userId: expected.userId,
+      providerId: expected.providerId,
+      providerUserId: expected.providerUserId,
+    });
+    const consumed = await loaded.store.consumeChallengeRpc({
+      id: loaded.id,
+      tenantId,
+      type: 'external_idp_provisioning_resume',
+      challenge: loaded.digest,
+    });
+    if (consumed.userId !== expected.userId) {
+      throw new Error('external_idp_provisioning_consume_mismatch');
+    }
+    deleteCookie(c, continuationCookieName(loaded.digest), { path: '/' });
+    const provider = await getProviderByIdOrSlug(c.env, loaded.continuation.providerId, tenantId);
+    if (!provider || provider.id !== expected.providerId || !completed.linkedIdentityId) {
+      throw new Error('external_idp_provisioning_provider_mismatch');
+    }
+    return await completeExternalAuthentication(c, {
+      authState: loaded.continuation.authState,
+      provider,
+      userInfo: loaded.continuation.userInfo,
+      upstreamIdToken: loaded.continuation.upstreamIdToken,
+      result: {
+        status: 'ready',
+        userId: expected.userId,
+        isNewUser: true,
+        linkedIdentityId: completed.linkedIdentityId,
+        stitchedFromExisting: false,
+        roles_assigned: completed.roles_assigned,
+        orgs_joined: completed.orgs_joined,
+      },
+    });
+  } catch {
+    return redirectWithError(
+      c,
+      ExternalIdPErrorCode.CALLBACK_FAILED,
+      'Authentication could not be resumed. Please try again.'
+    );
+  }
+}
+
 /**
  * Handle OAuth callback from external IdP
  *
@@ -146,22 +681,25 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
   const log = getLogger(c).module('CALLBACK');
   const providerIdOrSlug = c.req.param('provider');
   if (!providerIdOrSlug) return redirectWithError(c, 'invalid_request', 'Missing provider');
-  const { code, state, error, errorDescription, tenantId, user } = await getCallbackParams(c);
+  const callbackParams = await getCallbackParams(c);
+  let { code, state, error, errorDescription, issuer } = callbackParams;
+  const { idToken, responseJwt, tenantId, user } = callbackParams;
   let diagnosticLogger: Awaited<ReturnType<typeof createDiagnosticLoggerFromContext>> = null;
-
-  // Handle provider errors
-  if (error) {
-    // PII Protection: Do not log errorDescription (may contain user info from provider)
-    log.error('External IdP returned error', { error });
-    return redirectWithError(c, error, errorDescription);
-  }
-
-  if (!code || !state) {
-    return redirectWithError(c, 'invalid_request', 'Missing code or state');
-  }
-
-  // Declare provider outside try block so it's accessible in catch block for event logging
+  let diagnosticSessionId: string | undefined;
+  let diagnosticFlowId: string | undefined;
+  let fapi2Flow = false;
+  let fapi2Stage:
+    | 'authorization-response'
+    | 'provider-metadata'
+    | 'token-response'
+    | 'id-token'
+    | 'resource-response' = 'authorization-response';
+  // Declared outside the try block for failure event and diagnostic correlation.
   let provider: UpstreamProvider | null = null;
+
+  if (c.req.method === 'GET' && !code && !state && !error && !responseJwt) {
+    return createHybridFragmentRelayResponse();
+  }
 
   try {
     // 1. Get provider configuration first (by slug or ID)
@@ -170,24 +708,72 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       return redirectWithError(c, 'unknown_provider', 'Provider not found');
     }
 
+    diagnosticLogger = await createDiagnosticLoggerFromContext(c, {
+      tenantId,
+      clientId: provider.clientId,
+    }).catch(() => null);
+    diagnosticSessionId = getDiagnosticSessionId(c);
+    fapi2Flow = isFapi2Provider(provider);
+
+    if (responseJwt && !state) {
+      try {
+        state = extractUnverifiedJarmState(responseJwt);
+      } catch {
+        await logCallbackRejection(log, diagnosticLogger, {
+          diagnosticSessionId,
+          validationError: 'malformed_jarm',
+          fapi2: fapi2Flow,
+        });
+        return redirectWithError(c, 'invalid_request', 'Invalid JARM response');
+      }
+    }
+
+    if (!state) {
+      await logCallbackRejection(log, diagnosticLogger, {
+        diagnosticSessionId,
+        validationError: 'missing_state',
+        fapi2: fapi2Flow,
+      });
+      return redirectWithError(c, 'invalid_request', 'Missing state');
+    }
+
+    const stateCookieName = await getAuthStateCookieName(state);
+    if (!matchesAuthStateCookie(state, getCookie(c, stateCookieName))) {
+      await logCallbackRejection(log, diagnosticLogger, {
+        diagnosticSessionId,
+        validationError: 'browser_state_binding_failed',
+        fapi2: fapi2Flow,
+      });
+      return redirectWithError(c, 'invalid_state', 'State is not bound to this browser');
+    }
+    deleteCookie(c, stateCookieName, { path: '/auth/external/' });
+
     // 2. Validate state and get stored data
-    const authState = await consumeAuthState(c.env, state);
+    const authState = await consumeAuthState(c.env, tenantId, state);
     if (!authState) {
+      await logCallbackRejection(log, diagnosticLogger, {
+        diagnosticSessionId,
+        validationError: 'invalid_or_expired_state',
+        fapi2: fapi2Flow,
+      });
       return redirectWithError(c, 'invalid_state', 'State validation failed or expired');
     }
 
     // Verify the provider ID matches (authState always stores the actual ID)
     if (authState.providerId !== provider.id) {
+      await logCallbackRejection(log, diagnosticLogger, {
+        diagnosticSessionId,
+        validationError: 'provider_mismatch',
+        fapi2: fapi2Flow,
+      });
       return redirectWithError(c, 'invalid_state', 'Provider mismatch');
     }
 
-    // Create diagnostic logger (OIDF conformance)
-    diagnosticLogger = await createDiagnosticLoggerFromContext(c, {
-      tenantId: authState.tenantId || tenantId,
-      clientId: provider.clientId,
-    });
-    const diagnosticSessionId = getDiagnosticSessionId(c);
     const flowId = authState.flowId;
+    diagnosticFlowId = flowId;
+    if (flowId) {
+      c.header(DIAGNOSTIC_FLOW_ID_HEADER, flowId);
+    }
 
     // 3. Get client secret (Apple requires dynamic JWT generation)
     let clientSecret: string;
@@ -215,6 +801,99 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     const providerIdentifier = provider.slug || provider.id;
     const callbackTenantId = authState.tenantId || tenantId;
     const callbackUri = `${buildIssuerUrl(c.env, callbackTenantId)}/auth/external/${providerIdentifier}/callback`;
+    const client = OIDCRPClient.fromProvider(provider, callbackUri, clientSecret);
+
+    const fapi2Enabled = fapi2Flow;
+    let fapi2Config: Fapi2ProviderConfig | undefined;
+    let fapi2Client: Fapi2Client | undefined;
+    let fapi2Metadata: Awaited<ReturnType<OIDCRPClient['discover']>> | undefined;
+    if (fapi2Enabled) {
+      fapi2Stage = 'provider-metadata';
+      const encryptionKey = getEncryptionKeyOrUndefined(c.env);
+      if (!encryptionKey) throw new Error('RP_TOKEN_ENCRYPTION_KEY is not configured');
+      fapi2Config = await loadFapi2ProviderConfig(provider, encryptionKey);
+      fapi2Metadata = await client.discover();
+      validateFapi2ProviderMetadata(fapi2Metadata, fapi2Config.profile, fapi2Config);
+      await recordCallbackDiagnostic(log, () =>
+        diagnosticLogger?.logTokenValidation({
+          diagnosticSessionId,
+          flowId,
+          step: 'fapi2-provider-metadata-validation',
+          tokenType: 'provider_metadata',
+          result: 'pass',
+          details: { issuer_valid: true, profile: fapi2Config?.profile },
+        })
+      );
+      fapi2Client = new Fapi2Client({
+        issuer: fapi2Metadata.issuer,
+        clientId: provider.clientId,
+        redirectUri: callbackUri,
+        clientAssertionPrivateJwk: fapi2Config.clientAssertionPrivateJwk,
+        dpopPrivateJwk: fapi2Config.dpopPrivateJwk,
+      });
+      fapi2Stage = 'authorization-response';
+      if (fapi2Config.jarm) {
+        if (!responseJwt) {
+          throw new ExternalIdPError(
+            ExternalIdPErrorCode.CALLBACK_FAILED,
+            'Missing JARM authorization response'
+          );
+        }
+        if (!fapi2Metadata.jwks_uri) {
+          throw new Error('FAPI2 JARM provider metadata has no jwks_uri');
+        }
+        const jwks = await safeFetchJson<jose.JSONWebKeySet>(fapi2Metadata.jwks_uri, {
+          timeoutMs: 5_000,
+          maxResponseSize: 256 * 1024,
+        });
+        const jarm = await fapi2Client.validateJarmResponse({
+          responseJwt,
+          jwks,
+          expectedState: state,
+          signingAlgorithm: fapi2Config.authorizationSignedResponseAlg,
+        });
+        code = jarm.code;
+        state = jarm.state;
+        issuer = jarm.iss;
+        error = jarm.error;
+        errorDescription = jarm.error_description;
+      } else if (responseJwt) {
+        throw new ExternalIdPError(
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          'Unexpected JARM authorization response'
+        );
+      }
+      if (!provider.issuer || issuer !== provider.issuer) {
+        throw new ExternalIdPError(
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          issuer ? 'FAPI2 authorization response issuer mismatch' : 'Missing FAPI2 issuer parameter'
+        );
+      }
+      await recordCallbackDiagnostic(log, () =>
+        diagnosticLogger?.logTokenValidation({
+          diagnosticSessionId,
+          flowId,
+          step: 'fapi2-authorization-response-validation',
+          tokenType: fapi2Config?.jarm ? 'jarm' : 'authorization_response',
+          result: 'pass',
+          details: {
+            issuer_valid: true,
+            state_valid: true,
+            signature_valid: fapi2Config?.jarm ? true : undefined,
+          },
+        })
+      );
+    }
+
+    // Provider errors are processed only after state binding and, for JARM,
+    // signature/issuer/audience validation have completed.
+    if (error) {
+      log.error('External IdP returned error', { error });
+      return redirectWithError(c, error, errorDescription);
+    }
+    if (!code) {
+      return redirectWithError(c, 'invalid_request', 'Missing code');
+    }
 
     // 4b. Log authorization response (OIDF conformance)
     if (diagnosticLogger) {
@@ -229,14 +908,14 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           client_id: provider.clientId,
           authrim_client_id: authState.clientId,
           redirect_uri: callbackUri,
-          state,
-          code,
+          state_present: true,
+          code_present: true,
+          state_bound_to_browser: true,
         },
       });
     }
 
     // 5. Exchange code for tokens
-    const client = OIDCRPClient.fromProvider(provider, callbackUri, clientSecret);
     if (!authState.codeVerifier) {
       throw new ExternalIdPError(
         ExternalIdPErrorCode.CALLBACK_FAILED,
@@ -244,7 +923,71 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       );
     }
 
-    const { tokens, requestContext } = await client.exchangeCode(code, authState.codeVerifier);
+    const responseType =
+      provider.providerQuirks?.responseType === 'code id_token' ? 'code id_token' : 'code';
+    let authorizationIdTokenClaims: UserInfo | undefined;
+    if (responseType === 'code id_token') {
+      if (!idToken) {
+        throw new ExternalIdPError(
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          'Missing authorization response ID token for Hybrid Flow'
+        );
+      }
+      if (!authState.nonce) {
+        throw new ExternalIdPError(
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          'Missing nonce for Hybrid Flow ID token validation'
+        );
+      }
+      authorizationIdTokenClaims = await client.validateIdToken(
+        idToken,
+        {
+          nonce: authState.nonce,
+          code,
+          requireCodeHash: true,
+          maxAge: authState.maxAge,
+          acrValues: authState.acrValues,
+        },
+        diagnosticLogger ? { logger: diagnosticLogger, flowId, diagnosticSessionId } : undefined
+      );
+    }
+
+    let tokens: TokenResponse;
+    let requestContext;
+    let fapi2IdTokenSigningAlgorithms: string[] | undefined;
+    if (fapi2Enabled && fapi2Config) {
+      fapi2Stage = 'token-response';
+      const metadata = fapi2Metadata ?? (await client.discover());
+      validateFapi2ProviderMetadata(metadata, fapi2Config.profile, fapi2Config);
+      fapi2IdTokenSigningAlgorithms = metadata.id_token_signing_alg_values_supported;
+      if (!fapi2Client) throw new Error('FAPI2 client was not initialized');
+      tokens = await fapi2Client.exchangeCode({
+        tokenEndpoint: metadata.token_endpoint,
+        code,
+        codeVerifier: authState.codeVerifier,
+      });
+      requestContext = {
+        tokenEndpoint: metadata.token_endpoint,
+        authMethod: 'private_key_jwt',
+        authHeaderPresent: false,
+      };
+      await recordCallbackDiagnostic(log, () =>
+        diagnosticLogger?.logTokenValidation({
+          diagnosticSessionId,
+          flowId,
+          step: 'fapi2-token-response-validation',
+          tokenType: 'token_response',
+          result: 'pass',
+          details: {
+            access_token_present: true,
+            token_type_valid: tokens.token_type.toLowerCase() === 'dpop',
+            expires_in_present: tokens.expires_in !== undefined,
+          },
+        })
+      );
+    } else {
+      ({ tokens, requestContext } = await client.exchangeCode(code, authState.codeVerifier));
+    }
 
     if (diagnosticLogger) {
       await diagnosticLogger.logTokenValidation({
@@ -260,8 +1003,8 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           grant_type: 'authorization_code',
           redirect_uri: callbackUri,
           client_id: provider.clientId,
-          code,
-          code_verifier: authState.codeVerifier,
+          authorization_code_present: true,
+          code_verifier_present: true,
         },
       });
 
@@ -295,6 +1038,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
         }
       : undefined;
     if (provider.providerType === 'oidc' && tokens.id_token && authState.nonce) {
+      if (fapi2Enabled) fapi2Stage = 'id-token';
       // Use the new options-based signature for comprehensive OIDC validation
       userInfo = await client.validateIdToken(
         tokens.id_token,
@@ -303,18 +1047,58 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           accessToken: tokens.access_token, // For at_hash validation if present
           maxAge: authState.maxAge, // For auth_time validation if max_age was requested
           acrValues: authState.acrValues, // For acr validation if acr_values was requested
+          requireExactAudience: fapi2Enabled,
+          expectedSigningAlgorithms: fapi2IdTokenSigningAlgorithms,
         },
         diagnostics
       );
       idTokenSub = userInfo.sub;
+      if (
+        authorizationIdTokenClaims &&
+        (authorizationIdTokenClaims.iss !== userInfo.iss ||
+          authorizationIdTokenClaims.sub !== userInfo.sub)
+      ) {
+        throw new ExternalIdPError(
+          ExternalIdPErrorCode.CALLBACK_FAILED,
+          'Hybrid Flow ID token issuer or subject mismatch'
+        );
+      }
 
       // Optionally fetch userinfo even when id_token is present
       // Enable this for OIDC RP certification testing or when userinfo has additional claims
-      if (provider.alwaysFetchUserinfo) {
+      if (fapi2Client && fapi2Config?.resourceUrl) {
+        fapi2Stage = 'resource-response';
+        const resourceData = await fapi2Client.fetchResource({
+          resourceUrl: fapi2Config.resourceUrl,
+          accessToken: tokens.access_token,
+        });
+        if (idTokenSub && typeof resourceData.sub === 'string') {
+          assertUserInfoSubjectMatches(idTokenSub, resourceData.sub);
+        }
+        await recordCallbackDiagnostic(log, () =>
+          diagnosticLogger?.logTokenValidation({
+            diagnosticSessionId,
+            flowId,
+            step: 'fapi2-resource-response-validation',
+            tokenType: 'resource_response',
+            result: 'pass',
+            details: {
+              dpop_authorization_scheme_accepted: true,
+              subject_consistent:
+                !idTokenSub ||
+                typeof resourceData.sub !== 'string' ||
+                resourceData.sub === idTokenSub,
+            },
+          })
+        );
+        userInfo = { ...userInfo, ...resourceData };
+      } else if (provider.alwaysFetchUserinfo && !fapi2Client) {
         try {
-          const { userInfo: userinfoData, endpoint } = await client.fetchUserInfoWithMeta(
-            tokens.access_token
-          );
+          const {
+            userInfo: userinfoData,
+            endpoint,
+            signedResponse,
+          } = await client.fetchUserInfoWithMeta(tokens.access_token);
           if (diagnosticLogger) {
             await diagnosticLogger.logTokenValidation({
               diagnosticSessionId,
@@ -337,6 +1121,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
               details: {
                 endpoint,
                 claims: userinfoData,
+                signed_response: signedResponse,
               },
             });
           }
@@ -355,19 +1140,41 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
                 },
               });
             }
-            throw new Error('Userinfo sub claim mismatch');
+            assertUserInfoSubjectMatches(idTokenSub, userinfoData.sub);
           }
           // Merge userinfo data (userinfo may have additional claims not in id_token)
           userInfo = { ...userInfo, ...userinfoData };
-        } catch {
+        } catch (error) {
+          if (error instanceof UserInfoSubjectMismatchError) throw error;
           // Userinfo fetch failure is not fatal - we already have claims from id_token
           log.warn('Userinfo fetch failed, using id_token claims only');
         }
       }
-    } else {
-      const { userInfo: userinfoData, endpoint } = await client.fetchUserInfoWithMeta(
-        tokens.access_token
+    } else if (fapi2Client && fapi2Config?.resourceUrl) {
+      fapi2Stage = 'resource-response';
+      const resourceData = await fapi2Client.fetchResource({
+        resourceUrl: fapi2Config.resourceUrl,
+        accessToken: tokens.access_token,
+      });
+      await recordCallbackDiagnostic(log, () =>
+        diagnosticLogger?.logTokenValidation({
+          diagnosticSessionId,
+          flowId,
+          step: 'fapi2-resource-response-validation',
+          tokenType: 'resource_response',
+          result: 'pass',
+          details: { dpop_authorization_scheme_accepted: true },
+        })
       );
+      // Plain OAuth resource responses commonly use an ecosystem-specific
+      // account identifier. attributeMapping normalizes it to `sub` below.
+      userInfo = resourceData as UserInfo;
+    } else {
+      const {
+        userInfo: userinfoData,
+        endpoint,
+        signedResponse,
+      } = await client.fetchUserInfoWithMeta(tokens.access_token);
       if (diagnosticLogger) {
         await diagnosticLogger.logTokenValidation({
           diagnosticSessionId,
@@ -390,6 +1197,7 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
           details: {
             endpoint,
             claims: userinfoData,
+            signed_response: signedResponse,
           },
         });
       }
@@ -476,146 +1284,84 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       tenantId: authState.tenantId,
     });
 
-    // 8. Publish authentication success event (non-blocking)
-    // Note: Session will be created during token exchange, not here
-    publishEvent(c, {
-      type: AUTH_EVENTS.EXTERNAL_IDP_SUCCEEDED,
-      tenantId: authState.tenantId,
-      data: {
-        userId: result.userId,
-        method: 'external_idp',
-        clientId: provider.id,
-      } satisfies Omit<AuthEventData, 'sessionId'>,
-    }).catch((err: unknown) => {
-      log.error('Failed to publish auth.external_idp.succeeded', {}, err as Error);
+    if (result.status === 'pending') {
+      return await beginExternalIdpProvisioningContinuation(c, {
+        authState,
+        providerId: provider.id,
+        userInfo,
+        upstreamIdToken: tokens.id_token,
+        result,
+      });
+    }
+    return await completeExternalAuthentication(c, {
+      authState,
+      provider,
+      userInfo,
+      upstreamIdToken: tokens.id_token,
+      result,
+    });
+  } catch (error) {
+    log.error('Callback error', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+      errorCode:
+        error instanceof ExternalIdPError
+          ? error.code
+          : fapi2Flow
+            ? classifyFapi2CallbackError(error) || ExternalIdPErrorCode.CALLBACK_FAILED
+            : error instanceof Error
+              ? classifyExternalCallbackFailure(error)
+              : ExternalIdPErrorCode.CALLBACK_FAILED,
     });
 
-    // 9. Generate authorization code for Direct Auth token exchange
-    // Use code_challenge from authState (client-side PKCE)
-    const codeChallenge = authState.codeChallenge;
-    if (!codeChallenge) {
-      throw new ExternalIdPError(
-        ExternalIdPErrorCode.CALLBACK_FAILED,
-        'Missing code_challenge in auth state'
+    if (diagnosticLogger && fapi2Flow) {
+      const validationError = classifyFapi2CallbackError(error);
+      await recordCallbackDiagnostic(log, () =>
+        diagnosticLogger?.logTokenValidation({
+          diagnosticSessionId,
+          flowId: diagnosticFlowId,
+          step: `fapi2-${fapi2Stage}-validation`,
+          tokenType: fapi2Stage.replaceAll('-', '_'),
+          result: 'fail',
+          errorMessage: validationError,
+          details: { validation_error: validationError },
+        })
+      );
+      await recordCallbackDiagnostic(log, () =>
+        diagnosticLogger?.logAuthDecision({
+          diagnosticSessionId,
+          flowId: diagnosticFlowId,
+          decision: 'deny',
+          reason: 'fapi2_callback_rejected',
+          flow: 'fapi2',
+          context: {
+            validation_stage: fapi2Stage,
+            validation_error: validationError,
+          },
+        })
       );
     }
 
-    const clientId = authState.clientId;
-    if (!clientId) {
-      throw new ExternalIdPError(
-        ExternalIdPErrorCode.CALLBACK_FAILED,
-        'Missing client_id in auth state'
+    if (diagnosticLogger && !fapi2Flow) {
+      const validationError =
+        error instanceof ExternalIdPError
+          ? error.code
+          : error instanceof Error
+            ? classifyExternalCallbackFailure(error)
+            : ExternalIdPErrorCode.CALLBACK_FAILED;
+      await recordCallbackDiagnostic(log, () =>
+        diagnosticLogger?.logAuthDecision({
+          diagnosticSessionId,
+          flowId: diagnosticFlowId,
+          decision: 'deny',
+          reason: 'external_idp_callback_rejected',
+          flow: 'external_idp',
+          context: {
+            validation_stage: 'callback',
+            validation_error: validationError,
+          },
+        })
       );
     }
-
-    // 11. SSO decision: SSO is enabled by default (handoff flow)
-    const enableSso = authState.enableSso !== false; // Default: true
-
-    if (enableSso) {
-      // SSO enabled: handoff flow
-
-      // 11a. User verification (performed before session creation)
-      const tenantId = getTenantIdFromContext(c);
-      const authCtx = createAuthContextFromHono(c, tenantId);
-      const piiCtx = createPIIContextFromHono(c, tenantId);
-      const runtimeUsers = new CanonicalRuntimeUserStore({
-        coreAdapter: authCtx.coreAdapter,
-        piiAdapter: piiCtx.defaultPiiAdapter,
-        tenantId,
-      });
-      const runtimeUser = await runtimeUsers.findById(result.userId);
-
-      if (!runtimeUser) {
-        return createErrorResponse(c, AR_ERROR_CODES.USER_INACTIVE);
-      }
-
-      // 11b. Create session (SSO session)
-      const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
-      const sessionTTL = 24 * 60 * 60; // 24 hours
-
-      await sessionStore.createSessionRpc(
-        sessionId,
-        result.userId,
-        sessionTTL,
-        {
-          email: userInfo.email || null,
-          name: userInfo.name || null,
-          amr: ['external_idp'],
-          acr: 'urn:mace:incommon:iap:bronze',
-          client_id: clientId,
-          external_idp: provider.id,
-        },
-        tenantId
-      );
-
-      // Set session cookie
-      const issuerUrl = buildIssuerUrl(c.env, authState.tenantId || tenantId);
-      const isSecure = issuerUrl.startsWith('https://');
-
-      setCookie(c, 'authrim_session', sessionId, {
-        path: '/',
-        httpOnly: true,
-        secure: isSecure,
-        sameSite: 'Lax',
-        maxAge: sessionTTL,
-      });
-
-      // 11c. handoff tokengenerate
-      const handoffToken = crypto.randomUUID();
-      const handoffStore = await getChallengeStoreByChallengeId(c.env, handoffToken, tenantId);
-
-      await handoffStore.storeChallengeRpc({
-        id: `handoff:${handoffToken}`,
-        tenantId,
-        type: 'handoff',
-        userId: result.userId,
-        challenge: sessionId, // Store sessionId
-        ttl: 30, // 30 seconds (enough for redirect + JS execution)
-        metadata: {
-          client_id: clientId,
-          state: authState.state,
-          aud: 'handoff', // prevent accidental token reuse
-          created_at: Date.now(),
-        },
-      });
-
-      // 11d. Redirect to the RP (with handoff token + Referrer mitigation)
-      const redirectUrl = new URL(authState.redirectUri);
-      redirectUrl.searchParams.set('handoff_token', handoffToken);
-      redirectUrl.searchParams.set('state', authState.state);
-
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: redirectUrl.toString(),
-          'Referrer-Policy': 'no-referrer', // Mitigate browser-history and referrer leakage
-          'Cache-Control': 'no-store', // Prevent caching
-        },
-      });
-    } else {
-      // SSO disabled: legacy Direct Auth flow (returns authCode)
-      const authCode = await generateAuthCode(c.env, tenantId, result.userId, codeChallenge, {
-        method: 'external_idp',
-        provider: provider.id,
-        provider_id: provider.id,
-        provider_slug: provider.slug ?? provider.id,
-        client_id: clientId,
-        is_new_user: result.isNewUser,
-        stitched_from_existing: result.stitchedFromExisting,
-      });
-
-      const redirectUrl = new URL(authState.redirectUri);
-      redirectUrl.searchParams.set('code', authCode);
-
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: redirectUrl.toString(),
-        },
-      });
-    }
-  } catch (error) {
-    log.error('Callback error', {}, error as Error);
 
     // Determine error code for event
     let errorCode: string = ExternalIdPErrorCode.CALLBACK_FAILED;
@@ -623,6 +1369,13 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
       errorCode = error.code;
     } else if (error instanceof Error && error.message.includes('acr')) {
       errorCode = ExternalIdPErrorCode.ACR_VALUES_NOT_SATISFIED;
+    }
+    if (c.env.ENABLE_CONFORMANCE_MODE === 'true') {
+      c.header('X-Authrim-Diagnostic-Callback-Error', errorCode);
+      c.header(
+        'X-Authrim-Diagnostic-Callback-Error-Name',
+        error instanceof Error ? error.name : 'UnknownError'
+      );
     }
 
     // Publish authentication failure event (non-blocking)
@@ -672,8 +1425,137 @@ export async function handleExternalCallback(c: Context<{ Bindings: Env }>): Pro
     );
   } finally {
     if (diagnosticLogger) {
-      await diagnosticLogger.cleanup();
+      await diagnosticLogger.cleanup().catch((cleanupError: unknown) => {
+        log.warn('Failed to flush callback diagnostic logs', {
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        });
+      });
     }
+  }
+}
+
+async function recordCallbackDiagnostic(
+  log: ReturnType<ReturnType<typeof getLogger>['module']>,
+  write: () => Promise<void> | undefined
+): Promise<void> {
+  try {
+    await write();
+  } catch (error) {
+    log.warn('Failed to record callback diagnostic event', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function logCallbackRejection(
+  log: ReturnType<ReturnType<typeof getLogger>['module']>,
+  diagnosticLogger: Awaited<ReturnType<typeof createDiagnosticLoggerFromContext>>,
+  options: {
+    diagnosticSessionId?: string;
+    flowId?: string;
+    validationError: string;
+    fapi2: boolean;
+  }
+): Promise<void> {
+  if (!diagnosticLogger) return;
+  if (options.fapi2) {
+    await recordCallbackDiagnostic(log, () =>
+      diagnosticLogger.logTokenValidation({
+        diagnosticSessionId: options.diagnosticSessionId,
+        flowId: options.flowId,
+        step: 'fapi2-authorization-response-validation',
+        tokenType: 'authorization_response',
+        result: 'fail',
+        errorMessage: options.validationError,
+        details: { validation_error: options.validationError },
+      })
+    );
+  }
+  await recordCallbackDiagnostic(log, () =>
+    diagnosticLogger.logAuthDecision({
+      diagnosticSessionId: options.diagnosticSessionId,
+      flowId: options.flowId,
+      decision: 'deny',
+      reason: options.fapi2 ? 'fapi2_callback_rejected' : 'authorization_response_rejected',
+      flow: options.fapi2 ? 'fapi2' : 'external_idp',
+      context: {
+        validation_stage: 'authorization-response',
+        validation_error: options.validationError,
+      },
+    })
+  );
+}
+
+export function classifyFapi2CallbackError(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  const exact = new Map<string, string>([
+    ['Malformed JARM response', 'malformed_jarm'],
+    ['Missing JARM authorization response', 'missing_jarm_response'],
+    ['Unexpected JARM authorization response', 'unexpected_jarm_response'],
+    ['FAPI2 authorization response issuer mismatch', 'issuer_mismatch'],
+    ['Missing FAPI2 issuer parameter', 'missing_issuer'],
+    ['JARM response audience must contain only the client_id', 'audience_mismatch'],
+    ['JARM response state mismatch', 'state_mismatch'],
+    ['JARM response missing iss', 'missing_issuer'],
+    ['JARM response missing state', 'missing_state'],
+    ['JARM response has invalid code', 'invalid_code'],
+    ['JARM response has invalid error', 'invalid_error'],
+    ['JARM response contains neither code nor error', 'missing_code_or_error'],
+    ['Token response missing access_token', 'missing_access_token'],
+    ['Token response token_type must be DPoP', 'invalid_token_type'],
+    ['Token response has invalid expires_in', 'invalid_expires_in'],
+  ]);
+  const known = exact.get(message);
+  if (known) return known;
+
+  const joseError = error as { code?: unknown; claim?: unknown; reason?: unknown };
+  const code = typeof joseError?.code === 'string' ? joseError.code : '';
+  const claim = typeof joseError?.claim === 'string' ? joseError.claim : '';
+  const reason = typeof joseError?.reason === 'string' ? joseError.reason : '';
+  const missing = reason.toLowerCase().includes('missing');
+  if (code === 'ERR_JOSE_ALG_NOT_ALLOWED') return 'unexpected_signing_algorithm';
+  if (code === 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED') return 'invalid_signature';
+  if (code === 'ERR_JWKS_NO_MATCHING_KEY') return 'signing_key_not_found';
+  if (code === 'ERR_JWS_INVALID' || code === 'ERR_JWT_INVALID') return 'malformed_jwt';
+  if (code === 'ERR_JWT_EXPIRED') return 'expired_expiration';
+  if (code === 'ERR_JWT_CLAIM_VALIDATION_FAILED') {
+    if (claim === 'iss') return missing ? 'missing_issuer' : 'issuer_mismatch';
+    if (claim === 'aud') return missing ? 'missing_audience' : 'audience_mismatch';
+    if (claim === 'exp') return missing ? 'missing_expiration' : 'invalid_expiration';
+    if (claim === 'nonce') return missing ? 'missing_nonce' : 'nonce_mismatch';
+    return missing ? 'missing_required_claim' : 'claim_validation_failed';
+  }
+  if (message.includes('nonce'))
+    return message.includes('missing') ? 'missing_nonce' : 'nonce_mismatch';
+  if (message.includes('audience')) return 'audience_mismatch';
+  if (message.includes('issuer')) return 'issuer_mismatch';
+  if (message.includes('signature')) return 'invalid_signature';
+  return 'fapi2_validation_failed';
+}
+
+function classifyExternalCallbackFailure(error: Error): string {
+  const message = error.message.toLowerCase();
+  const patterns: Array<[RegExp, string]> = [
+    [
+      /account[_ -]?provision(?:er|ing)|external[_ -]?idp[_ -]?account[_ -]?provisioning/u,
+      'account_provisioning',
+    ],
+    [/foreign[_ -]?key|constraint|referential/u, 'database_constraint'],
+    [/database|d1|sqlite|sql/u, 'database_error'],
+    [/userinfo/u, 'userinfo_processing'],
+    [/token|authorization[_ -]?code/u, 'token_processing'],
+    [/identity|linked[_ -]?identity/u, 'identity_processing'],
+    [/email/u, 'email_processing'],
+  ];
+  return patterns.find(([pattern]) => pattern.test(message))?.[1] ?? 'callback_processing';
+}
+
+export function extractUnverifiedJarmState(responseJwt: string): string | undefined {
+  try {
+    const unverified = jose.decodeJwt(responseJwt);
+    return typeof unverified.state === 'string' ? unverified.state : undefined;
+  } catch {
+    throw new Error('Malformed JARM response');
   }
 }
 
@@ -712,95 +1594,45 @@ async function redirectWithError(
     redirectUrl.searchParams.set('tenant_hint', tenantId);
   }
 
-  return c.redirect(redirectUrl.toString());
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: redirectUrl.toString(),
+      'Referrer-Policy': 'no-referrer',
+      'Cache-Control': 'no-store',
+    },
+  });
 }
 
-/**
- * Session creation options for external IdP authentication
- */
-interface CreateSessionOptions {
+interface ExternalProviderSessionRecord {
   userId: string;
   tenantId: string;
-  /** External provider ID used for authentication */
-  externalProviderId: string;
-  /** Subject ID from the external provider (for backchannel logout) */
-  externalProviderSub: string;
-  /** ACR value returned by the provider */
-  acr?: string;
+  sessionId: string;
+  providerId: string;
+  providerSub: string;
+  providerSid?: string;
+  expiresAt: number;
 }
 
 /**
- * Create Authrim session (sharded)
- * Stores external provider information for backchannel logout support
+ * Record the external-provider reverse lookup in a claim-digest-scoped DO.
  */
-async function createSession(env: Env, options: CreateSessionOptions): Promise<string> {
+async function recordExternalProviderSession(
+  env: Env,
+  options: ExternalProviderSessionRecord
+): Promise<void> {
   try {
-    const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(
-      env,
-      options.tenantId
-    );
-    const now = Date.now();
-    const ttl = 3600; // 1 hour in seconds
-    const expiresAt = now + ttl * 1000;
-
-    // 1. Create session in Durable Object (for session data and validation)
-    const response = await sessionStore.fetch(
-      new Request('https://session-store/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionId,
-          userId: options.userId,
-          ttl,
-          data: {
-            amr: ['external_idp'],
-            acr: options.acr || 'urn:mace:incommon:iap:bronze',
-            // Store external provider info for backchannel logout
-            external_provider_id: options.externalProviderId,
-            external_provider_sub: options.externalProviderSub,
-          },
-        }),
-      })
-    );
-
-    if (!response.ok) {
-      throw new Error('Session creation failed');
-    }
-
-    // 2. Also record in D1 for backchannel logout queries
-    // This allows us to find sessions by (provider_id, provider_sub)
-    try {
-      const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-        env,
-        'bridge-callback-session-record',
-        { tenantId: options.tenantId }
-      );
-      await coreAdapter.execute(
-        `INSERT INTO sessions (
-           id, user_id, expires_at, created_at, external_provider_id, external_provider_sub, tenant_id
-         ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          sessionId,
-          options.userId,
-          expiresAt,
-          now,
-          options.externalProviderId,
-          options.externalProviderSub,
-          options.tenantId,
-        ]
-      );
-    } catch (dbError) {
-      // Log but don't fail session creation if D1 insert fails
-      // Session is still valid in DO, just backchannel logout may not work
-      const log = createLogger().module('CALLBACK');
-      log.warn('Failed to record session in D1 for backchannel logout');
-    }
-
-    return sessionId;
-  } catch (error) {
-    const log = createLogger().module('CALLBACK');
-    log.error('Failed to create session', {}, error as Error);
-    throw new Error('session_creation_failed');
+    await registerExternalProviderSession(env, {
+      tenantId: options.tenantId,
+      providerId: options.providerId,
+      providerSub: options.providerSub,
+      providerSid: options.providerSid,
+      sessionId: options.sessionId,
+      userId: options.userId,
+      expiresAtMs: options.expiresAt,
+    });
+  } catch {
+    createLogger().module('CALLBACK').warn('Failed to record external-provider session index');
   }
 }
 

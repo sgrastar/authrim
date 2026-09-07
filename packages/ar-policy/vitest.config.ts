@@ -7,9 +7,10 @@ export default defineConfig({
     globals: false,
     environment: 'node',
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        isolate: true,
+    coverage: {
+      exclude: ['**/__tests__/**'],
+      thresholds: {
+        branches: 70,
       },
     },
   },

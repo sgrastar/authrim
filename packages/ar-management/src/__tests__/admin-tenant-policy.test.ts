@@ -1,13 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { AdminAuthContext, Env } from '@authrim/ar-lib-core';
 import {
   getTenantIdFromContext,
   requestContextMiddleware,
   requireSystemAdmin,
 } from '@authrim/ar-lib-core';
 import { adminTenantPolicyMiddleware } from '../admin-tenant-policy';
-import { isTenantScopedAdminPath } from '../admin-tenant-access';
+import {
+  hasPlatformTenantManagementAuthority,
+  isTenantScopedAdminPath,
+} from '../admin-tenant-access';
 
 function createMockDB(options: { tenantRow?: { id: string } | null } = {}) {
   const { tenantRow = null } = options;
@@ -50,6 +53,9 @@ function buildApp(env: Partial<Env>) {
   app.get('/api/admin/sessions/me', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.get('/api/admin/me/session', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.post('/api/admin/logout', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
+  app.post('/api/admin/agent-login-handoffs/:id/approve', (c) =>
+    c.json({ tenantId: getTenantIdFromContext(c), handoffId: c.req.param('id') })
+  );
   app.get('/api/admin/tenants', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.get('/api/admin/runtime-profiles', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
   app.get('/api/admin/users', (c) => c.json({ tenantId: getTenantIdFromContext(c) }));
@@ -66,6 +72,9 @@ function buildApp(env: Partial<Env>) {
     c.json({ tenantId: getTenantIdFromContext(c), pathTenantId: c.req.param('tenantId') })
   );
   app.get('/api/admin/tenants/:tenantId/email-settings', (c) =>
+    c.json({ tenantId: getTenantIdFromContext(c), pathTenantId: c.req.param('tenantId') })
+  );
+  app.get('/api/admin/tenants/:tenantId/lifecycle/jobs', (c) =>
     c.json({ tenantId: getTenantIdFromContext(c), pathTenantId: c.req.param('tenantId') })
   );
   app.get('/api/admin/settings/logging/tenant/:tenantId', (c) =>
@@ -102,6 +111,27 @@ function buildPlatformGuardApp(roles: string[]) {
 }
 
 describe('adminTenantPolicyMiddleware', () => {
+  it('does not treat global tenant scope as a clone permission for machine actors', () => {
+    const machine = {
+      userId: 'machine-1',
+      authMethod: 'machine_access_token',
+      roles: [],
+      tenantId: 'default',
+      tenantScope: ['*'],
+      permissions: ['admin:tenants.read'],
+    } satisfies AdminAuthContext;
+
+    expect(hasPlatformTenantManagementAuthority(machine, 'admin:tenants:lifecycle:standard')).toBe(
+      false
+    );
+    expect(
+      hasPlatformTenantManagementAuthority(
+        { ...machine, permissions: ['admin:tenants:lifecycle:standard'] },
+        'admin:tenants:lifecycle:standard'
+      )
+    ).toBe(true);
+  });
+
   it('identifies tenant-scoped admin subresources that are managed by tenant admins', () => {
     expect(isTenantScopedAdminPath('/api/admin/tenants/tenant-a/directory-auth/overview')).toBe(
       true
@@ -284,6 +314,39 @@ describe('adminTenantPolicyMiddleware', () => {
     expect(logoutRes.status).toBe(200);
   });
 
+  it('allows only an exact Agent login handoff approval path without X-Tenant-Id', async () => {
+    const { app, env } = buildApp({
+      BASE_DOMAIN: 'auth.example.com',
+      DEFAULT_TENANT_ID: 'default',
+      DB: createMockDB(),
+      AUTHRIM_CONFIG: createMockKV(),
+    });
+    const validId = `alh_${'A'.repeat(32)}`;
+
+    const approved = await app.request(
+      new Request(`https://admin.pages.dev/api/admin/agent-login-handoffs/${validId}/approve`, {
+        method: 'POST',
+        headers: { Host: 'admin.pages.dev' },
+      }),
+      undefined,
+      env
+    );
+    const malformed = await app.request(
+      new Request('https://admin.pages.dev/api/admin/agent-login-handoffs/alh_short/approve', {
+        method: 'POST',
+        headers: { Host: 'admin.pages.dev' },
+      }),
+      undefined,
+      env
+    );
+
+    expect(approved.status).toBe(200);
+    expect(malformed.status).toBe(400);
+    await expect(malformed.json()).resolves.toMatchObject({
+      error_description: 'X-Tenant-Id header is required',
+    });
+  });
+
   it('returns 400 when tenant-scoped admin endpoints omit X-Tenant-Id', async () => {
     const { app, env } = buildApp({
       BASE_DOMAIN: 'auth.example.com',
@@ -314,7 +377,7 @@ describe('adminTenantPolicyMiddleware', () => {
     expect(res.status).toBe(400);
   });
 
-  it('returns 404 when X-Tenant-Id points to an unknown tenant', async () => {
+  it('fails closed when X-Tenant-Id has no signed runtime snapshot', async () => {
     const { app, env } = buildApp({
       BASE_DOMAIN: 'auth.example.com',
       DEFAULT_TENANT_ID: 'default',
@@ -328,7 +391,11 @@ describe('adminTenantPolicyMiddleware', () => {
       env
     );
 
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(409);
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'missing_generation',
+      tenant_id: 'ghost',
+    });
   });
 
   it('returns 400 when X-Tenant-Id does not match explicit tenant path', async () => {
@@ -363,6 +430,24 @@ describe('adminTenantPolicyMiddleware', () => {
     );
 
     expect(res.status).toBe(400);
+  });
+
+  it('treats tenant lifecycle jobs as platform-owned tenant inventory', async () => {
+    const { app, env } = buildApp({
+      BASE_DOMAIN: 'auth.example.com',
+      DEFAULT_TENANT_ID: 'default',
+      DB: createMockDB({ tenantRow: { id: 'fapi2' } }),
+      AUTHRIM_CONFIG: createMockKV(),
+    });
+
+    const res = await app.request(
+      makeRequest('/api/admin/tenants/fapi2/lifecycle/jobs'),
+      undefined,
+      env
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ tenantId: 'default', pathTenantId: 'fapi2' });
   });
 
   it('returns 400 when X-Tenant-Id does not match tenant logging override path', async () => {

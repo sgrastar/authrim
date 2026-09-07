@@ -889,10 +889,11 @@ export async function getConsentItemsForScreen(
   userId: string,
   language: string,
   tenantDefaultLanguage: string = 'en',
-  context: ConsentRequirementResolutionContext = {}
+  context: ConsentRequirementResolutionContext = {},
+  piiAdapter: DatabaseAdapter = adapter
 ): Promise<ConsentScreenItem[]> {
   // Get user claims for conditional rule evaluation
-  const userClaims = await getUserClaimsForRules(adapter, tenantId, userId);
+  const userClaims = await getUserClaimsForRules(adapter, tenantId, userId, piiAdapter);
 
   // Resolve requirements
   const requirements = await resolveConsentRequirements(
@@ -980,14 +981,15 @@ export async function getConsentItemsForScreen(
 export async function getUserClaimsForRules(
   adapter: DatabaseAdapter,
   tenantId: string,
-  userId: string
+  userId: string,
+  piiAdapter: DatabaseAdapter = adapter
 ): Promise<Record<string, unknown>> {
   const claims: Record<string, unknown> = {};
 
   try {
     const user = await new CanonicalRuntimeUserStore({
       coreAdapter: adapter,
-      piiAdapter: adapter,
+      piiAdapter,
       tenantId,
     }).findById(userId, { includeInactive: true });
 

@@ -38,11 +38,12 @@ import {
   buildTokenRequestBody,
 } from './fixtures';
 import type { Env } from '@authrim/ar-lib-core/types/env';
-import { authorizeHandler } from '../../packages/op-auth/src/authorize';
-import { tokenHandler } from '../../packages/op-token/src/token';
-import { discoveryHandler } from '../../packages/op-discovery/src/discovery';
-import { jwksHandler } from '../../packages/op-discovery/src/jwks';
-import { userinfoHandler } from '../../packages/op-userinfo/src/userinfo';
+import { hashClientSecret } from '@authrim/ar-lib-core/utils/crypto';
+import { authorizeHandler } from '../../packages/ar-auth/src/authorize';
+import { tokenHandler } from '../../packages/ar-token/src/token';
+import { discoveryHandler } from '../../packages/ar-discovery/src/discovery';
+import { jwksHandler } from '../../packages/ar-discovery/src/jwks';
+import { userinfoHandler } from '../../packages/ar-userinfo/src/userinfo';
 
 describe('Authorization Code Flow', () => {
   let app: Hono;
@@ -85,7 +86,9 @@ describe('Authorization Code Flow', () => {
     codeChallengeMethod?: 'S256';
   }): Promise<string> {
     const testCode = `auth_code_${Date.now()}_${crypto.randomUUID()}`;
-    const authCodeStub = env.AUTH_CODE_STORE.get(env.AUTH_CODE_STORE.idFromName('global'));
+    const authCodeStub = env.AUTH_CODE_STORE.get(
+      env.AUTH_CODE_STORE.idFromName('tenant:default:auth-code')
+    );
     await authCodeStub.fetch(
       new Request('http://localhost/code/create', {
         method: 'POST',
@@ -101,6 +104,10 @@ describe('Authorization Code Flow', () => {
           claims: options.claims,
           codeChallenge: options.codeChallenge,
           codeChallengeMethod: options.codeChallengeMethod,
+          resource: 'https://api.example.com',
+          tenantId: 'default',
+          authorizationServer: 'default',
+          subjectType: 'end_user',
           ttlMs: 120000,
         }),
       })
@@ -122,14 +129,19 @@ describe('Authorization Code Flow', () => {
       redirect_uri: options.redirect_uri,
       client_secret: options.client_secret,
     });
-    return app.request(
-      '/token',
-      {
+    tokenBody.set('resource', 'https://api.example.com');
+    return app.fetch(
+      new Request('http://localhost/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: tokenBody,
-      },
-      env
+      }),
+      env,
+      {
+        waitUntil: () => undefined,
+        passThroughOnException: () => undefined,
+        props: {},
+      } as ExecutionContext
     );
   }
 
@@ -155,6 +167,26 @@ describe('Authorization Code Flow', () => {
     env = await createMockEnv();
 
     // Register routes directly with handlers (with error handling for debugging)
+    app.use('*', async (c, next) => {
+      c.set('tenantId' as never, 'default' as never);
+      c.set(
+        'tenantMetadataContext' as never,
+        {
+          tenantId: 'default',
+          coreDb: c.env.DB,
+        } as never
+      );
+      c.set(
+        'accountDataContext' as never,
+        {
+          tenantId: 'default',
+          accountId: 'account:test-user',
+          coreDb: c.env.DB,
+          piiDb: c.env.DB,
+        } as never
+      );
+      await next();
+    });
     app.get('/authorize', (c) => authorizeHandler(c as any));
     app.post('/authorize', (c) => authorizeHandler(c as any));
     app.post('/token', (c) => tokenHandler(c as any));
@@ -180,16 +212,19 @@ describe('Authorization Code Flow', () => {
     // Register test clients in DB
     for (const client of Object.values(testClients)) {
       await env.DB.prepare(
-        "INSERT INTO oauth_clients (client_id, client_secret, redirect_uris, grant_types, response_types, scope, allow_claims_without_scope) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        'INSERT INTO oauth_clients (client_id, client_secret_hash, redirect_uris, grant_types, response_types, scope, allow_claims_without_scope, token_endpoint_auth_method, tenant_id, default_resource) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       )
         .bind(
           client.client_id,
-          client.client_secret || null,
+          client.client_secret ? await hashClientSecret(client.client_secret) : null,
           JSON.stringify(client.redirect_uris),
           JSON.stringify(client.grant_types),
           JSON.stringify(client.response_types),
           client.scope,
-          client.allow_claims_without_scope ? 1 : 0
+          client.allow_claims_without_scope ? 1 : 0,
+          client.client_secret ? 'client_secret_post' : 'none',
+          'default',
+          'https://api.example.com'
         )
         .run();
     }
@@ -337,7 +372,7 @@ describe('Authorization Code Flow', () => {
       const testCode = await createAuthorizationCode({
         client_id: client.client_id,
         redirect_uri: client.redirect_uris[0],
-        scope: client.scope,
+        scope: 'openid',
         userId: 'test-user',
       });
 
@@ -557,7 +592,7 @@ describe('Authorization Code Flow', () => {
       const testCode = await createAuthorizationCode({
         client_id: client.client_id,
         redirect_uri: client.redirect_uris[0],
-        scope: client.scope,
+        scope: 'openid',
         userId: 'test-user',
       });
 
@@ -569,13 +604,15 @@ describe('Authorization Code Flow', () => {
         client_secret: client.client_secret,
       });
 
-      expect(tokenRes.status).toBe(200);
       const tokenData = (await tokenRes.json()) as {
         access_token: string;
         id_token: string;
         token_type: string;
         expires_in: number;
+        error?: string;
+        error_description?: string;
       };
+      expect(tokenRes.status, JSON.stringify(tokenData)).toBe(200);
 
       // Validate token response
       expect(tokenData).toHaveProperty('access_token');

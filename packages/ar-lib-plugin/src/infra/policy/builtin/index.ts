@@ -196,7 +196,7 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
     // Query relationships where subject has the relation to objects of the given type
     const offset = cursor ? parseInt(cursor, 10) : 0;
 
-    const relationships = await this.storage!.adapter.query<{
+    const relationships = await this.getStorage().adapter.query<{
       to_type: string;
       to_id: string;
     }>(
@@ -224,7 +224,7 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
 
     const offset = cursor ? parseInt(cursor, 10) : 0;
 
-    const relationships = await this.storage!.adapter.query<{
+    const relationships = await this.getStorage().adapter.query<{
       from_type: string;
       from_id: string;
     }>(
@@ -304,7 +304,8 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
     }
 
     if (request.keys) {
-      await Promise.all(request.keys.map((key) => this.cache!.delete(this.CACHE_PREFIX + key)));
+      const cache = this.cache;
+      await Promise.all(request.keys.map((key) => cache.delete(this.CACHE_PREFIX + key)));
     }
 
     // Pattern-based invalidation is not efficiently supported by KV
@@ -319,6 +320,12 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
     if (!this.initialized || !this.storage) {
       throw new Error('BuiltinPolicyInfra: Not initialized. Call initialize() first.');
     }
+  }
+
+  private getStorage(): IStorageInfra {
+    this.ensureInitialized();
+    if (!this.storage) throw new Error('BuiltinPolicyInfra: Storage unavailable');
+    return this.storage;
   }
 
   private parseReference(ref: string): [string, string] {
@@ -364,7 +371,7 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
     objectType: string,
     objectId: string
   ): Promise<boolean> {
-    const result = await this.storage!.adapter.queryOne<{ count: number }>(
+    const result = await this.getStorage().adapter.queryOne<{ count: number }>(
       `SELECT COUNT(*) as count FROM relationships
        WHERE from_type = ? AND from_id = ? AND relationship_type = ?
        AND to_type = ? AND to_id = ?
@@ -383,7 +390,7 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
     objectId: string
   ): Promise<boolean> {
     // Use recursive CTE to traverse role hierarchy
-    const result = await this.storage!.adapter.queryOne<{ found: number }>(
+    const result = await this.getStorage().adapter.queryOne<{ found: number }>(
       `
       WITH RECURSIVE role_chain AS (
         -- Base case: direct role assignments
@@ -429,7 +436,7 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
     }
 
     // Load from database
-    const rules = await this.storage!.adapter.query<RuleRow>(
+    const rules = await this.getStorage().adapter.query<RuleRow>(
       `SELECT * FROM role_assignment_rules
        WHERE tenant_id = ? AND is_active = 1
        AND (valid_from IS NULL OR valid_from <= ?)
@@ -459,11 +466,11 @@ export class BuiltinPolicyInfra implements IPolicyInfra {
       id: row.id,
       tenant_id: row.tenant_id,
       priority: row.priority,
-      conditions: row.conditions ? JSON.parse(row.conditions) : [],
-      action: row.action as 'allow' | 'deny',
-      roles_to_assign: row.roles_to_assign ? JSON.parse(row.roles_to_assign) : [],
-      orgs_to_join: row.orgs_to_join ? JSON.parse(row.orgs_to_join) : [],
-      attributes_to_set: row.attributes_to_set ? JSON.parse(row.attributes_to_set) : [],
+      conditions: parseJsonArray(row.conditions, isRuleCondition),
+      action: row.action === 'allow' ? 'allow' : 'deny',
+      roles_to_assign: parseJsonArray(row.roles_to_assign, isString),
+      orgs_to_join: parseJsonArray(row.orgs_to_join, isString),
+      attributes_to_set: parseJsonArray(row.attributes_to_set, isAttributeAssignment),
       deny_reason: row.deny_reason ?? undefined,
     };
   }
@@ -625,6 +632,37 @@ interface RuleCondition {
   field: string;
   operator: 'eq' | 'neq' | 'contains' | 'starts_with' | 'ends_with' | 'matches' | 'in' | 'exists';
   value: unknown;
+}
+
+function parseJsonArray<T>(value: string | null, isItem: (item: unknown) => item is T): T[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) && parsed.every(isItem) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isRuleCondition(value: unknown): value is RuleCondition {
+  if (!isRecord(value) || typeof value.field !== 'string' || typeof value.operator !== 'string') {
+    return false;
+  }
+  return ['eq', 'neq', 'contains', 'starts_with', 'ends_with', 'matches', 'in', 'exists'].includes(
+    value.operator
+  );
+}
+
+function isAttributeAssignment(value: unknown): value is { key: string; value: unknown } {
+  return isRecord(value) && typeof value.key === 'string' && 'value' in value;
 }
 
 // =============================================================================

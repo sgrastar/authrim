@@ -1,6 +1,9 @@
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db/adapter-source';
 import type { Env } from '../types/env';
-import { resolveAuthCorePersistenceAdapterFromEnv } from './auth-core-persistence-context';
+import { createLookupAliasIndex } from './lookup-directory/blind-index';
+import { LookupRouteResolver } from './lookup-directory/resolver';
+import { loadVerifiedLookupBucketAssignmentProvider } from './lookup-directory/shard-registry';
+import { resolveTenantDatabaseSourceFromRegistry } from './tenant-database-resolver';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('TENANT-VANITY-DOMAINS');
@@ -137,51 +140,117 @@ export async function invalidateTenantVanityDomainCache(
   ]);
 }
 
+async function resolveTenantDefaultStore(env: Partial<Env>, tenantId: string) {
+  if (
+    !env.AUTHRIM_ENVIRONMENT_NAME ||
+    !env.TENANT_RUNTIME_REGISTRY ||
+    !env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS
+  ) {
+    throw new Error('tenant_vanity_runtime_registry_unavailable');
+  }
+  return resolveTenantDatabaseSourceFromRegistry(env as Env, {
+    tenantId,
+    role: 'tenant_core',
+    dataRole: 'tenant_core/default',
+    shardGroup: 'default',
+    shardIndex: 0,
+  });
+}
+
+async function queryActiveVanityTenant(
+  source: DatabaseSource,
+  hostname: string,
+  tenantId: string
+): Promise<string | null> {
+  const row = await ensureDatabaseAdapter(source, 'tenant-vanity-domain-resolver').queryOne<{
+    tenant_id: string;
+    status: string;
+    is_active: number;
+  }>(
+    `SELECT tenant_vanity_domains.tenant_id, tenant_vanity_domains.status, tenant_vanity_domains.is_active
+       FROM tenant_vanity_domains
+       INNER JOIN tenants ON tenants.id = tenant_vanity_domains.tenant_id
+       WHERE tenant_vanity_domains.active_hostname = ?
+         AND tenant_vanity_domains.tenant_id = ?
+         AND tenant_vanity_domains.is_active = 1
+         AND tenant_vanity_domains.status = 'active'
+         AND tenants.lifecycle_state = 'active'
+       LIMIT 1`,
+    [hostname, tenantId]
+  );
+  return row && isUsableVanityDomain(row) ? row.tenant_id : null;
+}
+
 export async function resolveTenantFromVanityHost(
-  db: DatabaseSource | undefined,
-  kv: KVNamespace | undefined,
+  env: Partial<Env>,
   host: string | null | undefined
 ): Promise<string | null> {
   const hostname = normalizeHostname(host);
   if (!hostname) return null;
 
+  const kv = env.AUTHRIM_CONFIG;
   const cacheKey = tenantVanityDomainCacheKey(hostname);
   if (kv) {
     try {
       const cached = await kv.get(cacheKey);
-      if (cached) return cached;
+      if (cached) {
+        const store = await resolveTenantDefaultStore(env, cached);
+        if ((await queryActiveVanityTenant(store.source, hostname, cached)) === cached) {
+          return cached;
+        }
+        await kv.delete(cacheKey).catch(() => {});
+      }
     } catch {
-      // Ignore cache errors and fall through to D1.
+      // KV is only a hint. Continue through the signed Lookup directory.
     }
   }
 
-  if (!db) return null;
-  const adapter = ensureDatabaseAdapter(db, 'tenant-vanity-domain-resolver');
-
   try {
-    const row = await adapter.queryOne<{ tenant_id: string; status: string; is_active: number }>(
-      `SELECT tenant_vanity_domains.tenant_id, tenant_vanity_domains.status, tenant_vanity_domains.is_active
-       FROM tenant_vanity_domains
-       INNER JOIN tenants ON tenants.id = tenant_vanity_domains.tenant_id
-       WHERE tenant_vanity_domains.active_hostname = ?
-         AND tenant_vanity_domains.is_active = 1
-         AND tenant_vanity_domains.status = 'active'
-         AND tenants.lifecycle_state = 'active'
-       LIMIT 1`,
-      [hostname]
-    );
+    if (
+      !env.AUTHRIM_ENVIRONMENT_NAME ||
+      !env.TENANT_RUNTIME_REGISTRY ||
+      !env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS
+    ) {
+      throw new Error('tenant_vanity_lookup_unavailable');
+    }
+    const index = await createLookupAliasIndex('custom_domain', hostname);
+    const assignments = await loadVerifiedLookupBucketAssignmentProvider({
+      store: env.TENANT_RUNTIME_REGISTRY,
+      environmentId: env.AUTHRIM_ENVIRONMENT_NAME,
+      publicJwks: env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS,
+    });
+    const alias = await new LookupRouteResolver(
+      env as Record<string, unknown>,
+      assignments
+    ).resolveAlias({ index });
+    if (!alias) return null;
 
-    if (!row || !isUsableVanityDomain(row)) return null;
-
-    await kv?.put(cacheKey, row.tenant_id, { expirationTtl: CACHE_TTL_SECONDS }).catch(() => {});
-    return row.tenant_id;
+    const store = await resolveTenantDefaultStore(env, alias.tenantId);
+    const projection = alias.routeProjection;
+    if (
+      projection.tenantRouteGeneration > store.bindingRouteGeneration ||
+      (projection.tenantRouteGeneration === store.bindingRouteGeneration &&
+        (projection.residencyPolicyId !== store.residencyPolicyId ||
+          projection.target.residencyPartition !== store.residencyPartition ||
+          projection.target.shardId !== store.shardId ||
+          projection.target.bindingRef !== store.bindingRef ||
+          projection.target.requiredBindingRouteGeneration !== store.bindingRouteGeneration))
+    ) {
+      throw new Error('tenant_vanity_alias_route_revalidation_failed');
+    }
+    const tenantId = await queryActiveVanityTenant(store.source, hostname, alias.tenantId);
+    if (tenantId !== alias.tenantId) {
+      throw new Error('tenant_vanity_alias_destination_revalidation_failed');
+    }
+    await kv?.put(cacheKey, tenantId, { expirationTtl: CACHE_TTL_SECONDS }).catch(() => {});
+    return tenantId;
   } catch (error) {
     log.warn('Failed to resolve tenant from vanity host', { hostname, error: String(error) });
     return null;
   }
 }
 
-type TenantVanityLookupEnv = Partial<Omit<Env, 'DB'>> & { DB?: DatabaseSource };
+type TenantVanityLookupEnv = Partial<Env> & { tenantCoreDb?: DatabaseSource };
 
 export async function getPrimaryTenantVanityDomain(
   env: TenantVanityLookupEnv,
@@ -214,18 +283,9 @@ export async function getPrimaryTenantVanityDomain(
     }
   }
 
-  const adapter = env.DB
-    ? ensureDatabaseAdapter(env.DB, 'tenant-vanity-domain-resolver')
-    : 'AUTHRIM_CONFIG' in env
-      ? await resolveAuthCorePersistenceAdapterFromEnv(
-          env as Parameters<typeof resolveAuthCorePersistenceAdapterFromEnv>[0],
-          'tenant-vanity-domain-resolver'
-        )
-      : null;
-
-  if (!adapter) return null;
-
   try {
+    const source = env.tenantCoreDb ?? (await resolveTenantDefaultStore(env, tenantId)).source;
+    const adapter = ensureDatabaseAdapter(source, 'tenant-vanity-domain-resolver');
     const row = await adapter.queryOne<TenantVanityDomainRow>(
       `SELECT *
        FROM tenant_vanity_domains

@@ -31,7 +31,9 @@ interface AdminSessionEntity extends BaseEntity {
  * Admin Session Repository
  */
 export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
-  constructor(adapter: DatabaseAdapter) {
+  private readonly tenantId: string;
+
+  constructor(adapter: DatabaseAdapter, tenantId: string) {
     super(adapter, {
       tableName: 'admin_sessions',
       primaryKey: 'id',
@@ -47,6 +49,7 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
         'mfa_verified_at',
       ],
     });
+    this.tenantId = requireTenantId(tenantId, 'AdminSessionRepository');
   }
 
   /**
@@ -72,6 +75,10 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
       mfa_verified: input.mfa_verified ?? false,
       mfa_verified_at: input.mfa_verified ? now : null,
     };
+
+    if (session.tenant_id !== this.tenantId) {
+      throw new Error('AdminSessionRepository cannot create a session for another tenant');
+    }
 
     const sql = `
       INSERT INTO admin_sessions (
@@ -105,8 +112,8 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
   async getSession(id: string): Promise<AdminSession | null> {
     const now = getCurrentTimestamp();
     const row = await this.adapter.queryOne<Record<string, unknown>>(
-      'SELECT * FROM admin_sessions WHERE id = ? AND expires_at > ?',
-      [id, now]
+      'SELECT * FROM admin_sessions WHERE tenant_id = ? AND id = ? AND expires_at > ?',
+      [this.tenantId, id, now]
     );
     return row ? this.rowToSession(row) : null;
   }
@@ -119,8 +126,8 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
    */
   async getSessionIncludingExpired(id: string): Promise<AdminSession | null> {
     const row = await this.adapter.queryOne<Record<string, unknown>>(
-      'SELECT * FROM admin_sessions WHERE id = ?',
-      [id]
+      'SELECT * FROM admin_sessions WHERE tenant_id = ? AND id = ?',
+      [this.tenantId, id]
     );
     return row ? this.rowToSession(row) : null;
   }
@@ -134,8 +141,8 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
   async updateActivity(id: string): Promise<boolean> {
     const now = getCurrentTimestamp();
     const result = await this.adapter.execute(
-      'UPDATE admin_sessions SET last_activity_at = ? WHERE id = ?',
-      [now, id]
+      'UPDATE admin_sessions SET last_activity_at = ? WHERE tenant_id = ? AND id = ?',
+      [now, this.tenantId, id]
     );
     return result.rowsAffected > 0;
   }
@@ -149,8 +156,8 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
   async setMfaVerified(id: string): Promise<boolean> {
     const now = getCurrentTimestamp();
     const result = await this.adapter.execute(
-      'UPDATE admin_sessions SET mfa_verified = 1, mfa_verified_at = ? WHERE id = ?',
-      [now, id]
+      'UPDATE admin_sessions SET mfa_verified = 1, mfa_verified_at = ? WHERE tenant_id = ? AND id = ?',
+      [now, this.tenantId, id]
     );
     return result.rowsAffected > 0;
   }
@@ -165,8 +172,8 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
   async extendSession(id: string, newExpiresAt: number): Promise<boolean> {
     const now = getCurrentTimestamp();
     const result = await this.adapter.execute(
-      'UPDATE admin_sessions SET expires_at = ?, last_activity_at = ? WHERE id = ?',
-      [newExpiresAt, now, id]
+      'UPDATE admin_sessions SET expires_at = ?, last_activity_at = ? WHERE tenant_id = ? AND id = ?',
+      [newExpiresAt, now, this.tenantId, id]
     );
     return result.rowsAffected > 0;
   }
@@ -178,7 +185,10 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
    * @returns True if deleted
    */
   async deleteSession(id: string): Promise<boolean> {
-    const result = await this.adapter.execute('DELETE FROM admin_sessions WHERE id = ?', [id]);
+    const result = await this.adapter.execute(
+      'DELETE FROM admin_sessions WHERE tenant_id = ? AND id = ?',
+      [this.tenantId, id]
+    );
     return result.rowsAffected > 0;
   }
 
@@ -190,8 +200,8 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
    */
   async deleteAllByUser(adminUserId: string): Promise<number> {
     const result = await this.adapter.execute(
-      'DELETE FROM admin_sessions WHERE admin_user_id = ?',
-      [adminUserId]
+      'DELETE FROM admin_sessions WHERE tenant_id = ? AND admin_user_id = ?',
+      [this.tenantId, adminUserId]
     );
     return result.rowsAffected;
   }
@@ -205,8 +215,8 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
    */
   async deleteAllByUserExcept(adminUserId: string, exceptSessionId: string): Promise<number> {
     const result = await this.adapter.execute(
-      'DELETE FROM admin_sessions WHERE admin_user_id = ? AND id != ?',
-      [adminUserId, exceptSessionId]
+      'DELETE FROM admin_sessions WHERE tenant_id = ? AND admin_user_id = ? AND id != ?',
+      [this.tenantId, adminUserId, exceptSessionId]
     );
     return result.rowsAffected;
   }
@@ -220,8 +230,8 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
   async getSessionsByUser(adminUserId: string): Promise<AdminSession[]> {
     const now = getCurrentTimestamp();
     const rows = await this.adapter.query<Record<string, unknown>>(
-      'SELECT * FROM admin_sessions WHERE admin_user_id = ? AND expires_at > ? ORDER BY created_at DESC',
-      [adminUserId, now]
+      'SELECT * FROM admin_sessions WHERE tenant_id = ? AND admin_user_id = ? AND expires_at > ? ORDER BY created_at DESC',
+      [this.tenantId, adminUserId, now]
     );
     return rows.map((row) => this.rowToSession(row));
   }
@@ -235,8 +245,8 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
   async countSessionsByUser(adminUserId: string): Promise<number> {
     const now = getCurrentTimestamp();
     const result = await this.adapter.queryOne<{ count: number }>(
-      'SELECT COUNT(*) as count FROM admin_sessions WHERE admin_user_id = ? AND expires_at > ?',
-      [adminUserId, now]
+      'SELECT COUNT(*) as count FROM admin_sessions WHERE tenant_id = ? AND admin_user_id = ? AND expires_at > ?',
+      [this.tenantId, adminUserId, now]
     );
     return result?.count ?? 0;
   }
@@ -248,9 +258,10 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
    */
   async cleanupExpiredSessions(): Promise<number> {
     const now = getCurrentTimestamp();
-    const result = await this.adapter.execute('DELETE FROM admin_sessions WHERE expires_at <= ?', [
-      now,
-    ]);
+    const result = await this.adapter.execute(
+      'DELETE FROM admin_sessions WHERE tenant_id = ? AND expires_at <= ?',
+      [this.tenantId, now]
+    );
     return result.rowsAffected;
   }
 
@@ -263,8 +274,8 @@ export class AdminSessionRepository extends BaseRepository<AdminSessionEntity> {
    */
   async getSessionsByIp(ipAddress: string, limit: number = 100): Promise<AdminSession[]> {
     const rows = await this.adapter.query<Record<string, unknown>>(
-      'SELECT * FROM admin_sessions WHERE ip_address = ? ORDER BY created_at DESC LIMIT ?',
-      [ipAddress, limit]
+      'SELECT * FROM admin_sessions WHERE tenant_id = ? AND ip_address = ? ORDER BY created_at DESC LIMIT ?',
+      [this.tenantId, ipAddress, limit]
     );
     return rows.map((row) => this.rowToSession(row));
   }

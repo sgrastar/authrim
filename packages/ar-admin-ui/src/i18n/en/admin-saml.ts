@@ -30,6 +30,53 @@ const adminSaml = {
 	admin_saml_metadata_not_checked: 'Not checked',
 	admin_saml_metadata_changed: 'Changed',
 	admin_saml_metadata_current: 'Current',
+	admin_saml_metadata_source_url: 'Metadata source URL',
+	admin_saml_federation_source_url_hint:
+		'The exact aggregate metadata URL that Authrim fetches. URL patterns remain trust-scope restrictions.',
+	admin_saml_metadata_auto_polling: 'Automatic metadata updates',
+	admin_saml_metadata_auto_polling_desc:
+		'Periodically fetch and validate the source. Turn this off to update only with Refresh now.',
+	admin_saml_metadata_polling: 'Polling',
+	admin_saml_metadata_polling_interval: 'Successful refresh interval',
+	admin_saml_metadata_interval_1h: 'Every hour',
+	admin_saml_metadata_interval_6h: 'Every 6 hours',
+	admin_saml_metadata_interval_12h: 'Every 12 hours',
+	admin_saml_metadata_interval_24h: 'Every 24 hours',
+	admin_saml_metadata_refresh_now: 'Refresh now',
+	admin_saml_metadata_refreshing: 'Refreshing...',
+	admin_saml_metadata_refresh_failed: 'Failed to refresh SAML metadata',
+	admin_saml_metadata_refreshed_changed: 'Metadata refreshed and changes were applied.',
+	admin_saml_metadata_refreshed_unchanged: 'Metadata refreshed; no changes were found.',
+	admin_saml_metadata_last_success: 'Last successful refresh',
+	admin_saml_metadata_next_refresh: 'Next refresh',
+	admin_saml_metadata_last_error: 'Last error',
+	admin_saml_metadata_never: 'Never',
+	admin_saml_metadata_manual_mode: 'Manual',
+	admin_saml_metadata_automatic_mode: 'Automatic',
+	admin_saml_federation_runtime_automatic: 'Use verified aggregate entities at runtime',
+	admin_saml_federation_runtime_automatic_desc:
+		'Resolve entityIDs from the latest valid aggregate. Off keeps the aggregate as inventory only.',
+	admin_saml_federation_runtime_roles: 'Runtime roles',
+	admin_saml_federation_runtime_idp_role: 'Resolve upstream IdPs',
+	admin_saml_federation_runtime_sp_role: 'Resolve downstream SPs',
+	admin_saml_federation_runtime_idp_mapping: 'IdP field mapping set ID',
+	admin_saml_federation_runtime_sp_mapping: 'SP field mapping set ID',
+	admin_saml_federation_runtime_priority: 'Source priority',
+	admin_saml_federation_runtime_default_preset: 'Default SP attribute preset',
+	admin_saml_federation_runtime_default_decision: 'Default Entity Category decision',
+	admin_saml_federation_runtime_authorities: 'Allowed registration authorities',
+	admin_saml_federation_runtime_authorities_hint:
+		'Optional allow-list, one registration authority URI per line.',
+	admin_saml_federation_runtime_category_rules: 'Entity Category rules',
+	admin_saml_federation_runtime_category_rules_hint:
+		'One rule per line: allow|deny, category URI, and optional SP attribute preset ID.',
+	admin_saml_federation_runtime_mapping_error:
+		'Select at least one runtime role and provide its field mapping set ID.',
+	admin_saml_federation_runtime_category_rule_error:
+		'An Entity Category rule is invalid. Use: allow|deny category-uri [preset-id].',
+	admin_saml_actions: 'Actions',
+	admin_saml_federation_refresh_complete:
+		'Federation metadata refreshed: {entities:number} entities, {updated:number} providers updated, {missing:number} missing, {failed:number} failed.',
 	admin_saml_federation_trust_profiles: 'Federation Trust Profiles',
 	admin_saml_federation_trust_desc:
 		'Trust anchors used to verify signed aggregate metadata before importing federation entities.',
@@ -53,7 +100,6 @@ const adminSaml = {
 	admin_saml_local_settings_updated: 'SAML settings updated',
 	admin_saml_local_certificate_settings_updated: 'SAML signing certificate settings updated',
 	admin_saml_local_copy: 'Copy',
-	admin_saml_local_download: 'Download',
 	admin_saml_local_download_xml: 'Metadata',
 	admin_saml_local_copy_pem: 'Copy',
 	admin_saml_local_download_pem: 'PEM',
@@ -217,9 +263,7 @@ const adminSaml = {
 		'Previous certificate kept temporarily during the metadata cache window.',
 	admin_saml_local_rollover_status_default_active: 'Default currently used certificate',
 	admin_saml_local_rollover_status_not_configured: 'Not configured',
-	admin_saml_local_rollover_status_signing_published: 'In use',
 	admin_saml_local_rollover_status_signing: 'In use',
-	admin_saml_local_rollover_status_stored_published: 'Stored',
 	admin_saml_local_rollover_status_stored_only: 'Stored',
 	admin_saml_local_yes: 'Yes',
 	admin_saml_local_no: 'No',
@@ -258,6 +302,10 @@ const adminSaml = {
 	admin_saml_detail_delete: 'Delete',
 	admin_saml_detail_provider_status: 'Provider Status',
 	admin_saml_detail_provider_status_desc: 'Enable or disable this SAML provider.',
+	admin_saml_detail_provider_status_mapping_required:
+		'Choose and save a Field Mapping Set before enabling this provider.',
+	admin_saml_detail_mapping_pending:
+		'This provider was registered in a disabled state. Choose the appropriate Field Mapping Set below, then enable and save the provider.',
 	admin_saml_detail_basic_information: 'Basic Information',
 	admin_saml_detail_name_required: 'Name *',
 	admin_saml_detail_name_required_error: 'Name is required',
@@ -280,8 +328,6 @@ const adminSaml = {
 		'Accepts X.509 certificates in PEM or base64 DER form. Metadata import usually fills this automatically.',
 	admin_saml_detail_checking: 'Checking...',
 	admin_saml_detail_validate_certificate: 'Validate Certificate',
-	admin_saml_detail_attribute_mapping_json: 'Attribute Mapping JSON',
-	admin_saml_detail_mapping_object_error: 'Attribute mapping must be a JSON object',
 	admin_saml_detail_allowed_bindings: 'Allowed SAML Bindings',
 	admin_saml_detail_allowed_bindings_hint:
 		'Controls which SAML protocol bindings this provider may use for SSO/SLO messages.',
@@ -316,21 +362,14 @@ const adminSaml = {
 		'Uses strict SP defaults for publisher/library SPs: signed assertions, required signed AuthnRequest and Logout, and Persistent NameID. Pair it with an attribute mapping when the SP expects mail, displayName, eduPersonScopedAffiliation, or eduPersonEntitlement.',
 	admin_saml_detail_profile_hint_legacy:
 		'Legacy relaxes compatibility for older SPs. Use it only for an explicit legacy exception.',
-	admin_saml_detail_attribute_preset: 'Attribute Preset',
-	admin_saml_detail_none: 'None',
 	admin_saml_detail_identity_mapping_policy: 'Field Mapping Set',
 	admin_saml_detail_identity_mapping_policy_default: 'Select a Field Mapping Set',
+	admin_saml_detail_identity_mapping_policy_required: 'Select an active Field Mapping Set.',
+	admin_saml_detail_identity_mapping_policy_no_compatible:
+		'No active compatible Field Mapping Sets are available.',
 	admin_saml_detail_identity_mapping_policy_hint:
 		'Selects the active Field Mapping Set used for inbound and outbound SAML attribute mapping.',
 	admin_saml_detail_identity_mapping_policy_link: 'Manage Field Mapping Sets',
-	admin_saml_detail_attribute_release_consent: 'Attribute release consent',
-	admin_saml_detail_attribute_release_consent_disabled: 'Do not ask before releasing attributes',
-	admin_saml_detail_attribute_release_consent_once: 'Ask the first time, then remember',
-	admin_saml_detail_attribute_release_consent_every_time: 'Ask every SSO',
-	admin_saml_detail_attribute_release_consent_until_attributes_change:
-		'Ask again when attributes change',
-	admin_saml_detail_attribute_release_consent_hint:
-		'Controls whether Authrim must confirm attribute release before sending a SAML assertion to this SP. The same policy shape can be reused for OIDC clients.',
 	admin_saml_detail_authn_request_signature: 'AuthnRequest signature verification',
 	admin_saml_detail_authn_request_signature_hint:
 		'Controls whether AuthnRequests from this SP must be signed. Use Optional or Required for normal SPs; use Disabled only for an explicit exception.',
@@ -407,6 +446,8 @@ const adminSaml = {
 	admin_saml_new_signature_via: 'via {profile:string}',
 	admin_saml_new_create_providers: 'Create Providers',
 	admin_saml_new_create_providers_desc: 'Select entities from this aggregate',
+	admin_saml_new_aggregate_mapping_after_create:
+		'Selected IdP and SP entities are registered as disabled providers. Choose the appropriate Field Mapping Set on each provider detail page, then enable the provider.',
 	admin_saml_new_federation_trust_profile: 'Federation Trust Profile',
 	admin_saml_new_federation_trust_profile_desc: 'Register trust anchor for this aggregate',
 	admin_saml_new_profile_name_required: 'Profile Name *',
@@ -437,6 +478,11 @@ const adminSaml = {
 	admin_saml_new_load_more: 'Load more',
 	admin_saml_new_batch_progress:
 		'Processed {processed:number} / {total:number} · Succeeded {succeeded:number} · Failed {failed:number}',
+	admin_saml_new_batch_mapping_next:
+		'Registration is complete. Configure a Field Mapping Set for each provider before enabling it.',
+	admin_saml_new_configure_created_provider: 'Configure {name:string}',
+	admin_saml_new_provider_import_failed:
+		'{entityId:string} could not be registered: {error:string}',
 	admin_saml_new_choose_provider_type: 'Choose Provider Type',
 	admin_saml_new_choose_provider_type_hint:
 		'Choose IdP or SP for a single SAML counterparty, or Federation for aggregate metadata trust anchors.',

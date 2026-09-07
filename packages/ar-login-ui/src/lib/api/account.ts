@@ -34,6 +34,10 @@ export type AccountSession = {
 	current: boolean;
 	created_at: number;
 	expires_at: number;
+	browser: string | null;
+	os: string | null;
+	device_type: 'desktop' | 'mobile' | 'tablet' | null;
+	country_code: string | null;
 	store_status?: string;
 };
 
@@ -99,6 +103,49 @@ export type AccountOperation = {
 	metadata?: Record<string, unknown>;
 };
 
+export type AccountLauncher = {
+	id: string;
+	name: string;
+	description: string | null;
+	category: string | null;
+	launch_type:
+		| 'bookmark'
+		| 'saml_sp_initiated'
+		| 'oidc_third_party_initiated'
+		| 'saml_idp_initiated';
+	open_in_new_tab: boolean;
+	icon_type: 'phosphor' | 'image';
+	icon_value: string;
+	icon_color: string;
+	background_color: string;
+	grid_width: number;
+	sort_order: number;
+	enabled: boolean;
+	allow_favorite: boolean;
+	created_at: number;
+	updated_at: number;
+	favorite: boolean;
+	launch_href: string;
+};
+
+export type IdentifierReplacementOperation = {
+	id: string;
+	state:
+		| 'processing'
+		| 'directory_pending'
+		| 'authoritative_switch_pending'
+		| 'authoritative_switched'
+		| 'revocation_pending'
+		| 'completed'
+		| 'blocked_forward_repair'
+		| 'canceled';
+	status_url?: string;
+	error_code?: string | null;
+	created_at?: number;
+	updated_at?: number;
+	completed_at?: number | null;
+};
+
 export type AccountOAuthClientConsent = {
 	kind: 'oauth_client';
 	id: string;
@@ -138,6 +185,74 @@ export type AccountStatementConsent = {
 
 export type AccountConsent = AccountOAuthClientConsent | AccountStatementConsent;
 
+export type AccountPageScreenField = {
+	field: string;
+	label: string;
+	required: boolean;
+	block_type?:
+		| 'heading'
+		| 'text'
+		| 'link'
+		| 'divider'
+		| 'layout_row'
+		| 'account_profile_widget'
+		| 'account_device_list_widget'
+		| 'account_session_widget'
+		| 'account_passkey_widget'
+		| 'account_totp_widget'
+		| 'account_consent_widget'
+		| 'account_activity_widget'
+		| 'account_social_account_widget'
+		| 'account_launcher_widget';
+	block_id?: string;
+	text?: string | null;
+	help_text?: string | null;
+	href?: string | null;
+	order?: number;
+	layout_columns?: number | null;
+	layout_column?: number | null;
+};
+
+export type AccountPageScreen = {
+	id: string;
+	screen_key: string;
+	display_name: string;
+	description?: string | null;
+	fields: AccountPageScreenField[];
+	localizations: Record<
+		string,
+		{
+			display_name?: string;
+			description?: string;
+			fields?: Record<
+				string,
+				Partial<Pick<AccountPageScreenField, 'label' | 'text' | 'help_text'>>
+			>;
+		}
+	>;
+};
+
+export type AccountPageDefinition = {
+	schema_version: 'authrim.account_page.v1';
+	title?: string;
+	description?: string;
+	localizations?: Record<string, { title?: string; description?: string }>;
+	screens: Array<{
+		id: string;
+		screen_key: string;
+		width: 'full' | 'half';
+		enabled: boolean;
+		condition:
+			| 'always'
+			| 'hidden'
+			| 'passkey_enabled'
+			| 'totp_enabled'
+			| 'external_idp_enabled'
+			| 'consent_records_available'
+			| 'multiple_sessions';
+	}>;
+};
+
 export type AccountCapabilities = {
 	capabilities: Array<{
 		id: string;
@@ -156,6 +271,14 @@ export type AccountCapabilities = {
 		source: string;
 		account_page_overrides_supported: boolean;
 		planned_tokens: string[];
+	};
+	account_page?: {
+		page_id?: string | null;
+		name?: string;
+		definition: AccountPageDefinition;
+		screens: AccountPageScreen[];
+		version: number;
+		published_at: string;
 	};
 };
 
@@ -229,6 +352,17 @@ export const accountAPI = {
 
 	getCapabilities: () => accountFetch<AccountCapabilities>('/api/account/capabilities'),
 
+	getLaunchers: () => accountFetch<{ launchers: AccountLauncher[] }>('/api/account/launchers'),
+
+	setLauncherFavorite: (id: string, favorite: boolean) =>
+		accountFetch<{ launcher_id: string; favorite: boolean }>(
+			`/api/account/launchers/${encodeURIComponent(id)}/favorite`,
+			{
+				method: 'PUT',
+				body: JSON.stringify({ favorite })
+			}
+		),
+
 	createPasskeyReauthOptions: () =>
 		accountFetch<{ options: PublicKeyCredentialRequestOptionsJSON; challenge_id: string }>(
 			'/api/account/reauth/passkey/options',
@@ -291,6 +425,30 @@ export const accountAPI = {
 			method: 'POST',
 			body: JSON.stringify({ code })
 		}),
+
+	startIdentifierReplacement: (email: string) =>
+		accountFetch<{ challenge_id: string; expires_in: number }>(
+			'/api/account/identifier-replacements/start',
+			{
+				method: 'POST',
+				body: JSON.stringify({ email })
+			}
+		),
+
+	completeIdentifierReplacement: (challengeId: string, code: string, idempotencyKey: string) =>
+		accountFetch<{ operation: IdentifierReplacementOperation }>(
+			'/api/account/identifier-replacements/complete',
+			{
+				method: 'POST',
+				headers: { 'Idempotency-Key': idempotencyKey },
+				body: JSON.stringify({ challenge_id: challengeId, code })
+			}
+		),
+
+	getIdentifierReplacement: (operationId: string) =>
+		accountFetch<{ operation: IdentifierReplacementOperation }>(
+			`/api/account/identifier-replacements/${encodeURIComponent(operationId)}`
+		),
 
 	getSessions: () => accountFetch<{ sessions: AccountSession[] }>('/api/account/sessions'),
 
@@ -408,6 +566,8 @@ export const accountAPI = {
 	getOperations: () =>
 		accountFetch<{ operations: AccountOperation[] }>('/api/account/operations?limit=20'),
 
-	getConsents: () =>
-		accountFetch<{ consents: AccountConsent[]; total: number }>('/api/account/consents')
+	getConsents: (locale?: string) =>
+		accountFetch<{ consents: AccountConsent[]; total: number }>('/api/account/consents', {
+			headers: locale ? { 'Accept-Language': locale.replace('_', '-') } : undefined
+		})
 };

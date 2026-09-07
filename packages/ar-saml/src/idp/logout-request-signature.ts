@@ -4,6 +4,8 @@ import {
   hasSignature,
   verifyRedirectBindingSignature,
   verifyXmlSignature,
+  verifyXmlSignatureAndGetReferences,
+  type VerifiedXmlReference,
 } from '../common/signature';
 import { DIGEST_ALGORITHMS, SAML_NAMESPACES, SIGNATURE_ALGORITHMS } from '../common/constants';
 import { getAttribute, parseXml } from '../common/xml-utils';
@@ -24,6 +26,7 @@ export interface SAMLLogoutRequestSignatureValidationInput {
 export interface SAMLLogoutRequestSignatureVerifiers {
   hasSignature?: (xml: string) => boolean;
   verifyXmlSignature?: typeof verifyXmlSignature;
+  verifyXmlSignatureAndGetReferences?: typeof verifyXmlSignatureAndGetReferences;
   verifyRedirectBindingSignature?: typeof verifyRedirectBindingSignature;
 }
 
@@ -49,11 +52,11 @@ export class SAMLLogoutRequestSignatureValidationError extends Error {
 export async function validateSAMLLogoutRequestSignature(
   input: SAMLLogoutRequestSignatureValidationInput,
   verifiers: SAMLLogoutRequestSignatureVerifiers = {}
-): Promise<void> {
+): Promise<VerifiedXmlReference[] | undefined> {
   const policy = input.spConfig.logoutRequestSignaturePolicy ?? 'required';
 
   if (policy === 'disabled') {
-    return;
+    return undefined;
   }
 
   const requestIsSigned = isLogoutRequestSigned(input, verifiers.hasSignature ?? hasSignature);
@@ -64,7 +67,7 @@ export async function validateSAMLLogoutRequestSignature(
         'Signed LogoutRequest is required for this Service Provider'
       );
     }
-    return;
+    return undefined;
   }
 
   const certificates = getSPVerificationCertificates(input.spConfig);
@@ -82,27 +85,32 @@ export async function validateSAMLLogoutRequestSignature(
       certificates,
       verifiers.verifyRedirectBindingSignature ?? verifyRedirectBindingSignature
     );
-    return;
+    return undefined;
   }
 
   validateXmlSignatureAlgorithms(input.xml, input.spConfig);
 
-  const verifier = verifiers.verifyXmlSignature ?? verifyXmlSignature;
+  const verifier = verifiers.verifyXmlSignature;
+  const referenceVerifier =
+    verifiers.verifyXmlSignatureAndGetReferences ??
+    (verifier ? undefined : verifyXmlSignatureAndGetReferences);
   let lastError: unknown;
   for (const certificate of certificates) {
     try {
-      if (
-        verifier(input.xml, {
-          certificateOrKey: certificate,
-          expectedId: input.logoutRequest.id,
-          strictXswProtection: true,
-          ...(shouldAllowSha1XmlSignature(input.spConfig)
-            ? { allowSha1SignatureAlgorithm: true }
-            : {}),
-          ...(shouldAllowSha1XmlDigest(input.spConfig) ? { allowSha1DigestAlgorithm: true } : {}),
-        })
-      ) {
-        return;
+      const verifyOptions = {
+        certificateOrKey: certificate,
+        expectedId: input.logoutRequest.id,
+        strictXswProtection: true,
+        ...(shouldAllowSha1XmlSignature(input.spConfig)
+          ? { allowSha1SignatureAlgorithm: true }
+          : {}),
+        ...(shouldAllowSha1XmlDigest(input.spConfig) ? { allowSha1DigestAlgorithm: true } : {}),
+      };
+      if (referenceVerifier) {
+        return referenceVerifier(input.xml, verifyOptions);
+      }
+      if (verifier?.(input.xml, verifyOptions)) {
+        return undefined;
       }
     } catch (error) {
       lastError = error;

@@ -126,6 +126,37 @@ export async function updateTokenEmbeddingSettings(c: Context) {
     );
   }
 
+  const booleanSettings = [
+    ['policy_embedding_enabled', body.policy_embedding_enabled],
+    ['custom_claims_enabled', body.custom_claims_enabled],
+    ['id_level_permissions_enabled', body.id_level_permissions_enabled],
+  ] as const;
+  for (const [name, value] of booleanSettings) {
+    if (value !== undefined && typeof value !== 'boolean') {
+      return c.json(
+        { error: 'invalid_request', error_description: `${name} must be a boolean` },
+        400
+      );
+    }
+  }
+
+  const limitSettings = [
+    ['max_embedded_permissions', body.max_embedded_permissions, 500],
+    ['max_resource_permissions', body.max_resource_permissions, 1000],
+    ['max_custom_claims', body.max_custom_claims, 100],
+  ] as const;
+  for (const [name, value, maximum] of limitSettings) {
+    if (value !== undefined && (!Number.isInteger(value) || value < 1 || value > maximum)) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: `${name} must be an integer between 1 and ${maximum}`,
+        },
+        400
+      );
+    }
+  }
+
   try {
     const updates: string[] = [];
 
@@ -156,15 +187,6 @@ export async function updateTokenEmbeddingSettings(c: Context) {
 
     // Update limits
     if (body.max_embedded_permissions !== undefined) {
-      if (body.max_embedded_permissions < 1 || body.max_embedded_permissions > 500) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: 'max_embedded_permissions must be between 1 and 500',
-          },
-          400
-        );
-      }
       await c.env.SETTINGS.put(
         KV_KEYS.MAX_EMBEDDED_PERMISSIONS,
         String(body.max_embedded_permissions)
@@ -173,15 +195,6 @@ export async function updateTokenEmbeddingSettings(c: Context) {
     }
 
     if (body.max_resource_permissions !== undefined) {
-      if (body.max_resource_permissions < 1 || body.max_resource_permissions > 1000) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: 'max_resource_permissions must be between 1 and 1000',
-          },
-          400
-        );
-      }
       await c.env.SETTINGS.put(
         KV_KEYS.MAX_RESOURCE_PERMISSIONS,
         String(body.max_resource_permissions)
@@ -190,15 +203,6 @@ export async function updateTokenEmbeddingSettings(c: Context) {
     }
 
     if (body.max_custom_claims !== undefined) {
-      if (body.max_custom_claims < 1 || body.max_custom_claims > 100) {
-        return c.json(
-          {
-            error: 'invalid_request',
-            error_description: 'max_custom_claims must be between 1 and 100',
-          },
-          400
-        );
-      }
       await c.env.SETTINGS.put(KV_KEYS.MAX_CUSTOM_CLAIMS, String(body.max_custom_claims));
       updates.push(`max_custom_claims=${body.max_custom_claims}`);
     }

@@ -1,12 +1,20 @@
 <script lang="ts">
 	import { Card } from '$lib/components';
+	import AccountSectionSkeleton from './AccountSectionSkeleton.svelte';
 	import type { AccountConsent } from '$lib/api/account';
 	import { formatTimestamp } from '$lib/utils/date';
 	import { LL, getLocale } from '$i18n/i18n-svelte';
 
-	let { consents = [], error = '' } = $props<{
+	let {
+		consents = [],
+		loading = false,
+		error = '',
+		title = ''
+	} = $props<{
 		consents?: AccountConsent[];
+		loading?: boolean;
 		error?: string;
+		title?: string;
 	}>();
 
 	function formatScopes(consent: AccountConsent): string {
@@ -50,18 +58,17 @@
 	}
 
 	function selectedValueLabel(): string {
-		return getLocale() === 'ja' ? '選択' : 'Decision';
+		return $LL.account_consentSelectedValue();
 	}
 
 	function formatSelectedValue(value: string): string {
-		const ja = getLocale() === 'ja';
 		switch (value) {
 			case 'once':
-				return ja ? '今回のみ' : 'This time only';
+				return $LL.account_consentSelectedOnce();
 			case 'always':
-				return ja ? '今後も許可' : 'Always allow';
+				return $LL.account_consentSelectedAlways();
 			case 'none':
-				return ja ? '許可しない' : 'Do not allow';
+				return $LL.account_consentSelectedNone();
 			default:
 				return value;
 		}
@@ -69,14 +76,16 @@
 </script>
 
 <Card>
-	<section class="consent-panel">
+	<section class="consent-panel" aria-busy={loading}>
 		<div class="panel-heading">
-			<h2>{$LL.account_consentTitle()}</h2>
-			<span class="count-badge">{consents.length}</span>
+			<h2>{title || $LL.account_consentTitle()}</h2>
+			{#if !loading}<span class="count-badge">{consents.length}</span>{/if}
 		</div>
 		<p class="panel-description">{$LL.account_consentDescription()}</p>
 
-		{#if error}
+		{#if loading}
+			<AccountSectionSkeleton variant="list" />
+		{:else if error}
 			<p class="panel-error">{error}</p>
 		{:else if consents.length === 0}
 			<p class="empty-text">{$LL.account_consentEmpty()}</p>
@@ -134,14 +143,14 @@
 							<div>
 								<dt>{$LL.account_consentGrantedAt()}</dt>
 								<dd>
-									{consent.grantedAt ? formatTimestamp(consent.grantedAt) : '-'}
+									{consent.grantedAt ? formatTimestamp(consent.grantedAt, getLocale()) : '-'}
 								</dd>
 							</div>
 							<div>
 								<dt>{$LL.account_consentExpiresAt()}</dt>
 								<dd>
 									{consent.expiresAt
-										? formatTimestamp(consent.expiresAt)
+										? formatTimestamp(consent.expiresAt, getLocale())
 										: $LL.account_consentNoExpiry()}
 								</dd>
 							</div>

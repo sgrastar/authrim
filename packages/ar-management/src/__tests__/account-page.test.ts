@@ -6,7 +6,9 @@ const {
   mockGetSessionStoreBySessionId,
   mockGetTenantIdFromContext,
   mockCreateAuthContextFromHono,
+  mockCreateAccountAuthContextFromHono,
   mockCreatePIIContextFromHono,
+  mockResolveAccountDataContextFromHono,
   mockCoreAdapter,
   mockCreateAuditLog,
   mockFindById,
@@ -23,7 +25,9 @@ const {
     mockGetSessionStoreBySessionId: vi.fn().mockReturnValue({ stub: sessionStore }),
     mockGetTenantIdFromContext: vi.fn().mockReturnValue('default'),
     mockCreateAuthContextFromHono: vi.fn().mockReturnValue({ coreAdapter }),
+    mockCreateAccountAuthContextFromHono: vi.fn().mockReturnValue({ coreAdapter }),
     mockCreatePIIContextFromHono: vi.fn().mockReturnValue({ defaultPiiAdapter: {} }),
+    mockResolveAccountDataContextFromHono: vi.fn().mockResolvedValue(undefined),
     mockCoreAdapter: coreAdapter,
     mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
     mockFindById: vi.fn(),
@@ -38,7 +42,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getSessionStoreBySessionId: mockGetSessionStoreBySessionId,
     getTenantIdFromContext: mockGetTenantIdFromContext,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
+    createAccountAuthContextFromHono: mockCreateAccountAuthContextFromHono,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
+    resolveAccountDataContextFromHono: mockResolveAccountDataContextFromHono,
     createAuditLog: mockCreateAuditLog,
     isShardedSessionId: vi.fn((sessionId: string) => sessionId.startsWith('g1:')),
     getLogger: () => ({
@@ -64,8 +70,9 @@ import {
   updateAccountProfileHandler,
 } from '../account-page';
 
-function createMockContext(cookie?: string, body?: unknown) {
+function createMockContext(cookie?: string, body?: unknown, bodyError?: Error) {
   const headers = new Headers();
+  const contextValues = new Map<string, unknown>();
   const request = new Request('https://op.example.com/api/account/profile', {
     headers: cookie ? { Cookie: cookie } : {},
   });
@@ -76,10 +83,14 @@ function createMockContext(cookie?: string, body?: unknown) {
       url: request.url,
       raw: request,
       header: (name: string) => request.headers.get(name) ?? undefined,
-      json: vi.fn().mockResolvedValue(body),
+      json: bodyError ? vi.fn().mockRejectedValue(bodyError) : vi.fn().mockResolvedValue(body),
     },
     header: (name: string, value: string) => {
       headers.set(name, value);
+    },
+    get: (key: string) => contextValues.get(key),
+    set: (key: string, value: unknown) => {
+      contextValues.set(key, value);
     },
     json: (body: unknown, status = 200) =>
       new Response(JSON.stringify(body), {
@@ -157,6 +168,11 @@ describe('Account Page API', () => {
       'g1:apac:3:session_123',
       'default'
     );
+    expect(mockResolveAccountDataContextFromHono).toHaveBeenCalledWith(
+      expect.anything(),
+      'user-001'
+    );
+    expect(mockCreateAccountAuthContextFromHono).toHaveBeenCalledWith(expect.anything(), 'default');
     expect(body.profile).toEqual({
       user_id: 'user-001',
       email: 'person@example.test',
@@ -323,5 +339,135 @@ describe('Account Page API', () => {
     expect(response.status).toBe(401);
     expect(body.error).toBe('unauthorized');
     expect(mockFindById).not.toHaveBeenCalled();
+  });
+
+  it('rejects legacy unsharded and missing-user sessions', async () => {
+    const legacy = await getAccountProfileHandler(
+      createMockContext('authrim_session=legacy-session')
+    );
+    expect(legacy.status).toBe(401);
+    expect(mockGetSessionStoreBySessionId).not.toHaveBeenCalled();
+
+    mockSessionStore.getSessionRpc.mockResolvedValueOnce({
+      id: 'g1:apac:3:session_123',
+      userId: '',
+      createdAt: 1,
+      expiresAt: Date.now() + 60_000,
+      data: {},
+    });
+    const missingUser = await getAccountProfileHandler(
+      createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_123')
+    );
+    expect(missingUser.status).toBe(401);
+  });
+
+  it('returns a masked server error when session validation storage fails', async () => {
+    mockSessionStore.getSessionRpc.mockRejectedValueOnce(new Error('storage secret'));
+
+    const response = await getAccountProfileHandler(
+      createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_123')
+    );
+    const text = await response.text();
+
+    expect(response.status).toBe(500);
+    expect(text).not.toContain('storage secret');
+  });
+
+  it('returns unauthorized when the session user no longer exists', async () => {
+    mockFindById.mockResolvedValueOnce(null);
+
+    const response = await getAccountProfileHandler(
+      createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_123')
+    );
+
+    expect(response.status).toBe(401);
+  });
+
+  it('returns a masked server error when profile lookup fails', async () => {
+    mockFindById.mockRejectedValueOnce(new Error('PII backend failed'));
+
+    const response = await getAccountProfileHandler(
+      createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_123')
+    );
+    const text = await response.text();
+
+    expect(response.status).toBe(500);
+    expect(text).not.toContain('PII backend');
+  });
+
+  it.each([
+    ['malformed JSON', undefined, new Error('bad json')],
+    ['missing name', {}, undefined],
+    ['non-string name', { name: 42 }, undefined],
+    ['empty normalized name', { name: '   ' }, undefined],
+    ['name above 100 characters', { name: 'x'.repeat(101) }, undefined],
+  ])('rejects profile updates with %s', async (_label, body, error) => {
+    const response = await updateAccountProfileHandler(
+      createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_123', body, error)
+    );
+
+    expect(response.status).toBe(400);
+    expect(mockSyncUser).not.toHaveBeenCalled();
+  });
+
+  it('does not recreate a user deleted between session validation and update', async () => {
+    mockFindById.mockResolvedValueOnce(null);
+
+    const response = await updateAccountProfileHandler(
+      createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_123', { name: 'New' })
+    );
+
+    expect(response.status).toBe(401);
+    expect(mockSyncUser).not.toHaveBeenCalled();
+  });
+
+  it('falls back to stable existing profile fields when post-update read misses', async () => {
+    mockFindById
+      .mockResolvedValueOnce({
+        id: 'user-001',
+        account_type: 'end_user',
+        active: 0,
+        email: 'person@example.test',
+        email_verified: 0,
+        name: 'Old',
+        given_name: 'Given',
+        family_name: 'Family',
+        locale: 'en',
+        picture: null,
+      })
+      .mockResolvedValueOnce(null);
+
+    const response = await updateAccountProfileHandler(
+      createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_123', { name: 'New' })
+    );
+    const body = (await response.json()) as Record<string, any>;
+
+    expect(response.status).toBe(200);
+    expect(mockSyncUser).toHaveBeenCalledWith(expect.objectContaining({ active: false }));
+    expect(body.profile).toMatchObject({
+      email: 'person@example.test',
+      email_verified: false,
+      name: 'New',
+      given_name: 'Given',
+    });
+  });
+
+  it('uses session creation time and empty methods when auth metadata is absent', async () => {
+    mockSessionStore.getSessionRpc.mockResolvedValueOnce({
+      id: 'g1:apac:3:session_123',
+      userId: 'user-001',
+      createdAt: Date.now() - 60_000,
+      expiresAt: Date.now() + 60_000,
+      data: {},
+    });
+
+    const response = await getAccountReauthStatusHandler(
+      createMockContext('authrim_session=g1%3Aapac%3A3%3Asession_123')
+    );
+    const body = (await response.json()) as Record<string, any>;
+
+    expect(response.status).toBe(200);
+    expect(body.reauth.authenticated_at).toBe(Math.floor((Date.now() - 60_000) / 1000));
+    expect(body.reauth.methods).toEqual([]);
   });
 });

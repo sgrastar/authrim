@@ -1,5 +1,11 @@
 import type { Context } from 'hono';
-import type { Env, OIDCProviderMetadata, LogoutConfig, TenantProfile } from '@authrim/ar-lib-core';
+import type {
+  Env,
+  Logger,
+  OIDCProviderMetadata,
+  LogoutConfig,
+  TenantProfile,
+} from '@authrim/ar-lib-core';
 import {
   SUPPORTED_JWE_ALG,
   SUPPORTED_JWE_ENC,
@@ -19,7 +25,16 @@ import {
   buildVersionedKey,
   getCacheTTL,
   PREDEFINED_TRANSFORMED_CLAIMS,
+  getTenantSystemSettings,
+  FAPI2_MESSAGE_SIGNING_ALGS,
+  CLIENT_ASSERTION_SIGNING_ALGS,
+  setBoundedMapEntry,
 } from '@authrim/ar-lib-core';
+import type { JWK } from 'jose';
+import {
+  getPublishedOIDCSigningAlgorithms,
+  type OIDCSigningAlgorithm,
+} from '@authrim/ar-lib-core/utils/oidc-signing';
 
 /**
  * OIDC Configuration interface for discovery metadata
@@ -49,6 +64,8 @@ interface OIDCConfig {
   claimsSupported?: string[];
   /** Token endpoint auth methods */
   tokenEndpointAuthMethodsSupported?: string[];
+  /** OAuth/OIDC response types enabled for this tenant profile */
+  responseTypesSupported?: string[];
   /** Allow 'none' algorithm for request objects */
   allowNoneAlgorithm?: boolean;
 }
@@ -60,14 +77,47 @@ interface OIDCConfig {
 interface FAPIConfig {
   /** FAPI 2.0 Security Profile enabled */
   enabled?: boolean;
+  messageSigning?: {
+    enabled?: boolean;
+    requireSignedRequestObject?: boolean;
+    requireJarm?: boolean;
+    requestObjectSigningAlgorithms?: string[];
+    authorizationSigningAlgorithms?: OIDCSigningAlgorithm[];
+  };
 }
 
 // Cache for metadata to improve performance
 // Key: tenantId:settingsHash, Value: metadata
 const metadataCache = new Map<string, OIDCProviderMetadata>();
+const MAX_METADATA_CACHE_ENTRIES = 100;
 
 export function clearDiscoveryMetadataCache(): void {
   metadataCache.clear();
+}
+
+async function resolvePublishedSigningAlgorithms(
+  env: Env,
+  tenantId: string,
+  log: Logger
+): Promise<OIDCSigningAlgorithm[]> {
+  let keys: JWK[] = [];
+  try {
+    if (env.KEY_MANAGER_PUBLIC) {
+      keys = await env.KEY_MANAGER_PUBLIC.getAllPublicKeys(tenantId);
+    }
+  } catch (error) {
+    log.warn('Failed to load OIDC signing keys for discovery', { tenantId }, error as Error);
+  }
+
+  if (keys.length === 0 && env.PUBLIC_JWK_JSON) {
+    try {
+      keys = [JSON.parse(env.PUBLIC_JWK_JSON) as JWK];
+    } catch (error) {
+      log.warn('Failed to parse fallback OIDC public key for discovery', {}, error as Error);
+    }
+  }
+
+  return getPublishedOIDCSigningAlgorithms(keys);
 }
 
 /**
@@ -85,6 +135,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
 
   // Build issuer URL for this tenant.
   const issuer = buildRequestIssuerUrl(c.req.raw, c.env, tenantId);
+  const publishedSigningAlgorithms = await resolvePublishedSigningAlgorithms(c.env, tenantId, log);
 
   // Load dynamic configuration from SETTINGS KV
   let oidcConfig: OIDCConfig = {};
@@ -93,10 +144,11 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   let currentSettingsJson = '';
 
   try {
-    const settingsJson = await c.env.SETTINGS?.get('system_settings');
-    currentSettingsJson = settingsJson || '';
-    if (settingsJson) {
-      const settings = JSON.parse(settingsJson);
+    const settings = await getTenantSystemSettings(c.env.SETTINGS, tenantId, {
+      failOnError: true,
+    });
+    currentSettingsJson = settings ? JSON.stringify(settings) : '';
+    if (settings) {
       oidcConfig = settings.oidc || {};
       fapiConfig = settings.fapi || {};
     }
@@ -116,7 +168,13 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     }
   } catch (error) {
     log.error('Failed to load settings from KV', { tenantId }, error as Error);
-    // Continue with default values
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Security profile settings are temporarily unavailable',
+      },
+      503
+    );
   }
 
   // HTTPS request_uri support status
@@ -183,7 +241,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   // stale metadata for a different environment or component set.
   const logoutHash = `bc=${logoutConfig.backchannel.enabled}:fc=${logoutConfig.frontchannel.enabled}:sm=${logoutConfig.session_management.enabled}:sm_iframe=${logoutConfig.session_management.check_session_iframe_enabled}`;
   const profileHash = `profile=${tenantProfile.type}`;
-  const settingsHash = `${currentSettingsJson}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}`;
+  const signingAlgorithmsHash = `oidc_algs=${publishedSigningAlgorithms.join(',')}`;
+  const settingsHash = `${currentSettingsJson}:issuer=${issuer}:async=${asyncEnabled}:te=${tokenExchangeEnabled}:cc=${clientCredentialsEnabled}:ns=${nativeSSOEnabled}:rar=${rarEnabled}:ai=${aiScopesEnabled}:idjag=${idJagEnabled}:fe=${flowEngineEnabled}:${profileHash}:${logoutHash}:${signingAlgorithmsHash}`;
   const cacheKey = `${tenantId}:${settingsHash}`;
   const discoveryTTL = await getCacheTTL(c.env, 'discovery');
   const kvCacheKey = buildVersionedKey('discovery', cacheKey);
@@ -219,6 +278,30 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
 
   // Determine PAR requirement (FAPI 2.0 mode or OIDC config)
   const requirePar = fapiConfig.enabled ? true : oidcConfig.requirePar || false;
+  const messageSigningEnabled = fapiConfig.messageSigning?.enabled === true;
+  const requestObjectSigningAlgorithms = messageSigningEnabled
+    ? (fapiConfig.messageSigning?.requestObjectSigningAlgorithms ?? [...FAPI2_MESSAGE_SIGNING_ALGS])
+    : oidcConfig.allowNoneAlgorithm
+      ? ['RS256', 'none']
+      : ['RS256'];
+  const authorizationSigningAlgorithms = messageSigningEnabled
+    ? (fapiConfig.messageSigning?.authorizationSigningAlgorithms ?? ['ES256']).filter((algorithm) =>
+        publishedSigningAlgorithms.includes(algorithm)
+      )
+    : publishedSigningAlgorithms;
+  const responseTypesSupported = oidcConfig.responseTypesSupported || [
+    'code',
+    'id_token',
+    'id_token token',
+    'code id_token',
+    'code token',
+    'code id_token token',
+    'none',
+  ];
+  const implicitGrantSupported = responseTypesSupported.some((responseType) => {
+    const values = responseType.split(/\s+/);
+    return values.includes('id_token') || values.includes('token');
+  });
 
   const metadata: OIDCProviderMetadata = {
     issuer,
@@ -235,6 +318,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     pushed_authorization_request_endpoint: `${issuer}/par`,
     // RFC 9126: PAR requirement (dynamic based on FAPI/OIDC config)
     require_pushed_authorization_requests: requirePar,
+    // RFC 9207: /authorize includes iss in successful and error responses
+    authorization_response_iss_parameter_supported: true,
     ...(asyncEnabled
       ? {
           // RFC 8628: Device Authorization endpoint
@@ -242,28 +327,23 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
           // OIDC CIBA: Backchannel Authentication endpoint
           backchannel_authentication_endpoint: `${issuer}/bc-authorize`,
           backchannel_token_delivery_modes_supported: ['poll', 'ping', 'push'],
-          backchannel_authentication_request_signing_alg_values_supported: ['RS256', 'ES256'],
+          backchannel_authentication_request_signing_alg_values_supported: [
+            'RS256',
+            'ES256',
+            'PS256',
+          ],
           backchannel_user_code_parameter_supported: true,
+          tls_client_certificate_bound_access_tokens: true,
         }
       : {}),
-    // Dynamic OP certification requires all hybrid and implicit response types
-    // Note: These are mandatory for Dynamic OP certification, not configurable
-    response_types_supported: [
-      'code',
-      'id_token',
-      'id_token token',
-      'code id_token',
-      'code token',
-      'code id_token token',
-      'none',
-    ],
+    response_types_supported: responseTypesSupported,
     // Grant types filtered by TenantProfile capabilities (§16: Two-layer model)
     // RFC 8414 §2: Discovery metadata SHOULD reflect actual capabilities
     grant_types_supported: filterGrantTypesByProfile(
       [
         'authorization_code',
         'refresh_token',
-        'implicit', // Required for Dynamic OP certification (id_token/token response types)
+        ...(implicitGrantSupported ? ['implicit'] : []),
         'urn:ietf:params:oauth:grant-type:jwt-bearer', // RFC 7523: JWT Bearer Flow
         ...(asyncEnabled
           ? [
@@ -277,7 +357,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       tenantProfile,
       { tokenExchangeEnabled, clientCredentialsEnabled }
     ),
-    id_token_signing_alg_values_supported: ['RS256'],
+    id_token_signing_alg_values_supported: publishedSigningAlgorithms,
     // OIDC Core 8: Both public and pairwise subject identifiers are supported
     subject_types_supported: ['public', 'pairwise'],
     // Dynamic scopes based on AI Ephemeral Auth configuration
@@ -340,36 +420,32 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       'phone_number_verified',
     ],
     // Dynamic token endpoint auth methods based on OIDC config
-    token_endpoint_auth_methods_supported: oidcConfig.tokenEndpointAuthMethodsSupported || [
-      'client_secret_basic',
-      'client_secret_post',
-      'client_secret_jwt',
-      'private_key_jwt',
-      'none',
-    ],
-    token_endpoint_auth_signing_alg_values_supported: ['RS256', 'ES256'],
+    token_endpoint_auth_methods_supported: fapiConfig.enabled
+      ? ['private_key_jwt']
+      : oidcConfig.tokenEndpointAuthMethodsSupported || [
+          'client_secret_basic',
+          'client_secret_post',
+          'private_key_jwt',
+          'none',
+        ],
+    token_endpoint_auth_signing_alg_values_supported: fapiConfig.enabled
+      ? [...FAPI2_MESSAGE_SIGNING_ALGS]
+      : [...CLIENT_ASSERTION_SIGNING_ALGS],
     code_challenge_methods_supported: ['S256'],
     // RFC 9449: DPoP (Demonstrating Proof of Possession) support
     dpop_signing_alg_values_supported: [...ALLOWED_DPOP_ALGS],
     // RFC 9101 (JAR): Request Object support
     request_parameter_supported: true,
     request_uri_parameter_supported: true,
-    request_object_signing_alg_values_supported: oidcConfig.allowNoneAlgorithm
-      ? ['RS256', 'none']
-      : ['RS256'],
+    request_object_signing_alg_values_supported: requestObjectSigningAlgorithms,
     request_object_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
     request_object_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
     // JARM (JWT-Secured Authorization Response Mode) support
-    response_modes_supported: [
-      'query',
-      'fragment',
-      'form_post',
-      'query.jwt',
-      'fragment.jwt',
-      'form_post.jwt',
-      'jwt',
-    ],
-    authorization_signing_alg_values_supported: ['RS256'],
+    response_modes_supported:
+      messageSigningEnabled && fapiConfig.messageSigning?.requireJarm
+        ? ['query.jwt', 'fragment.jwt', 'form_post.jwt', 'jwt']
+        : ['query', 'fragment', 'form_post', 'query.jwt', 'fragment.jwt', 'form_post.jwt', 'jwt'],
+    authorization_signing_alg_values_supported: authorizationSigningAlgorithms,
     authorization_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
     authorization_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
     // RFC 7516: JWE (JSON Web Encryption) support
@@ -377,8 +453,8 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     id_token_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
     userinfo_encryption_alg_values_supported: [...SUPPORTED_JWE_ALG],
     userinfo_encryption_enc_values_supported: [...SUPPORTED_JWE_ENC],
-    // UserInfo signing algorithm support (none = unsigned JSON, RS256 = signed JWT)
-    userinfo_signing_alg_values_supported: ['none', 'RS256'],
+    // Unsigned UserInfo is JSON; this field lists only implemented JWS algorithms with JWKS keys.
+    userinfo_signing_alg_values_supported: publishedSigningAlgorithms,
     // OIDC Core: Additional metadata
     claim_types_supported: ['normal'],
     claims_parameter_supported: true,
@@ -448,12 +524,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
   };
 
   // Update in-memory cache (with size limit to prevent memory issues)
-  if (metadataCache.size > 100) {
-    // Simple LRU: clear oldest entries when cache gets too large
-    const keysToDelete = Array.from(metadataCache.keys()).slice(0, 50);
-    keysToDelete.forEach((key) => metadataCache.delete(key));
-  }
-  metadataCache.set(cacheKey, metadata);
+  setBoundedMapEntry(metadataCache, cacheKey, metadata, MAX_METADATA_CACHE_ENTRIES);
 
   // =========================================================================
   // Phase 2: Store in KV cache (best-effort, don't block response)

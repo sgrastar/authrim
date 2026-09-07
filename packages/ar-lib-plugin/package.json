@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-lib-plugin",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -42,7 +42,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "hono": "4.12.29",
+    "hono": "4.13.2",
     "zod": "^3.24.4",
     "zod-to-json-schema": "^3.24.5"
   },

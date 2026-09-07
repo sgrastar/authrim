@@ -21,7 +21,10 @@ function relativeToSrc(path: string): string {
 
 describe('Admin UI route structure', () => {
 	it('keeps Admin pages on the shared page shell or an approved shell wrapper', () => {
-		const approvedStandalonePages = new Set(['routes/admin/login/+page.svelte']);
+		const approvedStandalonePages = new Set([
+			'routes/admin/login/+page.svelte',
+			'routes/admin/join/+page.svelte'
+		]);
 		const approvedShellWrappers = ['AdminPageShell', 'IdentityMappingPageShell'];
 		const approvedEditorWrappers = ['ConsentStatementEditor', 'PolicyEditor'];
 		const adminPages = walkFiles(adminRoutesDir).filter((path) => path.endsWith('/+page.svelte'));
@@ -64,6 +67,15 @@ describe('Admin UI route structure', () => {
 		expect(switcher).toContain('themeStore.setMode');
 	});
 
+	it('keeps dashboard statistics free of fabricated trends and links activity history', () => {
+		const dashboard = readFileSync(`${srcDir}/routes/admin/+page.svelte`, 'utf8');
+
+		expect(dashboard).not.toContain("change={{ value: '+12%'");
+		expect(dashboard).not.toContain("change={{ value: '+5'");
+		expect(dashboard).toContain('href="/admin/audit-logs"');
+		expect(dashboard).toContain('$LL.admin_dashboard_view_all()');
+	});
+
 	it('keeps Admin route tables routed through the shared AdminDataTable component', () => {
 		const adminPages = walkFiles(adminRoutesDir).filter((path) => path.endsWith('/+page.svelte'));
 
@@ -78,28 +90,48 @@ describe('Admin UI route structure', () => {
 		expect(rawTablePages).toEqual([]);
 	});
 
-	it('keeps hidden Admin routes covered by breadcrumbs and platform context detection', () => {
+	it('keeps hidden Admin routes covered by breadcrumbs and the tenant selector globally available', () => {
 		const layout = readFileSync(`${srcDir}/routes/admin/+layout.svelte`, 'utf8');
+		const header = readFileSync(`${srcDir}/lib/components/admin/AdminHeader.svelte`, 'utf8');
 		const hiddenBreadcrumbRoutes = [
 			'/admin/account-settings',
 			'/admin/role-rules',
 			'/admin/platform/tenant-domain-mappings',
 			'/admin/admin-roles'
 		];
-		const platformOnlyRoutes = [
-			'/admin/tenant-vanity-domains',
-			'/admin/platform/tenant-domain-mappings',
-			'/admin/dr-backup',
-			'/admin/approvals',
-			'/admin/operational-logs'
-		];
-
 		for (const route of hiddenBreadcrumbRoutes) {
 			expect(layout).toContain(`path: '${route}'`);
 		}
 
-		for (const route of platformOnlyRoutes) {
-			expect(layout).toContain(`'${route}'`);
-		}
+		expect(layout).not.toContain('hideTenantSelector=');
+		expect(header).toContain('{#if tenants.length > 1}');
+		expect(header).not.toContain('hideTenantSelector');
+	});
+
+	it('surfaces guarded control-plane actions without provider cleanup or registration', () => {
+		const layout = readFileSync(`${srcDir}/routes/admin/+layout.svelte`, 'utf8');
+		const notifications = readFileSync(`${srcDir}/routes/admin/notifications/+page.svelte`, 'utf8');
+		const controlPlane = readFileSync(`${srcDir}/routes/admin/control-plane/+page.svelte`, 'utf8');
+
+		expect(layout).toContain("category: 'control_plane_drift'");
+		expect(layout).toContain('admin_notifications_control_plane_drift_banner');
+		expect(layout).toContain('href="/admin/notifications"');
+		expect(notifications).toContain("value: 'control_plane_drift'");
+		expect(layout).toContain("path: '/admin/control-plane'");
+		expect(controlPlane).toContain("setDisposition(finding, 'reviewed')");
+		expect(controlPlane).toContain("setDisposition(finding, 'dismissed')");
+		expect(controlPlane).toContain('getProvisioningOperation(id)');
+		expect(controlPlane).toContain('admin_control_plane_operation_inspection');
+		expect(controlPlane).toContain('retryProvisioningOperationStep');
+		expect(controlPlane).toContain("step.stepKey === 'create_d1'");
+		expect(controlPlane).toContain("step.stepKey === 'apply_migrations'");
+		expect(controlPlane).toContain("availableActions.includes('cancel')");
+		expect(controlPlane).toContain('cancelProvisioningOperation');
+		expect(controlPlane).toContain("availableActions.includes('restore_previous_settings')");
+		expect(controlPlane).toContain('restoreProvisioningOperationPreviousSettings');
+		expect(controlPlane).not.toContain('cleanupProvisioningOperation');
+		expect(controlPlane).not.toContain('deleteWorker');
+		expect(controlPlane).not.toContain('registerUnknownWorker');
+		expect(layout).not.toContain('registerUnknownWorker');
 	});
 });

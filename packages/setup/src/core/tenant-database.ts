@@ -1,7 +1,13 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
+import {
+  buildTenantDatabaseBindingPlan,
+  TENANT_DATABASE_BINDING_PATTERN,
+} from '@authrim/ar-lib-core/services/tenant-database-naming';
 
 export type TenantDatabaseRole = 'tenant_core' | 'tenant_pii';
+export type TenantDatabaseDataRole = 'tenant_core/default' | 'tenant_core/users' | 'tenant_pii';
+export type ControlGeneratedDatabaseDataRole = TenantDatabaseDataRole | 'lookup';
 export type TenantDatabaseProvisioningState =
   | 'requested'
   | 'provisioning'
@@ -47,10 +53,15 @@ export interface TenantDatabaseResourcePlan {
 
 export interface TenantDatabaseRegistryResourceInput extends TenantDatabaseResourcePlan {
   databaseId: string;
+  shardGroup?: string;
+  shardIndex?: number;
+  shardCount?: number;
+  shardKeyStrategy?: string;
   schemaVersion?: number;
   status?: TenantDatabaseProvisioningState;
   signature?: string | null;
   signatureKeyId?: string | null;
+  metadata?: Record<string, unknown>;
 }
 
 export interface TenantDatabaseProvisioningPlan {
@@ -58,19 +69,6 @@ export interface TenantDatabaseProvisioningPlan {
   tenantSlug?: string;
   generation: number;
   resources: TenantDatabaseResourcePlan[];
-}
-
-export interface TenantDatabaseSlotResourcePlan {
-  slotNumber: number;
-  role: TenantDatabaseRole;
-  databaseName: string;
-  binding: string;
-}
-
-export interface TenantDatabaseSlotPlan {
-  slotNumber: number;
-  slotId: string;
-  resources: TenantDatabaseSlotResourcePlan[];
 }
 
 export interface TenantDatabaseRegistrySignatureConfig {
@@ -128,31 +126,6 @@ export interface TenantDatabaseStatsFreshness {
   state: 'fresh' | 'stale' | 'unknown';
   checkedAt: string | null;
   staleAfterHours: number;
-}
-
-export type TenantDatabaseAdminJobType =
-  | 'tenant-database/provision'
-  | 'tenant-database/migrate'
-  | 'tenant-database/health-check'
-  | 'tenant-database/migration-resume'
-  | 'tenant-database/migration-rollback'
-  | 'tenant-database/migration-repair'
-  | 'tenant-database/activate-batch'
-  | 'tenant-database/scheduled-activation'
-  | 'tenant-database/profile-change'
-  | 'tenant-database/worker-shard-split';
-
-export interface TenantDatabaseAdminJobSqlInput {
-  jobId: string;
-  tenantId: string;
-  jobType: TenantDatabaseAdminJobType;
-  status: 'pending' | 'processing' | 'completed' | 'failed' | 'partial_failure';
-  createdBy?: string;
-  createdAt?: number;
-  progress: Record<string, unknown>;
-  config: Record<string, unknown>;
-  result?: Record<string, unknown> | null;
-  errorMessage?: string | null;
 }
 
 export interface TenantWorkerShardSplitJobConfig {
@@ -229,50 +202,10 @@ export const DEFAULT_TENANT_ACCOUNT_STRONG_WARNING_THRESHOLD = 800_000;
 export const DEFAULT_TENANT_STORAGE_WARNING_RATIO = 0.7;
 export const DEFAULT_TENANT_STORAGE_STRONG_WARNING_RATIO = 0.8;
 export const DEFAULT_TENANT_STATS_STALE_AFTER_HOURS = 36;
-export const DEFAULT_TENANT_D1_PREALLOCATED_SLOTS = 3;
-export const MAX_TENANT_D1_PREALLOCATED_SLOTS = 500;
-
-const ROLE_SUFFIX: Record<TenantDatabaseRole, string> = {
-  tenant_core: 'CORE',
-  tenant_pii: 'PII',
-};
-
-const ROLE_DATABASE_SUFFIX: Record<TenantDatabaseRole, string> = {
-  tenant_core: 'core',
-  tenant_pii: 'pii',
-};
-
 const BINDING_ROLE_SUFFIX: Record<string, TenantDatabaseRole> = {
   CORE: 'tenant_core',
   PII: 'tenant_pii',
 };
-
-function fnv1a32(value: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(36).toUpperCase().padStart(6, '0').slice(0, 6);
-}
-
-function normalizeDatabasePart(value: string, fallback: string): string {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return normalized || fallback;
-}
-
-function normalizeBindingPart(value: string, fallback: string): string {
-  const normalized = value
-    .trim()
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-  return normalized || fallback;
-}
 
 function escapeSql(value: string): string {
   return value.replace(/'/g, "''");
@@ -282,22 +215,18 @@ export function buildTenantDatabaseProvisioningPlan(
   input: TenantDatabasePlanInput
 ): TenantDatabaseProvisioningPlan {
   const generation = input.generation ?? 1;
-  const env = normalizeDatabasePart(input.env, 'env');
-  const tenantName = normalizeDatabasePart(input.tenantSlug ?? input.tenantId, 'tenant').slice(
-    0,
-    40
-  );
-  const tenantBinding = normalizeBindingPart(input.tenantSlug ?? input.tenantId, 'TENANT').slice(
-    0,
-    32
-  );
   const resources: TenantDatabaseResourcePlan[] = (['tenant_core', 'tenant_pii'] as const).map(
     (role) => {
-      const hash = fnv1a32(`${env}:${input.tenantId}:${input.tenantSlug ?? ''}:${role}`);
+      const plan = buildTenantDatabaseBindingPlan({
+        environment: input.env,
+        tenantId: input.tenantId,
+        tenantSlug: input.tenantSlug,
+        role,
+      });
       return {
         role,
-        databaseName: `authrim-${env}-${tenantName}-${ROLE_DATABASE_SUFFIX[role]}`,
-        binding: `TDB_${tenantBinding}_${hash}_${ROLE_SUFFIX[role]}`,
+        databaseName: plan.databaseName,
+        binding: plan.bindingRef,
         generation,
       };
     }
@@ -311,81 +240,57 @@ export function buildTenantDatabaseProvisioningPlan(
   };
 }
 
-function normalizeSlotNumber(slotNumber: number): number {
-  if (!Number.isInteger(slotNumber) || slotNumber < 1) {
-    throw new Error('tenant_database_slot_number_must_be_positive_integer');
-  }
-  if (slotNumber > MAX_TENANT_D1_PREALLOCATED_SLOTS) {
-    throw new Error('tenant_database_slot_number_exceeds_maximum');
-  }
-  return slotNumber;
-}
-
-export function formatTenantDatabaseSlotNumber(slotNumber: number): string {
-  return normalizeSlotNumber(slotNumber).toString().padStart(4, '0');
-}
-
-export function buildTenantDatabaseSlotResourcePlan(input: {
-  env: string;
-  slotNumber: number;
-  role: TenantDatabaseRole;
-}): TenantDatabaseSlotResourcePlan {
-  const env = normalizeDatabasePart(input.env, 'env');
-  const slot = formatTenantDatabaseSlotNumber(input.slotNumber);
-  const roleSuffix = ROLE_SUFFIX[input.role];
-  const databaseRole = ROLE_DATABASE_SUFFIX[input.role];
-  return {
-    slotNumber: input.slotNumber,
-    role: input.role,
-    databaseName: `authrim-${env}-tdb-slot-${slot}-${databaseRole}`,
-    binding: `TDB_SLOT_${slot}_${roleSuffix}`,
-  };
-}
-
-export function buildTenantDatabaseSlotPlan(input: {
-  env: string;
-  slotNumber: number;
-}): TenantDatabaseSlotPlan {
-  const slot = formatTenantDatabaseSlotNumber(input.slotNumber);
-  return {
-    slotNumber: input.slotNumber,
-    slotId: `tdb-slot-${slot}`,
-    resources: (['tenant_core', 'tenant_pii'] as const).map((role) =>
-      buildTenantDatabaseSlotResourcePlan({
-        env: input.env,
-        slotNumber: input.slotNumber,
-        role,
-      })
-    ),
-  };
-}
-
-export function buildTenantDatabaseSlotPlans(input: {
-  env: string;
-  slots: number;
-  startSlotNumber?: number;
-}): TenantDatabaseSlotPlan[] {
-  const slots = normalizeSlotNumber(input.slots);
-  const startSlotNumber = normalizeSlotNumber(input.startSlotNumber ?? 1);
-  const lastSlotNumber = startSlotNumber + slots - 1;
-  if (lastSlotNumber > MAX_TENANT_D1_PREALLOCATED_SLOTS) {
-    throw new Error('tenant_database_slot_plan_exceeds_maximum');
-  }
-  return Array.from({ length: slots }, (_, index) =>
-    buildTenantDatabaseSlotPlan({
-      env: input.env,
-      slotNumber: startSlotNumber + index,
-    })
+export function isTenantDatabaseBinding(binding: string): boolean {
+  const markerIndex = binding.indexOf('_TDB_');
+  if (markerIndex <= 0) return false;
+  const canonical = binding.slice(markerIndex + 1);
+  return (
+    TENANT_DATABASE_BINDING_PATTERN.test(binding) &&
+    /^TDB_[A-Z0-9_]+_(CORE|PII|AUDIT|CUSTOM)(?:_S[0-9]+)?$/u.test(canonical)
   );
 }
 
-export function isTenantDatabaseBinding(binding: string): boolean {
-  return /^TDB_[A-Z0-9_]+_(CORE|PII|AUDIT|CUSTOM)(?:_S[0-9]+)?$/.test(binding);
+export function isLookupDatabaseBinding(binding: string): boolean {
+  const markerIndex = binding.indexOf('_TDB_');
+  if (markerIndex <= 0) return false;
+  const canonical = binding.slice(markerIndex + 1);
+  return (
+    TENANT_DATABASE_BINDING_PATTERN.test(binding) &&
+    /^TDB_LOOKUP_[A-Z0-9_]+_LOOKUP$/u.test(canonical)
+  );
+}
+
+export function isControlGeneratedDatabaseBinding(binding: string): boolean {
+  return isTenantDatabaseBinding(binding) || isLookupDatabaseBinding(binding);
 }
 
 export function getTenantDatabaseRoleFromBinding(binding: string): TenantDatabaseRole | null {
   const match = binding.match(/_(CORE|PII)(?:_S[0-9]+)?$/u);
   return match ? (BINDING_ROLE_SUFFIX[match[1]] ?? null) : null;
+}
+
+export function getTenantDatabaseDataRoleFromBinding(
+  binding: string
+): TenantDatabaseDataRole | null {
+  if (!isTenantDatabaseBinding(binding)) return null;
+  const canonical = binding.slice(binding.indexOf('_TDB_') + 1);
+  if (/^TDB_DEFAULT_[A-Z0-9_]*_CORE(?:_S[0-9]+)?$/u.test(canonical)) {
+    return 'tenant_core/default';
+  }
+  if (/^TDB_USERS_[A-Z0-9_]*_CORE(?:_S[0-9]+)?$/u.test(canonical)) {
+    return 'tenant_core/users';
+  }
+  if (/^TDB_PII_[A-Z0-9_]*_PII(?:_S[0-9]+)?$/u.test(canonical)) {
+    return 'tenant_pii';
+  }
+  return null;
+}
+
+export function getControlGeneratedDatabaseDataRoleFromBinding(
+  binding: string
+): ControlGeneratedDatabaseDataRole | null {
+  if (isLookupDatabaseBinding(binding)) return 'lookup';
+  return getTenantDatabaseDataRoleFromBinding(binding);
 }
 
 export function listTenantDatabaseMigrationTargets(
@@ -580,6 +485,14 @@ export function getLatestMigrationVersionFromDirectory(migrationsDir: string): n
     }, 0);
 }
 
+export function getLatestMigrationVersionFromFilenames(filenames: readonly string[]): number {
+  return filenames.reduce((latest, filename) => {
+    const basename = filename.split('/').at(-1) ?? filename;
+    const match = basename.match(/^(\d+)_/u);
+    return match ? Math.max(latest, Number.parseInt(match[1], 10)) : latest;
+  }, 0);
+}
+
 const _SIGNED_TENANT_DATABASE_REGISTRY_FIELDS = [
   'tenant_id',
   'role',
@@ -609,6 +522,10 @@ function buildTenantDatabaseRegistrySignaturePayload(input: {
   schemaVersion: number;
   status: TenantDatabaseProvisioningState;
 }): string {
+  const shardGroup = input.resource.shardGroup ?? 'default';
+  const shardIndex = input.resource.shardIndex ?? 0;
+  const shardCount = input.resource.shardCount ?? 1;
+  const shardKeyStrategy = input.resource.shardKeyStrategy ?? 'none';
   const values: Record<(typeof _SIGNED_TENANT_DATABASE_REGISTRY_FIELDS)[number], unknown> = {
     tenant_id: input.tenantId,
     role: input.resource.role,
@@ -618,10 +535,10 @@ function buildTenantDatabaseRegistrySignaturePayload(input: {
     schema_version: input.schemaVersion,
     status: input.status,
     generation: input.resource.generation,
-    shard_group: 'default',
-    shard_index: 0,
-    shard_count: 1,
-    shard_key_strategy: 'none',
+    shard_group: shardGroup,
+    shard_index: shardIndex,
+    shard_count: shardCount,
+    shard_key_strategy: shardKeyStrategy,
     worker_shard: 'primary',
     deployment_target: null,
     region_hint: null,
@@ -697,22 +614,42 @@ export function buildTenantDatabaseRegistrySql(options: {
 }): string {
   const now = new Date().toISOString();
   const actor = options.actorId ?? 'setup';
-  const metadataJson = escapeSql(
-    JSON.stringify({
-      creation_slug: options.tenantSlug ?? options.tenantId,
-      current_slug: options.tenantSlug ?? options.tenantId,
-      provisioning_tool: 'authrim-setup tenant-db',
-    })
-  );
   const statements: string[] = [];
 
   for (const resource of options.resources) {
+    const shardGroup = resource.shardGroup?.trim() || 'default';
+    const shardIndex = resource.shardIndex ?? 0;
+    const shardCount = resource.shardCount ?? 1;
+    const shardKeyStrategy = resource.shardKeyStrategy?.trim() || 'none';
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u.test(shardGroup)) {
+      throw new Error(`tenant_database_shard_group_invalid:${shardGroup}`);
+    }
+    if (!Number.isSafeInteger(shardIndex) || shardIndex < 0) {
+      throw new Error(`tenant_database_shard_index_invalid:${shardIndex}`);
+    }
+    if (!Number.isSafeInteger(shardCount) || shardCount < 1 || shardCount > 32) {
+      throw new Error(`tenant_database_shard_count_invalid:${shardCount}`);
+    }
+    if (shardIndex >= shardCount) {
+      throw new Error(`tenant_database_shard_index_out_of_range:${shardIndex}:${shardCount}`);
+    }
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u.test(shardKeyStrategy)) {
+      throw new Error(`tenant_database_shard_key_strategy_invalid:${shardKeyStrategy}`);
+    }
     const schemaVersion = resource.schemaVersion ?? 1;
     const status = resource.status ?? 'ready';
     const signature = resource.signature ? `'${escapeSql(resource.signature)}'` : 'NULL';
     const signatureKeyId = resource.signatureKeyId
       ? `'${escapeSql(resource.signatureKeyId)}'`
       : 'NULL';
+    const metadataJson = escapeSql(
+      JSON.stringify({
+        creation_slug: options.tenantSlug ?? options.tenantId,
+        current_slug: options.tenantSlug ?? options.tenantId,
+        provisioning_tool: 'authrim-setup control-plane',
+        ...(resource.metadata ?? {}),
+      })
+    );
     statements.push(
       `
 INSERT INTO tenant_database_registry (
@@ -722,9 +659,9 @@ INSERT INTO tenant_database_registry (
   region_hint, jurisdiction, signature, signature_key_id, metadata_json,
   created_at, updated_at, created_by, updated_by
 ) VALUES (
-  '${escapeSql(options.tenantId)}', '${resource.role}', ${resource.generation}, 'default', 0, 'd1',
+  '${escapeSql(options.tenantId)}', '${resource.role}', ${resource.generation}, '${escapeSql(shardGroup)}', ${shardIndex}, 'd1',
   '${escapeSql(resource.databaseId)}', '${escapeSql(resource.databaseName)}', '${escapeSql(resource.binding)}', NULL, ${schemaVersion},
-  '${status}', 1, 'none', 'primary', NULL,
+  '${status}', ${shardCount}, '${escapeSql(shardKeyStrategy)}', 'primary', NULL,
   NULL, NULL, ${signature}, ${signatureKeyId}, '${metadataJson}',
   '${now}', '${now}', '${escapeSql(actor)}', '${escapeSql(actor)}'
 )
@@ -764,7 +701,7 @@ INSERT INTO tenant_database_active_pointers (
   tenant_id, role, shard_group, generation, shard_count, shard_key_strategy,
   runtime_generation, status, updated_at, updated_by, metadata_json
 ) VALUES (
-  '${escapeSql(options.tenantId)}', '${resource.role}', 'default', ${resource.generation}, 1, 'none',
+  '${escapeSql(options.tenantId)}', '${resource.role}', '${escapeSql(shardGroup)}', ${resource.generation}, ${shardCount}, '${escapeSql(shardKeyStrategy)}',
   1, 'active', '${now}', '${escapeSql(actor)}', NULL
 )
 ON CONFLICT(tenant_id, role, shard_group) DO UPDATE SET
@@ -780,41 +717,6 @@ ON CONFLICT(tenant_id, role, shard_group) DO UPDATE SET
   }
 
   return statements.join('\n\n');
-}
-
-export function buildTenantDatabaseAdminJobSql(input: TenantDatabaseAdminJobSqlInput): string {
-  const now = input.createdAt ?? Math.floor(Date.now() / 1000);
-  const actor = input.createdBy ?? 'setup';
-  const resultSql = input.result ? `'${escapeSql(JSON.stringify(input.result))}'` : 'NULL';
-  const errorSql = input.errorMessage ? `'${escapeSql(input.errorMessage)}'` : 'NULL';
-
-  return `
-INSERT INTO admin_jobs (
-  id, tenant_id, job_type, status, progress, config, result, error_message,
-  created_by, created_at, updated_at, started_at, completed_at
-) VALUES (
-  '${escapeSql(input.jobId)}',
-  '${escapeSql(input.tenantId)}',
-  '${input.jobType}',
-  '${input.status}',
-  '${escapeSql(JSON.stringify(input.progress))}',
-  '${escapeSql(JSON.stringify(input.config))}',
-  ${resultSql},
-  ${errorSql},
-  '${escapeSql(actor)}',
-  ${now},
-  ${now},
-  ${now},
-  ${input.status === 'completed' || input.status === 'failed' || input.status === 'partial_failure' ? now : 'NULL'}
-)
-ON CONFLICT(id) DO UPDATE SET
-  status = excluded.status,
-  progress = excluded.progress,
-  config = excluded.config,
-  result = excluded.result,
-  error_message = excluded.error_message,
-  updated_at = excluded.updated_at,
-  completed_at = excluded.completed_at;`.trim();
 }
 
 export function buildTenantWorkerShardSplitJobConfig(

@@ -43,6 +43,78 @@ export const SUPPORTED_JWE_ENC = [
 export type JWEEncryption = (typeof SUPPORTED_JWE_ENC)[number];
 
 /**
+ * Select a client public key that can be used with the requested JWE key-management algorithm.
+ *
+ * A JWK Set can contain signing keys, decryption-only keys, and keys for different algorithms.
+ * Selecting by `use=enc` alone is therefore insufficient and can cause algorithm/key confusion.
+ * When several rotation keys are eligible, each key must have a distinct `kid` so the recipient
+ * can identify the key used from the JWE protected header.
+ */
+export function selectJWEEncryptionKey(keys: unknown, alg: JWEAlgorithm, kid?: string): JWK | null {
+  if (!Array.isArray(keys)) {
+    return null;
+  }
+
+  const expectedKeyOperations = alg.startsWith('RSA-')
+    ? new Set(['encrypt', 'wrapKey'])
+    : new Set(['deriveKey', 'deriveBits']);
+
+  const candidates = keys.filter((value): value is JWK => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return false;
+    }
+
+    const key = value as JWK;
+    if (key.use !== undefined && key.use !== 'enc') {
+      return false;
+    }
+    if (
+      Array.isArray(key.key_ops) &&
+      !key.key_ops.some((operation) => expectedKeyOperations.has(operation))
+    ) {
+      return false;
+    }
+    if (key.alg !== undefined && key.alg !== alg) {
+      return false;
+    }
+    if (kid !== undefined && key.kid !== kid) {
+      return false;
+    }
+
+    if (alg.startsWith('RSA-')) {
+      return key.kty === 'RSA' && typeof key.n === 'string' && typeof key.e === 'string';
+    }
+
+    if (key.kty === 'EC') {
+      return typeof key.crv === 'string' && typeof key.x === 'string' && typeof key.y === 'string';
+    }
+    return (
+      key.kty === 'OKP' && (key.crv === 'X25519' || key.crv === 'X448') && typeof key.x === 'string'
+    );
+  });
+
+  const exactAlgorithmMatches = candidates.filter((key) => key.alg === alg);
+  const eligible =
+    exactAlgorithmMatches.length > 0
+      ? exactAlgorithmMatches
+      : candidates.filter((key) => key.alg === undefined);
+
+  if (eligible.length === 0) {
+    return null;
+  }
+  if (eligible.length === 1) {
+    return eligible[0];
+  }
+
+  const kids = eligible.map((key) => key.kid).filter((kid): kid is string => !!kid);
+  if (kids.length !== eligible.length || new Set(kids).size !== eligible.length) {
+    return null;
+  }
+
+  return [...eligible].sort((left, right) => left.kid!.localeCompare(right.kid!))[0];
+}
+
+/**
  * JWE Encryption Options
  */
 export interface JWEEncryptionOptions {
@@ -195,10 +267,14 @@ export async function getClientPublicKey(
     jwks?: { keys: JWK[] };
     jwks_uri?: string;
   },
-  kid?: string
+  kid?: string,
+  algorithm?: JWEAlgorithm
 ): Promise<JWK | null> {
   // Option 1: Use embedded jwks
   if (clientMetadata.jwks?.keys) {
+    if (algorithm) {
+      return selectJWEEncryptionKey(clientMetadata.jwks.keys, algorithm, kid);
+    }
     const key = kid
       ? clientMetadata.jwks.keys.find((k) => k.kid === kid)
       : clientMetadata.jwks.keys[0];
@@ -214,10 +290,17 @@ export async function getClientPublicKey(
         return null;
       }
 
-      const jwks = await safeFetchJson<{ keys: JWK[] }>(clientMetadata.jwks_uri, {
+      const jwks = await safeFetchJson<{ keys?: unknown }>(clientMetadata.jwks_uri, {
         timeoutMs: 5000,
         maxResponseSize: 256 * 1024,
+        redirect: 'error',
       });
+      if (algorithm) {
+        return selectJWEEncryptionKey(jwks.keys, algorithm, kid);
+      }
+      if (!Array.isArray(jwks.keys)) {
+        return null;
+      }
       const key = kid ? jwks.keys.find((k) => k.kid === kid) : jwks.keys[0];
       return key || null;
     } catch (error) {

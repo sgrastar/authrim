@@ -6,8 +6,162 @@ import {
   parseWranglerToml,
   toToml,
 } from '../core/wrangler.js';
+import { MANAGED_WORKER_DEPLOY_BUILD_COMMAND } from '../core/managed-worker-deploy.js';
+import { createDefaultConfig } from '../core/config.js';
 import type { AuthrimConfig } from '../core/config.js';
 import type { AuthrimLock } from '../core/lock.js';
+import { WORKER_COMPONENTS, getRequiredDataRolesForComponent } from '../core/naming.js';
+
+describe('Worker placement generation', () => {
+  it('protects generated deployment config with the setup-managed build guard', () => {
+    const config = createDefaultConfig('test');
+    config.components.adminUi = false;
+    const generated = generateWranglerConfig('ar-auth', config, { d1: {}, kv: {} });
+
+    expect(generated.build).toEqual({ command: MANAGED_WORKER_DEPLOY_BUILD_COMMAND });
+    expect(toToml(generated, 'test')).toContain(
+      `[build]\ncommand = "${MANAGED_WORKER_DEPLOY_BUILD_COMMAND}"`
+    );
+  });
+
+  it('defaults to off and permits an explicit Smart Placement experiment', () => {
+    const config = createDefaultConfig('test');
+    config.urls = {
+      api: { custom: null, auto: 'https://test-ar-router.example.workers.dev' },
+      loginUi: {
+        custom: null,
+        auto: 'https://test-ar-login-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+      adminUi: {
+        custom: null,
+        auto: 'https://test-ar-admin-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+    };
+    expect(generateWranglerConfig('ar-management', config, { d1: {}, kv: {} }).placement).toEqual({
+      mode: 'off',
+    });
+    expect(
+      generateWranglerConfig('ar-management', config, { d1: {}, kv: {} }, undefined, {
+        placementMode: 'smart',
+      }).placement
+    ).toEqual({ mode: 'smart' });
+  });
+
+  it('enables same-Worker loopback RPC exports only for ar-management', () => {
+    const config = createDefaultConfig('test');
+    config.urls = {
+      api: { custom: null, auto: 'https://test-ar-router.example.workers.dev' },
+      loginUi: {
+        custom: null,
+        auto: 'https://test-ar-login-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+      adminUi: {
+        custom: null,
+        auto: 'https://test-ar-admin-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+    };
+    const resources = { d1: {}, kv: {} };
+
+    expect(generateWranglerConfig('ar-management', config, resources).compatibility_flags).toEqual([
+      'nodejs_compat',
+      'enable_ctx_exports',
+    ]);
+    expect(generateWranglerConfig('ar-auth', config, resources).compatibility_flags).toEqual([
+      'nodejs_compat',
+    ]);
+  });
+});
+
+describe('R2 binding generation', () => {
+  it('connects every provisioned standard bucket to its least-privilege Worker consumers', () => {
+    const config = createDefaultConfig('full-r2');
+    config.urls = {
+      api: { custom: null, auto: 'https://full-r2-ar-router.example.workers.dev' },
+      loginUi: {
+        custom: null,
+        auto: 'https://full-r2-ar-login-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+      adminUi: {
+        custom: null,
+        auto: 'https://full-r2-ar-admin-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+    };
+    const resources = {
+      d1: {},
+      kv: {},
+      r2: {
+        MIGRATION_RELEASES: { name: 'full-r2-migration-releases' },
+        PLUGIN_BUNDLES: { name: 'full-r2-plugin-bundles' },
+        PUBLIC_ASSETS: { name: 'full-r2-public-assets' },
+        DIAGNOSTIC_LOGS: { name: 'full-r2-diagnostic-logs' },
+        AUDIT_ARCHIVE: { name: 'full-r2-audit-archive' },
+        IMPORT_ARTIFACTS: { name: 'full-r2-import-artifacts' },
+        EXPORT_ARTIFACTS: { name: 'full-r2-export-artifacts' },
+        SENSITIVE_DETAILS: { name: 'full-r2-sensitive-details' },
+      },
+    };
+
+    expect(generateWranglerConfig('ar-control', config, resources).r2_buckets).toEqual([
+      { binding: 'MIGRATION_RELEASES', bucket_name: 'full-r2-migration-releases' },
+    ]);
+    expect(generateWranglerConfig('ar-plugin-runner', config, resources).r2_buckets).toEqual([
+      { binding: 'PLUGIN_BUNDLES', bucket_name: 'full-r2-plugin-bundles' },
+    ]);
+    expect(generateWranglerConfig('ar-auth', config, resources).r2_buckets).toEqual([
+      { binding: 'DIAGNOSTIC_LOGS', bucket_name: 'full-r2-diagnostic-logs' },
+      { binding: 'AUDIT_ARCHIVE', bucket_name: 'full-r2-audit-archive' },
+    ]);
+    expect(generateWranglerConfig('ar-management', config, resources).r2_buckets).toEqual([
+      { binding: 'PUBLIC_ASSETS', bucket_name: 'full-r2-public-assets' },
+      { binding: 'DIAGNOSTIC_LOGS', bucket_name: 'full-r2-diagnostic-logs' },
+      { binding: 'AUDIT_ARCHIVE', bucket_name: 'full-r2-audit-archive' },
+      { binding: 'IMPORT_ARTIFACTS', bucket_name: 'full-r2-import-artifacts' },
+      { binding: 'EXPORT_ARTIFACTS', bucket_name: 'full-r2-export-artifacts' },
+      { binding: 'SENSITIVE_DETAILS', bucket_name: 'full-r2-sensitive-details' },
+    ]);
+  });
+
+  it('does not ask Wrangler to provision unrecorded optional buckets during deploy', () => {
+    const config = createDefaultConfig('baseline-r2');
+    config.features.r2 = { enabled: false };
+    config.urls = {
+      api: { custom: null, auto: 'https://baseline-r2-ar-router.example.workers.dev' },
+      loginUi: {
+        custom: null,
+        auto: 'https://baseline-r2-ar-login-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+      adminUi: {
+        custom: null,
+        auto: 'https://baseline-r2-ar-admin-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+    };
+    const resources = {
+      d1: {},
+      kv: {},
+      r2: {
+        MIGRATION_RELEASES: { name: 'baseline-r2-migration-releases' },
+      },
+    };
+
+    expect(generateWranglerConfig('ar-control', config, resources).r2_buckets).toEqual([
+      {
+        binding: 'MIGRATION_RELEASES',
+        bucket_name: 'baseline-r2-migration-releases',
+      },
+    ]);
+    expect(generateWranglerConfig('ar-auth', config, resources).r2_buckets).toBeUndefined();
+    expect(generateWranglerConfig('ar-bridge', config, resources).r2_buckets).toBeUndefined();
+    expect(generateWranglerConfig('ar-management', config, resources).r2_buckets).toBeUndefined();
+  });
+});
 
 describe('generateRoutes', () => {
   it('exposes protected customer profile routes on ar-userinfo', () => {
@@ -81,6 +235,7 @@ describe('generateRoutes', () => {
       tenant: {
         name: 'default',
         displayName: 'Default Tenant',
+        placementPolicy: 'tenant_exclusive',
         multiTenant: false,
         userIdFormat: 'nanoid',
       },
@@ -128,6 +283,7 @@ describe('generateRoutes', () => {
         core: { location: 'auto', jurisdiction: 'none' },
         pii: { location: 'auto', jurisdiction: 'none' },
       },
+      controlPlane: { automaticProvisioning: true },
       security: {
         piiEncryptionEnabled: true,
         domainHashEnabled: true,
@@ -144,9 +300,38 @@ describe('generateRoutes', () => {
     const libCoreConfig = generateWranglerConfig('ar-lib-core', config, resourceIds);
     const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
     const tokenConfig = generateWranglerConfig('ar-token', config, resourceIds);
+    const discoveryConfig = generateWranglerConfig('ar-discovery', config, resourceIds);
+    const vcConfig = generateWranglerConfig('ar-vc', config, resourceIds);
+    const agentAccessConfig = generateWranglerConfig('ar-agent-access', config, resourceIds);
+    const bridgeConfig = generateWranglerConfig('ar-bridge', config, resourceIds);
+    const samlConfig = generateWranglerConfig('ar-saml', config, resourceIds);
+    const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+
+    for (const challengeStoreConsumer of [authConfig, managementConfig, samlConfig, bridgeConfig]) {
+      expect(challengeStoreConsumer.vars.AUTHRIM_CHALLENGE_SHARDS).toBe('4');
+    }
+
+    expect(authConfig.durable_objects?.bindings).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'VERSION_MANAGER' })])
+    );
+    expect(tokenConfig.durable_objects?.bindings).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'VERSION_MANAGER' })])
+    );
+    expect(managementConfig.durable_objects?.bindings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'VERSION_MANAGER' })])
+    );
+    expect(managementConfig.triggers).toEqual({
+      crons: ['* * * * *', '*/2 * * * *', '*/5 * * * *', '0 */6 * * *'],
+    });
+    expect(samlConfig.triggers).toEqual({ crons: ['*/5 * * * *'] });
 
     expect(tokenConfig.durable_objects?.bindings).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          name: 'SESSION_REVOCATION_STORE',
+          class_name: 'SessionRevocationStore',
+          script_name: 'emailtest-ar-lib-core',
+        }),
         expect.objectContaining({ name: 'DEVICE_CODE_STORE' }),
         expect.objectContaining({ name: 'CIBA_REQUEST_STORE' }),
       ])
@@ -159,7 +344,38 @@ describe('generateRoutes', () => {
         }),
       ])
     );
+    expect(bridgeConfig.durable_objects?.bindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'KEY_MANAGER', script_name: 'emailtest-ar-lib-core' }),
+        expect.objectContaining({
+          name: 'SESSION_REVOCATION_STORE',
+          class_name: 'SessionRevocationStore',
+          script_name: 'emailtest-ar-lib-core',
+        }),
+      ])
+    );
     expect(authConfig.migrations?.[0]?.new_sqlite_classes).toContain('DirectoryConnectorRelay');
+    expect(vcConfig.durable_objects?.bindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'RATE_LIMITER', script_name: 'emailtest-ar-lib-core' }),
+        expect.objectContaining({
+          name: 'CREDENTIAL_OFFER_STORE',
+          class_name: 'CredentialOfferStoreV2',
+        }),
+        expect.objectContaining({ name: 'VP_REQUEST_STORE', class_name: 'VPRequestStoreV2' }),
+      ])
+    );
+    expect(vcConfig.migrations?.[0]?.new_sqlite_classes).toEqual([
+      'CredentialOfferStore',
+      'VPRequestStore',
+    ]);
+    expect(vcConfig.migrations?.[1]?.new_sqlite_classes).toEqual(['CredentialOfferStoreV2']);
+    expect(vcConfig.migrations?.[2]?.new_sqlite_classes).toEqual(['VPRequestStoreV2']);
+    expect(vcConfig.vars.VC_TRANSACTION_CODE_HMAC_SECRET).toBe('');
+    expect(vcConfig.vars.VC_EVIDENCE_HMAC_SECRET).toBe('');
+    expect(vcConfig.vars.VC_PROFILE_CONTRACT_HMAC_SECRET).toBe('');
+    expect(vcConfig.vars.VC_ATTRIBUTE_ELEVATION_AUDIENCE).toBe('svc://op-vc/attribute-elevation');
+    expect(managementConfig.vars.VC_PROFILE_CONTRACT_HMAC_SECRET).toBe('');
     expect(managementConfig.durable_objects?.bindings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -169,15 +385,160 @@ describe('generateRoutes', () => {
         }),
       ])
     );
-    expect(authConfig.send_email).toEqual([{ name: 'EMAIL' }]);
-    expect(managementConfig.send_email).toEqual([{ name: 'EMAIL' }]);
+    expect(authConfig.send_email).toBeUndefined();
+    expect(managementConfig.send_email).toBeUndefined();
     expect(authConfig.services).toEqual([
       { binding: 'EXTERNAL_IDP', service: 'emailtest-ar-bridge' },
+      {
+        binding: 'ACCOUNT_PROVISIONER',
+        service: 'emailtest-ar-management',
+        entrypoint: 'AuthAccountProvisioningEntrypoint',
+        props: {
+          caller: 'ar-auth',
+          environmentId: 'emailtest',
+          audience: 'authrim-auth-account-provisioning-v1',
+        },
+      },
+      {
+        binding: 'PLUGIN_RUNNER',
+        service: 'emailtest-ar-plugin-runner',
+        props: {
+          caller: 'ar-auth',
+          environmentId: 'emailtest',
+          audience: 'authrim-plugin-runner-v1',
+        },
+      },
     ]);
+    expect(bridgeConfig.services).toEqual([
+      {
+        binding: 'EXTERNAL_IDP_ACCOUNT_PROVISIONER',
+        service: 'emailtest-ar-management',
+        entrypoint: 'AuthAccountProvisioningEntrypoint',
+        props: {
+          caller: 'ar-bridge',
+          environmentId: 'emailtest',
+          audience: 'authrim-external-idp-account-provisioning-v1',
+        },
+      },
+      {
+        binding: 'PLUGIN_RUNNER',
+        service: 'emailtest-ar-plugin-runner',
+        props: {
+          caller: 'ar-bridge',
+          environmentId: 'emailtest',
+          audience: 'authrim-plugin-runner-v1',
+        },
+      },
+    ]);
+    const bootstrapBridgeConfig = generateWranglerConfig(
+      'ar-bridge',
+      config,
+      resourceIds,
+      undefined,
+      { includeExternalIdpAccountProvisioner: false }
+    );
+    expect(bootstrapBridgeConfig.services).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'EXTERNAL_IDP_ACCOUNT_PROVISIONER' }),
+      ])
+    );
+    expect(bootstrapBridgeConfig.services).toEqual(
+      bridgeConfig.services?.filter(
+        (service) => service.binding !== 'EXTERNAL_IDP_ACCOUNT_PROVISIONER'
+      )
+    );
+    const bootstrapAuthConfig = generateWranglerConfig('ar-auth', config, resourceIds, undefined, {
+      includeAuthAccountProvisioner: false,
+    });
+    expect(bootstrapAuthConfig.services).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ binding: 'ACCOUNT_PROVISIONER' })])
+    );
+    expect(bootstrapAuthConfig.services).toEqual(
+      authConfig.services?.filter((service) => service.binding !== 'ACCOUNT_PROVISIONER')
+    );
     expect(managementConfig.services).toEqual([
       { binding: 'EXTERNAL_IDP', service: 'emailtest-ar-bridge' },
+      {
+        binding: 'CONTROL',
+        service: 'emailtest-ar-control',
+        props: {
+          caller: 'ar-management',
+          environmentId: 'emailtest',
+          audience: 'authrim-control-v1',
+        },
+      },
+      {
+        binding: 'PLUGIN_RUNNER',
+        service: 'emailtest-ar-plugin-runner',
+        props: {
+          caller: 'ar-management',
+          environmentId: 'emailtest',
+          audience: 'authrim-plugin-runner-v1',
+        },
+      },
     ]);
+    expect(toToml(managementConfig, 'emailtest')).toContain(
+      'props = { audience = "authrim-control-v1", caller = "ar-management", environmentId = "emailtest" }'
+    );
+    expect(toToml(managementConfig, 'emailtest')).not.toContain(
+      'entrypoint = "VCIssuerEntrypoint"'
+    );
+    const vcEnabledManagement = generateWranglerConfig(
+      'ar-management',
+      { ...config, components: { ...config.components, vc: true } },
+      resourceIds
+    );
+    expect(vcEnabledManagement.services).toContainEqual({
+      binding: 'VC_ISSUER',
+      service: 'emailtest-ar-vc',
+      entrypoint: 'VCIssuerEntrypoint',
+    });
+    expect(discoveryConfig.durable_objects?.bindings ?? []).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'KEY_MANAGER' })])
+    );
+    expect(discoveryConfig.services).toEqual([
+      {
+        binding: 'KEY_MANAGER_PUBLIC',
+        service: 'emailtest-ar-lib-core',
+        entrypoint: 'KeyManagerPublicEntrypoint',
+      },
+    ]);
+    expect(toToml(discoveryConfig, 'emailtest')).toContain(
+      'entrypoint = "KeyManagerPublicEntrypoint"'
+    );
     expect(tokenConfig.send_email).toBeUndefined();
+    expect(agentAccessConfig.main).toBe('src/platform/cloudflare/worker.ts');
+    expect(agentAccessConfig.vars.AUTHRIM_ENVIRONMENT_NAME).toBe('emailtest');
+    expect(discoveryConfig.vars.AUTHRIM_ENVIRONMENT_NAME).toBe('emailtest');
+    expect(agentAccessConfig.durable_objects?.bindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'AGENT_ACCESS_MCP',
+          class_name: 'AgentAccessMcpAgent',
+        }),
+        expect.objectContaining({
+          name: 'DPOP_JTI_STORE',
+          script_name: 'emailtest-ar-lib-core',
+        }),
+      ])
+    );
+    expect(agentAccessConfig.migrations?.[0]).toMatchObject({
+      tag: 'ar-agent-access-local-v1',
+      new_sqlite_classes: ['AgentAccessMcpAgent'],
+    });
+    expect(agentAccessConfig.services).toEqual([
+      { binding: 'OP_MANAGEMENT', service: 'emailtest-ar-management' },
+      { binding: 'OP_DISCOVERY', service: 'emailtest-ar-discovery' },
+      {
+        binding: 'AGENT_DOWNSCOPE',
+        service: 'emailtest-ar-token',
+        entrypoint: 'AgentDownscopeEntrypoint',
+      },
+    ]);
+    expect(routerConfig.services).toContainEqual({
+      binding: 'OP_AGENT_ACCESS',
+      service: 'emailtest-ar-agent-access',
+    });
     expect(libCoreConfig.vars.AUTH_CODE_EXPIRY).toBe('600');
     expect(authConfig.vars.EMAIL_FROM).toBe('noreply@example.com');
     expect(authConfig.vars.EMAIL_FROM_NAME).toBe('Authrim');
@@ -363,6 +724,28 @@ describe('generateRoutes', () => {
     expect(toml).not.toContain('env.undefined.send_email');
   });
 
+  it('escapes JSON strings in environment variables for valid TOML', () => {
+    const registeredSchemas = JSON.stringify(['binding:DB:core-d1', 'binding:DB_ADMIN:admin-d1']);
+    const config = {
+      main: 'src/index.ts',
+      compatibility_date: '2026-07-21',
+      compatibility_flags: ['nodejs_compat'],
+      name: 'authrim-management',
+      workers_dev: false,
+      vars: { AUTHRIM_REGISTERED_SCHEMA_REFS: registeredSchemas },
+    };
+
+    const scopedToml = toToml(config, 'test');
+    const legacyToml = toToml(config);
+
+    expect(scopedToml).toContain(
+      'AUTHRIM_REGISTERED_SCHEMA_REFS = "[\\"binding:DB:core-d1\\",\\"binding:DB_ADMIN:admin-d1\\"]"'
+    );
+    expect(legacyToml).toContain(
+      'AUTHRIM_REGISTERED_SCHEMA_REFS = "[\\"binding:DB:core-d1\\",\\"binding:DB_ADMIN:admin-d1\\"]"'
+    );
+  });
+
   it('serializes send_email bindings once in legacy wrangler.toml output', () => {
     const config = {
       main: 'src/index.ts',
@@ -478,7 +861,7 @@ describe('generateRoutes', () => {
       updatedAt: '2026-04-21T00:00:00.000Z',
       env: 'single',
       d1: {
-        DB: { id: 'd1-core', name: 'single-core' },
+        DB: { id: 'core-d1', name: 'single-core' },
       },
       kv: {
         SETTINGS: { id: 'kv-settings', name: 'single-settings', previewId: 'preview-settings' },
@@ -494,7 +877,7 @@ describe('generateRoutes', () => {
 
     expect(buildResourceIdsFromLock(lock)).toEqual({
       d1: {
-        DB: { id: 'd1-core', name: 'single-core' },
+        DB: { id: 'core-d1', name: 'single-core' },
       },
       kv: {
         SETTINGS: { id: 'kv-settings', name: 'single-settings' },
@@ -509,7 +892,7 @@ describe('generateRoutes', () => {
     });
   });
 
-  it('includes generated tenant D1 bindings for tenant durable runtime workers', () => {
+  it('includes generated assignment bindings for tenant durable runtime workers', () => {
     const config = {
       version: '1.0.0',
       environment: { prefix: 'tenantd1' },
@@ -544,16 +927,34 @@ describe('generateRoutes', () => {
         DB: { id: 'core-id', name: 'tenantd1-authrim-core-db' },
         DB_PII: { id: 'pii-id', name: 'tenantd1-authrim-pii-db' },
         DB_ADMIN: { id: 'admin-id', name: 'tenantd1-authrim-admin-db' },
-        TDB_EXAMPLE_ABC123_CORE: {
-          id: 'tenant-core-id',
-          name: 'authrim-tenantd1-example-core',
+        CONTROL_DB: { id: 'control-id', name: 'tenantd1-authrim-control-db' },
+        LOOKUP_DB: { id: 'lookup-id', name: 'tenantd1-authrim-lookup-db' },
+        TEST_TDB_LOOKUP_EXTRA_LOOKUP: {
+          id: 'lookup-extra-id',
+          name: 'authrim-tenantd1-lookup-extra',
         },
-        TDB_EXAMPLE_DEF456_PII: {
+        PLUGIN_RUNNER_DB: {
+          id: 'plugin-runner-id',
+          name: 'tenantd1-authrim-plugin-runner-db',
+        },
+        TEST_TDB_DEFAULT_EXAMPLE_CORE: {
+          id: 'tenant-default-id',
+          name: 'authrim-tenantd1-example-default',
+        },
+        TEST_TDB_USERS_EXAMPLE_CORE: {
+          id: 'tenant-users-id',
+          name: 'authrim-tenantd1-example-users',
+        },
+        TEST_TDB_PII_EXAMPLE_PII: {
           id: 'tenant-pii-id',
           name: 'authrim-tenantd1-example-pii',
         },
       },
       kv: {
+        INITIAL_ACCESS_TOKENS: {
+          id: 'kv-initial-access-tokens',
+          name: 'TENANTD1-INITIAL_ACCESS_TOKENS',
+        },
         TENANT_RUNTIME_REGISTRY: {
           id: 'kv-tenant-runtime-registry',
           name: 'TENANTD1-TENANT_RUNTIME_REGISTRY',
@@ -562,15 +963,138 @@ describe('generateRoutes', () => {
     };
 
     const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
+    const discoveryConfig = generateWranglerConfig('ar-discovery', config, resourceIds);
+    const controlConfig = generateWranglerConfig(
+      'ar-control',
+      { ...config, cloudflare: { accountId: 'account-id' } },
+      resourceIds
+    );
     const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
+    const agentAccessConfig = generateWranglerConfig('ar-agent-access', config, resourceIds);
     const asyncConfig = generateWranglerConfig('ar-async', config, resourceIds);
+    const policyConfig = generateWranglerConfig('ar-policy', config, resourceIds);
     const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
 
     expect(authConfig.d1_databases).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ binding: 'TDB_EXAMPLE_ABC123_CORE' }),
-        expect.objectContaining({ binding: 'TDB_EXAMPLE_DEF456_PII' }),
+        expect.objectContaining({ binding: 'TEST_TDB_DEFAULT_EXAMPLE_CORE' }),
+        expect.objectContaining({ binding: 'TEST_TDB_USERS_EXAMPLE_CORE' }),
+        expect.objectContaining({ binding: 'TEST_TDB_PII_EXAMPLE_PII' }),
       ])
+    );
+    expect(discoveryConfig.d1_databases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'TEST_TDB_DEFAULT_EXAMPLE_CORE' }),
+      ])
+    );
+    expect(discoveryConfig.d1_databases).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ binding: 'DB' })])
+    );
+    expect(discoveryConfig.d1_databases).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'TEST_TDB_USERS_EXAMPLE_CORE' }),
+        expect.objectContaining({ binding: 'TEST_TDB_PII_EXAMPLE_PII' }),
+        expect.objectContaining({ binding: 'LOOKUP_DB' }),
+      ])
+    );
+    expect(authConfig.d1_databases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'LOOKUP_DB' }),
+        expect.objectContaining({ binding: 'TEST_TDB_LOOKUP_EXTRA_LOOKUP' }),
+      ])
+    );
+    expect(managementConfig.d1_databases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'LOOKUP_DB' }),
+        expect.objectContaining({ binding: 'TEST_TDB_LOOKUP_EXTRA_LOOKUP' }),
+      ])
+    );
+    expect(authConfig.d1_databases).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'CONTROL_DB' }),
+        expect.objectContaining({ binding: 'PLUGIN_RUNNER_DB' }),
+      ])
+    );
+    expect(controlConfig.d1_databases).toEqual([
+      {
+        binding: 'CONTROL_DB',
+        database_name: 'tenantd1-authrim-control-db',
+        database_id: 'control-id',
+      },
+    ]);
+    expect(controlConfig.workers_dev).toBe(false);
+    expect(controlConfig.compatibility_date).toBe('2026-07-01');
+    expect(controlConfig.triggers).toEqual({ crons: ['* * * * *'] });
+    expect(controlConfig.vars).toMatchObject({
+      AUTHRIM_ENVIRONMENT_NAME: 'tenantd1',
+      AUTHRIM_DEPLOYMENT_TARGET: 'default',
+      CLOUDFLARE_ACCOUNT_ID: 'account-id',
+      CONTROL_DESTRUCTIVE_OPERATIONS_ENABLED: 'false',
+      RUNTIME_REGISTRY_SIGNING_ACTIVE_SLOT: 'A',
+    });
+    expect(controlConfig.kv_namespaces).toEqual([
+      {
+        binding: 'TENANT_RUNTIME_REGISTRY',
+        id: 'kv-tenant-runtime-registry',
+      },
+    ]);
+    expect(controlConfig.services).toHaveLength(13);
+    expect(controlConfig.services).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          binding: 'SMOKE_AR_LIB_CORE',
+          service: 'tenantd1-ar-lib-core',
+          entrypoint: 'RuntimeSmokeEntrypoint',
+          props: {
+            audience: 'authrim-runtime-smoke-v1',
+            caller: 'ar-control',
+            environmentId: 'tenantd1',
+            targetWorker: 'tenantd1-ar-lib-core',
+          },
+        }),
+        expect.objectContaining({
+          binding: 'SMOKE_AR_DISCOVERY',
+          service: 'tenantd1-ar-discovery',
+          entrypoint: 'RuntimeSmokeEntrypoint',
+          props: {
+            audience: 'authrim-runtime-smoke-v1',
+            caller: 'ar-control',
+            environmentId: 'tenantd1',
+            targetWorker: 'tenantd1-ar-discovery',
+          },
+        }),
+        expect.objectContaining({
+          binding: 'SMOKE_AR_AUTH',
+          service: 'tenantd1-ar-auth',
+          entrypoint: 'RuntimeSmokeEntrypoint',
+          props: {
+            audience: 'authrim-runtime-smoke-v1',
+            caller: 'ar-control',
+            environmentId: 'tenantd1',
+            targetWorker: 'tenantd1-ar-auth',
+          },
+        }),
+        expect.objectContaining({
+          binding: 'SMOKE_AR_MANAGEMENT',
+          service: 'tenantd1-ar-management',
+          entrypoint: 'RuntimeSmokeEntrypoint',
+          props: {
+            audience: 'authrim-runtime-smoke-v1',
+            caller: 'ar-control',
+            environmentId: 'tenantd1',
+            targetWorker: 'tenantd1-ar-management',
+          },
+        }),
+      ])
+    );
+    expect(controlConfig.durable_objects).toBeUndefined();
+    expect(controlConfig.d1_databases).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'TEST_TDB_DEFAULT_EXAMPLE_CORE' }),
+      ])
+    );
+    expect(controlConfig.d1_databases).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ binding: 'TEST_TDB_LOOKUP_EXTRA_LOOKUP' })])
     );
     expect(authConfig.kv_namespaces).toEqual(
       expect.arrayContaining([expect.objectContaining({ binding: 'TENANT_RUNTIME_REGISTRY' })])
@@ -578,7 +1102,55 @@ describe('generateRoutes', () => {
     expect(managementConfig.kv_namespaces).toEqual(
       expect.arrayContaining([expect.objectContaining({ binding: 'TENANT_RUNTIME_REGISTRY' })])
     );
-    expect(asyncConfig.d1_databases).toBeUndefined();
+    expect(agentAccessConfig.d1_databases).toEqual(
+      expect.arrayContaining([expect.objectContaining({ binding: 'DB_ADMIN' })])
+    );
+    expect(agentAccessConfig.d1_databases).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ binding: 'DB' })])
+    );
+    expect(agentAccessConfig.d1_databases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'TEST_TDB_DEFAULT_EXAMPLE_CORE' }),
+        expect.objectContaining({ binding: 'TEST_TDB_USERS_EXAMPLE_CORE' }),
+      ])
+    );
+    expect(agentAccessConfig.d1_databases).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ binding: 'TEST_TDB_PII_EXAMPLE_PII' })])
+    );
+    expect(asyncConfig.d1_databases).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'TEST_TDB_DEFAULT_EXAMPLE_CORE' }),
+        expect.objectContaining({ binding: 'TEST_TDB_USERS_EXAMPLE_CORE' }),
+        expect.objectContaining({ binding: 'TEST_TDB_PII_EXAMPLE_PII' }),
+      ])
+    );
+    expect(asyncConfig.d1_databases).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'DB' }),
+        expect.objectContaining({ binding: 'DB_PII' }),
+      ])
+    );
+    expect(asyncConfig.kv_namespaces).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'INITIAL_ACCESS_TOKENS' }),
+        expect.objectContaining({ binding: 'TENANT_RUNTIME_REGISTRY' }),
+      ])
+    );
+    expect(policyConfig.kv_namespaces).toEqual(
+      expect.arrayContaining([expect.objectContaining({ binding: 'TENANT_RUNTIME_REGISTRY' })])
+    );
+    for (const component of WORKER_COMPONENTS.filter((candidate) =>
+      getRequiredDataRolesForComponent(candidate).some(
+        (role) => role === 'lookup' || role.startsWith('tenant_')
+      )
+    )) {
+      expect(
+        generateWranglerConfig(component, config, resourceIds).kv_namespaces,
+        `${component} must receive the signed tenant runtime registry`
+      ).toEqual(
+        expect.arrayContaining([expect.objectContaining({ binding: 'TENANT_RUNTIME_REGISTRY' })])
+      );
+    }
     expect(routerConfig.d1_databases).toBeUndefined();
   });
 
@@ -653,7 +1225,6 @@ describe('generateRoutes', () => {
       profile: 'basic-op',
       profiles: {
         defaults: {
-          storage: 'builtin:storage:external-postgres',
           audit: 'builtin:audit:standard',
           residency: 'builtin:residency:default',
         },
@@ -668,7 +1239,6 @@ describe('generateRoutes', () => {
           },
         },
         seed: {
-          storage: [],
           audit: [],
           residency: [],
         },
@@ -700,6 +1270,22 @@ id = "kv-id"
 
     expect(parseWranglerToml(toml, 'portable.prod').kv).toEqual({ SESSION_STORE: 'kv-id' });
     expect(parseWranglerToml(toml, 'portableXprod').kv).toEqual({});
+  });
+
+  it('parses the exact environment-scoped Cron Trigger intent', () => {
+    const toml = `
+[env.portable.triggers]
+crons = ["* * * * *", "*/5 * * * *", "0 */6 * * *"]
+
+[env.other.triggers]
+crons = ["*/15 * * * *"]
+`;
+
+    expect(parseWranglerToml(toml, 'portable').crons).toEqual([
+      '* * * * *',
+      '*/5 * * * *',
+      '0 */6 * * *',
+    ]);
   });
 
   it('assigns AUDIT_QUEUE producer bindings to auth/token and a consumer to management', () => {
@@ -1411,11 +1997,30 @@ id = "kv-id"
       kv: {
         SETTINGS: { id: 'kv-settings', name: 'TEST-SETTINGS' },
         AUTHRIM_CONFIG: { id: 'kv-authrim-config', name: 'TEST-AUTHRIM_CONFIG' },
+        TENANT_RUNTIME_REGISTRY: {
+          id: 'kv-runtime-registry',
+          name: 'TEST-TENANT-RUNTIME-REGISTRY',
+        },
       },
     };
     const routerConfig = generateWranglerConfig('ar-router', config, resourceIds);
+    const discoveryConfig = generateWranglerConfig('ar-discovery', config, resourceIds);
+    const agentAccessConfig = generateWranglerConfig('ar-agent-access', config, resourceIds);
 
     expect(routerConfig.kv_namespaces).toEqual(
+      expect.arrayContaining([
+        { binding: 'SETTINGS', id: 'kv-settings' },
+        { binding: 'AUTHRIM_CONFIG', id: 'kv-authrim-config' },
+      ])
+    );
+    expect(discoveryConfig.kv_namespaces).toEqual(
+      expect.arrayContaining([
+        { binding: 'SETTINGS', id: 'kv-settings' },
+        { binding: 'AUTHRIM_CONFIG', id: 'kv-authrim-config' },
+        { binding: 'TENANT_RUNTIME_REGISTRY', id: 'kv-runtime-registry' },
+      ])
+    );
+    expect(agentAccessConfig.kv_namespaces).toEqual(
       expect.arrayContaining([
         { binding: 'SETTINGS', id: 'kv-settings' },
         { binding: 'AUTHRIM_CONFIG', id: 'kv-authrim-config' },
@@ -1431,7 +2036,7 @@ id = "kv-id"
     expect(routerConfig.vars.SERVICE_SITE_BINDING).toBe('SERVICE_SITE');
   });
 
-  it('binds import artifacts R2 only to ar-management', () => {
+  it('binds import artifacts only to management and diagnostic logs to bridge', () => {
     const config = {
       version: '1.0.0',
       createdAt: '2026-04-30T00:00:00.000Z',
@@ -1507,7 +2112,6 @@ id = "kv-id"
       kv: {},
       r2: {
         PUBLIC_ASSETS: { name: 'imports-public-assets' },
-        AVATARS: { name: 'imports-authrim-avatars' },
         DIAGNOSTIC_LOGS: { name: 'imports-diagnostic-logs' },
         IMPORT_ARTIFACTS: { name: 'imports-import-artifacts' },
         EXPORT_ARTIFACTS: { name: 'imports-export-artifacts' },
@@ -1517,6 +2121,7 @@ id = "kv-id"
 
     const managementConfig = generateWranglerConfig('ar-management', config, resourceIds);
     const authConfig = generateWranglerConfig('ar-auth', config, resourceIds);
+    const bridgeConfig = generateWranglerConfig('ar-bridge', config, resourceIds);
 
     expect(managementConfig.r2_buckets).toEqual(
       expect.arrayContaining([
@@ -1550,5 +2155,55 @@ id = "kv-id"
         },
       ])
     );
+    expect(bridgeConfig.r2_buckets).toEqual(
+      expect.arrayContaining([
+        {
+          binding: 'DIAGNOSTIC_LOGS',
+          bucket_name: 'imports-diagnostic-logs',
+        },
+        {
+          binding: 'SENSITIVE_DETAILS',
+          bucket_name: 'imports-sensitive-details',
+        },
+      ])
+    );
+    expect(bridgeConfig.r2_buckets).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ binding: 'IMPORT_ARTIFACTS' }),
+        expect.objectContaining({ binding: 'EXPORT_ARTIFACTS' }),
+      ])
+    );
+  });
+});
+
+describe('registered schema references', () => {
+  it('rejects a management Worker variable larger than Cloudflare allows', () => {
+    const config = createDefaultConfig('prod');
+    config.urls = {
+      api: { custom: null, auto: 'https://prod-ar-router.example.workers.dev' },
+      loginUi: {
+        custom: null,
+        auto: 'https://prod-ar-login-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+      adminUi: {
+        custom: null,
+        auto: 'https://prod-ar-admin-ui.example.workers.dev',
+        sameAsApi: false,
+      },
+    };
+    const references = Array.from(
+      { length: 200 },
+      (_, index) =>
+        `connection:external-${index.toString().padStart(3, '0')}-${'x'.repeat(30)}:core-d1`
+    );
+
+    expect(() =>
+      generateWranglerConfig('ar-management', config, {
+        d1: {},
+        kv: {},
+        registeredSchemaReferences: references,
+      })
+    ).toThrow('registered_schema_references_exceed_cloudflare_variable_limit');
   });
 });

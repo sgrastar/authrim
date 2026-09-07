@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import app from '../index';
+import app, { LoginUiBackendEntrypoint } from '../index';
 
 // Mock fetcher that tracks which service binding was called
 const createMockFetcher = (name: string) => ({
@@ -31,6 +31,28 @@ const createMockKV = (data: Record<string, string> = {}) => ({
   getWithMetadata: vi.fn(),
 });
 
+const createMockCache = () => {
+  const store = new Map<string, Response>();
+  return {
+    store,
+    match: vi.fn(async (request: Request) => store.get(request.url)?.clone()),
+    put: vi.fn(async (request: Request, response: Response) => {
+      store.set(request.url, response.clone());
+    }),
+  };
+};
+
+function createLoginUiBackendEntrypoint(env: ReturnType<typeof createMockEnv>) {
+  return new LoginUiBackendEntrypoint(
+    {
+      waitUntil: vi.fn(),
+      passThroughOnException: vi.fn(),
+      props: {},
+    } as unknown as ExecutionContext,
+    env as never
+  );
+}
+
 // Create mock environment with service bindings
 const createMockEnv = () => ({
   OP_DISCOVERY: createMockFetcher('OP_DISCOVERY'),
@@ -39,6 +61,8 @@ const createMockEnv = () => ({
   OP_TOKEN: createMockFetcher('OP_TOKEN'),
   OP_USERINFO: createMockFetcher('OP_USERINFO'),
   OP_MANAGEMENT: createMockFetcher('OP_MANAGEMENT'),
+  OP_CONTROL: createMockFetcher('OP_CONTROL'),
+  OP_AGENT_ACCESS: createMockFetcher('OP_AGENT_ACCESS'),
   OP_ASYNC: createMockFetcher('OP_ASYNC'),
   OP_SAML: createMockFetcher('OP_SAML'),
   EXTERNAL_IDP: createMockFetcher('EXTERNAL_IDP'),
@@ -46,14 +70,22 @@ const createMockEnv = () => ({
 
 describe('Router Worker', () => {
   let mockEnv: ReturnType<typeof createMockEnv>;
+  let originalCaches: unknown;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    originalCaches = (globalThis as { caches?: unknown }).caches;
+    delete (globalThis as { caches?: unknown }).caches;
     mockEnv = createMockEnv();
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    if (originalCaches === undefined) {
+      delete (globalThis as { caches?: unknown }).caches;
+    } else {
+      (globalThis as { caches?: unknown }).caches = originalCaches;
+    }
   });
 
   describe('Health Check', () => {
@@ -87,6 +119,54 @@ describe('Router Worker', () => {
   });
 
   describe('Path Routing', () => {
+    describe('Agent Access MCP route', () => {
+      it('forwards the complete Streamable HTTP request to its owner Worker', async () => {
+        const req = new Request('https://first.example.com/mcp', {
+          method: 'POST',
+          headers: {
+            authorization: 'Bearer token',
+            accept: 'application/json, text/event-stream',
+            'content-type': 'application/json',
+            'mcp-protocol-version': '2025-11-25',
+          },
+          body: '{"jsonrpc":"2.0","id":1,"method":"initialize"}',
+        });
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
+        expect(await res.json()).toMatchObject({ worker: 'OP_AGENT_ACCESS', path: '/mcp' });
+        expect(mockEnv.OP_AGENT_ACCESS.fetch).toHaveBeenCalledOnce();
+      });
+
+      it('returns 404 when the optional binding is absent', async () => {
+        const env = { ...mockEnv, OP_AGENT_ACCESS: undefined };
+        const res = await app.fetch(new Request('https://first.example.com/mcp'), env);
+        expect(res.status).toBe(404);
+      });
+
+      it('copies immutable Service Binding response headers before outer middleware runs', async () => {
+        const immutableResponse = await fetch(
+          'data:application/json,%7B%22status%22%3A%22disabled%22%7D'
+        );
+        expect(() => immutableResponse.headers.set('x-test', 'value')).toThrow();
+        const env = {
+          ...mockEnv,
+          OP_AGENT_ACCESS: { fetch: vi.fn(async () => immutableResponse) },
+        };
+
+        const res = await app.fetch(
+          new Request('https://first.example.com/mcp', {
+            headers: { accept: 'text/event-stream' },
+          }),
+          env
+        );
+
+        expect(res.status).toBe(200);
+        await expect(res.json()).resolves.toEqual({ status: 'disabled' });
+        expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+      });
+    });
+
     describe('OP_DISCOVERY routes', () => {
       it('should route /.well-known/openid-configuration to OP_DISCOVERY', async () => {
         const req = new Request('https://example.com/.well-known/openid-configuration');
@@ -176,11 +256,52 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route Admin Agent PAR and browser authorization to OP_AUTH', async () => {
+        const env = { ...mockEnv, ALLOWED_ORIGINS: 'https://example.com' };
+        await app.fetch(
+          new Request('https://example.com/oauth/admin-agent/par', { method: 'POST' }),
+          env
+        );
+        await app.fetch(
+          new Request('https://example.com/oauth/admin-agent/authorize?request_uri=test'),
+          env
+        );
+        await app.fetch(
+          new Request('https://example.com/oauth/admin-agent/authorize', {
+            method: 'POST',
+            headers: { Origin: 'https://example.com' },
+          }),
+          env
+        );
+        await app.fetch(
+          new Request('https://example.com/oauth/admin-agent/login-handoff/consume?code=ahc_test'),
+          env
+        );
+
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(4);
+      });
+
       it('should route /api/auth/* to OP_AUTH', async () => {
         const req = new Request('https://example.com/api/auth/passkey/register');
         await app.fetch(req, mockEnv);
 
         expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route public Admin invitation enrollment to OP_AUTH', async () => {
+        const request = new Request('https://auth.example.com/api/admin/invitations/redeem', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Origin: 'https://auth.example.com',
+          },
+          body: '{}',
+        });
+
+        await app.fetch(request, { ...mockEnv, ALLOWED_ORIGINS: 'https://auth.example.com' });
+
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
       });
 
       it('should route /auth/* browser protocol helpers to OP_AUTH', async () => {
@@ -214,6 +335,47 @@ describe('Router Worker', () => {
         await app.fetch(req, mockEnv);
 
         expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route account provisioning status polls to OP_AUTH', async () => {
+        const req = new Request('https://example.com/api/v1/auth/account-provisioning/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Origin: 'https://example.com' },
+          body: JSON.stringify({ provisioning_token: 'opaque-token' }),
+        });
+        await app.fetch(req, { ...mockEnv, ALLOWED_ORIGINS: 'https://example.com' });
+
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(1);
+        const forwarded = mockEnv.OP_AUTH.fetch.mock.calls[0][0] as Request;
+        expect(new URL(forwarded.url).pathname).toBe('/api/v1/auth/account-provisioning/status');
+        expect(await forwarded.json()).toEqual({ provisioning_token: 'opaque-token' });
+      });
+
+      it('should route public invitation validation and consumption to OP_AUTH', async () => {
+        const env = { ...mockEnv, ALLOWED_ORIGINS: 'https://example.com' };
+        await app.fetch(
+          new Request('https://example.com/api/v1/invitations/validate?token=opaque'),
+          env
+        );
+        await app.fetch(
+          new Request('https://example.com/api/v1/invitations/use', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Origin: 'https://example.com' },
+            body: JSON.stringify({ token: 'opaque' }),
+          }),
+          env
+        );
+
+        expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledTimes(2);
+        expect(
+          mockEnv.OP_AUTH.fetch.mock.calls.map(([request]) => [
+            request.method,
+            new URL(request.url).pathname,
+          ])
+        ).toEqual([
+          ['GET', '/api/v1/invitations/validate'],
+          ['POST', '/api/v1/invitations/use'],
+        ]);
       });
 
       it('should route LoginUI runtime interactions to OP_AUTH', async () => {
@@ -268,6 +430,30 @@ describe('Router Worker', () => {
     describe('OP_TOKEN routes', () => {
       it('should route POST /token to OP_TOKEN', async () => {
         const req = new Request('https://example.com/token', { method: 'POST' });
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_TOKEN.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route POST /oauth/admin-agent/token to OP_TOKEN', async () => {
+        const req = new Request('https://example.com/oauth/admin-agent/token', {
+          method: 'POST',
+        });
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_TOKEN.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('should route DPoP-authenticated Mode B delegation without browser Origin', async () => {
+        const req = new Request('https://example.com/oauth/admin-agent/delegation', {
+          method: 'POST',
+          headers: {
+            Authorization: 'DPoP machine-access-token',
+            DPoP: 'proof-jwt',
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: 'grant_id=grant-1&scope=agent%3Aread',
+        });
         await app.fetch(req, mockEnv);
 
         expect(mockEnv.OP_TOKEN.fetch).toHaveBeenCalledTimes(1);
@@ -350,6 +536,36 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('routes restricted Admin Agent DCR without requiring browser CSRF headers', async () => {
+        const req = new Request('https://example.com/oauth/admin-agent/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            client_name: 'Codex',
+            redirect_uris: ['http://127.0.0.1:49152/callback/test'],
+          }),
+        });
+
+        const response = await app.fetch(req, mockEnv);
+
+        expect(response.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not extend the restricted Admin Agent DCR CSRF exception to child paths', async () => {
+        const response = await app.fetch(
+          new Request('https://example.com/oauth/admin-agent/register/unexpected', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+          }),
+          mockEnv
+        );
+
+        expect(response.status).toBe(403);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
+      });
+
       it('should route GET /clients/:client_id to OP_MANAGEMENT', async () => {
         const req = new Request('https://example.com/clients/client-123');
         await app.fetch(req, mockEnv);
@@ -417,6 +633,69 @@ describe('Router Worker', () => {
         await app.fetch(req, mockEnv);
 
         expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      });
+
+      it('returns a retryable 503 when the Admin Management binding is rolling out', async () => {
+        mockEnv.OP_MANAGEMENT.fetch.mockRejectedValueOnce(
+          new Error('service binding temporarily unavailable')
+        );
+
+        const response = await app.fetch(
+          new Request('https://example.com/api/admin/users', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Origin: 'https://example.com',
+            },
+            body: '{}',
+          }),
+          { ...mockEnv, ALLOWED_ORIGINS: 'https://example.com' }
+        );
+
+        expect(response.status).toBe(503);
+        expect(response.headers.get('Cache-Control')).toBe('no-store');
+        expect(response.headers.get('Retry-After')).toBe('5');
+        await expect(response.json()).resolves.toMatchObject({
+          error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
+        });
+      });
+
+      it('routes only the diagnostic log ingest endpoint to OP_MANAGEMENT', async () => {
+        const ingestResponse = await app.fetch(
+          new Request('https://example.com/api/v1/diagnostic-logs/ingest', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer client-credential' },
+          }),
+          mockEnv
+        );
+
+        expect(ingestResponse.status).toBe(200);
+        expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+
+        vi.clearAllMocks();
+        const adminAliasResponse = await app.fetch(
+          new Request('https://example.com/api/v1/diagnostic-logs/test-connection', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer x' },
+          }),
+          mockEnv
+        );
+
+        expect(adminAliasResponse.status).toBe(404);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
+      });
+
+      it('routes the proof-bearing bootstrap accelerator request only to Control', async () => {
+        const req = new Request('https://example.com/api/internal/control/bootstrap/advance', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer header.payload.signature' },
+        });
+        await app.fetch(req, mockEnv);
+
+        expect(mockEnv.OP_CONTROL.fetch).toHaveBeenCalledTimes(1);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
+        const forwarded = mockEnv.OP_CONTROL.fetch.mock.calls[0]?.[0] as Request;
+        expect(forwarded.headers.get('Authorization')).toBe('Bearer header.payload.signature');
       });
 
       it('should route /api/approval-artifacts/* to OP_MANAGEMENT', async () => {
@@ -590,6 +869,24 @@ describe('Router Worker', () => {
         expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
       });
 
+      it('should route federation source refreshes to OP_SAML', async () => {
+        const envWithAdminOrigin = {
+          ...mockEnv,
+          ALLOWED_ORIGINS: 'https://admin.example.com',
+        };
+        const req = new Request(
+          'https://example.com/api/admin/saml-federation-sources/source-a/refresh-metadata',
+          {
+            method: 'POST',
+            headers: { Origin: 'https://admin.example.com', 'X-Tenant-Id': 'default' },
+          }
+        );
+        await app.fetch(req, envWithAdminOrigin);
+
+        expect(mockEnv.OP_SAML.fetch).toHaveBeenCalledTimes(1);
+        expect(mockEnv.OP_MANAGEMENT.fetch).not.toHaveBeenCalled();
+      });
+
       it('should return 404 when OP_SAML is not bound', async () => {
         const req = new Request('https://example.com/saml/sp/metadata');
         const env = { ...mockEnv, OP_SAML: undefined };
@@ -629,6 +926,50 @@ describe('Router Worker', () => {
       expect(res.headers.get('Content-Security-Policy')).toBeNull();
     });
 
+    it('should NOT replace the Admin Agent authorize CSP used by its localized consent page', async () => {
+      const upstreamCsp = "default-src 'none'; style-src 'nonce-test'";
+      mockEnv.OP_AUTH.fetch.mockResolvedValueOnce(
+        new Response('consent', {
+          headers: { 'Content-Security-Policy': upstreamCsp },
+        })
+      );
+      const req = new Request(
+        'https://example.com/oauth/admin-agent/authorize?request_uri=test&client_id=test'
+      );
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.headers.get('Content-Security-Policy')).toBe(upstreamCsp);
+      expect(mockEnv.OP_AUTH.fetch).toHaveBeenCalledOnce();
+    });
+
+    it.each(['/logged-out', '/logout-complete'])(
+      'should preserve the Login UI CSP on the %s issuer-hosted completion page',
+      async (path) => {
+        const upstreamCsp = "default-src 'self'; style-src 'self' 'unsafe-inline'";
+        const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+        loginUiWorker.fetch.mockResolvedValueOnce(
+          new Response('logout complete', {
+            headers: { 'Content-Security-Policy': upstreamCsp },
+          })
+        );
+        const envWithIssuerLoginUiPaths = {
+          ...mockEnv,
+          ENABLE_LOGIN_UI_PATH_PROXY: 'true',
+          ENABLE_LOGIN_UI_PROXY: 'false',
+          AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+          LOGIN_UI_WORKER: loginUiWorker,
+        };
+
+        const response = await app.fetch(
+          new Request(`https://test.example.com${path}`),
+          envWithIssuerLoginUiPaths
+        );
+
+        expect(response.headers.get('Content-Security-Policy')).toBe(upstreamCsp);
+        expect(loginUiWorker.fetch).toHaveBeenCalledOnce();
+      }
+    );
+
     it('should NOT apply CSP to /flow/* paths', async () => {
       const req = new Request('https://example.com/flow/confirm');
       const res = await app.fetch(req, mockEnv);
@@ -641,6 +982,18 @@ describe('Router Worker', () => {
       const res = await app.fetch(req, mockEnv);
 
       // session/check needs custom headers for iframe support
+      expect(res.headers.get('Content-Security-Policy')).toBeNull();
+      expect(res.headers.get('X-Frame-Options')).toBeNull();
+    });
+
+    it('should NOT apply frame-blocking headers to RP front-channel logout endpoints', async () => {
+      const req = new Request(
+        'https://example.com/auth/external/oidf/frontchannel-logout?iss=https%3A%2F%2Fop.example&sid=session-1'
+      );
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(200);
+      expect(mockEnv.EXTERNAL_IDP.fetch).toHaveBeenCalledOnce();
       expect(res.headers.get('Content-Security-Policy')).toBeNull();
       expect(res.headers.get('X-Frame-Options')).toBeNull();
     });
@@ -657,6 +1010,27 @@ describe('Router Worker', () => {
       // This is more secure per CORS spec
       expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://app.example.com');
       // Credentials should be disabled when no whitelist is configured
+      expect(res.headers.get('Access-Control-Allow-Credentials')).toBeNull();
+    });
+
+    it('strips credentialed CORS headers returned by a backend without a router allowlist', async () => {
+      mockEnv.OP_AUTH.fetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ session_id: 'must-not-be-readable-cross-origin' }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Credentials': 'true',
+          },
+        })
+      );
+      const req = new Request('https://example.com/api/sessions/issue', {
+        method: 'POST',
+        headers: { Origin: 'https://attacker.example' },
+      });
+
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://attacker.example');
       expect(res.headers.get('Access-Control-Allow-Credentials')).toBeNull();
     });
 
@@ -833,6 +1207,42 @@ describe('Router Worker', () => {
       expect(mockEnv.EXTERNAL_IDP.fetch).toHaveBeenCalledTimes(1);
     });
 
+    it.each([
+      '/auth/external/oidf/callback',
+      '/api/external/oidf/callback',
+      '/auth/external/oidf/backchannel-logout',
+      '/api/external/oidf/backchannel-logout',
+    ])(
+      'should allow external provider protocol POST without same-origin CSRF: %s',
+      async (path) => {
+        const req = new Request(`https://example.com${path}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Origin: 'https://external-op.example',
+          },
+          body: 'state=state-value&code=code-value',
+        });
+
+        const res = await app.fetch(req, mockEnv);
+
+        expect(res.status).toBe(200);
+        expect(mockEnv.EXTERNAL_IDP.fetch).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('should keep linked-identity mutations behind same-origin CSRF protection', async () => {
+      const req = new Request('https://example.com/auth/external/links', {
+        method: 'POST',
+        headers: { Origin: 'https://external-op.example' },
+      });
+
+      const res = await app.fetch(req, mockEnv);
+
+      expect(res.status).toBe(403);
+      expect(mockEnv.EXTERNAL_IDP.fetch).not.toHaveBeenCalled();
+    });
+
     it('should route handoff finalize to external IdP bridge', async () => {
       const env = { ...mockEnv, ALLOWED_ORIGINS: 'https://example.com' };
       const req = new Request('https://example.com/handoff/finalize', {
@@ -944,6 +1354,30 @@ describe('Router Worker', () => {
       expect(forwardedRequest.headers.get('X-Forwarded-Host')).toBe(
         'first.multi-tenant.authrim.com'
       );
+    });
+
+    it('should overwrite spoofed forwarded host hints when the Login UI marker is supplied', async () => {
+      const req = new Request('https://first.multi-tenant.authrim.com/token', {
+        method: 'POST',
+        headers: {
+          'X-Authrim-Ui-Proxy': 'login-ui',
+          'X-Authrim-Forwarded-Host': 'victim.multi-tenant.authrim.com',
+          'X-Authrim-Original-Host': 'victim.multi-tenant.authrim.com',
+          'X-Authrim-Browser-Origin': 'https://victim-ui.example.com',
+        },
+        body: 'grant_type=client_credentials',
+      });
+      await app.fetch(req, mockEnv);
+
+      const forwardedRequest = mockEnv.OP_TOKEN.fetch.mock.calls[0][0];
+      expect(new URL(forwardedRequest.url).host).toBe('first.multi-tenant.authrim.com');
+      expect(forwardedRequest.headers.get('Host')).toBe('first.multi-tenant.authrim.com');
+      expect(forwardedRequest.headers.get('X-Authrim-Forwarded-Host')).toBe(
+        'first.multi-tenant.authrim.com'
+      );
+      expect(forwardedRequest.headers.get('X-Authrim-Ui-Proxy')).toBeNull();
+      expect(forwardedRequest.headers.get('X-Authrim-Original-Host')).toBeNull();
+      expect(forwardedRequest.headers.get('X-Authrim-Browser-Origin')).toBeNull();
     });
 
     it('should allow POST from tenant subdomain origin in multi-tenant mode', async () => {
@@ -1063,6 +1497,35 @@ describe('Router Worker', () => {
       expect(new URL(forwardedRequest.url).pathname).toBe('/api/admin-init-setup/initialize');
     });
 
+    it('should bypass router CSRF only for the capability-authenticated CIBA conformance action', async () => {
+      const request = new Request(
+        'https://example.com/api/ciba/conformance-action?secret=capability&auth_req_id=req&action=allow',
+        { method: 'POST' }
+      );
+
+      const response = await app.fetch(request, mockEnv);
+
+      expect(response.status).toBe(200);
+      expect(mockEnv.OP_ASYNC.fetch).toHaveBeenCalledTimes(1);
+      const forwardedRequest = mockEnv.OP_ASYNC.fetch.mock.calls[0][0];
+      expect(new URL(forwardedRequest.url).pathname).toBe('/api/ciba/conformance-action');
+    });
+
+    it('should keep normal CIBA approval mutations behind router CSRF protection', async () => {
+      const request = new Request('https://example.com/api/ciba/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ auth_req_id: 'req' }),
+      });
+
+      const response = await app.fetch(request, mockEnv);
+      const body = (await response.json()) as { error: string };
+
+      expect(response.status).toBe(403);
+      expect(body.error).toBe('csrf_validation_failed');
+      expect(mockEnv.OP_ASYNC.fetch).not.toHaveBeenCalled();
+    });
+
     it('should proxy login-ui redirects without following them server-side', async () => {
       const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
         new Response(null, {
@@ -1130,6 +1593,40 @@ describe('Router Worker', () => {
       expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('first.example.com');
     });
 
+    it('should serve canonical Login UI paths without replacing the API response at the Router root', async () => {
+      const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+      const envWithIssuerLoginUiPaths = {
+        ...mockEnv,
+        ENABLE_LOGIN_UI_PATH_PROXY: 'true',
+        ENABLE_LOGIN_UI_PROXY: 'false',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: loginUiWorker,
+      };
+
+      const loginResponse = await app.fetch(
+        new Request('https://test.example.com/login?client_id=test'),
+        envWithIssuerLoginUiPaths
+      );
+      expect(loginResponse.status).toBe(200);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+
+      const loggedOutResponse = await app.fetch(
+        new Request('https://test.example.com/logged-out'),
+        envWithIssuerLoginUiPaths
+      );
+      expect(loggedOutResponse.status).toBe(200);
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(2);
+      expect(new URL(loginUiWorker.fetch.mock.calls[1][0].url).pathname).toBe('/logged-out');
+
+      const rootResponse = await app.fetch(
+        new Request('https://test.example.com/'),
+        envWithIssuerLoginUiPaths
+      );
+      expect(rootResponse.status).toBe(200);
+      expect(await rootResponse.json()).toMatchObject({ name: 'Authrim OIDC Provider' });
+      expect(loginUiWorker.fetch).toHaveBeenCalledTimes(2);
+    });
+
     it('should proxy browser requests on the configured Login UI host to Login UI before API routing', async () => {
       const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
       const envWithSeparateLoginUiHost = {
@@ -1151,6 +1648,31 @@ describe('Router Worker', () => {
       expect(new URL(proxiedRequest.url).pathname).toBe('/api/auth/authentication-methods');
       expect(proxiedRequest.headers.get('X-Authrim-Original-Host')).toBe('login.example.com');
     });
+
+    it.each(['/logged-out', '/logout-complete'])(
+      'should proxy the %s completion page on the configured Login UI host',
+      async (path) => {
+        const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
+        const envWithSeparateLoginUiHost = {
+          ...mockEnv,
+          LOGIN_UI_URL: 'https://login.example.com',
+          LOGIN_UI_HOST_MODE: 'dedicated' as const,
+          ENABLE_LOGIN_UI_PROXY: 'true',
+          AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+          LOGIN_UI_WORKER: loginUiWorker,
+        };
+
+        const response = await app.fetch(
+          new Request(`https://login.example.com${path}`),
+          envWithSeparateLoginUiHost
+        );
+
+        expect(response.status).toBe(200);
+        expect(loginUiWorker.fetch).toHaveBeenCalledTimes(1);
+        expect(mockEnv.OP_AUTH.fetch).not.toHaveBeenCalled();
+        expect(new URL(loginUiWorker.fetch.mock.calls[0][0].url).pathname).toBe(path);
+      }
+    );
 
     it('should reject protocol-relative Login UI paths before proxying', async () => {
       const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
@@ -1196,6 +1718,225 @@ describe('Router Worker', () => {
       expect(proxiedRequest.headers.get('Host')).toBe('example.com');
     });
 
+    it('should cache authentication methods by tenant host, client query, and revision', async () => {
+      const cache = createMockCache();
+      (globalThis as { caches?: unknown }).caches = { default: cache };
+      const settingsData: Record<string, string> = {};
+      const envWithCache = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        SETTINGS: createMockKV(settingsData),
+      };
+
+      const first = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods?client_id=a'),
+        envWithCache
+      );
+      const second = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods?client_id=a'),
+        envWithCache
+      );
+      const otherClient = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods?client_id=b'),
+        envWithCache
+      );
+      const otherTenant = await app.fetch(
+        new Request('https://second.example.com/api/auth/authentication-methods?client_id=a'),
+        envWithCache
+      );
+
+      expect(first.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('miss');
+      expect(second.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('hit');
+      expect(otherClient.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('miss');
+      expect(otherTenant.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('miss');
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(3);
+
+      settingsData['cache:authentication-methods:v1:revision:tenant:first'] = 'rev-2';
+      const afterRevision = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods?client_id=a'),
+        envWithCache
+      );
+
+      expect(afterRevision.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe(
+        'miss'
+      );
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(4);
+      expect(cache.put).toHaveBeenCalledTimes(4);
+    });
+
+    it('should cache cross-origin authentication methods without reusing stale CORS headers', async () => {
+      const cache = createMockCache();
+      (globalThis as { caches?: unknown }).caches = { default: cache };
+      const envWithCache = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        SETTINGS: createMockKV(),
+      };
+      mockEnv.OP_MANAGEMENT.fetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ worker: 'OP_MANAGEMENT', path: '/api/auth/authentication-methods' }),
+          {
+            status: 200,
+            headers: {
+              'Access-Control-Allow-Origin': 'https://rp-a.example.com',
+              'Content-Type': 'application/json',
+              'Server-Timing': 'management_cache;dur=12.3',
+              Vary: 'Origin',
+              'X-Authrim-Authentication-Methods-Cache': 'hit',
+              'X-Authrim-Diagnostic-Session-Id': 'test-diagnostic',
+            },
+          }
+        )
+      );
+
+      const first = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods', {
+          headers: { Origin: 'https://rp-a.example.com' },
+        }),
+        envWithCache
+      );
+      const second = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods', {
+          headers: { Origin: 'https://rp-b.example.com' },
+        }),
+        envWithCache
+      );
+      const stored = [...cache.store.values()][0];
+
+      expect(first.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('miss');
+      expect(first.headers.get('Access-Control-Allow-Origin')).toBe('https://rp-a.example.com');
+      expect(second.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('hit');
+      expect(second.headers.get('Access-Control-Allow-Origin')).toBe('https://rp-b.example.com');
+      expect(stored?.headers.get('Access-Control-Allow-Origin')).toBeNull();
+      expect(stored?.headers.get('Vary')).toBeNull();
+      expect(stored?.headers.get('Server-Timing')).toBeNull();
+      expect(stored?.headers.get('X-Authrim-Authentication-Methods-Cache')).toBeNull();
+      expect(stored?.headers.get('X-Authrim-Diagnostic-Session-Id')).toBeNull();
+      expect(second.headers.get('Server-Timing')).toBeNull();
+      expect(second.headers.get('X-Authrim-Authentication-Methods-Cache')).toBeNull();
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      expect(cache.match).toHaveBeenCalledTimes(2);
+      expect(cache.put).toHaveBeenCalledTimes(1);
+    });
+
+    it('should bypass the authentication methods cache for authorized requests', async () => {
+      const cache = createMockCache();
+      (globalThis as { caches?: unknown }).caches = { default: cache };
+      const envWithCache = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        SETTINGS: createMockKV(),
+      };
+
+      const authorized = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods', {
+          headers: { Authorization: 'Bearer token' },
+        }),
+        envWithCache
+      );
+
+      expect(authorized.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe(
+        'bypass'
+      );
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      expect(cache.match).not.toHaveBeenCalled();
+      expect(cache.put).not.toHaveBeenCalled();
+    });
+
+    it('should not store authentication methods responses that set cookies', async () => {
+      const cache = createMockCache();
+      (globalThis as { caches?: unknown }).caches = { default: cache };
+      const envWithCache = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        SETTINGS: createMockKV(),
+      };
+      mockEnv.OP_MANAGEMENT.fetch.mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'public, max-age=60',
+            'Set-Cookie': 'sid=test; HttpOnly; Secure',
+          },
+        })
+      );
+
+      const first = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods'),
+        envWithCache
+      );
+      const second = await app.fetch(
+        new Request('https://first.example.com/api/auth/authentication-methods'),
+        envWithCache
+      );
+
+      expect(first.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('bypass');
+      expect(second.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('bypass');
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(2);
+      expect(cache.match).toHaveBeenCalledTimes(2);
+      expect(cache.put).not.toHaveBeenCalled();
+    });
+
+    it('should cache Login UI backend proxy requests by forwarded tenant host', async () => {
+      const cache = createMockCache();
+      (globalThis as { caches?: unknown }).caches = { default: cache };
+      const envWithCache = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        LOGIN_UI_URL: 'https://login.example.com',
+        LOGIN_UI_HOST_MODE: 'dedicated',
+        ENABLE_LOGIN_UI_PROXY: 'true',
+        AR_LOGIN_UI_URL: 'https://phase9-ar-login-ui.example.workers.dev',
+        LOGIN_UI_WORKER: createMockFetcher('LOGIN_UI_WORKER'),
+        SETTINGS: createMockKV(),
+      };
+      const request = () =>
+        new Request('https://first.example.com/api/auth/authentication-methods?client_id=a', {
+          headers: {
+            'X-Authrim-Ui-Proxy': 'login-ui',
+            'X-Authrim-Forwarded-Host': 'first.example.com',
+            'X-Authrim-Original-Host': 'first.example.com',
+          },
+        });
+      const loginUiBackend = createLoginUiBackendEntrypoint(envWithCache);
+
+      const first = await loginUiBackend.fetch(request());
+      const second = await loginUiBackend.fetch(request());
+
+      expect(first.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('miss');
+      expect(second.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('hit');
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+      const proxiedRequest = mockEnv.OP_MANAGEMENT.fetch.mock.calls[0][0];
+      expect(new URL(proxiedRequest.url).host).toBe('first.example.com');
+      expect(proxiedRequest.headers.get('Host')).toBe('first.example.com');
+    });
+
+    it('should cache authentication methods on the naked issuer domain when enabled', async () => {
+      const cache = createMockCache();
+      (globalThis as { caches?: unknown }).caches = { default: cache };
+      const envWithNakedIssuer = {
+        ...mockEnv,
+        BASE_DOMAIN: 'example.com',
+        NAKED_DOMAIN_AS_ISSUER: 'true',
+        PRIMARY_TENANT_ID: 'primary',
+        SETTINGS: createMockKV(),
+      };
+
+      const first = await app.fetch(
+        new Request('https://example.com/api/auth/authentication-methods'),
+        envWithNakedIssuer
+      );
+      const second = await app.fetch(
+        new Request('https://example.com/api/auth/authentication-methods'),
+        envWithNakedIssuer
+      );
+
+      expect(first.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('miss');
+      expect(second.headers.get('X-Authrim-Router-Authentication-Methods-Cache')).toBe('hit');
+      expect(mockEnv.OP_MANAGEMENT.fetch).toHaveBeenCalledTimes(1);
+    });
+
     it('should keep protocol routes on a shared Login UI host routed to auth workers', async () => {
       const loginUiWorker = createMockFetcher('LOGIN_UI_WORKER');
       const envWithSharedLoginUiHost = {
@@ -1231,13 +1972,15 @@ describe('Router Worker', () => {
         LOGIN_UI_WORKER: loginUiWorker,
       };
 
-      const req = new Request('https://login.example.com/auth/login-challenge?challenge_id=test', {
+      const req = new Request('https://first.example.com/auth/login-challenge?challenge_id=test', {
         headers: {
           'X-Authrim-Ui-Proxy': 'login-ui',
           'X-Authrim-Forwarded-Host': 'first.example.com',
+          'X-Authrim-Original-Host': 'first.example.com',
+          'X-Authrim-Browser-Origin': 'https://login.example.com',
         },
       });
-      const res = await app.fetch(req, envWithSeparateLoginUiHost);
+      const res = await createLoginUiBackendEntrypoint(envWithSeparateLoginUiHost).fetch(req);
 
       expect(res.status).toBe(200);
       expect(loginUiWorker.fetch).not.toHaveBeenCalled();
@@ -1247,6 +1990,41 @@ describe('Router Worker', () => {
       expect(proxiedRequest.headers.get('Host')).toBe('first.example.com');
       expect(proxiedRequest.headers.get('X-Authrim-Forwarded-Host')).toBe('first.example.com');
       expect(proxiedRequest.headers.get('X-Forwarded-Host')).toBe('first.example.com');
+      expect(proxiedRequest.headers.get('X-Authrim-Ui-Proxy')).toBe('login-ui');
+      expect(proxiedRequest.headers.get('X-Authrim-Browser-Origin')).toBe(
+        'https://login.example.com'
+      );
+    });
+
+    it('rejects inconsistent tenant host hints on the private Login UI entrypoint', async () => {
+      const req = new Request('https://first.example.com/token', {
+        method: 'POST',
+        headers: {
+          'X-Authrim-Ui-Proxy': 'login-ui',
+          'X-Authrim-Forwarded-Host': 'victim.example.com',
+          'X-Authrim-Original-Host': 'victim.example.com',
+        },
+      });
+
+      const response = await createLoginUiBackendEntrypoint(mockEnv).fetch(req);
+
+      expect(response.status).toBe(403);
+      expect(mockEnv.OP_TOKEN.fetch).not.toHaveBeenCalled();
+    });
+
+    it('rejects requests without the Login UI marker on the private entrypoint', async () => {
+      const req = new Request('https://first.example.com/token', {
+        method: 'POST',
+        headers: {
+          'X-Authrim-Forwarded-Host': 'first.example.com',
+          'X-Authrim-Original-Host': 'first.example.com',
+        },
+      });
+
+      const response = await createLoginUiBackendEntrypoint(mockEnv).fetch(req);
+
+      expect(response.status).toBe(403);
+      expect(mockEnv.OP_TOKEN.fetch).not.toHaveBeenCalled();
     });
 
     it('should fast-redirect anonymous tenant root requests to /login when configured', async () => {

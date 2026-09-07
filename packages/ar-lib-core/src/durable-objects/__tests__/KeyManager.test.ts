@@ -1,5 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { exportJWK, exportPKCS8, generateKeyPair } from 'jose';
+import {
+  decodeJwt,
+  decodeProtectedHeader,
+  exportJWK,
+  exportPKCS8,
+  generateKeyPair,
+  importJWK,
+  jwtVerify,
+} from 'jose';
 import { KeyManager } from '../KeyManager.ts';
 import type { Env } from '../../types/env';
 
@@ -127,6 +135,31 @@ describe('KeyManager Durable Object', () => {
     state = new MockDurableObjectState();
     env = createMockEnv();
     keyManager = new KeyManager(state as unknown as DurableObjectState, env);
+  });
+
+  describe('purpose-separated OIDC signing keys', () => {
+    it('publishes a dedicated ES256 key without reusing VC EC state', async () => {
+      const keys = await keyManager.getAllOIDCPublicKeysRpc();
+      const oidcECKey = keys.find((key) => key.alg === 'ES256');
+      const oidcPS256Key = keys.find((key) => key.alg === 'PS256');
+
+      expect(oidcECKey).toMatchObject({
+        kty: 'EC',
+        use: 'sig',
+        alg: 'ES256',
+        crv: 'P-256',
+      });
+      expect(oidcECKey?.kid).toMatch(/^oidc-es256-/);
+      expect(oidcPS256Key).toMatchObject({ kty: 'RSA', use: 'sig', alg: 'PS256' });
+      expect(oidcPS256Key?.kid).toMatch(/^oidc-ps256-/);
+
+      const vcState = state.storage.map.get('ecState') as { keys: unknown[] };
+      const oidcState = state.storage.map.get('oidcECState') as { keys: unknown[] };
+      const oidcPS256State = state.storage.map.get('oidcPS256State') as { keys: unknown[] };
+      expect(vcState.keys).toHaveLength(0);
+      expect(oidcState.keys).toHaveLength(1);
+      expect(oidcPS256State.keys).toHaveLength(1);
+    });
   });
 
   describe('Authentication', () => {
@@ -555,6 +588,38 @@ describe('KeyManager Durable Object', () => {
       expect(rotated.active.value).not.toBe(initial.active.value);
       expect(rotated.previous?.value).toBe(initial.active.value);
     });
+
+    it.each(['__proto__', 'constructor', 'prototype'])(
+      'should reject unsafe secret reference %s',
+      async (secretRef) => {
+        await expect(keyManager.getOrCreateSecretRpc(secretRef)).rejects.toThrow(
+          'Invalid secret reference'
+        );
+
+        const response = await keyManager.fetch(
+          createRequest(
+            `/internal/secrets/${encodeURIComponent(secretRef)}`,
+            'GET',
+            'test-secret-token'
+          )
+        );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({
+          error: 'Bad Request',
+          message: 'Invalid secret reference',
+        });
+      }
+    );
+
+    it('should reject malformed secret references', async () => {
+      await expect(keyManager.getOrCreateSecretRpc('tenant ref with spaces')).rejects.toThrow(
+        'Invalid secret reference'
+      );
+      await expect(keyManager.getOrCreateSecretRpc(`tenant:${'a'.repeat(256)}`)).rejects.toThrow(
+        'Invalid secret reference'
+      );
+    });
   });
 
   describe('Key Rotation', () => {
@@ -871,6 +936,120 @@ describe('KeyManager Durable Object', () => {
       const response = await keyManager.fetch(request);
 
       expect(response.status).toBe(404);
+    });
+  });
+
+  describe('VCI access-token signing RPC', () => {
+    it('signs only the bounded token contract without exporting credential claims', async () => {
+      const activeKey = await keyManager.rotateECKeysRpc('ES256');
+      const result = await keyManager.signVCIAccessTokenRpc({
+        tenantId: 'tenant-a',
+        userId: 'user-a',
+        offerId: 'g1:apac:1:co_offer-a',
+        credentialConfigurationId: 'UniversityDegreeCredential',
+        issuer: 'did:web:issuer.example.com',
+      });
+      const publicKey = await importJWK(activeKey.publicJWK, 'ES256');
+      const verified = await jwtVerify(result.token, publicKey, {
+        issuer: 'did:web:issuer.example.com',
+        audience: 'did:web:issuer.example.com',
+      });
+
+      expect(verified.payload).toMatchObject({
+        sub: 'user-a',
+        tenant_id: 'tenant-a',
+        offer_id: 'g1:apac:1:co_offer-a',
+        credential_configuration_id: 'UniversityDegreeCredential',
+        scope: 'credential',
+      });
+      expect(decodeJwt(result.token)).not.toHaveProperty('credential_claims');
+      expect(result.jti).toBe(verified.payload.jti);
+    });
+
+    it('rejects unbounded signing input before using a key', async () => {
+      await expect(
+        keyManager.signVCIAccessTokenRpc({
+          tenantId: ' ',
+          userId: 'user-a',
+          offerId: 'offer-a',
+          credentialConfigurationId: 'UniversityDegreeCredential',
+          issuer: 'did:web:issuer.example.com',
+        })
+      ).rejects.toThrow('invalid_vci_access_token_signing_input');
+    });
+  });
+
+  describe('SD-JWT issuer signing RPC', () => {
+    it('signs a bounded VC payload with a fixed protected header', async () => {
+      const activeKey = await keyManager.rotateECKeysRpc('ES256');
+      const now = Math.floor(Date.now() / 1000);
+      const result = await keyManager.signSDJWTIssuerRpc({
+        iss: 'did:web:issuer.example.com',
+        vct: 'https://issuer.example.com/credentials/identity/v1',
+        iat: now,
+        _sd_alg: 'sha-256',
+        _sd: ['digest-a'],
+      });
+      const publicKey = await importJWK(activeKey.publicJWK, 'ES256');
+
+      await expect(jwtVerify(result.token, publicKey)).resolves.toMatchObject({
+        payload: { iss: 'did:web:issuer.example.com', iat: now, _sd_alg: 'sha-256' },
+      });
+      expect(decodeProtectedHeader(result.token)).toEqual({
+        alg: 'ES256',
+        typ: 'dc+sd-jwt',
+        kid: activeKey.kid,
+      });
+    });
+
+    it('rejects oversized and structurally invalid VC payloads', async () => {
+      await expect(
+        keyManager.signSDJWTIssuerRpc({
+          iss: 'did:web:issuer.example.com',
+          vct: 'IdentityCredential',
+          iat: Math.floor(Date.now() / 1000),
+          _sd_alg: 'none',
+        })
+      ).rejects.toThrow('invalid_sd_jwt_issuer_signing_input');
+    });
+  });
+
+  describe('Status List signing RPC', () => {
+    it('signs only a bounded Bitstring Status List credential contract', async () => {
+      const activeKey = await keyManager.rotateECKeysRpc('ES256');
+      const now = Math.floor(Date.now() / 1000);
+      const result = await keyManager.signStatusListCredentialRpc({
+        iss: 'did:web:issuer.example.com',
+        sub: 'https://issuer.example.com/vci/status/list-a',
+        iat: now,
+        exp: now + 3600,
+        vc: {
+          type: ['VerifiableCredential', 'BitstringStatusListCredential'],
+          credentialSubject: {
+            type: 'BitstringStatusList',
+            statusPurpose: 'revocation',
+            encodedList: 'encoded-list',
+          },
+        },
+      });
+      const publicKey = await importJWK(activeKey.publicJWK, 'ES256');
+
+      await expect(jwtVerify(result.token, publicKey)).resolves.toMatchObject({
+        payload: { sub: 'https://issuer.example.com/vci/status/list-a' },
+      });
+      expect(decodeProtectedHeader(result.token).typ).toBe('statuslist+jwt');
+    });
+
+    it('rejects a non-status credential payload', async () => {
+      await expect(
+        keyManager.signStatusListCredentialRpc({
+          iss: 'did:web:issuer.example.com',
+          sub: 'https://issuer.example.com/vci/status/list-a',
+          iat: Math.floor(Date.now() / 1000),
+          exp: Math.floor(Date.now() / 1000) + 3600,
+          vc: { type: ['VerifiableCredential'] },
+        })
+      ).rejects.toThrow('invalid_status_list_signing_input');
     });
   });
 });

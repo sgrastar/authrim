@@ -2,7 +2,7 @@ import { API_BASE_URL, adminFetch } from '$lib/api/admin-request';
 
 export interface RuntimeProfileRecord {
 	id: string;
-	kind: 'storage' | 'audit' | 'residency';
+	kind: 'audit' | 'residency';
 	label: string;
 	description?: string;
 	builtin?: boolean;
@@ -59,147 +59,20 @@ export interface RuntimeProfileReferenceCatalog {
 	};
 }
 
-export type StorageBoundaryClass = 'auth_core' | 'pii' | 'custom_extension' | 'authorization';
-
-export type StorageSlice =
-	| 'identity_core'
-	| 'identity_pii'
-	| 'custom_claims'
-	| 'registration_fields'
-	| 'custom_pii'
-	| 'passkeys'
-	| 'linked_identities'
-	| 'consent'
-	| 'authorization';
-
-export interface StorageSliceBoundaryPolicy {
-	slice: StorageSlice;
-	boundaryClass: StorageBoundaryClass;
-	tenantOverrideAllowed: boolean;
-	d1Default: boolean;
-	nonD1OptionRequired: boolean;
-}
-
-export interface StorageProfileTenantOverridePolicy {
-	authCoreSlice: string;
-	authCoreSlices: string[];
-	slicePolicies: Record<string, StorageSliceBoundaryPolicy>;
-	environmentDefaultStorageProfileId: string;
-	tenantOverrideAllowed: boolean;
-	violationCode?: string;
-	reason?: string;
-}
-
-export interface StorageProfileOperatorGuidance {
-	profileId: string;
-	deploymentProfile: 'shared-d1' | 'tenant-d1' | 'external-durable' | 'legacy-custom';
-	selectionScope: 'deployment';
-	recommendedScale: 'small' | 'medium_large' | 'regulated_or_large' | 'custom';
-	warnings: string[];
-	requirements: string[];
-	upgradeTargets: string[];
-}
-
-export interface StorageProfileDeploymentSelectionPolicy {
-	profileId: string;
-	environmentDefaultStorageProfileId: string;
-	deploymentSelectionAllowed: boolean;
-	selectionScope: 'deployment';
-	isEnvironmentDefault: boolean;
-	guidance: StorageProfileOperatorGuidance;
-}
-
-export interface TenantDatabaseStatsSummary {
-	active_tenant_core_databases: number;
-	stats_rows: number;
-	missing_stats_count: number;
-	stale_stats_count: number;
-	warning_count: number;
-	strong_warning_count: number;
-	stale_file_size_count: number;
-	unavailable_file_size_count: number;
-}
-
-export interface TenantDatabaseStatsStatus {
-	available: boolean;
-	staleAfterHours: number;
-	cutoffIso: string;
-	summary: TenantDatabaseStatsSummary | null;
-	attentionRequired: boolean;
-	unavailableReason?: 'db_admin_not_configured' | 'query_failed';
-}
-
-export interface RuntimeRegistrySecurityNotificationStatus {
-	available: boolean;
-	attentionRequired: boolean;
-	summary: {
-		pending_count: number;
-		failed_count: number;
-		dead_letter_count: number;
-		critical_count: number;
-		high_count: number;
-		latest_created_at: string | null;
-	} | null;
-	unavailableReason?: 'db_admin_not_configured' | 'query_failed';
-}
-
-export type StorageProfileCapabilityState = 'supported' | 'partial' | 'unsupported' | 'planned';
-export type StorageProfileCapabilityCriticality =
-	| 'security_critical'
-	| 'user_critical'
-	| 'admin_critical'
-	| 'non_critical';
-
-export interface StorageProfileCapabilityStatusEntry {
-	id: string;
-	label: string;
-	state: StorageProfileCapabilityState;
-	criticality: StorageProfileCapabilityCriticality;
-	detail: string;
-}
-
-export interface StorageProfileCapabilityStatus {
-	profileId: string;
-	deploymentProfile: 'shared-d1' | 'tenant-d1' | 'external-durable' | 'legacy-custom';
-	mvpReady: boolean;
-	unsupportedCount: number;
-	partialCount: number;
-	capabilities: StorageProfileCapabilityStatusEntry[];
-}
-
-export interface StorageProfileListPolicy {
-	authCoreSlice: string;
-	authCoreSlices: string[];
-	slicePolicies: Record<string, StorageSliceBoundaryPolicy>;
-	environmentDefaultStorageProfileId: string;
-	tenantDatabaseStatsStatus?: TenantDatabaseStatsStatus | null;
-	runtimeRegistrySecurityNotifications?: RuntimeRegistrySecurityNotificationStatus | null;
-	capabilityStatus?: Record<string, StorageProfileCapabilityStatus>;
-	tenantOverrideEligibility: Record<string, StorageProfileTenantOverridePolicy>;
-	deploymentSelectionPolicy?: {
-		selectionScope: 'deployment';
-		environmentDefaultStorageProfileId: string;
-		profiles: Record<string, StorageProfileDeploymentSelectionPolicy>;
-	};
-}
-
 export interface RuntimeProfileListResponse {
 	profiles: Record<string, RuntimeProfileRecord[]>;
 	reference_status?: Record<string, Record<string, RuntimeProfileReferenceStatusEntry[]>>;
 	activation_status?: Record<string, Record<string, RuntimeProfileActivationStatus>>;
 	reference_management?: RuntimeProfileReferenceManagementPolicy;
 	reference_catalog?: RuntimeProfileReferenceCatalog;
-	storage_policy?: StorageProfileListPolicy;
 }
 
 export interface RuntimeProfileDefaultsResponse {
 	defaults: {
-		storageProfileId: string;
 		auditProfileId: string;
 		residencyProfileId: string;
 	};
 	effective?: {
-		storage?: RuntimeProfileRecord | null;
 		audit?: RuntimeProfileRecord | null;
 		residency?: RuntimeProfileRecord | null;
 	};
@@ -234,11 +107,7 @@ export const adminRuntimeProfilesAPI = {
 		return parseResponse<RuntimeProfileDefaultsResponse>(response);
 	},
 
-	async updateDefaults(body: {
-		storageProfileId?: string;
-		auditProfileId?: string;
-		residencyProfileId?: string;
-	}) {
+	async updateDefaults(body: { auditProfileId?: string; residencyProfileId?: string }) {
 		const response = await adminFetch(`${API_BASE_URL}/api/admin/runtime-profiles/defaults`, {
 			method: 'PUT',
 			skipTenantHeader: true,
@@ -258,10 +127,6 @@ export const adminRuntimeProfilesAPI = {
 			activation_status?: RuntimeProfileActivationStatus;
 			reference_management?: RuntimeProfileReferenceManagementPolicy;
 			reference_catalog?: RuntimeProfileReferenceCatalog;
-			storage_policy?: StorageProfileTenantOverridePolicy & {
-				deploymentSelectionPolicy?: StorageProfileDeploymentSelectionPolicy;
-				capabilityStatus?: StorageProfileCapabilityStatus;
-			};
 		}>(response);
 	},
 

@@ -146,6 +146,15 @@ function createMockKeyManager(
 /**
  * Create a mock environment
  */
+function createMockD1(): D1Database {
+  return {
+    prepare: vi.fn().mockReturnValue({
+      bind: vi.fn().mockReturnThis(),
+      run: vi.fn().mockResolvedValue({}),
+    }),
+  } as unknown as D1Database;
+}
+
 function createMockEnv(keyManagerOptions: Parameters<typeof createMockKeyManager>[0] = {}): Env {
   const mockKeyManager = createMockKeyManager(keyManagerOptions);
 
@@ -160,12 +169,8 @@ function createMockEnv(keyManagerOptions: Parameters<typeof createMockKeyManager
       put: vi.fn().mockResolvedValue(undefined),
       get: vi.fn().mockResolvedValue(null),
     } as unknown as KVNamespace,
-    DB: {
-      prepare: vi.fn().mockReturnValue({
-        bind: vi.fn().mockReturnThis(),
-        run: vi.fn().mockResolvedValue({}),
-      }),
-    } as unknown as D1Database,
+    DB: createMockD1(),
+    DB_PII: createMockD1(),
     ISSUER_URL: 'https://test.example.com',
   } as unknown as Env;
 }

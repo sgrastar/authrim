@@ -3,7 +3,11 @@ import { STATUS_CODES } from '../common/constants';
 import { generateSAMLId, nowAsDateTime } from '../common/xml-utils';
 import type { MissingRequiredSAMLAttribute } from './attributes';
 import { buildErrorResponse } from './assertion';
-import { applySAMLErrorResponseSigningPolicy, type SAMLSigningMaterial } from './signing';
+import {
+  applySAMLErrorResponseSigningPolicy,
+  assertSAMLResponseSigningPolicy,
+  type SAMLSigningMaterial,
+} from './signing';
 
 export const SAML_ATTRIBUTE_RELEASE_FAILURE_STATUS_MESSAGE =
   'Required SAML attributes could not be released';
@@ -38,8 +42,13 @@ export function buildSAMLIdPErrorResponse(options: SAMLIdPErrorResponseOptions):
     statusMessage: options.statusMessage,
   });
 
-  if (!options.spConfig || !options.signingMaterial) {
+  if (!options.spConfig) {
     return xml;
+  }
+
+  assertSAMLResponseSigningPolicy(options.spConfig);
+  if (!options.signingMaterial) {
+    throw new Error('SAML signing material is required');
   }
 
   return applySAMLErrorResponseSigningPolicy(xml, options.spConfig, options.signingMaterial);

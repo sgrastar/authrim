@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061 # v4
@@ -28,10 +30,14 @@ jobs:
           cache: 'pnpm'
 
       - name: Update npm for OIDC trusted publishing
-        run: npm install -g npm@11.5.1
+        # Pin the npm CLI source to the commit that publishes npm 11.5.1.
+        run: npm install -g https://github.com/npm/cli.git#5bcdc023fc022499cb6fc2ca31cb1c7d76e0d46c
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Verify release migration candidate
+        run: pnpm migrate:release:check
 
       - name: Build
         run: pnpm --filter @authrim/setup build

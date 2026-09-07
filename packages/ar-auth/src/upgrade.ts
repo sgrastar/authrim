@@ -29,6 +29,7 @@ import {
   createPIIContextFromHono,
   CanonicalRuntimeUserStore,
   createErrorResponse,
+  createTenantPlacementWriteFenceResponse,
   AR_ERROR_CODES,
   isAnonymousAuthEnabled,
   loadClientContractCached,
@@ -40,6 +41,7 @@ import {
   syncUserLifecycleState,
   resolveCustomClaimRuntimeSourcesFromEnv,
 } from '@authrim/ar-lib-core';
+import { removeAnonymousDeviceRoute } from './account-provisioning';
 
 function createCanonicalRuntimeUserStore(
   c: Context<{ Bindings: Env }>,
@@ -208,6 +210,8 @@ export async function upgradeHandler(c: Context<{ Bindings: Env }>) {
     });
   } catch (error) {
     log.error('Upgrade start error', { action: 'start' }, error as Error);
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -354,6 +358,19 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
     const authCtx = createAuthContextFromHono(c, tenantId);
     const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
     const now = Date.now();
+    const routedAnonymousDevices = await authCtx.coreAdapter.query<{
+      id: string;
+      device_id_hash: string;
+    }>(
+      `SELECT id, device_id_hash FROM anonymous_devices
+            WHERE tenant_id = ? AND user_id = ? AND is_active = TRUE
+            ORDER BY id LIMIT 65`,
+      [tenantId, anonymousUserId],
+      { consistencyClass: 'primary_required' }
+    );
+    if (routedAnonymousDevices.length > 64) {
+      throw new Error('anonymous_upgrade_device_limit_exceeded');
+    }
 
     let finalUserId: string;
     let previousUserId: string | undefined;
@@ -426,8 +443,19 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       'UPDATE anonymous_devices SET is_active = 0 WHERE tenant_id = ? AND user_id = ?',
       [tenantId, anonymousUserId]
     );
+    for (const device of routedAnonymousDevices) {
+      await removeAnonymousDeviceRoute(c, {
+        tenantId,
+        userId: anonymousUserId,
+        deviceId: device.id,
+        deviceIdHash: device.device_id_hash,
+      });
+    }
 
-    const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+    const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId, {
+      accountId: finalUserId,
+    });
+    if (!customClaimSources.nonPiiDb) throw new Error('account_data_route_incomplete');
     const lifecycleSync = await syncUserLifecycleState({
       db: customClaimSources.nonPiiDb,
       dbPii: customClaimSources.piiDb,
@@ -435,6 +463,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       stateDb: authCtx.coreAdapter,
       tenantId,
       userId: finalUserId,
+      accountAuthenticationEnv: c.env,
     });
     const missingRequiredCustomClaims = lifecycleSync.missingRequiredFields.map((field) => ({
       field_key: field.fieldKey,
@@ -520,6 +549,8 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
     });
   } catch (error) {
     log.error('Upgrade complete error', { action: 'complete' }, error as Error);
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -566,7 +597,10 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
     let accountLifecycleState: UserLifecycleState = 'active';
 
     if (!isAnonymous) {
-      const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+      const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId, {
+        accountId: session.userId,
+      });
+      if (!customClaimSources.nonPiiDb) throw new Error('account_data_route_incomplete');
       const lifecycleSync = await syncUserLifecycleState({
         db: customClaimSources.nonPiiDb,
         dbPii: customClaimSources.piiDb,
@@ -574,6 +608,7 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
         stateDb: authCtx.coreAdapter,
         tenantId,
         userId: session.userId,
+        accountAuthenticationEnv: c.env,
       });
       missingRequiredCustomClaims = lifecycleSync.missingRequiredFields.map((field) => ({
         field_key: field.fieldKey,
@@ -615,6 +650,8 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
     });
   } catch (error) {
     log.error('Upgrade status error', { action: 'status' }, error as Error);
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

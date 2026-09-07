@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-lib-core",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,6 +9,11 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts",
       "default": "./src/index.ts"
+    },
+    "./control-plane": {
+      "import": "./dist/services/control-plane/index.js",
+      "types": "./src/services/control-plane/index.ts",
+      "default": "./src/services/control-plane/index.ts"
     },
     "./utils/*": {
       "import": "./dist/utils/*.js",
@@ -21,6 +26,21 @@
     "./types/*": {
       "import": "./dist/types/*.js",
       "default": "./src/types/*.ts"
+    },
+    "./types/login-ui-languages": {
+      "import": "./src/types/login-ui-languages.ts",
+      "types": "./src/types/login-ui-languages.ts",
+      "default": "./src/types/login-ui-languages.ts"
+    },
+    "./db/adapter": {
+      "import": "./dist/db/adapter.js",
+      "types": "./dist/db/adapter.d.ts",
+      "default": "./src/db/adapter.ts"
+    },
+    "./repositories/admin/internal-notification-event": {
+      "import": "./dist/repositories/admin/internal-notification-event.js",
+      "types": "./src/repositories/admin/internal-notification-event.ts",
+      "default": "./src/repositories/admin/internal-notification-event.ts"
     },
     "./middleware/*": {
       "import": "./dist/middleware/*.js",
@@ -37,6 +57,26 @@
     "./services/*": {
       "import": "./dist/services/*.js",
       "default": "./src/services/*.ts"
+    },
+    "./services/lookup-directory/contract": {
+      "import": "./dist/services/lookup-directory/contract.js",
+      "types": "./src/services/lookup-directory/contract.ts",
+      "default": "./src/services/lookup-directory/contract.ts"
+    },
+    "./services/lookup-directory/seed-sql": {
+      "import": "./dist/services/lookup-directory/seed-sql.js",
+      "types": "./src/services/lookup-directory/seed-sql.ts",
+      "default": "./src/services/lookup-directory/seed-sql.ts"
+    },
+    "./services/control-plane/migration-stream-contract": {
+      "import": "./dist/services/control-plane/migration-stream-contract.js",
+      "types": "./src/services/control-plane/migration-stream-contract.ts",
+      "default": "./src/services/control-plane/migration-stream-contract.ts"
+    },
+    "./rebac/rebac-service": {
+      "import": "./dist/rebac/rebac-service.js",
+      "types": "./dist/rebac/rebac-service.d.ts",
+      "default": "./src/rebac/rebac-service.ts"
     },
     "./notifications": {
       "import": "./dist/notifications/index.js",
@@ -65,9 +105,9 @@
   "dependencies": {
     "@authrim/ar-lib-field-mapping": "workspace:*",
     "@authrim/ar-lib-logging": "workspace:*",
-    "hono": "4.12.29",
-    "jose": "^6.1.2",
-    "mysql2": "^3.15.3",
+    "hono": "4.13.2",
+    "jose": "^6.2.9",
+    "mysql2": "^3.23.1",
     "pg": "^8.16.3"
   },
   "devDependencies": {

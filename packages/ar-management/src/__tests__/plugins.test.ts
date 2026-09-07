@@ -13,7 +13,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { Env } from '@authrim/ar-lib-core';
+import type {
+  ApprovedDynamicPlugin,
+  ControlPluginDynamicWorkerDesiredStatePlan,
+  ControlPluginDynamicWorkerDesiredStateRequest,
+  ControlPluginDynamicWorkerObservedStateRequest,
+  ControlPluginDynamicWorkerResourcePreparation,
+  DynamicPluginInstallationStatus,
+  Env,
+} from '@authrim/ar-lib-core';
 
 // Mock ar-lib-core functions
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -21,6 +29,35 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   return {
     ...actual,
     scheduleAuditLogFromContext: vi.fn(),
+    produceNotificationDelivery: vi.fn(async (env, input) => {
+      try {
+        await env.EMAIL.send({
+          to: input.payload.to,
+          from: input.payload.from,
+          subject: input.payload.subject,
+          html: input.payload.body,
+        });
+        return {
+          reference: { intentId: input.intentId },
+          bindingRef: 'PLATFORM_NOTIFICATION_DB',
+          delivery: 'delivered',
+        };
+      } catch {
+        return {
+          reference: { intentId: input.intentId },
+          bindingRef: 'PLATFORM_NOTIFICATION_DB',
+          delivery: 'pending',
+        };
+      }
+    }),
+  };
+});
+
+vi.mock('../admin-shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../admin-shared')>();
+  return {
+    ...actual,
+    writeAdminAuditLog: vi.fn(async () => 'audit-plugin-rollout-a'),
   };
 });
 
@@ -46,15 +83,19 @@ import {
   getPluginHandler,
   getPluginConfigHandler,
   updatePluginConfigHandler,
+  resetPluginConfigHandler,
   enablePluginHandler,
   disablePluginHandler,
+  uninstallPluginHandler,
   sendPluginTestEmailHandler,
   getPluginHealthHandler,
   getPluginSchemaHandler,
+  rolloutDynamicPluginBatchHandler,
   registerPlugin,
   updatePluginHealth,
 } from '../routes/settings/plugins';
 import { getPluginEncryptionKey } from '@authrim/ar-lib-plugin';
+import { writeAdminAuditLog } from '../admin-shared';
 
 // =============================================================================
 // Test Fixtures
@@ -76,7 +117,9 @@ function createMockKV(options: {
       storage.set(key, value);
       options.putCallback?.(key, value);
     }),
-    delete: vi.fn().mockResolvedValue(undefined),
+    delete: vi.fn().mockImplementation(async (key: string) => {
+      storage.delete(key);
+    }),
     list: vi.fn().mockResolvedValue({ keys: [] }),
     getWithMetadata: vi.fn().mockResolvedValue({ value: null, metadata: null }),
   } as unknown as KVNamespace;
@@ -122,6 +165,7 @@ function createMockContext(options: {
     env: {
       SETTINGS: mockKV,
       ISSUER_URL: 'https://op.example.com',
+      AUTHRIM_ENVIRONMENT_NAME: 'test',
       ...options.envOverrides,
     } as unknown as Env,
     json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
@@ -834,6 +878,56 @@ describe('Plugin Admin API - Update Plugin Config', () => {
       });
     });
 
+    it('projects a rotated Resend credential for an enabled tenant provider', async () => {
+      const registry = {
+        'notifier-resend': createPluginEntry({ id: 'notifier-resend' }),
+      };
+      const replacePluginCredentials = vi.fn(async (input) => ({
+        operationId: input.operationId,
+        installationId: input.installationId,
+        configVersion: input.expectedConfigVersion + 1,
+        credentialCount: input.credentials.length,
+      }));
+      const configureNotificationInstallation = vi.fn(async (input) => ({
+        ...input,
+        state: input.enabled ? ('enabled' as const) : ('disabled' as const),
+        configVersion: 4,
+      }));
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify(registry),
+          'plugins:enabled:notifier-resend:tenant:tenant-1': 'true',
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'notifier-resend' },
+        tenantId: 'tenant-1',
+        body: { config: { apiKey: 're_rotated', defaultFrom: 'mail@example.com' } },
+        kv,
+        envOverrides: {
+          AUTHRIM_ENVIRONMENT_NAME: 'test',
+          PLUGIN_RUNNER: {
+            configureNotificationInstallation,
+            replacePluginCredentials,
+          },
+        },
+      });
+
+      await updatePluginConfigHandler(c);
+
+      expect(replacePluginCredentials).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant-1',
+          expectedConfigVersion: 4,
+          credentials: [expect.objectContaining({ value: 're_rotated' })],
+        })
+      );
+      expect(configureNotificationInstallation).toHaveBeenLastCalledWith(
+        expect.objectContaining({ pluginId: 'notifier-resend', enabled: true })
+      );
+    });
+
     it('should return 404 for non-existent plugin', async () => {
       const kv = createMockKV({
         getValues: {
@@ -882,6 +976,51 @@ describe('Plugin Admin API - Update Plugin Config', () => {
 
       expect(status).toBe(400);
       expect(body).toHaveProperty('error');
+    });
+
+    it.each([
+      {
+        pluginId: 'human-verification-cloudflare-turnstile',
+        config: { siteKey: 'site-key', secretKey: 'secret-key', failurePolicy: 'fail_open' },
+      },
+      {
+        pluginId: 'human-verification-hcaptcha',
+        config: {
+          siteKey: 'site-key',
+          secretKey: 'secret-key',
+          widgetMode: 'score',
+          failurePolicy: 'fail_closed',
+        },
+      },
+      {
+        pluginId: 'human-verification-google-recaptcha',
+        config: {
+          siteKey: 'site-key',
+          secretKey: 'secret-key',
+          widgetMode: 'score',
+          scoreThreshold: 1.5,
+          failurePolicy: 'fail_closed',
+        },
+      },
+    ])('rejects invalid built-in human-verification config for $pluginId', async (input) => {
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify({
+            [input.pluginId]: createPluginEntry({ id: input.pluginId }),
+          }),
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: input.pluginId },
+        tenantId: 'tenant-1',
+        body: { config: input.config },
+        kv,
+      });
+
+      const response = await updatePluginConfigHandler(c);
+      expect((await getResponseData(response)).status).toBe(400);
+      expect(kv.put).not.toHaveBeenCalled();
     });
 
     it('should support tenant-specific configuration', async () => {
@@ -1062,6 +1201,70 @@ describe('Plugin Admin API - Update Plugin Config', () => {
   });
 });
 
+describe('Plugin Admin API - Reset Plugin Config', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('removes a tenant override and schedules inherited provider reprojection', async () => {
+    const pluginId = 'human-verification-cloudflare-turnstile';
+    const kv = createMockKV({
+      getValues: {
+        'plugins:registry': JSON.stringify({
+          [pluginId]: createPluginEntry({ id: pluginId }),
+        }),
+        [`plugins:config:${pluginId}`]: JSON.stringify({
+          siteKey: 'global-site',
+          secretKey: 'global-secret',
+          failurePolicy: 'fail_closed',
+        }),
+        [`plugins:config:${pluginId}:tenant:tenant-1`]: JSON.stringify({
+          siteKey: 'tenant-site',
+          secretKey: 'tenant-secret',
+          failurePolicy: 'fail_closed',
+        }),
+      },
+    });
+    const c = createMockContext({
+      method: 'DELETE',
+      params: { id: pluginId },
+      tenantId: 'tenant-1',
+      kv,
+      envOverrides: { DB_ADMIN: undefined },
+    });
+
+    await resetPluginConfigHandler(c);
+
+    expect(kv.delete).toHaveBeenCalledWith(`plugins:config:${pluginId}:tenant:tenant-1`);
+    expect(kv.put).toHaveBeenCalledWith(
+      `plugins:provider-projection:desired:${pluginId}`,
+      expect.any(String)
+    );
+    expect(c.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pluginId,
+        tenantId: 'tenant-1',
+        hasTenantOverride: false,
+      })
+    );
+  });
+
+  it('rejects an unknown plugin without deleting tenant data', async () => {
+    const kv = createMockKV({ getValues: { 'plugins:registry': '{}' } });
+    const c = createMockContext({
+      method: 'DELETE',
+      params: { id: 'missing-plugin' },
+      tenantId: 'tenant-1',
+      kv,
+    });
+
+    const response = (await resetPluginConfigHandler(c)) as Response;
+
+    expect((await getResponseData(response)).status).toBe(404);
+    expect(kv.delete).not.toHaveBeenCalled();
+  });
+});
+
 // =============================================================================
 // Enable/Disable Plugin Tests
 // =============================================================================
@@ -1188,6 +1391,43 @@ describe('Plugin Admin API - Enable/Disable', () => {
 
       expect(kv.put).toHaveBeenCalledWith('plugins:enabled:test-plugin:tenant:tenant-1', 'true');
     });
+
+    it('projects a built-in provider before enabling it for a tenant', async () => {
+      const registry = {
+        'notifier-cloudflare': createPluginEntry({ id: 'notifier-cloudflare' }),
+      };
+      const configureNotificationInstallation = vi.fn(async (input) => ({
+        ...input,
+        state: input.enabled ? ('enabled' as const) : ('disabled' as const),
+        configVersion: 1,
+      }));
+      const kv = createMockKV({ getValues: { 'plugins:registry': JSON.stringify(registry) } });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'notifier-cloudflare' },
+        tenantId: 'tenant-1',
+        body: {},
+        kv,
+        envOverrides: {
+          AUTHRIM_ENVIRONMENT_NAME: 'test',
+          PLUGIN_RUNNER: { configureNotificationInstallation },
+        },
+      });
+
+      await enablePluginHandler(c);
+
+      expect(configureNotificationInstallation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant-1',
+          pluginId: 'notifier-cloudflare',
+          enabled: true,
+        })
+      );
+      expect(kv.put).toHaveBeenCalledWith(
+        'plugins:enabled:notifier-cloudflare:tenant:tenant-1',
+        'true'
+      );
+    });
   });
 
   describe('PUT /api/admin/plugins/:id/disable', () => {
@@ -1275,6 +1515,78 @@ describe('Plugin Admin API - Enable/Disable', () => {
 
       expect(kv.put).toHaveBeenCalledWith('plugins:enabled:test-plugin:tenant:tenant-1', 'false');
     });
+
+    it('disables a built-in installation and removes it from the tenant order', async () => {
+      const registry = {
+        'notifier-cloudflare': createPluginEntry({ id: 'notifier-cloudflare' }),
+      };
+      const configureNotificationInstallation = vi.fn(async (input) => ({
+        ...input,
+        state: input.enabled ? ('enabled' as const) : ('disabled' as const),
+        configVersion: 2,
+      }));
+      const replaceNotificationProviderOrder = vi.fn(async (input) => ({
+        tenantId: input.tenantId,
+        channel: input.channel,
+        configVersion: input.expectedConfigVersion + 1,
+        state: 'disabled' as const,
+        installationIds: input.installationIds,
+      }));
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify(registry),
+          'plugins:enabled:notifier-cloudflare:tenant:tenant-1': 'true',
+          'settings:tenant:tenant-1:email-settings': JSON.stringify({
+            strategy: 'priority_failover',
+            providerOrder: ['notifier-cloudflare'],
+          }),
+        },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'notifier-cloudflare' },
+        tenantId: 'tenant-1',
+        body: {},
+        kv,
+        envOverrides: {
+          AUTHRIM_ENVIRONMENT_NAME: 'test',
+          PLUGIN_RUNNER: {
+            configureNotificationInstallation,
+            resolveNotificationProviderOrder: vi.fn(async () => ({
+              tenantId: 'tenant-1',
+              channel: 'email' as const,
+              configVersion: 2,
+              state: 'enabled' as const,
+              installationIds: [
+                configureNotificationInstallation.mock.calls[0]?.[0].installationId,
+              ],
+            })),
+            replaceNotificationProviderOrder,
+          },
+        },
+      });
+
+      await disablePluginHandler(c);
+
+      expect(configureNotificationInstallation).toHaveBeenCalledWith(
+        expect.objectContaining({ pluginId: 'notifier-cloudflare', enabled: false })
+      );
+      expect(replaceNotificationProviderOrder).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'tenant-1',
+          expectedConfigVersion: 2,
+          installationIds: [],
+        })
+      );
+      expect(kv.put).toHaveBeenCalledWith(
+        'settings:tenant:tenant-1:email-settings',
+        JSON.stringify({ strategy: 'priority_failover', providerOrder: [] })
+      );
+      expect(kv.put).toHaveBeenCalledWith(
+        'plugins:enabled:notifier-cloudflare:tenant:tenant-1',
+        'false'
+      );
+    });
   });
 
   describe('Tenant override behavior', () => {
@@ -1360,14 +1672,54 @@ describe('Plugin Admin API - Test Email', () => {
         success: true,
         pluginId: 'notifier-cloudflare',
         to: 'user@example.com',
-        messageId: 'cf-msg-1',
+        messageId: expect.stringMatching(/^admin-test-email:/u),
+        deliveryState: 'delivered',
       });
+      expect(body).not.toHaveProperty('providerResponse');
       expect(emailSend).toHaveBeenCalledWith(
         expect.objectContaining({
           to: 'user@example.com',
           subject: 'Authrim test email',
         })
       );
+    });
+
+    it('redacts provider failure details from the response', async () => {
+      const emailSend = vi.fn().mockRejectedValue(new Error('secret provider response'));
+      const registry = {
+        'notifier-cloudflare': createPluginEntry({ id: 'notifier-cloudflare' }),
+      };
+      const kv = createMockKV({
+        getValues: {
+          'plugins:registry': JSON.stringify(registry),
+          'plugins:schema:notifier-cloudflare': JSON.stringify({
+            type: 'object',
+            required: ['defaultFrom'],
+          }),
+          'plugins:config:notifier-cloudflare': JSON.stringify({
+            defaultFrom: 'noreply@example.com',
+          }),
+          'plugins:enabled:notifier-cloudflare': 'true',
+        },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        params: { id: 'notifier-cloudflare' },
+        kv,
+        body: { to: 'user@example.com' },
+        envOverrides: { EMAIL: { send: emailSend } },
+      });
+
+      const response = (await sendPluginTestEmailHandler(c)) as Response;
+      const { body, status } = await getResponseData(response);
+
+      expect(status).toBe(202);
+      expect(body).toMatchObject({
+        success: true,
+        deliveryState: 'pending',
+        messageId: expect.stringMatching(/^admin-test-email:/u),
+      });
+      expect(JSON.stringify(body)).not.toContain('secret provider response');
     });
   });
 });
@@ -2791,5 +3143,615 @@ describe('Plugin Admin API - Tenant Isolation', () => {
       expect(enableStates['plugins:enabled:multi-tenant-plugin:tenant:tenant-1']).toBe('true');
       expect(enableStates['plugins:enabled:multi-tenant-plugin:tenant:tenant-2']).toBe('false');
     });
+  });
+});
+
+describe('Plugin Admin API - Approved Dynamic Workers', () => {
+  const approved: ApprovedDynamicPlugin = {
+    pluginId: 'custom-a',
+    capabilityManifestDigest: 'b'.repeat(64),
+    activeVersionDigest: 'a'.repeat(64),
+    visibility: 'tenant' as const,
+    capabilities: ['flow.evaluate'],
+    credentials: [{ configKey: 'apiKey', required: true }],
+    resources: [],
+    updatedAt: 100,
+  };
+
+  function runner() {
+    return {
+      listApprovedDynamicPlugins: vi.fn(async () => [approved]),
+      getDynamicPluginInstallationStatus: vi.fn(
+        async (): Promise<DynamicPluginInstallationStatus> => ({
+          installationId: 'plugin-installation-v1-a',
+          tenantId: 'tenant-a',
+          pluginId: 'custom-a',
+          state: 'disabled',
+          configVersion: 2,
+          configuredKeys: ['apiKey'],
+          missingRequiredFields: [],
+          pinnedVersionDigest: approved.activeVersionDigest,
+        })
+      ),
+      replaceDynamicPluginCredentials: vi.fn(async (input) => ({
+        operationId: input.operationId,
+        installationId: 'plugin-installation-v1-a',
+        configVersion: input.expectedConfigVersion + 1,
+        credentialCount: Object.keys(input.credentials).length,
+      })),
+      configureDynamicPluginInstallation: vi.fn(async (input) => ({
+        installationId: 'plugin-installation-v1-a',
+        tenantId: input.tenantId,
+        pluginId: input.pluginId,
+        state: input.enabled ? ('enabled' as const) : ('disabled' as const),
+        configVersion: 2,
+        pinnedVersionDigest: approved.activeVersionDigest,
+      })),
+      stageDynamicPluginActivation: vi.fn(async (input) => ({
+        installationId: 'plugin-installation-v1-a',
+        tenantId: input.tenantId,
+        pluginId: input.pluginId,
+        activationRequestId: input.activationRequestId,
+        state: 'pending' as const,
+      })),
+      rolloutDynamicPluginBatch: vi.fn(async (input) => ({
+        operationId: input.operationId,
+        pluginId: input.pluginId,
+        targetVersionDigest: approved.activeVersionDigest,
+        state: 'running' as const,
+        cursorInstallationId: 'plugin-installation-v1-a',
+        processedThisBatch: input.batchSize,
+        succeededCount: input.batchSize,
+        blockedCount: 0,
+        failedCount: 0,
+        hasMore: true,
+        lastErrorCode: null,
+      })),
+    };
+  }
+
+  function control() {
+    return {
+      validatePluginDynamicWorkerDesiredState: vi.fn(
+        async (
+          input: ControlPluginDynamicWorkerDesiredStateRequest
+        ): Promise<ControlPluginDynamicWorkerDesiredStatePlan> => ({
+          environmentId: 'test',
+          tenantId: input.tenantId,
+          pluginId: input.pluginId,
+          installationId: 'plugin-installation-v1-a',
+          capabilityManifestDigest: approved.capabilityManifestDigest,
+          enabled: input.enabled,
+          bindings: [],
+          resources: [],
+        })
+      ),
+      preparePluginDynamicWorkerResources: vi.fn(
+        async (
+          input: ControlPluginDynamicWorkerDesiredStateRequest
+        ): Promise<ControlPluginDynamicWorkerResourcePreparation> => ({
+          environmentId: 'test',
+          tenantId: input.tenantId,
+          pluginId: input.pluginId,
+          installationId: 'plugin-installation-v1-a',
+          capabilityManifestDigest: approved.capabilityManifestDigest,
+          enabled: input.enabled,
+          bindings: [],
+          resources: (input.resourceSelections ?? []).map((selection) => ({
+            schemaVersion: 1 as const,
+            logicalResourceId: selection.logicalResourceId,
+            binding: 'PLUGIN_CACHE',
+            kind: 'kv_namespace' as const,
+            scope: 'tenant' as const,
+            access: 'read_write' as const,
+            lifecycleMode: 'existing' as const,
+            allowExisting: true,
+            migrationStream: null,
+            providerResourceId: selection.providerResourceId,
+            providerName: selection.providerName,
+          })),
+          operationId: 'op_plugin_resources_a',
+          readiness: 'ready' as const,
+        })
+      ),
+      syncPluginDynamicWorkerObservedState: vi.fn(
+        async (input: ControlPluginDynamicWorkerObservedStateRequest) => ({
+          operationId: 'op_plugin_sync_a',
+          environmentId: 'test',
+          tenantId: input.tenantId,
+          pluginId: input.pluginId,
+          installationId: input.installationId,
+          capabilityManifestDigest: approved.capabilityManifestDigest,
+          enabled: input.state === 'enabled',
+          bindings: [],
+          resources: [],
+          state: input.state,
+          configVersion: input.configVersion,
+          pinnedVersionDigest: input.pinnedVersionDigest,
+          bindingStatus: input.state === 'enabled' ? ('active' as const) : ('deleted' as const),
+        })
+      ),
+    };
+  }
+
+  it('starts a bounded platform rollout without exposing the raw idempotency key', async () => {
+    const service = runner();
+    const c = createMockContext({
+      method: 'POST',
+      params: { id: 'custom-a' },
+      body: { batch_size: 1 },
+      headers: { 'Idempotency-Key': 'operator-visible-key' },
+      envOverrides: { PLUGIN_RUNNER: service },
+      pluginTenantScope: 'platform',
+    });
+
+    const response = await rolloutDynamicPluginBatchHandler(c);
+    const result = await getResponseData(response);
+
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({
+      pluginId: 'custom-a',
+      processedThisBatch: 1,
+      targetVersionDigest: approved.activeVersionDigest,
+      auditId: 'audit-plugin-rollout-a',
+    });
+    expect(service.rolloutDynamicPluginBatch).toHaveBeenCalledWith({
+      operationId: expect.stringMatching(/^plugin-rollout-v1-[a-f0-9]{64}$/),
+      pluginId: 'custom-a',
+      batchSize: 1,
+    });
+    expect(JSON.stringify(service.rolloutDynamicPluginBatch.mock.calls)).not.toContain(
+      'operator-visible-key'
+    );
+  });
+
+  it('rejects a missing idempotency key or an unbounded rollout batch', async () => {
+    const service = runner();
+    const missingKey = createMockContext({
+      method: 'POST',
+      params: { id: 'custom-a' },
+      body: { batch_size: 1 },
+      envOverrides: { PLUGIN_RUNNER: service },
+      pluginTenantScope: 'platform',
+    });
+    const tooLarge = createMockContext({
+      method: 'POST',
+      params: { id: 'custom-a' },
+      body: { batch_size: 26 },
+      headers: { 'Idempotency-Key': 'rollout-a' },
+      envOverrides: { PLUGIN_RUNNER: service },
+      pluginTenantScope: 'platform',
+    });
+
+    expect((await getResponseData(await rolloutDynamicPluginBatchHandler(missingKey))).status).toBe(
+      400
+    );
+    expect((await getResponseData(await rolloutDynamicPluginBatchHandler(tooLarge))).status).toBe(
+      400
+    );
+    expect(service.rolloutDynamicPluginBatch).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before Runner mutation when durable audit is unavailable', async () => {
+    vi.mocked(writeAdminAuditLog).mockResolvedValueOnce(null);
+    const service = runner();
+    const c = createMockContext({
+      method: 'POST',
+      params: { id: 'custom-a' },
+      body: { batch_size: 1 },
+      headers: { 'Idempotency-Key': 'rollout-a' },
+      envOverrides: { PLUGIN_RUNNER: service },
+      pluginTenantScope: 'platform',
+    });
+
+    const result = await getResponseData(await rolloutDynamicPluginBatchHandler(c));
+
+    expect(result.status).toBe(503);
+    expect(service.rolloutDynamicPluginBatch).not.toHaveBeenCalled();
+  });
+
+  it('lists the verified Runner projection without persisting a duplicate KV registry entry', async () => {
+    const service = runner();
+    const kv = createMockKV({ getValues: { 'plugins:registry': '{}' } });
+    const c = createMockContext({
+      tenantId: 'tenant-a',
+      kv,
+      envOverrides: { PLUGIN_RUNNER: service },
+    });
+
+    await listPluginsHandler(c);
+
+    expect(c.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        plugins: [
+          expect.objectContaining({
+            id: 'custom-a',
+            backendKind: 'dynamic_worker',
+            enabled: false,
+            configured: true,
+            capabilityManifestDigest: approved.capabilityManifestDigest,
+          }),
+        ],
+      })
+    );
+    expect(kv.put).not.toHaveBeenCalledWith('plugins:registry', expect.any(String));
+  });
+
+  it('sends values only to the narrow Runner credential RPC and never stores or returns them', async () => {
+    const service = runner();
+    const kv = createMockKV({ getValues: { 'plugins:registry': '{}' } });
+    const c = createMockContext({
+      method: 'PUT',
+      params: { id: 'custom-a' },
+      tenantId: 'tenant-a',
+      body: { config: { apiKey: 'provider-secret-value' } },
+      kv,
+      envOverrides: { PLUGIN_RUNNER: service },
+    });
+
+    const response = (await updatePluginConfigHandler(c)) as Response;
+    const { body } = await getResponseData(response);
+
+    expect(service.replaceDynamicPluginCredentials).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        pluginId: 'custom-a',
+        expectedConfigVersion: 2,
+        credentials: { apiKey: 'provider-secret-value' },
+      })
+    );
+    expect(kv.put).not.toHaveBeenCalled();
+    expect(JSON.stringify(body)).not.toContain('provider-secret-value');
+    expect(body).toMatchObject({ config: {}, encryptedFields: ['apiKey'] });
+  });
+
+  it('enables and disables through Runner without writing a KV enable flag', async () => {
+    const service = runner();
+    const controlService = control();
+    const kv = createMockKV({ getValues: { 'plugins:registry': '{}' } });
+    const common = {
+      params: { id: 'custom-a' },
+      tenantId: 'tenant-a',
+      body: {},
+      kv,
+      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+    };
+
+    await enablePluginHandler(createMockContext({ method: 'PUT', ...common }));
+    await disablePluginHandler(createMockContext({ method: 'PUT', ...common }));
+
+    expect(service.configureDynamicPluginInstallation).toHaveBeenNthCalledWith(1, {
+      tenantId: 'tenant-a',
+      pluginId: 'custom-a',
+      enabled: true,
+    });
+    expect(service.configureDynamicPluginInstallation).toHaveBeenNthCalledWith(2, {
+      tenantId: 'tenant-a',
+      pluginId: 'custom-a',
+      enabled: false,
+    });
+    expect(controlService.validatePluginDynamicWorkerDesiredState).toHaveBeenCalledTimes(2);
+    expect(controlService.syncPluginDynamicWorkerObservedState).toHaveBeenCalledTimes(2);
+    expect(kv.put).not.toHaveBeenCalled();
+  });
+
+  it('disables Runner before requesting an explicit managed-resource cleanup', async () => {
+    const service = runner();
+    const controlService = {
+      ...control(),
+      requestPluginResourceCleanup: vi.fn(async (input) => ({
+        operationId: 'op_plugin_cleanup_a',
+        environmentId: 'test',
+        pluginInstallationId: 'plugin-installation-v1-a',
+        tenantId: input.tenantId,
+        pluginId: input.pluginId,
+        sourceOperationId: 'op_plugin_resources_a',
+        lifecycleGeneration: 1,
+        reason: input.reason,
+        state: 'requested' as const,
+        drainNotBefore: null,
+        managedResourceCount: 1,
+        detachedResourceCount: 1,
+        lastErrorCode: null,
+        createdAt: 100,
+        updatedAt: 100,
+        completedAt: null,
+      })),
+    };
+    const c = createMockContext({
+      method: 'POST',
+      params: { id: 'custom-a' },
+      tenantId: 'tenant-a',
+      body: {
+        tenant_id: 'tenant-a',
+        idempotency_key: 'uninstall-a',
+        confirmation: 'UNINSTALL',
+      },
+      kv: createMockKV({ getValues: { 'plugins:registry': '{}' } }),
+      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+    });
+
+    const result = await getResponseData(await uninstallPluginHandler(c));
+
+    expect(result.status).toBe(202);
+    expect(service.configureDynamicPluginInstallation).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      pluginId: 'custom-a',
+      enabled: false,
+    });
+    expect(controlService.requestPluginResourceCleanup).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      pluginId: 'custom-a',
+      reason: 'uninstall',
+      requestedById: 'admin-1',
+      idempotencyKey: 'uninstall-a',
+    });
+    expect(result.body.cleanup).toMatchObject({
+      operationId: 'op_plugin_cleanup_a',
+      state: 'requested',
+    });
+  });
+
+  it('rejects uninstall without the destructive confirmation and performs no mutation', async () => {
+    const service = runner();
+    const controlService = control();
+    const c = createMockContext({
+      method: 'POST',
+      params: { id: 'custom-a' },
+      tenantId: 'tenant-a',
+      body: { tenant_id: 'tenant-a', idempotency_key: 'uninstall-a', confirmation: 'DELETE' },
+      kv: createMockKV({ getValues: { 'plugins:registry': '{}' } }),
+      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+    });
+
+    expect((await getResponseData(await uninstallPluginHandler(c))).status).toBe(400);
+    expect(service.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+  });
+
+  it('accepts an advanced existing resource selection without exposing it to Runner', async () => {
+    const service = runner();
+    service.listApprovedDynamicPlugins.mockResolvedValueOnce([
+      {
+        ...approved,
+        resources: [
+          {
+            logicalResourceId: 'plugin_cache',
+            binding: 'PLUGIN_CACHE',
+            kind: 'kv_namespace' as const,
+            access: 'read_write' as const,
+            allowExisting: true,
+          },
+        ],
+      },
+    ]);
+    const controlService = control();
+    controlService.validatePluginDynamicWorkerDesiredState.mockResolvedValueOnce({
+      environmentId: 'test',
+      tenantId: 'tenant-a',
+      pluginId: 'custom-a',
+      installationId: 'plugin-installation-v1-a',
+      capabilityManifestDigest: approved.capabilityManifestDigest,
+      enabled: true,
+      bindings: [],
+      resources: [
+        {
+          schemaVersion: 1,
+          logicalResourceId: 'plugin_cache',
+          binding: 'PLUGIN_CACHE',
+          kind: 'kv_namespace',
+          scope: 'tenant',
+          access: 'read_write',
+          lifecycleMode: 'existing',
+          allowExisting: true,
+          migrationStream: null,
+          providerResourceId: 'resource-a',
+          providerName: 'existing-cache',
+        },
+      ],
+    });
+    const kv = createMockKV({ getValues: { 'plugins:registry': '{}' } });
+    const c = createMockContext({
+      method: 'PUT',
+      params: { id: 'custom-a' },
+      tenantId: 'tenant-a',
+      body: {
+        resource_selections: [
+          {
+            logical_resource_id: 'plugin_cache',
+            mode: 'existing',
+            provider_resource_id: 'resource-a',
+            provider_name: 'existing-cache',
+          },
+        ],
+      },
+      kv,
+      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+    });
+
+    const response = await enablePluginHandler(c);
+    expect((await getResponseData(response)).status).toBe(200);
+    expect(controlService.validatePluginDynamicWorkerDesiredState).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      pluginId: 'custom-a',
+      enabled: true,
+      resourceSelections: [
+        {
+          logicalResourceId: 'plugin_cache',
+          mode: 'existing',
+          providerResourceId: 'resource-a',
+          providerName: 'existing-cache',
+        },
+      ],
+    });
+    expect(service.configureDynamicPluginInstallation).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      pluginId: 'custom-a',
+      enabled: true,
+      activationRequestId: 'op_plugin_resources_a',
+    });
+    expect(JSON.stringify(service.configureDynamicPluginInstallation.mock.calls)).not.toContain(
+      'resource-a'
+    );
+  });
+
+  it('returns a provisioning operation without enabling Runner while managed resources are pending', async () => {
+    const service = runner();
+    const resource = {
+      schemaVersion: 1 as const,
+      logicalResourceId: 'plugin_cache',
+      binding: 'PLUGIN_CACHE',
+      kind: 'kv_namespace' as const,
+      scope: 'tenant' as const,
+      access: 'read_write' as const,
+      lifecycleMode: 'managed' as const,
+      allowExisting: true,
+      migrationStream: null,
+      providerResourceId: null,
+      providerName: null,
+    };
+    service.listApprovedDynamicPlugins.mockResolvedValueOnce([
+      {
+        ...approved,
+        resources: [
+          {
+            logicalResourceId: 'plugin_cache',
+            binding: 'PLUGIN_CACHE',
+            kind: 'kv_namespace',
+            access: 'read_write',
+            allowExisting: true,
+          },
+        ],
+      },
+    ]);
+    const controlService = control();
+    controlService.validatePluginDynamicWorkerDesiredState.mockResolvedValueOnce({
+      environmentId: 'test',
+      tenantId: 'tenant-a',
+      pluginId: 'custom-a',
+      installationId: 'plugin-installation-v1-a',
+      capabilityManifestDigest: approved.capabilityManifestDigest,
+      enabled: true,
+      bindings: [],
+      resources: [resource],
+    });
+    controlService.preparePluginDynamicWorkerResources.mockResolvedValueOnce({
+      environmentId: 'test',
+      tenantId: 'tenant-a',
+      pluginId: 'custom-a',
+      installationId: 'plugin-installation-v1-a',
+      capabilityManifestDigest: approved.capabilityManifestDigest,
+      enabled: true,
+      bindings: [],
+      resources: [resource],
+      operationId: 'op_plugin_resources_a',
+      readiness: 'pending',
+    });
+    const c = createMockContext({
+      method: 'PUT',
+      params: { id: 'custom-a' },
+      tenantId: 'tenant-a',
+      body: {},
+      kv: createMockKV({ getValues: { 'plugins:registry': '{}' } }),
+      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+    });
+
+    const result = await getResponseData(await enablePluginHandler(c));
+    expect(result.status).toBe(202);
+    expect(result.body).toMatchObject({
+      pluginId: 'custom-a',
+      enabled: false,
+      provisioning: { operationId: 'op_plugin_resources_a', state: 'pending' },
+    });
+    expect(service.configureDynamicPluginInstallation).not.toHaveBeenCalled();
+    expect(service.stageDynamicPluginActivation).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      pluginId: 'custom-a',
+      activationRequestId: 'op_plugin_resources_a',
+    });
+    expect(controlService.syncPluginDynamicWorkerObservedState).not.toHaveBeenCalled();
+  });
+
+  it('idempotently rechecks an already-enabled installation after provisioning response loss', async () => {
+    const service = runner();
+    service.getDynamicPluginInstallationStatus.mockResolvedValueOnce({
+      installationId: 'plugin-installation-v1-a',
+      tenantId: 'tenant-a',
+      pluginId: 'custom-a',
+      state: 'enabled',
+      configVersion: 2,
+      configuredKeys: ['apiKey'],
+      missingRequiredFields: [],
+      pinnedVersionDigest: approved.activeVersionDigest,
+    });
+    service.listApprovedDynamicPlugins.mockResolvedValueOnce([
+      {
+        ...approved,
+        resources: [
+          {
+            logicalResourceId: 'plugin_cache',
+            binding: 'PLUGIN_CACHE',
+            kind: 'kv_namespace',
+            access: 'read_write',
+            allowExisting: false,
+          },
+        ],
+      },
+    ]);
+    const resource = {
+      schemaVersion: 1 as const,
+      logicalResourceId: 'plugin_cache',
+      binding: 'PLUGIN_CACHE',
+      kind: 'kv_namespace' as const,
+      scope: 'tenant' as const,
+      access: 'read_write' as const,
+      lifecycleMode: 'managed' as const,
+      allowExisting: false,
+      migrationStream: null,
+      providerResourceId: null,
+      providerName: null,
+    };
+    const controlService = control();
+    controlService.validatePluginDynamicWorkerDesiredState.mockResolvedValueOnce({
+      environmentId: 'test',
+      tenantId: 'tenant-a',
+      pluginId: 'custom-a',
+      installationId: 'plugin-installation-v1-a',
+      capabilityManifestDigest: approved.capabilityManifestDigest,
+      enabled: true,
+      bindings: [],
+      resources: [resource],
+    });
+    controlService.preparePluginDynamicWorkerResources.mockResolvedValueOnce({
+      environmentId: 'test',
+      tenantId: 'tenant-a',
+      pluginId: 'custom-a',
+      installationId: 'plugin-installation-v1-a',
+      capabilityManifestDigest: approved.capabilityManifestDigest,
+      enabled: true,
+      bindings: [],
+      resources: [resource],
+      operationId: 'op_plugin_resources_a',
+      readiness: 'ready',
+    });
+    const c = createMockContext({
+      method: 'PUT',
+      params: { id: 'custom-a' },
+      tenantId: 'tenant-a',
+      body: {},
+      kv: createMockKV({ getValues: { 'plugins:registry': '{}' } }),
+      envOverrides: { PLUGIN_RUNNER: service, CONTROL: controlService },
+    });
+
+    const result = await getResponseData(await enablePluginHandler(c));
+
+    expect(result.status).toBe(200);
+    expect(result.body).toMatchObject({ pluginId: 'custom-a', enabled: true });
+    expect(service.stageDynamicPluginActivation).not.toHaveBeenCalled();
+    expect(service.configureDynamicPluginInstallation).toHaveBeenCalledWith({
+      tenantId: 'tenant-a',
+      pluginId: 'custom-a',
+      enabled: true,
+    });
+    expect(controlService.syncPluginDynamicWorkerObservedState).toHaveBeenCalledTimes(1);
   });
 });

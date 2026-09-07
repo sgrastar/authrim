@@ -3,12 +3,13 @@ import { getCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   CanonicalRuntimeUserStore,
-  createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   createPIIContextFromHono,
   getLogger,
   getSessionStoreBySessionId,
   getTenantIdFromContext,
   isShardedSessionId,
+  resolveAccountDataContextFromHono,
 } from '@authrim/ar-lib-core';
 import { recordAccountOperation } from './account-operation-log';
 
@@ -23,6 +24,8 @@ export type AccountSession = {
   authTime: number;
   acr?: string;
   amr?: string[];
+  userAgent?: string;
+  countryCode?: string;
 };
 
 function setNoStore(c: Context<{ Bindings: Env }>): void {
@@ -53,6 +56,10 @@ function normalizeSession(session: Session): AccountSession {
         : Math.floor(session.createdAt / 1000),
     ...(typeof session.data?.acr === 'string' && { acr: session.data.acr }),
     ...(Array.isArray(session.data?.amr) && { amr: session.data.amr }),
+    ...(typeof session.data?.userAgent === 'string' && { userAgent: session.data.userAgent }),
+    ...(typeof session.data?.countryCode === 'string' && {
+      countryCode: session.data.countryCode,
+    }),
   };
 }
 
@@ -82,6 +89,16 @@ export async function requireAccountSession(
       return unauthorized(c, 'Session has expired or is invalid');
     }
 
+    // Account-page handlers read account-scoped Core/PII data. Resolve the
+    // user's routed account database once while validating the session so all
+    // downstream self-service handlers use the same request context.
+    // Unit-test contexts may be plain objects rather than a full Hono Context.
+    // Real requests always provide get(); keep the production routing fail-closed
+    // while allowing those lightweight contexts to exercise downstream handlers.
+    if (typeof (c as unknown as { get?: unknown }).get === 'function') {
+      await resolveAccountDataContextFromHono(c, session.userId);
+    }
+
     return normalizeSession(session);
   } catch (error) {
     const log = getLogger(c).module('ACCOUNT-PAGE');
@@ -107,7 +124,7 @@ export async function getAccountProfileHandler(c: Context<{ Bindings: Env }>): P
   let user: Awaited<ReturnType<CanonicalRuntimeUserStore['findById']>> | null = null;
   try {
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const authCtx = createAccountAuthContextFromHono(c, tenantId);
     const piiCtx = createPIIContextFromHono(c, tenantId);
     const runtimeUsers = new CanonicalRuntimeUserStore({
       coreAdapter: authCtx.coreAdapter,
@@ -187,7 +204,7 @@ export async function updateAccountProfileHandler(
   }
 
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = createAccountAuthContextFromHono(c, tenantId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
   const runtimeUsers = new CanonicalRuntimeUserStore({
     coreAdapter: authCtx.coreAdapter,

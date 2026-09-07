@@ -544,7 +544,11 @@ export function isEncryptedValue(value: unknown): boolean {
  *
  * Note: This requires a CryptoKey from KEY_MANAGER DO
  */
-export async function encryptValue(value: string, key: CryptoKey): Promise<string> {
+export async function encryptValue(
+  value: string,
+  key: CryptoKey,
+  additionalData?: Uint8Array
+): Promise<string> {
   // Generate random IV (12 bytes for AES-GCM)
   const iv = crypto.getRandomValues(new Uint8Array(12));
 
@@ -552,7 +556,11 @@ export async function encryptValue(value: string, key: CryptoKey): Promise<strin
   const encoder = new TextEncoder();
   const data = encoder.encode(value);
 
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, ...(additionalData ? { additionalData } : {}) },
+    key,
+    data
+  );
 
   // Encode
   const ivBase64 = btoa(String.fromCharCode(...iv));
@@ -564,7 +572,11 @@ export async function encryptValue(value: string, key: CryptoKey): Promise<strin
 /**
  * Decrypt a string value
  */
-export async function decryptValue(encryptedValue: string, key: CryptoKey): Promise<string> {
+export async function decryptValue(
+  encryptedValue: string,
+  key: CryptoKey,
+  additionalData?: Uint8Array
+): Promise<string> {
   // Parse format
   const parts = encryptedValue.split(':');
   if (parts.length !== 4 || parts[0] !== 'enc' || parts[1] !== 'v1') {
@@ -587,7 +599,11 @@ export async function decryptValue(encryptedValue: string, key: CryptoKey): Prom
   );
 
   // Decrypt
-  const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+  const plaintext = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv, ...(additionalData ? { additionalData } : {}) },
+    key,
+    ciphertext
+  );
 
   // Decode
   const decoder = new TextDecoder();

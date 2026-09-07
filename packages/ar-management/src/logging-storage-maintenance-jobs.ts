@@ -17,7 +17,7 @@ import {
   type LogChunkCompression,
   type LogPlane,
   type LogType,
-} from '@authrim/ar-lib-logging';
+} from '@authrim/ar-lib-logging/contract';
 import {
   isArchiveLogRecordV1,
   projectArchiveLogRecordForExportV1,
@@ -39,7 +39,6 @@ import {
   enqueueLoggingMessagePayload,
   parseLoggingMessageQueuePayload,
   SqlLoggingMessageJobStore,
-  writeLoggingMessagePayloadToR2,
   type ExportBuildMessagePayload,
   type LoggingMessageJobRecord,
 } from '@authrim/ar-lib-logging/messaging';
@@ -54,6 +53,10 @@ import {
   SqlLoggingRewrapJobQueue,
 } from '@authrim/ar-lib-logging/keys';
 import { createLoggingTenantKeyResolver } from './logging-tenant-key';
+import {
+  readEncryptedLoggingMessagePayload,
+  writeEncryptedLoggingMessagePayload,
+} from './logging-message-payload-storage';
 
 interface LoggingStorageMaintenanceLogger {
   info: (message: string, meta?: Record<string, unknown>) => void;
@@ -1724,32 +1727,15 @@ function getLoggingMessagePayloadBucket(env: Env): R2Bucket | null {
   return env.AUDIT_ARCHIVE ?? null;
 }
 
-type LoggingMessagePayloadReadResult =
-  | { ok: true; value: unknown }
-  | { ok: false; reason: 'bucket_unavailable' | 'not_found' | 'too_large' | 'malformed_json' };
+async function readLoggingMessagePayload(env: Env, objectRef: string) {
+  return readEncryptedLoggingMessagePayload(env, objectRef, LOGGING_MESSAGE_PAYLOAD_MAX_BYTES);
+}
 
-async function readLoggingMessagePayload(
-  env: Env,
-  objectRef: string
-): Promise<LoggingMessagePayloadReadResult> {
-  const bucket = getLoggingMessagePayloadBucket(env);
-  if (!bucket) {
-    return { ok: false, reason: 'bucket_unavailable' };
-  }
-  const object = await bucket.get(objectRef);
-  if (!object) {
-    return { ok: false, reason: 'not_found' };
-  }
-  let text: string;
+async function deleteLoggingMessagePayload(env: Env, objectRef: string): Promise<void> {
   try {
-    text = await readR2ObjectTextWithLimit(object, LOGGING_MESSAGE_PAYLOAD_MAX_BYTES);
+    await env.AUDIT_ARCHIVE?.delete(objectRef);
   } catch {
-    return { ok: false, reason: 'too_large' };
-  }
-  try {
-    return { ok: true, value: JSON.parse(text) as unknown };
-  } catch {
-    return { ok: false, reason: 'malformed_json' };
+    // Terminal state is authoritative. The scheduled orphan cleanup retries object deletion.
   }
 }
 
@@ -2787,7 +2773,7 @@ async function createExportBuildChildJob(input: {
     partition_count: input.partitionCount,
     part_size: input.partSize,
   };
-  const payloadWrite = await writeLoggingMessagePayloadToR2({
+  const payloadWrite = await writeEncryptedLoggingMessagePayload(input.env, {
     bucket,
     jobId,
     payloadType: 'export_build',
@@ -3602,6 +3588,7 @@ async function runScheduledLoggingMessageJobRepairs(
       now,
     });
     await enqueueMessageJobDlqNotification(adapter, job, now, 'message_job_expired');
+    await deleteLoggingMessagePayload(env, job.payloadObjectRef);
   }
 
   const stuckJobs = await store.listStuckClaimJobs({ now, limit: 50 });
@@ -3631,6 +3618,7 @@ async function runScheduledLoggingMessageJobRepairs(
         now,
       });
       await enqueueMessageJobDlqNotification(adapter, job, now, 'message_job_expired');
+      await deleteLoggingMessagePayload(env, job.payloadObjectRef);
       continue;
     }
 
@@ -3730,13 +3718,21 @@ async function runScheduledLoggingMessageJobs(
     if (claimed.cancelRequestedAt !== null) {
       if (await store.markCancelled(claimed.id, now)) {
         result.blocked += 1;
+        await deleteLoggingMessagePayload(env, claimed.payloadObjectRef);
       }
       continue;
     }
 
     const payloadObject = await readLoggingMessagePayload(env, claimed.payloadObjectRef);
     if (!payloadObject.ok) {
-      if (payloadObject.reason === 'bucket_unavailable') {
+      if (
+        payloadObject.reason === 'bucket_unavailable' ||
+        payloadObject.reason === 'encryption_key_unavailable'
+      ) {
+        const errorClass =
+          payloadObject.reason === 'bucket_unavailable'
+            ? 'message_payload_bucket_unavailable'
+            : 'message_payload_encryption_key_unavailable';
         if (claimed.attemptCount >= claimed.maxAttempts) {
           if (
             await store.markFailed({
@@ -3744,17 +3740,12 @@ async function runScheduledLoggingMessageJobs(
               claimToken,
               now,
               status: 'dlq',
-              errorClass: 'message_payload_bucket_unavailable',
-              lastError: 'No logging message payload bucket is available.',
+              errorClass,
+              lastError: 'Logging message payload storage is unavailable.',
             })
           ) {
             result.dlq += 1;
-            await enqueueMessageJobDlqNotification(
-              adapter,
-              claimed,
-              now,
-              'message_payload_bucket_unavailable'
-            );
+            await enqueueMessageJobDlqNotification(adapter, claimed, now, errorClass);
           }
           continue;
         }
@@ -3764,8 +3755,8 @@ async function runScheduledLoggingMessageJobs(
             claimToken,
             now,
             notBefore: now + computeMessageJobRetryBackoffMs(claimed),
-            errorClass: 'message_payload_bucket_unavailable',
-            lastError: 'No logging message payload bucket is available.',
+            errorClass,
+            lastError: 'Logging message payload storage is unavailable.',
           })
         ) {
           result.retrying += 1;
@@ -3873,6 +3864,7 @@ async function runScheduledLoggingMessageJobs(
         });
         if (await store.markCompleted(claimed.id, claimToken, now)) {
           result.completed += 1;
+          await deleteLoggingMessagePayload(env, claimed.payloadObjectRef);
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'export_build_failed';
@@ -3954,6 +3946,7 @@ async function runScheduledLoggingMessageJobs(
     if (enqueueResult.queued) {
       if (await store.markCompleted(claimed.id, claimToken, now)) {
         result.completed += 1;
+        await deleteLoggingMessagePayload(env, claimed.payloadObjectRef);
       }
       continue;
     }
@@ -4015,6 +4008,7 @@ async function deleteRowsById(
 }
 
 async function runScheduledDeliveryEventRetention(
+  env: Env,
   adapter: DatabaseAdapter,
   log: LoggingStorageMaintenanceLogger,
   now: number
@@ -4062,8 +4056,8 @@ async function runScheduledDeliveryEventRetention(
      )`,
     [bulkSuccessCutoff, defaultCutoff, criticalFailureCutoff, retryDlqCutoff, defaultCutoff]
   );
-  const dlqRows = await adapter.query<{ id: string }>(
-    `SELECT id
+  const dlqRows = await adapter.query<{ id: string; payload_object_ref: string }>(
+    `SELECT id, payload_object_ref
      FROM logging_dlq_items
      WHERE status IN ('deleted', 'purged', 'replayed')
        AND (
@@ -4074,6 +4068,12 @@ async function runScheduledDeliveryEventRetention(
      LIMIT ?`,
     [criticalFailureCutoff, retryDlqCutoff, LOGGING_RETENTION_DELETE_BATCH_SIZE]
   );
+  if (dlqRows.length > 0) {
+    if (!env.AUDIT_ARCHIVE) {
+      throw new Error('logging_dlq_payload_bucket_unavailable');
+    }
+    await env.AUDIT_ARCHIVE.delete(dlqRows.map((row) => row.payload_object_ref));
+  }
   const dlqItemsPurged = await deleteRowsById(
     adapter,
     'logging_dlq_items',
@@ -4157,7 +4157,7 @@ export async function processLoggingStorageMaintenanceJobs(
   }
 
   try {
-    result.retention = await runScheduledDeliveryEventRetention(adapter, log, now);
+    result.retention = await runScheduledDeliveryEventRetention(env, adapter, log, now);
   } catch (error) {
     log.error('Logging delivery event retention failed', {}, error as Error);
   }

@@ -515,7 +515,10 @@ describe('Token Revocation Endpoint', () => {
       expect(mockValidateClientAssertion).toHaveBeenCalledWith(
         'assertion.jwt',
         'https://acme.oidc.example.com/revoke',
-        clientMetadata
+        clientMetadata,
+        expect.objectContaining({
+          replayProtection: expect.objectContaining({ tenantId: 'acme' }),
+        })
       );
       expect(verifyToken).toHaveBeenCalledWith(
         'valid.jwt.token',
@@ -570,7 +573,10 @@ describe('Token Revocation Endpoint', () => {
       expect(mockValidateClientAssertion).toHaveBeenCalledWith(
         'assertion.jwt',
         'https://tenant1.customer.example/revoke',
-        clientMetadata
+        clientMetadata,
+        expect.objectContaining({
+          replayProtection: expect.objectContaining({ tenantId: 'tenant1' }),
+        })
       );
     });
 

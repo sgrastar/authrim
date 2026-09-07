@@ -19,7 +19,15 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
+
+type SamlTestEnv = Partial<Env> & {
+  TDB_TEST_CORE?: D1Database;
+  TDB_TEST_PII?: D1Database;
+  LOGIN_UI_CLIENT_ID?: string;
+  SAML_STRICT_INRESPONSETO?: string;
+};
 import { handleSPACS } from '../sp/acs';
+import { buildSAMLRequestBindingCookie } from '../sp/request-browser-binding';
 import { handleSPSLO } from '../sp/slo';
 import { handleSPMetadata } from '../sp/metadata';
 import { handleIdPMetadata } from '../idp/metadata';
@@ -30,7 +38,7 @@ const {
   mockValidateCustomClaimWrite,
   mockPersistCustomClaimWrite,
   mockSyncUserLifecycleState,
-  mockResolveUserStoreRuntimeSourcesFromEnv,
+  mockResolveAccountDataContextByIdentifier,
   mockRuntimeUsersById,
   mockRuntimeUsersByEmail,
   mockRuntimeSyncUser,
@@ -41,6 +49,9 @@ const {
   mockSessionStoreFetch,
   mockCreateAuditLog,
   mockResolveRuntimeIdentityMappingBinding,
+  mockProvisionAuthAccount,
+  mockPublishExternalIdpRoute,
+  mockProvisionedAccounts,
 } = vi.hoisted(() => ({
   mockValidateCustomClaimWrite: vi.fn().mockResolvedValue({ ok: true }),
   mockPersistCustomClaimWrite: vi.fn().mockResolvedValue(undefined),
@@ -48,7 +59,7 @@ const {
     lifecycleState: 'active',
     missingRequiredFields: [],
   }),
-  mockResolveUserStoreRuntimeSourcesFromEnv: vi.fn(),
+  mockResolveAccountDataContextByIdentifier: vi.fn(),
   mockRuntimeUsersById: new Map<string, any>(),
   mockRuntimeUsersByEmail: new Map<string, any>(),
   mockRuntimeSyncUser: vi.fn(),
@@ -64,6 +75,9 @@ const {
     .mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 })),
   mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
   mockResolveRuntimeIdentityMappingBinding: vi.fn(),
+  mockProvisionAuthAccount: vi.fn(),
+  mockPublishExternalIdpRoute: vi.fn(),
+  mockProvisionedAccounts: new Map<string, { accountId: string; userId: string }>(),
 }));
 
 // Mock modules
@@ -85,6 +99,9 @@ vi.mock('../admin/providers', () => ({
 
 vi.mock('../common/signature', () => ({
   verifyXmlSignature: vi.fn(),
+  verifyXmlSignatureAndGetReferences: vi.fn((xml: string) => [
+    { uri: /\bReference URI="([^"]+)"/.exec(xml)?.[1] ?? '', xml },
+  ]),
   verifyRedirectBindingSignature: vi.fn().mockResolvedValue(true),
   hasSignature: vi.fn((xml: string) => xml.includes('<ds:Signature')),
   signXml: vi.fn((xml: string) => xml), // Pass through
@@ -122,7 +139,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     persistCustomClaimWrite: mockPersistCustomClaimWrite,
     syncUserLifecycleState: mockSyncUserLifecycleState,
     createAuditLog: mockCreateAuditLog,
-    resolveUserStoreRuntimeSourcesFromEnv: mockResolveUserStoreRuntimeSourcesFromEnv,
+    resolveAccountDataContextByIdentifier: mockResolveAccountDataContextByIdentifier,
     resolveRuntimeIdentityMappingBinding: mockResolveRuntimeIdentityMappingBinding,
     CanonicalRuntimeUserStore: class {
       async findById(userId: string) {
@@ -163,16 +180,18 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         return true;
       }
     },
-    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
-      storageProfile: {
-        id: 'builtin:storage:standard',
-        kind: 'storage',
-        label: 'Standard D1 Split',
-        slices: {},
-      },
-      schemaDb: env.DB,
-      nonPiiDb: env.DB,
-      piiDb: env.DB_PII ?? null,
+    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: SamlTestEnv) => ({
+      schemaDb: env.TDB_TEST_CORE,
+      nonPiiDb: env.TDB_TEST_CORE,
+      piiDb: env.TDB_TEST_PII ?? null,
+    })),
+    resolveTenantUserStoreSourcesFromEnv: vi.fn(async (env: SamlTestEnv) => ({
+      coreDb: env.TDB_TEST_CORE,
+      piiDb: env.TDB_TEST_PII ?? env.TDB_TEST_CORE,
+    })),
+    resolveUserStoreRuntimeSourcesFromEnv: vi.fn(async (env: SamlTestEnv) => ({
+      coreDb: env.TDB_TEST_CORE,
+      piiDb: env.TDB_TEST_PII ?? env.TDB_TEST_CORE,
     })),
     // Mock getSessionStoreForNewSession to avoid crypto dependency issues in tests
     getSessionStoreForNewSession: vi.fn().mockResolvedValue({
@@ -485,22 +504,32 @@ function createMockLogoutResponse(
     issuer?: string;
     statusCode?: string;
     inResponseTo?: string;
+    includeSignature?: boolean;
   } = {}
 ): string {
   const {
     issuer = 'https://idp.example.com',
     statusCode = 'urn:oasis:names:tc:SAML:2.0:status:Success',
     inResponseTo = '_request_123',
+    includeSignature = true,
   } = options;
+  const responseId = `_response_${Date.now()}`;
+  const signature = includeSignature
+    ? `<ds:Signature xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+    <ds:SignedInfo><ds:Reference URI="#${responseId}"/></ds:SignedInfo>
+    <ds:SignatureValue>test-signature</ds:SignatureValue>
+  </ds:Signature>`
+    : '';
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <samlp:LogoutResponse xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
   xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
-  ID="_response_${Date.now()}"
+  ID="${responseId}"
   Version="2.0"
   IssueInstant="${new Date().toISOString()}"
   InResponseTo="${inResponseTo}">
   <saml:Issuer>${issuer}</saml:Issuer>
+  ${signature}
   <samlp:Status>
     <samlp:StatusCode Value="${statusCode}"/>
   </samlp:Status>
@@ -511,7 +540,7 @@ function createMockLogoutResponse(
 
 describe('SAML Integration', () => {
   let app: Hono;
-  let mockEnv: Partial<Env>;
+  let mockEnv: SamlTestEnv;
   let mockUsers: Map<string, any>;
   let mockChallengeStore: Map<string, any>;
   let mockNonceStore: Map<string, string>;
@@ -527,6 +556,7 @@ describe('SAML Integration', () => {
     });
     mockRuntimeUsersById.clear();
     mockRuntimeUsersByEmail.clear();
+    mockProvisionedAccounts.clear();
     mockRuntimeSyncUser.mockReset();
     mockRuntimeDeleteUser.mockReset();
     mockCreateAuditLog.mockReset().mockResolvedValue(undefined);
@@ -608,23 +638,62 @@ describe('SAML Integration', () => {
         return null;
       }
     );
-    mockResolveUserStoreRuntimeSourcesFromEnv.mockImplementation(async (env: Partial<Env>) => ({
-      storageProfile: {
-        id: 'builtin:storage:standard',
-        kind: 'storage',
-        label: 'Standard D1 Split',
-        slices: {},
-      },
-      coreDb: env.DB,
-      piiDb: env.DB_PII ?? null,
-    }));
+    mockResolveAccountDataContextByIdentifier
+      .mockReset()
+      .mockImplementation(async (env: SamlTestEnv, input: Record<string, any>) => {
+        let routed: { accountId: string; userId: string } | undefined;
+        if (input.indexKind === 'email_exact') {
+          const user = mockRuntimeUsersByEmail.get(String(input.identifier).toLowerCase());
+          if (user) {
+            routed = { accountId: `account:${user.id}`, userId: user.id };
+          }
+        } else if (input.indexKind === 'external_subject') {
+          const identifier = input.identifier as { issuer: string; subject: string };
+          routed = mockProvisionedAccounts.get(`${identifier.issuer}\u0000${identifier.subject}`);
+        }
+        if (!routed) {
+          throw new Error('account_data_route_not_found');
+        }
+        return {
+          accountId: routed.accountId,
+          legacyUserId: routed.userId,
+          coreDb: env.TDB_TEST_CORE,
+          piiDb: env.TDB_TEST_PII,
+        };
+      });
+    mockProvisionAuthAccount.mockReset().mockImplementation(async (input: Record<string, any>) => {
+      const accountId = `account:${input.candidateUserId}`;
+      const externalSubject = input.externalSubject as { issuer: string; subject: string };
+      mockProvisionedAccounts.set(`${externalSubject.issuer}\u0000${externalSubject.subject}`, {
+        accountId,
+        userId: input.candidateUserId,
+      });
+      return {
+        status: 201,
+        operationId: input.operationId,
+        accountId,
+        userId: input.candidateUserId,
+      };
+    });
+    mockPublishExternalIdpRoute
+      .mockReset()
+      .mockImplementation(async (input: Record<string, any>) => ({
+        status: 201,
+        operationId: input.operationId,
+        accountId: input.accountId,
+      }));
 
     // Mock environment
     mockEnv = {
       ISSUER_URL: 'https://auth.example.com',
       DEFAULT_TENANT_ID: 'default',
       UI_URL: 'https://ui.example.com',
-      DB: {
+      SAML_STRICT_INRESPONSETO: 'false',
+      SAML_ACCOUNT_PROVISIONER: {
+        provisionAuthAccount: mockProvisionAuthAccount,
+        publishExternalIdpRoute: mockPublishExternalIdpRoute,
+      } as any,
+      TDB_TEST_CORE: {
         prepare: vi.fn().mockImplementation((sql: string) => ({
           bind: vi.fn().mockReturnThis(),
           first: vi.fn().mockImplementation(async () => {
@@ -637,10 +706,17 @@ describe('SAML Integration', () => {
           run: vi.fn().mockResolvedValue({ success: true }),
         })),
       } as any,
-      DB_PII: {
+      TDB_TEST_PII: {
         prepare: vi.fn().mockImplementation((sql: string) => ({
           bind: vi.fn().mockReturnThis(),
           first: vi.fn().mockImplementation(async () => {
+            if (sql.includes('FROM linked_identities')) {
+              return {
+                id: 'linked-identity-001',
+                user_id: 'user-001',
+                provider_user_id: 'saml-user@example.com',
+              };
+            }
             // PII/Non-PII separation: users_pii (PII)
             if (sql.includes('SELECT id FROM users_pii WHERE')) {
               return { id: 'user-001' };
@@ -696,6 +772,7 @@ describe('SAML Integration', () => {
         }),
       } as any,
     };
+    mockEnv.DB_ADMIN = mockEnv.TDB_TEST_CORE as Env['DB_ADMIN'];
 
     // Create Hono app
     app = new Hono();
@@ -739,6 +816,10 @@ describe('SAML Integration', () => {
     if (relayState) {
       formData.append('RelayState', relayState);
     }
+    const inResponseTo = atob(samlResponse).match(/\bInResponseTo="(_[0-9a-f]{32})"/)?.[1];
+    const browserBindingCookie = inResponseTo
+      ? buildSAMLRequestBindingCookie(inResponseTo)
+      : undefined;
 
     // Create minimal Hono-like context with all required properties
     const context = {
@@ -746,9 +827,11 @@ describe('SAML Integration', () => {
       req: {
         url: 'https://auth.example.com/saml/sp/acs',
         formData: async () => formData,
-        header: vi.fn((name: string) =>
-          name === 'X-Tenant-Id' ? options.headerTenantId : undefined
-        ),
+        header: vi.fn((name: string) => {
+          if (name === 'X-Tenant-Id') return options.headerTenantId;
+          if (name.toLowerCase() === 'cookie') return browserBindingCookie;
+          return undefined;
+        }),
       },
       json: (data: unknown, status: number) => new Response(JSON.stringify(data), { status }),
       get: vi.fn((key: string) =>
@@ -989,6 +1072,7 @@ describe('SAML Integration', () => {
     });
 
     it('should reject strict InResponseTo when the stored request is only present in another tenant', async () => {
+      const requestId = `_${'a'.repeat(32)}`;
       const tenantBStoreFetch = vi.fn().mockResolvedValue(new Response('OK', { status: 200 }));
       const tenantAStoreFetch = vi
         .fn()
@@ -1006,7 +1090,7 @@ describe('SAML Integration', () => {
 
       const res = await callACSDirectly(
         createMockSAMLResponse({
-          inResponseTo: '_tenant_b_request',
+          inResponseTo: requestId,
         }),
         undefined,
         { tenantId: 'tenant-a' }
@@ -1018,13 +1102,14 @@ describe('SAML Integration', () => {
       );
       expect(idFromName).not.toHaveBeenCalledWith(expect.stringContaining('tenant:tenant-b:'));
       expect(tenantAStoreFetch).toHaveBeenCalledWith(
-        'https://saml-request-store/consume/_tenant_b_request',
+        `https://saml-request-store/consume/${requestId}`,
         { method: 'POST' }
       );
       expect(tenantBStoreFetch).not.toHaveBeenCalled();
     });
 
     it('should reject strict InResponseTo when tenant-a has the request but tenant-b context does not', async () => {
+      const requestId = `_${'b'.repeat(32)}`;
       const tenantAStoreFetch = vi.fn().mockResolvedValue(new Response('OK', { status: 200 }));
       const tenantBStoreFetch = vi
         .fn()
@@ -1042,7 +1127,7 @@ describe('SAML Integration', () => {
 
       const res = await callACSDirectly(
         createMockSAMLResponse({
-          inResponseTo: '_shared_request',
+          inResponseTo: requestId,
         }),
         undefined,
         { tenantId: 'tenant-b' }
@@ -1054,7 +1139,7 @@ describe('SAML Integration', () => {
       );
       expect(idFromName).not.toHaveBeenCalledWith(expect.stringContaining('tenant:tenant-a:'));
       expect(tenantBStoreFetch).toHaveBeenCalledWith(
-        'https://saml-request-store/consume/_shared_request',
+        `https://saml-request-store/consume/${requestId}`,
         { method: 'POST' }
       );
       expect(tenantAStoreFetch).not.toHaveBeenCalled();
@@ -1155,6 +1240,19 @@ describe('SAML Integration', () => {
       );
     });
 
+    it('should include the configured Login UI client ID in the handoff artifact', async () => {
+      mockEnv.LOGIN_UI_CLIENT_ID = 'login-ui-client';
+
+      const res = await callACSDirectly(createMockSAMLResponse(), 'https://ui.example.com/');
+      const handoffLocation = new URL(res.headers.get('Location')!);
+      const token = handoffLocation.searchParams.get('handoff_token');
+
+      expect(res.status).toBe(302);
+      expect(mockChallengeStore.get(`handoff:${token}`).metadata).toEqual(
+        expect.objectContaining({ client_id: 'login-ui-client' })
+      );
+    });
+
     it('should reject JIT provisioning when required custom claims are missing', async () => {
       mockValidateCustomClaimWrite.mockResolvedValueOnce({
         ok: false,
@@ -1168,7 +1266,7 @@ describe('SAML Integration', () => {
         ],
       });
 
-      mockEnv.DB_PII = {
+      mockEnv.TDB_TEST_PII = {
         prepare: vi.fn().mockImplementation((sql: string) => ({
           bind: vi.fn().mockReturnThis(),
           first: vi.fn().mockImplementation(async () => {
@@ -1180,10 +1278,6 @@ describe('SAML Integration', () => {
           run: vi.fn().mockResolvedValue({ success: true }),
         })),
       } as any;
-      mockResolveRuntimeIdentityMappingBinding.mockResolvedValueOnce(
-        createTestSAMLInboundNoEmailMappingBinding()
-      );
-
       const res = await callACSDirectly(
         createMockSAMLResponse({
           nameId: 'new-user@example.com',
@@ -1225,7 +1319,7 @@ describe('SAML Integration', () => {
         },
       });
 
-      mockEnv.DB_PII = {
+      mockEnv.TDB_TEST_PII = {
         prepare: vi.fn().mockImplementation((sql: string) => ({
           bind: vi.fn().mockReturnThis(),
           first: vi.fn().mockImplementation(async () => {
@@ -1258,7 +1352,7 @@ describe('SAML Integration', () => {
     });
 
     it('should reject JIT provisioning without email unless synthetic email fallback is enabled', async () => {
-      mockEnv.DB_PII = {
+      mockEnv.TDB_TEST_PII = {
         prepare: vi.fn().mockImplementation((sql: string) => ({
           bind: vi.fn().mockReturnThis(),
           first: vi.fn().mockImplementation(async () => {
@@ -1302,7 +1396,7 @@ describe('SAML Integration', () => {
       mockResolveRuntimeIdentityMappingBinding.mockResolvedValueOnce(
         createTestSAMLInboundNoEmailMappingBinding()
       );
-      mockEnv.DB_PII = {
+      mockEnv.TDB_TEST_PII = {
         prepare: vi.fn().mockImplementation((sql: string) => ({
           bind: vi.fn().mockReturnThis(),
           first: vi.fn().mockImplementation(async () => {
@@ -1342,19 +1436,6 @@ describe('SAML Integration', () => {
       mockResolveRuntimeIdentityMappingBinding.mockResolvedValueOnce(
         createTestSAMLInboundNoEmailMappingBinding()
       );
-      const coreAdapter = createMockAdapter();
-      const piiAdapter = createMockAdapter();
-      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
-        storageProfile: {
-          id: 'builtin:storage:standard',
-          kind: 'storage',
-          label: 'Standard D1 Split',
-          slices: {},
-        },
-        coreDb: coreAdapter,
-        piiDb: piiAdapter,
-      });
-
       const res = await callACSDirectly(
         createMockSAMLResponse({
           nameId: 'person@example.com',
@@ -1363,17 +1444,21 @@ describe('SAML Integration', () => {
       );
 
       expect(res.status).toBe(302);
-      const syncUserInput = mockRuntimeSyncUser.mock.calls.find(
-        ([input]) => input.sourceRef === 'saml:https://idp.example.com'
-      )?.[0];
-      expect(syncUserInput).toEqual(
+      const provisioningInput = mockProvisionAuthAccount.mock.calls[0]?.[0];
+      expect(provisioningInput).toEqual(
         expect.objectContaining({
+          flow: 'saml',
           email: expect.stringMatching(/^saml-[0-9a-f]{32}@saml\.local$/),
-          emailVerified: true,
+          runtimeUser: expect.objectContaining({
+            emailVerified: true,
+            sensitiveValues: expect.objectContaining({
+              email: expect.stringMatching(/^saml-[0-9a-f]{32}@saml\.local$/),
+            }),
+          }),
         })
       );
-      expect(syncUserInput.email).not.toContain('person');
-      expect(syncUserInput.email).not.toContain('example.com');
+      expect(provisioningInput.email).not.toContain('person');
+      expect(provisioningInput.email).not.toContain('example.com');
     });
 
     it('should resolve existing SAML linked identity before email or JIT provisioning', async () => {
@@ -1404,13 +1489,7 @@ describe('SAML Integration', () => {
           return null;
         },
       });
-      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
-        storageProfile: {
-          id: 'builtin:storage:standard',
-          kind: 'storage',
-          label: 'Standard D1 Split',
-          slices: {},
-        },
+      mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
         coreDb: coreAdapter,
         piiDb: piiAdapter,
       });
@@ -1464,13 +1543,7 @@ describe('SAML Integration', () => {
           return null;
         },
       });
-      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
-        storageProfile: {
-          id: 'builtin:storage:standard',
-          kind: 'storage',
-          label: 'Standard D1 Split',
-          slices: {},
-        },
+      mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
         coreDb: coreAdapter,
         piiDb: piiAdapter,
       });
@@ -1530,13 +1603,7 @@ describe('SAML Integration', () => {
           return null;
         },
       });
-      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
-        storageProfile: {
-          id: 'builtin:storage:standard',
-          kind: 'storage',
-          label: 'Standard D1 Split',
-          slices: {},
-        },
+      mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
         coreDb: coreAdapter,
         piiDb: piiAdapter,
       });
@@ -1597,13 +1664,7 @@ describe('SAML Integration', () => {
           return null;
         },
       });
-      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
-        storageProfile: {
-          id: 'builtin:storage:standard',
-          kind: 'storage',
-          label: 'Standard D1 Split',
-          slices: {},
-        },
+      mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
         coreDb: coreAdapter,
         piiDb: piiAdapter,
       });
@@ -1660,13 +1721,7 @@ describe('SAML Integration', () => {
           return null;
         },
       });
-      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
-        storageProfile: {
-          id: 'builtin:storage:standard',
-          kind: 'storage',
-          label: 'Standard D1 Split',
-          slices: {},
-        },
+      mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
         coreDb: coreAdapter,
         piiDb: piiAdapter,
       });
@@ -1728,13 +1783,7 @@ describe('SAML Integration', () => {
           return null;
         },
       });
-      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
-        storageProfile: {
-          id: 'builtin:storage:standard',
-          kind: 'storage',
-          label: 'Standard D1 Split',
-          slices: {},
-        },
+      mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
         coreDb: coreAdapter,
         piiDb: piiAdapter,
       });
@@ -1799,13 +1848,7 @@ describe('SAML Integration', () => {
           return { rowsAffected: 1, insertId: undefined };
         },
       });
-      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
-        storageProfile: {
-          id: 'builtin:storage:standard',
-          kind: 'storage',
-          label: 'Standard D1 Split',
-          slices: {},
-        },
+      mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
         coreDb: coreAdapter,
         piiDb: piiAdapter,
       });
@@ -1822,20 +1865,8 @@ describe('SAML Integration', () => {
       expect(lookupCount).toBe(2);
     });
 
-    it('should clean up JIT-created rows when lifecycle sync fails', async () => {
+    it('should not directly delete a Control Plane account when lifecycle sync fails', async () => {
       mockSyncUserLifecycleState.mockRejectedValueOnce(new Error('lifecycle sync failed'));
-      const coreAdapter = createMockAdapter();
-      const piiAdapter = createMockAdapter();
-      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
-        storageProfile: {
-          id: 'builtin:storage:standard',
-          kind: 'storage',
-          label: 'Standard D1 Split',
-          slices: {},
-        },
-        coreDb: coreAdapter,
-        piiDb: piiAdapter,
-      });
 
       const res = await callACSDirectly(
         createMockSAMLResponse({
@@ -1846,20 +1877,13 @@ describe('SAML Integration', () => {
       );
 
       expect(res.status).toBe(500);
-      expect(mockRuntimeSyncUser).toHaveBeenCalledWith(
+      expect(mockProvisionAuthAccount).toHaveBeenCalledWith(
         expect.objectContaining({
           email: 'sync-fail@example.com',
-          sourceRef: 'saml:https://idp.example.com',
+          flow: 'saml',
         })
       );
-      expect(mockRuntimeDeleteUser).toHaveBeenCalledWith(expect.any(String));
-      expect(mockRuntimeDeleteUser.mock.calls[0]?.[0]).toBe(
-        mockRuntimeSyncUser.mock.calls[0]?.[0]?.userId
-      );
-      expect(piiAdapter.execute).not.toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO linked_identities'),
-        expect.anything()
-      );
+      expect(mockRuntimeDeleteUser).not.toHaveBeenCalled();
     });
 
     it('should reject new SAML users when JIT and linking are disabled for the IdP', async () => {
@@ -1874,19 +1898,6 @@ describe('SAML Integration', () => {
           name: 'displayName',
         },
       });
-      const coreAdapter = createMockAdapter();
-      const piiAdapter = createMockAdapter();
-      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
-        storageProfile: {
-          id: 'builtin:storage:standard',
-          kind: 'storage',
-          label: 'Standard D1 Split',
-          slices: {},
-        },
-        coreDb: coreAdapter,
-        piiDb: piiAdapter,
-      });
-
       const res = await callACSDirectly(
         createMockSAMLResponse({
           nameId: 'persistent-subject-disabled',
@@ -1897,10 +1908,7 @@ describe('SAML Integration', () => {
 
       expect(res.status).toBe(400);
       expect(mockValidateCustomClaimWrite).not.toHaveBeenCalled();
-      expect(coreAdapter.execute).not.toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO users_core'),
-        expect.anything()
-      );
+      expect(mockProvisionAuthAccount).not.toHaveBeenCalled();
     });
 
     it('should fail closed when stored IdP JIT linking policy is invalid', async () => {
@@ -1917,13 +1925,7 @@ describe('SAML Integration', () => {
       } as any);
       const coreAdapter = createMockAdapter();
       const piiAdapter = createMockAdapter();
-      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
-        storageProfile: {
-          id: 'builtin:storage:standard',
-          kind: 'storage',
-          label: 'Standard D1 Split',
-          slices: {},
-        },
+      mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
         coreDb: coreAdapter,
         piiDb: piiAdapter,
       });
@@ -1959,18 +1961,6 @@ describe('SAML Integration', () => {
     it('should create a SAML linked identity for newly JIT-provisioned users', async () => {
       const nameIdFormat = 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent';
       const providerUserKey = `saml:${encodeURIComponent(nameIdFormat)}:${encodeURIComponent('persistent-subject-new')}`;
-      const coreAdapter = createMockAdapter();
-      const piiAdapter = createMockAdapter();
-      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
-        storageProfile: {
-          id: 'builtin:storage:standard',
-          kind: 'storage',
-          label: 'Standard D1 Split',
-          slices: {},
-        },
-        coreDb: coreAdapter,
-        piiDb: piiAdapter,
-      });
 
       const res = await callACSDirectly(
         createMockSAMLResponse({
@@ -1981,21 +1971,22 @@ describe('SAML Integration', () => {
       );
 
       expect(res.status).toBe(302);
-      expect(mockRuntimeSyncUser).toHaveBeenCalledWith(
+      expect(mockProvisionAuthAccount).toHaveBeenCalledWith(
         expect.objectContaining({
           email: 'new-user@example.com',
-          emailVerified: true,
-          sourceRef: 'saml:https://idp.example.com',
+          flow: 'saml',
+          runtimeUser: expect.objectContaining({
+            emailVerified: true,
+            sourceRef: 'auth:saml',
+          }),
         })
       );
-      expect(piiAdapter.execute).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO linked_identities'),
-        expect.arrayContaining([
-          'default',
-          'https://idp.example.com',
-          providerUserKey,
-          'new-user@example.com',
-        ])
+      expect(mockPublishExternalIdpRoute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          tenantId: 'default',
+          providerId: 'https://idp.example.com',
+          providerUserId: providerUserKey,
+        })
       );
       expect(mockSyncUserLifecycleState).toHaveBeenCalled();
     });
@@ -2278,7 +2269,7 @@ describe('SAML Integration', () => {
       expect(html).toContain('form');
     });
 
-    it('should resolve user lookup from runtime storage sources when DB_PII is unset', async () => {
+    it('should resolve user lookup from the account route without a static PII binding', async () => {
       const runtimePiiAdapter = createMockAdapter({
         queryOne: (sql, params) => {
           if (sql.includes('SELECT id FROM users_pii WHERE tenant_id = ? AND email = ?')) {
@@ -2289,15 +2280,9 @@ describe('SAML Integration', () => {
         },
       });
 
-      mockEnv.DB_PII = undefined as any;
-      mockResolveUserStoreRuntimeSourcesFromEnv.mockResolvedValueOnce({
-        storageProfile: {
-          id: 'builtin:storage:single-db',
-          kind: 'storage',
-          label: 'Single DB',
-          slices: {},
-        },
-        coreDb: mockEnv.DB,
+      mockEnv.TDB_TEST_PII = undefined;
+      mockResolveAccountDataContextByIdentifier.mockResolvedValueOnce({
+        coreDb: mockEnv.TDB_TEST_CORE,
         piiDb: runtimePiiAdapter,
       });
 
@@ -2312,7 +2297,10 @@ describe('SAML Integration', () => {
       const res = await app.fetch(req);
 
       expect(res.status).toBe(200);
-      expect(mockResolveUserStoreRuntimeSourcesFromEnv).toHaveBeenCalledWith(mockEnv, 'default');
+      expect(mockResolveAccountDataContextByIdentifier).toHaveBeenCalledWith(
+        mockEnv,
+        expect.objectContaining({ tenantId: 'default', indexKind: 'email_exact' })
+      );
       expect(runtimePiiAdapter.queryOne).toHaveBeenCalled();
     });
 
@@ -2379,15 +2367,18 @@ describe('SAML Integration', () => {
         put: vi.fn(),
       } as unknown as Env['STATE_STORE'];
 
-      await expect(
-        callIdPSLODirectly(
-          createMockLogoutResponse({
-            issuer: 'https://sp.example.com/saml',
-            inResponseTo: requestId,
-          }),
-          { tenantId: 'tenant-b' }
-        )
-      ).rejects.toThrow('LogoutResponse InResponseTo does not match an outbound LogoutRequest');
+      const response = await callIdPSLODirectly(
+        createMockLogoutResponse({
+          issuer: 'https://sp.example.com/saml',
+          inResponseTo: requestId,
+        }),
+        { tenantId: 'tenant-b' }
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({
+        error: 'invalid_request',
+        error_code: 'AR130003',
+      });
       expect(stateStoreGet).toHaveBeenCalledWith(tenantBKey);
       expect(stateStoreGet).not.toHaveBeenCalledWith(tenantAKey);
       expect(stateStoreDelete).not.toHaveBeenCalled();

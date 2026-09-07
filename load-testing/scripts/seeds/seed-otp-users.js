@@ -8,7 +8,7 @@
  *
  * Environment variables:
  *   BASE_URL           Target Authrim Worker URL (default: https://your-authrim.example.com)
- *   ADMIN_API_SECRET   Admin API secret (required)
+ *   ADMIN_MACHINE_ACCESS_TOKEN   Admin Machine Access token (required)
  *   TENANT_ID          Tenant ID for admin API requests (optional)
  *   OTP_USER_COUNT     Number of users to generate (default: 500)
  *   CONCURRENCY        Parallel requests (default: 20)
@@ -17,7 +17,7 @@
  *
  * Usage:
  *   BASE_URL=https://your-authrim.example.com \
- *   ADMIN_API_SECRET=xxx \
+ *   ADMIN_MACHINE_ACCESS_TOKEN=xxx \
  *   OTP_USER_COUNT=1000 \
  *   node scripts/seed-otp-users.js
  *
@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 
 // Environment variables
 const BASE_URL = process.env.BASE_URL || '';
-const ADMIN_API_SECRET = process.env.ADMIN_API_SECRET || '';
+const ADMIN_MACHINE_ACCESS_TOKEN = process.env.ADMIN_MACHINE_ACCESS_TOKEN || '';
 const TENANT_ID = process.env.TENANT_ID || '';
 const OTP_USER_COUNT = Number.parseInt(process.env.OTP_USER_COUNT || '500', 10);
 const CONCURRENCY = Number.parseInt(process.env.CONCURRENCY || '20', 10);
@@ -45,13 +45,13 @@ const OUTPUT_DIR = process.env.OUTPUT_DIR || path.join(SCRIPT_DIR, '..', 'seeds'
 const REQUEST_TIMEOUT = 15000;
 const MAX_RETRIES = 3;
 
-if (!ADMIN_API_SECRET) {
-  console.error('❌ ADMIN_API_SECRET is required. Set environment variable.');
+if (!ADMIN_MACHINE_ACCESS_TOKEN) {
+  console.error('❌ ADMIN_MACHINE_ACCESS_TOKEN is required. Set environment variable.');
   process.exit(1);
 }
 
 const adminAuthHeader = {
-  Authorization: `Bearer ${ADMIN_API_SECRET}`,
+  Authorization: `Bearer ${ADMIN_MACHINE_ACCESS_TOKEN}`,
   ...(TENANT_ID ? { 'X-Tenant-Id': TENANT_ID } : {}),
 };
 
@@ -154,13 +154,13 @@ async function createUsersBatch(startIndex, batchSize) {
  * Main process
  */
 async function main() {
-  console.log("🚀 OTP User Seed Generator");
+  console.log('🚀 OTP User Seed Generator');
   console.log(`   BASE_URL       : ${BASE_URL}`);
   console.log(`   OTP_USER_COUNT : ${OTP_USER_COUNT}`);
   console.log(`   CONCURRENCY    : ${CONCURRENCY}`);
   console.log(`   USER_PREFIX    : ${USER_PREFIX}`);
   console.log(`   OUTPUT_DIR     : ${OUTPUT_DIR}`);
-  console.log("");
+  console.log('');
 
   const users = [];
   let createdCount = 0;
@@ -171,7 +171,7 @@ async function main() {
   const totalBatches = Math.ceil(OTP_USER_COUNT / CONCURRENCY);
 
   console.log(`📋 Creating ${OTP_USER_COUNT} users in ${totalBatches} batches...`);
-  console.log("");
+  console.log('');
 
   for (let batch = 0; batch < totalBatches; batch++) {
     const startIndex = batch * CONCURRENCY;
@@ -206,8 +206,8 @@ async function main() {
   }
 
   const totalTime = (Date.now() - startTime) / 1000;
-  console.log("");
-  console.log("✅ Seed generation complete:");
+  console.log('');
+  console.log('✅ Seed generation complete:');
   console.log(`   Total users: ${users.length}`);
   console.log(`   New created: ${createdCount}`);
   console.log(`   Already existing: ${existingCount}`);
@@ -216,7 +216,7 @@ async function main() {
   console.log(`   Rate: ${(users.length / totalTime).toFixed(1)} users/sec`);
 
   if (users.length === 0) {
-    console.error("❌ No users created. Aborting.");
+    console.error('❌ No users created. Aborting.');
     process.exit(1);
   }
 
@@ -235,11 +235,11 @@ async function main() {
   fs.writeFileSync(txtPath, users.map((u) => u.email).join('\n') + '\n');
   console.log(`📁 Saved email list to ${txtPath}`);
 
-  console.log("");
-  console.log("💡 Usage with k6 benchmark:");
-  console.log("   k6 run -e USER_LIST_PATH=../seeds/otp_user_list.txt \\");
-  console.log("     -e PRESET=rps30 \\");
-  console.log("     scripts/test-mail-otp-full-login-benchmark.js");
+  console.log('');
+  console.log('💡 Usage with k6 benchmark:');
+  console.log('   k6 run -e USER_LIST_PATH=../seeds/otp_user_list.txt \\');
+  console.log('     -e PRESET=rps30 \\');
+  console.log('     scripts/test-mail-otp-full-login-benchmark.js');
 }
 
 main().catch((err) => {

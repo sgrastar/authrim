@@ -83,6 +83,7 @@ packages/setup/.tmp-tests/
 
 # Cryptographic keys and certificates (NEVER commit these!)
 .keys/
+/keys/
 .authrim-keys/
 *.pem
 *.key
@@ -140,4 +141,3 @@ load-testing/seeds/
 
 # Wrangler/Miniflare remote storage cache
 remote/
-AGENTS.md

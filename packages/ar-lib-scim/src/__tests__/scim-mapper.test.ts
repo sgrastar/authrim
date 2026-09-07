@@ -5,7 +5,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   userToScim,
-  scimToUser,
   groupToScim,
   scimToGroup,
   generateEtag,
@@ -13,6 +12,7 @@ import {
   applyPatchOperations,
   validateScimUser,
   validateScimGroup,
+  validateScimPatchOp,
   type InternalUser,
   type InternalGroup,
 } from '../utils/scim-mapper';
@@ -65,6 +65,38 @@ describe('SCIM Mapper', () => {
 
       expect(scimUser.phoneNumbers).toHaveLength(1);
       expect(scimUser.phoneNumbers?.[0].value).toBe('+1234567890');
+    });
+
+    it('should include supplied group references when requested', () => {
+      const internalUser: InternalUser = {
+        id: 'user-123',
+        email: 'john@example.com',
+        email_verified: 1,
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-02T00:00:00Z',
+      };
+
+      const scimUser = userToScim(internalUser, {
+        baseUrl,
+        includeGroups: true,
+        groups: [
+          {
+            value: 'role-123',
+            $ref: `${baseUrl}/scim/v2/Groups/role-123`,
+            display: 'Administrators',
+            type: 'direct',
+          },
+        ],
+      });
+
+      expect(scimUser.groups).toEqual([
+        {
+          value: 'role-123',
+          $ref: `${baseUrl}/scim/v2/Groups/role-123`,
+          display: 'Administrators',
+          type: 'direct',
+        },
+      ]);
     });
 
     it('should parse address JSON', () => {
@@ -126,107 +158,6 @@ describe('SCIM Mapper', () => {
 
       expect(scimUser.meta.version).toBeDefined();
       expect(scimUser.meta.version).toMatch(/^W\//);
-    });
-  });
-
-  describe('scimToUser', () => {
-    it('should convert SCIM user to internal format', () => {
-      const scimUser: Partial<ScimUser> = {
-        userName: 'johndoe',
-        name: {
-          givenName: 'John',
-          familyName: 'Doe',
-        },
-        emails: [
-          {
-            value: 'john@example.com',
-            primary: true,
-          },
-        ],
-        active: true,
-      };
-
-      const internalUser = scimToUser(scimUser);
-
-      expect(internalUser.preferred_username).toBe('johndoe');
-      expect(internalUser.given_name).toBe('John');
-      expect(internalUser.family_name).toBe('Doe');
-      expect(internalUser.email).toBe('john@example.com');
-      expect(internalUser.active).toBe(1);
-    });
-
-    it('should extract primary email', () => {
-      const scimUser: Partial<ScimUser> = {
-        userName: 'johndoe',
-        emails: [
-          {
-            value: 'john.work@example.com',
-            type: 'work',
-            primary: false,
-          },
-          {
-            value: 'john@example.com',
-            type: 'home',
-            primary: true,
-          },
-        ],
-      };
-
-      const internalUser = scimToUser(scimUser);
-
-      expect(internalUser.email).toBe('john@example.com');
-    });
-
-    it('should convert address', () => {
-      const scimUser: Partial<ScimUser> = {
-        userName: 'johndoe',
-        addresses: [
-          {
-            streetAddress: '123 Main St',
-            locality: 'Springfield',
-            region: 'IL',
-            postalCode: '62701',
-            country: 'US',
-            primary: true,
-          },
-        ],
-      };
-
-      const internalUser = scimToUser(scimUser);
-
-      expect(internalUser.address_json).toBeDefined();
-      const address = JSON.parse(internalUser.address_json!);
-      expect(address.street_address).toBe('123 Main St');
-      expect(address.locality).toBe('Springfield');
-    });
-
-    it('should handle enterprise extension', () => {
-      const scimUser: Partial<ScimUser> = {
-        userName: 'johndoe',
-        'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User': {
-          employeeNumber: 'EMP-123',
-          department: 'Engineering',
-          organization: 'Acme Corp',
-        },
-      };
-
-      const internalUser = scimToUser(scimUser);
-
-      expect(internalUser.custom_attributes_json).toBeDefined();
-      const customAttrs = JSON.parse(internalUser.custom_attributes_json!);
-      expect(customAttrs.employeeNumber).toBe('EMP-123');
-      expect(customAttrs.department).toBe('Engineering');
-    });
-
-    it('should not map SCIM password to an internal password hash', () => {
-      const scimUser: Partial<ScimUser> = {
-        userName: 'johndoe',
-        password: 'not-stored',
-      };
-
-      const internalUser = scimToUser(scimUser);
-
-      expect(internalUser.password_hash).toBeUndefined();
     });
   });
 
@@ -360,6 +291,26 @@ describe('SCIM Mapper', () => {
       expect(result.email).toBe('new@example.com');
     });
 
+    it('should apply patch operation names case-insensitively', () => {
+      const resource = { displayName: 'Before', active: true };
+      const operations = [
+        {
+          op: 'Replace' as unknown as 'replace',
+          path: 'displayName',
+          value: 'After',
+        },
+        {
+          op: 'REPLACE' as unknown as 'replace',
+          path: 'active',
+          value: false,
+        },
+      ];
+
+      const result = applyPatchOperations(resource, operations);
+
+      expect(result).toMatchObject({ displayName: 'After', active: false });
+    });
+
     it('should apply remove operation', () => {
       const resource = { name: 'John', email: 'john@example.com' };
       const operations = [
@@ -471,18 +422,18 @@ describe('SCIM Mapper', () => {
       expect(result.errors).toContain('userName is required');
     });
 
-    it('should fail if emails is missing', () => {
+    it('should allow emails to be omitted because they are not SCIM-required', () => {
       const user: Partial<ScimUser> = {
         userName: 'johndoe',
       };
 
       const result = validateScimUser(user);
 
-      expect(result.valid).toBe(false);
-      expect(result.errors).toContain('At least one email is required');
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
     });
 
-    it('should fail if emails is empty array', () => {
+    it('should allow an empty emails array', () => {
       const user: Partial<ScimUser> = {
         userName: 'johndoe',
         emails: [],
@@ -490,8 +441,40 @@ describe('SCIM Mapper', () => {
 
       const result = validateScimUser(user);
 
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it.each([
+      [{ userName: '   ' }, 'userName is required'],
+      [{ userName: 'valid', emails: 'wrong-shape' }, 'emails must be an array'],
+      [{ userName: 'valid', emails: [{ value: 'not-an-email' }] }, 'emails[0].value is invalid'],
+    ])('rejects malformed user values', (user, error) => {
+      const result = validateScimUser(user as Partial<ScimUser>);
+
       expect(result.valid).toBe(false);
-      expect(result.errors).toContain('At least one email is required');
+      expect(result.errors).toContain(error);
+    });
+  });
+
+  describe('validateScimPatchOp', () => {
+    it('accepts RFC 7644 patch operations case-insensitively', () => {
+      expect(
+        validateScimPatchOp({
+          schemas: [SCIM_SCHEMAS.PATCH_OP],
+          Operations: [{ op: 'Replace', path: 'active', value: false }],
+        })
+      ).toEqual({ valid: true, errors: [] });
+    });
+
+    it.each([
+      { schemas: [SCIM_SCHEMAS.PATCH_OP] },
+      {
+        schemas: [SCIM_SCHEMAS.PATCH_OP],
+        Operations: [{ op: 'move', path: 'active', value: true }],
+      },
+    ])('rejects incomplete or unsupported patch requests', (patch) => {
+      expect(validateScimPatchOp(patch).valid).toBe(false);
     });
   });
 

@@ -50,6 +50,8 @@ interface ExportQuery {
   endDate?: string;
   /** Session IDs (comma-separated) */
   sessionIds?: string;
+  /** Authentication flow IDs (comma-separated) */
+  flowIds?: string;
   /** Categories (comma-separated) */
   categories?: string;
   /** Output format */
@@ -65,13 +67,26 @@ interface ExportQuery {
 /**
  * Parse client IDs from query
  */
-function parseClientIds(value?: string): string[] | undefined {
+function parseCsvFilter(
+  value: string | undefined,
+  field: string,
+  options: { maxItems?: number; maxItemLength?: number } = {}
+): string[] | undefined {
   if (!value) return undefined;
+  const maxItems = options.maxItems ?? 100;
+  const maxItemLength = options.maxItemLength ?? 256;
   const ids = value
     .split(',')
     .map((id) => id.trim())
     .filter((id) => id.length > 0);
-  return ids.length > 0 ? Array.from(new Set(ids)) : undefined;
+  const unique = Array.from(new Set(ids));
+  if (unique.length > maxItems) {
+    throw new Error(`${field} must contain at most ${maxItems} values`);
+  }
+  if (unique.some((id) => id.length > maxItemLength)) {
+    throw new Error(`${field} contains a value longer than ${maxItemLength} characters`);
+  }
+  return unique.length > 0 ? unique : undefined;
 }
 
 /**
@@ -246,8 +261,53 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
 
   // Parse query parameters
   const tenantId = query.tenantId;
-  const clientIds = parseClientIds(query.clientIds ?? query.clientId);
+  if (tenantId.length > 128) {
+    return c.json({ error: 'invalid_tenant_id', message: 'tenantId is too long' }, 400);
+  }
+
+  let clientIds: string[] | undefined;
+  let sessionIds: string[] | undefined;
+  let flowIds: string[] | undefined;
+  let categories: string[] | undefined;
+  try {
+    clientIds = parseCsvFilter(query.clientIds ?? query.clientId, 'clientIds');
+    sessionIds = parseCsvFilter(query.sessionIds, 'sessionIds');
+    flowIds = parseCsvFilter(query.flowIds, 'flowIds', { maxItemLength: 128 });
+    categories = parseCsvFilter(query.categories, 'categories', {
+      maxItems: 8,
+      maxItemLength: 32,
+    });
+  } catch (error) {
+    return c.json(
+      {
+        error: 'invalid_filter',
+        message: error instanceof Error ? error.message : 'Invalid export filter',
+      },
+      400
+    );
+  }
+
+  const allowedCategories = new Set([
+    'http-request',
+    'http-response',
+    'token-validation',
+    'auth-decision',
+    'client-operation',
+  ]);
+  if (categories?.some((category) => !allowedCategories.has(category))) {
+    return c.json({ error: 'invalid_categories', message: 'Unknown log category' }, 400);
+  }
+
   const format = query.format || 'json';
+  if (format !== 'json' && format !== 'jsonl' && format !== 'text') {
+    return c.json({ error: 'invalid_format', message: 'Unknown export format' }, 400);
+  }
+  if (query.sortMode && !['session', 'category', 'timeline'].includes(query.sortMode)) {
+    return c.json({ error: 'invalid_sort_mode', message: 'Unknown sort mode' }, 400);
+  }
+  if (query.exportMode && !normalizeMode(query.exportMode)) {
+    return c.json({ error: 'invalid_export_mode', message: 'Unknown export privacy mode' }, 400);
+  }
   const includeStats = query.includeStats === 'true';
   const sortMode = query.sortMode;
   const exportMode = normalizeMode(query.exportMode);
@@ -281,14 +341,12 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
 
   const startDate = new Date(startTime || 0);
   const endDate = new Date(endTime || Date.now());
-
-  // Parse session IDs and categories
-  const sessionIds = query.sessionIds
-    ? query.sessionIds.split(',').map((s) => s.trim())
-    : undefined;
-  const categories = query.categories
-    ? query.categories.split(',').map((c) => c.trim())
-    : undefined;
+  if (startDate.getTime() > endDate.getTime()) {
+    return c.json(
+      { error: 'invalid_date_range', message: 'startDate must not be after endDate' },
+      400
+    );
+  }
 
   // Check R2 bucket binding
   const r2 = c.env.DIAGNOSTIC_LOGS;
@@ -334,7 +392,7 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
     try {
       const manager = createSettingsManager({
         env: c.env as unknown as Record<string, string | undefined>,
-        kv: c.env.AUTHRIM_CONFIG ?? null,
+        kv: c.env.SETTINGS ?? null,
         cacheTTL: 5000,
       });
       manager.registerCategory(DIAGNOSTIC_LOGGING_CATEGORY_META);
@@ -423,6 +481,7 @@ app.get('/', adminAuthMiddleware({ requirePermissions: ['admin:diagnostics:read'
     // Build export options
     const exportOptions: ExportOptions = {
       sessionIds,
+      flowIds,
       startTime,
       endTime,
       categories,

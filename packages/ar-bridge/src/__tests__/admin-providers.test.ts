@@ -290,6 +290,70 @@ describe('Admin Provider API', () => {
       });
     });
 
+    it('does not return Apple private keys in provider responses', async () => {
+      vi.mocked(providerStore.listAllProviders).mockResolvedValueOnce([
+        {
+          id: 'apple-provider',
+          name: 'Apple',
+          clientSecretEncrypted: 'encrypted-client-secret',
+          privateKeyJwkEncrypted: 'encrypted-request-object-key',
+          providerQuirks: {
+            teamId: 'TEAMID1234',
+            keyId: 'KEYID12345',
+            privateKeyEncrypted: 'encrypted-private-key',
+          },
+        },
+      ] as never);
+
+      const ctx = createMockContext('GET', '/external-idp/admin/providers', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+      });
+      await handleAdminListProviders(ctx as never);
+
+      const result = vi.mocked(ctx.json).mock.calls[0][0] as {
+        providers: Array<{
+          privateKeyJwkEncrypted?: string;
+          providerQuirks: Record<string, unknown>;
+          hasPrivateKey: boolean;
+          hasPrivateKeyJwk: boolean;
+        }>;
+      };
+      expect(result.providers[0]?.providerQuirks.privateKeyEncrypted).toBeUndefined();
+      expect(result.providers[0]?.hasPrivateKey).toBe(true);
+      expect(result.providers[0]?.privateKeyJwkEncrypted).toBeUndefined();
+      expect(result.providers[0]?.hasPrivateKeyJwk).toBe(true);
+    });
+
+    it('does not return FAPI2 private keys in provider responses', async () => {
+      vi.mocked(providerStore.listAllProviders).mockResolvedValueOnce([
+        {
+          id: 'fapi2-provider',
+          name: 'FAPI2 OP',
+          providerQuirks: {
+            fapi2: {
+              enabled: true,
+              clientAssertionPrivateJwkEncrypted: 'encrypted-client-assertion-key',
+              dpopPrivateJwkEncrypted: 'encrypted-dpop-key',
+            },
+          },
+        },
+      ] as never);
+
+      const ctx = createMockContext('GET', '/external-idp/admin/providers', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+      });
+      await handleAdminListProviders(ctx as never);
+
+      const result = vi.mocked(ctx.json).mock.calls[0][0] as {
+        providers: Array<{ providerQuirks: { fapi2: Record<string, unknown> } }>;
+      };
+      expect(result.providers[0]?.providerQuirks.fapi2).toEqual({
+        enabled: true,
+        hasClientAssertionKey: true,
+        hasDpopKey: true,
+      });
+    });
+
     it('should ignore tenant_id query parameter and use context tenant', async () => {
       vi.mocked(providerStore.listAllProviders).mockResolvedValueOnce([]);
 
@@ -400,6 +464,61 @@ describe('Admin Provider API', () => {
       );
     });
 
+    it('should keep Facebook template email auto-linking disabled by default', async () => {
+      vi.mocked(providerStore.createProvider).mockResolvedValueOnce({
+        id: 'facebook-provider-id',
+        name: 'Facebook',
+        providerType: 'oauth2',
+        clientSecretEncrypted: 'encrypted',
+      } as never);
+
+      const ctx = createMockContext('POST', '/external-idp/admin/providers', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        body: {
+          name: 'Facebook',
+          client_id: 'facebook-client-id',
+          client_secret: 'facebook-secret',
+          template: 'facebook',
+        },
+      });
+      await handleAdminCreateProvider(ctx as never);
+
+      expect(providerStore.createProvider).toHaveBeenCalledWith(
+        mockEnv,
+        expect.objectContaining({
+          autoLinkEmail: false,
+        })
+      );
+    });
+
+    it('should preserve an explicit Facebook email auto-linking opt-in', async () => {
+      vi.mocked(providerStore.createProvider).mockResolvedValueOnce({
+        id: 'facebook-provider-id',
+        name: 'Facebook',
+        providerType: 'oauth2',
+        clientSecretEncrypted: 'encrypted',
+      } as never);
+
+      const ctx = createMockContext('POST', '/external-idp/admin/providers', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        body: {
+          name: 'Facebook',
+          client_id: 'facebook-client-id',
+          client_secret: 'facebook-secret',
+          template: 'facebook',
+          auto_link_email: true,
+        },
+      });
+      await handleAdminCreateProvider(ctx as never);
+
+      expect(providerStore.createProvider).toHaveBeenCalledWith(
+        mockEnv,
+        expect.objectContaining({
+          autoLinkEmail: true,
+        })
+      );
+    });
+
     it('should apply Microsoft template defaults with common tenant', async () => {
       const mockCreatedProvider = {
         id: 'microsoft-provider-id',
@@ -504,6 +623,135 @@ describe('Admin Provider API', () => {
         })
       );
     });
+
+    it('encrypts an Apple private key before storing provider quirks', async () => {
+      vi.mocked(providerStore.createProvider).mockResolvedValueOnce({
+        id: 'apple-provider',
+        name: 'Apple',
+        clientSecretEncrypted: 'encrypted-secret',
+        providerQuirks: {
+          teamId: 'TEAMID1234',
+          keyId: 'KEYID12345',
+          privateKeyEncrypted: 'encrypted-secret',
+        },
+      } as never);
+      const ctx = createMockContext('POST', '/external-idp/admin/providers', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        body: {
+          name: 'Apple',
+          client_id: 'com.example.service',
+          client_secret: 'unused-but-required',
+          template: 'apple',
+          provider_quirks: {
+            teamId: 'TEAMID1234',
+            keyId: 'KEYID12345',
+            privateKeyEncrypted: '-----BEGIN PRIVATE KEY-----raw-----END PRIVATE KEY-----',
+          },
+        },
+      });
+
+      await handleAdminCreateProvider(ctx as never);
+
+      expect(cryptoUtils.encrypt).toHaveBeenCalledWith(
+        '-----BEGIN PRIVATE KEY-----raw-----END PRIVATE KEY-----',
+        'mock-encryption-key'
+      );
+      expect(providerStore.createProvider).toHaveBeenCalledWith(
+        mockEnv,
+        expect.objectContaining({
+          providerQuirks: expect.objectContaining({ privateKeyEncrypted: 'encrypted-secret' }),
+        })
+      );
+      const response = vi.mocked(ctx.json).mock.calls.at(-1)?.[0] as {
+        providerQuirks: Record<string, unknown>;
+        hasPrivateKey: boolean;
+      };
+      expect(response.providerQuirks.privateKeyEncrypted).toBeUndefined();
+      expect(response.hasPrivateKey).toBe(true);
+    });
+
+    it('encrypts separate FAPI2 client assertion and DPoP keys before storage', async () => {
+      const clientAssertionJwk = {
+        kty: 'EC',
+        crv: 'P-256',
+        kid: 'client-assertion',
+        x: 'client-x',
+        y: 'client-y',
+        d: 'client-d',
+      };
+      const dpopJwk = {
+        kty: 'EC',
+        crv: 'P-256',
+        kid: 'dpop',
+        x: 'dpop-x',
+        y: 'dpop-y',
+        d: 'dpop-d',
+      };
+      vi.mocked(cryptoUtils.encrypt)
+        .mockResolvedValueOnce('encrypted-client-secret')
+        .mockResolvedValueOnce('encrypted-client-assertion-key')
+        .mockResolvedValueOnce('encrypted-dpop-key');
+      vi.mocked(providerStore.createProvider).mockResolvedValueOnce({
+        id: 'fapi2-provider',
+        name: 'FAPI2 OP',
+        providerQuirks: {
+          fapi2: {
+            enabled: true,
+            clientAssertionPrivateJwkEncrypted: 'encrypted-client-assertion-key',
+            dpopPrivateJwkEncrypted: 'encrypted-dpop-key',
+          },
+        },
+      } as never);
+
+      const ctx = createMockContext('POST', '/external-idp/admin/providers', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        body: {
+          name: 'FAPI2 OP',
+          client_id: 'fapi2-client',
+          client_secret: 'unused-but-required',
+          issuer: 'https://fapi.example.com',
+          provider_quirks: {
+            fapi2: {
+              enabled: true,
+              clientAssertionPrivateJwk: clientAssertionJwk,
+              dpopPrivateJwk: dpopJwk,
+            },
+          },
+        },
+      });
+      await handleAdminCreateProvider(ctx as never);
+
+      expect(cryptoUtils.encrypt).toHaveBeenNthCalledWith(
+        2,
+        JSON.stringify(clientAssertionJwk),
+        'mock-encryption-key'
+      );
+      expect(cryptoUtils.encrypt).toHaveBeenNthCalledWith(
+        3,
+        JSON.stringify(dpopJwk),
+        'mock-encryption-key'
+      );
+      expect(providerStore.createProvider).toHaveBeenCalledWith(
+        mockEnv,
+        expect.objectContaining({
+          providerQuirks: {
+            fapi2: {
+              enabled: true,
+              clientAssertionPrivateJwkEncrypted: 'encrypted-client-assertion-key',
+              dpopPrivateJwkEncrypted: 'encrypted-dpop-key',
+            },
+          },
+        })
+      );
+      const response = vi.mocked(ctx.json).mock.calls.at(-1)?.[0] as {
+        providerQuirks: { fapi2: Record<string, unknown> };
+      };
+      expect(response.providerQuirks.fapi2).toEqual({
+        enabled: true,
+        hasClientAssertionKey: true,
+        hasDpopKey: true,
+      });
+    });
   });
 
   describe('handleAdminGetProvider', () => {
@@ -590,6 +838,179 @@ describe('Admin Provider API', () => {
       await handleAdminUpdateProvider(ctx as never);
 
       expect(cryptoUtils.encrypt).toHaveBeenCalledWith('new-plain-secret', 'mock-encryption-key');
+    });
+
+    it('preserves a stored Apple private key when updating non-secret quirks', async () => {
+      vi.mocked(providerStore.getProvider).mockResolvedValueOnce({
+        id: 'provider-123',
+        providerQuirks: {
+          teamId: 'OLDTEAM123',
+          privateKeyEncrypted: 'already-encrypted-private-key',
+        },
+      } as never);
+      vi.mocked(providerStore.updateProvider).mockResolvedValueOnce({
+        id: 'provider-123',
+        providerQuirks: {
+          teamId: 'NEWTEAM123',
+          privateKeyEncrypted: 'already-encrypted-private-key',
+        },
+      } as never);
+
+      const ctx = createMockContext('PUT', '/external-idp/admin/providers/provider-123', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        params: { id: 'provider-123' },
+        body: { provider_quirks: { teamId: 'NEWTEAM123' } },
+      });
+      await handleAdminUpdateProvider(ctx as never);
+
+      expect(providerStore.updateProvider).toHaveBeenCalledWith(
+        mockEnv,
+        'default',
+        'provider-123',
+        {
+          providerQuirks: {
+            teamId: 'NEWTEAM123',
+            privateKeyEncrypted: 'already-encrypted-private-key',
+          },
+        }
+      );
+      expect(cryptoUtils.encrypt).not.toHaveBeenCalled();
+    });
+
+    it('preserves a stored dynamic registration initial access token on sanitized UI updates', async () => {
+      vi.mocked(providerStore.getProvider).mockResolvedValueOnce({
+        id: 'provider-123',
+        providerQuirks: {
+          dynamicClientRegistration: {
+            enabled: true,
+            initialAccessTokenEncrypted: 'stored-encrypted-token',
+          },
+        },
+      } as never);
+      vi.mocked(providerStore.updateProvider).mockResolvedValueOnce({
+        id: 'provider-123',
+      } as never);
+
+      const ctx = createMockContext('PUT', '/external-idp/admin/providers/provider-123', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        params: { id: 'provider-123' },
+        body: {
+          provider_quirks: {
+            dynamicClientRegistration: {
+              enabled: true,
+              clientName: 'Updated client',
+              hasInitialAccessToken: true,
+            },
+          },
+        },
+      });
+      await handleAdminUpdateProvider(ctx as never);
+
+      expect(providerStore.updateProvider).toHaveBeenCalledWith(
+        mockEnv,
+        'default',
+        'provider-123',
+        {
+          providerQuirks: {
+            dynamicClientRegistration: {
+              enabled: true,
+              clientName: 'Updated client',
+              initialAccessTokenEncrypted: 'stored-encrypted-token',
+            },
+          },
+        }
+      );
+    });
+
+    it('rejects caller-supplied encrypted dynamic registration tokens', async () => {
+      const ctx = createMockContext('PUT', '/external-idp/admin/providers/provider-123', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        params: { id: 'provider-123' },
+        body: {
+          provider_quirks: {
+            dynamicClientRegistration: {
+              enabled: true,
+              initialAccessTokenEncrypted: 'attacker-controlled-value',
+            },
+          },
+        },
+      });
+
+      const response = await handleAdminUpdateProvider(ctx as never);
+
+      expect(response.status).toBe(400);
+      expect(providerStore.getProvider).not.toHaveBeenCalled();
+      expect(providerStore.updateProvider).not.toHaveBeenCalled();
+    });
+
+    it('preserves stored FAPI2 keys on sanitized UI updates', async () => {
+      vi.mocked(providerStore.getProvider).mockResolvedValueOnce({
+        id: 'provider-123',
+        providerQuirks: {
+          fapi2: {
+            enabled: true,
+            clientAssertionPrivateJwkEncrypted: 'stored-client-assertion-key',
+            dpopPrivateJwkEncrypted: 'stored-dpop-key',
+          },
+        },
+      } as never);
+      vi.mocked(providerStore.updateProvider).mockResolvedValueOnce({
+        id: 'provider-123',
+      } as never);
+
+      const ctx = createMockContext('PUT', '/external-idp/admin/providers/provider-123', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        params: { id: 'provider-123' },
+        body: {
+          provider_quirks: {
+            fapi2: {
+              enabled: true,
+              hasClientAssertionKey: true,
+              hasDpopKey: true,
+              resourceUrl: 'https://resource.example.com/accounts',
+            },
+          },
+        },
+      });
+      await handleAdminUpdateProvider(ctx as never);
+
+      expect(providerStore.updateProvider).toHaveBeenCalledWith(
+        mockEnv,
+        'default',
+        'provider-123',
+        {
+          providerQuirks: {
+            fapi2: {
+              enabled: true,
+              resourceUrl: 'https://resource.example.com/accounts',
+              clientAssertionPrivateJwkEncrypted: 'stored-client-assertion-key',
+              dpopPrivateJwkEncrypted: 'stored-dpop-key',
+            },
+          },
+        }
+      );
+      expect(cryptoUtils.encrypt).not.toHaveBeenCalled();
+    });
+
+    it('rejects caller-supplied encrypted FAPI2 key fields', async () => {
+      const ctx = createMockContext('PUT', '/external-idp/admin/providers/provider-123', {
+        headers: { Authorization: 'Bearer test-admin-secret' },
+        params: { id: 'provider-123' },
+        body: {
+          provider_quirks: {
+            fapi2: {
+              enabled: true,
+              dpopPrivateJwkEncrypted: 'attacker-controlled-value',
+            },
+          },
+        },
+      });
+
+      const response = await handleAdminUpdateProvider(ctx as never);
+
+      expect(response.status).toBe(400);
+      expect(providerStore.getProvider).not.toHaveBeenCalled();
+      expect(providerStore.updateProvider).not.toHaveBeenCalled();
     });
 
     it('should reject unsafe endpoint updates', async () => {

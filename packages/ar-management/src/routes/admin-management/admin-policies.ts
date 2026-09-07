@@ -30,13 +30,11 @@ export const adminPoliciesRouter = new Hono<{
   Variables: { adminAuth?: AdminAuthContext };
 }>();
 
-// Apply admin authentication with policy permissions
-adminPoliciesRouter.use(
-  '*',
-  adminAuthMiddleware({
-    requirePermissions: [ADMIN_PERMISSIONS.ADMIN_ROLES_READ],
-  })
-);
+const adminPoliciesAuth = adminAuthMiddleware({
+  requirePermissions: [ADMIN_PERMISSIONS.ADMIN_ROLES_READ],
+});
+adminPoliciesRouter.use('/admin-policies', adminPoliciesAuth);
+adminPoliciesRouter.use('/admin-policies/*', adminPoliciesAuth);
 
 /**
  * Helper to get DB_ADMIN adapter

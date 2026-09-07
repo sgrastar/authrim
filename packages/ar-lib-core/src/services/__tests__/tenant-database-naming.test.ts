@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  TENANT_DATABASE_BINDING_PATTERN,
   buildTenantDatabaseBindingPlan,
   evaluateTenantDatabaseBindingCapacity,
   normalizeTenantBindingNamePart,
@@ -7,6 +8,11 @@ import {
 } from '../tenant-database-naming';
 
 describe('tenant-database-naming', () => {
+  it('requires an environment prefix in tenant D1 binding refs', () => {
+    expect(TENANT_DATABASE_BINDING_PATTERN.test('TEST_TDB_USERS_1234_CORE')).toBe(true);
+    expect(TENANT_DATABASE_BINDING_PATTERN.test('TDB_USERS_1234_CORE')).toBe(false);
+  });
+
   it('builds deterministic D1 database names and binding refs', () => {
     const plan = buildTenantDatabaseBindingPlan({
       environment: 'prod-us',
@@ -15,8 +21,10 @@ describe('tenant-database-naming', () => {
       role: 'tenant_core',
     });
 
-    expect(plan.databaseName).toBe('authrim-prod-us-example-university-core');
-    expect(plan.bindingRef).toMatch(/^TDB_EXAMPLE_UNIVERSITY_[A-Z0-9]{6}_CORE$/);
+    expect(plan.databaseName).toMatch(
+      /^prod-us-authrim-tenant-example-university-core-db-[a-f0-9]{8}$/u
+    );
+    expect(plan.bindingRef).toMatch(/^PROD_US_TDB_EXAMPLE_UNIVERSITY_[A-F0-9]{8}_CORE$/u);
     expect(plan.workerShard).toBe('primary');
     expect(
       buildTenantDatabaseBindingPlan({

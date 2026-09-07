@@ -59,7 +59,10 @@ function hasKvSource(settings: Record<string, unknown>): boolean {
     if (item.source === 'kv') {
       return true;
     }
-    return isRecord(item.value) && hasKvSource(item.value);
+    if (isRecord(item.value) && hasKvSource(item.value)) {
+      return true;
+    }
+    return hasKvSource(item);
   });
 }
 

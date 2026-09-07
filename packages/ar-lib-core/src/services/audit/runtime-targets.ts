@@ -35,7 +35,7 @@ export function targetToBackendId(target: AuditTarget | null | undefined): strin
   }
 
   if (target.type === 'r2') {
-    return target.bucketRef === 'DIAGNOSTIC_LOGS' ? 'r2-archive' : `r2:${target.bucketRef}`;
+    return `r2:${target.bucketRef}`;
   }
 
   if (target.type === 'logpush') {

@@ -39,6 +39,9 @@ interface IpSecuritySettingsSources {
   cloudProvider: SettingSource;
 }
 
+const IP_SECURITY_REFRESH_NOTE =
+  'Runtime IP extraction uses the secure Cloudflare default on cold isolates and refreshes KV overrides asynchronously; changes may take up to a few minutes to apply across active isolates.';
+
 /**
  * Cloud provider descriptions for UI
  */
@@ -146,7 +149,7 @@ export async function getIpSecurityConfig(c: Context<{ Bindings: Env }>) {
       })),
       note:
         'Select your cloud provider to ensure correct client IP extraction for rate limiting. ' +
-        'Incorrect configuration may allow IP spoofing attacks.',
+        `Incorrect configuration may allow IP spoofing attacks. ${IP_SECURITY_REFRESH_NOTE}`,
       kv_key: getCloudProviderKVKey(),
     });
   } catch (error) {
@@ -238,7 +241,7 @@ export async function updateIpSecurityConfig(c: Context<{ Bindings: Env }>) {
       settings,
       sources,
       providerInfo,
-      note: `Cloud provider set to "${settings.cloudProvider}". IP extraction method: ${providerInfo.ipExtraction}`,
+      note: `Cloud provider set to "${settings.cloudProvider}". IP extraction method: ${providerInfo.ipExtraction}. ${IP_SECURITY_REFRESH_NOTE}`,
     };
 
     // Add warning for 'none' provider
@@ -290,7 +293,7 @@ export async function clearIpSecurityConfig(c: Context<{ Bindings: Env }>) {
       success: true,
       settings,
       sources,
-      note: `IP security settings cleared. Using default provider: ${getDefaultCloudProvider()}`,
+      note: `IP security settings cleared. Using default provider: ${getDefaultCloudProvider()}. ${IP_SECURITY_REFRESH_NOTE}`,
     });
   } catch (error) {
     log.error('Error clearing settings', {}, error as Error);

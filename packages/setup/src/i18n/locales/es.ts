@@ -31,7 +31,7 @@ const es: Translations = {
 
   // Main menu
   'menu.prompt': '¿Qué te gustaría hacer?',
-  'menu.quick': 'Configuración Rápida (5 minutos)',
+  'menu.quick': 'Configuración Rápida',
   'menu.quickDesc': 'Despliega Authrim con configuración mínima',
   'menu.custom': 'Configuración Personalizada',
   'menu.customDesc': 'Configura todas las opciones paso a paso',
@@ -105,6 +105,8 @@ const es: Translations = {
   'prereq.notLoggedIn': 'No has iniciado sesión en Cloudflare',
   'prereq.loginHint': 'Ejecuta el siguiente comando para autenticarte:',
   'prereq.loggedInAs': 'Conectado a Cloudflare ({{email}})',
+  'prereq.authenticated': 'Conectado a Cloudflare',
+  'prereq.checkFailed': 'No se pudo comprobar wrangler',
   'prereq.accountId': 'ID de cuenta: {{accountId}}',
 
   // Environment
@@ -183,6 +185,13 @@ const es: Translations = {
   'domain.zoneCheckSkipped': 'Verificación de zona omitida, continuando con la configuración...',
   'domain.continueWithoutZone': '¿Continuar sin verificación de zona?',
   'domain.configureBinding': 'Configurar enlace de dominio personalizado para Workers',
+  'domain.configureBindingDesc':
+    'Asigna el dominio base directamente al Worker router para que Cloudflare gestione DNS y el certificado TLS. Los subdominios de tenant siguen usando rutas comodín.',
+  'domain.customHostnamesDesc':
+    'Automatiza los dominios personalizados de los tenants con Cloudflare Custom Hostnames.',
+  'domain.customHostnamesPrivacy':
+    'El token solo se guarda en un archivo secreto local y se carga como secreto de Worker; no se guarda en D1, KV ni en la configuración.',
+  'domain.customHostnamesPrompt': '¿Activar la automatización de Cloudflare Custom Hostnames?',
   'domain.action.retryCheck': 'Volver a comprobar',
   'domain.action.reloadPage': 'Recargar página',
   'domain.action.openCloudflareDashboard': 'Abrir panel de Cloudflare',
@@ -228,6 +237,13 @@ const es: Translations = {
   'domain.apiDomain': 'Dominio API / Emisor (ej: auth.ejemplo.com)',
   'domain.loginUiDomain': 'Dominio UI de inicio de sesión (Enter para omitir)',
   'domain.adminUiDomain': 'Dominio UI de administración (Enter para omitir)',
+  'domain.baseDomainDepthError':
+    'Base Domain debe ser el dominio principal de las URL de inquilinos. "{{hostname}}" tiene demasiadas etiquetas antes del dominio registrado.',
+  'domain.uiDomainDepthError':
+    'El dominio de {{label}} "{{hostname}}" es demasiado profundo para el modelo de dominios de inquilino estándar.',
+  'domain.suggestedHost': 'Host sugerido: {{hostname}}',
+  'domain.uiRequiresOwnRoute':
+    'El dominio personalizado de {{label}} requiere su propia ruta de Worker.',
   'domain.enterDomains':
     'Ingresa dominios personalizados (dejar vacío para usar predeterminados de Cloudflare)',
   'domain.singleTenantNote': 'En modo single-tenant, URL del emisor = dominio API',
@@ -243,9 +259,9 @@ const es: Translations = {
   // Database
   'db.title': 'Configuración de Base de Datos',
   'db.regionWarning': 'La región de la base de datos no puede cambiarse después de la creación.',
-  'db.coreDescription': 'BD Core: Almacena clientes OAuth, tokens, sesiones, logs de auditoría',
+  'db.coreDescription': 'BD de plataforma: Almacena metadatos y auditoría sin PII',
   'db.coreRegion': 'Región de Base de Datos Core',
-  'db.piiDescription': 'BD PII: Almacena perfiles de usuario, credenciales, datos personales',
+  'db.piiDescription': 'BD PII de plataforma: Almacena auditoría PII y datos anonimizados',
   'db.piiNote': 'Considera tus requisitos de protección de datos.',
   'db.piiRegion': 'Región de Base de Datos PII',
   'db.creating': 'Creando base de datos...',
@@ -278,6 +294,8 @@ const es: Translations = {
   'keys.generated': 'Claves generadas ({{path}})',
   'keys.existing': 'Ya existen claves para el entorno "{{env}}"',
   'keys.existingWarning': 'Las claves existentes serán sobrescritas.',
+  'keys.replaced':
+    'Las claves existentes se reemplazaron tras confirmar que el entorno estaba disponible.',
   'keys.error': 'Error al generar claves',
   'keys.regeneratePrompt': '¿Regenerar claves?',
   'keys.regenerateWarning': '¡Esto invalidará todos los tokens existentes!',
@@ -328,6 +346,16 @@ const es: Translations = {
   'config.shards': 'shards',
   'config.sec': 'seg',
   'config.automatic': 'Automático',
+  'config.d1Routing': 'Enrutamiento D1:',
+  'config.placement': 'Ubicación:',
+  'config.provisioning': 'Aprovisionamiento:',
+  'config.uiEnvNoApi': 'ui.env se creará cuando se configure una URL de API.',
+  'config.wranglerConfigsSaved': 'Se guardaron {{count}} configuraciones maestras de wrangler.toml',
+  'config.wranglerConfigsPartial': 'No se pudieron guardar algunas configuraciones de wrangler',
+  'config.wranglerConfigsSyncing': 'Sincronizando configuraciones de wrangler con los paquetes...',
+  'config.wranglerConfigsSynced':
+    'Configuraciones de wrangler sincronizadas con {{count}} componentes',
+  'config.wranglerConfigsSyncFailed': 'No se pudieron sincronizar las configuraciones de wrangler',
 
   // Deploy
   'deploy.prompt': '¿Iniciar configuración con esta configuración?',
@@ -358,6 +386,8 @@ const es: Translations = {
   'deploy.wranglerKeep': '📝 Mantener cambios manuales (desplegar tal cual)',
   'deploy.wranglerBackup': '💾 Respaldar y sobrescribir con master',
   'deploy.wranglerOverwrite': '⚠️ Sobrescribir con master (perder cambios)',
+  'deploy.initialProvisioningFailed':
+    'El aprovisionamiento de Cloudflare no terminó. No se creó el bloqueo del entorno; vuelva a ejecutar init para continuar de forma segura.',
 
   // Email provider
   'email.title': 'Proveedor de Email',
@@ -415,15 +445,26 @@ const es: Translations = {
   // Cloudflare API Token
   'cf.apiTokenPrompt': 'Ingresa el Token API de Cloudflare',
   'cf.apiTokenValidation': 'Por favor ingresa un Token API válido',
-
-  // OIDC Profile
-  'profile.prompt': 'Selecciona el perfil OIDC',
-  'profile.basicOp': 'OP Básico (Proveedor OIDC Estándar)',
-  'profile.basicOpDesc': 'Características OIDC estándar',
-  'profile.fapiRw': 'FAPI Read-Write (Grado Financiero)',
-  'profile.fapiRwDesc': 'Compatible con perfil de seguridad FAPI 1.0 Read-Write',
-  'profile.fapi2Security': 'Perfil de Seguridad FAPI 2.0',
-  'profile.fapi2SecurityDesc': 'Compatible con perfil de seguridad FAPI 2.0 (máxima seguridad)',
+  'cf.apiTokenCreationMethod': '¿Cómo quieres crear el token de API?',
+  'cf.apiTokenCreateFromLink': 'Crear desde un enlace preconfigurado (recomendado)',
+  'cf.apiTokenCreateFromLinkDesc':
+    'Abrir Cloudflare con el permiso y la zona necesarios ya seleccionados',
+  'cf.apiTokenCreateManually': 'Crear manualmente',
+  'cf.apiTokenCreateManuallyDesc':
+    'Revisar el permiso necesario y configurar el token personalmente',
+  'cf.apiTokenTemplateUrl': 'URL de creación del token de Cloudflare:',
+  'cf.apiTokenTemplateOpenPrompt': 'Pulsa Enter para abrir Cloudflare en el navegador',
+  'cf.apiTokenTemplateOpened': 'Se abrió la página de creación del token de Cloudflare',
+  'cf.apiTokenTemplateOpenFailed':
+    'No se pudo abrir el navegador. Abre manualmente la siguiente URL.',
+  'cf.apiTokenManualTitle': 'Crea un token de API de usuario con esta configuración:',
+  'cf.apiTokenManualType': 'Usa un API Token, no la Global API Key.',
+  'cf.apiTokenManualPermission': 'Permiso: Zone > SSL and Certificates > Edit',
+  'cf.apiTokenManualResource': 'Recurso de zona: Include > Specific zone > {{zone}}',
+  'cf.apiTokenManualLeastPrivilege': 'No añadas permisos ni zonas que no sean necesarios.',
+  'cf.apiTokenSecretOnce':
+    'El secreto del token solo se muestra una vez. Cópialo antes de salir de Cloudflare.',
+  'cf.apiTokenSelectedZone': 'la zona utilizada por este entorno',
 
   // Tenant configuration
   'tenant.title': 'Modo de Tenant',
@@ -442,6 +483,19 @@ const es: Translations = {
   'tenant.defaultTenantPrompt': 'Nombre del tenant predeterminado (identificador)',
   'tenant.defaultTenantValidation': 'Solo se permiten letras minúsculas, números y guiones',
   'tenant.displayNamePrompt': 'Nombre para mostrar del tenant predeterminado',
+  'tenant.domainSetupHint': 'Déjalo vacío para usar workers.dev en modo de un solo tenant.',
+  'tenant.customDomainExamples': 'Con un dominio personalizado:',
+  'tenant.nakedDomainExample': 'https://example.com (issuer sin subdominio de tenant)',
+  'tenant.subdomainExample': 'https://acme.example.com (issuer con subdominio de tenant)',
+  'tenant.idRules':
+    'El ID del tenant debe tener entre 1 y 63 caracteres, empezar por una letra minúscula y contener solo minúsculas, números y guiones.',
+  'tenant.randomIdHint':
+    'Un ID aleatorio evita exponer nombres de clientes o empresas en la URL del issuer.',
+  'tenant.randomIdPrompt': '¿Generar un ID de tenant aleatorio? ({{id}})',
+  'tenant.initialDisplayName': 'Tenant inicial',
+  'tenant.nakedDomainPrompt': '¿Usar el dominio base como issuer del tenant principal?',
+  'tenant.primaryTenantPrompt':
+    'ID del tenant principal para el dominio base (vacío para usar el tenant inicial)',
   'tenant.singleTenantTitle': 'Configuración de URL Single-tenant',
   'tenant.singleTenantNote1': 'En modo single-tenant:',
   'tenant.singleTenantNote2':
@@ -477,7 +531,7 @@ const es: Translations = {
   // Feature flags
   'features.title': 'Flags de Características',
   'features.queuePrompt': '¿Habilitar Cloudflare Queues? (para logs de auditoría)',
-  'features.r2Prompt': '¿Habilitar Cloudflare R2? (para avatares)',
+  'features.r2Prompt': '¿Habilitar el almacenamiento de objetos Cloudflare R2?',
   'features.queue': 'Cola:',
   'features.r2': 'R2:',
 
@@ -527,6 +581,19 @@ const es: Translations = {
   'complete.urls': 'URLs:',
   'complete.configLocation': 'Configuración:',
   'complete.keysLocation': 'Claves:',
+  'complete.createdResources': 'Recursos creados:',
+  'complete.generatedFiles': 'Archivos generados:',
+  'complete.automaticStep1': '1. Aplique los esquemas y despliegue la versión completa:',
+  'complete.automaticStep2':
+    '2. Cuando se solicite, cree e introduzca un token de arranque de Cloudflare de un solo uso.',
+  'complete.automaticStep2Detail':
+    'Setup registra los tokens secundarios divididos directamente en Control y revoca el token de arranque.',
+  'complete.manualStep1':
+    '1. Aplique los esquemas y despliegue con la sesión OAuth actual de Wrangler:',
+  'complete.manualStep2':
+    '2. Use Setup para ejecutar las operaciones de aprovisionamiento pendientes solicitadas desde Admin.',
+  'complete.manualStep2Detail':
+    'El aprovisionamiento automático está desactivado; no se almacena ningún token de API de Cloudflare en Control.',
 
   // Resource provisioning
   'resource.provisioning': 'Aprovisionando {{resource}}...',
@@ -584,6 +651,8 @@ const es: Translations = {
   // Common
   'common.yes': 'Sí',
   'common.no': 'No',
+  'common.example': 'Ejemplo',
+  'common.comingSoon': 'próximamente',
   'common.continue': 'Continuar',
   'common.cancel': 'Cancelar',
   'common.skip': 'Omitir',
@@ -627,7 +696,6 @@ const es: Translations = {
   'delete.confirm': '¿Estás seguro de que quieres eliminar "{{env}}"?',
   'delete.confirmPermanent':
     '⚠️ Esto eliminará permanentemente todos los recursos de "{{env}}". ¿Continuar?',
-  'delete.confirmWarning': '¡Esta acción no se puede deshacer!',
   'delete.deleting': 'Eliminando {{resource}}...',
   'delete.deleted': '{{resource}} eliminado',
   'delete.error': 'Error al eliminar {{resource}}',
@@ -639,6 +707,11 @@ const es: Translations = {
   'delete.kvNamespaces': 'Namespaces KV',
   'delete.queues': 'Colas',
   'delete.r2Buckets': 'Buckets R2',
+  'delete.pages': 'Proyectos de Pages',
+  'delete.partialSuccess':
+    'Se eliminaron los recursos seleccionados y se conservó el estado restante del entorno',
+  'delete.inventoryUnavailable':
+    'La eliminación no comenzó porque no se pudo verificar el inventario de recursos de Cloudflare',
 
   // Info command
   'info.title': 'Información del Entorno',
@@ -787,19 +860,78 @@ const es: Translations = {
   'web.db.name': 'Nombre',
   'web.db.region': 'Región',
   'web.db.regionAuto': 'Automático (más cercano)',
-  'web.db.storageProfileTitle': 'Perfil de despliegue de almacenamiento',
-  'web.db.storageProfileDesc':
-    'Selecciona cómo se ubican los datos core/PII de usuarios para este despliegue.',
-  'web.db.sharedD1Title': 'D1 compartido',
-  'web.db.sharedD1Desc':
-    'Un D1 core y un D1 PII para todo el despliegue. Menor coste de configuración y ruta predeterminada.',
-  'web.db.tenantD1Title': 'D1 por tenant',
-  'web.db.tenantD1Desc':
-    'Un par D1 core/PII por tenant. Requiere aprovisionar la base de datos del tenant antes de activarlo.',
-  'web.db.preallocatedSlotsTitle': 'Slots de tenant preasignados',
-  'web.db.preallocatedSlotsDesc': 'Cada slot de tenant crea dos bases de datos D1: core y PII.',
-  'web.db.slotsLabel': 'Slots',
-  'web.db.slotsHelp': 'El valor predeterminado es 3. El máximo es 500 slots.',
+  'web.db.controlPlaneTitle': 'D1 Control Plane',
+  'web.db.controlPlaneDesc':
+    'Inicializa el plano de control y los shards iniciales; la capacidad posterior se crea automáticamente.',
+  'web.db.controlPlaneWorkerDesc':
+    'Esta función permite a Authrim gestionar las bases de datos de tus tenants. Los recursos de gestión necesarios se crean durante el setup.',
+  'web.db.controlPlaneTenantPlacement':
+    'El tenant inicial comienza con su propio almacenamiento. Al añadir tenants, puedes elegir un almacenamiento para cada uno.',
+  'web.db.controlPlaneResolverNote':
+    'Authrim gestiona automáticamente la creación de bases de datos y el enrutamiento de conexiones.',
+  'web.db.automaticProvisioningTitle': 'Creación automática de bases de datos de tenants',
+  'web.db.automaticProvisioningOn': 'Activado (crear automáticamente)',
+  'web.db.automaticProvisioningOnDesc':
+    'Cuando aumentan los tenants o los datos, Authrim crea automáticamente las bases de datos necesarias.',
+  'web.db.automaticProvisioningTokenNote':
+    'Un Control Worker dedicado almacena y utiliza el token de API de Cloudflare con permisos limitados necesario para crear las bases de datos de los tenants.',
+  'web.db.automaticProvisioningOff': 'Desactivado (crear desde Setup)',
+  'web.db.automaticProvisioningOffDesc':
+    'Las bases de datos no se crean automáticamente. Créalas desde Setup cuando sea necesario.',
+  'web.db.automaticProvisioningNote':
+    'La separación de datos por tenant se mantiene aunque esté desactivado.',
+  'web.deploy.controlCredentialsTitle': 'Conexión con Cloudflare',
+  'web.deploy.bootstrapTokenTitle': 'Token temporal de Cloudflare para la configuración automática',
+  'web.deploy.cloudflareLoginNote':
+    'El inicio de sesión del Dashboard de Cloudflare es independiente de Wrangler OAuth y puede solicitar otro inicio de sesión.',
+  'web.deploy.createBootstrapToken': 'Crear token de Cloudflare de un solo uso',
+  'web.deploy.bootstrapTokenLabel': 'Token temporal de Cloudflare',
+  'web.deploy.bootstrapTokenPlaceholder': 'Introduce el token temporal de Cloudflare',
+  'web.deploy.bootstrapTokenHelp':
+    'Este token se usa una vez y se revoca después de registrar los tokens necesarios.',
+  'web.deploy.bootstrapTokenDescription':
+    'Este token temporal permite que Authrim cree automáticamente las bases de datos de los tenants. Necesita permiso para crear y editar tokens de API: Account API Tokens: Write/Edit para un token de cuenta o API Tokens: Write/Edit para un token de usuario. Setup lo usa para crear, según sea necesario, tokens de API con alcance limitado para D1, Workers, KV y R2, registrarlos en el Control Worker y revocar después el token temporal.',
+  'web.deploy.manualDnsSectionTitle': 'Configuración DNS',
+  'web.deploy.bootstrapTokenCreateStatus':
+    'Establece End Date en {{endDate}} (UTC) en el Dashboard de Cloudflare, crea el token temporal y escríbelo abajo.',
+  'web.deploy.bootstrapPopupBlocked':
+    'El navegador bloqueó la nueva pestaña. Permite las ventanas emergentes y vuelve a seleccionar el botón.',
+  'web.deploy.bootstrapTokenRequired':
+    'Crea e introduce el token temporal de Cloudflare antes del despliegue.',
+  'web.envDetail.automaticProvisioningTitle': 'Aprovisionamiento automático',
+  'web.envDetail.automaticProvisioningChecking': 'Comprobando...',
+  'web.envDetail.automaticProvisioningUnavailable': 'No disponible',
+  'web.envDetail.createOneTimeCloudflareToken': 'Crear token de Cloudflare de un solo uso',
+  'web.envDetail.oneTimeBootstrapTokenPlaceholder': 'Token bootstrap de un solo uso',
+  'web.envDetail.enableAutomaticProvisioning': 'Activar',
+  'web.envDetail.enterOneTimeTokenThenEnable':
+    'Establece End Date en {{endDate}} (UTC), crea e introduce el token de un solo uso y selecciona Activar.',
+  'web.envDetail.bootstrapPopupBlocked':
+    'El navegador bloqueó la pestaña del Dashboard de Cloudflare.',
+  'web.envDetail.enterOneTimeTokenFirst':
+    'Introduce primero el token de Cloudflare de un solo uso.',
+  'web.envDetail.preparingControlAuthority':
+    'Preparando la autoridad de aprovisionamiento de Control...',
+  'web.envDetail.deployingControlWorker': 'Desplegando la configuración de Control Worker...',
+  'web.envDetail.registeringScopedCredentials': 'Registrando credenciales limitadas...',
+  'web.envDetail.automaticProvisioningOn': 'Activado',
+  'web.envDetail.automaticProvisioningOff': 'Desactivado',
+  'web.envDetail.automaticProvisioningCredentialsRegistered':
+    'Las credenciales limitadas de Control Worker están registradas.',
+  'web.envDetail.automaticProvisioningBlocked': 'El aprovisionamiento automático está bloqueado.',
+  'web.envDetail.automaticProvisioningMissing': '(faltan: {{missing}})',
+  'web.envDetail.automaticProvisioningRepairHint':
+    'Introduce un nuevo token de un solo uso para repararlo.',
+  'web.envDetail.bootstrapRetainedForRetry':
+    'Cloudflare devolvió un error temporal. El token de bootstrap sigue activo; vuelve a introducir el mismo token y selecciona Habilitar para reanudar.',
+  'web.envDetail.bootstrapNotSubmittedForRetry':
+    'Setup se detuvo antes de enviar el token de bootstrap. Permanece en el campo y se puede reintentar.',
+  'web.envDetail.revokeTokensBeforeRetry':
+    'Revoca los tokens bootstrap y secundarios de Authrim indicados en el Dashboard de Cloudflare antes de reintentar.',
+  'web.envDetail.bootstrapRevokedPendingReset':
+    'El token bootstrap fue revocado, pero no se pudo restablecer el estado pendiente.',
+  'web.envDetail.bootstrapRevokedDisabled':
+    'El token bootstrap fue revocado y el aprovisionamiento automático volvió a estar desactivado.',
 
   // Web UI Email
   'web.email.title': 'Proveedor de Email',
@@ -869,8 +1001,7 @@ const es: Translations = {
   'web.env.openSetup': 'Abrir Configuración',
   'web.env.copyUrl': 'Copiar',
   'web.env.deleteTitle': 'Eliminar Entorno',
-  'web.env.deleteWarning':
-    'Esta acción no se puede deshacer. Los siguientes recursos serán eliminados permanentemente:',
+  'web.env.deleteWarning': 'Se eliminarán los siguientes recursos seleccionados:',
   'web.env.confirmDelete': 'Eliminar Seleccionados',
   'web.env.cancel': 'Cancelar',
 
@@ -942,8 +1073,8 @@ const es: Translations = {
   'web.form.userIdFormat': 'Formato de ID de Usuario',
   'web.form.userIdNanoid': 'NanoID (recomendado)',
   'web.form.userIdUuid': 'UUID v4',
-  'web.form.userIdFormatHint':
-    'Formato para generar IDs de usuario. No se puede cambiar después de crear usuarios.',
+  'web.form.userIdExample': 'Ejemplo:',
+  'web.form.userIdFormatHint': 'No se puede cambiar después de crear usuarios.',
   'web.form.loginDomainPlaceholder': 'login.ejemplo.com',
   'web.form.adminDomainPlaceholder': 'admin.ejemplo.com',
 
@@ -1086,6 +1217,30 @@ const es: Translations = {
 
   // Web UI Environment Detail
   'web.envDetail.title': 'Detalles del Entorno',
+  'web.envDetail.initialDeployRecoveryTitle': 'La implementación inicial está incompleta',
+  'web.envDetail.initialDeployRecoveryDesc':
+    'La implementación anterior se detuvo antes de la verificación. Al reanudar, se reutilizarán los recursos creados.',
+  'web.envDetail.initialDeployRecoveryAction': 'Reanudar implementación inicial',
+  'web.envDetail.initialDeployRecoveryVerified':
+    'Estado de Cloudflare verificado. Completado: {{completed}}. Se reanudará desde {{stage}}.',
+  'web.envDetail.initialDeployRecoveryStageMigrations':
+    'la verificación de migraciones de base de datos',
+  'web.envDetail.initialDeployRecoveryStageControlPlane':
+    'la preparación de la implementación inicial',
+  'web.envDetail.initialDeployRecoveryStageWorkers': 'la implementación de Workers',
+  'web.envDetail.initialDeployRecoveryStageVerification':
+    'la verificación posterior a la implementación',
+  'web.envDetail.initialDeployRecoveryResources': 'aprovisionamiento de recursos',
+  'web.envDetail.initialDeployRecoverySchema': 'migraciones de base de datos',
+  'web.envDetail.initialDeployRecoveryWorkers': 'implementación de Workers',
+  'web.envDetail.initialDeployRecoveryRecreate':
+    'El punto de control guardado no coincide con Cloudflare. Se deshabilitó la reanudación. Elimine este entorno incompleto y créelo de nuevo.',
+  'web.envDetail.initialDeployRecoveryManifestChanged':
+    'La definición draft de migraciones cambió después de iniciar la implementación inicial. Es posible que el estado guardado ya no coincida con las bases de datos, por lo que se deshabilitó la reanudación. Elimine este entorno incompleto y créelo de nuevo.',
+  'web.envDetail.initialDeployRecoveryBlocked':
+    'No se pudo verificar el estado actual, por lo que se deshabilitó la reanudación. Compruebe la conexión con Cloudflare y vuelva a revisar el entorno. Si la verificación sigue fallando, elimine el entorno incompleto y créelo de nuevo.',
+  'web.envDetail.initialDeployRecoveryTokenRequired':
+    ' Las credenciales de implementación deben actualizarse; se solicitará un nuevo token de Cloudflare de un solo uso.',
   'web.envDetail.adminNotConfigured': 'Cuenta de Admin No Configurada',
   'web.envDetail.adminNotConfiguredDesc':
     'El administrador inicial no ha sido configurado para este entorno.',
@@ -1165,8 +1320,7 @@ const es: Translations = {
 
   // Web UI Delete Section
   'web.delete.title': 'Eliminar Entorno',
-  'web.delete.warning':
-    'Esta acción es irreversible. Todos los recursos seleccionados serán eliminados permanentemente.',
+  'web.delete.warning': 'Los recursos seleccionados se eliminarán de este entorno.',
   'web.delete.environment': 'Entorno:',
   'web.delete.selectResources': 'Selecciona recursos para eliminar:',
   'web.delete.workers': 'Workers',
@@ -1212,6 +1366,9 @@ const es: Translations = {
   'web.status.adminNotConfigured': 'Admin No Configurado',
   'web.status.initializing': 'Inicializando...',
   'web.status.found': '{{count}} encontrado(s)',
+  'web.status.operationInProgress':
+    'Ya hay otra operación de configuración en curso. Espere a que termine y vuelva a intentarlo.',
+  'web.status.warning': 'Advertencia:',
 
   // Web UI Button Labels (dynamic)
   'web.btn.reprovision': 'Re-aprovisionar (Eliminar y Crear)',

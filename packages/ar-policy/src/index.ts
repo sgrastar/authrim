@@ -48,6 +48,7 @@ import {
   AR_ERROR_CODES,
   getLogger,
   getDefaultTenantId,
+  resolveOptionalCoreAdapterFromHono,
   adminAuthMiddleware,
   ADMIN_PERMISSIONS,
   type DatabaseAdapter,
@@ -587,7 +588,12 @@ function getPermissionChangeNotifier(c: Context<{ Bindings: Env }>): PermissionC
 rebacRoutes.get('/health', async (c) => {
   const flagsManager = getFeatureFlagsManager(c.env);
   const rebacEnabled = await flagsManager.getFlag('ENABLE_REBAC');
-  const hasDatabase = !!c.env.DB;
+  const hasDatabase = Boolean(
+    resolveOptionalCoreAdapterFromHono(
+      c as unknown as Context<{ Bindings: SharedEnv }>,
+      'policy-health'
+    )
+  );
   const hasCache = !!c.env.REBAC_CACHE_KV;
 
   return c.json({
@@ -1189,57 +1195,63 @@ rebacRoutes.delete(
  *   "user_id": "user_123"       // for type=user
  * }
  */
-rebacRoutes.post('/invalidate', async (c) => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const log = getLogger(c as any).module('REBAC');
+rebacRoutes.post(
+  '/invalidate',
+  adminAuthMiddleware({
+    requirePermissions: [ADMIN_PERMISSIONS.POLICY_REBAC_WRITE],
+  }),
+  async (c) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const log = getLogger(c as any).module('REBAC');
 
-  if (!authenticateRequest(c)) {
-    return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
-  }
-
-  const rebacService = getReBACService(c);
-  if (!rebacService) {
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-
-  try {
-    const body = await c.req.json<{
-      tenant_id?: string;
-      type: 'user' | 'object';
-      object_type?: string;
-      object_id?: string;
-      user_id?: string;
-    }>();
-
-    const tenantId = requireBodyTenantId(body.tenant_id);
-    if (!tenantId) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'tenant_id' },
-      });
+    const rebacService = getReBACService(c);
+    if (!rebacService) {
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
-    if (body.type === 'user') {
-      if (!body.user_id) {
+    try {
+      const body = await c.req.json<{
+        tenant_id?: string;
+        type: 'user' | 'object';
+        object_type?: string;
+        object_id?: string;
+        user_id?: string;
+      }>();
+
+      const tenantId = requireBodyTenantId(body.tenant_id);
+      if (!tenantId) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-          variables: { field: 'user_id' },
+          variables: { field: 'tenant_id' },
         });
       }
-      await rebacService.invalidateUserCache(tenantId, body.user_id);
-    } else if (body.type === 'object') {
-      if (!body.object_type || !body.object_id) {
+      const tenantMismatch = rejectTenantMismatch(c, tenantId);
+      if (tenantMismatch) {
+        return tenantMismatch;
+      }
+
+      if (body.type === 'user') {
+        if (!body.user_id) {
+          return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
+            variables: { field: 'user_id' },
+          });
+        }
+        await rebacService.invalidateUserCache(tenantId, body.user_id);
+      } else if (body.type === 'object') {
+        if (!body.object_type || !body.object_id) {
+          return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+        }
+        await rebacService.invalidateCache(tenantId, body.object_type, body.object_id);
+      } else {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
-      await rebacService.invalidateCache(tenantId, body.object_type, body.object_id);
-    } else {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-    }
 
-    return c.json({ success: true });
-  } catch (error) {
-    log.error('ReBAC invalidate error', { error: String(error) }, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+      return c.json({ success: true });
+    } catch (error) {
+      log.error('ReBAC invalidate error', { error: String(error) }, error as Error);
+      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+    }
   }
-});
+);
 
 // ============================================================
 // Mount sub-apps to main app
@@ -1281,3 +1293,4 @@ app.onError((err, c) => {
 });
 
 export default app;
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

@@ -24,6 +24,7 @@ const {
   mockValidateClientAssertion,
   mockGetKeyByKid,
   mockDeviceSecretRepository,
+  mockApplyIntrospectionIdentityMapping,
 } = vi.hoisted(() => {
   const clientRepo = {
     findByClientId: vi.fn(),
@@ -58,6 +59,9 @@ const {
       e: 'AQAB',
     }),
     mockDeviceSecretRepository: deviceSecretRepo,
+    mockApplyIntrospectionIdentityMapping: vi.fn(
+      async (input: { claims: Record<string, unknown> }) => input.claims
+    ),
   };
 });
 
@@ -83,6 +87,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     DeviceSecretRepository: vi.fn(function DeviceSecretRepositoryMock() {
       return mockDeviceSecretRepository;
     }),
+    applyIntrospectionIdentityMapping: mockApplyIntrospectionIdentityMapping,
     buildIssuerUrl: (env: Partial<Env>, tenantId?: string) => {
       if (env.BASE_DOMAIN) {
         const resolvedTenantId = tenantId || env.DEFAULT_TENANT_ID || 'default';
@@ -531,7 +536,10 @@ describe('Token Introspection Endpoint', () => {
       expect(mockValidateClientAssertion).toHaveBeenCalledWith(
         'assertion.jwt',
         'https://oidc.example.com/introspect',
-        clientMetadata
+        clientMetadata,
+        expect.objectContaining({
+          replayProtection: expect.objectContaining({ tenantId: 'default' }),
+        })
       );
       expect(verifyToken).toHaveBeenCalledWith(
         'valid.jwt.token',
@@ -585,7 +593,10 @@ describe('Token Introspection Endpoint', () => {
       expect(mockValidateClientAssertion).toHaveBeenCalledWith(
         'assertion.jwt',
         'https://tenant1.customer.example/introspect',
-        clientMetadata
+        clientMetadata,
+        expect.objectContaining({
+          replayProtection: expect.objectContaining({ tenantId: 'tenant1' }),
+        })
       );
     });
 
@@ -647,6 +658,211 @@ describe('Token Introspection Endpoint', () => {
       );
     });
 
+    it('returns active=false for an Authrim ID-token-shaped JWT', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'authrim.id.token',
+          client_id: 'client-123',
+          client_secret: 'client-secret',
+        },
+      });
+      const idTokenPayload = {
+        iss: 'https://op.example.com',
+        sub: 'user-123',
+        aud: 'client-123',
+        exp: Math.floor(Date.now() / 1000) + 300,
+        iat: Math.floor(Date.now() / 1000),
+        nonce: 'nonce-123',
+        at_hash: 'access-token-hash',
+        auth_time: Math.floor(Date.now() / 1000) - 60,
+      };
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue(idTokenPayload);
+      vi.mocked(verifyToken).mockResolvedValue(idTokenPayload);
+      vi.mocked(isTokenRevoked).mockResolvedValue(false);
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+      });
+
+      await introspectHandler(c);
+
+      expect(verifyToken).toHaveBeenCalled();
+      expect(isTokenRevoked).not.toHaveBeenCalled();
+      expect(c.json).toHaveBeenCalledWith({ active: false });
+    });
+
+    it('returns active=false for an explicitly non-OAuth token use', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'protocol.jwt.token',
+          client_id: 'client-123',
+          client_secret: 'client-secret',
+        },
+      });
+      const protocolTokenPayload = {
+        ...sampleTokenPayload,
+        token_use: 'id',
+      };
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue(protocolTokenPayload);
+      vi.mocked(verifyToken).mockResolvedValue(protocolTokenPayload);
+      vi.mocked(isTokenRevoked).mockResolvedValue(false);
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+      });
+
+      await introspectHandler(c);
+
+      expect(isTokenRevoked).not.toHaveBeenCalled();
+      expect(c.json).toHaveBeenCalledWith({ active: false });
+    });
+
+    it('accepts an access token with the explicit token-use discriminator', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'access.jwt.token',
+          client_id: 'client-123',
+          client_secret: 'client-secret',
+        },
+      });
+      const accessTokenPayload = {
+        ...sampleTokenPayload,
+        token_use: 'access',
+      };
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue(accessTokenPayload);
+      vi.mocked(verifyToken).mockResolvedValue(accessTokenPayload);
+      vi.mocked(isTokenRevoked).mockResolvedValue(false);
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+      });
+
+      await introspectHandler(c);
+
+      expect(isTokenRevoked).toHaveBeenCalled();
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ active: true }));
+    });
+
+    it('uses the signed refresh token discriminator when token_type_hint is omitted', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'refresh.jwt.token',
+          client_id: 'client-123',
+          client_secret: 'client-secret',
+        },
+      });
+      const refreshTokenPayload = {
+        ...sampleTokenPayload,
+        token_use: 'refresh',
+      };
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue(refreshTokenPayload);
+      vi.mocked(verifyToken).mockResolvedValue(refreshTokenPayload);
+      vi.mocked(getRefreshToken).mockResolvedValue({
+        familyId: 'family-123',
+        tokenId: 'token-jti-123',
+      } as any);
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'client-123',
+        client_secret_hash: 'hash_client-secret',
+      });
+
+      await introspectHandler(c);
+
+      expect(getRefreshToken).toHaveBeenCalled();
+      expect(isTokenRevoked).not.toHaveBeenCalled();
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ active: true }));
+    });
+
+    it('returns active=false when the authenticated client is not entitled to inspect the token', async () => {
+      const c = createMockContext({
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: {
+          token: 'other-client.jwt.token',
+          client_id: 'resource-server',
+          client_secret: 'resource-server-secret',
+        },
+      });
+      const otherClientToken = {
+        ...sampleTokenPayload,
+        client_id: 'other-client',
+      };
+
+      vi.mocked(validateClientId).mockReturnValue({ valid: true });
+      vi.mocked(parseToken).mockReturnValue(otherClientToken);
+      vi.mocked(verifyToken).mockResolvedValue(otherClientToken);
+      vi.mocked(isTokenRevoked).mockResolvedValue(false);
+      mockClientRepository.findByClientId.mockResolvedValue({
+        client_id: 'resource-server',
+        client_secret_hash: 'hash_resource-server-secret',
+      });
+
+      await introspectHandler(c);
+
+      expect(verifyToken).toHaveBeenCalled();
+      expect(c.json).toHaveBeenCalledWith({ active: false });
+    });
+
+    it.each([
+      ['string audience', { aud: 'resource-server' }],
+      ['audience', { aud: ['https://op.example.com', 'resource-server'] }],
+      ['string resource', { resource: 'resource-server' }],
+      ['resource', { resource: ['resource-server', 'https://api.example.com'] }],
+    ])(
+      'allows a resource server named in the token %s to inspect a cross-client token',
+      async (_claimName, claimOverride) => {
+        const c = createMockContext({
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: {
+            token: 'resource-bound.jwt.token',
+            client_id: 'resource-server',
+            client_secret: 'resource-server-secret',
+          },
+        });
+        const resourceBoundToken = {
+          ...sampleTokenPayload,
+          client_id: 'other-client',
+          ...claimOverride,
+        };
+
+        vi.mocked(validateClientId).mockReturnValue({ valid: true });
+        vi.mocked(parseToken).mockReturnValue(resourceBoundToken);
+        vi.mocked(verifyToken).mockResolvedValue(resourceBoundToken);
+        vi.mocked(isTokenRevoked).mockResolvedValue(false);
+        mockClientRepository.findByClientId.mockResolvedValue({
+          client_id: 'resource-server',
+          client_secret_hash: 'hash_resource-server-secret',
+        });
+
+        await introspectHandler(c);
+
+        expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ active: true }));
+      }
+    );
+
     it('returns downstream elevation details for exchanged break-glass tokens', async () => {
       const c = createMockContext({
         headers: {
@@ -656,6 +872,9 @@ describe('Token Introspection Endpoint', () => {
           token: 'valid.jwt.token',
           client_id: 'client-123',
           client_secret: 'client-secret',
+        },
+        env: {
+          DB_ADMIN: {} as D1Database,
         },
       });
 
@@ -1915,7 +2134,7 @@ describe('Token Introspection Endpoint', () => {
       expect(cacheKey).toMatch(/^introspect_cache:[a-f0-9]{64}$/);
     });
 
-    it('should skip getRefreshToken check when sub is undefined on refresh_token cache hit', async () => {
+    it('rejects a refresh token without sub before storage or cache lookup', async () => {
       // Token payload without sub
       const tokenWithoutSub = { ...sampleTokenPayload, sub: undefined };
       const cachedResponse = {
@@ -1966,13 +2185,11 @@ describe('Token Introspection Endpoint', () => {
 
       await introspectHandler(c);
 
-      // Should NOT call getRefreshToken when sub is undefined
       expect(getRefreshToken).not.toHaveBeenCalled();
-      // Should NOT call isTokenRevoked either (refresh_token hint)
       expect(isTokenRevoked).not.toHaveBeenCalled();
       expect(mockKvGet).not.toHaveBeenCalled();
       expect(verifyToken).toHaveBeenCalled();
-      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ active: true }));
+      expect(c.json).toHaveBeenCalledWith({ active: false });
     });
 
     it('should NOT cache active=false response', async () => {

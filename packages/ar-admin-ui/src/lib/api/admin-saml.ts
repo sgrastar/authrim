@@ -23,6 +23,22 @@ export interface SAMLMetadataRefreshStatus {
 	diff: SAMLMetadataDiffSummary;
 }
 
+export interface SAMLMetadataRefreshPolicy {
+	mode: 'automatic' | 'manual';
+	intervalSeconds: number;
+	nextRefreshAt?: number;
+	lastAttemptAt?: number;
+	lastSuccessAt?: number;
+	consecutiveFailures?: number;
+	sourceState?: 'healthy' | 'stale' | 'error' | 'expired' | 'missing' | 'identity_change_pending';
+	lastErrorCode?: string;
+	etag?: string;
+	lastModified?: string;
+	validatorSourceUrl?: string;
+	acceptedValidUntil?: string;
+	suspendedByMetadataSync?: boolean;
+}
+
 export interface SAMLSigningKeyReference {
 	slot: 'active' | 'next' | 'backup';
 	id?: string;
@@ -115,6 +131,7 @@ export type SAMLAttributeReleaseConfirmationValueDisplay =
 	| 'names'
 	| 'masked_values'
 	| 'full_values';
+export type SAMLDestinationFieldReleaseMode = 'required' | 'optional' | 'hidden';
 
 export interface SAMLProviderConfig {
 	description?: string;
@@ -125,6 +142,7 @@ export interface SAMLProviderConfig {
 	metadataUrl?: string;
 	metadataXml?: string;
 	metadataRefreshStatus?: SAMLMetadataRefreshStatus;
+	metadataRefreshPolicy?: SAMLMetadataRefreshPolicy;
 	metadataRequestedAttributes?: SAMLRequestedAttribute[];
 	metadataAttributeReleasePolicySuggestion?: {
 		attributes: SAMLAttributeReleaseRule[];
@@ -172,6 +190,7 @@ export interface SAMLProviderConfig {
 		sourceProfileId?: string;
 		destinationProfileId?: string;
 		attributeDescriptors?: Record<string, unknown>;
+		destinationFieldPolicies?: Record<string, SAMLDestinationFieldReleaseMode>;
 	};
 	attributePresetId?: string;
 	attributePresetVersion?: string;
@@ -249,6 +268,12 @@ export interface SAMLAttributePreset {
 	};
 }
 
+export type SAMLAttributePresetId =
+	| 'basic.v1'
+	| 'academic_publisher.v1'
+	| 'enterprise_saas.v1'
+	| 'research_federation.v1';
+
 export interface SAMLLocalSigningDRBundle {
 	kind: 'authrim.saml_local_signing_secret_dr_bundle.encrypted.v1';
 	version: 1;
@@ -293,6 +318,7 @@ export interface CreateSAMLProviderRequest {
 }
 
 export interface UpdateSAMLProviderRequest {
+	expectedUpdatedAt: string;
 	name?: string;
 	config?: SAMLProviderConfig;
 	enabled?: boolean;
@@ -335,6 +361,9 @@ export interface SAMLMetadataEntitySummary {
 	certificateCount: number;
 	validUntil?: string;
 	keywords?: string[];
+	entityCategories?: string[];
+	entityCategorySupport?: string[];
+	registrationAuthority?: string;
 	logoUrl?: string;
 }
 
@@ -366,6 +395,7 @@ export interface SAMLFederationTrustProfile {
 	tenantId: string;
 	name: string;
 	description?: string;
+	metadataUrl?: string;
 	metadataUrlPatterns: string[];
 	certificates: Array<{
 		id: string;
@@ -375,18 +405,47 @@ export interface SAMLFederationTrustProfile {
 		createdAt: number;
 	}>;
 	policy?: 'strict' | 'warn' | 'disabled';
+	polling?: SAMLMetadataRefreshPolicy;
+	runtimeResolution?: SAMLFederationRuntimeResolutionPolicy;
 	enabled: boolean;
 	createdAt: number;
 	updatedAt: number;
 }
 
+export interface SAMLFederationEntityCategoryRule {
+	entityCategory: string;
+	decision: 'allow' | 'deny';
+	attributePresetId?: SAMLAttributePresetId;
+}
+
+export interface SAMLFederationRuntimeResolutionPolicy {
+	mode: 'inventory_only' | 'automatic';
+	roles: Array<'saml_idp' | 'saml_sp'>;
+	priority?: number;
+	idpFieldMappingSetId?: string;
+	spFieldMappingSetId?: string;
+	defaultAttributePresetId?: SAMLAttributePresetId;
+	registrationAuthorities?: string[];
+	entityCategoryPolicy?: {
+		defaultDecision: 'allow' | 'deny';
+		rules: SAMLFederationEntityCategoryRule[];
+	};
+}
+
 export interface SAMLFederationTrustProfileRequest {
 	name: string;
 	description?: string;
+	metadataUrl?: string;
 	metadataUrlPatterns: string[];
 	certificates: Array<{ name?: string; certificate: string }>;
 	policy?: 'strict' | 'warn' | 'disabled';
+	polling?: Partial<SAMLMetadataRefreshPolicy>;
+	runtimeResolution?: SAMLFederationRuntimeResolutionPolicy;
 	enabled?: boolean;
+}
+
+export interface SAMLFederationTrustProfileUpdateRequest extends SAMLFederationTrustProfileRequest {
+	expectedUpdatedAt: number;
 }
 
 export interface SAMLTrustCertificatePreview {
@@ -425,6 +484,108 @@ function stringArray(value: unknown): string[] {
 		: [];
 }
 
+function metadataRefreshPolicy(value: unknown): SAMLMetadataRefreshPolicy | undefined {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+	const polling = value as Record<string, unknown>;
+	if (polling.mode !== 'automatic' && polling.mode !== 'manual') return undefined;
+	return {
+		mode: polling.mode,
+		intervalSeconds:
+			typeof polling.intervalSeconds === 'number' ? polling.intervalSeconds : 6 * 60 * 60,
+		...(typeof polling.nextRefreshAt === 'number' ? { nextRefreshAt: polling.nextRefreshAt } : {}),
+		...(typeof polling.lastAttemptAt === 'number' ? { lastAttemptAt: polling.lastAttemptAt } : {}),
+		...(typeof polling.lastSuccessAt === 'number' ? { lastSuccessAt: polling.lastSuccessAt } : {}),
+		...(typeof polling.consecutiveFailures === 'number'
+			? { consecutiveFailures: polling.consecutiveFailures }
+			: {}),
+		...(typeof polling.sourceState === 'string'
+			? { sourceState: polling.sourceState as SAMLMetadataRefreshPolicy['sourceState'] }
+			: {}),
+		...(typeof polling.lastErrorCode === 'string' ? { lastErrorCode: polling.lastErrorCode } : {}),
+		...(typeof polling.etag === 'string' ? { etag: polling.etag } : {}),
+		...(typeof polling.lastModified === 'string' ? { lastModified: polling.lastModified } : {}),
+		...(typeof polling.validatorSourceUrl === 'string'
+			? { validatorSourceUrl: polling.validatorSourceUrl }
+			: {}),
+		...(typeof polling.acceptedValidUntil === 'string'
+			? { acceptedValidUntil: polling.acceptedValidUntil }
+			: {}),
+		...(typeof polling.suspendedByMetadataSync === 'boolean'
+			? { suspendedByMetadataSync: polling.suspendedByMetadataSync }
+			: {})
+	};
+}
+
+function federationRuntimeResolutionPolicy(
+	value: unknown
+): SAMLFederationRuntimeResolutionPolicy | undefined {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+	const policy = value as Record<string, unknown>;
+	if (policy.mode !== 'inventory_only' && policy.mode !== 'automatic') return undefined;
+	const roles = Array.isArray(policy.roles)
+		? policy.roles.filter(
+				(role): role is 'saml_idp' | 'saml_sp' => role === 'saml_idp' || role === 'saml_sp'
+			)
+		: [];
+	const presetIds = new Set<SAMLAttributePresetId>([
+		'basic.v1',
+		'academic_publisher.v1',
+		'enterprise_saas.v1',
+		'research_federation.v1'
+	]);
+	const categoryPolicy = policy.entityCategoryPolicy;
+	const entityCategoryPolicy =
+		categoryPolicy && typeof categoryPolicy === 'object' && !Array.isArray(categoryPolicy)
+			? (() => {
+					const category = categoryPolicy as Record<string, unknown>;
+					if (category.defaultDecision !== 'allow' && category.defaultDecision !== 'deny') {
+						return undefined;
+					}
+					const defaultDecision: 'allow' | 'deny' = category.defaultDecision;
+					const rules = Array.isArray(category.rules)
+						? category.rules.flatMap((item): SAMLFederationEntityCategoryRule[] => {
+								if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+								const rule = item as Record<string, unknown>;
+								if (
+									typeof rule.entityCategory !== 'string' ||
+									(rule.decision !== 'allow' && rule.decision !== 'deny')
+								) {
+									return [];
+								}
+								return [
+									{
+										entityCategory: rule.entityCategory,
+										decision: rule.decision,
+										...(presetIds.has(rule.attributePresetId as SAMLAttributePresetId)
+											? { attributePresetId: rule.attributePresetId as SAMLAttributePresetId }
+											: {})
+									}
+								];
+							})
+						: [];
+					return { defaultDecision, rules };
+				})()
+			: undefined;
+	return {
+		mode: policy.mode,
+		roles,
+		...(typeof policy.priority === 'number' ? { priority: policy.priority } : {}),
+		...(typeof policy.idpFieldMappingSetId === 'string'
+			? { idpFieldMappingSetId: policy.idpFieldMappingSetId }
+			: {}),
+		...(typeof policy.spFieldMappingSetId === 'string'
+			? { spFieldMappingSetId: policy.spFieldMappingSetId }
+			: {}),
+		...(presetIds.has(policy.defaultAttributePresetId as SAMLAttributePresetId)
+			? { defaultAttributePresetId: policy.defaultAttributePresetId as SAMLAttributePresetId }
+			: {}),
+		...(Array.isArray(policy.registrationAuthorities)
+			? { registrationAuthorities: stringArray(policy.registrationAuthorities) }
+			: {}),
+		...(entityCategoryPolicy ? { entityCategoryPolicy } : {})
+	};
+}
+
 function profileFromTrustSource(source: {
 	id: string;
 	tenantId: string;
@@ -439,6 +600,17 @@ function profileFromTrustSource(source: {
 		? payload.certificates.filter(isFederationCertificate)
 		: [];
 	const metadataUrlPatterns = stringArray(payload.metadataUrlPatterns);
+	const explicitMetadataUrl =
+		typeof payload.metadataUrl === 'string' && payload.metadataUrl.trim()
+			? payload.metadataUrl.trim()
+			: undefined;
+	const inferredMetadataUrl =
+		metadataUrlPatterns.length === 1 &&
+		metadataUrlPatterns[0]?.startsWith('https://') &&
+		!metadataUrlPatterns[0].includes('*')
+			? metadataUrlPatterns[0]
+			: undefined;
+	const sourceMetadataUrl = explicitMetadataUrl ?? inferredMetadataUrl;
 	if (certificates.length === 0 && metadataUrlPatterns.length === 0) {
 		return null;
 	}
@@ -448,9 +620,17 @@ function profileFromTrustSource(source: {
 		tenantId: source.tenantId,
 		name: source.displayName,
 		description: typeof payload.description === 'string' ? payload.description : undefined,
+		metadataUrl: sourceMetadataUrl,
 		metadataUrlPatterns,
 		certificates,
 		policy: policy === 'strict' || policy === 'warn' || policy === 'disabled' ? policy : undefined,
+		polling:
+			metadataRefreshPolicy(payload.polling) ??
+			(sourceMetadataUrl ? { mode: 'automatic', intervalSeconds: 6 * 60 * 60 } : undefined),
+		runtimeResolution: federationRuntimeResolutionPolicy(payload.runtimeResolution) ?? {
+			mode: 'inventory_only',
+			roles: []
+		},
 		enabled: source.lifecycleState === 'active',
 		createdAt: source.createdAt ?? 0,
 		updatedAt: source.updatedAt ?? 0
@@ -458,7 +638,7 @@ function profileFromTrustSource(source: {
 }
 
 async function buildFederationTrustSourceRequest(
-	request: SAMLFederationTrustProfileRequest,
+	request: SAMLFederationTrustProfileRequest | SAMLFederationTrustProfileUpdateRequest,
 	trustSourceId?: string
 ) {
 	const now = Date.now();
@@ -477,7 +657,13 @@ async function buildFederationTrustSourceRequest(
 		})
 	);
 	const lifecycleState: 'draft' | 'active' = request.enabled === false ? 'draft' : 'active';
+	const existingPolling = request.polling;
+	const polling: SAMLMetadataRefreshPolicy = {
+		mode: existingPolling?.mode === 'manual' ? 'manual' : 'automatic',
+		intervalSeconds: existingPolling?.intervalSeconds ?? 6 * 60 * 60
+	};
 	return {
+		...('expectedUpdatedAt' in request ? { expectedUpdatedAt: request.expectedUpdatedAt } : {}),
 		sourceType: 'saml_aggregate' as const,
 		sourceKey: trustSourceId
 			? `saml-profile:${trustSourceId}`
@@ -486,8 +672,11 @@ async function buildFederationTrustSourceRequest(
 		lifecycleState,
 		protocolPayload: {
 			description: request.description ?? null,
+			metadataUrl: request.metadataUrl?.trim() || null,
 			metadataUrlPatterns: request.metadataUrlPatterns,
 			policy: request.policy ?? 'warn',
+			polling,
+			runtimeResolution: request.runtimeResolution ?? { mode: 'inventory_only', roles: [] },
 			certificates
 		},
 		anchors: certificates.map((certificate) => ({
@@ -504,19 +693,23 @@ function profileFromRequestResult(
 	tenantId: string | undefined,
 	request: SAMLFederationTrustProfileRequest,
 	sourceRequest: Awaited<ReturnType<typeof buildFederationTrustSourceRequest>>,
-	createdAt = Date.now()
+	createdAt = Date.now(),
+	updatedAt = createdAt
 ): SAMLFederationTrustProfile {
 	return {
 		id,
 		tenantId: tenantId ?? 'default',
 		name: request.name,
 		description: request.description,
+		metadataUrl: request.metadataUrl,
 		metadataUrlPatterns: request.metadataUrlPatterns,
 		certificates: sourceRequest.protocolPayload.certificates,
 		policy: request.policy,
+		polling: sourceRequest.protocolPayload.polling,
+		runtimeResolution: sourceRequest.protocolPayload.runtimeResolution,
 		enabled: request.enabled !== false,
 		createdAt,
-		updatedAt: Date.now()
+		updatedAt
 	};
 }
 
@@ -806,6 +999,7 @@ export const adminSAMLAPI = {
 			providerType?: SAMLProvider['providerType'];
 			samlProfile?: string;
 			attributePresetId?: string;
+			identityMapping?: SAMLProviderConfig['identityMapping'];
 			enabled?: boolean;
 		}
 	): Promise<SAMLMetadataBatchStatus> {
@@ -900,13 +1094,22 @@ export const adminSAMLAPI = {
 			throw await handleAPIError(response, 'Failed to create federation trust profile');
 		}
 
-		const body = (await response.json()) as { id: string; tenantId?: string };
-		return profileFromRequestResult(body.id, body.tenantId, request, sourceRequest);
+		const body = (await response.json()) as {
+			result: { id: string; tenantId?: string; updatedAt?: number };
+		};
+		return profileFromRequestResult(
+			body.result.id,
+			body.result.tenantId,
+			request,
+			sourceRequest,
+			Date.now(),
+			body.result.updatedAt
+		);
 	},
 
 	async updateFederationTrustProfile(
 		id: string,
-		request: SAMLFederationTrustProfileRequest
+		request: SAMLFederationTrustProfileUpdateRequest
 	): Promise<SAMLFederationTrustProfile> {
 		const sourceRequest = await buildFederationTrustSourceRequest(request, id);
 		const response = await adminFetch(
@@ -922,8 +1125,17 @@ export const adminSAMLAPI = {
 			throw await handleAPIError(response, 'Failed to update federation trust profile');
 		}
 
-		const body = (await response.json()) as { id: string; tenantId?: string };
-		return profileFromRequestResult(body.id, body.tenantId, request, sourceRequest);
+		const body = (await response.json()) as {
+			result: { id: string; tenantId?: string; updatedAt?: number };
+		};
+		return profileFromRequestResult(
+			body.result.id,
+			body.result.tenantId,
+			request,
+			sourceRequest,
+			Date.now(),
+			body.result.updatedAt
+		);
 	},
 
 	async deleteFederationTrustProfile(id: string): Promise<{ success: boolean }> {
@@ -936,7 +1148,8 @@ export const adminSAMLAPI = {
 			throw await handleAPIError(response, 'Failed to delete federation trust profile');
 		}
 
-		return await response.json();
+		const body = (await response.json()) as { result: { success: boolean } };
+		return body.result;
 	},
 
 	async importMetadata(
@@ -977,6 +1190,28 @@ export const adminSAMLAPI = {
 
 		if (!response.ok) {
 			throw await handleAPIError(response, 'Failed to refresh SAML metadata');
+		}
+
+		return await response.json();
+	},
+
+	async refreshFederationMetadataSource(sourceId: string): Promise<{
+		success: boolean;
+		sourceId: string;
+		changed: boolean;
+		entityCount: number;
+		providersUpdated: number;
+		providersMissing: number;
+		providersFailed: number;
+		verificationStatus: string;
+	}> {
+		const response = await adminFetch(
+			`${API_BASE_URL}/api/admin/saml-federation-sources/${encodeURIComponent(sourceId)}/refresh-metadata`,
+			{ method: 'POST', headers: { 'Content-Type': 'application/json' } }
+		);
+
+		if (!response.ok) {
+			throw await handleAPIError(response, 'Failed to refresh federation metadata');
 		}
 
 		return await response.json();

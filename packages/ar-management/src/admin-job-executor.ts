@@ -3,25 +3,26 @@ import type {
   Env,
   ObjectClass,
   ObjectRepresentation,
-  TenantDatabaseRole,
+  ResolvedTenantDatabaseSource,
 } from '@authrim/ar-lib-core';
 import {
-  buildTenantDatabaseBindingPlan,
   decryptObjectArtifact,
   ensureDatabaseAdapter,
   emitRuntimeLogRecords,
-  evaluateTenantDatabaseBindingCapacity,
   resolveAuthCorePersistenceAdapterFromEnv,
-  resolveUserStoreRuntimeSourcesFromEnv,
+  resolveTenantAssignedDatabaseSourcesFromRegistry,
   readR2ObjectTextWithLimit,
   tombstoneObjectCatalogEntryForTenant,
+  putTenantExistsCache,
+  deleteTenantExistsCache,
+  transitionAccountAuthenticationState,
 } from '@authrim/ar-lib-core';
 import { materializeEncryptedObjectArtifact } from './object-artifact-materialization';
 import { createLoggingTenantKeyResolver } from './logging-tenant-key';
+import { listScimTokens } from '@authrim/ar-lib-scim';
 
 type AdminJobStatus = 'processing' | 'completed' | 'partial_failure';
 type AdminJobResultDelivery = 'auto' | 'inline' | 'artifact';
-type TenantDatabaseProvisionExecutionMode = 'plan_only' | 'operator_cli';
 type TenantBackupKmsProvider = 'deployment_master_secret_hkdf' | 'external_kms_customer_managed';
 type TenantDatabaseExportFormat = 'jsonl_per_table' | 'sqlite_d1_dump' | 'parquet';
 type TenantDatabaseRestoreDryRunValidationMode =
@@ -33,9 +34,6 @@ const DEFAULT_JOB_MAX_ATTEMPTS = 3;
 const DEFAULT_JOB_BATCH_SIZE = 500;
 const MAX_JOB_BATCH_SIZE = 1000;
 const RETRY_BACKOFF_SECONDS = [60, 300, 900] as const;
-const TENANT_D1_BINDING_WARNING_THRESHOLD = 3000;
-const TENANT_D1_BINDING_HARD_LIMIT = 5000;
-const TENANT_D1_ROLES: TenantDatabaseRole[] = ['tenant_core', 'tenant_pii'];
 const DEFAULT_TENANT_BACKUP_RETENTION_DAYS = 30;
 const MAX_TENANT_BACKUP_RETENTION_DAYS = 3650;
 const TENANT_DATABASE_RESTORE_DRY_RUN_CONFIRMATION = 'VALIDATE_TENANT_DATABASE_RESTORE_DRY_RUN';
@@ -55,13 +53,13 @@ const TENANT_BACKUP_CORE_TABLES = [
   'passkeys',
   'roles',
   'user_roles',
-  'session_clients',
 ] as const;
 const TENANT_BACKUP_PII_TABLES = [
   'identity_sensitive_values',
   'subject_identifiers',
+  'pairwise_subject_identifiers',
   'linked_identities',
-  'pii_audit_log',
+  'audit_log_pii',
   'users_pii_tombstone',
 ] as const;
 
@@ -76,6 +74,7 @@ export interface AdminJobRow {
   attempt_count?: number | null;
   max_attempts?: number | null;
   next_run_at?: number | null;
+  tenant_lifecycle_state?: string | null;
 }
 
 interface AdminJobLogger {
@@ -161,7 +160,7 @@ async function emitAdminJobRuntimeLog(
 }
 
 const GENERIC_ADMIN_JOB_TYPES = [
-  'tenant-database/provision',
+  'tenants/lifecycle-validation',
   'tenant-database/export',
   'tenant-database/restore-dry-run',
   'tenant-database/purge-backup',
@@ -171,6 +170,249 @@ const GENERIC_ADMIN_JOB_TYPES = [
 ] as const;
 
 type GenericAdminJobType = (typeof GENERIC_ADMIN_JOB_TYPES)[number];
+
+export function isAdminJobAllowedForTenantLifecycle(
+  lifecycleState: string,
+  jobType: string
+): boolean {
+  if (lifecycleState === 'active') return true;
+  if (lifecycleState === 'deleting') {
+    return jobType === 'tenant-database/export';
+  }
+  if (jobType === 'tenants/lifecycle-validation') {
+    return ['suspended', 'frozen', 'restore_pending', 'restore_validating'].includes(
+      lifecycleState
+    );
+  }
+  if (lifecycleState === 'suspended') {
+    return ['tenant-database/export', 'tenant-database/restore-dry-run'].includes(jobType);
+  }
+  if (lifecycleState === 'frozen' || lifecycleState === 'migration_read_only') {
+    return ['tenant-database/export', 'tenant-database/restore-dry-run'].includes(jobType);
+  }
+  if (lifecycleState === 'restore_pending' || lifecycleState === 'restore_validating') {
+    return ['tenant-database/restore-dry-run'].includes(jobType);
+  }
+  return false;
+}
+
+interface TenantLifecycleValidationConfig {
+  command: 'resume' | 'unfreeze' | 'restore-validate';
+  validation_kind: string;
+  source_state: string;
+  target_state: 'active';
+  reason: string;
+  idempotency_key: string;
+  actor_id?: string | null;
+}
+
+async function writeTenantLifecycleJobAudit(
+  env: Env,
+  fallbackAdapter: DatabaseAdapter,
+  job: AdminJobRow,
+  input: {
+    action: string;
+    result: 'success' | 'failure';
+    severity: 'info' | 'error';
+    metadata: Record<string, unknown>;
+    error?: unknown;
+  }
+): Promise<void> {
+  const auditAdapter = ensureDatabaseAdapter(
+    env.DB_ADMIN ?? fallbackAdapter,
+    'tenant-lifecycle-job-audit'
+  );
+  const config = job.config ? (JSON.parse(job.config) as TenantLifecycleValidationConfig) : null;
+  await auditAdapter.execute(
+    `INSERT INTO admin_audit_log (
+      id, tenant_id, admin_user_id, action, resource_type, resource_id,
+      result, error_code, error_message, severity, metadata_json, created_at
+    ) VALUES (?, ?, ?, ?, 'tenant', ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      crypto.randomUUID(),
+      job.tenant_id,
+      config?.actor_id ?? null,
+      input.action,
+      job.tenant_id,
+      input.result,
+      input.result === 'failure' ? 'tenant_lifecycle_validation_failed' : null,
+      input.error instanceof Error ? input.error.message : input.error ? String(input.error) : null,
+      input.severity,
+      JSON.stringify({ job_id: job.id, ...input.metadata }),
+      Date.now(),
+    ]
+  );
+}
+
+async function processTenantLifecycleValidationJob(
+  env: Env,
+  adapter: DatabaseAdapter,
+  job: AdminJobRow
+): Promise<AdminJobProcessorResult> {
+  const config = parseJsonConfig<TenantLifecycleValidationConfig>(job);
+  const tenant = await adapter.queryOne<{ id: string; lifecycle_state: string }>(
+    'SELECT id, lifecycle_state FROM tenants WHERE id = ?',
+    [job.tenant_id]
+  );
+  if (!tenant) throw new Error('tenant_lifecycle_validation_tenant_not_found');
+
+  const allowedState =
+    config.command === 'restore-validate' ? 'restore_validating' : config.source_state;
+  if (tenant.lifecycle_state !== allowedState) {
+    throw new Error(
+      `tenant_lifecycle_validation_state_conflict:${tenant.lifecycle_state}:${allowedState}`
+    );
+  }
+
+  const checks: Array<{ id: string; status: 'passed'; evidence: string }> = [];
+  checks.push({ id: 'control_db', status: 'passed', evidence: 'tenant row present' });
+
+  const tenantAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+    env,
+    'tenant-lifecycle-validation',
+    { tenantId: job.tenant_id }
+  );
+  await tenantAdapter.queryOne('SELECT 1 AS ok');
+  checks.push({ id: 'tenant_db_read', status: 'passed', evidence: 'SELECT 1 succeeded' });
+
+  const probeId = `lifecycle:${job.id}`;
+  await tenantAdapter.execute(
+    `INSERT INTO authrim_runtime_probes
+      (id, tenant_id, role, probe_kind, nonce, created_at)
+     VALUES (?, ?, 'tenant_core', 'write_read', ?, ?)`,
+    [probeId, job.tenant_id, crypto.randomUUID(), Math.floor(Date.now() / 1000)]
+  );
+  const probe = await tenantAdapter.queryOne<{ id: string; tenant_id: string }>(
+    'SELECT id, tenant_id FROM authrim_runtime_probes WHERE id = ? AND tenant_id = ?',
+    [probeId, job.tenant_id]
+  );
+  if (probe?.id !== probeId || probe.tenant_id !== job.tenant_id) {
+    throw new Error('tenant_lifecycle_validation_write_read_failed');
+  }
+  await tenantAdapter.execute('DELETE FROM authrim_runtime_probes WHERE id = ? AND tenant_id = ?', [
+    probeId,
+    job.tenant_id,
+  ]);
+  checks.push({
+    id: 'tenant_db_write_read',
+    status: 'passed',
+    evidence: 'probe round-trip succeeded',
+  });
+
+  const issuer = env.BASE_DOMAIN ? `https://${job.tenant_id}.${env.BASE_DOMAIN}` : env.ISSUER_URL;
+  if (!issuer) throw new Error('tenant_lifecycle_validation_issuer_missing');
+  new URL(issuer);
+  if (!env.AUTHRIM_CONFIG) throw new Error('tenant_lifecycle_validation_kv_binding_missing');
+  const tenantSettingsRaw = await env.AUTHRIM_CONFIG.get(`settings:tenant:${job.tenant_id}:tenant`);
+  if (!tenantSettingsRaw) throw new Error('tenant_lifecycle_validation_tenant_settings_missing');
+  const tenantSettings = JSON.parse(tenantSettingsRaw) as Record<string, unknown>;
+  if (typeof tenantSettings['tenant.allowed_identifiers'] !== 'string') {
+    throw new Error('tenant_lifecycle_validation_discovery_settings_invalid');
+  }
+  checks.push({ id: 'discovery_issuer', status: 'passed', evidence: issuer });
+
+  if (config.command === 'restore-validate') {
+    const samlProviders = await tenantAdapter.queryOne<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM identity_providers
+        WHERE tenant_id = ? AND provider_type LIKE 'saml%'`,
+      [job.tenant_id]
+    );
+    checks.push({
+      id: 'saml',
+      status: 'passed',
+      evidence: `${samlProviders?.count ?? 0} tenant-scoped provider(s) queryable`,
+    });
+
+    if (!env.INITIAL_ACCESS_TOKENS) {
+      throw new Error('tenant_lifecycle_validation_scim_token_store_missing');
+    }
+    const scimTokens = await listScimTokens(env, { tenantId: job.tenant_id });
+    checks.push({
+      id: 'scim',
+      status: 'passed',
+      evidence: `${scimTokens.length} tenant-scoped token record(s) queryable`,
+    });
+  }
+
+  checks.push({
+    id: 'kv',
+    status: 'passed',
+    evidence: 'tenant settings read and parsed',
+  });
+
+  if (config.command === 'restore-validate') {
+    if (!env.EXPORT_ARTIFACTS) throw new Error('tenant_lifecycle_validation_r2_binding_missing');
+    const r2ProbeKey = `lifecycle-validation/${job.tenant_id}/${job.id}.json`;
+    const r2ProbeBody = JSON.stringify({ tenant_id: job.tenant_id, job_id: job.id });
+    await env.EXPORT_ARTIFACTS.put(r2ProbeKey, r2ProbeBody);
+    const restoredProbe = await env.EXPORT_ARTIFACTS.get(r2ProbeKey);
+    if (!restoredProbe || (await restoredProbe.text()) !== r2ProbeBody) {
+      throw new Error('tenant_lifecycle_validation_r2_round_trip_failed');
+    }
+    await env.EXPORT_ARTIFACTS.delete(r2ProbeKey);
+    checks.push({ id: 'r2', status: 'passed', evidence: 'temporary object round-trip succeeded' });
+  }
+
+  const auditAdapter = ensureDatabaseAdapter(
+    env.DB_ADMIN ?? adapter,
+    'tenant-lifecycle-audit-probe'
+  );
+  await auditAdapter.queryOne('SELECT id FROM admin_audit_log WHERE tenant_id = ? LIMIT 1', [
+    job.tenant_id,
+  ]);
+  checks.push({
+    id: 'audit_sink',
+    status: 'passed',
+    evidence: 'admin audit storage is queryable',
+  });
+
+  const currentVersion = await adapter.queryOne<{ updated_at: number }>(
+    'SELECT updated_at FROM tenants WHERE id = ?',
+    [job.tenant_id]
+  );
+  const nowTs = Math.max(
+    Math.floor(Date.now() / 1000),
+    Number(currentVersion?.updated_at ?? 0) + 1
+  );
+  const update = await adapter.execute(
+    'UPDATE tenants SET lifecycle_state = ?, updated_at = ? WHERE id = ? AND lifecycle_state = ?',
+    [config.target_state, nowTs, job.tenant_id, allowedState]
+  );
+  if (update.rowsAffected === 0) throw new Error('tenant_lifecycle_validation_activation_conflict');
+  if (config.target_state === 'active') {
+    await putTenantExistsCache(env.AUTHRIM_CONFIG, job.tenant_id);
+  } else {
+    await deleteTenantExistsCache(env.AUTHRIM_CONFIG, job.tenant_id);
+  }
+
+  await writeTenantLifecycleJobAudit(env, adapter, job, {
+    action: 'tenant.lifecycle.validation_completed',
+    result: 'success',
+    severity: 'info',
+    metadata: { checks, source_state: config.source_state, target_state: config.target_state },
+  });
+
+  return {
+    status: 'completed',
+    progress: {
+      stage: 'completed',
+      total: checks.length,
+      processed: checks.length,
+      succeeded: checks.length,
+      failed: 0,
+      checks,
+    },
+    result: {
+      summary: { total: checks.length, succeeded: checks.length, failed: 0 },
+      checks,
+      lifecycle_state: config.target_state,
+      source_state: config.source_state,
+      reason: config.reason,
+      actor_id: config.actor_id ?? null,
+      idempotency_key: config.idempotency_key,
+    },
+  };
+}
 
 const USER_BULK_UPDATE_COLUMNS = {
   status: {
@@ -283,15 +525,6 @@ export interface OrganizationBulkMembersConfig {
   result_delivery?: AdminJobResultDelivery;
 }
 
-export interface TenantDatabaseProvisionConfig {
-  tenant_id?: string;
-  tenant_slug?: string;
-  generation?: number;
-  activate?: boolean;
-  execution_mode?: TenantDatabaseProvisionExecutionMode;
-  reason?: string;
-}
-
 export interface TenantDatabaseExportConfig {
   policy?: 'deletion_before_purge' | 'manual' | 'scheduled_periodic';
   consistency?: 'maintenance_read_only' | 'best_effort_online';
@@ -328,23 +561,15 @@ export interface TenantDatabasePurgeBackupConfig {
   reason?: string;
 }
 
-interface TenantDatabaseProvisionResourcePlan {
-  role: TenantDatabaseRole;
-  database_name: string;
-  binding_ref: string;
-  worker_shard: string;
-  generation: number;
-  database_id: string | null;
-}
-
-interface TenantDatabaseProvisionProgress {
-  stage?: string;
-  resources?: TenantDatabaseProvisionResourcePlan[];
-}
-
 interface TenantBackupManifestTableArtifact {
   plane: 'core' | 'pii';
   table: string;
+  data_role: string;
+  residency_partition: string;
+  shard_id: string;
+  binding_ref: string;
+  binding_route_generation: number;
+  schema_version: number;
   row_count: number;
   plaintext_bytes: number;
   plaintext_sha256: string;
@@ -359,15 +584,20 @@ interface TenantBackupManifest {
   version: number;
   tenant_id: string;
   job_id: string;
-  profile: string;
-  schema_version: string;
+  runtime_generation: number;
   export_format: 'jsonl_per_table';
   consistency: 'maintenance_read_only' | 'best_effort_online';
   policy: NonNullable<TenantDatabaseExportConfig['policy']>;
   started_at: string;
   completed_at: string;
   retention_days: number;
-  restore_order: Array<{ plane: 'core' | 'pii'; table: string }>;
+  restore_order: Array<{
+    plane: 'core' | 'pii';
+    data_role: string;
+    residency_partition: string;
+    shard_id: string;
+    table: string;
+  }>;
   tables: TenantBackupManifestTableArtifact[];
   checksums: {
     whole_export_sha256: string;
@@ -522,143 +752,6 @@ async function resolveTenantBackupEncryptionMaterial(
   };
 }
 
-function normalizeTenantDatabaseProvisionExecutionMode(
-  value: unknown
-): TenantDatabaseProvisionExecutionMode {
-  if (value === undefined || value === null) return 'plan_only';
-  if (value === 'plan_only' || value === 'operator_cli') {
-    return value;
-  }
-  throw new Error('Invalid tenant database provisioning execution_mode');
-}
-
-function getTenantDatabaseProvisionEnvironment(env: Env): string {
-  const deploymentEnv = env as Env & {
-    DEPLOY_ENV?: string;
-    ENVIRONMENT?: string;
-    NODE_ENV?: string;
-  };
-  return deploymentEnv.DEPLOY_ENV || deploymentEnv.ENVIRONMENT || deploymentEnv.NODE_ENV || 'prod';
-}
-
-function countCurrentTenantD1Bindings(env: Env): number {
-  return Object.keys(env as unknown as Record<string, unknown>).filter((key) =>
-    /^TDB_[A-Z0-9_]+_(CORE|PII|AUDIT|CUSTOM)(?:_S[0-9]+)?$/u.test(key)
-  ).length;
-}
-
-function buildTenantDatabaseProvisionResources(
-  env: Env,
-  job: AdminJobRow,
-  config: TenantDatabaseProvisionConfig
-): TenantDatabaseProvisionResourcePlan[] {
-  const environment = getTenantDatabaseProvisionEnvironment(env);
-  const generation = config.generation ?? 1;
-  return TENANT_D1_ROLES.map((role) => {
-    const plan = buildTenantDatabaseBindingPlan({
-      environment,
-      tenantId: job.tenant_id,
-      tenantSlug: config.tenant_slug,
-      role,
-    });
-    return {
-      role,
-      database_name: plan.databaseName,
-      binding_ref: plan.bindingRef,
-      worker_shard: plan.workerShard,
-      generation,
-      database_id: null,
-    };
-  });
-}
-
-function escapeCliArg(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
-
-function buildTenantDatabaseProvisionCommand(
-  env: Env,
-  job: AdminJobRow,
-  config: TenantDatabaseProvisionConfig
-): string {
-  const args = [
-    'pnpm',
-    '--filter',
-    '@authrim/setup',
-    'exec',
-    'authrim-setup',
-    'tenant-db',
-    '--tenant-id',
-    escapeCliArg(job.tenant_id),
-    '--generation',
-    String(config.generation ?? 1),
-    '--env',
-    escapeCliArg(getTenantDatabaseProvisionEnvironment(env)),
-    '--yes',
-  ];
-  if (config.tenant_slug) {
-    args.push('--tenant-slug', escapeCliArg(config.tenant_slug));
-  }
-  if (config.activate) {
-    args.push('--activate');
-  }
-  return args.join(' ');
-}
-
-function buildWranglerD1BindingSnippet(resources: TenantDatabaseProvisionResourcePlan[]): string {
-  return resources
-    .map((resource) =>
-      `
-[[d1_databases]]
-binding = "${resource.binding_ref}"
-database_name = "${resource.database_name}"
-database_id = "${resource.database_id ?? '<created-by-provisioning>'}"
-`.trim()
-    )
-    .join('\n\n');
-}
-
-function buildBindingImpact(env: Env, resources: TenantDatabaseProvisionResourcePlan[]) {
-  const currentBindings = countCurrentTenantD1Bindings(env);
-  const generatedBindingRefs = resources.map((resource) => resource.binding_ref);
-  const envBindings = new Set(Object.keys(env as unknown as Record<string, unknown>));
-  const conflicts = generatedBindingRefs.filter((binding) => envBindings.has(binding));
-  const uniqueBindings = new Set(generatedBindingRefs);
-  if (uniqueBindings.size !== generatedBindingRefs.length) {
-    conflicts.push(
-      ...generatedBindingRefs.filter(
-        (binding, index) => generatedBindingRefs.indexOf(binding) !== index
-      )
-    );
-  }
-  return {
-    current_bindings: currentBindings,
-    added_bindings: resources.length,
-    generated_bindings: generatedBindingRefs,
-    binding_conflicts: Array.from(new Set(conflicts)).sort(),
-    capacity: evaluateTenantDatabaseBindingCapacity({
-      currentBindings,
-      tenantsToAdd: 1,
-      rolesPerTenant: resources.length,
-      warningThreshold: TENANT_D1_BINDING_WARNING_THRESHOLD,
-      hardLimit: TENANT_D1_BINDING_HARD_LIMIT,
-    }),
-  };
-}
-
-function mergeProvisionResourcesWithProgress(
-  planned: TenantDatabaseProvisionResourcePlan[],
-  progress: TenantDatabaseProvisionProgress | null
-): TenantDatabaseProvisionResourcePlan[] {
-  const progressResources = new Map(
-    (progress?.resources ?? []).map((resource) => [resource.role, resource])
-  );
-  return planned.map((resource) => ({
-    ...resource,
-    database_id: progressResources.get(resource.role)?.database_id ?? resource.database_id,
-  }));
-}
-
 function buildUserFilterWhere(
   tenantId: string,
   filter: Record<string, unknown> | undefined
@@ -712,68 +805,6 @@ export async function countBulkUserUpdateTargets(
     filter.params
   );
   return row?.count ?? 0;
-}
-
-async function processTenantDatabaseProvisionJob(
-  env: Env,
-  adapter: DatabaseAdapter,
-  job: AdminJobRow
-): Promise<AdminJobProcessorResult> {
-  const config = parseJsonConfig<TenantDatabaseProvisionConfig>(job);
-  const executionMode = normalizeTenantDatabaseProvisionExecutionMode(config.execution_mode);
-  const previousProgress = parseJsonProgress<TenantDatabaseProvisionProgress>(job);
-  const resources = mergeProvisionResourcesWithProgress(
-    buildTenantDatabaseProvisionResources(env, job, config),
-    previousProgress
-  );
-  const impact = buildBindingImpact(env, resources);
-
-  if (impact.binding_conflicts.length > 0) {
-    throw new Error(`tenant_d1_binding_conflict:${impact.binding_conflicts.join(',')}`);
-  }
-  if (impact.capacity.state === 'exceeds_limit') {
-    throw new Error(`tenant_d1_binding_capacity_exceeded:${impact.capacity.projectedBindings}`);
-  }
-
-  const result: Record<string, unknown> = {
-    summary: {
-      total: resources.length,
-      processed: resources.length,
-      succeeded: resources.length,
-      failed: 0,
-      execution_mode: executionMode,
-    },
-    tenant_database_provisioning: {
-      tenant_id: job.tenant_id,
-      tenant_slug: config.tenant_slug ?? null,
-      generation: config.generation ?? 1,
-      activate: config.activate ?? false,
-      reason: config.reason ?? null,
-      resources,
-      impact,
-      generated_config: {
-        wrangler_toml: buildWranglerD1BindingSnippet(resources),
-      },
-      operator_cli: {
-        command: buildTenantDatabaseProvisionCommand(env, job, config),
-      },
-      setup_tool_execution:
-        'Run the generated setup command from an operator workstation with wrangler access.',
-    },
-  };
-
-  return {
-    status: 'completed',
-    progress: {
-      total: resources.length,
-      processed: resources.length,
-      succeeded: resources.length,
-      failed: 0,
-      skipped: executionMode === 'plan_only' || executionMode === 'operator_cli' ? 1 : 0,
-      stage: 'deployment_plan_generated',
-    },
-    result,
-  };
 }
 
 function normalizeTenantDatabaseExportPolicy(
@@ -906,13 +937,19 @@ function safeObjectKeySegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._=-]+/g, '_').slice(0, 160) || 'unknown';
 }
 
-function buildTenantTableObjectKey(job: AdminJobRow, plane: 'core' | 'pii', table: string): string {
+function buildTenantTableObjectKey(
+  job: AdminJobRow,
+  plane: 'core' | 'pii',
+  shardId: string,
+  table: string
+): string {
   return [
     'exports',
     safeObjectKeySegment(job.tenant_id),
     'tenant-backup',
     safeObjectKeySegment(job.id),
     safeObjectKeySegment(plane),
+    safeObjectKeySegment(shardId),
     `${safeObjectKeySegment(table)}.jsonl`,
   ].join('/');
 }
@@ -925,10 +962,17 @@ async function exportTenantTableToArtifact(input: {
   keyVersion: number;
   job: AdminJobRow;
   plane: 'core' | 'pii';
+  store: ResolvedTenantDatabaseSource;
   table: string;
 }): Promise<{
   plane: 'core' | 'pii';
   table: string;
+  data_role: string;
+  residency_partition: string;
+  shard_id: string;
+  binding_ref: string;
+  binding_route_generation: number;
+  schema_version: number;
   row_count: number;
   plaintext_bytes: number;
   plaintext_sha256: string;
@@ -938,9 +982,19 @@ async function exportTenantTableToArtifact(input: {
   chunked: boolean;
   chunk_count: number;
 }> {
+  const tenantScopedQuery =
+    input.plane === 'pii' && input.table === 'pairwise_subject_identifiers'
+      ? `SELECT scoped.* FROM pairwise_subject_identifiers AS scoped
+           INNER JOIN users_pii AS tenant_parent ON tenant_parent.id = scoped.user_id
+           WHERE scoped.tenant_id = ? AND tenant_parent.tenant_id = ? LIMIT ?`
+      : `SELECT * FROM ${input.table} WHERE tenant_id = ? LIMIT ?`;
+  const tenantScopedParams =
+    input.plane === 'pii' && input.table === 'pairwise_subject_identifiers'
+      ? [input.job.tenant_id, input.job.tenant_id, TENANT_BACKUP_TABLE_ROW_LIMIT + 1]
+      : [input.job.tenant_id, TENANT_BACKUP_TABLE_ROW_LIMIT + 1];
   const rows = await input.adapter.query<Record<string, unknown>>(
-    `SELECT * FROM ${input.table} WHERE tenant_id = ? LIMIT ?`,
-    [input.job.tenant_id, TENANT_BACKUP_TABLE_ROW_LIMIT + 1]
+    tenantScopedQuery,
+    tenantScopedParams
   );
   if (rows.length > TENANT_BACKUP_TABLE_ROW_LIMIT) {
     throw new Error(
@@ -948,7 +1002,12 @@ async function exportTenantTableToArtifact(input: {
     );
   }
   const content = rows.map((row) => JSON.stringify(row)).join('\n');
-  const objectKey = buildTenantTableObjectKey(input.job, input.plane, input.table);
+  const objectKey = buildTenantTableObjectKey(
+    input.job,
+    input.plane,
+    input.store.shardId,
+    input.table
+  );
   const artifact = await materializeEncryptedObjectArtifact(input.artifactAdapter, input.bucket, {
     tenantId: input.job.tenant_id,
     objectClass: 'dr_bundle',
@@ -962,6 +1021,12 @@ async function exportTenantTableToArtifact(input: {
   return {
     plane: input.plane,
     table: input.table,
+    data_role: input.store.dataRole,
+    residency_partition: input.store.residencyPartition,
+    shard_id: input.store.shardId,
+    binding_ref: input.store.bindingRef,
+    binding_route_generation: input.store.bindingRouteGeneration,
+    schema_version: input.store.schemaVersion,
     row_count: rows.length,
     plaintext_bytes: utf8ByteLength(content),
     plaintext_sha256: await sha256Hex(content),
@@ -1101,10 +1166,22 @@ async function loadTenantBackupArtifactContent(input: {
 function parseTenantBackupManifest(content: string, tenantId: string): TenantBackupManifest {
   const parsed = JSON.parse(content) as Partial<TenantBackupManifest>;
   if (
-    parsed.version !== 1 ||
+    parsed.version !== 2 ||
     parsed.tenant_id !== tenantId ||
     parsed.export_format !== 'jsonl_per_table' ||
+    !Number.isSafeInteger(parsed.runtime_generation) ||
+    Number(parsed.runtime_generation) < 1 ||
     !Array.isArray(parsed.tables) ||
+    parsed.tables.some(
+      (table) =>
+        !table ||
+        typeof table.data_role !== 'string' ||
+        typeof table.residency_partition !== 'string' ||
+        typeof table.shard_id !== 'string' ||
+        typeof table.binding_ref !== 'string' ||
+        !Number.isSafeInteger(table.binding_route_generation) ||
+        !Number.isSafeInteger(table.schema_version)
+    ) ||
     !parsed.checksums?.whole_export_sha256 ||
     parsed.encryption?.plane !== 'EXPORT_ARTIFACTS' ||
     typeof parsed.encryption.key_version !== 'number'
@@ -1136,13 +1213,21 @@ async function processTenantDatabaseExportJob(
   const retentionDays = normalizeTenantBackupRetentionDays(config.retention_days, env);
   const coreTables = normalizeTenantBackupTables(config.tables?.core, TENANT_BACKUP_CORE_TABLES);
   const piiTables = normalizeTenantBackupTables(config.tables?.pii, TENANT_BACKUP_PII_TABLES);
-  const runtimeSources = await resolveUserStoreRuntimeSourcesFromEnv(env, job.tenant_id, {
-    requestPath: '/internal/admin-jobs/tenant-database/export',
-  });
-  const coreAdapter = ensureDatabaseAdapter(runtimeSources.coreDb, 'core');
-  const piiAdapter = runtimeSources.piiDb
-    ? ensureDatabaseAdapter(runtimeSources.piiDb, 'pii')
-    : coreAdapter;
+  const [coreStores, piiStores] = await Promise.all([
+    resolveTenantAssignedDatabaseSourcesFromRegistry(env, {
+      tenantId: job.tenant_id,
+      role: 'tenant_core',
+      maxStores: 32,
+      concurrency: 4,
+    }),
+    resolveTenantAssignedDatabaseSourcesFromRegistry(env, {
+      tenantId: job.tenant_id,
+      role: 'tenant_pii',
+      dataRole: 'tenant_pii',
+      maxStores: 32,
+      concurrency: 4,
+    }),
+  ]);
   const keyVersion = Number.parseInt(env.OBJECT_ENCRYPTION_KEY_VERSION || '1', 10) || 1;
   const encryptionMaterial = await resolveTenantBackupEncryptionMaterial(
     env,
@@ -1152,41 +1237,50 @@ async function processTenantDatabaseExportJob(
   const startedAt = new Date().toISOString();
   const tableArtifacts = [];
 
-  for (const table of coreTables) {
-    tableArtifacts.push(
-      await exportTenantTableToArtifact({
-        adapter: coreAdapter,
-        artifactAdapter: adapter,
-        bucket: env.EXPORT_ARTIFACTS,
-        rootKeyHex: encryptionMaterial.rootKeyHex,
-        keyVersion,
-        job,
-        plane: 'core',
-        table,
-      })
-    );
+  for (const store of coreStores) {
+    const coreAdapter = ensureDatabaseAdapter(store.source, `core:${store.bindingRef}`);
+    for (const table of coreTables) {
+      tableArtifacts.push(
+        await exportTenantTableToArtifact({
+          adapter: coreAdapter,
+          artifactAdapter: adapter,
+          bucket: env.EXPORT_ARTIFACTS,
+          rootKeyHex: encryptionMaterial.rootKeyHex,
+          keyVersion,
+          job,
+          plane: 'core',
+          store,
+          table,
+        })
+      );
+    }
   }
-  for (const table of piiTables) {
-    tableArtifacts.push(
-      await exportTenantTableToArtifact({
-        adapter: piiAdapter,
-        artifactAdapter: adapter,
-        bucket: env.EXPORT_ARTIFACTS,
-        rootKeyHex: encryptionMaterial.rootKeyHex,
-        keyVersion,
-        job,
-        plane: 'pii',
-        table,
-      })
-    );
+  for (const store of piiStores) {
+    const piiAdapter = ensureDatabaseAdapter(store.source, `pii:${store.bindingRef}`);
+    for (const table of piiTables) {
+      tableArtifacts.push(
+        await exportTenantTableToArtifact({
+          adapter: piiAdapter,
+          artifactAdapter: adapter,
+          bucket: env.EXPORT_ARTIFACTS,
+          rootKeyHex: encryptionMaterial.rootKeyHex,
+          keyVersion,
+          job,
+          plane: 'pii',
+          store,
+          table,
+        })
+      );
+    }
   }
 
   const manifest = {
-    version: 1,
+    version: 2,
     tenant_id: job.tenant_id,
     job_id: job.id,
-    profile: runtimeSources.storageProfile.id,
-    schema_version: runtimeSources.userCacheScope.schemaVersion,
+    runtime_generation: Math.max(
+      ...[...coreStores, ...piiStores].map((store) => store.runtimeGeneration)
+    ),
     export_format: 'jsonl_per_table',
     consistency,
     policy,
@@ -1195,6 +1289,9 @@ async function processTenantDatabaseExportJob(
     retention_days: retentionDays,
     restore_order: tableArtifacts.map((artifact) => ({
       plane: artifact.plane,
+      data_role: artifact.data_role,
+      residency_partition: artifact.residency_partition,
+      shard_id: artifact.shard_id,
       table: artifact.table,
     })),
     tables: tableArtifacts,
@@ -1317,6 +1414,12 @@ async function processTenantDatabaseRestoreDryRunJob(
     validations.push({
       plane: table.plane,
       table: table.table,
+      data_role: table.data_role,
+      residency_partition: table.residency_partition,
+      shard_id: table.shard_id,
+      binding_ref: table.binding_ref,
+      binding_route_generation: table.binding_route_generation,
+      schema_version: table.schema_version,
       row_count: actualRows,
       plaintext_bytes: actualBytes,
       checksum_sha256: actualChecksum,
@@ -1347,8 +1450,7 @@ async function processTenantDatabaseRestoreDryRunJob(
         object_catalog_id: manifestArtifact.catalogId,
         public_artifact_id: manifestArtifact.publicArtifactId,
         source_job_id: manifest.job_id,
-        profile: manifest.profile,
-        schema_version: manifest.schema_version,
+        runtime_generation: manifest.runtime_generation,
         consistency: manifest.consistency,
         policy: manifest.policy,
         whole_export_sha256: manifest.checksums.whole_export_sha256,
@@ -1459,7 +1561,7 @@ async function processTenantDatabasePurgeBackupJob(
 }
 
 async function processBulkUserUpdateJob(
-  _env: Env,
+  env: Env,
   adapter: DatabaseAdapter,
   job: AdminJobRow
 ): Promise<AdminJobProcessorResult> {
@@ -1467,7 +1569,7 @@ async function processBulkUserUpdateJob(
   validateBulkUserUpdateConfig(config);
   const filter = buildUserFilterWhere(job.tenant_id, config.filter);
   const total = await countBulkUserUpdateTargets(adapter, job.tenant_id, config);
-  const nowTs = Math.floor(Date.now() / 1000);
+  const nowMs = Date.now();
 
   if (config.dry_run) {
     return {
@@ -1536,14 +1638,54 @@ async function processBulkUserUpdateJob(
     }
   }
   assignments.push('updated_at = ?');
-  values.push(nowTs);
+  values.push(nowMs);
 
   const ids = selected.map((row) => row.id);
+  const requestedStatus =
+    typeof config.values.status === 'string' ? config.values.status : undefined;
+  const requestedActive =
+    typeof config.values.is_active === 'boolean' ? config.values.is_active : undefined;
+  const targetLifecycle =
+    requestedActive === false
+      ? 'inactive'
+      : requestedActive === true || requestedStatus === 'active'
+        ? 'active'
+        : requestedStatus === 'suspended' || requestedStatus === 'locked'
+          ? requestedStatus
+          : null;
+  if (targetLifecycle && targetLifecycle !== 'active') {
+    await Promise.all(
+      ids.map((userId) =>
+        transitionAccountAuthenticationState(env, {
+          tenantId: job.tenant_id,
+          userId,
+          lifecycle: targetLifecycle,
+          sourceVersionMs: nowMs,
+          operationId: crypto.randomUUID(),
+          revokeSessions: true,
+        })
+      )
+    );
+  }
   const idPlaceholders = ids.map(() => '?').join(', ');
   const updateResult = await adapter.execute(
     `UPDATE identity_accounts SET ${assignments.join(', ')} WHERE tenant_id = ? AND legacy_user_id IN (${idPlaceholders})`,
     [...values, job.tenant_id, ...ids]
   );
+  if (targetLifecycle === 'active') {
+    await Promise.all(
+      ids.map((userId) =>
+        transitionAccountAuthenticationState(env, {
+          tenantId: job.tenant_id,
+          userId,
+          lifecycle: 'active',
+          sourceVersionMs: nowMs,
+          operationId: crypto.randomUUID(),
+          revokeSessions: false,
+        })
+      )
+    );
+  }
   const batchSucceeded = updateResult.rowsAffected ?? selected.length;
   const processed = (previous.processed ?? 0) + selected.length;
   const succeeded = (previous.succeeded ?? 0) + batchSucceeded;
@@ -1786,7 +1928,7 @@ async function processOrganizationBulkMembersJob(
 }
 
 const ADMIN_JOB_PROCESSORS: Record<GenericAdminJobType, AdminJobProcessor> = {
-  'tenant-database/provision': processTenantDatabaseProvisionJob,
+  'tenants/lifecycle-validation': processTenantLifecycleValidationJob,
   'tenant-database/export': processTenantDatabaseExportJob,
   'tenant-database/restore-dry-run': processTenantDatabaseRestoreDryRunJob,
   'tenant-database/purge-backup': processTenantDatabasePurgeBackupJob,
@@ -1903,6 +2045,18 @@ function getRetryDelaySeconds(attemptCount: number): number {
 
 function buildFailureResult(job: AdminJobRow, error: unknown, attemptCount: number) {
   const message = error instanceof Error ? error.message : String(error);
+  const lifecycleCheckId = (() => {
+    if (job.job_type !== 'tenants/lifecycle-validation') return null;
+    if (message.includes('_kv_') || message.includes('tenant_settings')) return 'kv';
+    if (message.includes('_r2_')) return 'r2';
+    if (message.includes('_scim_')) return 'scim';
+    if (message.includes('_saml_')) return 'saml';
+    if (message.includes('_issuer_') || message.includes('_discovery_')) return 'discovery_issuer';
+    if (message.includes('_write_read_')) return 'tenant_db_write_read';
+    if (message.includes('_audit_')) return 'audit_sink';
+    if (message.includes('_state_') || message.includes('_activation_')) return 'control_db';
+    return 'tenant_db_read';
+  })();
   return JSON.stringify({
     summary: {
       total: 1,
@@ -1920,6 +2074,9 @@ function buildFailureResult(job: AdminJobRow, error: unknown, attemptCount: numb
       },
     ],
     job_type: job.job_type,
+    ...(lifecycleCheckId
+      ? { checks: [{ id: lifecycleCheckId, status: 'failed', evidence: message }] }
+      : {}),
   });
 }
 
@@ -1927,7 +2084,8 @@ export async function processPendingGenericAdminJobs(
   env: Env,
   logger: AdminJobLogger
 ): Promise<void> {
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'management-generic-jobs');
+  if (!env.DB_ADMIN) throw new Error('management_admin_jobs_database_unavailable');
+  const adapter = ensureDatabaseAdapter(env.DB_ADMIN, 'management-generic-jobs');
   const nowTs = Math.floor(Date.now() / 1000);
   const staleCutoffTs = nowTs - 15 * 60;
   const placeholders = GENERIC_ADMIN_JOB_TYPES.map(() => '?').join(', ');
@@ -1951,6 +2109,44 @@ export async function processPendingGenericAdminJobs(
   for (const job of jobs) {
     const processor = ADMIN_JOB_PROCESSORS[job.job_type as GenericAdminJobType];
     if (!processor) continue;
+
+    if (!job.tenant_lifecycle_state) {
+      try {
+        const tenantAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
+          env,
+          'management-generic-job-lifecycle',
+          { tenantId: job.tenant_id }
+        );
+        const tenant = await tenantAdapter.queryOne<{ lifecycle_state: string }>(
+          'SELECT lifecycle_state FROM tenants WHERE id = ? LIMIT 1',
+          [job.tenant_id]
+        );
+        job.tenant_lifecycle_state = tenant?.lifecycle_state ?? 'missing';
+      } catch {
+        job.tenant_lifecycle_state = 'route_unavailable';
+      }
+    }
+
+    if (
+      typeof job.tenant_lifecycle_state === 'string' &&
+      !isAdminJobAllowedForTenantLifecycle(job.tenant_lifecycle_state, job.job_type)
+    ) {
+      const blockedAt = Math.floor(Date.now() / 1000);
+      await adapter.execute(
+        `UPDATE admin_jobs
+            SET status = 'partial_failure', progress = ?, error_message = ?, completed_at = ?, updated_at = ?
+          WHERE id = ? AND tenant_id = ? AND status IN ('pending', 'processing')`,
+        [
+          JSON.stringify({ stage: 'blocked_by_tenant_lifecycle', processed: 0, failed: 1 }),
+          `tenant_lifecycle_blocked:${job.tenant_lifecycle_state}`,
+          blockedAt,
+          blockedAt,
+          job.id,
+          job.tenant_id,
+        ]
+      );
+      continue;
+    }
 
     const startedTs = Math.floor(Date.now() / 1000);
     const transition = await adapter.execute(
@@ -2063,13 +2259,46 @@ export async function processPendingGenericAdminJobs(
           ]
         );
       } else {
-        await adapter.execute(
-          `UPDATE admin_jobs
-              SET status = 'pending', error_message = ?, attempt_count = ?,
+        if (job.job_type === 'tenants/lifecycle-validation') {
+          const failureResult = JSON.parse(
+            buildFailureResult(job, error, nextAttemptCount)
+          ) as Record<string, unknown>;
+          await adapter.execute(
+            `UPDATE admin_jobs
+              SET status = 'pending', progress = ?, error_message = ?, attempt_count = ?,
                   max_attempts = COALESCE(max_attempts, ?), next_run_at = ?, updated_at = ?
             WHERE id = ? AND tenant_id = ?`,
-          [String(error), nextAttemptCount, maxAttempts, nextRunAt, failedTs, job.id, job.tenant_id]
-        );
+            [
+              JSON.stringify({
+                stage: 'validation_failed_retry_scheduled',
+                checks: failureResult.checks ?? [],
+              }),
+              String(error),
+              nextAttemptCount,
+              maxAttempts,
+              nextRunAt,
+              failedTs,
+              job.id,
+              job.tenant_id,
+            ]
+          );
+        } else {
+          await adapter.execute(
+            `UPDATE admin_jobs
+                SET status = 'pending', error_message = ?, attempt_count = ?,
+                    max_attempts = COALESCE(max_attempts, ?), next_run_at = ?, updated_at = ?
+              WHERE id = ? AND tenant_id = ?`,
+            [
+              String(error),
+              nextAttemptCount,
+              maxAttempts,
+              nextRunAt,
+              failedTs,
+              job.id,
+              job.tenant_id,
+            ]
+          );
+        }
       }
       logger.error(
         exhausted ? 'Generic admin job dead-lettered' : 'Generic admin job retry scheduled',
@@ -2083,6 +2312,28 @@ export async function processPendingGenericAdminJobs(
         },
         error as Error
       );
+      if (job.job_type === 'tenants/lifecycle-validation') {
+        await writeTenantLifecycleJobAudit(env, adapter, job, {
+          action: exhausted
+            ? 'tenant.lifecycle.validation_failed'
+            : 'tenant.lifecycle.validation_retry_scheduled',
+          result: 'failure',
+          severity: 'error',
+          error,
+          metadata: {
+            attempt_count: nextAttemptCount,
+            max_attempts: maxAttempts,
+            next_run_at: nextRunAt,
+            safe_state_preserved: true,
+          },
+        }).catch((auditError) => {
+          logger.error(
+            'Failed to write tenant lifecycle validation audit',
+            { job_id: job.id, tenant_id: job.tenant_id },
+            auditError as Error
+          );
+        });
+      }
       await emitAdminJobRuntimeLog(env, adapter, logger, {
         job,
         status: exhausted ? 'failed' : 'retrying',

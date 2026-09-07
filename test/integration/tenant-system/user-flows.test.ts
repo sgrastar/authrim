@@ -5,12 +5,15 @@ import {
   load as discoverLoad,
 } from '../../../packages/ar-login-ui/src/routes/discover/+page.server';
 import { load as loginLoad } from '../../../packages/ar-login-ui/src/routes/login/+page.server';
-import { tenantSystemProfiles } from '../../fixtures/tenant-system/profiles';
+import { clearLoginDiscoveryConfigCacheForTests } from '../../../packages/ar-login-ui/src/lib/login-discovery-config-cache';
+import { tenantSystemProfiles } from './fixtures/profiles';
 import {
   applyLoginEntryProfile,
   buildEnvForTopology,
   createTenantSystemApiFetch,
   createTenantSystemDiscoveryApp,
+  makeCommonHost,
+  postDiscoveryRequest,
   seedTenantDataset,
 } from './helpers';
 
@@ -31,11 +34,13 @@ function createCookies(initial: Record<string, string> = {}) {
 }
 
 async function createFlow(profileId: keyof typeof tenantSystemProfiles, tenantId = 'first') {
+  clearLoginDiscoveryConfigCacheForTests();
   const env = await buildEnvForTopology('D3_custom_subdomain');
   await seedTenantDataset(env, 'with-inactive');
   await applyLoginEntryProfile(env, 'first', tenantSystemProfiles[profileId]);
   const app = createTenantSystemDiscoveryApp(tenantId);
   return {
+    app,
     env,
     fetch: vi.fn(createTenantSystemApiFetch(app, env)),
   };
@@ -115,19 +120,20 @@ describe('tenant-system user flows', () => {
     });
   });
 
-  it('P00 email miss falls back to manual tenant entry, then manual code completes the tenant login grant flow', async () => {
-    const { fetch } = await createFlow('P00');
+  it('P00 generic email discovery reveals no membership, then manual code completes the tenant login grant flow', async () => {
+    const { app, env, fetch } = await createFlow('P00');
     const cookies = createCookies();
 
-    const emailResult = await resolveOnDiscover(
-      fetch,
-      cookies,
-      new URLSearchParams({ mode: 'email', value: 'missing@example.test' })
+    const emailResponse = await postDiscoveryRequest(
+      app,
+      env,
+      makeCommonHost('D3_custom_subdomain'),
+      { mode: 'email', value: 'first.user@example.test' }
     );
-    expect(emailResult).toMatchObject({
+    expect(emailResponse.status).toBe(200);
+    await expect(emailResponse.json()).resolves.toMatchObject({
       result: 'manual_required',
-      mode: 'tenant_code',
-      errorCode: 'manual_required',
+      allow_manual_tenant_entry: true,
     });
 
     const codeRedirect = (await resolveOnDiscover(
@@ -141,20 +147,17 @@ describe('tenant-system user flows', () => {
     );
   });
 
-  it('P08 email miss stops with not-found instead of falling back to manual entry', async () => {
-    const { fetch } = await createFlow('P08');
-    const result = await resolveOnDiscover(
-      fetch,
-      createCookies(),
-      new URLSearchParams({ mode: 'email', value: 'missing@example.test' })
-    );
+  it('P08 generic email discovery still reveals no membership when manual entry is disabled', async () => {
+    const { app, env } = await createFlow('P08');
+    const response = await postDiscoveryRequest(app, env, makeCommonHost('D3_custom_subdomain'), {
+      mode: 'email',
+      value: 'missing@example.test',
+    });
 
-    expect(result).toMatchObject({
-      status: 404,
-      data: expect.objectContaining({
-        result: 'not_found',
-        errorCode: 'email_domain_not_found',
-      }),
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      result: 'manual_required',
+      allow_manual_tenant_entry: false,
     });
   });
 

@@ -19,6 +19,8 @@ const {
   mockGenerateRegistrationOptions,
   mockVerifyAuthenticationResponse,
   mockVerifyRegistrationResponse,
+  mockAdvancePasskeyAuthenticationState,
+  mockCreateAuditLog,
 } = vi.hoisted(() => {
   const sessionStore = {
     getSessionRpc: vi.fn(),
@@ -45,6 +47,7 @@ const {
     findByCredentialId: vi.fn(),
     create: vi.fn(),
     updateCounterAfterAuth: vi.fn(),
+    mirrorCounterAfterAuth: vi.fn().mockResolvedValue(true),
   };
   return {
     mockSessionStore: sessionStore,
@@ -66,6 +69,11 @@ const {
     mockGenerateRegistrationOptions: vi.fn(),
     mockVerifyAuthenticationResponse: vi.fn(),
     mockVerifyRegistrationResponse: vi.fn(),
+    mockAdvancePasskeyAuthenticationState: vi.fn(async () => ({
+      counter: 13,
+      advanced: true,
+    })),
+    mockCreateAuditLog: vi.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -97,9 +105,18 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     getSessionStoreBySessionId: mockGetSessionStoreBySessionId,
     getChallengeStoreByChallengeId: mockGetChallengeStoreByChallengeId,
     getTenantIdFromContext: mockGetTenantIdFromContext,
+    resolveAccountDataContextFromHono: vi.fn().mockResolvedValue(null),
+    getTenantMetadataContextFromHono: vi.fn(() => undefined),
+    createAccountAuthContextFromHono: mockCreateAuthContextFromHono,
     createAuthContextFromHono: mockCreateAuthContextFromHono,
-    createAuditLog: vi.fn().mockResolvedValue(undefined),
+    createAuditLog: mockCreateAuditLog,
     createPIIContextFromHono: mockCreatePIIContextFromHono,
+    ensureAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
+    advancePasskeyAuthenticationState: mockAdvancePasskeyAuthenticationState,
+    getSessionRevocationStore: vi.fn(() => ({
+      advancePasskeyCounterRpc: vi.fn().mockResolvedValue({ counter: 13, advanced: true }),
+      deleteCredentialStateRpc: vi.fn().mockResolvedValue(true),
+    })),
     generateId: vi.fn(() => 'challenge-001'),
     isShardedSessionId: vi.fn((sessionId: string) => sessionId.startsWith('g1:')),
     PasskeyRepository: vi.fn(function PasskeyRepositoryMock() {
@@ -123,6 +140,14 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       registry: {
         getNotifier: vi.fn((channel: string) => (channel === 'email' ? mockEmailNotifier : null)),
       },
+    }),
+    produceNotificationDelivery: vi.fn(async (_env, input) => {
+      const result = await mockEmailNotifier.send(input.payload);
+      return {
+        reference: { intentId: input.intentId },
+        bindingRef: 'TDB_SHARED_CORE',
+        delivery: result.success ? 'delivered' : 'permanent_failure',
+      };
     }),
     getLogger: () => ({
       module: () => ({
@@ -231,14 +256,13 @@ function createMockContext(
     header: (name: string, value: string) => {
       headers.append(name, value);
     },
-    json: (body: unknown, status = 200) =>
-      new Response(JSON.stringify(body), {
-        status,
-        headers: {
-          'Content-Type': 'application/json',
-          ...Object.fromEntries(headers.entries()),
-        },
-      }),
+    json: (body: unknown, status = 200, responseHeaders?: HeadersInit) => {
+      const mergedHeaders = new Headers(responseHeaders);
+      mergedHeaders.set('Content-Type', 'application/json');
+      for (const [name, value] of headers.entries()) mergedHeaders.set(name, value);
+      return new Response(JSON.stringify(body), { status, headers: mergedHeaders });
+    },
+    executionCtx: { waitUntil: vi.fn() },
   } as any;
 }
 
@@ -273,7 +297,7 @@ describe('Account Page passkey management API', () => {
     });
     mockCoreAdapter.execute.mockResolvedValue({ rowsAffected: 1 });
     mockRateLimiter.incrementRpc.mockResolvedValue({ allowed: true });
-    mockEmailNotifier.send.mockResolvedValue({ messageId: 'email-001' });
+    mockEmailNotifier.send.mockResolvedValue({ success: true, messageId: 'email-001' });
     mockRuntimeUserStore.findById.mockResolvedValue(null);
     mockGenerateAuthenticationOptions.mockResolvedValue({
       challenge: 'reauth-challenge-value',
@@ -478,7 +502,7 @@ describe('Account Page passkey management API', () => {
         requireUserVerification: true,
       })
     );
-    expect(mockPasskeyRepo.updateCounterAfterAuth).toHaveBeenCalledWith('pk_001', 13);
+    expect(mockPasskeyRepo.mirrorCounterAfterAuth).toHaveBeenCalledWith('pk_001', 13);
     expect(mockSessionStore.updateSessionDataRpc).toHaveBeenCalledWith(
       'g1:apac:3:session_current',
       expect.objectContaining({
@@ -488,6 +512,47 @@ describe('Account Page passkey management API', () => {
     );
     expect(body.ok).toBe(true);
     expect(body.reauth.expires_at).toBe(body.reauth.authenticated_at + 300);
+    expect(mockCreateAuditLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: 'user-001',
+        action: 'account.passkey.reauthenticated',
+        resource: 'passkey',
+        resourceId: 'pk_001',
+      })
+    );
+  });
+
+  it('fails closed with 503 when Passkey authentication authority is unavailable', async () => {
+    mockChallengeStore.consumeChallengeRpc.mockResolvedValueOnce({
+      userId: 'user-001',
+      challenge: 'reauth-challenge-value',
+      metadata: {
+        rpID: 'op.example.com',
+        origin: 'https://op.example.com',
+        sessionId: 'g1:apac:3:session_current',
+      },
+    });
+    mockPasskeyRepo.findByCredentialId.mockResolvedValueOnce(basePasskey);
+    mockAdvancePasskeyAuthenticationState.mockRejectedValueOnce(
+      new Error('account_authentication_state_unavailable')
+    );
+
+    const response = await completeAccountPasskeyReauthHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        origin: 'https://op.example.com',
+        body: {
+          challenge_id: 'challenge-001',
+          credential: { id: 'credential-secret' },
+        },
+      })
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get('Retry-After')).toBe('1');
+    expect(mockSessionStore.updateSessionDataRpc).not.toHaveBeenCalled();
+    expect(mockPasskeyRepo.mirrorCounterAfterAuth).not.toHaveBeenCalled();
   });
 
   it('uses the browser origin when completing passkey re-authentication through the Login UI proxy', async () => {
@@ -593,6 +658,35 @@ describe('Account Page passkey management API', () => {
     );
   });
 
+  it('returns a redacted server error when email-code re-authentication delivery is rejected', async () => {
+    mockRuntimeUserStore.findById.mockResolvedValueOnce({
+      id: 'user-001',
+      email: 'User@Example.com',
+      email_verified: 1,
+      name: 'User One',
+    });
+    mockEmailNotifier.send.mockResolvedValueOnce({
+      success: false,
+      error: 'provider secret detail',
+    });
+
+    const response = await sendAccountEmailCodeReauthHandler(
+      createMockContext({
+        cookie: 'authrim_session=g1%3Aapac%3A3%3Asession_current',
+        body: {},
+        settings: {
+          'settings:tenant:default:authentication-methods': {
+            'authentication-methods.email_otp.enabled': true,
+          },
+        },
+      })
+    );
+    const body = (await response.json()) as Record<string, unknown>;
+
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(body)).not.toContain('provider secret detail');
+  });
+
   it('completes email-code re-authentication and refreshes session authTime', async () => {
     const issuedAt = Date.now();
     const codeHash = await hashTestEmailCode(
@@ -646,6 +740,15 @@ describe('Account Page passkey management API', () => {
     );
     expect(body.ok).toBe(true);
     expect(body.reauth.methods).toEqual(['email_code']);
+    expect(mockCreateAuditLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: 'user-001',
+        action: 'account.email.reauthenticated',
+        resource: 'session',
+        resourceId: 'g1:apac:3:session_current',
+      })
+    );
   });
 
   it('creates registration options with a stored one-time challenge', async () => {

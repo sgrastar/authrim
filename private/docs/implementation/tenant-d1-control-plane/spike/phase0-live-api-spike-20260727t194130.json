@@ -1,0 +1,196 @@
+{
+  "startedAt": "2026-07-27T19:41:30.673Z",
+  "accountId": "<redacted>",
+  "targetEnvironment": "test",
+  "workerName": "authrim-control-plane-spike-test-20260727t194130",
+  "dbName": "authrim-control-plane-spike-test-20260727t194130-db",
+  "steps": [
+    {
+      "step": "fixture_written",
+      "at": "2026-07-27T19:41:30.675Z",
+      "tempDir": "<redacted>"
+    },
+    {
+      "step": "worker_deployed_initial",
+      "at": "2026-07-27T19:41:34.855Z",
+      "workerUrl": "https://authrim-control-plane-spike-test-20260727t194130.sgrastar.workers.dev"
+    },
+    {
+      "step": "active_worker_before_patch",
+      "at": "2026-07-27T19:42:05.312Z",
+      "ok": true,
+      "marker": "initial",
+      "hasDb": false
+    },
+    {
+      "step": "d1_created",
+      "at": "2026-07-27T19:42:07.123Z",
+      "dbId": "6c54ba73-c100-4bb8-9f8b-255101eb0c7e"
+    },
+    {
+      "step": "d1_migration_applied",
+      "at": "2026-07-27T19:42:08.403Z",
+      "dbName": "authrim-control-plane-spike-test-20260727t194130-db"
+    },
+    {
+      "step": "settings_get_before_patch",
+      "at": "2026-07-27T19:42:10.688Z",
+      "bindingNames": [
+        "SPIKE_MARKER"
+      ],
+      "bindingTypes": [
+        "plain_text"
+      ],
+      "compatibilityDate": "2026-07-01"
+    },
+    {
+      "step": "settings_patch_append_d1",
+      "at": "2026-07-27T19:42:11.759Z",
+      "success": true,
+      "patchVersionId": "6c54ba73-c100-4bb8-9f8b-255101eb0c7e",
+      "resultKeys": [
+        "placement",
+        "compatibility_date",
+        "compatibility_flags",
+        "usage_model",
+        "tags",
+        "tail_consumers",
+        "logpush",
+        "annotations",
+        "bindings"
+      ]
+    },
+    {
+      "step": "settings_get_after_patch",
+      "at": "2026-07-27T19:42:12.027Z",
+      "bindingNames": [
+        "SPIKE_DB",
+        "SPIKE_MARKER"
+      ],
+      "bindingTypes": [
+        "d1",
+        "plain_text"
+      ],
+      "hasSpikeDbBinding": true
+    },
+    {
+      "step": "active_worker_after_patch_before_promote",
+      "at": "2026-07-27T19:42:14.224Z",
+      "env": {
+        "ok": true,
+        "marker": "initial",
+        "hasDb": false
+      },
+      "db": {
+        "ok": true,
+        "hasDb": true,
+        "migration": "applied"
+      }
+    },
+    {
+      "step": "version_promote_skipped",
+      "at": "2026-07-27T19:42:14.224Z",
+      "reason": "settings_patch_was_immediately_active"
+    },
+    {
+      "step": "active_worker_after_promote",
+      "at": "2026-07-27T19:42:14.268Z",
+      "env": {
+        "ok": true,
+        "marker": "initial",
+        "hasDb": false
+      },
+      "db": {
+        "ok": true,
+        "hasDb": true,
+        "migration": "applied"
+      }
+    }
+  ],
+  "observations": {
+    "deploymentsBeforePatch": [
+      {
+        "id": "dfcb89e3-4fff-4eca-bfd6-29f5e11ff0e0",
+        "createdOn": "2026-07-27T19:41:33.084511Z",
+        "versions": [
+          {
+            "id": "6529da04-84f3-4f66-a184-c160865cd40f",
+            "percentage": 100
+          }
+        ]
+      }
+    ],
+    "versionsBeforePatch": [
+      {
+        "id": "6529da04-84f3-4f66-a184-c160865cd40f"
+      }
+    ],
+    "deploymentsAfterPatch": [
+      {
+        "id": "dfcb89e3-4fff-4eca-bfd6-29f5e11ff0e0",
+        "createdOn": "2026-07-27T19:41:33.084511Z",
+        "versions": [
+          {
+            "id": "6529da04-84f3-4f66-a184-c160865cd40f",
+            "percentage": 100
+          }
+        ]
+      },
+      {
+        "id": "e85941a4-2c81-4bbb-adc2-8bda3ade221a",
+        "createdOn": "2026-07-27T19:42:11.424259Z",
+        "versions": [
+          {
+            "id": "c7c1e438-98f6-48af-a335-c763f689ade0",
+            "percentage": 100
+          }
+        ]
+      }
+    ],
+    "versionsAfterPatch": [
+      {
+        "id": "6529da04-84f3-4f66-a184-c160865cd40f"
+      },
+      {
+        "id": "c7c1e438-98f6-48af-a335-c763f689ade0"
+      }
+    ],
+    "patchImmediatelyActive": true,
+    "deploymentsAfterPromote": [
+      {
+        "id": "dfcb89e3-4fff-4eca-bfd6-29f5e11ff0e0",
+        "createdOn": "2026-07-27T19:41:33.084511Z",
+        "versions": [
+          {
+            "id": "6529da04-84f3-4f66-a184-c160865cd40f",
+            "percentage": 100
+          }
+        ]
+      },
+      {
+        "id": "e85941a4-2c81-4bbb-adc2-8bda3ade221a",
+        "createdOn": "2026-07-27T19:42:11.424259Z",
+        "versions": [
+          {
+            "id": "c7c1e438-98f6-48af-a335-c763f689ade0",
+            "percentage": 100
+          }
+        ]
+      }
+    ],
+    "finalHasD1Binding": false
+  },
+  "cleanup": {
+    "worker": "deleted",
+    "d1": "deleted",
+    "tempDir": "deleted"
+  },
+  "conclusion": {
+    "settingsPatchCreatesVersion": true,
+    "settingsPatchImmediatelyActive": true,
+    "explicitDeploymentRequiredForActiveTraffic": false,
+    "existingBindingsPreserved": true,
+    "d1BindingReachableAfterPromote": false
+  },
+  "finishedAt": "2026-07-27T19:42:15.176Z"
+}

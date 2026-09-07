@@ -26,8 +26,10 @@ import {
   getTenantIdFromContext,
   isAnonymousAuthEnabled,
   getLogger,
+  transitionAccountAuthenticationState,
   type Env,
 } from '@authrim/ar-lib-core';
+import { findActiveAccountLegalHold } from '../../account-legal-hold-guard';
 
 function createRuntimeUserStore(c: Context<{ Bindings: Env }>, tenantId: string) {
   const authCtx = createAuthContextFromHono(c, tenantId);
@@ -510,6 +512,28 @@ export async function deleteAnonymousUser(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const legalHold = await findActiveAccountLegalHold(authCtx.coreAdapter, tenantId, userId);
+    if (legalHold) {
+      return c.json(
+        {
+          error: 'legal_hold_active',
+          error_description: 'Anonymous user is under legal hold and cannot be deleted',
+          hold_id: legalHold.holdId,
+        },
+        409
+      );
+    }
+
+    const deletingVersionMs = Date.now();
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'deleting',
+      sourceVersionMs: deletingVersionMs,
+      operationId: crypto.randomUUID(),
+      revokeSessions: true,
+    });
+
     // Delete devices first (foreign key constraint)
     await authCtx.coreAdapter.execute(
       'DELETE FROM anonymous_devices WHERE tenant_id = ? AND user_id = ?',
@@ -518,6 +542,14 @@ export async function deleteAnonymousUser(c: Context<{ Bindings: Env }>) {
 
     // Delete user (upgrade history preserved for audit)
     await runtimeUsers.deleteUser(userId);
+    await transitionAccountAuthenticationState(c.env, {
+      tenantId,
+      userId,
+      lifecycle: 'deleted',
+      sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
+      operationId: crypto.randomUUID(),
+      revokeSessions: true,
+    });
 
     return c.json({
       success: true,
@@ -610,12 +642,33 @@ export async function cleanupExpiredAnonymousUsers(c: Context<{ Bindings: Env }>
       );
 
       if (!activeDevice) {
+        const legalHold = await findActiveAccountLegalHold(authCtx.coreAdapter, tenantId, userId);
+        if (legalHold) {
+          continue;
+        }
+        const deletingVersionMs = Date.now();
+        await transitionAccountAuthenticationState(c.env, {
+          tenantId,
+          userId,
+          lifecycle: 'deleting',
+          sourceVersionMs: deletingVersionMs,
+          operationId: crypto.randomUUID(),
+          revokeSessions: true,
+        });
         // No active devices, delete user
         await authCtx.coreAdapter.execute(
           'DELETE FROM anonymous_devices WHERE tenant_id = ? AND user_id = ?',
           [tenantId, userId]
         );
         await createRuntimeUserStore(c, tenantId).deleteUser(userId);
+        await transitionAccountAuthenticationState(c.env, {
+          tenantId,
+          userId,
+          lifecycle: 'deleted',
+          sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
+          operationId: crypto.randomUUID(),
+          revokeSessions: true,
+        });
         deletedUsers++;
         deletedDevices += expiredDevices.filter((d) => d.user_id === userId).length;
       } else {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  filterKnownD1NamesForEnvironment,
+  filterControlManagedD1ForEnvironment,
+  filterControlManagedKVForEnvironment,
+  filterControlManagedR2ForEnvironment,
   getObjectCatalogR2BucketName,
   parseR2BucketRows,
   parseD1RowsFromWranglerJson,
@@ -39,8 +41,8 @@ describe('Cloudflare environment deletion helpers', () => {
   });
 
   it('parses R2 bucket rows from JSON and legacy wrangler output', () => {
-    expect(parseR2BucketRows(JSON.stringify([{ name: 'prod-authrim-avatars' }]))).toEqual([
-      { name: 'prod-authrim-avatars' },
+    expect(parseR2BucketRows(JSON.stringify([{ name: 'prod-public-assets' }]))).toEqual([
+      { name: 'prod-public-assets' },
     ]);
     expect(parseR2BucketRows('name: prod-diagnostic-logs\nprod-import-artifacts\n')).toEqual([
       { name: 'prod-diagnostic-logs' },
@@ -62,24 +64,57 @@ describe('Cloudflare environment deletion helpers', () => {
     ]);
   });
 
-  it('keeps preallocated and legacy tenant D1 names for environment deletion', () => {
+  it('selects only exact Control-managed resources for the requested environment', () => {
     expect(
-      filterKnownD1NamesForEnvironment('phase9-tenant-d1', [
-        'phase9-tenant-d1-authrim-core-db',
-        'phase9-tenant-d1-authrim-admin-db',
-        'authrim-phase9-tenant-d1-tdb-slot-0001-core',
-        'authrim-phase9-tenant-d1-tdb-slot-0001-pii',
-        'authrim-phase9-tenant-d1-first-core',
-        'authrim-phase9-tenant-d1-first-pii',
-        'authrim-other-tdb-slot-0001-core',
+      filterControlManagedD1ForEnvironment('test', [
+        { name: 'authrim-test-core-default-default-a1b2c3d4', uuid: 'shared' },
+        { name: 'authrim-test-core-users-default-tenant-a-a1b2c3d4', uuid: 'exclusive' },
+        { name: 'test-authrim-tenant-core-users-jp-db-a1b2c3d4', uuid: 'new-exclusive' },
+        { name: 'test-authrim-tenant-core-default-default-db-a1b2c3d4', uuid: 'new-default' },
+        { name: 'test-authrim-tenant-default-bootstrap-db', uuid: 'bootstrap-default' },
+        { name: 'test-authrim-tenant-users-bootstrap-db', uuid: 'bootstrap-users' },
+        { name: 'test-authrim-tenant-pii-bootstrap-db', uuid: 'bootstrap-pii' },
+        { name: `authrim-test-${'a'.repeat(32)}-d1`, uuid: 'plugin' },
+        { name: `test-authrim-${'b'.repeat(32)}-d1`, uuid: 'new-plugin' },
+        { name: 'test-authrim-tenant-lookup-bootstrap-db', uuid: 'bootstrap-near-miss' },
+        { name: 'other-authrim-tenant-default-bootstrap-db', uuid: 'other-bootstrap' },
+        { name: 'authrim-test-unrelated-a1b2c3d4', uuid: 'unrelated' },
+        { name: 'authrim-other-core-default-default-a1b2c3d4', uuid: 'other' },
       ])
     ).toEqual([
-      'phase9-tenant-d1-authrim-core-db',
-      'phase9-tenant-d1-authrim-admin-db',
-      'authrim-phase9-tenant-d1-tdb-slot-0001-core',
-      'authrim-phase9-tenant-d1-tdb-slot-0001-pii',
-      'authrim-phase9-tenant-d1-first-core',
-      'authrim-phase9-tenant-d1-first-pii',
+      { name: 'authrim-test-core-default-default-a1b2c3d4', uuid: 'shared' },
+      { name: 'authrim-test-core-users-default-tenant-a-a1b2c3d4', uuid: 'exclusive' },
+      { name: 'test-authrim-tenant-core-users-jp-db-a1b2c3d4', uuid: 'new-exclusive' },
+      { name: 'test-authrim-tenant-core-default-default-db-a1b2c3d4', uuid: 'new-default' },
+      { name: 'test-authrim-tenant-default-bootstrap-db', uuid: 'bootstrap-default' },
+      { name: 'test-authrim-tenant-users-bootstrap-db', uuid: 'bootstrap-users' },
+      { name: 'test-authrim-tenant-pii-bootstrap-db', uuid: 'bootstrap-pii' },
+      { name: `authrim-test-${'a'.repeat(32)}-d1`, uuid: 'plugin' },
+      { name: `test-authrim-${'b'.repeat(32)}-d1`, uuid: 'new-plugin' },
+    ]);
+
+    expect(
+      filterControlManagedKVForEnvironment('test', [
+        { title: `authrim-test-${'a'.repeat(32)}-kv`, id: 'legacy-plugin-kv' },
+        { title: `test-authrim-${'b'.repeat(32)}-kv`, id: 'plugin-kv' },
+        { title: `authrim-other-${'b'.repeat(32)}-kv`, id: 'other-kv' },
+        { title: 'authrim-test-not-owned-kv', id: 'unrelated-kv' },
+      ])
+    ).toEqual([
+      { title: `authrim-test-${'a'.repeat(32)}-kv`, id: 'legacy-plugin-kv' },
+      { title: `test-authrim-${'b'.repeat(32)}-kv`, id: 'plugin-kv' },
+    ]);
+
+    expect(
+      filterControlManagedR2ForEnvironment('test', [
+        { name: `authrim-test-${'a'.repeat(32)}-r2` },
+        { name: `test-authrim-${'c'.repeat(32)}-r2` },
+        { name: `authrim-other-${'c'.repeat(32)}-r2` },
+        { name: 'authrim-test-not-owned-r2' },
+      ])
+    ).toEqual([
+      { name: `authrim-test-${'a'.repeat(32)}-r2` },
+      { name: `test-authrim-${'c'.repeat(32)}-r2` },
     ]);
   });
 });

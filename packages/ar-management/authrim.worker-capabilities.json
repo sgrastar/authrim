@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "packageName": "@authrim/ar-management",
+  "worker": "ar-management",
+  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
+  "lookupBlindIndex": true,
+  "bindings": [
+    { "name": "DB", "kind": "d1", "required": true, "capability": "platform_metadata" },
+    {
+      "name": "PLATFORM_NOTIFICATION_DB",
+      "kind": "d1",
+      "required": true,
+      "capability": "notification_intent.platform"
+    },
+    { "name": "DB_PII", "kind": "d1", "required": true, "capability": "audit.pii" },
+    { "name": "DB_ADMIN", "kind": "d1", "required": true, "capability": "admin_data" },
+    { "name": "LOOKUP_DB", "kind": "d1", "required": true, "dataRole": "lookup" },
+    { "name": "CLIENTS_CACHE", "kind": "kv_namespace", "required": true },
+    { "name": "SETTINGS", "kind": "kv_namespace", "required": true },
+    { "name": "USER_CACHE", "kind": "kv_namespace", "required": true },
+    { "name": "INITIAL_ACCESS_TOKENS", "kind": "kv_namespace", "required": true },
+    { "name": "AUTHRIM_CONFIG", "kind": "kv_namespace", "required": true },
+    { "name": "TENANT_RUNTIME_REGISTRY", "kind": "kv_namespace", "required": true },
+    { "name": "KEY_MANAGER", "kind": "durable_object_namespace", "required": true },
+    { "name": "REFRESH_TOKEN_ROTATOR", "kind": "durable_object_namespace", "required": true },
+    { "name": "RATE_LIMITER", "kind": "durable_object_namespace", "required": true },
+    { "name": "SESSION_STORE", "kind": "durable_object_namespace", "required": true },
+    {
+      "name": "SESSION_REVOCATION_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    { "name": "TOKEN_REVOCATION_STORE", "kind": "durable_object_namespace", "required": true },
+    { "name": "VERSION_MANAGER", "kind": "durable_object_namespace", "required": true },
+    { "name": "CHALLENGE_STORE", "kind": "durable_object_namespace", "required": true },
+    { "name": "DPOP_JTI_STORE", "kind": "durable_object_namespace", "required": true },
+    { "name": "DIRECTORY_CONNECTOR_RELAY", "kind": "durable_object_namespace", "required": true },
+    { "name": "PUBLIC_ASSETS", "kind": "r2_bucket", "required": false },
+    { "name": "DIAGNOSTIC_LOGS", "kind": "r2_bucket", "required": false },
+    { "name": "AUDIT_ARCHIVE", "kind": "r2_bucket", "required": false },
+    { "name": "IMPORT_ARTIFACTS", "kind": "r2_bucket", "required": false },
+    { "name": "EXPORT_ARTIFACTS", "kind": "r2_bucket", "required": false },
+    { "name": "SENSITIVE_DETAILS", "kind": "r2_bucket", "required": false },
+    { "name": "LOGGING_DELIVERY_CRITICAL_QUEUE", "kind": "queue", "required": false },
+    { "name": "LOGGING_DELIVERY_QUEUE", "kind": "queue", "required": false },
+    { "name": "LOGGING_DELIVERY_BULK_QUEUE", "kind": "queue", "required": false },
+    { "name": "EXTERNAL_IDP", "kind": "service", "required": true },
+    {
+      "name": "CONTROL",
+      "kind": "service",
+      "required": true,
+      "capability": "control_plane.provisioning"
+    },
+    {
+      "name": "PLUGIN_RUNNER",
+      "kind": "service",
+      "required": true,
+      "capability": "plugin_hooks.invoke"
+    },
+    { "name": "VC_ISSUER", "kind": "service", "required": false },
+    {
+      "name": "TENANT_DATABASE_HYPERDRIVE",
+      "kind": "hyperdrive",
+      "required": false,
+      "capability": "tenant_database_profiles"
+    },
+    { "name": "CONTROL_SMOKE_VERSION", "kind": "version_metadata", "required": true }
+  ],
+  "secrets": [
+    { "name": "PUBLIC_JWK_JSON", "capability": "legacy_signing.public", "required": true },
+    {
+      "name": "RP_TOKEN_ENCRYPTION_KEY",
+      "capability": "external_idp_tokens.encrypt",
+      "required": true
+    },
+    { "name": "PII_ENCRYPTION_KEY", "capability": "tenant_pii.encrypt_decrypt", "required": true },
+    {
+      "name": "OBJECT_ENCRYPTION_ROOT_KEY",
+      "capability": "object_encryption.encrypt_decrypt",
+      "required": true
+    },
+    { "name": "OTP_HMAC_SECRET", "capability": "otp.issue_verify", "required": true },
+    { "name": "LOGGING_CURSOR_HMAC_SECRET", "capability": "logging_cursor.sign", "required": true },
+    {
+      "name": "PLUGIN_ENCRYPTION_KEY",
+      "capability": "plugin_config.encrypt_decrypt",
+      "required": true
+    },
+    {
+      "name": "NOTIFICATION_PAYLOAD_ENCRYPTION_PUBLIC_JWKS",
+      "capability": "notification_payload.encrypt",
+      "required": true
+    },
+    {
+      "name": "NOTIFICATION_INTENT_HMAC_KEY",
+      "capability": "notification_intent.idempotency",
+      "required": true
+    },
+    {
+      "name": "TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS",
+      "capability": "runtime_registry.verify",
+      "required": true
+    },
+    {
+      "name": "VC_PROFILE_CONTRACT_HMAC_SECRET",
+      "capability": "vc_profile_contract.sign",
+      "required": true
+    },
+    {
+      "name": "AGENT_ELEVATION_ENCRYPTION_KEY",
+      "capability": "agent_elevation.encrypt_decrypt",
+      "required": true
+    },
+    {
+      "name": "LOOKUP_HMAC_KEY_SLOT_A",
+      "capability": "lookup_blind_index",
+      "required": true
+    },
+    {
+      "name": "LOOKUP_HMAC_KEY_SLOT_B",
+      "capability": "lookup_blind_index",
+      "required": false
+    },
+    {
+      "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
+      "capability": "control_smoke.verify",
+      "required": true
+    }
+  ]
+}

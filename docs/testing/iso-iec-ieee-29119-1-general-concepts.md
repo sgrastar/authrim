@@ -56,9 +56,9 @@ Authrim tests are designed to provide evidence that:
 
 ## 4. Test Items
 
-The primary test items are workspace packages under `packages/`, shared
-integration flows under `test/integration`, and end-to-end flows under
-`test-e2e`.
+The primary test items are workspace packages under `packages/`, maintained integration flows under
+`test/integration`, high-volume security combinations under `test/security-matrices`, generated
+environment checks under `test/generated-environment`, and end-to-end flows under `test-e2e`.
 
 Security-sensitive packages include:
 

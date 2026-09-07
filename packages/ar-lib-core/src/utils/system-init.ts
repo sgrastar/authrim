@@ -6,12 +6,11 @@
  *
  * Admin/EndUser Separation:
  * - Uses DB_ADMIN for Admin user management (admin_users, admin_roles, admin_role_assignments)
- * - Falls back to the auth core database (identity_accounts, roles, role_assignments)
+ * - Never falls back to a tenant identity assignment
  */
 
 import type { Env } from '../types/env';
 import { ensureDatabaseAdapter } from '../db';
-import { resolveAuthCorePersistenceAdapterFromEnv } from '../services/auth-core-persistence-context';
 import { createLogger } from './logger';
 import { DEFAULT_TENANT_ID } from './tenant-context';
 
@@ -25,8 +24,6 @@ export interface SystemInitStatus {
   initialized: boolean;
   /** Number of super_admin users (usually 1) */
   adminCount: number;
-  /** Whether using new DB_ADMIN (true) or legacy DB (false) */
-  usingAdminDb: boolean;
 }
 
 /**
@@ -35,7 +32,7 @@ export interface SystemInitStatus {
  * The system is considered initialized if there is at least one active Admin user
  * with the super_admin role that hasn't expired.
  *
- * Checks DB_ADMIN first, falls back to legacy DB for backward compatibility.
+ * DB_ADMIN is the only authority for this check.
  *
  * @param env - Cloudflare Workers environment
  * @returns true if system is initialized (has at least one super_admin)
@@ -52,74 +49,30 @@ export async function isSystemInitialized(env: Env): Promise<boolean> {
  * @returns System initialization status with admin count
  */
 export async function getSystemInitStatus(env: Env): Promise<SystemInitStatus> {
-  // First, try DB_ADMIN (new architecture)
-  if (env.DB_ADMIN) {
-    try {
-      const adminAdapter = ensureDatabaseAdapter(env.DB_ADMIN, 'admin-init');
-      const now = Date.now(); // Milliseconds for admin_role_assignments
-
-      // Count Admin users with active, non-expired super_admin role
-      const result = await adminAdapter.queryOne<{ count: number }>(
-        `SELECT COUNT(DISTINCT ra.admin_user_id) as count
-         FROM admin_role_assignments ra
-         JOIN admin_roles r ON ra.admin_role_id = r.id
-         JOIN admin_users u ON ra.admin_user_id = u.id
-         WHERE r.name = 'super_admin'
-           AND u.is_active = 1
-           AND u.status = 'active'
-           AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
-        [now]
-      );
-
-      const adminCount = result?.count ?? 0;
-
-      if (adminCount > 0) {
-        return {
-          initialized: true,
-          adminCount,
-          usingAdminDb: true,
-        };
-      }
-    } catch (error) {
-      // DB_ADMIN might not be set up yet, try legacy DB
-      log.debug('DB_ADMIN check failed, trying legacy DB', {});
-    }
-  }
-
-  // Fallback to tenant runtime DB when admin_users is not available.
   try {
-    const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'system-init');
-    const tenantId = DEFAULT_TENANT_ID;
-    const now = Math.floor(Date.now() / 1000); // UNIX seconds for legacy role_assignments
-
-    const result = await coreAdapter.queryOne<{ count: number }>(
-      `SELECT COUNT(DISTINCT ra.subject_id) as count
-       FROM role_assignments ra
-       JOIN roles r ON ra.role_id = r.id
-       JOIN identity_accounts u ON ra.subject_id = u.legacy_user_id
-       WHERE r.name = 'system_admin'
-         AND ra.tenant_id = ?
-         AND r.tenant_id = ?
-         AND u.lifecycle_state = 'active'
+    const adminAdapter = ensureDatabaseAdapter(env.DB_ADMIN, 'admin-init');
+    const now = Date.now();
+    const result = await adminAdapter.queryOne<{ count: number }>(
+      `SELECT COUNT(DISTINCT ra.admin_user_id) as count
+       FROM admin_role_assignments ra
+       JOIN admin_roles r ON ra.admin_role_id = r.id
+       JOIN admin_users u ON ra.admin_user_id = u.id
+       WHERE r.name = 'super_admin'
+         AND u.is_active = 1
+         AND u.status = 'active'
          AND (ra.expires_at IS NULL OR ra.expires_at > ?)`,
-      [tenantId, tenantId, now]
+      [now]
     );
-
     const adminCount = result?.count ?? 0;
-
     return {
       initialized: adminCount > 0,
       adminCount,
-      usingAdminDb: false,
     };
   } catch (error) {
-    // If there's a database error (e.g., tables don't exist yet),
-    // treat it as not initialized
     log.error('Failed to check system initialization status', {}, error as Error);
     return {
       initialized: false,
       adminCount: 0,
-      usingAdminDb: false,
     };
   }
 }
@@ -128,7 +81,7 @@ export async function getSystemInitStatus(env: Env): Promise<SystemInitStatus> {
  * Assign super_admin role to an Admin user
  *
  * Used during initial setup to grant the first Admin user super_admin privileges.
- * Uses DB_ADMIN (new architecture) when available, falls back to legacy DB.
+ * Uses DB_ADMIN as the sole administration authority.
  *
  * @param env - Cloudflare Workers environment
  * @param adminUserId - The Admin user ID to assign the role to
@@ -140,69 +93,23 @@ export async function assignSystemAdminRole(
   adminUserId: string,
   tenantId: string = DEFAULT_TENANT_ID
 ): Promise<void> {
-  // Use DB_ADMIN (new architecture) when available
-  if (env.DB_ADMIN) {
-    const adminAdapter = ensureDatabaseAdapter(env.DB_ADMIN, 'admin-init');
+  const adminAdapter = ensureDatabaseAdapter(env.DB_ADMIN, 'admin-init');
 
-    // Get the super_admin role ID
-    const role = await adminAdapter.queryOne<{ id: string }>(
-      "SELECT id FROM admin_roles WHERE name = 'super_admin' AND tenant_id = 'default' AND is_system = 1 LIMIT 1",
-      []
-    );
-
-    if (!role) {
-      throw new Error(
-        'super_admin role not found in DB_ADMIN. Database may not be properly initialized.'
-      );
-    }
-
-    // Check if assignment already exists
-    const existing = await adminAdapter.queryOne<{ id: string }>(
-      'SELECT id FROM admin_role_assignments WHERE tenant_id = ? AND admin_user_id = ? AND admin_role_id = ? LIMIT 1',
-      [tenantId, adminUserId, role.id]
-    );
-
-    if (existing) {
-      // Already assigned
-      return;
-    }
-
-    // Generate a new UUID for the role assignment
-    const assignmentId = crypto.randomUUID();
-    const now = Date.now(); // Milliseconds for new architecture
-
-    // Create the role assignment (no expiration for super_admin)
-    // scope_type='global' means system-wide access
-    await adminAdapter.execute(
-      `INSERT INTO admin_role_assignments (id, tenant_id, admin_user_id, admin_role_id, scope_type, scope_id, expires_at, assigned_by, created_at)
-       VALUES (?, ?, ?, ?, 'global', NULL, NULL, NULL, ?)`,
-      [assignmentId, tenantId, adminUserId, role.id, now]
-    );
-
-    log.info('Assigned super_admin role to Admin user', {
-      adminUserId: adminUserId.substring(0, 8) + '...',
-      roleId: role.id.substring(0, 8) + '...',
-    });
-
-    return;
-  }
-
-  // Fallback to legacy DB
-  const coreAdapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'system-init');
-
-  // Get the system_admin role ID (legacy)
-  const role = await coreAdapter.queryOne<{ id: string }>(
-    "SELECT id FROM roles WHERE name = 'system_admin' AND tenant_id = ? LIMIT 1",
-    [tenantId]
+  // Get the super_admin role ID
+  const role = await adminAdapter.queryOne<{ id: string }>(
+    "SELECT id FROM admin_roles WHERE name = 'super_admin' AND tenant_id = 'default' AND is_system = 1 LIMIT 1",
+    []
   );
 
   if (!role) {
-    throw new Error('system_admin role not found. Database may not be properly initialized.');
+    throw new Error(
+      'super_admin role not found in DB_ADMIN. Database may not be properly initialized.'
+    );
   }
 
   // Check if assignment already exists
-  const existing = await coreAdapter.queryOne<{ id: string }>(
-    'SELECT id FROM role_assignments WHERE tenant_id = ? AND subject_id = ? AND role_id = ? LIMIT 1',
+  const existing = await adminAdapter.queryOne<{ id: string }>(
+    'SELECT id FROM admin_role_assignments WHERE tenant_id = ? AND admin_user_id = ? AND admin_role_id = ? LIMIT 1',
     [tenantId, adminUserId, role.id]
   );
 
@@ -213,13 +120,18 @@ export async function assignSystemAdminRole(
 
   // Generate a new UUID for the role assignment
   const assignmentId = crypto.randomUUID();
-  const now = Math.floor(Date.now() / 1000);
+  const now = Date.now(); // Milliseconds for new architecture
 
-  // Create the role assignment (no expiration for system_admin)
+  // Create the role assignment (no expiration for super_admin)
   // scope_type='global' means system-wide access
-  await coreAdapter.execute(
-    `INSERT INTO role_assignments (id, tenant_id, subject_id, role_id, scope_type, scope_target, created_at, updated_at)
-     VALUES (?, ?, ?, ?, 'global', '', ?, ?)`,
-    [assignmentId, tenantId, adminUserId, role.id, now, now]
+  await adminAdapter.execute(
+    `INSERT INTO admin_role_assignments (id, tenant_id, admin_user_id, admin_role_id, scope_type, scope_id, expires_at, assigned_by, created_at)
+       VALUES (?, ?, ?, ?, 'global', NULL, NULL, NULL, ?)`,
+    [assignmentId, tenantId, adminUserId, role.id, now]
   );
+
+  log.info('Assigned super_admin role to Admin user', {
+    adminUserId: adminUserId.substring(0, 8) + '...',
+    roleId: role.id.substring(0, 8) + '...',
+  });
 }

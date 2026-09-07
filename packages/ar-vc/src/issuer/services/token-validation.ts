@@ -5,14 +5,13 @@
  */
 
 import type { Env } from '../../types';
-import { decodeBase64Url, safeFetchJson, createLogger, buildIssuerUrl } from '@authrim/ar-lib-core';
+import { decodeBase64Url, createLogger, buildIssuerUrl } from '@authrim/ar-lib-core';
 import { createVCConfigManager } from '../../utils/vc-config';
 
 const log = createLogger().module('VCI-TOKEN');
 
 const MAX_VCI_ACCESS_TOKEN_SIZE = 8 * 1024;
 const MAX_VCI_PROOF_JWT_SIZE = 8 * 1024;
-const MAX_EXTERNAL_JWKS_SIZE = 256 * 1024;
 
 function requireTenantId(tenantId: string | undefined, context: string): string {
   const normalized = tenantId?.trim();
@@ -26,7 +25,11 @@ export interface TokenValidationResult {
   valid: boolean;
   userId?: string;
   tenantId?: string;
+  credentialConfigurationId?: string;
+  /** Deprecated internal alias retained until all repository callers use the explicit name. */
   vct?: string;
+  jti?: string;
+  offerId?: string;
   claims?: Record<string, unknown>;
   holderBinding?: { kty: string; crv: string; x: string; y?: string };
   error?: string;
@@ -63,9 +66,33 @@ interface VCIAccessTokenPayload {
   tenant_id?: string;
   credential_configuration_id?: string;
   credential_claims?: Record<string, unknown>;
+  offer_id?: string;
   cnf?: {
     jwk?: { kty: string; crv: string; x: string; y?: string };
   };
+}
+
+function isValidPublicEcJwk(jwk: JWTHeader['jwk'], algorithm: string): boolean {
+  const expectedCurve: Record<string, string> = {
+    ES256: 'P-256',
+    ES384: 'P-384',
+    ES512: 'P-521',
+  };
+  return (
+    !!jwk &&
+    jwk.kty === 'EC' &&
+    jwk.crv === expectedCurve[algorithm] &&
+    typeof jwk.x === 'string' &&
+    jwk.x.length > 0 &&
+    typeof jwk.y === 'string' &&
+    jwk.y.length > 0 &&
+    !Object.prototype.hasOwnProperty.call(jwk, 'd')
+  );
+}
+
+function resolveCNonceExpiry(env: Env): number {
+  const parsed = Number(env.C_NONCE_EXPIRY_SECONDS);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 3600 ? parsed : 300;
 }
 
 function resolveExpectedIssuerIdentifier(
@@ -136,20 +163,20 @@ export async function validateVCIAccessToken(
       expectedIssuerOverride
     );
     // Allow issuer to be URL or DID format
-    if (!payload.iss || (!payload.iss.includes('authrim') && payload.iss !== expectedIssuer)) {
+    if (payload.iss !== expectedIssuer) {
       return { valid: false, error: 'Invalid issuer' };
     }
 
     // Validate audience (should include this VCI endpoint)
     const aud = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
-    const _vciAudience = `${expectedIssuer}/vci`; // Reserved for strict audience check
-    if (!aud.some((a) => a.includes('vci') || a === expectedIssuer)) {
+    const vciAudience = `${expectedIssuer}/vci`;
+    if (!aud.some((a) => a === vciAudience || a === expectedIssuer)) {
       return { valid: false, error: 'Invalid audience' };
     }
 
     // Check scope for credential issuance
     const scopes = payload.scope?.split(' ') || [];
-    if (!scopes.includes('openid') && !scopes.includes('credential')) {
+    if (!scopes.includes('credential')) {
       return { valid: false, error: 'Missing required scope' };
     }
 
@@ -159,27 +186,25 @@ export async function validateVCIAccessToken(
       return { valid: false, error: 'Invalid tenant' };
     }
 
-    const signatureValid = await verifyTokenSignature(
-      env,
-      accessToken,
-      header,
-      payload,
-      expectedIssuer,
-      tenantId
-    );
+    const signatureValid = await verifyTokenSignature(env, accessToken, header, tenantId);
     if (!signatureValid) {
       return { valid: false, error: 'Invalid signature' };
     }
 
     // Extract holder binding (cnf claim)
     const holderBinding = payload.cnf?.jwk;
+    if (holderBinding && !isValidPublicEcJwk(holderBinding, header.alg)) {
+      return { valid: false, error: 'Invalid holder binding' };
+    }
 
     return {
       valid: true,
       userId: payload.sub,
       tenantId,
+      credentialConfigurationId: payload.credential_configuration_id,
       vct: payload.credential_configuration_id,
-      claims: payload.credential_claims || {},
+      jti: payload.jti,
+      offerId: payload.offer_id,
       holderBinding,
     };
   } catch (error) {
@@ -199,59 +224,29 @@ async function verifyTokenSignature(
   env: Env,
   token: string,
   header: JWTHeader,
-  payload: VCIAccessTokenPayload,
-  expectedIssuerOverride: string | undefined,
   expectedTenantId: string
 ): Promise<boolean> {
   try {
-    // For self-issued tokens (iss = our identifier), use our own keys
-    const expectedIssuer = resolveExpectedIssuerIdentifier(
-      env,
-      expectedTenantId,
-      expectedIssuerOverride
-    );
+    // validateVCIAccessToken accepts only the expected Authrim issuer. Keep key resolution tenant-
+    // local so this helper cannot later turn an untrusted JWT iss claim into a JWKS fetch target.
+    const tenantId = requireTenantId(expectedTenantId, 'VCI access token signature');
+    const doId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
+    const stub = env.KEY_MANAGER.get(doId);
 
-    if (payload.iss === expectedIssuer || payload.iss.includes('authrim')) {
-      // Get public key from KeyManager
-      const tenantId = requireTenantId(expectedTenantId, 'VCI access token signature');
-      const doId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
-      const stub = env.KEY_MANAGER.get(doId);
-
-      const jwksResponse = await stub.fetch(new Request('https://internal/ec/jwks'));
-      if (!jwksResponse.ok) {
-        log.error('Failed to get JWKS from KeyManager', {});
-        return false;
-      }
-
-      const jwks = (await jwksResponse.json()) as { keys: Array<{ kid?: string; kty: string }> };
-
-      // Find the key by kid or use the first one
-      const key = header.kid
-        ? jwks.keys.find((k) => k.kid === header.kid)
-        : jwks.keys.find((k) => k.kty === 'EC');
-
-      if (!key) {
-        log.error('Signing key not found in JWKS', {});
-        return false;
-      }
-
-      // Import and verify
-      const cryptoKey = await importJWKForVerify(key, header.alg);
-      return await verifyJWTSignature(token, cryptoKey, header.alg);
+    const jwksResponse = await stub.fetch(new Request('https://internal/ec/jwks'));
+    if (!jwksResponse.ok) {
+      log.error('Failed to get JWKS from KeyManager', {});
+      return false;
     }
 
-    // For external issuers, fetch their JWKS
-    // This is a simplified implementation - production should cache JWKS
-    const jwksUri = `${payload.iss}/.well-known/jwks.json`;
-    const jwks = await safeFetchJson<{ keys: Array<{ kid?: string; kty: string }> }>(jwksUri, {
-      headers: { Accept: 'application/json' },
-      requireHttps: true,
-      timeoutMs: 10000,
-      maxResponseSize: MAX_EXTERNAL_JWKS_SIZE,
-    });
-    const key = header.kid ? jwks.keys.find((k) => k.kid === header.kid) : jwks.keys[0];
+    const jwks = (await jwksResponse.json()) as { keys: Array<{ kid?: string; kty: string }> };
+
+    const key = header.kid
+      ? jwks.keys.find((k) => k.kid === header.kid)
+      : jwks.keys.find((k) => k.kty === 'EC');
 
     if (!key) {
+      log.error('Signing key not found in JWKS', {});
       return false;
     }
 
@@ -314,6 +309,9 @@ export async function validateProofOfPossession(
     if (!holderPublicKey) {
       return { valid: false, error: 'Missing holder public key in JWT header' };
     }
+    if (!isValidPublicEcJwk(holderPublicKey, header.alg)) {
+      return { valid: false, error: 'Invalid holder public key' };
+    }
 
     // Validate audience (should be the issuer identifier)
     if (payload.aud !== expectedAudience) {
@@ -358,6 +356,19 @@ export async function validateProofOfPossession(
       valid: false,
       error: 'Proof validation failed',
     };
+  }
+}
+
+/** Decode only the routing nonce from a proof. Cryptographic validation must follow. */
+export function decodeVCIProofNonce(proofJwt: string): string | null {
+  if (!proofJwt || proofJwt.length > MAX_VCI_PROOF_JWT_SIZE) return null;
+  const parts = proofJwt.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const payload = JSON.parse(decodeBase64Url(parts[1])) as { nonce?: unknown };
+    return typeof payload.nonce === 'string' && payload.nonce.length <= 512 ? payload.nonce : null;
+  } catch {
+    return null;
   }
 }
 
@@ -427,8 +438,7 @@ export async function getOrCreateCNonce(
   userId: string
 ): Promise<{ nonce: string; expiresIn: number }> {
   const kvKey = `cnonce:${userId}`;
-  const parsedExpiresIn = parseInt(env.C_NONCE_EXPIRY_SECONDS || '300', 10);
-  const expiresIn = Number.isNaN(parsedExpiresIn) || parsedExpiresIn <= 0 ? 300 : parsedExpiresIn;
+  const expiresIn = resolveCNonceExpiry(env);
 
   // Try to get existing nonce
   const existing = await env.AUTHRIM_CONFIG.get(kvKey);

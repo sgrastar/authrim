@@ -15,7 +15,7 @@
  *   ./bin/k6-passkeys run \
  *     --env MODE=seed \
  *     --env BASE_URL=https://your-authrim.example.com \
- *     --env ADMIN_API_SECRET=xxx \
+ *     --env ADMIN_MACHINE_ACCESS_TOKEN=xxx \
  *     --env PASSKEY_USER_COUNT=500 \
  *     scripts/test-passkey-full-login-benchmark-vm.js
  *
@@ -80,7 +80,7 @@ const BASE_URL = __ENV.BASE_URL || '';
 const CLIENT_ID = __ENV.CLIENT_ID || '';
 const CLIENT_SECRET = __ENV.CLIENT_SECRET || '';
 const REDIRECT_URI = __ENV.REDIRECT_URI || 'https://localhost:3000/callback';
-const ADMIN_API_SECRET = __ENV.ADMIN_API_SECRET || '';
+const ADMIN_MACHINE_ACCESS_TOKEN = __ENV.ADMIN_MACHINE_ACCESS_TOKEN || '';
 const PRESET = __ENV.PRESET || 'rps50';
 const USER_ID_PREFIX = __ENV.USER_ID_PREFIX || 'pk-vm';
 
@@ -313,7 +313,7 @@ function createUser(index, timestamp) {
     {
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${ADMIN_API_SECRET}`,
+        Authorization: `Bearer ${ADMIN_MACHINE_ACCESS_TOKEN}`,
       },
       tags: { name: 'SeedCreateUser' },
     }
@@ -375,22 +375,22 @@ function registerPasskey(userId, email, credential, rp) {
 let credentialData = null;
 
 export function setup() {
-  console.log("");
+  console.log('');
   console.log(`🚀 ${TEST_NAME}`);
   console.log(`📋 Mode: ${MODE}`);
   console.log(`🎯 Target: ${BASE_URL}`);
   console.log(`🌐 RP ID: ${RP_ID}`);
-  console.log("");
+  console.log('');
 
   if (MODE === 'seed') {
     // Seed mode
-    if (!ADMIN_API_SECRET) {
-      throw new Error('ADMIN_API_SECRET is required for seeding');
+    if (!ADMIN_MACHINE_ACCESS_TOKEN) {
+      throw new Error('ADMIN_MACHINE_ACCESS_TOKEN is required for seeding');
     }
     console.log(`📝 Seeding ${PASSKEY_USER_COUNT} passkey users...`);
     console.log(`   Concurrency: ${SEED_CONCURRENCY}`);
     console.log(`   Output: ${CREDENTIAL_FILE}`);
-    console.log("");
+    console.log('');
 
     return {
       mode: 'seed',
@@ -405,7 +405,7 @@ export function setup() {
 
     console.log(`📋 Preset: ${PRESET} - ${selectedPreset.description}`);
     console.log(`🔑 Client: ${CLIENT_ID}`);
-    console.log("");
+    console.log('');
 
     // Load credential file
     let users = [];
@@ -426,10 +426,10 @@ export function setup() {
     const userCount = Math.min(users.length, selectedPreset.userCount);
     const selectedUsers = users.slice(0, userCount);
     console.log(`📦 Using ${selectedUsers.length} users for benchmark`);
-    console.log("");
+    console.log('');
 
     // Warmup
-    console.log("🔥 Warming up...");
+    console.log('🔥 Warming up...');
     for (let i = 0; i < Math.min(5, selectedUsers.length); i++) {
       const user = selectedUsers[i];
       http.get(`${BASE_URL}/authorize?response_type=code&client_id=${CLIENT_ID}&scope=openid`, {
@@ -445,8 +445,8 @@ export function setup() {
         }
       );
     }
-    console.log("   Warmup complete");
-    console.log("");
+    console.log('   Warmup complete');
+    console.log('');
 
     return {
       mode: 'benchmark',
@@ -517,14 +517,14 @@ export default function (data) {
   // Step 1: GET /authorize (initialization)
   const authorizeInitUrl =
     `${baseUrl}/authorize?` +
-    "response_type=code&" +
+    'response_type=code&' +
     `client_id=${encodeURIComponent(clientId)}&` +
     `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-    "scope=openid&" +
+    'scope=openid&' +
     `state=${state}&` +
     `nonce=${nonce}&` +
     `code_challenge=${codeChallenge}&` +
-    "code_challenge_method=S256";
+    'code_challenge_method=S256';
 
   const step1Response = http.get(authorizeInitUrl, {
     headers: { Accept: 'text/html', Connection: 'keep-alive' },
@@ -658,7 +658,7 @@ export default function (data) {
   // Step 6: POST /token
   if (success && authCode) {
     const tokenPayload =
-      "grant_type=authorization_code&" +
+      'grant_type=authorization_code&' +
       `code=${encodeURIComponent(authCode)}&` +
       `redirect_uri=${encodeURIComponent(redirectUri)}&` +
       `code_verifier=${codeVerifier}`;
@@ -707,7 +707,7 @@ export default function (data) {
 export function teardown(data) {
   if (data.mode === 'seed') {
     // Save seed results to file
-    console.log("");
+    console.log('');
     console.log(`💾 Saving ${seedResults.length} credentials to ${CREDENTIAL_FILE}...`);
 
     const output = {
@@ -725,11 +725,11 @@ export function teardown(data) {
     console.log('--- CREDENTIAL_DATA_START ---');
     console.log(JSON.stringify(output));
     console.log('--- CREDENTIAL_DATA_END ---');
-    console.log("");
+    console.log('');
     console.log(`✅ Seed complete. Save the JSON output above to ${CREDENTIAL_FILE}`);
-    console.log("   Or run: ./bin/k6-passkeys run ... 2>&1 | ./scripts/extract-credentials.sh");
+    console.log('   Or run: ./bin/k6-passkeys run ... 2>&1 | ./scripts/extract-credentials.sh');
   } else {
-    console.log("");
+    console.log('');
     console.log(`✅ ${TEST_NAME} Test completed`);
     console.log(`📊 Preset: ${data.preset}`);
     console.log(`🎯 Target: ${data.baseUrl}`);

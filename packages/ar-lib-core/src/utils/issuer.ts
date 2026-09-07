@@ -26,22 +26,46 @@ import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import type { Env } from '../types/env';
 import { DEFAULT_TENANT_ID } from './tenant-context';
 
+export const TENANT_EXISTS_CACHE_TTL_SECONDS = 60 * 60;
+
+export function getTenantExistsCacheKey(tenantId: string): string {
+  return `v1:tenant-exists:${tenantId}`;
+}
+
+export async function putTenantExistsCache(
+  kv: KVNamespace | undefined,
+  tenantId: string,
+  ttlSeconds: number = TENANT_EXISTS_CACHE_TTL_SECONDS
+): Promise<void> {
+  await kv
+    ?.put(getTenantExistsCacheKey(tenantId), 'true', { expirationTtl: ttlSeconds })
+    .catch(() => {});
+}
+
+export async function deleteTenantExistsCache(
+  kv: KVNamespace | undefined,
+  tenantId: string
+): Promise<void> {
+  await kv?.delete(getTenantExistsCacheKey(tenantId)).catch(() => {});
+}
+
 export interface IssuerEnvLike {
   ISSUER_URL?: string;
   BASE_DOMAIN?: string;
   NAKED_DOMAIN_AS_ISSUER?: string;
   PRIMARY_TENANT_ID?: string;
   DEFAULT_TENANT_ID?: string;
+  AUTHRIM_TRUST_FORWARDED_HOST?: string;
 }
 
 /**
  * Validate that a tenant exists and is runtime-active using D1 + KV positive cache.
  *
- * - Positive cache TTL: 300s (negative results are NOT cached to allow immediate
+ * - Positive cache TTL: 1 hour (negative results are NOT cached to allow immediate
  *   recognition after tenant creation)
- * - DB error → fail-open to prevent outage from blocking all requests
+ * - DB absence/error → fail-closed unless a positive cache entry already proved the tenant active
  *
- * @param db - D1 database binding (undefined = fail-open)
+ * @param db - D1 database binding (undefined = fail-closed)
  * @param kv - KV namespace for caching (undefined = skip cache)
  * @param tenantId - Tenant ID to validate
  * @returns true if tenant exists and is active, false if not found or not runtime-active
@@ -51,7 +75,7 @@ export async function validateTenantExistsAsync(
   kv: KVNamespace | undefined,
   tenantId: string
 ): Promise<boolean> {
-  const cacheKey = `v1:tenant-exists:${tenantId}`;
+  const cacheKey = getTenantExistsCacheKey(tenantId);
 
   // Check KV positive cache first
   if (kv) {
@@ -63,8 +87,8 @@ export async function validateTenantExistsAsync(
     }
   }
 
-  // Fail-open if no DB binding
-  if (!db) return true;
+  // An unverified host must never become a tenant merely because storage is unavailable.
+  if (!db) return false;
 
   try {
     const adapter = ensureDatabaseAdapter(db, 'tenant-exists');
@@ -74,20 +98,16 @@ export async function validateTenantExistsAsync(
     );
 
     if (!row) {
-      const health = await adapter.isHealthy().catch(() => ({
-        healthy: false,
-      }));
-      return health.healthy ? false : true;
+      return false;
     }
 
     // Write positive cache only (never cache negative to ensure immediate visibility)
     if (kv) {
-      await kv.put(cacheKey, 'true', { expirationTtl: 300 }).catch(() => {});
+      await putTenantExistsCache(kv, tenantId);
     }
     return true;
   } catch {
-    // D1 error → fail-open to prevent outage from blocking requests
-    return true;
+    return false;
   }
 }
 
@@ -202,12 +222,20 @@ export function buildRequestIssuerUrl(
   env: Partial<IssuerEnvLike>,
   tenantId: string
 ): string {
+  const trustAuthrimForwardedHost = ['true', '1', 'yes'].includes(
+    env.AUTHRIM_TRUST_FORWARDED_HOST?.trim().toLowerCase() ?? ''
+  );
+  const trustedForwardedHost =
+    request && trustAuthrimForwardedHost
+      ? normalizeHostCandidate(request.headers.get('X-Authrim-Forwarded-Host'))
+      : null;
   const explicitHost =
     request &&
-    (normalizeHostCandidate(request.headers.get('Host')) ||
+    (trustedForwardedHost ||
+      normalizeHostCandidate(request.headers.get('Host')) ||
       normalizeHostCandidate(request.headers.get('X-Authrim-Forwarded-Host')) ||
       normalizeHostCandidate(request.headers.get('X-Forwarded-Host')));
-  const requestHost = getRequestHost(request);
+  const requestHost = trustedForwardedHost || getRequestHost(request);
   const requestHostname = requestHost?.split(':')[0];
   const shouldIgnoreImplicitLocalhost =
     !explicitHost &&

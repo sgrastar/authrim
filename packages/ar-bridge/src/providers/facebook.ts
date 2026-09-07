@@ -101,7 +101,9 @@ export const FACEBOOK_DEFAULT_CONFIG: Partial<UpstreamProvider> = {
     given_name: 'first_name',
     family_name: 'last_name',
   },
-  autoLinkEmail: true,
+  // Facebook does not provide an email_verified claim. Keep automatic email linking disabled so
+  // future claim-mapping changes cannot silently turn an unverified address into link authority.
+  autoLinkEmail: false,
   jitProvisioning: true,
   // Facebook doesn't return email_verified, so we can't require it
   requireEmailVerified: false,

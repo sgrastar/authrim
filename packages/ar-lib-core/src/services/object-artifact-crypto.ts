@@ -4,7 +4,11 @@ import type { ObjectClass } from './object-catalog';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-export const OBJECT_STORAGE_PLANES = ['EXPORT_ARTIFACTS', 'SENSITIVE_DETAILS'] as const;
+export const OBJECT_STORAGE_PLANES = [
+  'EXPORT_ARTIFACTS',
+  'SENSITIVE_DETAILS',
+  'AUDIT_ARCHIVE',
+] as const;
 
 export type ObjectStoragePlane = (typeof OBJECT_STORAGE_PLANES)[number];
 

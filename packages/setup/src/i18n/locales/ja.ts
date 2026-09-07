@@ -31,7 +31,7 @@ const ja: Translations = {
 
   // Main menu
   'menu.prompt': '何をしますか？',
-  'menu.quick': 'クイックセットアップ（5分）',
+  'menu.quick': 'クイックセットアップ',
   'menu.quickDesc': '最小限の設定でAuthrimをデプロイ',
   'menu.custom': 'カスタムセットアップ',
   'menu.customDesc': 'すべてのオプションを段階的に設定',
@@ -104,6 +104,8 @@ const ja: Translations = {
   'prereq.notLoggedIn': 'Cloudflareにログインしていません',
   'prereq.loginHint': '以下のコマンドで認証してください:',
   'prereq.loggedInAs': 'Cloudflareに接続しました ({{email}})',
+  'prereq.authenticated': 'Cloudflareに接続しました',
+  'prereq.checkFailed': 'wranglerの確認に失敗しました',
   'prereq.accountId': 'アカウントID: {{accountId}}',
 
   // Environment
@@ -180,6 +182,13 @@ const ja: Translations = {
   'domain.zoneCheckSkipped': 'ゾーン確認をスキップしてセットアップを続行します...',
   'domain.continueWithoutZone': 'ゾーン確認なしで続行しますか？',
   'domain.configureBinding': 'Workersのカスタムドメインバインディングを設定する',
+  'domain.configureBindingDesc':
+    'ベースドメインをルーターWorkerへ直接割り当て、DNSとTLS証明書をCloudflareに管理させます。テナントのサブドメインには引き続きワイルドカードルーティングを使用します。',
+  'domain.customHostnamesDesc':
+    'Cloudflare Custom Hostnamesを使ってテナントの独自ドメイン設定を自動化します。',
+  'domain.customHostnamesPrivacy':
+    'トークンはローカルのシークレットファイルにのみ保存し、Workerシークレットとしてアップロードします。D1、KV、セットアップ設定には保存しません。',
+  'domain.customHostnamesPrompt': 'Cloudflare Custom Hostnamesの自動化を有効にしますか？',
   'domain.action.retryCheck': '再確認',
   'domain.action.reloadPage': 'ページを再読み込み',
   'domain.action.openCloudflareDashboard': 'Cloudflare ダッシュボードを開く',
@@ -223,6 +232,12 @@ const ja: Translations = {
   'domain.apiDomain': 'API / Issuerドメイン（例: auth.example.com）',
   'domain.loginUiDomain': 'ログインUIドメイン（Enterでスキップ）',
   'domain.adminUiDomain': '管理UIドメイン（Enterでスキップ）',
+  'domain.baseDomainDepthError':
+    'Base DomainにはテナントURLの親ドメインを指定してください。「{{hostname}}」は登録ドメインの前のラベル数が多すぎます。',
+  'domain.uiDomainDepthError':
+    '{{label}}ドメイン「{{hostname}}」は標準のテナントドメイン構成に対して深すぎます。',
+  'domain.suggestedHost': '推奨ホスト: {{hostname}}',
+  'domain.uiRequiresOwnRoute': '{{label}}のカスタムドメインには個別のWorkerルートが必要です。',
   'domain.enterDomains': 'カスタムドメインを入力（空欄でCloudflareデフォルトを使用）',
   'domain.singleTenantNote': 'シングルテナントモードでは、Issuer URL = APIドメインです',
   'domain.usingWorkersDev': '（Cloudflare workers.devドメインを使用）',
@@ -236,9 +251,9 @@ const ja: Translations = {
   // Database
   'db.title': 'データベース設定',
   'db.regionWarning': 'データベースのリージョンは作成後に変更できません。',
-  'db.coreDescription': 'コアDB: OAuthクライアント、トークン、セッション、監査ログを保存',
+  'db.coreDescription': 'プラットフォームDB: メタデータと非PII監査ログを保存',
   'db.coreRegion': 'コアデータベースのリージョン',
-  'db.piiDescription': 'PII DB: ユーザープロフィール、認証情報、個人データを保存',
+  'db.piiDescription': 'プラットフォームPII DB: PII監査と匿名化データを保存',
   'db.piiNote': 'データ保護要件を考慮してください。',
   'db.piiRegion': 'PIIデータベースのリージョン',
   'db.creating': 'データベースを作成中...',
@@ -271,6 +286,7 @@ const ja: Translations = {
   'keys.generated': 'キーを生成しました ({{path}})',
   'keys.existing': '環境 "{{env}}" のキーが既に存在します',
   'keys.existingWarning': '既存のキーは上書きされます。',
+  'keys.replaced': '環境名が利用可能であることを確認した後、既存のキーを置き換えました。',
   'keys.error': 'キーの生成に失敗しました',
   'keys.regeneratePrompt': 'キーを再生成しますか？',
   'keys.regenerateWarning': 'これにより既存のすべてのトークンが無効になります！',
@@ -321,6 +337,15 @@ const ja: Translations = {
   'config.shards': 'シャード',
   'config.sec': '秒',
   'config.automatic': '自動',
+  'config.d1Routing': 'D1ルーティング:',
+  'config.placement': '配置:',
+  'config.provisioning': 'プロビジョニング:',
+  'config.uiEnvNoApi': 'API URLの設定後に ui.env が作成されます。',
+  'config.wranglerConfigsSaved': 'wrangler.toml マスター設定を {{count}} 件保存しました',
+  'config.wranglerConfigsPartial': '一部のwrangler設定を保存できませんでした',
+  'config.wranglerConfigsSyncing': 'wrangler設定をパッケージへ同期中...',
+  'config.wranglerConfigsSynced': 'wrangler設定を {{count}} 個のコンポーネントへ同期しました',
+  'config.wranglerConfigsSyncFailed': 'wrangler設定の同期に失敗しました',
 
   // Deploy
   'deploy.prompt': 'この設定でセットアップを開始しますか？',
@@ -351,6 +376,8 @@ const ja: Translations = {
   'deploy.wranglerKeep': '📝 手動変更を保持（そのままデプロイ）',
   'deploy.wranglerBackup': '💾 バックアップしてマスターで上書き',
   'deploy.wranglerOverwrite': '⚠️  マスターで上書き（変更を破棄）',
+  'deploy.initialProvisioningFailed':
+    'Cloudflareのプロビジョニングが完了しませんでした。環境ロックは作成されていません。initを再実行すると安全に再開できます。',
 
   // Email provider
   'email.title': 'メールプロバイダー',
@@ -406,15 +433,23 @@ const ja: Translations = {
   // Cloudflare API Token
   'cf.apiTokenPrompt': 'Cloudflare APIトークンを入力',
   'cf.apiTokenValidation': '有効なAPIトークンを入力してください',
-
-  // OIDC Profile
-  'profile.prompt': 'OIDCプロファイルを選択',
-  'profile.basicOp': 'Basic OP（標準OIDCプロバイダー）',
-  'profile.basicOpDesc': '標準OIDC機能',
-  'profile.fapiRw': 'FAPI Read-Write（金融グレード）',
-  'profile.fapiRwDesc': 'FAPI 1.0 Read-Writeセキュリティプロファイル準拠',
-  'profile.fapi2Security': 'FAPI 2.0 セキュリティプロファイル',
-  'profile.fapi2SecurityDesc': 'FAPI 2.0 セキュリティプロファイル準拠（最高セキュリティ）',
+  'cf.apiTokenCreationMethod': 'APIトークンをどのように作成しますか？',
+  'cf.apiTokenCreateFromLink': '設定済みリンクから作成（推奨）',
+  'cf.apiTokenCreateFromLinkDesc': '必要な権限と対象Zoneを選択済みの状態でCloudflareを開きます',
+  'cf.apiTokenCreateManually': '手動で作成',
+  'cf.apiTokenCreateManuallyDesc': '必要な権限を確認して自分でトークンを設定します',
+  'cf.apiTokenTemplateUrl': 'Cloudflareトークン作成URL:',
+  'cf.apiTokenTemplateOpenPrompt': 'Enterを押してCloudflareをブラウザで開く',
+  'cf.apiTokenTemplateOpened': 'Cloudflareのトークン作成ページを開きました',
+  'cf.apiTokenTemplateOpenFailed': 'ブラウザを開けませんでした。以下のURLを手動で開いてください。',
+  'cf.apiTokenManualTitle': '以下の設定でユーザーAPIトークンを作成してください:',
+  'cf.apiTokenManualType': 'Global API KeyではなくAPI Tokenを使用します。',
+  'cf.apiTokenManualPermission': '権限: Zone > SSL and Certificates > Edit',
+  'cf.apiTokenManualResource': 'Zoneリソース: Include > Specific zone > {{zone}}',
+  'cf.apiTokenManualLeastPrivilege': '無関係な権限やZoneは追加しないでください。',
+  'cf.apiTokenSecretOnce':
+    'トークンの値は一度しか表示されません。Cloudflareを離れる前にコピーしてください。',
+  'cf.apiTokenSelectedZone': 'この環境で使用するZone',
 
   // Tenant configuration
   'tenant.title': 'テナントモード',
@@ -433,6 +468,19 @@ const ja: Translations = {
   'tenant.defaultTenantPrompt': 'デフォルトテナント名（識別子）',
   'tenant.defaultTenantValidation': '小文字英数字とハイフンのみ使用可能',
   'tenant.displayNamePrompt': 'デフォルトテナントの表示名',
+  'tenant.domainSetupHint': '空欄の場合はworkers.devを使うシングルテナントモードになります。',
+  'tenant.customDomainExamples': 'カスタムドメインを使う場合:',
+  'tenant.nakedDomainExample': 'https://example.com（テナントサブドメインなしのIssuer）',
+  'tenant.subdomainExample': 'https://acme.example.com（テナントサブドメイン付きのIssuer）',
+  'tenant.idRules':
+    'テナントIDは1〜63文字で、小文字から始まり、小文字・数字・ハイフンのみ使用できます。',
+  'tenant.randomIdHint':
+    'ランダムなテナントIDを使うと、Issuer URLに顧客名や企業名が露出するのを防げます。',
+  'tenant.randomIdPrompt': 'ランダムなテナントIDを生成しますか？（{{id}}）',
+  'tenant.initialDisplayName': '初期テナント',
+  'tenant.nakedDomainPrompt': 'プライマリテナントのIssuerにベースドメインを使用しますか？',
+  'tenant.primaryTenantPrompt':
+    'ベースドメインで使用するプライマリテナントID（空欄で初期テナントを使用）',
   'tenant.singleTenantTitle': 'シングルテナントURL設定',
   'tenant.singleTenantNote1': 'シングルテナントモードでは:',
   'tenant.singleTenantNote2': 'Issuer URL = APIカスタムドメイン（またはworkers.devフォールバック）',
@@ -447,9 +495,9 @@ const ja: Translations = {
   'userId.title': 'ユーザーID形式',
   'userId.prompt': 'ユーザーIDの形式を選択してください',
   'userId.nanoid': 'NanoID（推奨）',
-  'userId.nanoidDesc': 'URL安全な21文字のID、コンパクトで安全',
+  'userId.nanoidDesc': 'URLで使いやすい、21文字の短いIDです。',
   'userId.uuid': 'UUID v4',
-  'userId.uuidDesc': 'ハイフン付き36文字の標準UUID',
+  'userId.uuidDesc': 'ハイフンを含む、標準的な36文字のIDです。',
   'userId.note': '注意: この設定はユーザー作成後に変更できません。',
   'userId.selected': 'ユーザーID形式: {{format}}',
 
@@ -468,7 +516,7 @@ const ja: Translations = {
   'features.title': '機能フラグ',
   'features.queuePrompt':
     'Cloudflare Queuesを有効にしますか？デフォルトは無効です。Freeプランの目安は約3,000配信メッセージ/日です。Authrimでは非同期audit fan-out、logging delivery retry、export build job、key rewrap retry jobなどで1 queued messageを使います。',
-  'features.r2Prompt': 'Cloudflare R2を有効にしますか？（アバター用）',
+  'features.r2Prompt': 'Cloudflare R2オブジェクトストレージを有効にしますか？',
   'features.queue': 'Queue:',
   'features.r2': 'R2:',
 
@@ -517,6 +565,17 @@ const ja: Translations = {
   'complete.urls': 'URL:',
   'complete.configLocation': '設定:',
   'complete.keysLocation': 'キー:',
+  'complete.createdResources': '作成したリソース:',
+  'complete.generatedFiles': '生成したファイル:',
+  'complete.automaticStep1': '1. スキーマを適用し、リリース全体をデプロイします:',
+  'complete.automaticStep2':
+    '2. 表示されたら、1回限りのCloudflareブートストラップトークンを作成して入力します。',
+  'complete.automaticStep2Detail':
+    'Setupは分割した子トークンをControlに直接登録し、ブートストラップトークンを無効化します。',
+  'complete.manualStep1': '1. 現在のWrangler OAuthログインでスキーマを適用し、デプロイします:',
+  'complete.manualStep2': '2. Adminから要求された保留中のプロビジョニング操作をSetupで実行します。',
+  'complete.manualStep2Detail':
+    '自動プロビジョニングはオフで、Cloudflare APIトークンはControlに保存されません。',
 
   // Resource provisioning
   'resource.provisioning': '{{resource}}をプロビジョニング中...',
@@ -574,6 +633,8 @@ const ja: Translations = {
   // Common
   'common.yes': 'はい',
   'common.no': 'いいえ',
+  'common.example': '例',
+  'common.comingSoon': '近日対応',
   'common.continue': '続行',
   'common.cancel': 'キャンセル',
   'common.skip': 'スキップ',
@@ -616,7 +677,6 @@ const ja: Translations = {
   'delete.prompt': '削除するリソースを選択',
   'delete.confirm': '"{{env}}"を削除してもよろしいですか？',
   'delete.confirmPermanent': '⚠️  "{{env}}"のすべてのリソースが完全に削除されます。続行しますか？',
-  'delete.confirmWarning': 'この操作は元に戻せません！',
   'delete.deleting': '{{resource}}を削除中...',
   'delete.deleted': '{{resource}}を削除しました',
   'delete.error': '{{resource}}の削除に失敗しました',
@@ -628,6 +688,10 @@ const ja: Translations = {
   'delete.kvNamespaces': 'KV名前空間',
   'delete.queues': 'Queues',
   'delete.r2Buckets': 'R2バケット',
+  'delete.pages': 'Pagesプロジェクト',
+  'delete.partialSuccess': '選択したリソースを削除し、残りの環境情報は保持しました',
+  'delete.inventoryUnavailable':
+    'Cloudflareのリソース一覧を確認できなかったため、削除を開始しませんでした',
 
   // Info command
   'info.title': '環境情報',
@@ -774,21 +838,76 @@ const ja: Translations = {
   'web.db.name': '名前',
   'web.db.region': 'リージョン',
   'web.db.regionAuto': '自動（最寄り）',
-  'web.db.storageProfileTitle': 'ストレージ\nプロファイル',
-  'web.db.storageProfileDesc':
-    'このデプロイでユーザー core/PII データをどのように配置するかを選択します。',
-  'web.db.sharedD1Title': '共有 D1（Shared D1）',
-  'web.db.sharedD1Desc':
-    '環境全体で core D1 と PII D1 を1組ずつ共有します。構築コストが最小の標準構成です。',
-  'web.db.tenantD1Title': 'テナント別 D1（Tenant D1）',
-  'web.db.tenantD1Desc':
-    'テナントごとに core / PII のD1ペアを割り当てます。テナント有効化の前にスロットの事前確保が必要です。',
-  'web.db.preallocatedSlotsTitle': '事前確保するテナントスロット',
-  'web.db.preallocatedSlotsDesc':
-    '各テナントスロットは core と PII の 2 つの D1 データベースを作成します。',
-  'web.db.slotsLabel': 'スロット',
-  'web.db.slotsHelp':
-    'スロット1つにつき core / PII の2つのD1データベースが作成されます。既定値は3、最大500です。あとから環境管理画面で拡張できます。',
+  'web.db.controlPlaneTitle': 'D1 Control Plane',
+  'web.db.controlPlaneDesc':
+    'Control Planeと初期tenant shardを構築します。以後のtenant容量は必要に応じて自動作成されます。',
+  'web.db.controlPlaneWorkerDesc':
+    'Authrimがテナント用データベースを管理するための機能です。セットアップ時に必要な管理用リソースを作成します。',
+  'web.db.controlPlaneTenantPlacement':
+    '初期テナントは専用の保存先で開始します。テナントが増えた後は、テナントごとに保存先を選択できます。',
+  'web.db.controlPlaneResolverNote':
+    'データベースの作成と接続先の管理は、Authrimが自動で行います。',
+  'web.db.automaticProvisioningTitle': 'テナント用データベースの自動作成',
+  'web.db.automaticProvisioningOn': 'オン（自動で作成）',
+  'web.db.automaticProvisioningOnDesc':
+    'テナントやデータ量が増えたとき、Authrimが必要なデータベースを自動で作成します。',
+  'web.db.automaticProvisioningTokenNote':
+    '専用のControl Workerに、必要な権限だけを持つCloudflare API tokenを保存し、テナント用データベースの作成時に使用します。',
+  'web.db.automaticProvisioningOff': 'オフ（Setupから作成）',
+  'web.db.automaticProvisioningOffDesc':
+    'データベースを自動では作成しません。必要になったときにSetupツールから作成します。',
+  'web.db.automaticProvisioningNote': 'オフにしても、テナントごとのデータ分離は維持されます。',
+
+  // Control Plane credentials
+  'web.deploy.controlCredentialsTitle': 'Cloudflare接続情報',
+  'web.deploy.bootstrapTokenTitle': '自動作成用の一時Cloudflare token',
+  'web.deploy.cloudflareLoginNote':
+    'Cloudflare DashboardのログインはWrangler OAuthとは別で、再度ログインを求められる場合があります。',
+  'web.deploy.createBootstrapToken': '一回限りのCloudflare tokenを作成',
+  'web.deploy.bootstrapTokenLabel': '一時Cloudflare token',
+  'web.deploy.bootstrapTokenPlaceholder': '一時Cloudflare tokenを入力',
+  'web.deploy.bootstrapTokenHelp': 'このtokenは一度だけ使用され、必要なtokenの登録後に失効します。',
+  'web.deploy.bootstrapTokenDescription':
+    'この一時tokenは、Authrimがテナント用データベースを自動作成するために使用します。入力するtokenには、API tokenを作成・編集する権限（アカウント所有の場合は Account API Tokens: Write/Edit、ユーザー所有の場合は API Tokens: Write/Edit）が必要です。Setupはこのtokenを使い、必要な範囲に限定したD1・Workers・KV・R2用のAPI tokenを作成してControl Workerに登録します。登録後、一時tokenは失効します。',
+  'web.deploy.manualDnsSectionTitle': 'DNS設定',
+  'web.deploy.bootstrapTokenCreateStatus':
+    'Cloudflare DashboardでEnd Dateを{{endDate}}（UTC）に設定して一時tokenを作成し、下の欄に入力してください。',
+  'web.deploy.bootstrapPopupBlocked':
+    '新しいタブがブラウザにブロックされました。ポップアップを許可して、もう一度このボタンを選択してください。',
+  'web.deploy.bootstrapTokenRequired':
+    'Control Workerを動かすための権限限定D1・Workers・KV・R2認証情報を作成する、一回限りのCloudflare API tokenが必要です。デプロイ前に作成して入力してください。',
+  'web.envDetail.automaticProvisioningTitle': '自動プロビジョニング',
+  'web.envDetail.automaticProvisioningChecking': '確認中…',
+  'web.envDetail.automaticProvisioningUnavailable': '利用できません',
+  'web.envDetail.createOneTimeCloudflareToken': '一回限りのCloudflare tokenを作成',
+  'web.envDetail.oneTimeBootstrapTokenPlaceholder': '一回限りのbootstrap token',
+  'web.envDetail.enableAutomaticProvisioning': '有効化',
+  'web.envDetail.enterOneTimeTokenThenEnable':
+    'End Dateを{{endDate}}（UTC）に設定して一回限りのtokenを作成・入力し、「有効化」を選択してください。',
+  'web.envDetail.bootstrapPopupBlocked':
+    'Cloudflare Dashboardのタブがブラウザにブロックされました。',
+  'web.envDetail.enterOneTimeTokenFirst': '先に一回限りのCloudflare tokenを入力してください。',
+  'web.envDetail.preparingControlAuthority': 'Controlのプロビジョニング権限を準備しています…',
+  'web.envDetail.deployingControlWorker': 'Control Workerの設定をデプロイしています…',
+  'web.envDetail.registeringScopedCredentials': '権限範囲付きcredentialを登録しています…',
+  'web.envDetail.automaticProvisioningOn': 'オン',
+  'web.envDetail.automaticProvisioningOff': 'オフ',
+  'web.envDetail.automaticProvisioningCredentialsRegistered':
+    '権限範囲付きControl Worker credentialが登録されています。',
+  'web.envDetail.automaticProvisioningBlocked': '自動プロビジョニングがブロックされています。',
+  'web.envDetail.automaticProvisioningMissing': '（不足: {{missing}}）',
+  'web.envDetail.automaticProvisioningRepairHint':
+    '修復するには新しい一回限りのtokenを入力してください。',
+  'web.envDetail.bootstrapRetainedForRetry':
+    'Cloudflareで一時的なエラーが発生しました。bootstrap tokenは有効なままです。同じtokenを再入力して「有効化」を選択すると再開できます。',
+  'web.envDetail.bootstrapNotSubmittedForRetry':
+    'bootstrap tokenを送信する前にSetupが停止しました。入力欄に保持されているため、そのまま再試行できます。',
+  'web.envDetail.revokeTokensBeforeRetry':
+    '再試行前に、Cloudflare Dashboardで表示されたAuthrim bootstrap tokenと子tokenを失効させてください。',
+  'web.envDetail.bootstrapRevokedPendingReset':
+    'bootstrap tokenは失効しましたが、保留状態をリセットできませんでした。保留中の操作を再試行または修復してください。',
+  'web.envDetail.bootstrapRevokedDisabled':
+    'bootstrap tokenを失効させ、自動プロビジョニングをオフに戻しました。',
 
   // Web UI Email
   'web.email.title': 'メールプロバイダー',
@@ -856,7 +975,7 @@ const ja: Translations = {
   'web.env.openSetup': '設定を開く',
   'web.env.copyUrl': 'コピー',
   'web.env.deleteTitle': '環境を削除',
-  'web.env.deleteWarning': 'この操作は取り消せません。以下のリソースが完全に削除されます:',
+  'web.env.deleteWarning': '以下の選択したリソースを削除します:',
   'web.env.confirmDelete': '選択項目を削除',
   'web.env.cancel': 'キャンセル',
 
@@ -925,7 +1044,8 @@ const ja: Translations = {
   'web.form.userIdFormat': 'ユーザーID形式',
   'web.form.userIdNanoid': 'NanoID（推奨）',
   'web.form.userIdUuid': 'UUID v4',
-  'web.form.userIdFormatHint': 'ユーザーID生成形式。ユーザー作成後は変更できません。',
+  'web.form.userIdExample': '例:',
+  'web.form.userIdFormatHint': 'ユーザー作成後は変更できません。',
   'web.form.loginDomainPlaceholder': 'login.example.com',
   'web.form.adminDomainPlaceholder': 'admin.example.com',
 
@@ -1064,6 +1184,27 @@ const ja: Translations = {
 
   // Web UI Environment Detail
   'web.envDetail.title': '環境詳細',
+  'web.envDetail.initialDeployRecoveryTitle': '初回デプロイが完了していません',
+  'web.envDetail.initialDeployRecoveryDesc':
+    '前回のデプロイは検証前に停止しました。作成済みのリソースを再利用して再開できます。',
+  'web.envDetail.initialDeployRecoveryAction': '初回デプロイを再開',
+  'web.envDetail.initialDeployRecoveryVerified':
+    'Cloudflare 上の状態を確認しました。完了済み: {{completed}}。{{stage}}から再開できます。',
+  'web.envDetail.initialDeployRecoveryStageMigrations': 'データベースマイグレーションの検証',
+  'web.envDetail.initialDeployRecoveryStageControlPlane': '初回デプロイの準備',
+  'web.envDetail.initialDeployRecoveryStageWorkers': 'Worker のデプロイ',
+  'web.envDetail.initialDeployRecoveryStageVerification': 'デプロイ後の検証',
+  'web.envDetail.initialDeployRecoveryResources': 'リソース作成',
+  'web.envDetail.initialDeployRecoverySchema': 'データベースマイグレーション',
+  'web.envDetail.initialDeployRecoveryWorkers': 'Worker のデプロイ',
+  'web.envDetail.initialDeployRecoveryRecreate':
+    '保存されたチェックポイントと Cloudflare 上の状態が一致しないため、再開を無効にしました。この不完全な環境を削除して、最初から作り直してください。',
+  'web.envDetail.initialDeployRecoveryManifestChanged':
+    '初回デプロイ開始後にデータベースの定義が変わり、保存済みの進行状況と現在のデータベースが一致しない可能性があります。安全のため再開を無効にしました。この不完全な環境を削除して、最初から作り直してください。',
+  'web.envDetail.initialDeployRecoveryBlocked':
+    '現在の状態を確認できなかったため、再開を無効にしました。Cloudflare 接続を確認して、この環境を再チェックしてください。確認できない状態が続く場合は、不完全な環境を削除して作り直してください。',
+  'web.envDetail.initialDeployRecoveryTokenRequired':
+    ' デプロイ用の接続情報を更新するため、新しい一時 Cloudflare token の入力が必要です。',
   'web.envDetail.adminNotConfigured': '管理者アカウント未設定',
   'web.envDetail.adminNotConfiguredDesc': 'この環境の初期管理者がまだ設定されていません。',
   'web.envDetail.startPasskey': 'Passkeyで管理者アカウント設定を開始',
@@ -1143,7 +1284,7 @@ const ja: Translations = {
 
   // Web UI Delete Section
   'web.delete.title': '環境を削除',
-  'web.delete.warning': 'この操作は取り消せません。選択したリソースはすべて完全に削除されます。',
+  'web.delete.warning': '選択したリソースをこの環境から削除します。',
   'web.delete.environment': '環境:',
   'web.delete.selectResources': '削除するリソースを選択:',
   'web.delete.workers': 'Workers',
@@ -1188,6 +1329,9 @@ const ja: Translations = {
   'web.status.adminNotConfigured': '管理者未設定',
   'web.status.initializing': '初期化中...',
   'web.status.found': '{{count}}件検出',
+  'web.status.operationInProgress':
+    '別のセットアップ操作を実行中です。完了後にもう一度お試しください。',
+  'web.status.warning': '警告：',
 
   // Web UI Button Labels (dynamic)
   'web.btn.reprovision': '再プロビジョニング（削除して作成）',

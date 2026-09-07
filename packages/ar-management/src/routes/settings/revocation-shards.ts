@@ -63,11 +63,11 @@ export async function updateRevocationShards(c: Context<{ Bindings: Env }>) {
   const { shards, updatedBy } = body;
 
   // Validation
-  if (typeof shards !== 'number' || shards <= 0 || shards > 256) {
+  if (typeof shards !== 'number' || !Number.isInteger(shards) || shards <= 0 || shards > 256) {
     return c.json(
       {
         error: 'invalid_shard_count',
-        error_description: 'Shard count must be a number between 1 and 256',
+        error_description: 'Shard count must be an integer between 1 and 256',
       },
       400
     );

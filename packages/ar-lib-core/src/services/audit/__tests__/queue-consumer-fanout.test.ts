@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { decryptLogChunkBody } from '@authrim/ar-lib-logging/chunks';
-import type { LogPlane, LogType } from '@authrim/ar-lib-logging/registry';
+import type { LogPlane, LogType } from '@authrim/ar-lib-logging/contract';
 import { processAuditQueue } from '../queue-consumer';
 import type { AuditQueueMessage } from '../types';
 
@@ -599,6 +599,7 @@ describe('audit queue consumer fanout', () => {
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: payloadBucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
         LOGGING_DELIVERY_QUEUE: deliveryQueue,
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );
@@ -606,9 +607,10 @@ describe('audit queue consumer fanout', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(payloadBucket.put).toHaveBeenCalledWith(
       expect.stringContaining('logging-delivery-payloads/v1/'),
-      expect.stringContaining('"recordType":"audit_batch"'),
+      expect.not.stringContaining('"recordType":"audit_batch"'),
       expect.objectContaining({
-        httpMetadata: { contentType: 'application/json' },
+        httpMetadata: { contentType: 'application/vnd.authrim.object-envelope+json' },
+        customMetadata: expect.objectContaining({ encryption: 'authrim-object-envelope-v1' }),
       })
     );
     const payloadObjectKey = (payloadBucket.put as unknown as ReturnType<typeof vi.fn>).mock
@@ -713,6 +715,7 @@ describe('audit queue consumer fanout', () => {
         DB_PII: {} as D1Database,
         DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: payloadBucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );
 

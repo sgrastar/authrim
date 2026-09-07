@@ -217,22 +217,21 @@ export async function deviceVerifyApiHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const authenticatedUser = await getAuthenticatedAsyncUser(c, tenantId);
+    const mockAuthEnabled = await isMockAuthEnabled(c.env);
+    if (!authenticatedUser && !mockAuthEnabled) {
+      return c.json(
+        {
+          success: false,
+          error: 'authentication_required',
+          error_description: 'A valid browser session is required to decide a device code.',
+        },
+        401
+      );
+    }
+
     // Handle approval or denial
     if (approve) {
-      const authenticatedUser = await getAuthenticatedAsyncUser(c, tenantId);
-      const mockAuthEnabled = await isMockAuthEnabled(c.env);
-
-      if (!authenticatedUser && !mockAuthEnabled) {
-        return c.json(
-          {
-            success: false,
-            error: 'authentication_required',
-            error_description: 'A valid browser session is required to approve a device code.',
-          },
-          401
-        );
-      }
-
       if ((userId || sub) && !mockAuthEnabled) {
         log.warn('Ignoring caller-supplied device approval subject', {
           action: 'approval_subject_ignored',

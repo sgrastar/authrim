@@ -13,9 +13,8 @@
  * 5. Return client_id for inclusion in ui.env
  */
 
-import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { createHash } from 'node:crypto';
+
 import {
   fetchWithTimeout,
   readResponseJsonWithLimit,
@@ -40,15 +39,12 @@ export interface LoginUiClientConfig {
    * serve Admin API requests is used for this provisioning operation.
    */
   apiBaseUrls?: string[];
-  /** Login UI URL (e.g., https://prod-ar-login-ui.workers.dev) */
+  /** Canonical Login UI execution origin (e.g., https://auth.example.com) */
   loginUiUrl: string;
-  /**
-   * Path to admin_api_secret.txt.
-   * Used only as a legacy fallback when setup machine keys are absent.
-   */
-  adminApiSecretPath?: string;
-  /** Directory containing setup machine keys. Defaults to dirname(adminApiSecretPath). */
-  keysDir?: string;
+  /** Directory containing setup machine Admin Machine Access keys. */
+  keysDir: string;
+  /** Optional short-lived scoped Admin Machine Access token. */
+  adminBearerToken?: string;
   /** Progress callback */
   onProgress?: (message: string) => void;
   /** Optional tenant ID for tenant-scoped admin APIs */
@@ -90,6 +86,14 @@ function isRetryableLoginUiClientError(error?: string | null): boolean {
     .toLowerCase();
 
   if (!normalized) return false;
+  // The release mutation fence is deterministic. Retrying it as router propagation wastes the
+  // full readiness window and hides the real ordering/configuration error from the operator.
+  if (
+    normalized.includes('admin_mutation_paused_for_release') ||
+    normalized.includes('control_plane_release_rollout_unavailable')
+  ) {
+    return false;
+  }
 
   return (
     normalized.includes('fetch failed') ||
@@ -102,6 +106,9 @@ function isRetryableLoginUiClientError(error?: string | null): boolean {
     normalized.includes('bad gateway') ||
     normalized.includes('service unavailable') ||
     normalized.includes('gateway timeout') ||
+    normalized.includes('lookup_registry_snapshot_unavailable') ||
+    normalized.includes('lookup_registry_public_jwks_unavailable') ||
+    normalized.includes('lookup_registry_generation_mismatch') ||
     normalized.includes('connection reset') ||
     normalized.includes('econnreset') ||
     normalized.includes('enotfound') ||
@@ -109,11 +116,19 @@ function isRetryableLoginUiClientError(error?: string | null): boolean {
   );
 }
 
+function describeLoginUiClientRetry(error: string): string {
+  const normalized = error.toLowerCase();
+  if (normalized.includes('lookup_registry_')) {
+    return 'Login UI client request is waiting for the runtime lookup registry to propagate';
+  }
+  return 'Login UI client request hit a temporary router readiness error';
+}
+
 interface AdminClientListResponse {
   clients: Array<{
     client_id: string;
     client_name: string;
-    redirect_uris: string[];
+    redirect_uris?: string[];
     grant_types: string[];
     is_trusted?: boolean;
     skip_consent?: boolean;
@@ -149,7 +164,10 @@ function normalizeApiBaseUrl(url: string): string | null {
 
 function buildApiBaseUrlCandidates(primary: string, candidates?: string[]): string[] {
   const seen = new Set<string>();
-  return [primary, ...(candidates ?? [])].reduce<string[]>((list, candidate) => {
+  // Purpose-aware tenant candidates must be attempted before a legacy/environment fallback.
+  // The fallback remains available because this flow verifies token issuance and the Admin API
+  // end to end before accepting a candidate.
+  return [...(candidates ?? []), primary].reduce<string[]>((list, candidate) => {
     const normalized = normalizeApiBaseUrl(candidate);
     if (!normalized || seen.has(normalized)) {
       return list;
@@ -168,6 +186,20 @@ function buildApiBaseUrlCandidates(primary: string, candidates?: string[]): stri
 const LOGIN_UI_CLIENT_NAME = 'Login UI';
 const LOGIN_UI_CLIENT_DESCRIPTION =
   'System-managed public OAuth client used by the built-in Authrim Login UI.';
+
+function buildCreateIdempotencyKey(loginUiUrl: string, tenantId?: string): string {
+  const digest = createHash('sha256')
+    .update(
+      JSON.stringify({
+        operation: 'ensure-login-ui-client-v1',
+        tenantId: tenantId?.trim() || 'default',
+        loginUiOrigin: normalizeApiBaseUrl(loginUiUrl),
+      })
+    )
+    .digest('hex')
+    .slice(0, 32);
+  return `setup-login-ui-${digest}`;
+}
 
 // =============================================================================
 // Implementation
@@ -188,51 +220,36 @@ function buildRedirectUris(loginUiUrl: string): string[] {
   ];
 }
 
-/**
- * Read the legacy admin API secret from the keys directory.
- */
-async function readAdminApiSecret(secretPath: string): Promise<string> {
-  if (!existsSync(secretPath)) {
-    throw new Error(`Admin API secret not found: ${secretPath}`);
-  }
-  const secret = await readFile(secretPath, 'utf-8');
-  return secret.trim();
-}
-
 async function resolveAdminBearerToken(options: {
   apiBaseUrl: string;
-  adminApiSecretPath?: string;
-  keysDir?: string;
+  keysDir: string;
+  adminBearerToken?: string;
   tenantId?: string;
   onProgress?: (message: string) => void;
 }): Promise<string> {
-  const keysDir =
-    options.keysDir ??
-    (options.adminApiSecretPath ? dirname(options.adminApiSecretPath) : undefined);
-
-  if (keysDir && setupMachineKeyFilesExist(keysDir)) {
+  if (options.adminBearerToken?.trim()) {
+    return options.adminBearerToken.trim();
+  }
+  if (setupMachineKeyFilesExist(options.keysDir)) {
     options.onProgress?.('Requesting setup machine Admin token...');
     const token = await requestAdminMachineAccessToken({
       apiBaseUrl: options.apiBaseUrl,
-      keysDir,
+      keysDir: options.keysDir,
       tenantId: options.tenantId,
     });
     return token.accessToken;
   }
 
-  if (!options.adminApiSecretPath) {
-    throw new Error(
-      'Admin API credential not found: setup machine keys or admin_api_secret.txt required'
-    );
-  }
-
-  options.onProgress?.('Reading legacy admin API secret...');
-  return readAdminApiSecret(options.adminApiSecretPath);
+  throw new Error(`Setup machine keys not found: ${options.keysDir}`);
 }
 
 interface ExistingClientInfo {
   clientId: string;
   needsMigration: boolean;
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value) => right.includes(value));
 }
 
 /**
@@ -242,6 +259,7 @@ interface ExistingClientInfo {
 async function findExistingClient(
   apiBaseUrl: string,
   adminSecret: string,
+  loginUiUrl: string,
   tenantId?: string
 ): Promise<ExistingClientInfo | null> {
   const response = await fetchWithTimeout(
@@ -274,7 +292,9 @@ async function findExistingClient(
       existing.token_endpoint_auth_method !== 'none' ||
       existing.require_pkce !== true ||
       existing.browser_refresh_token_policy !== 'disabled' ||
-      existing.description !== LOGIN_UI_CLIENT_DESCRIPTION,
+      existing.description !== LOGIN_UI_CLIENT_DESCRIPTION ||
+      (Array.isArray(existing.redirect_uris) &&
+        !sameStringSet(existing.redirect_uris, buildRedirectUris(loginUiUrl))),
   };
 }
 
@@ -286,6 +306,7 @@ async function updateClientToPublic(
   apiBaseUrl: string,
   adminSecret: string,
   clientId: string,
+  loginUiUrl: string,
   tenantId?: string
 ): Promise<void> {
   const response = await fetchWithTimeout(`${apiBaseUrl}/api/admin/clients/${clientId}`, {
@@ -296,13 +317,14 @@ async function updateClientToPublic(
       Accept: 'application/json',
       ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
     },
-    body: JSON.stringify({
-      description: LOGIN_UI_CLIENT_DESCRIPTION,
-      token_endpoint_auth_method: 'none',
-      require_pkce: true,
-      browser_public_client_mode: 'cookie_fallback',
-      browser_refresh_token_policy: 'disabled',
-    }),
+    body: JSON.stringify(
+      buildBrowserClientMetadata({
+        clientName: LOGIN_UI_CLIENT_NAME,
+        description: LOGIN_UI_CLIENT_DESCRIPTION,
+        redirectUris: buildRedirectUris(loginUiUrl),
+        sessionProfile: 'managed_browser_session',
+      })
+    ),
   });
 
   if (!response.ok) {
@@ -330,6 +352,7 @@ async function createClient(
       Authorization: `Bearer ${adminSecret}`,
       'Content-Type': 'application/json',
       Accept: 'application/json',
+      'Idempotency-Key': buildCreateIdempotencyKey(loginUiUrl, tenantId),
       ...(tenantId ? { 'X-Tenant-Id': tenantId } : {}),
     },
     body: JSON.stringify(
@@ -355,7 +378,8 @@ async function createClient(
  * Ensure a Login UI OAuth client exists, creating one if necessary.
  *
  * This is idempotent: if a client named "Login UI" with is_trusted=true
- * already exists, its client_id is returned without creating a new one.
+ * already exists, its client_id is returned. Its public-client metadata and
+ * callback origins are reconciled when the canonical Login UI origin changes.
  */
 export async function ensureLoginUiClient(
   config: LoginUiClientConfig
@@ -364,8 +388,8 @@ export async function ensureLoginUiClient(
     apiBaseUrl,
     apiBaseUrls,
     loginUiUrl,
-    adminApiSecretPath,
     keysDir,
+    adminBearerToken: providedAdminBearerToken,
     onProgress,
     tenantId,
     retryDelayMs = LOGIN_UI_CLIENT_RETRY_BASE_DELAY_MS,
@@ -386,8 +410,8 @@ export async function ensureLoginUiClient(
           if (!adminBearerToken) {
             adminBearerToken = await resolveAdminBearerToken({
               apiBaseUrl: candidateApiBaseUrl,
-              adminApiSecretPath,
               keysDir,
+              adminBearerToken: providedAdminBearerToken,
               tenantId,
               onProgress,
             });
@@ -398,6 +422,7 @@ export async function ensureLoginUiClient(
           const existingClient = await findExistingClient(
             candidateApiBaseUrl,
             adminBearerToken,
+            loginUiUrl,
             tenantId
           );
 
@@ -410,6 +435,7 @@ export async function ensureLoginUiClient(
                 candidateApiBaseUrl,
                 adminBearerToken,
                 existingClient.clientId,
+                loginUiUrl,
                 tenantId
               );
               onProgress?.(
@@ -450,8 +476,8 @@ export async function ensureLoginUiClient(
         }
       }
 
-      const shouldRetry = attempt < maxRetries && retryableError !== null;
-      if (!shouldRetry) {
+      const retryReason = retryableError;
+      if (attempt >= maxRetries || retryReason === null) {
         return {
           success: false,
           error: lastError || 'Login UI client creation failed',
@@ -460,7 +486,7 @@ export async function ensureLoginUiClient(
 
       const delayMs = Math.min(retryDelayMs * attempt, 10000);
       onProgress?.(
-        `Login UI client request hit a temporary router readiness error. Retrying in ${Math.ceil(delayMs / 1000)}s...`
+        `${describeLoginUiClientRetry(retryReason)}. Retrying in ${Math.ceil(delayMs / 1000)}s...`
       );
       await sleep(delayMs);
     }

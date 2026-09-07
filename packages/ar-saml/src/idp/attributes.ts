@@ -1,4 +1,4 @@
-import { executeRuntimeMapping, findCatalogEntry } from '@authrim/ar-lib-field-mapping';
+import { executeRuntimeMapping, findCatalogEntry } from '@authrim/ar-lib-field-mapping/runtime';
 import type {
   FieldCatalogBundle,
   FieldRef,
@@ -8,7 +8,7 @@ import type {
   ReasonCode,
   SourceValueEnvelope,
   ValidationRule,
-} from '@authrim/ar-lib-field-mapping';
+} from '@authrim/ar-lib-field-mapping/contract';
 import type {
   SAMLAttribute,
   SAMLAttributeValueType,
@@ -18,7 +18,14 @@ import type {
 export interface SAMLAttributeSubject {
   id: string;
   email?: string;
+  email_verified?: boolean;
   name?: string;
+  display_name?: string;
+  given_name?: string;
+  family_name?: string;
+  preferred_username?: string;
+  picture_url?: string;
+  locale?: string;
   claims?: Record<string, unknown>;
   attributes?: Record<string, unknown>;
   customClaims?: Record<string, unknown>;
@@ -90,6 +97,7 @@ export interface SAMLIdentityMappingFieldMappingBinding {
   fieldMappingVersionId?: string;
   sourceProfileId?: string;
   destinationProfileId?: string;
+  destinationFieldPolicies?: Record<string, 'required' | 'optional' | 'hidden'>;
   runtimeContext?: Record<string, unknown>;
 }
 
@@ -230,11 +238,14 @@ function buildSAMLAttributesFromIdentityMapping(
     throw new SAMLIdentityMappingRuntimeError(result.reasons);
   }
 
-  const attributes = mergeSAMLAttributes(
-    result.values
-      .filter((value) => value.sourceRef.namespace === destinationNamespace)
-      .map((value) => buildAttributeFromMappedValue(value, binding))
-      .filter((attribute): attribute is SAMLAttribute => attribute !== null)
+  const attributes = applyDestinationFieldReleasePolicy(
+    mergeSAMLAttributes(
+      result.values
+        .filter((value) => value.sourceRef.namespace === destinationNamespace)
+        .map((value) => buildAttributeFromMappedValue(value, binding))
+        .filter((attribute): attribute is SAMLAttribute => attribute !== null)
+    ),
+    binding.destinationFieldPolicies
   );
   const missingAttributes = findMissingRequiredMappedAttributes(
     attributes,
@@ -252,7 +263,7 @@ function buildSAMLAttributesFromIdentityMapping(
   };
 }
 
-function resolveSAMLIdentityMappingFieldMappingBinding(
+export function resolveSAMLIdentityMappingFieldMappingBinding(
   config: SAMLIdentityMappingReleaseConfig,
   context: SAMLIdentityMappingRuntimeContext
 ): SAMLIdentityMappingFieldMappingBinding {
@@ -453,53 +464,41 @@ function findMissingRequiredMappedAttributes(
   destinationNamespace: string
 ): MissingRequiredSAMLAttribute[] {
   const emittedNames = new Set(attributes.map((attribute) => attribute.name));
-  const missing: MissingRequiredSAMLAttribute[] = [];
-
-  for (const entry of config.catalog.entries) {
-    if (entry.namespace !== destinationNamespace || !entry.required) {
-      continue;
-    }
-    const ref: FieldRef = {
-      side: 'destination',
-      namespace: entry.namespace,
-      path: entry.path,
-      catalogEntryId: entry.id,
-    };
-    const descriptor = findMappedAttributeDescriptor(ref, config);
-    const name = descriptor?.name ?? entry.path;
-    if (!emittedNames.has(name)) {
-      missing.push({
-        name,
-        friendlyName: descriptor?.friendlyName,
-        source: 'identity_mapping',
-        claim: entry.path,
-      });
-    }
-  }
-
-  for (const [key, descriptor] of Object.entries(config.attributeDescriptors ?? {})) {
-    if (!descriptor.required) {
-      continue;
-    }
-    const name = descriptor.name ?? findCatalogPathById(config, key) ?? key;
-    if (!emittedNames.has(name)) {
-      missing.push({
-        name,
-        friendlyName: descriptor.friendlyName,
-        source: 'identity_mapping',
-        claim: key,
-      });
-    }
-  }
-
-  return dedupeMissingAttributes(missing);
+  return dedupeMissingAttributes(
+    Object.entries(config.destinationFieldPolicies ?? {}).flatMap(([name, mode]) => {
+      if (mode !== 'required' || emittedNames.has(name)) return [];
+      const entry = config.catalog.entries.find(
+        (candidate) => candidate.namespace === destinationNamespace && candidate.path === name
+      );
+      const descriptor = entry
+        ? findMappedAttributeDescriptor(
+            {
+              side: 'destination',
+              namespace: entry.namespace,
+              path: entry.path,
+              catalogEntryId: entry.id,
+            },
+            config
+          )
+        : undefined;
+      return [
+        {
+          name,
+          friendlyName: descriptor?.friendlyName,
+          source: 'identity_mapping' as const,
+          claim: entry?.path ?? name,
+        },
+      ];
+    })
+  );
 }
 
-function findCatalogPathById(
-  config: SAMLIdentityMappingFieldMappingBinding,
-  catalogEntryId: string
-) {
-  return config.catalog.entries.find((entry) => entry.id === catalogEntryId)?.path;
+function applyDestinationFieldReleasePolicy(
+  attributes: SAMLAttribute[],
+  policies?: Record<string, 'required' | 'optional' | 'hidden'>
+): SAMLAttribute[] {
+  if (!policies) return attributes;
+  return attributes.filter((attribute) => policies[attribute.name] !== 'hidden');
 }
 
 function findMappedAttributeDescriptor(

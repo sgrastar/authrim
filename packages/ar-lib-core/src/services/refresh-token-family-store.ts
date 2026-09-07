@@ -11,6 +11,7 @@ import type {
   CreateFamilyRequestV3,
   RotateTokenRequestV2,
   RotateTokenResponseV2,
+  TokenFamilyV2,
 } from '../durable-objects/RefreshTokenRotator';
 
 export interface RefreshTokenRotatorRpcStub {
@@ -23,6 +24,7 @@ export interface RefreshTokenRotatorRpcStub {
   rotateRpc(request: RotateTokenRequestV2): Promise<RotateTokenResponseV2>;
   revokeByJtiRpc(jti: string, reason?: string): Promise<boolean>;
   revokeFamilyRpc(userId: string, reason?: string): Promise<void>;
+  getFamilyRpc(userId: string): Promise<TokenFamilyV2 | null>;
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
 

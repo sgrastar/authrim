@@ -4,7 +4,7 @@
 // Required env vars:
 //   AUTHRIM_ENV_NAME          Environment name, e.g. test
 //   AUTHRIM_ENV_CONFIG        Contents of .authrim/{env}/config.json
-//   AUTHRIM_ENV_LOCK          Contents of .authrim/{env}/lock.json
+//   AUTHRIM_ENV_LOCK_GZIP_B64 base64(gzip(.authrim/{env}/lock.json))
 //   AUTHRIM_ENV_KEYS_TAR_B64  base64(tar.gz) of the contents of .authrim-keys/{env}
 //
 // Create the key archive with:
@@ -16,6 +16,7 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as tar from 'tar';
+import { decodeGzipBase64Secret } from './lib/ci-secret-codec.mjs';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const rootDir = resolve(__dirname, '..');
@@ -72,7 +73,21 @@ const env = requiredEnv('AUTHRIM_ENV_NAME');
 validateEnvName(env);
 
 const configSecret = requiredEnv('AUTHRIM_ENV_CONFIG');
-const lockSecret = requiredEnv('AUTHRIM_ENV_LOCK');
+const compressedLockSecret = process.env.AUTHRIM_ENV_LOCK_GZIP_B64?.trim();
+const legacyLockSecret = process.env.AUTHRIM_ENV_LOCK?.trim();
+if (!compressedLockSecret && !legacyLockSecret) {
+  console.error('❌ AUTHRIM_ENV_LOCK_GZIP_B64 is required');
+  process.exit(1);
+}
+let lockSecret = legacyLockSecret;
+if (compressedLockSecret) {
+  try {
+    lockSecret = decodeGzipBase64Secret('AUTHRIM_ENV_LOCK_GZIP_B64', compressedLockSecret);
+  } catch (error) {
+    console.error(`❌ ${error instanceof Error ? error.message : error}`);
+    process.exit(1);
+  }
+}
 const keysArchiveSecret = requiredEnv('AUTHRIM_ENV_KEYS_TAR_B64').replace(/\s+/g, '');
 
 const envDir = join(rootDir, '.authrim', env);

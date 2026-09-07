@@ -4,9 +4,10 @@ import type {
   ApprovalRequest,
   ApprovalRequestApproval,
   ApprovalTransportMethod,
+  AdminAuthContext,
   Env,
 } from '@authrim/ar-lib-core';
-import { getRequiredPluginContext } from '@authrim/ar-lib-core';
+import { produceNotificationDelivery } from '@authrim/ar-lib-core';
 import { issueApprovalCompletionArtifact } from './approval-completion-artifact';
 import { issueApprovalOtpChallenge } from './approval-otp';
 import { resolveApprovalNotificationTransport } from './approval-notification-resolution';
@@ -51,23 +52,10 @@ export interface ApprovalNotificationDispatchResult {
   retryable?: boolean;
 }
 
-type AdminContext = Context<any, any, any>;
-type NotificationHandler = {
-  send(notification: {
-    channel: string;
-    to: string;
-    from?: string;
-    subject?: string;
-    body: string;
-    metadata?: Record<string, unknown>;
-  }): Promise<{
-    success: boolean;
-    messageId?: string;
-    error?: string;
-    retryable?: boolean;
-  }>;
-};
-
+type AdminContext = Context<{
+  Bindings: Env;
+  Variables: { adminAuth?: AdminAuthContext };
+}>;
 const APPROVAL_NOTIFICATION_FROM = 'noreply@authrim.dev';
 
 function createCorrelationId(
@@ -213,66 +201,6 @@ async function sendViaNotifier(
   completionArtifact?: ApprovalCompletionDispatchArtifact | null,
   completionPath?: string | null
 ): Promise<ApprovalNotificationDispatchResult> {
-  const pluginCtx = getRequiredPluginContext(c, 'notification');
-  const notifier = pluginCtx.registry.getNotifier(channel) as NotificationHandler | undefined;
-
-  if (!notifier) {
-    return {
-      success: false,
-      method,
-      transportChannel,
-      summary: {
-        provider: `notifier.${channel}`,
-        delivery_status: 'failed',
-        target,
-        correlation_id: correlationId,
-        transport_request_id: null,
-      },
-      completionArtifact:
-        completionArtifact && completionPath
-          ? {
-              artifactId: completionArtifact.artifact_id,
-              path: completionPath,
-              expiresAt: completionArtifact.expires_at,
-            }
-          : null,
-      detail: {
-        request: {
-          channel,
-          to: target,
-          subject: notification.subject ?? null,
-          completion_path: completionPath ?? null,
-        },
-        response: {
-          success: false,
-          error: `No ${channel} notifier is configured`,
-          retryable: false,
-        },
-        metadata: {
-          ...buildBaseMetadata(
-            input.request,
-            input.approval,
-            input.action,
-            method,
-            transportChannel,
-            metadataContext
-          ),
-          approval_completion_artifact:
-            completionArtifact && completionPath
-              ? {
-                  artifact_id: completionArtifact.artifact_id,
-                  path: completionPath,
-                  expires_at: completionArtifact.expires_at,
-                }
-              : null,
-          operator_input: input.operatorTransportDetail ?? null,
-        },
-      },
-      error: `No ${channel} notifier is configured`,
-      retryable: false,
-    };
-  }
-
   const payload = {
     channel,
     to: target,
@@ -283,17 +211,36 @@ async function sendViaNotifier(
   };
 
   try {
-    const result = await notifier.send(payload);
+    const intentKey = completionArtifact?.artifact_id ?? crypto.randomUUID();
+    const delivery = await produceNotificationDelivery(c.env, {
+      owner: { owner: 'tenant', tenantId: input.request.tenant_id },
+      intentId: `approval-notification:${intentKey}`,
+      outboxId: `notification:${intentKey}`,
+      notificationKind: 'approval.notification',
+      idempotencyKey: `approval-notification:${intentKey}`,
+      expiresAt: Math.floor(
+        (completionArtifact?.expires_at ??
+          Math.min(input.request.expires_at, input.approval.expires_at)) / 1000
+      ),
+      payload,
+    });
+    const success = delivery.delivery !== 'permanent_failure';
+    const retryable = delivery.delivery === 'pending';
     return {
-      success: result.success,
+      success,
       method,
       transportChannel,
       summary: {
         provider: `notifier.${channel}`,
-        delivery_status: result.success ? 'sent' : 'failed',
+        delivery_status:
+          delivery.delivery === 'delivered'
+            ? 'sent'
+            : delivery.delivery === 'pending'
+              ? 'pending'
+              : 'failed',
         target,
         correlation_id: correlationId,
-        transport_request_id: result.messageId ?? null,
+        transport_request_id: delivery.reference.intentId,
       },
       completionArtifact:
         completionArtifact && completionPath
@@ -306,10 +253,11 @@ async function sendViaNotifier(
       detail: {
         request: payload as unknown as Record<string, unknown>,
         response: {
-          success: result.success,
-          messageId: result.messageId ?? null,
-          error: result.error ?? null,
-          retryable: result.retryable ?? false,
+          success,
+          messageId: delivery.reference.intentId,
+          delivery: delivery.delivery,
+          error: success ? null : 'notification_delivery_failed',
+          retryable,
         },
         metadata: {
           ...buildBaseMetadata(
@@ -331,15 +279,15 @@ async function sendViaNotifier(
           operator_input: input.operatorTransportDetail ?? null,
         },
       },
-      ...(result.success
+      ...(success
         ? {}
         : {
-            error: result.error ?? `${channel} notification failed`,
-            retryable: result.retryable ?? false,
+            error: 'notification_delivery_failed',
+            retryable,
           }),
     };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : `${channel} notification failed`;
+  } catch {
+    const message = 'notification_delivery_unavailable';
     return {
       success: false,
       method,

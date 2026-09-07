@@ -11,6 +11,7 @@ import {
   generateCIBAUserCode,
   CIBA_CONSTANTS,
   validateCIBARequest,
+  validateCIBARequestObject,
   validateCIBAIdTokenHint,
   determineDeliveryMode,
   calculatePollingInterval,
@@ -27,6 +28,16 @@ import {
 } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
 import { resolveAsyncTenantId } from './tenant';
+
+function invalidCIBAClientResponse(c: Context<{ Bindings: Env }>) {
+  // CIBA error responses are a public protocol contract and may only contain
+  // error, error_description, and error_uri. Do not expose Authrim's internal
+  // error identifiers on this endpoint.
+  return c.json(
+    { error: 'invalid_client', error_description: 'Client authentication failed.' },
+    401
+  );
+}
 
 /**
  * POST /bc-authorize
@@ -47,7 +58,6 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
   try {
     // Parse request body
     const body = await c.req.parseBody();
-    const scope = (body.scope as string) || 'openid';
     const clientAuth = parseOAuthClientAuthenticationParams({
       clientId: body.client_id as string | undefined,
       clientSecret: body.client_secret as string | undefined,
@@ -56,20 +66,10 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       authorizationHeader: c.req.header('Authorization') ?? undefined,
     });
     if (!clientAuth.ok) {
-      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
+      return invalidCIBAClientResponse(c);
     }
 
     const client_id = clientAuth.credentials.clientId;
-    const login_hint = body.login_hint as string | undefined;
-    const login_hint_token = body.login_hint_token as string | undefined;
-    const id_token_hint = body.id_token_hint as string | undefined;
-    const binding_message = body.binding_message as string | undefined;
-    const user_code = body.user_code as string | undefined;
-    const acr_values = body.acr_values as string | undefined;
-    const client_notification_token = body.client_notification_token as string | undefined;
-    const requested_expiry = body.requested_expiry
-      ? parseInt(body.requested_expiry as string, 10)
-      : undefined;
 
     // Validate client_id
     if (!client_id) {
@@ -78,7 +78,105 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    // Validate CIBA request parameters
+    // Validate client exists and is authorized for CIBA
+    const clientMetadata = await getClientCached(c, c.env, client_id);
+    if (!clientMetadata) {
+      return invalidCIBAClientResponse(c);
+    }
+
+    const clientAuthentication = await authenticateConfidentialOAuthClient(
+      clientMetadata as unknown as ClientMetadata,
+      `${requestIssuer}/bc-authorize`,
+      clientAuth.credentials,
+      {
+        issuer: requestIssuer,
+        // CIBA clients in the ecosystem commonly use the token endpoint URL as the RFC 7523
+        // audience for assertions sent to other authenticated AS endpoints.
+        additionalAudiences: [`${requestIssuer}/token`],
+        replayProtection: { env: c.env, tenantId },
+      }
+    );
+
+    if (!clientAuthentication.ok) {
+      return invalidCIBAClientResponse(c);
+    }
+
+    let parameters: Record<string, unknown> = body as Record<string, unknown>;
+    const registeredRequestAlgorithm =
+      clientMetadata.backchannel_authentication_request_signing_alg;
+    if (registeredRequestAlgorithm) {
+      const requestObject = body.request;
+      if (typeof requestObject !== 'string') {
+        return c.json({ error: 'invalid_request', error_description: 'request is required' }, 400);
+      }
+      const semanticParameters = [
+        'scope',
+        'login_hint',
+        'login_hint_token',
+        'id_token_hint',
+        'binding_message',
+        'user_code',
+        'acr_values',
+        'client_notification_token',
+        'requested_expiry',
+      ];
+      if (semanticParameters.some((name) => body[name] !== undefined)) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'CIBA parameters must be contained in the signed request object',
+          },
+          400
+        );
+      }
+      const requestValidation = await validateCIBARequestObject(requestObject, {
+        clientId: client_id,
+        audience: requestIssuer,
+        algorithm: registeredRequestAlgorithm,
+        jwks: (clientMetadata.jwks as { keys: import('jose').JWK[] } | undefined) ?? { keys: [] },
+      });
+      if (!requestValidation.valid || !requestValidation.payload) {
+        return c.json(
+          { error: 'invalid_request', error_description: 'Invalid signed CIBA request' },
+          400
+        );
+      }
+      parameters = requestValidation.payload as Record<string, unknown>;
+    } else if (body.request !== undefined) {
+      return c.json(
+        { error: 'invalid_request', error_description: 'Signed CIBA requests are not registered' },
+        400
+      );
+    }
+
+    const stringParameter = (name: string): string | undefined =>
+      typeof parameters[name] === 'string' ? parameters[name] : undefined;
+    const scope = stringParameter('scope');
+    const login_hint = stringParameter('login_hint');
+    const login_hint_token = stringParameter('login_hint_token');
+    const id_token_hint = stringParameter('id_token_hint');
+    const binding_message = stringParameter('binding_message');
+    const user_code = stringParameter('user_code');
+    const acr_values = stringParameter('acr_values');
+    const client_notification_token = stringParameter('client_notification_token');
+    const requestedExpiryValue = parameters.requested_expiry;
+    const requested_expiry =
+      typeof requestedExpiryValue === 'number'
+        ? requestedExpiryValue
+        : typeof requestedExpiryValue === 'string' && /^\d+$/u.test(requestedExpiryValue)
+          ? Number(requestedExpiryValue)
+          : undefined;
+
+    if (requestedExpiryValue !== undefined && requested_expiry === undefined) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'requested_expiry must be a positive integer',
+        },
+        400
+      );
+    }
+
     const validation = validateCIBARequest({
       scope,
       login_hint,
@@ -88,26 +186,14 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
       user_code,
       requested_expiry,
     });
-
     if (!validation.valid) {
-      // CIBA validation errors use AR codes directly
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
-    }
-
-    // Validate client exists and is authorized for CIBA
-    const clientMetadata = await getClientCached(c, c.env, client_id);
-    if (!clientMetadata) {
-      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
-    }
-
-    const clientAuthentication = await authenticateConfidentialOAuthClient(
-      clientMetadata as unknown as ClientMetadata,
-      `${requestIssuer}/bc-authorize`,
-      clientAuth.credentials
-    );
-
-    if (!clientAuthentication.ok) {
-      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
+      return c.json(
+        {
+          error: validation.error ?? 'invalid_request',
+          error_description: validation.error_description,
+        },
+        400
+      );
     }
 
     // Verify client is authorized to use CIBA grant type
@@ -117,16 +203,16 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Verify scope includes 'openid'
-    if (!scope.includes('openid')) {
+    if (!scope?.split(/\s+/u).includes('openid')) {
       return createErrorResponse(c, AR_ERROR_CODES.CLIENT_NOT_ALLOWED_SCOPE);
     }
 
     // Determine delivery mode based on client configuration
     // CIBA clients can request specific delivery modes via request parameters or client metadata
-    const requestedMode = null; // Could be extracted from request if needed
+    const registeredMode = clientMetadata.backchannel_token_delivery_mode ?? 'poll';
     const deliveryMode = determineDeliveryMode(
-      requestedMode,
-      (clientMetadata.backchannel_client_notification_endpoint as string | undefined) ?? null,
+      registeredMode,
+      clientMetadata.backchannel_client_notification_endpoint ?? null,
       client_notification_token ?? null
     );
 
@@ -138,9 +224,7 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
     }
 
     // Verify client supports requested delivery mode
-    const supportedModesStr = (clientMetadata.backchannel_token_delivery_mode as string) || 'poll';
-    const supportedModes = supportedModesStr.split(',').map((m) => m.trim());
-    if (!supportedModes.includes(deliveryMode)) {
+    if (deliveryMode !== registeredMode) {
       return createErrorResponse(c, AR_ERROR_CODES.CLIENT_NOT_ALLOWED_GRANT);
     }
 
@@ -191,8 +275,16 @@ export async function cibaAuthorizationHandler(c: Context<{ Bindings: Env }>) {
 
     // Calculate expiration
     const now = Date.now();
-    const expiresIn = requested_expiry || CIBA_CONSTANTS.DEFAULT_EXPIRES_IN;
-    const interval = calculatePollingInterval(expiresIn);
+    const expiresIn = Math.min(
+      Math.max(
+        requested_expiry ?? CIBA_CONSTANTS.DEFAULT_EXPIRES_IN,
+        CIBA_CONSTANTS.MIN_EXPIRES_IN
+      ),
+      CIBA_CONSTANTS.MAX_EXPIRES_IN
+    );
+    // requested_expiry controls the auth_req_id lifetime, not the polling
+    // interval. CIBA has no request parameter for choosing the interval.
+    const interval = calculatePollingInterval(null);
 
     // Create CIBA request metadata
     const metadata: CIBARequestMetadata = {

@@ -38,6 +38,9 @@ jobs:
       - name: Audit dependencies
         run: pnpm run security:audit
 
+      - name: Verify MCP server ownership registry
+        run: pnpm run security:mcp-registry
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -75,6 +78,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
@@ -97,6 +102,10 @@ jobs:
 
       - name: Run type checking
         run: pnpm run typecheck
+
+      - name: Verify release migration candidate for main
+        if: github.base_ref == 'main'
+        run: pnpm migrate:release:check
 
   api-tests:
     name: API Tests with Coverage
@@ -125,17 +134,50 @@ jobs:
           echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env
           echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-admin-ui/.env
 
-      - name: Run API tests with coverage
-        run: pnpm run test:coverage:api
+      - name: Check canonical test quality
+        run: node scripts/check-test-quality.mjs
 
-      - name: Comment coverage summary
-        if: ${{ github.event_name == 'pull_request' && success() }}
+      - name: Prepare repository suite reports
+        run: mkdir -p ci-reports
+
+      - name: Run API tests with coverage
+        run: AUTHRIM_SECURITY_REGRESSION_SUITE=true pnpm run test:coverage:api
+
+      - name: Run canonical integration tests
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_SHA: ${{ github.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTHRIM_TEST_REPORT: ${{ github.workspace }}/ci-reports/authrim-integration-tests.json
+        run: AUTHRIM_SECURITY_REGRESSION_SUITE=true pnpm run test:integration
+
+      - name: Run OAuth and OIDC regression gate
+        env:
+          AUTHRIM_TEST_REPORT: ${{ github.workspace }}/ci-reports/authrim-oauth-oidc-regressions.json
+        run: pnpm run test:oauth-oidc-regressions
+
+      - name: Type-check security matrices
+        run: pnpm run test:security-matrices:typecheck
+
+      - name: Run security matrices
+        env:
+          AUTHRIM_TEST_REPORT: ${{ github.workspace }}/ci-reports/authrim-security-matrices.json
+        run: pnpm run test:security-matrices
+
+      - name: Run Phase 1 scale-out correctness tests
+        env:
+          AUTHRIM_TEST_REPORT: ${{ github.workspace }}/ci-reports/authrim-scale-out-phase1-tests.json
+        run: pnpm run test:scale-out-phase1
+
+      - name: Export compact package coverage summary
+        env:
+          AUTHRIM_COVERAGE_STATS_OUTPUT: ${{ github.workspace }}/ci-reports/authrim-package-coverage.json
         run: node scripts/ci-pr-coverage-comment.mjs
+
+      - name: Upload API coverage and repository suite reports
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: authrim-api-test-evidence
+          path: ci-reports/
+          if-no-files-found: error
+          retention-days: 1
 
   ui-tests:
     name: UI Tests
@@ -166,6 +208,86 @@ jobs:
 
       - name: Run UI tests
         run: pnpm run test:ui
+
+  control-plane-tests:
+    name: Tenant D1 Control Plane Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@eae0cfeb286e66ffb5155f1a79b90583a127a68b # v2
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare repository suite reports
+        run: mkdir -p ci-reports
+
+      - name: Run tenant D1 control-plane tests
+        env:
+          AUTHRIM_TEST_REPORT: ${{ github.workspace }}/ci-reports/authrim-control-plane-tests.json
+        run: pnpm run control-plane:test
+
+      - name: Run Phase 9 local release gate
+        run: pnpm run control-plane:phase9-local-gate
+
+      - name: Upload control-plane repository suite report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: authrim-control-plane-test-evidence
+          path: ci-reports/authrim-control-plane-tests.json
+          if-no-files-found: error
+          retention-days: 1
+
+  coverage-summary:
+    name: Repository Test Suites Summary
+    runs-on: ubuntu-latest
+    needs:
+      - api-tests
+      - control-plane-tests
+      - lint
+      - typecheck
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Download API coverage and repository suite reports
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: authrim-api-test-evidence
+          path: ci-reports
+
+      - name: Download control-plane repository suite report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: authrim-control-plane-test-evidence
+          path: ci-reports
+
+      - name: Comment coverage summary
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTHRIM_INTEGRATION_REPORT: ci-reports/authrim-integration-tests.json
+          AUTHRIM_OAUTH_OIDC_REPORT: ci-reports/authrim-oauth-oidc-regressions.json
+          AUTHRIM_SECURITY_MATRICES_REPORT: ci-reports/authrim-security-matrices.json
+          AUTHRIM_SCALE_OUT_PHASE1_REPORT: ci-reports/authrim-scale-out-phase1-tests.json
+          AUTHRIM_CONTROL_PLANE_REPORT: ci-reports/authrim-control-plane-tests.json
+          AUTHRIM_COVERAGE_STATS_REPORT: ci-reports/authrim-package-coverage.json
+        run: node scripts/ci-pr-coverage-comment.mjs
 
   build:
     name: Build
@@ -233,6 +355,8 @@ jobs:
       - typecheck
       - api-tests
       - ui-tests
+      - control-plane-tests
+      - coverage-summary
       - build
       - format
     if: ${{ always() }}

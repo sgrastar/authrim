@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Async Authorization API
-  version: 0.3.4
+  version: 0.4.0
   summary: Device Authorization and CIBA endpoints.
   description: Initial OpenAPI contract for `@authrim/ar-async`.
 servers:
@@ -19,68 +19,70 @@ paths:
         - Device Authorization
       summary: Start an OAuth Device Authorization Grant.
       requestBody:
-        $ref: "#/components/requestBodies/DeviceAuthorization"
+        $ref: '#/components/requestBodies/DeviceAuthorization'
       responses:
-        "200":
-          $ref: "#/components/responses/DeviceAuthorization"
+        '200':
+          $ref: '#/components/responses/DeviceAuthorization'
   /device:
     get:
       tags:
         - Device Authorization
       summary: Render the device verification page.
       responses:
-        "200":
+        '200':
           description: HTML device verification page.
     post:
       tags:
         - Device Authorization
       summary: Submit a device user code.
       requestBody:
-        $ref: "#/components/requestBodies/FormOrJson"
+        $ref: '#/components/requestBodies/FormOrJson'
       responses:
-        "200":
-          $ref: "#/components/responses/Any"
+        '200':
+          $ref: '#/components/responses/Any'
   /api/devices/verify:
     post:
       tags:
         - Device Authorization
       summary: Verify or approve a device authorization request.
       requestBody:
-        $ref: "#/components/requestBodies/DeviceVerify"
+        $ref: '#/components/requestBodies/DeviceVerify'
       responses:
-        "200":
-          $ref: "#/components/responses/DeviceVerify"
+        '200':
+          $ref: '#/components/responses/DeviceVerify'
   /bc-authorize:
     post:
       tags:
         - CIBA
       summary: Start a CIBA backchannel authentication request.
       requestBody:
-        $ref: "#/components/requestBodies/CibaAuthorization"
+        $ref: '#/components/requestBodies/CibaAuthorization'
       responses:
-        "200":
-          $ref: "#/components/responses/CibaAuthorization"
+        '200':
+          $ref: '#/components/responses/CibaAuthorization'
   /api/ciba/pending:
     get:
       tags:
         - CIBA
       summary: List pending CIBA requests for the current user/session.
       security:
-        - userSessionCookie: []
+        - sessionCookie: []
+        - sessionHeader: []
       responses:
-        "200":
-          $ref: "#/components/responses/CibaPending"
-        "401":
-          $ref: "#/components/responses/CibaAuthenticationRequired"
-        "403":
-          $ref: "#/components/responses/CibaInsufficientPermissions"
+        '200':
+          $ref: '#/components/responses/CibaPending'
+        '401':
+          $ref: '#/components/responses/CibaAuthenticationRequired'
+        '403':
+          $ref: '#/components/responses/CibaInsufficientPermissions'
   /api/ciba/requests/{auth_req_id}:
     get:
       tags:
         - CIBA
       summary: Get a pending CIBA request.
       security:
-        - userSessionCookie: []
+        - sessionCookie: []
+        - sessionHeader: []
       parameters:
         - name: auth_req_id
           in: path
@@ -88,44 +90,102 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          $ref: "#/components/responses/CibaDetails"
-        "401":
-          $ref: "#/components/responses/CibaAuthenticationRequired"
-        "403":
-          $ref: "#/components/responses/CibaInsufficientPermissions"
+        '200':
+          $ref: '#/components/responses/CibaDetails'
+        '401':
+          $ref: '#/components/responses/CibaAuthenticationRequired'
+        '403':
+          $ref: '#/components/responses/CibaInsufficientPermissions'
   /api/ciba/approve:
     post:
       tags:
         - CIBA
       summary: Approve a CIBA request.
+      security:
+        - sessionCookie: []
+        - sessionHeader: []
       requestBody:
-        $ref: "#/components/requestBodies/CibaDecision"
+        $ref: '#/components/requestBodies/CibaDecision'
       responses:
-        "200":
-          $ref: "#/components/responses/CibaDecision"
+        '200':
+          $ref: '#/components/responses/CibaDecision'
+        '401':
+          $ref: '#/components/responses/CibaAuthenticationRequired'
+        '403':
+          $ref: '#/components/responses/CibaInsufficientPermissions'
   /api/ciba/deny:
     post:
       tags:
         - CIBA
       summary: Deny a CIBA request.
       security:
-        - userSessionCookie: []
+        - sessionCookie: []
+        - sessionHeader: []
       requestBody:
-        $ref: "#/components/requestBodies/CibaDecision"
+        $ref: '#/components/requestBodies/CibaDecision'
       responses:
-        "200":
-          $ref: "#/components/responses/CibaDecision"
-        "401":
-          $ref: "#/components/responses/CibaAuthenticationRequired"
-        "403":
-          $ref: "#/components/responses/CibaInsufficientPermissions"
+        '200':
+          $ref: '#/components/responses/CibaDecision'
+        '401':
+          $ref: '#/components/responses/CibaAuthenticationRequired'
+        '403':
+          $ref: '#/components/responses/CibaInsufficientPermissions'
+  /api/ciba/conformance-action:
+    post:
+      tags:
+        - CIBA
+      summary: Execute a short-lived capability-authorized CIBA conformance action.
+      description: Internal automation endpoint available only after an expiring capability is provisioned.
+      parameters:
+        - name: secret
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 32
+        - name: auth_req_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: action
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [allow, deny]
+      responses:
+        '200':
+          description: Action completed.
+        '401':
+          description: Capability is invalid or expired.
+  /api/ciba/test:
+    get:
+      tags:
+        - CIBA
+      summary: Render the built-in CIBA test console.
+      description: >-
+        Available only when test endpoints or built-in conformance forms are explicitly enabled.
+        Returns 404 in normal production mode.
+      responses:
+        '200':
+          description: HTML CIBA test console.
+          content:
+            text/html:
+              schema:
+                type: string
+        '404':
+          description: Test endpoints and built-in conformance forms are disabled.
 components:
   securitySchemes:
-    userSessionCookie:
+    sessionCookie:
       type: apiKey
       in: cookie
       name: authrim_session
+    sessionHeader:
+      type: apiKey
+      in: header
+      name: X-Session-Id
   requestBodies:
     JsonObject:
       required: true
@@ -150,7 +210,7 @@ components:
       content:
         application/x-www-form-urlencoded:
           schema:
-            $ref: "#/components/schemas/DeviceAuthorizationRequest"
+            $ref: '#/components/schemas/DeviceAuthorizationRequest'
           example:
             client_id: client_123
             scope: openid profile email
@@ -159,7 +219,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DeviceVerifyRequest"
+            $ref: '#/components/schemas/DeviceVerifyRequest'
           example:
             user_code: WDJB-MJHT
             approve: true
@@ -168,7 +228,7 @@ components:
       content:
         application/x-www-form-urlencoded:
           schema:
-            $ref: "#/components/schemas/CibaAuthorizationRequest"
+            $ref: '#/components/schemas/CibaAuthorizationRequest'
           example:
             scope: openid profile email
             client_id: client_123
@@ -179,7 +239,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/CibaDecisionRequest"
+            $ref: '#/components/schemas/CibaDecisionRequest'
           example:
             auth_req_id: auth_req_123
             user_id: user_123
@@ -198,7 +258,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DeviceAuthorizationResponse"
+            $ref: '#/components/schemas/DeviceAuthorizationResponse'
           example:
             device_code: GmRhmhcxhwAzkoEqiMEg_DnyEysNkuNhszIySk9eS
             user_code: WDJB-MJHT
@@ -211,7 +271,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DeviceVerifyResponse"
+            $ref: '#/components/schemas/DeviceVerifyResponse'
           example:
             success: true
             message: Device authorized successfully
@@ -220,7 +280,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/CibaAuthorizationResponse"
+            $ref: '#/components/schemas/CibaAuthorizationResponse'
           example:
             auth_req_id: 1c266114-a1be-4252-8ad1-04986c5b9ac1
             expires_in: 300
@@ -230,7 +290,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/CibaPendingResponse"
+            $ref: '#/components/schemas/CibaPendingResponse'
           example:
             requests:
               - auth_req_id: auth_req_123
@@ -239,7 +299,7 @@ components:
                 client_logo_uri: https://example.com/logo.png
                 scope: openid profile email
                 binding_message: Approve sign-in
-                user_code: "123456"
+                user_code: '123456'
                 created_at: 1770000000000
                 expires_at: 1770000300000
                 status: pending
@@ -248,7 +308,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/CibaDetailsResponse"
+            $ref: '#/components/schemas/CibaDetailsResponse'
           example:
             auth_req_id: auth_req_123
             client:
@@ -258,7 +318,7 @@ components:
               is_trusted: false
             scope: openid profile email
             binding_message: Approve sign-in
-            user_code: "123456"
+            user_code: '123456'
             created_at: 1770000000000
             expires_at: 1770000300000
             time_remaining: 240
@@ -268,7 +328,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/CibaDecisionResponse"
+            $ref: '#/components/schemas/CibaDecisionResponse'
           example:
             success: true
             message: Authentication request approved
@@ -277,7 +337,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/CibaErrorResponse"
+            $ref: '#/components/schemas/CibaErrorResponse'
           example:
             error: login_required
             error_description: Authentication is required
@@ -286,7 +346,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/CibaErrorResponse"
+            $ref: '#/components/schemas/CibaErrorResponse'
           example:
             error: access_denied
             error_description: Insufficient permissions
@@ -398,7 +458,7 @@ components:
           example: Approve sign-in to Example App
         user_code:
           type: string
-          example: "123456"
+          example: '123456'
         requested_expiry:
           type: integer
           example: 300
@@ -426,7 +486,7 @@ components:
         requests:
           type: array
           items:
-            $ref: "#/components/schemas/CibaPendingRequest"
+            $ref: '#/components/schemas/CibaPendingRequest'
       required:
         - requests
     CibaPendingRequest:
@@ -444,7 +504,7 @@ components:
         client_logo_uri:
           type:
             - string
-            - "null"
+            - 'null'
           example: https://example.com/logo.png
         scope:
           type: string
@@ -452,13 +512,13 @@ components:
         binding_message:
           type:
             - string
-            - "null"
+            - 'null'
           example: Approve sign-in
         user_code:
           type:
             - string
-            - "null"
-          example: "123456"
+            - 'null'
+          example: '123456'
         created_at:
           type: integer
           example: 1770000000000
@@ -486,7 +546,7 @@ components:
             logo_uri:
               type:
                 - string
-                - "null"
+                - 'null'
               example: https://example.com/logo.png
             is_trusted:
               type: boolean
@@ -497,13 +557,13 @@ components:
         binding_message:
           type:
             - string
-            - "null"
+            - 'null'
           example: Approve sign-in
         user_code:
           type:
             - string
-            - "null"
-          example: "123456"
+            - 'null'
+          example: '123456'
         created_at:
           type: integer
           example: 1770000000000

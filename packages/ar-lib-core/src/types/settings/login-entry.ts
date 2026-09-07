@@ -15,10 +15,7 @@ export interface LoginEntrySettings {
   'login-entry.override_enabled': boolean;
   'login-entry.mode': 'tenant_only' | 'discovery_optional' | 'discovery_required';
   'login-entry.discovery_methods': string;
-  'login-entry.email_resolution_policy':
-    | 'exact_email_then_domain'
-    | 'exact_email_only'
-    | 'disabled';
+  'login-entry.email_resolution_policy': 'exact_email_only' | 'disabled';
   'login-entry.selection_policy':
     | 'auto_if_single'
     | 'always_select'
@@ -63,20 +60,19 @@ export const LOGIN_ENTRY_SETTINGS_META: Record<keyof LoginEntrySettings, Setting
   'login-entry.discovery_methods': {
     key: 'login-entry.discovery_methods',
     type: 'string',
-    default: '["email_domain","tenant_code","tenant_slug","wayf"]',
+    default: '["email_exact","tenant_code","tenant_slug","wayf"]',
     label: 'Discovery Methods',
     description:
-      'JSON array of enabled discovery methods. Example: ["email_domain","tenant_code","tenant_slug","wayf"]',
+      'JSON array of enabled discovery methods. Example: ["email_exact","tenant_code","tenant_slug","wayf"]',
     visibility: 'admin',
   },
   'login-entry.email_resolution_policy': {
     key: 'login-entry.email_resolution_policy',
     type: 'enum',
-    default: 'exact_email_then_domain',
+    default: 'exact_email_only',
     label: 'Email Resolution Policy',
-    description:
-      'Controls whether email discovery uses exact address matching only, exact match with domain fallback, or is disabled.',
-    enum: ['exact_email_then_domain', 'exact_email_only', 'disabled'],
+    description: 'Controls whether OTP-protected exact email discovery is enabled or disabled.',
+    enum: ['exact_email_only', 'disabled'],
     visibility: 'admin',
   },
   'login-entry.selection_policy': {
@@ -211,8 +207,8 @@ export const LOGIN_ENTRY_CATEGORY_META: CategoryMeta = {
 export const LOGIN_ENTRY_DEFAULTS: LoginEntrySettings = {
   'login-entry.override_enabled': false,
   'login-entry.mode': 'discovery_optional',
-  'login-entry.discovery_methods': '["email_domain","tenant_code","tenant_slug","wayf"]',
-  'login-entry.email_resolution_policy': 'exact_email_then_domain',
+  'login-entry.discovery_methods': '["email_exact","tenant_code","tenant_slug","wayf"]',
+  'login-entry.email_resolution_policy': 'exact_email_only',
   'login-entry.selection_policy': 'select_if_multiple',
   'login-entry.allow_manual_tenant_entry': true,
   'login-entry.remember_last_tenant': true,

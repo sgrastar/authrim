@@ -17,7 +17,10 @@ export const WORKER_COMPONENTS = [
   'ar-auth', // Authorization endpoint
   'ar-token', // Token endpoint
   'ar-userinfo', // UserInfo endpoint
+  'ar-control', // Private Cloudflare control plane
+  'ar-plugin-runner', // Private plugin execution plane
   'ar-management', // Management API
+  'ar-agent-access', // Agent/MCP access plane
   'ar-router', // Service Bindings router (must deploy last)
   'ar-async', // Async queue processing
   'ar-policy', // Policy service (ReBAC)
@@ -35,7 +38,10 @@ export const CORE_WORKER_COMPONENTS: WorkerComponent[] = [
   'ar-auth',
   'ar-token',
   'ar-userinfo',
+  'ar-control',
+  'ar-plugin-runner',
   'ar-management',
+  'ar-agent-access',
   'ar-async',
   'ar-policy',
   'ar-saml',
@@ -53,6 +59,7 @@ export const OPTIONAL_WORKER_COMPONENTS: WorkerComponent[] = [];
 
 export const DURABLE_OBJECTS = [
   { name: 'SESSION_STORE', className: 'SessionStore' },
+  { name: 'SESSION_REVOCATION_STORE', className: 'SessionRevocationStore' },
   { name: 'SESSION_CLIENT_STORE', className: 'SessionClientStore' },
   { name: 'KEY_MANAGER', className: 'KeyManager' },
   { name: 'AUTH_CODE_STORE', className: 'AuthorizationCodeStore' },
@@ -69,6 +76,7 @@ export const DURABLE_OBJECTS = [
   { name: 'SAML_AGGREGATE_METADATA_STORE', className: 'SAMLAggregateMetadataStore' },
   { name: 'PERMISSION_CHANGE_HUB', className: 'PermissionChangeHub' },
   { name: 'FLOW_STATE_STORE', className: 'FlowStateStore' },
+  { name: 'DEVICE_SECRET_ROUTE_STORE', className: 'DeviceSecretRouteStore' },
 ] as const;
 
 export type DurableObjectBinding = (typeof DURABLE_OBJECTS)[number];
@@ -96,12 +104,81 @@ export type KVNamespace = (typeof KV_NAMESPACES)[number];
 // =============================================================================
 
 export const D1_DATABASES = [
-  { binding: 'DB', dbType: 'core-db' },
-  { binding: 'DB_PII', dbType: 'pii-db' },
-  { binding: 'DB_ADMIN', dbType: 'admin-db' },
+  { binding: 'DB', dbType: 'core-db', locationProfile: 'core' },
+  { binding: 'DB_PII', dbType: 'pii-db', locationProfile: 'pii' },
+  { binding: 'DB_ADMIN', dbType: 'admin-db', locationProfile: 'pii' },
+  { binding: 'CONTROL_DB', dbType: 'control-db', locationProfile: 'core' },
+  { binding: 'LOOKUP_DB', dbType: 'lookup-db', locationProfile: 'pii' },
+  { binding: 'PLUGIN_RUNNER_DB', dbType: 'plugin-runner-db', locationProfile: 'core' },
 ] as const;
 
 export type D1Database = (typeof D1_DATABASES)[number];
+
+export type WorkerRequiredDataRole =
+  | 'tenant_core/default'
+  | 'tenant_core/users'
+  | 'tenant_pii'
+  | 'lookup'
+  | 'control'
+  | 'plugin_runner';
+
+export const WORKER_REQUIRED_DATA_ROLES: Record<
+  WorkerComponent,
+  readonly WorkerRequiredDataRole[]
+> = {
+  'ar-lib-core': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
+  'ar-discovery': ['tenant_core/default'],
+  'ar-auth': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
+  'ar-token': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
+  'ar-userinfo': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
+  'ar-control': ['control'],
+  'ar-plugin-runner': ['plugin_runner', 'tenant_core/default', 'tenant_core/users'],
+  'ar-management': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
+  'ar-agent-access': ['tenant_core/default', 'tenant_core/users'],
+  'ar-router': [],
+  'ar-async': ['tenant_core/default', 'tenant_core/users', 'tenant_pii'],
+  'ar-policy': ['tenant_core/default', 'tenant_core/users'],
+  'ar-saml': ['tenant_core/default', 'tenant_core/users', 'tenant_pii'],
+  'ar-bridge': ['tenant_core/default', 'tenant_core/users', 'tenant_pii', 'lookup'],
+  'ar-vc': ['tenant_core/default', 'tenant_core/users', 'tenant_pii'],
+};
+
+export function getRequiredDataRolesForComponent(
+  component: WorkerComponent
+): readonly WorkerRequiredDataRole[] {
+  return WORKER_REQUIRED_DATA_ROLES[component];
+}
+
+/**
+ * Return the bootstrap D1 bindings a Worker is allowed to receive.
+ * Control-plane databases are deliberately excluded from the default runtime set.
+ */
+export function getBuiltinD1BindingsForComponent(
+  component: WorkerComponent
+): readonly D1Database['binding'][] {
+  if (component === 'ar-control') return ['CONTROL_DB'];
+  if (component === 'ar-plugin-runner') return ['PLUGIN_RUNNER_DB'];
+  if (component === 'ar-router') return [];
+  // Discovery resolves tenant metadata exclusively from signed Runtime Registry
+  // assignments. Giving it the deployment Core binding would reintroduce an
+  // implicit route around the Control Plane contract.
+  if (component === 'ar-discovery') return [];
+  if (component === 'ar-lib-core') return ['DB', 'DB_PII', 'LOOKUP_DB'];
+  if (component === 'ar-management') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
+  if (component === 'ar-auth') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
+  if (component === 'ar-token') return ['DB_ADMIN', 'LOOKUP_DB'];
+  if (component === 'ar-userinfo') return ['LOOKUP_DB'];
+  if (component === 'ar-bridge') return ['DB', 'DB_PII', 'DB_ADMIN', 'LOOKUP_DB'];
+  if (component === 'ar-agent-access') return ['DB_ADMIN'];
+  // Policy resolves tenant/account adapters from the request-scoped Runtime
+  // Registry context. It must not receive the deployment Core binding as a
+  // fallback route.
+  if (component === 'ar-policy') return [];
+  if (component === 'ar-saml') return ['DB', 'DB_PII', 'DB_ADMIN'];
+  if (component === 'ar-vc') return ['DB_ADMIN'];
+  if (component === 'ar-async') return [];
+  return [];
+}
 
 // =============================================================================
 // Naming Functions
@@ -193,17 +270,30 @@ export function getAutoWorkerUrl(
  */
 export const WORKER_DEPLOYMENT_DEPENDENCIES: Record<WorkerComponent, readonly WorkerComponent[]> = {
   'ar-lib-core': [],
-  'ar-bridge': ['ar-lib-core'],
+  'ar-control': [],
+  'ar-plugin-runner': [],
+  'ar-bridge': ['ar-lib-core', 'ar-plugin-runner'],
   'ar-discovery': ['ar-lib-core'],
   'ar-token': ['ar-lib-core'],
   'ar-userinfo': ['ar-lib-core'],
   'ar-async': ['ar-lib-core'],
-  'ar-policy': ['ar-lib-core'],
-  'ar-saml': ['ar-lib-core'],
+  'ar-policy': ['ar-lib-core', 'ar-plugin-runner'],
+  'ar-saml': ['ar-lib-core', 'ar-plugin-runner'],
   'ar-vc': ['ar-lib-core'],
-  'ar-auth': ['ar-lib-core', 'ar-bridge'],
-  'ar-management': ['ar-lib-core', 'ar-bridge', 'ar-auth'],
-  'ar-router': CORE_WORKER_COMPONENTS.filter((component) => component !== 'ar-router'),
+  'ar-auth': ['ar-lib-core', 'ar-bridge', 'ar-plugin-runner'],
+  'ar-management': [
+    'ar-lib-core',
+    'ar-control',
+    'ar-plugin-runner',
+    'ar-bridge',
+    'ar-auth',
+    'ar-vc',
+  ],
+  'ar-agent-access': ['ar-lib-core', 'ar-token', 'ar-management'],
+  'ar-router': CORE_WORKER_COMPONENTS.filter(
+    (component) =>
+      component !== 'ar-router' && component !== 'ar-control' && component !== 'ar-plugin-runner'
+  ),
 };
 
 /**
@@ -212,7 +302,7 @@ export const WORKER_DEPLOYMENT_DEPENDENCIES: Record<WorkerComponent, readonly Wo
  * start as soon as ar-bridge is ready without waiting for unrelated Workers.
  */
 export const DEPLOYMENT_LEVELS: WorkerComponent[][] = [
-  ['ar-lib-core'],
+  ['ar-lib-core', 'ar-control', 'ar-plugin-runner'],
   [
     'ar-bridge',
     'ar-discovery',
@@ -225,6 +315,7 @@ export const DEPLOYMENT_LEVELS: WorkerComponent[][] = [
   ],
   ['ar-auth'],
   ['ar-management'],
+  ['ar-agent-access'],
   ['ar-router'],
 ];
 

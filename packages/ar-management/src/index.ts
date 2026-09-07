@@ -15,9 +15,11 @@ import {
   pluginContextMiddleware,
   createPluginLoader,
   idempotencyMiddleware,
+  requiredIdempotencyMiddleware,
   ensureDatabaseAdapter,
   type DatabaseAdapter,
   createErrorResponse,
+  createTenantPlacementWriteFenceResponse,
   AR_ERROR_CODES,
   requireSystemAdmin,
   requireAnyRole,
@@ -38,22 +40,51 @@ import {
   csrfProtectionMiddleware,
   getTenantIdFromContext,
   getTenantSettings,
-  resolveAuthCorePersistenceAdapterFromEnv,
+  listEnvironmentTenantDefaultStores,
+  resolveTenantAssignedDatabaseSourcesFromRegistry,
   createCompatibilityErrorResponse,
   ADMIN_PERMISSIONS,
   hasAdminPermission,
   type AdminAuthContext,
-  getDefaultTenantId,
-  readResponseTextWithLimit,
 } from '@authrim/ar-lib-core';
-import { cloudflareEmailPlugin, resendEmailPlugin } from '@authrim/ar-lib-plugin';
-import { resolveBuiltinPluginBootstrapConfig } from '@authrim/ar-lib-plugin/core';
 import { cleanupResolvedAuditPrimaries } from './audit-maintenance';
 import { runObjectArtifactCleanup } from './artifact-cleanup';
-import { processScheduledAdminJobQueues } from './scheduled-admin-jobs';
+import { processLoggingStorageMaintenanceJobs } from './logging-storage-maintenance-jobs';
+import {
+  isInteractiveAdminJobCron,
+  processInteractiveAdminJobQueues,
+  processScheduledAdminJobQueues,
+} from './scheduled-admin-jobs';
+import {
+  isTenantRuntimeRegistryRefreshCron,
+  refreshTenantRuntimeRegistrySnapshots,
+} from './tenant-runtime-registry-snapshot-jobs';
 import { isTenantScopedAdminPath } from './admin-tenant-access';
-
-const VERSION_MANAGER_ERROR_BODY_MAX_BYTES = 64 * 1024;
+import { authenticateAgentDownscopeBearer } from './agent-downscope-auth';
+import {
+  isAgentElevationRecoveryCron,
+  processScheduledAgentElevationRecovery,
+} from './agent-elevation-recovery';
+import { processScheduledAgentTokenRevocations } from './agent-token-revocation';
+import { processScheduledAgentPayloadRetention } from './agent-payload-retention';
+import { processControlPlaneDriftNotifications } from './control-plane-drift-notifications';
+import { isDirectoryScheduledCron, processScheduledDirectoryJobs } from './directory-scheduled';
+import {
+  isLookupScaleOutObservationDue,
+  processNextLookupBucketMigration,
+} from './lookup-bucket-migration-scheduled';
+import { processScheduledIdentifierReplacements } from './identifier-replacement-scheduled';
+import {
+  getR2MaintenanceDashboard,
+  processR2StorageMaintenance,
+  R2_STORAGE_MAINTENANCE_CRON,
+  runTrackedLoggingStorageMaintenance,
+  runTrackedObjectArtifactCleanup,
+} from './r2-storage-maintenance';
+import type { AccountDirectoryRpcProps } from './account-directory-entrypoint';
+import type { ExecutionContext } from '@cloudflare/workers-types';
+import { MANAGEMENT_REQUEST_DIAGNOSTIC_CONTEXT_KEY } from './request-diagnostics';
+import { releaseRolloutMutationFenceMiddleware } from './release-rollout-mutation-fence';
 
 function isLoopbackHost(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
@@ -76,6 +107,164 @@ async function redirectExternalHttpToHttps(c: Context<{ Bindings: Env }>, next: 
 
   requestUrl.protocol = 'https:';
   return c.redirect(requestUrl.toString(), 308);
+}
+
+const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
+const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
+const PHASE0C_MAIL_DIAGNOSTIC_SESSION = /^phase0c-mail-[0-9]{14}-[a-f0-9]{6}$/u;
+const TEST_ENVIRONMENT_NAME = /^test(?:[-_][a-z0-9][a-z0-9_-]*)?$/u;
+const MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS = [
+  '/api/auth/authentication-methods',
+  '/api/admin/test/email-codes',
+] as const;
+
+interface MiddlewareDiagnosticSpan {
+  name: string;
+  durationMs: number;
+}
+
+interface MiddlewareDiagnosticState {
+  sessionId: string;
+  startedAt: number;
+  lastMarkAt: number;
+  spans: MiddlewareDiagnosticSpan[];
+}
+
+function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+}
+
+function diagnosticFlagEnabled(env: Env): boolean {
+  const value = env.AUTHRIM_DIAGNOSTIC_TIMING_ENABLED?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+export function isManagementRequestDiagnosticTimingEnabled(
+  env: Env,
+  sessionId: string | null
+): boolean {
+  if (!sessionId) return false;
+  return (
+    diagnosticFlagEnabled(env) ||
+    (TEST_ENVIRONMENT_NAME.test(env.AUTHRIM_ENVIRONMENT_NAME ?? '') &&
+      PHASE0C_MAIL_DIAGNOSTIC_SESSION.test(sessionId))
+  );
+}
+
+function roundDiagnosticDurationMs(durationMs: number): number {
+  return Math.round(durationMs * 10) / 10;
+}
+
+function getMiddlewareDiagnosticState(
+  c: Context<{ Bindings: Env }>
+): MiddlewareDiagnosticState | null {
+  return (
+    ((c as unknown as { get(key: string): unknown }).get(
+      MANAGEMENT_REQUEST_DIAGNOSTIC_CONTEXT_KEY
+    ) as MiddlewareDiagnosticState | undefined) ?? null
+  );
+}
+
+function setMiddlewareDiagnosticState(
+  c: Context<{ Bindings: Env }>,
+  state: MiddlewareDiagnosticState
+): void {
+  (c as unknown as { set(key: string, value: unknown): void }).set(
+    MANAGEMENT_REQUEST_DIAGNOSTIC_CONTEXT_KEY,
+    state
+  );
+}
+
+function appendMiddlewareDiagnosticServerTiming(
+  c: Context<{ Bindings: Env }>,
+  spans: MiddlewareDiagnosticSpan[]
+): void {
+  if (spans.length === 0) return;
+  const value = spans.map((span) => `${span.name};dur=${span.durationMs.toFixed(1)}`).join(', ');
+  const existing = c.res.headers.get('Server-Timing');
+  c.res.headers.set('Server-Timing', existing ? `${existing}, ${value}` : value);
+}
+
+function recordMiddlewareDiagnosticSpan(c: Context<{ Bindings: Env }>, name: string): void {
+  const state = getMiddlewareDiagnosticState(c);
+  if (!state) return;
+  const now = performance.now();
+  state.spans.push({
+    name,
+    durationMs: roundDiagnosticDurationMs(now - state.lastMarkAt),
+  });
+  state.lastMarkAt = now;
+}
+
+async function timeMiddlewareDiagnosticOperation<T>(
+  c: Context<{ Bindings: Env }>,
+  name: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const state = getMiddlewareDiagnosticState(c);
+  if (!state) {
+    return operation();
+  }
+  const startedAt = performance.now();
+  try {
+    return await operation();
+  } finally {
+    const now = performance.now();
+    state.spans.push({
+      name,
+      durationMs: roundDiagnosticDurationMs(now - startedAt),
+    });
+    state.lastMarkAt = now;
+  }
+}
+
+function managementRequestDiagnosticStartMiddleware() {
+  return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    const sessionId = sanitizeDiagnosticSessionId(c.req.header(DIAGNOSTIC_SESSION_ID_HEADER));
+    if (!sessionId || !isManagementRequestDiagnosticTimingEnabled(c.env, sessionId)) {
+      return next();
+    }
+
+    const startedAt = performance.now();
+    setMiddlewareDiagnosticState(c, {
+      sessionId,
+      startedAt,
+      lastMarkAt: startedAt,
+      spans: [],
+    });
+
+    try {
+      await next();
+    } finally {
+      const state = getMiddlewareDiagnosticState(c);
+      if (!state) return;
+      recordMiddlewareDiagnosticSpan(c, 'mg_handler_downstream');
+      state.spans.push({
+        name: 'mg_total',
+        durationMs: roundDiagnosticDurationMs(performance.now() - state.startedAt),
+      });
+      appendMiddlewareDiagnosticServerTiming(c, state.spans);
+      c.res.headers.set('X-Authrim-Diagnostic-Session-Id', state.sessionId);
+      getLogger(c)
+        .module('MANAGEMENT-REQUEST-TIMING')
+        .info('Management request middleware diagnostics', {
+          diagnosticSessionId: state.sessionId,
+          method: c.req.method,
+          path: c.req.path,
+          status: c.res.status,
+          timingMs: Object.fromEntries(state.spans.map((span) => [span.name, span.durationMs])),
+        });
+    }
+  };
+}
+
+function managementRequestDiagnosticCheckpoint(name: string) {
+  return async (c: Context<{ Bindings: Env }>, next: Next) => {
+    recordMiddlewareDiagnosticSpan(c, name);
+    await next();
+  };
 }
 
 // Import handlers
@@ -131,16 +320,26 @@ import {
 } from './admin-consent-policies';
 import { revokeHandler, batchRevokeHandler } from './revoke';
 import {
+  adminAccountLegalHoldCreateHandler,
+  adminAccountLegalHoldReleaseHandler,
+  adminAccountLegalHoldsListHandler,
+  adminAccountSupportContextGetHandler,
+  adminAccountSupportContextPutHandler,
+} from './admin-account-governance';
+import {
   serveAvatarHandler,
   adminStatsHandler,
   adminUsersListHandler,
   adminUserGetHandler,
   adminUserCreateHandler,
+  adminUserCreationOperationHandler,
   adminUserUpdateHandler,
   adminUserDeleteHandler,
   adminUserTotpResetHandler,
   adminUserRetryPiiHandler,
   adminUserDeletePiiHandler,
+  adminUserIdentifierReplacementsHandler,
+  adminUserIdentifierReplacementResumeHandler,
   adminClientsListHandler,
   adminClientCreateHandler,
   adminClientGetHandler,
@@ -180,12 +379,14 @@ import {
   adminScimTokenCreateHandler,
   adminScimTokenRevokeHandler,
 } from './scim-tokens';
+import { adminScimSettingsGetHandler, adminScimSettingsUpdateHandler } from './scim-settings';
 import { adminIATListHandler, adminIATCreateHandler, adminIATRevokeHandler } from './iat-tokens';
 import {
   adminExternalProvidersListHandler,
   adminExternalProvidersCreateHandler,
   adminExternalProvidersGetHandler,
   adminExternalProvidersUpdateHandler,
+  adminExternalProvidersRegisterHandler,
   adminExternalProvidersDeleteHandler,
   adminExternalProvidersDiscoverOidcHandler,
   adminExternalTokenRefreshConfigGetHandler,
@@ -220,7 +421,11 @@ import {
 } from './admin-rbac';
 import { registerAdminRbacPermissionMiddleware } from './admin-rbac-permissions';
 import { registerAdminResourcePermissionMiddleware } from './admin-resource-permissions';
-import { registerDeclaredAdminRouteAccessMiddleware } from './admin-route-access';
+import {
+  enforceDeclaredAdminRouteAccess,
+  registerDeclaredAdminRouteAccessMiddleware,
+} from './admin-route-access';
+import { requireInternalVersionManagerAuthority } from './internal-version-access';
 import { adminPublicAssetUploadHandler, servePublicAssetHandler } from './admin-public-assets';
 import {
   adminRelationDefinitionsListHandler,
@@ -290,12 +495,32 @@ import {
   adminFlowAssignmentDeleteHandler,
 } from './admin-flows';
 import {
+  adminCredentialProfilesListHandler,
+  adminCredentialProfileCreateHandler,
+  adminCredentialProfileGetHandler,
+  adminCredentialProfileUpdateHandler,
+  adminCredentialProfileVersionCreateHandler,
+  adminCredentialProfilePublishHandler,
+  adminCredentialOfferCreateHandler,
+} from './admin-credential-profiles';
+import {
   adminScreenCreateHandler,
   adminScreenDeleteHandler,
   adminScreenGetHandler,
   adminScreensListHandler,
   adminScreenUpdateHandler,
 } from './admin-screens';
+import {
+  adminLauncherCreateHandler,
+  adminLauncherDeleteHandler,
+  adminLauncherOptionsHandler,
+  adminLauncherOrderHandler,
+  adminLaunchersListHandler,
+  adminLauncherUpdateHandler,
+  getAccountLaunchersHandler,
+  launchAccountLauncherHandler,
+  setAccountLauncherFavoriteHandler,
+} from './launchers';
 import {
   adminOidcScopeCreateHandler,
   adminOidcScopeDeleteHandler,
@@ -310,13 +535,6 @@ import {
 } from './admin-access-trace';
 import { adminAccessControlStatsHandler } from './admin-access-control-stats';
 import {
-  adminAIGrantsListHandler,
-  adminAIGrantGetHandler,
-  adminAIGrantCreateHandler,
-  adminAIGrantUpdateHandler,
-  adminAIGrantRevokeHandler,
-} from './ai-grants';
-import {
   adminJobsListHandler,
   adminJobGetHandler,
   adminJobResultHandler,
@@ -328,8 +546,6 @@ import {
   adminJobsImportUploadHandler,
   adminJobsUsersImportHandler,
   adminJobsUsersBulkUpdateHandler,
-  adminJobsTenantDatabaseProvisionHandler,
-  adminJobsTenantDatabaseActivateBatchHandler,
   adminJobsReportsGenerateHandler,
   adminJobsOrgBulkMembersHandler,
   adminJobTypesHandler,
@@ -361,8 +577,8 @@ import {
   adminSettingsDiffHandler,
   adminSettingsSchemaHandler,
   adminSettingsValidateHandler,
-  adminTenantCloneHandler,
 } from './admin-settings-meta';
+import { adminTenantCloneHandler } from './admin-tenant-clone';
 import { adminTenantInfoHandler } from './admin-info';
 import {
   adminRuntimeProfileDefaultsHandler,
@@ -377,13 +593,31 @@ import {
 import {
   adminTenantsListHandler,
   adminTenantCreateHandler,
+  adminTenantProvisioningStatusHandler,
   adminTenantGetHandler,
   adminTenantUpdateHandler,
   adminTenantDeleteHandler,
   adminTenantSetDefaultHandler,
   adminTenantProvisioningCleanupHandler,
   adminTenantProvisioningRetryHandler,
+  adminTenantSuspendHandler,
+  adminTenantResumeHandler,
+  adminTenantFreezeHandler,
+  adminTenantUnfreezeHandler,
+  adminTenantRestoreValidateHandler,
+  adminTenantLifecycleJobsHandler,
+  adminTenantLifecycleJobRetryHandler,
+  processNextTenantProvisioning,
 } from './admin-tenants';
+import { processNextTenantPlacementMigration } from './tenant-placement-migration-scheduled';
+import { processDynamicPluginResourceFinalizations } from './plugin-resource-finalization';
+import {
+  adminTenantPlacementMigrationApprovePurgeHandler,
+  adminTenantPlacementMigrationCancelHandler,
+  adminTenantPlacementMigrationGetHandler,
+  adminTenantPlacementMigrationLatestHandler,
+  adminTenantPlacementMigrationStartHandler,
+} from './admin-tenant-placement-migrations';
 import {
   listTenantDomainMappingsHandler,
   createTenantDomainMappingHandler,
@@ -424,6 +658,8 @@ import {
   postDiscoveryGrantHandler,
   postDiscoveryGrantVerifyHandler,
   postDiscoveryHandler,
+  postDiscoveryEmailStartHandler,
+  postDiscoveryEmailVerifyHandler,
 } from './discovery';
 import {
   dataExportArtifactChunkHandler,
@@ -651,6 +887,7 @@ import settingsV2 from './routes/settings-v2';
 import policyRouter from './routes/policy';
 import adminManagementRouter from './routes/admin-management';
 import diagnosticLoggingRouter from './routes/diagnostic-logging';
+import diagnosticLogIngestRouter from './routes/diagnostic-logging/ingest';
 import {
   revokeCredentialHandler,
   suspendCredentialHandler,
@@ -664,14 +901,20 @@ import {
   getPluginHandler,
   getPluginConfigHandler,
   updatePluginConfigHandler,
+  resetPluginConfigHandler,
   enablePluginHandler,
   disablePluginHandler,
+  uninstallPluginHandler,
   sendPluginTestEmailHandler,
   getPluginHealthHandler,
   getPluginSchemaHandler,
   ensureBuiltinPluginsRegistered,
   platformPluginScopeMiddleware,
+  getProviderReprojectionStatusHandler,
+  rolloutDynamicPluginBatchHandler,
 } from './routes/settings/plugins';
+import { processProviderReprojectionJobs } from './provider-reprojection-jobs';
+import { processTenantDisasterRecoveryLookupReprojection } from './tenant-disaster-recovery-lookup';
 import {
   getNativeSSOSettingsConfig,
   updateNativeSSOConfig,
@@ -719,6 +962,11 @@ import {
   updateAccountTotpCredentialHandler,
 } from './account-totp';
 import { createAccountReturnHandler, consumeAccountReturnHandler } from './account-return';
+import {
+  completeAccountIdentifierReplacementHandler,
+  getAccountIdentifierReplacementHandler,
+  startAccountIdentifierReplacementHandler,
+} from './account-identifier-replacement';
 import {
   createWebhook,
   listWebhooks,
@@ -848,6 +1096,10 @@ import {
   updateTenantEmailSettingsHandler,
 } from './routes/email-settings';
 import {
+  adminEmailDeliveriesListHandler,
+  adminUserEmailDeliveriesHandler,
+} from './admin-email-deliveries';
+import {
   checkDirectoryConnectorHealthHandler,
   getDirectoryConnectorsHandler,
   issueDirectoryConnectorSecretHandler,
@@ -882,43 +1134,6 @@ import {
   updateDirectoryAuthTenantPolicyHandler,
 } from './routes/directory-auth';
 
-const AI_GRANTS_ADMIN_ROLES = ['system_admin', 'distributor_admin'];
-
-function requireAiGrantAdminAccess(requiredPermission: string) {
-  return async (c: Context<{ Bindings: Env }>, next: Next) => {
-    const authContext = (c as unknown as { get: (key: string) => unknown }).get('adminAuth') as
-      | AdminAuthContext
-      | undefined;
-
-    if (!authContext) {
-      return c.json(
-        {
-          error: 'invalid_token',
-          error_description: 'Authentication required. Please authenticate first.',
-        },
-        401
-      );
-    }
-
-    if (authContext.authMethod === 'machine_access_token') {
-      const permissions = authContext.permissions || [];
-      if (hasAdminPermission(permissions, requiredPermission)) {
-        return next();
-      }
-
-      return c.json(
-        {
-          error: 'insufficient_permissions',
-          error_description: 'You do not have the required permissions for this operation.',
-        },
-        403
-      );
-    }
-
-    return requireAnyRole(AI_GRANTS_ADMIN_ROLES)(c, next);
-  };
-}
-
 function requireClientManagementPermission() {
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const method = c.req.method.toUpperCase();
@@ -937,45 +1152,35 @@ export const app = new Hono<{ Bindings: Env }>();
 
 const loadAuthBootstrapPlugins = createPluginLoader([]);
 
-const loadNotificationPlugins = createPluginLoader([
-  {
-    plugin: cloudflareEmailPlugin,
-    skipIfConfigEmpty: true,
-    envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, cloudflareEmailPlugin.id),
-  },
-  {
-    plugin: resendEmailPlugin,
-    skipIfConfigEmpty: true,
-    skipIfConfig: (config) => typeof config.apiKey !== 'string' || config.apiKey.trim() === '',
-    envConfigResolver: (env) => resolveBuiltinPluginBootstrapConfig(env, resendEmailPlugin.id),
-  },
-]);
-
 const authBootstrapPluginContextMiddleware = pluginContextMiddleware({
   scope: 'auth-bootstrap',
   failurePolicy: 'fail_open',
   loadPlugins: loadAuthBootstrapPlugins,
 });
 
-const notificationPluginContextMiddleware = pluginContextMiddleware({
-  scope: 'notification',
-  failurePolicy: 'fail_open',
-  loadPlugins: loadNotificationPlugins,
-});
-
 // Middleware
+for (const path of MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, managementRequestDiagnosticStartMiddleware());
+}
 app.use('*', redirectExternalHttpToHttps);
+for (const path of MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, managementRequestDiagnosticCheckpoint('mg_redirect_https'));
+}
 app.use('*', logger());
+for (const path of MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, managementRequestDiagnosticCheckpoint('mg_logger'));
+}
 app.use('*', requestContextMiddleware());
+for (const path of MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, managementRequestDiagnosticCheckpoint('mg_request_context'));
+}
 app.use('/api/auth/authentication-methods', authBootstrapPluginContextMiddleware);
+app.use(
+  '/api/auth/authentication-methods',
+  managementRequestDiagnosticCheckpoint('mg_auth_bootstrap_plugin')
+);
 app.use('/api/auth/discovery', authBootstrapPluginContextMiddleware);
 app.use('/api/auth/discovery/*', authBootstrapPluginContextMiddleware);
-app.use('/api/account/reauth/email-code/send', notificationPluginContextMiddleware);
-app.use('/api/admin/tenants/:id/invitations', notificationPluginContextMiddleware);
-app.use('/api/admin/tenants/:id/invitations/*', notificationPluginContextMiddleware);
-app.use('/api/admin/approvals', notificationPluginContextMiddleware);
-app.use('/api/admin/approvals/*', notificationPluginContextMiddleware);
-app.use('/api/approval-artifacts/*', notificationPluginContextMiddleware);
 
 // Enhanced security headers
 app.use(
@@ -998,6 +1203,9 @@ app.use(
     referrerPolicy: 'strict-origin-when-cross-origin',
   })
 );
+for (const path of MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, managementRequestDiagnosticCheckpoint('mg_secure_headers'));
+}
 
 /**
  * CORS configuration with dynamic origin validation
@@ -1074,6 +1282,9 @@ app.use('*', async (c, next) => {
     credentials: allowCredentials,
   })(c, next);
 });
+for (const path of MANAGEMENT_REQUEST_DIAGNOSTIC_PATHS) {
+  app.use(path, managementRequestDiagnosticCheckpoint('mg_cors'));
+}
 
 // Rate limiting for registration endpoint
 // Configurable via KV (rate_limit_{profile}_max_requests, rate_limit_{profile}_window_seconds)
@@ -1088,6 +1299,16 @@ app.use('/register', async (c, next) => {
 // Initial Access Token validation for Dynamic Client Registration (RFC 7591)
 // Can be disabled by setting ENABLE_OPEN_REGISTRATION=true in environment variables
 app.use('/register', initialAccessTokenMiddleware());
+
+// Dedicated restricted public-client registration for interactive Admin Agent connections.
+// It is gated by the tenant Agent Access flag and never accepts an Initial Access Token bypass.
+app.use('/oauth/admin-agent/register', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({
+    ...profile,
+    endpoints: ['/oauth/admin-agent/register'],
+  })(c, next);
+});
 
 // Rate limiting for introspect endpoint
 // Configurable via KV (rate_limit_{profile}_max_requests, rate_limit_{profile}_window_seconds)
@@ -1143,6 +1364,10 @@ app.use('/revoke/batch', async (c, next) => {
 // Health check endpoints - rate limited with lenient profile
 // These are public endpoints that should be protected from abuse
 app.use('/api/admin/*', adminTenantPolicyMiddleware);
+app.use(
+  '/api/admin/test/email-codes',
+  managementRequestDiagnosticCheckpoint('mg_admin_tenant_policy')
+);
 
 app.use('/api/health', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'lenient');
@@ -1181,20 +1406,26 @@ app.get('/health/ready', healthHandlers.readiness);
 // Authentication Methods API - public endpoint for Login UI
 // Returns enabled authentication methods (passkey, emailCode, external providers) and UI config
 app.use('/api/auth/authentication-methods', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'lenient');
+  const profile = await timeMiddlewareDiagnosticOperation(c, 'mg_rate_limit_profile', () =>
+    getRateLimitProfileAsync(c.env, 'publicRead', c.executionCtx)
+  );
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/auth/authentication-methods'],
+    endpointClass: 'publicRead',
     nonBlockingRead: true,
   })(c, next);
 });
+app.use('/api/auth/authentication-methods', managementRequestDiagnosticCheckpoint('mg_rate_limit'));
 app.get('/api/auth/authentication-methods', getAuthenticationMethodsHandler);
 app.get('/api/assets/:tenantId/login-ui/:kind/:filename', servePublicAssetHandler);
+app.get('/api/avatars/:filename', serveAvatarHandler);
 app.use('/api/auth/discovery', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'lenient');
+  const profile = await getRateLimitProfileAsync(c.env, 'publicRead', c.executionCtx);
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/auth/discovery'],
+    endpointClass: 'publicRead',
     nonBlockingRead: true,
   })(c, next);
 });
@@ -1214,11 +1445,14 @@ app.use('/api/auth/discovery/grant/verify', async (c, next) => {
 });
 app.get('/api/auth/discovery', getDiscoveryConfigHandler);
 app.post('/api/auth/discovery', postDiscoveryHandler);
+app.post('/api/auth/discovery/email/start', postDiscoveryEmailStartHandler);
+app.post('/api/auth/discovery/email/verify', postDiscoveryEmailVerifyHandler);
 app.post('/api/auth/discovery/grant', postDiscoveryGrantHandler);
 app.post('/api/auth/discovery/grant/verify', postDiscoveryGrantVerifyHandler);
 
 // Dynamic Client Registration endpoint - RFC 7591
 app.post('/register', registerHandler);
+app.post('/oauth/admin-agent/register', registerHandler);
 
 // Client Configuration Endpoint - RFC 7592
 // Rate limit: moderate (sensitive but not auth-critical)
@@ -1273,12 +1507,21 @@ app.patch('/api/account/profile', updateAccountProfileHandler);
 app.post('/api/account/return', createAccountReturnHandler);
 app.post('/api/account/return/:id/consume', consumeAccountReturnHandler);
 app.get('/api/account/capabilities', getAccountCapabilitiesHandler);
+app.get('/api/account/launchers', getAccountLaunchersHandler);
+app.get('/api/account/launchers/:id/launch', launchAccountLauncherHandler);
+app.put('/api/account/launchers/:id/favorite', setAccountLauncherFavoriteHandler);
 app.get('/api/account/reauth/status', getAccountReauthStatusHandler);
 app.post('/api/account/reauth/passkey/options', createAccountPasskeyReauthOptionsHandler);
 app.post('/api/account/reauth/passkey/complete', completeAccountPasskeyReauthHandler);
 app.post('/api/account/reauth/email-code/send', sendAccountEmailCodeReauthHandler);
 app.post('/api/account/reauth/email-code/complete', completeAccountEmailCodeReauthHandler);
 app.post('/api/account/reauth/totp/complete', completeAccountTotpReauthHandler);
+app.post('/api/account/identifier-replacements/start', startAccountIdentifierReplacementHandler);
+app.post(
+  '/api/account/identifier-replacements/complete',
+  completeAccountIdentifierReplacementHandler
+);
+app.get('/api/account/identifier-replacements/:id', getAccountIdentifierReplacementHandler);
 app.get('/api/account/consents', listAccountConsentsHandler);
 app.get('/api/account/operations', listAccountOperationsHandler);
 app.get('/api/account/sessions', listAccountSessionsHandler);
@@ -1307,11 +1550,17 @@ app.get('/api/admin/sessions/me', () =>
 // Applied before auth to reject CSRF attempts early (defense-in-depth with SameSite cookies + CORS)
 // Skips Bearer token requests (server-to-server API calls are not vulnerable to CSRF)
 app.use('/api/admin/*', csrfProtectionMiddleware());
+app.use('/api/admin/test/email-codes', managementRequestDiagnosticCheckpoint('mg_admin_csrf'));
 
 // Admin authentication middleware - applies to ALL /api/admin/* routes
 // Supports both Bearer token (for headless/API usage) and session-based auth (for UI)
 // Note: /api/admin/auth/* routes are handled by ar-auth via ar-router
-app.use('/api/admin/*', adminAuthMiddleware({ plane: 'tenant' }));
+app.use(
+  '/api/admin/*',
+  adminAuthMiddleware({ plane: 'tenant', authenticateBearer: authenticateAgentDownscopeBearer })
+);
+app.use('/api/admin/test/email-codes', managementRequestDiagnosticCheckpoint('mg_admin_auth'));
+app.use('/api/admin/*', releaseRolloutMutationFenceMiddleware());
 
 // Body size limit for Admin API - prevents DoS attacks via large payloads
 // 100KB is sufficient for policy/settings updates while blocking malicious large payloads
@@ -1338,6 +1587,10 @@ app.use('/api/admin/*', async (c, next) => {
     },
   })(c, next);
 });
+app.use(
+  '/api/admin/test/email-codes',
+  managementRequestDiagnosticCheckpoint('mg_admin_body_limit')
+);
 
 // Admin API endpoints
 registerDeclaredAdminRouteAccessMiddleware(app);
@@ -1346,20 +1599,40 @@ registerAdminResourcePermissionMiddleware(app);
 app.get('/api/admin/stats', adminStatsHandler);
 app.post('/api/admin/assets/login-ui', adminPublicAssetUploadHandler);
 app.get('/api/admin/users', adminUsersListHandler);
+app.get('/api/admin/users/operations/:operationId', adminUserCreationOperationHandler);
 app.get('/api/admin/users/:id', adminUserGetHandler);
+app.get('/api/admin/users/:id/support-context', adminAccountSupportContextGetHandler);
+app.put('/api/admin/users/:id/support-context', adminAccountSupportContextPutHandler);
+app.get('/api/admin/users/:id/legal-holds', adminAccountLegalHoldsListHandler);
+app.post('/api/admin/users/:id/legal-holds', adminAccountLegalHoldCreateHandler);
+app.post('/api/admin/users/:id/legal-holds/:holdId/release', adminAccountLegalHoldReleaseHandler);
+app.get('/api/admin/users/:id/email-deliveries', adminUserEmailDeliveriesHandler);
+app.get('/api/admin/users/:id/identifier-replacements', adminUserIdentifierReplacementsHandler);
+app.post(
+  '/api/admin/users/:id/identifier-replacements/:operationId/resume',
+  adminUserIdentifierReplacementResumeHandler
+);
 app.post('/api/admin/users', adminUserCreateHandler);
 app.put('/api/admin/users/:id', adminUserUpdateHandler);
 app.delete('/api/admin/users/:id', adminUserDeleteHandler);
 app.post('/api/admin/users/:id/totp/reset', adminUserTotpResetHandler);
 app.post('/api/admin/users/:id/avatar', adminUserAvatarUploadHandler);
 app.delete('/api/admin/users/:id/avatar', adminUserAvatarDeleteHandler);
-app.get('/api/admin/avatars/:filename', serveAvatarHandler); // Avatar serving (protected by adminAuthMiddleware)
 app.post('/api/admin/users/:id/retry-pii', adminUserRetryPiiHandler);
 app.delete('/api/admin/users/:id/pii', adminUserDeletePiiHandler);
 app.use('/api/admin/clients', requireClientManagementPermission());
 app.use('/api/admin/clients/*', requireClientManagementPermission());
 app.get('/api/admin/clients', adminClientsListHandler);
-app.post('/api/admin/clients', adminClientCreateHandler);
+app.post(
+  '/api/admin/clients',
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: ['client_secret'],
+  }),
+  adminClientCreateHandler
+);
 app.delete('/api/admin/clients/bulk', adminClientsBulkDeleteHandler); // Must be before :id route
 
 // Rate limiting for sensitive client operations (strict profile)
@@ -1446,6 +1719,7 @@ app.post('/api/admin/users/:id/send-email', adminUserSendEmailHandler);
 // Admin Audit Log endpoints
 app.get('/api/admin/audit-logs', adminAuditLogListHandler);
 app.get('/api/admin/audit-logs/:id', adminAuditLogGetHandler);
+app.get('/api/admin/email-deliveries', adminEmailDeliveriesListHandler);
 
 // Admin Settings endpoints (legacy - will be deprecated)
 app.get('/api/admin/settings', adminSettingsGetHandler);
@@ -1518,10 +1792,101 @@ app.use('/api/admin/tenants/:tenantId', requireSupportedTenantParam('tenantId'))
 app.use('/api/admin/tenants/:tenantId/*', requireSupportedTenantParam('tenantId'));
 app.get('/api/admin/tenants', adminTenantsListHandler);
 app.post('/api/admin/tenants', adminTenantCreateHandler);
+app.get('/api/admin/tenants/:id/provisioning', adminTenantProvisioningStatusHandler);
+app.get(
+  '/api/admin/tenants/:id/placement-migrations/latest',
+  adminTenantPlacementMigrationLatestHandler
+);
+app.post(
+  '/api/admin/tenants/:id/placement-migrations',
+  async (c, next) => {
+    const profile = await getRateLimitProfileAsync(c.env, 'strict');
+    return rateLimitMiddleware(profile)(c, next);
+  },
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: [],
+  }),
+  adminTenantPlacementMigrationStartHandler
+);
+app.get(
+  '/api/admin/tenants/:id/placement-migrations/:operationId',
+  adminTenantPlacementMigrationGetHandler
+);
+app.post(
+  '/api/admin/tenants/:id/placement-migrations/:operationId/cancel',
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: [],
+  }),
+  adminTenantPlacementMigrationCancelHandler
+);
+app.post(
+  '/api/admin/tenants/:id/placement-migrations/:operationId/approve-purge',
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: [],
+  }),
+  adminTenantPlacementMigrationApprovePurgeHandler
+);
 app.post('/api/admin/tenants/:id/set-default', adminTenantSetDefaultHandler);
-app.post('/api/admin/tenants/:id/clone', adminTenantCloneHandler);
+app.post(
+  '/api/admin/tenants/:id/clone',
+  async (c, next) => {
+    const profile = await getRateLimitProfileAsync(c.env, 'strict');
+    return rateLimitMiddleware(profile)(c, next);
+  },
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: [],
+  }),
+  adminTenantCloneHandler
+);
 app.post('/api/admin/tenants/:id/provisioning/retry', adminTenantProvisioningRetryHandler);
 app.post('/api/admin/tenants/:id/provisioning/cleanup', adminTenantProvisioningCleanupHandler);
+app.post(
+  '/api/admin/tenants/:id/lifecycle/suspend',
+  requireAdminPermissions([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD]),
+  adminTenantSuspendHandler
+);
+app.post(
+  '/api/admin/tenants/:id/lifecycle/resume',
+  requireAdminPermissions([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD]),
+  adminTenantResumeHandler
+);
+app.post(
+  '/api/admin/tenants/:id/lifecycle/freeze',
+  requireAdminPermissions([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD]),
+  adminTenantFreezeHandler
+);
+app.post(
+  '/api/admin/tenants/:id/lifecycle/unfreeze',
+  requireAdminPermissions([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_RECOVERY]),
+  adminTenantUnfreezeHandler
+);
+app.post(
+  '/api/admin/tenants/:id/lifecycle/restore-validate',
+  requireAdminPermissions([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_RECOVERY]),
+  adminTenantRestoreValidateHandler
+);
+app.get(
+  '/api/admin/tenants/:id/lifecycle/jobs',
+  requireAdminPermissions([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_RECOVERY]),
+  adminTenantLifecycleJobsHandler
+);
+app.post(
+  '/api/admin/tenants/:id/lifecycle/jobs/:jobId/retry',
+  requireAdminPermissions([ADMIN_PERMISSIONS.TENANT_LIFECYCLE_RECOVERY]),
+  adminTenantLifecycleJobRetryHandler
+);
 app.get('/api/admin/tenants/:id/info', adminTenantInfoHandler);
 app.get('/api/admin/tenants/:id/runtime-profiles', adminTenantRuntimeProfilesHandler);
 app.post(
@@ -1537,7 +1902,16 @@ app.delete('/api/admin/tenants/:id', adminTenantDeleteHandler);
 // - POST   /api/admin/tenants/:id/invitations          - Create invitation
 // - GET    /api/admin/tenants/:id/invitations          - List invitations
 // - DELETE /api/admin/tenants/:id/invitations/:inv_id  - Cancel invitation
-app.post('/api/admin/tenants/:id/invitations', createTenantInvitationHandler);
+app.post(
+  '/api/admin/tenants/:id/invitations',
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: ['token'],
+  }),
+  createTenantInvitationHandler
+);
 app.get('/api/admin/tenants/:id/invitations', listTenantInvitationsHandler);
 app.delete('/api/admin/tenants/:id/invitations/:inv_id', cancelTenantInvitationHandler);
 app.get('/api/admin/tenants/:tenantId/email-settings', getTenantEmailSettingsHandler);
@@ -1700,16 +2074,43 @@ app.delete(
 // Tenant-scoped endpoints require admin:tenant_domains:* permission. Platform endpoints are
 // system-admin only and operate across tenants.
 app.get('/api/admin/tenant-vanity-domains', listTenantVanityDomainsHandler);
-app.post('/api/admin/tenant-vanity-domains', createTenantVanityDomainHandler);
+app.post(
+  '/api/admin/tenant-vanity-domains',
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: [],
+  }),
+  createTenantVanityDomainHandler
+);
 app.get('/api/admin/tenant-vanity-domains/:id', getTenantVanityDomainHandler);
-app.patch('/api/admin/tenant-vanity-domains/:id', updateTenantVanityDomainHandler);
+app.patch(
+  '/api/admin/tenant-vanity-domains/:id',
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: [],
+  }),
+  updateTenantVanityDomainHandler
+);
 app.post('/api/admin/tenant-vanity-domains/:id/primary', setPrimaryTenantVanityDomainHandler);
 app.post('/api/admin/tenant-vanity-domains/:id/sync', syncTenantVanityDomainHandler);
 app.post('/api/admin/tenant-vanity-domains/:id/verify', verifyTenantVanityDomainHandler);
 app.delete('/api/admin/tenant-vanity-domains/:id', deleteTenantVanityDomainHandler);
 
 app.get('/api/admin/platform/tenant-vanity-domains', listPlatformTenantVanityDomainsHandler);
-app.post('/api/admin/platform/tenant-vanity-domains', createPlatformTenantVanityDomainHandler);
+app.post(
+  '/api/admin/platform/tenant-vanity-domains',
+  requiredIdempotencyMiddleware({
+    ttlSeconds: 900,
+    failClosedOnStorageError: true,
+    reserveBeforeExecution: true,
+    redactFields: [],
+  }),
+  createPlatformTenantVanityDomainHandler
+);
 app.get('/api/admin/platform/tenant-vanity-domains/:id', getPlatformTenantVanityDomainHandler);
 app.post(
   '/api/admin/platform/tenant-vanity-domains/:id/primary',
@@ -1768,7 +2169,7 @@ app.route('/api/admin', policyRouter);
 // Admin Management API (Admin/EndUser Separation - DB_ADMIN)
 // =============================================================================
 // Routes:
-// - GET/POST /api/admin/admins - Admin user list/create
+// - GET /api/admin/admins - Admin user list (POST requires the invitation API)
 // - GET/PATCH/DELETE /api/admin/admins/:id - Admin user CRUD
 // - POST /api/admin/admins/:id/suspend|activate|unlock
 // - POST/DELETE /api/admin/admins/:id/roles - Role assignment
@@ -1792,7 +2193,7 @@ app.route('/api/admin/diagnostic-logging', diagnosticLoggingRouter);
 
 // Public API routes:
 // - POST /api/v1/diagnostic-logs/ingest - Ingest logs from SDK (public API with client auth)
-app.route('/api/v1/diagnostic-logs', diagnosticLoggingRouter);
+app.route('/api/v1/diagnostic-logs/ingest', diagnosticLogIngestRouter);
 
 // Admin Certification Profile endpoints (OpenID Certification)
 // NOTE: Profiles apply predefined settings - kept for certification testing
@@ -2031,6 +2432,8 @@ app.post('/api/admin/signing-keys/emergency-rotate', adminSigningKeysEmergencyRo
 app.get('/api/admin/scim-tokens', adminScimTokensListHandler);
 app.post('/api/admin/scim-tokens', adminScimTokenCreateHandler);
 app.delete('/api/admin/scim-tokens/:tokenHash', adminScimTokenRevokeHandler);
+app.get('/api/admin/scim-settings', adminScimSettingsGetHandler);
+app.put('/api/admin/scim-settings', adminScimSettingsUpdateHandler);
 
 // Admin Initial Access Token (IAT) Management endpoints
 // RFC 7591 Dynamic Client Registration requires Initial Access Token
@@ -2056,6 +2459,7 @@ app.use('/api/admin/external-providers/discover-oidc', async (c, next) => {
 
 // OIDC Discovery proxy (must be before :id route to avoid conflict)
 app.post('/api/admin/external-providers/discover-oidc', adminExternalProvidersDiscoverOidcHandler);
+app.post('/api/admin/external-providers/:id/register', adminExternalProvidersRegisterHandler);
 app.get('/api/admin/external-providers/:id', adminExternalProvidersGetHandler);
 app.put('/api/admin/external-providers/:id', adminExternalProvidersUpdateHandler);
 app.delete('/api/admin/external-providers/:id', adminExternalProvidersDeleteHandler);
@@ -2250,7 +2654,55 @@ app.get('/api/admin/flow-assignments', adminFlowAssignmentsListHandler);
 app.put('/api/admin/flow-assignments', adminFlowAssignmentUpsertHandler);
 app.delete('/api/admin/flow-assignments', adminFlowAssignmentDeleteHandler);
 
-// Screen profiles used by Flow form nodes.
+// Credential Profile control plane. Offer creation is idempotent because it
+// materializes a one-time bearer capability and must not be duplicated on retry.
+app.get('/api/admin/credential-profiles', adminCredentialProfilesListHandler);
+app.post('/api/admin/credential-profiles', adminCredentialProfileCreateHandler);
+app.get('/api/admin/credential-profiles/:id', adminCredentialProfileGetHandler);
+app.patch('/api/admin/credential-profiles/:id', adminCredentialProfileUpdateHandler);
+app.post('/api/admin/credential-profiles/:id/versions', adminCredentialProfileVersionCreateHandler);
+app.post(
+  '/api/admin/credential-profiles/:id/versions/:versionId/publish',
+  adminCredentialProfilePublishHandler
+);
+app.post(
+  '/api/admin/credential-profiles/:id/offers',
+  requiredIdempotencyMiddleware({ ttlSeconds: 900 }),
+  adminCredentialOfferCreateHandler
+);
+
+// Application launcher management.
+app.get(
+  '/api/admin/launchers/options',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminLauncherOptionsHandler
+);
+app.get(
+  '/api/admin/launchers',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
+  adminLaunchersListHandler
+);
+app.post(
+  '/api/admin/launchers',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminLauncherCreateHandler
+);
+app.put(
+  '/api/admin/launchers/order',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminLauncherOrderHandler
+);
+app.put(
+  '/api/admin/launchers/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminLauncherUpdateHandler
+);
+app.delete(
+  '/api/admin/launchers/:id',
+  requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_WRITE]),
+  adminLauncherDeleteHandler
+);
+
 app.get(
   '/api/admin/screens',
   requireAdminPermissions([ADMIN_PERMISSIONS.SETTINGS_READ]),
@@ -2322,50 +2774,6 @@ app.use(
 
 // Access Control Hub endpoints
 app.get('/api/admin/access-control/stats', adminAccessControlStatsHandler);
-
-// =============================================================================
-// AI Grants (Human Auth / AI Ephemeral Auth Two-Layer Model)
-// =============================================================================
-// Manages grants that authorize AI principals (agents, tools, services) to act
-// on behalf of users or systems. Used for MCP integration and AI-to-AI delegation.
-// Rate limited with RateLimitProfiles.moderate.
-// AuthZ: Human admins require system_admin/distributor_admin; machine callers
-// require scoped Admin Machine Access permissions such as admin:ai_grants:*.
-
-// Rate limiting for AI Grants endpoints
-app.use('/api/admin/ai-grants', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
-  return rateLimitMiddleware({
-    ...profile,
-    endpoints: ['/api/admin/ai-grants'],
-  })(c, next);
-});
-
-app.get(
-  '/api/admin/ai-grants',
-  requireAiGrantAdminAccess(ADMIN_PERMISSIONS.AI_GRANTS_READ),
-  adminAIGrantsListHandler
-);
-app.get(
-  '/api/admin/ai-grants/:id',
-  requireAiGrantAdminAccess(ADMIN_PERMISSIONS.AI_GRANTS_READ),
-  adminAIGrantGetHandler
-);
-app.post(
-  '/api/admin/ai-grants',
-  requireAiGrantAdminAccess(ADMIN_PERMISSIONS.AI_GRANTS_CREATE),
-  adminAIGrantCreateHandler
-);
-app.put(
-  '/api/admin/ai-grants/:id',
-  requireAiGrantAdminAccess(ADMIN_PERMISSIONS.AI_GRANTS_UPDATE),
-  adminAIGrantUpdateHandler
-);
-app.delete(
-  '/api/admin/ai-grants/:id',
-  requireAiGrantAdminAccess(ADMIN_PERMISSIONS.AI_GRANTS_REVOKE),
-  adminAIGrantRevokeHandler
-);
 
 // =============================================================================
 // Policy ↔ Identity Integration (Phase 8.1)
@@ -2487,10 +2895,15 @@ app.get('/api/admin/vc/status-lists/:id', getStatusListHandler);
 app.use('/api/admin/platform/plugins/*', requireSystemAdmin(), platformPluginScopeMiddleware);
 app.use('/api/admin/platform/plugins', requireSystemAdmin(), platformPluginScopeMiddleware);
 app.get('/api/admin/platform/plugins', listPluginsHandler);
+app.get(
+  '/api/admin/platform/plugins/provider-projection/status',
+  getProviderReprojectionStatusHandler
+);
 app.get('/api/admin/platform/plugins/:id', getPluginHandler);
 app.get('/api/admin/platform/plugins/:id/config', getPluginConfigHandler);
 app.put('/api/admin/platform/plugins/:id/config', updatePluginConfigHandler);
 app.post('/api/admin/platform/plugins/:id/test-email', sendPluginTestEmailHandler);
+app.post('/api/admin/platform/plugins/:id/rollout', rolloutDynamicPluginBatchHandler);
 app.put('/api/admin/platform/plugins/:id/enable', enablePluginHandler);
 app.put('/api/admin/platform/plugins/:id/disable', disablePluginHandler);
 app.get('/api/admin/platform/plugins/:id/health', getPluginHealthHandler);
@@ -2503,11 +2916,13 @@ app.get('/api/admin/plugins/:id', getPluginHandler);
 // Plugin configuration
 app.get('/api/admin/plugins/:id/config', getPluginConfigHandler);
 app.put('/api/admin/plugins/:id/config', updatePluginConfigHandler);
+app.delete('/api/admin/plugins/:id/config', resetPluginConfigHandler);
 app.post('/api/admin/plugins/:id/test-email', sendPluginTestEmailHandler);
 
 // Plugin enable/disable
 app.put('/api/admin/plugins/:id/enable', enablePluginHandler);
 app.put('/api/admin/plugins/:id/disable', disablePluginHandler);
+app.post('/api/admin/plugins/:id/uninstall', uninstallPluginHandler);
 
 // Plugin health and schema
 app.get('/api/admin/plugins/:id/health', getPluginHealthHandler);
@@ -3155,15 +3570,11 @@ app.post('/api/admin/jobs/users/import/upload-url', adminJobsImportUploadUrlHand
 app.put('/api/admin/jobs/users/import/upload/:upload_id', adminJobsImportUploadHandler);
 app.post('/api/admin/jobs/users/import', adminJobsUsersImportHandler);
 app.post('/api/admin/jobs/users/bulk-update', adminJobsUsersBulkUpdateHandler);
-app.post('/api/admin/jobs/tenant-databases/provision', adminJobsTenantDatabaseProvisionHandler);
-app.post(
-  '/api/admin/jobs/tenant-databases/activate-batch',
-  adminJobsTenantDatabaseActivateBatchHandler
-);
 app.post('/api/admin/jobs/reports/generate', adminJobsReportsGenerateHandler);
 app.post('/api/admin/jobs/organizations/:id/bulk-members', adminJobsOrgBulkMembersHandler);
 // Job status endpoints
 app.get('/api/admin/jobs/types', adminJobTypesHandler);
+app.get('/api/admin/jobs/schedules', async (c) => c.json(await getR2MaintenanceDashboard(c.env)));
 app.get('/api/admin/jobs/artifacts/:artifactId', adminJobResultArtifactManifestHandler);
 app.get('/api/admin/jobs/artifacts/:artifactId/download', adminJobResultArtifactDownloadHandler);
 app.get('/api/admin/jobs/artifacts/:artifactId/chunks/:index', adminJobResultArtifactChunkHandler);
@@ -3492,6 +3903,7 @@ app.use('/api/admin/test/*', async (c, next) => {
   }
   return next();
 });
+app.use('/api/admin/test/email-codes', managementRequestDiagnosticCheckpoint('mg_test_guard'));
 
 // Test endpoints (all protected by adminAuthMiddleware from /api/admin/* and test guard above)
 app.post('/api/admin/test/sessions', adminTestSessionCreateHandler); // Create session without login
@@ -3514,11 +3926,17 @@ app.post('/api/admin/test/tokens', adminTokenRegisterHandler); // Register pre-g
  *   "deployTime": "2025-11-28T03:20:15Z"
  * }
  *
- * Requires: Admin authentication plus internal VersionManager DO secret.
+ * Requires: Global platform Admin or the Authrim setup machine with control-plane provision access.
  */
 app.post(
   '/api/internal/versions/:workerName',
-  adminAuthMiddleware({ plane: 'platform' }),
+  csrfProtectionMiddleware(),
+  adminAuthMiddleware({
+    plane: 'platform',
+    requireRoles: ['super_admin', 'system_admin'],
+  }),
+  requireInternalVersionManagerAuthority(ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION),
+  enforceDeclaredAdminRouteAccess(),
   async (c) => {
     const workerName = c.req.param('workerName')!;
 
@@ -3556,35 +3974,7 @@ app.post(
     try {
       const vmId = c.env.VERSION_MANAGER.idFromName('global');
       const vm = c.env.VERSION_MANAGER.get(vmId);
-      if (!c.env.VERSION_MANAGER_SECRET) {
-        const log = getLogger(c).module('VERSION-API');
-        log.error('VERSION_MANAGER_SECRET not configured');
-        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-      }
-
-      const response = await vm.fetch(
-        new Request(`https://do/version/${workerName}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${c.env.VERSION_MANAGER_SECRET}`,
-          },
-          body: JSON.stringify({
-            uuid: body.uuid,
-            deployTime: body.deployTime,
-          }),
-        })
-      );
-
-      if (!response.ok) {
-        const error = await readResponseTextWithLimit(
-          response,
-          VERSION_MANAGER_ERROR_BODY_MAX_BYTES
-        );
-        const log = getLogger(c).module('VERSION-API');
-        log.error('Failed to register version', { workerName, error });
-        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-      }
+      await vm.registerVersionRpc(workerName, body.uuid, body.deployTime);
 
       const log = getLogger(c).module('VERSION-API');
       log.info('Registered version', {
@@ -3606,42 +3996,26 @@ app.post(
  * GET /api/internal/version-manager/status
  * Get all registered versions
  *
- * Requires: Admin authentication plus internal VersionManager DO secret.
+ * Requires: Global platform Admin or the Authrim setup machine with control-plane read access.
  */
 app.get(
   '/api/internal/version-manager/status',
-  adminAuthMiddleware({ plane: 'platform' }),
+  adminAuthMiddleware({
+    plane: 'platform',
+    requireRoles: ['super_admin', 'system_admin'],
+  }),
+  requireInternalVersionManagerAuthority(ADMIN_PERMISSIONS.CONTROL_PLANE_READ),
+  enforceDeclaredAdminRouteAccess(),
   async (c) => {
     try {
       const vmId = c.env.VERSION_MANAGER.idFromName('global');
       const vm = c.env.VERSION_MANAGER.get(vmId);
-      if (!c.env.VERSION_MANAGER_SECRET) {
-        const log = getLogger(c).module('VERSION-API');
-        log.error('VERSION_MANAGER_SECRET not configured');
-        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-      }
-
-      const response = await vm.fetch(
-        new Request('https://do/version-manager/status', {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${c.env.VERSION_MANAGER_SECRET}`,
-          },
-        })
-      );
-
-      if (!response.ok) {
-        const error = await readResponseTextWithLimit(
-          response,
-          VERSION_MANAGER_ERROR_BODY_MAX_BYTES
-        );
-        const log = getLogger(c).module('VERSION-API');
-        log.error('Failed to get version status', { error });
-        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-      }
-
-      const data = await response.json();
-      return c.json(data);
+      const versions = await vm.getAllVersionsRpc();
+      return c.json({
+        versions,
+        workerCount: Object.keys(versions).length,
+        timestamp: new Date().toISOString(),
+      });
     } catch (error) {
       const log = getLogger(c).module('VERSION-API');
       log.error('Version status error', {}, error as Error);
@@ -3657,58 +4031,192 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
+  const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, err);
+  if (writeFenceResponse) return writeFenceResponse;
   const log = getLogger(c).module('MANAGEMENT');
   log.error('Unhandled error', {}, err);
   return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
 });
 
 async function listMaintenanceTenantIds(
-  adapter: DatabaseAdapter,
   env: Env,
   log: ReturnType<typeof createLogger>
-): Promise<string[]> {
-  try {
-    const rows = await adapter.query<{ id: string }>(
-      "SELECT id FROM tenants WHERE lifecycle_state = 'active' ORDER BY id"
-    );
-    const tenantIds = rows.map((row) => row.id).filter((id) => id.length > 0);
-    if (tenantIds.length > 0) {
-      return tenantIds;
-    }
-  } catch (error) {
-    log.warn('Failed to list active tenants for scheduled cleanup', {
-      error: (error as Error).message,
+): Promise<{
+  targets: Array<{
+    tenantId: string;
+    adapters: Array<{ adapter: DatabaseAdapter; bindingRef: string }>;
+  }>;
+  cursorKey: string;
+  nextCursor: string;
+}> {
+  if (!env.AUTHRIM_CONFIG) throw new Error('maintenance_tenant_directory_unavailable');
+  const cursorKey = 'jobs:scheduled-maintenance:tenant-cursor';
+  const afterTenantId = (await env.AUTHRIM_CONFIG.get(cursorKey))?.trim() || undefined;
+  const tenants = await listEnvironmentTenantDefaultStores(env, {
+    limit: 8,
+    afterTenantId,
+    concurrency: 4,
+  });
+  const targets = [];
+  for (const tenant of tenants) {
+    const stores = await resolveTenantAssignedDatabaseSourcesFromRegistry(env, {
+      tenantId: tenant.tenantId,
+      role: 'tenant_core',
+      maxStores: 32,
+      concurrency: 4,
+    });
+    targets.push({
+      tenantId: tenant.tenantId,
+      adapters: stores.map((store) => ({
+        adapter: ensureDatabaseAdapter(store.source, `maintenance:${store.bindingRef}`),
+        bindingRef: store.bindingRef,
+      })),
     });
   }
-
-  return [getDefaultTenantId(env)];
+  const nextCursor = tenants.length === 8 ? (tenants[tenants.length - 1]?.tenantId ?? '') : '';
+  log.debug('Resolved scheduled maintenance tenant routes', {
+    tenantCount: targets.length,
+    shardRouteCount: targets.reduce((count, target) => count + target.adapters.length, 0),
+  });
+  return { targets, cursorKey, nextCursor };
 }
 
 async function deleteExpiredTenantRows(
-  adapter: DatabaseAdapter,
-  tenantIds: string[],
+  targets: Array<{
+    tenantId: string;
+    adapters: Array<{ adapter: DatabaseAdapter; bindingRef: string }>;
+  }>,
   sql: string,
   getParams: (tenantId: string) => unknown[]
 ): Promise<number> {
   let deleted = 0;
-  for (const tenantId of tenantIds) {
-    const result = await adapter.execute(sql, getParams(tenantId));
-    deleted += result.rowsAffected || 0;
+  for (const target of targets) {
+    for (const { adapter } of target.adapters) {
+      const result = await adapter.execute(sql, getParams(target.tenantId));
+      deleted += result.rowsAffected || 0;
+    }
   }
   return deleted;
 }
 
 /**
  * Scheduled handler for D1 database cleanup and async job processing.
- * Runs hourly to clean up expired data and process pending jobs.
+ * Provider reprojection runs on every configured schedule; each job is bounded and lease-fenced.
+ * The remaining maintenance work runs on the schedule selected below.
  *
  * Cron configuration in wrangler.toml:
  * [triggers]
  * crons = ["0 * * * *"]  # Hourly
  */
 async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
-  const now = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
   const log = createLogger().module('SCHEDULED');
+  try {
+    const finalized = await processDynamicPluginResourceFinalizations(env);
+    if (finalized.inspected > 0) {
+      log.info('Dynamic plugin resource finalization scheduler completed', finalized);
+    }
+  } catch (error) {
+    log.warn('Dynamic plugin resource finalization scheduler failed', {
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+  }
+  {
+    try {
+      const recovery = await processTenantDisasterRecoveryLookupReprojection(env);
+      if (recovery.processed) {
+        log.info('Tenant disaster recovery Lookup reprojection advanced', {
+          operationId: recovery.operationId,
+          stage: recovery.stage,
+        });
+      }
+    } catch (error) {
+      log.warn('Tenant disaster recovery Lookup reprojection failed', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+    try {
+      let processed = 0;
+      while (processed < 5 && (await processNextTenantProvisioning(env))) {
+        processed += 1;
+      }
+      if (processed > 0) {
+        log.info('Tenant provisioning scheduler completed', { processed });
+      }
+    } catch (error) {
+      log.warn('Tenant provisioning scheduler failed', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+    try {
+      let processed = 0;
+      while (processed < 5 && (await processNextTenantPlacementMigration(env))) {
+        processed += 1;
+      }
+      if (processed > 0) {
+        log.info('Tenant placement migration scheduler completed', { processed });
+      }
+    } catch (error) {
+      log.warn('Tenant placement migration scheduler failed', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+  }
+  try {
+    await processProviderReprojectionJobs(env, log.module('PROVIDER-REPROJECTION'));
+  } catch (error) {
+    log.warn('Provider reprojection scheduler failed', {
+      errorType: error instanceof Error ? error.name : 'Unknown',
+    });
+  }
+  if (isTenantRuntimeRegistryRefreshCron(event.cron)) {
+    try {
+      await refreshTenantRuntimeRegistrySnapshots(env, log);
+    } catch (error) {
+      log.error('Tenant runtime registry snapshot refresh failed', {}, error as Error);
+    }
+  }
+  if (isDirectoryScheduledCron(event.cron)) {
+    try {
+      // Use the scheduled timestamp for cadence selection. Earlier scheduled work can delay this
+      // callback past the ten-minute wall-clock boundary; using Date.now() here would then skip the
+      // complete planning window. The snapshot still records its actual observation time.
+      const observationDue = isLookupScaleOutObservationDue(Math.floor(event.scheduledTime / 1000));
+      const migration = await processNextLookupBucketMigration(env, { observationDue });
+      log.info('Lookup bucket migration scheduler completed', {
+        status: migration.status,
+        state: migration.state,
+        processedRows: migration.processedRows,
+      });
+    } catch (error) {
+      log.warn('Lookup bucket migration scheduler failed', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+    try {
+      await processScheduledIdentifierReplacements(env, log.module('IDENTIFIER-REPLACEMENT'));
+    } catch (error) {
+      log.warn('Identifier replacement scheduler failed', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+    await processScheduledDirectoryJobs(env, log.module('DIRECTORY'));
+    return;
+  }
+  if (isAgentElevationRecoveryCron(event.cron)) {
+    await processScheduledAgentElevationRecovery(env, log);
+    await processScheduledAgentTokenRevocations(env, log);
+    await processScheduledAgentPayloadRetention(env, log);
+    return;
+  }
+  if (isInteractiveAdminJobCron(event.cron)) {
+    await processInteractiveAdminJobQueues(env, log);
+    return;
+  }
+  if (event.cron !== R2_STORAGE_MAINTENANCE_CRON) {
+    return;
+  }
+
+  const now = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
   log.info('Scheduled maintenance job started', { timestamp: new Date().toISOString() });
 
   // Register builtin plugins (idempotent - skips if already registered)
@@ -3726,28 +4234,15 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   }
 
   try {
-    const coreAdapter: DatabaseAdapter = await resolveAuthCorePersistenceAdapterFromEnv(
-      env,
-      'management-scheduled'
-    );
-    const maintenanceTenantIds = await listMaintenanceTenantIds(coreAdapter, env, log);
+    const maintenancePage = await listMaintenanceTenantIds(env, log);
+    const maintenanceTargets = maintenancePage.targets;
+    const maintenanceTenantIds = maintenanceTargets.map((target) => target.tenantId);
 
-    // 1. Cleanup expired sessions (with 1-day grace period)
-    const sessionsDeleted = await deleteExpiredTenantRows(
-      coreAdapter,
-      maintenanceTenantIds,
-      'DELETE FROM sessions WHERE tenant_id = ? AND expires_at < ?',
-      (tenantId) => [tenantId, now - 86400] // 1 day grace period
-    );
-    log.debug('Deleted expired sessions', {
-      count: sessionsDeleted,
-      tenantCount: maintenanceTenantIds.length,
-    });
+    // Session expiration is owned by SessionStore alarms and its authoritative DO state.
 
-    // 2. Cleanup expired/used password reset tokens
+    // 1. Cleanup expired/used password reset tokens
     const passwordTokensDeleted = await deleteExpiredTenantRows(
-      coreAdapter,
-      maintenanceTenantIds,
+      maintenanceTargets,
       'DELETE FROM password_reset_tokens WHERE tenant_id = ? AND (expires_at < ? OR used = 1)',
       (tenantId) => [tenantId, now]
     );
@@ -3756,20 +4251,22 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       tenantCount: maintenanceTenantIds.length,
     });
 
-    // 3. Legacy audit_log cleanup is disabled. Unified audit retention is handled below
+    // 2. Legacy audit_log cleanup is disabled. Unified audit retention is handled below
     // by cleanupResolvedAuditPrimaries(), which resolves the effective audit profile per tenant
     // and applies retention to D1/Postgres primaries or skips archive-only installs.
     const auditLogsDeleted = 0;
 
-    // 4. Cleanup expired Native SSO device_secrets (if enabled)
+    // 3. Cleanup expired Native SSO device_secrets (if enabled)
     // This cleans up device secrets that have passed their expiration date
     let deviceSecretsDeleted = 0;
     try {
       const nativeSSOEnabled = await isNativeSSOEnabled(env);
       if (nativeSSOEnabled) {
-        for (const tenantId of maintenanceTenantIds) {
-          const deviceSecretRepo = new DeviceSecretRepository(coreAdapter, tenantId);
-          deviceSecretsDeleted += await deviceSecretRepo.cleanupExpired();
+        for (const target of maintenanceTargets) {
+          for (const { adapter } of target.adapters) {
+            const deviceSecretRepo = new DeviceSecretRepository(adapter, target.tenantId);
+            deviceSecretsDeleted += await deviceSecretRepo.cleanupExpired();
+          }
         }
         log.debug('Cleaned up expired device secrets', {
           count: deviceSecretsDeleted,
@@ -3786,8 +4283,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     let operationalLogsDeleted = 0;
     try {
       operationalLogsDeleted = await deleteExpiredTenantRows(
-        coreAdapter,
-        maintenanceTenantIds,
+        maintenanceTargets,
         'DELETE FROM operational_logs WHERE tenant_id = ? AND expires_at < ?',
         (tenantId) => [tenantId, now]
       );
@@ -3806,8 +4302,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     let idempotencyKeysDeleted = 0;
     try {
       idempotencyKeysDeleted = await deleteExpiredTenantRows(
-        coreAdapter,
-        maintenanceTenantIds,
+        maintenanceTargets,
         'DELETE FROM idempotency_keys WHERE tenant_id = ? AND expires_at < ?',
         (tenantId) => [tenantId, now]
       );
@@ -3825,19 +4320,20 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     let flowInteractionsExpired = 0;
     let flowInteractionStepsDeleted = 0;
     try {
-      for (const tenantId of maintenanceTenantIds) {
-        const expiredResult = await coreAdapter.execute(
-          `UPDATE flow_interactions
+      for (const target of maintenanceTargets) {
+        for (const { adapter } of target.adapters) {
+          const expiredResult = await adapter.execute(
+            `UPDATE flow_interactions
            SET state = 'expired', updated_at = ?
            WHERE tenant_id = ?
              AND state IN ('created', 'active')
              AND expires_at <= ?`,
-          [now, tenantId, now]
-        );
-        flowInteractionsExpired += expiredResult.rowsAffected || 0;
+            [now, target.tenantId, now]
+          );
+          flowInteractionsExpired += expiredResult.rowsAffected || 0;
 
-        const deletedStepsResult = await coreAdapter.execute(
-          `DELETE FROM flow_interaction_steps
+          const deletedStepsResult = await adapter.execute(
+            `DELETE FROM flow_interaction_steps
            WHERE tenant_id = ?
              AND interaction_id IN (
                SELECT id
@@ -3846,9 +4342,10 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
                  AND state IN ('completed', 'expired', 'failed')
                  AND updated_at <= ?
              )`,
-          [tenantId, tenantId, now - 86400]
-        );
-        flowInteractionStepsDeleted += deletedStepsResult.rowsAffected || 0;
+            [target.tenantId, target.tenantId, now - 86400]
+          );
+          flowInteractionStepsDeleted += deletedStepsResult.rowsAffected || 0;
+        }
       }
       log.debug('Cleaned up Flow runtime interactions', {
         expired: flowInteractionsExpired,
@@ -3875,6 +4372,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
 
     try {
       unifiedAuditCleanup = await cleanupResolvedAuditPrimaries(env, {
+        tenantIds: maintenanceTenantIds,
         logger: log.module('AUDIT-MAINTENANCE'),
       });
       log.debug('Unified audit retention cleanup completed', unifiedAuditCleanup);
@@ -3883,7 +4381,6 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     }
 
     log.info('Scheduled maintenance cleanup completed', {
-      sessionsDeleted,
       passwordTokensDeleted,
       auditLogsDeleted,
       deviceSecretsDeleted,
@@ -3893,19 +4390,37 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       flowInteractionStepsDeleted,
       unifiedAuditCleanup,
     });
+    await env.AUTHRIM_CONFIG!.put(maintenancePage.cursorKey, maintenancePage.nextCursor);
   } catch (error) {
     log.error('Scheduled maintenance job failed', {}, error as Error);
     // Don't throw - we don't want to mark the cron job as failed
     // Errors are logged for monitoring
   }
 
-  await processScheduledAdminJobQueues(env, log);
+  await processScheduledAdminJobQueues(env, log, { skipLoggingStorageMaintenance: true });
+
+  await runTrackedLoggingStorageMaintenance(
+    env,
+    async () => ({ ...(await processLoggingStorageMaintenanceJobs(env, log)) }),
+    log.module('LOGGING-STORAGE-MAINTENANCE')
+  );
+
+  await processR2StorageMaintenance(env, log.module('R2-STORAGE-MAINTENANCE'));
 
   try {
-    await runObjectArtifactCleanup(env, log);
-  } catch (cleanupError) {
-    log.error('Object artifact cleanup failed', {}, cleanupError as Error);
+    await processControlPlaneDriftNotifications(env, log.module('CONTROL-DRIFT-NOTIFICATIONS'));
+  } catch (notificationError) {
+    log.error('Control drift notification sync failed', {}, notificationError as Error);
   }
+
+  await runTrackedObjectArtifactCleanup(
+    env,
+    async () => {
+      await runObjectArtifactCleanup(env, log);
+      return { completed: true };
+    },
+    log.module('OBJECT-ARTIFACT-CLEANUP')
+  );
 }
 
 const LOGGING_DELIVERY_QUEUE_NAMES = new Set([
@@ -3954,8 +4469,58 @@ async function handleQueue(batch: MessageBatch<unknown>, env: Env): Promise<void
 }
 
 // Export for Cloudflare Workers with scheduled + queue handlers
+interface ManagementInternalExports {
+  AccountDirectoryEntrypoint(options: {
+    props: AccountDirectoryRpcProps;
+  }): NonNullable<Env['ACCOUNT_DIRECTORY']>;
+}
+
+export function attachInternalAccountDirectoryBinding(
+  env: Env,
+  executionContext: ExecutionContext
+): Env {
+  if (env.ACCOUNT_DIRECTORY) return env;
+  const environmentId = env.AUTHRIM_ENVIRONMENT_NAME;
+  const exports = (executionContext as unknown as { exports?: Partial<ManagementInternalExports> })
+    .exports;
+  if (
+    typeof environmentId !== 'string' ||
+    !environmentId ||
+    typeof exports?.AccountDirectoryEntrypoint !== 'function'
+  ) {
+    return env;
+  }
+  return {
+    ...env,
+    ACCOUNT_DIRECTORY: exports.AccountDirectoryEntrypoint({
+      props: {
+        caller: 'ar-management',
+        environmentId,
+        audience: 'authrim-account-directory-v1',
+      },
+    }),
+  };
+}
+
 export default {
-  fetch: app.fetch,
+  fetch(request: Request, env: Env, executionContext?: ExecutionContext) {
+    return app.fetch(
+      request,
+      executionContext ? attachInternalAccountDirectoryBinding(env, executionContext) : env,
+      executionContext
+    );
+  },
   scheduled: handleScheduled,
   queue: handleQueue,
 };
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';
+export { AccountDirectoryEntrypoint } from './account-directory-entrypoint';
+export { AuthAccountProvisioningEntrypoint } from './auth-account-provisioning-entrypoint';
+export {
+  attemptImmediateAccountDirectoryPublication,
+  buildInitialAccountDirectoryPublication,
+  executeDurableInitialAccountDirectoryWrite,
+  executeInitialAccountDirectoryWrite,
+  resolveInitialAccountDirectoryWriteTargets,
+} from './account-directory-producer';
+export { CrossShardAccountListService } from './cross-shard-account-list';

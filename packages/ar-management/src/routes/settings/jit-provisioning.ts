@@ -16,6 +16,10 @@ import { type JITProvisioningConfig, DEFAULT_JIT_CONFIG, getLogger } from '@auth
 // =============================================================================
 
 const KV_KEY = 'jit_provisioning_config';
+const DEFAULT_RATE_LIMIT = DEFAULT_JIT_CONFIG.rate_limit ?? {
+  max_per_minute: 10,
+  max_per_hour: 100,
+};
 
 // =============================================================================
 // Helpers
@@ -51,6 +55,8 @@ function validateConfig(config: Partial<JITProvisioningConfig>): string[] {
 
   if (config.default_role_id !== undefined && typeof config.default_role_id !== 'string') {
     errors.push('default_role_id must be a string');
+  } else if (config.default_role_id !== undefined && config.default_role_id.trim().length === 0) {
+    errors.push('default_role_id must not be empty');
   }
 
   if (
@@ -63,8 +69,10 @@ function validateConfig(config: Partial<JITProvisioningConfig>): string[] {
   if (config.allowed_provider_ids !== undefined && config.allowed_provider_ids !== null) {
     if (!Array.isArray(config.allowed_provider_ids)) {
       errors.push('allowed_provider_ids must be an array or null');
-    } else if (!config.allowed_provider_ids.every((id) => typeof id === 'string')) {
-      errors.push('allowed_provider_ids must be an array of strings');
+    } else if (
+      !config.allowed_provider_ids.every((id) => typeof id === 'string' && id.trim().length > 0)
+    ) {
+      errors.push('allowed_provider_ids must be an array of non-empty strings');
     }
   }
 
@@ -76,26 +84,44 @@ function validateConfig(config: Partial<JITProvisioningConfig>): string[] {
   }
 
   if (config.rate_limit !== undefined) {
-    if (typeof config.rate_limit !== 'object') {
+    if (
+      !config.rate_limit ||
+      typeof config.rate_limit !== 'object' ||
+      Array.isArray(config.rate_limit)
+    ) {
       errors.push('rate_limit must be an object');
     } else {
       if (
         config.rate_limit.max_per_minute !== undefined &&
-        (typeof config.rate_limit.max_per_minute !== 'number' ||
+        (!Number.isFinite(config.rate_limit.max_per_minute) ||
+          !Number.isInteger(config.rate_limit.max_per_minute) ||
           config.rate_limit.max_per_minute < 1)
       ) {
-        errors.push('rate_limit.max_per_minute must be a positive number');
+        errors.push('rate_limit.max_per_minute must be a positive integer');
       }
       if (
         config.rate_limit.max_per_hour !== undefined &&
-        (typeof config.rate_limit.max_per_hour !== 'number' || config.rate_limit.max_per_hour < 1)
+        (!Number.isFinite(config.rate_limit.max_per_hour) ||
+          !Number.isInteger(config.rate_limit.max_per_hour) ||
+          config.rate_limit.max_per_hour < 1)
       ) {
-        errors.push('rate_limit.max_per_hour must be a positive number');
+        errors.push('rate_limit.max_per_hour must be a positive integer');
       }
     }
   }
 
   return errors;
+}
+
+function mergeWithDefaults(config: Partial<JITProvisioningConfig>): JITProvisioningConfig {
+  return {
+    ...DEFAULT_JIT_CONFIG,
+    ...config,
+    rate_limit: {
+      max_per_minute: config.rate_limit?.max_per_minute ?? DEFAULT_RATE_LIMIT.max_per_minute,
+      max_per_hour: config.rate_limit?.max_per_hour ?? DEFAULT_RATE_LIMIT.max_per_hour,
+    },
+  };
 }
 
 // =============================================================================
@@ -117,8 +143,11 @@ export async function getJITProvisioningConfig(c: Context) {
       try {
         const kvConfig = await c.env.SETTINGS.get(KV_KEY);
         if (kvConfig) {
-          config = JSON.parse(kvConfig);
-          source = 'kv';
+          const parsed = JSON.parse(kvConfig) as Partial<JITProvisioningConfig>;
+          if (parsed && typeof parsed === 'object' && validateConfig(parsed).length === 0) {
+            config = mergeWithDefaults(parsed);
+            source = 'kv';
+          }
         }
       } catch {
         // KV error, use default
@@ -151,7 +180,10 @@ export async function updateJITProvisioningConfig(c: Context) {
   const body = await c.req.json<Partial<JITProvisioningConfig>>();
 
   // Validate input
-  const errors = validateConfig(body);
+  const errors =
+    !body || typeof body !== 'object' || Array.isArray(body)
+      ? ['configuration must be an object']
+      : validateConfig(body);
   if (errors.length > 0) {
     return c.json(
       {
@@ -178,7 +210,10 @@ export async function updateJITProvisioningConfig(c: Context) {
     try {
       const kvConfig = await c.env.SETTINGS.get(KV_KEY);
       if (kvConfig) {
-        existingConfig = JSON.parse(kvConfig);
+        const parsed = JSON.parse(kvConfig) as Partial<JITProvisioningConfig>;
+        if (parsed && typeof parsed === 'object' && validateConfig(parsed).length === 0) {
+          existingConfig = mergeWithDefaults(parsed);
+        }
       }
     } catch {
       // Use defaults if KV read fails

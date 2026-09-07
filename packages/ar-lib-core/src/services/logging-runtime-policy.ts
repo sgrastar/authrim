@@ -1,4 +1,9 @@
-import { LOG_PLANES, LOG_TYPES, type LogPlane, type LogType } from '@authrim/ar-lib-logging';
+import {
+  LOG_PLANES,
+  LOG_TYPES,
+  type LogPlane,
+  type LogType,
+} from '@authrim/ar-lib-logging/contract';
 import type { LoggingDestination } from '@authrim/ar-lib-logging/destinations';
 import {
   RuntimeLoggingPolicySnapshotMemoryCache,
@@ -15,6 +20,8 @@ import {
 import type { Env } from '../types/env';
 
 const RUNTIME_LOGGING_POLICY_CACHE_TTL_MS = 60_000;
+
+export const PLATFORM_DEFAULT_R2_ARCHIVE_DESTINATION_ID = 'platform_default_r2_archive';
 
 export interface RuntimeLoggingPolicySnapshotPayload {
   assignments: unknown[];
@@ -74,6 +81,7 @@ export interface RuntimeLoggingPolicyResolution {
   warnings: string[];
   destination: LoggingDestination | null;
   target: RuntimeLoggingDestinationTarget | null;
+  requiresDeliveryFanout: boolean;
 }
 
 const runtimeLoggingPolicySnapshotCache =
@@ -453,7 +461,7 @@ export async function resolveRuntimeLoggingPolicyTargetFromEnv(
   const policies = await loadRuntimeLoggingPolicySnapshotFromEnv(env, input.tenantId);
   if (!policies) {
     if (input.plane === 'archive' && env.AUDIT_ARCHIVE) {
-      const destinationId = 'platform_default_r2_archive';
+      const destinationId = PLATFORM_DEFAULT_R2_ARCHIVE_DESTINATION_ID;
       return {
         tenantId: input.tenantId,
         logType: input.logType,
@@ -466,6 +474,7 @@ export async function resolveRuntimeLoggingPolicyTargetFromEnv(
         source: 'none',
         warnings: ['runtime_logging_policy_snapshot_missing_using_platform_default'],
         destination: null,
+        requiresDeliveryFanout: false,
         target: {
           type: 'r2',
           destinationId,
@@ -502,5 +511,6 @@ export async function resolveRuntimeLoggingPolicyTargetFromEnv(
     selectedDestinationId,
     destination,
     target: destination ? targetFromRuntimeLoggingDestination(destination, input.plane) : null,
+    requiresDeliveryFanout: destination !== null,
   };
 }

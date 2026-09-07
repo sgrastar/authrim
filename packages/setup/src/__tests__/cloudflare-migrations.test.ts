@@ -11,10 +11,11 @@ import {
   calculateD1MigrationChecksum,
   buildRuntimeProfileSeedSql,
   listD1MigrationSqlFiles,
-  shouldMirrorPiiMigrationsToCore,
 } from '../core/cloudflare.js';
 import { createDefaultConfig } from '../core/config.js';
+import { generateReleaseMigrationManifest } from '../core/release-migrations.js';
 import { renderPortableMigrationSql } from '../core/sql-portability.js';
+import { BUILTIN_PROFILE_CLAIM_SCHEMAS } from '@authrim/ar-lib-core/services/custom-claims/schema-catalog';
 
 function findSqlite3(): string | null {
   try {
@@ -37,23 +38,37 @@ function readSqlite(sqlite3Path: string, dbPath: string, sql: string): string {
   return execFileSync(sqlite3Path, [dbPath, sql], { encoding: 'utf-8' }).trim();
 }
 
+function readSqliteJson<T>(sqlite3Path: string, dbPath: string, sql: string): T {
+  const output = execFileSync(sqlite3Path, ['-json', dbPath, sql], {
+    encoding: 'utf-8',
+  }).trim();
+  return JSON.parse(output || '[]') as T;
+}
+
 const rootMigrationsDir = fileURLToPath(new URL('../../../../migrations', import.meta.url));
 const docsTestingDir = fileURLToPath(new URL('../../../../docs/testing', import.meta.url));
-const coreMigrationExclusions = new Set(['admin', 'archive', 'external', 'pii']);
 const sqliteMigrationApplyTimeoutMs = 20_000;
 
 function activeCoreMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(rootMigrationsDir, {
-    excludeTopLevelDirectories: coreMigrationExclusions,
-  });
+  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'core/d1')).map(
+    (file) => `core/d1/${file}`
+  );
 }
 
 function activeAdminMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'admin')).map((file) => `admin/${file}`);
+  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'admin/d1')).map(
+    (file) => `admin/d1/${file}`
+  );
 }
 
 function activePiiMigrationFiles(): string[] {
-  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'pii')).map((file) => `pii/${file}`);
+  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'pii/d1')).map((file) => `pii/d1/${file}`);
+}
+
+function activePluginRunnerMigrationFiles(): string[] {
+  return listD1MigrationSqlFiles(join(rootMigrationsDir, 'plugin-runner/d1')).map(
+    (file) => `plugin-runner/d1/${file}`
+  );
 }
 
 function activeD1MigrationFiles(): string[] {
@@ -160,83 +175,6 @@ INSERT INTO oauth_clients (
 `;
 }
 
-function insertApprovalRequestSql(id: string, detailObjectCatalogId: string | null = null): string {
-  const escapedId = id.replaceAll("'", "''");
-  const detailObjectCatalogSql = detailObjectCatalogId
-    ? `'${detailObjectCatalogId.replaceAll("'", "''")}'`
-    : 'NULL';
-
-  return `
-INSERT INTO approval_requests (
-  id,
-  public_request_id,
-  tenant_id,
-  investigation_id,
-  requester_subject_type,
-  requester_subject_id,
-  target_subject_type,
-  target_subject_id,
-  request_surface,
-  requested_action,
-  redaction_level,
-  status,
-  scope_canonical,
-  scope_json,
-  reason_code,
-  reuse_scope,
-  policy_preset,
-  partial_access_allowed,
-  requested_at,
-  expires_at,
-  detail_object_catalog_id,
-  created_at,
-  updated_at
-) VALUES (
-  '${escapedId}',
-  'apr-${escapedId}',
-  'default',
-  'inv-${escapedId}',
-  'service_principal',
-  'approval-smoke',
-  'user',
-  'user-${escapedId}',
-  'service_data',
-  'detail_read',
-  'masked',
-  'pending',
-  'surface=service_data&action=detail_read',
-  '{}',
-  'technical_support',
-  'request',
-  'technical_debug_default',
-  0,
-  100,
-  200,
-  ${detailObjectCatalogSql},
-  100,
-  100
-);
-`;
-}
-
-describe('shouldMirrorPiiMigrationsToCore', () => {
-  it('returns false for the standard storage profile', () => {
-    const config = createDefaultConfig('dev');
-    expect(shouldMirrorPiiMigrationsToCore(config)).toBe(false);
-  });
-
-  it('returns true for the single-db storage profile', () => {
-    const config = createDefaultConfig('dev');
-    config.profiles.defaults.storage = 'builtin:storage:single-db';
-    expect(shouldMirrorPiiMigrationsToCore(config)).toBe(true);
-  });
-
-  it('returns false when profile defaults are absent', () => {
-    expect(shouldMirrorPiiMigrationsToCore(undefined)).toBe(false);
-    expect(shouldMirrorPiiMigrationsToCore({})).toBe(false);
-  });
-});
-
 describe('buildRuntimeProfileSeedSql', () => {
   it('builds idempotent SQL for seeded runtime profiles', () => {
     const config = createDefaultConfig('dev');
@@ -329,7 +267,69 @@ describe('buildRecordMigrationSql', () => {
   });
 });
 
+describe('Control plane drift notification migration', () => {
+  it('preserves existing events and accepts the new category', () => {
+    const sqlite3Path = findSqlite3();
+    if (!sqlite3Path) {
+      return;
+    }
+
+    const migrationPath = 'admin/d1/001_0_4_0_admin_baseline.sql';
+    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-control-drift-notification-'));
+    const dbPath = join(tempDir, 'test.db');
+
+    try {
+      runMigrationFiles(sqlite3Path, dbPath, [migrationPath]);
+      runSqlite(
+        sqlite3Path,
+        dbPath,
+        `INSERT INTO internal_notification_events (
+           id, tenant_id, category, event_type, severity, payload_json
+         ) VALUES (
+           'existing-event', 'tenant-a', 'tenant_database_health',
+           'tenant.database.unhealthy', 'high', '{}'
+         );`
+      );
+
+      runSqlite(
+        sqlite3Path,
+        dbPath,
+        `INSERT INTO internal_notification_events (
+           id, tenant_id, category, event_type, severity, payload_json
+         ) VALUES (
+           'control-event', '__control__', 'control_plane_drift',
+           'control.worker_inventory.actual_only', 'medium', '{}'
+         );`
+      );
+
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          'SELECT id || ":" || category FROM internal_notification_events ORDER BY id;'
+        )
+      ).toBe('control-event:control_plane_drift\nexisting-event:tenant_database_health');
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT COUNT(*) FROM sqlite_master
+            WHERE type = 'index' AND name LIKE 'idx_internal_notification_events_%';`
+        )
+      ).toBe('3');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('calculateD1MigrationChecksum', () => {
+  it('keeps the current 0.4.0 core baseline candidate checksum stable', () => {
+    expect(
+      calculateD1MigrationChecksum(join(rootMigrationsDir, 'core/d1/001_0_4_0_core_baseline.sql'))
+    ).toBe('11a7eeb61266e9386e2fac051508d403231cf81be9a4a7cc9eadb83bec8808d0');
+  });
+
   it('changes when rendered migration SQL changes', () => {
     const dir = mkdtempSync(join(tmpdir(), 'authrim-migration-checksum-'));
     const file = join(dir, '001_test.sql');
@@ -402,8 +402,6 @@ describe('migration seed SQL portability', () => {
       const sql = readMigration(migrationFile);
       expect(sql).not.toContain('INSERT OR IGNORE');
     }
-
-    expect(readMigrations(migrationFiles)).toContain('WHERE NOT EXISTS');
   });
 
   it('keeps oauth_clients device secret policy columns in the core baseline', () => {
@@ -415,14 +413,59 @@ describe('migration seed SQL portability', () => {
     expect(sql).toContain('device_secret_introspection_trust_groups TEXT');
   });
 
-  it('keeps Admin role assignment scope normalization independent from timestamp columns', () => {
-    const sql = readMigrations(activeAdminMigrationFiles());
-    const updateStatement = sql.match(/UPDATE admin_role_assignments[\s\S]*?;/)?.[0];
+  it(
+    'adds the Agent refresh-family revocation owner through an additive admin migration',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) return;
 
-    expect(updateStatement).toBeDefined();
-    expect(updateStatement).toContain('SET scope_id = tenant_id');
-    expect(updateStatement).not.toContain('updated_at');
-    expect(updateStatement).not.toContain("strftime('%s', 'now')");
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-agent-revocation-owner-'));
+      const dbPath = join(tempDir, 'test.db');
+
+      try {
+        runMigrationFiles(sqlite3Path, dbPath, activeAdminMigrationFiles());
+
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+             FROM pragma_table_info('admin_agent_token_families')
+             WHERE name = 'revocation_outbox_id';`
+          )
+        ).toBe('1');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+             FROM sqlite_master
+             WHERE type = 'index'
+               AND name = 'idx_admin_agent_token_families_revocation_outbox';`
+          )
+        ).toBe('1');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
+  it('includes credential-profile Flow assignment targets in both final baselines', () => {
+    const coreBaseline = readMigration('core/d1/001_0_4_0_core_baseline.sql');
+    const postgresBaseline = readMigration('core/postgresql/001_0_4_0_core_baseline.sql');
+
+    expect(coreBaseline).toContain("'credential_profile'");
+    expect(postgresBaseline).toContain("'credential_profile'");
+    expect(postgresBaseline).toContain('flow_assignments_target_type_check');
+    expect(postgresBaseline).toContain('flow_assignments_target_id_check');
+  });
+
+  it('keeps normalized Admin role assignment scope columns in the final baseline', () => {
+    const sql = readMigrations(activeAdminMigrationFiles());
+
+    expect(sql).toContain('scope_type TEXT NOT NULL');
+    expect(sql).toContain('scope_id TEXT NOT NULL');
   });
 
   it('replaces backend-specific epoch helpers in migration assets', () => {
@@ -442,20 +485,207 @@ describe('migration seed SQL portability', () => {
   });
 
   it('does not auto-seed OIDC custom claim schemas from core migrations', () => {
-    const sql = readMigration('006_core_extended_operations.sql');
+    const sql = readMigration('core/d1/001_0_4_0_core_baseline.sql');
 
     expect(sql).not.toContain('Seed default OIDC claim schemas');
-    expect(sql).not.toContain('randomblob(');
     expect(sql).not.toContain("'system_claim_' || t.id || '_name'");
     expect(sql).not.toContain("'system_claim_' || t.id || '_address_country'");
   });
 
-  it('removes partial indexes from migration assets in the current gate', () => {
-    const partialIndexPattern = /CREATE(?: UNIQUE)? INDEX[\s\S]{0,120}?WHERE\b/;
+  it('installs exactly the eight optional built-in profile schemas for the default tenant', () => {
+    const sqlite3Path = findSqlite3();
+    if (!sqlite3Path) return;
+    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-builtin-profile-schema-'));
+    const dbPath = join(tempDir, 'test.db');
+    try {
+      runMigrationFiles(sqlite3Path, dbPath, activeCoreMigrationFiles());
 
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT group_concat(field_key, ',')
+             FROM (
+               SELECT field_key
+                 FROM custom_claim_schemas
+                WHERE tenant_id = 'default' AND is_system = 1
+                  AND id LIKE 'builtin:default:%'
+                ORDER BY field_key
+             );`
+        )
+      ).toBe(
+        'display_name,email,email_verified,family_name,given_name,locale,picture_url,preferred_username'
+      );
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT COUNT(*) FROM custom_claim_schemas
+            WHERE tenant_id = 'default' AND is_system = 1 AND is_required <> 0;`
+        )
+      ).toBe('0');
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT COUNT(*) FROM custom_claim_schemas
+            WHERE tenant_id = 'default' AND field_key = 'name';`
+        )
+      ).toBe('0');
+      const rows = readSqliteJson<
+        Array<{
+          field_key: string;
+          display_label: string;
+          field_type: string;
+          cardinality: string;
+          is_pii: number;
+          is_required: number;
+          is_active: number;
+          is_system: number;
+          is_searchable: number;
+          is_exportable: number;
+          include_in_id_token: number;
+          include_in_userinfo: number;
+          include_in_introspection: number;
+          display_order: number;
+          ui_group_key: string | null;
+          ui_group_label: string | null;
+          ui_group_order: number;
+          ui_field_order: number;
+          examples_json: string | null;
+        }>
+      >(
+        sqlite3Path,
+        dbPath,
+        `SELECT field_key, display_label, field_type, cardinality, is_pii, is_required,
+                is_active, is_system, is_searchable, is_exportable, include_in_id_token,
+                include_in_userinfo, include_in_introspection, display_order, ui_group_key,
+                ui_group_label, ui_group_order, ui_field_order, examples_json
+           FROM custom_claim_schemas
+          WHERE tenant_id = 'default'
+          ORDER BY field_key`
+      );
+      expect(rows).toEqual(
+        [...BUILTIN_PROFILE_CLAIM_SCHEMAS]
+          .sort((left, right) => left.field_key.localeCompare(right.field_key))
+          .map((schema) => ({
+            field_key: schema.field_key,
+            display_label: schema.display_label,
+            field_type: schema.field_type,
+            cardinality: schema.cardinality ?? 'single',
+            is_pii: schema.is_pii,
+            is_required: schema.is_required ?? 0,
+            is_active: 1,
+            is_system: schema.is_system ?? 1,
+            is_searchable: schema.is_searchable,
+            is_exportable: schema.is_exportable,
+            include_in_id_token: 0,
+            include_in_userinfo: 0,
+            include_in_introspection: 0,
+            display_order: schema.display_order,
+            ui_group_key: schema.ui_group_key ?? null,
+            ui_group_label: schema.ui_group_label ?? null,
+            ui_group_order: schema.ui_group_order ?? 0,
+            ui_field_order: schema.ui_field_order ?? schema.display_order,
+            examples_json: schema.examples_json ?? null,
+          }))
+      );
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('seeds the eight built-ins during a manifest-based fresh install before the draft is finalized', () => {
+    const sqlite3Path = findSqlite3();
+    if (!sqlite3Path) return;
+    const manifest = generateReleaseMigrationManifest({
+      migrationsRoot: rootMigrationsDir,
+      productVersion: '0.4.0',
+      semanticBaselineSource: true,
+    });
+    const coreFiles = manifest.streams
+      .find((stream) => stream.id === 'core-d1')
+      ?.files.map((file) => `core/d1/${file.path}`);
+    expect(coreFiles?.length).toBeGreaterThan(0);
+
+    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-manifest-builtin-profile-schema-'));
+    const dbPath = join(tempDir, 'test.db');
+    try {
+      runMigrationFiles(sqlite3Path, dbPath, coreFiles ?? []);
+      runSqlite(sqlite3Path, dbPath, buildInitialTenantBootstrapSql(createDefaultConfig('test')));
+
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT group_concat(field_key, ',')
+             FROM (
+               SELECT field_key
+                 FROM custom_claim_schemas
+                WHERE tenant_id = 'default'
+                  AND is_system = 1
+                  AND is_required = 0
+                  AND id LIKE 'builtin:default:%'
+                ORDER BY field_key
+             );`
+        )
+      ).toBe(
+        'display_name,email,email_verified,family_name,given_name,locale,picture_url,preferred_username'
+      );
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT COUNT(*) FROM custom_claim_schemas
+            WHERE tenant_id = 'default' AND field_key = 'name';`
+        )
+      ).toBe('0');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('uses triggers instead of the removed plugin rollout partial index', () => {
+    const baselineSql = readMigration('plugin-runner/d1/001_0_4_0_plugin_runner_baseline.sql');
+    expect(baselineSql).not.toContain('idx_plugin_runner_dynamic_rollout_active_plugin');
+    expect(baselineSql).toContain('trg_plugin_runner_dynamic_rollout_running_insert');
+    expect(baselineSql).toContain('trg_plugin_runner_dynamic_rollout_running_update');
+
+    const sqlite3Path = findSqlite3();
+    if (!sqlite3Path) return;
+    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-plugin-runner-index-gate-'));
+    const dbPath = join(tempDir, 'test.db');
+    try {
+      runMigrationFiles(sqlite3Path, dbPath, activePluginRunnerMigrationFiles());
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'index' AND upper(sql) LIKE '% WHERE %';`
+        )
+      ).toBe('0');
+      expect(
+        readSqlite(
+          sqlite3Path,
+          dbPath,
+          `SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'trigger'
+               AND name IN (
+                 'trg_plugin_runner_dynamic_rollout_running_insert',
+                 'trg_plugin_runner_dynamic_rollout_running_update'
+               );`
+        )
+      ).toBe('2');
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps D1 REST migration triggers compatible with the query parser', () => {
     for (const migrationFile of activeD1MigrationFiles()) {
       const sql = readMigration(migrationFile);
-      expect(sql).not.toMatch(partialIndexPattern);
+      expect(sql, migrationFile).not.toMatch(/SELECT\s+CASE\s+WHEN/iu);
     }
   });
 
@@ -468,13 +698,9 @@ describe('migration seed SQL portability', () => {
       'FOREIGN KEY (tenant_id, client_id) REFERENCES oauth_clients(tenant_id, client_id)'
     );
     expect(sql).toContain('UNIQUE (tenant_id, user_id, client_id)');
-    expect(sql).toContain('UNIQUE (tenant_id, session_id, client_id)');
     expect(sql).toContain('CREATE INDEX idx_ciba_client ON ciba_requests(tenant_id, client_id)');
     expect(sql).toContain(
       'CREATE INDEX idx_consents_client ON oauth_client_consents(tenant_id, client_id)'
-    );
-    expect(sql).toContain(
-      'CREATE INDEX idx_session_clients_client_id ON session_clients(tenant_id, client_id)'
     );
   });
 
@@ -627,53 +853,13 @@ ${insertOAuthClientSql('tenant-a', 'shared-mobile', 'Duplicate Tenant A Mobile')
           )
         ).toThrow();
 
-        runSqlite(
-          sqlite3Path,
-          dbPath,
-          `
-PRAGMA foreign_keys = ON;
-INSERT INTO session_clients (
-  id,
-  tenant_id,
-  session_id,
-  client_id,
-  first_token_at,
-  last_token_at
-) VALUES (
-  'sc-tenant-a',
-  'tenant-a',
-  'session-a',
-  'shared-mobile',
-  1,
-  1
-);
-`
-        );
-
-        expect(() =>
-          runSqlite(
+        expect(
+          readSqlite(
             sqlite3Path,
             dbPath,
-            `
-PRAGMA foreign_keys = ON;
-INSERT INTO session_clients (
-  id,
-  tenant_id,
-  session_id,
-  client_id,
-  first_token_at,
-  last_token_at
-) VALUES (
-  'sc-tenant-c',
-  'tenant-c',
-  'session-c',
-  'shared-mobile',
-  1,
-  1
-);
-`
+            `SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'session_clients';`
           )
-        ).toThrow();
+        ).toBe('0');
 
         runSqlite(
           sqlite3Path,
@@ -730,6 +916,52 @@ INSERT INTO oauth_clients (
   );
 
   it(
+    'materializes the configured initial tenant placement exactly once',
+    () => {
+      const sqlite3Path = findSqlite3();
+      if (!sqlite3Path) {
+        return;
+      }
+
+      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-initial-tenant-placement-'));
+      const dbPath = join(tempDir, 'test.db');
+      const sharedConfig = createDefaultConfig('mt');
+      sharedConfig.tenant.placementPolicy = 'shared_pool';
+
+      try {
+        runMigrationFiles(sqlite3Path, dbPath, activeCoreMigrationFiles());
+        runSqlite(sqlite3Path, dbPath, buildInitialTenantBootstrapSql(sharedConfig));
+
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            "SELECT isolation_policy FROM tenants WHERE id = 'default';"
+          )
+        ).toBe('shared_pool');
+
+        const exclusiveConfig = createDefaultConfig('mt');
+        exclusiveConfig.tenant.placementPolicy = 'tenant_exclusive';
+        runSqlite(sqlite3Path, dbPath, buildInitialTenantBootstrapSql(exclusiveConfig));
+
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            "SELECT isolation_policy FROM tenants WHERE id = 'default';"
+          )
+        ).toBe('tenant_exclusive');
+        expect(() =>
+          runSqlite(sqlite3Path, dbPath, buildInitialTenantBootstrapSql(sharedConfig))
+        ).toThrow();
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    sqliteMigrationApplyTimeoutMs
+  );
+
+  it(
     'keeps seeded no-consent Flows assigned after initial tenant rename',
     () => {
       const sqlite3Path = findSqlite3();
@@ -761,6 +993,33 @@ INSERT INTO oauth_clients (
                AND slug IN ('default-login-no-consent', 'default-registration-no-consent');`
           )
         ).toBe('2');
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT group_concat(field_key, ',')
+               FROM (
+                 SELECT field_key
+                   FROM custom_claim_schemas
+                  WHERE tenant_id = 'first'
+                    AND is_system = 1
+                    AND is_required = 0
+                    AND id LIKE 'builtin:first:%'
+                  ORDER BY field_key
+               );`
+          )
+        ).toBe(
+          'display_name,email,email_verified,family_name,given_name,locale,picture_url,preferred_username'
+        );
+        expect(
+          readSqlite(
+            sqlite3Path,
+            dbPath,
+            `SELECT COUNT(*)
+               FROM custom_claim_schemas
+              WHERE tenant_id = 'default' OR field_key = 'name';`
+          )
+        ).toBe('0');
         expect(
           readSqlite(
             sqlite3Path,
@@ -958,6 +1217,28 @@ INSERT INTO screens (
     sqliteMigrationApplyTimeoutMs
   );
 
+  it('keeps external Postgres linked identities compatible with the PII schema', () => {
+    const postgresMigration = readMigration('pii/postgresql/001_0_4_0_pii_baseline.sql');
+
+    for (const column of [
+      'email_verified',
+      'access_token_encrypted',
+      'refresh_token_encrypted',
+      'token_expires_at',
+      'raw_claims',
+      'profile_data',
+      'last_login_at',
+      'updated_at',
+    ]) {
+      expect(postgresMigration).toMatch(new RegExp(`\\b${column}\\b`, 'u'));
+    }
+    expect(postgresMigration).toContain('last_used_at');
+    expect(postgresMigration).toContain('linked_at');
+    expect(postgresMigration).toContain('provisioning_state');
+    expect(postgresMigration).toContain('linked_identities_provisioning_state_check');
+    expect(postgresMigration).toContain("ARRAY['pending'::text, 'active'::text]");
+  });
+
   for (const [databaseRole, migrationFiles] of [
     ['core', activeCoreMigrationFiles()],
     ['admin', activeAdminMigrationFiles()],
@@ -986,464 +1267,6 @@ INSERT INTO screens (
       sqliteMigrationApplyTimeoutMs
     );
   }
-
-  it(
-    'repairs device-code client foreign keys while retaining only redeemable codes',
-    () => {
-      const sqlite3Path = findSqlite3();
-      if (!sqlite3Path) {
-        return;
-      }
-
-      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-device-code-fk-repair-'));
-      const dbPath = join(tempDir, 'test.db');
-      const repairMigration = '018_repair_device_code_client_foreign_key.sql';
-      const migrationsBeforeRepair = activeCoreMigrationFiles().filter(
-        (migrationFile) => migrationFile !== repairMigration
-      );
-
-      try {
-        runMigrationFiles(sqlite3Path, dbPath, migrationsBeforeRepair);
-        runSqlite(
-          sqlite3Path,
-          dbPath,
-          `
-PRAGMA foreign_keys = OFF;
-${insertOAuthClientSql('default', 'device-client', 'Device Client')}
-INSERT INTO device_codes (
-  device_code,
-  user_code,
-  client_id,
-  scope,
-  status,
-  created_at,
-  expires_at,
-  tenant_id
-) VALUES (
-  'device-valid',
-  'USER-VALID',
-  'device-client',
-  'openid',
-  'pending',
-  100,
-  200,
-  'default'
-);
-INSERT INTO device_codes (
-  device_code,
-  user_code,
-  client_id,
-  scope,
-  status,
-  created_at,
-  expires_at,
-  tenant_id
-) VALUES (
-  'device-orphan',
-  'USER-ORPHAN',
-  'missing-client',
-  'openid',
-  'pending',
-  100,
-  200,
-  'default'
-);
-`
-        );
-
-        runMigrationFiles(sqlite3Path, dbPath, [repairMigration]);
-
-        expect(readSqlite(sqlite3Path, dbPath, 'SELECT device_code FROM device_codes;')).toBe(
-          'device-valid'
-        );
-        expect(
-          readSqlite(
-            sqlite3Path,
-            dbPath,
-            `SELECT group_concat("from" || ':' || "to", ',')
-               FROM (
-                 SELECT "from", "to"
-                   FROM pragma_foreign_key_list('device_codes')
-                  WHERE "table" = 'oauth_clients'
-                  ORDER BY id, seq
-               );`
-          )
-        ).toBe('tenant_id:tenant_id,client_id:client_id');
-        expect(findInvalidForeignKeyReferences(sqlite3Path, dbPath)).toEqual([]);
-        expect(() =>
-          runSqlite(
-            sqlite3Path,
-            dbPath,
-            `PRAGMA foreign_keys = ON;
-INSERT INTO device_codes (
-  device_code,
-  user_code,
-  client_id,
-  scope,
-  status,
-  created_at,
-  expires_at,
-  tenant_id
-) VALUES (
-  'device-cross-tenant',
-  'USER-CROSS-TENANT',
-  'device-client',
-  'openid',
-  'pending',
-  100,
-  200,
-  'another-tenant'
-);`
-          )
-        ).toThrow();
-
-        runSqlite(
-          sqlite3Path,
-          dbPath,
-          `PRAGMA foreign_keys = ON;
-DELETE FROM oauth_clients
- WHERE tenant_id = 'default'
-   AND client_id = 'device-client';`
-        );
-        expect(readSqlite(sqlite3Path, dbPath, 'SELECT COUNT(*) FROM device_codes;')).toBe('0');
-        expect(readSqlite(sqlite3Path, dbPath, 'PRAGMA foreign_key_check;')).toBe('');
-      } finally {
-        rmSync(tempDir, { recursive: true, force: true });
-      }
-    },
-    sqliteMigrationApplyTimeoutMs
-  );
-
-  it('backfills tenant lifecycle state from is_active and drops the legacy column', () => {
-    const sqlite3Path = findSqlite3();
-    if (!sqlite3Path) {
-      return;
-    }
-
-    const tempDir = mkdtempSync(join(tmpdir(), 'authrim-tenant-lifecycle-migration-'));
-    const dbPath = join(tempDir, 'test.db');
-
-    try {
-      runMigrationFiles(sqlite3Path, dbPath, ['001_core_foundation.sql']);
-      runSqlite(
-        sqlite3Path,
-        dbPath,
-        `
-INSERT INTO tenants (
-  id,
-  tenant_code,
-  tenant_key,
-  name,
-  is_active,
-  created_at,
-  updated_at
-) VALUES (
-  'inactive-tenant',
-  'inactive-tenant',
-  'tenant-key-inactive',
-  'Inactive Tenant',
-  0,
-  1,
-  1
-);
-`
-      );
-
-      runMigrationFiles(sqlite3Path, dbPath, ['007_tenant_lifecycle_state.sql']);
-
-      expect(
-        readSqlite(sqlite3Path, dbPath, "SELECT lifecycle_state FROM tenants WHERE id = 'default';")
-      ).toBe('active');
-      expect(
-        readSqlite(
-          sqlite3Path,
-          dbPath,
-          "SELECT lifecycle_state FROM tenants WHERE id = 'inactive-tenant';"
-        )
-      ).toBe('suspended');
-      expect(
-        readSqlite(
-          sqlite3Path,
-          dbPath,
-          "SELECT COUNT(*) FROM pragma_table_info('tenants') WHERE name = 'is_active';"
-        )
-      ).toBe('0');
-    } finally {
-      rmSync(tempDir, { recursive: true, force: true });
-    }
-  });
-
-  it(
-    'repairs approval object-catalog foreign keys without losing approval data',
-    () => {
-      const sqlite3Path = findSqlite3();
-      if (!sqlite3Path) {
-        return;
-      }
-
-      const tempDir = mkdtempSync(join(tmpdir(), 'authrim-admin-approval-fk-repair-'));
-      const dbPath = join(tempDir, 'test.db');
-      const directoryCatalogMigration = 'admin/009_directory_auth_object_catalog_classes.sql';
-      const repairMigration = 'admin/010_repair_approval_object_catalog_foreign_key.sql';
-      const migrationsBeforeCatalogRebuild = activeAdminMigrationFiles().filter(
-        (migrationFile) =>
-          migrationFile !== directoryCatalogMigration && migrationFile !== repairMigration
-      );
-
-      try {
-        runMigrationFiles(sqlite3Path, dbPath, migrationsBeforeCatalogRebuild);
-        runSqlite(
-          sqlite3Path,
-          dbPath,
-          `
-PRAGMA foreign_keys = ON;
-INSERT INTO object_catalog (
-  id,
-  public_artifact_id,
-  tenant_id,
-  object_class,
-  created_at,
-  updated_at
-) VALUES (
-  'catalog-existing',
-  'artifact-existing',
-  'default',
-  'approval_transport_detail',
-  100,
-  100
-);
-${insertApprovalRequestSql('request-existing')}
-INSERT INTO approval_request_approvals (
-  id,
-  approval_request_id,
-  step_key,
-  side,
-  subject_type,
-  subject_id,
-  status,
-  method,
-  requested_at,
-  expires_at,
-  created_at,
-  updated_at,
-  last_notification_action,
-  last_notified_at,
-  notification_count
-) VALUES (
-  'approval-existing',
-  'request-existing',
-  'customer-owner',
-  'customer_data_owner',
-  'end_user',
-  'user-existing',
-  'pending',
-  'portal_confirm',
-  100,
-  200,
-  100,
-  100,
-  'initial',
-  101,
-  3
-);
-INSERT INTO elevation_grants (
-  id,
-  public_grant_id,
-  approval_request_id,
-  tenant_id,
-  status,
-  target_audience,
-  resource_class,
-  redaction_level,
-  scope_canonical,
-  scope_json,
-  requester_subject_type,
-  requester_subject_id,
-  actor_subject_type,
-  actor_subject_id,
-  issued_at,
-  expires_at,
-  created_at,
-  updated_at
-) VALUES (
-  'grant-existing',
-  'egr-existing',
-  'request-existing',
-  'default',
-  'active',
-  'admin-api',
-  'customer_profile',
-  'masked',
-  'surface=service_data&action=detail_read',
-  '{}',
-  'service_principal',
-  'approval-smoke',
-  'service_principal',
-  'approval-smoke',
-  100,
-  200,
-  100,
-  100
-);
-`
-        );
-
-        runMigrationFiles(sqlite3Path, dbPath, [directoryCatalogMigration]);
-
-        expect(
-          readSqlite(
-            sqlite3Path,
-            dbPath,
-            `SELECT "table"
-               FROM pragma_foreign_key_list('approval_requests')
-              WHERE "from" = 'detail_object_catalog_id';`
-          )
-        ).toBe('object_catalog_old');
-        expect(() =>
-          runSqlite(
-            sqlite3Path,
-            dbPath,
-            `PRAGMA foreign_keys = ON;${insertApprovalRequestSql('request-before-repair')}`
-          )
-        ).toThrow();
-
-        runSqlite(
-          sqlite3Path,
-          dbPath,
-          `PRAGMA foreign_keys = ON;\n${renderPortableMigrationSql(
-            readMigration(repairMigration),
-            'sqlite'
-          )}`
-        );
-
-        expect(findInvalidForeignKeyReferences(sqlite3Path, dbPath)).toEqual([]);
-        expect(
-          readSqlite(
-            sqlite3Path,
-            dbPath,
-            `SELECT "table"
-               FROM pragma_foreign_key_list('approval_requests')
-              WHERE "from" = 'detail_object_catalog_id';`
-          )
-        ).toBe('object_catalog');
-        expect(
-          readSqlite(
-            sqlite3Path,
-            dbPath,
-            `SELECT "table"
-               FROM pragma_foreign_key_list('approval_request_approvals')
-              WHERE "from" = 'approval_request_id';`
-          )
-        ).toBe('approval_requests');
-        expect(
-          readSqlite(
-            sqlite3Path,
-            dbPath,
-            `SELECT "table"
-               FROM pragma_foreign_key_list('elevation_grants')
-              WHERE "from" = 'approval_request_id';`
-          )
-        ).toBe('approval_requests');
-        expect(
-          readSqlite(
-            sqlite3Path,
-            dbPath,
-            "SELECT public_request_id FROM approval_requests WHERE id = 'request-existing';"
-          )
-        ).toBe('apr-request-existing');
-        expect(
-          readSqlite(
-            sqlite3Path,
-            dbPath,
-            `SELECT last_notification_action || ':' || last_notified_at || ':' || notification_count
-               FROM approval_request_approvals
-              WHERE id = 'approval-existing';`
-          )
-        ).toBe('initial:101:3');
-        expect(
-          readSqlite(
-            sqlite3Path,
-            dbPath,
-            "SELECT public_grant_id FROM elevation_grants WHERE id = 'grant-existing';"
-          )
-        ).toBe('egr-existing');
-        expect(
-          readSqlite(
-            sqlite3Path,
-            dbPath,
-            `SELECT COUNT(*)
-               FROM sqlite_master
-              WHERE type = 'table'
-                AND (name LIKE '%_old' OR name LIKE '%_repaired');`
-          )
-        ).toBe('0');
-        expect(
-          readSqlite(
-            sqlite3Path,
-            dbPath,
-            `SELECT COUNT(*)
-               FROM sqlite_master
-              WHERE type = 'index'
-                AND name IN (
-                  'idx_approval_requests_tenant_status_requested',
-                  'idx_approval_requests_investigation',
-                  'idx_approval_requests_requester',
-                  'idx_approval_requests_target',
-                  'idx_approval_requests_expires',
-                  'idx_approval_requests_detail_object_catalog',
-                  'idx_approval_request_approvals_unique_subject',
-                  'idx_approval_request_approvals_request_status',
-                  'idx_approval_request_approvals_subject',
-                  'idx_approval_request_approvals_expires',
-                  'idx_elevation_grants_tenant_status_issued',
-                  'idx_elevation_grants_request',
-                  'idx_elevation_grants_actor',
-                  'idx_elevation_grants_expires'
-                );`
-          )
-        ).toBe('14');
-
-        expect(() =>
-          runSqlite(
-            sqlite3Path,
-            dbPath,
-            `PRAGMA foreign_keys = ON;${insertApprovalRequestSql('request-after-repair')}`
-          )
-        ).not.toThrow();
-        expect(() =>
-          runSqlite(
-            sqlite3Path,
-            dbPath,
-            `PRAGMA foreign_keys = ON;${insertApprovalRequestSql(
-              'request-invalid-catalog',
-              'catalog-missing'
-            )}`
-          )
-        ).toThrow();
-
-        runSqlite(
-          sqlite3Path,
-          dbPath,
-          `PRAGMA foreign_keys = ON;
-UPDATE approval_requests
-   SET detail_object_catalog_id = 'catalog-existing'
- WHERE id = 'request-existing';
-DELETE FROM object_catalog WHERE id = 'catalog-existing';`
-        );
-        expect(
-          readSqlite(
-            sqlite3Path,
-            dbPath,
-            "SELECT detail_object_catalog_id IS NULL FROM approval_requests WHERE id = 'request-existing';"
-          )
-        ).toBe('1');
-        expect(readSqlite(sqlite3Path, dbPath, 'PRAGMA foreign_key_check;')).toBe('');
-      } finally {
-        rmSync(tempDir, { recursive: true, force: true });
-      }
-    },
-    sqliteMigrationApplyTimeoutMs
-  );
 
   it(
     'applies the unified identity mapping admin control-plane baseline in SQLite',
@@ -1505,29 +1328,14 @@ DELETE FROM object_catalog WHERE id = 'catalog-existing';`
     sqliteMigrationApplyTimeoutMs
   );
 
-  it('keeps unified identity mapping schema migrations annotated with schema-readiness IDs', () => {
-    const migrationSql = [
-      readMigration('008_unified_identity_canonical_schema.sql'),
-      readMigration('admin/007_identity_mapping_control_plane.sql'),
-    ].join('\n');
-    const migrationIds = new Set(migrationSql.match(/UIM-SCH-\d{3}/g) ?? []);
-    const expectedIds = [
-      ...Array.from({ length: 84 }, (_, index) => `UIM-SCH-${String(index + 1).padStart(3, '0')}`),
-      'UIM-SCH-088',
-      'UIM-SCH-089',
-      'UIM-SCH-090',
-      'UIM-SCH-091',
-      'UIM-SCH-092',
-      'UIM-SCH-093',
-      'UIM-SCH-094',
-      'UIM-SCH-095',
-    ];
+  it('retains unified identity migration provenance in semantic baseline evidence', () => {
+    const evidence = readFileSync(
+      join(rootMigrationsDir, 'semantic-baseline.evidence.json'),
+      'utf8'
+    );
 
-    expect([...migrationIds].sort()).toEqual(expectedIds.sort());
-    expect(migrationIds.has('UIM-SCH-032A')).toBe(false);
-    expect(migrationIds.has('UIM-SCH-085')).toBe(false);
-    expect(migrationIds.has('UIM-SCH-086')).toBe(false);
-    expect(migrationIds.has('UIM-SCH-087')).toBe(false);
+    expect(evidence).toContain('008_unified_identity_canonical_schema.sql');
+    expect(evidence).toContain('007_identity_mapping_control_plane.sql');
   });
 
   it('keeps PR6 canonical runtime cutover items closed in the readiness snapshot', () => {

@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-08-29",
+  "environment": "scaleout",
+  "scenario": "tenant-exclusive",
+  "profile": "accelerated-5k",
+  "runId": "phase1-20260829023720-edfbc538",
+  "evidenceStatus": "failed_unexpected_server_5xx_and_local_harness_interruption",
+  "startedAt": "2026-08-29T02:37:25.387Z",
+  "injectionFinishedAt": "2026-08-29T04:02:07.984Z",
+  "integrityVerifiedAt": "2026-08-29T04:48:44.065Z",
+  "submittedAccounts": 5000,
+  "createdAccounts": 5000,
+  "uniqueUserIds": 5000,
+  "attempts": 22356,
+  "immediate201": 1437,
+  "capacity503": 13649,
+  "registryPropagation503": 3456,
+  "runtimeBindingPropagation503": 0,
+  "unexpectedServer5xx": 4,
+  "terminalFailures": 0,
+  "integrity": {
+    "lostAccounts": 0,
+    "duplicateCoreAccounts": 0,
+    "duplicatePiiAccounts": 0,
+    "lookupRouteMismatches": 0,
+    "crossTenantWrites": 0,
+    "orphanD1Resources": 0,
+    "resourceMappingMismatches": 0,
+    "pendingAccountOperations": 0,
+    "pendingRoutingOutbox": 0,
+    "blockedCapacityOperations": 0,
+    "duplicateProvisioningDecisions": 0
+  },
+  "scaleOut": {
+    "coreBoundaryCrossings": 10,
+    "piiBoundaryCrossings": 10,
+    "corePhysicalAdditions": 10,
+    "piiPhysicalAdditions": 10,
+    "lookupPhysicalAdditions": 4,
+    "lookupUsedAssignmentTransitions": 1,
+    "provisionedD1Resources": 24,
+    "excessCoreProvisioning": 0,
+    "excessPiiProvisioning": 0,
+    "manualIntervention": 0
+  },
+  "readyLatencySeconds": {
+    "observedCount": 22,
+    "minimum": 38,
+    "p50": 61,
+    "p95": 118,
+    "maximum": 119,
+    "mean": 63.864
+  },
+  "predictiveLookupDecision": {
+    "decisionAt": "2026-08-29T04:11:01.000Z",
+    "readyAt": "2026-08-29T04:11:39.000Z",
+    "observedActiveRoutes": 53942,
+    "forecastNewRoutes": 342,
+    "projectedActiveRoutes": 54284,
+    "usableRoutesBeforeAddition": 52800,
+    "decisionToReadySeconds": 38
+  },
+  "diagnosticProbes": {
+    "scheduledAccounts": 1000,
+    "createdAccounts": 1000,
+    "attempts": 2664,
+    "capacity503": 1664,
+    "unexpectedServer5xx": 0,
+    "terminalFailures": 0
+  },
+  "limitations": [
+    "The local harness stopped at 4,500 accounts after the workstation filesystem reached ENOSPC and was resumed from its checkpoint.",
+    "Historical Workers exception logs were unavailable because Workers Observability was disabled during the four server 5xx responses.",
+    "This immutable run is not a publishable Phase 1 pass; a clean uninterrupted rerun remains required."
+  ],
+  "result": "failed",
+  "failedChecks": ["server_5xx_responses"]
+}

@@ -12,6 +12,9 @@ import type { Env } from '../../types/env';
 // Mock DurableObjectState
 class MockDurableObjectState implements Partial<DurableObjectState> {
   private _storage = new Map<string, unknown>();
+  private failPutKey: string | null = null;
+  listCallCount = 0;
+  putCallCount = 0;
   id!: DurableObjectId;
   storage: DurableObjectStorage;
 
@@ -21,9 +24,18 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
         return Promise.resolve(this._storage.get(key) as T | undefined);
       },
       put: (keyOrEntries: string | Record<string, unknown>, value?: unknown): Promise<void> => {
+        this.putCallCount++;
         if (typeof keyOrEntries === 'string') {
+          if (this.failPutKey === keyOrEntries) {
+            this.failPutKey = null;
+            return Promise.reject(new Error('simulated storage write failure'));
+          }
           this._storage.set(keyOrEntries, value);
         } else {
+          if (this.failPutKey && Object.hasOwn(keyOrEntries, this.failPutKey)) {
+            this.failPutKey = null;
+            return Promise.reject(new Error('simulated storage write failure'));
+          }
           Object.entries(keyOrEntries).forEach(([k, v]) => this._storage.set(k, v));
         }
         return Promise.resolve();
@@ -46,6 +58,7 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
         return Promise.resolve();
       },
       list: <T>(options?: DurableObjectListOptions): Promise<Map<string, T>> => {
+        this.listCallCount++;
         const result = new Map<string, T>();
         const prefix = options?.prefix || '';
         for (const [key, value] of this._storage) {
@@ -88,21 +101,33 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
   waitUntil(): void {
     // No-op for testing
   }
+
+  failNextPut(key: string): void {
+    this.failPutKey = key;
+  }
+
+  seed(key: string, value: unknown): void {
+    this._storage.set(key, value);
+  }
 }
 
 // Mock Env
+const createMockD1 = () =>
+  ({
+    prepare: () => ({
+      bind: () => ({
+        run: async () => ({ success: true }),
+        first: async () => null,
+        all: async () => ({ results: [] }),
+      }),
+    }),
+    batch: async () => [],
+  }) as unknown as D1Database;
+
 const createMockEnv = (): Env =>
   ({
-    DB: {
-      prepare: () => ({
-        bind: () => ({
-          run: async () => ({ success: true }),
-          first: async () => null,
-          all: async () => ({ results: [] }),
-        }),
-      }),
-      batch: async () => [],
-    },
+    DB: createMockD1(),
+    DB_PII: createMockD1(),
   }) as unknown as Env;
 
 describe('RefreshTokenRotator V2', () => {
@@ -123,6 +148,217 @@ describe('RefreshTokenRotator V2', () => {
   });
 
   describe('Token Family Creation', () => {
+    it('does not enumerate all families on cold start and lazily restores one family', async () => {
+      await rotator.createFamilyRpc({
+        jti: 'cold-jti',
+        userId: 'cold-user',
+        clientId: 'client_1',
+        tenantId: 'default',
+        scope: 'openid',
+        ttl: 2592000,
+        generation: 1,
+        shardIndex: 0,
+      });
+
+      const restarted = new RefreshTokenRotator(
+        mockState as unknown as DurableObjectState,
+        mockEnv
+      );
+      const restored = await restarted.getFamilyRpc('cold-user');
+
+      expect(restored).toMatchObject({ user_id: 'cold-user', last_jti: 'cold-jti' });
+      expect(mockState.listCallCount).toBe(0);
+      expect(mockState.putCallCount).toBe(1);
+    });
+
+    it('rejects invalid family input before writing any state', async () => {
+      await expect(
+        rotator.createFamilyRpc({
+          jti: 'invalid-ttl-jti',
+          userId: 'invalid-ttl-user',
+          clientId: 'client_1',
+          tenantId: 'default',
+          scope: 'openid',
+          ttl: 0,
+          generation: 1,
+          shardIndex: 0,
+        })
+      ).rejects.toThrow('Invalid refresh token family input');
+      expect(mockState.putCallCount).toBe(0);
+    });
+
+    it('does not expose a family in memory when its durable create fails', async () => {
+      mockState.failNextPut('f:undurable-user');
+
+      await expect(
+        rotator.createFamilyRpc({
+          jti: 'undurable-jti',
+          userId: 'undurable-user',
+          clientId: 'client_1',
+          tenantId: 'default',
+          scope: 'openid',
+          ttl: 2592000,
+        })
+      ).rejects.toThrow('simulated storage write failure');
+      await expect(rotator.getFamilyRpc('undurable-user')).resolves.toBeNull();
+    });
+
+    it('does not retain tenant context when its durable write fails', async () => {
+      mockState.failNextPut('m:tenantId');
+
+      await expect(
+        rotator.createFamilyRpc({
+          jti: 'failed-tenant-jti',
+          userId: 'failed-tenant-user',
+          clientId: 'client_1',
+          tenantId: 'tenant-a',
+          scope: 'openid',
+          ttl: 2592000,
+        })
+      ).rejects.toThrow('simulated storage write failure');
+
+      await expect(
+        rotator.createFamilyRpc({
+          jti: 'recovered-tenant-jti',
+          userId: 'recovered-tenant-user',
+          clientId: 'client_1',
+          tenantId: 'tenant-b',
+          scope: 'openid',
+          ttl: 2592000,
+        })
+      ).resolves.toMatchObject({ version: 1 });
+    });
+
+    it('does not retain shard metadata when its durable write fails', async () => {
+      mockState.failNextPut('m:generation');
+
+      await expect(
+        rotator.createFamilyRpc({
+          jti: 'failed-shard-jti',
+          userId: 'failed-shard-user',
+          clientId: 'client_1',
+          tenantId: 'default',
+          scope: 'openid',
+          ttl: 2592000,
+          generation: 1,
+          shardIndex: 0,
+        })
+      ).rejects.toThrow('simulated storage write failure');
+
+      await expect(
+        rotator.createFamilyRpc({
+          jti: 'recovered-shard-jti',
+          userId: 'recovered-shard-user',
+          clientId: 'client_1',
+          tenantId: 'default',
+          scope: 'openid',
+          ttl: 2592000,
+          generation: 2,
+          shardIndex: 1,
+        })
+      ).resolves.toMatchObject({ version: 1 });
+    });
+
+    it('retains the prior cached version when a rotation write fails', async () => {
+      await rotator.createFamilyRpc({
+        jti: 'durable-v1',
+        userId: 'durable-user',
+        clientId: 'client_1',
+        tenantId: 'default',
+        scope: 'openid',
+        ttl: 2592000,
+      });
+      mockState.failNextPut('f:durable-user');
+
+      await expect(
+        rotator.rotateRpc({
+          incomingVersion: 1,
+          incomingJti: 'durable-v1',
+          userId: 'durable-user',
+          clientId: 'client_1',
+          tenantId: 'default',
+        })
+      ).rejects.toThrow('simulated storage write failure');
+      await expect(rotator.validateRpc('durable-user', 1, 'client_1')).resolves.toMatchObject({
+        valid: true,
+      });
+      await expect(rotator.validateRpc('durable-user', 2, 'client_1')).resolves.toEqual({
+        valid: false,
+      });
+    });
+
+    it('rejects a request routed to an existing shard with different metadata', async () => {
+      await rotator.createFamilyRpc({
+        jti: 'shard-v1',
+        userId: 'shard-user',
+        clientId: 'client_1',
+        tenantId: 'default',
+        scope: 'openid',
+        ttl: 2592000,
+        generation: 1,
+        shardIndex: 0,
+      });
+
+      await expect(
+        rotator.createFamilyRpc({
+          jti: 'wrong-shard',
+          userId: 'other-user',
+          clientId: 'client_1',
+          tenantId: 'default',
+          scope: 'openid',
+          ttl: 2592000,
+          generation: 2,
+          shardIndex: 0,
+        })
+      ).rejects.toThrow('Refresh token shard metadata mismatch');
+      await expect(rotator.getFamilyRpc('other-user')).resolves.toBeNull();
+    });
+
+    it('fails closed when a lazily loaded family does not match its storage key', async () => {
+      const corruptedState = new MockDurableObjectState();
+      corruptedState.seed('m:tenantId', 'default');
+      corruptedState.seed('f:expected-user', {
+        tenant_id: 'default',
+        version: 1,
+        last_jti: 'corrupt-jti',
+        last_used_at: Date.now(),
+        expires_at: Date.now() + 60_000,
+        user_id: 'different-user',
+        client_id: 'client_1',
+        allowed_scope: 'openid',
+      });
+      const corruptedRotator = new RefreshTokenRotator(
+        corruptedState as unknown as DurableObjectState,
+        mockEnv
+      );
+
+      await expect(corruptedRotator.getFamilyRpc('expected-user')).rejects.toThrow(
+        'refresh_token_family_storage_invalid'
+      );
+    });
+
+    it('fails closed when persisted families have no tenant metadata', async () => {
+      const missingTenantState = new MockDurableObjectState();
+      missingTenantState.seed('f:expected-user', {
+        tenant_id: 'default',
+        version: 1,
+        last_jti: 'legacy-jti',
+        last_used_at: Date.now(),
+        expires_at: Date.now() + 60_000,
+        user_id: 'expected-user',
+        client_id: 'client_1',
+        allowed_scope: 'openid',
+      });
+      const missingTenantRotator = new RefreshTokenRotator(
+        missingTenantState as unknown as DurableObjectState,
+        mockEnv
+      );
+
+      await expect(missingTenantRotator.getFamilyRpc('expected-user')).rejects.toThrow(
+        'refresh_token_family_storage_invalid'
+      );
+    });
+
     it('should create new token family successfully', async () => {
       const request = new Request('http://localhost/family', {
         method: 'POST',
@@ -214,7 +450,7 @@ describe('RefreshTokenRotator V2', () => {
         jti: 'tenant-bound-jti',
         userId: 'user_123',
         clientId: 'client_1',
-        tenantId: 'tenant_a',
+        tenantId: 'tenant-a',
         scope: 'openid',
         ttl: 2592000,
       });
@@ -225,7 +461,7 @@ describe('RefreshTokenRotator V2', () => {
           incomingJti: 'tenant-bound-jti',
           userId: 'user_123',
           clientId: 'client_1',
-          tenantId: 'tenant_b',
+          tenantId: 'tenant-b',
         })
       ).rejects.toThrow('Tenant mismatch');
     });

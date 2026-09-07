@@ -607,6 +607,11 @@ describe('Token Claim Evaluator Service', () => {
         actions_json: JSON.stringify([
           { type: 'add_claim', claim_name: 'sub', claim_value: 'hacked_sub' },
           { type: 'add_claim', claim_name: 'iss', claim_value: 'hacked_iss' },
+          { type: 'add_claim', claim_name: 'scope', claim_value: 'openid admin:all' },
+          { type: 'add_claim', claim_name: 'client_id', claim_value: 'other-client' },
+          { type: 'add_claim', claim_name: 'cnf', claim_value: { jkt: 'attacker' } },
+          { type: 'add_claim', claim_name: 'sid', claim_value: 'other-session' },
+          { type: 'add_claim', claim_name: 'token_use', claim_value: 'refresh' },
           { type: 'add_claim', claim_name: 'valid_claim', claim_value: 'allowed' },
         ]),
         priority: 100,
@@ -623,6 +628,11 @@ describe('Token Claim Evaluator Service', () => {
       expect(result.claims_to_add).toEqual({ valid_claim: 'allowed' });
       expect(result.claims_to_add).not.toHaveProperty('sub');
       expect(result.claims_to_add).not.toHaveProperty('iss');
+      expect(result.claims_to_add).not.toHaveProperty('scope');
+      expect(result.claims_to_add).not.toHaveProperty('client_id');
+      expect(result.claims_to_add).not.toHaveProperty('cnf');
+      expect(result.claims_to_add).not.toHaveProperty('sid');
+      expect(result.claims_to_add).not.toHaveProperty('token_use');
     });
   });
 

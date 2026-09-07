@@ -68,11 +68,11 @@ export interface DurableObjectStorageListOptions {
 /**
  * Mock WorkerEntrypoint base class
  */
-export class WorkerEntrypoint<Env = unknown> {
+export class WorkerEntrypoint<Env = unknown, Props = Record<string, never>> {
   protected env: Env;
-  protected ctx: ExecutionContext;
+  protected ctx: ExecutionContext<Props>;
 
-  constructor(ctx: ExecutionContext, env: Env) {
+  constructor(ctx: ExecutionContext<Props>, env: Env) {
     this.ctx = ctx;
     this.env = env;
   }
@@ -81,7 +81,8 @@ export class WorkerEntrypoint<Env = unknown> {
 /**
  * Mock ExecutionContext
  */
-export interface ExecutionContext {
+export interface ExecutionContext<Props = Record<string, never>> {
+  props: Props;
   waitUntil(promise: Promise<unknown>): void;
   passThroughOnException(): void;
 }

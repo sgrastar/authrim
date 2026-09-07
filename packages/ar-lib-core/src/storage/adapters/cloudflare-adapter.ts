@@ -5,7 +5,7 @@
  * Integrates D1, KV, and Durable Objects with intelligent routing logic.
  *
  * Routing Strategy:
- * - session:* → SessionStore Durable Object (region-sharded hot path + cold persistence adapter)
+ * - session:* → SessionStore Durable Object (authoritative; no D1 mirror or fallback)
  * - client:* → D1 database + KV cache (read-through cache pattern)
  * - user:* → D1 database
  * - authcode:* → AuthorizationCodeStore Durable Object (one-time use guarantee)
@@ -299,78 +299,49 @@ export class CloudflareStorageAdapter implements IStorageAdapter {
   }
 
   /**
-   * Get from D1 with KV cache (read-through cache pattern)
+   * Get security-sensitive client metadata directly from D1.
    */
   private async getFromD1WithKVCache(key: string): Promise<string | null> {
-    // 1. Try KV cache first (CLIENTS_CACHE is now required)
-    if (!this.env.CLIENTS_CACHE) {
-      throw new Error('CLIENTS_CACHE binding is required - CLIENTS KV has been deprecated');
-    }
-    const cached = await this.env.CLIENTS_CACHE.get(key);
-    if (cached) {
-      return cached;
-    }
-
-    // 2. Cache miss, query D1
-    const value = await this.getFromD1(key);
-
-    // 3. Update cache (1 hour TTL)
-    if (value && this.env.CLIENTS_CACHE) {
-      await this.env.CLIENTS_CACHE.put(key, value, { expirationTtl: 3600 });
-    }
-
-    return value;
+    // OAuth client security metadata must be strongly consistent. KV cannot
+    // atomically coordinate a read-through fill with a concurrent D1 mutation,
+    // so an old redirect URI or secret could otherwise be resurrected.
+    return this.getFromD1(key);
   }
 
   /**
-   * Set to D1 with KV cache invalidation
-   *
-   * Strategy: Delete-Then-Write
-   * 1. Delete KV cache first to prevent stale cache reads
-   * 2. Then update D1 (source of truth)
-   *
-   * This ensures that even if D1 write fails, the cache is invalidated,
-   * so future reads will fetch fresh data from D1 instead of stale cache.
+   * Set client metadata in D1 and remove any legacy KV entry.
    */
   private async setToD1WithKVCache(key: string, value: string): Promise<void> {
-    // Step 1: Invalidate KV cache BEFORE updating D1
+    // Update the source of truth before invalidating any legacy cache entry.
+    await this.setToD1(key, value);
+
     if (this.env.CLIENTS_CACHE) {
       try {
         await this.env.CLIENTS_CACHE.delete(key);
       } catch (error) {
         // Cache deletion failure should not block D1 write
         // D1 is the source of truth
-        log.warn('KV cache delete failed, proceeding with D1 write', { key }, error as Error);
+        log.warn('KV cache delete failed after D1 write', { key }, error as Error);
       }
     }
-
-    // Step 2: Update D1 (source of truth)
-    await this.setToD1(key, value);
   }
 
   /**
-   * Delete from D1 with KV cache invalidation
-   *
-   * Strategy: Delete-Then-Write (same as setToD1WithKVCache)
-   * 1. Delete KV cache first to prevent stale cache reads
-   * 2. Then delete from D1 (source of truth)
-   *
-   * This ensures cache consistency even if D1 deletion fails.
+   * Delete client metadata from D1 and remove any legacy KV entry.
    */
   private async deleteFromD1WithKVCache(key: string): Promise<void> {
-    // Step 1: Invalidate KV cache BEFORE deleting from D1
+    // Delete the source of truth before invalidating any legacy cache entry.
+    await this.deleteFromD1(key);
+
     if (this.env.CLIENTS_CACHE) {
       try {
         await this.env.CLIENTS_CACHE.delete(key);
       } catch (error) {
         // Cache deletion failure should not block D1 delete
         // D1 is the source of truth
-        log.warn('KV cache delete failed, proceeding with D1 delete', { key }, error as Error);
+        log.warn('KV cache delete failed after D1 delete', { key }, error as Error);
       }
     }
-
-    // Step 2: Delete from D1 (source of truth)
-    await this.deleteFromD1(key);
   }
 
   /**
@@ -939,7 +910,7 @@ export class ClientStore implements IClientStore {
 }
 
 /**
- * SessionStore implementation (Durable Object + D1)
+ * SessionStore implementation backed only by the authoritative Durable Object
  */
 export class SessionStore implements ISessionStore {
   constructor(
@@ -1033,6 +1004,7 @@ export class PasskeyStore implements IPasskeyStore {
       tenant_id: tenantId,
       user_id: passkey.user_id!,
       credential_id: passkey.credential_id!,
+      rp_id: passkey.rp_id,
       public_key: passkey.public_key!,
       counter: passkey.counter || 0,
       transports: passkey.transports,
@@ -1044,14 +1016,15 @@ export class PasskeyStore implements IPasskeyStore {
 
     await this.adapter.execute(
       `INSERT INTO passkeys (
-        id, tenant_id, user_id, credential_id, public_key, counter, transports,
+        id, tenant_id, user_id, credential_id, rp_id, public_key, counter, transports,
         device_name, aaguid, created_at, last_used_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         newPasskey.id,
         tenantId,
         newPasskey.user_id,
         newPasskey.credential_id,
+        newPasskey.rp_id ?? null,
         newPasskey.public_key,
         newPasskey.counter,
         newPasskey.transports ? JSON.stringify(newPasskey.transports) : null,

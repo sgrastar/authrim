@@ -193,6 +193,8 @@ export interface Translations {
   'keys.generating': string;
   'keys.generated': string;
   'keys.existing': string;
+  'keys.existingWarning': string;
+  'keys.replaced': string;
   'keys.error': string;
   'keys.regeneratePrompt': string;
   'keys.regenerateWarning': string;
@@ -322,7 +324,6 @@ export interface Translations {
   'delete.title': string;
   'delete.prompt': string;
   'delete.confirm': string;
-  'delete.confirmWarning': string;
   'delete.deleting': string;
   'delete.deleted': string;
   'delete.error': string;
@@ -334,6 +335,9 @@ export interface Translations {
   'delete.kvNamespaces': string;
   'delete.queues': string;
   'delete.r2Buckets': string;
+  'delete.pages': string;
+  'delete.partialSuccess': string;
+  'delete.inventoryUnavailable': string;
 
   // Info command
   'info.title': string;
@@ -401,6 +405,23 @@ export interface Translations {
   'web.darkMode': string;
   'web.lightMode': string;
   'web.systemMode': string;
+
+  // Initial deployment recovery
+  'web.envDetail.initialDeployRecoveryTitle': string;
+  'web.envDetail.initialDeployRecoveryDesc': string;
+  'web.envDetail.initialDeployRecoveryAction': string;
+  'web.envDetail.initialDeployRecoveryVerified': string;
+  'web.envDetail.initialDeployRecoveryStageMigrations': string;
+  'web.envDetail.initialDeployRecoveryStageControlPlane': string;
+  'web.envDetail.initialDeployRecoveryStageWorkers': string;
+  'web.envDetail.initialDeployRecoveryStageVerification': string;
+  'web.envDetail.initialDeployRecoveryResources': string;
+  'web.envDetail.initialDeployRecoverySchema': string;
+  'web.envDetail.initialDeployRecoveryWorkers': string;
+  'web.envDetail.initialDeployRecoveryRecreate': string;
+  'web.envDetail.initialDeployRecoveryManifestChanged': string;
+  'web.envDetail.initialDeployRecoveryBlocked': string;
+  'web.envDetail.initialDeployRecoveryTokenRequired': string;
 
   // Web UI steps
   'web.step.environment': string;

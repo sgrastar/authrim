@@ -12,7 +12,6 @@
 	let tenants = $derived(tenantStore.tenants);
 	let singleTenantMode = $derived(tenantStore.singleTenantMode);
 	let singleTenantReason = $derived(tenantStore.singleTenantReason);
-	let tenantD1Pool = $derived(tenantStore.tenantD1Pool);
 	let loading = $state(!tenantStore.loaded);
 	let error = $state('');
 
@@ -70,11 +69,19 @@
 	<AdminPageHeader title={$LL.admin_tenants_title()} description={$LL.admin_tenants_description()}>
 		{#snippet actions()}
 			{#if !singleTenantMode}
+				<a href="/admin/tenants/clone" class="btn btn-secondary">
+					<i class="i-ph-copy"></i>
+					{$LL.admin_tenants_clone_action()}
+				</a>
 				<a href="/admin/tenants/new" class="btn btn-primary">
 					<i class="i-ph-plus"></i>
 					{$LL.admin_tenants_add()}
 				</a>
 			{:else}
+				<button class="btn btn-secondary" disabled title={$LL.admin_tenants_add_disabled_title()}>
+					<i class="i-ph-copy"></i>
+					{$LL.admin_tenants_clone_action()}
+				</button>
 				<button class="btn btn-primary" disabled title={$LL.admin_tenants_add_disabled_title()}>
 					<i class="i-ph-plus"></i>
 					{$LL.admin_tenants_add()}
@@ -91,21 +98,6 @@
 				<p>
 					{singleTenantReason ?? $LL.admin_tenants_single_mode_fallback()}
 					{$LL.admin_tenants_single_mode_setup_hint()}
-				</p>
-			</div>
-		</div>
-	{/if}
-
-	{#if tenantD1Pool?.enabled}
-		<div class="alert alert-info">
-			<i class="i-ph-database"></i>
-			<div>
-				<strong>{$LL.admin_tenants_d1_slots()}</strong>
-				<p>
-					{$LL.admin_tenants_d1_slots_available({
-						available: tenantD1Pool.available_slots ?? 0,
-						capacity: tenantD1Pool.capacity ?? 0
-					})}
 				</p>
 			</div>
 		</div>

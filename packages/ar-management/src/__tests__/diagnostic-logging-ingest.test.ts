@@ -79,7 +79,12 @@ function createClient(overrides: Partial<OAuthClient> = {}): OAuthClient {
     backchannel_client_notification_endpoint: null,
     backchannel_authentication_request_signing_alg: null,
     backchannel_user_code_parameter: false,
+    token_endpoint_auth_signing_alg: null,
+    id_token_signed_response_alg: null,
     userinfo_signed_response_alg: null,
+    authorization_signed_response_alg: null,
+    authorization_encrypted_response_alg: null,
+    authorization_encrypted_response_enc: null,
     backchannel_logout_uri: null,
     backchannel_logout_session_required: false,
     frontchannel_logout_uri: null,
@@ -161,7 +166,7 @@ describe('diagnostic logging ingest', () => {
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toMatchObject({
       error: 'invalid_client',
-      error_description: 'invalid_client_secret',
+      error_description: 'validation_error',
     });
     expect(bucket.store.size).toBe(0);
   });

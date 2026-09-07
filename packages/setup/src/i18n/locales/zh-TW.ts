@@ -31,7 +31,7 @@ const zhTW: Translations = {
 
   // Main menu
   'menu.prompt': '您想做什麼？',
-  'menu.quick': '快速設定（5 分鐘）',
+  'menu.quick': '快速設定',
   'menu.quickDesc': '使用最少配置部署 Authrim',
   'menu.custom': '自訂設定',
   'menu.customDesc': '逐步配置所有選項',
@@ -103,6 +103,8 @@ const zhTW: Translations = {
   'prereq.notLoggedIn': '尚未登入 Cloudflare',
   'prereq.loginHint': '執行以下命令進行驗證：',
   'prereq.loggedInAs': '已連接到 Cloudflare（{{email}}）',
+  'prereq.authenticated': '已連接到 Cloudflare',
+  'prereq.checkFailed': '無法檢查 wrangler',
   'prereq.accountId': '帳戶 ID：{{accountId}}',
 
   // Environment
@@ -178,6 +180,12 @@ const zhTW: Translations = {
   'domain.zoneCheckSkipped': '已跳過區域檢查，繼續設定...',
   'domain.continueWithoutZone': '不驗證區域繼續？',
   'domain.configureBinding': '為 Workers 設定自訂網域綁定',
+  'domain.configureBindingDesc':
+    '將基礎網域直接指派給路由 Worker，由 Cloudflare 管理 DNS 和 TLS 憑證。租戶子網域仍使用萬用字元路由。',
+  'domain.customHostnamesDesc': '使用 Cloudflare Custom Hostnames 自動設定租戶自訂網域。',
+  'domain.customHostnamesPrivacy':
+    '權杖只會儲存在本機密鑰檔案並作為 Worker 密鑰上傳；不會儲存在 D1、KV 或安裝設定中。',
+  'domain.customHostnamesPrompt': '啟用 Cloudflare Custom Hostnames 自動化？',
   'domain.action.retryCheck': '重新檢查',
   'domain.action.reloadPage': '重新載入頁面',
   'domain.action.openCloudflareDashboard': '開啟 Cloudflare 控制台',
@@ -217,6 +225,11 @@ const zhTW: Translations = {
   'domain.apiDomain': 'API / 發行者網域（例如：auth.example.com）',
   'domain.loginUiDomain': '登入 UI 網域（按 Enter 跳過）',
   'domain.adminUiDomain': '管理 UI 網域（按 Enter 跳過）',
+  'domain.baseDomainDepthError':
+    'Base Domain 必須是租戶 URL 使用的父網域。「{{hostname}}」在註冊網域之前包含過多標籤。',
+  'domain.uiDomainDepthError': '{{label}} 網域「{{hostname}}」對標準租戶網域模型而言層級過深。',
+  'domain.suggestedHost': '建議的主機名：{{hostname}}',
+  'domain.uiRequiresOwnRoute': '{{label}} 自訂網域需要獨立的 Worker 路由。',
   'domain.enterDomains': '輸入自訂網域（留空以使用 Cloudflare 預設值）',
   'domain.singleTenantNote': '在單租戶模式中，發行者 URL = API 網域',
   'domain.usingWorkersDev': '（使用 Cloudflare workers.dev 網域）',
@@ -230,9 +243,9 @@ const zhTW: Translations = {
   // Database
   'db.title': '資料庫配置',
   'db.regionWarning': '資料庫地區建立後無法變更。',
-  'db.coreDescription': 'Core DB：儲存 OAuth 用戶端、權杖、工作階段、稽核日誌',
+  'db.coreDescription': '平台資料庫：儲存平台中繼資料與非 PII 稽核日誌',
   'db.coreRegion': 'Core 資料庫地區',
-  'db.piiDescription': 'PII DB：儲存使用者設定檔、憑證、個人資料',
+  'db.piiDescription': '平台 PII 資料庫：儲存 PII 稽核與匿名化資料',
   'db.piiNote': '請考慮您的資料保護要求。',
   'db.piiRegion': 'PII 資料庫地區',
   'db.creating': '正在建立資料庫...',
@@ -265,6 +278,7 @@ const zhTW: Translations = {
   'keys.generated': '金鑰已產生（{{path}}）',
   'keys.existing': '環境「{{env}}」的金鑰已存在',
   'keys.existingWarning': '現有金鑰將被覆寫。',
+  'keys.replaced': '確認環境名稱可用後，已取代現有金鑰。',
   'keys.error': '產生金鑰失敗',
   'keys.regeneratePrompt': '重新產生金鑰？',
   'keys.regenerateWarning': '這將使所有現有權杖失效！',
@@ -315,6 +329,15 @@ const zhTW: Translations = {
   'config.shards': '個分片',
   'config.sec': '秒',
   'config.automatic': '自動',
+  'config.d1Routing': 'D1 路由：',
+  'config.placement': '放置策略：',
+  'config.provisioning': '資源佈建：',
+  'config.uiEnvNoApi': '設定 API URL 後將建立 ui.env。',
+  'config.wranglerConfigsSaved': '已儲存 {{count}} 個 wrangler.toml 主設定',
+  'config.wranglerConfigsPartial': '部分 wrangler 設定無法儲存',
+  'config.wranglerConfigsSyncing': '正在將 wrangler 設定同步到套件...',
+  'config.wranglerConfigsSynced': '已將 wrangler 設定同步到 {{count}} 個元件',
+  'config.wranglerConfigsSyncFailed': 'wrangler 設定同步失敗',
 
   // Deploy
   'deploy.prompt': '使用此配置開始設定？',
@@ -344,6 +367,8 @@ const zhTW: Translations = {
   'deploy.wranglerKeep': '📝 保留手動變更（按原樣部署）',
   'deploy.wranglerBackup': '💾 備份並使用主版本覆寫',
   'deploy.wranglerOverwrite': '⚠️  使用主版本覆寫（遺失變更）',
+  'deploy.initialProvisioningFailed':
+    'Cloudflare 資源佈建未完成。未建立環境鎖定；請重新執行 init 以安全恢復。',
 
   // Email provider
   'email.title': '電子郵件提供者',
@@ -399,15 +424,22 @@ const zhTW: Translations = {
   // Cloudflare API Token
   'cf.apiTokenPrompt': '輸入 Cloudflare API 權杖',
   'cf.apiTokenValidation': '請輸入有效的 API 權杖',
-
-  // OIDC Profile
-  'profile.prompt': '選擇 OIDC 設定檔',
-  'profile.basicOp': 'Basic OP（標準 OIDC 提供者）',
-  'profile.basicOpDesc': '標準 OIDC 功能',
-  'profile.fapiRw': 'FAPI Read-Write（金融級）',
-  'profile.fapiRwDesc': '符合 FAPI 1.0 Read-Write 安全設定檔',
-  'profile.fapi2Security': 'FAPI 2.0 Security Profile',
-  'profile.fapi2SecurityDesc': '符合 FAPI 2.0 安全設定檔（最高安全性）',
+  'cf.apiTokenCreationMethod': '您想如何建立 API 權杖？',
+  'cf.apiTokenCreateFromLink': '從預設連結建立（建議）',
+  'cf.apiTokenCreateFromLinkDesc': '開啟 Cloudflare，所需權限和區域已預先選取',
+  'cf.apiTokenCreateManually': '手動建立',
+  'cf.apiTokenCreateManuallyDesc': '查看所需權限並自行設定權杖',
+  'cf.apiTokenTemplateUrl': 'Cloudflare 權杖建立 URL：',
+  'cf.apiTokenTemplateOpenPrompt': '按 Enter 在瀏覽器中開啟 Cloudflare',
+  'cf.apiTokenTemplateOpened': '已開啟 Cloudflare 權杖建立頁面',
+  'cf.apiTokenTemplateOpenFailed': '無法開啟瀏覽器。請手動開啟下方的 URL。',
+  'cf.apiTokenManualTitle': '請使用以下設定建立使用者 API 權杖：',
+  'cf.apiTokenManualType': '使用 API Token，不要使用 Global API Key。',
+  'cf.apiTokenManualPermission': '權限：Zone > SSL and Certificates > Edit',
+  'cf.apiTokenManualResource': '區域資源：Include > Specific zone > {{zone}}',
+  'cf.apiTokenManualLeastPrivilege': '不要新增無關的權限或區域。',
+  'cf.apiTokenSecretOnce': '權杖密鑰只顯示一次。離開 Cloudflare 前請複製。',
+  'cf.apiTokenSelectedZone': '此環境使用的區域',
 
   // Tenant configuration
   'tenant.title': '租戶模式',
@@ -425,6 +457,17 @@ const zhTW: Translations = {
   'tenant.defaultTenantPrompt': '預設租戶名稱（識別碼）',
   'tenant.defaultTenantValidation': '僅允許小寫字母、數字和連字符',
   'tenant.displayNamePrompt': '預設租戶顯示名稱',
+  'tenant.domainSetupHint': '留空則在單一租戶模式下使用 workers.dev。',
+  'tenant.customDomainExamples': '使用自訂網域時：',
+  'tenant.nakedDomainExample': 'https://example.com（不含租戶子網域的 issuer）',
+  'tenant.subdomainExample': 'https://acme.example.com（包含租戶子網域的 issuer）',
+  'tenant.idRules':
+    '租戶 ID 長度必須為 1–63 個字元，以小寫字母開頭，且只能包含小寫字母、數字和連字號。',
+  'tenant.randomIdHint': '隨機租戶 ID 可避免在 issuer URL 中顯示客戶或企業名稱。',
+  'tenant.randomIdPrompt': '產生隨機租戶 ID？（{{id}}）',
+  'tenant.initialDisplayName': '初始租戶',
+  'tenant.nakedDomainPrompt': '將基礎網域用作主要租戶的 issuer？',
+  'tenant.primaryTenantPrompt': '基礎網域使用的主要租戶 ID（留空則使用初始租戶）',
   'tenant.singleTenantTitle': '單租戶 URL 配置',
   'tenant.singleTenantNote1': '在單租戶模式中：',
   'tenant.singleTenantNote2': '發行者 URL = API 自訂網域（或 workers.dev 備援）',
@@ -458,7 +501,7 @@ const zhTW: Translations = {
   // Feature flags
   'features.title': '功能旗標',
   'features.queuePrompt': '啟用 Cloudflare Queues？（用於稽核日誌）',
-  'features.r2Prompt': '啟用 Cloudflare R2？（用於頭像）',
+  'features.r2Prompt': '啟用 Cloudflare R2 物件儲存空間？',
   'features.queue': '佇列：',
   'features.r2': 'R2：',
 
@@ -507,6 +550,14 @@ const zhTW: Translations = {
   'complete.urls': 'URL：',
   'complete.configLocation': '配置：',
   'complete.keysLocation': '金鑰：',
+  'complete.createdResources': '已建立的資源：',
+  'complete.generatedFiles': '已產生的檔案：',
+  'complete.automaticStep1': '1. 套用綱要並部署完整版本：',
+  'complete.automaticStep2': '2. 出現提示時，建立並輸入一次性 Cloudflare 引導令牌。',
+  'complete.automaticStep2Detail': 'Setup 會將分割的子令牌直接註冊到 Control，然後撤銷引導令牌。',
+  'complete.manualStep1': '1. 使用目前 Wrangler OAuth 登入套用綱要並部署：',
+  'complete.manualStep2': '2. 使用 Setup 執行 Admin 要求的待處理資源佈建作業。',
+  'complete.manualStep2Detail': '自動資源佈建已關閉；Control 不會儲存 Cloudflare API 令牌。',
 
   // Resource provisioning
   'resource.provisioning': '正在佈建 {{resource}}...',
@@ -564,6 +615,8 @@ const zhTW: Translations = {
   // Common
   'common.yes': '是',
   'common.no': '否',
+  'common.example': '範例',
+  'common.comingSoon': '即將推出',
   'common.continue': '繼續',
   'common.cancel': '取消',
   'common.skip': '跳過',
@@ -606,7 +659,6 @@ const zhTW: Translations = {
   'delete.prompt': '選擇要刪除的資源',
   'delete.confirm': '您確定要刪除「{{env}}」嗎？',
   'delete.confirmPermanent': '⚠️  這將永久刪除「{{env}}」的所有資源。繼續嗎？',
-  'delete.confirmWarning': '此操作無法復原！',
   'delete.deleting': '正在刪除 {{resource}}...',
   'delete.deleted': '{{resource}} 已刪除',
   'delete.error': '刪除 {{resource}} 失敗',
@@ -618,6 +670,9 @@ const zhTW: Translations = {
   'delete.kvNamespaces': 'KV 命名空間',
   'delete.queues': '佇列',
   'delete.r2Buckets': 'R2 儲存貯體',
+  'delete.pages': 'Pages 專案',
+  'delete.partialSuccess': '已刪除所選資源，並保留其餘環境狀態',
+  'delete.inventoryUnavailable': '無法驗證 Cloudflare 資源清單，因此未開始刪除',
 
   // Info command
   'info.title': '環境資訊',
@@ -761,16 +816,64 @@ const zhTW: Translations = {
   'web.db.name': '名稱',
   'web.db.region': '地區',
   'web.db.regionAuto': '自動（最近）',
-  'web.db.storageProfileTitle': '儲存部署設定檔',
-  'web.db.storageProfileDesc': '選擇此部署中使用者 core/PII 資料的放置方式。',
-  'web.db.sharedD1Title': '共用 D1',
-  'web.db.sharedD1Desc': '整個部署共用一個 core D1 與一個 PII D1。設定成本最低，也是預設路徑。',
-  'web.db.tenantD1Title': '租戶 D1',
-  'web.db.tenantD1Desc': '每個租戶使用一組 core/PII D1。租戶啟用前需要先完成租戶資料庫佈建。',
-  'web.db.preallocatedSlotsTitle': '預先配置的租戶槽位',
-  'web.db.preallocatedSlotsDesc': '每個租戶槽位會建立兩個 D1 資料庫：core 和 PII。',
-  'web.db.slotsLabel': '槽位',
-  'web.db.slotsHelp': '預設值為 3。最多 500 個槽位。',
+  'web.db.controlPlaneTitle': 'D1 Control Plane',
+  'web.db.controlPlaneDesc': '初始化控制平面和首批租戶分片，後續容量會按需自動建立。',
+  'web.db.controlPlaneWorkerDesc':
+    '此功能讓 Authrim 管理各租戶的資料庫。設定過程會建立所需的管理資源。',
+  'web.db.controlPlaneTenantPlacement':
+    '初始租戶從獨立的儲存位置開始。新增租戶後，可以為每個租戶選擇儲存位置。',
+  'web.db.controlPlaneResolverNote': 'Authrim 會自動管理資料庫建立和連線路由。',
+  'web.db.automaticProvisioningTitle': '自動建立租戶資料庫',
+  'web.db.automaticProvisioningOn': '開啟（自動建立）',
+  'web.db.automaticProvisioningOnDesc': '當租戶或資料量增加時，Authrim 會自動建立所需的資料庫。',
+  'web.db.automaticProvisioningTokenNote':
+    '專用的 Control Worker 會儲存並使用建立租戶資料庫所需、權限受限的 Cloudflare API token。',
+  'web.db.automaticProvisioningOff': '關閉（從 Setup 建立）',
+  'web.db.automaticProvisioningOffDesc': '不會自動建立資料庫。需要時請從 Setup 工具建立。',
+  'web.db.automaticProvisioningNote': '關閉此選項後，租戶之間的資料分離仍會維持。',
+  'web.deploy.controlCredentialsTitle': 'Cloudflare 連線資訊',
+  'web.deploy.bootstrapTokenTitle': '用於自動設定的臨時 Cloudflare token',
+  'web.deploy.cloudflareLoginNote':
+    'Cloudflare Dashboard 登入獨立於 Wrangler OAuth，可能需要再次登入。',
+  'web.deploy.createBootstrapToken': '建立一次性 Cloudflare token',
+  'web.deploy.bootstrapTokenLabel': '臨時 Cloudflare token',
+  'web.deploy.bootstrapTokenPlaceholder': '輸入臨時 Cloudflare token',
+  'web.deploy.bootstrapTokenHelp': '此 token 僅使用一次，並會在所需 token 註冊後撤銷。',
+  'web.deploy.bootstrapTokenDescription':
+    '此臨時 token 讓 Authrim 能自動建立租戶資料庫。它需要建立和編輯 API token 的權限：帳戶所有的 token 需要 Account API Tokens: Write/Edit，使用者所有的 token 需要 API Tokens: Write/Edit。Setup 會依需要建立 D1、Workers、KV 和 R2 的範圍受限 API token，將其註冊到 Control Worker，然後撤銷臨時 token。',
+  'web.deploy.manualDnsSectionTitle': 'DNS 設定',
+  'web.deploy.bootstrapTokenCreateStatus':
+    '請在 Cloudflare Dashboard 將 End Date 設為 {{endDate}}（UTC），建立臨時 token，然後在下方輸入。',
+  'web.deploy.bootstrapPopupBlocked': '瀏覽器封鎖了新分頁。請允許彈出視窗後再次選取此按鈕。',
+  'web.deploy.bootstrapTokenRequired': '部署前請建立並輸入臨時 Cloudflare token。',
+  'web.envDetail.automaticProvisioningTitle': '自動佈建',
+  'web.envDetail.automaticProvisioningChecking': '檢查中...',
+  'web.envDetail.automaticProvisioningUnavailable': '無法使用',
+  'web.envDetail.createOneTimeCloudflareToken': '建立一次性 Cloudflare token',
+  'web.envDetail.oneTimeBootstrapTokenPlaceholder': '一次性 bootstrap token',
+  'web.envDetail.enableAutomaticProvisioning': '啟用',
+  'web.envDetail.enterOneTimeTokenThenEnable':
+    '將 End Date 設為 {{endDate}}（UTC），建立並輸入一次性 token，然後選取「啟用」。',
+  'web.envDetail.bootstrapPopupBlocked': '瀏覽器封鎖了 Cloudflare Dashboard 分頁。',
+  'web.envDetail.enterOneTimeTokenFirst': '請先輸入一次性 Cloudflare token。',
+  'web.envDetail.preparingControlAuthority': '正在準備 Control 佈建權限...',
+  'web.envDetail.deployingControlWorker': '正在部署 Control Worker 設定...',
+  'web.envDetail.registeringScopedCredentials': '正在註冊範圍受限的憑證...',
+  'web.envDetail.automaticProvisioningOn': '開啟',
+  'web.envDetail.automaticProvisioningOff': '關閉',
+  'web.envDetail.automaticProvisioningCredentialsRegistered':
+    '範圍受限的 Control Worker 憑證已註冊。',
+  'web.envDetail.automaticProvisioningBlocked': '自動佈建已被封鎖。',
+  'web.envDetail.automaticProvisioningMissing': '（缺少：{{missing}}）',
+  'web.envDetail.automaticProvisioningRepairHint': '請輸入新的一次性 token 進行修復。',
+  'web.envDetail.bootstrapRetainedForRetry':
+    'Cloudflare 發生暫時性錯誤。Bootstrap token 仍然有效；請重新輸入相同 token 並選擇「啟用」以繼續。',
+  'web.envDetail.bootstrapNotSubmittedForRetry':
+    'Setup 在提交 Bootstrap token 前停止。Token 仍保留在輸入欄中，可直接重試。',
+  'web.envDetail.revokeTokensBeforeRetry':
+    '重試前，請在 Cloudflare Dashboard 撤銷列出的 Authrim bootstrap token 與子 token。',
+  'web.envDetail.bootstrapRevokedPendingReset': 'Bootstrap token 已撤銷，但無法重設待處理狀態。',
+  'web.envDetail.bootstrapRevokedDisabled': 'Bootstrap token 已撤銷，自動佈建已恢復為關閉。',
 
   // Web UI Email
   'web.email.title': '電子郵件提供者',
@@ -836,7 +939,7 @@ const zhTW: Translations = {
   'web.env.openSetup': '開啟設定',
   'web.env.copyUrl': '複製',
   'web.env.deleteTitle': '刪除環境',
-  'web.env.deleteWarning': '此操作無法復原。以下資源將被永久刪除：',
+  'web.env.deleteWarning': '將刪除以下選取的資源：',
   'web.env.confirmDelete': '刪除所選項目',
   'web.env.cancel': '取消',
 
@@ -903,7 +1006,8 @@ const zhTW: Translations = {
   'web.form.userIdFormat': '使用者 ID 格式',
   'web.form.userIdNanoid': 'NanoID（推薦）',
   'web.form.userIdUuid': 'UUID v4',
-  'web.form.userIdFormatHint': '使用者 ID 生成格式。建立使用者後無法變更。',
+  'web.form.userIdExample': '範例：',
+  'web.form.userIdFormatHint': '建立使用者後無法變更。',
   'web.form.loginDomainPlaceholder': 'login.example.com',
   'web.form.adminDomainPlaceholder': 'admin.example.com',
 
@@ -1034,6 +1138,26 @@ const zhTW: Translations = {
 
   // Web UI Environment Detail
   'web.envDetail.title': '環境詳情',
+  'web.envDetail.initialDeployRecoveryTitle': '初始部署尚未完成',
+  'web.envDetail.initialDeployRecoveryDesc': '上次部署在驗證前停止。恢復時將重用已建立的資源。',
+  'web.envDetail.initialDeployRecoveryAction': '恢復初始部署',
+  'web.envDetail.initialDeployRecoveryVerified':
+    '已驗證 Cloudflare 狀態。已完成：{{completed}}。將從{{stage}}恢復。',
+  'web.envDetail.initialDeployRecoveryStageMigrations': '資料庫遷移驗證',
+  'web.envDetail.initialDeployRecoveryStageControlPlane': '初始部署準備',
+  'web.envDetail.initialDeployRecoveryStageWorkers': 'Worker 部署',
+  'web.envDetail.initialDeployRecoveryStageVerification': '部署後驗證',
+  'web.envDetail.initialDeployRecoveryResources': '資源建立',
+  'web.envDetail.initialDeployRecoverySchema': '資料庫遷移',
+  'web.envDetail.initialDeployRecoveryWorkers': 'Worker 部署',
+  'web.envDetail.initialDeployRecoveryRecreate':
+    '儲存的檢查點與 Cloudflare 上的狀態不一致，因此已停用恢復。請刪除此不完整環境並重新建立。',
+  'web.envDetail.initialDeployRecoveryManifestChanged':
+    '初始部署開始後，draft migration 定義已變更。儲存的部署狀態可能已與資料庫不一致，因此已停用恢復。請刪除此不完整環境並重新建立。',
+  'web.envDetail.initialDeployRecoveryBlocked':
+    '無法驗證目前狀態，因此已停用恢復。請檢查 Cloudflare 連線並重新檢查此環境。如果仍無法驗證，請刪除此不完整環境並重新建立。',
+  'web.envDetail.initialDeployRecoveryTokenRequired':
+    ' 部署認證資訊需要更新；系統將要求輸入新的一次性 Cloudflare token。',
   'web.envDetail.adminNotConfigured': '管理員帳戶未配置',
   'web.envDetail.adminNotConfiguredDesc': '此環境尚未設定初始管理員。',
   'web.envDetail.startPasskey': '使用 Passkey 開始管理員帳戶設定',
@@ -1108,7 +1232,7 @@ const zhTW: Translations = {
 
   // Web UI Delete Section
   'web.delete.title': '刪除環境',
-  'web.delete.warning': '此操作不可逆轉。所有選定的資源將被永久刪除。',
+  'web.delete.warning': '將從此環境中刪除所選資源。',
   'web.delete.environment': '環境：',
   'web.delete.selectResources': '選擇要刪除的資源：',
   'web.delete.workers': 'Workers',
@@ -1152,6 +1276,8 @@ const zhTW: Translations = {
   'web.status.adminNotConfigured': '管理員未配置',
   'web.status.initializing': '初始化中...',
   'web.status.found': '找到 {{count}} 個',
+  'web.status.operationInProgress': '另一個設定操作正在進行中。請等待完成後再試一次。',
+  'web.status.warning': '警告：',
 
   // Web UI Button Labels (dynamic)
   'web.btn.reprovision': '重新佈建（刪除並建立）',

@@ -33,6 +33,8 @@ export interface OIDCProviderMetadata {
   // RFC 9126: PAR (Pushed Authorization Requests)
   pushed_authorization_request_endpoint?: string;
   require_pushed_authorization_requests?: boolean;
+  // RFC 9207: Authorization Server Issuer Identification
+  authorization_response_iss_parameter_supported?: boolean;
   // RFC 9449: DPoP (Demonstrating Proof of Possession)
   dpop_signing_alg_values_supported?: string[];
   // RFC 9101 (JAR): Request Object support
@@ -59,6 +61,8 @@ export interface OIDCProviderMetadata {
   backchannel_token_delivery_modes_supported?: string[];
   backchannel_authentication_request_signing_alg_values_supported?: string[];
   backchannel_user_code_parameter_supported?: boolean;
+  // RFC 8705: Mutual-TLS client certificate-bound access tokens
+  tls_client_certificate_bound_access_tokens?: boolean;
   // OIDC Core: Additional metadata
   claim_types_supported?: string[];
   claims_parameter_supported?: boolean;
@@ -261,8 +265,8 @@ export interface OIDCIdentityMappingFieldMappingSelector {
  * https://openid.net/specs/openid-connect-registration-1_0.html#ClientMetadata
  */
 export interface ClientRegistrationRequest {
-  // Required fields
-  redirect_uris: string[];
+  // Required for redirect-based grants; CIBA-only clients register an empty array.
+  redirect_uris?: string[];
   // Optional fields
   client_name?: string;
   client_uri?: string;
@@ -275,7 +279,14 @@ export interface ClientRegistrationRequest {
   software_id?: string;
   software_version?: string;
   // Token endpoint authentication
-  token_endpoint_auth_method?: 'client_secret_basic' | 'client_secret_post' | 'none';
+  token_endpoint_auth_method?:
+    | 'client_secret_basic'
+    | 'client_secret_post'
+    | 'client_secret_jwt'
+    | 'private_key_jwt'
+    | 'none';
+  /** JWS algorithm registered for private_key_jwt/client_secret_jwt authentication. */
+  token_endpoint_auth_signing_alg?: string;
   // Grant types and response types
   grant_types?: string[];
   response_types?: string[];
@@ -284,6 +295,16 @@ export interface ClientRegistrationRequest {
   application_type?: 'web' | 'native';
   // Scopes
   scope?: string;
+  /** Authrim extension for explicitly enabling RFC 6749 client_credentials. */
+  client_credentials_allowed?: boolean;
+  /** Allowed scopes for machine-to-machine access tokens. */
+  allowed_scopes?: string[];
+  /** Default scope for client_credentials when scope is omitted. */
+  default_scope?: string;
+  /** Default audience for access tokens when audience/resource is omitted. */
+  default_audience?: string;
+  /** Default RFC 8707 resource target. */
+  default_resource?: string;
   // Subject type (OIDC Core 8)
   subject_type?: 'public' | 'pairwise';
   sector_identifier_uri?: string;
@@ -298,6 +319,10 @@ export interface ClientRegistrationRequest {
   id_token_signed_response_alg?: string;
   // JAR (JWT-Secured Authorization Request) - RFC 9101
   request_object_signing_alg?: string;
+  // JARM (JWT-Secured Authorization Response Mode) - RFC 9102
+  authorization_signed_response_alg?: string;
+  authorization_encrypted_response_alg?: string;
+  authorization_encrypted_response_enc?: string;
   // Claims parameter and ASC client settings (Authrim extension)
   claims_parameter_policy?: Record<string, 'scope_required' | 'claims_allowed' | 'forbidden'>;
   asc_enabled?: boolean;
@@ -334,6 +359,13 @@ export interface ClientRegistrationRequest {
   // ==========================================================================
   initiate_login_uri?: string;
   login_ui_url?: string | null; // Client-specific login UI base URL
+  // OIDC CIBA client metadata
+  backchannel_token_delivery_mode?: 'poll' | 'ping' | 'push';
+  backchannel_client_notification_endpoint?: string;
+  backchannel_authentication_request_signing_alg?: string;
+  backchannel_user_code_parameter?: boolean;
+  // RFC 8705 certificate-bound token policy
+  tls_client_certificate_bound_access_tokens?: boolean;
 }
 
 /**
@@ -357,6 +389,7 @@ export interface ClientRegistrationResponse {
   software_id?: string;
   software_version?: string;
   token_endpoint_auth_method?: string;
+  token_endpoint_auth_signing_alg?: string;
   grant_types?: string[];
   response_types?: string[];
   require_pkce?: boolean;
@@ -399,6 +432,13 @@ export interface ClientRegistrationResponse {
   // OIDC Front-Channel Logout 1.0
   frontchannel_logout_uri?: string;
   frontchannel_logout_session_required?: boolean;
+  // OIDC CIBA client metadata
+  backchannel_token_delivery_mode?: 'poll' | 'ping' | 'push';
+  backchannel_client_notification_endpoint?: string;
+  backchannel_authentication_request_signing_alg?: string;
+  backchannel_user_code_parameter?: boolean;
+  // RFC 8705 certificate-bound token policy
+  tls_client_certificate_bound_access_tokens?: boolean;
   // ==========================================================================
   // Simple Logout Webhook (Authrim Extension)
   // Returns URI and secret on initial registration only
@@ -455,10 +495,11 @@ export interface ClientMetadata extends ClientRegistrationResponse {
   userinfo_encrypted_response_enc?: string;
   jwks?: JWKS;
   // CIBA (Client Initiated Backchannel Authentication) settings
-  backchannel_token_delivery_mode?: string; // 'poll', 'ping', 'push', or combination
+  backchannel_token_delivery_mode?: 'poll' | 'ping' | 'push';
   backchannel_client_notification_endpoint?: string; // Callback URL for ping/push modes
   backchannel_authentication_request_signing_alg?: string; // Algorithm for signed auth requests
   backchannel_user_code_parameter?: boolean; // Whether client supports user_code parameter
+  tls_client_certificate_bound_access_tokens?: boolean;
 
   // ==========================================================================
   // RFC 9449: DPoP (Demonstrating Proof of Possession)
@@ -580,6 +621,14 @@ export interface ClientMetadata extends ClientRegistrationResponse {
    * Set during DCR registration when dcr.scope_restriction_enabled is true.
    */
   requestable_scopes?: string[];
+
+  /** Restricted self-service registration provenance and inactivity lifecycle. */
+  agent_access_registration_mode?: 'restricted_dcr' | 'cimd';
+  agent_access_expires_at?: number;
+  agent_access_last_used_at?: number;
+  client_metadata_url?: string;
+  client_metadata_hash?: string;
+  client_metadata_fetched_at?: number;
 
   // ==========================================================================
   // PKCE Settings
@@ -836,6 +885,7 @@ export interface CIBARequestMetadata {
   user_id?: string; // Set when user approves the request
   sub?: string; // Subject (user identifier) - set when approved
   nonce?: string; // Nonce for ID token (optional)
+  authenticated_acr?: string; // Authentication context established by the approval step
   // Token issuance tracking
   token_issued?: boolean; // True if tokens have been issued
   token_issued_at?: number; // Timestamp when tokens were issued
@@ -980,7 +1030,7 @@ export type NativeSSOTokenTypeURN = TokenTypeURN | typeof DEVICE_SECRET_TOKEN_TY
  * Represents a device secret stored in the database.
  * Non-PII data: only secret_hash is stored, no personal information.
  *
- * @see migrations/017_native_sso_device_secrets.sql
+ * @see migrations/core/d1/001_0_4_0_core_baseline.sql
  */
 export interface DeviceSecret {
   /** Primary key (UUID) */

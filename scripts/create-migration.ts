@@ -7,11 +7,22 @@
  * Example: pnpm migrate:create add_user_preferences
  */
 
-import { writeFileSync, readdirSync } from 'fs';
+import { writeFileSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
+import {
+  assertProductVersionOpenForNewMigrations,
+  streamDirectory,
+  syncDraftReleaseMigrationManifest,
+} from '../packages/setup/src/core/release-migrations.js';
+import {
+  isMigrationStreamId,
+  migrationStreamContract,
+} from '../packages/ar-lib-core/src/services/control-plane/migration-stream-contract.js';
 
 function main() {
   const description = process.argv[2];
+  const streamIndex = process.argv.indexOf('--stream');
+  const streamId = streamIndex >= 0 ? process.argv[streamIndex + 1] : 'core-d1';
 
   if (!description) {
     console.error('❌ Error: Migration description required\n');
@@ -29,7 +40,20 @@ function main() {
     process.exit(1);
   }
 
-  const migrationsDir = join(process.cwd(), 'migrations');
+  if (!isMigrationStreamId(streamId)) {
+    console.error(`❌ Error: Unknown migration stream: ${String(streamId)}`);
+    process.exit(1);
+  }
+  const stream = migrationStreamContract(streamId);
+  const migrationsRoot = join(process.cwd(), 'migrations');
+  const migrationsDir = streamDirectory(migrationsRoot, stream.id);
+  if (!migrationsDir) throw new Error(`Unknown migration stream: ${stream.id}`);
+  const rootPackage = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf-8')) as {
+    version: string;
+  };
+  assertProductVersionOpenForNewMigrations(migrationsRoot, rootPackage.version, {
+    repositoryRoot: process.cwd(),
+  });
 
   // Find next version number
   const files = readdirSync(migrationsDir)
@@ -90,15 +114,19 @@ function main() {
 
   try {
     writeFileSync(filepath, template, 'utf-8');
-    console.log(`✅ Created migration: ${filename}\n`);
-    console.log("📝 Next steps:");
+    syncDraftReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: rootPackage.version,
+    });
+    console.log(`✅ Created migration: ${stream.id}/${filename}\n`);
+    console.log('📝 Next steps:');
     console.log(`   1. Edit: ${filepath}`);
     console.log('   2. Add SQL statements in "Up Migration" section');
     console.log('   3. Document rollback in "Down Migration" section');
-    console.log("   4. Test: pnpm migrate:dry-run");
-    console.log("   5. Apply: pnpm migrate:up\n");
+    console.log('   4. The draft release manifest was updated automatically');
+    console.log('   5. Run: pnpm migrate:manifest:check\n');
   } catch (error) {
-    console.error("❌ Failed to create migration:", error);
+    console.error('❌ Failed to create migration:', error);
     process.exit(1);
   }
 }

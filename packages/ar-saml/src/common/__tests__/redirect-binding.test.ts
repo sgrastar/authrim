@@ -10,7 +10,7 @@
  * @see https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   buildLogoutRequest,
   buildLogoutResponse,
@@ -23,7 +23,11 @@ import {
   type LogoutResponseOptions,
 } from '../slo-messages';
 import { SAML_MESSAGE_LIMITS } from '../message-limits';
-import { signRedirectBinding, verifyRedirectBindingSignature } from '../signature';
+import {
+  parseRedirectBindingSignatureInput,
+  signRedirectBinding,
+  verifyRedirectBindingSignature,
+} from '../signature';
 
 // Test private key (same as signature-security.test.ts)
 const testPrivateKey = `-----BEGIN PRIVATE KEY-----
@@ -270,6 +274,32 @@ describe('HTTP-Redirect Binding - SAML 2.0 Bindings Section 3.4', () => {
       expect(isValid).toBe(true);
     });
 
+    it('rejects a Redirect signature before the pinned certificate validity begins', async () => {
+      const signResult = await signRedirectBinding(
+        'SAMLRequest',
+        'request',
+        'relay',
+        testPrivateKey
+      );
+
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2025-01-01T00:00:00Z'));
+      try {
+        await expect(
+          verifyRedirectBindingSignature(
+            'SAMLRequest',
+            'request',
+            'relay',
+            signResult.signature,
+            signResult.sigAlg,
+            testCertificate
+          )
+        ).rejects.toThrow('SAML signing certificate is not valid yet');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('should sign and verify LogoutResponse redirect binding query values', async () => {
       const xml = buildLogoutResponse({
         id: '_logout_response_signed_redirect',
@@ -324,8 +354,10 @@ describe('HTTP-Redirect Binding - SAML 2.0 Bindings Section 3.4', () => {
         testPrivateKey
       );
 
-      // Tamper with signature
-      const tamperedSignature = signResult.signature.replace(/A/g, 'B');
+      // Tamper with the signature deterministically. Replacing a specific character
+      // can be a no-op when the generated Base64 signature does not contain it.
+      const replacement = signResult.signature[0] === 'A' ? 'B' : 'A';
+      const tamperedSignature = replacement + signResult.signature.slice(1);
 
       // Verify should fail
       const isValid = await verifyRedirectBindingSignature(
@@ -379,6 +411,68 @@ describe('HTTP-Redirect Binding - SAML 2.0 Bindings Section 3.4', () => {
   });
 
   describe('Invalid Input Handling', () => {
+    it('rejects duplicate signed query parameters', () => {
+      expect(() =>
+        parseRedirectBindingSignatureInput(
+          '?SAMLRequest=first&SAMLRequest=second&SigAlg=algorithm&Signature=value',
+          'SAMLRequest'
+        )
+      ).toThrow('Duplicate HTTP-Redirect parameter: SAMLRequest');
+    });
+
+    it('rejects a query containing both request and response messages', () => {
+      expect(() =>
+        parseRedirectBindingSignatureInput(
+          '?SAMLRequest=request&SAMLResponse=response&SigAlg=algorithm&Signature=value',
+          'SAMLRequest'
+        )
+      ).toThrow('HTTP-Redirect message cannot contain both SAMLRequest and SAMLResponse');
+    });
+
+    it('preserves signed encodings and decodes only signature metadata', () => {
+      expect(
+        parseRedirectBindingSignatureInput(
+          'SAMLRequest=a%2Bb&RelayState=&SigAlg=urn%3Atest&Signature=c%2Bd',
+          'SAMLRequest'
+        )
+      ).toEqual({
+        samlMessage: 'a%2Bb',
+        relayState: '',
+        sigAlg: 'urn:test',
+        signature: 'c+d',
+      });
+    });
+
+    it('allows an unsigned message without optional Redirect parameters', () => {
+      expect(parseRedirectBindingSignatureInput('?SAMLRequest=value&&', 'SAMLRequest')).toEqual({
+        samlMessage: 'value',
+      });
+    });
+
+    it.each(['RelayState', 'SigAlg', 'Signature'])('rejects duplicate %s parameters', (name) => {
+      expect(() =>
+        parseRedirectBindingSignatureInput(
+          `?SAMLRequest=value&${name}=first&${name}=second`,
+          'SAMLRequest'
+        )
+      ).toThrow(`Duplicate HTTP-Redirect parameter: ${name}`);
+    });
+
+    it('rejects a missing message parameter', () => {
+      expect(() => parseRedirectBindingSignatureInput('?RelayState=value', 'SAMLResponse')).toThrow(
+        'Missing SAMLResponse parameter'
+      );
+    });
+
+    it('rejects malformed percent encoding in names and values', () => {
+      expect(() => parseRedirectBindingSignatureInput('?%ZZ=value', 'SAMLRequest')).toThrow(
+        'Malformed HTTP-Redirect query encoding'
+      );
+      expect(() =>
+        parseRedirectBindingSignatureInput('?SAMLRequest=value&SigAlg=%ZZ', 'SAMLRequest')
+      ).toThrow('Malformed HTTP-Redirect query encoding');
+    });
+
     it('should reject invalid base64 encoding', () => {
       expect(() => parseLogoutRequestRedirect('not-valid-base64!!!')).toThrow();
     });

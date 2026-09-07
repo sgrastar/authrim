@@ -487,6 +487,8 @@ export interface SecurityEventData extends BaseEventData {
     maxRequests: number;
     windowSeconds: number;
     retryAfter: number;
+    /** Optional bucket class used to partition rate-limit counters */
+    endpointClass?: string | undefined;
   };
 }
 

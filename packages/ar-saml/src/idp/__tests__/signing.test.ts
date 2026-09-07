@@ -175,18 +175,28 @@ describe('SAML response signing policy', () => {
     ]);
   });
 
-  it('returns unchanged XML when no signatures are required', () => {
+  it('fails closed when no signature is configured', () => {
     const signer = vi.fn((xml: string) => xml);
 
-    const signed = applySAMLResponseSigningPolicy(
-      responseXml,
-      { signAssertions: false, signResponses: false },
-      signingMaterial,
-      signer
-    );
-
-    expect(signed).toBe(responseXml);
+    expect(() =>
+      applySAMLResponseSigningPolicy(
+        responseXml,
+        { signAssertions: false, signResponses: false },
+        signingMaterial,
+        signer
+      )
+    ).toThrow('SAML Response signing is required');
     expect(signer).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for an unsigned protocol error response', () => {
+    expect(() =>
+      applySAMLErrorResponseSigningPolicy(
+        responseXml,
+        { signAssertions: false, signResponses: false },
+        signingMaterial
+      )
+    ).toThrow('SAML Response signing is required');
   });
 
   it('signs error responses at Response level when only assertion signing is configured', () => {

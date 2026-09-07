@@ -6,17 +6,6 @@ const adminFlows = {
 		'Review the path from login, attribute release, consent, and output in one place.',
 	admin_flows_consent_policies: 'Consent Policies',
 	admin_flows_field_mapping: 'Field Mapping',
-	admin_flows_overview_title: 'Flow overview',
-	admin_flows_overview_description:
-		'Start with representative SAML/OIDC paths and review Mapping, Consent, and Output together.',
-	admin_flows_overview_request_title: 'Request',
-	admin_flows_overview_request_subtitle: 'protocol request',
-	admin_flows_overview_mapping_title: 'Mapping',
-	admin_flows_overview_mapping_subtitle: 'schema / field set',
-	admin_flows_overview_consent_title: 'Consent',
-	admin_flows_overview_consent_subtitle: 'statement / policy',
-	admin_flows_overview_output_title: 'Output',
-	admin_flows_overview_output_subtitle: 'response / grant',
 	admin_flows_list_title: 'Flow list',
 	admin_flows_list_description:
 		'Check the configuration elements in details, then open the Flow view for the full picture.',
@@ -186,7 +175,6 @@ const adminFlows = {
 	admin_flows_cancel: 'Cancel',
 	admin_flows_apply: 'Apply',
 	admin_flows_node_settings_aria: 'Configure {title:string}',
-	admin_flows_node_description_aria: 'Description for {title:string}',
 	admin_flows_node_outputs_aria: '{title:string} outputs',
 	admin_flows_template_saml_attribute_release_title: 'SAML Attribute Release',
 	admin_flows_template_saml_attribute_release_subtitle:
@@ -247,6 +235,57 @@ const adminFlows = {
 		'Sign in with an existing account and review scope/claim sharing when needed',
 	admin_flows_template_oidc_login_recorded_state:
 		'tenant + user + OIDC Client + session/authentication event + User Decision',
+	admin_flows_template_oidc_registration_no_consent_title: 'Registration (No consent)',
+	admin_flows_template_oidc_registration_no_consent_subtitle:
+		'Account creation without profile input or registration consent',
+	admin_flows_template_oidc_registration_no_consent_description:
+		'Review the path from registration request, registration method selection, account creation, and application continuation.',
+	admin_flows_template_oidc_registration_no_consent_primary_entry:
+		'Registration Request / Sign-up entry',
+	admin_flows_template_oidc_registration_no_consent_primary_output:
+		'Application continuation / New account session',
+	admin_flows_template_oidc_registration_no_consent_mapping_set: 'OIDC registration profile fields',
+	admin_flows_template_oidc_registration_no_consent_user_action:
+		'Choose a registration method and create an account without profile input or registration consent',
+	admin_flows_template_oidc_registration_no_consent_recorded_state:
+		'tenant + user + OIDC Client + credential binding + audit event',
+	admin_flows_template_academic_saml_login_title: 'Academic SAML Login',
+	admin_flows_template_academic_saml_login_subtitle: 'Login for academic publisher and library SPs',
+	admin_flows_template_academic_saml_login_description:
+		'Review the path from SAML AuthnRequest, session check, authentication method selection, attribute release confirmation, and SAML Response.',
+	admin_flows_template_academic_saml_login_primary_entry: 'SAML AuthnRequest',
+	admin_flows_template_academic_saml_login_primary_output: 'SAML Response / Assertion',
+	admin_flows_template_academic_saml_login_mapping_set:
+		'GakuNin application standard Field Mapping Set',
+	admin_flows_template_academic_saml_login_consent_policy: 'SAML attribute release policy',
+	admin_flows_template_academic_saml_login_consent_statement: 'saml_attribute_release_uapprove',
+	admin_flows_template_academic_saml_login_user_action:
+		'Sign in with an existing account, review the attributes released to the SP, and allow the release',
+	admin_flows_template_academic_saml_login_recorded_state:
+		'tenant + user + SAML SP + statement/version + User Decision',
+	admin_flows_template_oidc_login_no_consent_title: 'Authentication-only Login',
+	admin_flows_template_oidc_login_no_consent_subtitle:
+		'Sign-in without an interactive consent node',
+	admin_flows_template_oidc_login_no_consent_description:
+		'Review the path from login request, session check, authentication method selection, sign-in, and application continuation.',
+	admin_flows_template_oidc_login_no_consent_primary_entry: 'Login Request / Login entry',
+	admin_flows_template_oidc_login_no_consent_primary_output:
+		'Application continuation / Existing account session',
+	admin_flows_template_oidc_login_no_consent_mapping_set: 'OIDC login/session claims',
+	admin_flows_template_oidc_login_no_consent_user_action: 'Sign in with an existing account',
+	admin_flows_template_oidc_login_no_consent_recorded_state:
+		'tenant + user + OIDC Client + session/authentication event + audit event',
+	admin_flows_template_saml_sp_oidc_rp_title: 'SAML SP/OIDC RP Flow',
+	admin_flows_template_saml_sp_oidc_rp_subtitle: 'Sign-in for SAML SPs and OIDC RPs',
+	admin_flows_template_saml_sp_oidc_rp_description:
+		'Use the same sign-in steps as Authentication-only Login, then route to a SAML Response or OIDC authorization response based on the request protocol.',
+	admin_flows_template_saml_sp_oidc_rp_primary_entry:
+		'SAML AuthnRequest / OIDC Authorization Request',
+	admin_flows_template_saml_sp_oidc_rp_primary_output:
+		'SAML Response / OIDC Authorization Response',
+	admin_flows_template_saml_sp_oidc_rp_user_action: 'Sign in with an existing account',
+	admin_flows_template_saml_sp_oidc_rp_recorded_state:
+		'tenant + user + protocol target + session/authentication event + audit event',
 	admin_flows_kind_release_confirmation: 'Release confirmation',
 	admin_flows_kind_authorization: 'Authorization',
 	admin_flows_kind_registration: 'Registration',
@@ -417,7 +456,6 @@ const adminFlows = {
 	admin_flows_output_complete: 'Complete',
 	admin_flows_output_matched: 'Matched',
 	admin_flows_output_otherwise: 'Otherwise',
-	admin_flows_editor_start_description: 'Receive a request, direct link, or LoginUI entry.',
 	admin_flows_editor_registration_request_description:
 		'Receive a registration request or LoginUI sign-up entry and resolve the application context.',
 	admin_flows_editor_login_request_description:
@@ -434,20 +472,20 @@ const adminFlows = {
 		'Complete the flow by creating the resulting session, response, or redirect.',
 	admin_flows_editor_setting_prompt_create: 'prompt=create',
 	admin_flows_editor_setting_signup_entry: 'signup entry',
-	admin_flows_editor_setting_default_profile: 'Default profile',
 	admin_flows_editor_setting_basic_profile: 'Basic profile',
 	admin_flows_editor_setting_email: 'email',
 	admin_flows_editor_setting_name: 'name',
 	admin_flows_editor_setting_redirect: 'redirect',
-	admin_flows_trust_policy_title: 'Consent policy',
+	admin_flows_trust_policy_title: 'Client Trust Policy',
 	admin_flows_trust_policy_description:
-		'Configure trust behavior. Flow assignment is managed from the Flow settings.',
+		'Configure the authoritative trust behavior for an OIDC client or SAML service provider.',
 	admin_flows_trust_policy_loading: 'Loading consent policy settings...',
 	admin_flows_trust_policy_load_failed: 'Failed to load consent policy settings',
 	admin_flows_trust_policy_saved: 'Trust policy settings saved.',
 	admin_flows_trust_policy_save_failed: 'Failed to save consent policy settings',
 	admin_flows_trust_policy_flow_hint:
-		'Select the Login or Registration Flow for this target from Flow settings. Consent policies are attached to Consent nodes inside a Flow.',
+		'This read-only gate shows the protocol authority. Editing or publishing the Flow does not change the Client Trust Policy.',
+	admin_flows_authoritative_consent_gate_output: 'Authorization / attribute release',
 	admin_flows_trust_policy_first_party_label: 'First-party application',
 	admin_flows_trust_policy_first_party_description:
 		'Marks the application as operated by the same service owner.',

@@ -6,9 +6,27 @@ import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { Hono } from 'hono';
 import { statusListRoute, statusListJsonRoute } from '../status-list';
 import type { Env } from '../../../types';
-import { exportJWK, generateKeyPair } from 'jose';
+import {
+  decodeJwt,
+  decodeProtectedHeader,
+  exportJWK,
+  generateKeyPair,
+  importJWK,
+  SignJWT,
+} from 'jose';
 import type { JWK } from 'jose';
-import { requestContextMiddleware } from '@authrim/ar-lib-core';
+
+const runtimeMocks = vi.hoisted(() => ({
+  resolveTenantMetadataContext: vi.fn(),
+}));
+
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  return {
+    ...actual,
+    resolveTenantMetadataContext: runtimeMocks.resolveTenantMetadataContext,
+  };
+});
 
 // Mock database result
 const mockListData = {
@@ -45,13 +63,24 @@ function createMockEnv(listData: typeof mockListData | null = mockListData): Env
       batch: vi.fn().mockResolvedValue([]),
     } as unknown as D1Database,
     AUTHRIM_CONFIG: {
-      get: vi.fn().mockResolvedValue(null),
+      get: vi
+        .fn()
+        .mockImplementation((key: string) =>
+          Promise.resolve(key === 'v1:tenant-exists:tenant1' ? 'true' : null)
+        ),
     } as unknown as KVNamespace,
     VP_REQUEST_STORE: {} as DurableObjectNamespace,
     CREDENTIAL_OFFER_STORE: {} as DurableObjectNamespace,
     KEY_MANAGER: {
       idFromName: vi.fn().mockReturnValue({ toString: () => 'key-manager-id' }),
       get: vi.fn().mockReturnValue({
+        signStatusListCredentialRpc: vi.fn(async (payload: Record<string, unknown>) => {
+          const privateKey = await importJWK(mockKeyData.privateKeyJwk, 'ES256');
+          const token = await new SignJWT(payload)
+            .setProtectedHeader({ alg: 'ES256', typ: 'statuslist+jwt', kid: mockKeyData.kid })
+            .sign(privateKey);
+          return { token, kid: mockKeyData.kid };
+        }),
         // Create fresh Response for each fetch call
         fetch: vi
           .fn()
@@ -95,17 +124,28 @@ describe('Status List Routes', () => {
 
   beforeEach(() => {
     mockEnv = createMockEnv();
+    runtimeMocks.resolveTenantMetadataContext.mockImplementation(
+      async (env: Env, tenantId: string) => ({
+        tenantId,
+        coreDb: env.DB,
+      })
+    );
     app = new Hono<{ Bindings: Env }>();
-    app.use('*', requestContextMiddleware());
-    app.get('/vci/status/:listId', statusListRoute);
-    app.get('/vci/status/:listId/json', statusListJsonRoute);
+    app.use('*', async (c, next) => {
+      const tenantId = c.req.header('Host')?.split('.')[0] ?? 'tenant1';
+      c.set('tenantId' as never, tenantId as never);
+      c.set('tenantMetadataContext' as never, { tenantId, coreDb: c.env.DB } as never);
+      await next();
+    });
+    app.get('/vci/status-lists/:listId', statusListRoute);
+    app.get('/vci/status-lists/:listId/json', statusListJsonRoute);
     vi.clearAllMocks();
   });
 
-  describe('GET /vci/status/:listId', () => {
+  describe('GET /vci/status-lists/:listId', () => {
     it('should return status list credential JWT', async () => {
       const res = await app.request(
-        '/vci/status/sl_r_tenant1_abc123',
+        '/vci/status-lists/sl_r_tenant1_abc123',
         {
           headers: { host: 'tenant1.issuer.example.com' },
         },
@@ -121,9 +161,18 @@ describe('Status List Routes', () => {
       expect(jwt).toMatch(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
 
       // Decode and verify JWT payload
-      const parts = jwt.split('.');
-      const header = JSON.parse(atob(parts[0].replace(/-/g, '+').replace(/_/g, '/')));
-      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      const header = decodeProtectedHeader(jwt);
+      const payload = decodeJwt(jwt) as {
+        iss: string;
+        vc: {
+          type: string[];
+          credentialSubject: {
+            type: string;
+            statusPurpose: string;
+            encodedList: string;
+          };
+        };
+      };
 
       expect(header.typ).toBe('statuslist+jwt');
       expect(header.alg).toBe('ES256');
@@ -139,7 +188,7 @@ describe('Status List Routes', () => {
     it('should return 304 Not Modified when ETag matches', async () => {
       // First request to get ETag
       const res1 = await app.request(
-        '/vci/status/sl_r_tenant1_abc123',
+        '/vci/status-lists/sl_r_tenant1_abc123',
         {
           headers: { host: 'tenant1.issuer.example.com' },
         },
@@ -148,14 +197,15 @@ describe('Status List Routes', () => {
 
       const etag = res1.headers.get('ETag');
       expect(etag).toBeTruthy();
+      if (!etag) throw new Error('Expected ETag');
 
       // Second request with If-None-Match
       const res2 = await app.request(
-        '/vci/status/sl_r_tenant1_abc123',
+        '/vci/status-lists/sl_r_tenant1_abc123',
         {
           headers: {
             host: 'tenant1.issuer.example.com',
-            'If-None-Match': etag!,
+            'If-None-Match': etag,
           },
         },
         mockEnv
@@ -170,7 +220,7 @@ describe('Status List Routes', () => {
       const mockEnvNotFound = createMockEnv(null);
 
       const res = await app.request(
-        '/vci/status/non-existent',
+        '/vci/status-lists/non-existent',
         {
           headers: { host: 'tenant1.issuer.example.com' },
         },
@@ -184,7 +234,7 @@ describe('Status List Routes', () => {
 
     it('should return 404 for a status list owned by another tenant', async () => {
       const res = await app.request(
-        '/vci/status/sl_r_tenant1_abc123',
+        '/vci/status-lists/sl_r_tenant1_abc123',
         {
           headers: { host: 'other.issuer.example.com' },
         },
@@ -196,7 +246,7 @@ describe('Status List Routes', () => {
 
     it('should include correct cache headers', async () => {
       const res = await app.request(
-        '/vci/status/sl_r_tenant1_abc123',
+        '/vci/status-lists/sl_r_tenant1_abc123',
         {
           headers: { host: 'tenant1.issuer.example.com' },
         },
@@ -207,10 +257,10 @@ describe('Status List Routes', () => {
     });
   });
 
-  describe('GET /vci/status/:listId/json', () => {
+  describe('GET /vci/status-lists/:listId/json', () => {
     it('should return status list data as JSON', async () => {
       const res = await app.request(
-        '/vci/status/sl_r_tenant1_abc123/json',
+        '/vci/status-lists/sl_r_tenant1_abc123/json',
         { headers: { host: 'tenant1.issuer.example.com' } },
         mockEnv
       );
@@ -229,7 +279,7 @@ describe('Status List Routes', () => {
       const mockEnvNotFound = createMockEnv(null);
 
       const res = await app.request(
-        '/vci/status/non-existent/json',
+        '/vci/status-lists/non-existent/json',
         { headers: { host: 'tenant1.issuer.example.com' } },
         mockEnvNotFound
       );
@@ -239,7 +289,7 @@ describe('Status List Routes', () => {
 
     it('should return 404 for a status list owned by another tenant', async () => {
       const res = await app.request(
-        '/vci/status/sl_r_tenant1_abc123/json',
+        '/vci/status-lists/sl_r_tenant1_abc123/json',
         { headers: { host: 'other.issuer.example.com' } },
         mockEnv
       );
@@ -255,7 +305,7 @@ describe('Status List Routes', () => {
       const mockEnv2 = createMockEnv();
 
       const res1 = await app.request(
-        '/vci/status/sl_r_tenant1_abc123',
+        '/vci/status-lists/sl_r_tenant1_abc123',
         {
           headers: { host: 'tenant1.issuer.example.com' },
         },
@@ -263,7 +313,7 @@ describe('Status List Routes', () => {
       );
 
       const res2 = await app.request(
-        '/vci/status/sl_r_tenant1_abc123',
+        '/vci/status-lists/sl_r_tenant1_abc123',
         {
           headers: { host: 'tenant1.issuer.example.com' },
         },
@@ -276,7 +326,7 @@ describe('Status List Routes', () => {
     it('should generate different ETag for different data', async () => {
       const mockEnv1 = createMockEnv();
       const res1 = await app.request(
-        '/vci/status/sl_r_tenant1_abc123',
+        '/vci/status-lists/sl_r_tenant1_abc123',
         {
           headers: { host: 'tenant1.issuer.example.com' },
         },
@@ -293,7 +343,7 @@ describe('Status List Routes', () => {
       const mockEnvModified = createMockEnv(modifiedListData);
 
       const res2 = await app.request(
-        '/vci/status/sl_r_tenant1_abc123',
+        '/vci/status-lists/sl_r_tenant1_abc123',
         {
           headers: { host: 'tenant1.issuer.example.com' },
         },

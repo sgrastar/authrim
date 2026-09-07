@@ -23,7 +23,7 @@ import {
 import { sendPingNotification } from '@authrim/ar-lib-core/notifications';
 import { resolveAsyncTenantId } from './tenant';
 import {
-  cibaLoginHintMatchesAuthenticatedUser,
+  cibaRequestMatchesAuthenticatedUser,
   getAuthenticatedAsyncUser,
 } from './authenticated-session';
 
@@ -147,14 +147,7 @@ export async function cibaApproveHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
     if (authenticatedUser) {
-      if (
-        metadata.resolved_subject_id &&
-        metadata.resolved_subject_id !== authenticatedUser.userId &&
-        metadata.resolved_subject_id !== authenticatedUser.sub
-      ) {
-        return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
-      }
-      if (!cibaLoginHintMatchesAuthenticatedUser(metadata.login_hint, authenticatedUser)) {
+      if (!cibaRequestMatchesAuthenticatedUser(metadata, authenticatedUser)) {
         return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
       }
     } else {

@@ -3,7 +3,6 @@ import type { Env } from '@authrim/ar-lib-core';
 import {
   CanonicalRuntimeUserProjectionRepository,
   CanonicalSensitiveValueResolver,
-  CanonicalRuntimeUserStore,
   validateResponseType,
   validateClientId,
   validateRedirectUri,
@@ -19,16 +18,19 @@ import {
   buildDOInstanceName,
   getSessionStoreBySessionId,
   getSessionStoreForNewSession,
+  getSessionClientMetadata,
+  deriveOidcSid,
   isShardedSessionId,
   parseShardedSessionId,
   getCachedUser,
   getCachedConsent,
-  invalidateConsentCache,
+  upsertOAuthClientConsent,
   getChallengeStoreByChallengeId,
   generateRegionAwareJti,
   createAuthContextFromHono,
   createPIIContextFromHono,
-  getRuntimeUserStoreSourcesFromHonoContext,
+  getTenantMetadataContextFromHono,
+  resolveAccountDataContextFromHono,
   registerSessionClientInStore,
   getTenantIdFromContext,
   getDefaultTenantId,
@@ -67,13 +69,28 @@ import {
   canonicalProjectionToOIDCClaimsUser,
   hasSAORulesForTarget,
   normalizeAttributeReleaseConsentPolicy,
+  getTenantSystemSettings,
+  resolveAuthorizationResponseSigningAlgorithm,
+  selectJWEEncryptionKey,
+  setBoundedMapEntry,
+  timingSafeEqual,
+  type OIDCSigningAlgorithm,
 } from '@authrim/ar-lib-core';
 import type { CachedUser, CachedConsent } from '@authrim/ar-lib-core';
 import type { Session, PARRequestData } from '@authrim/ar-lib-core';
 import type { PublicJWK, JWKS } from '@authrim/ar-lib-core';
-import { isSigningJWK, isEncryptionJWK } from '@authrim/ar-lib-core';
+import { isSigningJWK } from '@authrim/ar-lib-core';
 import { safeFetch, safeFetchJson } from '@authrim/ar-lib-core';
 import { validateAuthorizationDetails } from '@authrim/ar-lib-core';
+import {
+  buildAuthorizeContinuationUrl,
+  CONSENT_CONFIRMATION_COOKIE_NAME,
+  createAuthorizationRequestContinuation,
+  parseAuthorizationRequestContinuation,
+  type AuthorizationRequestContinuation,
+  type AuthorizationRequestSource,
+} from './authorization-continuation';
+import { provisionEmailAccount } from './account-provisioning';
 import {
   generateSecureRandomString,
   parseToken,
@@ -105,11 +122,15 @@ import { SignJWT, importJWK, importPKCS8, compactDecrypt, type CryptoKey } from 
 // NIST SP 800-63-4 Assurance Levels
 import { type FAL } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
+import type { FAPI2MessageSigningConfig } from './fapi-message-signing';
+import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
 
 const DEFAULT_HANDOFF_ARTIFACT_TTL_SECONDS = 60;
 const MIN_HANDOFF_ARTIFACT_TTL_SECONDS = 30;
 const MAX_HANDOFF_ARTIFACT_TTL_SECONDS = 300;
 const HTTPS_REQUEST_URI_MAX_REDIRECTS = 5;
+const AUTHORIZE_CONFIRMATION_COOKIE_NAME = 'authrim_authorize_confirmation';
+const DEFAULT_CLIENT_AUTHORIZATION_SCOPES = ['openid', 'profile', 'email'];
 
 function splitScopes(scope: string | undefined | null): string[] {
   return (scope ?? '')
@@ -141,7 +162,8 @@ function getClientAllowedScopes(clientMetadata: {
   if (Array.isArray(clientMetadata.allowed_scopes) && clientMetadata.allowed_scopes.length) {
     return clientMetadata.allowed_scopes;
   }
-  return splitScopes(clientMetadata.scope);
+  const registeredScopes = splitScopes(clientMetadata.scope);
+  return registeredScopes.length > 0 ? registeredScopes : [...DEFAULT_CLIENT_AUTHORIZATION_SCOPES];
 }
 
 function isClientPublic(clientMetadata: {
@@ -169,24 +191,8 @@ function isOidcCertificationRedirectUri(value: unknown): boolean {
   }
 }
 
-function isOidcCertificationClient(clientMetadata?: { redirect_uris?: unknown } | null): boolean {
-  return (
-    Array.isArray(clientMetadata?.redirect_uris) &&
-    clientMetadata.redirect_uris.some(isOidcCertificationRedirectUri)
-  );
-}
-
 function responseTypeIssuesAuthorizationCode(responseType: string | undefined): boolean {
   return splitScopes(responseType).includes('code');
-}
-
-async function deriveOidcSid(sessionId: string, clientId: string, issuer: string): Promise<string> {
-  const data = new TextEncoder().encode(`${issuer}\u0000${clientId}\u0000${sessionId}`);
-  const digest = await crypto.subtle.digest('SHA-256', data);
-  return btoa(String.fromCharCode(...new Uint8Array(digest)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
 }
 
 async function loadOIDCClaimsUser(
@@ -260,6 +266,7 @@ const signingKeyCache = new Map<
   }
 >();
 const KEY_CACHE_TTL = 60000; // 60 seconds
+const MAX_SIGNING_KEY_CACHE_ENTRIES = 128;
 
 // ===== SettingsManager Caching for Performance Optimization =====
 // Cache SettingsManager instance to avoid recreating it on every request
@@ -362,7 +369,7 @@ async function getUIRedirectTarget(
       deviceAuthorize: '/device/authorize',
       logoutComplete: '/logout-complete',
       loggedOut: '/logged-out',
-      register: '/register',
+      register: '/signup',
     };
     return { type: 'builtin', fallbackPath: fallbackPaths[path] || '/error' };
   }
@@ -397,7 +404,23 @@ async function getUIRedirectTarget(
 }
 
 function shouldUseIssuerHostedUi(env: Env, issuerUiBaseUrl?: string | null): boolean {
-  if (!issuerUiBaseUrl || env.LOGIN_UI_ENABLED === 'false' || !env.BASE_DOMAIN) {
+  if (!issuerUiBaseUrl || env.LOGIN_UI_ENABLED === 'false') {
+    return false;
+  }
+
+  // Setup-generated deployments pin browser Login UI execution to the issuer.
+  // This preserves the primary tenant's Login UI origin when a custom-domain
+  // single-tenant deployment is later expanded to multi-tenant routing.
+  if (env.LOGIN_UI_EXECUTION_HOST_MODE === 'issuer') {
+    return true;
+  }
+  if (env.LOGIN_UI_EXECUTION_HOST_MODE === 'dedicated') {
+    return false;
+  }
+
+  // Legacy configurations used issuer-hosted Login UI only for multi-tenant
+  // deployments. Preserve that behavior until they opt in explicitly.
+  if (!env.BASE_DOMAIN) {
     return false;
   }
 
@@ -422,6 +445,24 @@ function getTenantAwareUiQueryParams(
   } catch {
     return queryParams;
   }
+}
+
+function getChallengeUiQueryParams(
+  challengeId: string,
+  uiLocales: string | undefined
+): Record<string, string> {
+  const normalizedUiLocales = uiLocales?.trim();
+  return {
+    challenge_id: challengeId,
+    ...(normalizedUiLocales ? { ui_locales: normalizedUiLocales } : {}),
+  };
+}
+
+function buildBuiltinUiRedirectUrl(
+  fallbackPath: string,
+  queryParams: Record<string, string>
+): string {
+  return `${fallbackPath}?${new URLSearchParams(queryParams).toString()}`;
 }
 
 function createLocalUiUnavailableResponse(
@@ -596,9 +637,12 @@ async function createAuthorizeConfirmationChallenge(
   metadata: {
     authTime?: number;
     sessionUserId?: string;
+    sessionId?: string;
+    authorizationRequest: AuthorizationRequestContinuation;
   }
 ): Promise<string> {
   const confirmationId = crypto.randomUUID();
+  const browserBinding = generateSecureRandomString(32);
   const confirmationStore = await getChallengeStoreByChallengeId(c.env, confirmationId, tenantId);
   await confirmationStore.storeChallengeRpc({
     id: confirmationId,
@@ -611,8 +655,15 @@ async function createAuthorizeConfirmationChallenge(
       purpose: 'authorize_confirmation',
       authTime: metadata.authTime,
       sessionUserId: metadata.sessionUserId ?? userId,
+      sessionId: metadata.sessionId,
+      browserBinding,
+      authorization_request: metadata.authorizationRequest,
     },
   });
+  c.res.headers.append(
+    'Set-Cookie',
+    `${AUTHORIZE_CONFIRMATION_COOKIE_NAME}=${encodeURIComponent(browserBinding)}; Path=/authorize; HttpOnly; SameSite=${getSessionCookieSameSite(c.env)}; Secure; Max-Age=120`
+  );
   return confirmationId;
 }
 
@@ -637,8 +688,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let code_challenge: string | undefined;
   let code_challenge_method: string | undefined;
   let claims: string | undefined;
+  let dpop_jkt: string | undefined;
   let authorization_details: string | undefined; // RFC 9396: Rich Authorization Requests
   let request_uri: string | undefined;
+  let par_request_uri: string | undefined;
   let response_mode: string | undefined;
   let request: string | undefined; // RFC 9101: Request Object (JAR)
   let prompt: string | undefined;
@@ -650,6 +703,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let login_hint: string | undefined;
   let handoff: string | undefined; // Authrim Extension: Session Token Handoff SSO
   let claimsRequestIntegrityProtected = false;
+  let authorizationRequestSource: AuthorizationRequestSource = 'frontchannel';
+  let restoredAuthorizationRequest: AuthorizationRequestContinuation | undefined;
   let _confirmed: string | undefined;
   let _auth_time: string | undefined;
   let _session_user_id: string | undefined;
@@ -680,6 +735,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       code_challenge_method =
         typeof body.code_challenge_method === 'string' ? body.code_challenge_method : undefined;
       claims = typeof body.claims === 'string' ? body.claims : undefined;
+      dpop_jkt = typeof body.dpop_jkt === 'string' ? body.dpop_jkt : undefined;
       authorization_details =
         typeof body.authorization_details === 'string' ? body.authorization_details : undefined;
       response_mode = typeof body.response_mode === 'string' ? body.response_mode : undefined;
@@ -724,6 +780,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     code_challenge = c.req.query('code_challenge');
     code_challenge_method = c.req.query('code_challenge_method');
     claims = c.req.query('claims');
+    dpop_jkt = c.req.query('dpop_jkt');
     authorization_details = c.req.query('authorization_details');
     response_mode = c.req.query('response_mode');
     prompt = c.req.query('prompt');
@@ -744,6 +801,19 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     cancel_uri = c.req.query('cancel_uri') ?? undefined;
   }
 
+  // RFC 9101 Section 5: request and request_uri are mutually exclusive.
+  // Reject before resolving either container so one protected request cannot
+  // silently override the other.
+  if (request && request_uri) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'request and request_uri must not be used together',
+      },
+      400
+    );
+  }
+
   if (_confirmation_challenge) {
     const tenantId = getTenantIdFromContext(c);
     const confirmationStore = await getChallengeStoreByChallengeId(
@@ -751,22 +821,106 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       _confirmation_challenge,
       tenantId
     );
-    let confirmationData: {
+    type AuthorizeConfirmationData = {
       userId?: string;
       metadata?: {
         purpose?: string;
         authTime?: number;
         sessionUserId?: string;
+        sessionId?: string;
+        browserBinding?: string;
+        authorization_request?: unknown;
       };
     };
+    let confirmationData: AuthorizeConfirmationData;
 
     try {
+      const pendingConfirmation = (await confirmationStore.getChallengeRpc(
+        _confirmation_challenge
+      )) as AuthorizeConfirmationData | null;
+      if (pendingConfirmation?.metadata?.purpose !== 'authorize_confirmation') {
+        throw new Error('Invalid confirmation challenge');
+      }
+
+      const boundSessionId = pendingConfirmation.metadata.sessionId;
+      const browserBinding = pendingConfirmation.metadata.browserBinding;
+      if (typeof browserBinding !== 'string' || browserBinding.length === 0) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Authorization confirmation requires browser binding',
+          },
+          401
+        );
+      }
+      {
+        const rawBindingCookie = c.req
+          .header('Cookie')
+          ?.match(new RegExp(`(?:^|;\\s*)${AUTHORIZE_CONFIRMATION_COOKIE_NAME}=([^;]+)`))?.[1];
+        let presentedBrowserBinding: string | undefined;
+        try {
+          presentedBrowserBinding = rawBindingCookie
+            ? decodeURIComponent(rawBindingCookie)
+            : undefined;
+        } catch {
+          presentedBrowserBinding = undefined;
+        }
+        if (!presentedBrowserBinding || !timingSafeEqual(presentedBrowserBinding, browserBinding)) {
+          return c.json(
+            {
+              error: 'access_denied',
+              error_description: 'Authorization confirmation requires the originating browser',
+            },
+            401
+          );
+        }
+      }
+      if (boundSessionId) {
+        const rawCookie = c.req.header('Cookie')?.match(/(?:^|;\s*)authrim_session=([^;]+)/)?.[1];
+        let presentedSessionId: string | undefined;
+        try {
+          presentedSessionId = rawCookie ? decodeURIComponent(rawCookie) : undefined;
+        } catch {
+          presentedSessionId = undefined;
+        }
+        if (presentedSessionId !== boundSessionId || !isShardedSessionId(boundSessionId)) {
+          return c.json(
+            {
+              error: 'access_denied',
+              error_description: 'Authorization confirmation requires the bound session',
+            },
+            401
+          );
+        }
+        const { stub: sessionStore } = getSessionStoreBySessionId(c.env, boundSessionId, tenantId);
+        const session = (await sessionStore.getSessionRpc(boundSessionId)) as Session | null;
+        if (
+          !session ||
+          session.userId !== pendingConfirmation.userId ||
+          session.expiresAt <= Date.now()
+        ) {
+          return c.json(
+            {
+              error: 'access_denied',
+              error_description: 'Authorization confirmation requires the bound session',
+            },
+            401
+          );
+        }
+      }
+
       confirmationData = (await confirmationStore.consumeChallengeRpc({
         id: _confirmation_challenge,
         tenantId,
         type: 'reauth',
         challenge: _confirmation_challenge,
       })) as typeof confirmationData;
+      if (browserBinding) {
+        c.res.headers.append(
+          'Set-Cookie',
+          `${AUTHORIZE_CONFIRMATION_COOKIE_NAME}=; Path=/authorize; HttpOnly; SameSite=${getSessionCookieSameSite(c.env)}; Secure; Max-Age=0`
+        );
+      }
     } catch {
       return c.json(
         {
@@ -792,6 +946,21 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       _auth_time = confirmationData.metadata.authTime.toString();
     }
     _session_user_id = confirmationData.metadata.sessionUserId || confirmationData.userId;
+    if (confirmationData.metadata.authorization_request !== undefined) {
+      const parsed = parseAuthorizationRequestContinuation(
+        confirmationData.metadata.authorization_request
+      );
+      if (!parsed) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Invalid authorization continuation',
+          },
+          400
+        );
+      }
+      restoredAuthorizationRequest = parsed;
+    }
   }
 
   if (_consent_confirmation_challenge) {
@@ -805,16 +974,105 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       userId?: string;
       metadata?: {
         purpose?: string;
+        sessionId?: string;
+        browserBinding?: string;
+        authorization_request?: unknown;
       };
     };
 
     try {
+      const pendingConfirmation = (await confirmationStore.getChallengeRpc(
+        _consent_confirmation_challenge
+      )) as typeof confirmationData | null;
+      if (pendingConfirmation?.metadata?.purpose !== 'authorize_consent_confirmation') {
+        throw new Error('Invalid consent confirmation challenge');
+      }
+
+      const boundSessionId = pendingConfirmation.metadata.sessionId;
+      const browserBinding = pendingConfirmation.metadata.browserBinding;
+      if (
+        typeof boundSessionId !== 'string' ||
+        boundSessionId.length === 0 ||
+        typeof browserBinding !== 'string' ||
+        browserBinding.length === 0
+      ) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Consent confirmation requires session and browser binding',
+          },
+          401
+        );
+      }
+
+      const rawBindingCookie = c.req
+        .header('Cookie')
+        ?.match(new RegExp(`(?:^|;\\s*)${CONSENT_CONFIRMATION_COOKIE_NAME}=([^;]+)`))?.[1];
+      let presentedBrowserBinding: string | undefined;
+      try {
+        presentedBrowserBinding = rawBindingCookie
+          ? decodeURIComponent(rawBindingCookie)
+          : undefined;
+      } catch {
+        presentedBrowserBinding = undefined;
+      }
+      if (!presentedBrowserBinding || !timingSafeEqual(presentedBrowserBinding, browserBinding)) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Consent confirmation requires the originating browser',
+          },
+          401
+        );
+      }
+
+      const rawSessionCookie = c.req
+        .header('Cookie')
+        ?.match(/(?:^|;\s*)authrim_session=([^;]+)/)?.[1];
+      let presentedSessionId: string | undefined;
+      try {
+        presentedSessionId = rawSessionCookie ? decodeURIComponent(rawSessionCookie) : undefined;
+      } catch {
+        presentedSessionId = undefined;
+      }
+      if (presentedSessionId !== boundSessionId || !isShardedSessionId(boundSessionId)) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Consent confirmation requires the bound session',
+          },
+          401
+        );
+      }
+
+      const { stub: sessionStore } = getSessionStoreBySessionId(c.env, boundSessionId, tenantId);
+      const session = (await sessionStore.getSessionRpc(boundSessionId)) as Session | null;
+      if (
+        !session ||
+        session.userId !== pendingConfirmation.userId ||
+        session.expiresAt <= Date.now()
+      ) {
+        return c.json(
+          {
+            error: 'access_denied',
+            error_description: 'Consent confirmation requires the bound session',
+          },
+          401
+        );
+      }
+
       confirmationData = (await confirmationStore.consumeChallengeRpc({
         id: _consent_confirmation_challenge,
         tenantId,
         type: 'consent',
         challenge: _consent_confirmation_challenge,
       })) as typeof confirmationData;
+      c.res.headers.append(
+        'Set-Cookie',
+        `${CONSENT_CONFIRMATION_COOKIE_NAME}=; Path=/authorize; HttpOnly; SameSite=${getSessionCookieSameSite(
+          c.env
+        )}; Secure; Max-Age=0`
+      );
     } catch {
       return c.json(
         {
@@ -837,7 +1095,102 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
     _consent_confirmed = 'true';
     confirmedConsentUserId = confirmationData.userId;
+    if (confirmationData.metadata.authorization_request !== undefined) {
+      const parsed = parseAuthorizationRequestContinuation(
+        confirmationData.metadata.authorization_request
+      );
+      if (!parsed) {
+        return c.json(
+          {
+            error: 'invalid_request',
+            error_description: 'Invalid authorization continuation',
+          },
+          400
+        );
+      }
+      restoredAuthorizationRequest = parsed;
+    }
   }
+
+  if (restoredAuthorizationRequest) {
+    response_type = restoredAuthorizationRequest.response_type;
+    client_id = restoredAuthorizationRequest.client_id;
+    redirect_uri = restoredAuthorizationRequest.redirect_uri;
+    scope = restoredAuthorizationRequest.scope;
+    state = restoredAuthorizationRequest.state;
+    nonce = restoredAuthorizationRequest.nonce;
+    code_challenge = restoredAuthorizationRequest.code_challenge;
+    code_challenge_method = restoredAuthorizationRequest.code_challenge_method;
+    claims = restoredAuthorizationRequest.claims;
+    dpop_jkt = restoredAuthorizationRequest.dpop_jkt;
+    par_request_uri = restoredAuthorizationRequest.par_request_uri;
+    authorization_details = restoredAuthorizationRequest.authorization_details;
+    response_mode = restoredAuthorizationRequest.response_mode;
+    max_age = restoredAuthorizationRequest.max_age;
+    prompt = restoredAuthorizationRequest.prompt;
+    id_token_hint = restoredAuthorizationRequest.id_token_hint;
+    acr_values = restoredAuthorizationRequest.acr_values;
+    display = restoredAuthorizationRequest.display;
+    ui_locales = restoredAuthorizationRequest.ui_locales;
+    login_hint = restoredAuthorizationRequest.login_hint;
+    handoff = restoredAuthorizationRequest.handoff;
+    org_id = restoredAuthorizationRequest.org_id;
+    acting_as = restoredAuthorizationRequest.acting_as;
+    error_uri = restoredAuthorizationRequest.error_uri;
+    cancel_uri = restoredAuthorizationRequest.cancel_uri;
+    request_uri = undefined;
+    request = undefined;
+    authorizationRequestSource = restoredAuthorizationRequest.source;
+    claimsRequestIntegrityProtected = restoredAuthorizationRequest.integrity_protected;
+  }
+
+  const sendRequestUriError = async (error: string, description: string): Promise<Response> => {
+    // Request Object processing happens before the main client/redirect validation below. An
+    // OAuth error may still be returned to the client, but only after independently proving that
+    // the outer client and redirect URI belong to this tenant. Never trust values recovered from
+    // an invalid Request Object or PAR entry.
+    if (
+      client_id &&
+      redirect_uri &&
+      response_type &&
+      validateClientId(client_id).valid &&
+      validateResponseType(response_type).valid
+    ) {
+      try {
+        const errorClient = await getClientCached(c, c.env, client_id);
+        const requestTenantId = getTenantIdFromContext(c);
+        const errorClientTenantId =
+          typeof errorClient?.tenant_id === 'string' && errorClient.tenant_id.length > 0
+            ? errorClient.tenant_id
+            : requestTenantId;
+        const registeredRedirectUris = errorClient?.redirect_uris;
+        const redirectValidation = validateRedirectUri(
+          redirect_uri,
+          c.env.ENABLE_HTTP_REDIRECT === 'true'
+        );
+        if (
+          errorClient &&
+          errorClientTenantId === requestTenantId &&
+          Array.isArray(registeredRedirectUris) &&
+          redirectValidation.valid &&
+          isRedirectUriRegistered(redirect_uri, registeredRedirectUris as string[])
+        ) {
+          return redirectWithError(c, redirect_uri, error, description, state, {
+            responseMode: response_mode,
+            responseType: response_type,
+            clientId: client_id,
+          });
+        }
+      } catch (validationError) {
+        log.warn('Failed to validate redirect for request_uri error', {
+          action: 'request_uri_error_redirect_validation',
+          error: validationError instanceof Error ? validationError.message : 'unknown',
+        });
+      }
+    }
+
+    return c.json({ error, error_description: description }, 400);
+  };
 
   // RFC 9126: If request_uri is present, fetch parameters from PAR storage
   // OIDC Core 6.2: Also support HTTPS request_uri (Request Object by Reference)
@@ -847,13 +1200,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     const isHTTPS = request_uri.startsWith('https://');
 
     if (!isPAR && !isHTTPS) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description:
-            'request_uri must be either urn:ietf:params:oauth:request_uri: or https://',
-        },
-        400
+      return sendRequestUriError(
+        'invalid_request',
+        'request_uri must be either urn:ietf:params:oauth:request_uri: or https://'
       );
     }
 
@@ -876,10 +1225,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       };
 
       try {
-        const settingsJson = await c.env.SETTINGS?.get('system_settings');
-        if (settingsJson) {
-          const settings = JSON.parse(settingsJson);
-          const kvConfig = settings.oidc?.httpsRequestUri;
+        const settings = await getTenantSystemSettings(c.env.SETTINGS, getTenantIdFromContext(c));
+        if (settings) {
+          const oidc = settings.oidc as
+            | { httpsRequestUri?: Partial<typeof httpsRequestUriConfig> }
+            | undefined;
+          const kvConfig = oidc?.httpsRequestUri;
           if (kvConfig) {
             httpsRequestUriConfig = {
               enabled: kvConfig.enabled ?? false,
@@ -915,13 +1266,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       if (!httpsRequestUriConfig.enabled) {
-        return c.json(
-          {
-            error: 'request_uri_not_supported',
-            error_description:
-              'HTTPS request_uri is disabled. Use PAR (RFC 9126) with urn:ietf:params:oauth:request_uri: format instead.',
-          },
-          400
+        return sendRequestUriError(
+          'request_uri_not_supported',
+          'HTTPS request_uri is disabled. Use PAR (RFC 9126) with urn:ietf:params:oauth:request_uri: format instead.'
         );
       }
 
@@ -935,13 +1282,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       try {
         requestUrl = new URL(request_uri);
       } catch {
-        return c.json(
-          {
-            error: 'invalid_request_uri',
-            error_description: 'Invalid URL format for request_uri',
-          },
-          400
-        );
+        return sendRequestUriError('invalid_request_uri', 'Invalid URL format for request_uri');
       }
 
       // Validate domain against allowlist (if configured)
@@ -957,12 +1298,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             domain: requestDomain,
             allowedDomains: allowedDomains.join(', '),
           });
-          return c.json(
-            {
-              error: 'invalid_request_uri',
-              error_description: 'request_uri domain is not in the allowed list',
-            },
-            400
+          return sendRequestUriError(
+            'invalid_request_uri',
+            'request_uri domain is not in the allowed list'
           );
         }
       }
@@ -973,12 +1311,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           action: 'ssrf_block',
           hostname: requestUrl.hostname,
         });
-        return c.json(
-          {
-            error: 'invalid_request_uri',
-            error_description: 'request_uri cannot point to internal addresses',
-          },
-          400
+        return sendRequestUriError(
+          'invalid_request_uri',
+          'request_uri cannot point to internal addresses'
         );
       }
 
@@ -1006,23 +1341,17 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           }
 
           if (redirectCount === HTTPS_REQUEST_URI_MAX_REDIRECTS) {
-            return c.json(
-              {
-                error: 'invalid_request_uri',
-                error_description: 'request_uri exceeded maximum redirect depth',
-              },
-              400
+            return sendRequestUriError(
+              'invalid_request_uri',
+              'request_uri exceeded maximum redirect depth'
             );
           }
 
           const location = requestObjectResponse.headers.get('location');
           if (!location) {
-            return c.json(
-              {
-                error: 'invalid_request_uri',
-                error_description: 'request_uri redirect response is missing Location header',
-              },
-              400
+            return sendRequestUriError(
+              'invalid_request_uri',
+              'request_uri redirect response is missing Location header'
             );
           }
 
@@ -1030,12 +1359,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             const finalUrl = new URL(location, fetchUrl);
             const finalDomain = finalUrl.hostname.toLowerCase();
             if (finalUrl.protocol !== 'https:') {
-              return c.json(
-                {
-                  error: 'invalid_request_uri',
-                  error_description: 'request_uri redirect target must use HTTPS',
-                },
-                400
+              return sendRequestUriError(
+                'invalid_request_uri',
+                'request_uri redirect target must use HTTPS'
               );
             }
 
@@ -1050,12 +1376,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 domain: finalDomain,
                 allowedDomains: allowedDomains.join(', '),
               });
-              return c.json(
-                {
-                  error: 'invalid_request_uri',
-                  error_description: 'Redirected request_uri domain is not in the allowed list',
-                },
-                400
+              return sendRequestUriError(
+                'invalid_request_uri',
+                'Redirected request_uri domain is not in the allowed list'
               );
             }
 
@@ -1065,34 +1388,25 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 action: 'ssrf_block',
                 hostname: finalUrl.hostname,
               });
-              return c.json(
-                {
-                  error: 'invalid_request_uri',
-                  error_description: 'request_uri cannot redirect to internal addresses',
-                },
-                400
+              return sendRequestUriError(
+                'invalid_request_uri',
+                'request_uri cannot redirect to internal addresses'
               );
             }
 
             fetchUrl = finalUrl.toString();
           } catch {
-            return c.json(
-              {
-                error: 'invalid_request_uri',
-                error_description: 'request_uri redirect target is invalid',
-              },
-              400
+            return sendRequestUriError(
+              'invalid_request_uri',
+              'request_uri redirect target is invalid'
             );
           }
         }
 
         if (!requestObjectResponse) {
-          return c.json(
-            {
-              error: 'invalid_request_uri',
-              error_description: 'Failed to fetch request object from request_uri',
-            },
-            400
+          return sendRequestUriError(
+            'invalid_request_uri',
+            'Failed to fetch request object from request_uri'
           );
         }
 
@@ -1102,37 +1416,25 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             httpStatus: requestObjectResponse.status,
             statusText: requestObjectResponse.statusText,
           });
-          return c.json(
-            {
-              error: 'invalid_request_uri',
-              error_description: 'Failed to fetch request object from request_uri',
-            },
-            400
+          return sendRequestUriError(
+            'invalid_request_uri',
+            'Failed to fetch request object from request_uri'
           );
         }
 
         // Check Content-Length header first
         const contentLength = requestObjectResponse.headers.get('content-length');
         if (contentLength && parseInt(contentLength, 10) > maxSizeBytes) {
-          return c.json(
-            {
-              error: 'invalid_request_uri',
-              error_description: `Response too large: ${contentLength} bytes exceeds limit of ${maxSizeBytes} bytes`,
-            },
-            400
+          return sendRequestUriError(
+            'invalid_request_uri',
+            `Response too large: ${contentLength} bytes exceeds limit of ${maxSizeBytes} bytes`
           );
         }
 
         // Read response with size limit
         const reader = requestObjectResponse.body?.getReader();
         if (!reader) {
-          return c.json(
-            {
-              error: 'invalid_request_uri',
-              error_description: 'Failed to read response body',
-            },
-            400
-          );
+          return sendRequestUriError('invalid_request_uri', 'Failed to read response body');
         }
 
         const chunks: Uint8Array[] = [];
@@ -1145,12 +1447,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           totalSize += value.length;
           if (totalSize > maxSizeBytes) {
             reader.cancel();
-            return c.json(
-              {
-                error: 'invalid_request_uri',
-                error_description: `Response too large: exceeds limit of ${maxSizeBytes} bytes`,
-              },
-              400
+            return sendRequestUriError(
+              'invalid_request_uri',
+              `Response too large: exceeds limit of ${maxSizeBytes} bytes`
             );
           }
           chunks.push(value);
@@ -1178,24 +1477,23 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           { action: 'request_uri_fetch', isTimeout, isTooLarge },
           error as Error
         );
-        return c.json(
-          {
-            error: 'invalid_request_uri',
-            error_description: isTimeout
-              ? `Request timed out after ${timeoutMs}ms`
-              : isTooLarge
-                ? `Response too large: exceeds limit of ${maxSizeBytes} bytes`
-                : 'Failed to fetch request object from request_uri',
-          },
-          400
+        return sendRequestUriError(
+          'invalid_request_uri',
+          isTimeout
+            ? `Request timed out after ${timeoutMs}ms`
+            : isTooLarge
+              ? `Response too large: exceeds limit of ${maxSizeBytes} bytes`
+              : 'Failed to fetch request object from request_uri'
         );
       }
     }
 
     // Handle PAR request_uri (URN format)
     if (isPAR) {
-      // Retrieve request parameters atomically (issue #11: single-use guarantee)
-      // Try DO first, fall back to KV
+      // Read the PAR request without consuming it. RFC 9126 Section 7.3 recommends that
+      // one-time-use enforcement happen when the user authorizes the request, not merely when
+      // the authorization endpoint is visited. This lets a login page be revisited safely while
+      // preserving an atomic consume operation after authentication.
       let parsedData: {
         client_id: string;
         response_type: string;
@@ -1206,8 +1504,18 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         code_challenge?: string;
         code_challenge_method?: string;
         claims?: string;
+        dpop_jkt?: string;
         response_mode?: string;
+        prompt?: string;
+        display?: string;
+        max_age?: number;
+        ui_locales?: string;
+        id_token_hint?: string;
+        login_hint?: string;
+        acr_values?: string;
         authorization_details?: string;
+        error_uri?: string;
+        cancel_uri?: string;
       } | null = null;
 
       if (!c.env.PAR_REQUEST_STORE) {
@@ -1225,17 +1533,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       const parsedPar = parsePARRequestUri(request_uri!);
 
       try {
-        let consumed: PARRequestData;
+        let stored: PARRequestData | null;
 
         if (parsedPar) {
           // New region-sharded format: route via embedded shard info
           const tenantId = getTenantIdFromContext(c);
           const { stub } = getPARRequestStoreByUri(c.env, request_uri!, tenantId);
-          consumed = (await stub.consumeRequestRpc({
-            requestUri: request_uri!,
-            tenant_id: tenantId,
-            client_id: client_id || '', // May be empty for new format
-          })) as PARRequestData;
+          stored = (await stub.getRequestRpc(request_uri!)) as PARRequestData | null;
         } else {
           // Legacy format: route via client_id
           if (!client_id) {
@@ -1249,26 +1553,43 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           }
           const id = c.env.PAR_REQUEST_STORE.idFromName(client_id);
           const stub = c.env.PAR_REQUEST_STORE.get(id);
-          consumed = (await stub.consumeRequestRpc({
-            requestUri: request_uri!,
-            tenant_id: getTenantIdFromContext(c),
-            client_id: client_id,
-          })) as PARRequestData;
+          stored = (await stub.getRequestRpc(request_uri!)) as PARRequestData | null;
+        }
+
+        const requestTenantId = getTenantIdFromContext(c);
+        if (
+          !stored ||
+          stored.consumed ||
+          stored.tenant_id !== requestTenantId ||
+          (client_id && stored.client_id !== client_id) ||
+          (stored.authorization_server ?? 'default') !== 'default'
+        ) {
+          throw new Error('Invalid or expired request_uri');
         }
 
         // Map PARRequestData to the expected format
         parsedData = {
-          client_id: consumed.client_id,
-          response_type: consumed.response_type || 'code',
-          redirect_uri: consumed.redirect_uri,
-          scope: consumed.scope,
-          state: consumed.state,
-          nonce: consumed.nonce,
-          code_challenge: consumed.code_challenge,
-          code_challenge_method: consumed.code_challenge_method,
-          claims: consumed.claims,
-          authorization_details: consumed.authorization_details,
-          response_mode: undefined,
+          client_id: stored.client_id,
+          response_type: stored.response_type || 'code',
+          redirect_uri: stored.redirect_uri,
+          scope: stored.scope,
+          state: stored.state,
+          nonce: stored.nonce,
+          code_challenge: stored.code_challenge,
+          code_challenge_method: stored.code_challenge_method,
+          claims: stored.claims,
+          dpop_jkt: stored.dpop_jkt,
+          authorization_details: stored.authorization_details,
+          response_mode: stored.response_mode,
+          prompt: stored.prompt,
+          display: stored.display,
+          max_age: stored.max_age,
+          ui_locales: stored.ui_locales,
+          id_token_hint: stored.id_token_hint,
+          login_hint: stored.login_hint,
+          acr_values: stored.acr_values,
+          error_uri: stored.error_uri,
+          cancel_uri: stored.cancel_uri,
         };
       } catch {
         // RPC error (invalid/expired request_uri)
@@ -1276,9 +1597,44 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       if (!parsedData) {
+        // RFC 9126 errors may be returned through the browser only after independently
+        // re-validating the outer client and redirect URI. Never trust a redirect URI recovered
+        // from an invalid/expired request_uri, and never redirect to an unregistered URI.
+        if (client_id && redirect_uri) {
+          try {
+            const errorClient = await getClientCached(c, c.env, client_id);
+            const requestTenantId = getTenantIdFromContext(c);
+            const errorClientTenantId =
+              typeof errorClient?.tenant_id === 'string' && errorClient.tenant_id.length > 0
+                ? errorClient.tenant_id
+                : requestTenantId;
+            const registeredRedirectUris = errorClient?.redirect_uris;
+            if (
+              errorClient &&
+              errorClientTenantId === requestTenantId &&
+              Array.isArray(registeredRedirectUris) &&
+              validateRedirectUri(redirect_uri).valid &&
+              isRedirectUriRegistered(redirect_uri, registeredRedirectUris as string[])
+            ) {
+              return redirectWithError(
+                c,
+                redirect_uri,
+                'invalid_request_uri',
+                'Invalid or expired request_uri',
+                state,
+                { responseType: 'code', clientId: client_id }
+              );
+            }
+          } catch (error) {
+            log.warn('Failed to validate redirect for invalid request_uri', {
+              action: 'invalid_request_uri_redirect_validation',
+              error: error instanceof Error ? error.message : 'unknown',
+            });
+          }
+        }
         return c.json(
           {
-            error: 'invalid_request',
+            error: 'invalid_request_uri',
             error_description: 'Invalid or expired request_uri',
           },
           400
@@ -1296,8 +1652,18 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         code_challenge?: string;
         code_challenge_method?: string;
         claims?: string;
+        dpop_jkt?: string;
         response_mode?: string;
+        prompt?: string;
+        display?: string;
+        max_age?: number;
+        ui_locales?: string;
+        id_token_hint?: string;
+        login_hint?: string;
+        acr_values?: string;
         authorization_details?: string; // RFC 9396: Rich Authorization Requests
+        error_uri?: string;
+        cancel_uri?: string;
       } = parsedData;
 
       try {
@@ -1322,9 +1688,21 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         code_challenge = parData.code_challenge;
         code_challenge_method = parData.code_challenge_method;
         claims = parData.claims;
+        dpop_jkt = parData.dpop_jkt;
         claimsRequestIntegrityProtected = true;
         authorization_details = parData.authorization_details; // RFC 9396 RAR
         response_mode = parData.response_mode;
+        prompt = parData.prompt;
+        display = parData.display;
+        max_age = parData.max_age === undefined ? undefined : String(parData.max_age);
+        ui_locales = parData.ui_locales;
+        id_token_hint = parData.id_token_hint;
+        login_hint = parData.login_hint;
+        acr_values = parData.acr_values;
+        error_uri = parData.error_uri;
+        cancel_uri = parData.cancel_uri;
+        authorizationRequestSource = 'par';
+        par_request_uri = request_uri;
       } catch {
         return c.json(
           {
@@ -1336,6 +1714,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
     }
   }
+
+  // Preserve the front-channel client identity. A Request Object may protect
+  // parameters for that client, but it must not switch the authorization
+  // transaction to another registered client after signature verification.
+  const outerRequestClientId = client_id;
 
   // RFC 9101 (JAR): If request parameter is present, parse JWT request object
   if (request) {
@@ -1436,9 +1819,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
           // Check if 'none' algorithm is allowed (read from KV settings)
           // Only applies to non-production environments
-          const settingsJson = await c.env.SETTINGS?.get('system_settings');
-          const settings = settingsJson ? JSON.parse(settingsJson) : {};
-          const allowNoneAlgorithm = settings.oidc?.allowNoneAlgorithm ?? false;
+          const settings =
+            (await getTenantSystemSettings(c.env.SETTINGS, getTenantIdFromContext(c))) || {};
+          const oidc = settings.oidc as { allowNoneAlgorithm?: boolean } | undefined;
+          const allowNoneAlgorithm = oidc?.allowNoneAlgorithm ?? false;
 
           if (!allowNoneAlgorithm) {
             log.warn('Rejected unsigned request object (alg=none) - not allowed in configuration', {
@@ -1589,6 +1973,21 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Override parameters with those from request object
       // Per OIDC Core 6.1: request object parameters take precedence
       if (requestObjectClaims) {
+        if (
+          typeof requestObjectClaims.client_id !== 'string' ||
+          !outerRequestClientId ||
+          requestObjectClaims.client_id !== outerRequestClientId
+        ) {
+          return c.json(
+            {
+              error: 'invalid_request_object',
+              error_description:
+                'client_id in the request object must match the authorization request',
+            },
+            400
+          );
+        }
+
         // OIDC Core 6.1: redirect_uri is REQUIRED in the request object
         if (!requestObjectClaims.redirect_uri) {
           return c.json(
@@ -1616,7 +2015,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
         if (requestObjectClaims.response_type)
           response_type = requestObjectClaims.response_type as string;
-        if (requestObjectClaims.client_id) client_id = requestObjectClaims.client_id as string;
+        client_id = requestObjectClaims.client_id;
         redirect_uri = requestObjectRedirectUri;
         if (requestObjectClaims.scope) scope = requestObjectClaims.scope as string;
         if (requestObjectClaims.state) state = requestObjectClaims.state as string;
@@ -1633,7 +2032,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         if (requestObjectClaims.response_mode)
           response_mode = requestObjectClaims.response_mode as string;
         if (requestObjectClaims.prompt) prompt = requestObjectClaims.prompt as string;
-        if (requestObjectClaims.max_age) max_age = requestObjectClaims.max_age as string;
+        if (requestObjectClaims.max_age !== undefined) {
+          max_age = String(requestObjectClaims.max_age);
+        }
         if (requestObjectClaims.id_token_hint)
           id_token_hint = requestObjectClaims.id_token_hint as string;
         if (requestObjectClaims.acr_values) acr_values = requestObjectClaims.acr_values as string;
@@ -1733,7 +2134,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   const validClientId: string = client_id as string;
 
   // Fetch client metadata to validate redirect_uri (request-level cached)
-  const clientMetadata = await getClientCached(c, c.env, validClientId);
+  const clientMetadata = await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_client', () =>
+    getClientCached(c, c.env, validClientId)
+  );
   if (!clientMetadata) {
     if (await shouldUseBuiltinForms(c.env)) {
       return c.json(
@@ -1751,7 +2154,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       'Invalid Client'
     );
   }
-  const useCertificationBuiltinForms = isOidcCertificationClient(clientMetadata);
+  // Certification behavior must be scoped to both an explicitly enabled
+  // conformance environment and the redirect URI used by this request. A client
+  // merely registering a certification URI must not turn its other flows into
+  // credential-accepting test flows.
+  const useCertificationBuiltinForms =
+    (await shouldUseBuiltinForms(c.env)) && isOidcCertificationRedirectUri(redirect_uri);
 
   // Profile-based response_type validation (Human Auth / AI Ephemeral Auth two-layer model)
   // AI Ephemeral profile restricts implicit/hybrid flows to 'code' only for MCP User Delegation
@@ -1775,33 +2183,31 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   const tenantId = clientTenantId || requestTenantId;
-  const tenantProfile = await loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId);
+  const tenantProfilePromise = timeAuthRequestDiagnosticOperation(
+    c,
+    'auth_authorize_tenant_profile',
+    () => loadTenantProfileCached(c, c.env.AUTHRIM_CONFIG, c.env, tenantId)
+  );
+  const securitySettingsPromise = timeAuthRequestDiagnosticOperation(
+    c,
+    'auth_authorize_security_settings',
+    () =>
+      getTenantSystemSettings(c.env.SETTINGS, tenantId, {
+        failOnError: true,
+      })
+  ).then(
+    (value) => ({ ok: true as const, value }),
+    (error: unknown) => ({ ok: false as const, error })
+  );
+  const tenantProfile = await tenantProfilePromise;
   const profileAllowedResponseTypes = filterResponseTypesByProfile(
     ['code', 'id_token', 'id_token token', 'code id_token', 'code token', 'code id_token token'],
     tenantProfile
   );
-  if (!profileAllowedResponseTypes.includes(response_type!)) {
-    return c.json(
-      {
-        error: 'unauthorized_client',
-        error_description: `Response type '${response_type}' is not allowed for this tenant profile. Allowed: ${profileAllowedResponseTypes.join(', ')}`,
-      },
-      400
-    );
-  }
 
   // VG-006: Validate response_type against client's allowed response_types
   // RFC 7591 Section 2: response_types defaults to ["code"] if not specified
   const clientResponseTypes = (clientMetadata.response_types as string[] | undefined) || ['code'];
-  if (!clientResponseTypes.includes(response_type!)) {
-    return c.json(
-      {
-        error: 'unauthorized_client',
-        error_description: `Response type '${response_type}' is not allowed for this client. Allowed: ${clientResponseTypes.join(', ')}`,
-      },
-      400
-    );
-  }
 
   // Load FAPI 2.0 configuration from SETTINGS KV
   interface FAPIConfig {
@@ -1809,9 +2215,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     allowPublicClients?: boolean;
     /** Strict DPoP enforcement mode */
     strictDPoP?: boolean;
+    messageSigning?: FAPI2MessageSigningConfig;
   }
   interface OIDCConfig {
     requirePar?: boolean;
+    responseTypesSupported?: unknown;
     /** RFC 9396: Rich Authorization Requests */
     rar?: { enabled: boolean };
     /** Supported ACR values */
@@ -1819,63 +2227,47 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
   let fapiConfig: FAPIConfig = {};
   let oidcConfig: OIDCConfig = {};
-  try {
-    const settingsJson = await c.env.SETTINGS?.get('system_settings');
-    if (settingsJson) {
-      const settings = JSON.parse(settingsJson);
-      fapiConfig = settings.fapi || {};
-      oidcConfig = settings.oidc || {};
-    }
-  } catch (error) {
+  const securitySettings = await securitySettingsPromise;
+  if (!securitySettings.ok) {
     log.error(
       'Failed to load FAPI settings from KV',
       { action: 'fapi_settings_load' },
-      error as Error
+      securitySettings.error as Error
     );
-    // Continue with default values (FAPI disabled)
+    return c.json(
+      {
+        error: 'temporarily_unavailable',
+        error_description: 'Security profile settings are temporarily unavailable',
+      },
+      503
+    );
+  }
+  if (securitySettings.value) {
+    fapiConfig = securitySettings.value.fapi || {};
+    oidcConfig = securitySettings.value.oidc || {};
   }
 
-  // FAPI 2.0 Security Profile validation
-  if (fapiConfig.enabled) {
-    // FAPI 2.0 SHALL reject authorization requests sent without PAR
-    const requirePar = oidcConfig.requirePar !== false; // Default to true in FAPI mode
-    const usedPAR = request_uri && request_uri.startsWith('urn:ietf:params:oauth:request_uri:');
-
-    if (requirePar && !usedPAR) {
+  let configuredResponseTypes: string[] | undefined;
+  if (oidcConfig.responseTypesSupported !== undefined) {
+    if (
+      !Array.isArray(oidcConfig.responseTypesSupported) ||
+      oidcConfig.responseTypesSupported.length === 0 ||
+      oidcConfig.responseTypesSupported.some(
+        (value) => typeof value !== 'string' || !validateResponseType(value).valid
+      )
+    ) {
+      log.error('Invalid tenant response type policy', {
+        action: 'oidc_response_type_policy',
+      });
       return c.json(
         {
-          error: 'invalid_request',
-          error_description: 'PAR is required in FAPI 2.0 mode. Use /par endpoint first.',
+          error: 'temporarily_unavailable',
+          error_description: 'OIDC response type policy is unavailable',
         },
-        400
+        503
       );
     }
-
-    // FAPI 2.0 SHALL only support confidential clients (unless explicitly allowed)
-    const allowPublicClients = fapiConfig.allowPublicClients !== false;
-    const isPublicClient = !clientMetadata.client_secret_hash;
-
-    if (!allowPublicClients && isPublicClient) {
-      return c.json(
-        {
-          error: 'invalid_client',
-          error_description: 'Public clients are not allowed in FAPI 2.0 mode',
-        },
-        400
-      );
-    }
-
-    // FAPI 2.0 SHALL require PKCE with S256
-    // Exception: response_type=none does not issue authorization code, so PKCE is not required
-    if (response_type !== 'none' && (!code_challenge || code_challenge_method !== 'S256')) {
-      return c.json(
-        {
-          error: 'invalid_request',
-          error_description: 'PKCE with S256 is required in FAPI 2.0 mode',
-        },
-        400
-      );
-    }
+    configuredResponseTypes = oidcConfig.responseTypesSupported as string[];
   }
 
   // OAuth 2.0 Section 3.1.2.3: Handle redirect_uri based on registration
@@ -2234,8 +2626,56 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       responseMode: response_mode,
       responseType: response_type,
       clientId: validClientId,
+      messageSigning: fapiConfig.messageSigning,
       errorUri: validatedErrorUri,
     });
+
+  if (configuredResponseTypes && !configuredResponseTypes.includes(response_type!)) {
+    return sendError(
+      'unsupported_response_type',
+      `Response type '${response_type}' is not enabled for this tenant`
+    );
+  }
+
+  if (!profileAllowedResponseTypes.includes(response_type!)) {
+    return sendError(
+      'unsupported_response_type',
+      `Response type '${response_type}' is not allowed for this tenant profile. Allowed: ${profileAllowedResponseTypes.join(', ')}`
+    );
+  }
+
+  if (!clientResponseTypes.includes(response_type!)) {
+    return sendError(
+      'unsupported_response_type',
+      `Response type '${response_type}' is not allowed for this client. Allowed: ${clientResponseTypes.join(', ')}`
+    );
+  }
+
+  // FAPI errors are safe to redirect only after client_id and redirect_uri have been
+  // validated. This also lets a relying party (including the OIDF suite) observe a
+  // standards-compliant authorization error instead of leaving the browser at the AS.
+  if (fapiConfig.enabled) {
+    const requirePar = oidcConfig.requirePar !== false;
+    const usedPAR = authorizationRequestSource === 'par';
+
+    if (requirePar && !usedPAR) {
+      return sendError(
+        'invalid_request',
+        'PAR is required in FAPI 2.0 mode. Use /par endpoint first.'
+      );
+    }
+
+    const allowPublicClients = fapiConfig.allowPublicClients !== false;
+    const isPublicClient = !clientMetadata.client_secret_hash;
+    if (!allowPublicClients && isPublicClient) {
+      return sendError('invalid_client', 'Public clients are not allowed in FAPI 2.0 mode');
+    }
+
+    // response_type=none does not issue an authorization code, so PKCE is not required.
+    if (response_type !== 'none' && (!code_challenge || code_challenge_method !== 'S256')) {
+      return sendError('invalid_request', 'PKCE with S256 is required in FAPI 2.0 mode');
+    }
+  }
 
   // Validate scope
   const scopeValidation = validateScope(scope);
@@ -2376,6 +2816,27 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         'response_mode=fragment is not compatible with response_type=code'
       );
     }
+
+    // OAuth 2.0 Multiple Response Type Encoding Practices: credentials returned
+    // directly from the authorization endpoint must not be placed in the query,
+    // where they leak through browser history, server logs and Referer headers.
+    const responseTypes = response_type!.split(/\s+/);
+    if (
+      baseMode === 'query' &&
+      (responseTypes.includes('token') || responseTypes.includes('id_token'))
+    ) {
+      return sendError(
+        'invalid_request',
+        'response_mode=query is not compatible with token or id_token response types'
+      );
+    }
+  }
+
+  if (
+    fapiConfig.messageSigning?.requireJarm &&
+    (!response_mode || (!response_mode.includes('.jwt') && response_mode !== 'jwt'))
+  ) {
+    return sendError('invalid_request', 'A JARM response_mode is required for this FAPI profile');
   }
 
   // Validate claims parameter (optional, per OIDC Core 5.5)
@@ -2415,6 +2876,30 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     return sendError('invalid_request', 'PKCE with S256 is required for this client');
   }
 
+  // Start optional SSO settings only after request validation, while still overlapping session I/O.
+  // Invalid authorization requests must not amplify Settings KV reads.
+  const settingsManager = getSettingsManager(c.env);
+  const ssoSettingsPromise = timeAuthRequestDiagnosticOperation(
+    c,
+    'auth_authorize_sso_settings',
+    () =>
+      Promise.all([
+        settingsManager
+          .getAll('client', {
+            type: 'client',
+            id: validClientId,
+            tenantId,
+          })
+          .catch(() => null),
+        settingsManager
+          .getAll('oauth', {
+            type: 'tenant',
+            id: tenantId,
+          })
+          .catch(() => null),
+      ])
+  );
+
   // Process authentication-related parameters (OIDC Core 3.1.2.1)
   let sessionUserId: string | undefined;
   let authTime: number | undefined;
@@ -2434,7 +2919,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     action: 'session_detect',
     hasCookieHeader: !!cookieHeader,
     hasSessionId: !!sessionId,
-    sessionIdPrefix: sessionId ? sessionId.substring(0, 30) : null, // First 30 chars for debugging
     isShardedFormat: sessionId ? isShardedSessionId(sessionId) : false,
     clientId: validClientId,
   });
@@ -2445,14 +2929,18 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     try {
       const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
 
-      const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
+      const session = (await timeAuthRequestDiagnosticOperation(
+        c,
+        'auth_authorize_session_read',
+        () => sessionStore.getSessionRpc(sessionId)
+      )) as Session | null;
 
       // Debug: Log session retrieval result
       log.info('Session retrieved', {
         action: 'session_retrieved',
         hasSession: !!session,
         sessionExpired: session ? session.expiresAt <= Date.now() : null,
-        sessionUserId: session?.userId,
+        hasSessionUserId: typeof session?.userId === 'string' && session.userId.length > 0,
         clientId: validClientId,
       });
 
@@ -2514,7 +3002,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     });
 
     // prompt=login or max_age re-authentication requires a new auth_time (user just re-authenticated)
-    if (prompt?.includes('login') || max_age) {
+    if (prompt?.includes('login') || max_age !== undefined) {
       authTime = Math.floor(Date.now() / 1000);
       log.debug('Re-authentication confirmed, setting new authTime', {
         action: 'reauth',
@@ -2538,35 +3026,30 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   let ssoEnabled = false; // Default: disabled for security
 
   try {
-    // Use cached SettingsManager for better performance
-    const settingsManager = getSettingsManager(c.env);
-
     let clientSsoSetting: boolean | null = null;
     let tenantSsoSetting: boolean | null = null;
 
     // Fetch client and tenant settings in parallel for better performance
     // Priority: Client setting > Tenant setting > Default (false)
     try {
-      const [clientSso, tenantSso] = await Promise.all([
-        settingsManager
-          .get('client.sso_enabled', {
-            type: 'client',
-            id: validClientId,
-            tenantId,
-          })
-          .catch(() => null),
-        settingsManager
-          .get('oauth.sso_enabled', {
-            type: 'tenant',
-            id: tenantId,
-          })
-          .catch(() => null),
-      ]);
+      const [clientSettings, tenantSettings] = await ssoSettingsPromise;
 
-      if (typeof clientSso === 'boolean') {
+      // A category default is not an explicit client override. Treating the client default as
+      // configured here prevents the tenant setting from ever being inherited by newly registered
+      // clients (including DCR clients). Only KV/env values participate in the override chain.
+      const clientSso = clientSettings?.values['client.sso_enabled'];
+      if (
+        clientSettings?.sources['client.sso_enabled'] !== 'default' &&
+        typeof clientSso === 'boolean'
+      ) {
         clientSsoSetting = clientSso;
       }
-      if (typeof tenantSso === 'boolean') {
+
+      const tenantSso = tenantSettings?.values['oauth.sso_enabled'];
+      if (
+        tenantSettings?.sources['oauth.sso_enabled'] !== 'default' &&
+        typeof tenantSso === 'boolean'
+      ) {
         tenantSsoSetting = tenantSso;
       }
     } catch (error) {
@@ -2694,6 +3177,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   // ============================================================
   // Evaluation order: prompt=login (highest priority) → max_age → SSO setting
   // This ensures OIDC specification compliance while enabling SSO control
+  let forceReauthentication = false;
 
   // 1. prompt=login: Explicit re-authentication request (OIDC Core 3.1.2.1)
   //    → Always force re-authentication regardless of SSO setting
@@ -2702,34 +3186,44 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       action: 'prompt_login',
       clientId: validClientId,
     });
-    sessionUserId = undefined;
-    authTime = undefined;
-    isAnonymousSession = false;
+    // Preserve the authenticated subject long enough to create a reauth challenge. Clearing it
+    // here routes through the ordinary login challenge, which may be auto-completed from the
+    // existing browser session and violates prompt=login.
+    forceReauthentication = sessionUserId !== undefined;
   }
 
   // 2. max_age: Authentication age constraint (OIDC Core 3.1.2.1)
   //    → Evaluated before SSO setting (specification requirement)
   //    → For prompt=none, separate check in prompt processing (Line 2143-2155) returns error
   //    → For other cases, clear session to trigger re-authentication
-  else if (max_age && authTime && !prompt?.includes('none') && _confirmed !== 'true') {
+  else if (
+    max_age !== undefined &&
+    authTime !== undefined &&
+    !prompt?.includes('none') &&
+    _confirmed !== 'true'
+  ) {
     const authAge = Math.floor(Date.now() / 1000) - authTime;
     const maxAgeSeconds = parseInt(max_age, 10);
-    if (authAge > maxAgeSeconds) {
+    if (maxAgeSeconds === 0 || authAge > maxAgeSeconds) {
       log.info('max_age exceeded - re-authentication required', {
         action: 'max_age_exceeded',
         clientId: validClientId,
         authAge,
         maxAge: maxAgeSeconds,
       });
-      sessionUserId = undefined;
-      authTime = undefined;
-      isAnonymousSession = false;
+      forceReauthentication = sessionUserId !== undefined;
     }
   }
 
   // 3. SSO Setting: Session sharing control (Authrim-specific feature)
   //    → Applied after prompt=login and max_age
-  if (!ssoEnabled && sessionUserId && _confirmed !== 'true' && _consent_confirmed !== 'true') {
+  if (
+    !ssoEnabled &&
+    sessionUserId &&
+    !forceReauthentication &&
+    _confirmed !== 'true' &&
+    _consent_confirmed !== 'true'
+  ) {
     // Log if id_token_hint was provided but ignored due to SSO disabled
     if (id_token_hint) {
       log.warn('SSO disabled - ignoring id_token_hint', {
@@ -2816,12 +3310,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Check max_age if provided
-      if (max_age && authTime) {
+      if (max_age !== undefined && authTime !== undefined) {
         const maxAgeSeconds = parseInt(max_age, 10);
         const currentTime = Math.floor(Date.now() / 1000);
         const timeSinceAuth = currentTime - authTime;
 
-        if (timeSinceAuth > maxAgeSeconds) {
+        if (maxAgeSeconds === 0 || timeSinceAuth > maxAgeSeconds) {
           return sendError(
             'login_required',
             'Re-authentication is required due to max_age constraint'
@@ -2839,9 +3333,10 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // Note: max_age parameter is handled in the OIDC compliance section above
 
-  // If prompt=login was requested but session still exists (not yet cleared), show confirmation screen
-  // This handles edge cases where sessionUserId is restored after OIDC compliance section
-  if (prompt?.includes('login') && sessionUserId && _confirmed !== 'true') {
+  // prompt=login and an expired max_age both require proof of a new authentication ceremony.
+  // Use a reauth challenge tied to the current subject; never let an ordinary login challenge be
+  // auto-completed merely because the browser still has a valid session cookie.
+  if (forceReauthentication && sessionUserId && _confirmed !== 'true') {
     // Store authorization request parameters in ChallengeStore (RPC)
     // Use challengeId-based sharding for better scalability
     const challengeId = crypto.randomUUID();
@@ -2868,6 +3363,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         code_challenge,
         code_challenge_method,
         claims,
+        dpop_jkt,
+        par_request_uri,
         response_mode,
         max_age,
         prompt,
@@ -2879,6 +3376,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         sessionUserId,
         authTime, // Preserve original auth_time
         issuer: getRequestIssuer(c),
+        authorization_request_source: authorizationRequestSource,
+        authorization_request_integrity_protected: claimsRequestIntegrityProtected,
+        authorization_server: 'default',
         session_mode:
           clientMetadata?.browser_public_client_mode === 'strict'
             ? 'token_session'
@@ -2903,14 +3403,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Client-specific UI: use client's login_ui_url
     // Global UI configured: redirect to external UI
     // Neither: return configuration error
+    const reauthUiQueryParams = getChallengeUiQueryParams(challengeId, ui_locales);
     const reauthTarget = await getUIRedirectTarget(
       c.env,
       'reauth',
-      getTenantAwareUiQueryParams(c, {
-        challenge_id: challengeId,
-      }),
+      getTenantAwareUiQueryParams(c, reauthUiQueryParams),
       tenantId,
-      clientMetadata?.login_ui_url,
+      undefined,
       getRequestIssuer(c),
       useCertificationBuiltinForms
     );
@@ -2922,7 +3421,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     }
     // Builtin forms: redirect to local confirm endpoint
     return c.redirect(
-      `${reauthTarget.fallbackPath}?challenge_id=${encodeURIComponent(challengeId)}`,
+      buildBuiltinUiRedirectUrl(reauthTarget.fallbackPath, reauthUiQueryParams),
       302
     );
   }
@@ -2955,6 +3454,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         code_challenge,
         code_challenge_method,
         claims,
+        dpop_jkt,
+        par_request_uri,
         response_mode,
         max_age,
         prompt,
@@ -2983,6 +3484,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         client_uri: clientMetadata?.client_uri,
         tenant_id: tenantId,
         issuer: getRequestIssuer(c),
+        authorization_request_source: authorizationRequestSource,
+        authorization_request_integrity_protected: claimsRequestIntegrityProtected,
+        authorization_server: 'default',
         // Custom Redirect URIs (Authrim Extension)
         error_uri: validatedErrorUri,
         cancel_uri: validatedCancelUri,
@@ -2994,12 +3498,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Client-specific UI: use client's login_ui_url
     // Global UI configured: redirect to external UI
     // Neither: return configuration error
+    const loginUiQueryParams = getChallengeUiQueryParams(challengeId, ui_locales);
     const loginTarget = await getUIRedirectTarget(
       c.env,
       'login',
-      getTenantAwareUiQueryParams(c, {
-        challenge_id: challengeId,
-      }),
+      getTenantAwareUiQueryParams(c, loginUiQueryParams),
       tenantId,
       clientMetadata?.login_ui_url,
       getRequestIssuer(c),
@@ -3012,10 +3515,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       return sendError('temporarily_unavailable', 'Login UI is not configured');
     }
     // Builtin forms: redirect to local login endpoint
-    return c.redirect(
-      `${loginTarget.fallbackPath}?challenge_id=${encodeURIComponent(challengeId)}`,
-      302
-    );
+    return c.redirect(buildBuiltinUiRedirectUrl(loginTarget.fallbackPath, loginUiQueryParams), 302);
   }
 
   // Determine user identifier (sub)
@@ -3026,8 +3526,41 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   }
 
   const sub = sessionUserId;
+  try {
+    await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_account_route', () =>
+      resolveAccountDataContextFromHono(c, sub)
+    );
+  } catch (error) {
+    log.error(
+      'Unable to resolve account data for authorization',
+      { action: 'account_route_resolve' },
+      error as Error
+    );
+    return sendError('temporarily_unavailable', 'Account data is temporarily unavailable');
+  }
   if (_consent_confirmed === 'true' && confirmedConsentUserId && confirmedConsentUserId !== sub) {
     return sendError('invalid_request', 'Consent confirmation does not match the active session');
+  }
+
+  // Enforce PAR request_uri one-time use only after the request has reached an authenticated
+  // authorization journey. The Durable Object consume remains atomic, so concurrent attempts
+  // cannot both proceed.
+  if (par_request_uri) {
+    try {
+      const parsedPar = parsePARRequestUri(par_request_uri);
+      const stub = parsedPar
+        ? getPARRequestStoreByUri(c.env, par_request_uri, tenantId).stub
+        : c.env.PAR_REQUEST_STORE.get(c.env.PAR_REQUEST_STORE.idFromName(validClientId));
+      await stub.consumeRequestRpc({
+        requestUri: par_request_uri,
+        tenant_id: tenantId,
+        client_id: validClientId,
+        expected_authorization_server: 'default',
+      });
+      par_request_uri = undefined;
+    } catch {
+      return sendError('invalid_request', 'Invalid or expired request_uri');
+    }
   }
 
   // Check if consent is required (unless already confirmed)
@@ -3037,7 +3570,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     const clientMetadata = await getClientCached(c, c.env, validClientId);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
-    // Get client settings from KV (replaces legacy D1 is_trusted/skip_consent fields)
+    // Client Trust Policy is the sole authority for first-party and consent bypass decisions.
     let consentRequired = true; // Default: require consent (security-first)
     let firstParty = false;
     let clientTrustPolicySource: string | null = null;
@@ -3046,40 +3579,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     let requiresFirstTimeSignInConfirmation = false;
 
     try {
-      // Use cached SettingsManager for better performance
-      const settingsManager = getSettingsManager(c.env);
-
-      // Get consent_required setting (KV > env > default)
-      const consentRequiredSetting = await settingsManager.get('client.consent_required', {
-        type: 'client',
-        id: validClientId,
-        tenantId,
-      });
-      consentRequired = (consentRequiredSetting as boolean | undefined) ?? true;
-
-      // Get first_party setting (informational)
-      const firstPartySetting = await settingsManager.get('client.first_party', {
-        type: 'client',
-        id: validClientId,
-        tenantId,
-      });
-      firstParty = (firstPartySetting as boolean | undefined) ?? false;
-    } catch (error) {
-      log.error('Failed to get client settings, defaulting to consent required', {
-        action: 'consent_settings_error',
-        clientId: validClientId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      consentRequired = true; // fail-safe: require consent
-    }
-
-    try {
-      const clientTrustPolicy = await resolveClientTrustPolicy(
-        authCtx.coreAdapter,
-        tenantId,
-        'oidc_client',
-        validClientId
-      );
+      const [clientTrustPolicy, signInConfirmationPolicy] =
+        await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_trust_policy', () =>
+          Promise.all([
+            resolveClientTrustPolicy(authCtx.coreAdapter, tenantId, 'oidc_client', validClientId),
+            resolveSignInConfirmationPolicy(authCtx.coreAdapter, tenantId),
+          ])
+        );
       if (clientTrustPolicy) {
         firstParty = clientTrustPolicy.first_party;
         consentRequired = !(
@@ -3087,11 +3593,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         );
         clientTrustPolicySource = 'client';
       }
-
-      const signInConfirmationPolicy = await resolveSignInConfirmationPolicy(
-        authCtx.coreAdapter,
-        tenantId
-      );
       signInConfirmationMode = signInConfirmationPolicy?.mode ?? null;
       signInConfirmationRememberDurationDays =
         signInConfirmationPolicy?.remember_duration_days ?? null;
@@ -3101,7 +3602,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         requiresFirstTimeSignInConfirmation = true;
       }
     } catch (error) {
-      log.warn('Failed to apply consent policy settings', {
+      log.warn('Failed to apply authoritative consent policies', {
         action: 'consent_policy_settings',
         clientId: validClientId,
         error: error instanceof Error ? error.message : String(error),
@@ -3131,7 +3632,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       legacy_skip_consent: clientMetadata?.skip_consent,
     });
 
-    // Trusted client: consent_required=false allows skipping consent
+    // An active authoritative trust policy allows skipping consent.
     // (unless prompt=consent is explicitly specified)
     const isTrustedClient = !consentRequired;
 
@@ -3157,29 +3658,33 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       !requiresEveryTimeSignInConfirmation
     ) {
       // Check if consent already exists (using cache)
-      const existingConsent = await getCachedConsent(
-        c.env,
-        sub,
-        validClientId,
-        tenantId,
-        authCtx.coreAdapter
+      const existingConsent = await timeAuthRequestDiagnosticOperation(
+        c,
+        'auth_authorize_consent_lookup',
+        () => getCachedConsent(c.env, sub, validClientId, tenantId, authCtx.coreAdapter)
       );
 
       if (!existingConsent) {
-        // Auto-grant consent for trusted client
+        // Auto-grant consent for trusted client. The shared consent service
+        // handles a concurrent first-grant race without a database-specific SQL
+        // upsert, preserving the DatabaseAdapter abstraction.
         const consentId = crypto.randomUUID();
         const now = Date.now();
 
-        // Use DatabaseAdapter for consent insert (portable across D1/PostgreSQL/MySQL)
-        await authCtx.coreAdapter.execute(
-          `INSERT INTO oauth_client_consents
-           (id, tenant_id, user_id, client_id, scope, granted_at, expires_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [consentId, tenantId, sub, validClientId, scope, now, null, now, now]
+        await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_consent_grant', () =>
+          upsertOAuthClientConsent(authCtx.coreAdapter, {
+            consentId,
+            tenantId,
+            userId: sub,
+            clientId: validClientId,
+            scope: scope ?? '',
+            grantedAt: now,
+            expiresAt: null,
+            now,
+          })
         );
 
-        // Invalidate consent cache after insert so next read picks up new consent
-        await invalidateConsentCache(c.env, sub, tenantId, validClientId);
+        // getCachedConsent does not negative-cache misses, so there is no stale entry to delete.
 
         log.info('Auto-granted consent for trusted client', {
           action: 'consent_auto_grant',
@@ -3315,6 +3820,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             code_challenge,
             code_challenge_method,
             claims,
+            dpop_jkt,
+            par_request_uri,
             response_mode,
             max_age,
             prompt,
@@ -3325,7 +3832,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             login_hint,
             authorization_details,
             sessionUserId: sub,
+            session_id: sessionId,
             authTime, // Preserve auth_time
+            issuer: getRequestIssuer(c),
+            authorization_request_source: authorizationRequestSource,
+            authorization_request_integrity_protected: claimsRequestIntegrityProtected,
+            authorization_server: 'default',
             // Phase 2-B RBAC extensions
             org_id,
             acting_as,
@@ -3340,14 +3852,13 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         // Client-specific UI: use client's login_ui_url
         // Global UI configured: redirect to external UI
         // Neither: return configuration error
+        const consentUiQueryParams = getChallengeUiQueryParams(challengeId, ui_locales);
         const consentTarget = await getUIRedirectTarget(
           c.env,
           'consent',
-          getTenantAwareUiQueryParams(c, {
-            challenge_id: challengeId,
-          }),
+          getTenantAwareUiQueryParams(c, consentUiQueryParams),
           tenantId,
-          clientMetadata?.login_ui_url,
+          undefined,
           getRequestIssuer(c),
           useCertificationBuiltinForms
         );
@@ -3359,7 +3870,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         }
         // Builtin forms: redirect to local consent endpoint
         return c.redirect(
-          `${consentTarget.fallbackPath}?challenge_id=${encodeURIComponent(challengeId)}`,
+          buildBuiltinUiRedirectUrl(consentTarget.fallbackPath, consentUiQueryParams),
           302
         );
       }
@@ -3379,7 +3890,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       let consentMgmtEnabled = false;
       if (c.env.KV) {
         try {
-          const kvVal = await c.env.KV.get('consent:consent_management_enabled');
+          const settingsKv = c.env.KV;
+          const kvVal = await timeAuthRequestDiagnosticOperation(
+            c,
+            'auth_authorize_consent_management_config',
+            () => settingsKv.get('consent:consent_management_enabled')
+          );
           if (kvVal !== null) {
             consentMgmtEnabled = kvVal === 'true' || kvVal === '1';
           } else {
@@ -3396,27 +3912,30 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       const authCtx = createAuthContextFromHono(c, tenantId);
-      const userClaims = await getUserClaimsForRules(authCtx.coreAdapter, tenantId, sub);
-      const requirements = await resolveConsentRequirements(
-        authCtx.coreAdapter,
-        tenantId,
-        validClientId,
-        userClaims,
-        {
-          target_type: 'oidc_client',
-          target_id: validClientId,
-          requested_scopes: splitScopes(scope),
-          requested_claims: collectRequestedClaimNames(parsedClaimsRequest.request),
-        }
+      const piiCtx = createPIIContextFromHono(c, tenantId);
+      const userClaims = await timeAuthRequestDiagnosticOperation(
+        c,
+        'auth_authorize_consent_user_claims',
+        () => getUserClaimsForRules(authCtx.coreAdapter, tenantId, sub, piiCtx.defaultPiiAdapter)
+      );
+      const requirements = await timeAuthRequestDiagnosticOperation(
+        c,
+        'auth_authorize_consent_requirements',
+        () =>
+          resolveConsentRequirements(authCtx.coreAdapter, tenantId, validClientId, userClaims, {
+            target_type: 'oidc_client',
+            target_id: validClientId,
+            requested_scopes: splitScopes(scope),
+            requested_claims: collectRequestedClaimNames(parsedClaimsRequest.request),
+          })
       );
 
       if (consentMgmtEnabled || requirements.length > 0) {
         if (requirements.length > 0) {
-          const { satisfied, unsatisfied } = await checkUserConsentSatisfaction(
-            authCtx.coreAdapter,
-            tenantId,
-            sub,
-            requirements
+          const { satisfied, unsatisfied } = await timeAuthRequestDiagnosticOperation(
+            c,
+            'auth_authorize_consent_satisfaction',
+            () => checkUserConsentSatisfaction(authCtx.coreAdapter, tenantId, sub, requirements)
           );
 
           if (!satisfied) {
@@ -3459,6 +3978,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 code_challenge,
                 code_challenge_method,
                 claims,
+                dpop_jkt,
+                par_request_uri,
                 response_mode,
                 max_age,
                 prompt,
@@ -3469,7 +3990,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
                 login_hint,
                 authorization_details,
                 sessionUserId: sub,
+                session_id: sessionId,
                 authTime,
+                issuer: getRequestIssuer(c),
+                authorization_request_source: authorizationRequestSource,
+                authorization_request_integrity_protected: claimsRequestIntegrityProtected,
+                authorization_server: 'default',
                 org_id,
                 acting_as,
                 error_uri: validatedErrorUri,
@@ -3481,14 +4007,15 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             });
 
             const clientMetadata = await getClientCached(c, c.env, validClientId);
+            const consentUiQueryParams = getChallengeUiQueryParams(challengeId, ui_locales);
             const consentTarget = await getUIRedirectTarget(
               c.env,
               'consent',
-              getTenantAwareUiQueryParams(c, { challenge_id: challengeId }),
+              getTenantAwareUiQueryParams(c, consentUiQueryParams),
               tenantId,
-              clientMetadata?.login_ui_url,
+              undefined,
               getRequestIssuer(c),
-              isOidcCertificationClient(clientMetadata)
+              useCertificationBuiltinForms
             );
             if (consentTarget.type === 'redirect') {
               return c.redirect(consentTarget.url, 302);
@@ -3497,7 +4024,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
               return sendError('temporarily_unavailable', 'Login UI is not configured');
             }
             return c.redirect(
-              `${consentTarget.fallbackPath}?challenge_id=${encodeURIComponent(challengeId)}`,
+              buildBuiltinUiRedirectUrl(consentTarget.fallbackPath, consentUiQueryParams),
               302
             );
           }
@@ -3509,7 +4036,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         { action: 'consent_mgmt_check' },
         error as Error
       );
-      // Non-blocking: continue if consent management check fails
+      return sendError('temporarily_unavailable', 'Unable to evaluate consent requirements');
     }
   }
 
@@ -3518,8 +4045,8 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if (prompt?.split(' ').includes('none') && handoff === 'true') {
     log.info('Handoff SSO: Issuing handoff token', {
       action: 'handoff_sso',
-      sessionId,
-      userId: sessionUserId,
+      hasSession: !!sessionId,
+      hasUser: !!sessionUserId,
     });
 
     const handoffToken = crypto.randomUUID();
@@ -3609,7 +4136,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
   // Extract and validate DPoP proof (if present) for authorization code binding
   // FAPI 2.0: DPoP validation is strict when DPoP header is provided
-  let dpopJkt: string | undefined;
+  let dpopJkt: string | undefined = dpop_jkt;
   const dpopProof = extractDPoPProof(c.req.raw.headers);
 
   // Determine if strict DPoP validation is required
@@ -3632,6 +4159,9 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     );
 
     if (dpopValidation.valid && dpopValidation.jkt) {
+      if (dpopJkt && dpopJkt !== dpopValidation.jkt) {
+        return sendError('invalid_dpop_proof', 'dpop_jkt does not match the key in the DPoP proof');
+      }
       dpopJkt = dpopValidation.jkt; // Store JWK thumbprint for code binding
       log.info('Authorization code will be bound to DPoP key', {
         action: 'dpop_bind',
@@ -3658,7 +4188,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       // Note: We don't fail the request if DPoP is invalid, just don't bind the code
       // This allows flexibility for clients that may have optional DPoP support
     }
-  } else if (isStrictDPoPMode && clientMetadata?.dpop_bound_access_tokens === true) {
+  } else if (!dpopJkt && isStrictDPoPMode && clientMetadata?.dpop_bound_access_tokens === true) {
     // Client requires DPoP but no DPoP header provided
     log.error('DPoP STRICT: Client requires DPoP but no DPoP header provided', {
       action: 'dpop_required',
@@ -3693,7 +4223,11 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
     // Determine shard count from KV (dynamic) > environment > default
     // This ensures both op-auth and op-token use the same shard count
-    const shardCount = await getShardCount(c.env);
+    const shardCount = await timeAuthRequestDiagnosticOperation(
+      c,
+      'auth_authorize_code_shard_config',
+      () => getShardCount(c.env)
+    );
 
     // Session→AuthCode Sticky Routing: Use session's shard index for AuthCode
     // This collocates Session and AuthCode on the same DO shard for locality,
@@ -3724,35 +4258,45 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     // Store authorization code using AuthorizationCodeStore Durable Object (RPC)
     try {
       const authCodeStore = c.env.AUTH_CODE_STORE.get(authCodeStoreId);
+      const authorizationGrantResource =
+        typeof clientMetadata.default_resource === 'string' &&
+        clientMetadata.default_resource.length > 0
+          ? clientMetadata.default_resource
+          : typeof clientMetadata.default_audience === 'string' &&
+              clientMetadata.default_audience.length > 0
+            ? clientMetadata.default_audience
+            : undefined;
 
-      await authCodeStore.storeCodeRpc({
-        code,
-        tenantId: getTenantIdFromContext(c),
-        clientId: validClientId,
-        redirectUri: validRedirectUri,
-        userId: sub,
-        scope: validScope,
-        codeChallenge: code_challenge,
-        codeChallengeMethod: code_challenge_method as 'S256' | 'plain' | undefined,
-        nonce,
-        state,
-        claims,
-        claimsRequestProtected: claimsRequestIntegrityProtected,
-        authTime: currentAuthTime,
-        acr: selectedAcr,
-        amr: sessionAmr,
-        dpopJkt, // Bind authorization code to DPoP key (RFC 9449)
-        sid: oidcSid, // OIDC Session Management: derived RP-specific session identifier
-        authorizationDetails: authorization_details, // RFC 9396 RAR
-      });
+      await timeAuthRequestDiagnosticOperation(c, 'auth_authorize_code_store', () =>
+        authCodeStore.storeCodeRpc({
+          code: code as string,
+          tenantId: getTenantIdFromContext(c),
+          clientId: validClientId,
+          redirectUri: validRedirectUri,
+          userId: sub,
+          scope: validScope,
+          codeChallenge: code_challenge,
+          codeChallengeMethod: code_challenge_method as 'S256' | 'plain' | undefined,
+          nonce,
+          state,
+          claims,
+          claimsRequestProtected: claimsRequestIntegrityProtected,
+          authTime: currentAuthTime,
+          acr: selectedAcr,
+          amr: sessionAmr,
+          dpopJkt, // Bind authorization code to DPoP key (RFC 9449)
+          sid: oidcSid, // OIDC Session Management: derived RP-specific session identifier
+          sessionId, // Internal OP session key for logout target lookup
+          authorizationDetails: authorization_details, // RFC 9396 RAR
+          resource: authorizationGrantResource,
+        })
+      );
       log.info('Stored authorization code', {
         action: 'auth_code_store',
         tenantId: getTenantIdFromContext(c),
         clientId: validClientId,
         shardCount,
         shardIndex: authCodeShardIndex,
-        instanceName: authCodeStoreInstanceName,
-        codePrefix: code.includes('_') ? code.split('_', 1)[0] : 'legacy',
       });
     } catch (error) {
       log.error('AuthCodeStore DO error', { action: 'auth_code_store' }, error as Error);
@@ -3925,19 +4469,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
   if ((includesIdToken || includesToken) && sessionId) {
     try {
       const tenantId = getTenantIdFromContext(c);
-      const authCtx = createAuthContextFromHono(c, tenantId);
       log.debug('Registering session-client for implicit/hybrid logout', {
         action: 'session_client_register',
-        sidPrefix: sessionId.substring(0, 25),
-        clientIdPrefix: validClientId.substring(0, 25),
+        clientId: validClientId,
       });
-      const mirrorMode =
-        getRuntimeUserStoreSourcesFromHonoContext(c)?.storageProfile.transientAuth
-          ?.sessionClientMirror ?? 'async';
-
       const registrationInput = {
         session_id: sessionId,
         client_id: validClientId,
+        oidc_sid: oidcSid,
       };
       const storeRegistrationPromise = registerSessionClientInStore(
         c.env,
@@ -3950,7 +4489,6 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
           }
           log.debug('Successfully registered session-client in DO', {
             action: 'session_client_registered',
-            resultId: result.id,
           });
         })
         .catch((error) => {
@@ -3960,34 +4498,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
             error as Error
           );
         });
-      const mirrorPromise =
-        mirrorMode === 'disabled'
-          ? Promise.resolve()
-          : authCtx.repositories.sessionClient
-              .createOrUpdate(registrationInput)
-              .then((result) => {
-                log.debug('Successfully mirrored session-client', {
-                  action: 'session_client_registered',
-                  resultId: result.id,
-                });
-              })
-              .catch((error) => {
-                // Log error but don't fail the authorization - logout tracking is non-critical
-                log.error(
-                  'Failed to mirror session-client for implicit/hybrid logout',
-                  { action: 'session_client_register' },
-                  error as Error
-                );
-              });
-      const registrationPromise = Promise.all([storeRegistrationPromise, mirrorPromise]).then(
-        () => undefined
-      );
-
-      if (mirrorMode === 'sync') {
-        await registrationPromise;
-      } else {
-        c.executionCtx?.waitUntil(registrationPromise);
-      }
+      c.executionCtx?.waitUntil(storeRegistrationPromise);
     } catch (error) {
       // Log error but don't fail the authorization - logout tracking is non-critical
       log.error(
@@ -4080,7 +4591,14 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
       baseMode = includesIdToken || includesToken ? 'fragment' : 'query';
     }
 
-    return await createJARMResponse(c, validRedirectUri, responseParams, baseMode, validClientId);
+    return await createJARMResponse(
+      c,
+      validRedirectUri,
+      responseParams,
+      baseMode,
+      validClientId,
+      fapiConfig.messageSigning
+    );
   }
 
   // Handle response based on response_mode (traditional non-JWT modes)
@@ -4102,10 +4620,12 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
  */
 async function getSigningKeyFromKeyManager(
   env: Env,
-  tenantId: string
+  tenantId: string,
+  algorithm: OIDCSigningAlgorithm = 'RS256'
 ): Promise<{ privateKey: CryptoKey; kid: string }> {
   const now = Date.now();
-  const cached = signingKeyCache.get(tenantId);
+  const cacheKey = `${tenantId}:${algorithm}`;
+  const cached = signingKeyCache.get(cacheKey);
 
   // Check cache — if within TTL, verify KV version to detect emergency rotation
   if (cached && now - cached.timestamp < KEY_CACHE_TTL) {
@@ -4122,28 +4642,15 @@ async function getSigningKeyFromKeyManager(
     throw new Error('KEY_MANAGER binding not available');
   }
 
-  if (!env.KEY_MANAGER_SECRET) {
-    throw new Error('KEY_MANAGER_SECRET not configured');
-  }
-
   const keyManagerId = env.KEY_MANAGER.idFromName(`${tenantId}-v3`);
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
   // Try to get active key via RPC
-  let keyData = await keyManager.getActiveKeyWithPrivateRpc();
+  const keyData = await keyManager.getActiveOIDCSigningKeyWithPrivateRpc(algorithm);
 
   if (keyData) {
     moduleLogger.debug('Active key response', {
       action: 'key_manager_active',
-      hasKid: !!keyData.kid,
-      hasPrivatePEM: !!keyData.privatePEM,
-      pemLength: keyData.privatePEM?.length,
-    });
-  } else {
-    moduleLogger.debug('No active key, rotating', { action: 'key_manager_rotate' });
-    keyData = await keyManager.rotateKeysWithPrivateRpc();
-    moduleLogger.debug('Rotated key', {
-      action: 'key_manager_rotated',
       hasKid: !!keyData.kid,
       hasPrivatePEM: !!keyData.privatePEM,
       pemLength: keyData.privatePEM?.length,
@@ -4176,13 +4683,18 @@ async function getSigningKeyFromKeyManager(
   });
 
   // Import private key (expensive operation: 5-7ms)
-  const privateKey = await importPKCS8(keyData.privatePEM, 'RS256');
+  const privateKey = await importPKCS8(keyData.privatePEM, algorithm);
 
   // Fetch current version for cache coherence
   const version =
     (await env.AUTHRIM_CONFIG?.get(`v1:key-version:${tenantId}`).catch(() => null)) ?? '';
 
-  signingKeyCache.set(tenantId, { privateKey, kid: keyData.kid, timestamp: now, version });
+  setBoundedMapEntry(
+    signingKeyCache,
+    cacheKey,
+    { privateKey, kid: keyData.kid, timestamp: now, version },
+    MAX_SIGNING_KEY_CACHE_ENTRIES
+  );
   return { privateKey, kid: keyData.kid };
 }
 
@@ -4202,13 +4714,14 @@ interface ErrorRedirectOptions {
   responseMode?: string;
   responseType?: string | null;
   clientId?: string;
+  messageSigning?: FAPI2MessageSigningConfig;
   // Custom Redirect URIs (Authrim Extension)
   errorUri?: string;
   cancelUri?: string;
   isUserCancellation?: boolean;
 }
 
-async function redirectWithError(
+export async function redirectWithError(
   c: Context<{ Bindings: Env }>,
   redirectUri: string,
   error: string,
@@ -4260,7 +4773,14 @@ async function redirectWithError(
 
   if (isJARM) {
     if (options?.clientId) {
-      return await createJARMResponse(c, targetUri, params, baseMode || 'query', options.clientId);
+      return await createJARMResponse(
+        c,
+        targetUri,
+        params,
+        baseMode || 'query',
+        options.clientId,
+        options.messageSigning
+      );
     }
     moduleLogger.warn(
       'JARM error response requested but client_id unavailable; falling back to base mode',
@@ -4431,7 +4951,8 @@ async function createJARMResponse(
   redirectUri: string,
   params: Record<string, string>,
   baseMode: string,
-  clientId: string
+  clientId: string,
+  messageSigning?: FAPI2MessageSigningConfig
 ): Promise<Response> {
   try {
     // Get client metadata to check for encryption requirements (request-level cached)
@@ -4450,32 +4971,31 @@ async function createJARMResponse(
       ...params, // Include all response parameters
     };
 
-    // Get server's signing key
-    const privateKeyPem = c.env.PRIVATE_KEY_PEM;
-    if (!privateKeyPem) {
-      throw new Error('Server private key not configured');
+    const tenantId = getTenantIdFromContext(c);
+    const defaultSigningAlgorithm =
+      messageSigning?.enabled && messageSigning.defaultAuthorizationSigningAlgorithm
+        ? messageSigning.defaultAuthorizationSigningAlgorithm
+        : 'RS256';
+    const signingAlgorithm = resolveAuthorizationResponseSigningAlgorithm(
+      client,
+      defaultSigningAlgorithm
+    );
+    if (
+      messageSigning?.enabled &&
+      messageSigning.authorizationSigningAlgorithms &&
+      !messageSigning.authorizationSigningAlgorithms.includes(signingAlgorithm)
+    ) {
+      throw new Error('Client authorization response signing algorithm is not allowed by tenant');
     }
-
-    const privateKey = await importPKCS8(privateKeyPem, 'RS256');
-
-    // Get key ID from KV or use default
-    let kid = 'default';
-    try {
-      if (c.env.KV) {
-        const signingKey = (await c.env.KV.get('keys:signing', 'json')) as { kid: string } | null;
-        if (signingKey?.kid) {
-          kid = signingKey.kid;
-        }
-      }
-    } catch (error) {
-      moduleLogger.warn('Failed to get signing key ID, using default', {
-        action: 'signing_key_id_fallback',
-      });
-    }
+    const { privateKey, kid } = await getSigningKeyFromKeyManager(
+      c.env,
+      tenantId,
+      signingAlgorithm
+    );
 
     // Sign the JWT
     const jwt = await new SignJWT(payload)
-      .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
+      .setProtectedHeader({ alg: signingAlgorithm, typ: 'oauth-authz-resp+jwt', kid })
       .sign(privateKey);
 
     let responseToken = jwt;
@@ -4496,13 +5016,16 @@ async function createJARMResponse(
         Array.isArray(client.jwks.keys)
       ) {
         // Find encryption key
-        const encKey = (client.jwks.keys as PublicJWK[]).find((key) => isEncryptionJWK(key));
+        const encKey = selectJWEEncryptionKey(
+          client.jwks.keys,
+          client.authorization_encrypted_response_alg as JWEAlgorithm
+        );
 
         if (!encKey) {
           throw new Error('No suitable encryption key found in client jwks');
         }
 
-        clientPublicKeyJWK = encKey;
+        clientPublicKeyJWK = encKey as PublicJWK;
       } else if (client.jwks_uri && typeof client.jwks_uri === 'string') {
         // SSRF protection: Block requests to internal addresses
         if (isInternalUrl(client.jwks_uri)) {
@@ -4513,14 +5036,18 @@ async function createJARMResponse(
         const jwks = await safeFetchJson<JWKS>(client.jwks_uri, {
           timeoutMs: 5000,
           maxResponseSize: 256 * 1024,
+          redirect: 'error',
         });
-        const encKey = jwks.keys.find((key) => isEncryptionJWK(key));
+        const encKey = selectJWEEncryptionKey(
+          jwks.keys,
+          client.authorization_encrypted_response_alg as JWEAlgorithm
+        );
 
         if (!encKey) {
           throw new Error('No suitable encryption key found in client jwks_uri');
         }
 
-        clientPublicKeyJWK = encKey;
+        clientPublicKeyJWK = encKey as PublicJWK;
       } else {
         throw new Error('Client requested encryption but no public key available');
       }
@@ -4534,6 +5061,7 @@ async function createJARMResponse(
           alg: client.authorization_encrypted_response_alg as JWEAlgorithm,
           enc: client.authorization_encrypted_response_enc as JWEEncryption,
           cty: 'JWT',
+          ...(clientPublicKeyJWK.kid ? { kid: clientPublicKeyJWK.kid } : {}),
         }
       );
     }
@@ -4610,6 +5138,21 @@ function safeHttpsDisplayUrl(value: string | undefined): string | null {
  */
 export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('AUTHORIZE');
+  const testEndpointsEnabled = c.env.ENABLE_TEST_ENDPOINTS === 'true';
+  const builtinFormsEnabled = await shouldUseBuiltinForms(c.env);
+  if (!testEndpointsEnabled && !builtinFormsEnabled) {
+    log.warn('Built-in login adapter request rejected outside test or conformance mode', {
+      action: 'login_stub_denied',
+    });
+    return c.json(
+      {
+        error: 'access_denied',
+        error_description: 'Built-in login is unavailable',
+      },
+      403
+    );
+  }
+
   // Parse challenge_id and username from request
   let challenge_id: string | undefined;
   let loginUsername: string | undefined;
@@ -4642,40 +5185,63 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     );
   }
 
+  const tenantId = getTenantIdFromContext(c);
+  const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id, tenantId);
+  let previewChallenge: {
+    tenantId?: string;
+    type?: string;
+    metadata?: {
+      redirect_uri?: string;
+      logo_uri?: string;
+      client_name?: string;
+      policy_uri?: string;
+      tos_uri?: string;
+      [key: string]: unknown;
+    };
+  } | null;
+  try {
+    previewChallenge = (await challengeStore.getChallengeRpc(
+      challenge_id
+    )) as typeof previewChallenge;
+  } catch {
+    previewChallenge = null;
+  }
+  if (
+    !previewChallenge ||
+    previewChallenge.type !== 'login' ||
+    (previewChallenge.tenantId !== undefined && previewChallenge.tenantId !== tenantId)
+  ) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Invalid or expired challenge',
+      },
+      400
+    );
+  }
+
+  const isCertificationTest =
+    builtinFormsEnabled && isOidcCertificationRedirectUri(previewChallenge.metadata?.redirect_uri);
+  if (!testEndpointsEnabled && !isCertificationTest) {
+    log.warn('Built-in login adapter rejected for a non-certification client', {
+      action: 'login_stub_denied',
+    });
+    return c.json(
+      {
+        error: 'access_denied',
+        error_description: 'Built-in login is unavailable for this client',
+      },
+      403
+    );
+  }
+
   // GET request: Show login form (stub implementation with username/password fields)
   if (c.req.method === 'GET') {
     // Fetch challenge data to display client logo and info (OIDC Dynamic OP conformance)
-    let logoUri: string | undefined;
-    let clientName: string | undefined;
-    let policyUri: string | undefined;
-    let tosUri: string | undefined;
-
-    try {
-      const challengeStore = await getChallengeStoreByChallengeId(
-        c.env,
-        challenge_id,
-        getTenantIdFromContext(c)
-      );
-      const challengeData = (await challengeStore.getChallengeRpc(challenge_id)) as {
-        id: string;
-        type: string;
-        metadata?: {
-          logo_uri?: string;
-          client_name?: string;
-          policy_uri?: string;
-          tos_uri?: string;
-          [key: string]: unknown;
-        };
-      } | null;
-      if (challengeData?.metadata) {
-        logoUri = challengeData.metadata.logo_uri;
-        clientName = challengeData.metadata.client_name;
-        policyUri = challengeData.metadata.policy_uri;
-        tosUri = challengeData.metadata.tos_uri;
-      }
-    } catch (e) {
-      log.warn('Failed to fetch challenge data for client info', { action: 'challenge_fetch' });
-    }
+    const logoUri = previewChallenge.metadata?.logo_uri;
+    const clientName = previewChallenge.metadata?.client_name;
+    const policyUri = previewChallenge.metadata?.policy_uri;
+    const tosUri = previewChallenge.metadata?.tos_uri;
 
     const safeLogoUri = safeHttpsDisplayUrl(logoUri);
     const safePolicyUri = safeHttpsDisplayUrl(policyUri);
@@ -4794,7 +5360,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     <h1>Login Required</h1>
     <p>Please enter your credentials to continue.</p>
     <form method="POST" action="/flow/login">
-      <input type="hidden" name="challenge_id" value="${challenge_id}">
+      <input type="hidden" name="challenge_id" value="${escapeHtml(challenge_id)}">
       <input type="text" name="username" placeholder="Username" required>
       <input type="password" name="password" placeholder="Password" required>
       <button type="submit">Login</button>
@@ -4805,13 +5371,6 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
   }
 
   // POST request: Process login (stub - accepts any credentials) (RPC)
-  // Use challengeId-based sharding - must match the shard used during challenge creation
-  const challengeStore = await getChallengeStoreByChallengeId(
-    c.env,
-    challenge_id,
-    getTenantIdFromContext(c)
-  );
-
   let challengeData: {
     userId: string;
     metadata?: {
@@ -4848,90 +5407,60 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
 
   const metadata = challengeData.metadata || {};
 
-  // Determine if this is an OIDC Conformance Test client
-  const client_id = metadata.client_id as string | undefined;
-  let isCertificationTest = false;
-
-  if (client_id) {
-    const clientMetadata = await getClientCached(c, c.env, client_id);
-    isCertificationTest = isOidcCertificationClient(clientMetadata);
-  }
-
-  // Create a new user and session (stub - in production, verify credentials first)
-  let userId: string;
-  const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  const piiCtx = createPIIContextFromHono(c, tenantId);
-  const runtimeUsers = new CanonicalRuntimeUserStore({
-    coreAdapter: authCtx.coreAdapter,
-    piiAdapter: piiCtx.defaultPiiAdapter,
-    tenantId,
-  });
-
+  // Create a new user and session (stub - in production, verify credentials first).
+  // Even test-only users must enter through the Control Plane provisioning boundary so a
+  // fresh installation never falls back to writing account rows into tenant metadata D1.
+  let candidateUserId: string;
+  let userEmail: string;
+  let runtimeUser: Parameters<typeof provisionEmailAccount>[1]['runtimeUser'];
   if (isCertificationTest) {
-    // Use fixed test user for OIDC Conformance Tests
-    userId = 'user-oidc-conformance-test';
+    candidateUserId = 'user-oidc-conformance-test';
+    userEmail = 'test@example.com';
     log.info('Using OIDC Conformance Test user', { action: 'login_test_user' });
-
-    // Verify test user exists in canonical runtime tables (should be created during DCR).
-    const existingUser = await runtimeUsers.findById(userId, { includeInactive: true });
-
-    if (!existingUser) {
-      log.warn('Test user not found, creating it now', { action: 'login_test_user_create' });
-
-      await runtimeUsers
-        .syncUser({
-          userId,
-          email: 'test@example.com',
-          name: 'John Doe',
-          active: true,
-          emailVerified: true,
-          userType: 'end_user',
-          sourceRef: 'oidc_conformance',
-          piiFields: {
-            given_name: true,
-            family_name: true,
-            nickname: true,
-            preferred_username: true,
-            picture: true,
-            website: true,
-            gender: true,
-            birthdate: true,
-            zoneinfo: true,
-            locale: true,
-            phone_number: true,
-          },
-          sensitiveValues: {
-            given_name: 'John',
-            family_name: 'Doe',
-            nickname: 'Johnny',
-            preferred_username: 'test',
-            picture: 'https://example.com/avatar.jpg',
-            website: 'https://example.com',
-            gender: 'male',
-            birthdate: '1990-01-01',
-            zoneinfo: 'America/New_York',
-            locale: 'en-US',
-            phone_number: '+1-555-0100',
-          },
-          phoneNumberVerified: true,
-          addressJson: JSON.stringify({
-            formatted: '1234 Main St, Anytown, ST 12345, USA',
-            street_address: '1234 Main St',
-            locality: 'Anytown',
-            region: 'ST',
-            postal_code: '12345',
-            country: 'USA',
-          }),
-        })
-        .catch((error: unknown) => {
-          // PII Protection: Don't log full error
-          log.error('Failed to create test user in canonical runtime store', {
-            action: 'login_test_user_canonical',
-            errorName: error instanceof Error ? error.name : 'Unknown error',
-          });
-        });
-    }
+    runtimeUser = {
+      active: true,
+      emailVerified: true,
+      userType: 'end_user',
+      displayName: 'John Doe',
+      sourceRef: 'auth:test_stub',
+      piiFields: {
+        email: true,
+        given_name: true,
+        family_name: true,
+        nickname: true,
+        preferred_username: true,
+        picture: true,
+        website: true,
+        gender: true,
+        birthdate: true,
+        zoneinfo: true,
+        locale: true,
+        phone_number: true,
+      },
+      sensitiveValues: {
+        email: userEmail,
+        given_name: 'John',
+        family_name: 'Doe',
+        nickname: 'Johnny',
+        preferred_username: 'test',
+        picture: 'https://example.com/avatar.jpg',
+        website: 'https://example.com',
+        gender: 'male',
+        birthdate: '1990-01-01',
+        zoneinfo: 'America/New_York',
+        locale: 'en-US',
+        phone_number: '+1-555-0100',
+      },
+      phoneNumberVerified: true,
+      addressJson: JSON.stringify({
+        formatted: '1234 Main St, Anytown, ST 12345, USA',
+        street_address: '1234 Main St',
+        locality: 'Anytown',
+        region: 'ST',
+        postal_code: '12345',
+        country: 'USA',
+      }),
+    };
   } else {
     // Normal client: create new random user
     // ⚠️ PII/Non-PII SEPARATION NOTE:
@@ -4942,45 +5471,31 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     // - /api/auth/passkey (WebAuthn registration)
     // - /api/auth/email-code (Passwordless OTP)
     // - External IdP (SAML/OIDC federation)
-    if (c.env.ENABLE_TEST_ENDPOINTS !== 'true') {
-      log.warn('Non-certification client attempted stub login without ENABLE_TEST_ENDPOINTS', {
-        action: 'login_stub_denied',
-      });
-      return c.json(
-        {
-          error: 'access_denied',
-          error_description:
-            'Stub login is only available for OIDC certification tests or when ENABLE_TEST_ENDPOINTS is enabled',
-        },
-        403
-      );
-    }
-
     log.info('Creating stub user (ENABLE_TEST_ENDPOINTS=true)', {
       action: 'login_stub_user_create',
     });
-    userId = 'user-' + crypto.randomUUID();
-
-    // Use the email from login form, or fall back to a dummy email
-    const userEmail = loginUsername || `${userId}@example.com`;
-
-    await runtimeUsers
-      .syncUser({
-        userId,
-        email: userEmail,
-        active: true,
-        emailVerified: false,
-        userType: 'end_user',
-        sourceRef: 'oidc_stub_login',
-      })
-      .catch((error: unknown) => {
-        // PII Protection: Don't log full error
-        log.error('Failed to create stub user in canonical runtime store', {
-          action: 'login_user_canonical_create',
-          errorName: error instanceof Error ? error.name : 'Unknown error',
-        });
-      });
+    candidateUserId = 'user-' + crypto.randomUUID();
+    userEmail = loginUsername || `${candidateUserId}@example.com`;
+    runtimeUser = {
+      active: true,
+      emailVerified: false,
+      userType: 'end_user',
+      sourceRef: 'auth:test_stub',
+      piiFields: { email: true },
+      sensitiveValues: { email: userEmail },
+    };
   }
+
+  const provisioned = await provisionEmailAccount(c, {
+    tenantId,
+    candidateUserId,
+    flow: 'test_stub',
+    email: userEmail,
+    runtimeUser,
+  });
+  if (provisioned.status === 'pending') return provisioned.response;
+  const userId = provisioned.userId;
+  await resolveAccountDataContextFromHono(c, provisioned.accountId);
 
   // Calculate auth_time BEFORE creating session to ensure consistency
   // This value will be used for both the session and the redirect parameter
@@ -4995,6 +5510,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     c.env,
     tenantId
   );
+  let browserSessionId: string | undefined;
 
   if (sessionTenantProfile.uses_do_for_state) {
     // Human profile: Create session using sharded SessionStore
@@ -5009,6 +5525,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
         userId,
         3600, // 1 hour session
         {
+          ...getSessionClientMetadata(c.req.raw),
           clientId: metadata.client_id as string,
           authTime: loginAuthTime, // Store auth_time for OIDC conformance (prompt=none consistency)
         },
@@ -5031,6 +5548,7 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
         'Set-Cookie',
         `${BROWSER_STATE_COOKIE_NAME}=${browserState}; Path=/; SameSite=${browserStateSameSiteValue}; Secure; Max-Age=3600`
       );
+      browserSessionId = newSessionId;
     } catch (error) {
       log.error('Failed to create session', { action: 'session_create' }, error as Error);
       // Continue even if session creation fails - user can re-login
@@ -5043,35 +5561,22 @@ export async function authorizeLoginHandler(c: Context<{ Bindings: Env }>) {
     });
   }
 
-  // Build query string for internal redirect to /authorize
-  const params = new URLSearchParams();
-  if (metadata.response_type) params.set('response_type', metadata.response_type as string);
-  if (metadata.client_id) params.set('client_id', metadata.client_id as string);
-  if (metadata.redirect_uri) params.set('redirect_uri', metadata.redirect_uri as string);
-  if (metadata.scope) params.set('scope', metadata.scope as string);
-  if (metadata.state) params.set('state', metadata.state as string);
-  if (metadata.nonce) params.set('nonce', metadata.nonce as string);
-  if (metadata.code_challenge) params.set('code_challenge', metadata.code_challenge as string);
-  if (metadata.code_challenge_method)
-    params.set('code_challenge_method', metadata.code_challenge_method as string);
-  if (metadata.claims) params.set('claims', metadata.claims as string);
-  if (metadata.response_mode) params.set('response_mode', metadata.response_mode as string);
-  if (metadata.max_age) params.set('max_age', metadata.max_age as string);
-  if (metadata.prompt) params.set('prompt', metadata.prompt as string);
-  if (metadata.acr_values) params.set('acr_values', metadata.acr_values as string);
-
   const confirmationId = await createAuthorizeConfirmationChallenge(c, tenantId, userId, {
     authTime: loginAuthTime,
     sessionUserId: userId,
+    sessionId: browserSessionId,
+    authorizationRequest: createAuthorizationRequestContinuation(metadata),
   });
-  params.set('_confirmation_challenge', confirmationId);
   log.debug('Setting auth_time for authorization redirect', {
     action: 'auth_time_set',
     authTime: loginAuthTime,
   });
 
-  // Redirect to /authorize with original parameters
-  const redirectUrl = `/authorize?${params.toString()}`;
+  const redirectUrl = buildAuthorizeContinuationUrl(
+    metadata,
+    confirmationId,
+    new URL(c.req.url).origin
+  );
   return c.redirect(redirectUrl, 302);
 }
 
@@ -5108,6 +5613,41 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
         error_description: 'Missing challenge_id parameter',
       },
       400
+    );
+  }
+
+  // This credential-looking form is a local test/conformance adapter only. Production
+  // reauthentication is completed by passkey, OTP, directory, or external-IdP handlers.
+  const tenantId = getTenantIdFromContext(c);
+  const challengeStore = await getChallengeStoreByChallengeId(c.env, challenge_id, tenantId);
+  const previewChallenge = (await challengeStore.getChallengeRpc(challenge_id)) as {
+    tenantId?: string;
+    type?: string;
+    metadata?: { redirect_uri?: unknown };
+  } | null;
+  if (
+    !previewChallenge ||
+    previewChallenge.type !== 'reauth' ||
+    (previewChallenge.tenantId !== undefined && previewChallenge.tenantId !== tenantId)
+  ) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description: 'Invalid or expired challenge',
+      },
+      400
+    );
+  }
+  const isCertificationAdapter =
+    (await shouldUseBuiltinForms(c.env)) &&
+    isOidcCertificationRedirectUri(previewChallenge.metadata?.redirect_uri);
+  if (c.env.ENABLE_TEST_ENDPOINTS !== 'true' && !isCertificationAdapter) {
+    return c.json(
+      {
+        error: 'access_denied',
+        error_description: 'Built-in reauthentication is unavailable for this client',
+      },
+      403
     );
   }
 
@@ -5179,7 +5719,7 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
     <h1>Re-authentication Required</h1>
     <p>For security reasons, please re-enter your credentials.</p>
     <form method="POST" action="/flow/confirm">
-      <input type="hidden" name="challenge_id" value="${challenge_id}">
+      <input type="hidden" name="challenge_id" value="${escapeHtml(challenge_id)}">
       <input type="text" name="username" placeholder="Username" required>
       <input type="password" name="password" placeholder="Password" required>
       <button type="submit">Confirm</button>
@@ -5191,12 +5731,6 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
 
   // POST request: Process confirmation and redirect to /authorize (RPC)
   // Use challengeId-based sharding - must match the shard used during challenge creation
-  const challengeStore = await getChallengeStoreByChallengeId(
-    c.env,
-    challenge_id,
-    getTenantIdFromContext(c)
-  );
-
   let challengeData: {
     userId: string;
     metadata?: {
@@ -5234,29 +5768,6 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
 
   const metadata = challengeData.metadata || {};
 
-  // Build query string for internal redirect to /authorize
-  const params = new URLSearchParams();
-  if (metadata.response_type) params.set('response_type', metadata.response_type as string);
-  if (metadata.client_id) params.set('client_id', metadata.client_id as string);
-  if (metadata.redirect_uri) params.set('redirect_uri', metadata.redirect_uri as string);
-  if (metadata.scope) params.set('scope', metadata.scope as string);
-  if (metadata.state) params.set('state', metadata.state as string);
-  if (metadata.nonce) params.set('nonce', metadata.nonce as string);
-  if (metadata.code_challenge) params.set('code_challenge', metadata.code_challenge as string);
-  if (metadata.code_challenge_method)
-    params.set('code_challenge_method', metadata.code_challenge_method as string);
-  if (metadata.claims) params.set('claims', metadata.claims as string);
-  if (metadata.response_mode) params.set('response_mode', metadata.response_mode as string);
-  if (metadata.max_age) params.set('max_age', metadata.max_age as string);
-  if (metadata.prompt) {
-    params.set('prompt', metadata.prompt as string);
-    log.debug('Passing prompt to confirmation redirect', {
-      action: 'confirm_prompt',
-      prompt: metadata.prompt,
-    });
-  }
-  if (metadata.acr_values) params.set('acr_values', metadata.acr_values as string);
-
   const confirmationId = await createAuthorizeConfirmationChallenge(
     c,
     getTenantIdFromContext(c),
@@ -5265,9 +5776,10 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
       authTime: typeof metadata.authTime === 'number' ? metadata.authTime : undefined,
       sessionUserId:
         typeof metadata.sessionUserId === 'string' ? metadata.sessionUserId : challengeData.userId,
+      sessionId: typeof metadata.session_id === 'string' ? metadata.session_id : undefined,
+      authorizationRequest: createAuthorizationRequestContinuation(metadata),
     }
   );
-  params.set('_confirmation_challenge', confirmationId);
   if (metadata.authTime) {
     log.debug('Passing auth_time to confirmation redirect', {
       action: 'confirm_auth_time',
@@ -5275,7 +5787,10 @@ export async function authorizeConfirmHandler(c: Context<{ Bindings: Env }>) {
     });
   }
 
-  // Redirect to /authorize with original parameters
-  const redirectUrl = `/authorize?${params.toString()}`;
+  const redirectUrl = buildAuthorizeContinuationUrl(
+    metadata,
+    confirmationId,
+    new URL(c.req.url).origin
+  );
   return c.redirect(redirectUrl, 302);
 }

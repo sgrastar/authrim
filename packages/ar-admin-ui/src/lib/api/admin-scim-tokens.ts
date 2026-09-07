@@ -46,7 +46,39 @@ export interface CreateScimTokenResponse {
 	message: string;
 }
 
+export interface ScimInboundSettings {
+	enabled: boolean;
+	usersEnabled: boolean;
+	groupsEnabled: boolean;
+	bulkEnabled: boolean;
+	mappingSetId: string | null;
+	bulkMaxOperations: number;
+	bulkMaxPayloadSize: number;
+}
+
 export const adminScimTokensAPI = {
+	async getSettings(): Promise<{ settings: ScimInboundSettings }> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/scim-settings`, {
+			credentials: 'include'
+		});
+		if (!response.ok) throw new Error('Failed to fetch SCIM settings');
+		return response.json();
+	},
+
+	async updateSettings(settings: ScimInboundSettings): Promise<{ settings: ScimInboundSettings }> {
+		const response = await adminFetch(`${API_BASE_URL}/api/admin/scim-settings`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			credentials: 'include',
+			body: JSON.stringify(settings)
+		});
+		if (!response.ok) {
+			const error = (await response.json().catch(() => ({}))) as { message?: string };
+			throw new Error(error.message || 'Failed to update SCIM settings');
+		}
+		return response.json();
+	},
+
 	/**
 	 * List all SCIM tokens
 	 */

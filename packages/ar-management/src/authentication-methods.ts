@@ -22,17 +22,25 @@
  */
 
 import type { Context } from 'hono';
-import type { Env } from '@authrim/ar-lib-core';
+import type { Env, LoginUITextLocalizations } from '@authrim/ar-lib-core';
 import {
   getRequestHost,
   getLogger,
   getTenantIdFromContext,
   profileForTotpPreset,
+  readAuthenticationMethodsCacheRevision,
   resolveAuthCorePersistenceAdapterFromEnv,
   SELF_SERVICE_DEFAULTS,
+  VALIDATION_LIMITS,
   validateAccountPagePath,
   validateLoginUICustomCss,
 } from '@authrim/ar-lib-core';
+import {
+  LOGIN_UI_LOCALES,
+  parseConfiguredPrimaryLoginUILocales,
+  resolveEffectivePrimaryLoginUILocales,
+  type LoginUILocale,
+} from '@authrim/ar-lib-core/types/login-ui-languages';
 import {
   decryptSecretFields,
   getPluginEncryptionKey,
@@ -86,7 +94,7 @@ interface DirectoryPasswordMethod {
 }
 
 type HumanVerificationProvider = string;
-type HumanVerificationFailurePolicy = 'fail_closed' | 'fail_open';
+type HumanVerificationFailurePolicy = 'fail_closed';
 type HumanVerificationWidgetMode = 'managed' | 'checkbox' | 'invisible' | 'score';
 
 interface HumanVerificationMethod {
@@ -155,6 +163,7 @@ interface UIConfig {
     fontFamily: 'system' | 'rounded' | 'serif' | 'mono';
     fontScale: 'compact' | 'comfortable' | 'spacious';
     backgroundColor: string;
+    accentColor: string;
     titleColor: string;
     textColor: string;
     copyColor: string;
@@ -197,6 +206,7 @@ interface UIConfig {
     thumbnailUrl: string | null;
     customCss: string | null;
     headerText: string | null;
+    textLocalizations: LoginUITextLocalizations;
     footerText: string | null;
     footerLinks: Array<{ label: string; url: string }>;
     customBlocks: Array<{
@@ -208,6 +218,9 @@ interface UIConfig {
     }>;
   };
   supportedLocales: string[];
+  defaultLocale: string;
+  primaryLocales: string[];
+  showEnglishLanguageNames: boolean;
   selfService: {
     accountPageEnabled: boolean;
     accountPagePath: string;
@@ -237,9 +250,56 @@ interface AuthenticationMethodsErrorResponse {
 // =============================================================================
 
 const DEFAULT_CACHE_TTL = 60; // seconds
+const DEFAULT_EDGE_CACHE_TTL = 24 * 60 * 60; // seconds
+const MAX_EDGE_CACHE_TTL = 7 * 24 * 60 * 60; // seconds
+const EDGE_CACHE_KEY_ORIGIN = 'https://authrim.internal';
+const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
+const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
+type AuthenticationMethodsEdgeCache = {
+  match(request: Request): Promise<Response | undefined>;
+  put(request: Request, response: Response): Promise<void>;
+};
+type WaitUntilExecutionContext = {
+  waitUntil(promise: Promise<unknown>): void;
+};
+type AuthenticationMethodsCacheStatus = 'hit' | 'miss' | 'bypass';
+type AuthenticationMethodsDiagnosticLogger = {
+  info(message: string, metadata?: Record<string, unknown>): void;
+};
+interface AuthenticationMethodsTimingSpan {
+  name: string;
+  durationMs: number;
+}
+interface AuthenticationMethodsDiagnosticTiming {
+  enabled: boolean;
+  sessionId: string | null;
+  startedAt: number;
+  spans: AuthenticationMethodsTimingSpan[];
+  completed: boolean;
+}
 const MAX_EXTERNAL_LOGIN_PROVIDERS = 20;
 const MAX_STRING_LENGTH = 256;
 const MAX_URL_LENGTH = 2048;
+const LEGACY_DEFAULT_LOGIN_UI_LOCALES = [
+  'en',
+  'ja',
+  'zh-CN',
+  'zh-TW',
+  'es',
+  'pt',
+  'fr',
+  'de',
+  'ko',
+  'ru',
+  'id',
+] as const;
+
+function isLegacyDefaultLoginUILocaleSet(locales: readonly string[]): boolean {
+  return (
+    locales.length === LEGACY_DEFAULT_LOGIN_UI_LOCALES.length &&
+    LEGACY_DEFAULT_LOGIN_UI_LOCALES.every((locale) => locales.includes(locale))
+  );
+}
 
 const LOGIN_PROVIDER_ICON_NAMES = new Set([
   'buildings',
@@ -293,6 +353,7 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     fontFamily: 'system',
     fontScale: 'comfortable',
     backgroundColor: '',
+    accentColor: '',
     titleColor: '',
     textColor: '',
     copyColor: '',
@@ -328,11 +389,37 @@ const DEFAULT_UI_CONFIG: UIConfig = {
     thumbnailUrl: null,
     customCss: null,
     headerText: null,
+    textLocalizations: {},
     footerText: null,
     footerLinks: [],
     customBlocks: [],
   },
-  supportedLocales: ['en', 'ja'],
+  supportedLocales: [
+    'en',
+    'ja',
+    'zh-CN',
+    'zh-TW',
+    'es',
+    'pt',
+    'fr',
+    'de',
+    'ko',
+    'ru',
+    'id',
+    'ar',
+    'it',
+    'th',
+    'vi',
+    'hi',
+    'bn',
+    'tr',
+    'sw',
+    'am',
+    'pl',
+  ],
+  defaultLocale: 'en',
+  primaryLocales: resolveEffectivePrimaryLoginUILocales(LOGIN_UI_LOCALES, null),
+  showEnglishLanguageNames: false,
   selfService: {
     accountPageEnabled: SELF_SERVICE_DEFAULTS['self-service.account_page_enabled'],
     accountPagePath: SELF_SERVICE_DEFAULTS['self-service.account_page_path'],
@@ -392,6 +479,7 @@ interface LoginUIKVSettings {
   'login-ui.font_family'?: string;
   'login-ui.font_scale'?: string;
   'login-ui.background_color'?: string;
+  'login-ui.accent_color'?: string;
   'login-ui.title_color'?: string;
   'login-ui.text_color'?: string;
   'login-ui.copy_color'?: string;
@@ -404,6 +492,9 @@ interface LoginUIKVSettings {
   'login-ui.brand_panel_title'?: string;
   'login-ui.brand_panel_text'?: string;
   'login-ui.supported_locales'?: string;
+  'login-ui.default_locale'?: string;
+  'login-ui.primary_locales'?: unknown;
+  'login-ui.show_english_language_names'?: boolean | string;
   'login-ui.background_image_url'?: string;
   'login-ui.login_panel_background_image_url'?: string;
   'login-ui.custom_css'?: string;
@@ -429,6 +520,7 @@ interface LoginUIKVSettings {
   'login-ui.brand_position'?: string;
   'login-ui.brand_align'?: string;
   'login-ui.header_text'?: string;
+  'login-ui.text_localizations'?: string;
   'login-ui.footer_text'?: string;
   'login-ui.footer_links'?: string;
   'login-ui.custom_blocks'?: string;
@@ -508,6 +600,7 @@ interface LoginUIResolved {
   fontFamily: UIConfig['pageTemplate']['fontFamily'];
   fontScale: UIConfig['pageTemplate']['fontScale'];
   backgroundColor: string;
+  accentColor: string;
   titleColor: string;
   textColor: string;
   copyColor: string;
@@ -520,6 +613,9 @@ interface LoginUIResolved {
   brandPanelTitle: string | null;
   brandPanelText: string | null;
   supportedLocales: string[];
+  defaultLocale: string;
+  primaryLocales: LoginUILocale[] | null;
+  showEnglishLanguageNames: boolean;
   backgroundImageUrl: string | null;
   loginPanelBackgroundImageUrl: string | null;
   customCss: string | null;
@@ -545,6 +641,7 @@ interface LoginUIResolved {
   brandPosition: UIConfig['pageTemplate']['brandPosition'];
   brandAlign: UIConfig['pageTemplate']['brandAlign'];
   headerText: string | null;
+  textLocalizations: LoginUITextLocalizations;
   footerText: string | null;
   footerLinks: Array<{ label: string; url: string }>;
   customBlocks: Array<{
@@ -570,8 +667,308 @@ function safeParseJsonArray<T>(json: string | undefined): T[] {
   }
 }
 
+const LOGIN_UI_TEXT_FIELDS = new Set([
+  'tagline',
+  'brandPanelTitle',
+  'brandPanelText',
+  'footerText',
+  'loginTitle',
+  'registrationTitle',
+  'accountTitle',
+]);
+
+function safeParseTextLocalizations(
+  json: string | undefined,
+  fallback: LoginUITextLocalizations = {}
+): LoginUITextLocalizations {
+  if (!json || typeof json !== 'string') return fallback;
+  try {
+    const parsed: unknown = JSON.parse(json);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return fallback;
+
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter(
+          ([locale, value]) =>
+            LOGIN_UI_LOCALES.includes(locale as (typeof LOGIN_UI_LOCALES)[number]) &&
+            Boolean(value) &&
+            typeof value === 'object' &&
+            !Array.isArray(value)
+        )
+        .flatMap(([locale, value]) => {
+          const localized = Object.fromEntries(
+            Object.entries(value as Record<string, unknown>)
+              .filter(
+                ([field, text]) => LOGIN_UI_TEXT_FIELDS.has(field) && typeof text === 'string'
+              )
+              .map(([field, text]) => [field, (text as string).trim().slice(0, MAX_STRING_LENGTH)])
+          );
+          return Object.keys(localized).length > 0 ? [[locale, localized]] : [];
+        })
+    );
+  } catch {
+    return fallback;
+  }
+}
+
+function readBoundedIntegerEnvValue(
+  value: string | undefined,
+  fallback: number,
+  min: number,
+  max: number
+): number {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, Math.floor(parsed))) : fallback;
+}
+
+function resolveAuthenticationMethodsEdgeCacheTTL(env: Env): number {
+  return readBoundedIntegerEnvValue(
+    env.AUTHENTICATION_METHODS_EDGE_CACHE_TTL,
+    DEFAULT_EDGE_CACHE_TTL,
+    0,
+    MAX_EDGE_CACHE_TTL
+  );
+}
+
+function roundDurationMs(durationMs: number): number {
+  return Math.round(durationMs * 100) / 100;
+}
+
+function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+}
+
+function createAuthenticationMethodsDiagnosticTiming(
+  request: Request
+): AuthenticationMethodsDiagnosticTiming {
+  const sessionId = sanitizeDiagnosticSessionId(request.headers.get(DIAGNOSTIC_SESSION_ID_HEADER));
+  return {
+    enabled: Boolean(sessionId),
+    sessionId,
+    startedAt: performance.now(),
+    spans: [],
+    completed: false,
+  };
+}
+
+function recordAuthenticationMethodsTiming(
+  timing: AuthenticationMethodsDiagnosticTiming,
+  name: string,
+  startedAt: number
+): void {
+  if (!timing.enabled) return;
+  timing.spans.push({
+    name,
+    durationMs: roundDurationMs(performance.now() - startedAt),
+  });
+}
+
+async function measureAuthenticationMethodsTiming<T>(
+  timing: AuthenticationMethodsDiagnosticTiming,
+  name: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    return await operation();
+  } finally {
+    recordAuthenticationMethodsTiming(timing, name, startedAt);
+  }
+}
+
+function finalizeAuthenticationMethodsTiming(
+  timing: AuthenticationMethodsDiagnosticTiming
+): AuthenticationMethodsTimingSpan[] {
+  if (!timing.enabled) return [];
+  if (!timing.completed) {
+    timing.spans.push({
+      name: 'handler_total',
+      durationMs: roundDurationMs(performance.now() - timing.startedAt),
+    });
+    timing.completed = true;
+  }
+  return timing.spans;
+}
+
+function buildServerTimingHeader(spans: AuthenticationMethodsTimingSpan[]): string {
+  return spans.map((span) => `${span.name};dur=${span.durationMs}`).join(', ');
+}
+
+function attachAuthenticationMethodsDiagnosticHeaders(
+  response: Response,
+  timing: AuthenticationMethodsDiagnosticTiming,
+  spans: AuthenticationMethodsTimingSpan[]
+): Response {
+  if (!timing.enabled || spans.length === 0) return response;
+  const headers = new Headers(response.headers);
+  headers.set('Server-Timing', buildServerTimingHeader(spans));
+  if (timing.sessionId) {
+    headers.set('X-Authrim-Diagnostic-Session-Id', timing.sessionId);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function emitAuthenticationMethodsDiagnosticLog(input: {
+  log: AuthenticationMethodsDiagnosticLogger;
+  timing: AuthenticationMethodsDiagnosticTiming;
+  spans: AuthenticationMethodsTimingSpan[];
+  tenantId: string;
+  requestedClientId: string | null;
+  cacheStatus: AuthenticationMethodsCacheStatus;
+  edgeCacheEnabled: boolean;
+  edgeCacheTTL: number;
+}): void {
+  if (!input.timing.enabled) return;
+  input.log.info('Authentication methods diagnostics', {
+    diagnosticSessionId: input.timing.sessionId,
+    tenantId: input.tenantId,
+    clientScoped: Boolean(input.requestedClientId),
+    cacheStatus: input.cacheStatus,
+    edgeCacheEnabled: input.edgeCacheEnabled,
+    edgeCacheTTL: input.edgeCacheTTL,
+    timingMs: Object.fromEntries(input.spans.map((span) => [span.name, span.durationMs])),
+  });
+}
+
+function normalizeCacheKeyPart(value: string | null | undefined, fallback: string): string {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || fallback;
+}
+
+function buildAuthenticationMethodsEdgeCacheRequest(input: {
+  tenantId: string;
+  forwardedHost: string | null;
+  clientId: string | null;
+  revision: string;
+}): Request {
+  const url = new URL('/cache/authentication-methods/v2', EDGE_CACHE_KEY_ORIGIN);
+  url.searchParams.set('tenant', input.tenantId);
+  url.searchParams.set('host', normalizeCacheKeyPart(input.forwardedHost, '__unknown_host__'));
+  url.searchParams.set('client', input.clientId?.trim() || '__tenant__');
+  url.searchParams.set('revision', input.revision);
+  return new Request(url.toString(), { method: 'GET' });
+}
+
+function getAuthenticationMethodsCacheTag(tenantId: string): string {
+  const safeTenantId = tenantId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 128) || 'unknown';
+  return `authrim-authentication-methods,authrim-authentication-methods-tenant-${safeTenantId}`;
+}
+
+function buildAuthenticationMethodsHeaders(input: {
+  tenantId: string;
+  cacheTTL: number;
+  edgeCacheTTL: number;
+  cacheStatus: AuthenticationMethodsCacheStatus;
+}): Headers {
+  const headers = new Headers({
+    'Content-Type': 'application/json',
+    'Cache-Control': `public, max-age=${input.cacheTTL}`,
+    'X-Authrim-Authentication-Methods-Cache': input.cacheStatus,
+    'X-Authrim-Authentication-Methods-Client-TTL': String(input.cacheTTL),
+  });
+  if (input.edgeCacheTTL > 0) {
+    headers.set('Cloudflare-CDN-Cache-Control', `public, max-age=${input.edgeCacheTTL}`);
+    headers.set('Cache-Tag', getAuthenticationMethodsCacheTag(input.tenantId));
+  }
+  return headers;
+}
+
+function buildAuthenticationMethodsJsonResponse(
+  tenantId: string,
+  body: AuthenticationMethodsResponse,
+  cacheTTL: number,
+  edgeCacheTTL: number,
+  cacheStatus: AuthenticationMethodsCacheStatus
+): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: buildAuthenticationMethodsHeaders({ tenantId, cacheTTL, edgeCacheTTL, cacheStatus }),
+  });
+}
+
+function getDefaultEdgeCache(): AuthenticationMethodsEdgeCache | null {
+  const candidate = (
+    globalThis as unknown as {
+      caches?: { default?: AuthenticationMethodsEdgeCache };
+    }
+  ).caches?.default;
+  return candidate ?? null;
+}
+
+function getWaitUntilExecutionContext(
+  c: Context<{ Bindings: Env }>
+): WaitUntilExecutionContext | null {
+  try {
+    return (c as unknown as { executionCtx?: WaitUntilExecutionContext }).executionCtx ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function putAuthenticationMethodsEdgeCache(
+  c: Context<{ Bindings: Env }>,
+  cache: AuthenticationMethodsEdgeCache,
+  request: Request,
+  response: Response,
+  edgeCacheTTL: number
+): Promise<void> {
+  const cacheable = new Response(response.body, response);
+  cacheable.headers.set('Cache-Control', `public, max-age=${edgeCacheTTL}`);
+  const put = cache.put(request, cacheable).catch((error) => {
+    getLogger(c)
+      .module('LOGIN-METHODS')
+      .warn('Failed to store authentication methods edge cache', {}, error as Error);
+  });
+  const executionCtx = getWaitUntilExecutionContext(c);
+  if (executionCtx) {
+    executionCtx.waitUntil(put);
+    return;
+  }
+  await put;
+}
+
+function cloneCachedAuthenticationMethodsResponse(
+  tenantId: string,
+  cached: Response,
+  edgeCacheTTL: number
+): Response {
+  const cacheTTL = Math.max(
+    0,
+    Math.floor(Number(cached.headers.get('X-Authrim-Authentication-Methods-Client-TTL')) || 60)
+  );
+  return new Response(cached.body, {
+    status: cached.status,
+    statusText: cached.statusText,
+    headers: buildAuthenticationMethodsHeaders({
+      tenantId,
+      cacheTTL,
+      edgeCacheTTL,
+      cacheStatus: 'hit',
+    }),
+  });
+}
+
 function readEnum<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
   return typeof value === 'string' && allowed.includes(value as T) ? (value as T) : fallback;
+}
+
+async function readAuthenticationMethodKVSettings(
+  env: Env,
+  tenantId: string
+): Promise<AuthenticationMethodKVSettings | null> {
+  try {
+    const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:authentication-methods`);
+    return kvJson ? (JSON.parse(kvJson) as AuthenticationMethodKVSettings) : null;
+  } catch {
+    return null;
+  }
 }
 
 function readBoolean(value: unknown, fallback: boolean): boolean {
@@ -612,6 +1009,26 @@ function resolveLoginUIFromKVSettings(
   kvSettings: LoginUIKVSettings,
   defaults: LoginUIResolved
 ): LoginUIResolved {
+  const configuredSupportedLocales = kvSettings['login-ui.supported_locales']
+    ? kvSettings['login-ui.supported_locales']
+        .split(',')
+        .map((locale) => locale.trim())
+        .filter((locale) => LOGIN_UI_LOCALES.includes(locale as (typeof LOGIN_UI_LOCALES)[number]))
+        .filter((locale, index, locales) => locales.indexOf(locale) === index)
+    : defaults.supportedLocales;
+  const supportedLocales = isLegacyDefaultLoginUILocaleSet(configuredSupportedLocales)
+    ? [...LOGIN_UI_LOCALES]
+    : configuredSupportedLocales;
+  const safeSupportedLocales =
+    supportedLocales.length > 0 ? supportedLocales : defaults.supportedLocales;
+  const configuredDefaultLocale = kvSettings['login-ui.default_locale'];
+  const configuredPrimaryLocales = Object.prototype.hasOwnProperty.call(
+    kvSettings,
+    'login-ui.primary_locales'
+  )
+    ? parseConfiguredPrimaryLoginUILocales(kvSettings['login-ui.primary_locales'])
+    : defaults.primaryLocales;
+
   return {
     theme: kvSettings['login-ui.theme'] || defaults.theme,
     variant: kvSettings['login-ui.variant'] || defaults.variant,
@@ -639,6 +1056,7 @@ function resolveLoginUIFromKVSettings(
       kvSettings['login-ui.background_color'],
       defaults.backgroundColor
     ),
+    accentColor: readSafeColor(kvSettings['login-ui.accent_color'], defaults.accentColor),
     titleColor: readSafeColor(kvSettings['login-ui.title_color'], defaults.titleColor),
     textColor: readSafeColor(kvSettings['login-ui.text_color'], defaults.textColor),
     copyColor: readSafeColor(kvSettings['login-ui.copy_color'], defaults.copyColor),
@@ -666,13 +1084,19 @@ function resolveLoginUIFromKVSettings(
       kvSettings['login-ui.brand_panel_text'],
       defaults.brandPanelText
     ),
-    supportedLocales: kvSettings['login-ui.supported_locales']
-      ? kvSettings['login-ui.supported_locales']
-          .split(',')
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0 && s.length <= 10 && /^[a-z]{2}(-[A-Z]{2})?$/.test(s))
-          .slice(0, 20)
-      : defaults.supportedLocales,
+    supportedLocales: safeSupportedLocales,
+    defaultLocale:
+      typeof configuredDefaultLocale === 'string' &&
+      safeSupportedLocales.includes(configuredDefaultLocale)
+        ? configuredDefaultLocale
+        : safeSupportedLocales.includes(defaults.defaultLocale)
+          ? defaults.defaultLocale
+          : (safeSupportedLocales[0] ?? DEFAULT_UI_CONFIG.defaultLocale),
+    primaryLocales: configuredPrimaryLocales,
+    showEnglishLanguageNames: readBoolean(
+      kvSettings['login-ui.show_english_language_names'],
+      defaults.showEnglishLanguageNames
+    ),
     backgroundImageUrl: isValidLoginUIImageUrl(kvSettings['login-ui.background_image_url'])
       ? kvSettings['login-ui.background_image_url']!
       : defaults.backgroundImageUrl,
@@ -779,6 +1203,13 @@ function resolveLoginUIFromKVSettings(
       defaults.brandAlign
     ),
     headerText: kvSettings['login-ui.header_text'] || defaults.headerText,
+    textLocalizations:
+      kvSettings['login-ui.text_localizations'] === undefined
+        ? defaults.textLocalizations
+        : safeParseTextLocalizations(
+            kvSettings['login-ui.text_localizations'],
+            defaults.textLocalizations
+          ),
     footerText: kvSettings['login-ui.footer_text'] || defaults.footerText,
     footerLinks:
       kvSettings['login-ui.footer_links'] === undefined
@@ -803,7 +1234,11 @@ async function applyClientLoginUIOverride(
   clientId: string | null | undefined,
   base: LoginUIResolved
 ): Promise<LoginUIResolved> {
-  if (!clientId || !/^[A-Za-z0-9._:-]{1,128}$/u.test(clientId)) {
+  if (
+    !clientId ||
+    clientId.length > VALIDATION_LIMITS.CLIENT_ID_MAX_LENGTH ||
+    !/^[A-Za-z0-9._:-]+$/u.test(clientId)
+  ) {
     return base;
   }
   try {
@@ -833,6 +1268,7 @@ async function getLoginUISettings(
     fontFamily: DEFAULT_UI_CONFIG.pageTemplate.fontFamily,
     fontScale: DEFAULT_UI_CONFIG.pageTemplate.fontScale,
     backgroundColor: DEFAULT_UI_CONFIG.pageTemplate.backgroundColor,
+    accentColor: DEFAULT_UI_CONFIG.pageTemplate.accentColor,
     titleColor: DEFAULT_UI_CONFIG.pageTemplate.titleColor,
     textColor: DEFAULT_UI_CONFIG.pageTemplate.textColor,
     copyColor: DEFAULT_UI_CONFIG.pageTemplate.copyColor,
@@ -845,6 +1281,9 @@ async function getLoginUISettings(
     brandPanelTitle: DEFAULT_UI_CONFIG.pageTemplate.brandPanelTitle,
     brandPanelText: DEFAULT_UI_CONFIG.pageTemplate.brandPanelText,
     supportedLocales: [...DEFAULT_UI_CONFIG.supportedLocales],
+    defaultLocale: DEFAULT_UI_CONFIG.defaultLocale,
+    primaryLocales: null,
+    showEnglishLanguageNames: DEFAULT_UI_CONFIG.showEnglishLanguageNames,
     backgroundImageUrl: DEFAULT_UI_CONFIG.appearance.backgroundImageUrl,
     loginPanelBackgroundImageUrl: DEFAULT_UI_CONFIG.appearance.loginPanelBackgroundImageUrl,
     customCss: DEFAULT_UI_CONFIG.appearance.customCss,
@@ -871,12 +1310,29 @@ async function getLoginUISettings(
     brandPosition: DEFAULT_UI_CONFIG.pageTemplate.brandPosition,
     brandAlign: DEFAULT_UI_CONFIG.pageTemplate.brandAlign,
     headerText: DEFAULT_UI_CONFIG.appearance.headerText,
+    textLocalizations: DEFAULT_UI_CONFIG.appearance.textLocalizations,
     footerText: DEFAULT_UI_CONFIG.appearance.footerText,
     footerLinks: [...DEFAULT_UI_CONFIG.appearance.footerLinks],
     customBlocks: [...DEFAULT_UI_CONFIG.appearance.customBlocks],
   };
 
-  // Try settings-v2 (SETTINGS KV) first — tenant-aware
+  // Resolve settings-v2 from platform to tenant to client so the Admin UI scope
+  // hierarchy is reflected by the public Login UI configuration.
+  let inheritedDefaults = defaults;
+  let hasPlatformSettings = false;
+  try {
+    const platformJson = await env.SETTINGS?.get('settings:platform:login-ui');
+    if (platformJson) {
+      inheritedDefaults = resolveLoginUIFromKVSettings(
+        JSON.parse(platformJson) as LoginUIKVSettings,
+        defaults
+      );
+      hasPlatformSettings = true;
+    }
+  } catch {
+    // Invalid platform settings do not prevent tenant or legacy settings from loading.
+  }
+
   try {
     const kvJson = await env.SETTINGS?.get(`settings:tenant:${tenantId}:login-ui`);
     if (kvJson) {
@@ -885,11 +1341,15 @@ async function getLoginUISettings(
         env,
         tenantId,
         clientId,
-        resolveLoginUIFromKVSettings(kvSettings, defaults)
+        resolveLoginUIFromKVSettings(kvSettings, inheritedDefaults)
       );
     }
   } catch {
     // Invalid JSON — fall through to legacy
+  }
+
+  if (hasPlatformSettings) {
+    return applyClientLoginUIOverride(env, tenantId, clientId, inheritedDefaults);
   }
 
   // Fallback to legacy system_settings.loginUI
@@ -901,6 +1361,7 @@ async function getLoginUISettings(
     fontFamily: defaults.fontFamily,
     fontScale: defaults.fontScale,
     backgroundColor: defaults.backgroundColor,
+    accentColor: defaults.accentColor,
     titleColor: defaults.titleColor,
     textColor: defaults.textColor,
     copyColor: defaults.copyColor,
@@ -915,6 +1376,9 @@ async function getLoginUISettings(
     brandPanelTitle: defaults.brandPanelTitle,
     brandPanelText: defaults.brandPanelText,
     supportedLocales: systemSettings.loginUI?.supportedLocales || defaults.supportedLocales,
+    defaultLocale: defaults.defaultLocale,
+    primaryLocales: defaults.primaryLocales,
+    showEnglishLanguageNames: defaults.showEnglishLanguageNames,
     backgroundImageUrl: defaults.backgroundImageUrl,
     loginPanelBackgroundImageUrl: defaults.loginPanelBackgroundImageUrl,
     customCss: defaults.customCss,
@@ -940,6 +1404,7 @@ async function getLoginUISettings(
     brandPosition: defaults.brandPosition,
     brandAlign: defaults.brandAlign,
     headerText: defaults.headerText,
+    textLocalizations: defaults.textLocalizations,
     footerText: defaults.footerText,
     footerLinks: defaults.footerLinks,
     customBlocks: defaults.customBlocks,
@@ -1072,6 +1537,47 @@ function buildExternalIdpProviderHeaders(
     headers['X-Forwarded-Proto'] = getForwardedProto(request);
   }
   return headers;
+}
+
+function parseExternalProviderUsageItems(
+  settings: AuthenticationMethodKVSettings | null
+): ExternalLoginProviderUsageConfig[] | null {
+  if (!settings) return null;
+  const rawUsage = settings['authentication-methods.external_provider_usage'];
+  if (rawUsage === undefined) return null;
+  if (Array.isArray(rawUsage)) return rawUsage;
+  if (typeof rawUsage === 'string') {
+    return safeParseJsonArray<ExternalLoginProviderUsageConfig>(rawUsage);
+  }
+  return null;
+}
+
+function isSAMLExternalProviderUsage(item: ExternalLoginProviderUsageConfig): boolean {
+  const id = typeof item.id === 'string' ? item.id : '';
+  const providerId = typeof item.providerId === 'string' ? item.providerId : '';
+  return id.startsWith('saml:') || providerId.startsWith('saml:');
+}
+
+function externalProviderUsageHasEnabledSurface(item: ExternalLoginProviderUsageConfig): boolean {
+  return (
+    normalizeBoolean(item.loginEnabled, true) ||
+    normalizeBoolean(item.signupEnabled, true) ||
+    normalizeBoolean(item.reauthEnabled, true) ||
+    normalizeBoolean(item.accountLinkEnabled, true)
+  );
+}
+
+function shouldFetchExternalLoginProviders(
+  settings: AuthenticationMethodKVSettings | null
+): boolean {
+  const usageItems = parseExternalProviderUsageItems(settings);
+  if (usageItems === null) {
+    // Legacy tenant: bridge providers may exist even before usage settings were saved.
+    return true;
+  }
+  return usageItems.some(
+    (item) => !isSAMLExternalProviderUsage(item) && externalProviderUsageHasEnabledSurface(item)
+  );
 }
 
 /**
@@ -1613,7 +2119,7 @@ async function resolveHumanVerificationMethod(
   const provider = providerFromHumanVerificationPluginId(resolved.providerPluginId);
   const siteKey = typeof pluginConfig.siteKey === 'string' ? pluginConfig.siteKey : '';
   const configured = Boolean(siteKey && typeof pluginConfig.secretKey === 'string');
-  const failurePolicy = pluginConfig.failurePolicy === 'fail_open' ? 'fail_open' : 'fail_closed';
+  const failurePolicy = 'fail_closed' as const;
   const hasEnabledUsage = resolved.loginEnabled || resolved.signupEnabled || resolved.reauthEnabled;
 
   return {
@@ -1739,6 +2245,7 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
       fontFamily: loginUI.fontFamily,
       fontScale: loginUI.fontScale,
       backgroundColor: loginUI.backgroundColor,
+      accentColor: loginUI.accentColor,
       titleColor: loginUI.titleColor,
       textColor: loginUI.textColor,
       copyColor: loginUI.copyColor,
@@ -1774,11 +2281,22 @@ function buildUIConfig(loginUI: LoginUIResolved): UIConfig {
       thumbnailUrl: loginUI.thumbnailUrl,
       customCss: loginUI.customCss,
       headerText: loginUI.headerText,
+      textLocalizations: loginUI.textLocalizations,
       footerText: loginUI.footerText,
       footerLinks: loginUI.footerLinks,
       customBlocks: loginUI.customBlocks,
     },
     supportedLocales: loginUI.supportedLocales,
+    defaultLocale: loginUI.supportedLocales.includes(loginUI.defaultLocale)
+      ? loginUI.defaultLocale
+      : (loginUI.supportedLocales[0] ?? DEFAULT_UI_CONFIG.defaultLocale),
+    primaryLocales: resolveEffectivePrimaryLoginUILocales(
+      loginUI.supportedLocales.filter((locale): locale is LoginUILocale =>
+        LOGIN_UI_LOCALES.includes(locale as LoginUILocale)
+      ),
+      loginUI.primaryLocales
+    ),
+    showEnglishLanguageNames: loginUI.showEnglishLanguageNames,
     selfService: {
       accountPageEnabled: SELF_SERVICE_DEFAULTS['self-service.account_page_enabled'],
       accountPagePath: SELF_SERVICE_DEFAULTS['self-service.account_page_path'],
@@ -1837,7 +2355,7 @@ async function resolveCacheTTL(env: Env, tenantId: string): Promise<number> {
   }
 
   // 2. Try environment variable
-  const envTTL = (env as unknown as Record<string, unknown>).AUTHENTICATION_METHODS_CACHE_TTL;
+  const envTTL = env.AUTHENTICATION_METHODS_CACHE_TTL;
   if (envTTL !== undefined && envTTL !== null && envTTL !== '') {
     const parsed = Number(envTTL);
     if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 3600) {
@@ -1860,11 +2378,60 @@ async function resolveCacheTTL(env: Env, tenantId: string): Promise<number> {
  */
 export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('LOGIN-METHODS');
+  const timing = createAuthenticationMethodsDiagnosticTiming(c.req.raw);
 
   try {
     const env = c.env as Env;
     const tenantId = getTenantIdFromContext(c);
     const requestedClientId = c.req.query('client_id')?.trim() || null;
+    const forwardedHost = getRequestHost(c.req.raw);
+    const edgeCacheTTL = resolveAuthenticationMethodsEdgeCacheTTL(env);
+    const edgeCache = edgeCacheTTL > 0 ? getDefaultEdgeCache() : null;
+    let edgeCacheRequest: Request | null = null;
+
+    if (edgeCache) {
+      try {
+        const revision = await measureAuthenticationMethodsTiming(timing, 'revision_read', () =>
+          readAuthenticationMethodsCacheRevision(env, tenantId)
+        );
+        edgeCacheRequest = buildAuthenticationMethodsEdgeCacheRequest({
+          tenantId,
+          forwardedHost,
+          clientId: requestedClientId,
+          revision,
+        });
+        const cached = await measureAuthenticationMethodsTiming(timing, 'cache_match', () =>
+          edgeCache.match(edgeCacheRequest as Request)
+        );
+        if (cached) {
+          const response = cloneCachedAuthenticationMethodsResponse(tenantId, cached, edgeCacheTTL);
+          const spans = finalizeAuthenticationMethodsTiming(timing);
+          emitAuthenticationMethodsDiagnosticLog({
+            log,
+            timing,
+            spans,
+            tenantId,
+            requestedClientId,
+            cacheStatus: 'hit',
+            edgeCacheEnabled: true,
+            edgeCacheTTL,
+          });
+          return attachAuthenticationMethodsDiagnosticHeaders(response, timing, spans);
+        }
+      } catch (error) {
+        log.warn('Authentication methods edge cache lookup failed', {}, error as Error);
+        edgeCacheRequest = null;
+      }
+    }
+
+    const authenticationMethodSettings = await measureAuthenticationMethodsTiming(
+      timing,
+      'settings_read',
+      () => readAuthenticationMethodKVSettings(env, tenantId)
+    );
+    const bridgeProvidersPromise = shouldFetchExternalLoginProviders(authenticationMethodSettings)
+      ? fetchExternalLoginProviders(env, tenantId, c.req.raw)
+      : Promise.resolve([]);
 
     // Fetch data in parallel
     const [
@@ -1875,21 +2442,27 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       directoryPassword,
       humanVerification,
       externalProviderUsage,
-    ] = await Promise.all([
-      getSystemSettings(env),
-      fetchExternalLoginProviders(env, tenantId, c.req.raw),
-      fetchSAMLLoginProviders(env, tenantId),
-      fetchConfiguredExternalLoginProviders(env, tenantId),
-      resolveDirectoryPasswordMethod(env, tenantId),
-      resolveHumanVerificationMethod(env, tenantId),
-      resolveExternalProviderUsage(env, tenantId),
-    ]);
+    ] = await measureAuthenticationMethodsTiming(timing, 'fanout', () =>
+      Promise.all([
+        getSystemSettings(env),
+        bridgeProvidersPromise,
+        fetchSAMLLoginProviders(env, tenantId),
+        fetchConfiguredExternalLoginProviders(env, tenantId),
+        resolveDirectoryPasswordMethod(env, tenantId),
+        resolveHumanVerificationMethod(env, tenantId),
+        resolveExternalProviderUsage(env, tenantId),
+      ])
+    );
     const externalProviders = applyExternalProviderUsage(
       mergeExternalLoginProviders([bridgeProviders, samlProviders, configuredProviders]),
       externalProviderUsage
     );
 
-    const builtInMethods = await resolveBuiltInAuthenticationMethods(env, tenantId, settings);
+    const builtInMethods = await measureAuthenticationMethodsTiming(
+      timing,
+      'built_in_methods',
+      () => resolveBuiltInAuthenticationMethods(env, tenantId, settings)
+    );
     const passkeyLoginEnabled = builtInMethods.passkeyLoginEnabled;
     const passkeySignupEnabled = builtInMethods.passkeySignupEnabled;
     const passkeyReauthEnabled = builtInMethods.passkeyReauthEnabled;
@@ -1984,11 +2557,16 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     };
 
     // Resolve Login UI settings and cache TTL in parallel (tenant-aware)
-    const [loginUISettings, selfServiceUI, cacheTTL] = await Promise.all([
-      getLoginUISettings(env, tenantId, settings, requestedClientId),
-      resolveSelfServiceUIConfig(env, tenantId),
-      resolveCacheTTL(env, tenantId),
-    ]);
+    const [loginUISettings, selfServiceUI, cacheTTL] = await measureAuthenticationMethodsTiming(
+      timing,
+      'ui_config',
+      () =>
+        Promise.all([
+          getLoginUISettings(env, tenantId, settings, requestedClientId),
+          resolveSelfServiceUIConfig(env, tenantId),
+          resolveCacheTTL(env, tenantId),
+        ])
+    );
     const ui = {
       ...buildUIConfig(loginUISettings),
       selfService: selfServiceUI,
@@ -2003,9 +2581,38 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
       },
     };
 
-    c.header('Cache-Control', `public, max-age=${cacheTTL}`);
+    const httpResponse = buildAuthenticationMethodsJsonResponse(
+      tenantId,
+      response,
+      cacheTTL,
+      edgeCacheTTL,
+      edgeCacheRequest ? 'miss' : 'bypass'
+    );
+    if (edgeCache && edgeCacheRequest && edgeCacheTTL > 0) {
+      await measureAuthenticationMethodsTiming(timing, 'cache_put', () =>
+        putAuthenticationMethodsEdgeCache(
+          c,
+          edgeCache,
+          edgeCacheRequest as Request,
+          httpResponse.clone(),
+          edgeCacheTTL
+        )
+      );
+    }
 
-    return c.json(response);
+    const spans = finalizeAuthenticationMethodsTiming(timing);
+    const cacheStatus: AuthenticationMethodsCacheStatus = edgeCacheRequest ? 'miss' : 'bypass';
+    emitAuthenticationMethodsDiagnosticLog({
+      log,
+      timing,
+      spans,
+      tenantId,
+      requestedClientId,
+      cacheStatus,
+      edgeCacheEnabled: Boolean(edgeCache),
+      edgeCacheTTL,
+    });
+    return attachAuthenticationMethodsDiagnosticHeaders(httpResponse, timing, spans);
   } catch (error) {
     log.error('Failed to get authentication methods', {}, error as Error);
     c.header('Cache-Control', 'no-store');

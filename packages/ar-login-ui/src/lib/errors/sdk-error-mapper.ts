@@ -4,14 +4,18 @@ export interface LoginUiErrorMessages {
 	unknown(): string;
 	invalidRequest(): string;
 	accessDenied(): string;
+	unauthorizedClient(): string;
+	unsupportedResponseType(): string;
+	invalidScope(): string;
 	serverError(): string;
+	temporarilyUnavailable(): string;
 	loginRequired(): string;
 	emailCodeInvalid(): string;
 }
 
-const GENERIC_DIRECT_AUTH_ERRORS = new Set([
-	'email_code_invalid',
-	'email_code_expired',
+const EMAIL_CODE_ERRORS = new Set(['email_code_invalid', 'email_code_expired']);
+
+const INVALID_AUTH_REQUEST_ERRORS = new Set([
 	'auth_code_invalid',
 	'auth_code_expired',
 	'pkce_mismatch',
@@ -22,21 +26,6 @@ const GENERIC_DIRECT_AUTH_ERRORS = new Set([
 	'token_binding_failed'
 ]);
 
-function getErrorDetailsCode(error: APIError): string {
-	const code = error.error_details?.code;
-	return typeof code === 'string' ? code : '';
-}
-
-function shouldExposeInvalidRequestDescription(error: APIError): boolean {
-	const description = error.error_description?.trim();
-	if (!description) return false;
-
-	const detailsCode = getErrorDetailsCode(error);
-	if (detailsCode.startsWith('DIRECT_SESSION_')) return true;
-
-	return description.toLowerCase().includes('authorization challenge');
-}
-
 export function messageForApiError(
 	error: APIError | null | undefined,
 	messages: LoginUiErrorMessages
@@ -45,24 +34,33 @@ export function messageForApiError(
 		return messages.unknown();
 	}
 
-	if (GENERIC_DIRECT_AUTH_ERRORS.has(error.error)) {
+	if (EMAIL_CODE_ERRORS.has(error.error)) {
 		return messages.emailCodeInvalid();
+	}
+	if (INVALID_AUTH_REQUEST_ERRORS.has(error.error)) {
+		return messages.invalidRequest();
 	}
 
 	switch (error.error) {
 		case 'invalid_request':
-			if (shouldExposeInvalidRequestDescription(error)) {
-				return error.error_description;
-			}
 			return messages.invalidRequest();
 		case 'access_denied':
 			return messages.accessDenied();
+		case 'unauthorized_client':
+		case 'invalid_client':
+		case 'configuration_error':
+			return messages.unauthorizedClient();
+		case 'unsupported_response_type':
+			return messages.unsupportedResponseType();
+		case 'invalid_scope':
+			return messages.invalidScope();
 		case 'server_error':
-		case 'temporarily_unavailable':
 			return messages.serverError();
+		case 'temporarily_unavailable':
+			return messages.temporarilyUnavailable();
 		case 'login_required':
 			return messages.loginRequired();
 		default:
-			return error.error_description || messages.unknown();
+			return messages.unknown();
 	}
 }

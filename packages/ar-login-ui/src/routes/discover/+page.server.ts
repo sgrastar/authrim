@@ -4,10 +4,13 @@ import {
 	fetchDiscoveryConfig,
 	getDiscoveryRequestHeaders,
 	issueDiscoveryGrant,
+	startDiscoveryEmailVerification,
+	verifyDiscoveryEmail,
 	type DiscoveryCandidate,
 	type DiscoveryConfigResponse
 } from '../../lib/discovery-entry';
 import { REMEMBERED_TENANT_COOKIE, readRememberedTenant } from '../../lib/discovery-session';
+import { normalizeLoginUILocale } from '$lib/i18n/locales';
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 const MAX_DISCOVERY_RESPONSE_BYTES = 256 * 1024;
 
@@ -21,7 +24,6 @@ type DiscoveryResponse =
 
 type DiscoveryErrorCode =
 	| 'email_not_found'
-	| 'email_domain_not_found'
 	| 'tenant_code_not_found'
 	| 'tenant_slug_not_found'
 	| 'invitation_not_found'
@@ -30,7 +32,11 @@ type DiscoveryErrorCode =
 	| 'value_required'
 	| 'manual_required'
 	| 'invitation_unresolved'
-	| 'resolve_failed';
+	| 'resolve_failed'
+	| 'invalid_or_expired_code'
+	| 'rate_limited'
+	| 'discovery_disabled'
+	| 'discovery_unavailable';
 
 function readDiscoveryGrantContext(formData: FormData | URLSearchParams) {
 	const expectedTenantId = String(formData.get('expected_tenant_id') || '').trim();
@@ -47,7 +53,8 @@ function readDiscoveryGrantContext(formData: FormData | URLSearchParams) {
 function buildSignupUrl(
 	candidate: DiscoveryCandidate,
 	inviteToken: string,
-	invitedEmail?: string | null
+	invitedEmail?: string | null,
+	preferredLanguage?: string | null
 ): string {
 	const signupUrl = new URL(candidate.login_url);
 	signupUrl.pathname = '/signup';
@@ -56,7 +63,19 @@ function buildSignupUrl(
 	if (invitedEmail) {
 		signupUrl.searchParams.set('email', invitedEmail);
 	}
+	if (preferredLanguage) signupUrl.searchParams.set('lang', preferredLanguage);
 	return signupUrl.toString();
+}
+
+function withPreferredLanguage(
+	targetUrl: string,
+	cookies: Parameters<PageServerLoad>[0]['cookies']
+): string {
+	const language = normalizeLoginUILocale(cookies.get('preferredLanguage'));
+	if (!language) return targetUrl;
+	const target = new URL(targetUrl);
+	target.searchParams.set('lang', language);
+	return target.toString();
 }
 
 async function resolveDiscovery(
@@ -192,10 +211,10 @@ async function redirectResolvedCandidate(
 			},
 			getDiscoveryRequestHeaders(event)
 		);
-		throw redirect(303, grant.login_url);
+		throw redirect(303, withPreferredLanguage(grant.login_url, event.cookies));
 	}
 
-	throw redirect(303, candidate.login_url);
+	throw redirect(303, withPreferredLanguage(candidate.login_url, event.cookies));
 }
 
 export const load: PageServerLoad = async (event) => {
@@ -225,7 +244,10 @@ export const load: PageServerLoad = async (event) => {
 	}
 
 	if (effectiveConfig.single_tenant_mode && effectiveConfig.default_candidate && !inviteToken) {
-		throw redirect(303, effectiveConfig.default_candidate.login_url);
+		throw redirect(
+			303,
+			withPreferredLanguage(effectiveConfig.default_candidate.login_url, event.cookies)
+		);
 	}
 
 	if (
@@ -246,7 +268,7 @@ export const load: PageServerLoad = async (event) => {
 			},
 			discoveryHeaders
 		);
-		throw redirect(303, grant.login_url);
+		throw redirect(303, withPreferredLanguage(grant.login_url, event.cookies));
 	}
 
 	if (
@@ -295,7 +317,12 @@ export const load: PageServerLoad = async (event) => {
 			}
 			throw redirect(
 				303,
-				buildSignupUrl(result.candidate, inviteToken, result.invited_email || undefined)
+				buildSignupUrl(
+					result.candidate,
+					inviteToken,
+					result.invited_email || undefined,
+					normalizeLoginUILocale(event.cookies.get('preferredLanguage'))
+				)
 			);
 		}
 
@@ -317,7 +344,7 @@ export const load: PageServerLoad = async (event) => {
 			if (effectiveConfig.config.remember_last_tenant) {
 				setRememberedTenantCookie(event.cookies, result.candidate);
 			}
-			throw redirect(303, result.candidate.login_url);
+			throw redirect(303, withPreferredLanguage(result.candidate.login_url, event.cookies));
 		}
 	}
 
@@ -338,6 +365,8 @@ export const actions: Actions = {
 		const mode = String(formData.get('mode') || '') as DiscoveryMode;
 		const value = String(formData.get('value') || '').trim();
 		const inviteToken = String(formData.get('invite_token') || '').trim();
+		const emailChallengeId = String(formData.get('email_challenge_id') || '').trim();
+		const emailCode = String(formData.get('email_code') || '').trim();
 		const { expectedTenantId, returnTo, loginHint } = readDiscoveryGrantContext(formData);
 		const currentIsCommonDiscover = config.common_discover_url
 			? isSamePublicUrl(
@@ -365,9 +394,51 @@ export const actions: Actions = {
 				value
 			});
 		}
+		if (
+			mode === 'email' &&
+			(!effectiveConfig.config.discovery_methods.includes('email_exact') ||
+				effectiveConfig.config.email_resolution_policy === 'disabled' ||
+				effectiveConfig.config.selection_policy === 'manual_only')
+		) {
+			return fail(403, {
+				mode: defaultManualMode(effectiveConfig.config),
+				value,
+				errorCode: 'manual_required' as const,
+				result: 'manual_required' as const
+			});
+		}
 
 		try {
-			const result = await resolveDiscovery(event.fetch, mode, value, discoveryHeaders);
+			if (mode === 'email' && !emailChallengeId) {
+				const started = await startDiscoveryEmailVerification(event.fetch, value, discoveryHeaders);
+				return {
+					mode,
+					value,
+					loginHint: value,
+					emailChallengeId: started.challenge_id,
+					emailExpiresIn: started.expires_in,
+					result: 'email_code_sent' as const
+				};
+			}
+
+			if (mode === 'email' && !/^\d{6}$/u.test(emailCode)) {
+				return fail(400, {
+					mode,
+					value,
+					loginHint: value,
+					emailChallengeId,
+					errorCode: 'invalid_or_expired_code' as const
+				});
+			}
+
+			const result: DiscoveryResponse =
+				mode === 'email'
+					? await verifyDiscoveryEmail(
+							event.fetch,
+							{ challenge_id: emailChallengeId, code: emailCode },
+							discoveryHeaders
+						)
+					: await resolveDiscovery(event.fetch, mode, value, discoveryHeaders);
 
 			if (result.result === 'resolved') {
 				if (effectiveConfig.config.remember_last_tenant) {
@@ -382,16 +453,11 @@ export const actions: Actions = {
 						buildSignupUrl(
 							result.candidate,
 							inviteToken || value,
-							result.invited_email || undefined
+							result.invited_email || undefined,
+							normalizeLoginUILocale(event.cookies.get('preferredLanguage'))
 						)
 					);
 				}
-
-				await redirectResolvedCandidate(event, effectiveConfig, result.candidate, {
-					expectedTenantId,
-					returnTo,
-					loginHint: loginHint || (mode === 'email' && value ? value : null)
-				});
 
 				if (effectiveConfig.config.selection_policy === 'always_select') {
 					return {
@@ -404,7 +470,13 @@ export const actions: Actions = {
 					};
 				}
 
-				throw redirect(303, result.candidate.login_url);
+				await redirectResolvedCandidate(event, effectiveConfig, result.candidate, {
+					expectedTenantId,
+					returnTo,
+					loginHint: loginHint || (mode === 'email' && value ? value : null)
+				});
+
+				throw redirect(303, withPreferredLanguage(result.candidate.login_url, event.cookies));
 			}
 
 			if (result.result === 'multiple') {
@@ -440,10 +512,32 @@ export const actions: Actions = {
 				throw error;
 			}
 
-			return fail(500, {
+			const errorCode =
+				error instanceof Error &&
+				[
+					'invalid_or_expired_code',
+					'rate_limited',
+					'discovery_disabled',
+					'discovery_unavailable'
+				].includes(error.message)
+					? (error.message as DiscoveryErrorCode)
+					: ('resolve_failed' as const);
+			const status =
+				errorCode === 'invalid_or_expired_code'
+					? 400
+					: errorCode === 'rate_limited'
+						? 429
+						: errorCode === 'discovery_disabled'
+							? 403
+							: errorCode === 'discovery_unavailable'
+								? 503
+								: 500;
+			return fail(status, {
 				mode,
 				value,
-				errorCode: 'resolve_failed' as const,
+				loginHint: mode === 'email' ? value : loginHint || '',
+				emailChallengeId: mode === 'email' ? emailChallengeId : undefined,
+				errorCode,
 				candidates: [],
 				result: 'not_found' as const
 			});

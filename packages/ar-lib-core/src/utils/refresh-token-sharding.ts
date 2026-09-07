@@ -393,6 +393,36 @@ export function getRefreshTokenRotatorId(
  * In-memory cache for shard configuration.
  */
 const shardConfigCache = new Map<string, { config: RefreshTokenShardConfig; expiresAt: number }>();
+const shardConfigEpochs = new Map<string, number>();
+
+function validateRefreshTokenShardConfig(value: unknown): RefreshTokenShardConfig {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('refresh_token_shard_config_invalid');
+  }
+  const config = value as Partial<RefreshTokenShardConfig>;
+  if (
+    !Number.isSafeInteger(config.currentGeneration) ||
+    (config.currentGeneration ?? 0) < 1 ||
+    !Number.isSafeInteger(config.currentShardCount) ||
+    (config.currentShardCount ?? 0) < 1 ||
+    !Array.isArray(config.previousGenerations) ||
+    config.previousGenerations.length > MAX_PREVIOUS_GENERATIONS ||
+    config.previousGenerations.some(
+      (entry) =>
+        !entry ||
+        !Number.isSafeInteger(entry.generation) ||
+        entry.generation < 1 ||
+        !Number.isSafeInteger(entry.shardCount) ||
+        entry.shardCount < 1 ||
+        (entry.deprecatedAt !== undefined && !Number.isFinite(entry.deprecatedAt))
+    ) ||
+    typeof config.updatedAt !== 'number' ||
+    !Number.isFinite(config.updatedAt)
+  ) {
+    throw new Error('refresh_token_shard_config_invalid');
+  }
+  return config as RefreshTokenShardConfig;
+}
 
 /**
  * Build KV key for shard configuration.
@@ -442,32 +472,23 @@ export async function getRefreshTokenShardConfig(
     return cached.config;
   }
 
-  // Try client-specific config
+  const loadEpoch = shardConfigEpochs.get(cacheKey) ?? 0;
+  // Keep only a numeric epoch in isolate scope. Sharing an in-flight Promise across
+  // Cloudflare request contexts can make the consumer request impossible to complete.
+  shardConfigEpochs.set(cacheKey, loadEpoch);
   let config: RefreshTokenShardConfig | null = null;
-
-  // Use AUTHRIM_CONFIG KV namespace (bound as env.AUTHRIM_CONFIG)
   const kv = env.AUTHRIM_CONFIG ?? env.KV;
   if (kv) {
-    // Client-specific
-    const clientConfig = await kv.get<RefreshTokenShardConfig>(
-      buildShardConfigKvKey(clientId, normalizedTenantId),
-      'json'
-    );
-    if (clientConfig) {
-      config = clientConfig;
-    } else {
-      // Global fallback
-      const globalConfig = await kv.get<RefreshTokenShardConfig>(
-        buildShardConfigKvKey(null, normalizedTenantId),
-        'json'
-      );
-      if (globalConfig) {
-        config = globalConfig;
-      }
+    const [clientConfig, globalConfig] = await Promise.all([
+      kv.get<unknown>(buildShardConfigKvKey(clientId, normalizedTenantId), 'json'),
+      kv.get<unknown>(buildShardConfigKvKey(null, normalizedTenantId), 'json'),
+    ]);
+    const configured = clientConfig ?? globalConfig;
+    if (configured !== null) {
+      config = validateRefreshTokenShardConfig(configured);
     }
   }
 
-  // Default configuration
   if (!config) {
     config = {
       currentGeneration: 1,
@@ -477,12 +498,12 @@ export async function getRefreshTokenShardConfig(
     };
   }
 
-  // Update cache
-  shardConfigCache.set(cacheKey, {
-    config,
-    expiresAt: now + SHARD_CONFIG_CACHE_TTL_MS,
-  });
-
+  if ((shardConfigEpochs.get(cacheKey) ?? 0) === loadEpoch) {
+    shardConfigCache.set(cacheKey, {
+      config,
+      expiresAt: Date.now() + SHARD_CONFIG_CACHE_TTL_MS,
+    });
+  }
   return config;
 }
 
@@ -510,11 +531,25 @@ export async function saveRefreshTokenShardConfig(
     throw new Error('Refresh token shard config save requires tenantId');
   }
 
-  await kv.put(buildShardConfigKvKey(clientId, normalizedTenantId), JSON.stringify(config));
+  const validatedConfig = validateRefreshTokenShardConfig(config);
+  await kv.put(
+    buildShardConfigKvKey(clientId, normalizedTenantId),
+    JSON.stringify(validatedConfig)
+  );
 
-  // Invalidate cache
-  const cacheKey = `shard-config:${normalizedTenantId}:${clientId ?? GLOBAL_CONFIG_KEY}`;
-  shardConfigCache.delete(cacheKey);
+  if (clientId === null) {
+    const tenantPrefix = `shard-config:${normalizedTenantId}:`;
+    const affectedKeys = new Set([...shardConfigCache.keys(), ...shardConfigEpochs.keys()]);
+    for (const key of affectedKeys) {
+      if (!key.startsWith(tenantPrefix)) continue;
+      shardConfigEpochs.set(key, (shardConfigEpochs.get(key) ?? 0) + 1);
+      shardConfigCache.delete(key);
+    }
+  } else {
+    const cacheKey = `shard-config:${normalizedTenantId}:${clientId}`;
+    shardConfigEpochs.set(cacheKey, (shardConfigEpochs.get(cacheKey) ?? 0) + 1);
+    shardConfigCache.delete(cacheKey);
+  }
 }
 
 /**
@@ -523,6 +558,7 @@ export async function saveRefreshTokenShardConfig(
  */
 export function clearShardConfigCache(): void {
   shardConfigCache.clear();
+  shardConfigEpochs.clear();
 }
 
 // =============================================================================

@@ -25,6 +25,7 @@ import {
   safeFetch,
   readResponseTextWithLimit,
   getLogger,
+  getTenantIdFromContext,
   createLogger,
 } from '@authrim/ar-lib-core';
 
@@ -110,8 +111,7 @@ interface DIDResolutionResult {
  * Supports did:web and did:key methods.
  */
 export async function didResolveRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const log = getLogger(c as any).module('VC');
+  const log = getLogger(c).module('VC');
   try {
     const did = c.req.param('did');
 
@@ -140,7 +140,9 @@ export async function didResolveRoute(c: Context<{ Bindings: Env }>): Promise<Re
     }
 
     // Initialize repository
-    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-did-resolver');
+    const adapter = await resolveAuthCorePersistenceAdapterFromEnv(c.env, 'vc-did-resolver', {
+      tenantId: getTenantIdFromContext(c),
+    });
     const cacheRepo = new DIDDocumentCacheRepository(adapter);
 
     // Check cache first

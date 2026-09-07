@@ -1,7 +1,93 @@
 import { describe, expect, it } from 'vitest';
-import { buildIdentityMappingFlowSamples } from '../flow-data';
+import {
+	buildIdentityMappingDestinationSamples,
+	buildIdentityMappingFlowSamples,
+	buildIdentityMappingSourceSamples,
+	type IdentityMappingFlowInput
+} from '../flow-data';
 
 describe('field mapping flow data adapter', () => {
+	it('shows exactly the eight optional built-in profile schemas as canonical mapping targets', () => {
+		const builtInKeys = [
+			'email',
+			'email_verified',
+			'display_name',
+			'given_name',
+			'family_name',
+			'preferred_username',
+			'picture_url',
+			'locale'
+		];
+		const identitySchemas = builtInKeys.map((fieldKey, index) => ({
+			id: `builtin:tenant_a:${fieldKey}`,
+			tenant_id: 'tenant_a',
+			field_key: fieldKey,
+			display_label: fieldKey,
+			field_type: fieldKey === 'email_verified' ? ('boolean' as const) : ('string' as const),
+			cardinality: 'single' as const,
+			is_pii: 0,
+			is_required: 0,
+			is_active: 1,
+			validation_rules: null,
+			include_in_id_token: 0,
+			include_in_userinfo: 0,
+			include_in_introspection: 0,
+			required_scopes: null,
+			scope_mode: 'any' as const,
+			is_system: 1,
+			is_searchable: 0,
+			is_exportable: 1,
+			is_vc_claim: 0,
+			claim_namespace: null,
+			description: null,
+			display_order: index,
+			schema_version: 1,
+			operation_status: 'active' as const,
+			operation_detail: null,
+			created_by: null,
+			created_at: 0,
+			updated_at: 0
+		}));
+		const samples = buildIdentityMappingDestinationSamples({
+			policies: [],
+			catalogs: [],
+			identitySchemas,
+			sourceProfiles: [],
+			destinationProfiles: [
+				{
+					id: 'destination_profile_oidc',
+					tenantId: 'tenant_a',
+					destinationType: 'oidc',
+					profileKey: 'oidc_claims',
+					displayName: 'OIDC claims',
+					ownerScopeType: 'tenant',
+					lifecycleState: 'active',
+					version: {
+						id: 'destination_profile_oidc_v1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schema: { claims: { sub: { type: 'string' } } }
+					}
+				}
+			],
+			protocolSchemas: [],
+			externalSchemas: [],
+			schemaReadinessRows: []
+		});
+
+		const profileTargets = samples[0].nodes.filter(
+			(node) =>
+				node.role === 'target' && node.fieldRef?.catalogEntryId?.startsWith('field.canonical.')
+		);
+		expect(profileTargets.map((node) => node.fieldRef?.path).sort()).toEqual(
+			[...builtInKeys].sort()
+		);
+		expect(profileTargets).toHaveLength(8);
+		for (const target of profileTargets) {
+			expect(target).toMatchObject({ nullable: true, required: false });
+		}
+	});
+
 	it('builds graph nodes from control-plane schemas instead of preview fixtures', () => {
 		const samples = buildIdentityMappingFlowSamples({
 			policies: [
@@ -124,6 +210,72 @@ describe('field mapping flow data adapter', () => {
 		});
 
 		expect(samples).toEqual([]);
+	});
+
+	it('builds SCIM source nodes only from a saved source profile', () => {
+		const samples = buildIdentityMappingFlowSamples({
+			policies: [],
+			catalogs: [],
+			identitySchemas: [],
+			sourceProfiles: [
+				{
+					id: 'scim_enterprise',
+					tenantId: 'tenant_a',
+					sourceType: 'scim',
+					profileKey: 'scim_enterprise_user',
+					displayName: 'SCIM Enterprise User',
+					lifecycleState: 'active',
+					version: {
+						id: 'scim_enterprise_v1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schema: {
+							sourceType: 'scim',
+							resourceType: 'User',
+							schemaUris: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+							attributes: [
+								{
+									name: 'userName',
+									label: 'User name',
+									type: 'string',
+									required: true,
+									classification: 'pii'
+								},
+								{
+									name: 'enterprise.employeeNumber',
+									label: 'Employee number',
+									type: 'string',
+									required: false,
+									classification: 'pii'
+								}
+							]
+						}
+					}
+				}
+			],
+			destinationProfiles: [],
+			protocolSchemas: [],
+			externalSchemas: [],
+			schemaReadinessRows: []
+		});
+
+		expect(samples).toHaveLength(1);
+		expect(samples[0]).toMatchObject({
+			id: 'scim_enterprise',
+			title: 'SCIM Enterprise User',
+			sourceAdapter: 'SCIM'
+		});
+		expect(samples[0].nodes).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					label: 'Employee number',
+					fieldRef: {
+						namespace: 'scim.attribute',
+						path: 'enterprise.employeeNumber'
+					}
+				})
+			])
+		);
 	});
 
 	it('does not show catalog fallback targets when no Schema Settings fields exist', () => {
@@ -251,6 +403,7 @@ describe('field mapping flow data adapter', () => {
 					field_key: 'email',
 					display_label: 'Email',
 					field_type: 'string',
+					cardinality: 'multi',
 					is_pii: 1,
 					is_required: 1,
 					is_active: 1,
@@ -363,6 +516,7 @@ describe('field mapping flow data adapter', () => {
 									label: 'Email',
 									valueType: 'email',
 									required: true,
+									mappingRequired: true,
 									classification: 'pii'
 								}
 							]
@@ -376,6 +530,13 @@ describe('field mapping flow data adapter', () => {
 			schemaReadinessRows: []
 		});
 
+		const sourceNodes = samples[0].nodes.filter((node) => node.role === 'source');
+		expect(sourceNodes[0]).toEqual(
+			expect.objectContaining({
+				label: 'Email',
+				mappingRequired: true
+			})
+		);
 		const targetNodes = samples[0].nodes.filter((node) => node.role === 'target');
 		expect(targetNodes[0]).toEqual(
 			expect.objectContaining({
@@ -393,13 +554,16 @@ describe('field mapping flow data adapter', () => {
 			expect.arrayContaining([
 				expect.objectContaining({
 					label: 'Email',
+					inputCardinality: 'many',
+					valueMultiplicity: 'multi',
 					fieldRef: expect.objectContaining({
 						path: 'email',
-						catalogEntryId: 'custom-claim.email'
+						catalogEntryId: 'field.canonical.email'
 					}),
 					uiGroupKey: 'contact',
 					uiGroupLabel: 'Contact',
 					privacy: 'PII',
+					nullable: false,
 					required: true,
 					examples: ['taro.yamada@example.edu']
 				}),
@@ -407,8 +571,10 @@ describe('field mapping flow data adapter', () => {
 					label: 'Nickname',
 					fieldRef: expect.objectContaining({
 						path: 'nickname',
-						catalogEntryId: 'custom-claim.nickname'
+						catalogEntryId: 'field.canonical.nickname'
 					}),
+					nullable: true,
+					required: false,
 					examples: ['taro', 'yamada_t']
 				})
 			])
@@ -498,7 +664,7 @@ describe('field mapping flow data adapter', () => {
 				expect.objectContaining({
 					role: 'source',
 					label: 'Email',
-					profileId: 'source-profile-source_profile_1',
+					profileId: 'source_profile_1',
 					profileTitle: 'Workday CSV',
 					privacy: 'PII',
 					required: true
@@ -506,12 +672,149 @@ describe('field mapping flow data adapter', () => {
 				expect.objectContaining({
 					role: 'destination',
 					label: 'Library card',
-					profileId: 'destination-profile-destination_profile_1',
+					profileId: 'destination_profile_1',
 					profileTitle: 'Library OIDC',
 					privacy: 'PII'
 				})
 			])
 		);
+	});
+
+	it('separates Source -> Identity DB and Identity DB -> Destination editor graphs', () => {
+		const input: IdentityMappingFlowInput = {
+			policies: [],
+			catalogs: [],
+			identitySchemas: [],
+			sourceProfiles: [
+				{
+					id: 'source_scim_core',
+					tenantId: 'tenant_a',
+					sourceType: 'scim',
+					profileKey: 'scim_core_user',
+					displayName: 'SCIM Core User',
+					lifecycleState: 'active',
+					version: {
+						id: 'source_scim_core_v1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schema: {
+							sourceType: 'scim',
+							resourceType: 'User',
+							schemaUris: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+							attributes: [
+								{
+									name: 'userName',
+									label: 'User name',
+									type: 'string',
+									required: true,
+									mappingRequired: true,
+									classification: 'pii'
+								}
+							]
+						}
+					}
+				}
+			],
+			destinationProfiles: [
+				{
+					id: 'destination_oidc_claims',
+					tenantId: 'tenant_a',
+					destinationType: 'oidc',
+					profileKey: 'oidc_claims',
+					displayName: 'OIDC claims',
+					ownerScopeType: 'tenant',
+					lifecycleState: 'active',
+					version: {
+						id: 'destination_oidc_claims_v1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schema: {
+							destinationType: 'oidc',
+							claims: [
+								{
+									claimName: 'email',
+									label: 'Email',
+									valueType: 'string',
+									classification: 'pii',
+									surfaces: ['userinfo']
+								}
+							]
+						}
+					}
+				}
+			],
+			protocolSchemas: [
+				{
+					id: 'protocol_scim_catalog',
+					tenantId: 'tenant_a',
+					protocol: 'scim',
+					schemaKey: 'scim_core_catalog',
+					displayName: 'SCIM catalog only',
+					schemaVersion: '2.0',
+					lifecycleState: 'active',
+					schema: {
+						attributes: [
+							{
+								name: 'catalogOnlyUserName',
+								label: 'Catalog-only user name',
+								mappingRequired: true
+							}
+						]
+					}
+				}
+			],
+			externalSchemas: [
+				{
+					id: 'external_catalog_only',
+					tenantId: 'tenant_a',
+					sourceType: 'csv',
+					sourceId: 'unregistered-import',
+					schemaKey: 'unregistered-import',
+					displayName: 'Unregistered import catalog',
+					lifecycleState: 'active',
+					schema: { columns: ['catalog_only_column'] }
+				}
+			],
+			schemaReadinessRows: []
+		};
+
+		const sourceSamples = buildIdentityMappingSourceSamples(input);
+		const destinationSamples = buildIdentityMappingDestinationSamples(input);
+
+		expect(sourceSamples).toHaveLength(1);
+		expect(sourceSamples[0]).toMatchObject({
+			id: 'source_scim_core',
+			title: 'SCIM Core User'
+		});
+		expect(sourceSamples[0].nodes).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					role: 'source',
+					label: 'User name',
+					mappingRequired: true
+				})
+			])
+		);
+		expect(sourceSamples[0].nodes.some((node) => node.role === 'destination')).toBe(false);
+		expect(JSON.stringify(sourceSamples)).not.toContain('Catalog-only user name');
+		expect(JSON.stringify(sourceSamples)).not.toContain('catalog_only_column');
+
+		expect(destinationSamples).toHaveLength(1);
+		expect(destinationSamples[0]).toMatchObject({
+			id: 'destination_oidc_claims',
+			title: 'OIDC claims'
+		});
+		expect(destinationSamples[0].nodes).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					role: 'destination',
+					label: 'Email'
+				})
+			])
+		);
+		expect(destinationSamples[0].nodes.some((node) => node.role === 'source')).toBe(false);
+		expect(JSON.stringify(destinationSamples)).not.toContain('User name');
+		expect(JSON.stringify(destinationSamples)).not.toContain('Catalog-only user name');
 	});
 
 	it('builds a destination release graph when only destination profiles are registered', () => {
@@ -595,13 +898,13 @@ describe('field mapping flow data adapter', () => {
 				expect.objectContaining({
 					role: 'destination',
 					label: 'givenName',
-					profileId: 'destination-profile-destination_saml_gakunin',
+					profileId: 'destination_saml_gakunin',
 					profileTitle: 'GakuNin application standard'
 				}),
 				expect.objectContaining({
 					role: 'destination',
 					label: 'mail',
-					profileId: 'destination-profile-destination_saml_kafe',
+					profileId: 'destination_saml_kafe',
 					profileTitle: 'KAFE attribute map'
 				})
 			])
@@ -759,5 +1062,49 @@ describe('field mapping flow data adapter', () => {
 					node.fieldRef.path === 'directory.identity.subject'
 			)
 		).toBe(true);
+	});
+
+	it('keeps mapping-required fields visible beyond the normal 64-field limit', () => {
+		const columns = Array.from({ length: 70 }, (_, index) => ({
+			stableColumnId: `csv.column.${index + 1}`,
+			headerName: `Column ${index + 1}`,
+			label: `Column ${index + 1}`,
+			valueType: 'string',
+			required: false,
+			mappingRequired: index === 69,
+			classification: 'internal'
+		}));
+		const samples = buildIdentityMappingFlowSamples({
+			policies: [],
+			catalogs: [],
+			identitySchemas: [],
+			sourceProfiles: [
+				{
+					id: 'large_csv',
+					tenantId: 'tenant_a',
+					sourceType: 'csv',
+					profileKey: 'large_csv',
+					displayName: 'Large CSV',
+					lifecycleState: 'active',
+					version: {
+						id: 'large_csv_v1',
+						versionLabel: 'v1',
+						lifecycleState: 'active',
+						schema: { sourceType: 'csv', columns }
+					}
+				}
+			],
+			destinationProfiles: [],
+			protocolSchemas: [],
+			externalSchemas: [],
+			schemaReadinessRows: []
+		});
+
+		const sourceNodes = samples[0].nodes.filter((node) => node.role === 'source');
+		expect(sourceNodes).toHaveLength(64);
+		expect(sourceNodes[0]).toEqual(
+			expect.objectContaining({ label: 'Column 70', mappingRequired: true })
+		);
+		expect(sourceNodes.some((node) => node.label === 'Column 64')).toBe(false);
 	});
 });

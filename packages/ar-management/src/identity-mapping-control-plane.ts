@@ -1,10 +1,16 @@
 import type { Context } from 'hono';
-import type { Env, DatabaseAdapter } from '@authrim/ar-lib-core';
+import type { Env, DatabaseAdapter, PreparedStatement } from '@authrim/ar-lib-core';
 import {
   createAuthContextFromHono,
   getTenantIdFromContext,
   requireDedicatedAdminDatabaseAdapter,
+  transitionAccountAuthenticationState,
+  validateExternalUrl,
 } from '@authrim/ar-lib-core';
+import {
+  isProtectedIdentityMappingDestinationClaim,
+  OIDC_PROTOCOL_ENVELOPE_CLAIMS,
+} from '@authrim/ar-lib-core/services/destination-profile-consent';
 import type {
   LifecycleSignalType,
   ProvisioningAssignmentCondition,
@@ -16,11 +22,12 @@ import {
   decideLifecycleSignalRevocation,
   evaluateProvisioningAssignmentRule,
 } from './identity-provisioning-assignment';
-import { parseCsvSourceProfile, validateCatalogBundle } from '@authrim/ar-lib-field-mapping';
-import type {
-  CsvSourceProfileParserOptions,
-  FieldCatalogEntry,
-} from '@authrim/ar-lib-field-mapping';
+import {
+  parseCsvSourceProfile,
+  validateCatalogBundle,
+} from '@authrim/ar-lib-field-mapping/authoring';
+import type { CsvSourceProfileParserOptions } from '@authrim/ar-lib-field-mapping/authoring';
+import type { FieldCatalogEntry } from '@authrim/ar-lib-field-mapping/contract';
 
 type AdminContext = Context<{ Bindings: Env }>;
 
@@ -46,6 +53,8 @@ const POLICY_RULE_MAX_RELEASE_RULES = 250;
 const POLICY_RULE_MAX_CONFLICT_RULES = 100;
 const POLICY_SYMBOL_MAX_CHARS = 128;
 const POLICY_SYMBOL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:\-]{0,127}$/;
+const SAML_METADATA_POLLING_MIN_INTERVAL_SECONDS = 15 * 60;
+const SAML_METADATA_POLLING_MAX_INTERVAL_SECONDS = 7 * 24 * 60 * 60;
 const SUPPORTED_POLICY_TRANSFORM_OPERATIONS = new Set([
   'copy',
   'concat',
@@ -442,6 +451,8 @@ interface FieldMappingRuleSummaryRow {
   rule_kind: string;
   action: string;
   priority: number;
+  scope_json: string | null;
+  condition_json: string | null;
   metadata_json: string | null;
   edge_id: string | null;
   source_ref_json: string | null;
@@ -458,6 +469,43 @@ interface FieldMappingTransformSummaryRow {
   step_order: number;
   operation: string;
   parameters_json: string | null;
+}
+
+interface FieldMappingValidationSummaryRow {
+  field_mapping_version_id: string;
+  rule_id: string | null;
+  validation_id: string;
+  target_ref_json: string;
+  validation_kind: string;
+  severity: string;
+  parameters_json: string | null;
+}
+
+interface FieldMappingReleaseSummaryRow {
+  field_mapping_version_id: string;
+  release_id: string;
+  destination_type: string;
+  destination_id: string | null;
+  source_ref_json: string;
+  release_action: string;
+  legal_basis: string | null;
+  purpose: string | null;
+  condition_json: string | null;
+  priority: number;
+}
+
+interface FieldMappingConflictSummaryRow {
+  field_mapping_version_id: string;
+  conflict_id: string;
+  target_ref_json: string;
+  conflict_strategy: string;
+  source_priority_json: string | null;
+  condition_json: string | null;
+}
+
+interface SensitiveReleaseMappingEdgeRow {
+  source_ref_json: string;
+  target_ref_json: string;
 }
 
 interface FieldCatalogVersionRow {
@@ -505,6 +553,7 @@ interface CustomClaimSchemaCatalogRow {
   active_field_key: string | null;
   display_label: string | null;
   field_type: string | null;
+  cardinality: string | null;
   is_pii: number | boolean | null;
   is_required: number | boolean | null;
   validation_rules: string | null;
@@ -764,7 +813,7 @@ interface ParseCsvSourceProfileRequest {
 }
 
 interface CreateSourceProfileRequest {
-  sourceType: 'csv' | 'saml' | 'directory';
+  sourceType: 'csv' | 'scim' | 'saml' | 'directory';
   profileKey: string;
   displayName: string;
   versionLabel?: string;
@@ -776,7 +825,7 @@ interface CreateSourceProfileRequest {
 }
 
 interface UpdateSourceProfileRequest {
-  sourceType?: 'csv' | 'saml' | 'directory';
+  sourceType?: 'csv' | 'scim' | 'saml' | 'directory';
   profileKey?: string;
   displayName?: string;
   versionLabel?: string;
@@ -788,7 +837,7 @@ interface UpdateSourceProfileRequest {
 }
 
 interface CreateDestinationProfileRequest {
-  destinationType: 'oidc' | 'csv' | 'saml';
+  destinationType: 'oidc' | 'csv' | 'saml' | 'resource_server';
   profileKey: string;
   displayName: string;
   ownerScopeType?: 'platform' | 'tenant' | 'client';
@@ -801,7 +850,7 @@ interface CreateDestinationProfileRequest {
 }
 
 interface UpdateDestinationProfileRequest {
-  destinationType?: 'oidc' | 'csv' | 'saml';
+  destinationType?: 'oidc' | 'csv' | 'saml' | 'resource_server';
   profileKey?: string;
   displayName?: string;
   ownerScopeType?: 'platform' | 'tenant' | 'client';
@@ -881,6 +930,7 @@ interface CreateFieldMappingVersionRequest {
   versionLabel: string;
   compatibilityRange?: string;
   authorId?: string;
+  sourceProfileIds?: string[];
   rules: FieldMappingVersionRuleInput[];
 }
 
@@ -1132,7 +1182,9 @@ interface CreateFederationTrustSourceRequest {
   }>;
 }
 
-interface UpdateFederationTrustSourceRequest extends CreateFederationTrustSourceRequest {}
+interface UpdateFederationTrustSourceRequest extends CreateFederationTrustSourceRequest {
+  expectedUpdatedAt: number;
+}
 
 interface RegisterFederationMetadataDocumentRequest {
   trustSourceId: string;
@@ -1200,9 +1252,10 @@ const FEDERATION_TRUST_SOURCE_TYPES = new Set([
   'saml_metadata',
   'saml_federation',
 ]);
-const SOURCE_PROFILE_TYPES = new Set(['csv', 'saml', 'directory']);
+const INTERNAL_SAML_RUNTIME_DOCUMENT_TYPE = 'saml_aggregate_runtime_snapshot';
+const SOURCE_PROFILE_TYPES = new Set(['csv', 'scim', 'saml', 'directory']);
 const SOURCE_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
-const DESTINATION_PROFILE_TYPES = new Set(['oidc', 'csv', 'saml']);
+const DESTINATION_PROFILE_TYPES = new Set(['oidc', 'csv', 'saml', 'resource_server']);
 const DESTINATION_PROFILE_VERSION_STATES = new Set(['draft', 'reviewed', 'active']);
 const PROFILE_OWNER_SCOPE_TYPES = new Set(['platform', 'tenant', 'client']);
 const REGISTRY_OWNER_SCOPE_TYPES = new Set(['platform', 'tenant']);
@@ -1285,18 +1338,7 @@ const DIRECTORY_FACTS_SCHEMA = {
     groupsPolicy: 'opt_in',
   },
 } satisfies Record<string, unknown>;
-const OIDC_RESERVED_NON_PROFILE_CLAIMS = new Set([
-  'iss',
-  'aud',
-  'exp',
-  'iat',
-  'nbf',
-  'jti',
-  'nonce',
-  'at_hash',
-  'c_hash',
-  'azp',
-]);
+const OIDC_RESERVED_NON_PROFILE_CLAIMS = OIDC_PROTOCOL_ENVELOPE_CLAIMS;
 const OIDC_STANDARD_CLAIMS = new Set([
   'sub',
   'name',
@@ -1380,11 +1422,283 @@ class IdentityMappingControlPlaneError extends Error {
   }
 }
 
+function validateSAMLFederationProtocolPayload(payload: Record<string, unknown>): void {
+  const metadataUrl = payload.metadataUrl;
+  if (metadataUrl !== undefined && metadataUrl !== null) {
+    if (typeof metadataUrl !== 'string' || validateExternalUrl(metadataUrl)) {
+      throw badRequest('protocolPayload.metadataUrl must be an external HTTPS URL');
+    }
+  }
+  const patterns = payload.metadataUrlPatterns;
+  if (
+    patterns !== undefined &&
+    (!Array.isArray(patterns) || patterns.some((pattern) => typeof pattern !== 'string'))
+  ) {
+    throw badRequest('protocolPayload.metadataUrlPatterns must be an array of strings');
+  }
+  if (Array.isArray(patterns)) {
+    for (const pattern of patterns as string[]) {
+      const normalizedPattern = pattern.trim();
+      if (!normalizedPattern || !/^https:\/\//i.test(normalizedPattern)) {
+        throw badRequest('protocolPayload.metadataUrlPatterns must contain HTTPS URL patterns');
+      }
+      if (!normalizedPattern.includes('*') && validateExternalUrl(normalizedPattern)) {
+        throw badRequest(
+          'protocolPayload.metadataUrlPatterns cannot contain an internal exact URL'
+        );
+      }
+    }
+  }
+  if (
+    payload.policy !== undefined &&
+    payload.policy !== 'strict' &&
+    payload.policy !== 'warn' &&
+    payload.policy !== 'disabled'
+  ) {
+    throw badRequest('protocolPayload.policy is not supported');
+  }
+  const exactPatternUrls = Array.isArray(patterns)
+    ? patterns.filter(
+        (pattern): pattern is string =>
+          typeof pattern === 'string' &&
+          /^https:\/\//i.test(pattern.trim()) &&
+          !pattern.includes('*')
+      )
+    : [];
+  if (payload.polling !== undefined) {
+    if (!payload.polling || typeof payload.polling !== 'object' || Array.isArray(payload.polling)) {
+      throw badRequest('protocolPayload.polling must be an object');
+    }
+    const polling = payload.polling as Record<string, unknown>;
+    if (polling.mode !== 'automatic' && polling.mode !== 'manual') {
+      throw badRequest('protocolPayload.polling.mode must be automatic or manual');
+    }
+    if (
+      typeof polling.intervalSeconds !== 'number' ||
+      !Number.isInteger(polling.intervalSeconds) ||
+      polling.intervalSeconds < SAML_METADATA_POLLING_MIN_INTERVAL_SECONDS ||
+      polling.intervalSeconds > SAML_METADATA_POLLING_MAX_INTERVAL_SECONDS
+    ) {
+      throw badRequest('protocolPayload.polling.intervalSeconds is outside the supported range');
+    }
+    if (
+      polling.mode === 'automatic' &&
+      !(typeof metadataUrl === 'string' && metadataUrl.trim()) &&
+      exactPatternUrls.length !== 1
+    ) {
+      throw badRequest('automatic SAML federation polling requires one exact metadata URL');
+    }
+  }
+  validateSAMLFederationRuntimeResolutionPayload(
+    payload.runtimeResolution,
+    metadataUrl,
+    exactPatternUrls
+  );
+}
+
+function resetSAMLFederationPollingRuntimeState(
+  payload: Record<string, unknown>
+): Record<string, unknown> {
+  const polling = payload.polling;
+  if (!polling || typeof polling !== 'object' || Array.isArray(polling)) return { ...payload };
+  const value = polling as Record<string, unknown>;
+  return {
+    ...payload,
+    polling: {
+      mode: value.mode,
+      intervalSeconds: value.intervalSeconds,
+      consecutiveFailures: 0,
+      sourceState: 'stale',
+    },
+  };
+}
+
+function buildSAMLFederationTrustContext(
+  input: CreateFederationTrustSourceRequest,
+  protocolPayload: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  const trustPayload = { ...(protocolPayload ?? {}) };
+  const certificates = trustPayload.certificates;
+  delete trustPayload.description;
+  delete trustPayload.polling;
+  delete trustPayload.certificates;
+  const trustCertificates = Array.isArray(certificates)
+    ? certificates
+        .flatMap((entry) => {
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [];
+          const value = entry as Record<string, unknown>;
+          const certificate = typeof value.certificate === 'string' ? value.certificate : null;
+          const fingerprintSha256 =
+            typeof value.fingerprintSha256 === 'string' ? value.fingerprintSha256 : null;
+          return [
+            {
+              certificate,
+              fingerprintSha256,
+            },
+          ];
+        })
+        .sort((left, right) =>
+          (left.fingerprintSha256 ?? '').localeCompare(right.fingerprintSha256 ?? '')
+        )
+    : undefined;
+  return {
+    sourceType: input.sourceType,
+    sourceKey: input.sourceKey,
+    protocolPayload: protocolPayload
+      ? {
+          ...trustPayload,
+          ...(trustCertificates ? { certificates: trustCertificates } : {}),
+        }
+      : null,
+    anchors: [...(input.anchors ?? [])]
+      .map((anchor) => ({
+        anchorType: anchor.anchorType,
+        anchorHash: anchor.anchorHash,
+        notBefore: anchor.notBefore ?? null,
+        notAfter: anchor.notAfter ?? null,
+      }))
+      .sort((left, right) =>
+        `${left.anchorType}:${left.anchorHash}`.localeCompare(
+          `${right.anchorType}:${right.anchorHash}`
+        )
+      ),
+    scopeBindings: [...(input.scopeBindings ?? [])]
+      .map((binding) => ({
+        scopeType: binding.scopeType,
+        scopeId: binding.scopeId ?? null,
+        priority: binding.priority ?? 0,
+      }))
+      .sort((left, right) =>
+        `${left.scopeType}:${left.scopeId ?? ''}:${left.priority}`.localeCompare(
+          `${right.scopeType}:${right.scopeId ?? ''}:${right.priority}`
+        )
+      ),
+  };
+}
+
+function validateSAMLFederationRuntimeResolutionPayload(
+  input: unknown,
+  metadataUrl: unknown,
+  exactPatternUrls: string[]
+): void {
+  if (input === undefined) return;
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw badRequest('protocolPayload.runtimeResolution must be an object');
+  }
+  const policy = input as Record<string, unknown>;
+  if (policy.mode !== 'inventory_only' && policy.mode !== 'automatic') {
+    throw badRequest('protocolPayload.runtimeResolution.mode is not supported');
+  }
+  if (
+    !Array.isArray(policy.roles) ||
+    policy.roles.some((role) => role !== 'saml_idp' && role !== 'saml_sp') ||
+    new Set(policy.roles).size !== policy.roles.length
+  ) {
+    throw badRequest('protocolPayload.runtimeResolution.roles is invalid');
+  }
+  if (
+    policy.priority !== undefined &&
+    (typeof policy.priority !== 'number' ||
+      !Number.isInteger(policy.priority) ||
+      policy.priority < -1000 ||
+      policy.priority > 1000)
+  ) {
+    throw badRequest('protocolPayload.runtimeResolution.priority is invalid');
+  }
+  for (const field of ['idpFieldMappingSetId', 'spFieldMappingSetId'] as const) {
+    if (
+      policy[field] !== undefined &&
+      (typeof policy[field] !== 'string' || !policy[field].trim())
+    ) {
+      throw badRequest(`protocolPayload.runtimeResolution.${field} is invalid`);
+    }
+  }
+  const presetIds = new Set([
+    'basic.v1',
+    'academic_publisher.v1',
+    'enterprise_saas.v1',
+    'research_federation.v1',
+  ]);
+  if (
+    policy.defaultAttributePresetId !== undefined &&
+    (typeof policy.defaultAttributePresetId !== 'string' ||
+      !presetIds.has(policy.defaultAttributePresetId))
+  ) {
+    throw badRequest('protocolPayload.runtimeResolution.defaultAttributePresetId is invalid');
+  }
+  if (
+    policy.registrationAuthorities !== undefined &&
+    (!Array.isArray(policy.registrationAuthorities) ||
+      policy.registrationAuthorities.length > 100 ||
+      policy.registrationAuthorities.some(
+        (authority) => typeof authority !== 'string' || !authority.trim()
+      ))
+  ) {
+    throw badRequest('protocolPayload.runtimeResolution.registrationAuthorities is invalid');
+  }
+  if (policy.entityCategoryPolicy !== undefined) {
+    const categoryPolicy = policy.entityCategoryPolicy;
+    if (!categoryPolicy || typeof categoryPolicy !== 'object' || Array.isArray(categoryPolicy)) {
+      throw badRequest('protocolPayload.runtimeResolution.entityCategoryPolicy is invalid');
+    }
+    const category = categoryPolicy as Record<string, unknown>;
+    if (category.defaultDecision !== 'allow' && category.defaultDecision !== 'deny') {
+      throw badRequest(
+        'protocolPayload.runtimeResolution.entityCategoryPolicy.defaultDecision is invalid'
+      );
+    }
+    if (!Array.isArray(category.rules) || category.rules.length > 100) {
+      throw badRequest('protocolPayload.runtimeResolution.entityCategoryPolicy.rules is invalid');
+    }
+    const seenEntityCategories = new Set<string>();
+    for (const item of category.rules) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        throw badRequest('protocolPayload.runtimeResolution entity category rule is invalid');
+      }
+      const rule = item as Record<string, unknown>;
+      if (
+        typeof rule.entityCategory !== 'string' ||
+        !rule.entityCategory.trim() ||
+        (rule.decision !== 'allow' && rule.decision !== 'deny') ||
+        (rule.attributePresetId !== undefined &&
+          (typeof rule.attributePresetId !== 'string' || !presetIds.has(rule.attributePresetId)))
+      ) {
+        throw badRequest('protocolPayload.runtimeResolution entity category rule is invalid');
+      }
+      const normalizedEntityCategory = rule.entityCategory.trim();
+      if (seenEntityCategories.has(normalizedEntityCategory)) {
+        throw badRequest('protocolPayload.runtimeResolution entity category rules must be unique');
+      }
+      seenEntityCategories.add(normalizedEntityCategory);
+    }
+  }
+  if (policy.mode === 'automatic') {
+    if (policy.roles.length === 0) {
+      throw badRequest('automatic federation runtime resolution requires at least one role');
+    }
+    if (policy.roles.includes('saml_idp') && !policy.idpFieldMappingSetId) {
+      throw badRequest('automatic saml_idp runtime resolution requires idpFieldMappingSetId');
+    }
+    if (policy.roles.includes('saml_sp') && !policy.spFieldMappingSetId) {
+      throw badRequest('automatic saml_sp runtime resolution requires spFieldMappingSetId');
+    }
+    if (!(typeof metadataUrl === 'string' && metadataUrl.trim()) && exactPatternUrls.length !== 1) {
+      throw badRequest('automatic federation runtime resolution requires one exact metadata URL');
+    }
+  }
+}
+
 export class IdentityMappingControlPlaneRepository {
   constructor(
     private readonly adapter: DatabaseAdapter,
     private readonly now: () => number = () => Date.now(),
-    private readonly coreAdapter?: DatabaseAdapter
+    private readonly coreAdapter?: DatabaseAdapter,
+    private readonly beforeAccountSuspension?: (
+      tenantId: string,
+      accountId: string,
+      sourceVersionMs: number,
+      operationId: string
+    ) => Promise<void>
   ) {}
 
   async listSchemaReadiness() {
@@ -1420,6 +1734,14 @@ export class IdentityMappingControlPlaneRepository {
     validateRequiredString(input.versionLabel, 'versionLabel');
     if (!Array.isArray(input.entries) || input.entries.length === 0) {
       throw badRequest('entries must contain at least one catalog entry');
+    }
+    for (const entry of input.entries) {
+      if (
+        entry.targetType === 'destination-only' &&
+        isProtectedIdentityMappingDestinationClaim(entry.namespace, entry.path)
+      ) {
+        throw badRequest(`${entry.namespace}:${entry.path} is reserved by the protocol envelope`);
+      }
     }
 
     const catalogId = createId('catalog');
@@ -1642,6 +1964,7 @@ export class IdentityMappingControlPlaneRepository {
             active_field_key,
             display_label,
             field_type,
+            cardinality,
             is_pii,
             is_required,
             validation_rules,
@@ -1655,7 +1978,7 @@ export class IdentityMappingControlPlaneRepository {
             schema_version
            FROM custom_claim_schemas
           WHERE tenant_id = ?
-            AND is_active = 1
+            AND is_active = TRUE
             AND operation_status = 'active'
           ORDER BY ui_group_order ASC, ui_field_order ASC, display_order ASC, field_key ASC`,
         [tenantId]
@@ -1873,7 +2196,7 @@ export class IdentityMappingControlPlaneRepository {
     validateRequiredString(input.profileKey, 'profileKey');
     validateRequiredString(input.displayName, 'displayName');
     if (!SOURCE_PROFILE_TYPES.has(input.sourceType)) {
-      throw badRequest('sourceType must be csv, saml, or directory');
+      throw badRequest('sourceType must be csv, scim, saml, or directory');
     }
     const duplicate = await this.adapter.queryOne<{ id: string }>(
       `SELECT id
@@ -1997,7 +2320,7 @@ export class IdentityMappingControlPlaneRepository {
                  FROM source_profile_versions latest
                 WHERE latest.tenant_id = p.tenant_id
                   AND latest.profile_id = p.id
-                ORDER BY latest.updated_at DESC
+                ORDER BY latest.updated_at DESC, latest.created_at DESC, latest.id DESC
                 LIMIT 1
              ),
              p.active_version_id
@@ -2049,9 +2372,10 @@ export class IdentityMappingControlPlaneRepository {
     if (!existing) {
       throw notFound('source profile not found');
     }
-    const sourceType = input.sourceType ?? (existing.source_type as 'csv' | 'saml');
+    const sourceType =
+      input.sourceType ?? (existing.source_type as CreateSourceProfileRequest['sourceType']);
     if (!SOURCE_PROFILE_TYPES.has(sourceType)) {
-      throw badRequest('sourceType must be csv, saml, or directory');
+      throw badRequest('sourceType must be csv, scim, saml, or directory');
     }
     const profileKey = input.profileKey ?? existing.profile_key;
     const displayName = input.displayName ?? existing.display_name;
@@ -2401,7 +2725,7 @@ export class IdentityMappingControlPlaneRepository {
     validateRequiredString(input.profileKey, 'profileKey');
     validateRequiredString(input.displayName, 'displayName');
     if (!DESTINATION_PROFILE_TYPES.has(input.destinationType)) {
-      throw badRequest('destinationType must be oidc, csv, or saml');
+      throw badRequest('destinationType must be oidc, csv, saml, or resource_server');
     }
     if (!isRecord(input.schema)) {
       throw badRequest('schema must be an object');
@@ -2411,6 +2735,7 @@ export class IdentityMappingControlPlaneRepository {
     assertNoDestinationProfileRawValues(input.schema, 'destinationProfile.schema');
 
     const owner = normalizeProfileOwner(tenantId, input.ownerScopeType, input.ownerScopeId);
+    assertDestinationProfileOwner(input.destinationType, owner);
     const duplicate = await this.adapter.queryOne<{ id: string }>(
       `SELECT id
          FROM destination_profiles
@@ -2536,7 +2861,7 @@ export class IdentityMappingControlPlaneRepository {
                  FROM destination_profile_versions latest
                 WHERE latest.tenant_id = p.tenant_id
                   AND latest.profile_id = p.id
-                ORDER BY latest.updated_at DESC
+                ORDER BY latest.updated_at DESC, latest.created_at DESC, latest.id DESC
                 LIMIT 1
              ),
              p.active_version_id
@@ -2606,9 +2931,10 @@ export class IdentityMappingControlPlaneRepository {
     }
 
     const destinationType =
-      input.destinationType ?? (existing.destination_type as 'oidc' | 'csv' | 'saml');
+      input.destinationType ??
+      (existing.destination_type as 'oidc' | 'csv' | 'saml' | 'resource_server');
     if (!DESTINATION_PROFILE_TYPES.has(destinationType)) {
-      throw badRequest('destinationType must be oidc, csv, or saml');
+      throw badRequest('destinationType must be oidc, csv, saml, or resource_server');
     }
     if (!isRecord(input.schema)) {
       throw badRequest('schema is required');
@@ -2622,6 +2948,7 @@ export class IdentityMappingControlPlaneRepository {
       input.ownerScopeType ?? (existing.owner_scope_type as 'platform' | 'tenant' | 'client'),
       input.ownerScopeId === undefined ? existing.owner_scope_id : input.ownerScopeId
     );
+    assertDestinationProfileOwner(destinationType, owner);
     if (owner.tenantId === 'platform' && !allowPlatformScope) {
       throw forbidden('platform owner scope requires platform admin');
     }
@@ -2798,11 +3125,21 @@ export class IdentityMappingControlPlaneRepository {
     versionId: string,
     allowPlatformScope = false
   ) {
-    const row = await this.adapter.queryOne<{ tenant_id: string; lifecycle_state: string }>(
-      `SELECT tenant_id, lifecycle_state
-         FROM destination_profile_versions
-        WHERE profile_id = ? AND id = ?
-          AND (tenant_id = ? OR (? = 1 AND tenant_id = ?))`,
+    const row = await this.adapter.queryOne<{
+      tenant_id: string;
+      lifecycle_state: string;
+      destination_type: string;
+      owner_scope_type: string;
+      owner_scope_id: string | null;
+      schema_json: string;
+    }>(
+      `SELECT v.tenant_id, v.lifecycle_state, v.schema_json,
+              p.destination_type, p.owner_scope_type, p.owner_scope_id
+         FROM destination_profile_versions v
+         JOIN destination_profiles p
+           ON p.tenant_id = v.tenant_id AND p.id = v.profile_id
+        WHERE v.profile_id = ? AND v.id = ?
+          AND (v.tenant_id = ? OR (? = 1 AND v.tenant_id = ?))`,
       [profileId, versionId, tenantId, allowPlatformScope ? 1 : 0, 'platform']
     );
     if (!row) {
@@ -2811,27 +3148,70 @@ export class IdentityMappingControlPlaneRepository {
     if (row.lifecycle_state !== 'reviewed' && row.lifecycle_state !== 'active') {
       throw badRequest('destination profile version must be reviewed before activation');
     }
+    assertDestinationProfileOwner(row.destination_type, {
+      ownerScopeType: row.owner_scope_type,
+      ownerScopeId: row.owner_scope_id,
+    });
+    let schema: unknown;
+    try {
+      schema = JSON.parse(row.schema_json) as unknown;
+    } catch {
+      throw badRequest('destination profile schema is invalid');
+    }
+    if (!isRecord(schema)) {
+      throw badRequest('destination profile schema is invalid');
+    }
+    const attributeGroups = await this.listAttributeGroups(
+      row.tenant_id === 'platform' ? tenantId : row.tenant_id
+    );
+    const validation = validateDestinationProfileSchema(
+      row.destination_type,
+      schema,
+      attributeGroups
+    );
+    if (validation.errorCount > 0) {
+      throw badRequest(`destination profile schema is invalid: ${validation.errors.join('; ')}`);
+    }
+    if (row.destination_type === 'resource_server') {
+      const conflictingProfile = await this.adapter.queryOne<{ id: string }>(
+        `SELECT id
+           FROM destination_profiles
+          WHERE tenant_id = ?
+            AND destination_type = 'resource_server'
+            AND owner_scope_type = 'client'
+            AND owner_scope_id = ?
+            AND lifecycle_state = 'active'
+            AND id <> ?
+          LIMIT 1`,
+        [row.tenant_id, row.owner_scope_id, profileId]
+      );
+      if (conflictingProfile) {
+        throw conflict(
+          'another active Resource Server destination profile already owns this client'
+        );
+      }
+    }
     const now = this.now();
-    await this.adapter.transaction(async (tx) => {
-      await tx.execute(
-        `UPDATE destination_profile_versions
+    await this.adapter.batch([
+      {
+        sql: `UPDATE destination_profile_versions
             SET lifecycle_state = ?, updated_at = ?
           WHERE tenant_id = ? AND profile_id = ? AND lifecycle_state = ?`,
-        ['reviewed', now, row.tenant_id, profileId, 'active']
-      );
-      await tx.execute(
-        `UPDATE destination_profile_versions
+        params: ['reviewed', now, row.tenant_id, profileId, 'active'],
+      },
+      {
+        sql: `UPDATE destination_profile_versions
             SET lifecycle_state = ?, activated_at = ?, updated_at = ?
           WHERE tenant_id = ? AND profile_id = ? AND id = ?`,
-        ['active', now, now, row.tenant_id, profileId, versionId]
-      );
-      await tx.execute(
-        `UPDATE destination_profiles
+        params: ['active', now, now, row.tenant_id, profileId, versionId],
+      },
+      {
+        sql: `UPDATE destination_profiles
             SET lifecycle_state = ?, active_version_id = ?, updated_at = ?
           WHERE tenant_id = ? AND id = ?`,
-        ['active', versionId, now, row.tenant_id, profileId]
-      );
-    });
+        params: ['active', versionId, now, row.tenant_id, profileId],
+      },
+    ]);
     return { id: versionId, lifecycleState: 'active', activatedAt: now };
   }
 
@@ -3130,6 +3510,8 @@ export class IdentityMappingControlPlaneRepository {
               r.rule_kind,
               r.action,
               r.priority,
+              r.scope_json,
+              r.condition_json,
               r.metadata_json,
               e.id AS edge_id,
               e.source_ref_json,
@@ -3166,6 +3548,59 @@ export class IdentityMappingControlPlaneRepository {
         ORDER BY v.id, r.priority ASC, t.step_order ASC`,
       [tenantId, fieldMappingSetId]
     );
+    const validationRows = await this.adapter.query<FieldMappingValidationSummaryRow>(
+      `SELECT v.id AS field_mapping_version_id,
+              vr.rule_id,
+              vr.id AS validation_id,
+              vr.target_ref_json,
+              vr.validation_kind,
+              vr.severity,
+              vr.parameters_json
+         FROM field_mapping_versions v
+         JOIN mapping_rules r
+           ON r.tenant_id = v.tenant_id
+          AND r.field_mapping_version_id = v.id
+         JOIN mapping_validation_rules vr
+           ON vr.tenant_id = r.tenant_id
+          AND vr.rule_id = r.id
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?
+        ORDER BY v.id, r.priority ASC, vr.created_at ASC, vr.id ASC`,
+      [tenantId, fieldMappingSetId]
+    );
+    const releaseRows = await this.adapter.query<FieldMappingReleaseSummaryRow>(
+      `SELECT v.id AS field_mapping_version_id,
+              rr.id AS release_id,
+              rr.destination_type,
+              rr.destination_id,
+              rr.source_ref_json,
+              rr.release_action,
+              rr.legal_basis,
+              rr.purpose,
+              rr.condition_json,
+              rr.priority
+         FROM field_mapping_versions v
+         JOIN mapping_release_rules rr
+           ON rr.tenant_id = v.tenant_id
+          AND rr.field_mapping_version_id = v.id
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?
+        ORDER BY v.id, rr.priority ASC, rr.created_at ASC, rr.id ASC`,
+      [tenantId, fieldMappingSetId]
+    );
+    const conflictRows = await this.adapter.query<FieldMappingConflictSummaryRow>(
+      `SELECT v.id AS field_mapping_version_id,
+              cr.id AS conflict_id,
+              cr.target_ref_json,
+              cr.conflict_strategy,
+              cr.source_priority_json,
+              cr.condition_json
+         FROM field_mapping_versions v
+         JOIN mapping_conflict_rules cr
+           ON cr.tenant_id = v.tenant_id
+          AND cr.field_mapping_version_id = v.id
+        WHERE v.tenant_id = ? AND v.field_mapping_set_id = ?
+        ORDER BY v.id, cr.created_at ASC, cr.id ASC`,
+      [tenantId, fieldMappingSetId]
+    );
     const summariesByVersion = new Map<
       string,
       {
@@ -3181,6 +3616,8 @@ export class IdentityMappingControlPlaneRepository {
             ruleKind: string;
             action: string;
             priority: number;
+            scope: Record<string, unknown>;
+            condition: Record<string, unknown>;
             metadata: Record<string, unknown>;
             edges: Array<{
               id: string;
@@ -3196,8 +3633,34 @@ export class IdentityMappingControlPlaneRepository {
               operation: string;
               parameters: Record<string, unknown>;
             }>;
+            validationRules: Array<{
+              id: string;
+              ruleId: string | null;
+              targetRef: Record<string, unknown>;
+              validationKind: string;
+              severity: string;
+              parameters: Record<string, unknown>;
+            }>;
           }
         >;
+        releaseRules: Array<{
+          id: string;
+          destinationType: string;
+          destinationId: string | null;
+          sourceRef: Record<string, unknown>;
+          releaseAction: string;
+          legalBasis: string | null;
+          purpose: string | null;
+          condition: Record<string, unknown>;
+          priority: number;
+        }>;
+        conflictRules: Array<{
+          id: string;
+          targetRef: Record<string, unknown>;
+          conflictStrategy: string;
+          sourcePriority: unknown[];
+          condition: Record<string, unknown>;
+        }>;
       }
     >();
     for (const row of ruleRows) {
@@ -3208,6 +3671,8 @@ export class IdentityMappingControlPlaneRepository {
         sourceProfileIds: new Set<string>(),
         destinationProfileIds: new Set<string>(),
         rules: new Map(),
+        releaseRules: [],
+        conflictRules: [],
       };
       if (row.rule_kind.includes('source')) summary.source = true;
       if (row.rule_kind.includes('destination') || row.rule_kind.includes('release')) {
@@ -3217,14 +3682,19 @@ export class IdentityMappingControlPlaneRepository {
         row.source_ref_json,
         row.target_ref_json
       )) {
-        if (profileId.startsWith('source-profile-') || profileId.startsWith('external-source-')) {
-          summary.sourceProfileIds.add(profileId);
+        if (
+          profileId.startsWith('source-profile-') ||
+          profileId.startsWith('source_profile_') ||
+          profileId.startsWith('external-source-')
+        ) {
+          summary.sourceProfileIds.add(normalizeSourceProfileReference(profileId));
         }
         if (
           profileId.startsWith('destination-profile-') ||
+          profileId.startsWith('destination_profile_') ||
           profileId.startsWith('protocol-destination-')
         ) {
-          summary.destinationProfileIds.add(profileId);
+          summary.destinationProfileIds.add(normalizeDestinationProfileReference(profileId));
         }
       }
       const rule = summary.rules.get(row.rule_id) ?? {
@@ -3233,9 +3703,12 @@ export class IdentityMappingControlPlaneRepository {
         ruleKind: row.rule_kind,
         action: row.action,
         priority: row.priority,
+        scope: parseJsonObject(row.scope_json ?? '{}', {}),
+        condition: parseJsonObject(row.condition_json ?? '{}', {}),
         metadata: parseJsonObject(row.metadata_json ?? '{}', {}),
         edges: [],
         transforms: [],
+        validationRules: [],
       };
       if (row.edge_id && row.source_ref_json && row.target_ref_json) {
         rule.edges.push({
@@ -3261,6 +3734,49 @@ export class IdentityMappingControlPlaneRepository {
         parameters: parseJsonObject(row.parameters_json ?? '{}', {}),
       });
     }
+    for (const row of validationRows) {
+      const summary = summariesByVersion.get(row.field_mapping_version_id);
+      const rule = row.rule_id ? summary?.rules.get(row.rule_id) : null;
+      if (!summary || !rule) continue;
+      rule.validationRules.push({
+        id: row.validation_id,
+        ruleId: row.rule_id,
+        targetRef: parseJsonObject(row.target_ref_json, {}),
+        validationKind: row.validation_kind,
+        severity: row.severity,
+        parameters: parseJsonObject(row.parameters_json ?? '{}', {}),
+      });
+    }
+    for (const row of releaseRows) {
+      const summary = summariesByVersion.get(row.field_mapping_version_id);
+      if (!summary) continue;
+      summary.destination = true;
+      if (row.destination_id && isDestinationProfileMappingReference(row.destination_id)) {
+        summary.destinationProfileIds.add(normalizeDestinationProfileReference(row.destination_id));
+      }
+      summary.releaseRules.push({
+        id: row.release_id,
+        destinationType: row.destination_type,
+        destinationId: row.destination_id,
+        sourceRef: parseJsonObject(row.source_ref_json, {}),
+        releaseAction: row.release_action,
+        legalBasis: row.legal_basis,
+        purpose: row.purpose,
+        condition: parseJsonObject(row.condition_json ?? '{}', {}),
+        priority: row.priority,
+      });
+    }
+    for (const row of conflictRows) {
+      const summary = summariesByVersion.get(row.field_mapping_version_id);
+      if (!summary) continue;
+      summary.conflictRules.push({
+        id: row.conflict_id,
+        targetRef: parseJsonObject(row.target_ref_json, {}),
+        conflictStrategy: row.conflict_strategy,
+        sourcePriority: parseJsonUnknownArray(row.source_priority_json),
+        condition: parseJsonObject(row.condition_json ?? '{}', {}),
+      });
+    }
     return rows.map((row) => ({
       id: row.id,
       tenantId: row.tenant_id,
@@ -3280,6 +3796,8 @@ export class IdentityMappingControlPlaneRepository {
       sourceProfileIds: [...(summariesByVersion.get(row.id)?.sourceProfileIds ?? [])],
       destinationProfileIds: [...(summariesByVersion.get(row.id)?.destinationProfileIds ?? [])],
       rules: [...(summariesByVersion.get(row.id)?.rules.values() ?? [])],
+      releaseRules: summariesByVersion.get(row.id)?.releaseRules ?? [],
+      conflictRules: summariesByVersion.get(row.id)?.conflictRules ?? [],
       latestSnapshot: row.snapshot_id
         ? {
             id: row.snapshot_id,
@@ -3301,12 +3819,22 @@ export class IdentityMappingControlPlaneRepository {
     if (!Array.isArray(input.rules)) {
       throw badRequest('rules must be an array');
     }
+    if (
+      input.sourceProfileIds !== undefined &&
+      (!Array.isArray(input.sourceProfileIds) ||
+        input.sourceProfileIds.some(
+          (profileId) => typeof profileId !== 'string' || !profileId.trim()
+        ))
+    ) {
+      throw badRequest('sourceProfileIds must be an array of non-empty strings');
+    }
     assertFieldMappingVersionRequestSafe(input);
 
     const fieldMappingSet = await this.getFieldMappingSet(tenantId, fieldMappingSetId);
     if (!fieldMappingSet) {
       throw notFound('field mapping set not found');
     }
+    await this.assertMappingRequiredSourceFieldsConnected(tenantId, input);
     const existingVersion = await this.adapter.queryOne<{ id: string }>(
       `SELECT id FROM field_mapping_versions
         WHERE tenant_id = ? AND field_mapping_set_id = ? AND version_label = ?`,
@@ -3358,6 +3886,84 @@ export class IdentityMappingControlPlaneRepository {
       fieldMappingHash,
       compatibilityRange: input.compatibilityRange ?? null,
     };
+  }
+
+  private async assertMappingRequiredSourceFieldsConnected(
+    tenantId: string,
+    input: CreateFieldMappingVersionRequest
+  ): Promise<void> {
+    const sourceRefs = input.rules.flatMap((rule) =>
+      (rule.edges ?? []).map((edge) => edge.sourceRef)
+    );
+    const profileRefs = new Set(input.sourceProfileIds ?? []);
+    for (const sourceRef of sourceRefs) {
+      const profileId = readStringValue(sourceRef.profileId);
+      if (profileId && isSourceProfileMappingReference(profileId)) {
+        profileRefs.add(profileId);
+      }
+    }
+    if (profileRefs.size === 0) return;
+
+    const rows = await this.adapter.query<{
+      id: string;
+      profile_key: string;
+      source_type: string;
+      schema_json: string | null;
+    }>(
+      `SELECT p.id, p.profile_key, p.source_type, v.schema_json
+         FROM source_profiles p
+         LEFT JOIN source_profile_versions v
+           ON v.id = COALESCE(
+             (
+               SELECT latest.id
+                 FROM source_profile_versions latest
+                WHERE latest.tenant_id = p.tenant_id
+                  AND latest.profile_id = p.id
+                ORDER BY latest.updated_at DESC, latest.created_at DESC, latest.id DESC
+                LIMIT 1
+             ),
+             p.active_version_id
+           )
+        WHERE p.tenant_id = ?`,
+      [tenantId]
+    );
+
+    const missing: string[] = [];
+    for (const profileRef of profileRefs) {
+      if (!isSourceProfileMappingReference(profileRef)) continue;
+      const candidates = sourceProfileReferenceCandidates(profileRef);
+      const profile = rows.find((row) => candidates.includes(row.id));
+      if (!profile?.schema_json) {
+        throw badRequest(`source profile referenced by mapping was not found: ${profileRef}`);
+      }
+      const schema = parseJsonObject(profile.schema_json, {});
+      const requiredFields = mappingRequiredSourceFields(schema);
+      if (requiredFields.length === 0) continue;
+
+      const connectedPaths = new Set(
+        sourceRefs.flatMap((sourceRef) => {
+          const sourceRefProfileId = readStringValue(sourceRef.profileId);
+          if (
+            sourceRefProfileId &&
+            !sourceProfileReferenceCandidates(sourceRefProfileId).includes(profile.id)
+          ) {
+            return [];
+          }
+          if (!sourceRefProfileId && profileRefs.size > 1) return [];
+          const path = readStringValue(sourceRef.path);
+          return path ? [path] : [];
+        })
+      );
+      for (const field of requiredFields) {
+        if (!field.aliases.some((alias) => connectedPaths.has(alias))) {
+          missing.push(`${profile.profile_key}:${field.displayName}`);
+        }
+      }
+    }
+
+    if (missing.length > 0) {
+      throw badRequest(`mapping-required source fields are not connected: ${missing.join(', ')}`);
+    }
   }
 
   async publishFieldMappingVersion(
@@ -3493,18 +4099,75 @@ export class IdentityMappingControlPlaneRepository {
     if (!snapshot) {
       throw notFound('compiled snapshot not found');
     }
+    await this.assertSensitiveMappingReleaseSafety(
+      tenantId,
+      fieldMappingVersionId,
+      snapshot.catalog_version_id
+    );
+    const now = this.now();
     if (snapshot.lifecycle_state === 'active') {
-      return {
-        id: input.snapshotId,
-        tenantId,
-        fieldMappingSetId,
-        fieldMappingVersionId,
-        lifecycleState: 'active',
-        alreadyActive: true,
-      };
+      const existingActivation = await this.adapter.queryOne<{ id: string }>(
+        `SELECT id
+           FROM field_mapping_activations
+          WHERE tenant_id = ?
+            AND field_mapping_set_id = ?
+            AND field_mapping_version_id = ?
+            AND lifecycle_state = ?
+          LIMIT 1`,
+        [tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
+      );
+      if (existingActivation) {
+        await this.adapter.transaction(async (tx) => {
+          await tx.execute(
+            `UPDATE field_mapping_versions
+                SET lifecycle_state = ?, updated_at = ?
+              WHERE tenant_id = ?
+                AND field_mapping_set_id = ?
+                AND id <> ?
+                AND lifecycle_state = ?`,
+            ['published', now, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
+          );
+          await tx.execute(
+            `UPDATE compiled_mapping_snapshots
+                SET lifecycle_state = ?, activated_at = ?
+              WHERE tenant_id = ?
+                AND field_mapping_version_id IN (
+                  SELECT id
+                    FROM field_mapping_versions
+                   WHERE tenant_id = ?
+                     AND field_mapping_set_id = ?
+                     AND id <> ?
+                )
+                AND lifecycle_state = ?`,
+            ['retired', now, tenantId, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
+          );
+          await tx.execute(
+            `UPDATE field_mapping_versions
+                SET lifecycle_state = ?, updated_at = ?
+              WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ?`,
+            ['active', now, tenantId, fieldMappingSetId, fieldMappingVersionId]
+          );
+          await tx.execute(
+            `UPDATE field_mapping_sets
+                SET lifecycle_state = ?, updated_at = ?
+              WHERE tenant_id = ? AND id = ?`,
+            ['active', now, tenantId, fieldMappingSetId]
+          );
+        });
+        return {
+          id: existingActivation.id,
+          tenantId,
+          fieldMappingSetId,
+          fieldMappingVersionId,
+          snapshotId: input.snapshotId,
+          lifecycleState: 'active',
+          alreadyActive: true,
+        };
+      }
+      // A snapshot without an activation is not live. Continue through the normal activation
+      // transaction so the complete activation record is restored.
     }
 
-    const now = this.now();
     const holderId = input.holderId ?? createId('activation_holder');
     const leaseKey = `field_mapping:${fieldMappingSetId}:activate`;
     await this.acquireActivationLease(tenantId, leaseKey, holderId, now);
@@ -3520,8 +4183,14 @@ export class IdentityMappingControlPlaneRepository {
       await tx.execute(
         `UPDATE compiled_mapping_snapshots
             SET lifecycle_state = ?, activated_at = ?
-          WHERE tenant_id = ? AND field_mapping_version_id = ? AND lifecycle_state = ?`,
-        ['retired', now, tenantId, fieldMappingVersionId, 'active']
+          WHERE tenant_id = ?
+            AND field_mapping_version_id IN (
+              SELECT id
+                FROM field_mapping_versions
+               WHERE tenant_id = ? AND field_mapping_set_id = ?
+            )
+            AND lifecycle_state = ?`,
+        ['retired', now, tenantId, tenantId, fieldMappingSetId, 'active']
       );
       await tx.execute(
         `INSERT INTO field_mapping_activations (
@@ -3541,6 +4210,15 @@ export class IdentityMappingControlPlaneRepository {
           now,
           now,
         ]
+      );
+      await tx.execute(
+        `UPDATE field_mapping_versions
+            SET lifecycle_state = ?, updated_at = ?
+          WHERE tenant_id = ?
+            AND field_mapping_set_id = ?
+            AND id <> ?
+            AND lifecycle_state = ?`,
+        ['published', now, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
       );
       await tx.execute(
         `UPDATE field_mapping_versions
@@ -3598,6 +4276,31 @@ export class IdentityMappingControlPlaneRepository {
             SET lifecycle_state = ?, updated_at = ?
           WHERE tenant_id = ? AND field_mapping_set_id = ? AND id = ? AND lifecycle_state = ?`,
         ['published', now, tenantId, fieldMappingSetId, fieldMappingVersionId, 'active']
+      );
+      await tx.execute(
+        `UPDATE field_mapping_sets
+            SET lifecycle_state = CASE
+                  WHEN EXISTS (
+                    SELECT 1
+                      FROM field_mapping_activations a
+                     WHERE a.tenant_id = ?
+                       AND a.field_mapping_set_id = ?
+                       AND a.lifecycle_state = ?
+                  ) THEN ?
+                  ELSE ?
+                END,
+                updated_at = ?
+          WHERE tenant_id = ? AND id = ?`,
+        [
+          tenantId,
+          fieldMappingSetId,
+          'active',
+          'active',
+          'published',
+          now,
+          tenantId,
+          fieldMappingSetId,
+        ]
       );
     });
     return {
@@ -4722,6 +5425,13 @@ export class IdentityMappingControlPlaneRepository {
 
     const eventId = existingEvent?.id ?? createId('external_lifecycle_signal_event');
     const signalEventId = eventId;
+    if (
+      input.signalType === 'scim_active_false' &&
+      input.targetType === 'account' &&
+      this.beforeAccountSuspension
+    ) {
+      await this.beforeAccountSuspension(tenantId, input.targetId, now, signalEventId);
+    }
     const lifecycleDecision = await this.adapter.transaction(async (tx) => {
       if (!existingEvent) {
         await tx.execute(
@@ -5064,7 +5774,11 @@ export class IdentityMappingControlPlaneRepository {
     }
     if (input.protocolPayload) {
       assertNoSensitiveMetadata(input.protocolPayload, 'protocolPayload');
+      validateSAMLFederationProtocolPayload(input.protocolPayload);
     }
+    const protocolPayload = input.protocolPayload
+      ? resetSAMLFederationPollingRuntimeState(input.protocolPayload)
+      : undefined;
     if (input.anchors !== undefined && !Array.isArray(input.anchors)) {
       throw badRequest('anchors must be an array');
     }
@@ -5073,14 +5787,7 @@ export class IdentityMappingControlPlaneRepository {
     }
     const now = this.now();
     const sourceId = createId('federation_trust_source');
-    const trustContext = {
-      sourceType: input.sourceType,
-      sourceKey: input.sourceKey,
-      displayName: input.displayName,
-      protocolPayload: input.protocolPayload ?? null,
-      anchors: input.anchors ?? [],
-      scopeBindings: input.scopeBindings ?? [],
-    };
+    const trustContext = buildSAMLFederationTrustContext(input, protocolPayload);
     const snapshotHash = await hashStableJson(trustContext);
     await this.adapter.transaction(async (tx) => {
       await tx.execute(
@@ -5095,7 +5802,7 @@ export class IdentityMappingControlPlaneRepository {
           input.sourceKey,
           input.displayName,
           lifecycleState,
-          input.protocolPayload ? stableJson(input.protocolPayload) : null,
+          protocolPayload ? stableJson(protocolPayload) : null,
           now,
           now,
         ]
@@ -5188,46 +5895,92 @@ export class IdentityMappingControlPlaneRepository {
     }
     if (input.protocolPayload) {
       assertNoSensitiveMetadata(input.protocolPayload, 'protocolPayload');
+      validateSAMLFederationProtocolPayload(input.protocolPayload);
     }
+    const protocolPayload = input.protocolPayload
+      ? resetSAMLFederationPollingRuntimeState(input.protocolPayload)
+      : undefined;
     if (input.anchors !== undefined && !Array.isArray(input.anchors)) {
       throw badRequest('anchors must be an array');
     }
     if (input.scopeBindings !== undefined && !Array.isArray(input.scopeBindings)) {
       throw badRequest('scopeBindings must be an array');
     }
-    await this.ensureFederationTrustSource(tenantId, trustSourceId);
+    if (!Number.isSafeInteger(input.expectedUpdatedAt) || input.expectedUpdatedAt < 0) {
+      throw badRequest('expectedUpdatedAt must be a non-negative integer');
+    }
+    for (const anchor of input.anchors ?? []) {
+      validateRequiredString(anchor.anchorType, 'anchor.anchorType');
+      validateRequiredString(anchor.anchorHash, 'anchor.anchorHash');
+    }
+    for (const binding of input.scopeBindings ?? []) {
+      validateRequiredString(binding.scopeType, 'scopeBinding.scopeType');
+    }
 
     const now = this.now();
-    const trustContext = {
-      sourceType: input.sourceType,
-      sourceKey: input.sourceKey,
-      displayName: input.displayName,
-      protocolPayload: input.protocolPayload ?? null,
-      anchors: input.anchors ?? [],
-      scopeBindings: input.scopeBindings ?? [],
-    };
+    const trustContext = buildSAMLFederationTrustContext(input, protocolPayload);
     const snapshotHash = await hashStableJson(trustContext);
+    const current = await this.adapter.queryOne<{
+      updated_at: number;
+      snapshot_hash: string | null;
+    }>(
+      `SELECT source.updated_at,
+              (
+                SELECT snapshot.snapshot_hash
+                  FROM federation_trust_context_snapshots snapshot
+                 WHERE snapshot.tenant_id = source.tenant_id
+                   AND snapshot.trust_source_id = source.id
+                 ORDER BY snapshot.created_at DESC, snapshot.id DESC
+                 LIMIT 1
+              ) AS snapshot_hash
+         FROM federation_trust_sources source
+        WHERE source.tenant_id = ? AND source.id = ?`,
+      [tenantId, trustSourceId]
+    );
+    if (!current) throw notFound('federation trust source not found');
+    if (current.updated_at !== input.expectedUpdatedAt) {
+      throw conflict('federation trust source was modified by another operation');
+    }
+    const trustContextChanged = current.snapshot_hash !== snapshotHash;
+    const writeTime = Math.max(now, input.expectedUpdatedAt + 1);
     await this.adapter.transaction(async (tx) => {
-      await tx.execute(
+      const sourceUpdate = await tx.execute(
         `UPDATE federation_trust_sources
             SET source_type = ?,
                 source_key = ?,
                 display_name = ?,
                 lifecycle_state = ?,
                 protocol_payload_json = ?,
+                active_metadata_document_id = CASE WHEN ? = 1 THEN NULL
+                                                   ELSE active_metadata_document_id END,
                 updated_at = ?
-          WHERE tenant_id = ? AND id = ?`,
+          WHERE tenant_id = ? AND id = ? AND updated_at = ?
+            AND (refresh_operation_token IS NULL OR refresh_operation_expires_at <= ?)`,
         [
           input.sourceType,
           input.sourceKey,
           input.displayName,
           lifecycleState,
-          input.protocolPayload ? stableJson(input.protocolPayload) : null,
-          now,
+          protocolPayload ? stableJson(protocolPayload) : null,
+          trustContextChanged ? 1 : 0,
+          writeTime,
           tenantId,
           trustSourceId,
+          input.expectedUpdatedAt,
+          now,
         ]
       );
+      if (sourceUpdate.rowsAffected !== 1) {
+        throw conflict('federation trust source was modified by another operation');
+      }
+      if (trustContextChanged) {
+        // A changed URL, trust anchor, or runtime policy must never inherit entities verified
+        // under the previous trust context. A successful refresh repopulates this directory.
+        await tx.execute(
+          'DELETE FROM federation_saml_runtime_entities WHERE tenant_id = ? AND trust_source_id = ?',
+          [tenantId, trustSourceId]
+        );
+      }
       await tx.execute(
         'DELETE FROM federation_trust_anchors WHERE tenant_id = ? AND trust_source_id = ?',
         [tenantId, trustSourceId]
@@ -5236,9 +5989,14 @@ export class IdentityMappingControlPlaneRepository {
         'DELETE FROM federation_trust_scope_bindings WHERE tenant_id = ? AND trust_source_id = ?',
         [tenantId, trustSourceId]
       );
+      await tx.execute(
+        `UPDATE federation_trust_context_snapshots
+            SET lifecycle_state = 'retired'
+          WHERE tenant_id = ? AND trust_source_id = ?
+            AND lifecycle_state IN ('active', 'draft')`,
+        [tenantId, trustSourceId]
+      );
       for (const anchor of input.anchors ?? []) {
-        validateRequiredString(anchor.anchorType, 'anchor.anchorType');
-        validateRequiredString(anchor.anchorHash, 'anchor.anchorHash');
         await tx.execute(
           `INSERT INTO federation_trust_anchors (
             id, tenant_id, trust_source_id, anchor_type, anchor_hash, anchor_ref,
@@ -5260,7 +6018,6 @@ export class IdentityMappingControlPlaneRepository {
         );
       }
       for (const binding of input.scopeBindings ?? []) {
-        validateRequiredString(binding.scopeType, 'scopeBinding.scopeType');
         await tx.execute(
           `INSERT INTO federation_trust_scope_bindings (
             id, tenant_id, trust_source_id, scope_type, scope_id, priority,
@@ -5304,13 +6061,29 @@ export class IdentityMappingControlPlaneRepository {
       sourceKey: input.sourceKey,
       lifecycleState,
       snapshotHash,
+      updatedAt: writeTime,
     };
   }
 
   async deleteFederationTrustSource(tenantId: string, trustSourceId: string) {
     validateRequiredString(trustSourceId, 'trustSourceId');
     await this.ensureFederationTrustSource(tenantId, trustSourceId);
+    const now = this.now();
     await this.adapter.transaction(async (tx) => {
+      const retirement = await tx.execute(
+        `UPDATE federation_trust_sources
+            SET lifecycle_state = 'retired',
+                active_metadata_document_id = NULL,
+                refresh_operation_token = NULL,
+                refresh_operation_expires_at = NULL,
+                updated_at = ?
+          WHERE tenant_id = ? AND id = ?
+            AND (refresh_operation_token IS NULL OR refresh_operation_expires_at <= ?)`,
+        [now, tenantId, trustSourceId, now]
+      );
+      if (retirement.rowsAffected !== 1) {
+        throw conflict('federation trust source refresh is in progress');
+      }
       await tx.execute(
         'DELETE FROM federation_trust_anchors WHERE tenant_id = ? AND trust_source_id = ?',
         [tenantId, trustSourceId]
@@ -5324,7 +6097,27 @@ export class IdentityMappingControlPlaneRepository {
         [tenantId, trustSourceId]
       );
       await tx.execute(
+        'DELETE FROM federation_metadata_refresh_jobs WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute(
+        'DELETE FROM federation_selected_entity_import_events WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute(
+        'DELETE FROM federation_entity_statements WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute(
+        'DELETE FROM federation_trust_chains WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute(
         'DELETE FROM federation_metadata_validation_events WHERE tenant_id = ? AND trust_source_id = ?',
+        [tenantId, trustSourceId]
+      );
+      await tx.execute(
+        'DELETE FROM federation_saml_runtime_entities WHERE tenant_id = ? AND trust_source_id = ?',
         [tenantId, trustSourceId]
       );
       await tx.execute(
@@ -5382,6 +6175,9 @@ export class IdentityMappingControlPlaneRepository {
   ) {
     validateRequiredString(input.trustSourceId, 'trustSourceId');
     validateRequiredString(input.documentType, 'documentType');
+    if (input.documentType === INTERNAL_SAML_RUNTIME_DOCUMENT_TYPE) {
+      throw badRequest('documentType is reserved for managed SAML runtime snapshots');
+    }
     validateRequiredString(input.documentHash, 'documentHash');
     const validationState = input.validationState ?? 'pending';
     if (!FEDERATION_METADATA_VALIDATION_STATES.has(validationState)) {
@@ -5957,6 +6753,183 @@ export class IdentityMappingControlPlaneRepository {
     );
   }
 
+  private async assertSensitiveMappingReleaseSafety(
+    tenantId: string,
+    fieldMappingVersionId: string,
+    catalogVersionId: string | null
+  ): Promise<void> {
+    const edgeRows = await this.adapter.query<SensitiveReleaseMappingEdgeRow>(
+      `SELECT e.source_ref_json, e.target_ref_json
+         FROM mapping_rules r
+         JOIN mapping_rule_edges e
+           ON e.tenant_id = r.tenant_id
+          AND e.rule_id = r.id
+        WHERE r.tenant_id = ?
+          AND r.field_mapping_version_id = ?`,
+      [tenantId, fieldMappingVersionId]
+    );
+    const releaseEdges = edgeRows
+      .map((row) => ({
+        sourceRef: parseJsonObject(row.source_ref_json, {}),
+        targetRef: parseJsonObject(row.target_ref_json, {}),
+      }))
+      .filter(({ targetRef }) =>
+        isDestinationProfileMappingReference(readStringValue(targetRef.profileId))
+      );
+    if (releaseEdges.length === 0) return;
+    if (!catalogVersionId) {
+      throw badRequest('sensitive destination mappings require a compiled catalog snapshot');
+    }
+
+    const sourceEntries = await this.loadCatalogEntriesForActivation(tenantId, catalogVersionId);
+    const profileCache = new Map<string, DestinationProfileRow | null>();
+    for (const { sourceRef, targetRef } of releaseEdges) {
+      const sourceEntry = findCatalogEntryForMappingRef(sourceEntries, sourceRef);
+      const sourceNamespace = readStringValue(sourceRef.namespace);
+      if (!sourceEntry) {
+        if (isBuiltInSystemIdentityMappingReference(sourceRef)) {
+          // Runtime-owned identifiers are not custom claims and therefore are intentionally absent
+          // from the tenant's canonical custom-claim catalog.
+          continue;
+        }
+        if (sourceNamespace === 'authrim.profile') {
+          throw badRequest(
+            `mapping source field is missing from compiled catalog: ${readStringValue(sourceRef.path) ?? 'unknown'}`
+          );
+        }
+        continue;
+      }
+      const sourceSensitivity = sensitiveClassificationRank(sourceEntry.classification);
+      if (sourceSensitivity === 0) continue;
+
+      const profileRef = readStringValue(targetRef.profileId);
+      const targetPath = readStringValue(targetRef.path);
+      if (!profileRef || !targetPath) {
+        throw badRequest('sensitive destination mapping must reference a profile field');
+      }
+      let profile = profileCache.get(profileRef);
+      if (profile === undefined) {
+        profile = await this.loadActiveDestinationProfileForActivation(tenantId, profileRef);
+        profileCache.set(profileRef, profile);
+      }
+      if (!profile || !profile.schema_json) {
+        throw badRequest(`sensitive destination mapping profile is unavailable: ${profileRef}`);
+      }
+      const targetField = findDestinationProfileField(
+        profile.destination_type,
+        parseJsonObject(profile.schema_json, {}),
+        targetPath
+      );
+      if (!targetField) {
+        throw badRequest(`sensitive destination profile field is unavailable: ${targetPath}`);
+      }
+      const targetClassification = readStringValue(targetField.classification) ?? 'internal';
+      if (sensitiveClassificationRank(targetClassification) < sourceSensitivity) {
+        throw badRequest(
+          `sensitive mapping cannot lower classification from ${sourceEntry.classification} to ${targetClassification}: ${targetPath}`
+        );
+      }
+      if (
+        (profile.destination_type === 'oidc' || profile.destination_type === 'resource_server') &&
+        readStringArrayValue(targetField.requiredScopes).length === 0
+      ) {
+        throw badRequest(
+          `sensitive destination field must require at least one scope: ${targetPath}`
+        );
+      }
+    }
+  }
+
+  private async loadCatalogEntriesForActivation(
+    tenantId: string,
+    catalogVersionId: string
+  ): Promise<FieldCatalogEntrySummary[]> {
+    const configuredCatalog = await this.loadConfiguredCanonicalCatalog(tenantId);
+    if (configuredCatalog?.versionId === catalogVersionId) return configuredCatalog.entries;
+
+    const rows = await this.adapter.query<FieldCatalogListRow>(
+      `SELECT e.id AS entry_id,
+              e.stable_field_id,
+              e.namespace,
+              e.path,
+              e.target_taxonomy,
+              e.value_type,
+              e.cardinality,
+              e.classification,
+              e.aliases_json,
+              e.validation_json,
+              e.ui_group_key,
+              e.ui_group_label,
+              e.ui_group_order,
+              e.ui_field_order,
+              e.examples_json,
+              e.note
+         FROM field_catalog_entries e
+        WHERE e.tenant_id = ? AND e.catalog_version_id = ?`,
+      [tenantId, catalogVersionId]
+    );
+    return rows.flatMap((row) => {
+      if (!row.entry_id || !row.stable_field_id || !row.namespace || !row.path) return [];
+      const validation = parseJsonObject(row.validation_json ?? '{}', {});
+      return [
+        {
+          id: row.entry_id,
+          stableFieldId: row.stable_field_id,
+          namespace: row.namespace,
+          path: row.path,
+          targetTaxonomy: row.target_taxonomy ?? 'canonical',
+          valueType: row.value_type ?? 'string',
+          cardinality: row.cardinality ?? 'single',
+          classification: row.classification ?? 'internal',
+          aliases: parseCatalogAliases(row.aliases_json),
+          uiGroupKey: row.ui_group_key,
+          uiGroupLabel: row.ui_group_label,
+          uiGroupOrder: row.ui_group_order ?? 0,
+          uiFieldOrder: row.ui_field_order ?? 0,
+          examples: parseJsonUnknownArray(row.examples_json),
+          note: row.note,
+          allowedValues: parseStringArray(validation.allowedValues),
+          valueMultiplicity:
+            validation.valueMultiplicity === 'single' || validation.valueMultiplicity === 'multi'
+              ? validation.valueMultiplicity
+              : null,
+          nullable: typeof validation.nullable === 'boolean' ? validation.nullable : null,
+          required: typeof validation.required === 'boolean' ? validation.required : null,
+        },
+      ];
+    });
+  }
+
+  private async loadActiveDestinationProfileForActivation(
+    tenantId: string,
+    profileRef: string
+  ): Promise<DestinationProfileRow | null> {
+    const profileIds = destinationProfileReferenceCandidates(profileRef);
+    const rows = await this.adapter.query<DestinationProfileRow>(
+      `SELECT p.*,
+              v.id AS version_id,
+              v.version_label,
+              v.lifecycle_state AS version_lifecycle_state,
+              v.schema_hash,
+              v.schema_json,
+              v.validation_summary_json,
+              v.warning_summary_json,
+              v.release_impact_json
+         FROM destination_profiles p
+         JOIN destination_profile_versions v
+           ON v.id = p.active_version_id
+          AND v.profile_id = p.id
+          AND v.tenant_id = p.tenant_id
+        WHERE p.tenant_id IN (?, 'platform')
+          AND p.id IN (${profileIds.map(() => '?').join(', ')})
+          AND p.lifecycle_state = 'active'
+          AND v.lifecycle_state = 'active'
+        LIMIT 1`,
+      [tenantId, ...profileIds]
+    );
+    return rows[0] ?? null;
+  }
+
   private async insertFieldMappingRule(
     executor: SqlExecutor,
     tenantId: string,
@@ -6188,7 +7161,7 @@ function customClaimSchemaToCatalogEntry(
       path: fieldKey,
       targetTaxonomy: 'canonical',
       valueType: normalizeCatalogValueType(row.field_type),
-      cardinality: 'single',
+      cardinality: row.cardinality === 'multi' ? 'multi' : 'single',
       classification: readDatabaseBoolean(row.is_pii) ? 'pii' : 'internal',
       aliases: [{ namespace: 'oidc', path: fieldKey }],
       uiGroupKey: row.ui_group_key,
@@ -6199,10 +7172,12 @@ function customClaimSchemaToCatalogEntry(
       note: row.description,
       allowedValues: allowedValuesFromCatalog.length > 0 ? allowedValuesFromCatalog : enumValues,
       valueMultiplicity:
-        validation.valueMultiplicity === 'single' || validation.valueMultiplicity === 'multi'
-          ? validation.valueMultiplicity
-          : null,
-      nullable: required ? false : null,
+        row.cardinality === 'multi'
+          ? 'multi'
+          : validation.valueMultiplicity === 'single' || validation.valueMultiplicity === 'multi'
+            ? validation.valueMultiplicity
+            : 'single',
+      nullable: !required,
       required,
     },
   ];
@@ -6772,10 +7747,28 @@ async function handleMutation<T>(
 
 function createRepository(c: AdminContext): IdentityMappingControlPlaneRepository {
   const tenantId = getTenantIdFromContext(c);
+  const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
   return new IdentityMappingControlPlaneRepository(
     requireDedicatedAdminDatabaseAdapter(c.env, 'identity-mapping-control-plane'),
     () => Date.now(),
-    createAuthContextFromHono(c, tenantId).coreAdapter
+    coreAdapter,
+    async (targetTenantId, accountId, sourceVersionMs, operationId) => {
+      const account = await coreAdapter.queryOne<{ legacy_user_id: string | null }>(
+        'SELECT legacy_user_id FROM identity_accounts WHERE tenant_id = ? AND id = ?',
+        [targetTenantId, accountId]
+      );
+      if (!account?.legacy_user_id) {
+        throw new Error('account_authentication_subject_unavailable');
+      }
+      await transitionAccountAuthenticationState(c.env, {
+        tenantId: targetTenantId,
+        userId: account.legacy_user_id,
+        lifecycle: 'suspended',
+        sourceVersionMs,
+        operationId,
+        revokeSessions: true,
+      });
+    }
   );
 }
 
@@ -6964,6 +7957,16 @@ function normalizeProfileOwner(
   };
 }
 
+function assertDestinationProfileOwner(
+  destinationType: string,
+  owner: { ownerScopeType: string; ownerScopeId: string | null }
+): void {
+  if (destinationType !== 'resource_server') return;
+  if (owner.ownerScopeType !== 'client' || !owner.ownerScopeId) {
+    throw badRequest('resource_server destination profiles must be owned by a specific client');
+  }
+}
+
 function normalizeRegistryOwner(
   tenantId: string,
   ownerScopeType?: string,
@@ -7023,9 +8026,91 @@ function validateDestinationProfileSchema(
       return validateCsvDestinationProfileSchema(schema);
     case 'saml':
       return validateSamlDestinationProfileSchema(schema);
+    case 'resource_server':
+      return validateResourceServerDestinationProfileSchema(schema);
     default:
-      throw badRequest('destinationType must be oidc, csv, or saml');
+      throw badRequest('destinationType must be oidc, csv, saml, or resource_server');
   }
+}
+
+function validateResourceServerDestinationProfileSchema(schema: Record<string, unknown>) {
+  const claims = Array.isArray(schema.claims)
+    ? schema.claims.filter(isRecord)
+    : ([] as Record<string, unknown>[]);
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  if (schema.destinationType !== 'resource_server') {
+    errors.push('destinationType must be resource_server');
+  }
+
+  const activeClaim = claims.find((claim) => claim.claimName === 'active');
+  if (!activeClaim) {
+    errors.push('Resource Server destination profile must include active');
+  } else {
+    if (activeClaim.required === false) {
+      errors.push('Introspection active claim must be required');
+    }
+    if (
+      Array.isArray(activeClaim.requiredScopes) &&
+      activeClaim.requiredScopes.map(String).some(Boolean)
+    ) {
+      errors.push('Introspection active claim must not depend on optional scopes');
+    }
+  }
+
+  const claimNames = new Set<string>();
+  let piiClaimCount = 0;
+  let regulatedClaimCount = 0;
+  let requiredClaimCount = 0;
+  for (const claim of claims) {
+    const claimName = String(claim.claimName ?? '');
+    if (!claimName) {
+      errors.push('claimName is required');
+      continue;
+    }
+    if (claimNames.has(claimName)) errors.push(`${claimName} appears more than once`);
+    claimNames.add(claimName);
+    try {
+      validateOidcClaimName(claimName);
+    } catch {
+      errors.push(`${claimName} is not a valid introspection claim name`);
+    }
+    validateFieldConstraintDefinition(claim, `claim ${claimName}`, errors);
+    if (claim.required === true || claimName === 'active') requiredClaimCount += 1;
+    const requiredScopes = Array.isArray(claim.requiredScopes)
+      ? claim.requiredScopes.map(String).filter(Boolean)
+      : [];
+    const classification = String(claim.classification ?? 'internal');
+    if (classification === 'pii') piiClaimCount += 1;
+    if (classification === 'regulated') regulatedClaimCount += 1;
+    if (
+      claimName !== 'active' &&
+      (classification === 'pii' || classification === 'regulated') &&
+      requiredScopes.length === 0
+    ) {
+      errors.push(`${claimName} must require at least one scope before releasing sensitive data`);
+    }
+  }
+
+  return {
+    errorCount: errors.length,
+    errors,
+    warningCount: warnings.length,
+    warnings,
+    warningSummary: {
+      warningCount: warnings.length,
+      blockingWarningCount: 0,
+      overReleaseWarningCount: 0,
+    },
+    releaseImpact: {
+      destinationType: 'resource_server',
+      claimCount: claims.length,
+      requiredClaimCount,
+      surfaces: ['introspection'],
+      piiClaimCount,
+      regulatedClaimCount,
+    },
+  };
 }
 
 function validateOidcDestinationProfileSchema(
@@ -7046,6 +8131,25 @@ function validateOidcDestinationProfileSchema(
   if (!claims.some((claim) => claim.claimName === 'sub')) {
     errors.push('OIDC destination profile must include sub');
   }
+  if (claims.some((claim) => claim.claimName === 'sub' && claim.required === false)) {
+    errors.push('OIDC sub claim must be required');
+  }
+  const subjectClaims = claims.filter((claim) => claim.claimName === 'sub');
+  for (const subjectClaim of subjectClaims) {
+    const surfaces = Array.isArray(subjectClaim.surfaces) ? subjectClaim.surfaces.map(String) : [];
+    if (!surfaces.includes('id_token') || !surfaces.includes('userinfo')) {
+      errors.push('OIDC sub claim must target both id_token and userinfo');
+    }
+    if (
+      Array.isArray(subjectClaim.requiredScopes) &&
+      subjectClaim.requiredScopes.map(String).some(Boolean)
+    ) {
+      errors.push('OIDC sub claim must not depend on optional scopes');
+    }
+    if (subjectClaim.nullable === true) {
+      errors.push('OIDC sub claim must not be nullable');
+    }
+  }
 
   const claimNames = new Set<string>();
   const attributeGroupFields = new Map(
@@ -7059,6 +8163,7 @@ function validateOidcDestinationProfileSchema(
   let overReleaseWarningCount = 0;
   let claimsParameterClaimCount = 0;
   let essentialClaimCount = 0;
+  let requiredClaimCount = 0;
 
   for (const claim of claims) {
     const claimName = String(claim.claimName ?? '');
@@ -7076,6 +8181,7 @@ function validateOidcDestinationProfileSchema(
       errors.push(`${claimName} is reserved by the OIDC token envelope`);
     }
     validateFieldConstraintDefinition(claim, `claim ${claimName}`, errors);
+    if (claim.required === true || claimName === 'sub') requiredClaimCount += 1;
     const surfaces = Array.isArray(claim.surfaces) ? claim.surfaces.map(String) : [];
     if (surfaces.length === 0 || surfaces.some((surface) => !OIDC_SURFACES.has(surface))) {
       errors.push(`${claimName} must target id_token or userinfo`);
@@ -7095,8 +8201,7 @@ function validateOidcDestinationProfileSchema(
       (classification === 'pii' || classification === 'regulated') &&
       requiredScopes.length === 0
     ) {
-      blockingWarningCount += 1;
-      warnings.push(`${claimName} releases sensitive data without required scopes`);
+      errors.push(`${claimName} must require at least one scope before releasing sensitive data`);
     }
     if (isOverReleasedOidcClaim(claimName, requiredScopes, attributeGroupFields)) {
       overReleaseWarningCount += 1;
@@ -7146,6 +8251,7 @@ function validateOidcDestinationProfileSchema(
       claimCount: claims.length,
       claimsParameterClaimCount,
       essentialClaimCount,
+      requiredClaimCount,
       surfaces: ['id_token', 'userinfo'].filter((surface) =>
         claims.some((claim) => Array.isArray(claim.surfaces) && claim.surfaces.includes(surface))
       ),
@@ -7247,6 +8353,11 @@ function validateSamlDestinationProfileSchema(schema: Record<string, unknown>) {
     }
     if (seenNames.has(name)) errors.push(`${name} appears more than once`);
     seenNames.add(name);
+    if (attribute.required !== undefined) {
+      errors.push(
+        `${name}.required must be configured on the SAML SP, not the Destination Profile`
+      );
+    }
     validateFieldConstraintDefinition(attribute, `SAML attribute ${name}`, errors);
     const classification = String(attribute.classification ?? 'internal');
     if (classification === 'pii') piiAttributeCount += 1;
@@ -7398,7 +8509,10 @@ function validateFieldConstraintDefinition(
   };
 
   if (definition.allowedValues !== undefined) {
-    if (!Array.isArray(definition.allowedValues)) {
+    if (
+      !Array.isArray(definition.allowedValues) ||
+      definition.allowedValues.some((value) => typeof value !== 'string')
+    ) {
       report(`${path}.allowedValues must be an array of strings`);
     }
   }
@@ -7415,6 +8529,154 @@ function validateFieldConstraintDefinition(
   if (definition.required !== undefined && typeof definition.required !== 'boolean') {
     report(`${path}.required must be boolean`);
   }
+  if (definition.mappingRequired !== undefined && typeof definition.mappingRequired !== 'boolean') {
+    report(`${path}.mappingRequired must be boolean`);
+  }
+}
+
+interface MappingRequiredSourceField {
+  displayName: string;
+  aliases: string[];
+}
+
+function mappingRequiredSourceFields(
+  schema: Record<string, unknown>
+): MappingRequiredSourceField[] {
+  const fields = [schema.attributes, schema.fields, schema.columns].flatMap((definitions) =>
+    Array.isArray(definitions)
+      ? definitions.filter(isRecord).flatMap(mappingRequiredSourceFieldFromDefinition)
+      : []
+  );
+  for (const value of [schema.claims, schema.properties]) {
+    if (!isRecord(value)) continue;
+    fields.push(
+      ...Object.entries(value).flatMap(([key, definition]) => {
+        if (!isRecord(definition) || definition.mappingRequired !== true) return [];
+        return [{ displayName: key, aliases: [key] }];
+      })
+    );
+  }
+  return fields;
+}
+
+function mappingRequiredSourceFieldFromDefinition(
+  definition: Record<string, unknown>
+): MappingRequiredSourceField[] {
+  if (definition.mappingRequired !== true) return [];
+  const aliases = [
+    definition.name,
+    definition.key,
+    definition.claimName,
+    definition.columnName,
+    definition.headerName,
+    definition.id,
+    definition.stableColumnId,
+  ]
+    .map(readStringValue)
+    .filter((value): value is string => value !== null);
+  const uniqueAliases = [...new Set(aliases)];
+  if (uniqueAliases.length === 0) return [];
+  return [{ displayName: uniqueAliases[0], aliases: uniqueAliases }];
+}
+
+function isSourceProfileMappingReference(profileId: string): boolean {
+  return profileId.startsWith('source-profile-') || profileId.startsWith('source_profile_');
+}
+
+function sourceProfileReferenceCandidates(profileId: string): string[] {
+  const candidates = new Set([profileId, normalizeSourceProfileReference(profileId)]);
+  return [...candidates];
+}
+
+function normalizeSourceProfileReference(profileId: string): string {
+  return profileId.startsWith('source-profile-')
+    ? profileId.slice('source-profile-'.length)
+    : profileId;
+}
+
+function isDestinationProfileMappingReference(profileId: string | null): boolean {
+  return Boolean(
+    profileId &&
+    (profileId.startsWith('destination-profile-') || profileId.startsWith('destination_profile_'))
+  );
+}
+
+function isBuiltInSystemIdentityMappingReference(ref: Record<string, unknown>): boolean {
+  const catalogEntryId = readStringValue(ref.catalogEntryId);
+  return Boolean(catalogEntryId?.startsWith('system.identity.'));
+}
+
+function destinationProfileReferenceCandidates(profileId: string): string[] {
+  const candidates = new Set([profileId, normalizeDestinationProfileReference(profileId)]);
+  return [...candidates];
+}
+
+function normalizeDestinationProfileReference(profileId: string): string {
+  return profileId.startsWith('destination-profile-')
+    ? profileId.slice('destination-profile-'.length)
+    : profileId;
+}
+
+function findCatalogEntryForMappingRef(
+  entries: FieldCatalogEntrySummary[],
+  ref: Record<string, unknown>
+): FieldCatalogEntrySummary | null {
+  const catalogEntryId = readStringValue(ref.catalogEntryId);
+  if (catalogEntryId) {
+    const exact = entries.find(
+      (entry) => entry.id === catalogEntryId || entry.stableFieldId === catalogEntryId
+    );
+    if (exact) return exact;
+  }
+  const namespace = readStringValue(ref.namespace);
+  const path = readStringValue(ref.path);
+  if (!namespace || !path) return null;
+  return (
+    entries.find(
+      (entry) =>
+        (entry.namespace === namespace && entry.path === path) ||
+        entry.aliases.some((alias) => alias.namespace === namespace && alias.path === path)
+    ) ?? null
+  );
+}
+
+function findDestinationProfileField(
+  destinationType: string,
+  schema: Record<string, unknown>,
+  path: string
+): Record<string, unknown> | null {
+  const definitions =
+    destinationType === 'saml'
+      ? schema.attributes
+      : destinationType === 'csv'
+        ? schema.columns
+        : schema.claims;
+  if (!Array.isArray(definitions)) return null;
+  const key =
+    destinationType === 'saml' ? 'name' : destinationType === 'csv' ? 'columnName' : 'claimName';
+  return (
+    definitions.filter(isRecord).find((definition) => readStringValue(definition[key]) === path) ??
+    null
+  );
+}
+
+function sensitiveClassificationRank(classification: string): number {
+  if (classification === 'regulated') return 2;
+  if (classification === 'pii') return 1;
+  return 0;
+}
+
+function readStringValue(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function readStringArrayValue(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)
+    : [];
 }
 
 function assertProfileSchemaBudget(value: unknown, path: string): void {
@@ -7502,6 +8764,17 @@ function assertFieldMappingRuleSafe(rule: FieldMappingVersionRuleInput, path: st
   rule.edges?.forEach((edge, index) => {
     assertNonEmptyRecord(edge.sourceRef, `${path}.edges[${index}].sourceRef`);
     assertNonEmptyRecord(edge.targetRef, `${path}.edges[${index}].targetRef`);
+    const targetNamespace = readStringValue(edge.targetRef.namespace);
+    const targetPath = readStringValue(edge.targetRef.path);
+    if (
+      targetNamespace &&
+      targetPath &&
+      isProtectedIdentityMappingDestinationClaim(targetNamespace, targetPath)
+    ) {
+      throw badRequest(
+        `${path}.edges[${index}].targetRef targets a claim reserved by the protocol envelope`
+      );
+    }
     if (edge.edgeKind !== undefined) {
       validatePolicySymbol(edge.edgeKind, `${path}.edges[${index}].edgeKind`);
     }

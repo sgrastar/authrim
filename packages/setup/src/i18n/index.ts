@@ -28,12 +28,26 @@ let currentLocale: Locale = DEFAULT_LOCALE;
 // Cached translations
 const translationsCache = new Map<Locale, Translations>();
 
+const translationLoaders: Record<Locale, () => Promise<{ default: Translations }>> = {
+  en: () => import('./locales/en.js'),
+  ja: () => import('./locales/ja.js'),
+  'zh-CN': () => import('./locales/zh-CN.js'),
+  'zh-TW': () => import('./locales/zh-TW.js'),
+  es: () => import('./locales/es.js'),
+  pt: () => import('./locales/pt.js'),
+  fr: () => import('./locales/fr.js'),
+  de: () => import('./locales/de.js'),
+  ko: () => import('./locales/ko.js'),
+  ru: () => import('./locales/ru.js'),
+  id: () => import('./locales/id.js'),
+};
+
 /**
  * Dynamically import translation module
  */
 async function importTranslations(locale: Locale): Promise<Translations> {
   try {
-    const module = await import(`./locales/${locale}.js`);
+    const module = await translationLoaders[locale]();
     return module.default as Translations;
   } catch {
     // Fallback to English if locale not found

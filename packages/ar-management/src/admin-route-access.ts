@@ -1,6 +1,11 @@
 import type { Context, Hono, Next } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { ADMIN_PERMISSIONS, hasAdminPermission, type AdminAuthContext } from '@authrim/ar-lib-core';
+import {
+  ADMIN_PERMISSIONS,
+  getLogger,
+  hasAdminPermission,
+  type AdminAuthContext,
+} from '@authrim/ar-lib-core';
 
 export type AdminRouteMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -92,12 +97,85 @@ function writeOnly(pattern: string, permission: string, description: string): Ad
 }
 
 export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
+  rule({
+    pattern: '/api/internal/versions/:workerName',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION],
+    description: 'internal Worker version registration',
+  }),
+  readOnly(
+    '/api/internal/version-manager/status',
+    ADMIN_PERMISSIONS.CONTROL_PLANE_READ,
+    'internal Worker version status'
+  ),
   authenticated('/api/admin/me/session', 'current admin session'),
   authenticated('/api/admin/logout', 'current admin logout'),
   authenticated('/api/admin/sessions/me', 'removed legacy session endpoint'),
   authenticated('/api/admin/me/passkeys', 'current admin passkey management'),
   authenticated('/api/admin/me/passkeys/*', 'current admin passkey management'),
+  authenticated('/api/admin/me/agent-consents', 'current admin Agent consent management'),
+  authenticated('/api/admin/me/agent-consents/*', 'current admin Agent consent management'),
 
+  rule({
+    pattern: '/api/admin/agent-write/clients/:id/metadata',
+    methods: ['PUT'],
+    permissions: [ADMIN_PERMISSIONS.CLIENTS_UPDATE],
+    description: 'Agent OAuth client display metadata update',
+  }),
+  rule({
+    pattern: '/api/admin/agent-write/clients/:id/protocol-security',
+    methods: ['PUT'],
+    permissions: [ADMIN_PERMISSIONS.CLIENTS_UPDATE],
+    description: 'Agent operation-bound OAuth client protocol security update',
+  }),
+  rule({
+    pattern: '/api/admin/agent-write/clients/public',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.CLIENTS_CREATE],
+    description: 'Agent operation-bound public OAuth client creation',
+  }),
+  rule({
+    pattern: '/api/admin/clients',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.CLIENTS_CREATE],
+    description: 'Create OAuth client',
+  }),
+  rule({
+    pattern: '/api/admin/clients/:id',
+    methods: ['PUT', 'PATCH'],
+    permissions: [ADMIN_PERMISSIONS.CLIENTS_UPDATE],
+    description: 'Update OAuth client',
+  }),
+  rule({
+    pattern: '/api/admin/clients/:id/regenerate-secret',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.CLIENTS_SECRET_ROTATE],
+    description: 'Rotate OAuth client secret',
+  }),
+  rule({
+    pattern: '/api/admin/policies/simulate',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.POLICY_SIMULATE],
+    description: 'Simulate authorization policy',
+  }),
+  rule({
+    pattern: '/api/admin/flows/:id/validate',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.FLOWS_VALIDATE],
+    description: 'Validate authentication Flow',
+  }),
+  rule({
+    pattern: '/api/admin/flows/:id/compile',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.FLOWS_COMPILE],
+    description: 'Compile authentication Flow',
+  }),
+  rule({
+    pattern: '/api/admin/flows/:id/publish',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.FLOWS_PUBLISH],
+    description: 'Publish authentication Flow',
+  }),
   rule({
     pattern: '/api/admin/test/*',
     permissions: [ADMIN_PERMISSIONS.SECURITY_WRITE],
@@ -267,6 +345,38 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
   ),
 
   ...byMethod(
+    '/api/admin/email-deliveries',
+    ADMIN_PERMISSIONS.EMAIL_DELIVERIES_READ,
+    ADMIN_PERMISSIONS.EMAIL_DELIVERIES_READ,
+    ADMIN_PERMISSIONS.EMAIL_DELIVERIES_READ,
+    'email delivery diagnostics',
+    TENANT_ADMIN_ROLES
+  ),
+  readOnly(
+    '/api/admin/users/:id/email-deliveries',
+    ADMIN_PERMISSIONS.EMAIL_DELIVERIES_READ,
+    'user email delivery diagnostics'
+  ),
+  ...byMethod(
+    '/api/admin/users/:id/support-context',
+    ADMIN_PERMISSIONS.ACCOUNT_SUPPORT_CONTEXT_READ,
+    ADMIN_PERMISSIONS.ACCOUNT_SUPPORT_CONTEXT_WRITE,
+    ADMIN_PERMISSIONS.ACCOUNT_SUPPORT_CONTEXT_WRITE,
+    'account support context'
+  ),
+  ...byMethod(
+    '/api/admin/users/:id/legal-holds',
+    ADMIN_PERMISSIONS.ACCOUNT_LEGAL_HOLDS_READ,
+    ADMIN_PERMISSIONS.ACCOUNT_LEGAL_HOLDS_WRITE,
+    ADMIN_PERMISSIONS.ACCOUNT_LEGAL_HOLDS_WRITE,
+    'account legal holds'
+  ),
+  writeOnly(
+    '/api/admin/users/:id/legal-holds/*',
+    ADMIN_PERMISSIONS.ACCOUNT_LEGAL_HOLDS_WRITE,
+    'account legal hold lifecycle'
+  ),
+  ...byMethod(
     '/api/admin/users',
     ADMIN_PERMISSIONS.USERS_READ,
     ADMIN_PERMISSIONS.USERS_WRITE,
@@ -280,7 +390,6 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.USERS_DELETE,
     'end users'
   ),
-  readOnly('/api/admin/avatars/*', ADMIN_PERMISSIONS.USERS_READ, 'user avatars'),
   ...byMethod(
     '/api/admin/assets/login-ui',
     ADMIN_PERMISSIONS.SETTINGS_READ,
@@ -340,11 +449,32 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'tenant settings'
   ),
   ...byMethod(
+    '/api/admin/settings/agent',
+    ADMIN_PERMISSIONS.AGENT_SETTINGS_READ,
+    ADMIN_PERMISSIONS.AGENT_SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.AGENT_SETTINGS_WRITE,
+    'Agent Access settings'
+  ),
+  ...byMethod(
     '/api/admin/settings/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'tenant settings'
+  ),
+  ...byMethod(
+    '/api/admin/launchers',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'application launchers'
+  ),
+  ...byMethod(
+    '/api/admin/launchers/*',
+    ADMIN_PERMISSIONS.SETTINGS_READ,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    ADMIN_PERMISSIONS.SETTINGS_WRITE,
+    'application launchers'
   ),
   ...byMethod(
     '/api/admin/platform/settings/*',
@@ -354,6 +484,42 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'platform settings',
     PLATFORM_ADMIN_ROLES
   ),
+  rule({
+    pattern: '/api/admin/tenants/:tenantId/settings/assurance',
+    methods: ['PATCH'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_ASSURANCE_UPDATE],
+    description: 'tenant assurance settings update',
+  }),
+  rule({
+    pattern: '/api/admin/tenants/:tenantId/settings/security',
+    methods: ['PATCH'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_SECURITY_UPDATE],
+    description: 'tenant protocol security settings update',
+  }),
+  rule({
+    pattern: '/api/admin/tenants/:tenantId/settings/tokens',
+    methods: ['PATCH'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_TOKEN_EXCHANGE_UPDATE],
+    description: 'tenant token settings update',
+  }),
+  rule({
+    pattern: '/api/admin/tenants/:tenantId/settings/oauth',
+    methods: ['PATCH'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_OAUTH_UPDATE],
+    description: 'tenant OAuth settings update',
+  }),
+  rule({
+    pattern: '/api/admin/tenants/:tenantId/settings/session',
+    methods: ['PATCH'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_SESSION_UPDATE],
+    description: 'tenant session and logout settings update',
+  }),
+  rule({
+    pattern: '/api/admin/tenants/:tenantId/settings/login-ui',
+    methods: ['PATCH'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_LOGIN_UI_UPDATE],
+    description: 'tenant login UI settings update',
+  }),
   ...byMethod(
     '/api/admin/tenants/:tenantId/settings/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
@@ -489,6 +655,12 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'tenant administration',
     PLATFORM_ADMIN_ROLES
   ),
+  rule({
+    pattern: '/api/admin/tenants/:tenantId/clone',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.TENANT_LIFECYCLE_STANDARD],
+    description: 'clone tenant configuration',
+  }),
   ...byMethod(
     '/api/admin/tenants/*',
     ADMIN_PERMISSIONS.SETTINGS_READ,
@@ -660,6 +832,41 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'identity field mapping'
   ),
+  readOnly(
+    '/api/admin/credential-profiles',
+    ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_READ,
+    'credential profiles'
+  ),
+  writeOnly(
+    '/api/admin/credential-profiles',
+    ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_WRITE,
+    'credential profiles'
+  ),
+  readOnly(
+    '/api/admin/credential-profiles/:id',
+    ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_READ,
+    'credential profile'
+  ),
+  writeOnly(
+    '/api/admin/credential-profiles/:id',
+    ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_WRITE,
+    'credential profile'
+  ),
+  writeOnly(
+    '/api/admin/credential-profiles/:id/versions',
+    ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_WRITE,
+    'credential profile versions'
+  ),
+  writeOnly(
+    '/api/admin/credential-profiles/:id/versions/:versionId/publish',
+    ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_PUBLISH,
+    'credential profile publication'
+  ),
+  writeOnly(
+    '/api/admin/credential-profiles/:id/offers',
+    ADMIN_PERMISSIONS.VC_CREDENTIAL_OFFERS_CREATE,
+    'credential offer creation'
+  ),
   ...byMethod(
     '/api/admin/flows',
     ADMIN_PERMISSIONS.SETTINGS_READ,
@@ -728,6 +935,13 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SECURITY_WRITE,
     ADMIN_PERMISSIONS.SECURITY_WRITE,
     'SCIM bearer tokens'
+  ),
+  ...byMethod(
+    '/api/admin/scim-settings',
+    ADMIN_PERMISSIONS.SECURITY_READ,
+    ADMIN_PERMISSIONS.SECURITY_WRITE,
+    ADMIN_PERMISSIONS.SECURITY_WRITE,
+    'SCIM inbound settings'
   ),
   ...byMethod(
     '/api/admin/check-api-keys',
@@ -823,6 +1037,24 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.ADMIN_USERS_DELETE,
     'admin users'
   ),
+  rule({
+    pattern: '/api/admin/admin-invitations',
+    methods: READ_METHODS,
+    permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_READ],
+    description: 'admin invitations read',
+  }),
+  rule({
+    pattern: '/api/admin/admin-invitations',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_WRITE, ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE],
+    description: 'admin invitations create',
+  }),
+  rule({
+    pattern: '/api/admin/admin-invitations/*',
+    methods: ['POST', 'DELETE'],
+    permissions: [ADMIN_PERMISSIONS.ADMIN_USERS_WRITE, ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE],
+    description: 'admin invitations resend or revoke',
+  }),
   ...byMethod(
     '/api/admin/admin-roles',
     ADMIN_PERMISSIONS.ADMIN_ROLES_READ,
@@ -988,6 +1220,51 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'database connections'
   ),
   ...byMethod(
+    '/api/admin/platform/read-replication',
+    ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_READ,
+    ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_UPDATE,
+    ADMIN_PERMISSIONS.DATABASE_CONNECTIONS_UPDATE,
+    'platform D1 read replication',
+    PLATFORM_ADMIN_ROLES
+  ),
+  rule({
+    pattern: '/api/admin/platform/control-plane/capacity/preview',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_READ],
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'platform control plane capacity preview',
+  }),
+  rule({
+    pattern: '/api/admin/platform/control-plane/lookup-hmac/rotations',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_ROTATE],
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'platform control plane lookup HMAC rotation start',
+  }),
+  rule({
+    pattern: '/api/admin/platform/control-plane/lookup-hmac/rotations/:operationId/activate',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_ROTATE],
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'platform control plane lookup HMAC rotation activation',
+  }),
+  rule({
+    pattern:
+      '/api/admin/platform/control-plane/lookup-hmac/rotations/:operationId/observe-generation',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.CONTROL_PLANE_ROTATE],
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'platform control plane lookup HMAC generation observation',
+  }),
+  ...byMethod(
+    '/api/admin/platform/control-plane/*',
+    ADMIN_PERMISSIONS.CONTROL_PLANE_READ,
+    ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION,
+    ADMIN_PERMISSIONS.CONTROL_PLANE_PROVISION,
+    'platform control plane operations',
+    PLATFORM_ADMIN_ROLES
+  ),
+  ...byMethod(
     '/api/admin/machine-access',
     ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_READ,
     ADMIN_PERMISSIONS.ADMIN_MACHINE_ACCESS_WRITE,
@@ -1096,6 +1373,12 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'admin jobs',
     TENANT_ADMIN_ROLES
   ),
+  rule({
+    pattern: '/api/admin/jobs/schedules',
+    methods: READ_METHODS,
+    roles: PLATFORM_ADMIN_ROLES,
+    description: 'platform R2 maintenance schedules and storage metrics',
+  }),
   ...byMethod(
     '/api/admin/jobs/*',
     ADMIN_PERMISSIONS.JOBS_READ,
@@ -1162,18 +1445,197 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'access control aggregate stats'
   ),
   ...byMethod(
-    '/api/admin/ai-grants',
-    ADMIN_PERMISSIONS.AI_GRANTS_READ,
-    ADMIN_PERMISSIONS.AI_GRANTS_CREATE,
-    ADMIN_PERMISSIONS.AI_GRANTS_REVOKE,
-    'AI grants'
+    '/api/admin/agent-grants',
+    ADMIN_PERMISSIONS.AGENT_GRANTS_READ,
+    ADMIN_PERMISSIONS.AGENT_GRANTS_WRITE,
+    ADMIN_PERMISSIONS.AGENT_GRANTS_REVOKE,
+    'Agent Access grants'
+  ),
+  readOnly(
+    '/api/admin/agent-grants/eligible-permissions',
+    ADMIN_PERMISSIONS.AGENT_GRANTS_WRITE,
+    'Agent Access grant permission eligibility'
   ),
   ...byMethod(
-    '/api/admin/ai-grants/*',
-    ADMIN_PERMISSIONS.AI_GRANTS_READ,
-    ADMIN_PERMISSIONS.AI_GRANTS_UPDATE,
-    ADMIN_PERMISSIONS.AI_GRANTS_REVOKE,
-    'AI grants'
+    '/api/admin/agent-grants/*',
+    ADMIN_PERMISSIONS.AGENT_GRANTS_READ,
+    ADMIN_PERMISSIONS.AGENT_GRANTS_WRITE,
+    ADMIN_PERMISSIONS.AGENT_GRANTS_REVOKE,
+    'Agent Access grants'
+  ),
+  rule({
+    pattern: '/api/admin/agent-login-handoffs/:id/approve',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.AGENT_USE],
+    description: 'Approve an Admin Agent login handoff on the central Admin origin',
+  }),
+  ...byMethod(
+    '/api/admin/agent-elevations/*',
+    ADMIN_PERMISSIONS.AGENT_USE,
+    ADMIN_PERMISSIONS.AGENT_USE,
+    ADMIN_PERMISSIONS.AGENT_ELEVATION_RECONCILE,
+    'Agent elevation review and decision'
+  ),
+  ...byMethod(
+    '/api/admin/agent-task-sets',
+    ADMIN_PERMISSIONS.AGENT_TASK_SETS_READ,
+    ADMIN_PERMISSIONS.AGENT_TASK_SETS_WRITE,
+    ADMIN_PERMISSIONS.AGENT_TASK_SETS_WRITE,
+    'Agent Task Sets'
+  ),
+  ...byMethod(
+    '/api/admin/agent-task-sets/*',
+    ADMIN_PERMISSIONS.AGENT_TASK_SETS_READ,
+    ADMIN_PERMISSIONS.AGENT_TASK_SETS_WRITE,
+    ADMIN_PERMISSIONS.AGENT_TASK_SETS_WRITE,
+    'Agent Task Sets'
+  ),
+  ...byMethod(
+    '/api/admin/agent-scope-policies',
+    ADMIN_PERMISSIONS.AGENT_SCOPE_POLICIES_READ,
+    ADMIN_PERMISSIONS.AGENT_SCOPE_POLICIES_WRITE,
+    ADMIN_PERMISSIONS.AGENT_SCOPE_POLICIES_WRITE,
+    'Agent Scope Policies'
+  ),
+  ...byMethod(
+    '/api/admin/agent-scope-policies/*',
+    ADMIN_PERMISSIONS.AGENT_SCOPE_POLICIES_READ,
+    ADMIN_PERMISSIONS.AGENT_SCOPE_POLICIES_WRITE,
+    ADMIN_PERMISSIONS.AGENT_SCOPE_POLICIES_WRITE,
+    'Agent Scope Policies'
+  ),
+  ...byMethod(
+    '/api/admin/agent-templates',
+    ADMIN_PERMISSIONS.AGENT_TEMPLATES_PUBLISH,
+    ADMIN_PERMISSIONS.AGENT_TEMPLATES_PUBLISH,
+    ADMIN_PERMISSIONS.AGENT_TEMPLATES_PUBLISH,
+    'Agent configuration templates'
+  ),
+  ...byMethod(
+    '/api/admin/agent-templates/*',
+    ADMIN_PERMISSIONS.AGENT_TEMPLATES_PUBLISH,
+    ADMIN_PERMISSIONS.AGENT_TEMPLATES_PUBLISH,
+    ADMIN_PERMISSIONS.AGENT_TEMPLATES_PUBLISH,
+    'Agent configuration template copies'
+  ),
+  ...byMethod(
+    '/api/admin/agent-baselines',
+    ADMIN_PERMISSIONS.AGENT_BASELINES_READ,
+    ADMIN_PERMISSIONS.AGENT_BASELINES_WRITE,
+    ADMIN_PERMISSIONS.AGENT_BASELINES_APPLY,
+    'Agent baselines'
+  ),
+  ...byMethod(
+    '/api/admin/agent-baselines/*',
+    ADMIN_PERMISSIONS.AGENT_BASELINES_READ,
+    ADMIN_PERMISSIONS.AGENT_BASELINES_APPLY,
+    ADMIN_PERMISSIONS.AGENT_BASELINES_APPLY,
+    'Agent baseline assignments and exceptions'
+  ),
+  ...byMethod(
+    '/api/admin/agent-bulk-plans',
+    ADMIN_PERMISSIONS.BULK_PLANS_READ,
+    ADMIN_PERMISSIONS.BULK_PLANS_CREATE,
+    ADMIN_PERMISSIONS.BULK_PLANS_APPLY,
+    'Agent Bulk Plans'
+  ),
+  rule({
+    pattern: '/api/admin/agent-bulk-plans/:id/:version/start',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.BULK_PLANS_APPLY],
+    description: 'Start Agent Bulk Plan',
+  }),
+  rule({
+    pattern: '/api/admin/agent-bulk-plans/:id/:version/pause',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.BULK_PLANS_PAUSE],
+    description: 'Pause Agent Bulk Plan',
+  }),
+  rule({
+    pattern: '/api/admin/agent-bulk-plans/:id/:version/resume',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.BULK_PLANS_RESUME],
+    description: 'Resume Agent Bulk Plan',
+  }),
+  rule({
+    pattern: '/api/admin/agent-bulk-plans/:id/:version/cancel',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.BULK_PLANS_APPLY],
+    description: 'Cancel Agent Bulk Plan',
+  }),
+  ...byMethod(
+    '/api/admin/agent-bulk-plans/*',
+    ADMIN_PERMISSIONS.BULK_PLANS_READ,
+    ADMIN_PERMISSIONS.BULK_PLANS_CREATE,
+    ADMIN_PERMISSIONS.BULK_PLANS_APPLY,
+    'Agent Bulk Plans'
+  ),
+  rule({
+    pattern: '/api/admin/agent-config-plans/:id/:version/confirm',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_APPLY],
+    description: 'Agent configuration Plan confirmation',
+  }),
+  rule({
+    pattern: '/api/admin/agent-config-plans/:id/:version/cancel',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_CANCEL],
+    description: 'Cancel Agent configuration Plan',
+  }),
+  ...byMethod(
+    '/api/admin/agent-config-plans/*',
+    ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_READ,
+    ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_CREATE,
+    ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_CANCEL,
+    'Agent configuration Plans'
+  ),
+  ...byMethod(
+    '/api/admin/agent-config-plans',
+    ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_READ,
+    ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_CREATE,
+    ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_CANCEL,
+    'Agent configuration Plans'
+  ),
+  ...byMethod(
+    '/api/admin/agent-secret-refs',
+    ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_READ,
+    ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_CREATE,
+    ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_CANCEL,
+    'Agent opaque secret references'
+  ),
+  rule({
+    pattern: '/api/admin/agent-secret-refs/:id/revoke',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.AUTH_CONFIG_PLANS_CREATE],
+    description: 'Revoke an Agent opaque secret reference',
+  }),
+  readOnly('/api/admin/agent-read/users', ADMIN_PERMISSIONS.USERS_READ, 'Agent-safe user search'),
+  readOnly('/api/admin/agent-read/users/*', ADMIN_PERMISSIONS.USERS_READ, 'Agent-safe user detail'),
+  readOnly(
+    '/api/admin/agent-read/clients',
+    ADMIN_PERMISSIONS.CLIENTS_READ,
+    'Agent-safe client list'
+  ),
+  readOnly(
+    '/api/admin/agent-read/clients/*',
+    ADMIN_PERMISSIONS.CLIENTS_READ,
+    'Agent-safe client detail'
+  ),
+  readOnly(
+    '/api/admin/agent-read/session-posture',
+    ADMIN_PERMISSIONS.SESSIONS_READ,
+    'Agent-safe aggregate session posture'
+  ),
+  rule({
+    pattern: '/api/admin/agent-write/users/:id/suspend',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.USERS_SUSPEND],
+    description: 'Agent operation-bound user suspension',
+  }),
+  readOnly(
+    '/api/admin/agent-read/admin-audit-log',
+    ADMIN_PERMISSIONS.ADMIN_AUDIT_READ,
+    'Agent-safe Admin audit search'
   ),
   ...byMethod(
     '/api/admin/rebac',
@@ -1404,7 +1866,22 @@ function isAllowedByRule(authContext: AdminAuthContext, accessRule: AdminRouteAc
   return false;
 }
 
-function insufficientPermissionsResponse(c: Context<{ Bindings: Env }>): Response {
+function insufficientPermissionsResponse(
+  c: Context<{ Bindings: Env }>,
+  accessRule?: AdminRouteAccessRule
+): Response {
+  const authContext = (c as unknown as { get: (key: string) => unknown }).get('adminAuth') as
+    | AdminAuthContext
+    | undefined;
+  getLogger(c)
+    .module('ADMIN-ROUTE-ACCESS')
+    .warn('Declared Admin route access denied', {
+      method: c.req.method,
+      path: new URL(c.req.url).pathname,
+      authMethod: authContext?.authMethod,
+      requiredPermissions: accessRule?.permissions ?? accessRule?.anyPermissions ?? [],
+      actualPermissions: authContext?.permissions ?? [],
+    });
   return c.json(
     {
       error: 'insufficient_permissions',
@@ -1437,7 +1914,7 @@ export function enforceDeclaredAdminRouteAccess() {
     }
 
     if (!isAllowedByRule(authContext, accessRule)) {
-      return insufficientPermissionsResponse(c);
+      return insufficientPermissionsResponse(c, accessRule);
     }
 
     return next();

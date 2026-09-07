@@ -213,14 +213,14 @@ export const httpNonLocalhostUriArb = fc
 // =============================================================================
 
 /**
- * Valid state parameter (printable ASCII, 1-512 characters)
+ * Valid state parameter (1-2048 characters)
  */
-export const stateArb = fc.string({ minLength: 1, maxLength: 512 });
+export const stateArb = fc.string({ minLength: 1, maxLength: 2048 });
 
 /**
  * State that is too long
  */
-export const tooLongStateArb = fc.string({ minLength: 513, maxLength: 1024 });
+export const tooLongStateArb = fc.string({ minLength: 2049, maxLength: 4096 });
 
 /**
  * Valid nonce parameter

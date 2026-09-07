@@ -41,6 +41,12 @@ const mockCountUsersWithNonPiiFieldData = vi.fn(
     return rows[0]?.count || 0;
   }
 );
+const mockCountUsersWithPiiFieldData = vi.fn(
+  async (_db: unknown, _tenantId: string, fieldKey: string) => {
+    const rows = await mockPiiQuery('COUNT_PII_FIELD_USERS', fieldKey);
+    return rows[0]?.count || 0;
+  }
+);
 const mockDeleteStoredCustomClaimData = vi.fn(
   async ({ fieldKey, isPii }: { fieldKey: string; isPii: boolean }) => {
     if (!isPii) {
@@ -174,6 +180,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     listNonPiiFieldUsage: (db: unknown, tenantId: string) => mockListNonPiiFieldUsage(db, tenantId),
     countUsersWithNonPiiFieldData: (db: unknown, tenantId: string, fieldKey: string) =>
       mockCountUsersWithNonPiiFieldData(db, tenantId, fieldKey),
+    countUsersWithPiiFieldData: (db: unknown, tenantId: string, fieldKey: string) =>
+      mockCountUsersWithPiiFieldData(db, tenantId, fieldKey),
     deleteStoredCustomClaimData: (params: {
       db: unknown;
       dbPii?: unknown;
@@ -193,16 +201,15 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       return selectMockAdapter(opts.db);
     }),
     resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
-      storageProfile: {
-        id: 'builtin:storage:standard',
-        kind: 'storage',
-        label: 'Standard D1 Split',
-        slices: {},
-      },
       schemaDb: env.DB,
       nonPiiDb: env.DB,
       piiDb: env.DB_PII ?? null,
     })),
+    resolveTenantAssignedDatabaseSourcesFromRegistry: vi.fn(
+      async (env: Partial<Env>, options: { role: string }) => [
+        { source: options.role === 'tenant_pii' ? env.DB_PII : env.DB },
+      ]
+    ),
     CustomClaimSchemaHistoryManager: vi
       .fn()
       .mockImplementation(function MockCustomClaimSchemaHistoryManager() {
@@ -319,6 +326,12 @@ function createMockContext(options: {
     set: vi.fn((key: string, value: unknown) => contextStore.set(key, value)),
   } as any;
 
+  contextStore.set('tenantMetadataContext', {
+    tenantId: 'test-tenant',
+    coreDb: c.env.DB,
+    route: {},
+  });
+
   return c;
 }
 
@@ -341,6 +354,7 @@ function createSchemaRow(
     field_key: 'employee_id',
     display_label: 'Employee ID',
     field_type: 'string',
+    cardinality: 'single',
     is_pii: 0,
     is_required: 0,
     is_active: 1,
@@ -375,8 +389,10 @@ describe('Custom Claims Admin API', () => {
     vi.clearAllMocks();
     mockDbQuery.mockReset();
     mockDbExecute.mockReset();
+    mockDbExecute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mockPiiQuery.mockReset();
     mockPiiExecute.mockReset();
+    mockPiiExecute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mockGenerateId.mockReturnValue('test-id-123');
     mockSchemaHistoryRecordChange.mockReset();
     mockSchemaHistoryRecordChange.mockResolvedValue(undefined);
@@ -448,6 +464,8 @@ describe('Custom Claims Admin API', () => {
 
       expect(status).toBe(200);
       expect(body.presets[0].id).toBe('oidc_standard');
+      expect(body.presets[0]).toEqual(expect.objectContaining({ label: expect.any(String) }));
+      expect(body.presets[0]).not.toHaveProperty('name');
       expect(body.presets[0].fields).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -457,6 +475,19 @@ describe('Custom Claims Admin API', () => {
           }),
         ])
       );
+      expect(body.presets).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'scim_core_user' }),
+          expect.objectContaining({ id: 'scim_enterprise_user' }),
+          expect.objectContaining({ id: 'saml_eduperson' }),
+          expect.objectContaining({ id: 'authorization_context' }),
+        ])
+      );
+      expect(
+        body.presets
+          .find((preset: { id: string }) => preset.id === 'authorization_context')
+          ?.fields.find((field: { field_key: string }) => field.field_key === 'roles')
+      ).toMatchObject({ cardinality: 'multi' });
       expect(body.existing_field_keys).toEqual(['email']);
     });
   });
@@ -486,6 +517,7 @@ describe('Custom Claims Admin API', () => {
       expect(body.skipped_field_keys).toEqual(['email']);
       expect(mockDbExecute.mock.calls[0][0]).toContain('INSERT INTO custom_claim_schemas');
       expect(mockDbExecute.mock.calls[0][0]).toContain('ui_group_key');
+      expect(mockDbExecute.mock.calls[0][0]).toContain("FALSE, FALSE, FALSE, 'any'");
     });
 
     it('should reject unknown preset field keys', async () => {
@@ -569,6 +601,22 @@ describe('Custom Claims Admin API', () => {
       expect(status).toBe(400);
       expect(body.error_code).toBe('AR130002');
     });
+
+    it.each(['display_name', 'picture_url'])(
+      'should reject creation of built-in profile field %s',
+      async (fieldKey) => {
+        const c = createMockContext({
+          method: 'POST',
+          body: { field_key: fieldKey, display_label: 'Duplicate built-in' },
+        });
+
+        const res = await adminCustomClaimCreateHandler(c);
+        const { body, status } = await getResponseData(res);
+
+        expect(status).toBe(400);
+        expect(body.error_code).toBe('AR130002');
+      }
+    );
 
     it('should reject display_label longer than 255 chars', async () => {
       const c = createMockContext({
@@ -877,6 +925,8 @@ describe('Custom Claims Admin API', () => {
       expect(body.reserved_names).toBeInstanceOf(Array);
       expect(body.reserved_names).toContain('sub');
       expect(body.reserved_names).toContain('email');
+      expect(body.reserved_names).toContain('display_name');
+      expect(body.reserved_names).toContain('picture_url');
       // Verify sorted
       const sorted = [...body.reserved_names].sort();
       expect(body.reserved_names).toEqual(sorted);
@@ -954,27 +1004,30 @@ describe('Custom Claims Admin API', () => {
   describe('POST /api/admin/custom-claims/required-violations/detect', () => {
     it('should rescan active users and return violating previews', async () => {
       mockDbQuery.mockResolvedValueOnce([{ id: 'user-1' }, { id: 'user-2' }]);
-      mockGetRequiredCustomClaimViolationStatuses.mockResolvedValue({
-        requiredSchemaCount: 1,
-        users: [
-          {
-            userId: 'user-1',
-            lifecycleState: 'incomplete',
-            missingRequiredFields: [
-              {
-                fieldKey: 'department',
-                label: 'Department',
-                fieldType: 'string',
-              },
-            ],
-          },
-          {
-            userId: 'user-2',
-            lifecycleState: 'active',
-            missingRequiredFields: [],
-          },
-        ],
-      });
+      const statuses = [
+        {
+          userId: 'user-1',
+          lifecycleState: 'incomplete',
+          missingRequiredFields: [
+            {
+              fieldKey: 'department',
+              label: 'Department',
+              fieldType: 'string',
+            },
+          ],
+        },
+        {
+          userId: 'user-2',
+          lifecycleState: 'active',
+          missingRequiredFields: [],
+        },
+      ];
+      mockGetRequiredCustomClaimViolationStatuses.mockImplementation(
+        async ({ userIds }: { userIds: string[] }) => ({
+          requiredSchemaCount: 1,
+          users: statuses.filter((status) => userIds.includes(status.userId)),
+        })
+      );
       mockPiiQuery.mockResolvedValueOnce([
         { id: 'user-1', email: 'missing@example.com', name: 'Missing User' },
       ]);
@@ -1005,13 +1058,12 @@ describe('Custom Claims Admin API', () => {
           ],
         },
       ]);
-      expect(mockGetRequiredCustomClaimViolationStatuses).toHaveBeenCalledWith(
-        expect.objectContaining({
-          tenantId: 'test-tenant',
-          userIds: ['user-1', 'user-2'],
-          syncLifecycleState: true,
-        })
-      );
+      expect(mockGetRequiredCustomClaimViolationStatuses).toHaveBeenCalledTimes(2);
+      expect(
+        mockGetRequiredCustomClaimViolationStatuses.mock.calls.map(
+          ([input]) => (input as { userIds: string[] }).userIds[0]
+        )
+      ).toEqual(['user-1', 'user-2']);
     });
 
     it('should return empty results when there are no active users to scan', async () => {
@@ -1099,6 +1151,30 @@ describe('Custom Claims Admin API', () => {
       expect(body.schema).toBeDefined();
     });
 
+    it('should reject display label changes for built-in profile schemas', async () => {
+      mockDbQuery.mockResolvedValueOnce([
+        createSchemaRow({
+          id: 'builtin:test-tenant:display_name',
+          field_key: 'display_name',
+          display_label: 'Display Name',
+          is_system: true,
+        }),
+      ]);
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'builtin:test-tenant:display_name' },
+        body: { display_label: 'Renamed Profile Field' },
+      });
+
+      const res = await adminCustomClaimUpdateHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(403);
+      expect(body.error).toBe('forbidden');
+      expect(mockDbExecute).not.toHaveBeenCalled();
+    });
+
     it('should reject is_pii change', async () => {
       mockDbQuery.mockResolvedValueOnce([createSchemaRow({ is_pii: 0 })]);
 
@@ -1161,6 +1237,68 @@ describe('Custom Claims Admin API', () => {
       expect(status).toBe(400);
     });
 
+    it('should reject a cardinality change when non-PII values exist', async () => {
+      mockDbQuery.mockResolvedValueOnce([createSchemaRow()]).mockResolvedValueOnce([{ count: 3 }]);
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { cardinality: 'multi' },
+      });
+
+      const res = await adminCustomClaimUpdateHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(409);
+      expect(body.error_code).toBe('AR060005');
+      expect(mockDbExecute).toHaveBeenCalledTimes(2);
+      expect(mockDbExecute.mock.calls[0][0]).toContain("operation_status = 'reconfiguring'");
+      expect(mockDbExecute.mock.calls[1][1]).toEqual(
+        expect.arrayContaining(['active', null, 'schema-1', 'test-tenant', 'reconfiguring'])
+      );
+    });
+
+    it('should reject a cardinality change when PII values exist', async () => {
+      mockDbQuery.mockResolvedValueOnce([createSchemaRow({ is_pii: 1 })]);
+      mockPiiQuery.mockResolvedValueOnce([{ count: 2 }]);
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { cardinality: 'multi' },
+      });
+
+      const res = await adminCustomClaimUpdateHandler(c);
+      const { status } = await getResponseData(res);
+
+      expect(status).toBe(409);
+      expect(mockPiiQuery).toHaveBeenCalledWith('COUNT_PII_FIELD_USERS', 'employee_id');
+      expect(mockDbExecute).toHaveBeenCalledTimes(2);
+    });
+
+    it('fences writes while changing cardinality and restores the active state on success', async () => {
+      mockDbQuery
+        .mockResolvedValueOnce([createSchemaRow()])
+        .mockResolvedValueOnce([{ count: 0 }])
+        .mockResolvedValueOnce([createSchemaRow({ cardinality: 'multi' })]);
+
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'schema-1' },
+        body: { cardinality: 'multi' },
+      });
+
+      const res = await adminCustomClaimUpdateHandler(c);
+      const { status } = await getResponseData(res);
+
+      expect(status).toBe(200);
+      expect(mockDbExecute).toHaveBeenCalledTimes(2);
+      expect(mockDbExecute.mock.calls[0][0]).toContain("operation_status = 'reconfiguring'");
+      expect(mockDbExecute.mock.calls[1][1]).toEqual(
+        expect.arrayContaining(['multi', 'active', null, 'reconfiguring'])
+      );
+    });
+
     it('should reject examples_json larger than the storage budget on update', async () => {
       mockDbQuery.mockResolvedValueOnce([createSchemaRow()]);
 
@@ -1213,6 +1351,24 @@ describe('Custom Claims Admin API', () => {
   // ===========================================================================
 
   describe('DELETE /api/admin/custom-claims/:id (2-phase)', () => {
+    it('should reject deletion of PostgreSQL boolean system schemas', async () => {
+      mockDbQuery.mockResolvedValueOnce([
+        createSchemaRow({ id: 'builtin:test-tenant:email', field_key: 'email', is_system: true }),
+      ]);
+
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: 'builtin:test-tenant:email' },
+      });
+
+      const res = await adminCustomClaimDeleteHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(403);
+      expect(body.error).toBe('forbidden');
+      expect(mockDbExecute).not.toHaveBeenCalled();
+    });
+
     it('should delete non-PII schema with cascade', async () => {
       mockDbQuery.mockResolvedValueOnce([createSchemaRow()]);
       mockDbExecute.mockResolvedValue({ rowsAffected: 1 });
@@ -1312,6 +1468,29 @@ describe('Custom Claims Admin API', () => {
   // ===========================================================================
 
   describe('PATCH /api/admin/custom-claims/:id/rename (2-phase)', () => {
+    it('should reject renaming PostgreSQL boolean system schemas', async () => {
+      mockDbQuery.mockResolvedValueOnce([
+        createSchemaRow({
+          id: 'builtin:test-tenant:display_name',
+          field_key: 'display_name',
+          is_system: true,
+        }),
+      ]);
+
+      const c = createMockContext({
+        method: 'PATCH',
+        params: { id: 'builtin:test-tenant:display_name' },
+        body: { new_field_key: 'renamed_display_name' },
+      });
+
+      const res = await adminCustomClaimRenameHandler(c);
+      const { body, status } = await getResponseData(res);
+
+      expect(status).toBe(403);
+      expect(body.error).toBe('forbidden');
+      expect(mockDbExecute).not.toHaveBeenCalled();
+    });
+
     it('should rename non-PII field_key', async () => {
       mockDbQuery
         .mockResolvedValueOnce([createSchemaRow()]) // fetch existing

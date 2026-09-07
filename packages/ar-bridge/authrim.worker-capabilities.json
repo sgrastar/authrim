@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "packageName": "@authrim/ar-bridge",
+  "worker": "ar-bridge",
+  "lookupBlindIndex": true,
+  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
+  "bindings": [
+    { "name": "DB", "kind": "d1", "required": true, "capability": "audit.event" },
+    { "name": "DB_PII", "kind": "d1", "required": true, "capability": "audit.pii" },
+    {
+      "name": "DB_ADMIN",
+      "kind": "d1",
+      "required": true,
+      "capability": "admin.session.verify"
+    },
+    { "name": "LOOKUP_DB", "kind": "d1", "required": true, "dataRole": "lookup" },
+    { "name": "SETTINGS", "kind": "kv_namespace", "required": true },
+    { "name": "AUTHRIM_CONFIG", "kind": "kv_namespace", "required": true },
+    {
+      "name": "PLUGIN_RUNNER",
+      "kind": "service",
+      "required": true,
+      "capability": "plugin_hooks.invoke"
+    },
+    {
+      "name": "EXTERNAL_IDP_ACCOUNT_PROVISIONER",
+      "kind": "service",
+      "required": true,
+      "capability": "accounts.external_idp.provision"
+    },
+    { "name": "TENANT_RUNTIME_REGISTRY", "kind": "kv_namespace", "required": true },
+    { "name": "KEY_MANAGER", "kind": "durable_object_namespace", "required": true },
+    { "name": "SESSION_STORE", "kind": "durable_object_namespace", "required": true },
+    {
+      "name": "SESSION_REVOCATION_STORE",
+      "kind": "durable_object_namespace",
+      "required": true
+    },
+    { "name": "CHALLENGE_STORE", "kind": "durable_object_namespace", "required": true },
+    { "name": "DIAGNOSTIC_LOGS", "kind": "r2_bucket", "required": false },
+    { "name": "AUDIT_ARCHIVE", "kind": "r2_bucket", "required": false },
+    { "name": "SENSITIVE_DETAILS", "kind": "r2_bucket", "required": false },
+    { "name": "LOGGING_DELIVERY_CRITICAL_QUEUE", "kind": "queue", "required": false },
+    { "name": "LOGGING_DELIVERY_QUEUE", "kind": "queue", "required": false },
+    { "name": "LOGGING_DELIVERY_BULK_QUEUE", "kind": "queue", "required": false },
+    { "name": "TENANT_DATABASE_HYPERDRIVE", "kind": "hyperdrive", "required": false },
+    { "name": "CONTROL_SMOKE_VERSION", "kind": "version_metadata", "required": true }
+  ],
+  "secrets": [
+    {
+      "name": "RP_TOKEN_ENCRYPTION_KEY",
+      "capability": "external_idp_tokens.encrypt_decrypt",
+      "required": true
+    },
+    {
+      "name": "OBJECT_ENCRYPTION_ROOT_KEY",
+      "capability": "object_encryption.encrypt",
+      "required": true
+    },
+    {
+      "name": "TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS",
+      "capability": "runtime_registry.verify",
+      "required": true
+    },
+    {
+      "name": "LOOKUP_HMAC_KEY_SLOT_A",
+      "capability": "lookup_blind_index",
+      "required": true
+    },
+    {
+      "name": "LOOKUP_HMAC_KEY_SLOT_B",
+      "capability": "lookup_blind_index",
+      "required": false
+    },
+    {
+      "name": "CONTROL_SMOKE_VERIFYING_PUBLIC_JWKS",
+      "capability": "control_smoke.verify",
+      "required": true
+    }
+  ]
+}

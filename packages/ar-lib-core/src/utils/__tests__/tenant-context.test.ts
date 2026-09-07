@@ -1,5 +1,24 @@
-import { describe, it, expect } from 'vitest';
-import { remapShardIndex, getTenantIdFromHost, resolveTenantFromRequest } from '../tenant-context';
+import { describe, it, expect, vi } from 'vitest';
+import {
+  buildAuthCodeShardInstanceName,
+  buildDOInstanceName,
+  buildDOInstanceNameForTenant,
+  buildDOKey,
+  buildKVKey,
+  buildKVKeyForTenant,
+  buildSessionShardInstanceName,
+  createShardedAuthCode,
+  fnv1a32,
+  getAuthCodeShardIndex,
+  getSessionShardCount,
+  getShardCount,
+  getTenantId,
+  getTenantIdFromHost,
+  getTenantIdOrThrow,
+  parseShardedAuthCode,
+  remapShardIndex,
+  resolveTenantFromRequest,
+} from '../tenant-context';
 import type { Env } from '../../types/env';
 
 describe('getTenantIdFromHost', () => {
@@ -276,5 +295,140 @@ describe('remapShardIndex', () => {
       // Verify the relationship: oldShard % shardCount === newShard
       expect(oldShard % shardCount).toBe(newShard);
     }
+  });
+});
+
+describe('tenant-prefixed storage keys', () => {
+  it('builds unambiguous tenant-prefixed keys for every storage topology', () => {
+    expect(getTenantId()).toBe('default');
+    expect(buildDOKey('session', 's1', ' tenant-a ')).toBe('tenant:tenant-a:session:s1');
+    expect(buildKVKey('client', 'c1', 'tenant-a')).toBe('tenant:tenant-a:client:c1');
+    expect(buildDOInstanceName('key-manager', 'tenant-a')).toBe('tenant:tenant-a:key-manager');
+    expect(buildDOInstanceNameForTenant('tenant-a', 'session')).toBe('tenant:tenant-a:session');
+    expect(buildKVKeyForTenant('tenant-a', 'state', 'x')).toBe('tenant:tenant-a:state:x');
+    expect(buildAuthCodeShardInstanceName(3, 'tenant-a')).toBe('tenant:tenant-a:auth-code:shard-3');
+    expect(buildSessionShardInstanceName(2, 'tenant-a')).toBe('tenant:tenant-a:session:shard-2');
+  });
+
+  it.each([
+    ['buildDOKey', () => buildDOKey('session', 's1', ' ')],
+    ['buildKVKey', () => buildKVKey('state', 'x', '')],
+    ['buildDOInstanceName', () => buildDOInstanceName('session', '\t')],
+    ['buildDOInstanceNameForTenant', () => buildDOInstanceNameForTenant('', 'session')],
+    ['buildKVKeyForTenant', () => buildKVKeyForTenant(' ', 'state', 'x')],
+    ['buildAuthCodeShardInstanceName', () => buildAuthCodeShardInstanceName(0, '')],
+    ['buildSessionShardInstanceName', () => buildSessionShardInstanceName(0, ' ')],
+  ])('rejects an empty tenant in %s', (_label, operation) => {
+    expect(operation).toThrow(/requires tenantId/);
+  });
+});
+
+describe('tenant resolution failures', () => {
+  const env: Partial<Env> = { BASE_DOMAIN: 'authrim.example', DEFAULT_TENANT_ID: 'fallback' };
+
+  it.each([
+    [undefined, 'Host header is required'],
+    ['unknown.example', 'Tenant not found'],
+  ])('throws a stable error for host %s', (host, message) => {
+    expect(() => getTenantIdOrThrow(host, env)).toThrow(message);
+  });
+
+  it('returns a resolved tenant without modification', () => {
+    expect(getTenantIdOrThrow('acme.authrim.example', env)).toBe('acme');
+  });
+
+  it('falls back to a valid Authrim forwarded host only when Host is missing', () => {
+    const request = new Request('https://runtime.invalid/path', {
+      headers: { 'X-Authrim-Forwarded-Host': 'acme.authrim.example' },
+    });
+    request.headers.delete('Host');
+
+    const result = resolveTenantFromRequest(request, env);
+
+    expect(result).toMatchObject({ success: true, tenantId: 'acme' });
+  });
+
+  it('ignores duplicate and empty forwarded host values', () => {
+    const request = new Request('https://runtime.invalid/path', {
+      headers: { Host: 'unknown.example', 'X-Authrim-Forwarded-Host': ' ,acme.authrim.example' },
+    });
+
+    const result = resolveTenantFromRequest(request, {
+      ...env,
+      AUTHRIM_TRUST_FORWARDED_HOST: 'true',
+    });
+
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('authorization-code sharding', () => {
+  it('uses a deterministic unsigned FNV-1a hash and sticky shard', () => {
+    expect(fnv1a32('hello')).toBe(1335831723);
+    expect(getAuthCodeShardIndex('user-1', 'client-1', 16)).toBe(
+      getAuthCodeShardIndex('user-1', 'client-1', 16)
+    );
+    expect(getAuthCodeShardIndex('user-1', 'client-1', 16)).toBeLessThan(16);
+  });
+
+  it.each([0, -1, 1.5])('rejects invalid shard count %s', (count) => {
+    expect(() => getAuthCodeShardIndex('u', 'c', count)).toThrow('positive integer');
+  });
+
+  it('creates and strictly parses sharded authorization codes', () => {
+    expect(createShardedAuthCode(3, 'opaque_value')).toBe('3_opaque_value');
+    expect(parseShardedAuthCode('3_opaque_value')).toEqual({
+      shardIndex: 3,
+      opaqueCode: 'opaque_value',
+    });
+  });
+
+  it.each(['legacy-code', '-1_token', '1junk_token', '1_', '_token'])(
+    'rejects malformed sharded code %s',
+    (code) => expect(parseShardedAuthCode(code)).toBeNull()
+  );
+});
+
+describe('dynamic shard counts', () => {
+  it('prefers valid KV values and caches them briefly', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2030-01-01T00:00:00Z'));
+    const get = vi.fn(async (key: string) => (key === 'code_shards' ? '32' : '16'));
+    const env = { AUTHRIM_CONFIG: { get } } as unknown as Env;
+
+    expect(await getShardCount(env)).toBe(32);
+    expect(await getShardCount(env)).toBe(32);
+    expect(await getSessionShardCount(env)).toBe(16);
+    expect(await getSessionShardCount(env)).toBe(16);
+    expect(get).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it('refreshes after TTL and falls back through invalid KV to environment values', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2030-01-01T00:01:00Z'));
+    const env = {
+      AUTHRIM_CONFIG: { get: vi.fn(async () => 'invalid') },
+      AUTHRIM_CODE_SHARDS: '8',
+      AUTHRIM_SESSION_SHARDS: '12',
+    } as unknown as Env;
+
+    expect(await getShardCount(env)).toBe(8);
+    expect(await getSessionShardCount(env)).toBe(12);
+    vi.useRealTimers();
+  });
+
+  it('uses defaults when neither KV nor environment contains a positive count', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2030-01-01T00:02:00Z'));
+    const env = {
+      AUTHRIM_CONFIG: { get: vi.fn(async () => '-2') },
+      AUTHRIM_CODE_SHARDS: '0',
+      AUTHRIM_SESSION_SHARDS: 'NaN',
+    } as unknown as Env;
+
+    expect(await getShardCount(env)).toBe(4);
+    expect(await getSessionShardCount(env)).toBe(4);
+    vi.useRealTimers();
   });
 });

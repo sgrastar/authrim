@@ -26,6 +26,7 @@
 <button
 	{type}
 	disabled={disabled || loading}
+	aria-busy={loading}
 	class="btn btn-{variant} btn-{size} {className}"
 	class:btn-icon={icon}
 	{...restProps}

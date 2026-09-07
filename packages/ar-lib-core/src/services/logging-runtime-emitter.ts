@@ -2,13 +2,15 @@ import type { Queue } from '@cloudflare/workers-types';
 import {
   createLoggingId,
   formatUtcPartition,
-  writeLogChunkToR2,
   type LogPlane,
   type LogType,
-} from '@authrim/ar-lib-logging';
+} from '@authrim/ar-lib-logging/contract';
 import { buildArchiveLogRecordV1 } from '@authrim/ar-lib-logging/archive';
-import type { WriteLogChunkResult } from '@authrim/ar-lib-logging/chunks';
-import type { LogChunkEncryptionOptions } from '@authrim/ar-lib-logging/chunks';
+import {
+  writeLogChunkToR2,
+  type LogChunkEncryptionOptions,
+  type WriteLogChunkResult,
+} from '@authrim/ar-lib-logging/chunks';
 import {
   SqlLoggingDeliveryEventStore,
   type LoggingDeliveryLane,
@@ -19,6 +21,7 @@ import { laneForLogPolicy } from '@authrim/ar-lib-logging/policies';
 import { ensureDatabaseAdapter, type DatabaseSource } from '../db';
 import { SqlLogChunkCatalogStore } from './audit/logging-catalog-store';
 import { resolveAuditTenantKey, type TenantKeyResolver } from './audit/tenant-key';
+import { encryptObjectArtifact } from './object-artifact-crypto';
 import {
   resolveRuntimeLoggingPolicyTargetFromEnv,
   type RuntimeLoggingDestinationTarget,
@@ -488,6 +491,7 @@ async function emitArchiveChunk(input: {
   lane: LoggingDeliveryLane;
   target: Extract<RuntimeLoggingDestinationTarget, { type: 'r2' }>;
   policyMetadata: RuntimePolicyDeliveryMetadata;
+  requiresDeliveryFanout: boolean;
   records: RuntimeLogRecord[];
 }): Promise<RuntimeLogEmitTargetResult> {
   const bucket = getBucketBinding(input.env, input.target.bucketRef);
@@ -526,20 +530,22 @@ async function emitArchiveChunk(input: {
       plane: input.plane,
     }),
   });
-  const enqueueResult = await enqueueDeliveryPayload(input.env, {
-    payload_type: 'delivery_fanout',
-    schema_version: 1,
-    payload_id: `qpl_${crypto.randomUUID()}`,
-    tenant_key: input.tenantKey,
-    lane: input.lane,
-    created_at: result.createdAt,
-    catalog_id: result.objectCatalogId,
-    object_key: result.objectKey,
-    destination_id: input.target.destinationId,
-    log_type: input.logType,
-    plane: input.plane,
-    record_count: result.recordCount,
-  });
+  const enqueueResult = input.requiresDeliveryFanout
+    ? await enqueueDeliveryPayload(input.env, {
+        payload_type: 'delivery_fanout',
+        schema_version: 1,
+        payload_id: `qpl_${crypto.randomUUID()}`,
+        tenant_key: input.tenantKey,
+        lane: input.lane,
+        created_at: result.createdAt,
+        catalog_id: result.objectCatalogId,
+        object_key: result.objectKey,
+        destination_id: input.target.destinationId,
+        log_type: input.logType,
+        plane: input.plane,
+        record_count: result.recordCount,
+      })
+    : null;
   const status = statusForEnqueueResult(enqueueResult);
   await recordDeliveryEvent({
     env: input.env,
@@ -555,9 +561,9 @@ async function emitArchiveChunk(input: {
     metadata: {
       chunk_id: result.chunkId,
       ...policyDeliveryMetadataObject(input.policyMetadata),
-      delivery_queue_binding: enqueueResult.bindingName,
-      delivery_queue_fallback_used: enqueueResult.fallbackUsed,
-      delivery_queue_attempted_bindings: enqueueResult.attemptedBindingNames,
+      delivery_queue_binding: enqueueResult?.bindingName ?? null,
+      delivery_queue_fallback_used: enqueueResult?.fallbackUsed ?? false,
+      delivery_queue_attempted_bindings: enqueueResult?.attemptedBindingNames ?? null,
     },
   });
   return {
@@ -566,7 +572,7 @@ async function emitArchiveChunk(input: {
     lane: input.lane,
     status,
     objectCatalogId: result.objectCatalogId,
-    queued: enqueueResult.queued,
+    queued: enqueueResult?.queued ?? false,
   };
 }
 
@@ -607,19 +613,34 @@ async function emitHttpBatch(input: {
     partition.hour,
     `${cleanR2ObjectKeySegment(payloadId)}.json`,
   ].join('/');
-  const body = JSON.stringify(
-    canonicalBatch({
-      tenantId: input.tenantId,
-      tenantKey: input.tenantKey,
-      logType: input.logType,
-      plane: input.plane,
-      surface: input.surface,
-      records: input.records,
-      target: input.target,
-    })
-  );
-  await bucket.put(objectKey, body, {
-    httpMetadata: { contentType: 'application/json' },
+  if (!input.env.OBJECT_ENCRYPTION_ROOT_KEY) {
+    throw new Error('runtime_log_delivery_payload_encryption_key_unavailable');
+  }
+  const payload = canonicalBatch({
+    tenantId: input.tenantId,
+    tenantKey: input.tenantKey,
+    logType: input.logType,
+    plane: input.plane,
+    surface: input.surface,
+    records: input.records,
+    target: input.target,
+  });
+  const parsedKeyVersion = Number.parseInt(input.env.OBJECT_ENCRYPTION_KEY_VERSION ?? '1', 10);
+  const keyVersion =
+    Number.isSafeInteger(parsedKeyVersion) && parsedKeyVersion > 0 ? parsedKeyVersion : 1;
+  const envelope = await encryptObjectArtifact(JSON.stringify(payload), {
+    rootKeyHex: input.env.OBJECT_ENCRYPTION_ROOT_KEY,
+    plane: 'AUDIT_ARCHIVE',
+    keyVersion,
+    contentType: 'application/json',
+    context: {
+      tenantId: input.tenantKey,
+      objectKey,
+      objectClass: 'operational_log_detail',
+    },
+  });
+  await bucket.put(objectKey, JSON.stringify(envelope), {
+    httpMetadata: { contentType: 'application/vnd.authrim.object-envelope+json' },
     customMetadata: {
       tenantKey: input.tenantKey,
       logType: input.logType,
@@ -628,6 +649,9 @@ async function emitHttpBatch(input: {
       payloadId,
       batchId,
       createdAt: String(now),
+      encryption: 'authrim-object-envelope-v1',
+      encryptionTenantContext: input.tenantKey,
+      keyVersion: String(keyVersion),
     },
   });
   const enqueueResult = await enqueueDeliveryPayload(input.env, {
@@ -776,6 +800,7 @@ export async function emitRuntimeLogRecords(
           lane,
           target: resolved.target,
           policyMetadata,
+          requiresDeliveryFanout: resolved.requiresDeliveryFanout,
           records: input.records,
         })
       );

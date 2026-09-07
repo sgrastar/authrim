@@ -5,12 +5,10 @@ import {
   BUILTIN_RUNTIME_PROFILES,
   DEFAULT_AUDIT_PROFILE_ID,
   DEFAULT_RESIDENCY_PROFILE_ID,
-  DEFAULT_STORAGE_PROFILE_ID,
   type AuditProfile,
   type ResidencyProfile,
   type RuntimeProfile,
   type RuntimeProfileKind,
-  type StorageProfile,
 } from '../types/runtime-profile';
 
 export interface ProfileRegistryBackend {
@@ -21,20 +19,17 @@ export interface ProfileRegistryBackend {
 }
 
 export interface EnvironmentProfileDefaults {
-  storageProfileId: string;
   auditProfileId: string;
   residencyProfileId: string;
 }
 
 export interface TenantProfileOverrides {
-  storageProfileId?: string | null;
   auditProfileId?: string | null;
   residencyProfileId?: string | null;
 }
 
 export interface EffectiveProfileRefs extends EnvironmentProfileDefaults {
   inherited: {
-    storage: boolean;
     audit: boolean;
     residency: boolean;
   };
@@ -42,7 +37,6 @@ export interface EffectiveProfileRefs extends EnvironmentProfileDefaults {
 
 export interface ResolvedRuntimeProfiles {
   refs: EffectiveProfileRefs;
-  storageProfile: StorageProfile;
   auditProfile: AuditProfile;
   residencyProfile: ResidencyProfile;
 }
@@ -220,9 +214,6 @@ export function readEnvironmentProfileDefaults(
   settings?: Partial<InfrastructureSettings>
 ): EnvironmentProfileDefaults {
   return {
-    storageProfileId:
-      normalizeProfileId(settings?.['infra.default_storage_profile_id']) ??
-      DEFAULT_STORAGE_PROFILE_ID,
     auditProfileId:
       normalizeProfileId(settings?.['infra.default_audit_profile_id']) ?? DEFAULT_AUDIT_PROFILE_ID,
     residencyProfileId:
@@ -235,7 +226,6 @@ export function readTenantProfileOverrides(
   settings?: Partial<TenantSettings>
 ): TenantProfileOverrides {
   return {
-    storageProfileId: normalizeProfileId(settings?.['tenant.storage_profile_id']) ?? null,
     auditProfileId: normalizeProfileId(settings?.['tenant.audit_profile_id']) ?? null,
     residencyProfileId: normalizeProfileId(settings?.['tenant.residency_profile_id']) ?? null,
   };
@@ -245,16 +235,13 @@ export function resolveEffectiveProfileRefs(
   defaults: EnvironmentProfileDefaults,
   overrides?: TenantProfileOverrides
 ): EffectiveProfileRefs {
-  const storageOverride = normalizeProfileId(overrides?.storageProfileId);
   const auditOverride = normalizeProfileId(overrides?.auditProfileId);
   const residencyOverride = normalizeProfileId(overrides?.residencyProfileId);
 
   return {
-    storageProfileId: storageOverride ?? defaults.storageProfileId,
     auditProfileId: auditOverride ?? defaults.auditProfileId,
     residencyProfileId: residencyOverride ?? defaults.residencyProfileId,
     inherited: {
-      storage: !storageOverride,
       audit: !auditOverride,
       residency: !residencyOverride,
     },
@@ -265,15 +252,11 @@ export async function resolveRuntimeProfiles(
   registry: RuntimeProfileRegistry,
   refs: EffectiveProfileRefs
 ): Promise<ResolvedRuntimeProfiles> {
-  const [storageProfile, auditProfile, residencyProfile] = await Promise.all([
-    registry.get<StorageProfile>('storage', refs.storageProfileId),
+  const [auditProfile, residencyProfile] = await Promise.all([
     registry.get<AuditProfile>('audit', refs.auditProfileId),
     registry.get<ResidencyProfile>('residency', refs.residencyProfileId),
   ]);
 
-  if (!storageProfile) {
-    throw new Error(`storage_profile_not_found:${refs.storageProfileId}`);
-  }
   if (!auditProfile) {
     throw new Error(`audit_profile_not_found:${refs.auditProfileId}`);
   }
@@ -283,7 +266,6 @@ export async function resolveRuntimeProfiles(
 
   return {
     refs,
-    storageProfile,
     auditProfile,
     residencyProfile,
   };

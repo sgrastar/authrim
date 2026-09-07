@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Authentication API
-  version: 0.3.4
+  version: 0.4.0
   summary: Browser and API authentication endpoints.
   description: >
     Initial OpenAPI contract for endpoints owned by `@authrim/ar-auth`. This document intentionally
@@ -31,6 +31,7 @@ tags:
   - name: Login Runtime
   - name: Direct Auth
   - name: Invitations
+  - name: Admin Invitations
   - name: Registration
   - name: Auth
 paths:
@@ -47,6 +48,9 @@ paths:
       tags:
         - OAuth
       summary: Start or continue an OAuth/OIDC authorization request.
+      description: >-
+        Rejects response types that are disabled by the tenant OIDC policy. Internal consent
+        continuations are accepted only from the originating live session and browser binding.
       parameters:
         - $ref: '#/components/parameters/ClientIdQuery'
         - name: redirect_uri
@@ -65,15 +69,28 @@ paths:
           in: query
           schema:
             type: string
+        - name: ui_locales
+          in: query
+          description: >-
+            Space-separated BCP 47 locale preferences in priority order. The first supported value
+            is forwarded to Login UI as a transaction-scoped hint and does not overwrite the
+            end-user's saved language preference.
+          schema:
+            type: string
       responses:
         '200':
           $ref: '#/components/responses/Any'
         '302':
           description: Redirect response.
+        '503':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - OAuth
       summary: Submit an OAuth/OIDC authorization request.
+      description: >-
+        Internal consent continuations are accepted only from the originating live session and
+        browser binding.
       requestBody:
         $ref: '#/components/requestBodies/FormOrJson'
       responses:
@@ -104,40 +121,251 @@ paths:
       responses:
         '405':
           $ref: '#/components/responses/MethodNotAllowed'
+  /oauth/admin-agent/par:
+    post:
+      tags:
+        - OAuth
+      operationId: createAdminAgentPushedAuthorizationRequest
+      summary: Create a pushed authorization request for Admin Agent access.
+      description: >
+        Creates a single-use RFC 9126 request URI bound to the dedicated Admin Agent authorization
+        journey and the tenant MCP resource. Known clients, HTTPS Client ID Metadata Documents,
+        and restricted public-client registrations are supported. PKCE S256 and the exact RFC 8707
+        resource parameter are required.
+      requestBody:
+        $ref: '#/components/requestBodies/AdminAgentPushedAuthorization'
+      responses:
+        '201':
+          $ref: '#/components/responses/PushedAuthorization'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /oauth/admin-agent/authorize:
+    get:
+      tags:
+        - OAuth
+      operationId: getAdminAgentAuthorization
+      summary: Review an Admin Agent authorization request.
+      description: >
+        Requires a human Admin UI session. A request_uri resolves the dedicated PAR request without
+        consuming it. A direct Authorization Code with PKCE request is first validated and converted
+        to the same bounded PAR journey with a 302 redirect. RFC 8252 loopback IP callbacks may
+        vary only by port. The consent step displays the exact tenant and lets the Admin approve
+        configuration read, masked user-data read, and configuration write independently. For an
+        interactive client without a Grant, the server atomically creates a seven-day system-managed
+        Grant, Task Set, Scope Policy, both consent records, and audit evidence. Existing managed
+        Grants remain subject to their preconfigured boundary.
+      security:
+        - adminSessionCookie: []
+      parameters:
+        - name: request_uri
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: response_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [code]
+        - name: redirect_uri
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uri
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: resource
+          in: query
+          required: false
+          description: Exact MCP resource. Repeated identical values are normalized.
+          schema:
+            type: string
+            format: uri
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: code_challenge
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: code_challenge_method
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [S256]
+        - name: authorization_details
+          in: query
+          required: false
+          description: Bounded authrim_admin_agent RAR array.
+          schema:
+            type: string
+            maxLength: 16384
+      responses:
+        '200':
+          description: HTML consent page.
+          content:
+            text/html:
+              schema:
+                type: string
+        '302':
+          description: Direct request normalized to the dedicated PAR journey.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+    post:
+      tags:
+        - OAuth
+      operationId: decideAdminAgentAuthorization
+      summary: Approve or deny an Admin Agent authorization request.
+      description: >
+        Repeats all live checks, atomically consumes the dedicated PAR request, and redirects to the
+        registered client. Approval records delegation and OAuth client consent with a synchronous
+        audit event before issuing a dedicated admin-subject authorization code.
+      security:
+        - adminSessionCookie: []
+      requestBody:
+        $ref: '#/components/requestBodies/AdminAgentAuthorizationDecision'
+      responses:
+        '302':
+          description: Redirect to the exact registered redirect URI with code or OAuth error.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /oauth/admin-agent/login-handoff/consume:
+    get:
+      tags:
+        - OAuth
+      operationId: consumeAdminAgentLoginHandoff
+      summary: Establish a host-only Admin session on the target tenant issuer.
+      description: >
+        Consumes a one-time code only when the request has the tenant-side HttpOnly browser-binding
+        cookie and the central Management API-issued code. It revalidates the source Admin session,
+        user, MFA state, tenant scope, target origin, and expiry. Success sets a host-only derived
+        Admin session cookie and resumes the stored Admin Agent authorization path. Replays and
+        cross-tenant consumption fail closed.
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^ahc_[A-Za-z0-9_-]{43}$'
+      responses:
+        '302':
+          description: Resume the exact stored Admin Agent authorization request.
+          headers:
+            Location:
+              schema:
+                type: string
+                format: uri
+            Set-Cookie:
+              schema:
+                type: string
+              description: Secure, HttpOnly, host-only Admin session cookie.
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '410':
+          $ref: '#/components/responses/Error'
   /flow/login:
     get:
       tags:
         - OAuth
-      summary: Render a built-in login flow page when enabled.
+      summary: Render the test or OIDC-conformance login adapter when enabled.
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - OAuth
-      summary: Submit a built-in login flow step when enabled.
+      summary: Submit the test or OIDC-conformance login adapter when enabled.
       requestBody:
         $ref: '#/components/requestBodies/FormOrJson'
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
   /flow/confirm:
     get:
       tags:
         - OAuth
-      summary: Render a built-in confirmation step when enabled.
+      summary: Render the test or OIDC-conformance reauthentication adapter when enabled.
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - OAuth
-      summary: Submit a built-in confirmation step when enabled.
+      summary: Submit the test or OIDC-conformance reauthentication adapter when enabled.
       requestBody:
         $ref: '#/components/requestBodies/FormOrJson'
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
   /api/auth/passkeys/register/options:
     post:
       tags:
@@ -148,6 +376,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/PasskeyRegisterOptions'
+        '202':
+          $ref: '#/components/responses/AccountProvisioningAccepted'
   /api/auth/passkeys/register/verify:
     post:
       tags:
@@ -188,6 +418,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/EmailCodeSend'
+        '202':
+          $ref: '#/components/responses/AccountProvisioningAccepted'
   /api/auth/email-codes/verify:
     post:
       tags:
@@ -202,8 +434,12 @@ paths:
     post:
       tags:
         - TOTP
-      summary: Start TOTP login.
-      description: Creates a short-lived TOTP login challenge for an email or username identifier.
+      summary: Start TOTP login or reauthentication.
+      description: >
+        Creates a short-lived TOTP challenge for either an email or username identifier, or an
+        opaque OIDC reauthentication challenge. Exactly one input must be supplied. The
+        reauthentication form resolves the bound subject server-side and does not disclose the
+        subject identifier to the browser.
       requestBody:
         $ref: '#/components/requestBodies/TotpLoginStart'
       responses:
@@ -248,6 +484,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/TotpSignupActivate'
+        '202':
+          $ref: '#/components/responses/AccountProvisioningAccepted'
         '400':
           $ref: '#/components/responses/Error'
   /api/auth/directory-password/login:
@@ -480,6 +718,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/AnonLoginVerify'
+        '202':
+          $ref: '#/components/responses/AnonymousLoginPending'
   /api/auth/upgrade:
     post:
       tags:
@@ -520,28 +760,41 @@ paths:
       tags:
         - Consent
       summary: Submit a consent decision.
+      description: Acting-as requests require the feature to be enabled and a current delegated relationship.
       requestBody:
         $ref: '#/components/requestBodies/FormOrJson'
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '403':
+          $ref: '#/components/responses/Error'
   /auth/consent:
     get:
       tags:
         - Consent
       summary: Render built-in consent page when enabled.
+      description: Managed browser challenges require the authenticated session bound at authorization time.
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '401':
+          $ref: '#/components/responses/Error'
     post:
       tags:
         - Consent
       summary: Submit built-in consent page decision when enabled.
+      description: >-
+        Managed browser challenges require the authenticated session bound at authorization time.
+        Acting-as requests require the feature to be enabled and a current delegated relationship.
       requestBody:
         $ref: '#/components/requestBodies/FormOrJson'
       responses:
         '200':
           $ref: '#/components/responses/Any'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
   /api/sessions:
     post:
       tags:
@@ -594,12 +847,46 @@ paths:
     get:
       tags:
         - Logout
-      summary: Start front-channel logout.
+      summary: Start front-channel logout confirmation.
+      description:
+        Renders a no-store confirmation form and sets a short-lived, HttpOnly confirmation cookie.
+        This request does not invalidate the browser session.
       responses:
         '200':
           $ref: '#/components/responses/Any'
         '302':
           description: Redirect response.
+    post:
+      tags:
+        - Logout
+      summary: Start or confirm front-channel logout.
+      description:
+        A direct RP-initiated POST renders the same confirmation interaction as GET. A follow-up POST
+        validates the form confirmation token against the short-lived confirmation cookie, then
+        invalidates the selected session and performs configured logout propagation.
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                confirmation_token:
+                  type: string
+                id_token_hint:
+                  type: string
+                post_logout_redirect_uri:
+                  type: string
+                  format: uri
+                state:
+                  type: string
+                logout_scope:
+                  type: string
+      responses:
+        '302':
+          description: Redirect after successful logout.
+        '400':
+          $ref: '#/components/responses/Error'
   /logout/backchannel:
     post:
       tags:
@@ -781,6 +1068,10 @@ paths:
                   contract:
                     type: object
                     additionalProperties: true
+                    description: >
+                      Signed runtime contract. Consent-policy steps can include
+                      content.destination_field_consent, derived from the active Destination
+                      Profile, with required fields locked and optional fields selectable.
                   contract_hash:
                     type: string
                   signature:
@@ -879,8 +1170,8 @@ paths:
       description: >
         Advances the active runtime Flow step after verifying CSRF, interaction state, expiry,
         contract hash, HMAC signature, and current step identity. Step input is interpreted by the
-        active runtime component; consent-policy input records consent item decisions for the
-        authenticated user.
+        active runtime component; consent-policy input records consent item decisions and
+        Destination Profile field selections for the authenticated user.
       parameters:
         - name: interaction_id
           in: path
@@ -912,6 +1203,26 @@ paths:
                 input:
                   type: object
                   additionalProperties: true
+                  properties:
+                    consent_item_decisions:
+                      type: object
+                      additionalProperties:
+                        type: string
+                        enum:
+                          - granted
+                          - denied
+                          - selected
+                    consent_item_selected_values:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    destination_field_decisions:
+                      type: object
+                      description: >
+                        Boolean decisions keyed by Destination Profile field key. Required fields
+                        must be true; optional fields set to false are omitted from release.
+                      additionalProperties:
+                        type: boolean
       responses:
         '200':
           description: Updated runtime interaction state and next step.
@@ -974,10 +1285,14 @@ paths:
         Creates an email-code challenge for Direct Auth after validating the client, channel,
         origin, and requested email identifier. For an eligible explicit email-verification Flow,
         a valid Email Verification Protocol presentation completes verification without sending a
-        code; missing, unsupported, or invalid presentations use the normal mail-OTP response.
+        code; missing, unsupported, or invalid presentations use the normal mail-OTP response. The
+        accepted response intentionally does not disclose whether the account exists or whether the
+        delivery provider accepted the message.
       responses:
         '200':
           $ref: '#/components/responses/DirectEmailCodeSend'
+        '202':
+          $ref: '#/components/responses/AccountProvisioningAccepted'
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -986,6 +1301,30 @@ paths:
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DirectEmailCodeSend'
+  /api/v1/auth/account-provisioning/status:
+    post:
+      tags:
+        - Direct Auth
+      operationId: postApiV1AuthAccountProvisioningStatus
+      summary: Read asynchronous account provisioning status.
+      description: >
+        Reads the tenant-bound operation referenced by an opaque, short-lived resume token. The
+        response never exposes operation, account, user, shard, or binding identifiers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountProvisioningStatusRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountProvisioningStatus'
+        '400':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
   /api/v1/auth/direct/email-code/verify:
     post:
       tags:
@@ -1134,10 +1473,12 @@ paths:
       summary: Start Direct Auth passkey signup.
       description:
         Creates WebAuthn registration options for Direct Auth signup after validating client,
-        channel, origin, and email policy.
+        channel, and origin. Email is optional and is not used for discoverable Passkey lookup.
       responses:
         '200':
           $ref: '#/components/responses/DirectPasskeyStart'
+        '202':
+          $ref: '#/components/responses/AccountProvisioningAccepted'
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -1487,6 +1828,181 @@ paths:
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/SetupTokenVerify'
+  /api/admin/invitations/redeem:
+    post:
+      tags:
+        - Admin Invitations
+      security: []
+      summary: Redeem an Admin invitation code for Passkey enrollment.
+      description: >-
+        Validates the recipient email, one-time enrollment code, expiry, and optional source-IP
+        restriction. This operation does not create an Admin account or session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email:
+                  type: string
+                  format: email
+                code:
+                  type: string
+                  pattern: '^[23456789A-HJ-NP-Z]{4}(-[23456789A-HJ-NP-Z]{4}){3}$'
+      responses:
+        '200':
+          description: Short-lived Passkey enrollment credential and non-secret invitation summary.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enrollment_token, expires_in, invitation]
+                properties:
+                  enrollment_token:
+                    type: string
+                  expires_in:
+                    type: integer
+                    const: 600
+                  invitation:
+                    type: object
+                    required: [email, role, ip_restriction_enabled]
+                    properties:
+                      email:
+                        type: string
+                        format: email
+                      name:
+                        type: [string, 'null']
+                      role:
+                        type: string
+                      ip_restriction_enabled:
+                        type: boolean
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+  /api/admin/invitations/passkey/options:
+    post:
+      tags:
+        - Admin Invitations
+      security: []
+      summary: Create resident Passkey registration options for an Admin invitation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enrollment_token, rp_id]
+              properties:
+                enrollment_token:
+                  type: string
+                rp_id:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+  /api/admin/invitations/passkey/register:
+    post:
+      tags:
+        - Admin Invitations
+      security: []
+      summary: Verify a newly registered Passkey and start possession verification.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enrollment_token, challenge_id, passkey_response, origin]
+              properties:
+                enrollment_token:
+                  type: string
+                challenge_id:
+                  type: string
+                passkey_response:
+                  type: object
+                  additionalProperties: true
+                origin:
+                  type: string
+                  format: uri
+      responses:
+        '200':
+          $ref: '#/components/responses/Any'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+  /api/admin/invitations/activate:
+    post:
+      tags:
+        - Admin Invitations
+      security: []
+      summary: Verify the new Passkey and atomically activate the Admin account.
+      description: >-
+        Verifies possession of the Passkey registered in the same enrollment and atomically creates
+        the Admin user, Passkey, role assignment, and Admin session while consuming the invitation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enrollment_token, challenge_id, credential]
+              properties:
+                enrollment_token:
+                  type: string
+                challenge_id:
+                  type: string
+                credential:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Admin account activated and Admin session cookie set.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, user]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+                  user:
+                    type: object
+                    required: [id, email, role]
+                    properties:
+                      id:
+                        type: string
+                      email:
+                        type: string
+                        format: email
+                      name:
+                        type: string
+                      role:
+                        type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
   /api/flow/cancel:
     post:
       tags:
@@ -1574,6 +2090,10 @@ components:
       type: apiKey
       in: cookie
       name: authrim_session
+    adminSessionCookie:
+      type: apiKey
+      in: cookie
+      name: authrim_admin_session
   parameters:
     ClientIdQuery:
       name: client_id
@@ -1611,6 +2131,30 @@ components:
             scope: openid profile email
             code_challenge: rfc7636-code-challenge
             code_challenge_method: S256
+    AdminAgentPushedAuthorization:
+      required: true
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            $ref: '#/components/schemas/AdminAgentPushedAuthorizationRequest'
+          example:
+            client_id: mcp_client_123
+            redirect_uri: http://127.0.0.1:34127/callback
+            response_type: code
+            scope: agent:read
+            resource: https://tenant.example.com/mcp
+            code_challenge: dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk
+            code_challenge_method: S256
+    AdminAgentAuthorizationDecision:
+      required: true
+      content:
+        application/x-www-form-urlencoded:
+          schema:
+            $ref: '#/components/schemas/AdminAgentAuthorizationDecisionRequest'
+          example:
+            request_uri: urn:ietf:params:oauth:request_uri:par_123
+            client_id: mcp_client_123
+            decision: approve
     PasskeyRegisterOptions:
       required: true
       content:
@@ -2538,7 +3082,7 @@ components:
             expires_in: 60
             is_new_user: true
     DirectEmailCodeSend:
-      description: Successful JSON response.
+      description: Accepted response that does not confirm account existence or provider delivery.
       content:
         application/json:
           schema:
@@ -2547,6 +3091,26 @@ components:
             attempt_id: attempt_123
             expires_in: 300
             masked_email: u***r@example.com
+    AccountProvisioningAccepted:
+      description: Account creation is durable but its active Lookup route is not ready yet.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AccountProvisioningAcceptedResponse'
+    AnonymousLoginPending:
+      description: Anonymous account routing is being created or an expired route is being released.
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/AccountProvisioningAcceptedResponse'
+              - $ref: '#/components/schemas/AnonymousCredentialRecyclingResponse'
+    AccountProvisioningStatus:
+      description: Public status for an opaque account-provisioning resume token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AccountProvisioningStatusResponse'
     DirectLogout:
       description: Successful JSON response.
       content:
@@ -2858,6 +3422,10 @@ components:
         nonce:
           type: string
           example: nonce_123
+        ui_locales:
+          type: string
+          description: >-
+            Space-separated BCP 47 locale preferences in priority order for the authorization UI.
         request:
           type: string
           description: Signed request object JWT.
@@ -2877,6 +3445,91 @@ components:
       required:
         - request_uri
         - expires_in
+    AdminAgentPushedAuthorizationRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        client_id:
+          type: string
+        redirect_uri:
+          type: string
+          format: uri
+        response_type:
+          type: string
+          const: code
+        scope:
+          type: string
+          description: >-
+            Space-separated scopes. Interactive self-service accepts agent:read,
+            agent:user-data:read, and agent:write. Advanced managed Grants may use additional
+            advertised extension scopes.
+        resource:
+          type: string
+          format: uri
+          description: Exact tenant MCP resource identifier advertised by protected resource metadata.
+        state:
+          type: string
+        code_challenge:
+          type: string
+          minLength: 43
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_-]+$'
+        code_challenge_method:
+          type: string
+          const: S256
+        client_secret:
+          type: string
+          writeOnly: true
+        client_assertion:
+          type: string
+          writeOnly: true
+        client_assertion_type:
+          type: string
+          const: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+        authorization_details:
+          type: string
+          maxLength: 16384
+          description: >
+            JSON-encoded RFC 9396 array, additionally bounded to 16 KiB and 20 entries at
+            runtime. Only type authrim_admin_agent and max_subjects_per_call from 1 to 50 are
+            accepted in this phase; repeated entries use the narrowest limit.
+      required:
+        - client_id
+        - redirect_uri
+        - response_type
+        - scope
+        - resource
+        - code_challenge
+        - code_challenge_method
+    AdminAgentAuthorizationDecisionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        request_uri:
+          type: string
+        client_id:
+          type: string
+        decision:
+          type: string
+          enum:
+            - approve
+            - deny
+        scope_read:
+          type: string
+          const: agent:read
+          description: Required interactive self-service configuration-read consent.
+        scope_user_data_read:
+          type: string
+          const: agent:user-data:read
+          description: Optional masked user-data consent selected by the Admin.
+        scope_write:
+          type: string
+          const: agent:write
+          description: Optional configuration-change consent selected by the Admin.
+      required:
+        - request_uri
+        - client_id
+        - decision
     AuthUser:
       type: object
       properties:
@@ -2924,6 +3577,7 @@ components:
       description: WebAuthn credential response from the browser.
     PasskeyRegisterOptionsRequest:
       type: object
+      description: Email is optional for discoverable Passkey registration.
       properties:
         email:
           type: string
@@ -2935,8 +3589,13 @@ components:
         custom_fields:
           type: object
           additionalProperties: true
-      required:
-        - email
+        provisioning_token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: Continuation token returned by a previous asynchronous account provisioning response.
+        resume_user_id:
+          type: string
+          description: Continuation value paired with provisioning_token for a retried Passkey request.
     PasskeyRegisterOptionsResponse:
       type: object
       properties:
@@ -3103,13 +3762,21 @@ components:
     TotpLoginStartRequest:
       type: object
       additionalProperties: false
-      required:
-        - identifier
+      oneOf:
+        - required:
+            - identifier
+        - required:
+            - authorization_challenge_id
       properties:
         identifier:
           type: string
           minLength: 1
           description: Email address or username/user identifier.
+        authorization_challenge_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Opaque reauthentication challenge whose bound subject is resolved server-side.
     TotpLoginStartResponse:
       type: object
       required:
@@ -4415,6 +5082,7 @@ components:
         - expires_in
     DirectPasskeySignupStartRequest:
       type: object
+      description: Email is optional and is retained only as profile data when supplied.
       properties:
         client_id:
           type: string
@@ -4463,6 +5131,13 @@ components:
         custom_fields:
           type: object
           additionalProperties: true
+        provisioning_token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: Internal Login UI continuation token returned by a previous 202 response.
+        resume_user_id:
+          type: string
+          description: Internal Login UI continuation value paired with provisioning_token.
       required:
         - client_id
         - code_challenge
@@ -4544,6 +5219,83 @@ components:
             - expires_in
             - masked_email
         - $ref: '#/components/schemas/DirectAuthArtifactResponse'
+    AccountProvisioningAcceptedResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - provisioning_token
+        - status_endpoint
+        - retry_after_ms
+        - expires_in
+      properties:
+        status:
+          type: string
+          const: provisioning
+        provisioning_token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+        status_endpoint:
+          type: string
+          const: /api/v1/auth/account-provisioning/status
+        retry_after_ms:
+          type: integer
+          minimum: 250
+          maximum: 2000
+        expires_in:
+          type: integer
+          minimum: 1
+          maximum: 600
+        resume_user_id:
+          type: string
+          description: >
+            Present for passkey signup only. The Login UI sends this continuation value back with
+            the provisioning token so a retried request reuses the same account candidate.
+    AccountProvisioningStatusRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - provisioning_token
+      properties:
+        provisioning_token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+    AnonymousCredentialRecyclingResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - restart_required
+        - retry_after_ms
+      properties:
+        status:
+          type: string
+          const: anonymous_credential_recycling
+        restart_required:
+          type: boolean
+          const: true
+        retry_after_ms:
+          type: integer
+          minimum: 250
+          maximum: 2000
+    AccountProvisioningStatusResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum:
+            - pending
+            - ready
+        retry_after_ms:
+          type: integer
+          minimum: 250
+          maximum: 2000
+        restart_required:
+          type: boolean
+          description: When true, start a fresh anonymous-login challenge after provisioning is ready.
     DirectEmailCodeVerifyRequest:
       type: object
       properties:

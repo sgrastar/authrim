@@ -5,6 +5,7 @@
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
+import { CanonicalRuntimeUserStore } from '@authrim/ar-lib-core';
 import type { Env } from '@authrim/ar-lib-core/types/env';
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
@@ -43,7 +44,17 @@ vi.mock('@authrim/ar-lib-core/utils/crypto', async (importOriginal) => {
   };
 });
 
-import { registerHandler } from '../register';
+vi.mock('../tenant-alias-directory', () => ({
+  resolveTenantDiscoveryAliasDirectoryInput: vi.fn(async (_env, input) => ({
+    ...input,
+    routeProjection: {},
+  })),
+  prepareTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+  activateTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+  ensureActiveTenantDiscoveryAliasDirectory: vi.fn(async () => undefined),
+}));
+
+import { buildConformanceTestUserId, registerHandler } from '../register';
 
 // Helper to create mock D1Database
 function createMockDB() {
@@ -56,7 +67,12 @@ function createMockDB() {
 
   return {
     prepare: vi.fn().mockReturnValue(mockStatement),
-    batch: vi.fn().mockResolvedValue([]),
+    batch: vi.fn(async (statements: D1PreparedStatement[]) =>
+      statements.map(() => ({
+        success: true,
+        meta: { changes: 1 },
+      }))
+    ),
     _mockStatement: mockStatement,
   } as unknown as D1Database & { _mockStatement: typeof mockStatement };
 }
@@ -82,7 +98,7 @@ function createMockEnv(options?: { db?: D1Database }): Env {
     NONCE_STORE: {} as KVNamespace,
     CLIENTS_CACHE: {} as KVNamespace,
     DB: options?.db ?? createMockDB(),
-    AVATARS: {} as R2Bucket,
+    PUBLIC_ASSETS: {} as R2Bucket,
     KEY_MANAGER: {} as unknown as Env['KEY_MANAGER'],
     SESSION_STORE: {} as unknown as Env['SESSION_STORE'],
     AUTH_CODE_STORE: {} as unknown as Env['AUTH_CODE_STORE'],
@@ -123,6 +139,31 @@ function getLastBindArgs(env: Env): unknown[] {
   return calls[calls.length - 1] ?? [];
 }
 
+function getOauthClientInsertPlaceholderCount(env: Env): number {
+  const db = env.DB as unknown as ReturnType<typeof createMockDB>;
+  const call = vi
+    .mocked(db.prepare)
+    .mock.calls.find(([sql]) => String(sql).includes('INSERT INTO oauth_clients'));
+  return (String(call?.[0] ?? '').match(/\?/g) ?? []).length;
+}
+
+function attachTenantContexts(
+  c: { env: Env; set(key: string, value: unknown): void },
+  tenantId: string
+) {
+  c.set('tenantId', tenantId);
+  c.set('tenantMetadataContext', {
+    tenantId,
+    coreDb: c.env.DB,
+  });
+  c.set('accountDataContext', {
+    tenantId,
+    accountId: 'test-account',
+    coreDb: c.env.DB,
+    piiDb: c.env.DB,
+  });
+}
+
 describe('Dynamic Client Registration Handler', () => {
   let app: Hono<{ Bindings: Env }>;
 
@@ -137,16 +178,220 @@ describe('Dynamic Client Registration Handler', () => {
     // Create fresh app instance
     app = new Hono<{ Bindings: Env }>();
     app.use('*', async (c, next) => {
-      (c as unknown as { set: (key: string, value: string) => void }).set('tenantId', 'default');
+      attachTenantContexts(c as never, 'default');
       await next();
     });
     app.post('/register', registerHandler);
+    app.post('/oauth/admin-agent/register', registerHandler);
 
     // Setup mock KV namespaces
     mockEnv.CLIENTS_CACHE = createMockKV();
   });
 
   describe('Successful Registration', () => {
+    it('does not create a browser test user for certification client credentials registration', async () => {
+      const syncUser = vi.spyOn(CanonicalRuntimeUserStore.prototype, 'syncUser');
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://www.certification.openid.net/test/a/client/callback'],
+            grant_types: ['client_credentials'],
+            response_types: ['code'],
+            token_endpoint_auth_method: 'private_key_jwt',
+            client_credentials_allowed: true,
+            scope: 'fapi',
+            jwks: {
+              keys: [
+                {
+                  kty: 'EC',
+                  crv: 'P-256',
+                  x: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                  y: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                  use: 'sig',
+                  alg: 'ES256',
+                  kid: 'test',
+                },
+              ],
+            },
+          }),
+        },
+        mockEnv
+      );
+
+      const responseBody = await res.json();
+      expect(res.status, JSON.stringify(responseBody)).toBe(201);
+      expect(syncUser).not.toHaveBeenCalled();
+    });
+
+    it('registers a restricted Agent public client without an initial access token', async () => {
+      const res = await app.request(
+        '/oauth/admin-agent/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['http://127.0.0.1:57939/callback/session'],
+            client_name: 'Codex',
+            token_endpoint_auth_method: 'none',
+            grant_types: ['authorization_code', 'refresh_token'],
+            response_types: ['code'],
+          }),
+        },
+        { ...mockEnv, ENABLE_AGENT_MCP: 'true' } as Env
+      );
+
+      expect(res.status).toBe(201);
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.token_endpoint_auth_method).toBe('none');
+      expect(json.require_pkce).toBe(true);
+      expect(json.scope).toBe('agent:read agent:user-data:read agent:write');
+      expect(json.client_secret).toBeUndefined();
+      expect(json.client_secret_expires_at).toBeUndefined();
+      expect(json.registration_access_token).toBeUndefined();
+      expect(json.registration_client_uri).toBeUndefined();
+      expect(json.redirect_uris).toEqual(['http://127.0.0.1:57939/callback/session']);
+      const stored = getLastBindArgs({ ...mockEnv, ENABLE_AGENT_MCP: 'true' } as Env);
+      expect(stored).toHaveLength(72);
+      expect(getOauthClientInsertPlaceholderCount(mockEnv)).toBe(stored.length);
+      expect(stored[55]).toBeNull();
+      expect(stored[65]).toBe('restricted_dcr');
+      expect(stored[66]).toEqual(expect.any(Number));
+      expect(stored[67]).toBeNull();
+      expect(stored[68]).toBe(0);
+      expect(stored[69]).toBe('default');
+    });
+
+    it('does not expand an explicitly requested restricted Agent scope subset', async () => {
+      const res = await app.request(
+        '/oauth/admin-agent/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['http://127.0.0.1:57939/callback'],
+            token_endpoint_auth_method: 'none',
+            scope: 'agent:read',
+          }),
+        },
+        { ...mockEnv, ENABLE_AGENT_MCP: 'true' } as Env
+      );
+
+      expect(res.status).toBe(201);
+      expect(await res.json()).toMatchObject({ scope: 'agent:read' });
+      const stored = getLastBindArgs({ ...mockEnv, ENABLE_AGENT_MCP: 'true' } as Env);
+      expect(stored).toContain('["agent:read"]');
+    });
+
+    it('fails closed when restricted Agent registration is disabled', async () => {
+      const res = await app.request(
+        '/oauth/admin-agent/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['http://127.0.0.1:57939/callback'],
+            token_endpoint_auth_method: 'none',
+          }),
+        },
+        { ...mockEnv, ENABLE_AGENT_MCP: 'false' } as Env
+      );
+      expect(res.status).toBe(403);
+      expect(await res.json()).toMatchObject({ error: 'access_denied' });
+    });
+
+    it('rejects confidential metadata in the restricted Agent profile', async () => {
+      const res = await app.request(
+        '/oauth/admin-agent/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['http://127.0.0.1:57939/callback'],
+            token_endpoint_auth_method: 'client_secret_basic',
+          }),
+        },
+        { ...mockEnv, ENABLE_AGENT_MCP: 'true' } as Env
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: 'invalid_client_metadata' });
+    });
+
+    it('rejects a non-loopback HTTP redirect in the restricted Agent profile', async () => {
+      const res = await app.request(
+        '/oauth/admin-agent/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['http://client.example.com/callback'],
+            token_endpoint_auth_method: 'none',
+          }),
+        },
+        { ...mockEnv, ENABLE_AGENT_MCP: 'true' } as Env
+      );
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ error: 'invalid_redirect_uri' });
+    });
+
+    it('enforces the per-tenant active restricted registration limit', async () => {
+      const database = mockEnv.DB as unknown as ReturnType<typeof createMockDB>;
+      database._mockStatement.first.mockResolvedValueOnce({ total: 20 });
+      const res = await app.request(
+        '/oauth/admin-agent/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['http://127.0.0.1:57939/callback'],
+            token_endpoint_auth_method: 'none',
+          }),
+        },
+        { ...mockEnv, ENABLE_AGENT_MCP: 'true' } as Env
+      );
+
+      expect(res.status).toBe(429);
+      expect(await res.json()).toMatchObject({
+        error: 'access_denied',
+        error_description: 'Agent self-service client registration limit reached',
+      });
+    });
+
+    it('fails closed on a concurrent restricted registration slot collision', async () => {
+      const database = mockEnv.DB as unknown as ReturnType<typeof createMockDB>;
+      database._mockStatement.first
+        .mockResolvedValueOnce({ total: 0 })
+        .mockResolvedValueOnce({ total: 1 });
+      database._mockStatement.run
+        .mockResolvedValueOnce({ success: true })
+        .mockRejectedValue(
+          new Error(
+            'UNIQUE constraint failed: oauth_clients.tenant_id, oauth_clients.agent_access_registration_slot'
+          )
+        );
+      const res = await app.request(
+        '/oauth/admin-agent/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['http://127.0.0.1:57939/callback'],
+            token_endpoint_auth_method: 'none',
+          }),
+        },
+        { ...mockEnv, ENABLE_AGENT_MCP: 'true' } as Env
+      );
+
+      expect(res.status).toBe(429);
+      expect(await res.json()).toMatchObject({
+        error: 'access_denied',
+        error_description: expect.stringContaining('retry registration'),
+      });
+    });
+
     it('should register a client with minimal required fields', async () => {
       const requestBody = {
         redirect_uris: ['https://example.com/callback'],
@@ -190,6 +435,107 @@ describe('Dynamic Client Registration Handler', () => {
       expect(res.headers.get('Pragma')).toBe('no-cache');
     });
 
+    it('registers a CIBA-only private_key_jwt client without redirect URIs', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            grant_types: ['urn:openid:params:grant-type:ciba'],
+            response_types: [],
+            token_endpoint_auth_method: 'private_key_jwt',
+            token_endpoint_auth_signing_alg: 'PS256',
+            jwks: {
+              keys: [
+                {
+                  kty: 'RSA',
+                  use: 'sig',
+                  alg: 'PS256',
+                  kid: 'client-key',
+                  n: 'n',
+                  e: 'AQAB',
+                  x5c: [btoa('leaf-certificate')],
+                },
+              ],
+            },
+            backchannel_token_delivery_mode: 'ping',
+            backchannel_client_notification_endpoint:
+              'https://certification.openid.net/ciba-notification-endpoint',
+            backchannel_authentication_request_signing_alg: 'PS256',
+            backchannel_user_code_parameter: false,
+            id_token_signed_response_alg: 'PS256',
+            tls_client_certificate_bound_access_tokens: true,
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+      await expect(res.json()).resolves.toMatchObject({
+        redirect_uris: [],
+        grant_types: ['urn:openid:params:grant-type:ciba'],
+        response_types: [],
+        token_endpoint_auth_method: 'private_key_jwt',
+        token_endpoint_auth_signing_alg: 'PS256',
+        backchannel_token_delivery_mode: 'ping',
+        backchannel_authentication_request_signing_alg: 'PS256',
+        id_token_signed_response_alg: 'PS256',
+        tls_client_certificate_bound_access_tokens: true,
+      });
+      const bindCalls = (mockEnv.DB as unknown as ReturnType<typeof createMockDB>)._mockStatement
+        .bind.mock.calls;
+      expect(
+        bindCalls.some((args) =>
+          args.some(
+            (value) => value === 'https://certification.openid.net/ciba-notification-endpoint'
+          )
+        )
+      ).toBe(true);
+    });
+
+    it('registers a CIBA client with refresh-token grant without redirect URIs', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            grant_types: ['urn:openid:params:grant-type:ciba', 'refresh_token'],
+            response_types: [],
+            token_endpoint_auth_method: 'private_key_jwt',
+            token_endpoint_auth_signing_alg: 'PS256',
+            jwks: {
+              keys: [
+                {
+                  kty: 'RSA',
+                  use: 'sig',
+                  alg: 'PS256',
+                  kid: 'client-key',
+                  n: 'n',
+                  e: 'AQAB',
+                  x5c: [btoa('leaf-certificate')],
+                },
+              ],
+            },
+            backchannel_token_delivery_mode: 'poll',
+            backchannel_authentication_request_signing_alg: 'PS256',
+            id_token_signed_response_alg: 'PS256',
+            tls_client_certificate_bound_access_tokens: true,
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+      await expect(res.json()).resolves.toMatchObject({
+        redirect_uris: [],
+        grant_types: ['urn:openid:params:grant-type:ciba', 'refresh_token'],
+        response_types: [],
+        backchannel_token_delivery_mode: 'poll',
+      });
+    });
+
     it('stores issuer URL as the default access-token resource for authorization-code clients', async () => {
       const requestBody = {
         redirect_uris: ['https://example.com/callback'],
@@ -210,7 +556,7 @@ describe('Dynamic Client Registration Handler', () => {
       expect(res.status).toBe(201);
 
       const args = getLastBindArgs(mockEnv);
-      expect(args).toHaveLength(56);
+      expect(args).toHaveLength(72);
       expect(args).toContain('https://id.example.com');
     });
 
@@ -240,7 +586,7 @@ describe('Dynamic Client Registration Handler', () => {
       expect(res.status).toBe(201);
 
       const args = getLastBindArgs(mockEnv);
-      expect(args).toHaveLength(56);
+      expect(args).toHaveLength(72);
       expect(args).toContain('https://api.example.com/');
       expect(args).not.toContain('https://id.example.com');
     });
@@ -323,7 +669,7 @@ describe('Dynamic Client Registration Handler', () => {
     it('uses the request host for registration_client_uri in multi-tenant mode', async () => {
       const localApp = new Hono<{ Bindings: Env }>();
       localApp.use('*', async (c, next) => {
-        (c as any).set('tenantId', 'tenant1');
+        attachTenantContexts(c as never, 'tenant1');
         await next();
       });
       localApp.post('/register', registerHandler);
@@ -382,6 +728,23 @@ describe('Dynamic Client Registration Handler', () => {
         expect.stringContaining('INSERT INTO oauth_clients')
       );
 
+      const insertSql = vi
+        .mocked(mockDB.prepare)
+        .mock.calls.map(([sql]) => String(sql))
+        .find((sql) => sql.includes('INSERT INTO oauth_clients'));
+      expect(insertSql).toBeDefined();
+      const insertMatch = insertSql?.match(
+        /INSERT INTO oauth_clients\s*\(([\s\S]*?)\)\s*VALUES\s*\(([\s\S]*?)\)/
+      );
+      expect(insertMatch).toBeTruthy();
+      const columnCount = insertMatch?.[1]
+        .split(',')
+        .filter((column: string) => column.trim()).length;
+      const placeholderCount = insertMatch?.[2].match(/\?/g)?.length;
+      const bindCount = getLastBindArgs(localMockEnv).length;
+      expect(placeholderCount).toBe(columnCount);
+      expect(bindCount).toBe(columnCount);
+
       // Verify the run method was called (client was actually inserted)
       expect(mockDB._mockStatement.run).toHaveBeenCalled();
     });
@@ -412,7 +775,7 @@ describe('Dynamic Client Registration Handler', () => {
     it('should build registration_client_uri with default tenant subdomain when naked domain is disabled', async () => {
       const localApp = new Hono<{ Bindings: Env }>();
       localApp.use('*', async (c, next) => {
-        (c as any).set('tenantId', 'default');
+        attachTenantContexts(c as never, 'default');
         await next();
       });
       localApp.post('/register', registerHandler);
@@ -445,7 +808,7 @@ describe('Dynamic Client Registration Handler', () => {
     it('should build registration_client_uri with naked domain for the default tenant when enabled', async () => {
       const localApp = new Hono<{ Bindings: Env }>();
       localApp.use('*', async (c, next) => {
-        (c as any).set('tenantId', 'default');
+        attachTenantContexts(c as never, 'default');
         await next();
       });
       localApp.post('/register', registerHandler);
@@ -477,7 +840,7 @@ describe('Dynamic Client Registration Handler', () => {
     it('should keep tenant subdomains for non-primary tenants when naked domain is enabled', async () => {
       const localApp = new Hono<{ Bindings: Env }>();
       localApp.use('*', async (c, next) => {
-        (c as any).set('tenantId', 'acme');
+        attachTenantContexts(c as never, 'acme');
         await next();
       });
       localApp.post('/register', registerHandler);
@@ -506,6 +869,196 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.registration_client_uri).toMatch(
         /^https:\/\/acme\.oidc\.example\.com\/clients\//
       );
+    });
+  });
+
+  describe('Validation - OIDC response signing algorithms', () => {
+    it('rejects ambiguous client key sources', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            jwks: { keys: [] },
+            jwks_uri: 'https://client.example.com/jwks.json',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        error: 'invalid_client_metadata',
+        error_description: 'jwks and jwks_uri must not both be provided',
+      });
+    });
+
+    it.each([
+      ['token_endpoint_auth_signing_alg', 'HS256'],
+      ['id_token_signed_response_alg', 'RS512'],
+      ['userinfo_signed_response_alg', 'RS512'],
+      ['request_object_signing_alg', 'HS256'],
+      ['authorization_signed_response_alg', 'RS512'],
+      ['authorization_encrypted_response_alg', 'dir'],
+      ['authorization_encrypted_response_enc', 'A128CBC-HS256'],
+    ])('rejects unsupported %s values', async (field, value) => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            [field]: value,
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({ error: 'invalid_client_metadata' });
+    });
+
+    it('accepts ES256 for ID Token and signed UserInfo responses', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            id_token_signed_response_alg: 'ES256',
+            userinfo_signed_response_alg: 'ES256',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+      await expect(res.json()).resolves.toMatchObject({
+        id_token_signed_response_alg: 'ES256',
+        userinfo_signed_response_alg: 'ES256',
+      });
+    });
+
+    it.each(['RS256', 'ES256', 'PS256', 'EdDSA'])(
+      'accepts and returns %s for private_key_jwt client authentication',
+      async (algorithm) => {
+        const res = await app.request(
+          '/register',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              redirect_uris: ['https://example.com/callback'],
+              token_endpoint_auth_method: 'private_key_jwt',
+              token_endpoint_auth_signing_alg: algorithm,
+            }),
+          },
+          mockEnv
+        );
+
+        expect(res.status).toBe(201);
+        await expect(res.json()).resolves.toMatchObject({
+          token_endpoint_auth_signing_alg: algorithm,
+        });
+      }
+    );
+
+    it('stores and returns FAPI Message Signing and JARM client metadata', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            token_endpoint_auth_signing_alg: 'ES256',
+            request_object_signing_alg: 'ES256',
+            authorization_signed_response_alg: 'ES256',
+            authorization_encrypted_response_alg: 'RSA-OAEP',
+            authorization_encrypted_response_enc: 'A256GCM',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(201);
+      await expect(res.json()).resolves.toMatchObject({
+        token_endpoint_auth_signing_alg: 'ES256',
+        request_object_signing_alg: 'ES256',
+        authorization_signed_response_alg: 'ES256',
+        authorization_encrypted_response_alg: 'RSA-OAEP',
+        authorization_encrypted_response_enc: 'A256GCM',
+      });
+      expect(getLastBindArgs(mockEnv)).toEqual(
+        expect.arrayContaining(['ES256', 'RSA-OAEP', 'A256GCM'])
+      );
+    });
+
+    it('rejects a JARM signing algorithm excluded by the active Message Signing profile', async () => {
+      mockKVStore.set(
+        'settings:tenant:default:certification-profile',
+        JSON.stringify({
+          fapi: {
+            enabled: true,
+            messageSigning: {
+              enabled: true,
+              authorizationSigningAlgorithms: ['ES256'],
+            },
+          },
+        })
+      );
+      mockEnv.SETTINGS = createMockKV();
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            token_endpoint_auth_method: 'private_key_jwt',
+            authorization_signed_response_alg: 'RS256',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        error: 'invalid_client_metadata',
+        error_description: expect.stringContaining('authorization_signed_response_alg'),
+      });
+    });
+
+    it('rejects secret-based client authentication in an active FAPI profile', async () => {
+      mockKVStore.set(
+        'settings:tenant:default:certification-profile',
+        JSON.stringify({ fapi: { enabled: true } })
+      );
+      mockEnv.SETTINGS = createMockKV();
+
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            token_endpoint_auth_method: 'client_secret_basic',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toMatchObject({
+        error: 'invalid_client_metadata',
+        error_description: expect.stringContaining('private_key_jwt'),
+      });
     });
   });
 
@@ -835,6 +1388,28 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('token_endpoint_auth_method');
     });
+
+    it('should reject client_secret_jwt because no reversible HMAC secret is stored', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            token_endpoint_auth_method: 'client_secret_jwt',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as RegistrationResponse;
+      expect(json.error).toBe('invalid_client_metadata');
+      expect(json.error_description).toContain('token_endpoint_auth_method');
+    });
   });
 
   describe('Validation - application_type', () => {
@@ -998,10 +1573,16 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.error_description).toContain('grant_types must be an array');
     });
 
-    it('should reject unsupported grant_type', async () => {
+    it('should register a private_key_jwt client for client_credentials', async () => {
       const requestBody = {
         redirect_uris: ['https://example.com/callback'],
-        grant_types: ['authorization_code', 'client_credentials'],
+        grant_types: ['client_credentials'],
+        token_endpoint_auth_method: 'private_key_jwt',
+        client_credentials_allowed: true,
+        allowed_scopes: ['fapi'],
+        default_scope: 'fapi',
+        default_resource: 'https://api.example.com/resource',
+        jwks: { keys: [{ kty: 'EC', crv: 'P-256', x: 'x', y: 'y', kid: 'sig-1' }] },
       };
 
       const res = await app.request(
@@ -1016,11 +1597,34 @@ describe('Dynamic Client Registration Handler', () => {
         mockEnv
       );
 
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(201);
 
       const json = (await res.json()) as RegistrationResponse;
-      expect(json.error).toBe('invalid_client_metadata');
-      expect(json.error_description).toContain('Unsupported grant_type');
+      expect(json.grant_types).toEqual(['client_credentials']);
+      expect(json.client_credentials_allowed).toBe(true);
+      expect(json.allowed_scopes).toEqual(['fapi']);
+    });
+
+    it('rejects client_credentials without its explicit safety opt-in', async () => {
+      const res = await app.request(
+        '/register',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            redirect_uris: ['https://example.com/callback'],
+            grant_types: ['client_credentials'],
+            token_endpoint_auth_method: 'private_key_jwt',
+          }),
+        },
+        mockEnv
+      );
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        error: 'invalid_client_metadata',
+        error_description: expect.stringContaining('client_credentials_allowed'),
+      });
     });
   });
 
@@ -1568,5 +2172,13 @@ describe('Dynamic Client Registration Handler', () => {
       expect(json.error).toBe('invalid_client_metadata');
       expect(json.error_description).toContain('internal addresses');
     });
+  });
+});
+
+describe('conformance test user tenant isolation', () => {
+  it('keeps the legacy ID for the default tenant and scopes other tenant IDs', () => {
+    expect(buildConformanceTestUserId('default')).toBe('user-oidc-conformance-test');
+    expect(buildConformanceTestUserId('fapi2')).toBe('user-oidc-conformance-test-fapi2');
+    expect(buildConformanceTestUserId('primary', 'primary')).toBe('user-oidc-conformance-test');
   });
 });

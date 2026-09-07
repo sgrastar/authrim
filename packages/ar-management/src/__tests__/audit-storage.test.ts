@@ -168,7 +168,7 @@ describe('Audit Storage Configuration API', () => {
       expect(body.operational_policy.eventFailurePolicy.mode).toBe('event_class');
       expect(body.operational_policy.eventFailurePolicy.failOpenCategories).toContain('login');
       expect(body.operational_policy.eventFailurePolicy.failClosedCategories).toContain(
-        'storage_profile'
+        'data_governance'
       );
       expect(body.operational_policy.queue.binding).toBe('AUDIT_QUEUE');
       expect(body.operational_policy.queue.retryLimit).toBe(5);

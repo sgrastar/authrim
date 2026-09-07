@@ -25,7 +25,7 @@ import {
   type ResidencyProfile,
   type TenantDatabaseRole,
 } from '@authrim/ar-lib-core';
-import { createLoggingId, deriveTenantKeyFromTenantId } from '@authrim/ar-lib-logging';
+import { createLoggingId, deriveTenantKeyFromTenantId } from '@authrim/ar-lib-logging/contract';
 import {
   DESTINATION_PROVIDER_SCHEMAS,
   getDefaultDestinationCapabilities,
@@ -72,7 +72,6 @@ import {
 import {
   enqueueLoggingMessagePayload,
   SqlLoggingMessageJobStore,
-  writeLoggingMessagePayloadToR2,
   type ExportBuildMessagePayload,
   type LoggingMessageJobKind,
   type LoggingMessageJobRepairFindingRecord,
@@ -86,7 +85,12 @@ import {
   buildAdminAuditCoverageStatusView,
   summarizeAdminAuditCoverage,
 } from '@authrim/ar-lib-logging/coverage';
-import { LOG_PLANES, LOG_TYPES, type LogPlane, type LogType } from '@authrim/ar-lib-logging';
+import {
+  LOG_PLANES,
+  LOG_TYPES,
+  type LogPlane,
+  type LogType,
+} from '@authrim/ar-lib-logging/contract';
 import { writeAdminAuditLog } from '../../admin-shared';
 import {
   adminActionEnvelope,
@@ -99,6 +103,7 @@ import {
   fieldError,
 } from './response-helpers';
 import { createLoggingTenantKeyResolverFromSource } from '../../logging-tenant-key';
+import { writeEncryptedLoggingMessagePayload } from '../../logging-message-payload-storage';
 
 type AdminContext = Context<{ Bindings: Env; Variables: { adminAuth?: AdminAuthContext } }>;
 
@@ -567,7 +572,7 @@ async function enqueueExportBuildRepairJob(input: {
   if (!payloadBucket) {
     throw new Error('logging_message_payload_bucket_unavailable');
   }
-  const payloadWrite = await writeLoggingMessagePayloadToR2({
+  const payloadWrite = await writeEncryptedLoggingMessagePayload(c.env, {
     bucket: payloadBucket,
     jobId: messageJobId,
     payloadType: 'export_build',
@@ -697,7 +702,7 @@ async function hashFilter(value: Record<string, unknown>): Promise<string> {
 }
 
 function getLoggingCursorSecret(c: AdminContext): string | undefined {
-  return c.env.LOGGING_CURSOR_HMAC_SECRET || c.env.KEY_MANAGER_SECRET;
+  return c.env.LOGGING_CURSOR_HMAC_SECRET;
 }
 
 function getCursorSort(payload: LoggingCursorPayload): { createdAt: number; id: string } | null {
@@ -3921,6 +3926,7 @@ const NOTIFICATION_CENTER_CATEGORIES = [
   'storage_registry_health',
   'tenant_database_stats',
   'tenant_database_health',
+  'control_plane_drift',
   'logging_destination_health',
   'logging_delivery_failure',
   'logging_fallback_used',
@@ -7443,7 +7449,6 @@ loggingPoliciesRouter.post('/runtime/tenant-db-probe', async (c) => {
         role,
         shardGroup,
         shardIndex,
-        runtimeSnapshotMode: 'optional',
       }
     );
     const tenantAdapter = ensureDatabaseAdapter(resolved.source, 'tenant-db-probe');
@@ -8963,7 +8968,7 @@ loggingPoliciesRouter.post('/exports', async (c) => {
         ),
       ]);
     }
-    const payloadWrite = await writeLoggingMessagePayloadToR2({
+    const payloadWrite = await writeEncryptedLoggingMessagePayload(c.env, {
       bucket: payloadBucket,
       jobId: messageJobId,
       payloadType: 'export_build',
@@ -9648,7 +9653,7 @@ loggingPoliciesRouter.post('/message-jobs/:id/cancel', async (c) => {
           requested_by: cancelledBy,
           cleanup_reason: 'cancelled',
         };
-        const payloadWrite = await writeLoggingMessagePayloadToR2({
+        const payloadWrite = await writeEncryptedLoggingMessagePayload(c.env, {
           bucket: payloadBucket,
           jobId: cleanupJobId,
           payloadType: 'export_build',
@@ -10405,7 +10410,7 @@ loggingPoliciesRouter.post('/retries', async (c) => {
       reason: request.reason,
       replay_payload: source.replayPayload,
     };
-    const payloadWrite = await writeLoggingMessagePayloadToR2({
+    const payloadWrite = await writeEncryptedLoggingMessagePayload(c.env, {
       bucket: payloadBucket,
       jobId: messageJobId,
       payloadType: 'retry_delivery',
@@ -10563,7 +10568,7 @@ async function createRetryDeliveryMessageJobAction(
       reason: request.reason,
       replay_payload: source.replayPayload,
     };
-    const payloadWrite = await writeLoggingMessagePayloadToR2({
+    const payloadWrite = await writeEncryptedLoggingMessagePayload(c.env, {
       bucket: payloadBucket,
       jobId: messageJobId,
       payloadType: 'retry_delivery',

@@ -12,7 +12,7 @@
  */
 
 import { Context } from 'hono';
-import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
+import type { Env, AdminAuthContext, DatabaseSource } from '@authrim/ar-lib-core';
 import {
   createAuthContextFromHono,
   getTenantIdFromContext,
@@ -36,10 +36,13 @@ import {
   countUsersWithPiiCustomClaimData,
   listNonPiiFieldUsage,
   countUsersWithNonPiiFieldData,
+  countUsersWithPiiFieldData,
   deleteStoredCustomClaimData,
   renameStoredCustomClaimData,
   resolveCustomClaimRuntimeSourcesFromEnv,
+  resolveTenantAssignedDatabaseSourcesFromRegistry,
   CanonicalRuntimeUserStore,
+  BUILTIN_PROFILE_CLAIM_KEYS,
 } from '@authrim/ar-lib-core';
 import { CUSTOM_CLAIM_PRESETS, type CustomClaimPresetField } from './custom-claim-presets';
 
@@ -75,7 +78,121 @@ function createHistoryManagerFromContext(c: AdminContext): CustomClaimSchemaHist
 }
 
 async function resolveCustomClaimStorageSources(c: AdminContext, tenantId: string) {
-  return resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+  const [schema, coreStores, piiStores] = await Promise.all([
+    resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId),
+    resolveTenantAssignedDatabaseSourcesFromRegistry(c.env, {
+      tenantId,
+      role: 'tenant_core',
+      dataRole: 'tenant_core/users',
+      maxStores: 32,
+      concurrency: 4,
+    }),
+    resolveTenantAssignedDatabaseSourcesFromRegistry(c.env, {
+      tenantId,
+      role: 'tenant_pii',
+      dataRole: 'tenant_pii',
+      maxStores: 32,
+      concurrency: 4,
+    }),
+  ]);
+  return {
+    schemaDb: schema.schemaDb,
+    nonPiiDbs: coreStores.map((store) => store.source),
+    piiDbs: piiStores.map((store) => store.source),
+  };
+}
+
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  fn: (value: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+      while (cursor < values.length) {
+        const index = cursor++;
+        results[index] = await fn(values[index], index);
+      }
+    })
+  );
+  return results;
+}
+
+function sum(values: number[]): number {
+  return values.reduce((total, value) => total + value, 0);
+}
+
+type CustomClaimStorageSources = Awaited<ReturnType<typeof resolveCustomClaimStorageSources>>;
+
+async function deleteCustomClaimDataAcrossStores(
+  sources: CustomClaimStorageSources,
+  input: { tenantId: string; fieldKey: string; isPii: boolean; piiBatchSize?: number }
+) {
+  const stores = input.isPii ? sources.piiDbs : sources.nonPiiDbs;
+  const results = await mapWithConcurrency(stores, 4, (db) =>
+    deleteStoredCustomClaimData({
+      db: input.isPii ? sources.schemaDb : db,
+      dbPii: input.isPii ? db : undefined,
+      ...input,
+    })
+  );
+  return {
+    affectedUsers: sum(results.map((result) => result.affectedUsers)),
+    processedUsers: sum(results.map((result) => result.processedUsers)),
+    failedUsers: sum(results.map((result) => result.failedUsers)),
+  };
+}
+
+async function renameCustomClaimDataAcrossStores(
+  sources: CustomClaimStorageSources,
+  input: {
+    tenantId: string;
+    oldKey: string;
+    newKey: string;
+    isPii: boolean;
+    updatedAt?: number;
+    piiBatchSize?: number;
+  }
+) {
+  const stores = input.isPii ? sources.piiDbs : sources.nonPiiDbs;
+  const results = await mapWithConcurrency(stores, 4, (db) =>
+    renameStoredCustomClaimData({
+      db: input.isPii ? sources.schemaDb : db,
+      dbPii: input.isPii ? db : undefined,
+      ...input,
+    })
+  );
+  return {
+    affectedUsers: sum(results.map((result) => result.affectedUsers)),
+    processedUsers: sum(results.map((result) => result.processedUsers)),
+    failedUsers: sum(results.map((result) => result.failedUsers)),
+  };
+}
+
+async function countNonPiiFieldAcrossStores(
+  sources: CustomClaimStorageSources,
+  tenantId: string,
+  fieldKey: string
+): Promise<number> {
+  return sum(
+    await mapWithConcurrency(sources.nonPiiDbs, 4, (db) =>
+      countUsersWithNonPiiFieldData(db, tenantId, fieldKey)
+    )
+  );
+}
+
+async function countPiiFieldAcrossStores(
+  sources: CustomClaimStorageSources,
+  tenantId: string,
+  fieldKey: string
+): Promise<number> {
+  return sum(
+    await mapWithConcurrency(sources.piiDbs, 4, (db) =>
+      countUsersWithPiiFieldData(db, tenantId, fieldKey)
+    )
+  );
 }
 
 // =============================================================================
@@ -84,6 +201,7 @@ async function resolveCustomClaimStorageSources(c: AdminContext, tenantId: strin
 
 /** Reserved OIDC claim names that cannot be used as field_key */
 const RESERVED_CLAIM_NAMES = new Set([
+  ...BUILTIN_PROFILE_CLAIM_KEYS,
   'sub',
   'iss',
   'aud',
@@ -130,6 +248,8 @@ const RESERVED_CLAIM_NAMES = new Set([
 /** Valid field types */
 const VALID_FIELD_TYPES = ['string', 'number', 'boolean', 'date', 'enum'] as const;
 type FieldType = (typeof VALID_FIELD_TYPES)[number];
+const VALID_CARDINALITIES = ['single', 'multi'] as const;
+type Cardinality = (typeof VALID_CARDINALITIES)[number];
 
 /** field_key pattern: snake_case, starts with letter, max 64 chars */
 const FIELD_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
@@ -141,7 +261,13 @@ const STATS_CACHE_PREFIX = 'custom_claim_stats:';
 const STATS_CACHE_TTL = 300; // 5 minutes
 
 /** Valid operation statuses for filtering */
-const VALID_OPERATION_STATUSES = new Set(['active', 'deleting', 'renaming', 'error']);
+const VALID_OPERATION_STATUSES = new Set([
+  'active',
+  'deleting',
+  'renaming',
+  'reconfiguring',
+  'error',
+]);
 
 /** Batch size for PII user data operations */
 const PII_BATCH_SIZE = 500;
@@ -477,7 +603,7 @@ async function listStoredFieldUsageBindings(
       `SELECT id, field_key, binding_type, binding_id, protection, reason, source,
               metadata_json, is_active, created_at, updated_at
          FROM field_usage_bindings
-        WHERE tenant_id = ? AND is_active = 1${fieldFilter}
+        WHERE tenant_id = ? AND is_active = TRUE${fieldFilter}
         ORDER BY binding_type ASC, binding_id ASC`,
       params
     );
@@ -756,6 +882,9 @@ async function seedPresetCustomClaimSchemas(
   schemas: CustomClaimPresetField[]
 ): Promise<number> {
   const now = Math.floor(Date.now() / 1000);
+  const usesNativeBooleans = adapter.getType() === 'postgres';
+  const databaseFlag = (value: number): number | boolean =>
+    usesNativeBooleans ? value === 1 : value;
   let createdCount = 0;
 
   for (const schema of schemas) {
@@ -769,13 +898,13 @@ async function seedPresetCustomClaimSchemas(
 
     await adapter.execute(
       `INSERT INTO custom_claim_schemas (
-        id, tenant_id, field_key, active_field_key, display_label, field_type,
+        id, tenant_id, field_key, active_field_key, display_label, field_type, cardinality,
         is_pii, is_required, is_active, is_system,
         is_searchable, is_exportable, is_vc_claim,
         include_in_id_token, include_in_userinfo, include_in_introspection,
         scope_mode, display_order, ui_group_key, ui_group_label, ui_group_order, ui_field_order,
         examples_json, schema_version, operation_status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 1, 1, ?, ?, 0, 0, 1, 0, 'any', ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, FALSE, TRUE, TRUE, ?, ?, FALSE, FALSE, FALSE, FALSE, 'any', ?, ?, ?, ?, ?, ?, 1, 'active', ?, ?)`,
       [
         generateId(),
         tenantId,
@@ -783,9 +912,10 @@ async function seedPresetCustomClaimSchemas(
         schema.field_key,
         schema.display_label,
         schema.field_type,
-        schema.is_pii,
-        schema.is_searchable,
-        schema.is_exportable,
+        schema.cardinality ?? 'single',
+        databaseFlag(schema.is_pii),
+        databaseFlag(schema.is_searchable),
+        databaseFlag(schema.is_exportable),
         schema.display_order,
         schema.ui_group_key,
         schema.ui_group_label,
@@ -869,7 +999,7 @@ export async function adminCustomClaimPresetsListHandler(c: AdminContext) {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
     const rows = await adapter.query<{ field_key: string }>(
-      'SELECT field_key FROM custom_claim_schemas WHERE tenant_id = ? AND is_active = 1',
+      'SELECT field_key FROM custom_claim_schemas WHERE tenant_id = ? AND is_active = TRUE',
       [tenantId]
     );
 
@@ -1006,7 +1136,7 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
         variables: {
           field: 'field_key',
-          reason: `'${field_key}' is a reserved OIDC claim name`,
+          reason: `'${field_key}' is a reserved or built-in profile field name`,
         },
       });
     }
@@ -1053,6 +1183,16 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
         variables: {
           field: 'field_type',
           reason: `Must be one of: ${VALID_FIELD_TYPES.join(', ')}`,
+        },
+      });
+    }
+
+    const cardinality = body.cardinality ?? 'single';
+    if (!VALID_CARDINALITIES.includes(cardinality as Cardinality)) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: {
+          field: 'cardinality',
+          reason: `Must be one of: ${VALID_CARDINALITIES.join(', ')}`,
         },
       });
     }
@@ -1153,13 +1293,16 @@ export async function adminCustomClaimCreateHandler(c: AdminContext) {
       field_key,
       display_label,
       field_type,
+      cardinality,
       is_pii: body.is_pii ? 1 : 0,
       is_required: body.is_required ? 1 : 0,
       is_active: 1,
       validation_rules: validationRulesJson,
-      include_in_id_token: body.include_in_id_token ? 1 : 0,
-      include_in_userinfo: body.include_in_userinfo ? 1 : 0,
-      include_in_introspection: body.include_in_introspection ? 1 : 0,
+      // Schema Settings defines storage only. Runtime release is authorized by
+      // Schema Mapping and an active Destination Profile.
+      include_in_id_token: 0,
+      include_in_userinfo: 0,
+      include_in_introspection: 0,
       required_scopes: requiredScopesJson,
       scope_mode: scopeMode,
       is_searchable: body.is_searchable !== false ? 1 : 0,
@@ -1259,35 +1402,45 @@ export async function adminCustomClaimsStatsHandler(c: AdminContext) {
 
     // Non-PII count
     const nonPiiResult = await adapter.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM custom_claim_schemas WHERE tenant_id = ? AND is_pii = 0 AND is_active = 1',
+      'SELECT COUNT(*) as count FROM custom_claim_schemas WHERE tenant_id = ? AND is_pii = FALSE AND is_active = TRUE',
       [tenantId]
     );
 
     // PII count
     const piiResult = await adapter.query<{ count: number }>(
-      'SELECT COUNT(*) as count FROM custom_claim_schemas WHERE tenant_id = ? AND is_pii = 1 AND is_active = 1',
+      'SELECT COUNT(*) as count FROM custom_claim_schemas WHERE tenant_id = ? AND is_pii = TRUE AND is_active = TRUE',
       [tenantId]
     );
 
     // Non-PII user data count (from user_custom_fields)
-    const nonPiiUserCount = await countUsersWithNonPiiCustomClaimData(
-      storageSources.nonPiiDb,
-      tenantId
+    const nonPiiUserCount = sum(
+      await mapWithConcurrency(storageSources.nonPiiDbs, 4, (db) =>
+        countUsersWithNonPiiCustomClaimData(db, tenantId)
+      )
     );
 
     // PII approximate count (users with any custom PII data)
     let piiUserCount = 0;
     try {
-      piiUserCount = storageSources.piiDb
-        ? await countUsersWithPiiCustomClaimData(storageSources.piiDb, tenantId)
-        : 0;
+      piiUserCount = sum(
+        await mapWithConcurrency(storageSources.piiDbs, 4, (db) =>
+          countUsersWithPiiCustomClaimData(db, tenantId)
+        )
+      );
     } catch {
       // PII DB may not be accessible
       piiUserCount = -1;
     }
 
     // Per-field usage for non-PII
-    const fieldUsage = await listNonPiiFieldUsage(storageSources.nonPiiDb, tenantId);
+    const fieldUsageByShard = await mapWithConcurrency(storageSources.nonPiiDbs, 4, (db) =>
+      listNonPiiFieldUsage(db, tenantId)
+    );
+    const fieldUsageMap = new Map<string, number>();
+    for (const row of fieldUsageByShard.flat()) {
+      fieldUsageMap.set(row.fieldName, (fieldUsageMap.get(row.fieldName) ?? 0) + row.count);
+    }
+    const fieldUsage = Array.from(fieldUsageMap, ([fieldName, count]) => ({ fieldName, count }));
 
     // Error state count
     const errorResult = await adapter.query<{ count: number }>(
@@ -1302,7 +1455,7 @@ export async function adminCustomClaimsStatsHandler(c: AdminContext) {
       non_pii_users_with_data: nonPiiUserCount,
       pii_users_with_data: piiUserCount,
       pii_users_approximate: true,
-      field_usage: fieldUsage.map((row: { fieldName: string; count: number }) => ({
+      field_usage: fieldUsage.map((row) => ({
         field_name: row.fieldName,
         count: row.count,
       })),
@@ -1340,17 +1493,19 @@ export async function adminCustomClaimRequiredViolationsDetectHandler(c: AdminCo
     const adapter = createAdapterFromContext(c);
     const storageSources = await resolveCustomClaimStorageSources(c, tenantId);
     const previewLimit = Math.min(100, Math.max(1, parseInt(c.req.query('limit') || '20')));
-    const userRows = await adapter.query<{
-      id: string;
-    }>(
-      `SELECT legacy_user_id as id
+    const userRows = (
+      await mapWithConcurrency(storageSources.nonPiiDbs, 4, (db) =>
+        ensureDatabaseAdapter(db, 'custom-claims-required-violations-core').query<{ id: string }>(
+          `SELECT legacy_user_id as id
        FROM identity_accounts
        WHERE tenant_id = ?
          AND lifecycle_state = 'active'
          AND legacy_user_id IS NOT NULL
        ORDER BY created_at DESC`,
-      [tenantId]
-    );
+          [tenantId]
+        )
+      )
+    ).flat();
 
     if (userRows.length === 0) {
       return c.json({
@@ -1365,16 +1520,25 @@ export async function adminCustomClaimRequiredViolationsDetectHandler(c: AdminCo
       });
     }
 
-    const violationStatuses = await getRequiredCustomClaimViolationStatuses({
-      db: storageSources.nonPiiDb,
-      schemaDb: adapter,
-      stateDb: adapter,
-      dbPii: storageSources.piiDb,
-      cache: c.env.SETTINGS || c.env.AUTHRIM_CONFIG || null,
-      tenantId,
-      userIds: userRows.map((row) => row.id),
-      syncLifecycleState: true,
+    const statusResults = await mapWithConcurrency(userRows, 4, async (row) => {
+      const accountSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId, {
+        accountId: `account:${row.id}`,
+      });
+      return getRequiredCustomClaimViolationStatuses({
+        db: accountSources.nonPiiDb,
+        schemaDb: storageSources.schemaDb,
+        stateDb: accountSources.nonPiiDb,
+        dbPii: accountSources.piiDb,
+        cache: c.env.SETTINGS || c.env.AUTHRIM_CONFIG || null,
+        tenantId,
+        userIds: [row.id],
+        syncLifecycleState: true,
+      });
     });
+    const violationStatuses = {
+      users: statusResults.flatMap((result) => result.users),
+      requiredSchemaCount: statusResults[0]?.requiredSchemaCount ?? 0,
+    };
 
     const violatingUsers = violationStatuses.users.filter(
       (user) => user.missingRequiredFields.length > 0
@@ -1382,26 +1546,30 @@ export async function adminCustomClaimRequiredViolationsDetectHandler(c: AdminCo
     const previewUsers = violatingUsers.slice(0, previewLimit);
     const previewPiiMap = new Map<string, { email: string | null; name: string | null }>();
 
-    if (previewUsers.length > 0 && storageSources.piiDb) {
-      const runtimeUsers = new CanonicalRuntimeUserStore({
-        coreAdapter: adapter,
-        piiAdapter: ensureDatabaseAdapter(
-          storageSources.piiDb,
-          'custom-claims-required-violations-preview-pii'
-        ),
-        tenantId,
+    if (previewUsers.length > 0) {
+      await mapWithConcurrency(previewUsers, 4, async (user) => {
+        const accountSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId, {
+          accountId: `account:${user.userId}`,
+        });
+        const runtimeUsers = new CanonicalRuntimeUserStore({
+          coreAdapter: ensureDatabaseAdapter(
+            accountSources.nonPiiDb,
+            'custom-claims-required-violations-preview-core'
+          ),
+          piiAdapter: ensureDatabaseAdapter(
+            accountSources.piiDb,
+            'custom-claims-required-violations-preview-pii'
+          ),
+          tenantId,
+        });
+        const runtimeUser = await runtimeUsers.findById(user.userId, { includeInactive: true });
+        if (runtimeUser) {
+          previewPiiMap.set(user.userId, {
+            email: runtimeUser.email,
+            name: runtimeUser.name,
+          });
+        }
       });
-      await Promise.all(
-        previewUsers.map(async (user) => {
-          const runtimeUser = await runtimeUsers.findById(user.userId, { includeInactive: true });
-          if (runtimeUser) {
-            previewPiiMap.set(user.userId, {
-              email: runtimeUser.email,
-              name: runtimeUser.name,
-            });
-          }
-        })
-      );
     }
 
     return c.json({
@@ -1453,17 +1621,19 @@ export async function adminCustomClaimGetHandler(c: AdminContext) {
     if (schema.is_pii) {
       // PII: approximate count
       try {
-        userCount = storageSources.piiDb
-          ? await countUsersWithPiiCustomClaimData(storageSources.piiDb, tenantId)
-          : 0;
+        userCount = sum(
+          await mapWithConcurrency(storageSources.piiDbs, 4, (db) =>
+            countUsersWithPiiCustomClaimData(db, tenantId)
+          )
+        );
       } catch {
         userCount = -1;
       }
     } else {
-      userCount = await countUsersWithNonPiiFieldData(
-        storageSources.nonPiiDb,
-        tenantId,
-        schema.field_key as string
+      userCount = sum(
+        await mapWithConcurrency(storageSources.nonPiiDbs, 4, (db) =>
+          countUsersWithNonPiiFieldData(db, tenantId, schema.field_key as string)
+        )
       );
     }
 
@@ -1487,6 +1657,11 @@ export async function adminCustomClaimGetHandler(c: AdminContext) {
  * Update a custom claim schema (is_pii and field_key are immutable)
  */
 export async function adminCustomClaimUpdateHandler(c: AdminContext) {
+  let cardinalityFence: {
+    adapter: DatabaseAdapter;
+    tenantId: string;
+    schemaId: string;
+  } | null = null;
   try {
     const adapter = createAdapterFromContext(c);
     const tenantId = getTenantIdFromContext(asBaseContext(c));
@@ -1511,8 +1686,8 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
     }
 
     // Block protected field changes for system claims
-    if (schema.is_system === 1) {
-      const protectedFields = ['field_key', 'field_type', 'is_pii'];
+    if (schema.is_system === 1 || schema.is_system === true) {
+      const protectedFields = ['field_key', 'display_label', 'field_type', 'cardinality', 'is_pii'];
       for (const f of protectedFields) {
         if (body[f] !== undefined && body[f] !== schema[f]) {
           return c.json(
@@ -1591,6 +1766,22 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
         },
       });
     }
+
+    if (
+      body.cardinality !== undefined &&
+      !VALID_CARDINALITIES.includes(body.cardinality as Cardinality)
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
+        variables: {
+          field: 'cardinality',
+          reason: `Must be one of: ${VALID_CARDINALITIES.join(', ')}`,
+        },
+      });
+    }
+
+    const existingCardinality = schema.cardinality === 'multi' ? 'multi' : 'single';
+    const cardinalityChanging =
+      body.cardinality !== undefined && body.cardinality !== existingCardinality;
 
     // Validate validation_rules (pre-serialize for size check + reuse)
     const validationRules = body.validation_rules !== undefined ? body.validation_rules : undefined;
@@ -1694,11 +1885,9 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
     const updateableFields: Record<string, (v: unknown) => unknown> = {
       display_label: (v) => v,
       field_type: (v) => v,
+      cardinality: (v) => v,
       is_required: (v) => (v ? 1 : 0),
       is_active: (v) => (v ? 1 : 0),
-      include_in_id_token: (v) => (v ? 1 : 0),
-      include_in_userinfo: (v) => (v ? 1 : 0),
-      include_in_introspection: (v) => (v ? 1 : 0),
       scope_mode: (v) => v,
       is_searchable: (v) => (v ? 1 : 0),
       is_exportable: (v) => (v ? 1 : 0),
@@ -1752,17 +1941,76 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
       });
     }
 
+    if (cardinalityChanging) {
+      const fenceDetail = JSON.stringify({
+        operation: 'cardinality_change',
+        from: existingCardinality,
+        to: body.cardinality,
+        started_at: now,
+      });
+      const fenceResult = await adapter.execute(
+        `UPDATE custom_claim_schemas
+            SET operation_status = 'reconfiguring', operation_detail = ?, updated_at = ?
+          WHERE id = ?
+            AND tenant_id = ?
+            AND operation_status = 'active'
+            AND cardinality = ?`,
+        [fenceDetail, now, id, tenantId, existingCardinality]
+      );
+      if (fenceResult.rowsAffected !== 1) {
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT, {
+          variables: {
+            field: 'operation_status',
+            reason: 'Schema changed concurrently. Reload it and retry.',
+          },
+        });
+      }
+      cardinalityFence = { adapter, tenantId, schemaId: id };
+      await invalidateSchemaCache(c, tenantId);
+
+      const storageSources = await resolveCustomClaimStorageSources(c, tenantId);
+      const storedUserCount = schema.is_pii
+        ? await countPiiFieldAcrossStores(storageSources, tenantId, schema.field_key as string)
+        : await countNonPiiFieldAcrossStores(storageSources, tenantId, schema.field_key as string);
+      if (storedUserCount > 0) {
+        await updateCustomClaimSchemaFields({
+          db: adapter,
+          tenantId,
+          schemaId: id,
+          updates: { operation_status: 'active', operation_detail: null, updated_at: now },
+          allowedCurrentStatuses: ['reconfiguring'],
+        });
+        cardinalityFence = null;
+        await invalidateSchemaCache(c, tenantId);
+        return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT, {
+          variables: {
+            field: 'cardinality',
+            reason:
+              'Cardinality cannot be changed while stored values exist. Remove or migrate the field data first.',
+          },
+        });
+      }
+
+      updates.push('operation_status = ?', 'operation_detail = ?');
+      updateParams.push('active', null);
+    }
+
     updates.push('updated_at = ?');
     updateParams.push(now);
 
-    await updateCustomClaimSchemaFields({
+    const updatedRows = await updateCustomClaimSchemaFields({
       db: adapter,
       tenantId,
       schemaId: id,
       updates: Object.fromEntries(
         updates.map((clause, index) => [clause.replace(' = ?', ''), updateParams[index]])
       ),
+      allowedCurrentStatuses: [cardinalityChanging ? 'reconfiguring' : 'active'],
     });
+    if (updatedRows !== 1) {
+      throw new Error('custom_claim_schema_update_conflict');
+    }
+    cardinalityFence = null;
 
     // Fetch updated schema
     const updated = await getCustomClaimSchemaById(adapter, tenantId, id);
@@ -1794,6 +2042,24 @@ export async function adminCustomClaimUpdateHandler(c: AdminContext) {
 
     return c.json({ schema: updated });
   } catch (error) {
+    if (cardinalityFence) {
+      try {
+        await updateCustomClaimSchemaFields({
+          db: cardinalityFence.adapter,
+          tenantId: cardinalityFence.tenantId,
+          schemaId: cardinalityFence.schemaId,
+          updates: {
+            operation_status: 'active',
+            operation_detail: null,
+            updated_at: Math.floor(Date.now() / 1000),
+          },
+          allowedCurrentStatuses: ['reconfiguring'],
+        });
+        await invalidateSchemaCache(c, cardinalityFence.tenantId);
+      } catch {
+        // Best effort: the operation remains visible as reconfiguring for operator recovery.
+      }
+    }
     console.error('Failed to update custom claim schema:', error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -1818,7 +2084,7 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
     }
 
     // Block deletion of system claims
-    if (schema.is_system === 1) {
+    if (schema.is_system === 1 || schema.is_system === true) {
       return c.json(
         { error: 'forbidden', error_description: 'System claims cannot be deleted' },
         403
@@ -1878,9 +2144,7 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
     try {
       // Phase 2: Delete user data
       if (isPii) {
-        const deleteResult = await deleteStoredCustomClaimData({
-          db: storageSources.nonPiiDb,
-          dbPii: storageSources.piiDb,
+        const deleteResult = await deleteCustomClaimDataAcrossStores(storageSources, {
           tenantId,
           fieldKey,
           isPii: true,
@@ -1919,8 +2183,7 @@ export async function adminCustomClaimDeleteHandler(c: AdminContext) {
           );
         }
       } else {
-        await deleteStoredCustomClaimData({
-          db: storageSources.nonPiiDb,
+        await deleteCustomClaimDataAcrossStores(storageSources, {
           tenantId,
           fieldKey,
           isPii: false,
@@ -2018,7 +2281,7 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT, {
         variables: {
           field: 'new_field_key',
-          reason: `'${newKey}' is a reserved OIDC claim name`,
+          reason: `'${newKey}' is a reserved or built-in profile field name`,
         },
       });
     }
@@ -2031,7 +2294,7 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
     }
 
     // Block renaming of system claims
-    if (schema.is_system === 1) {
+    if (schema.is_system === 1 || schema.is_system === true) {
       return c.json(
         { error: 'forbidden', error_description: 'System claims cannot be renamed' },
         403
@@ -2101,9 +2364,7 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
       let failedPiiUsers = 0;
 
       if (isPii) {
-        const renameResult = await renameStoredCustomClaimData({
-          db: storageSources.nonPiiDb,
-          dbPii: storageSources.piiDb,
+        const renameResult = await renameCustomClaimDataAcrossStores(storageSources, {
           tenantId,
           oldKey,
           newKey,
@@ -2143,8 +2404,7 @@ export async function adminCustomClaimRenameHandler(c: AdminContext) {
           );
         }
       } else {
-        const renameResult = await renameStoredCustomClaimData({
-          db: storageSources.nonPiiDb,
+        const renameResult = await renameCustomClaimDataAcrossStores(storageSources, {
           tenantId,
           oldKey,
           newKey,
@@ -2359,9 +2619,7 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
         let affectedUsers = 0;
 
         if (isPii) {
-          const renameResult = await renameStoredCustomClaimData({
-            db: storageSources.nonPiiDb,
-            dbPii: storageSources.piiDb,
+          const renameResult = await renameCustomClaimDataAcrossStores(storageSources, {
             tenantId,
             oldKey,
             newKey,
@@ -2403,15 +2661,14 @@ export async function adminCustomClaimRetryHandler(c: AdminContext) {
           }
         } else {
           // Non-PII: Check remaining records to distinguish "all migrated" from "nothing to do"
-          const remainingCount = await countUsersWithNonPiiFieldData(
-            storageSources.nonPiiDb,
+          const remainingCount = await countNonPiiFieldAcrossStores(
+            storageSources,
             tenantId,
             oldKey
           );
 
           if (remainingCount > 0) {
-            const renameResult = await renameStoredCustomClaimData({
-              db: storageSources.nonPiiDb,
+            const renameResult = await renameCustomClaimDataAcrossStores(storageSources, {
               tenantId,
               oldKey,
               newKey,

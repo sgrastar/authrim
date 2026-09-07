@@ -3,7 +3,7 @@
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { isValidImageUrl, isValidLinkUrl } from '$lib/utils/url-validation';
-	import { LL } from '$i18n/i18n-svelte';
+	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import { onMount } from 'svelte';
 
 	const { themeStore } = useLoginUIStores();
@@ -22,7 +22,7 @@
 			config: {
 				mode: 'tenant_only' | 'discovery_optional' | 'discovery_required';
 				discovery_methods: string[];
-				email_resolution_policy: 'exact_email_then_domain' | 'exact_email_only' | 'disabled';
+				email_resolution_policy: 'exact_email_only' | 'disabled';
 				selection_policy: 'auto_if_single' | 'always_select' | 'select_if_multiple' | 'manual_only';
 				allow_manual_tenant_entry: boolean;
 				require_common_discovery_before_login: boolean;
@@ -54,9 +54,11 @@
 		mode?: string;
 		value?: string;
 		loginHint?: string;
+		emailChallengeId?: string;
+		emailExpiresIn?: number;
 		errorCode?: string;
 		candidates?: DiscoveryCandidate[];
-		result?: 'multiple' | 'manual_required' | 'not_found';
+		result?: 'email_code_sent' | 'multiple' | 'manual_required' | 'not_found';
 	}
 
 	let { data, form }: { data: PageData; form?: ActionData } = $props();
@@ -71,6 +73,7 @@
 	const rememberedCandidate = $derived(data.rememberedCandidate);
 	const submittedMode = $derived(form?.mode);
 	const submittedValue = $derived(form?.value || '');
+	const emailChallengeId = $derived(form?.emailChallengeId || '');
 	const showTenantChooser = $derived(
 		!(data.config.is_common_entry_host && data.config.config.mode === 'tenant_only')
 	);
@@ -126,8 +129,13 @@
 		switch (code) {
 			case 'email_not_found':
 				return $LL.discover_error_emailNotFound();
-			case 'email_domain_not_found':
-				return $LL.discover_error_emailDomainNotFound();
+			case 'invalid_or_expired_code':
+				return $LL.emailCode_errorInvalid();
+			case 'rate_limited':
+			case 'discovery_unavailable':
+				return $LL.error_temporarily_unavailable();
+			case 'discovery_disabled':
+				return $LL.discover_error_manualRequired();
 			case 'tenant_code_not_found':
 				return $LL.discover_error_tenantCodeNotFound();
 			case 'tenant_slug_not_found':
@@ -155,7 +163,10 @@
 	}
 
 	function candidateHref(candidate: DiscoveryCandidate): string | null {
-		return isValidLinkUrl(candidate.login_url) ? candidate.login_url : null;
+		if (!isValidLinkUrl(candidate.login_url)) return null;
+		const target = new URL(candidate.login_url);
+		target.searchParams.set('lang', getLocale());
+		return target.toString();
 	}
 
 	function shouldPostCandidateSelection(): boolean {
@@ -288,12 +299,15 @@
 				{#if loginHint}
 					<input type="hidden" name="login_hint" value={loginHint} />
 				{/if}
+				{#if emailChallengeId}
+					<input type="hidden" name="email_challenge_id" value={emailChallengeId} />
+				{/if}
 
 				{#if interactiveMethods.length > 1}
 					<div class="form-group">
 						<label for="mode">{$LL.discover_methodLabel()}</label>
 						<select id="mode" name="mode" bind:value={selectedMode}>
-							{#if interactiveMethods.includes('email_domain')}
+							{#if interactiveMethods.includes('email_exact')}
 								<option value="email">{$LL.discover_method_email()}</option>
 							{/if}
 							{#if interactiveMethods.includes('tenant_code')}
@@ -332,9 +346,25 @@
 							type={selectedMode === 'email' ? 'email' : 'text'}
 							bind:value
 							placeholder={placeholderFor(selectedMode)}
+							readonly={selectedMode === 'email' && Boolean(emailChallengeId)}
 							required
 						/>
 					</div>
+					{#if selectedMode === 'email' && emailChallengeId}
+						<div class="form-group">
+							<label for="email-code">{$LL.emailCode_codeLabel()}</label>
+							<input
+								id="email-code"
+								name="email_code"
+								type="text"
+								inputmode="numeric"
+								autocomplete="one-time-code"
+								pattern="[0-9]{6}"
+								maxlength="6"
+								required
+							/>
+						</div>
+					{/if}
 				{/if}
 
 				<button
@@ -603,7 +633,7 @@
 	.tenant-option-button {
 		width: 100%;
 		font: inherit;
-		text-align: left;
+		text-align: start;
 		cursor: pointer;
 	}
 

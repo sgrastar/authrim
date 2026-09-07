@@ -12,6 +12,17 @@
 
 import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 
+export type LoginUITextField =
+  | 'tagline'
+  | 'brandPanelTitle'
+  | 'brandPanelText'
+  | 'footerText'
+  | 'loginTitle'
+  | 'registrationTitle'
+  | 'accountTitle';
+
+export type LoginUITextLocalizations = Record<string, Partial<Record<LoginUITextField, string>>>;
+
 /**
  * Login UI Settings Interface
  */
@@ -28,6 +39,7 @@ export interface LoginUISettings {
   'login-ui.font_family': string;
   'login-ui.font_scale': string;
   'login-ui.background_color': string;
+  'login-ui.accent_color': string;
   'login-ui.title_color': string;
   'login-ui.text_color': string;
   'login-ui.copy_color': string;
@@ -44,6 +56,9 @@ export interface LoginUISettings {
 
   // Locales
   'login-ui.supported_locales': string;
+  'login-ui.default_locale': string;
+  'login-ui.primary_locales': string[] | null;
+  'login-ui.show_english_language_names': boolean;
 
   // Appearance
   'login-ui.background_image_url': string;
@@ -71,10 +86,16 @@ export interface LoginUISettings {
   'login-ui.brand_position': string;
   'login-ui.brand_align': string;
   'login-ui.header_text': string;
+  'login-ui.text_localizations': string;
   'login-ui.footer_text': string;
   'login-ui.footer_links': string;
   'login-ui.custom_blocks': string;
   'login-ui.custom_themes': string;
+  'login-ui.account_pages': string;
+  'login-ui.account_page_draft': string;
+  'login-ui.account_page_published': string;
+  'login-ui.account_page_published_version': number;
+  'login-ui.account_page_published_at': string;
 }
 
 /**
@@ -193,6 +214,16 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
       'Page background color override. Empty follows the selected theme template background',
     visibility: 'public',
   },
+  'login-ui.accent_color': {
+    key: 'login-ui.accent_color',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_ACCENT_COLOR',
+    label: 'Accent Color',
+    description:
+      'Optional CSS color override for primary actions, focus indicators, and highlights',
+    visibility: 'public',
+  },
   'login-ui.title_color': {
     key: 'login-ui.title_color',
     type: 'string',
@@ -269,11 +300,62 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
   'login-ui.supported_locales': {
     key: 'login-ui.supported_locales',
     type: 'string',
-    default: 'en,ja',
+    default: 'en,ja,zh-CN,zh-TW,es,pt,fr,de,ko,ru,id,ar,it,th,vi,hi,bn,tr,sw,am,pl',
     envKey: 'LOGIN_UI_SUPPORTED_LOCALES',
     label: 'Supported Locales',
-    description: 'Comma-separated list of supported UI locales (e.g., en,ja)',
+    description: 'Comma-separated list of supported LoginUI locales',
     visibility: 'public',
+  },
+  'login-ui.default_locale': {
+    key: 'login-ui.default_locale',
+    type: 'enum',
+    default: 'en',
+    envKey: 'LOGIN_UI_DEFAULT_LOCALE',
+    label: 'Default Locale',
+    description: 'Fallback locale used when no enabled browser or saved locale matches',
+    enum: [
+      'en',
+      'ja',
+      'zh-CN',
+      'zh-TW',
+      'es',
+      'pt',
+      'fr',
+      'de',
+      'ko',
+      'ru',
+      'id',
+      'ar',
+      'it',
+      'th',
+      'vi',
+      'hi',
+      'bn',
+      'tr',
+      'sw',
+      'am',
+      'pl',
+    ],
+    visibility: 'public',
+  },
+  'login-ui.primary_locales': {
+    key: 'login-ui.primary_locales',
+    type: 'json',
+    default: null,
+    envKey: 'LOGIN_UI_PRIMARY_LOCALES',
+    label: 'Primary Languages',
+    description:
+      'Up to six primary Login UI locales. Null selects defaults by speaker count; an empty array explicitly selects none',
+    visibility: 'page',
+  },
+  'login-ui.show_english_language_names': {
+    key: 'login-ui.show_english_language_names',
+    type: 'boolean',
+    default: false,
+    envKey: 'LOGIN_UI_SHOW_ENGLISH_LANGUAGE_NAMES',
+    label: 'Show English Language Names',
+    description: 'Display English names alongside native language names in the Login UI selector',
+    visibility: 'page',
   },
   'login-ui.favicon_url': {
     key: 'login-ui.favicon_url',
@@ -550,6 +632,15 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
     description: 'Header text displayed above the login form',
     visibility: 'public',
   },
+  'login-ui.text_localizations': {
+    key: 'login-ui.text_localizations',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_TEXT_LOCALIZATIONS',
+    label: 'Localized Text',
+    description: 'JSON object of locale-specific Login UI text overrides',
+    visibility: 'public',
+  },
   'login-ui.footer_text': {
     key: 'login-ui.footer_text',
     type: 'string',
@@ -589,6 +680,57 @@ export const LOGIN_UI_SETTINGS_META: Record<keyof LoginUISettings, SettingMeta> 
       'JSON document holding duplicated Login UI themes managed from the Themes admin page',
     visibility: 'public',
   },
+  'login-ui.account_pages': {
+    key: 'login-ui.account_pages',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_ACCOUNT_PAGES',
+    label: 'Account Pages',
+    description: 'Versioned custom account pages with resolved published screen snapshots',
+    visibility: 'internal',
+    status: 'in_development',
+  },
+  'login-ui.account_page_draft': {
+    key: 'login-ui.account_page_draft',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_ACCOUNT_PAGE_DRAFT',
+    label: 'Account Page Draft',
+    description: 'Serialized draft account page composition managed from Admin UI',
+    visibility: 'internal',
+    status: 'in_development',
+  },
+  'login-ui.account_page_published': {
+    key: 'login-ui.account_page_published',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_ACCOUNT_PAGE_PUBLISHED',
+    label: 'Published Account Page',
+    description: 'Serialized published account page composition used by Login UI',
+    visibility: 'internal',
+    status: 'in_development',
+  },
+  'login-ui.account_page_published_version': {
+    key: 'login-ui.account_page_published_version',
+    type: 'number',
+    default: 0,
+    envKey: 'LOGIN_UI_ACCOUNT_PAGE_PUBLISHED_VERSION',
+    label: 'Published Account Page Version',
+    description: 'Monotonic version of the published account page composition',
+    min: 0,
+    visibility: 'internal',
+    status: 'in_development',
+  },
+  'login-ui.account_page_published_at': {
+    key: 'login-ui.account_page_published_at',
+    type: 'string',
+    default: '',
+    envKey: 'LOGIN_UI_ACCOUNT_PAGE_PUBLISHED_AT',
+    label: 'Published Account Page At',
+    description: 'ISO timestamp of the latest account page publication',
+    visibility: 'internal',
+    status: 'in_development',
+  },
 };
 
 /**
@@ -616,6 +758,7 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.font_family': 'system',
   'login-ui.font_scale': 'comfortable',
   'login-ui.background_color': '',
+  'login-ui.accent_color': '',
   'login-ui.title_color': '',
   'login-ui.text_color': '',
   'login-ui.copy_color': '',
@@ -627,7 +770,11 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.logo_layout': 'stack',
   'login-ui.brand_panel_title': '',
   'login-ui.brand_panel_text': '',
-  'login-ui.supported_locales': 'en,ja',
+  'login-ui.supported_locales':
+    'en,ja,zh-CN,zh-TW,es,pt,fr,de,ko,ru,id,ar,it,th,vi,hi,bn,tr,sw,am,pl',
+  'login-ui.default_locale': 'en',
+  'login-ui.primary_locales': null,
+  'login-ui.show_english_language_names': false,
   'login-ui.background_image_url': '',
   'login-ui.login_panel_background_image_url': '',
   'login-ui.custom_css': '',
@@ -653,8 +800,14 @@ export const LOGIN_UI_DEFAULTS: LoginUISettings = {
   'login-ui.brand_position': 'center',
   'login-ui.brand_align': 'left',
   'login-ui.header_text': '',
+  'login-ui.text_localizations': '',
   'login-ui.footer_text': '',
   'login-ui.footer_links': '',
   'login-ui.custom_blocks': '',
   'login-ui.custom_themes': '',
+  'login-ui.account_pages': '',
+  'login-ui.account_page_draft': '',
+  'login-ui.account_page_published': '',
+  'login-ui.account_page_published_version': 0,
+  'login-ui.account_page_published_at': '',
 };

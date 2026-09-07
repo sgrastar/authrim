@@ -1,5 +1,6 @@
 export * from './flush-profiles';
 export * from './flush-worker';
+export * from './encryption-key';
 export * from './index-profiles';
 export * from './r2-chunk-writer';
 export * from './r2-chunk-reader';

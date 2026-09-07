@@ -164,11 +164,10 @@ export function resolveIssuerUrl(
 /**
  * Resolve the most stable public API origin for setup-time management calls.
  *
- * In multi-tenant mode the canonical issuer may be `{tenant}.{baseDomain}`.
- * Immediately after deploy, that tenant hostname can lag wildcard/custom-domain
- * propagation even when the base API domain is already routed. Admin bootstrap
- * requests carry `X-Tenant-Id`, so using the base API origin avoids unnecessary
- * dependence on the tenant hostname during post-deploy setup.
+ * In multi-tenant mode this returns the base domain for environment-level health and
+ * control-plane operations that do not require tenant resolution. Tenant-scoped admin
+ * calls must use `resolveApiBaseUrlCandidates(..., { purpose: 'tenant-scoped-admin' })`;
+ * those routes resolve the tenant from the host before `X-Tenant-Id` can help.
  */
 export function resolveOperationalApiBaseUrl(
   config: Partial<AuthrimConfig> | null | undefined,
@@ -201,8 +200,13 @@ export function resolveApiBaseUrlCandidates(
     !customUrl && config?.urls?.api?.auto
       ? normalizeWorkersDevUrl(config.urls.api.auto, options.workersSubdomain)
       : undefined;
-  const candidates =
-    purpose === 'tenant-scoped-admin'
+  const tenantHostIsRequired =
+    purpose === 'tenant-scoped-admin' &&
+    isMultiTenantConfigured(config) &&
+    config?.tenant?.nakedDomain !== true;
+  const candidates = tenantHostIsRequired
+    ? [issuerUrl]
+    : purpose === 'tenant-scoped-admin'
       ? [issuerUrl, operationalUrl, customUrl, workersDevUrl]
       : [operationalUrl, issuerUrl, customUrl, workersDevUrl];
   const seen = new Set<string>();
@@ -233,11 +237,24 @@ export function resolveLoginUiEntryUrl(
   config: Partial<AuthrimConfig> | null | undefined,
   options: ResolveEnvironmentUrlOptions
 ): string {
+  return `${resolveLoginUiExecutionOrigin(config, options)}/login`;
+}
+
+/**
+ * Resolve the browser origin that executes Login UI flows.
+ *
+ * A workers.dev-only deployment keeps Login UI on its dedicated Worker origin.
+ * Issuer-hosted UI is used once the UI shares the API host or tenant hosts are enabled.
+ */
+export function resolveLoginUiExecutionOrigin(
+  config: Partial<AuthrimConfig> | null | undefined,
+  options: ResolveEnvironmentUrlOptions
+): string {
   if (isMultiTenantConfigured(config) || config?.urls?.loginUi?.sameAsApi === true) {
-    return `${resolveIssuerUrl(config, options)}/login`;
+    return resolveIssuerUrl(config, options);
   }
 
-  return `${resolveSharedLoginUiBaseUrl(config, options)}/login`;
+  return resolveSharedLoginUiBaseUrl(config, options);
 }
 
 export function resolveAdminUiEntryUrl(

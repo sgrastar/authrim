@@ -4,7 +4,7 @@ import {
   publishRuntimeLoggingPolicySnapshot,
 } from '@authrim/ar-lib-logging/policies';
 import { decryptLogChunkBody } from '@authrim/ar-lib-logging/chunks';
-import type { LogPlane, LogType } from '@authrim/ar-lib-logging/registry';
+import type { LogPlane, LogType } from '@authrim/ar-lib-logging/contract';
 import { emitRuntimeLogRecords } from '../logging-runtime-emitter';
 
 const ROOT_KEY = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -152,6 +152,55 @@ async function decodeFirstChunkRecord(input: {
 }
 
 describe('runtime log emitter', () => {
+  it('commits fresh-environment platform archives without redundant delivery fanout', async () => {
+    const { bucket, objectValues } = createSnapshotStores();
+    const deliveryAdapter = createMockAdapter();
+    const indexAdapter = createMockAdapter();
+    const criticalQueue = { send: vi.fn(async () => {}) };
+
+    const result = await emitRuntimeLogRecords({
+      env: {
+        DB_ADMIN: deliveryAdapter as never,
+        LOGGING_INDEX_DB: indexAdapter as never,
+        AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+        LOGGING_DELIVERY_CRITICAL_QUEUE: criticalQueue as never,
+      },
+      tenantId: 'tenant-fresh-environment',
+      logType: 'admin_audit',
+      surface: 'admin_audit',
+      tenantKeyResolver: async () => 't_fresh_environment',
+      records: [
+        {
+          id: 'admin-audit-fresh-1',
+          eventAt: 1_700_000_000_000,
+          payload: { action: 'environment.initialized', status: 'success' },
+        },
+      ],
+      planes: ['archive'],
+    });
+
+    expect([...objectValues.keys()]).toHaveLength(1);
+    expect(result.targetResults[0]).toMatchObject({
+      plane: 'archive',
+      destinationId: 'platform_default_r2_archive',
+      status: 'delivered',
+      queued: false,
+    });
+    expect(criticalQueue.send).not.toHaveBeenCalled();
+    expect(deliveryAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO logging_delivery_events'),
+      expect.arrayContaining([
+        't_fresh_environment',
+        'platform_default_r2_archive',
+        'admin_audit',
+        'archive',
+        'critical',
+        'delivered',
+      ])
+    );
+  });
+
   it('writes normal, job, webhook, and operational archive chunks with stable R2 layout and metadata', async () => {
     const tenantId = 'tenant-runtime-contract';
     const tenantKey = 't_runtime_contract';
@@ -483,6 +532,7 @@ describe('runtime log emitter', () => {
         DIAGNOSTIC_LOGS: bucket,
         AUDIT_ARCHIVE: bucket,
         LOGGING_DELIVERY_QUEUE: queue as never,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       },
       tenantId,
       logType: 'webhook',
@@ -675,6 +725,7 @@ describe('runtime log emitter', () => {
         DIAGNOSTIC_LOGS: bucket,
         AUDIT_ARCHIVE: bucket,
         LOGGING_DELIVERY_QUEUE: queue as never,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       },
       tenantId,
       logType: 'webhook',

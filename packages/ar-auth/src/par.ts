@@ -32,28 +32,40 @@ import {
   verifyClientSecretHash,
   getTokenFormat,
   parseToken,
+  parseTokenHeader,
   isInternalUrl,
+  safeFetchJson,
   validateAuthorizationDetails,
   // Logging
   getLogger,
   getTenantIdFromContext,
   isSigningJWK,
+  getTenantSystemSettings,
+  FAPI2_MESSAGE_SIGNING_ALGS,
+  parseBasicAuth,
+  validateRegisteredClientAuthenticationMethod,
+  validateCustomRedirectParams,
 } from '@authrim/ar-lib-core';
 import type { JWK } from '@authrim/ar-lib-core';
 import { getClientCached, getPARRequestStoreForNewRequest } from '@authrim/ar-lib-core';
 import { getRequestIssuer } from './issuer';
-import { jwtVerify, compactDecrypt, importJWK, createRemoteJWKSet } from 'jose';
+import { jwtVerify, compactDecrypt, importJWK } from 'jose';
+import {
+  type FAPI2MessageSigningConfig,
+  validateFAPI2MessageSigningRequestObjectClaims,
+} from './fapi-message-signing';
 
-const REQUEST_OBJECT_SIGNING_ALGORITHMS = ['RS256'];
+const LEGACY_REQUEST_OBJECT_SIGNING_ALGORITHMS = ['RS256'];
+const MAX_CLIENT_ASSERTION_SIZE_BYTES = 16 * 1024;
 
 /**
  * PAR request parameters interface
  */
 interface PARRequestParams {
   client_id: string;
-  response_type: string;
-  redirect_uri: string;
-  scope: string;
+  response_type?: string;
+  redirect_uri?: string;
+  scope?: string;
   state?: string | undefined;
   nonce?: string | undefined;
   code_challenge?: string | undefined;
@@ -67,37 +79,67 @@ interface PARRequestParams {
   login_hint?: string | undefined;
   acr_values?: string | undefined;
   claims?: string | undefined;
+  dpop_jkt?: string | undefined;
   authorization_details?: string | undefined; // RFC 9396: Rich Authorization Requests
+  error_uri?: string | undefined; // Authrim extension: validated again at /authorize
+  cancel_uri?: string | undefined; // Authrim extension: validated again at /authorize
+}
+
+interface CompletePARRequestParams extends PARRequestParams {
+  response_type: string;
+  redirect_uri: string;
+  scope: string;
 }
 
 /**
  * Validate PAR request parameters
  */
-function validatePARParams(formData: Record<string, unknown>): PARRequestParams {
-  const client_id = formData.client_id;
+function resolvePARClientId(
+  formData: Record<string, unknown>,
+  clientAssertion: string | undefined,
+  clientAssertionType: string | undefined
+): string {
+  const requestClientId = formData.client_id;
+  if (typeof requestClientId === 'string' && requestClientId.length > 0) {
+    return requestClientId;
+  }
+
+  if (
+    !clientAssertion ||
+    clientAssertionType !== 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer' ||
+    new TextEncoder().encode(clientAssertion).byteLength > MAX_CLIENT_ASSERTION_SIZE_BYTES
+  ) {
+    throw new RFCError('invalid_request', 400, 'client_id is required');
+  }
+
+  try {
+    // This unverified payload is used only to select the registered client key. The assertion is
+    // cryptographically verified against that client below before the request is accepted.
+    const claims = parseToken(clientAssertion);
+    if (
+      typeof claims.iss === 'string' &&
+      claims.iss.length > 0 &&
+      typeof claims.sub === 'string' &&
+      timingSafeEqual(claims.iss, claims.sub)
+    ) {
+      return claims.iss;
+    }
+  } catch {
+    // Return the same generic authentication error for malformed and unknown assertions.
+  }
+  throw new RFCError('invalid_client', 401, 'Client authentication failed');
+}
+
+function validatePARParams(formData: Record<string, unknown>, clientId: string): PARRequestParams {
   const response_type = formData.response_type;
   const redirect_uri = formData.redirect_uri;
   const scope = formData.scope;
 
-  // Validate required parameters
-  if (!client_id || typeof client_id !== 'string') {
-    throw new RFCError('invalid_request', 400, 'client_id is required');
-  }
-  if (!response_type || typeof response_type !== 'string') {
-    throw new RFCError('invalid_request', 400, 'response_type is required');
-  }
-  if (!redirect_uri || typeof redirect_uri !== 'string') {
-    throw new RFCError('invalid_request', 400, 'redirect_uri is required');
-  }
-  if (!scope || typeof scope !== 'string') {
-    throw new RFCError('invalid_request', 400, 'scope is required');
-  }
-
   return {
-    client_id,
-    response_type,
-    redirect_uri,
-    scope,
+    client_id: clientId,
+    response_type: typeof response_type === 'string' ? response_type : undefined,
+    redirect_uri: typeof redirect_uri === 'string' ? redirect_uri : undefined,
+    scope: typeof scope === 'string' ? scope : undefined,
     state: typeof formData.state === 'string' ? formData.state : undefined,
     nonce: typeof formData.nonce === 'string' ? formData.nonce : undefined,
     code_challenge:
@@ -115,11 +157,28 @@ function validatePARParams(formData: Record<string, unknown>): PARRequestParams 
     login_hint: typeof formData.login_hint === 'string' ? formData.login_hint : undefined,
     acr_values: typeof formData.acr_values === 'string' ? formData.acr_values : undefined,
     claims: typeof formData.claims === 'string' ? formData.claims : undefined,
+    dpop_jkt: typeof formData.dpop_jkt === 'string' ? formData.dpop_jkt : undefined,
     authorization_details:
       typeof formData.authorization_details === 'string'
         ? formData.authorization_details
         : undefined,
+    error_uri: typeof formData.error_uri === 'string' ? formData.error_uri : undefined,
+    cancel_uri: typeof formData.cancel_uri === 'string' ? formData.cancel_uri : undefined,
   };
+}
+
+function assertCompletePARParams(
+  params: PARRequestParams
+): asserts params is CompletePARRequestParams {
+  if (!params.response_type) {
+    throw new RFCError('invalid_request', 400, 'response_type is required');
+  }
+  if (!params.redirect_uri) {
+    throw new RFCError('invalid_request', 400, 'redirect_uri is required');
+  }
+  if (!params.scope) {
+    throw new RFCError('invalid_request', 400, 'scope is required');
+  }
 }
 
 function selectRequestObjectSigningKey(
@@ -131,8 +190,11 @@ function selectRequestObjectSigningKey(
     return undefined;
   }
 
-  return (jwks.keys as JWK[]).find((key) => {
+  const candidates = (jwks.keys as JWK[]).filter((key) => {
     if (!isSigningJWK(key)) {
+      return false;
+    }
+    if (key.key_ops && !key.key_ops.includes('verify')) {
       return false;
     }
     if (kid && key.kid !== kid) {
@@ -141,8 +203,30 @@ function selectRequestObjectSigningKey(
     if (key.alg && key.alg !== alg) {
       return false;
     }
-    return true;
+    if (alg === 'ES256') {
+      return (
+        key.kty === 'EC' &&
+        key.crv === 'P-256' &&
+        typeof key.x === 'string' &&
+        typeof key.y === 'string'
+      );
+    }
+    if (alg === 'PS256' || alg === 'RS256') {
+      return key.kty === 'RSA' && typeof key.n === 'string' && typeof key.e === 'string';
+    }
+    if (alg === 'EdDSA') {
+      return (
+        key.kty === 'OKP' &&
+        (key.crv === 'Ed25519' || key.crv === 'Ed448') &&
+        typeof key.x === 'string'
+      );
+    }
+    return false;
   });
+  if (kid) {
+    return candidates[0];
+  }
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 /**
@@ -174,13 +258,47 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
 
     const formData = await c.req.parseBody();
 
+    // RFC 9126: request_uri is an authorization endpoint parameter produced by PAR; it is not
+    // accepted as input to the pushed authorization request endpoint. Reject it explicitly
+    // instead of silently discarding it and issuing a new request_uri.
+    if (Object.prototype.hasOwnProperty.call(formData, 'request_uri')) {
+      throw new RFCError(
+        'request_uri_not_supported',
+        400,
+        'request_uri is not supported at the PAR endpoint'
+      );
+    }
+
     // Extract client authentication parameters
-    const client_secret = formData.client_secret as string | undefined;
+    let client_secret = formData.client_secret as string | undefined;
     const client_assertion = formData.client_assertion as string | undefined;
     const client_assertion_type = formData.client_assertion_type as string | undefined;
 
+    const basicAuth = parseBasicAuth(c.req.header('Authorization'));
+    if (
+      !basicAuth.success &&
+      (basicAuth.error === 'malformed_credentials' || basicAuth.error === 'decode_error')
+    ) {
+      throw new RFCError('invalid_client', 401, 'Invalid Authorization header format');
+    }
+    if (basicAuth.success) {
+      if (formData.client_id && formData.client_id !== basicAuth.credentials.username) {
+        throw new RFCError('invalid_client', 401, 'Client authentication failed');
+      }
+      formData.client_id = basicAuth.credentials.username;
+      client_secret = basicAuth.credentials.password;
+    }
+
+    // RFC 9126 permits authenticated clients to omit the outer client_id. private_key_jwt
+    // identifies the client through the assertion issuer; its signature is verified below.
+    const clientId = resolvePARClientId(
+      formData as Record<string, unknown>,
+      client_assertion,
+      client_assertion_type
+    );
+
     // Validate request parameters
-    const params = validatePARParams(formData as Record<string, unknown>);
+    const params = validatePARParams(formData as Record<string, unknown>, clientId);
 
     // Validate client_id
     const clientValidation = validateClientId(params.client_id);
@@ -204,6 +322,8 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       enabled?: boolean;
       requirePrivateKeyJwt?: boolean;
       maxRequestUriExpiry?: number;
+      clientAssertionAudience?: 'issuer';
+      messageSigning?: FAPI2MessageSigningConfig;
     } = {};
     let oidcConfig: {
       parExpiry?: number;
@@ -212,21 +332,44 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     } = {};
 
     try {
-      const settingsJson = await c.env.SETTINGS?.get('system_settings');
-      if (settingsJson) {
-        const settings = JSON.parse(settingsJson);
+      const settings = await getTenantSystemSettings(
+        c.env.SETTINGS,
+        (clientMetadata.tenant_id as string) || getTenantIdFromContext(c),
+        { failOnError: true }
+      );
+      if (settings) {
         fapiConfig = settings.fapi || {};
         oidcConfig = settings.oidc || {};
       }
     } catch (error) {
       log.error('Failed to load settings from KV', { action: 'settings_load' }, error as Error);
-      // Continue with default values
+      throw new RFCError(
+        'temporarily_unavailable',
+        503,
+        'Security profile settings are temporarily unavailable'
+      );
     }
 
     // =========================================================================
     // P0: Client Authentication (RFC 9126 Section 2.1)
     // The authorization server MUST authenticate the client.
     // =========================================================================
+    const methodValidation = validateRegisteredClientAuthenticationMethod(clientMetadata, {
+      basic: basicAuth.success,
+      clientSecretPost: typeof formData.client_secret === 'string',
+      clientAssertion: Boolean(client_assertion),
+      clientAssertionType: client_assertion_type,
+    });
+    if (!methodValidation.valid) {
+      return c.json(
+        {
+          error: 'invalid_client',
+          error_description: methodValidation.errorDescription,
+        },
+        401
+      );
+    }
+
     if (
       client_assertion &&
       client_assertion_type === 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
@@ -235,7 +378,20 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       const assertionValidation = await validateClientAssertion(
         client_assertion,
         `${issuer}/par`,
-        clientMetadata
+        clientMetadata,
+        {
+          audiencePolicy:
+            fapiConfig.clientAssertionAudience === 'issuer' ? 'issuer-only' : 'endpoint-or-issuer',
+          issuer,
+          additionalAudiences:
+            fapiConfig.clientAssertionAudience === 'issuer' ? [] : [`${issuer}/token`],
+          clockSkewSeconds: 60,
+          ...(fapiConfig.enabled ? { allowedAlgorithms: [...FAPI2_MESSAGE_SIGNING_ALGS] } : {}),
+          replayProtection: {
+            env: c.env,
+            tenantId: getTenantIdFromContext(c),
+          },
+        }
       );
 
       if (!assertionValidation.valid) {
@@ -248,7 +404,10 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
           401
         );
       }
-    } else if (clientMetadata.client_secret_hash) {
+    } else if (
+      clientMetadata.token_endpoint_auth_method !== 'none' &&
+      clientMetadata.client_secret_hash
+    ) {
       // client_secret_basic or client_secret_post authentication
       // SV-015: Verify client secret against stored SHA-256 hash
       if (
@@ -273,6 +432,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       // FAPI 2.0: Require private_key_jwt authentication
       if (fapiConfig.requirePrivateKeyJwt !== false) {
         if (
+          clientMetadata.token_endpoint_auth_method !== 'private_key_jwt' ||
           !client_assertion ||
           client_assertion_type !== 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
         ) {
@@ -285,11 +445,6 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
           );
         }
       }
-
-      // FAPI 2.0: Require PKCE with S256
-      if (!params.code_challenge || params.code_challenge_method !== 'S256') {
-        throw new RFCError('invalid_request', 400, 'FAPI 2.0 requires PKCE with S256 method');
-      }
     }
 
     // =========================================================================
@@ -297,11 +452,27 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     // If 'request' parameter is present, parse JWT request object
     // =========================================================================
     const requestParam = formData.request as string | undefined;
+    const messageSigningConfig = fapiConfig.messageSigning;
+    const messageSigningEnabled = messageSigningConfig?.enabled === true;
+    const requestObjectSigningAlgorithms = messageSigningEnabled
+      ? (messageSigningConfig.requestObjectSigningAlgorithms ?? [...FAPI2_MESSAGE_SIGNING_ALGS])
+      : LEGACY_REQUEST_OBJECT_SIGNING_ALGORITHMS;
+
+    if (messageSigningConfig?.requireSignedRequestObject && !requestParam) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'A signed request object is required for this FAPI profile',
+        },
+        400
+      );
+    }
 
     if (requestParam) {
       try {
         let requestObjectClaims: Record<string, unknown> | undefined;
         let requestProcessed = false;
+        let requestCryptographicallySigned = false;
 
         // Check if request is JWE (encrypted) or JWT (signed)
         let tokenFormat = getTokenFormat(requestParam);
@@ -344,10 +515,20 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
 
             // Check inner format
             tokenFormat = getTokenFormat(jwtRequest);
-            if (tokenFormat === 'jwe') {
-              // Try to parse as plain JSON (unsecured request object inside JWE)
+            if (tokenFormat === 'unknown' && jwtRequest.trimStart().startsWith('{')) {
+              // A directly encrypted JSON request object has JWE integrity protection,
+              // but it is not a client signature and is therefore rejected by the
+              // Message Signing profile below.
               requestObjectClaims = JSON.parse(jwtRequest) as Record<string, unknown>;
               requestProcessed = true;
+            } else if (tokenFormat !== 'jwt') {
+              return c.json(
+                {
+                  error: 'invalid_request_object',
+                  error_description: 'Decrypted request object must be a JWT or JSON object',
+                },
+                400
+              );
             }
           } catch (decryptError) {
             log.error(
@@ -367,12 +548,21 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
 
         // Process JWT/JWS if not already processed
         if (!requestProcessed) {
-          const parsed = parseToken(jwtRequest);
-          const header = parsed?.header as { alg?: string; kid?: string } | undefined;
+          const header = parseTokenHeader(jwtRequest);
           const alg = header?.alg;
 
           // Handle unsigned request objects (alg=none)
           if (alg === 'none') {
+            if (messageSigningEnabled) {
+              return c.json(
+                {
+                  error: 'invalid_request_object',
+                  error_description:
+                    'Unsigned request objects are not allowed for FAPI Message Signing',
+                },
+                400
+              );
+            }
             // SECURITY: Block alg=none in production
             const environment = c.env.ENVIRONMENT || c.env.NODE_ENV || 'production';
             const isProduction = environment === 'production';
@@ -413,7 +603,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
             });
             requestObjectClaims = parseToken(jwtRequest) as Record<string, unknown>;
           } else {
-            if (!alg || !REQUEST_OBJECT_SIGNING_ALGORITHMS.includes(alg)) {
+            if (!alg || !requestObjectSigningAlgorithms.includes(alg)) {
               return c.json(
                 {
                   error: 'invalid_request_object',
@@ -423,10 +613,23 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
               );
             }
 
+            if (
+              clientMetadata.request_object_signing_alg &&
+              clientMetadata.request_object_signing_alg !== alg
+            ) {
+              return c.json(
+                {
+                  error: 'invalid_request_object',
+                  error_description:
+                    'Request object algorithm does not match the registered client metadata',
+                },
+                400
+              );
+            }
+
             // Signed request object - verify using client's public key
             // Get client's public key from JWKS or jwks_uri
             let cryptoKey: CryptoKey | undefined;
-            let jwksKeyGetter: ReturnType<typeof createRemoteJWKSet> | undefined;
 
             if (clientMetadata.jwks) {
               // Use embedded JWKS
@@ -471,10 +674,50 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
                 );
               }
 
-              jwksKeyGetter = createRemoteJWKSet(jwksUri);
+              try {
+                const jwks = await safeFetchJson<{ keys?: unknown }>(jwksUri.toString(), {
+                  timeoutMs: 5000,
+                  maxResponseSize: 256 * 1024,
+                  redirect: 'error',
+                });
+                const key = selectRequestObjectSigningKey(jwks, alg, header.kid);
+                if (!key) {
+                  return c.json(
+                    {
+                      error: 'invalid_request_object',
+                      error_description: 'No suitable signing key found in client jwks_uri',
+                    },
+                    400
+                  );
+                }
+                const imported = await importJWK(key, alg);
+                if (imported instanceof Uint8Array) {
+                  return c.json(
+                    {
+                      error: 'invalid_request_object',
+                      error_description: 'Invalid key format in client JWKS',
+                    },
+                    400
+                  );
+                }
+                cryptoKey = imported as CryptoKey;
+              } catch (error) {
+                log.error(
+                  'Failed to fetch client jwks_uri',
+                  { action: 'jwks_fetch' },
+                  error as Error
+                );
+                return c.json(
+                  {
+                    error: 'invalid_request_object',
+                    error_description: 'Failed to fetch client jwks_uri',
+                  },
+                  400
+                );
+              }
             }
 
-            if (!cryptoKey && !jwksKeyGetter) {
+            if (!cryptoKey) {
               return c.json(
                 {
                   error: 'invalid_request_object',
@@ -486,21 +729,33 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
             }
 
             try {
-              // jwtVerify has two overloads: one for CryptoKey, one for getKey function
-              // We need to call them separately to satisfy TypeScript
               const verifyOptions = {
                 issuer: params.client_id, // RFC 9101: iss MUST be client_id
                 audience: issuer, // RFC 9101: aud MUST be OP issuer
-                algorithms: REQUEST_OBJECT_SIGNING_ALGORITHMS,
+                algorithms: requestObjectSigningAlgorithms,
+                ...(messageSigningEnabled
+                  ? { clockTolerance: messageSigningConfig?.clockSkewSeconds ?? 10 }
+                  : {}),
               };
 
-              let payload: Record<string, unknown>;
-              if (cryptoKey) {
-                const result = await jwtVerify(jwtRequest, cryptoKey, verifyOptions);
-                payload = result.payload as Record<string, unknown>;
-              } else {
-                const result = await jwtVerify(jwtRequest, jwksKeyGetter!, verifyOptions);
-                payload = result.payload as Record<string, unknown>;
+              const result = await jwtVerify(jwtRequest, cryptoKey, verifyOptions);
+              const payload = result.payload as Record<string, unknown>;
+              requestCryptographicallySigned = true;
+
+              if (messageSigningEnabled) {
+                const claimError = validateFAPI2MessageSigningRequestObjectClaims(payload, {
+                  maxAgeSeconds: messageSigningConfig?.maxRequestObjectAgeSeconds,
+                  maxLifetimeSeconds: messageSigningConfig?.maxRequestObjectLifetimeSeconds,
+                });
+                if (claimError) {
+                  return c.json(
+                    {
+                      error: 'invalid_request_object',
+                      error_description: claimError,
+                    },
+                    400
+                  );
+                }
               }
               requestObjectClaims = payload;
             } catch (verifyError) {
@@ -516,8 +771,27 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
           }
         }
 
+        if (messageSigningConfig?.requireSignedRequestObject && !requestCryptographicallySigned) {
+          return c.json(
+            {
+              error: 'invalid_request_object',
+              error_description: 'A signed request object is required for this FAPI profile',
+            },
+            400
+          );
+        }
+
         // Merge request object claims into params (request object takes precedence)
         if (requestObjectClaims) {
+          if (requestObjectClaims.request_uri !== undefined) {
+            return c.json(
+              {
+                error: 'invalid_request_object',
+                error_description: 'request_uri is not supported inside a PAR request object',
+              },
+              400
+            );
+          }
           // RFC 9101: Certain parameters in the request object override query/form params
           if (requestObjectClaims.response_type)
             params.response_type = requestObjectClaims.response_type as string;
@@ -534,8 +808,8 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
             params.response_mode = requestObjectClaims.response_mode as string;
           if (requestObjectClaims.prompt) params.prompt = requestObjectClaims.prompt as string;
           if (requestObjectClaims.display) params.display = requestObjectClaims.display as string;
-          if (requestObjectClaims.max_age)
-            params.max_age = String(requestObjectClaims.max_age) as string;
+          if (requestObjectClaims.max_age !== undefined)
+            params.max_age = String(requestObjectClaims.max_age);
           if (requestObjectClaims.ui_locales)
             params.ui_locales = requestObjectClaims.ui_locales as string;
           if (requestObjectClaims.id_token_hint)
@@ -549,12 +823,18 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
               typeof requestObjectClaims.claims === 'string'
                 ? requestObjectClaims.claims
                 : JSON.stringify(requestObjectClaims.claims);
+          if (typeof requestObjectClaims.dpop_jkt === 'string')
+            params.dpop_jkt = requestObjectClaims.dpop_jkt;
           // RFC 9396: authorization_details from request object
           if (requestObjectClaims.authorization_details)
             params.authorization_details =
               typeof requestObjectClaims.authorization_details === 'string'
                 ? requestObjectClaims.authorization_details
                 : JSON.stringify(requestObjectClaims.authorization_details);
+          if (typeof requestObjectClaims.error_uri === 'string')
+            params.error_uri = requestObjectClaims.error_uri;
+          if (typeof requestObjectClaims.cancel_uri === 'string')
+            params.cancel_uri = requestObjectClaims.cancel_uri;
 
           // client_id in request object must match client_id from request
           if (requestObjectClaims.client_id && requestObjectClaims.client_id !== params.client_id) {
@@ -582,6 +862,14 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       }
     }
 
+    // Validate the effective authorization request after JAR claims have been
+    // merged. Signed PAR requests do not duplicate these values in the form body.
+    assertCompletePARParams(params);
+
+    if (fapiConfig.enabled && (!params.code_challenge || params.code_challenge_method !== 'S256')) {
+      throw new RFCError('invalid_request', 400, 'FAPI 2.0 requires PKCE with S256 method');
+    }
+
     // =========================================================================
     // Standard Validations
     // =========================================================================
@@ -600,6 +888,32 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     // to prevent Open Redirect attacks via URL manipulation
     if (!isRedirectUriRegistered(params.redirect_uri, clientData.redirect_uris as string[])) {
       throw new RFCError('invalid_request', 400, 'redirect_uri not registered for this client');
+    }
+
+    // Authrim extension parameters are allowlisted explicitly and validated before storage.
+    // The authorization endpoint validates them again before using either redirect target.
+    if (params.error_uri || params.cancel_uri) {
+      const allowedRedirectOrigins = Array.isArray(clientMetadata.allowed_redirect_origins)
+        ? clientMetadata.allowed_redirect_origins.filter(
+            (origin): origin is string => typeof origin === 'string'
+          )
+        : [];
+      const customRedirectValidation = validateCustomRedirectParams(
+        { error_uri: params.error_uri, cancel_uri: params.cancel_uri },
+        params.redirect_uri,
+        allowedRedirectOrigins
+      );
+      if (!customRedirectValidation.valid) {
+        throw new RFCError(
+          'invalid_request',
+          400,
+          Object.entries(customRedirectValidation.errors)
+            .map(([parameter, message]) => `${parameter}: ${message}`)
+            .join(', ')
+        );
+      }
+      params.error_uri = customRedirectValidation.validatedUris?.error_uri;
+      params.cancel_uri = customRedirectValidation.validatedUris?.cancel_uri;
     }
 
     // Validate scope
@@ -644,6 +958,17 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     }
 
     // Validate response_type
+    // FAPI 2.0 Security Profile Final permits only the authorization code flow. Rejecting
+    // hybrid/implicit response types at PAR also avoids creating a request_uri for a request
+    // that the authorization endpoint can never process.
+    if (fapiConfig.enabled && params.response_type !== 'code') {
+      throw new RFCError(
+        'unsupported_response_type',
+        400,
+        'FAPI 2.0 supports only response_type=code'
+      );
+    }
+
     const supportedResponseTypes = ['code', 'code id_token', 'code token', 'code id_token token'];
     if (!supportedResponseTypes.includes(params.response_type)) {
       throw new RFCError(
@@ -679,6 +1004,10 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
     let dpopJkt: string | undefined;
     const dpopHeader = c.req.header('DPoP');
 
+    if (params.dpop_jkt && !/^[A-Za-z0-9_-]{43}$/.test(params.dpop_jkt)) {
+      throw new RFCError('invalid_request', 400, 'dpop_jkt must be a SHA-256 JWK thumbprint');
+    }
+
     if (dpopHeader) {
       const parEndpointUrl = `${issuer}/par`;
       const dpopValidation = await validateDPoPProof(
@@ -703,11 +1032,20 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
 
       // Store dpop_jkt for authorization code binding
       dpopJkt = dpopValidation.jkt;
+      if (params.dpop_jkt && dpopJkt && !timingSafeEqual(params.dpop_jkt, dpopJkt)) {
+        throw new RFCError(
+          'invalid_request',
+          400,
+          'dpop_jkt does not match the key in the DPoP proof'
+        );
+      }
       log.debug('DPoP proof validated', {
         action: 'dpop_validate',
         jktPrefix: dpopJkt?.substring(0, 16),
       });
     }
+
+    dpopJkt ??= params.dpop_jkt;
 
     // =========================================================================
     // P1: Use ConfigManager for expiration (KV → env → default)
@@ -740,7 +1078,7 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       response_mode: params.response_mode,
       prompt: params.prompt,
       display: params.display,
-      max_age: params.max_age ? parseInt(params.max_age, 10) : undefined,
+      max_age: params.max_age === undefined ? undefined : parseInt(params.max_age, 10),
       ui_locales: params.ui_locales,
       id_token_hint: params.id_token_hint,
       login_hint: params.login_hint,
@@ -750,6 +1088,10 @@ export async function parHandler(c: Context<{ Bindings: Env }>): Promise<Respons
       dpop_jkt: dpopJkt,
       // RFC 9396: Rich Authorization Requests
       authorization_details: params.authorization_details,
+      // Authrim extensions. The authorization endpoint applies the same registered-origin
+      // validation used for direct authorization requests before either URI can be used.
+      error_uri: params.error_uri,
+      cancel_uri: params.cancel_uri,
     };
 
     // Store in PARRequestStore DO with region-aware sharding (issue #11: single-use guarantee)

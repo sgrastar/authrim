@@ -27,8 +27,12 @@ import {
   type WebOriginRegistryDocument,
   type WebOriginRegistryWritePayload,
   DEFAULT_ASC_ALLOWED_TRANSFORMED_CLAIMS,
+  loadDestinationProfileConsentDescriptor,
+  requireAdminDatabaseAdapter,
+  resolveRuntimeIdentityMappingBinding,
   type AttributeReleaseConsentPolicy,
   type ClaimReleasePolicy,
+  buildContractKey,
 } from '@authrim/ar-lib-core';
 import {
   parseClientStringArray,
@@ -38,6 +42,11 @@ import {
   scheduleAdminAuditLog,
   toMilliseconds,
 } from './admin-shared';
+import {
+  disableTenantDiscoveryAliasDirectory,
+  ensureActiveTenantDiscoveryAliasDirectory,
+  resolveTenantDiscoveryAliasDirectoryInput,
+} from './tenant-alias-directory';
 
 type AdminClientApplicationType = 'web' | 'native' | 'spa' | 'service';
 type AdminBrowserPublicClientMode = 'strict' | 'cookie_fallback';
@@ -47,12 +56,11 @@ type AdminTokenEndpointAuthMethod =
   | 'none'
   | 'client_secret_basic'
   | 'client_secret_post'
-  | 'client_secret_jwt'
   | 'private_key_jwt';
 
 interface AdminOIDCIdentityMappingSelector {
-  policySetId?: string;
-  policyVersionId?: string;
+  fieldMappingSetId?: string;
+  fieldMappingVersionId?: string;
   destinationNamespace?: string;
   sourceProfileId?: string;
   destinationProfileId?: string;
@@ -97,14 +105,71 @@ const VALID_TOKEN_ENDPOINT_AUTH_METHODS = new Set<AdminTokenEndpointAuthMethod>(
   'none',
   'client_secret_basic',
   'client_secret_post',
-  'client_secret_jwt',
   'private_key_jwt',
 ]);
+const VALID_ID_TOKEN_SIGNING_ALGORITHMS = new Set(['RS256', 'ES256']);
+const VALID_USERINFO_SIGNING_ALGORITHMS = new Set(['none', 'RS256', 'ES256']);
 const UNSUPPORTED_LEGACY_CLIENT_FIELDS = new Set([
   'app_suite',
   'trust_group_id',
   'allow_cross_client_native_sso',
 ]);
+
+async function deleteKvPrefix(kv: KVNamespace | undefined, prefix: string): Promise<void> {
+  if (!kv) return;
+  let cursor: string | undefined;
+  do {
+    const page = await kv.list({ prefix, cursor, limit: 1000 });
+    for (let offset = 0; offset < page.keys.length; offset += 25) {
+      await Promise.all(page.keys.slice(offset, offset + 25).map(({ name }) => kv.delete(name)));
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+}
+
+async function deleteClientOwnedConfiguration(
+  env: Env,
+  tenantId: string,
+  clientId: string
+): Promise<void> {
+  await Promise.all([
+    deleteKvPrefix(env.SETTINGS, `settings:client:${tenantId}:${clientId}:`),
+    env.AUTHRIM_CONFIG?.delete(buildContractKey(env, 'client', tenantId, clientId)),
+  ]);
+}
+
+async function deleteClientAndOwnedPolicy(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  clientId: string
+): Promise<boolean> {
+  const authCtx = createAuthContextFromHono(c, tenantId);
+  if (!(await authCtx.repositories.client.exists(clientId))) return false;
+
+  await disableTenantDiscoveryAliasDirectory(
+    c.env,
+    await resolveTenantDiscoveryAliasDirectoryInput(c.env, {
+      tenantId,
+      aliasKind: 'client_id',
+      aliasValue: clientId,
+    })
+  );
+
+  // Delete remote configuration first so a transient failure leaves the client retriable.
+  await deleteClientOwnedConfiguration(c.env, tenantId, clientId);
+  const results = await authCtx.coreAdapter.batch([
+    {
+      sql: `DELETE FROM client_trust_policies
+            WHERE tenant_id = ? AND target_type = 'oidc_client' AND target_id = ?`,
+      params: [tenantId, clientId],
+    },
+    {
+      sql: 'DELETE FROM oauth_clients WHERE tenant_id = ? AND client_id = ?',
+      params: [tenantId, clientId],
+    },
+  ]);
+  return (results[1]?.rowsAffected ?? 0) > 0;
+}
 
 function validateOptionalStringArrayField(
   value: unknown,
@@ -126,6 +191,30 @@ function validateOptionalStringArrayField(
     };
   }
   return { ok: true, value };
+}
+
+function validateOptionalScopeArrayField(
+  value: unknown,
+  field: string
+): { ok: true; value: string[] | null | undefined } | { ok: false; error: string } {
+  const validation = validateOptionalStringArrayField(value, field);
+  if (!validation.ok || validation.value === undefined || validation.value === null) {
+    return validation;
+  }
+  if (validation.value.length > 100) {
+    return { ok: false, error: `${field} must contain at most 100 scopes` };
+  }
+  const normalized = validation.value.map((scope) => scope.trim());
+  if (normalized.some((scope) => scope.length === 0 || scope.length > 256 || /\s/u.test(scope))) {
+    return {
+      ok: false,
+      error: `${field} must contain non-empty scope tokens without whitespace`,
+    };
+  }
+  if (new Set(normalized).size !== normalized.length) {
+    return { ok: false, error: `${field} must not contain duplicate scopes` };
+  }
+  return { ok: true, value: normalized };
 }
 
 function findUnsupportedLegacyClientField(body: Record<string, unknown>): string | null {
@@ -404,8 +493,8 @@ function validateOptionalIdentityMappingSelectorField(
   const source = value as Record<string, unknown>;
   const selector: AdminOIDCIdentityMappingSelector = {};
   for (const key of [
-    'policySetId',
-    'policyVersionId',
+    'fieldMappingSetId',
+    'fieldMappingVersionId',
     'destinationNamespace',
     'sourceProfileId',
     'destinationProfileId',
@@ -421,6 +510,24 @@ function validateOptionalIdentityMappingSelectorField(
     if (trimmed) {
       selector[key] = trimmed;
     }
+  }
+
+  const legacyFieldMappingSetId = source.policySetId;
+  const legacyFieldMappingVersionId = source.policyVersionId;
+  if (legacyFieldMappingSetId !== undefined && typeof legacyFieldMappingSetId !== 'string') {
+    return { ok: false, error: `${field}.policySetId must be a string` };
+  }
+  if (
+    legacyFieldMappingVersionId !== undefined &&
+    typeof legacyFieldMappingVersionId !== 'string'
+  ) {
+    return { ok: false, error: `${field}.policyVersionId must be a string` };
+  }
+  if (!selector.fieldMappingSetId && typeof legacyFieldMappingSetId === 'string') {
+    selector.fieldMappingSetId = legacyFieldMappingSetId.trim() || undefined;
+  }
+  if (!selector.fieldMappingVersionId && typeof legacyFieldMappingVersionId === 'string') {
+    selector.fieldMappingVersionId = legacyFieldMappingVersionId.trim() || undefined;
   }
 
   return { ok: true, value: Object.keys(selector).length > 0 ? selector : null };
@@ -497,6 +604,45 @@ function parseIdentityMappingSelectorField(
   }
   const validation = validateOptionalIdentityMappingSelectorField(current, 'identity_mapping');
   return validation.ok ? (validation.value ?? null) : null;
+}
+
+async function validateOIDCIdentityMappingSelector(
+  env: Env,
+  tenantId: string,
+  selector: AdminOIDCIdentityMappingSelector | null | undefined
+): Promise<string | null> {
+  if (selector === undefined || selector === null) return null;
+  if (!selector.fieldMappingSetId) {
+    return 'identity_mapping.fieldMappingSetId is required';
+  }
+
+  try {
+    const adminAdapter = requireAdminDatabaseAdapter(env, 'oidc-client-identity-mapping');
+    const binding = await resolveRuntimeIdentityMappingBinding(adminAdapter, {
+      tenantId,
+      protocol: 'oidc',
+      role: 'op',
+      fieldMappingSetId: selector.fieldMappingSetId,
+      fieldMappingVersionId: selector.fieldMappingVersionId,
+    });
+    if (!binding) {
+      return 'identity_mapping.fieldMappingSetId must reference an active compiled Mapping Set';
+    }
+    if (binding.destinationProfileIds.length !== 1 || !binding.destinationProfileId) {
+      return 'The active Mapping Set must reference exactly one OIDC Destination Profile';
+    }
+    const descriptor = await loadDestinationProfileConsentDescriptor(
+      adminAdapter,
+      tenantId,
+      binding.destinationProfileId
+    );
+    if (!descriptor || descriptor.destinationType !== 'oidc') {
+      return 'The active Mapping Set must reference an active OIDC Destination Profile';
+    }
+    return null;
+  } catch {
+    return 'Unable to validate identity_mapping against the active Mapping Set';
+  }
 }
 
 function parseAttributeReleaseConsentPolicyField(
@@ -655,6 +801,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       skip_consent?: boolean;
       allow_claims_without_scope?: boolean;
       claims_parameter_policy?: Record<string, ClaimReleasePolicy> | null;
+      identity_mapping?: AdminOIDCIdentityMappingSelector | null;
       attribute_release_consent?: AttributeReleaseConsentPolicy | null;
       asc_enabled?: boolean;
       asc_protected_request_required?: boolean;
@@ -684,6 +831,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       delegation_mode?: 'none' | 'delegation' | 'impersonation';
       client_credentials_allowed?: boolean;
       allowed_scopes?: string[] | null;
+      requestable_scopes?: string[] | null;
       default_scope?: string | null;
       default_audience?: string | null;
       default_resource?: string | null;
@@ -896,6 +1044,20 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const requestableScopesValidation = validateOptionalScopeArrayField(
+      body.requestable_scopes,
+      'requestable_scopes'
+    );
+    if (!requestableScopesValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: requestableScopesValidation.error,
+        },
+        400
+      );
+    }
+
     const claimsParameterPolicyValidation = validateOptionalClaimsParameterPolicyField(
       body.claims_parameter_policy,
       'claims_parameter_policy'
@@ -910,6 +1072,19 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const identityMappingValidation = validateOptionalIdentityMappingSelectorField(
+      body.identity_mapping,
+      'identity_mapping'
+    );
+    if (!identityMappingValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: identityMappingValidation.error,
+        },
+        400
+      );
+    }
     const attributeReleaseConsentValidation = validateOptionalAttributeReleaseConsentPolicyField(
       body.attribute_release_consent,
       'attribute_release_consent'
@@ -1176,9 +1351,19 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
 
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const clientSecret =
-      crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
-    const clientSecretHash = await hashClientSecret(clientSecret);
+    const identityMappingError = await validateOIDCIdentityMappingSelector(
+      c.env,
+      tenantId,
+      identityMappingValidation.value
+    );
+    if (identityMappingError) {
+      return c.json({ error: 'invalid_request', error_description: identityMappingError }, 400);
+    }
+    const isPublicClient = tokenEndpointAuthMethodValidation.value === 'none';
+    const clientSecret = isPublicClient
+      ? undefined
+      : crypto.randomUUID().replace(/-/g, '') + crypto.randomUUID().replace(/-/g, '');
+    const clientSecretHash = clientSecret ? await hashClientSecret(clientSecret) : undefined;
 
     const client = await authCtx.repositories.client.create({
       client_name: body.client_name,
@@ -1213,6 +1398,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       skip_consent: body.skip_consent || false,
       allow_claims_without_scope: body.allow_claims_without_scope || false,
       claims_parameter_policy: claimsParameterPolicyValidation.value,
+      identity_mapping: identityMappingValidation.value,
       attribute_release_consent: attributeReleaseConsentValidation.value,
       asc_enabled: ascEnabledValidation.value ?? true,
       asc_protected_request_required: ascProtectedRequestRequiredValidation.value ?? true,
@@ -1225,6 +1411,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       delegation_mode: body.delegation_mode ?? 'delegation',
       client_credentials_allowed: body.client_credentials_allowed ?? false,
       allowed_scopes: allowedScopesValidation.value,
+      requestable_scopes: requestableScopesValidation.value,
       default_scope: body.default_scope ?? null,
       default_audience: body.default_audience ?? null,
       default_resource: defaultResourceValidation.value,
@@ -1253,6 +1440,13 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
         );
       }
     }
+
+    const discoveryAlias = await resolveTenantDiscoveryAliasDirectoryInput(c.env, {
+      tenantId,
+      aliasKind: 'client_id',
+      aliasValue: client.client_id,
+    });
+    await ensureActiveTenantDiscoveryAliasDirectory(c.env, discoveryAlias);
 
     await putClient(c.env, {
       client_id: client.client_id,
@@ -1301,6 +1495,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
       allow_claims_without_scope: client.allow_claims_without_scope,
       claims_parameter_policy:
         parseClaimsParameterPolicyField(client.claims_parameter_policy) ?? undefined,
+      identity_mapping: parseIdentityMappingSelectorField(client.identity_mapping),
       attribute_release_consent:
         parseAttributeReleaseConsentPolicyField(client.attribute_release_consent) ?? undefined,
       asc_enabled: client.asc_enabled,
@@ -1413,6 +1608,7 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
           skip_consent: client.skip_consent,
           allow_claims_without_scope: client.allow_claims_without_scope,
           claims_parameter_policy: parseClaimsParameterPolicyField(client.claims_parameter_policy),
+          identity_mapping: parseIdentityMappingSelectorField(client.identity_mapping),
           attribute_release_consent: parseAttributeReleaseConsentPolicyField(
             client.attribute_release_consent
           ),
@@ -1434,6 +1630,9 @@ export async function adminClientCreateHandler(c: Context<{ Bindings: Env }>) {
           client_credentials_allowed: client.client_credentials_allowed,
           allowed_scopes: client.allowed_scopes
             ? parseClientStringArray(client.allowed_scopes, [])
+            : [],
+          requestable_scopes: client.requestable_scopes
+            ? parseClientStringArray(client.requestable_scopes, [])
             : [],
           default_scope: client.default_scope,
           default_audience: client.default_audience,
@@ -1488,6 +1687,9 @@ export async function adminClientsListHandler(c: Context<{ Bindings: Env }>) {
           : [],
         allowed_scopes: client.allowed_scopes
           ? parseClientStringArray(client.allowed_scopes, [])
+          : [],
+        requestable_scopes: client.requestable_scopes
+          ? parseClientStringArray(client.requestable_scopes, [])
           : [],
         allowed_channels: client.allowed_channels
           ? parseClientStringArray(client.allowed_channels, [])
@@ -1568,6 +1770,9 @@ export async function adminClientGetHandler(c: Context<{ Bindings: Env }>) {
         : [],
       allowed_scopes: client.allowed_scopes
         ? parseClientStringArray(client.allowed_scopes, [])
+        : [],
+      requestable_scopes: client.requestable_scopes
+        ? parseClientStringArray(client.requestable_scopes, [])
         : [],
       allowed_channels: client.allowed_channels
         ? parseClientStringArray(client.allowed_channels, [])
@@ -1680,10 +1885,36 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       delegation_mode,
       client_credentials_allowed,
       allowed_scopes,
+      requestable_scopes,
       default_scope,
       default_audience,
       default_resource,
+      id_token_signed_response_alg,
+      userinfo_signed_response_alg,
     } = body;
+
+    const idTokenSigningAlgorithmValidation = validateOptionalEnumField(
+      id_token_signed_response_alg,
+      'id_token_signed_response_alg',
+      VALID_ID_TOKEN_SIGNING_ALGORITHMS
+    );
+    if (!idTokenSigningAlgorithmValidation.ok) {
+      return c.json(
+        { error: 'invalid_request', error_description: idTokenSigningAlgorithmValidation.error },
+        400
+      );
+    }
+    const userInfoSigningAlgorithmValidation = validateOptionalEnumField(
+      userinfo_signed_response_alg,
+      'userinfo_signed_response_alg',
+      VALID_USERINFO_SIGNING_ALGORITHMS
+    );
+    if (!userInfoSigningAlgorithmValidation.ok) {
+      return c.json(
+        { error: 'invalid_request', error_description: userInfoSigningAlgorithmValidation.error },
+        400
+      );
+    }
 
     const descriptionValidation = validateOptionalStringField(description, 'description');
     if (!descriptionValidation.ok) {
@@ -1785,6 +2016,24 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const existingTokenEndpointAuthMethodValidation = validateTokenEndpointAuthMethod(
+      existingClient.token_endpoint_auth_method,
+      'existing token_endpoint_auth_method'
+    );
+    if (
+      tokenEndpointAuthMethodValidation.value === undefined &&
+      !existingTokenEndpointAuthMethodValidation.ok
+    ) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description:
+            'The existing token_endpoint_auth_method is no longer supported and must be replaced',
+        },
+        400
+      );
+    }
+
     const requirePkceValidation = validateOptionalStrictBooleanField(require_pkce, 'require_pkce');
     if (!requirePkceValidation.ok) {
       return c.json(
@@ -1801,7 +2050,9 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       parseClientStringArray(existingClient.grant_types, [GRANT_TYPES.AUTHORIZATION_CODE]);
     const effectiveTokenEndpointAuthMethod =
       tokenEndpointAuthMethodValidation.value ??
-      existingClient.token_endpoint_auth_method ??
+      (existingTokenEndpointAuthMethodValidation.ok
+        ? existingTokenEndpointAuthMethodValidation.value
+        : undefined) ??
       'client_secret_basic';
     const effectiveRequirePkce =
       requirePkceValidation.value ?? Boolean(existingClient.require_pkce);
@@ -1885,6 +2136,20 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
+    const requestableScopesValidation = validateOptionalScopeArrayField(
+      requestable_scopes,
+      'requestable_scopes'
+    );
+    if (!requestableScopesValidation.ok) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: requestableScopesValidation.error,
+        },
+        400
+      );
+    }
+
     const claimsParameterPolicyValidation = validateOptionalClaimsParameterPolicyField(
       claims_parameter_policy,
       'claims_parameter_policy'
@@ -1911,6 +2176,14 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
         },
         400
       );
+    }
+    const identityMappingError = await validateOIDCIdentityMappingSelector(
+      c.env,
+      tenantId,
+      identityMappingValidation.value
+    );
+    if (identityMappingError) {
+      return c.json({ error: 'invalid_request', error_description: identityMappingError }, 400);
     }
 
     const attributeReleaseConsentValidation = validateOptionalAttributeReleaseConsentPolicyField(
@@ -2216,9 +2489,12 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       delegation_mode,
       client_credentials_allowed,
       allowed_scopes,
+      requestable_scopes,
       default_scope,
       default_audience,
       default_resource,
+      id_token_signed_response_alg,
+      userinfo_signed_response_alg,
     ].some((v) => v !== undefined);
     const hasRegistryUpdate = webOriginRegistryPayload !== undefined;
     const hasUpdates = hasClientUpdates || hasRegistryUpdate;
@@ -2230,57 +2506,77 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
+    const expectedUpdatedAt = c.get('agentExpectedClientUpdatedAt' as never) as number | undefined;
     const updatedClient = hasClientUpdates
-      ? await authCtx.repositories.client.update(clientId, {
-          client_name,
-          description: descriptionValidation.value,
-          redirect_uris: redirectUrisValidation.value,
-          grant_types: grantTypesValidation.value,
-          response_types,
-          token_endpoint_auth_method: tokenEndpointAuthMethodValidation.value,
-          scope,
-          logo_uri,
-          client_uri,
-          policy_uri,
-          tos_uri,
-          is_trusted,
-          skip_consent,
-          allow_claims_without_scope,
-          claims_parameter_policy: claimsParameterPolicyValidation.value,
-          identity_mapping: identityMappingValidation.value,
-          attribute_release_consent: attributeReleaseConsentValidation.value,
-          asc_enabled: ascEnabledValidation.value ?? undefined,
-          asc_protected_request_required: ascProtectedRequestRequiredValidation.value ?? undefined,
-          asc_sao_enabled: ascSaoEnabledValidation.value ?? undefined,
-          asc_transformed_claims_enabled: ascTransformedClaimsEnabledValidation.value ?? undefined,
-          asc_allowed_transformed_claims: ascAllowedTransformedClaimsValidation.value,
-          allowed_redirect_origins: validatedAllowedOrigins,
-          require_pkce: requirePkceValidation.value,
-          initiate_login_uri,
-          login_ui_url,
-          application_type: applicationTypeValidation.value,
-          trust_group: trustGroupValidation.value,
-          browser_public_client_mode: browserPublicClientModeValidation.value,
-          browser_refresh_token_policy: browserRefreshTokenPolicyValidation.value,
-          native_sso_enabled: nativeSsoEnabledValidation.value,
-          native_channel_allowed: nativeChannelAllowedValidation.value,
-          allowed_channels: allowedChannelsValidation.value,
-          device_secret_revoke_enabled: deviceSecretRevokeEnabledValidation.value,
-          device_secret_revoke_trust_groups: deviceSecretRevokeTrustGroupsValidation.value,
-          device_secret_introspection_enabled: deviceSecretIntrospectionEnabledValidation.value,
-          device_secret_introspection_trust_groups:
-            deviceSecretIntrospectionTrustGroupsValidation.value,
-          token_exchange_allowed,
-          allowed_subject_token_clients: allowedSubjectTokenClientsValidation.value,
-          allowed_token_exchange_resources: allowedTokenExchangeResourcesValidation.value,
-          delegation_mode,
-          client_credentials_allowed,
-          allowed_scopes: allowedScopesValidation.value,
-          default_scope,
-          default_audience,
-          default_resource: defaultResourceValidation.value,
-        })
+      ? await authCtx.repositories.client.update(
+          clientId,
+          {
+            client_name,
+            description: descriptionValidation.value,
+            redirect_uris: redirectUrisValidation.value,
+            grant_types: grantTypesValidation.value,
+            response_types,
+            token_endpoint_auth_method: tokenEndpointAuthMethodValidation.value,
+            scope,
+            logo_uri,
+            client_uri,
+            policy_uri,
+            tos_uri,
+            is_trusted,
+            skip_consent,
+            allow_claims_without_scope,
+            claims_parameter_policy: claimsParameterPolicyValidation.value,
+            identity_mapping: identityMappingValidation.value,
+            attribute_release_consent: attributeReleaseConsentValidation.value,
+            asc_enabled: ascEnabledValidation.value ?? undefined,
+            asc_protected_request_required:
+              ascProtectedRequestRequiredValidation.value ?? undefined,
+            asc_sao_enabled: ascSaoEnabledValidation.value ?? undefined,
+            asc_transformed_claims_enabled:
+              ascTransformedClaimsEnabledValidation.value ?? undefined,
+            asc_allowed_transformed_claims: ascAllowedTransformedClaimsValidation.value,
+            allowed_redirect_origins: validatedAllowedOrigins,
+            require_pkce: requirePkceValidation.value,
+            initiate_login_uri,
+            login_ui_url,
+            application_type: applicationTypeValidation.value,
+            trust_group: trustGroupValidation.value,
+            browser_public_client_mode: browserPublicClientModeValidation.value,
+            browser_refresh_token_policy: browserRefreshTokenPolicyValidation.value,
+            native_sso_enabled: nativeSsoEnabledValidation.value,
+            native_channel_allowed: nativeChannelAllowedValidation.value,
+            allowed_channels: allowedChannelsValidation.value,
+            device_secret_revoke_enabled: deviceSecretRevokeEnabledValidation.value,
+            device_secret_revoke_trust_groups: deviceSecretRevokeTrustGroupsValidation.value,
+            device_secret_introspection_enabled: deviceSecretIntrospectionEnabledValidation.value,
+            device_secret_introspection_trust_groups:
+              deviceSecretIntrospectionTrustGroupsValidation.value,
+            token_exchange_allowed,
+            allowed_subject_token_clients: allowedSubjectTokenClientsValidation.value,
+            allowed_token_exchange_resources: allowedTokenExchangeResourcesValidation.value,
+            delegation_mode,
+            client_credentials_allowed,
+            allowed_scopes: allowedScopesValidation.value,
+            requestable_scopes: requestableScopesValidation.value,
+            default_scope,
+            default_audience,
+            default_resource: defaultResourceValidation.value,
+            id_token_signed_response_alg: idTokenSigningAlgorithmValidation.value,
+            userinfo_signed_response_alg: userInfoSigningAlgorithmValidation.value,
+          },
+          expectedUpdatedAt === undefined ? undefined : { expectedUpdatedAt }
+        )
       : existingClient;
+
+    if (hasClientUpdates && !updatedClient && expectedUpdatedAt !== undefined) {
+      return c.json(
+        {
+          error: 'precondition_failed',
+          error_description: 'The client changed after the Agent plan validated it',
+        },
+        412
+      );
+    }
 
     let webOriginRegistry =
       webOriginRegistryPayload !== undefined
@@ -2356,6 +2652,9 @@ export async function adminClientUpdateHandler(c: Context<{ Bindings: Env }>) {
           allowed_scopes: updatedClient.allowed_scopes
             ? parseClientStringArray(updatedClient.allowed_scopes, [])
             : [],
+          requestable_scopes: updatedClient.requestable_scopes
+            ? parseClientStringArray(updatedClient.requestable_scopes, [])
+            : [],
           allowed_channels: updatedClient.allowed_channels
             ? parseClientStringArray(updatedClient.allowed_channels, [])
             : [],
@@ -2401,10 +2700,9 @@ export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
   try {
     const clientId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const exists = await authCtx.repositories.client.exists(clientId);
+    const deleted = await deleteClientAndOwnedPolicy(c, tenantId, clientId);
 
-    if (!exists) {
+    if (!deleted) {
       return c.json(
         {
           error: 'not_found',
@@ -2413,8 +2711,6 @@ export async function adminClientDeleteHandler(c: Context<{ Bindings: Env }>) {
         404
       );
     }
-
-    await authCtx.repositories.client.delete(clientId);
 
     const log = getLogger(c).module('ADMIN-CLIENT');
     try {
@@ -2486,10 +2782,25 @@ export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const result = await authCtx.repositories.client.bulkDelete(client_ids);
     const log = getLogger(c).module('ADMIN-CLIENT');
-    const successfullyDeletedIds = client_ids.filter((id) => !result.failed.includes(id));
+    const successfullyDeletedIds: string[] = [];
+    const failedIds: string[] = [];
+    for (const clientId of client_ids) {
+      try {
+        if (await deleteClientAndOwnedPolicy(c, tenantId, clientId)) {
+          successfullyDeletedIds.push(clientId);
+        } else {
+          failedIds.push(clientId);
+        }
+      } catch (error) {
+        failedIds.push(clientId);
+        log.warn('Failed to delete client and owned configuration', {
+          action: 'client_delete_cleanup',
+          clientId,
+          error: error instanceof Error ? error.message : 'unknown_error',
+        });
+      }
+    }
     for (const clientId of successfullyDeletedIds) {
       try {
         await c.env.CLIENTS_CACHE.delete(buildKVKey('client', clientId, tenantId));
@@ -2500,21 +2811,21 @@ export async function adminClientsBulkDeleteHandler(c: Context<{ Bindings: Env }
     }
 
     const errors =
-      result.failed.length > 0
-        ? result.failed.map((id) => `Failed to delete ${id}: client not found or delete failed`)
+      failedIds.length > 0
+        ? failedIds.map((id) => `Failed to delete ${id}: client not found or delete failed`)
         : undefined;
 
     scheduleAdminAuditLog(c, 'client.bulk_deleted', null, 'success', {
-      deleted_count: result.deleted,
+      deleted_count: successfullyDeletedIds.length,
       requested_count: client_ids.length,
-      failed_count: result.failed.length,
+      failed_count: failedIds.length,
       deleted_ids: successfullyDeletedIds,
-      failed_ids: result.failed.length > 0 ? result.failed : undefined,
+      failed_ids: failedIds.length > 0 ? failedIds : undefined,
     });
 
     return c.json({
       success: true,
-      deleted: result.deleted,
+      deleted: successfullyDeletedIds.length,
       requested: client_ids.length,
       errors,
     });

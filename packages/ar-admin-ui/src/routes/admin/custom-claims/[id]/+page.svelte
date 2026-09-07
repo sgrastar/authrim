@@ -4,13 +4,12 @@
 	import { goto } from '$app/navigation';
 	import {
 		adminCustomClaimsAPI,
+		type Cardinality,
 		type CustomClaimSchema,
 		type FieldType,
-		type ScopeMode,
 		type ValidationRules,
 		type OperationStatus,
-		parseValidationRules,
-		parseRequiredScopes
+		parseValidationRules
 	} from '$lib/api/admin-custom-claims';
 	import { AdminPageHeader, AdminPageShell, AdminSection } from '$lib/components/admin';
 	import { Modal } from '$lib/components';
@@ -32,17 +31,12 @@
 	let editForm = $state({
 		display_label: '',
 		field_type: 'string' as FieldType,
+		cardinality: 'single' as Cardinality,
 		is_required: false,
 		is_active: true,
 		description: '',
 		validation_rules_json: '',
-		include_in_id_token: false,
-		include_in_userinfo: false,
-		include_in_introspection: false,
-		required_scopes_text: '',
-		scope_mode: 'any' as ScopeMode,
 		display_order: 0,
-		claim_namespace: '',
 		is_searchable: false,
 		is_exportable: false,
 		is_vc_claim: false,
@@ -86,21 +80,15 @@
 
 	function populateForm(s: CustomClaimSchema) {
 		const rules = parseValidationRules(s.validation_rules);
-		const scopes = parseRequiredScopes(s.required_scopes);
 		editForm = {
 			display_label: s.display_label,
 			field_type: s.field_type,
+			cardinality: s.cardinality ?? 'single',
 			is_required: !!s.is_required,
 			is_active: !!s.is_active,
 			description: s.description || '',
 			validation_rules_json: rules ? JSON.stringify(rules, null, 2) : '',
-			include_in_id_token: !!s.include_in_id_token,
-			include_in_userinfo: !!s.include_in_userinfo,
-			include_in_introspection: !!s.include_in_introspection,
-			required_scopes_text: scopes ? scopes.join(', ') : '',
-			scope_mode: s.scope_mode,
 			display_order: s.display_order,
-			claim_namespace: s.claim_namespace || '',
 			is_searchable: !!s.is_searchable,
 			is_exportable: !!s.is_exportable,
 			is_vc_claim: !!s.is_vc_claim,
@@ -134,28 +122,15 @@
 				}
 			}
 
-			let requiredScopes: string[] | null = null;
-			if (editForm.required_scopes_text.trim()) {
-				requiredScopes = editForm.required_scopes_text
-					.split(',')
-					.map((s) => s.trim())
-					.filter((s) => s.length > 0);
-			}
-
 			const result = await adminCustomClaimsAPI.updateSchema(schema.id, {
 				display_label: editForm.display_label,
 				field_type: editForm.field_type,
+				cardinality: editForm.cardinality,
 				is_required: editForm.is_required,
 				is_active: editForm.is_active,
 				description: editForm.description || null,
 				validation_rules: validationRules,
-				include_in_id_token: editForm.include_in_id_token,
-				include_in_userinfo: editForm.include_in_userinfo,
-				include_in_introspection: editForm.include_in_introspection,
-				required_scopes: requiredScopes,
-				scope_mode: editForm.scope_mode,
 				display_order: editForm.display_order,
-				claim_namespace: editForm.claim_namespace || null,
 				is_searchable: editForm.is_searchable,
 				is_exportable: editForm.is_exportable,
 				is_vc_claim: editForm.is_vc_claim,
@@ -236,6 +211,8 @@
 				return $LL.admin_custom_claims_status_renaming();
 			case 'deleting':
 				return $LL.admin_custom_claims_status_deleting();
+			case 'reconfiguring':
+				return $LL.admin_custom_claims_status_reconfiguring();
 			case 'error':
 				return $LL.admin_custom_claims_status_error();
 			default:
@@ -371,7 +348,7 @@
 								type="text"
 								class="admin-input"
 								bind:value={editForm.display_label}
-								disabled={!isEditable}
+								disabled={!isEditable || isSystem}
 							/>
 						</div>
 
@@ -392,6 +369,22 @@
 								<option value="date">{$LL.admin_custom_claims_field_type_date()}</option>
 								<option value="enum">{$LL.admin_custom_claims_field_type_enum()}</option>
 							</select>
+						</div>
+
+						<div class="admin-field">
+							<label class="admin-field__label" for="cardinality"
+								>{$LL.admin_custom_claims_cardinality()}</label
+							>
+							<select
+								id="cardinality"
+								class="admin-select"
+								bind:value={editForm.cardinality}
+								disabled={!isEditable || isSystem}
+							>
+								<option value="single">{$LL.admin_custom_claims_cardinality_single()}</option>
+								<option value="multi">{$LL.admin_custom_claims_cardinality_multi()}</option>
+							</select>
+							<p class="field-hint">{$LL.admin_custom_claims_cardinality_hint()}</p>
 						</div>
 
 						<!-- is_pii (read-only after creation) -->
@@ -458,91 +451,10 @@
 					</div>
 				</AdminSection>
 
-				<!-- Section: Token & Endpoint Inclusion -->
-				<AdminSection title={$LL.admin_custom_claims_token_endpoint_inclusion()}>
+				<AdminSection title={$LL.admin_custom_claims_release_mapping_title()}>
 					<p class="section-hint">
-						{$LL.admin_custom_claims_token_endpoint_description()}
+						{$LL.admin_custom_claims_release_mapping_hint()}
 					</p>
-
-					<div class="form-grid">
-						<div class="admin-field col-span-2">
-							<div class="check-list check-list--inline">
-								<label class="admin-field__label">
-									<input
-										type="checkbox"
-										bind:checked={editForm.include_in_id_token}
-										disabled={!isEditable}
-									/>
-									ID Token
-								</label>
-								<label class="admin-field__label">
-									<input
-										type="checkbox"
-										bind:checked={editForm.include_in_userinfo}
-										disabled={!isEditable}
-									/>
-									UserInfo
-								</label>
-								<label class="admin-field__label check-with-hint">
-									<span class="inline-check">
-										<input
-											type="checkbox"
-											bind:checked={editForm.include_in_introspection}
-											disabled={!isEditable}
-										/>
-										Introspection
-									</span>
-									<small class="field-warning-note"
-										>{$LL.admin_custom_claims_introspection_disabled()}</small
-									>
-								</label>
-							</div>
-						</div>
-
-						<div class="admin-field">
-							<label class="admin-field__label" for="required-scopes"
-								>{$LL.admin_custom_claims_required_scopes()}</label
-							>
-							<input
-								id="required-scopes"
-								type="text"
-								class="admin-input"
-								placeholder={$LL.admin_custom_claims_required_scopes_placeholder()}
-								bind:value={editForm.required_scopes_text}
-								disabled={!isEditable}
-							/>
-							<p class="field-hint">{$LL.admin_custom_claims_required_scopes_hint()}</p>
-						</div>
-
-						<div class="admin-field">
-							<label class="admin-field__label" for="scope-mode"
-								>{$LL.admin_custom_claims_scope_mode()}</label
-							>
-							<select
-								id="scope-mode"
-								class="admin-select"
-								bind:value={editForm.scope_mode}
-								disabled={!isEditable}
-							>
-								<option value="any">{$LL.admin_custom_claims_scope_mode_any()}</option>
-								<option value="all">{$LL.admin_custom_claims_scope_mode_all()}</option>
-							</select>
-						</div>
-
-						<div class="admin-field col-span-2">
-							<label class="admin-field__label" for="claim-namespace"
-								>{$LL.admin_custom_claims_claim_namespace()}</label
-							>
-							<input
-								id="claim-namespace"
-								type="text"
-								class="admin-input"
-								placeholder={$LL.admin_custom_claims_claim_namespace_placeholder()}
-								bind:value={editForm.claim_namespace}
-								disabled={!isEditable}
-							/>
-						</div>
-					</div>
 				</AdminSection>
 
 				<!-- Section: Validation Rules -->
@@ -913,7 +825,6 @@
 	.operation-error-content,
 	.operation-error-message,
 	.inline-badges,
-	.inline-check,
 	.check-list {
 		display: flex;
 		align-items: center;
@@ -955,11 +866,6 @@
 	.check-list {
 		flex-wrap: wrap;
 		gap: 14px 24px;
-	}
-
-	.check-with-hint {
-		display: grid;
-		gap: 4px;
 	}
 
 	.save-actions {
@@ -1020,11 +926,6 @@
 
 	.field-hint--warning {
 		color: var(--color-warning);
-	}
-
-	.field-warning-note {
-		color: var(--color-warning);
-		font-size: 0.75rem;
 	}
 
 	.modal-alert {

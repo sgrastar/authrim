@@ -27,6 +27,10 @@ export {
   parseRegistrationFieldDefinitions,
   listRegistrationFieldDefinitions,
   seedCustomClaimSchemas,
+  seedBuiltinProfileClaimSchemas,
+  BUILTIN_PROFILE_CLAIM_KEYS,
+  BUILTIN_PROFILE_CLAIM_SCHEMAS,
+  type BuiltinProfileClaimKey,
   type RegistrationFieldSchemaRow,
   type RegistrationFieldDefinition,
   type SeedCustomClaimSchemaInput,
@@ -41,6 +45,7 @@ export {
   countUsersWithPiiCustomClaimData,
   listNonPiiFieldUsage,
   countUsersWithNonPiiFieldData,
+  countUsersWithPiiFieldData,
   deleteStoredCustomClaimData,
   renameStoredCustomClaimData,
   type NonPiiFieldUsageRow,
@@ -80,6 +85,7 @@ export {
   type SetUserLifecycleStateParams,
 } from './user-lifecycle';
 export {
+  resolveCustomClaimRuntimeSourcesFromHono,
   resolveCustomClaimRuntimeSourcesFromEnv,
   type CustomClaimRuntimeSourceEnv,
   type ResolvedCustomClaimRuntimeSources,

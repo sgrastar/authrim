@@ -190,47 +190,6 @@ function sanitizeAdminUser(
 }
 
 /**
- * Hash password using PBKDF2 (secure password hashing for Cloudflare Workers)
- *
- * Uses PBKDF2-SHA256 with 100,000 iterations and a 16-byte random salt.
- * The result format is: base64(salt):base64(hash)
- *
- * This is more secure than simple SHA-256 hashing because:
- * - PBKDF2 is intentionally slow, making brute-force attacks expensive
- * - Each password has a unique salt, preventing rainbow table attacks
- * - 100,000 iterations provide adequate security for modern systems
- */
-async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(password),
-    { name: 'PBKDF2' },
-    false,
-    ['deriveBits']
-  );
-
-  const derivedBits = await crypto.subtle.deriveBits(
-    {
-      name: 'PBKDF2',
-      salt: salt,
-      iterations: 100000,
-      hash: 'SHA-256',
-    },
-    keyMaterial,
-    256
-  );
-
-  const hashArray = new Uint8Array(derivedBits);
-  const saltBase64 = btoa(String.fromCharCode(...salt));
-  const hashBase64 = btoa(String.fromCharCode(...hashArray));
-
-  return `${saltBase64}:${hashBase64}`;
-}
-
-/**
  * Create audit log entry
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -351,7 +310,8 @@ adminUsersRouter.get('/:id', async (c) => {
 
 /**
  * POST /api/admin/admins
- * Create a new Admin user
+ * Direct Admin creation is disabled. Use /api/admin/admin-invitations so every new Admin
+ * proves possession of a newly registered Passkey before the account becomes active.
  */
 adminUsersRouter.post('/', async (c) => {
   const authContext = c.get('adminAuth') as AdminAuthContext;
@@ -360,54 +320,14 @@ adminUsersRouter.post('/', async (c) => {
     return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS);
   }
 
-  try {
-    const adapter = getAdminAdapter(c);
-    const userRepo = new AdminUserRepository(adapter);
-    const tenantId = getTenantIdFromContext(c);
-
-    const body = await c.req.json<{
-      email: string;
-      name?: string;
-      password?: string;
-      mfa_enabled?: boolean;
-    }>();
-
-    // Validate required fields
-    if (!body.email) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INVALID_REQUEST);
-    }
-
-    // Check if email already exists
-    const existing = await userRepo.findByEmail(tenantId, body.email);
-    if (existing) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
-    }
-
-    // Hash password if provided using PBKDF2
-    let passwordHash: string | undefined;
-    if (body.password) {
-      passwordHash = await hashPassword(body.password);
-    }
-
-    // Create admin user
-    const user = await userRepo.createAdminUser({
-      tenant_id: tenantId,
-      email: body.email.toLowerCase(),
-      name: body.name,
-      password: passwordHash,
-      mfa_enabled: body.mfa_enabled,
-      created_by: authContext.userId,
-    });
-
-    // Create audit log
-    await createAuditLog(c, 'admin_user.create', user.id, 'success', {
-      email: user.email,
-    });
-
-    return c.json(sanitizeAdminUser(user), 201);
-  } catch (error) {
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
+  return c.json(
+    {
+      error: 'admin_invitation_required',
+      error_description:
+        'Direct Admin creation is disabled. Create an invitation at /api/admin/admin-invitations.',
+    },
+    409
+  );
 });
 
 /**

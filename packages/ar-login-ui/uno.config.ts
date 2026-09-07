@@ -29,6 +29,8 @@ export default defineConfig({
 		presetTypography(), // Typography utilities
 		presetWebFonts({
 			provider: 'google',
+			// Keep builds deterministic/offline; browsers load the generated @import URL.
+			inlineImports: false,
 			fonts: {
 				// Display font for headings
 				display: 'Plus Jakarta Sans:400,500,600,700,800',
@@ -229,6 +231,24 @@ export default defineConfig({
 		'i-ph-presentation-chart',
 		'i-ph-rocket-launch',
 		'i-ph-compass',
+		'i-ph-airplane-tilt',
+		'i-ph-browser',
+		'i-ph-calendar',
+		'i-ph-chart-line-up',
+		'i-ph-chat-circle-text',
+		'i-ph-code',
+		'i-ph-envelope-simple',
+		'i-ph-folder-open',
+		'i-ph-gear',
+		'i-ph-link',
+		'i-ph-monitor',
+		'i-ph-notebook',
+		'i-ph-shopping-cart',
+		'i-ph-wrench',
+		'i-ph-magnifying-glass',
+		'i-ph-star',
+		'i-ph-star-fill',
+		'i-ph-arrow-square-out',
 		// Social provider icons (Phosphor)
 		'i-ph-google-logo',
 		'i-ph-github-logo',

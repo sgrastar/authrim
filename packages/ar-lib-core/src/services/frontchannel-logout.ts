@@ -72,7 +72,7 @@ export function buildFrontchannelLogoutUri(
 export function buildFrontchannelLogoutIframes(
   clients: SessionClientWithDetails[],
   issuer: string,
-  sessionId: string
+  fallbackOidcSid?: string
 ): FrontchannelLogoutIframe[] {
   return clients
     .filter((client) => client.frontchannel_logout_uri)
@@ -81,7 +81,7 @@ export function buildFrontchannelLogoutIframes(
       logoutUri: buildFrontchannelLogoutUri(
         client.frontchannel_logout_uri!,
         issuer,
-        sessionId,
+        client.oidc_sid ?? fallbackOidcSid,
         client.frontchannel_logout_session_required
       ),
       sessionRequired: client.frontchannel_logout_session_required,

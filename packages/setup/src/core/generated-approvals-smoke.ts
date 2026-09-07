@@ -258,8 +258,10 @@ export async function runGeneratedApprovalsSmoke(
     baseUrl: target.baseUrl,
     path: '/api/admin/users',
     method: 'POST',
-    adminSecret,
-    tenantId,
+    headers: {
+      ...getAdminHeaders(adminSecret, tenantId),
+      'idempotency-key': `approval-smoke-user-${smokeRunId}`,
+    },
     timeoutMs,
     expectedStatus: 201,
     body: {
@@ -288,6 +290,7 @@ export async function runGeneratedApprovalsSmoke(
   checks.push(finalizeCheck(userCreateCheck, 'approval smoke user create verified'));
 
   if (!targetSubjectId) {
+    await adminAccess.cleanup?.();
     return {
       ok: false,
       env: target.env,

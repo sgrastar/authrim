@@ -38,7 +38,7 @@ const validationErrors = new Counter('validation_errors');
 const BASE_URL = __ENV.BASE_URL || '';
 const PRESET = __ENV.PRESET || 'rps500';
 const TOKEN_PATH = __ENV.TOKEN_PATH || '../seeds/access_tokens.json';
-const STORAGE_PROFILE = __ENV.STORAGE_PROFILE || 'unspecified';
+const TENANT_PLACEMENT_POLICY = __ENV.TENANT_PLACEMENT_POLICY || 'unspecified';
 const DATASET_USER_COUNT = __ENV.DATASET_USER_COUNT || 'unspecified';
 // For K6 Cloud: URL to fetch seed data from R2
 const TOKEN_URL = __ENV.TOKEN_URL || '';
@@ -157,7 +157,7 @@ export const options = {
       stages: selectedPreset.stages,
       tags: {
         test_id: TEST_ID,
-        storage_profile: STORAGE_PROFILE,
+        tenant_placement_policy: TENANT_PLACEMENT_POLICY,
         dataset_user_count: DATASET_USER_COUNT,
       },
     },
@@ -190,13 +190,13 @@ if (!TOKEN_URL) {
 
 // Setup (runs once before test starts)
 export function setup() {
-  console.log("");
+  console.log('');
   console.log(`🚀 ${TEST_NAME}`);
   console.log(`📋 Preset: ${PRESET} - ${selectedPreset.description}`);
   console.log(`🎯 Target: ${BASE_URL}`);
-  console.log(`🗄️  Storage profile: ${STORAGE_PROFILE}`);
+  console.log(`🧭 Tenant placement: ${TENANT_PLACEMENT_POLICY}`);
   console.log(`👥 Dataset users: ${DATASET_USER_COUNT}`);
-  console.log("");
+  console.log('');
 
   let tokens = [];
 
@@ -221,7 +221,7 @@ export function setup() {
   }
 
   // Warmup: Initialize DO with first few requests
-  console.log("🔥 Warming up...");
+  console.log('🔥 Warming up...');
   for (let i = 0; i < Math.min(10, tokens.length); i++) {
     const token = tokens[i];
     http.get(`${BASE_URL}/userinfo`, {
@@ -231,14 +231,14 @@ export function setup() {
       tags: { name: 'Warmup' },
     });
   }
-  console.log("   Warmup complete");
-  console.log("");
+  console.log('   Warmup complete');
+  console.log('');
 
   return {
     tokens: useRemoteData ? tokens : null,
     tokenCount: tokens.length,
     preset: PRESET,
-    storageProfile: STORAGE_PROFILE,
+    tenantPlacementPolicy: TENANT_PLACEMENT_POLICY,
     datasetUserCount: DATASET_USER_COUNT,
     baseUrl: BASE_URL,
   };
@@ -316,7 +316,7 @@ export default function (data) {
 
 // Teardown (runs once after test ends)
 export function teardown(data) {
-  console.log("");
+  console.log('');
   console.log(`✅ ${TEST_NAME} Test completed`);
   console.log(`📊 Preset: ${data.preset}`);
   console.log(`🎯 Target: ${data.baseUrl}`);

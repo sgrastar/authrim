@@ -253,7 +253,6 @@ This file tracks the progress of translating the project to English.
 | 177 | packages/ar-lib-core/src/repositories/core/passkey.ts | Untranslated | - | - | - | |
 | 178 | packages/ar-lib-core/src/repositories/core/role.ts | Untranslated | - | - | - | |
 | 179 | packages/ar-lib-core/src/repositories/core/session-client.ts | Untranslated | - | - | - | |
-| 180 | packages/ar-lib-core/src/repositories/core/session.ts | Untranslated | - | - | - | |
 | 181 | packages/ar-lib-core/src/repositories/core/user-core.ts | Untranslated | - | - | - | |
 | 182 | packages/ar-lib-core/src/repositories/index.ts | Untranslated | - | - | - | |
 | 183 | packages/ar-lib-core/src/repositories/pii/audit-log.ts | Untranslated | - | - | - | |

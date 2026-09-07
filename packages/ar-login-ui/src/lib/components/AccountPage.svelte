@@ -1,26 +1,34 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
+	import { SvelteMap } from 'svelte/reactivity';
 	import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
-	import { Button, Spinner } from '$lib/components';
+	import { Button } from '$lib/components';
 	import {
 		accountAPI,
 		type AccountConsent,
+		type AccountCapabilities,
 		type AccountDevice,
 		type AccountOperation,
 		type AccountPasskey,
 		type AccountProfile,
 		type AccountProfileSession,
+		type IdentifierReplacementOperation,
 		type AccountSession,
+		type AccountPageScreen,
+		type AccountPageScreenField,
 		type AccountTotpCredential
 	} from '$lib/api/account';
 	import AccountActivitySection from '$lib/components/account/AccountActivitySection.svelte';
 	import AccountConsentSection from '$lib/components/account/AccountConsentSection.svelte';
+	import AccountLauncherSection from '$lib/components/account/AccountLauncherSection.svelte';
 	import AccountProfileSection from '$lib/components/account/AccountProfileSection.svelte';
 	import AccountSecuritySection from '$lib/components/account/AccountSecuritySection.svelte';
+	import ConfiguredFooter from '$lib/components/ConfiguredFooter.svelte';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
 	import {
 		fetchAuthenticationMethods,
-		type AuthenticationMethods
+		type AuthenticationMethods,
+		type AuthenticationMethodsResponse
 	} from '$lib/api/authentication-methods';
 	import { auth } from '$lib/stores/auth';
 	import {
@@ -29,12 +37,51 @@
 		signalUnknownCredential,
 		shouldSignalUnknownCredentialAfterRegistrationFailure
 	} from '$lib/webauthn/signal';
+	import { classifyPasskeyRegistrationError } from '$lib/webauthn/passkey-registration-error';
 	import { buildTotpDeleteProof } from '$lib/account/totp-proof';
 	import { getAuthConfig } from '$lib/auth';
-	import { LL } from '$i18n/i18n-svelte';
+	import type { APIError } from '$lib/api/client';
+	import { appendApiSupportReference, messageForCaughtError } from '$lib/errors/display-error';
+	import { LL, getLocale } from '$i18n/i18n-svelte';
+	import type { Locales } from '$i18n/i18n-types';
+	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 
-	let loading = $state(true);
+	let {
+		initialCapabilities = null,
+		initialCapabilitiesResolved = false,
+		initialPlacementConditions = {
+			consentRecordsAvailable: null,
+			multipleSessions: null
+		},
+		initialAuthenticationMethods = null
+	} = $props<{
+		initialCapabilities?: AccountCapabilities | null;
+		initialCapabilitiesResolved?: boolean;
+		initialPlacementConditions?: {
+			consentRecordsAvailable: boolean | null;
+			multipleSessions: boolean | null;
+		};
+		initialAuthenticationMethods?: AuthenticationMethodsResponse | null;
+	}>();
+	const embeddedCapabilities = untrack(() => initialCapabilities);
+	const embeddedCapabilitiesResolved = untrack(() => initialCapabilitiesResolved);
+	const embeddedAuthenticationMethods = untrack(() => initialAuthenticationMethods);
+
+	const { brandingStore, languageStore, loginUIPageStore } = useLoginUIStores();
+	type SecurityArea = 'devices' | 'sessions' | 'passkeys' | 'totp' | 'social';
+	const ALL_SECURITY_AREAS: SecurityArea[] = ['devices', 'sessions', 'passkeys', 'totp', 'social'];
+
 	let logoutLoading = $state(false);
+	let profileLoading = $state(true);
+	let devicesLoading = $state(true);
+	let sessionsLoading = $state(true);
+	let passkeysLoading = $state(true);
+	let totpLoading = $state(true);
+	let operationsLoading = $state(true);
+	let consentsLoading = $state(true);
+	let capabilitiesLoading = $state(!embeddedCapabilitiesResolved);
+	let capabilitiesResolved = $state(embeddedCapabilitiesResolved);
+	let authenticationMethodsLoading = $state(!embeddedAuthenticationMethods);
 	let profile = $state<AccountProfile | null>(null);
 	let devices = $state<AccountDevice[]>([]);
 	let sessions = $state<AccountSession[]>([]);
@@ -49,17 +96,29 @@
 	} | null>(null);
 	let operations = $state<AccountOperation[]>([]);
 	let consents = $state<AccountConsent[]>([]);
-	let authenticationMethods = $state<AuthenticationMethods | null>(null);
+	let authenticationMethods = $state<AuthenticationMethods | null>(
+		embeddedAuthenticationMethods?.methods ?? null
+	);
+	let accountCapabilities = $state<AccountCapabilities | null>(embeddedCapabilities);
 	let accountError = $state('');
 	let profileError = $state('');
 	let consentError = $state('');
 	let profileSaved = $state(false);
 	let profileSaving = $state(false);
-	let securityError = $state('');
+	let emailChangeStage = $state<'idle' | 'challenge' | 'processing' | 'completed'>('idle');
+	let emailChangeLoading = $state(false);
+	let emailChangeError = $state('');
+	let emailChangeChallengeId = $state('');
+	let emailChangeIdempotencyKey = $state('');
+	let emailChangePollGeneration = 0;
+	let consentLoadGeneration = 0;
+	let securityErrors = $state<Partial<Record<SecurityArea, string>>>({});
 	let reauthNeeded = $state(false);
-	let securityLoading = $state(false);
+	let securityRefreshingAreas = $state<SecurityArea[]>([]);
+	const securityRefreshCounts = new SvelteMap<SecurityArea, number>();
 	let actionLoading = $state('');
 	let passkeySupported = $state(false);
+	let currentLocale = $state<Locales>(getLocale());
 	let reauthModalOpen = $state(false);
 	let reauthLoading = $state(false);
 	let reauthError = $state('');
@@ -74,8 +133,36 @@
 		| { type: 'add-totp'; label: string }
 		| { type: 'delete-totp'; id: string; code: string }
 		| { type: 'regenerate-totp-backup-codes'; code: string }
+		| { type: 'change-email'; email: string }
 		| null
 	>(null);
+
+	function localizeApiError(error: APIError | null | undefined, fallback: string): string {
+		if (!error) return fallback;
+		let message: string;
+		switch (error.error) {
+			case 'invalid_request':
+				message = $LL.error_invalid_request();
+				break;
+			case 'access_denied':
+				message = $LL.error_access_denied();
+				break;
+			case 'temporarily_unavailable':
+				message = $LL.error_temporarily_unavailable();
+				break;
+			case 'server_error':
+				message = $LL.error_server_error();
+				break;
+			case 'login_required':
+			case 'reauthentication_required':
+				message = $LL.account_reauthRequired();
+				break;
+			default:
+				message = fallback;
+		}
+		return appendApiSupportReference(message, $LL.error_errorCode(), error);
+	}
+
 	let passkeyReauthAvailable = $derived(
 		Boolean(
 			passkeySupported &&
@@ -108,6 +195,238 @@
 				(authenticationMethods.totp.accountLinkEnabled ?? false))
 		)
 	);
+	function initialLoadingAreas(areas: SecurityArea[]): SecurityArea[] {
+		return areas.filter((area) => {
+			switch (area) {
+				case 'devices':
+					return devicesLoading;
+				case 'sessions':
+					return sessionsLoading;
+				case 'passkeys':
+					return passkeysLoading || authenticationMethodsLoading;
+				case 'totp':
+					return totpLoading || authenticationMethodsLoading;
+				case 'social':
+					return authenticationMethodsLoading;
+			}
+		});
+	}
+
+	function setSecurityError(area: SecurityArea, message: string) {
+		if (message) {
+			securityErrors = { ...securityErrors, [area]: message };
+			return;
+		}
+		const nextErrors = { ...securityErrors };
+		delete nextErrors[area];
+		securityErrors = nextErrors;
+	}
+
+	function clearSecurityErrors(areas: SecurityArea[] = ALL_SECURITY_AREAS) {
+		for (const area of areas) setSecurityError(area, '');
+	}
+
+	function securityErrorFor(areas: SecurityArea[]): string {
+		return areas.map((area) => securityErrors[area]).find(Boolean) ?? '';
+	}
+
+	function localizedPasskeyRegistrationError(error: unknown): string {
+		switch (classifyPasskeyRegistrationError(error)) {
+			case 'cancelled-or-timed-out':
+				return $LL.account_passkeyRegistrationCancelled();
+			case 'already-registered':
+				return $LL.account_passkeyAlreadyRegistered();
+			case 'interrupted':
+				return $LL.account_passkeyRegistrationInterrupted();
+			case 'authenticator-unsupported':
+				return $LL.account_passkeyAuthenticatorUnsupported();
+			case 'authenticator-unavailable':
+				return $LL.account_passkeyAuthenticatorUnavailable();
+			case 'configuration':
+				return $LL.account_passkeyConfigurationError();
+			case 'failed':
+				return $LL.account_passkeyRegistrationFailed();
+		}
+	}
+
+	function syncSecurityRefreshingAreas() {
+		securityRefreshingAreas = ALL_SECURITY_AREAS.filter(
+			(area) => (securityRefreshCounts.get(area) ?? 0) > 0
+		);
+	}
+
+	function beginSecurityRefresh(areas: SecurityArea[]) {
+		for (const area of areas) {
+			securityRefreshCounts.set(area, (securityRefreshCounts.get(area) ?? 0) + 1);
+		}
+		syncSecurityRefreshingAreas();
+	}
+
+	function endSecurityRefresh(areas: SecurityArea[]) {
+		for (const area of areas) {
+			const nextCount = (securityRefreshCounts.get(area) ?? 0) - 1;
+			if (nextCount > 0) {
+				securityRefreshCounts.set(area, nextCount);
+			} else {
+				securityRefreshCounts.delete(area);
+			}
+		}
+		syncSecurityRefreshingAreas();
+	}
+
+	function securityAreasRefreshing(areas: SecurityArea[]): boolean {
+		return areas.some((area) => securityRefreshingAreas.includes(area));
+	}
+
+	function configuredScreen(screenKey: string): AccountPageScreen | null {
+		return (
+			accountCapabilities?.account_page?.screens.find(
+				(screen) => screen.screen_key === screenKey
+			) ?? null
+		);
+	}
+
+	function localeVariants(locale: string): string[] {
+		return [...new Set([locale, locale.replace('_', '-'), locale.split('-')[0]])];
+	}
+
+	function localeCandidates(locale: string): string[] {
+		return [...localeVariants(locale), ...localeVariants(languageStore.defaultLocale)].filter(
+			(candidate, index, values) => values.indexOf(candidate) === index
+		);
+	}
+
+	function localizedPageCopy(): { title: string; description: string } {
+		const definition = accountCapabilities?.account_page?.definition;
+		const localizations = localeCandidates(currentLocale).map(
+			(locale) => definition?.localizations?.[locale]
+		);
+		const themeTitle = localeCandidates(currentLocale)
+			.map((locale) => loginUIPageStore.getLocalizedText(locale, 'accountTitle'))
+			.find((value): value is string => Boolean(value));
+		return {
+			title:
+				themeTitle ??
+				localizations.find((entry) => Boolean(entry?.title))?.title ??
+				definition?.title ??
+				$LL.account_title(),
+			description:
+				localizations.find((entry) => Boolean(entry?.description))?.description ??
+				definition?.description ??
+				''
+		};
+	}
+
+	function placementVisible(condition: string): boolean {
+		switch (condition) {
+			case 'hidden':
+				return false;
+			case 'passkey_enabled':
+				return Boolean(authenticationMethods?.passkey?.enabled);
+			case 'totp_enabled':
+				return totpManagementEnabled;
+			case 'external_idp_enabled':
+				return Boolean(authenticationMethods?.external?.enabled);
+			case 'consent_records_available':
+				if (consentsLoading && initialPlacementConditions.consentRecordsAvailable !== null) {
+					return initialPlacementConditions.consentRecordsAvailable;
+				}
+				return consents.length > 0;
+			case 'multiple_sessions':
+				if (sessionsLoading && initialPlacementConditions.multipleSessions !== null) {
+					return initialPlacementConditions.multipleSessions;
+				}
+				return sessions.length > 1;
+			default:
+				return true;
+		}
+	}
+
+	function safeHref(value: string | null | undefined): string | null {
+		if (!value) return null;
+		if (/^#[a-zA-Z][\w-]*$/u.test(value) || /^\/(?!\/)/u.test(value)) return value;
+		try {
+			const url = new URL(value);
+			return url.protocol === 'https:' ? url.toString() : null;
+		} catch {
+			return null;
+		}
+	}
+
+	function localizedScreenFields(screen: AccountPageScreen): AccountPageScreenField[] {
+		const localized =
+			localeVariants(currentLocale)
+				.map((locale) => screen.localizations?.[locale]?.fields)
+				.find((fields) => fields && Object.keys(fields).length > 0) ?? {};
+		const defaultLocalized =
+			localeVariants(languageStore.defaultLocale)
+				.map((locale) => screen.localizations?.[locale]?.fields)
+				.find((fields) => fields && Object.keys(fields).length > 0) ?? {};
+		return [...screen.fields]
+			.sort((left, right) => (left.order ?? 0) - (right.order ?? 0))
+			.map((field, index) => {
+				const key = field.block_id ?? `${field.field}-${index}`;
+				const localizedField = {
+					...field,
+					...(defaultLocalized[key] ?? {}),
+					...(localized[key] ?? {})
+				};
+				return screen.screen_key === 'account_overview' &&
+					field.field === 'heading.account_overview'
+					? { ...localizedField, text: undefined }
+					: localizedField;
+			})
+			.filter(
+				(field) =>
+					screen.screen_key !== 'account_overview' || field.field !== 'link.account_security'
+			);
+	}
+
+	function accountWidgetTitle(field: AccountPageScreenField): string {
+		const defaultTitles: Partial<
+			Record<NonNullable<AccountPageScreenField['block_type']>, string>
+		> = {
+			account_profile_widget: $LL.account_profileTitle(),
+			account_device_list_widget: $LL.account_devices(),
+			account_session_widget: $LL.account_sessions(),
+			account_passkey_widget: $LL.account_passkeys(),
+			account_totp_widget: $LL.account_totp(),
+			account_consent_widget: $LL.account_consentTitle(),
+			account_activity_widget: $LL.account_activityTitle(),
+			account_social_account_widget: $LL.account_socialAccounts(),
+			account_launcher_widget: $LL.account_launcherTitle()
+		};
+		const title = defaultTitles[field.block_type ?? 'text'];
+		const defaultLabels = new Set([
+			'User profile',
+			'Devices',
+			'Connected apps and devices',
+			'Sessions',
+			'Signed-in devices',
+			'Passkeys',
+			'Authenticator app',
+			'Consent information',
+			'Account activity',
+			'Connected accounts',
+			'My applications'
+		]);
+		const systemWidgetFields = new Set([
+			'account.profile',
+			'account.devices',
+			'account.sessions',
+			'account.passkeys',
+			'account.totp',
+			'account.consents',
+			'account.activity',
+			'account.social_accounts',
+			'account.launchers'
+		]);
+		return !field.label ||
+			defaultLabels.has(field.label) ||
+			(!field.block_id && systemWidgetFields.has(field.field))
+			? (title ?? field.label)
+			: field.label;
+	}
 
 	function isDedicatedLoginUiHostname(hostname: string): boolean {
 		const firstLabel = hostname.split('.')[0]?.toLowerCase() ?? '';
@@ -138,16 +457,24 @@
 			return;
 		}
 
-		const [methodsResult, accountLoadStatus] = await Promise.all([
-			fetchAuthenticationMethods(),
-			loadAccountPage()
-		]);
-		if (methodsResult.data?.ui.selfService?.accountPageEnabled !== true) {
-			window.location.href = '/';
-			return;
+		// Start account data immediately. WebAuthn capability detection can take noticeably
+		// longer in Safari and must not hold back the composition request or widget skeletons.
+		const accountLoadRequest = loadAccountPage();
+		const passkeySupportRequest = detectPasskeySupport();
+		const methodsRequest = embeddedAuthenticationMethods
+			? Promise.resolve({ data: embeddedAuthenticationMethods })
+			: fetchAuthenticationMethods();
+		if (!embeddedAuthenticationMethods) {
+			void methodsRequest
+				.then((methodsResult) => {
+					authenticationMethods = methodsResult.data?.methods ?? null;
+				})
+				.finally(() => {
+					authenticationMethodsLoading = false;
+				});
 		}
-		authenticationMethods = methodsResult.data.methods;
-		passkeySupported = await detectPasskeySupport();
+		passkeySupported = await passkeySupportRequest;
+		const accountLoadStatus = await accountLoadRequest;
 
 		if (accountLoadStatus === 'unauthorized') {
 			const returnTo = `${window.location.pathname}${window.location.search}`;
@@ -158,7 +485,29 @@
 				: '/login';
 			return;
 		}
-		loading = false;
+
+		const methodsResult = await methodsRequest;
+		if (methodsResult.data?.ui.selfService?.accountPageEnabled !== true) {
+			window.location.href = '/';
+			return;
+		}
+	});
+
+	onMount(() => {
+		const handleLocaleChange = (event: Event) => {
+			const locale = (event as CustomEvent<{ locale?: string }>).detail?.locale;
+			if (locale) {
+				currentLocale = locale as Locales;
+				void refreshLocalizedAccountData(locale);
+			}
+		};
+		window.addEventListener('authrim:locale-change', handleLocaleChange);
+		return () => window.removeEventListener('authrim:locale-change', handleLocaleChange);
+	});
+
+	onDestroy(() => {
+		emailChangePollGeneration += 1;
+		consentLoadGeneration += 1;
 	});
 
 	async function detectPasskeySupport(): Promise<boolean> {
@@ -181,100 +530,159 @@
 
 	async function loadAccountPage(): Promise<'ok' | 'unauthorized' | 'error'> {
 		accountError = '';
-		securityError = '';
+		securityErrors = {};
 		consentError = '';
 		reauthNeeded = false;
-		const [
-			profileResult,
-			devicesResult,
-			sessionsResult,
-			passkeysResult,
-			totpResult,
-			operationsResult,
-			consentsResult,
-			capabilitiesResult
-		] = await Promise.all([
-			accountAPI.getProfile(),
-			accountAPI.getDevices(),
-			accountAPI.getSessions(),
-			accountAPI.getPasskeys(),
-			accountAPI.getTotpCredentials(),
-			accountAPI.getOperations(),
-			accountAPI.getConsents(),
-			accountAPI.getCapabilities()
-		]);
+		profileLoading = true;
+		devicesLoading = true;
+		sessionsLoading = true;
+		passkeysLoading = true;
+		totpLoading = true;
+		operationsLoading = true;
+		consentsLoading = true;
+		capabilitiesLoading = !embeddedCapabilitiesResolved;
+		const profileRequest = accountAPI.getProfile();
+		const passkeysRequest = accountAPI.getPasskeys();
+		const initialConsentGeneration = ++consentLoadGeneration;
+
+		void accountAPI
+			.getDevices()
+			.then((result) => {
+				devices = result.data?.devices ?? [];
+				recordSecurityLoadError('devices', result.error);
+			})
+			.finally(() => {
+				devicesLoading = false;
+			});
+		void accountAPI
+			.getSessions()
+			.then((result) => {
+				sessions = result.data?.sessions ?? [];
+				recordSecurityLoadError('sessions', result.error);
+			})
+			.finally(() => {
+				sessionsLoading = false;
+			});
+		void passkeysRequest
+			.then((result) => {
+				passkeys = result.data?.passkeys ?? [];
+				recordSecurityLoadError('passkeys', result.error);
+			})
+			.finally(() => {
+				passkeysLoading = false;
+			});
+		void accountAPI
+			.getTotpCredentials()
+			.then((result) => {
+				totpCredentials = result.data?.credentials ?? [];
+				totpBackupCodes = result.data?.backup_codes ?? { total: 0, remaining: 0 };
+				recordSecurityLoadError('totp', result.error);
+			})
+			.finally(() => {
+				totpLoading = false;
+			});
+		void accountAPI
+			.getOperations()
+			.then((result) => {
+				operations = result.data?.operations ?? [];
+			})
+			.finally(() => {
+				operationsLoading = false;
+			});
+		void accountAPI
+			.getConsents(getLocale())
+			.then((result) => {
+				if (initialConsentGeneration !== consentLoadGeneration) return;
+				consents = result.data?.consents ?? [];
+				consentError = result.error ? localizeApiError(result.error, $LL.account_loadFailed()) : '';
+			})
+			.finally(() => {
+				if (initialConsentGeneration === consentLoadGeneration) {
+					consentsLoading = false;
+				}
+			});
+		if (!embeddedCapabilitiesResolved) {
+			void accountAPI
+				.getCapabilities()
+				.then((result) => {
+					if (result.data) {
+						accountCapabilities = result.data;
+						capabilitiesResolved = true;
+					}
+				})
+				.finally(() => {
+					capabilitiesLoading = false;
+				});
+		}
+
+		const profileResult = await profileRequest;
 
 		if (profileResult.error) {
 			if (profileResult.error.error === 'unauthorized') {
 				return 'unauthorized';
 			}
-			accountError = profileResult.error.error_description || profileResult.error.error;
+			profileLoading = false;
+			accountError = localizeApiError(profileResult.error, $LL.account_loadFailed());
 			return 'error';
 		}
+		profileLoading = false;
 		profile = profileResult.data?.profile ?? null;
 		if (profile && profileResult.data?.session) {
 			syncAuthFromAccountProfile(profile, profileResult.data.session);
 		}
-		devices = devicesResult.data?.devices ?? [];
-		sessions = sessionsResult.data?.sessions ?? [];
-		passkeys = passkeysResult.data?.passkeys ?? [];
-		totpCredentials = totpResult.data?.credentials ?? [];
-		totpBackupCodes = totpResult.data?.backup_codes ?? { total: 0, remaining: 0 };
-		operations = operationsResult.data?.operations ?? [];
-		consents = consentsResult.data?.consents ?? [];
-		await Promise.all([
-			signalAllAcceptedCredentials(passkeysResult.data?.webauthn_signal),
-			signalCurrentUserDetails(profile)
-		]);
-		consentError = consentsResult.error?.error_description || consentsResult.error?.error || '';
-		if (
-			devicesResult.error ||
-			sessionsResult.error ||
-			passkeysResult.error ||
-			totpResult.error ||
-			operationsResult.error ||
-			capabilitiesResult.error
-		) {
-			securityError =
-				devicesResult.error?.error_description ||
-				sessionsResult.error?.error_description ||
-				passkeysResult.error?.error_description ||
-				totpResult.error?.error_description ||
-				operationsResult.error?.error_description ||
-				capabilitiesResult.error?.error_description ||
-				$LL.account_loadFailed();
-		}
+		void passkeysRequest
+			.then((result) => signalAllAcceptedCredentials(result.data?.webauthn_signal))
+			.catch(() => undefined);
+		void signalCurrentUserDetails(profile).catch(() => undefined);
 		return 'ok';
 	}
 
-	async function refreshSecurity() {
-		securityLoading = true;
+	function recordSecurityLoadError(area: SecurityArea, error: APIError | null | undefined) {
+		setSecurityError(area, error ? localizeApiError(error, $LL.account_loadFailed()) : '');
+	}
+
+	async function refreshLocalizedAccountData(locale: string) {
+		const generation = ++consentLoadGeneration;
+		consentsLoading = true;
+		const result = await accountAPI.getConsents(locale);
+		if (generation !== consentLoadGeneration) return;
+		if (result.data) {
+			consents = result.data.consents;
+			consentError = '';
+		} else if (result.error) {
+			consentError = localizeApiError(result.error, $LL.account_loadFailed());
+		}
+		consentsLoading = false;
+	}
+
+	async function refreshSecurity(areas?: SecurityArea[]) {
+		const requestedAreas = areas ? [...new Set(areas)] : [...ALL_SECURITY_AREAS];
+		const refreshAll = areas === undefined;
+		beginSecurityRefresh(requestedAreas);
 		try {
 			reauthNeeded = false;
 			const [devicesResult, sessionsResult, passkeysResult, totpResult, operationsResult] =
 				await Promise.all([
-					accountAPI.getDevices(),
-					accountAPI.getSessions(),
-					accountAPI.getPasskeys(),
-					accountAPI.getTotpCredentials(),
-					accountAPI.getOperations()
+					requestedAreas.includes('devices') ? accountAPI.getDevices() : null,
+					requestedAreas.includes('sessions') ? accountAPI.getSessions() : null,
+					requestedAreas.includes('passkeys') ? accountAPI.getPasskeys() : null,
+					requestedAreas.includes('totp') ? accountAPI.getTotpCredentials() : null,
+					refreshAll ? accountAPI.getOperations() : null
 				]);
-			devices = devicesResult.data?.devices ?? devices;
-			sessions = sessionsResult.data?.sessions ?? sessions;
-			passkeys = passkeysResult.data?.passkeys ?? passkeys;
-			totpCredentials = totpResult.data?.credentials ?? totpCredentials;
-			totpBackupCodes = totpResult.data?.backup_codes ?? totpBackupCodes;
-			operations = operationsResult.data?.operations ?? operations;
-			await signalAllAcceptedCredentials(passkeysResult.data?.webauthn_signal);
-			securityError =
-				devicesResult.error?.error_description ||
-				sessionsResult.error?.error_description ||
-				passkeysResult.error?.error_description ||
-				totpResult.error?.error_description ||
-				operationsResult.error?.error_description ||
-				'';
+			devices = devicesResult?.data?.devices ?? devices;
+			sessions = sessionsResult?.data?.sessions ?? sessions;
+			passkeys = passkeysResult?.data?.passkeys ?? passkeys;
+			totpCredentials = totpResult?.data?.credentials ?? totpCredentials;
+			totpBackupCodes = totpResult?.data?.backup_codes ?? totpBackupCodes;
+			operations = operationsResult?.data?.operations ?? operations;
+			await signalAllAcceptedCredentials(passkeysResult?.data?.webauthn_signal);
+			if (devicesResult) recordSecurityLoadError('devices', devicesResult.error);
+			if (sessionsResult) recordSecurityLoadError('sessions', sessionsResult.error);
+			if (passkeysResult) recordSecurityLoadError('passkeys', passkeysResult.error);
+			if (totpResult) recordSecurityLoadError('totp', totpResult.error);
+			if (requestedAreas.includes('social')) setSecurityError('social', '');
 		} finally {
-			securityLoading = false;
+			endSecurityRefresh(requestedAreas);
 		}
 	}
 
@@ -292,7 +700,7 @@
 	async function finishReauth() {
 		await auth.refreshFromSession();
 		reauthNeeded = false;
-		securityError = '';
+		clearSecurityErrors();
 		reauthModalOpen = false;
 		emailReauthChallengeId = '';
 		emailReauthCode = '';
@@ -313,6 +721,8 @@
 			await deleteTotpCredential(pending.id, pending.code);
 		} else if (pending?.type === 'regenerate-totp-backup-codes') {
 			await regenerateTotpBackupCodes(pending.code);
+		} else if (pending?.type === 'change-email') {
+			await startEmailChange(pending.email);
 		}
 	}
 
@@ -323,10 +733,7 @@
 		try {
 			const optionsResult = await accountAPI.createPasskeyReauthOptions();
 			if (optionsResult.error) {
-				reauthError = handleApiError(
-					optionsResult.error.error_description,
-					$LL.account_actionFailed()
-				);
+				reauthError = localizeApiError(optionsResult.error, $LL.account_actionFailed());
 				return;
 			}
 
@@ -338,16 +745,13 @@
 				credential
 			);
 			if (completeResult.error) {
-				reauthError = handleApiError(
-					completeResult.error.error_description,
-					$LL.account_actionFailed()
-				);
+				reauthError = localizeApiError(completeResult.error, $LL.account_actionFailed());
 				return;
 			}
 
 			await finishReauth();
 		} catch (error) {
-			reauthError = error instanceof Error ? error.message : $LL.account_actionFailed();
+			reauthError = messageForCaughtError(error, $LL.account_actionFailed());
 		} finally {
 			reauthLoading = false;
 		}
@@ -360,7 +764,7 @@
 		try {
 			const result = await accountAPI.sendEmailCodeReauth();
 			if (result.error) {
-				reauthError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				reauthError = localizeApiError(result.error, $LL.account_actionFailed());
 				return;
 			}
 			emailReauthChallengeId = result.data!.challenge_id;
@@ -368,7 +772,7 @@
 			emailReauthCode = '';
 			emailReauthCodeSent = true;
 		} catch (error) {
-			reauthError = error instanceof Error ? error.message : $LL.account_actionFailed();
+			reauthError = messageForCaughtError(error, $LL.account_actionFailed());
 		} finally {
 			reauthLoading = false;
 		}
@@ -384,12 +788,12 @@
 				emailReauthCode
 			);
 			if (result.error) {
-				reauthError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				reauthError = localizeApiError(result.error, $LL.account_actionFailed());
 				return;
 			}
 			await finishReauth();
 		} catch (error) {
-			reauthError = error instanceof Error ? error.message : $LL.account_actionFailed();
+			reauthError = messageForCaughtError(error, $LL.account_actionFailed());
 		} finally {
 			reauthLoading = false;
 		}
@@ -402,19 +806,15 @@
 		try {
 			const result = await accountAPI.completeTotpReauth(totpReauthCode.trim());
 			if (result.error) {
-				reauthError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				reauthError = localizeApiError(result.error, $LL.account_actionFailed());
 				return;
 			}
 			await finishReauth();
 		} catch (error) {
-			reauthError = error instanceof Error ? error.message : $LL.account_actionFailed();
+			reauthError = messageForCaughtError(error, $LL.account_actionFailed());
 		} finally {
 			reauthLoading = false;
 		}
-	}
-
-	function handleApiError(message: string | undefined, fallback: string): string {
-		return message || fallback;
 	}
 
 	async function saveProfileName(name: string) {
@@ -424,7 +824,7 @@
 		try {
 			const result = await accountAPI.updateProfileName(name);
 			if (result.error) {
-				profileError = handleApiError(result.error.error_description, $LL.account_saveFailed());
+				profileError = localizeApiError(result.error, $LL.account_saveFailed());
 				return;
 			}
 			profile = result.data?.profile ?? profile;
@@ -437,13 +837,117 @@
 		}
 	}
 
+	async function refreshProfileAfterEmailChange() {
+		const [result, operationsResult] = await Promise.all([
+			accountAPI.getProfile(),
+			accountAPI.getOperations()
+		]);
+		if (!result.data) {
+			emailChangeError = localizeApiError(result.error, $LL.account_loadFailed());
+			return;
+		}
+		profile = result.data.profile;
+		operations = operationsResult.data?.operations ?? operations;
+		syncAuthFromAccountProfile(result.data.profile, result.data.session);
+		await signalCurrentUserDetails(profile);
+	}
+
+	async function finishEmailChangeOperation(operation: IdentifierReplacementOperation) {
+		if (operation.state === 'completed') {
+			await refreshProfileAfterEmailChange();
+			emailChangeStage = 'completed';
+			emailChangeLoading = false;
+			return true;
+		}
+		if (operation.state === 'blocked_forward_repair' || operation.state === 'canceled') {
+			emailChangeError = $LL.account_actionFailed();
+			emailChangeLoading = false;
+			return true;
+		}
+		return false;
+	}
+
+	async function pollEmailChange(operationId: string, generation: number) {
+		for (let attempt = 0; attempt < 120 && generation === emailChangePollGeneration; attempt += 1) {
+			await new Promise((resolve) => window.setTimeout(resolve, 1500));
+			if (generation !== emailChangePollGeneration) return;
+			const result = await accountAPI.getIdentifierReplacement(operationId);
+			if (result.error) {
+				if (attempt === 119) {
+					emailChangeError = localizeApiError(result.error, $LL.account_actionFailed());
+					emailChangeLoading = false;
+				}
+				continue;
+			}
+			if (result.data && (await finishEmailChangeOperation(result.data.operation))) return;
+		}
+		if (generation === emailChangePollGeneration) {
+			emailChangeError = $LL.account_actionFailed();
+			emailChangeLoading = false;
+		}
+	}
+
+	async function startEmailChange(email: string) {
+		emailChangeError = '';
+		emailChangeLoading = true;
+		const result = await accountAPI.startIdentifierReplacement(email.trim());
+		if (result.error?.error === 'reauthentication_required') {
+			emailChangeLoading = false;
+			requestReauth({ type: 'change-email', email: email.trim() });
+			return;
+		}
+		if (!result.data) {
+			emailChangeError = localizeApiError(result.error, $LL.account_actionFailed());
+			emailChangeLoading = false;
+			return;
+		}
+		emailChangeChallengeId = result.data.challenge_id;
+		emailChangeIdempotencyKey = crypto.randomUUID();
+		emailChangeStage = 'challenge';
+		emailChangeLoading = false;
+	}
+
+	async function completeEmailChange(code: string) {
+		if (!emailChangeChallengeId || !emailChangeIdempotencyKey) return;
+		emailChangeError = '';
+		emailChangeLoading = true;
+		const result = await accountAPI.completeIdentifierReplacement(
+			emailChangeChallengeId,
+			code.trim(),
+			emailChangeIdempotencyKey
+		);
+		if (result.error?.error === 'reauthentication_required') {
+			emailChangeLoading = false;
+			requestReauth();
+			return;
+		}
+		if (!result.data) {
+			emailChangeError = localizeApiError(result.error, $LL.account_actionFailed());
+			emailChangeLoading = false;
+			return;
+		}
+		if (await finishEmailChangeOperation(result.data.operation)) return;
+		emailChangeStage = 'processing';
+		const generation = ++emailChangePollGeneration;
+		void pollEmailChange(result.data.operation.id, generation);
+	}
+
+	function cancelEmailChange() {
+		emailChangePollGeneration += 1;
+		emailChangeStage = 'idle';
+		emailChangeLoading = false;
+		emailChangeError = '';
+		emailChangeChallengeId = '';
+		emailChangeIdempotencyKey = '';
+	}
+
 	async function revokeSession(id: string) {
 		actionLoading = `session:${id}`;
-		securityError = '';
+		setSecurityError('sessions', '');
 		try {
 			const result = await accountAPI.revokeSession(id);
 			if (result.error) {
-				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				setSecurityError('sessions', localizeApiError(result.error, $LL.account_actionFailed()));
 				return;
 			}
 			if (result.data?.session.current) {
@@ -460,25 +964,31 @@
 	async function addPasskey(deviceName: string) {
 		if (!passkeySupported) return;
 		actionLoading = 'passkey:add';
-		securityError = '';
+		setSecurityError('passkeys', '');
 		try {
 			const optionsResult = await accountAPI.createPasskeyOptions(deviceName.trim());
 			if (optionsResult.error) {
 				if (optionsResult.error.error === 'reauth_required') {
-					securityError = $LL.account_reauthRequired();
+					setSecurityError('passkeys', $LL.account_reauthRequired());
 					reauthNeeded = true;
 					requestReauth({ type: 'add-passkey', deviceName });
 					return;
 				}
-				securityError = handleApiError(
-					optionsResult.error.error_description,
-					$LL.account_actionFailed()
+				setSecurityError(
+					'passkeys',
+					localizeApiError(optionsResult.error, $LL.account_actionFailed())
 				);
 				return;
 			}
-			const credential = await startRegistration({
-				optionsJSON: optionsResult.data!.options
-			});
+			let credential: Awaited<ReturnType<typeof startRegistration>>;
+			try {
+				credential = await startRegistration({
+					optionsJSON: optionsResult.data!.options
+				});
+			} catch (error) {
+				setSecurityError('passkeys', localizedPasskeyRegistrationError(error));
+				return;
+			}
 			const completeResult = await accountAPI.completePasskeyRegistration(
 				optionsResult.data!.challenge_id,
 				credential,
@@ -488,16 +998,19 @@
 				if (shouldSignalUnknownCredentialAfterRegistrationFailure(completeResult.error)) {
 					await signalUnknownCredential(credential.id);
 				}
-				securityError = handleApiError(
-					completeResult.error.error_description,
-					$LL.account_actionFailed()
+				setSecurityError(
+					'passkeys',
+					localizeApiError(completeResult.error, $LL.account_actionFailed())
 				);
 				return;
 			}
 			await signalAllAcceptedCredentials(completeResult.data?.webauthn_signal);
 			await refreshSecurity();
 		} catch (error) {
-			securityError = error instanceof Error ? error.message : $LL.account_actionFailed();
+			setSecurityError(
+				'passkeys',
+				messageForCaughtError(error, $LL.account_passkeyRegistrationFailed())
+			);
 		} finally {
 			actionLoading = '';
 		}
@@ -505,21 +1018,21 @@
 
 	async function deletePasskey(id: string) {
 		actionLoading = `passkey:${id}`;
-		securityError = '';
+		setSecurityError('passkeys', '');
 		try {
 			const result = await accountAPI.deletePasskey(id);
 			if (result.error) {
 				if (result.error.error === 'reauth_required') {
-					securityError = $LL.account_reauthRequired();
+					setSecurityError('passkeys', $LL.account_reauthRequired());
 					reauthNeeded = true;
 					requestReauth({ type: 'delete-passkey', id });
 					return;
 				}
 				if (result.error.error === 'remaining_login_method_required') {
-					securityError = $LL.account_remainingLoginMethodRequired();
+					setSecurityError('passkeys', $LL.account_remainingLoginMethodRequired());
 					return;
 				}
-				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				setSecurityError('passkeys', localizeApiError(result.error, $LL.account_actionFailed()));
 				return;
 			}
 			await signalAllAcceptedCredentials(result.data?.webauthn_signal);
@@ -531,17 +1044,17 @@
 
 	async function startTotpEnrollment(label: string) {
 		actionLoading = 'totp:add';
-		securityError = '';
+		setSecurityError('totp', '');
 		try {
 			const result = await accountAPI.createTotpOptions(label.trim());
 			if (result.error) {
 				if (result.error.error === 'reauth_required') {
-					securityError = $LL.account_reauthRequired();
+					setSecurityError('totp', $LL.account_reauthRequired());
 					reauthNeeded = true;
 					requestReauth({ type: 'add-totp', label });
 					return;
 				}
-				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				setSecurityError('totp', localizeApiError(result.error, $LL.account_actionFailed()));
 				return;
 			}
 			if (!result.data) return;
@@ -560,14 +1073,14 @@
 	async function activateTotpEnrollment(code: string) {
 		if (!totpEnrollment) return;
 		actionLoading = `totp:activate:${totpEnrollment.credentialId}`;
-		securityError = '';
+		setSecurityError('totp', '');
 		try {
 			const result = await accountAPI.activateTotpCredential(
 				totpEnrollment.credentialId,
 				code.trim()
 			);
 			if (result.error) {
-				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				setSecurityError('totp', localizeApiError(result.error, $LL.account_actionFailed()));
 				return;
 			}
 			totpEnrollment = {
@@ -582,21 +1095,21 @@
 
 	async function deleteTotpCredential(id: string, code: string) {
 		actionLoading = `totp:${id}`;
-		securityError = '';
+		setSecurityError('totp', '');
 		try {
 			const result = await accountAPI.deleteTotpCredential(id, buildTotpDeleteProof(code));
 			if (result.error) {
 				if (result.error.error === 'reauth_required') {
-					securityError = $LL.account_reauthRequired();
+					setSecurityError('totp', $LL.account_reauthRequired());
 					reauthNeeded = true;
 					requestReauth({ type: 'delete-totp', id, code });
 					return;
 				}
 				if (result.error.error === 'remaining_login_method_required') {
-					securityError = $LL.account_remainingLoginMethodRequired();
+					setSecurityError('totp', $LL.account_remainingLoginMethodRequired());
 					return;
 				}
-				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				setSecurityError('totp', localizeApiError(result.error, $LL.account_actionFailed()));
 				return;
 			}
 			await refreshSecurity();
@@ -607,17 +1120,17 @@
 
 	async function regenerateTotpBackupCodes(code: string) {
 		actionLoading = 'totp:backup-codes';
-		securityError = '';
+		setSecurityError('totp', '');
 		try {
 			const result = await accountAPI.regenerateTotpBackupCodes(code.trim() || undefined);
 			if (result.error) {
 				if (result.error.error === 'reauth_required') {
-					securityError = $LL.account_reauthRequired();
+					setSecurityError('totp', $LL.account_reauthRequired());
 					reauthNeeded = true;
 					requestReauth({ type: 'regenerate-totp-backup-codes', code });
 					return;
 				}
-				securityError = handleApiError(result.error.error_description, $LL.account_actionFailed());
+				setSecurityError('totp', localizeApiError(result.error, $LL.account_actionFailed()));
 				return;
 			}
 			totpEnrollment = {
@@ -635,60 +1148,275 @@
 	async function handleLogout() {
 		if (logoutLoading) return;
 		logoutLoading = true;
+		accountError = '';
 		try {
 			await auth.logout();
 			window.location.href = '/';
 		} catch {
+			accountError = $LL.account_actionFailed();
 			logoutLoading = false;
 		}
 	}
 </script>
 
 <svelte:head>
-	<title>{$LL.account_pageTitle()}</title>
+	<title
+		>{localizedPageCopy().title || $LL.account_title()} - {brandingStore.brandName ||
+			$LL.app_title()}</title
+	>
 </svelte:head>
 
 <div class="account-shell">
-	<div class="account-language">
-		<LanguageSwitcher />
-	</div>
+	<div class="account-layout">
+		<header class="account-header">
+			<div>
+				<p class="account-kicker">{brandingStore.brandName || $LL.app_title()}</p>
+				<h1>{localizedPageCopy().title}</h1>
+				{#if localizedPageCopy().description}<p class="account-description">
+						{localizedPageCopy().description}
+					</p>{/if}
+			</div>
+			<Button variant="secondary" loading={logoutLoading} onclick={handleLogout}>
+				{$LL.header_logout()}
+			</Button>
+		</header>
 
-	{#if loading}
-		<div class="account-loading">
-			<Spinner size="lg" />
-		</div>
-	{:else if accountError}
-		<div class="account-layout">
-			<header class="account-header">
-				<div>
-					<p class="account-kicker">Authrim</p>
-					<h1>{$LL.account_title()}</h1>
-				</div>
-				<Button variant="secondary" loading={logoutLoading} onclick={handleLogout}>
-					{$LL.header_logout()}
-				</Button>
-			</header>
-			<p class="account-error">{accountError}</p>
-		</div>
-	{:else}
-		<div class="account-layout">
-			<header class="account-header">
-				<div>
-					<p class="account-kicker">Authrim</p>
-					<h1>{$LL.account_title()}</h1>
-				</div>
-				<Button variant="secondary" loading={logoutLoading} onclick={handleLogout}>
-					{$LL.header_logout()}
-				</Button>
-			</header>
+		{#if accountError}
+			<p class="account-error" role="alert">{accountError}</p>
+		{/if}
 
-			<section class="account-grid">
+		<section class="account-grid" aria-busy={profileLoading || capabilitiesLoading}>
+			{#if capabilitiesLoading || !capabilitiesResolved}
+				<!-- Wait for the published composition so unused widgets never flash as skeletons. -->
+			{:else if accountCapabilities?.account_page}
+				{#each accountCapabilities.account_page.definition.screens.filter((item) => item.enabled && placementVisible(item.condition)) as placement (placement.id)}
+					{@const screen = configuredScreen(placement.screen_key)}
+					{#if screen}
+						<section
+							id={placement.id}
+							class="account-screen"
+							class:full={placement.width === 'full'}
+							class:overview={screen.screen_key === 'account_overview'}
+						>
+							{#each localizedScreenFields(screen) as field, fieldIndex (`${field.block_id ?? field.field}-${fieldIndex}`)}
+								{#if field.block_type !== 'layout_row'}
+									<div
+										class="account-screen__block"
+										style={placement.width === 'full' &&
+										(field.layout_column === 1 || field.layout_column === 2)
+											? `grid-column: ${field.layout_column};`
+											: undefined}
+									>
+										{#if field.block_type === 'heading'}
+											<header class="account-screen__heading">
+												<h2>{field.label}</h2>
+												{#if field.text}<p>{field.text}</p>{/if}
+											</header>
+										{:else if field.block_type === 'text'}
+											<p class="account-screen__text">{field.text || field.label}</p>
+										{:else if field.block_type === 'link' && safeHref(field.href)}
+											<a class="account-screen__link" href={safeHref(field.href) ?? '#'}
+												>{field.label}</a
+											>
+										{:else if field.block_type === 'divider'}
+											<div class="account-screen__divider"><span>{field.text ?? ''}</span></div>
+										{:else if field.block_type === 'account_profile_widget'}
+											<AccountProfileSection
+												{profile}
+												loading={profileLoading}
+												title={accountWidgetTitle(field)}
+												saving={profileSaving}
+												error={profileError}
+												saved={profileSaved}
+												{emailChangeStage}
+												{emailChangeLoading}
+												{emailChangeError}
+												onSave={saveProfileName}
+												onStartEmailChange={startEmailChange}
+												onCompleteEmailChange={completeEmailChange}
+												onCancelEmailChange={cancelEmailChange}
+											/>
+										{:else if field.block_type === 'account_consent_widget'}
+											<AccountConsentSection
+												{consents}
+												loading={consentsLoading}
+												title={accountWidgetTitle(field)}
+												error={consentError}
+											/>
+										{:else if field.block_type === 'account_activity_widget'}
+											<AccountActivitySection
+												{operations}
+												loading={operationsLoading}
+												title={accountWidgetTitle(field)}
+											/>
+										{:else if field.block_type === 'account_device_list_widget'}
+											<AccountSecuritySection
+												{devices}
+												{sessions}
+												{passkeys}
+												{totpCredentials}
+												{totpBackupCodes}
+												{totpEnrollment}
+												areas={['devices']}
+												title={accountWidgetTitle(field)}
+												showSectionHeadings={false}
+												loading={securityAreasRefreshing(['devices'])}
+												loadingAreas={initialLoadingAreas(['devices'])}
+												{actionLoading}
+												error={securityErrorFor(['devices'])}
+												{reauthNeeded}
+												{passkeySupported}
+												{totpManagementEnabled}
+												onRefresh={refreshSecurity}
+												onRevokeSession={revokeSession}
+												onAddPasskey={addPasskey}
+												onDeletePasskey={deletePasskey}
+												onStartTotpEnrollment={startTotpEnrollment}
+												onActivateTotpEnrollment={activateTotpEnrollment}
+												onDeleteTotpCredential={deleteTotpCredential}
+												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+												onClearTotpEnrollment={() => (totpEnrollment = null)}
+												onReauth={() => requestReauth()}
+											/>
+										{:else if field.block_type === 'account_session_widget'}
+											<AccountSecuritySection
+												{devices}
+												{sessions}
+												{passkeys}
+												{totpCredentials}
+												{totpBackupCodes}
+												{totpEnrollment}
+												areas={['sessions']}
+												title={accountWidgetTitle(field)}
+												showSectionHeadings={false}
+												loading={securityAreasRefreshing(['sessions'])}
+												loadingAreas={initialLoadingAreas(['sessions'])}
+												{actionLoading}
+												error={securityErrorFor(['sessions'])}
+												{reauthNeeded}
+												{passkeySupported}
+												{totpManagementEnabled}
+												onRefresh={refreshSecurity}
+												onRevokeSession={revokeSession}
+												onAddPasskey={addPasskey}
+												onDeletePasskey={deletePasskey}
+												onStartTotpEnrollment={startTotpEnrollment}
+												onActivateTotpEnrollment={activateTotpEnrollment}
+												onDeleteTotpCredential={deleteTotpCredential}
+												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+												onClearTotpEnrollment={() => (totpEnrollment = null)}
+												onReauth={() => requestReauth()}
+											/>
+										{:else if field.block_type === 'account_passkey_widget'}
+											<AccountSecuritySection
+												{devices}
+												{sessions}
+												{passkeys}
+												{totpCredentials}
+												{totpBackupCodes}
+												{totpEnrollment}
+												areas={['passkeys']}
+												title={accountWidgetTitle(field)}
+												showSectionHeadings={false}
+												loading={securityAreasRefreshing(['passkeys'])}
+												loadingAreas={initialLoadingAreas(['passkeys'])}
+												{actionLoading}
+												error={securityErrorFor(['passkeys'])}
+												{reauthNeeded}
+												{passkeySupported}
+												{totpManagementEnabled}
+												onRefresh={refreshSecurity}
+												onRevokeSession={revokeSession}
+												onAddPasskey={addPasskey}
+												onDeletePasskey={deletePasskey}
+												onStartTotpEnrollment={startTotpEnrollment}
+												onActivateTotpEnrollment={activateTotpEnrollment}
+												onDeleteTotpCredential={deleteTotpCredential}
+												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+												onClearTotpEnrollment={() => (totpEnrollment = null)}
+												onReauth={() => requestReauth()}
+											/>
+										{:else if field.block_type === 'account_totp_widget'}
+											<AccountSecuritySection
+												{devices}
+												{sessions}
+												{passkeys}
+												{totpCredentials}
+												{totpBackupCodes}
+												{totpEnrollment}
+												areas={['totp']}
+												title={accountWidgetTitle(field)}
+												showSectionHeadings={false}
+												loading={securityAreasRefreshing(['totp'])}
+												loadingAreas={initialLoadingAreas(['totp'])}
+												{actionLoading}
+												error={securityErrorFor(['totp'])}
+												{reauthNeeded}
+												{passkeySupported}
+												{totpManagementEnabled}
+												onRefresh={refreshSecurity}
+												onRevokeSession={revokeSession}
+												onAddPasskey={addPasskey}
+												onDeletePasskey={deletePasskey}
+												onStartTotpEnrollment={startTotpEnrollment}
+												onActivateTotpEnrollment={activateTotpEnrollment}
+												onDeleteTotpCredential={deleteTotpCredential}
+												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+												onClearTotpEnrollment={() => (totpEnrollment = null)}
+												onReauth={() => requestReauth()}
+											/>
+										{:else if field.block_type === 'account_social_account_widget'}
+											<AccountSecuritySection
+												{devices}
+												{sessions}
+												{passkeys}
+												{totpCredentials}
+												{totpBackupCodes}
+												{totpEnrollment}
+												areas={['social']}
+												title={accountWidgetTitle(field)}
+												showSectionHeadings={false}
+												loading={securityAreasRefreshing(['social'])}
+												loadingAreas={initialLoadingAreas(['social'])}
+												{actionLoading}
+												error={securityErrorFor(['social'])}
+												{reauthNeeded}
+												{passkeySupported}
+												{totpManagementEnabled}
+												onRefresh={refreshSecurity}
+												onRevokeSession={revokeSession}
+												onAddPasskey={addPasskey}
+												onDeletePasskey={deletePasskey}
+												onStartTotpEnrollment={startTotpEnrollment}
+												onActivateTotpEnrollment={activateTotpEnrollment}
+												onDeleteTotpCredential={deleteTotpCredential}
+												onRegenerateTotpBackupCodes={regenerateTotpBackupCodes}
+												onClearTotpEnrollment={() => (totpEnrollment = null)}
+												onReauth={() => requestReauth()}
+											/>
+										{:else if field.block_type === 'account_launcher_widget'}
+											<AccountLauncherSection title={accountWidgetTitle(field)} />
+										{/if}
+									</div>
+								{/if}
+							{/each}
+						</section>
+					{/if}
+				{/each}
+			{:else}
 				<AccountProfileSection
 					{profile}
+					loading={profileLoading}
 					saving={profileSaving}
 					error={profileError}
 					saved={profileSaved}
+					{emailChangeStage}
+					{emailChangeLoading}
+					{emailChangeError}
 					onSave={saveProfileName}
+					onStartEmailChange={startEmailChange}
+					onCompleteEmailChange={completeEmailChange}
+					onCancelEmailChange={cancelEmailChange}
 				/>
 				<AccountSecuritySection
 					{devices}
@@ -697,9 +1425,10 @@
 					{totpCredentials}
 					{totpBackupCodes}
 					{totpEnrollment}
-					loading={securityLoading}
+					loading={securityAreasRefreshing(ALL_SECURITY_AREAS)}
+					loadingAreas={initialLoadingAreas(['devices', 'sessions', 'passkeys', 'totp', 'social'])}
 					{actionLoading}
-					error={securityError}
+					error={securityErrorFor(ALL_SECURITY_AREAS)}
 					{reauthNeeded}
 					{passkeySupported}
 					{totpManagementEnabled}
@@ -714,11 +1443,22 @@
 					onClearTotpEnrollment={() => (totpEnrollment = null)}
 					onReauth={() => requestReauth()}
 				/>
-				<AccountConsentSection {consents} error={consentError} />
-				<AccountActivitySection {operations} />
-			</section>
+				<AccountConsentSection {consents} loading={consentsLoading} error={consentError} />
+				<AccountActivitySection {operations} loading={operationsLoading} />
+			{/if}
+		</section>
+	</div>
+
+	{#if loginUIPageStore.showTopbar}
+		<div class="account-preferences" data-position={loginUIPageStore.topbarPosition}>
+			<LanguageSwitcher
+				showThemeToggle={loginUIPageStore.themeToggleEnabled}
+				showLanguageSelect={loginUIPageStore.languageSelectEnabled}
+			/>
 		</div>
 	{/if}
+
+	<ConfiguredFooter locale={currentLocale} class="account-footer" />
 
 	{#if reauthModalOpen}
 		<button
@@ -814,81 +1554,21 @@
 
 <style>
 	.account-shell {
-		--account-card-bg: #fefdfa;
-		--account-control-bg: #ffffff;
-		--account-control-hover: #f7f3ec;
-		--account-primary-bg: #2c2724;
-		--account-primary-hover: #1a1715;
-		--account-modal-bg: #fffaf3;
-		--account-modal-border: #ded4c5;
+		--account-card-bg: var(--bg-card, #fefdfa);
+		--account-control-bg: var(--bg-input, #ffffff);
+		--account-control-hover: var(--surface-muted, var(--bg-subtle, #f7f3ec));
+		--account-primary-bg: var(--button-primary-bg, var(--primary, #2c2724));
+		--account-primary-hover: var(--primary-hover, #1a1715);
+		--account-modal-bg: var(--bg-card, #fffaf3);
+		--account-modal-border: var(--border, #ded4c5);
 
-		min-height: 100vh;
+		min-height: 100dvh;
 		background: var(--bg-page);
 		color: var(--text-primary);
 		isolation: isolate;
 		padding: 24px;
-	}
-
-	:global([data-theme='light'][data-variant='blue-gray'] .account-shell) {
-		--account-card-bg: #f8fafc;
-		--account-control-bg: #ffffff;
-		--account-control-hover: #eef4fb;
-		--account-primary-bg: #3b82f6;
-		--account-primary-hover: #2563eb;
-		--account-modal-bg: #ffffff;
-		--account-modal-border: #d8e2ef;
-	}
-
-	:global([data-theme='light'][data-variant='green'] .account-shell) {
-		--account-card-bg: #f8fcf8;
-		--account-control-bg: #ffffff;
-		--account-control-hover: #edf8ef;
-		--account-primary-bg: #10b981;
-		--account-primary-hover: #059669;
-		--account-modal-bg: #ffffff;
-		--account-modal-border: #d8eadb;
-	}
-
-	:global([data-theme='dark'] .account-shell) {
-		--account-card-bg: #2d2824;
-		--account-control-bg: #3c3630;
-		--account-control-hover: #463f38;
-		--account-primary-bg: #c8b8a8;
-		--account-primary-hover: #d4c4b4;
-		--account-modal-bg: #211d19;
-		--account-modal-border: #4f463d;
-	}
-
-	:global([data-theme='dark'][data-variant='navy'] .account-shell) {
-		--account-card-bg: #232c38;
-		--account-control-bg: #2d3748;
-		--account-control-hover: #344257;
-		--account-primary-bg: #6495ed;
-		--account-primary-hover: #93c5fd;
-		--account-modal-bg: #182231;
-		--account-modal-border: #3c4a5f;
-	}
-
-	:global([data-theme='dark'][data-variant='slate'] .account-shell) {
-		--account-card-bg: #2d343c;
-		--account-control-bg: #374151;
-		--account-control-hover: #414d5f;
-		--account-primary-bg: #94a3b8;
-		--account-primary-hover: #cbd5e1;
-		--account-modal-bg: #202832;
-		--account-modal-border: #4a5565;
-	}
-
-	@media (prefers-color-scheme: dark) {
-		:global(:root:not([data-theme]) .account-shell) {
-			--account-card-bg: #2d2824;
-			--account-control-bg: #3c3630;
-			--account-control-hover: #463f38;
-			--account-primary-bg: #c8b8a8;
-			--account-primary-hover: #d4c4b4;
-			--account-modal-bg: #211d19;
-			--account-modal-border: #4f463d;
-		}
+		display: flex;
+		flex-direction: column;
 	}
 
 	:global(.account-shell .card),
@@ -955,20 +1635,71 @@
 		box-shadow: none !important;
 	}
 
-	.account-language {
+	.account-preferences {
+		order: 2;
+		width: min(1040px, 100%);
+		margin: 24px auto 0;
 		display: flex;
-		justify-content: flex-end;
-		margin-bottom: 24px;
+		justify-content: center;
 	}
 
-	.account-loading {
-		min-height: 60vh;
-		display: grid;
-		place-items: center;
+	.account-preferences[data-position='in_card'] {
+		order: -1;
+		justify-content: flex-end;
+		margin: 0 auto 24px;
+	}
+
+	.account-preferences[data-position='top_right'],
+	.account-preferences[data-position='bottom_left'],
+	.account-preferences[data-position='bottom_center'],
+	.account-preferences[data-position='bottom_right'] {
+		position: fixed;
+		z-index: 40;
+		width: auto;
+		margin: 0;
+	}
+
+	.account-preferences[data-position='top_right'] {
+		top: max(20px, env(safe-area-inset-top));
+		right: max(20px, env(safe-area-inset-right));
+	}
+
+	.account-preferences[data-position='bottom_left'],
+	.account-preferences[data-position='bottom_center'],
+	.account-preferences[data-position='bottom_right'] {
+		bottom: max(20px, env(safe-area-inset-bottom));
+	}
+
+	.account-preferences[data-position='bottom_left'] {
+		left: max(20px, env(safe-area-inset-left));
+	}
+
+	.account-preferences[data-position='bottom_center'] {
+		left: 50%;
+		transform: translateX(-50%);
+	}
+
+	.account-preferences[data-position='bottom_right'] {
+		right: max(20px, env(safe-area-inset-right));
+	}
+
+	:global(.account-shell .account-footer) {
+		order: 3;
+		align-self: center;
+		margin-top: 32px;
+		padding-bottom: max(0px, env(safe-area-inset-bottom));
+	}
+
+	:global(.account-shell .account-footer p) {
+		margin: 0;
+	}
+
+	:global(.account-shell .account-footer p + p) {
+		margin-top: 6px;
 	}
 
 	.account-layout {
-		width: min(720px, 100%);
+		width: min(1040px, 100%);
 		margin: 0 auto;
 	}
 
@@ -977,6 +1708,14 @@
 		align-items: center;
 		justify-content: space-between;
 		margin-bottom: 24px;
+	}
+
+	.account-description {
+		max-width: 60ch;
+		margin: 6px 0 0;
+		color: var(--text-muted);
+		font-size: 0.875rem;
+		line-height: 1.6;
 	}
 
 	.account-kicker {
@@ -995,8 +1734,65 @@
 
 	.account-grid {
 		display: grid;
-		grid-template-columns: 1fr;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 16px;
+	}
+
+	.account-screen {
+		display: grid;
+		min-width: 0;
+		gap: 12px;
+	}
+
+	.account-screen.full {
+		grid-column: 1 / -1;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.account-screen.overview {
+		border: 1px solid var(--border-glass);
+		border-radius: var(--card-radius, var(--radius-xl));
+		background: var(--account-card-bg);
+		box-shadow: none;
+		padding: var(--auth-card-padding, var(--card-padding, 24px));
+	}
+
+	.account-screen__block {
+		min-width: 0;
+		grid-column: 1 / -1;
+	}
+
+	.account-screen__heading h2,
+	.account-screen__heading p,
+	.account-screen__text {
+		margin: 0;
+	}
+
+	.account-screen__heading h2 {
+		font-size: 1.05rem;
+	}
+
+	.account-screen__heading p,
+	.account-screen__text {
+		margin-top: 4px;
+		color: var(--text-muted);
+		font-size: 0.875rem;
+		line-height: 1.65;
+	}
+
+	.account-screen__divider {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		color: var(--text-muted);
+		font-size: 0.75rem;
+	}
+
+	.account-screen__divider::before,
+	.account-screen__divider::after {
+		content: '';
+		flex: 1;
+		border-top: 1px solid var(--border);
 	}
 
 	.account-error {
@@ -1090,5 +1886,29 @@
 		font: inherit;
 		letter-spacing: 0.08em;
 		padding: 0 14px;
+	}
+
+	@media (max-width: 760px) {
+		.account-shell {
+			padding: 16px;
+		}
+
+		.account-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.account-screen.full {
+			grid-column: auto;
+			grid-template-columns: 1fr;
+		}
+
+		.account-screen__block {
+			grid-column: 1 !important;
+		}
+
+		.account-header {
+			align-items: flex-start;
+			gap: 16px;
+		}
 	}
 </style>

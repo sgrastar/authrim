@@ -29,15 +29,17 @@ This guide covers Authrim's comprehensive testing strategy including unit tests,
 
 ## Test Overview
 
-| Test Type         | Tool            | Purpose                       | Location            |
-| ----------------- | --------------- | ----------------------------- | ------------------- |
-| **Unit**          | Vitest          | Backend API, DOs, Components  | `packages/*/test/`  |
-| **Integration**   | Vitest          | Authorization flows, security | `test/integration/` |
-| **E2E**           | Playwright      | User flows, UI functionality  | `test-e2e/`         |
-| **Accessibility** | axe-core        | WCAG 2.1 AA compliance        | `test-e2e/`         |
-| **Performance**   | Lighthouse CI   | Core Web Vitals               | `lighthouserc.json` |
-| **Load**          | k6              | Performance at scale          | `load-testing/`     |
-| **Conformance**   | OIDC Foundation | OpenID certification          | (separate setup)    |
+| Test Type                 | Tool            | Purpose                                         | Location                      |
+| ------------------------- | --------------- | ----------------------------------------------- | ----------------------------- |
+| **Unit**                  | Vitest          | Backend API, Durable Objects, and components    | `packages/*/src/__tests__/`   |
+| **Integration**           | Vitest          | Maintained cross-package protocol flows         | `test/integration/`           |
+| **Security matrices**     | Vitest          | High-volume protocol, topology, and state cases | `test/security-matrices/`     |
+| **Generated environment** | TypeScript CLI  | Generated-file and deployed-environment smoke   | `test/generated-environment/` |
+| **E2E**                   | Playwright      | User flows and UI functionality                 | `test-e2e/`                   |
+| **Accessibility**         | axe-core        | WCAG 2.1 AA compliance                          | `test-e2e/`                   |
+| **Performance**           | Lighthouse CI   | Core Web Vitals                                 | `lighthouserc.json`           |
+| **Load**                  | k6              | Performance at scale                            | `load-testing/`               |
+| **Conformance**           | OIDC Foundation | OpenID certification                            | separate conformance setup    |
 
 ---
 

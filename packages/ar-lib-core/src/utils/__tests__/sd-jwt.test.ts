@@ -320,6 +320,20 @@ describe('SD-JWT', () => {
       expect(parsed).not.toBeNull();
       expect(parsed!.disclosures.length).toBe(1);
     });
+
+    test('should reject an unrecognized component instead of silently ignoring it', async () => {
+      const claims = {
+        iss: 'https://issuer.example.com',
+        sub: 'user123',
+      };
+      const sdJwt = await createSDJWT(claims, privateKey, kid, {
+        selectiveDisclosureClaims: [],
+      });
+
+      const parsed = await parseSDJWT(`${sdJwt.jwt}~header.payload.signature`);
+
+      expect(parsed).toBeNull();
+    });
   });
 
   describe('verifySDJWT', () => {
@@ -398,6 +412,32 @@ describe('SD-JWT', () => {
       const otherPublicKey = otherKeyPair.publicKey as CryptoKey;
 
       await expect(verifySDJWT(sdJwt.combined, otherPublicKey, issuer, audience)).rejects.toThrow();
+    });
+
+    test('should reject holder-bound SD-JWT when no key binding proof is verified', async () => {
+      const issuer = 'https://issuer.example.com';
+      const audience = 'client123';
+      const holderKeyPair = await generateKeyPair('RS256');
+      const holderJwk = await exportJWK(holderKeyPair.publicKey);
+      const sdJwt = await createSDJWT(
+        {
+          iss: issuer,
+          sub: 'user123',
+          aud: audience,
+          exp: Math.floor(Date.now() / 1000) + 3600,
+          iat: Math.floor(Date.now() / 1000),
+        },
+        privateKey,
+        kid,
+        {
+          selectiveDisclosureClaims: [],
+          holderBinding: holderJwk,
+        }
+      );
+
+      await expect(verifySDJWT(sdJwt.combined, publicKey, issuer, audience)).rejects.toThrow(
+        'Holder-bound SD-JWT requires Key Binding JWT verification'
+      );
     });
 
     test('should throw on invalid disclosure hash', async () => {

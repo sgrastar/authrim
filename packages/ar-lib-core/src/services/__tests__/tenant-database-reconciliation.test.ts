@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TenantDatabaseRegistryRow } from '../../repositories/admin/tenant-database-registry';
 import {
   createTenantDatabaseDerivedBindingManifest,
+  isWithinTenantDatabaseProvisioningGracePeriod,
   reconcileTenantDatabaseDerivedBindings,
+  TENANT_DATABASE_PROVISIONING_GRACE_PERIOD_MS,
 } from '../tenant-database-reconciliation';
 
 function createRow(overrides: Partial<TenantDatabaseRegistryRow> = {}): TenantDatabaseRegistryRow {
@@ -37,6 +39,18 @@ function createRow(overrides: Partial<TenantDatabaseRegistryRow> = {}): TenantDa
 }
 
 describe('tenant database reconciliation', () => {
+  it('limits the provisioning grace period to the first ten minutes', () => {
+    const now = new Date('2026-05-16T00:10:00.000Z');
+
+    expect(isWithinTenantDatabaseProvisioningGracePeriod('2026-05-16T00:00:00.001Z', now)).toBe(
+      true
+    );
+    expect(isWithinTenantDatabaseProvisioningGracePeriod('2026-05-16T00:00:00.000Z', now)).toBe(
+      false
+    );
+    expect(TENANT_DATABASE_PROVISIONING_GRACE_PERIOD_MS).toBe(10 * 60 * 1000);
+  });
+
   it('treats generated bindings as registry-derived manifest entries', () => {
     const manifest = createTenantDatabaseDerivedBindingManifest([
       createRow({ tenant_id: 'tenant-b' }),

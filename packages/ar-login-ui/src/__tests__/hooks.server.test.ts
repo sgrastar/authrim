@@ -108,6 +108,183 @@ describe('Login UI proxy hooks', () => {
 		expect(shouldProxyPath('/login')).toBe(false);
 	});
 
+	it('applies the detected browser locale to the initial document language', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		const url = new URL('https://login.example.com/login');
+		const event = {
+			request: new Request(url, { headers: { 'Accept-Language': 'zh-Hant-TW,ja;q=0.8' } }),
+			url,
+			locals: {
+				authenticationMethods: {
+					ui: {
+						theme: 'dark',
+						variant: 'navy',
+						pageTemplate: { backgroundColor: '#112233' }
+					}
+				}
+			},
+			cookies: { get: () => undefined, set: vi.fn() }
+		};
+		let renderedHtml = '';
+
+		await localeHandle({
+			event: event as never,
+			resolve: async (_event, options) => {
+				const transformedHtml = await options?.transformPageChunk?.({
+					html: '<html lang="__AUTHRIM_DOCUMENT_LANGUAGE__" dir="__AUTHRIM_DOCUMENT_DIRECTION__" style="background: __AUTHRIM_INITIAL_BACKGROUND__; color-scheme: __AUTHRIM_INITIAL_COLOR_SCHEME__"></html>',
+					done: true
+				});
+				renderedHtml = transformedHtml ?? '';
+				return new Response(renderedHtml, { headers: { 'Content-Type': 'text/html' } });
+			}
+		});
+
+		expect(event.locals).toMatchObject({ locale: 'zh-TW' });
+		expect(renderedHtml).toContain('<html lang="zh-TW"');
+		expect(renderedHtml).toContain('dir="ltr"');
+		expect(renderedHtml).toContain('background: #112233; color-scheme: dark');
+		expect(renderedHtml).not.toContain('__AUTHRIM_INITIAL_');
+		expect(event.cookies.set).toHaveBeenCalledWith(
+			'authrim_theme_hint',
+			'dark',
+			expect.objectContaining({ path: '/', maxAge: 3600, sameSite: 'lax' })
+		);
+	});
+
+	it('renders an RTL document from the first response for Arabic', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		const url = new URL('https://login.example.com/login');
+		const event = {
+			request: new Request(url, { headers: { 'Accept-Language': 'ar-SA,ar;q=0.9' } }),
+			url,
+			locals: {},
+			cookies: { get: () => undefined, set: vi.fn() }
+		};
+		let renderedHtml = '';
+
+		await localeHandle({
+			event: event as never,
+			resolve: async (_event, options) => {
+				renderedHtml =
+					(await options?.transformPageChunk?.({
+						html: '<html lang="__AUTHRIM_DOCUMENT_LANGUAGE__" dir="__AUTHRIM_DOCUMENT_DIRECTION__"></html>',
+						done: true
+					})) ?? '';
+				return new Response(renderedHtml);
+			}
+		});
+
+		expect(event.locals).toMatchObject({ locale: 'ar' });
+		expect(renderedHtml).toContain('<html lang="ar" dir="rtl"');
+	});
+
+	it('honors Accept-Language quality values and ignores excluded languages', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		const url = new URL('https://login.example.com/login');
+		const event = {
+			request: new Request(url, {
+				headers: { 'Accept-Language': 'en;q=0, fr;q=0.4, de-DE;q=0.9' }
+			}),
+			url,
+			locals: {},
+			cookies: { get: () => undefined, set: vi.fn() }
+		};
+
+		await localeHandle({
+			event: event as never,
+			resolve: async () => new Response('ok')
+		});
+
+		expect(event.locals).toMatchObject({ locale: 'de' });
+	});
+
+	it('does not read the removed legacy lang cookie', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		const url = new URL('https://login.example.com/login');
+		const event = {
+			request: new Request(url, { headers: { 'Accept-Language': 'fr-FR' } }),
+			url,
+			locals: {},
+			cookies: {
+				get: (name: string) => (name === 'lang' ? 'ja' : undefined),
+				set: vi.fn()
+			}
+		};
+
+		await localeHandle({
+			event: event as never,
+			resolve: async () => new Response('ok')
+		});
+
+		expect(event.locals).toMatchObject({ locale: 'fr' });
+	});
+
+	it('prefers a saved user choice over the OIDC locale hint', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		const url = new URL('https://login.example.com/login?ui_locales=ja%20en');
+		const event = {
+			request: new Request(url, { headers: { 'Accept-Language': 'de-DE' } }),
+			url,
+			locals: {},
+			cookies: {
+				get: (name: string) => (name === 'preferredLanguage' ? 'fr' : undefined),
+				set: vi.fn()
+			}
+		};
+
+		await localeHandle({
+			event: event as never,
+			resolve: async () => new Response('ok')
+		});
+
+		expect(event.locals).toMatchObject({ locale: 'fr' });
+	});
+
+	it('uses the first enabled OIDC locale before Accept-Language without persisting the hint', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		const url = new URL('https://login.example.com/login?ui_locales=unsupported%20zh-Hant-TW%20ja');
+		const setCookie = vi.fn();
+		const event = {
+			request: new Request(url, { headers: { 'Accept-Language': 'de-DE' } }),
+			url,
+			locals: {},
+			cookies: { get: () => undefined, set: setCookie }
+		};
+
+		await localeHandle({
+			event: event as never,
+			resolve: async () => new Response('ok')
+		});
+
+		expect(event.locals).toMatchObject({ locale: 'zh-TW' });
+		expect(setCookie).not.toHaveBeenCalledWith(
+			'preferredLanguage',
+			expect.anything(),
+			expect.anything()
+		);
+	});
+
+	it('prefers an explicit lang query over saved, OIDC, and browser preferences', async () => {
+		const { localeHandle } = await import('../hooks.server');
+		const url = new URL('https://login.example.com/login?lang=ja&ui_locales=fr');
+		const event = {
+			request: new Request(url, { headers: { 'Accept-Language': 'de-DE' } }),
+			url,
+			locals: {},
+			cookies: {
+				get: (name: string) => (name === 'preferredLanguage' ? 'en' : undefined),
+				set: vi.fn()
+			}
+		};
+
+		await localeHandle({
+			event: event as never,
+			resolve: async () => new Response('ok')
+		});
+
+		expect(event.locals).toMatchObject({ locale: 'ja' });
+	});
+
 	it('preserves Set-Cookie headers from proxied auth responses', async () => {
 		const { buildProxyResponse } = await import('../hooks.server');
 		const upstream = new Response(JSON.stringify({ ok: true }), {
@@ -158,6 +335,121 @@ describe('Login UI proxy hooks', () => {
 		expect(headers.get('X-Forwarded-Host')).toBe('login.multi-tenant.authrim.com');
 		expect(headers.get('Host')).toBe('login.multi-tenant.authrim.com');
 		expect(headers.get('Cookie')).toContain('authrim_remembered_tenant');
+	});
+
+	it('forwards DPoP proofs without broadening the proxy header allowlist', async () => {
+		const { buildProxyHeaders } = await import('../hooks.server');
+		const request = new Request('https://login.example.com/authorize', {
+			headers: {
+				DPoP: 'proof.jwt.value',
+				'X-Authrim-Internal-Secret': 'must-not-forward'
+			}
+		});
+		const event = {
+			request,
+			url: new URL(request.url),
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const headers = buildProxyHeaders(event as never, undefined, 'first.test.authrim.com');
+
+		expect(headers.get('DPoP')).toBe('proof.jwt.value');
+		expect(headers.get('X-Authrim-Internal-Secret')).toBeNull();
+	});
+
+	it('preserves binary proxy request bodies and enforces a byte limit', async () => {
+		const { readBoundedProxyBody } = await import('../hooks.server');
+		const expected = new Uint8Array([0x00, 0xff, 0xfe, 0x41]);
+		const accepted = new Request('https://login.example.com/api/upload', {
+			method: 'POST',
+			body: expected
+		});
+		const rejected = new Request('https://login.example.com/api/upload', {
+			method: 'POST',
+			body: new Uint8Array([1, 2, 3, 4, 5])
+		});
+
+		const body = await readBoundedProxyBody(accepted, expected.byteLength);
+
+		expect(body).toBeInstanceOf(ArrayBuffer);
+		expect(new Uint8Array(body as ArrayBuffer)).toEqual(expected);
+		await expect(readBoundedProxyBody(rejected, 4)).resolves.toBe('__TOO_LARGE__');
+	});
+
+	it('forwards exact binary bytes through the Service Binding proxy path', async () => {
+		const { apiProxyHandle } = await import('../hooks.server');
+		const expected = new Uint8Array([0x00, 0xff, 0xfe, 0x41]);
+		let upstreamRequest: Request | undefined;
+		const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			upstreamRequest = new Request(input, init);
+			return new Response('proxied');
+		});
+		const url = new URL('https://login.example.com/api/upload');
+		const event = {
+			url,
+			request: new Request(url, {
+				method: 'POST',
+				headers: {
+					'content-type': 'application/octet-stream',
+					'x-authrim-original-host': 'first.test.authrim.com'
+				},
+				body: expected
+			}),
+			platform: {
+				env: {
+					AR_ROUTER: { fetch },
+					PUBLIC_API_BASE_URL: 'https://api.example.com'
+				}
+			},
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+		const resolve = vi.fn(async () => new Response('resolved'));
+
+		const response = await apiProxyHandle({ event: event as never, resolve });
+
+		expect(response.status).toBe(200);
+		expect(fetch).toHaveBeenCalledOnce();
+		expect(upstreamRequest).toBeDefined();
+		expect(new Uint8Array(await upstreamRequest!.arrayBuffer())).toEqual(expected);
+		expect(resolve).not.toHaveBeenCalled();
+	});
+
+	it('forwards DPoP through the complete authorization proxy path only', async () => {
+		const { apiProxyHandle } = await import('../hooks.server');
+		let upstreamRequest: Request | undefined;
+		const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+			upstreamRequest = new Request(input, init);
+			return new Response('proxied');
+		});
+		const url = new URL('https://login.example.com/authorize');
+		const event = {
+			url,
+			request: new Request(url, {
+				headers: {
+					DPoP: 'proof.jwt.value',
+					'X-Authrim-Internal-Secret': 'must-not-forward',
+					'x-authrim-original-host': 'first.test.authrim.com'
+				}
+			}),
+			platform: {
+				env: {
+					AR_ROUTER: { fetch },
+					PUBLIC_API_BASE_URL: 'https://api.example.com'
+				}
+			},
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		await apiProxyHandle({
+			event: event as never,
+			resolve: vi.fn(async () => new Response('resolved'))
+		});
+
+		expect(fetch).toHaveBeenCalledOnce();
+		expect(upstreamRequest?.headers.get('DPoP')).toBe('proof.jwt.value');
+		expect(upstreamRequest?.headers.get('X-Authrim-Internal-Secret')).toBeNull();
 	});
 
 	it('rewrites same-origin browser Origin and Referer to the forwarded tenant origin', async () => {
@@ -404,6 +696,207 @@ describe('Login UI proxy hooks', () => {
 		expect(shouldPrefetchLoginUITheme('/discover')).toBe(false);
 	});
 
+	it('bootstraps the published account composition through the router binding', async () => {
+		const { fetchAccountPageInitialDataForPageRequest } = await import('../hooks.server');
+		const capabilities = {
+			capabilities: [],
+			sections: [],
+			theme: {
+				version: 1,
+				scope: 'account',
+				source: 'test',
+				account_page_overrides_supported: true,
+				planned_tokens: []
+			},
+			account_page: {
+				definition: {
+					schema_version: 'authrim.account_page.v1',
+					screens: [
+						{
+							id: 'profile-placement',
+							screen_key: 'account-profile',
+							width: 'half',
+							enabled: true,
+							condition: 'always'
+						}
+					]
+				},
+				screens: [],
+				version: 1,
+				published_at: '2026-08-09T00:00:00.000Z'
+			}
+		};
+		const fetch = vi.fn(async (_input: Request | string, _init?: RequestInit) =>
+			Response.json(capabilities)
+		);
+		const url = new URL('https://first.test.authrim.com/account');
+		const event = {
+			request: new Request(url, {
+				headers: {
+					Cookie: 'authrim_session=session-1',
+					'Accept-Language': 'ja-JP'
+				}
+			}),
+			url,
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const result = await fetchAccountPageInitialDataForPageRequest(event as never, {
+			PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+			AR_ROUTER: { fetch }
+		});
+
+		expect(result.capabilitiesResolved).toBe(true);
+		expect(result.capabilities).toEqual(capabilities);
+		expect(fetch).toHaveBeenCalledTimes(1);
+		const [input, init] = fetch.mock.calls[0];
+		expect(input).toBe('https://first.test.authrim.com/api/account/capabilities');
+		const headers = new Headers(init?.headers);
+		expect(headers.get('cookie')).toBe('authrim_session=session-1');
+		expect(headers.get('accept-language')).toBe('ja-JP');
+		expect(headers.get('x-authrim-ui-proxy')).toBe('login-ui');
+	});
+
+	it('bootstraps the configured theme for plain login and signup documents', async () => {
+		const {
+			resolveInitialLoginUIAppearance,
+			shouldBootstrapLoginUITheme,
+			shouldResolveLoginChallengeThemeTarget
+		} = await import('../hooks.server');
+
+		expect(shouldBootstrapLoginUITheme('/login')).toBe(true);
+		expect(shouldBootstrapLoginUITheme('/signup')).toBe(true);
+		for (const pathname of [
+			'/callback',
+			'/ciba',
+			'/consent',
+			'/device',
+			'/device/authorize',
+			'/error',
+			'/logged-out',
+			'/logout-complete',
+			'/reauth',
+			'/verify-email-code'
+		]) {
+			expect(shouldBootstrapLoginUITheme(pathname)).toBe(true);
+		}
+		expect(shouldBootstrapLoginUITheme('/discover')).toBe(false);
+		expect(shouldResolveLoginChallengeThemeTarget('/login')).toBe(true);
+		expect(shouldResolveLoginChallengeThemeTarget('/signup')).toBe(true);
+		expect(shouldResolveLoginChallengeThemeTarget('/account')).toBe(false);
+		expect(
+			resolveInitialLoginUIAppearance({
+				ui: {
+					theme: 'dark',
+					variant: 'navy',
+					pageTemplate: { backgroundColor: '#112233' }
+				}
+			} as never)
+		).toEqual({ background: '#112233', colorScheme: 'dark' });
+		expect(resolveInitialLoginUIAppearance(null)).toEqual({
+			background: '#eeeae3',
+			colorScheme: 'light'
+		});
+		expect(
+			resolveInitialLoginUIAppearance(null, {
+				theme: 'dark',
+				darkVariant: 'navy'
+			})
+		).toEqual({
+			background: '#0a0e14',
+			colorScheme: 'dark'
+		});
+		expect(
+			resolveInitialLoginUIAppearance(null, {
+				theme: 'light',
+				lightVariant: 'green'
+			})
+		).toEqual({
+			background: '#e8f2e8',
+			colorScheme: 'light'
+		});
+	});
+
+	it('skips server-side theme bootstrap for same-origin plain /login', async () => {
+		const { shouldBootstrapLoginUIThemeForRequest } = await import('../hooks.server');
+		const url = new URL('https://first.test.authrim.com/login');
+		const event = {
+			request: new Request(url),
+			url,
+			platform: {
+				env: {
+					PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+					PUBLIC_AUTHRIM_ISSUER: 'https://first.test.authrim.com'
+				}
+			},
+			cookies: { get: () => undefined }
+		};
+
+		expect(
+			shouldBootstrapLoginUIThemeForRequest(event as never, {
+				PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+				PUBLIC_AUTHRIM_ISSUER: 'https://first.test.authrim.com'
+			})
+		).toBe(false);
+	});
+
+	it('keeps server-side theme bootstrap for protocol login and signup documents', async () => {
+		const { shouldBootstrapLoginUIThemeForRequest } = await import('../hooks.server');
+		const loginUrl = new URL('https://first.test.authrim.com/login?challenge_id=challenge-1');
+		const signupUrl = new URL('https://first.test.authrim.com/signup');
+		const platformEnv = {
+			PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+			PUBLIC_AUTHRIM_ISSUER: 'https://first.test.authrim.com'
+		};
+
+		expect(
+			shouldBootstrapLoginUIThemeForRequest(
+				{
+					request: new Request(loginUrl),
+					url: loginUrl,
+					platform: { env: platformEnv },
+					cookies: { get: () => undefined }
+				} as never,
+				platformEnv
+			)
+		).toBe(true);
+		expect(
+			shouldBootstrapLoginUIThemeForRequest(
+				{
+					request: new Request(signupUrl),
+					url: signupUrl,
+					platform: { env: platformEnv },
+					cookies: { get: () => undefined }
+				} as never,
+				platformEnv
+			)
+		).toBe(true);
+	});
+
+	it('keeps plain /login theme bootstrap when an Origin-Trial token is configured', async () => {
+		const { shouldBootstrapLoginUIThemeForRequest } = await import('../hooks.server');
+		const url = new URL('https://first.test.authrim.com/login');
+		const event = {
+			request: new Request(url),
+			url,
+			platform: {
+				env: {
+					PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+					EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN: VALID_ORIGIN_TRIAL_TOKEN
+				}
+			},
+			cookies: { get: () => undefined }
+		};
+
+		expect(
+			shouldBootstrapLoginUIThemeForRequest(event as never, {
+				PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+				EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN: VALID_ORIGIN_TRIAL_TOKEN
+			})
+		).toBe(true);
+	});
+
 	it('resolves the challenge client before fetching an overridden Login UI theme', async () => {
 		const {
 			fetchAuthenticationMethodsForPageRequest,
@@ -437,6 +930,57 @@ describe('Login UI proxy hooks', () => {
 		expect(fetch.mock.calls[1][0]).toBe(
 			'https://second.test.authrim.com/api/auth/authentication-methods?client_id=client-123'
 		);
+	});
+
+	it('accepts DCR-generated client identifiers up to the shared 256-character limit', async () => {
+		const { fetchLoginChallengeThemeTargetForPageRequest } = await import('../hooks.server');
+		const clientId = `client_${'a'.repeat(128)}`;
+		const fetch = vi.fn(async () => Response.json({ client: { client_id: clientId } }));
+		const event = {
+			request: new Request(
+				'https://login.example.com/login?tenant_host=second.test.authrim.com&challenge_id=challenge-dcr'
+			),
+			url: new URL(
+				'https://login.example.com/login?tenant_host=second.test.authrim.com&challenge_id=challenge-dcr'
+			),
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const target = await fetchLoginChallengeThemeTargetForPageRequest(event as never, {
+			PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+			AR_ROUTER: { fetch }
+		});
+
+		expect(target).toEqual({ challengeId: 'challenge-dcr', valid: true, clientId });
+	});
+
+	it('rejects challenge client identifiers above the shared 256-character limit', async () => {
+		const { fetchLoginChallengeThemeTargetForPageRequest } = await import('../hooks.server');
+		const fetch = vi.fn(async () =>
+			Response.json({ client: { client_id: `client_${'a'.repeat(250)}` } })
+		);
+		const event = {
+			request: new Request(
+				'https://login.example.com/login?tenant_host=second.test.authrim.com&challenge_id=challenge-too-long'
+			),
+			url: new URL(
+				'https://login.example.com/login?tenant_host=second.test.authrim.com&challenge_id=challenge-too-long'
+			),
+			cookies: { get: () => undefined },
+			getClientAddress: () => '192.0.2.10'
+		};
+
+		const target = await fetchLoginChallengeThemeTargetForPageRequest(event as never, {
+			PUBLIC_API_BASE_URL: 'https://first.test.authrim.com',
+			AR_ROUTER: { fetch }
+		});
+
+		expect(target).toEqual({
+			challengeId: 'challenge-too-long',
+			valid: false,
+			clientId: null
+		});
 	});
 
 	it('does not share a never-settling authentication methods loader across requests', async () => {
@@ -839,5 +1383,23 @@ describe('Login UI proxy hooks', () => {
 			emailVerificationProtocolEnabled: true,
 			authenticationMethods: null
 		});
+	});
+
+	it('does not persist an OIDC transaction locale from root layout data', async () => {
+		const { load } = await import('../routes/+layout.server');
+		const setCookie = vi.fn();
+		const data = await load({
+			url: new URL('https://login.example.com/login?ui_locales=zh-Hant-TW%20en'),
+			cookies: { get: () => undefined, set: setCookie },
+			route: { id: '/login' },
+			locals: {
+				locale: 'zh-TW',
+				emailVerificationProtocolEnabled: false,
+				authenticationMethods: null
+			}
+		} as never);
+
+		expect(data).toMatchObject({ preferredLanguage: 'zh-TW' });
+		expect(setCookie).not.toHaveBeenCalled();
 	});
 });

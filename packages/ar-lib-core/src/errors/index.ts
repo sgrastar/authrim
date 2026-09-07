@@ -88,6 +88,18 @@ export {
 } from './details';
 
 export {
+  createTenantPlacementWriteFenceResponse,
+  isTenantPlacementWriteFenceError,
+  TENANT_PLACEMENT_WRITE_FENCE_RETRY_AFTER_MS,
+} from './tenant-placement-write-fence';
+
+export {
+  createDataTemporarilyUnavailableResponse,
+  isDataTemporarilyUnavailableError,
+  DATA_TEMPORARILY_UNAVAILABLE_RETRY_AFTER_MS,
+} from './data-temporarily-unavailable';
+
+export {
   createStepUpErrorBody,
   createStepUpErrorResponse,
   type CreateStepUpErrorBodyInput,
@@ -168,6 +180,7 @@ export {
 export {
   AuthrimError,
   RFCError,
+  errorHandler,
   errorMiddleware,
   createErrorFactoryFromContext,
   createErrorResponse,

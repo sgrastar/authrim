@@ -206,11 +206,12 @@ ipAllowlistRouter.get('/:id', async (c) => {
   try {
     const adapter = getAdminAdapter(c);
     const ipRepo = new AdminIpAllowlistRepository(adapter);
+    const tenantId = getTenantIdFromContext(c);
 
     const id = c.req.param('id')!;
     const entry = await ipRepo.getEntry(id);
 
-    if (!entry) {
+    if (!entry || entry.tenant_id !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
@@ -305,12 +306,13 @@ ipAllowlistRouter.patch('/:id', async (c) => {
   try {
     const adapter = getAdminAdapter(c);
     const ipRepo = new AdminIpAllowlistRepository(adapter);
+    const tenantId = getTenantIdFromContext(c);
 
     const id = c.req.param('id')!;
 
     // Check if entry exists
     const existing = await ipRepo.getEntry(id);
-    if (!existing) {
+    if (!existing || existing.tenant_id !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
@@ -366,12 +368,13 @@ ipAllowlistRouter.delete('/:id', async (c) => {
   try {
     const adapter = getAdminAdapter(c);
     const ipRepo = new AdminIpAllowlistRepository(adapter);
+    const tenantId = getTenantIdFromContext(c);
 
     const id = c.req.param('id')!;
 
     // Check if entry exists
     const existing = await ipRepo.getEntry(id);
-    if (!existing) {
+    if (!existing || existing.tenant_id !== tenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
@@ -402,8 +405,14 @@ ipAllowlistRouter.post('/:id/enable', async (c) => {
   try {
     const adapter = getAdminAdapter(c);
     const ipRepo = new AdminIpAllowlistRepository(adapter);
+    const tenantId = getTenantIdFromContext(c);
 
     const id = c.req.param('id')!;
+
+    const existing = await ipRepo.getEntry(id);
+    if (!existing || existing.tenant_id !== tenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
 
     const success = await ipRepo.enableEntry(id);
     if (!success) {
@@ -433,8 +442,14 @@ ipAllowlistRouter.post('/:id/disable', async (c) => {
   try {
     const adapter = getAdminAdapter(c);
     const ipRepo = new AdminIpAllowlistRepository(adapter);
+    const tenantId = getTenantIdFromContext(c);
 
     const id = c.req.param('id')!;
+
+    const existing = await ipRepo.getEntry(id);
+    if (!existing || existing.tenant_id !== tenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
+    }
 
     const success = await ipRepo.disableEntry(id);
     if (!success) {

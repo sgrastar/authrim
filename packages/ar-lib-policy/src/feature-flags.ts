@@ -25,7 +25,7 @@ export interface PolicyFeatureFlags {
   /** Enable detailed policy evaluation logging */
   ENABLE_POLICY_LOGGING: boolean;
 
-  /** Enable verified attributes checking (requires verified_attributes table) */
+  /** Enable verified attributes checking from the canonical attribute repository */
   ENABLE_VERIFIED_ATTRIBUTES: boolean;
 
   /** Enable custom policy rules (beyond default rules) */

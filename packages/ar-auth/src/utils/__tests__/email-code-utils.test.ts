@@ -360,6 +360,19 @@ describe('Email Code Utilities', () => {
       );
       expect(isValid).toBe(false);
     });
+
+    it('rejects a truncated stored hash before byte comparison', async () => {
+      await expect(
+        verifyEmailCodeHash(
+          testCode,
+          testEmail,
+          testSessionId,
+          testIssuedAt,
+          'truncated',
+          testSecret
+        )
+      ).resolves.toBe(false);
+    });
   });
 
   describe('hashEmail', () => {

@@ -124,7 +124,7 @@ export const DEFAULT_UI_PATHS: UIPathConfig = {
   deviceAuthorize: '/device/authorize',
   logoutComplete: '/logout-complete',
   loggedOut: '/logged-out',
-  register: '/register',
+  register: '/signup',
 };
 
 /**

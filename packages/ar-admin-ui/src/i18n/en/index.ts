@@ -36,6 +36,7 @@ import adminAdminAudit from './admin-admin-audit';
 import adminAdminLogging from './admin-admin-logging';
 import adminIpAllowlist from './admin-ip-allowlist';
 import adminMachineAccess from './admin-machine-access';
+import adminAgentAccess from './admin-agent-access';
 import adminOperationalLogs from './admin-operational-logs';
 import adminSecurity from './admin-security';
 import adminCompliance from './admin-compliance';
@@ -55,6 +56,7 @@ import adminConsentPolicies from './admin-consent-policies';
 import adminFlows from './admin-flows';
 import adminScreens from './admin-screens';
 import adminOther from './admin-other';
+import adminControlPlane from './admin-control-plane';
 
 const en: BaseTranslation = {
 	...core,
@@ -94,6 +96,7 @@ const en: BaseTranslation = {
 	...adminAdminLogging,
 	...adminIpAllowlist,
 	...adminMachineAccess,
+	...adminAgentAccess,
 	...adminOperationalLogs,
 	...adminSecurity,
 	...adminCompliance,
@@ -112,6 +115,7 @@ const en: BaseTranslation = {
 	...adminConsentPolicies,
 	...adminFlows,
 	...adminScreens,
+	...adminControlPlane,
 	...adminOther
 } satisfies BaseTranslation;
 

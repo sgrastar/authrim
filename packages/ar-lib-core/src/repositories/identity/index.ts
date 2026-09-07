@@ -69,6 +69,11 @@ export {
 
 export {
   CanonicalRuntimeUserStore,
+  findCanonicalAccountAuthenticationState,
+  markOtpLoginEmailVerified,
+  type CanonicalAccountAuthenticationState,
+  type CanonicalAuthenticationResponseUser,
+  type CanonicalOtpLoginUser,
   type CanonicalRuntimeUserCreateInput,
   type CanonicalRuntimeUserStoreOptions,
 } from './canonical-runtime-user-store';

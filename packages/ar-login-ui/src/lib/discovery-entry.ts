@@ -18,7 +18,7 @@ export interface DiscoveryConfigResponse {
 		tenant_id: string;
 		mode: 'tenant_only' | 'discovery_optional' | 'discovery_required';
 		discovery_methods: string[];
-		email_resolution_policy: 'exact_email_then_domain' | 'exact_email_only' | 'disabled';
+		email_resolution_policy: 'exact_email_only' | 'disabled';
 		selection_policy: 'auto_if_single' | 'always_select' | 'select_if_multiple' | 'manual_only';
 		allow_manual_tenant_entry: boolean;
 		remember_last_tenant: boolean;
@@ -62,6 +62,17 @@ export interface DiscoveryGrantVerifyResponse {
 	tenant_id: string;
 	target_url: string;
 }
+
+export interface DiscoveryEmailStartResponse {
+	challenge_id: string;
+	expires_in: number;
+	status: 'code_sent';
+}
+
+export type DiscoveryEmailVerifyResponse =
+	| { result: 'resolved'; candidate: DiscoveryCandidate }
+	| { result: 'multiple'; candidates: DiscoveryCandidate[] }
+	| { result: 'not_found'; code: string };
 
 export interface SessionStatusResponse {
 	active: boolean;
@@ -112,6 +123,46 @@ export async function fetchDiscoveryConfig(
 		throw new Error('Failed to load discovery config');
 	}
 	return (await response.json()) as DiscoveryConfigResponse;
+}
+
+export async function startDiscoveryEmailVerification(
+	fetchFn: typeof fetch,
+	email: string,
+	headers?: HeadersInit
+): Promise<DiscoveryEmailStartResponse> {
+	const requestHeaders = new Headers(headers);
+	requestHeaders.set('Content-Type', 'application/json');
+	const response = await fetchFn('/api/auth/discovery/email/start', {
+		method: 'POST',
+		headers: requestHeaders,
+		body: JSON.stringify({ email })
+	});
+	if (!response.ok) {
+		if (response.status === 403) throw new Error('discovery_disabled');
+		if (response.status === 429) throw new Error('rate_limited');
+		throw new Error('discovery_unavailable');
+	}
+	return (await response.json()) as DiscoveryEmailStartResponse;
+}
+
+export async function verifyDiscoveryEmail(
+	fetchFn: typeof fetch,
+	request: { challenge_id: string; code: string },
+	headers?: HeadersInit
+): Promise<DiscoveryEmailVerifyResponse> {
+	const requestHeaders = new Headers(headers);
+	requestHeaders.set('Content-Type', 'application/json');
+	const response = await fetchFn('/api/auth/discovery/email/verify', {
+		method: 'POST',
+		headers: requestHeaders,
+		body: JSON.stringify(request)
+	});
+	if (!response.ok) {
+		if (response.status === 400) throw new Error('invalid_or_expired_code');
+		if (response.status === 403) throw new Error('discovery_disabled');
+		throw new Error('discovery_unavailable');
+	}
+	return (await response.json()) as DiscoveryEmailVerifyResponse;
 }
 
 export async function isCurrentSessionActive(

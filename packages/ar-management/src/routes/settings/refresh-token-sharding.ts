@@ -8,8 +8,7 @@ import {
   clearShardConfigCache,
   getTenantIdFromContext,
   createAuthContextFromHono,
-  ensureOptionalDatabaseAdapter,
-  type DatabaseSource,
+  resolveOptionalCoreAdapterFromHono,
   countActiveRefreshTokenFamiliesByGeneration,
   deleteRefreshTokenFamiliesByGeneration,
   getLogger,
@@ -21,13 +20,7 @@ import {
 } from '@authrim/ar-lib-core';
 
 function resolveOptionalCoreAdapter(c: Context<{ Bindings: Env }>) {
-  const runtimeSources = (c as any).get?.('runtimeUserStoreSources') as
-    | { coreDb?: DatabaseSource | null }
-    | undefined;
-  return ensureOptionalDatabaseAdapter(
-    runtimeSources?.coreDb ?? c.env.DB ?? null,
-    'refresh-token-sharding-config'
-  );
+  return resolveOptionalCoreAdapterFromHono(c, 'refresh-token-sharding-config');
 }
 
 /**

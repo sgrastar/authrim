@@ -28,7 +28,6 @@ import {
   createAuditLogFromContext,
   getLogger,
   listObjectCatalogObjects,
-  type AdminAuthContext,
   type ObjectCatalogListResult,
   type ObjectCatalogPhysicalRecord,
   type ObjectRepresentation,
@@ -58,7 +57,6 @@ import {
 } from './user-import-jobs';
 
 const ADMIN_JOB_MANAGER_ROLES = ['system_admin', 'distributor_admin', 'tenant_admin'];
-const TENANT_D1_STORAGE_PROFILE_ID = 'builtin:storage:tenant-d1';
 
 export function registerAdminJobPermissionMiddleware(app: Hono<any, any, any>) {
   app.use('/api/admin/jobs', requireAnyRole(ADMIN_JOB_MANAGER_ROLES));
@@ -76,14 +74,6 @@ export function registerAdminJobPermissionMiddleware(app: Hono<any, any, any>) {
   app.use('/api/admin/jobs/users/import', requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE]));
   app.use(
     '/api/admin/jobs/users/bulk-update',
-    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
-  );
-  app.use(
-    '/api/admin/jobs/tenant-databases/provision',
-    requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
-  );
-  app.use(
-    '/api/admin/jobs/tenant-databases/activate-batch',
     requireAdminPermissions([ADMIN_PERMISSIONS.JOBS_WRITE])
   );
   app.use(
@@ -1370,42 +1360,6 @@ const BulkUpdateOptionsSchema = z.object({
   result_delivery: JobResultDeliverySchema,
 });
 
-const TenantDatabaseProvisionOptionsSchema = z.object({
-  tenant_slug: z.string().trim().min(1).max(128).optional(),
-  generation: z.number().int().min(1).optional(),
-  activate: z.boolean().default(false),
-  execution_mode: z.enum(['plan_only', 'operator_cli']).default('plan_only'),
-  reason: z.string().trim().min(1).max(500).optional(),
-});
-
-const TenantDatabaseActivateBatchOptionsSchema = z.object({
-  activation_batch_id: z.string().trim().min(1).max(128).optional(),
-  targets: z
-    .array(
-      z.object({
-        tenant_id: z.string().trim().min(1).max(128),
-        generation: z.number().int().min(1),
-        roles: z
-          .array(z.enum(['tenant_core', 'tenant_pii']))
-          .min(1)
-          .optional(),
-      })
-    )
-    .min(1)
-    .max(500),
-  scheduled_window: z
-    .object({
-      not_before: z.string().datetime().optional(),
-      not_after: z.string().datetime().optional(),
-      timezone: z.string().trim().min(1).max(64).optional(),
-    })
-    .optional(),
-  require_health_check: z.boolean().default(true),
-  require_binding_reconciliation: z.boolean().default(true),
-  execution_mode: z.enum(['plan_only', 'operator_cli']).default('plan_only'),
-  reason: z.string().trim().min(1).max(500).optional(),
-});
-
 /**
  * Report options
  */
@@ -1424,16 +1378,6 @@ const ReportOptionsSchema = z.object({
 function getAdminAuth(c: Context<{ Bindings: Env }>): { adminId?: string } | null {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
   return (c as any).get('adminAuth') as { adminId?: string } | null;
-}
-
-function getStorageOperatorAuth(c: Context<{ Bindings: Env }>): AdminAuthContext | null {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
-  return (c as any).get('adminAuth') as AdminAuthContext | null;
-}
-
-function isSystemStorageOperator(auth: AdminAuthContext | null): boolean {
-  const roles = auth?.roles ?? [];
-  return roles.includes('system_admin') || roles.includes('super_admin');
 }
 
 /**
@@ -1541,7 +1485,9 @@ export async function adminJobsImportUploadHandler(c: Context<{ Bindings: Env }>
     const payloadBytes = new Uint8Array(payload);
     const checksumSha256 = await sha256HexFromBytes(payloadBytes);
     const key = buildUserImportUploadKey(tenantId, uploadId, filename);
-    await c.env.IMPORT_ARTIFACTS.put(key, payload, {
+    const uploadedAt = Date.now();
+    const storedObject = await c.env.IMPORT_ARTIFACTS.put(key, payload, {
+      onlyIf: { etagDoesNotMatch: '*' },
       httpMetadata: {
         contentType: 'text/csv',
       },
@@ -1549,8 +1495,21 @@ export async function adminJobsImportUploadHandler(c: Context<{ Bindings: Env }>
         checksum_sha256: checksumSha256,
         uploaded_bytes: String(payload.byteLength),
         content_type: 'text/csv',
+        uploaded_at: String(uploadedAt),
+        expires_at: String(uploadedAt + 24 * 60 * 60 * 1000),
       },
     });
+    if (!storedObject) {
+      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT, {
+        variables: {
+          field: 'upload_id',
+          reason: 'Import upload IDs are immutable and can only be used once',
+        },
+      });
+    }
+    if (!storedObject?.etag) {
+      throw new Error('import_artifact_upload_receipt_missing');
+    }
 
     return c.json(
       {
@@ -1559,6 +1518,7 @@ export async function adminJobsImportUploadHandler(c: Context<{ Bindings: Env }>
         r2_key: key,
         uploaded_bytes: payload.byteLength,
         checksum_sha256: checksumSha256,
+        etag: storedObject.etag,
         content_type: 'text/csv',
       },
       201
@@ -1719,7 +1679,15 @@ export async function adminJobsUsersImportHandler(c: Context<{ Bindings: Env }>)
           percentage: 0,
           stage: options.validate_only ? 'validation' : 'queued',
         }),
-        JSON.stringify(options),
+        JSON.stringify({
+          ...options,
+          artifact: {
+            checksum_sha256: actualChecksumSha256,
+            etag: inputObject.etag,
+            size_bytes: inputBytes.byteLength,
+            content_type: storedContentType,
+          },
+        }),
         inputKey,
         buildUserImportResultKey(tenantId, jobId),
         createdBy,
@@ -1846,248 +1814,6 @@ export async function adminJobsUsersBulkUpdateHandler(c: Context<{ Bindings: Env
   } catch (error) {
     const log = getLogger(c).module('ADMIN-JOBS');
     log.error('Failed to create bulk update job', {}, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-}
-
-/**
- * POST /api/admin/jobs/tenant-databases/provision
- * Create a tenant database provisioning/deployment request.
- */
-export async function adminJobsTenantDatabaseProvisionHandler(c: Context<{ Bindings: Env }>) {
-  const tenantId = getTenantIdFromContext(c);
-
-  try {
-    if (c.env.DEFAULT_STORAGE_PROFILE_ID === TENANT_D1_STORAGE_PROFILE_ID) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: {
-          field: 'storage_profile',
-          reason:
-            'Tenant D1 pool expansion is managed by the setup tool/wrangler, not Admin UI jobs.',
-        },
-      });
-    }
-
-    if (!isAdminJobTypeCreatableFromAdminApi('tenant-database/provision')) {
-      return createUnsupportedJobTypeResponse(c, 'tenant-database/provision');
-    }
-
-    const adminAuth = getStorageOperatorAuth(c);
-    if (!isSystemStorageOperator(adminAuth)) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS, {
-        variables: {
-          reason: 'Tenant database provisioning requires system_admin or super_admin.',
-        },
-      });
-    }
-
-    const parseResult = TenantDatabaseProvisionOptionsSchema.safeParse(await c.req.json());
-    if (!parseResult.success) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: {
-          field: 'request',
-          reason: parseResult.error.issues.map((issue) => issue.message).join(', '),
-        },
-      });
-    }
-
-    const options = parseResult.data;
-    const adapter = createAdapter(c);
-    const createdBy = adminAuth?.userId ?? adminAuth?.actorId ?? 'unknown';
-    const jobId = crypto.randomUUID();
-    const nowTs = Math.floor(Date.now() / 1000);
-    const result = {
-      summary: {
-        total: 1,
-        succeeded: 0,
-        failed: 0,
-        skipped: 0,
-      },
-      deployment_request: {
-        execution_mode: options.execution_mode,
-        required_operator_steps: [
-          'Run authrim-setup tenant-db with the requested tenant, slug, generation, and activation mode.',
-          'Deploy generated Worker bindings before activation when activate=true.',
-          'Confirm tenant database health and binding reconciliation before runtime cutover.',
-        ],
-      },
-    };
-
-    await adapter.execute(
-      `INSERT INTO admin_jobs (
-        id, tenant_id, job_type, status, progress, config,
-        result, created_by, created_at, updated_at, estimated_completion
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        jobId,
-        tenantId,
-        'tenant-database/provision',
-        'pending',
-        JSON.stringify({
-          total: 1,
-          processed: 0,
-          succeeded: 0,
-          failed: 0,
-          skipped: 0,
-          percentage: 0,
-          stage: 'deployment_request_created',
-        }),
-        JSON.stringify({
-          ...options,
-          tenant_id: tenantId,
-          requested_from: 'admin_ui',
-        }),
-        JSON.stringify(result),
-        createdBy,
-        nowTs,
-        nowTs,
-        nowTs + 60 * 60,
-      ]
-    );
-
-    await createAuditLogFromContext(c, 'tenant_database.provision.requested', 'admin_job', jobId, {
-      job_type: 'tenant-database/provision',
-      tenant_id: tenantId,
-      generation: options.generation ?? null,
-      activate: options.activate,
-      execution_mode: options.execution_mode,
-    });
-
-    return c.json(
-      {
-        job_id: jobId,
-        job_type: 'tenant-database/provision',
-        status: 'pending',
-        tenant_id: tenantId,
-        created_by: createdBy,
-        created_at: new Date(nowTs * 1000).toISOString(),
-      },
-      202
-    );
-  } catch (error) {
-    const log = getLogger(c).module('ADMIN-JOBS');
-    log.error('Failed to create tenant database provisioning job', {}, error as Error);
-    return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-  }
-}
-
-/**
- * POST /api/admin/jobs/tenant-databases/activate-batch
- * Create a tenant database activation batch request.
- */
-export async function adminJobsTenantDatabaseActivateBatchHandler(c: Context<{ Bindings: Env }>) {
-  const tenantId = getTenantIdFromContext(c);
-
-  try {
-    if (c.env.DEFAULT_STORAGE_PROFILE_ID === TENANT_D1_STORAGE_PROFILE_ID) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: {
-          field: 'storage_profile',
-          reason:
-            'Tenant D1 pool activation is managed by the setup tool/wrangler, not Admin UI jobs.',
-        },
-      });
-    }
-
-    if (!isAdminJobTypeCreatableFromAdminApi('tenant-database/activate-batch')) {
-      return createUnsupportedJobTypeResponse(c, 'tenant-database/activate-batch');
-    }
-
-    const adminAuth = getStorageOperatorAuth(c);
-    if (!isSystemStorageOperator(adminAuth)) {
-      return createErrorResponse(c, AR_ERROR_CODES.ADMIN_INSUFFICIENT_PERMISSIONS, {
-        variables: {
-          reason: 'Tenant database activation requires system_admin or super_admin.',
-        },
-      });
-    }
-
-    const parseResult = TenantDatabaseActivateBatchOptionsSchema.safeParse(await c.req.json());
-    if (!parseResult.success) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
-        variables: {
-          field: 'request',
-          reason: parseResult.error.issues.map((issue) => issue.message).join(', '),
-        },
-      });
-    }
-
-    const options = parseResult.data;
-    const adapter = createAdapter(c);
-    const createdBy = adminAuth?.userId ?? adminAuth?.actorId ?? 'unknown';
-    const jobId = crypto.randomUUID();
-    const nowTs = Math.floor(Date.now() / 1000);
-    const targetCount = options.targets.length;
-
-    await adapter.execute(
-      `INSERT INTO admin_jobs (
-        id, tenant_id, job_type, status, progress, config,
-        result, created_by, created_at, updated_at, estimated_completion
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        jobId,
-        tenantId,
-        'tenant-database/activate-batch',
-        'pending',
-        JSON.stringify({
-          total: targetCount,
-          processed: 0,
-          succeeded: 0,
-          failed: 0,
-          skipped: 0,
-          percentage: 0,
-          stage: 'activation_request_created',
-        }),
-        JSON.stringify({
-          ...options,
-          requested_from: 'admin_ui',
-        }),
-        JSON.stringify({
-          summary: {
-            total: targetCount,
-            succeeded: 0,
-            failed: 0,
-            skipped: 0,
-          },
-          deployment_request: {
-            execution_mode: options.execution_mode,
-            requires_health_check: options.require_health_check,
-            requires_binding_reconciliation: options.require_binding_reconciliation,
-          },
-        }),
-        createdBy,
-        nowTs,
-        nowTs,
-        nowTs + 60 * 60,
-      ]
-    );
-
-    await createAuditLogFromContext(
-      c,
-      'tenant_database.activate_batch.requested',
-      'admin_job',
-      jobId,
-      {
-        job_type: 'tenant-database/activate-batch',
-        target_count: targetCount,
-        execution_mode: options.execution_mode,
-      }
-    );
-
-    return c.json(
-      {
-        job_id: jobId,
-        job_type: 'tenant-database/activate-batch',
-        status: 'pending',
-        target_count: targetCount,
-        created_by: createdBy,
-        created_at: new Date(nowTs * 1000).toISOString(),
-      },
-      202
-    );
-  } catch (error) {
-    const log = getLogger(c).module('ADMIN-JOBS');
-    log.error('Failed to create tenant database activation job', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }

@@ -9,6 +9,7 @@ import { SignJWT, jwtVerify, importPKCS8, importJWK } from 'jose';
 import type { JWK, CryptoKey, JWTPayload } from 'jose';
 import { generateSecureRandomString } from './crypto';
 import type { IDTokenClaims } from '../types/oidc';
+import type { OIDCSigningAlgorithm } from './oidc-signing';
 
 const MAX_JWT_SIZE_BYTES = 16 * 1024;
 const MAX_JWT_SEGMENT_SIZE_BYTES = 8 * 1024;
@@ -25,6 +26,7 @@ export interface AccessTokenClaims extends JWTPayload {
   jti: string; // JWT ID (unique token identifier for revocation)
   scope: string; // Granted scopes
   client_id: string; // Client identifier
+  token_use?: string; // Authrim token-purpose discriminator or narrower internal token purpose
   claims?: string; // Requested claims (JSON string, per OIDC Core 5.5)
   claims_request_protected?: boolean; // Whether claims came from PAR or signed JAR
   cnf?: { jkt: string }; // DPoP confirmation (RFC 9449 Section 6)
@@ -43,7 +45,8 @@ export async function createIDToken(
   claims: Omit<IDTokenClaims, 'iat' | 'exp'>,
   privateKey: CryptoKey,
   kid: string,
-  expiresIn: number = 3600
+  expiresIn: number = 3600,
+  algorithm: OIDCSigningAlgorithm = 'RS256'
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
 
@@ -52,7 +55,7 @@ export async function createIDToken(
     iat: now,
     exp: now + expiresIn,
   })
-    .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid })
+    .setProtectedHeader({ alg: algorithm, typ: 'JWT', kid })
     .sign(privateKey);
 }
 
@@ -75,7 +78,8 @@ export async function createSDJWTIDTokenFromClaims(
   privateKey: CryptoKey,
   kid: string,
   expiresIn: number = 3600,
-  selectiveClaims: string[] = ['email', 'phone_number', 'address', 'birthdate']
+  selectiveClaims: string[] = ['email', 'phone_number', 'address', 'birthdate'],
+  algorithm: OIDCSigningAlgorithm = 'RS256'
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
 
@@ -90,7 +94,7 @@ export async function createSDJWTIDTokenFromClaims(
   };
 
   // Create SD-JWT
-  const sdJwt = await createSDJWTIDToken(fullClaims, privateKey, kid, selectiveClaims);
+  const sdJwt = await createSDJWTIDToken(fullClaims, privateKey, kid, selectiveClaims, algorithm);
 
   return sdJwt.combined;
 }
@@ -118,6 +122,8 @@ export async function createAccessToken(
 
   const token = await new SignJWT({
     ...claims,
+    // Preserve narrower internal token purposes while marking ordinary OAuth access tokens.
+    token_use: claims.token_use ?? 'access',
     iat: now,
     exp: now + expiresIn,
     jti,
@@ -383,6 +389,7 @@ export interface RefreshTokenClaims extends JWTPayload {
   jti: string; // JWT ID (unique token identifier)
   scope: string; // Granted scopes
   client_id: string; // Client identifier
+  token_use?: 'refresh'; // Authrim token-purpose discriminator
   cnf?: { jkt: string }; // DPoP confirmation (RFC 9449 Section 6)
   rtv?: number; // Refresh Token Version (V2) - for theft detection
 }
@@ -415,6 +422,7 @@ export async function createRefreshToken(
 
   const token = await new SignJWT({
     ...claims,
+    token_use: claims.token_use ?? 'refresh',
     iat: now,
     exp: now + expiresIn,
     jti,

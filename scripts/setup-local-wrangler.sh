@@ -206,7 +206,6 @@ new_sqlite_classes = ["FlowStateStore"]
 
 # Environment variables
 [vars]
-KEY_MANAGER_SECRET = "dev-secret-change-in-production"
 SHARED_TOML_EOF
         echo "  ✅ ar-lib-core/wrangler.${DEPLOY_ENV}.toml (Durable Objects)"
     fi
@@ -284,7 +283,6 @@ new_sqlite_classes = ["FlowStateStore"]
 
 # Environment variables
 [vars]
-KEY_MANAGER_SECRET = "dev-secret-change-in-production"
 SHARED_TOML_EOF
 fi
 
@@ -325,8 +323,8 @@ database_id = "placeholder"
 
 # R2 Bucket
 [[r2_buckets]]
-binding = "AVATARS"
-bucket_name = "authrim-avatars"' '[[durable_objects.bindings]]
+binding = "PUBLIC_ASSETS"
+bucket_name = "authrim-public-assets"' '[[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
 script_name = "${DEPLOY_ENV}-ar-lib-core"
@@ -689,6 +687,11 @@ name = "KEY_MANAGER"
 class_name = "KeyManager"
 script_name = "${DEPLOY_ENV}-ar-lib-core"
 
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
+script_name = "${DEPLOY_ENV}-ar-lib-core"
+
 # Service Bindings
 [[services]]
 binding = "POLICY_SERVICE"
@@ -766,6 +769,11 @@ class_name = "CredentialOfferStore"
 [[durable_objects.bindings]]
 name = "KEY_MANAGER"
 class_name = "KeyManager"
+script_name = "${DEPLOY_ENV}-ar-lib-core"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterCounter"
 script_name = "${DEPLOY_ENV}-ar-lib-core"
 
 # Service Bindings

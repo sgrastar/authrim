@@ -62,6 +62,14 @@ export interface AdminAuthOptions {
   plane?: 'tenant' | 'platform';
 
   /**
+   * Optional same-origin login redirect for browser GET journeys. The caller owns validation of
+   * the returned location. API and mutation routes should leave this unset.
+   */
+  unauthenticatedRedirect?: (
+    c: Context<{ Bindings: Env }>
+  ) => string | undefined | Promise<string | undefined>;
+
+  /**
    * Required roles for access. User must have at least one of these roles.
    * Default: ['super_admin', 'security_admin', 'admin', 'support', 'viewer']
    */
@@ -84,6 +92,25 @@ export interface AdminAuthOptions {
    * Require MFA to be verified for this session (default: false)
    */
   requireMfa?: boolean;
+
+  /**
+   * Require an Admin UI session to establish the actor (default: false).
+   *
+   * This is intended for browser authorization journeys such as Admin Agent OAuth. A scoped
+   * machine bearer token may still be used as BFF transport authentication, but it can never
+   * replace the human admin session as the primary actor.
+   */
+  sessionOnly?: boolean;
+
+  /**
+   * Optional owner-package verifier for a signed bearer token type that ar-lib-core must not
+   * depend on directly. The callback must fully verify the token and return a bounded context.
+   */
+  authenticateBearer?: (
+    c: Context<{ Bindings: Env }>,
+    token: string,
+    tenantId: string
+  ) => Promise<AdminAuthContext | null>;
 }
 
 function parsePermissionsJson(value: string): string[] {
@@ -150,10 +177,10 @@ async function getAdminAccessTokenVerificationKey(
   return importJWK(publicJwk, 'RS256') as Promise<CryptoKey>;
 }
 
-function hasTenantScope(authContext: AdminAuthContext, tenantId: string): boolean {
-  if (!authContext.tenantScope && authContext.authMethod !== 'machine_access_token') {
-    return true;
-  }
+export function adminAuthContextHasTenantScope(
+  authContext: AdminAuthContext,
+  tenantId: string
+): boolean {
   const tenantScope = authContext.tenantScope ?? [];
   return tenantScope.includes('*') || tenantScope.includes(tenantId);
 }
@@ -259,7 +286,14 @@ async function authenticateMachineAccessToken(
 ): Promise<AdminAuthContext | null> {
   try {
     const header = parseTokenHeader(token);
-    const publicKey = await getAdminAccessTokenVerificationKey(c.env, tenantId, header.kid);
+    // Admin machine credentials live in the platform Admin database and may be scoped to more than
+    // one tenant. Their access tokens are therefore signed by the platform/default Key Manager,
+    // rather than by the tenant selected for an individual Admin API request.
+    const publicKey = await getAdminAccessTokenVerificationKey(
+      c.env,
+      getDefaultTenantId(c.env),
+      header.kid
+    );
     const issuer = buildRequestIssuerUrl(c.req.raw, c.env, tenantId);
     const payload = (await verifyToken(token, publicKey, issuer, {
       audience: ADMIN_API_AUDIENCE,
@@ -366,7 +400,7 @@ async function authenticateMachineAccessToken(
  * @param requiredRoles - Roles required for access (user must have at least one)
  * @returns AdminAuthContext if valid, null otherwise
  */
-async function authenticateSession(
+export async function authenticateAdminSessionForTenant(
   c: Context<{ Bindings: Env }>,
   sessionId: string,
   requiredRoles: string[] = ['super_admin', 'security_admin', 'admin', 'support', 'viewer'],
@@ -383,11 +417,49 @@ async function authenticateSession(
       admin_user_id: string;
       expires_at: number;
       mfa_verified: number;
+      mfa_verified_at: number | null;
+      created_at: number;
+      parent_session_id?: string | null;
+      derived_target_tenant_id?: string | null;
     }>('SELECT * FROM admin_sessions WHERE id = ? AND expires_at > ?', [sessionId, now]);
 
     if (!session) {
       log.debug('Admin session not found or expired', { sessionId: sessionId.substring(0, 8) });
       return null;
+    }
+
+    if (session.parent_session_id) {
+      if (
+        !session.derived_target_tenant_id ||
+        (targetTenantId && targetTenantId !== session.derived_target_tenant_id)
+      ) {
+        log.warn('Derived Admin session target is invalid', {
+          sessionId: session.id.substring(0, 8),
+        });
+        return null;
+      }
+      const parent = await adminAdapter.queryOne<{
+        id: string;
+        tenant_id: string;
+        admin_user_id: string;
+        expires_at: number;
+        parent_session_id?: string | null;
+      }>('SELECT * FROM admin_sessions WHERE id = ? AND expires_at > ?', [
+        session.parent_session_id,
+        now,
+      ]);
+      if (
+        !parent ||
+        parent.parent_session_id ||
+        parent.tenant_id !== session.tenant_id ||
+        parent.admin_user_id !== session.admin_user_id ||
+        parent.expires_at < session.expires_at
+      ) {
+        log.warn('Derived Admin session parent is invalid', {
+          sessionId: session.id.substring(0, 8),
+        });
+        return null;
+      }
     }
 
     // Fetch admin user
@@ -413,7 +485,8 @@ async function authenticateSession(
       return null;
     }
 
-    const effectiveTargetTenantId = targetTenantId || session.tenant_id;
+    const effectiveTargetTenantId =
+      targetTenantId || session.derived_target_tenant_id || session.tenant_id;
 
     // Fetch effective roles for this Admin user. Global assignments are platform-wide.
     // Tenant assignments only apply to the requested tenant; legacy NULL scope_id only
@@ -512,8 +585,13 @@ async function authenticateSession(
       permissions: Array.from(allPermissions),
       hierarchyLevel: maxHierarchyLevel,
       mfaVerified: Boolean(session.mfa_verified),
+      authenticationTimeMs:
+        session.mfa_verified_at && session.mfa_verified_at > session.created_at
+          ? session.mfa_verified_at
+          : session.created_at,
       sessionId: session.id,
-      tenantScope: hasGlobalScope ? ['*'] : [session.tenant_id],
+      sessionExpiresAt: session.expires_at,
+      tenantScope: hasGlobalScope ? ['*'] : [session.derived_target_tenant_id ?? session.tenant_id],
     };
   } catch (error) {
     log.error('Admin session authentication failed', {}, error as Error);
@@ -528,7 +606,10 @@ async function authenticateSession(
  * @param tenantId - Tenant ID
  * @returns true if allowed (or if no allowlist entries exist)
  */
-async function isIpAllowed(c: Context<{ Bindings: Env }>, tenantId: string): Promise<boolean> {
+export async function isAdminRequestIpAllowedForTenant(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string
+): Promise<boolean> {
   try {
     const adminAdapter: DatabaseAdapter = requireAdminDatabaseAdapter(c.env, 'admin-auth');
 
@@ -587,42 +668,38 @@ function ipMatches(ip: string, range: string): boolean {
 }
 
 /**
- * Check if an IP matches a CIDR range (IPv4 only for now)
+ * Check if an IP matches an IPv4 or IPv6 CIDR range.
  */
 function ipMatchesCidr(ip: string, cidr: string): boolean {
-  const [rangeIp, prefixLengthStr] = cidr.split('/');
-  const prefixLength = parseInt(prefixLengthStr, 10);
-
-  if (isNaN(prefixLength)) {
+  const cidrParts = cidr.split('/');
+  if (cidrParts.length !== 2 || !/^\d+$/.test(cidrParts[1])) {
     return false;
   }
+  const [rangeIp, prefixLengthStr] = cidrParts;
+  const prefixLength = Number(prefixLengthStr);
 
   // IPv4 handling
   if (!ip.includes(':') && !rangeIp.includes(':')) {
     const ipNum = ipv4ToNumber(ip);
     const rangeNum = ipv4ToNumber(rangeIp);
 
-    if (ipNum === null || rangeNum === null) {
+    if (ipNum === null || rangeNum === null || prefixLength < 0 || prefixLength > 32) {
       return false;
     }
 
-    const mask = (-1 << (32 - prefixLength)) >>> 0;
+    const mask = prefixLength === 0 ? 0 : (-1 << (32 - prefixLength)) >>> 0;
     return (ipNum & mask) === (rangeNum & mask);
   }
 
-  // IPv6 - simplified check (full implementation in repository)
+  // IPv6 handling. Parse both compressed and full notation and compare prefix bits.
   if (ip.includes(':') && rangeIp.includes(':')) {
-    // For now, just check prefix match
-    const ipParts = ip.split(':');
-    const rangeParts = rangeIp.split(':');
-    const partsToCheck = Math.ceil(prefixLength / 16);
-
-    for (let i = 0; i < partsToCheck && i < ipParts.length && i < rangeParts.length; i++) {
-      if (ipParts[i] !== rangeParts[i]) {
-        return false;
-      }
+    const ipNum = ipv6ToBigInt(ip);
+    const rangeNum = ipv6ToBigInt(rangeIp);
+    if (ipNum === null || rangeNum === null || prefixLength < 0 || prefixLength > 128) {
+      return false;
     }
-    return true;
+    const hostBits = BigInt(128 - prefixLength);
+    return ipNum >> hostBits === rangeNum >> hostBits;
   }
 
   return false;
@@ -639,14 +716,44 @@ function ipv4ToNumber(ip: string): number | null {
 
   let result = 0;
   for (const part of parts) {
-    const num = parseInt(part, 10);
-    if (isNaN(num) || num < 0 || num > 255) {
+    if (!/^\d{1,3}$/.test(part)) {
+      return null;
+    }
+    const num = Number(part);
+    if (num > 255) {
       return null;
     }
     result = (result << 8) | num;
   }
 
   return result >>> 0;
+}
+
+function ipv6ToBigInt(ip: string): bigint | null {
+  if (ip.includes('.') || ip.includes(':::') || (ip.match(/::/g) ?? []).length > 1) {
+    return null;
+  }
+
+  const compressed = ip.includes('::');
+  const [leftText, rightText = ''] = compressed ? ip.split('::') : [ip, ''];
+  const left = leftText ? leftText.split(':') : [];
+  const right = rightText ? rightText.split(':') : [];
+  if ((!compressed && left.length !== 8) || (compressed && left.length + right.length >= 8)) {
+    return null;
+  }
+
+  const groups = compressed
+    ? [...left, ...Array(8 - left.length - right.length).fill('0'), ...right]
+    : left;
+  if (groups.length !== 8 || groups.some((group) => !/^[0-9a-fA-F]{1,4}$/.test(group))) {
+    return null;
+  }
+
+  let result = 0n;
+  for (const group of groups) {
+    result = (result << 16n) | BigInt(`0x${group}`);
+  }
+  return result;
 }
 
 function resolveAdminRequestTenantId(c: Context<{ Bindings: Env }>): string | null {
@@ -664,8 +771,12 @@ function resolveAdminRequestTenantId(c: Context<{ Bindings: Env }>): string | nu
   return c.env.BASE_DOMAIN ? null : getDefaultTenantId(c.env);
 }
 
-function isPlatformAdminSessionStatusPath(path: string): boolean {
-  return path === '/api/admin/me/session' || path === '/api/admin/me/session/';
+function isPlatformAdminSessionPath(path: string): boolean {
+  return (
+    path === '/api/admin/me/session' ||
+    path === '/api/admin/me/session/' ||
+    /^\/api\/admin\/agent-login-handoffs\/alh_[A-Za-z0-9_-]{32}\/approve\/?$/u.test(path)
+  );
 }
 
 /**
@@ -696,8 +807,14 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
   ];
 
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
-    let authContext: AdminAuthContext | null = null;
-    const effectivePlane = isPlatformAdminSessionStatusPath(c.req.path) ? 'platform' : plane;
+    const existingAuthContext = (c as unknown as { get?: (key: string) => unknown }).get?.(
+      'adminAuth'
+    );
+    let authContext: AdminAuthContext | null =
+      existingAuthContext && typeof existingAuthContext === 'object'
+        ? (existingAuthContext as AdminAuthContext)
+        : null;
+    const effectivePlane = isPlatformAdminSessionPath(c.req.path) ? 'platform' : plane;
     const authHeader = c.req.header('Authorization');
     const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
     const requiresBffTransportAuth = isAdminUiBffTransportRequest(c);
@@ -727,7 +844,7 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
       }
 
       if (sessionId) {
-        authContext = await authenticateSession(
+        authContext = await authenticateAdminSessionForTenant(
           c,
           sessionId,
           requiredRoles,
@@ -786,7 +903,7 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
           403
         );
       }
-      if (!hasTenantScope(transportAuthContext, tokenTenantId)) {
+      if (!adminAuthContextHasTenantScope(transportAuthContext, tokenTenantId)) {
         return c.json(
           {
             error: 'access_denied',
@@ -811,7 +928,7 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
       };
     }
 
-    if (!authContext && bearerToken) {
+    if (!options.sessionOnly && !authContext && bearerToken) {
       const tokenTenantId =
         effectivePlane === 'tenant'
           ? resolveAdminRequestTenantId(c)
@@ -827,7 +944,14 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
           400
         );
       }
-      authContext = await authenticateMachineAccessToken(c, bearerToken, tokenTenantId);
+      if (options.authenticateBearer) {
+        try {
+          authContext = await options.authenticateBearer(c, bearerToken, tokenTenantId);
+        } catch {
+          authContext = null;
+        }
+      }
+      authContext ??= await authenticateMachineAccessToken(c, bearerToken, tokenTenantId);
       if (authContext?.principalType === 'admin_ui_bff') {
         return c.json(
           {
@@ -841,6 +965,8 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
 
     // Authentication failed
     if (!authContext) {
+      const redirectLocation = await options.unauthenticatedRedirect?.(c);
+      if (redirectLocation) return c.redirect(redirectLocation, 302);
       return c.json(
         {
           error: 'invalid_token',
@@ -865,7 +991,7 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
       if (
         authContext.authMethod === 'session' &&
         authContext.tenantId !== requestTenantId &&
-        !hasTenantScope(authContext, requestTenantId)
+        !adminAuthContextHasTenantScope(authContext, requestTenantId)
       ) {
         log.warn('Admin session tenant does not match request tenant', {
           userId: authContext.userId,
@@ -888,7 +1014,7 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
         };
       }
 
-      if (!hasTenantScope(authContext, requestTenantId)) {
+      if (!adminAuthContextHasTenantScope(authContext, requestTenantId)) {
         log.warn('Admin machine token tenant scope does not allow request tenant', {
           userId: authContext.userId,
           requestTenantId,
@@ -916,7 +1042,7 @@ export function adminAuthMiddleware(options: AdminAuthOptions = {}) {
           400
         );
       }
-      const ipAllowed = await isIpAllowed(c, tenantId);
+      const ipAllowed = await isAdminRequestIpAllowedForTenant(c, tenantId);
       if (!ipAllowed) {
         return c.json(
           {
@@ -1005,6 +1131,13 @@ export function requireAdminPermissions(permissions: string[]) {
     );
 
     if (!hasAllPermissions) {
+      log.warn('Admin permission middleware denied request', {
+        method: c.req.method,
+        path: new URL(c.req.url).pathname,
+        authMethod: authContext.authMethod,
+        requiredPermissions: permissions,
+        actualPermissions: userPermissions,
+      });
       return c.json(
         {
           error: 'insufficient_permissions',

@@ -11,7 +11,10 @@ import {
   createAuthContextFromHono,
   createDirectoryAuthMigrationTransaction,
   createErrorResponse,
+  createTenantPlacementWriteFenceResponse,
   createPIIContextFromHono,
+  ensureAccountAuthenticationState,
+  isAccountAuthenticationDeniedError,
   generateBrowserState,
   findActiveInvitationByToken,
   AUTH_EVENTS,
@@ -20,9 +23,10 @@ import {
   getBrowserStateCookieSameSite,
   getChallengeStoreByChallengeId,
   getLogger,
-  getRequiredPluginContext,
+  produceNotificationDelivery,
   getSessionCookieSameSite,
   getSessionStoreForNewSession,
+  getSessionClientMetadata,
   getTenantSettings,
   getTenantIdFromContext,
   hasRemainingInvitationUses,
@@ -60,6 +64,8 @@ import {
 import { verifyHumanVerificationForAction } from './human-verification';
 import { getRequestIssuer } from './issuer';
 import { resolveSessionTtl } from './session-ttl';
+import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
+import { publishTenantD1PasskeyRoute } from './account-provisioning';
 import { generateRegistrationOptions, verifyRegistrationResponse } from '@simplewebauthn/server';
 import { isoBase64URL } from '@simplewebauthn/server/helpers';
 import type {
@@ -85,6 +91,24 @@ const RP_NAME = 'Authrim';
 const MIGRATION_PASSKEY_CHALLENGE_TTL_SECONDS = 5 * 60;
 const MIGRATION_EMAIL_CODE_TTL_SECONDS = 5 * 60;
 const DIRECTORY_UNAVAILABLE_RECOVERY_REQUEST_PREFIX = 'directory_unavailable_recovery:';
+const DIRECTORY_PASSWORD_ACCOUNT_WINDOW_SECONDS = 15 * 60;
+const DIRECTORY_PASSWORD_ACCOUNT_MAX_FAILURES = 5;
+
+async function getDirectoryPasswordAccountLimiter(env: Env, tenantId: string, username: string) {
+  const normalizedUsername = username.normalize('NFKC').toLocaleLowerCase('en-US');
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`${tenantId}\u0000${normalizedUsername}`)
+  );
+  const accountHash = Array.from(new Uint8Array(digest), (byte) =>
+    byte.toString(16).padStart(2, '0')
+  ).join('');
+  const key = `account:${accountHash}`;
+  const id = env.RATE_LIMITER.idFromName(
+    buildDOKey('rate-limit', 'directory-password-account', tenantId)
+  );
+  return { limiter: env.RATE_LIMITER.get(id), key };
+}
 
 interface DirectoryPasswordLoginRequest {
   username?: unknown;
@@ -221,6 +245,19 @@ function createCanonicalRuntimeUserStore(
   });
 }
 
+async function ensureDirectoryAccountAuthenticationState(
+  c: Context<{ Bindings: Env }>,
+  tenantId: string,
+  userId: string
+): Promise<void> {
+  const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+  await timeAuthRequestDiagnosticOperation(c, 'auth_account_state_read', () =>
+    ensureAccountAuthenticationState(c.env, tenantId, userId, () =>
+      runtimeUsers.findAccountAuthenticationState(userId)
+    )
+  );
+}
+
 export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordFetch) {
   return async function directoryPasswordLoginHandler(c: Context<{ Bindings: Env }>) {
     const log = getLogger(c).module('DIRECTORY_PASSWORD_LOGIN');
@@ -245,6 +282,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_FORMAT);
     }
 
+    const accountRateLimit = await getDirectoryPasswordAccountLimiter(c.env, tenantId, username);
     let turnstileAction: 'login' | 'reauth' = 'login';
     if (authorizationChallengeId) {
       const challengeType = await readAuthorizationChallengeType(
@@ -292,6 +330,29 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         404
       );
     }
+
+    // Reserve the account attempt atomically before contacting the connector.
+    // Checking and incrementing after verification would allow a concurrent
+    // burst to send many password guesses before any failure is recorded.
+    const accountAttempt = await accountRateLimit.limiter.incrementRpc(accountRateLimit.key, {
+      windowSeconds: DIRECTORY_PASSWORD_ACCOUNT_WINDOW_SECONDS,
+      maxRequests: DIRECTORY_PASSWORD_ACCOUNT_MAX_FAILURES,
+    });
+    if (!accountAttempt.allowed) {
+      return c.json(
+        {
+          error: 'rate_limit_exceeded',
+          error_description: 'Too many login attempts. Please try again later.',
+        },
+        429,
+        {
+          'Retry-After': String(
+            accountAttempt.retryAfter || DIRECTORY_PASSWORD_ACCOUNT_WINDOW_SECONDS
+          ),
+        }
+      );
+    }
+
     let verdict;
     try {
       verdict = await client.verifyPassword({
@@ -341,6 +402,8 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
         { action: 'directory_password' },
         error as Error
       );
+      const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+      if (writeFenceResponse) return writeFenceResponse;
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
 
@@ -354,6 +417,8 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       );
       return c.json({ error: 'invalid_credentials' }, 401);
     }
+
+    await accountRateLimit.limiter.resetRpc(accountRateLimit.key);
 
     const authCtx = createAuthContextFromHono(c, tenantId);
     const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
@@ -524,7 +589,7 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (authorizationChallengeId && !deferAuthorizationContinuation) {
       const continuation = await consumeAuthorizationChallengeContinuation(
-        c.env,
+        c,
         tenantId,
         authorizationChallengeId,
         runtimeUser.id,
@@ -537,12 +602,28 @@ export function createDirectoryPasswordLoginHandler(fetcher?: DirectoryPasswordF
       authorizationContinuation = continuation;
     }
 
+    try {
+      await ensureDirectoryAccountAuthenticationState(c, tenantId, runtimeUser.id);
+    } catch (error) {
+      if (!isAccountAuthenticationDeniedError(error)) {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Authentication state unavailable.',
+          },
+          503,
+          { 'Retry-After': '1' }
+        );
+      }
+      return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
+    }
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
     await sessionStore.createSessionRpc(
       sessionId,
       runtimeUser.id,
       sessionTtl.seconds,
       {
+        ...getSessionClientMetadata(c.req.raw),
         email: runtimeUser.email,
         name: runtimeUser.name,
         amr: ['pwd', 'directory'],
@@ -785,6 +866,8 @@ export async function directoryMigrationPasskeyOptionsHandler(c: Context<{ Bindi
       action: 'migration_passkey_options',
       errorType: error instanceof Error ? error.name : 'Unknown',
     });
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -881,10 +964,12 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
     }
 
     const credentialIDBase64URL = toBase64URLString(credentialID as CredentialIDLike);
+    const passkeyId = crypto.randomUUID();
     await authCtx.repositories.passkey.create({
-      id: crypto.randomUUID(),
+      id: passkeyId,
       user_id: transaction.user_id,
       credential_id: credentialIDBase64URL,
+      rp_id: challengeMetadata.rpID,
       public_key: Buffer.from(credentialPublicKey).toString('base64'),
       counter,
       transports: Array.isArray(body.credential.response?.transports)
@@ -892,6 +977,13 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
         : [],
       device_name: deviceName || 'Directory Migration Passkey',
       aaguid: regInfo.aaguid ?? null,
+    });
+    await publishTenantD1PasskeyRoute(c, {
+      tenantId,
+      userId: transaction.user_id,
+      passkeyId,
+      credentialId: credentialIDBase64URL,
+      rpId: challengeMetadata.rpID,
     });
 
     const now = Date.now();
@@ -917,7 +1009,7 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (transaction.authorization_challenge_id) {
       const continuation = await consumeAuthorizationChallengeContinuation(
-        c.env,
+        c,
         tenantId,
         transaction.authorization_challenge_id,
         transaction.user_id,
@@ -950,6 +1042,8 @@ export async function directoryMigrationPasskeyVerifyHandler(c: Context<{ Bindin
       action: 'migration_passkey_verify_final',
       errorType: error instanceof Error ? error.name : 'Unknown',
     });
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -1010,15 +1104,6 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
     }
 
-    const pluginCtx = getRequiredPluginContext(c, 'notification');
-    const emailNotifier = pluginCtx.registry.getNotifier('email');
-    if (!emailNotifier) {
-      log.warn('No email notifier plugin configured for directory migration email fallback', {
-        action: 'migration_email_notifier_check',
-      });
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-    }
-
     const code = generateEmailCode();
     const challengeId = crypto.randomUUID();
     const issuedAt = Date.now();
@@ -1048,39 +1133,47 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
     });
 
     const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
-    const emailResult = await emailNotifier.send({
-      channel: 'email',
-      to: normalizedEmail,
-      from: fromEmail,
-      subject:
-        transaction.scope === 'recovery'
-          ? 'Your Authrim directory recovery code'
-          : 'Your Authrim migration verification code',
-      body: getEmailCodeHtml({
-        name: runtimeUser.name || undefined,
-        email: normalizedEmail,
-        code,
-        expiresInMinutes: MIGRATION_EMAIL_CODE_TTL_SECONDS / 60,
-        appName: 'Authrim',
-        logoUrl: undefined,
-      }),
-      metadata: {
-        textBody: getEmailCodeText({
+    const delivery = await produceNotificationDelivery(c.env, {
+      owner: { owner: 'tenant', tenantId },
+      intentId: `directory-email-code:${challengeId}`,
+      outboxId: `notification:${challengeId}`,
+      notificationKind: 'auth.directory-email-code',
+      accountId: transaction.user_id,
+      idempotencyKey: `directory-email-code:${challengeId}`,
+      expiresAt: Math.floor(issuedAt / 1000) + MIGRATION_EMAIL_CODE_TTL_SECONDS,
+      payload: {
+        channel: 'email',
+        to: normalizedEmail,
+        from: fromEmail,
+        subject:
+          transaction.scope === 'recovery'
+            ? 'Your Authrim directory recovery code'
+            : 'Your Authrim migration verification code',
+        body: getEmailCodeHtml({
           name: runtimeUser.name || undefined,
           email: normalizedEmail,
           code,
           expiresInMinutes: MIGRATION_EMAIL_CODE_TTL_SECONDS / 60,
           appName: 'Authrim',
+          logoUrl: undefined,
         }),
-        headers: {
-          'Authentication-Info': `<${getRequestIssuer(c)}>; otpauth=email`,
+        metadata: {
+          textBody: getEmailCodeText({
+            name: runtimeUser.name || undefined,
+            email: normalizedEmail,
+            code,
+            expiresInMinutes: MIGRATION_EMAIL_CODE_TTL_SECONDS / 60,
+            appName: 'Authrim',
+          }),
+          headers: {
+            'Authentication-Info': `<${getRequestIssuer(c)}>; otpauth=email`,
+          },
         },
       },
     });
-    if (!emailResult.success) {
+    if (delivery.delivery === 'permanent_failure') {
       log.error('Failed to send directory migration email code', {
         action: 'migration_email_send',
-        providerError: emailResult.error ? 'send_failed' : undefined,
       });
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
     }
@@ -1102,6 +1195,8 @@ export async function directoryMigrationEmailCodeSendHandler(c: Context<{ Bindin
       },
       error as Error
     );
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -1214,7 +1309,7 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (transaction.authorization_challenge_id) {
       const continuation = await consumeAuthorizationChallengeContinuation(
-        c.env,
+        c,
         tenantId,
         transaction.authorization_challenge_id,
         transaction.user_id,
@@ -1254,6 +1349,8 @@ export async function directoryMigrationEmailCodeVerifyHandler(c: Context<{ Bind
       },
       error as Error
     );
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
 }
@@ -1550,6 +1647,21 @@ async function createDirectorySessionSuccessResponse(
   }
 ): Promise<Response> {
   const log = getLogger(c).module('DIRECTORY_PASSWORD_LOGIN');
+  try {
+    await ensureDirectoryAccountAuthenticationState(c, input.tenantId, input.user.id);
+  } catch (error) {
+    if (!isAccountAuthenticationDeniedError(error)) {
+      return c.json(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Authentication state unavailable.',
+        },
+        503,
+        { 'Retry-After': '1' }
+      );
+    }
+    return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
+  }
   const sessionTtl = await resolveSessionTtl(c.env, input.tenantId, 'directory_password');
   const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(
     c.env,
@@ -1560,6 +1672,7 @@ async function createDirectorySessionSuccessResponse(
     input.user.id,
     sessionTtl.seconds,
     {
+      ...getSessionClientMetadata(c.req.raw),
       email: input.user.email,
       name: input.user.name,
       amr: directorySessionAmr(input.method),

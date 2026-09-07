@@ -38,6 +38,29 @@ function createMockContext(options: {
   settingsKv?: KVNamespace;
   configKv?: KVNamespace;
 }) {
+  const pluginRunner = {
+    configureNotificationInstallation: vi.fn(async (input) => ({
+      ...input,
+      state: input.enabled ? ('enabled' as const) : ('disabled' as const),
+      configVersion: 1,
+    })),
+    replacePluginCredentials: vi.fn(async (input) => ({
+      operationId: input.operationId,
+      installationId: input.installationId,
+      configVersion: input.expectedConfigVersion + 1,
+      credentialCount: input.credentials.length,
+    })),
+    resolveNotificationProviderOrder: vi.fn(async () => {
+      throw new Error('plugin_notification_provider_order_unavailable');
+    }),
+    replaceNotificationProviderOrder: vi.fn(async (input) => ({
+      tenantId: input.tenantId,
+      channel: input.channel,
+      configVersion: input.expectedConfigVersion + 1,
+      state: input.installationIds.length > 0 ? ('enabled' as const) : ('disabled' as const),
+      installationIds: input.installationIds,
+    })),
+  } satisfies Partial<NonNullable<Env['PLUGIN_RUNNER']>>;
   return {
     req: {
       param: vi.fn(() => 'tenant-a'),
@@ -46,6 +69,8 @@ function createMockContext(options: {
     env: {
       SETTINGS: options.settingsKv,
       AUTHRIM_CONFIG: options.configKv,
+      AUTHRIM_ENVIRONMENT_NAME: 'test',
+      PLUGIN_RUNNER: pluginRunner,
     } as unknown as Env,
     get: vi.fn((key: string) => {
       if (key === 'adminAuth') {
@@ -241,5 +266,60 @@ describe('tenant email settings API', () => {
         configSource: 'kv',
       }),
     ]);
+  });
+
+  it('keeps an absent provider order empty instead of enabling available providers implicitly', async () => {
+    const settingsKv = createMockKV({
+      'plugins:registry': JSON.stringify({
+        'notifier-cloudflare': {
+          id: 'notifier-cloudflare',
+          version: '1.0.0',
+          capabilities: ['notifier.email'],
+        },
+      }),
+      'plugins:schema:notifier-cloudflare': JSON.stringify({
+        type: 'object',
+        required: ['defaultFrom'],
+      }),
+      'plugins:config:notifier-cloudflare': JSON.stringify({
+        defaultFrom: 'cloudflare@example.com',
+      }),
+    });
+    const c = createMockContext({ settingsKv, configKv: createMockKV() });
+
+    const response = (await getTenantEmailSettingsHandler(c)) as Response;
+    const body = (await response.json()) as { settings: { providerOrder: string[] } };
+    expect(body.settings.providerOrder).toEqual([]);
+  });
+
+  it('replaces the saved order with an explicit empty order', async () => {
+    const settingsKv = createMockKV({
+      'plugins:registry': JSON.stringify({
+        'notifier-cloudflare': {
+          id: 'notifier-cloudflare',
+          version: '1.0.0',
+          capabilities: ['notifier.email'],
+        },
+      }),
+    });
+    const configKv = createMockKV({
+      'settings:tenant:tenant-a:email-settings': JSON.stringify({
+        strategy: 'priority_failover',
+        providerOrder: ['notifier-cloudflare'],
+      }),
+    });
+    const c = createMockContext({
+      settingsKv,
+      configKv,
+      body: { strategy: 'priority_failover', providerOrder: [] },
+    });
+
+    const response = (await updateTenantEmailSettingsHandler(c)) as Response;
+    const body = (await response.json()) as { settings: { providerOrder: string[] } };
+    expect(body.settings.providerOrder).toEqual([]);
+    expect(configKv.put).toHaveBeenCalledWith(
+      'settings:tenant:tenant-a:email-settings',
+      JSON.stringify({ strategy: 'priority_failover', providerOrder: [] })
+    );
   });
 });

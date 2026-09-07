@@ -10,9 +10,103 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Env } from '@authrim/ar-lib-core';
 
-const { mockPostgresAdapterFactory, canonicalRuntimeUsers } = vi.hoisted(() => ({
+const {
+  mockPostgresAdapterFactory,
+  canonicalRuntimeUsers,
+  resolveIdentityMappingBinding,
+  loadDestinationProfileDescriptor,
+  executeDurableAccountCreation,
+  resolveAccountCreationTargets,
+  listCrossShardAccounts,
+  dashboardCrossShardAccounts,
+  recentCrossShardLogins,
+  findExactCrossShardAccounts,
+  resolveOtpAccountCoreDataContextByIdentifier,
+  resolveAccountDataContextByIdentifier,
+  resolveAccountDataContext,
+  prepareAccountRemoval,
+  markAccountRemovalsReady,
+  attemptAccountRemovals,
+  eraseAccountPii,
+  produceNotificationDelivery,
+  resolveCustomClaimRuntimeSources,
+} = vi.hoisted(() => ({
   mockPostgresAdapterFactory: vi.fn(),
   canonicalRuntimeUsers: new Map<string, any>(),
+  resolveIdentityMappingBinding: vi.fn(async () => ({
+    destinationProfileId: 'destination_oidc_1',
+    destinationProfileIds: ['destination_oidc_1'],
+  })),
+  loadDestinationProfileDescriptor: vi.fn(async () => ({
+    profileId: 'destination_oidc_1',
+    profileVersionId: 'destination_oidc_version_1',
+    destinationType: 'oidc',
+    fields: [],
+  })),
+  executeDurableAccountCreation: vi.fn(),
+  resolveAccountCreationTargets: vi.fn(),
+  listCrossShardAccounts: vi.fn(),
+  dashboardCrossShardAccounts: vi.fn(),
+  recentCrossShardLogins: vi.fn(),
+  findExactCrossShardAccounts: vi.fn(),
+  resolveOtpAccountCoreDataContextByIdentifier: vi.fn(),
+  resolveAccountDataContextByIdentifier: vi.fn(),
+  resolveAccountDataContext: vi.fn(),
+  prepareAccountRemoval: vi.fn(async (_env, input) => [
+    {
+      operationId: `remove:${input.userId}`,
+      tenantId: input.tenantId,
+      accountId: `account:${input.userId}`,
+    },
+  ]),
+  markAccountRemovalsReady: vi.fn(),
+  attemptAccountRemovals: vi.fn(),
+  eraseAccountPii: vi.fn(),
+  produceNotificationDelivery: vi.fn(),
+  resolveCustomClaimRuntimeSources: vi.fn(),
+}));
+
+vi.mock('../account-directory-producer', () => ({
+  executeDurableInitialAccountDirectoryWrite: executeDurableAccountCreation,
+  resolveInitialAccountDirectoryWriteTargets: resolveAccountCreationTargets,
+}));
+
+vi.mock('../account-directory-removal-producer', () => ({
+  prepareAccountDirectoryRemoval: prepareAccountRemoval,
+  markAccountDirectoryRemovalsReady: markAccountRemovalsReady,
+  attemptImmediateAccountDirectoryRemovals: attemptAccountRemovals,
+  eraseAccountPiiAfterDirectoryRemovalPrepared: eraseAccountPii,
+}));
+
+vi.mock('../tenant-alias-directory', () => ({
+  resolveTenantDiscoveryAliasDirectoryInput: vi.fn(async (_env, input) => ({
+    ...input,
+    routeProjection: {
+      schemaVersion: 1,
+      tenantRouteGeneration: 1,
+      residencyPolicyId: 'default',
+      target: {
+        dataRole: 'tenant_core/default',
+        residencyPartition: 'default',
+        shardId: 'default',
+        bindingRef: 'DB',
+        requiredBindingRouteGeneration: 1,
+      },
+    },
+  })),
+  ensureActiveTenantDiscoveryAliasDirectory: vi.fn().mockResolvedValue(undefined),
+  disableTenantDiscoveryAliasDirectory: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('../cross-shard-account-list', () => ({
+  CrossShardAccountListService: class {
+    list = listCrossShardAccounts;
+    dashboardStats = dashboardCrossShardAccounts;
+    recentLogins = recentCrossShardLogins;
+  },
+  CrossShardAccountExactSearchService: class {
+    find = findExactCrossShardAccounts;
+  },
 }));
 
 // Mock specific submodules to avoid ESM barrel export resolution issues
@@ -53,8 +147,39 @@ vi.mock('@authrim/ar-lib-core/utils/crypto', async (importOriginal) => {
 });
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  const ensureMockAccountDataContext = (c: {
+    get(key: string): unknown;
+    set(key: string, value: unknown): void;
+    env: Env;
+  }) => {
+    if (c.get('accountDataContext')) return;
+    c.set('accountDataContext', {
+      tenantId: c.get('tenantId') ?? 'default',
+      accountId: 'account:test-user',
+      legacyUserId: 'test-user',
+      coreDb: c.env.DB,
+      piiDb: c.env.DB_PII ?? c.env.DB,
+      membership: {},
+      userCacheScope: { kind: 'tenant', tenantId: c.get('tenantId') ?? 'default' },
+      piiCacheMode: 'encrypted_short_ttl',
+    });
+  };
   return {
     ...actual,
+    createAccountAuthContextFromHono: vi.fn((c, tenantId) => {
+      ensureMockAccountDataContext(c);
+      return actual.createAccountAuthContextFromHono(c, tenantId);
+    }),
+    createPIIContextFromHono: vi.fn((c, tenantId) => {
+      ensureMockAccountDataContext(c);
+      return actual.createPIIContextFromHono(c, tenantId);
+    }),
+    transitionAccountAuthenticationState: vi.fn(async (_env, input) => ({
+      lifecycle: input.lifecycle,
+    })),
+    produceNotificationDelivery,
+    resolveRuntimeIdentityMappingBinding: resolveIdentityMappingBinding,
+    loadDestinationProfileConsentDescriptor: loadDestinationProfileDescriptor,
     resolveAaguidAuthenticator: vi.fn((aaguid: string | null | undefined) =>
       aaguid
         ? {
@@ -66,17 +191,25 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
           }
         : null
     ),
-    resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async (env: Partial<Env>) => ({
-      storageProfile: {
-        id: 'builtin:storage:standard',
-        kind: 'storage',
-        label: 'Standard D1 Split',
-        slices: {},
-      },
-      schemaDb: env.DB,
-      nonPiiDb: env.DB,
-      piiDb: env.DB_PII ?? null,
-    })),
+    resolveCustomClaimRuntimeSourcesFromEnv: resolveCustomClaimRuntimeSources,
+    resolveCustomClaimRuntimeSourcesFromHono: vi.fn(
+      async (c: { get(key: string): unknown; env: Partial<Env> }) => {
+        const account = c.get('accountDataContext') as
+          | { coreDb?: unknown; piiDb?: unknown }
+          | undefined;
+        return {
+          storageProfile: {
+            id: 'builtin:storage:tenant-d1',
+            kind: 'storage',
+            label: 'Tenant D1',
+            slices: {},
+          },
+          schemaDb: c.env.DB,
+          nonPiiDb: account?.coreDb ?? c.env.DB,
+          piiDb: account?.piiDb ?? c.env.DB_PII ?? null,
+        };
+      }
+    ),
     resolveTenantRuntimeProfilesFromEnv: vi.fn(async (env: Partial<Env>) => {
       const auditProfileId = (env as Record<string, unknown>).DEFAULT_AUDIT_PROFILE_ID;
       if (auditProfileId === 'builtin:audit:archive-only-logpush') {
@@ -117,6 +250,10 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         },
       };
     }),
+    resolveAccountDataContextByIdentifierFromHono: resolveAccountDataContextByIdentifier,
+    resolveOtpAccountCoreDataContextByIdentifierFromHono:
+      resolveOtpAccountCoreDataContextByIdentifier,
+    resolveAccountDataContextFromHono: resolveAccountDataContext,
     PostgresAdapter: vi.fn().mockImplementation(function MockPostgresAdapter(config: unknown) {
       const adapter = mockPostgresAdapterFactory(config);
       if (!adapter) {
@@ -186,6 +323,13 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         }
         const pii = piiRows.find((row) => row.id === userId) ?? {};
         return toCanonicalProjection(userId, { ...core, ...pii }, this.tenantId);
+      }
+
+      async findByAccountId(accountId: string) {
+        const userId = accountId.startsWith('account:')
+          ? accountId.slice('account:'.length)
+          : accountId.replace(/^account-/, 'user-account-');
+        return this.findByLegacyUserId(userId);
       }
     },
     CanonicalRuntimeUserWriter: class {
@@ -267,6 +411,16 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         return null;
       }
 
+      async findForOtpLogin(userId: string, trustedEmail: string) {
+        const runtimeUser = canonicalRuntimeUsers.get(userId);
+        if (!runtimeUser) return null;
+        const projection = toCanonicalProjection(userId, runtimeUser, this.tenantId);
+        return {
+          ...projection,
+          email: trustedEmail.trim().toLowerCase(),
+        };
+      }
+
       async deleteUser(userId: string) {
         canonicalRuntimeUsers.set(userId, {
           ...(canonicalRuntimeUsers.get(userId) ?? { id: userId }),
@@ -309,6 +463,17 @@ function toCanonicalProjection(userId: string, row: any, tenantId: string) {
     account_id: row.id?.startsWith?.('account:') ? row.id : `account:${userId}`,
     account_type: row.account_type ?? 'user',
     lifecycle_state: lifecycleState,
+    account_status:
+      row.status ??
+      (lifecycleState === 'suspended' || lifecycleState === 'locked' || lifecycleState === 'deleted'
+        ? lifecycleState
+        : lifecycleState === 'active'
+          ? 'active'
+          : 'inactive'),
+    suspended_at: row.suspended_at ?? null,
+    suspended_until: row.suspended_until ?? null,
+    locked_at: row.locked_at ?? null,
+    locked_until: row.locked_until ?? null,
     email: row.email ?? null,
     email_verified: row.email_verified ?? 0,
     name: row.name ?? null,
@@ -344,8 +509,10 @@ import {
   adminUsersListHandler,
   adminUserGetHandler,
   adminUserCreateHandler,
+  adminUserCreationOperationHandler,
   adminUserUpdateHandler,
   adminUserDeleteHandler,
+  adminUserDeletePiiHandler,
   adminUserAnonymizeHandler,
   adminUserSendEmailHandler,
   adminAuditLogListHandler,
@@ -358,6 +525,7 @@ import {
   adminClientDeleteHandler,
   adminClientRegenerateSecretHandler,
   adminSessionGetHandler,
+  adminTestEmailCodeHandler,
 } from '../admin';
 
 // Helper to create mock D1Database
@@ -365,7 +533,7 @@ function createMockDB(options: {
   prepareResults?: Record<string, any>;
   allResults?: any[];
   firstResult?: any;
-  runResult?: { success: boolean };
+  runResult?: { success: boolean; meta?: { changes: number } };
 }) {
   let currentSql = '';
   const mockStatement = {
@@ -400,7 +568,11 @@ function createMockDB(options: {
       currentSql = sql;
       return mockStatement;
     }),
-    batch: vi.fn().mockResolvedValue([]),
+    batch: vi
+      .fn()
+      .mockImplementation(async (statements: unknown[]) =>
+        statements.map(() => options.runResult ?? { success: true, meta: { changes: 1 } })
+      ),
     exec: vi.fn().mockResolvedValue(undefined),
     dump: vi.fn().mockResolvedValue(new ArrayBuffer(0)),
     _mockStatement: mockStatement,
@@ -433,9 +605,13 @@ function createOAuthClientRow(
     jwks: null,
     subject_type: null,
     sector_identifier_uri: null,
+    token_endpoint_auth_signing_alg: null,
     id_token_signed_response_alg: null,
     userinfo_signed_response_alg: null,
     request_object_signing_alg: null,
+    authorization_signed_response_alg: null,
+    authorization_encrypted_response_alg: null,
+    authorization_encrypted_response_enc: null,
     is_trusted: null,
     skip_consent: null,
     allow_claims_without_scope: null,
@@ -529,7 +705,11 @@ function createMockKVNamespace(initialData: Record<string, string> = {}) {
     delete: vi.fn(async (key: string) => {
       store.delete(key);
     }),
-    list: vi.fn().mockResolvedValue({ keys: [] }),
+    list: vi.fn(async ({ prefix = '' }: { prefix?: string } = {}) => ({
+      keys: [...store.keys()].filter((key) => key.startsWith(prefix)).map((name) => ({ name })),
+      list_complete: true,
+      cacheStatus: null,
+    })),
   };
 }
 
@@ -545,6 +725,8 @@ function createMockContext(options: {
   jsonError?: Error;
   envOverrides?: Partial<Env>;
   tenantId?: string;
+  runtimeUserStoreSources?: unknown;
+  tenantMetadataContext?: unknown;
 }) {
   const mockDB =
     options.db ??
@@ -561,9 +743,26 @@ function createMockContext(options: {
       allResults: [],
     });
 
+  const runtimeStorageProfileId = (
+    options.runtimeUserStoreSources as { storageProfile?: { id?: string } } | undefined
+  )?.storageProfile?.id;
+  const defaultTenantMetadata = options.tenantMetadataContext ?? {
+    tenantId: options.tenantId ?? 'default',
+    coreDb: mockDB,
+    ...(runtimeStorageProfileId === 'builtin:storage:tenant-d1'
+      ? {
+          route: {
+            allocationScope: 'tenant_exclusive',
+            source: mockDB,
+          },
+        }
+      : {}),
+  };
+
   // Store context values (simulating Hono's context store)
   const contextStore = new Map<string, unknown>([
     ['tenantId', options.tenantId ?? 'default'],
+    ['tenantMetadataContext', defaultTenantMetadata],
     [
       'adminAuth',
       {
@@ -575,6 +774,12 @@ function createMockContext(options: {
       },
     ],
   ]);
+  if (options.runtimeUserStoreSources) {
+    contextStore.set('runtimeUserStoreSources', options.runtimeUserStoreSources);
+  }
+  if (options.tenantMetadataContext) {
+    contextStore.set('tenantMetadataContext', options.tenantMetadataContext);
+  }
   const normalizedHeaders = new Map(
     Object.entries(options.headers ?? {}).map(([key, value]) => [key.toLowerCase(), value])
   );
@@ -593,12 +798,24 @@ function createMockContext(options: {
     },
     env: {
       DB: mockDB,
+      DB_ADMIN: mockDB,
       DB_PII: mockDBPII, // Added for PII/Non-PII DB separation
       ISSUER_URL: 'https://op.example.com',
       CLIENTS_CACHE: createMockKVNamespace(),
       SETTINGS: createMockKVNamespace(),
+      SESSION_REVOCATION_STORE: {
+        idFromName: vi.fn((name: string) => name),
+        get: vi.fn(() => ({
+          setAccountLifecycleRpc: vi.fn(async (_tenant, _user, _account, lifecycle) => ({
+            lifecycle,
+          })),
+        })),
+      },
     } as unknown as Env,
-    json: vi.fn((body, status = 200) => new Response(JSON.stringify(body), { status })),
+    json: vi.fn(
+      (body, status = 200, headers?: Record<string, string>) =>
+        new Response(JSON.stringify(body), { status, headers })
+    ),
     header: vi.fn((name: string, value: string) => {
       responseHeaders.set(name, value);
     }),
@@ -691,10 +908,288 @@ describe('Admin API Handlers', () => {
     vi.clearAllMocks();
     mockPostgresAdapterFactory.mockReset();
     canonicalRuntimeUsers.clear();
+    listCrossShardAccounts.mockReset();
+    dashboardCrossShardAccounts.mockReset();
+    recentCrossShardLogins.mockReset();
+    findExactCrossShardAccounts.mockReset();
+    resolveOtpAccountCoreDataContextByIdentifier.mockReset();
+    resolveAccountDataContextByIdentifier.mockReset();
+    resolveAccountDataContext.mockReset();
+    resolveCustomClaimRuntimeSources.mockImplementation(async (env: Partial<Env>) => ({
+      storageProfile: {
+        id: env.DEFAULT_AUDIT_PROFILE_ID ?? 'builtin:audit:standard',
+        kind: 'storage',
+        label: 'Standard D1 Split',
+        slices: {},
+      },
+      schemaDb: env.DB,
+      nonPiiDb: env.DB,
+      piiDb: env.DB_PII ?? null,
+    }));
+    produceNotificationDelivery.mockReset().mockResolvedValue({
+      reference: {
+        tenantId: 'default',
+        intentId: 'admin-user-email:delivery-a',
+        outboxId: 'notification:delivery-a',
+        pluginInstallationId: 'provider-a',
+        notificationKind: 'admin.user-email.welcome',
+        channel: 'email',
+        expiresAt: 2_000_000_000,
+        state: 'pending',
+      },
+      bindingRef: 'TDB_DEFAULT_CORE',
+      delivery: 'pending',
+    });
+    executeDurableAccountCreation.mockImplementation(async (_env, input) => {
+      const accountId = `account:${input.candidateUserId}`;
+      const operationId = input.candidateOperationId;
+      return {
+        operation: {
+          operationId,
+          tenantId: input.tenantId,
+          actorId: input.actorId,
+          idempotencyKey: input.idempotencyKey,
+          allocationIdempotencyKey: 'account-create:key',
+          requestHash: input.requestHash,
+          userId: input.candidateUserId,
+          accountId,
+          status: 'succeeded',
+          publication: null,
+        },
+        publication: {
+          operationId,
+          tenantId: input.tenantId,
+          accountId,
+          idempotencyKey: 'account-create:key',
+          routeProjection: {
+            schemaVersion: 1,
+            accountRouteGeneration: 1,
+            residencyPolicyId: input.residencyPolicyId,
+            targets: [],
+          },
+          indexes: [],
+        },
+        delivery: { status: 201, operationId, accountId },
+      };
+    });
+    resolveAccountCreationTargets.mockImplementation(async (env) => ({
+      tenantCoreUsers: env.DB,
+      tenantPii: env.DB_PII,
+      residencyPartition: 'default',
+    }));
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  describe('adminTestEmailCodeHandler tenant D1 routing', () => {
+    const tenantMetadataContext = {
+      tenantId: 'default',
+      storageProfileId: 'builtin:storage:tenant-d1',
+    };
+
+    it('uses the route-bound Core projection without reading tenant-D1 PII data', async () => {
+      const storeChallengeRpc = vi.fn().mockResolvedValue(undefined);
+      const c = createMockContext({
+        method: 'POST',
+        body: { email: 'USER@example.com', create_user: false },
+        tenantMetadataContext,
+        envOverrides: {
+          OTP_HMAC_SECRET: 'test-only-otp-hmac-secret',
+          CHALLENGE_STORE: {
+            idFromName: vi.fn(() => ({ toString: () => 'challenge-shard' })),
+            get: vi.fn(() => ({ storeChallengeRpc })),
+          } as unknown as Env['CHALLENGE_STORE'],
+        },
+      });
+      resolveOtpAccountCoreDataContextByIdentifier.mockImplementationOnce(async (context) => {
+        return {
+          tenantId: 'default',
+          accountId: 'account-1',
+          legacyUserId: 'user-1',
+          coreDb: context.env.DB,
+          user: {
+            id: 'user-1',
+            email: 'user@example.com',
+            name: 'User One',
+            active: 1,
+            email_verified: 0,
+            account_type: 'end_user',
+            created_at: '2023-11-14T22:13:20.000Z',
+          },
+        };
+      });
+
+      const response = await adminTestEmailCodeHandler(c);
+
+      expect(response.status).toBe(201);
+      await expect(response.clone().json()).resolves.toMatchObject({
+        runtime_profile: {
+          storage_profile_id: 'builtin:storage:tenant-d1',
+          session_cold_persistence: 'disabled',
+        },
+      });
+      expect(resolveOtpAccountCoreDataContextByIdentifier).toHaveBeenCalledWith(c, {
+        indexKind: 'email_exact',
+        identifier: 'user@example.com',
+        trustedEmail: 'USER@example.com',
+      });
+      expect(resolveAccountDataContextByIdentifier).not.toHaveBeenCalled();
+      expect(c.get('accountDataContext')).toBeUndefined();
+      expect(storeChallengeRpc).toHaveBeenCalledOnce();
+    });
+
+    it('uses Lookup routing for shared-pool storage', async () => {
+      const storeChallengeRpc = vi.fn().mockResolvedValue(undefined);
+      const c = createMockContext({
+        method: 'POST',
+        body: { email: 'shared@example.com', create_user: false },
+        tenantMetadataContext: {
+          tenantId: 'default',
+          route: { allocationScope: 'shared_pool' },
+        },
+        envOverrides: {
+          OTP_HMAC_SECRET: 'test-only-otp-hmac-secret',
+          CHALLENGE_STORE: {
+            idFromName: vi.fn(() => ({ toString: () => 'challenge-shard' })),
+            get: vi.fn(() => ({ storeChallengeRpc })),
+          } as unknown as Env['CHALLENGE_STORE'],
+        },
+      });
+      resolveOtpAccountCoreDataContextByIdentifier.mockImplementationOnce(async (context) => ({
+        tenantId: 'default',
+        accountId: 'account-shared',
+        legacyUserId: 'user-shared',
+        coreDb: context.env.DB,
+        user: {
+          id: 'user-shared',
+          email: 'shared@example.com',
+          name: 'Shared User',
+          active: 1,
+          email_verified: 0,
+          account_type: 'end_user',
+          created_at: '2023-11-14T22:13:20.000Z',
+        },
+      }));
+
+      const response = await adminTestEmailCodeHandler(c);
+
+      expect(response.status).toBe(201);
+      expect(resolveOtpAccountCoreDataContextByIdentifier).toHaveBeenCalledWith(c, {
+        indexKind: 'email_exact',
+        identifier: 'shared@example.com',
+        trustedEmail: 'shared@example.com',
+      });
+      expect(storeChallengeRpc).toHaveBeenCalledOnce();
+    });
+
+    it('uses the identifier route as the authoritative email binding without rereading PII', async () => {
+      resolveOtpAccountCoreDataContextByIdentifier.mockImplementationOnce(async (context) => {
+        return {
+          tenantId: 'default',
+          accountId: 'account-1',
+          legacyUserId: 'user-1',
+          coreDb: context.env.DB,
+          user: {
+            id: 'user-1',
+            email: 'old-address@example.com',
+            name: 'User One',
+            active: 1,
+            email_verified: 0,
+            account_type: 'end_user',
+            created_at: '2023-11-14T22:13:20.000Z',
+          },
+        };
+      });
+      const c = createMockContext({
+        method: 'POST',
+        body: { email: 'old-address@example.com', create_user: false },
+        tenantMetadataContext,
+        envOverrides: {
+          OTP_HMAC_SECRET: 'test-only-otp-hmac-secret',
+          CHALLENGE_STORE: {
+            idFromName: vi.fn(() => ({ toString: () => 'challenge-shard' })),
+            get: vi.fn(() => ({ storeChallengeRpc: vi.fn().mockResolvedValue(undefined) })),
+          } as unknown as Env['CHALLENGE_STORE'],
+        },
+      });
+
+      const response = await adminTestEmailCodeHandler(c);
+
+      expect(response.status).toBe(201);
+      await expect(response.json()).resolves.toMatchObject({ success: true, userId: 'user-1' });
+    });
+
+    it('returns the existing not-found contract when a pre-seeded route is absent', async () => {
+      resolveOtpAccountCoreDataContextByIdentifier.mockRejectedValueOnce(
+        new Error('account_data_route_not_found')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        body: { email: 'missing@example.com', create_user: false },
+        tenantMetadataContext,
+      });
+
+      const response = await adminTestEmailCodeHandler(c);
+
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'invalid_request',
+      });
+    });
+
+    it('does not create an unallocated tenant-D1 user through the test endpoint', async () => {
+      resolveOtpAccountCoreDataContextByIdentifier.mockRejectedValueOnce(
+        new Error('account_data_route_not_found')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        body: { email: 'missing@example.com', create_user: true },
+        tenantMetadataContext,
+      });
+
+      const response = await adminTestEmailCodeHandler(c);
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toMatchObject({ error: 'conflict' });
+    });
+
+    it('fails closed when identifier routing rejects the tenant boundary', async () => {
+      resolveOtpAccountCoreDataContextByIdentifier.mockRejectedValueOnce(
+        new Error('account_data_context_conflict')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        body: { email: 'user@example.com', create_user: false },
+        tenantMetadataContext,
+      });
+
+      const response = await adminTestEmailCodeHandler(c);
+
+      expect(response.status).toBe(500);
+      expect(c.get('accountDataContext')).toBeUndefined();
+    });
+
+    it('returns retryable 503 when tenant-D1 routing is overloaded', async () => {
+      resolveOtpAccountCoreDataContextByIdentifier.mockRejectedValueOnce(
+        new Error('D1 DB is overloaded')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        body: { email: 'user@example.com', create_user: false },
+        tenantMetadataContext,
+      });
+
+      const response = await adminTestEmailCodeHandler(c);
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get('Retry-After')).toBe('1');
+      await expect(response.json()).resolves.toMatchObject({
+        error: 'temporarily_unavailable',
+        extensions: { reason: 'data_store_overloaded', retryable: true },
+      });
+    });
   });
 
   describe('tenant isolation for UID-scoped endpoints', () => {
@@ -811,16 +1306,77 @@ describe('Admin API Handlers', () => {
     });
 
     it('should include active users count from last 30 days', async () => {
-      const mockDB = createMockDB({
-        firstResult: { count: 25 },
-        allResults: [],
+      const mockDB = createSqlAwareMockDB((sql, _params, op) => {
+        if (op === 'first' && sql.includes('AS total_users')) {
+          return {
+            total_users: 80,
+            new_users_today: 3,
+            active_users: 25,
+            logins_today: 7,
+          };
+        }
+        if (op === 'first' && sql.includes('FROM oauth_clients')) {
+          return { count: 4 };
+        }
+        return op === 'all' ? [] : null;
       });
 
       const c = createMockContext({ db: mockDB });
 
       await adminStatsHandler(c);
 
-      expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('identity_accounts'));
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stats: expect.objectContaining({
+            activeUsers: 25,
+            totalUsers: 80,
+            registeredClients: 4,
+            newUsersToday: 3,
+            loginsToday: 7,
+          }),
+        })
+      );
+      expect(mockDB.prepare).toHaveBeenCalledWith(expect.stringContaining('$.last_login_at'));
+    });
+
+    it('aggregates tenant-exclusive user shards for dashboard statistics', async () => {
+      dashboardCrossShardAccounts.mockResolvedValue({
+        activeUsers: 12,
+        totalUsers: 1795,
+        newUsersToday: 1,
+        loginsToday: 14,
+      });
+      listCrossShardAccounts.mockResolvedValue({ items: [], nextCursor: null });
+      recentCrossShardLogins.mockResolvedValue([]);
+      const mockDB = createSqlAwareMockDB((sql, _params, op) => {
+        if (op === 'first' && sql.includes('FROM oauth_clients')) return { count: 4 };
+        return op === 'all' ? [] : null;
+      });
+      const c = createMockContext({
+        db: mockDB,
+        tenantMetadataContext: {
+          tenantId: 'default',
+          coreDb: mockDB,
+          route: { allocationScope: 'tenant_exclusive', source: mockDB },
+        },
+      });
+
+      await adminStatsHandler(c);
+
+      expect(dashboardCrossShardAccounts).toHaveBeenCalledWith(
+        expect.objectContaining({ tenantId: 'default' })
+      );
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stats: expect.objectContaining({
+            activeUsers: 12,
+            totalUsers: 1795,
+            registeredClients: 4,
+            newUsersToday: 1,
+            loginsToday: 14,
+          }),
+        })
+      );
     });
 
     it('should include recent activity in response', async () => {
@@ -864,31 +1420,72 @@ describe('Admin API Handlers', () => {
 
       const c = createMockContext({ db: mockDB });
 
-      await adminStatsHandler(c);
+      const response = await adminStatsHandler(c);
 
-      // D1Adapter returns null on failure after retries (graceful degradation)
-      // Handler converts null to zeros instead of throwing error
-      expect(c.json).toHaveBeenCalledWith(
+      expect(response.status).toBe(500);
+      await expect(response.json()).resolves.toEqual(
         expect.objectContaining({
-          stats: expect.objectContaining({
-            activeUsers: 0,
-            totalUsers: 0,
-            registeredClients: 0,
-            newUsersToday: 0,
-            loginsToday: 0,
-            piiHealth: expect.objectContaining({
-              repairNeeded: 0,
-              partialPIIUsers: 0,
-            }),
-          }),
-          recentActivity: [],
+          error: 'server_error',
+          error_code: 'AR900001',
+          error_description: 'An unexpected error occurred.',
         })
       );
     });
   });
 
   describe('archive-only audit hot query guard', () => {
-    it('returns archive-backed audit log entries when archive-only profile is active', async () => {
+    it('resolves the account data shard before filtering audit logs by user', async () => {
+      const userId = '_WdnkLInMNDz8yJNZUlzA';
+      const coreDb = createSqlAwareMockDB((sql, params, op) => {
+        if (sql.includes('FROM sqlite_master')) return { name: 'event_log' };
+        if (op === 'first' && sql.includes('COUNT(*) as total')) return { total: 1 };
+        if (op === 'all' && sql.includes('FROM event_log')) {
+          expect(params).toContain('anon-user-1');
+          return [
+            {
+              id: 'event-1',
+              anonymized_user_id: 'anon-user-1',
+              event_type: 'user.login',
+              event_category: 'auth',
+              result: 'success',
+              severity: 'info',
+              error_code: null,
+              error_message: null,
+              client_id: null,
+              session_id: null,
+              request_id: null,
+              details_json: '{}',
+              created_at: 1_710_000_000_000,
+            },
+          ];
+        }
+        return null;
+      });
+      const piiDb = createSqlAwareMockDB((sql, _params, op) => {
+        if (op === 'first' && sql.includes('SELECT anonymized_user_id')) {
+          return { anonymized_user_id: 'anon-user-1' };
+        }
+        if (op === 'all' && sql.includes('FROM user_anonymization_map')) {
+          return [{ anonymized_user_id: 'anon-user-1', user_id: userId }];
+        }
+        return null;
+      });
+      const c = createMockContext({
+        query: { page: '1', limit: '10', user_id: userId },
+        db: coreDb,
+        dbPII: piiDb,
+      });
+
+      const response = await adminAuditLogListHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(resolveAccountDataContext).toHaveBeenCalledWith(c, userId);
+      await expect(response.json()).resolves.toMatchObject({
+        entries: [expect.objectContaining({ id: 'event-1', userId })],
+      });
+    });
+
+    it('rejects the legacy DIAGNOSTIC_LOGS archive list configuration', async () => {
       const archiveBucket = createMockR2Bucket([
         {
           key: 'audit/event/default/2026-04-30/evt-1.json',
@@ -917,24 +1514,10 @@ describe('Admin API Handlers', () => {
       });
 
       const response = await adminAuditLogListHandler(c);
-      expect(response.status).toBe(200);
-      const body = (await response.json()) as {
-        entries: Array<Record<string, unknown>>;
-        pagination: { total: number };
-      };
-      expect(body.pagination.total).toBe(1);
-      expect(body.entries).toEqual([
-        expect.objectContaining({
-          id: 'evt-1',
-          action: 'user.login',
-          resourceType: 'user',
-          resourceId: 'user-1',
-          ipAddress: '127.0.0.1',
-        }),
-      ]);
+      expect(response.status).toBe(501);
     });
 
-    it('returns archive-backed audit log details when archive-only profile is active', async () => {
+    it('rejects the legacy DIAGNOSTIC_LOGS archive detail configuration', async () => {
       const archiveBucket = createMockR2Bucket([
         {
           key: 'audit/event/default/2026-04-30/evt-1.json',
@@ -964,18 +1547,7 @@ describe('Admin API Handlers', () => {
       });
 
       const response = await adminAuditLogGetHandler(c);
-      expect(response.status).toBe(200);
-      const body = (await response.json()) as Record<string, unknown>;
-      expect(body).toEqual(
-        expect.objectContaining({
-          id: 'evt-1',
-          action: 'user.login',
-          resourceType: 'user',
-          resourceId: 'user-1',
-          requestId: 'req-1',
-          userAgent: 'Vitest',
-        })
-      );
+      expect(response.status).toBe(501);
     });
 
     it('returns an empty audit log list when the hot audit table is not initialized', async () => {
@@ -1068,6 +1640,7 @@ describe('Admin API Handlers', () => {
 
       const response = await adminUserActivityLogHandler(c);
       expect(response.status).toBe(200);
+      expect(resolveAccountDataContext).toHaveBeenCalledWith(c, 'user-1');
       const body = (await response.json()) as {
         data: Array<{
           action: string;
@@ -1087,6 +1660,206 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUsersListHandler', () => {
+    it('uses cursor-based routed projection for tenant-D1 storage without exposing bindings', async () => {
+      const userId = 'user-route';
+      const createdAt = Date.UTC(2026, 6, 10, 10, 35, 4);
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'routed@example.com',
+        name: 'Routed User',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date(createdAt).toISOString(),
+        updated_at: new Date(createdAt).toISOString(),
+      });
+      listCrossShardAccounts.mockResolvedValue({
+        items: [
+          {
+            id: `account:${userId}`,
+            legacyUserId: userId,
+            tenantId: 'default',
+            accountType: 'user',
+            lifecycleState: 'active',
+            displayLabel: 'Routed User',
+            createdAt,
+            coreBindingRef: 'DB',
+            piiBindingRef: 'DB_PII',
+          },
+        ],
+        nextCursor: 'opaque-next-cursor',
+      });
+      const core = createMockDB({ allResults: [] });
+      const pii = createMockDB({ allResults: [] });
+      const c = createMockContext({
+        db: core,
+        dbPII: pii,
+        runtimeUserStoreSources: {
+          storageProfile: {
+            id: 'builtin:storage:tenant-d1',
+            kind: 'storage',
+            label: 'Tenant D1',
+            slices: {},
+          },
+          coreDb: core,
+          piiDb: pii,
+          policyDb: core,
+          userCacheScope: {
+            storageProfileId: 'builtin:storage:tenant-d1',
+            sourceGeneration: 'test',
+            schemaVersion: 'test',
+          },
+          piiCacheMode: 'no_cross_request_pii',
+        },
+      });
+
+      const response = await adminUsersListHandler(c);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as Record<string, unknown>;
+      expect(body).toMatchObject({
+        users: [expect.objectContaining({ id: userId, email: 'routed@example.com' })],
+        pagination: {
+          mode: 'cursor',
+          limit: 20,
+          nextCursor: 'opaque-next-cursor',
+          hasNext: true,
+        },
+      });
+      expect(JSON.stringify(body)).not.toContain('DB_PII');
+      expect(JSON.stringify(body)).not.toContain('coreBindingRef');
+    });
+
+    it('uses exact routed search for shared-pool metadata without runtime sources', async () => {
+      const userId = 'user-metadata-route';
+      const createdAt = Date.UTC(2026, 6, 10, 10, 40, 0);
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'metadata-route@example.com',
+        name: 'Metadata Routed User',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date(createdAt).toISOString(),
+        updated_at: new Date(createdAt).toISOString(),
+      });
+      findExactCrossShardAccounts.mockResolvedValue([
+        {
+          id: `account:${userId}`,
+          legacyUserId: userId,
+          tenantId: 'default',
+          accountType: 'user',
+          lifecycleState: 'active',
+          displayLabel: 'Metadata Routed User',
+          createdAt,
+          coreBindingRef: 'DB',
+          piiBindingRef: 'DB_PII',
+        },
+      ]);
+      const core = createMockDB({ allResults: [] });
+      const pii = createMockDB({ allResults: [] });
+      const response = await adminUsersListHandler(
+        createMockContext({
+          query: { search: 'metadata-route@example.com' },
+          db: core,
+          dbPII: pii,
+          tenantMetadataContext: {
+            tenantId: 'default',
+            coreDb: core,
+            route: {
+              allocationScope: 'shared_pool',
+              source: core,
+            },
+          },
+        })
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        users: [expect.objectContaining({ id: userId, email: 'metadata-route@example.com' })],
+        pagination: { mode: 'exact', hasNext: false },
+      });
+      expect(findExactCrossShardAccounts).toHaveBeenCalledWith({
+        tenantId: 'default',
+        identifier: 'metadata-route@example.com',
+      });
+      expect(listCrossShardAccounts).not.toHaveBeenCalled();
+    });
+
+    it('returns retryable 503 while a scale-out route is waiting for registry publication', async () => {
+      findExactCrossShardAccounts.mockRejectedValue(
+        new Error('lookup_route_binding_generation_stale')
+      );
+      const core = createMockDB({ allResults: [] });
+      const c = createMockContext({
+        query: { search: 'scaleout@example.com' },
+        db: core,
+        dbPII: core,
+        tenantMetadataContext: {
+          tenantId: 'default',
+          coreDb: core,
+          route: {
+            allocationScope: 'shared_pool',
+            source: core,
+          },
+        },
+      });
+      const response = await adminUsersListHandler(c);
+
+      expect(response.status).toBe(503);
+      expect(response.headers.get('Retry-After') ?? c._responseHeaders.get('Retry-After')).toBe(
+        '5'
+      );
+      await expect(response.json()).resolves.toEqual({
+        error: 'temporarily_unavailable',
+        error_description: 'The tenant runtime route is refreshing; retry shortly',
+      });
+    });
+
+    it('returns 400 for malformed pagination instead of reaching a database', async () => {
+      const response = await adminUsersListHandler(
+        createMockContext({ query: { page: '1', limit: 'not-a-number' } })
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({ error: 'invalid_pagination' });
+    });
+
+    it('maps a signed cursor tenant mismatch to a client-safe 400 response', async () => {
+      listCrossShardAccounts.mockRejectedValue(new Error('cross_shard_cursor_tenant_mismatch'));
+      const core = createMockDB({ allResults: [] });
+      const response = await adminUsersListHandler(
+        createMockContext({
+          query: { cursor: 'signed-cursor' },
+          db: core,
+          dbPII: core,
+          runtimeUserStoreSources: {
+            storageProfile: {
+              id: 'builtin:storage:tenant-d1',
+              kind: 'storage',
+              label: 'Tenant D1',
+              slices: {},
+            },
+            coreDb: core,
+            piiDb: core,
+            policyDb: core,
+            userCacheScope: {
+              storageProfileId: 'builtin:storage:tenant-d1',
+              sourceGeneration: 'test',
+              schemaVersion: 'test',
+            },
+            piiCacheMode: 'no_cross_request_pii',
+          },
+        })
+      );
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({ error: 'invalid_cursor' });
+    });
+
     it('should return paginated users list', async () => {
       const mockDB = createMockDB({
         firstResult: { count: 50 },
@@ -1216,12 +1989,27 @@ describe('Admin API Handlers', () => {
       // 2. Core DB is queried for user_core data with those IDs
       // 3. PII DB is queried again for full PII data
 
-      // Core DB returns user core data (no PII)
+      canonicalRuntimeUsers.set('user-1', {
+        id: 'user-1',
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'john@example.com',
+        name: 'John Doe',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        last_login_at: null,
+      });
+
+      // Core DB returns the canonical account key used by the projection repository.
       const mockDB = createMockDB({
         firstResult: { count: 1 },
         allResults: [
           {
-            id: 'user-1',
+            legacy_user_id: 'user-1',
+            user_id: 'user-1',
             tenant_id: 'default',
             email_verified: 1,
             phone_number_verified: 0,
@@ -1387,6 +2175,91 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUserGetHandler', () => {
+    it('resolves tenant-D1 account context before reading user details', async () => {
+      const userId = 'routed-user';
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        email: 'routed@example.com',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      const routedCore = createMockDB({ allResults: [] });
+      const routedPii = createMockDB({ allResults: [] });
+      const c = createMockContext({
+        params: { id: userId },
+        tenantMetadataContext: {
+          tenantId: 'default',
+          storageProfileId: 'builtin:storage:tenant-d1',
+        },
+      });
+      resolveAccountDataContext.mockImplementationOnce(async (context, accountId) => {
+        const accountDataContext = {
+          tenantId: 'default',
+          accountId: `account:${accountId}`,
+          legacyUserId: accountId,
+          coreDb: routedCore,
+          piiDb: routedPii,
+        };
+        context.set('accountDataContext', accountDataContext);
+        return accountDataContext;
+      });
+
+      const response = await adminUserGetHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(resolveAccountDataContext).toHaveBeenCalledWith(c, userId);
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ user: expect.objectContaining({ id: userId }) })
+      );
+    });
+
+    it('returns the canonical suspended status and restriction timestamps', async () => {
+      const userId = 'suspended-user';
+      const suspendedAt = 1_752_700_000;
+      const suspendedUntil = suspendedAt + 86_400;
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'suspended',
+        status: 'suspended',
+        suspended_at: suspendedAt,
+        suspended_until: suspendedUntil,
+        active: 0,
+        email: 'suspended@example.com',
+        email_verified: 1,
+        phone_number_verified: 0,
+        created_at: new Date(suspendedAt * 1000).toISOString(),
+        updated_at: new Date(suspendedAt * 1000).toISOString(),
+      });
+      const c = createMockContext({
+        params: { id: userId },
+        db: createMockDB({ allResults: [] }),
+      });
+
+      const response = await adminUserGetHandler(c);
+      const body = (await response.json()) as {
+        user: {
+          status: string;
+          is_active: number;
+          pii_status: string;
+          suspended_at: number | null;
+          suspended_until: number | null;
+        };
+      };
+
+      expect(body.user).toMatchObject({
+        status: 'suspended',
+        is_active: 0,
+        pii_status: 'active',
+        suspended_at: suspendedAt * 1000,
+        suspended_until: suspendedUntil * 1000,
+      });
+    });
+
     it('should return user details with passkeys', async () => {
       const userId = 'user-123';
       // Core DB returns users_core data (no PII) and passkeys
@@ -1606,6 +2479,24 @@ describe('Admin API Handlers', () => {
       expect(mockDB.prepare).not.toHaveBeenCalled();
     });
 
+    it('should require an idempotency key before account allocation', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: { email: 'person@example.com' },
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: 'A valid Idempotency-Key header is required',
+        }),
+        400
+      );
+      expect(executeDurableAccountCreation).not.toHaveBeenCalled();
+    });
+
     it('should reject create when required custom field is missing', async () => {
       const mockDB = createMockDB({
         runResult: { success: true },
@@ -1620,6 +2511,7 @@ describe('Admin API Handlers', () => {
 
       const c = createMockContext({
         method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-required-field' },
         body: {
           email: 'newuser@example.com',
           name: 'New User',
@@ -1687,11 +2579,6 @@ describe('Admin API Handlers', () => {
       let piiQueryCount = 0;
       (mockDBPII as any)._mockStatement.first.mockImplementation(() => {
         piiQueryCount++;
-        if (piiQueryCount === 1) {
-          // First query: check for existing user by email - return null (no duplicate)
-          return Promise.resolve(null);
-        }
-        // Final query: return created user PII
         return Promise.resolve({
           id: 'new-user-id',
           email: 'newuser@example.com',
@@ -1701,6 +2588,7 @@ describe('Admin API Handlers', () => {
 
       const c = createMockContext({
         method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-valid-user' },
         body: {
           email: 'newuser@example.com',
           name: 'New User',
@@ -1712,19 +2600,141 @@ describe('Admin API Handlers', () => {
 
       await adminUserCreateHandler(c);
 
-      expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE user_custom_fields SET')
-      );
-      expect(mockDB.prepare).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO user_custom_fields')
+      expect(executeDurableAccountCreation).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          tenantId: 'default',
+          actorId: 'admin-user',
+          idempotencyKey: 'admin-create-valid-user',
+          email: 'newuser@example.com',
+          residencyPartition: 'default',
+        }),
+        expect.objectContaining({ operationRepository: expect.anything() })
       );
       // API returns { user }
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           user: expect.objectContaining({
-            email: 'newuser@example.com',
+            id: expect.stringMatching(/^user-/u),
           }),
         }),
+        201
+      );
+    });
+
+    it('allocates a tenant-D1 account before an account data context exists', async () => {
+      const mockDB = createMockDB({
+        runResult: { success: true },
+        firstResult: {
+          id: 'account:new-user-id',
+          legacy_user_id: 'new-user-id',
+          tenant_id: 'default',
+          lifecycle_state: 'active',
+          email_verified: 0,
+          phone_number_verified: 0,
+          account_type: 'end_user',
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        },
+      });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      const mockDBPII = createMockDB({
+        runResult: { success: true },
+        firstResult: {
+          account_id: 'account:new-user-id',
+          email: 'tenant-d1-user@example.com',
+          preferred_username: 'tenant-d1-user',
+        },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-tenant-d1-user' },
+        body: { email: 'tenant-d1-user@example.com' },
+        db: mockDB,
+        dbPII: mockDBPII,
+        envOverrides: {
+          DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard',
+        },
+        tenantMetadataContext: {
+          tenantId: 'default',
+          storageProfileId: 'builtin:storage:tenant-d1',
+          coreDb: mockDB,
+        },
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(executeDurableAccountCreation).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          tenantId: 'default',
+          idempotencyKey: 'admin-create-tenant-d1-user',
+          email: 'tenant-d1-user@example.com',
+        }),
+        expect.anything()
+      );
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ user: expect.anything() }),
+        201
+      );
+    });
+
+    it('allocates elastic D1 targets before the new account has a resolved PII route', async () => {
+      const mockDB = createMockDB({
+        runResult: { success: true },
+        firstResult: {
+          id: 'account:elastic-user-id',
+          legacy_user_id: 'elastic-user-id',
+          tenant_id: 'default',
+          lifecycle_state: 'active',
+          email_verified: 0,
+          phone_number_verified: 0,
+          account_type: 'end_user',
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        },
+      });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      const bootstrapPii = createMockDB({
+        runResult: { success: true },
+        firstResult: {
+          account_id: 'account:elastic-user-id',
+          email: 'elastic-user@example.com',
+        },
+      });
+      resolveAccountCreationTargets.mockResolvedValueOnce({
+        tenantCoreUsers: mockDB,
+        tenantPii: bootstrapPii,
+        residencyPartition: 'default',
+      });
+      resolveCustomClaimRuntimeSources.mockResolvedValueOnce({
+        storageProfile: {
+          id: 'builtin:audit:standard',
+          kind: 'storage',
+          label: 'Standard D1 Split',
+          slices: {},
+        },
+        schemaDb: mockDB,
+        nonPiiDb: null,
+        piiDb: null,
+      });
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-elastic-user' },
+        body: { email: 'elastic-user@example.com' },
+        db: mockDB,
+        dbPII: bootstrapPii,
+        envOverrides: {
+          CONTROL: {} as Env['CONTROL'],
+        },
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(executeDurableAccountCreation).toHaveBeenCalledOnce();
+      expect(resolveAccountCreationTargets).toHaveBeenCalledOnce();
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ user: expect.anything() }),
         201
       );
     });
@@ -1755,9 +2765,6 @@ describe('Admin API Handlers', () => {
       let piiQueryCount = 0;
       (mockDBPII as any)._mockStatement.first.mockImplementation(() => {
         piiQueryCount++;
-        if (piiQueryCount === 1) {
-          return Promise.resolve(null);
-        }
         return Promise.resolve({
           id: 'new-user-id',
           tenant_id: 'default',
@@ -1768,6 +2775,7 @@ describe('Admin API Handlers', () => {
 
       const c = createMockContext({
         method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-canonical-user' },
         body: {
           email: 'newuser@example.com',
           name: 'New User',
@@ -1784,7 +2792,7 @@ describe('Admin API Handlers', () => {
       expect(c.json).toHaveBeenCalledWith(
         expect.objectContaining({
           user: expect.objectContaining({
-            email: 'newuser@example.com',
+            id: expect.stringMatching(/^user-/u),
           }),
         }),
         201
@@ -1803,6 +2811,7 @@ describe('Admin API Handlers', () => {
 
       const c = createMockContext({
         method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-duplicate-user' },
         body: {
           email: 'duplicate@example.com',
           name: 'Duplicate User',
@@ -1810,6 +2819,10 @@ describe('Admin API Handlers', () => {
         db: mockDB,
         dbPII: mockDBPII,
       });
+
+      executeDurableAccountCreation.mockRejectedValueOnce(
+        new Error('directory_identifier_reservation_conflict')
+      );
 
       await adminUserCreateHandler(c);
 
@@ -1820,6 +2833,243 @@ describe('Admin API Handlers', () => {
           error_description: 'Unable to create user with the provided information',
         }),
         409
+      );
+    });
+
+    it('should return an operation reference when directory publication is pending', async () => {
+      const mockDB = createMockDB({ runResult: { success: true } });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      executeDurableAccountCreation.mockResolvedValueOnce({
+        operation: {
+          operationId: 'operation-pending',
+          tenantId: 'default',
+          actorId: 'admin-user',
+          idempotencyKey: 'admin-create-pending-user',
+          allocationIdempotencyKey: `account-create:${'a'.repeat(64)}`,
+          requestHash: 'b'.repeat(64),
+          userId: 'user-pending',
+          accountId: 'account:user-pending',
+          status: 'directory_pending',
+          publication: null,
+        },
+        publication: {},
+        delivery: {
+          status: 202,
+          operationId: 'operation-pending',
+          accountId: 'account:user-pending',
+        },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-pending-user' },
+        body: { email: 'pending@example.com' },
+        db: mockDB,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          status: 'pending',
+          state: 'directory_pending',
+          operation_id: 'operation-pending',
+          status_url: '/api/admin/users/operations/operation-pending',
+        },
+        202
+      );
+      expect(resolveAccountCreationTargets).not.toHaveBeenCalled();
+    });
+
+    it('should report temporary unavailability while Control replenishes capacity', async () => {
+      const mockDB = createMockDB({ runResult: { success: true } });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      executeDurableAccountCreation.mockRejectedValueOnce(
+        new Error('control_account_allocation_capacity_unavailable')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-no-capacity' },
+        body: { email: 'capacity@example.com' },
+        db: mockDB,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'temporarily_unavailable',
+          error_description: 'Account capacity is being provisioned',
+        },
+        503
+      );
+      expect(c._responseHeaders.get('Retry-After')).toBe('10');
+    });
+
+    it('should report runtime binding propagation as retryable after allocation succeeds', async () => {
+      const mockDB = createMockDB({ runResult: { success: true } });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      resolveAccountCreationTargets.mockRejectedValueOnce(
+        new Error('account_directory_write_binding_unavailable')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-binding-propagating' },
+        body: { email: 'binding-propagating@example.com' },
+        db: mockDB,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'runtime_binding_propagating',
+          error_description: 'Runtime database binding is propagating; retry shortly',
+        },
+        503
+      );
+      expect(c._responseHeaders.get('Retry-After')).toBe('1');
+    });
+
+    it('should report lookup registry generation propagation as retryable', async () => {
+      const mockDB = createMockDB({ runResult: { success: true } });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      executeDurableAccountCreation.mockRejectedValueOnce(
+        new Error('lookup_registry_generation_mismatch')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-lookup-registry-propagating' },
+        body: { email: 'lookup-registry-propagating@example.com' },
+        db: mockDB,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'snapshot_generation_propagating',
+          error_description: 'Runtime lookup registry generation is propagating; retry shortly',
+        },
+        503
+      );
+      expect(c._responseHeaders.get('Retry-After')).toBe('1');
+    });
+
+    it('should report a rejected Control allocation RPC as a retryable rollout state', async () => {
+      const mockDB = createMockDB({ runResult: { success: true } });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      executeDurableAccountCreation.mockRejectedValueOnce(
+        new Error('control_account_allocation_rpc_unavailable')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-control-rpc-unavailable' },
+        body: { email: 'control-rpc@example.com' },
+        db: mockDB,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'CONTROL_PLANE_RELEASE_ROLLOUT_UNAVAILABLE',
+          error_description: 'Control plane is temporarily unavailable during rollout',
+        },
+        503
+      );
+      expect(c._responseHeaders.get('Retry-After')).toBe('5');
+    });
+
+    it('should keep an invalid Control allocation response as a server error', async () => {
+      const mockDB = createMockDB({ runResult: { success: true } });
+      (mockDB as any)._mockStatement.all.mockResolvedValueOnce({ results: [] });
+      executeDurableAccountCreation.mockRejectedValueOnce(
+        new Error('account_directory_capacity_response_invalid')
+      );
+      const c = createMockContext({
+        method: 'POST',
+        headers: { 'Idempotency-Key': 'admin-create-invalid-capacity-response' },
+        body: { email: 'invalid-capacity-response@example.com' },
+        db: mockDB,
+      });
+
+      await adminUserCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'server_error',
+          error_description: 'Failed to create user',
+          details: 'account_directory_capacity_response_invalid',
+        },
+        500
+      );
+      expect(c._responseHeaders.get('Retry-After')).toBeUndefined();
+    });
+  });
+
+  describe('adminUserCreationOperationHandler', () => {
+    const operationRow = {
+      operation_id: 'operation-pending',
+      tenant_id: 'default',
+      actor_id: 'admin-user',
+      idempotency_key: 'admin-create-pending-user',
+      allocation_idempotency_key: `account-create:${'a'.repeat(64)}`,
+      request_hash: 'b'.repeat(64),
+      user_id: 'user-pending',
+      account_id: 'account:user-pending',
+      status: 'directory_pending',
+      publication_json: null,
+    };
+
+    it('returns the owning administrator operation state', async () => {
+      const c = createMockContext({
+        params: { operationId: 'operation-pending' },
+        db: createMockDB({ firstResult: operationRow }),
+      });
+
+      await adminUserCreationOperationHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith({
+        operation_id: 'operation-pending',
+        state: 'directory_pending',
+      });
+    });
+
+    it('does not disclose an operation owned by another administrator', async () => {
+      const c = createMockContext({
+        params: { operationId: 'operation-pending' },
+        db: createMockDB({ firstResult: { ...operationRow, actor_id: 'admin-other' } }),
+      });
+
+      await adminUserCreationOperationHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'not_found',
+          error_description: 'Account creation operation was not found',
+        },
+        404
+      );
+    });
+
+    it('reports operation storage failures as server errors', async () => {
+      const db = createMockDB({ firstResult: operationRow });
+      (db as any)._mockStatement.first.mockRejectedValue(
+        new Error('simulated_database_unavailable')
+      );
+      const c = createMockContext({
+        params: { operationId: 'operation-pending' },
+        db,
+      });
+
+      await adminUserCreationOperationHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'server_error',
+          error_description: 'Failed to read account creation operation',
+        },
+        500
       );
     });
   });
@@ -1854,6 +3104,9 @@ describe('Admin API Handlers', () => {
         })
         .mockResolvedValueOnce({
           results: [],
+        })
+        .mockResolvedValueOnce({
+          results: [createCustomClaimSchemaRow({ is_required: 0 })],
         });
 
       const mockDBPII = createMockDB({
@@ -2155,6 +3408,185 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUserDeleteHandler', () => {
+    it('blocks deletion when the account has an active legal hold', async () => {
+      const userId = 'user-held-delete';
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'held@example.com',
+      });
+      const mockDB = createSqlAwareMockDB(async (sql) => {
+        if (sql.includes('FROM legal_holds hold')) {
+          return { hold_id: 'legal-hold:held', reason_code: 'litigation' };
+        }
+        return null;
+      });
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: mockDB,
+        dbPII: createMockDB({ firstResult: null }),
+      });
+
+      await adminUserDeleteHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'legal_hold_active', hold_id: 'legal-hold:held' }),
+        409
+      );
+      expect(prepareAccountRemoval).not.toHaveBeenCalled();
+      expect(eraseAccountPii).not.toHaveBeenCalled();
+      expect(canonicalRuntimeUsers.get(userId)).toMatchObject({ lifecycle_state: 'active' });
+    });
+
+    it('deletes a tenant-D1 user through the routed removal saga', async () => {
+      const userId = 'user-routed-delete';
+      const core = createMockDB({ firstResult: null, runResult: { success: true } });
+      const pii = createMockDB({ firstResult: null, runResult: { success: true } });
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'routed-delete@example.com',
+        email_verified: 0,
+        phone_number_verified: 0,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+      findExactCrossShardAccounts.mockResolvedValue([
+        {
+          id: `account:${userId}`,
+          legacyUserId: userId,
+          tenantId: 'default',
+          accountType: 'user',
+          lifecycleState: 'active',
+          displayLabel: null,
+          createdAt: Date.now(),
+          coreBindingRef: 'DB',
+          piiBindingRef: 'DB_PII',
+        },
+      ]);
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: core,
+        dbPII: pii,
+        tenantMetadataContext: {
+          tenantId: 'default',
+          storageProfileId: 'builtin:storage:tenant-d1',
+          coreDb: core,
+        },
+      });
+
+      await adminUserDeleteHandler(c);
+
+      expect(findExactCrossShardAccounts).toHaveBeenCalledWith({
+        tenantId: 'default',
+        identifier: userId,
+        purpose: 'account_delete_retry',
+      });
+      expect(prepareAccountRemoval).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ tenantId: 'default', userId })
+      );
+      expect(eraseAccountPii).toHaveBeenCalledWith(expect.anything(), {
+        tenantId: 'default',
+        userId,
+      });
+      expect(markAccountRemovalsReady).toHaveBeenCalled();
+      expect(attemptAccountRemovals).toHaveBeenCalled();
+      expect(canonicalRuntimeUsers.get(userId)).toMatchObject({ lifecycle_state: 'deleted' });
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ success: true, message: 'User deleted successfully' })
+      );
+    });
+
+    it('resumes tenant-D1 deletion after the PII projection has already been erased', async () => {
+      const userId = 'user-routed-delete-retry';
+      const core = createMockDB({ firstResult: null, runResult: { success: true } });
+      const pii = createMockDB({ firstResult: null, runResult: { success: true } });
+      findExactCrossShardAccounts.mockResolvedValue([
+        {
+          id: `account:${userId}`,
+          legacyUserId: userId,
+          tenantId: 'default',
+          accountType: 'user',
+          lifecycleState: 'deleting',
+          displayLabel: null,
+          createdAt: Date.now(),
+          coreBindingRef: 'DB',
+          piiBindingRef: 'DB_PII',
+        },
+      ]);
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: core,
+        dbPII: pii,
+        tenantMetadataContext: {
+          tenantId: 'default',
+          storageProfileId: 'builtin:storage:tenant-d1',
+          coreDb: core,
+        },
+      });
+
+      await adminUserDeleteHandler(c);
+
+      expect(prepareAccountRemoval).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ tenantId: 'default', userId })
+      );
+      expect(markAccountRemovalsReady).toHaveBeenCalled();
+      expect(attemptAccountRemovals).toHaveBeenCalled();
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ success: true, message: 'User deleted successfully' })
+      );
+    });
+
+    it('fails closed when an active tenant-D1 route has no matching projection', async () => {
+      const userId = 'user-routed-delete-missing-projection';
+      const core = createMockDB({ firstResult: null, runResult: { success: true } });
+      const pii = createMockDB({ firstResult: null, runResult: { success: true } });
+      findExactCrossShardAccounts.mockResolvedValue([
+        {
+          id: `account:${userId}`,
+          legacyUserId: userId,
+          tenantId: 'default',
+          accountType: 'user',
+          lifecycleState: 'active',
+          displayLabel: null,
+          createdAt: Date.now(),
+          coreBindingRef: 'DB',
+          piiBindingRef: 'DB_PII',
+        },
+      ]);
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: core,
+        dbPII: pii,
+        tenantMetadataContext: {
+          tenantId: 'default',
+          storageProfileId: 'builtin:storage:tenant-d1',
+          coreDb: core,
+        },
+      });
+
+      await adminUserDeleteHandler(c);
+
+      expect(prepareAccountRemoval).not.toHaveBeenCalled();
+      expect(c.json).toHaveBeenCalledWith(
+        {
+          error: 'server_error',
+          error_description: 'Failed to delete user',
+        },
+        500
+      );
+    });
+
     it('should delete user successfully', async () => {
       const userId = 'user-to-delete';
       const mockDB = createMockDB({
@@ -2261,6 +3693,38 @@ describe('Admin API Handlers', () => {
     });
   });
 
+  describe('adminUserDeletePiiHandler', () => {
+    it('blocks PII deletion when the account has an active legal hold', async () => {
+      const userId = 'user-held-pii';
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        lifecycle_state: 'active',
+        active: 1,
+        email: 'held-pii@example.com',
+      });
+      const mockDB = createSqlAwareMockDB(async (sql) => {
+        if (sql.includes('FROM legal_holds hold')) {
+          return { hold_id: 'legal-hold:held-pii', reason_code: 'regulatory_review' };
+        }
+        return null;
+      });
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: userId },
+        db: mockDB,
+        dbPII: createMockDB({ firstResult: null }),
+      });
+
+      await adminUserDeletePiiHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'legal_hold_active', hold_id: 'legal-hold:held-pii' }),
+        409
+      );
+    });
+  });
+
   describe('adminUserAnonymizeHandler', () => {
     it('should anonymize using current schema tables and avoid legacy SQL', async () => {
       const userId = 'user-anon-1';
@@ -2277,7 +3741,11 @@ describe('Admin API Handlers', () => {
               updated_at: Date.now(),
             };
           }
-          if (sql.includes('SELECT id, reason FROM legal_holds')) {
+          if (
+            sql.includes('FROM legal_holds hold') &&
+            sql.includes("hold.subject_type = 'account'") &&
+            sql.includes("hold.state = 'active'")
+          ) {
             return null;
           }
           return undefined;
@@ -2374,8 +3842,7 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUserSendEmailHandler', () => {
-    it('should load email from users_pii by id and tenant_id before enqueuing email', async () => {
-      const userId = 'user-mail-1';
+    function createUserEmailContext(userId = 'user-mail-1') {
       const coreDb = createSqlAwareMockDB(async (sql, _params, op) => {
         if (op === 'first' && sql.includes('FROM identity_accounts WHERE legacy_user_id = ?')) {
           return {
@@ -2401,19 +3868,28 @@ describe('Admin API Handlers', () => {
         return op === 'run' ? { success: true } : undefined;
       });
 
-      const c = createMockContext({
-        method: 'POST',
-        params: { id: userId },
-        body: {
-          template: 'welcome',
-          subject: 'hello',
-          variables: { locale: 'ja' },
-        },
-        db: coreDb,
-        dbPII: piiDb,
-      });
+      return {
+        userId,
+        coreDb,
+        piiDb,
+        context: createMockContext({
+          method: 'POST',
+          params: { id: userId },
+          body: {
+            template: 'welcome',
+            subject: 'hello',
+            variables: { locale: 'ja' },
+          },
+          db: coreDb,
+          dbPII: piiDb,
+        }),
+      };
+    }
 
-      const res = await adminUserSendEmailHandler(c);
+    it('loads the recipient from PII and delegates durable delivery to the notification producer', async () => {
+      const { userId, coreDb, piiDb, context } = createUserEmailContext();
+
+      const res = await adminUserSendEmailHandler(context);
       expect(res.status).toBe(200);
 
       const piiSqls = (piiDb.prepare as any).mock.calls.map((call: [string]) => call[0]);
@@ -2421,7 +3897,70 @@ describe('Admin API Handlers', () => {
 
       expect(piiSqls).toContainEqual(expect.stringContaining('identity_sensitive_values'));
       expect(piiSqls).not.toContainEqual(expect.stringContaining('WHERE user_id = ?'));
-      expect(coreSqls).toContainEqual(expect.stringContaining('INSERT INTO email_queue'));
+      expect(coreSqls).not.toContainEqual(expect.stringContaining('INSERT INTO email_queue'));
+      expect(produceNotificationDelivery).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          owner: { owner: 'tenant', tenantId: 'default' },
+          notificationKind: 'admin.user-email.welcome',
+          accountId: userId,
+          payload: expect.objectContaining({
+            channel: 'email',
+            to: 'mail@example.com',
+            subject: 'hello',
+          }),
+        })
+      );
+      await expect(res.json()).resolves.toMatchObject({ success: true, status: 'queued' });
+    });
+
+    it('reports provider acceptance without claiming final inbox delivery', async () => {
+      produceNotificationDelivery.mockResolvedValueOnce({
+        reference: {
+          tenantId: 'default',
+          intentId: 'admin-user-email:delivery-b',
+          outboxId: 'notification:delivery-b',
+          pluginInstallationId: 'provider-a',
+          notificationKind: 'admin.user-email.welcome',
+          channel: 'email',
+          expiresAt: 2_000_000_000,
+          state: 'delivered',
+        },
+        bindingRef: 'TDB_DEFAULT_CORE',
+        delivery: 'delivered',
+      });
+      const { context } = createUserEmailContext();
+
+      const response = await adminUserSendEmailHandler(context);
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        success: true,
+        status: 'provider_accepted',
+      });
+    });
+
+    it('returns a delivery error when the provider permanently rejects the request', async () => {
+      produceNotificationDelivery.mockResolvedValueOnce({
+        reference: {
+          tenantId: 'default',
+          intentId: 'admin-user-email:delivery-c',
+          outboxId: 'notification:delivery-c',
+          pluginInstallationId: 'provider-a',
+          notificationKind: 'admin.user-email.welcome',
+          channel: 'email',
+          expiresAt: 2_000_000_000,
+          state: 'dead_letter',
+        },
+        bindingRef: 'TDB_DEFAULT_CORE',
+        delivery: 'permanent_failure',
+      });
+      const { context } = createUserEmailContext();
+
+      const response = await adminUserSendEmailHandler(context);
+
+      expect(response.status).toBe(502);
+      await expect(response.json()).resolves.toMatchObject({ error: 'email_delivery_failed' });
     });
   });
 
@@ -2693,6 +4232,108 @@ describe('Admin API Handlers', () => {
           }),
         }),
         201
+      );
+    });
+
+    it('validates and persists the selected OIDC Mapping Set on create', async () => {
+      const mockDB = createMockDB({
+        firstResult: null,
+        runResult: { success: true },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Mapped Client',
+          redirect_uris: ['https://example.com/callback'],
+          identity_mapping: {
+            fieldMappingSetId: 'mapping_set_1',
+            destinationNamespace: 'oidc.claim',
+          },
+        },
+        db: mockDB,
+      });
+
+      const response = await adminClientCreateHandler(c);
+
+      expect(response.status).toBe(201);
+      expect(resolveIdentityMappingBinding).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          tenantId: 'default',
+          protocol: 'oidc',
+          fieldMappingSetId: 'mapping_set_1',
+        })
+      );
+      expect(mockDB._mockStatement.bind.mock.calls.flat()).toContainEqual(
+        JSON.stringify({
+          fieldMappingSetId: 'mapping_set_1',
+          destinationNamespace: 'oidc.claim',
+        })
+      );
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          client: expect.objectContaining({
+            identity_mapping: {
+              fieldMappingSetId: 'mapping_set_1',
+              destinationNamespace: 'oidc.claim',
+            },
+          }),
+        }),
+        201
+      );
+    });
+
+    it('should persist explicit requestable scopes for an Agent Access connection', async () => {
+      const mockDB = createMockDB({
+        firstResult: null,
+        runResult: { success: true },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'MCP client Agent Access',
+          redirect_uris: ['http://localhost:18080/callback'],
+          grant_types: ['authorization_code', 'refresh_token'],
+          response_types: ['code'],
+          token_endpoint_auth_method: 'none',
+          require_pkce: true,
+          requestable_scopes: ['agent:read', 'agent:write', 'agent:execute'],
+        },
+        db: mockDB,
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          client: expect.objectContaining({
+            requestable_scopes: ['agent:read', 'agent:write', 'agent:execute'],
+            require_pkce: true,
+          }),
+        }),
+        201
+      );
+    });
+
+    it('should reject malformed requestable scope tokens', async () => {
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Malformed Agent Access client',
+          redirect_uris: ['http://localhost:18080/callback'],
+          requestable_scopes: ['agent:read agent:write'],
+        },
+        db: createMockDB({}),
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: 'invalid_request',
+          error_description: expect.stringContaining('requestable_scopes'),
+        }),
+        400
       );
     });
 
@@ -3022,6 +4663,38 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('should not generate or persist a secret for a PKCE public client', async () => {
+      const mockDB = createMockDB({
+        firstResult: null,
+        runResult: { success: true },
+      });
+      const c = createMockContext({
+        method: 'POST',
+        body: {
+          client_name: 'Public Code Client',
+          application_type: 'spa',
+          redirect_uris: ['https://example.com/callback'],
+          grant_types: ['authorization_code'],
+          response_types: ['code'],
+          token_endpoint_auth_method: 'none',
+          require_pkce: true,
+        },
+        db: mockDB,
+      });
+
+      await adminClientCreateHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          client: expect.not.objectContaining({ client_secret: expect.anything() }),
+        }),
+        201
+      );
+      expect((mockDB as any)._mockStatement.bind).not.toHaveBeenCalledWith(
+        expect.stringMatching(/^[a-f0-9]{64}$/u)
+      );
+    });
+
     it('should reject invalid allowed_redirect_origins', async () => {
       const c = createMockContext({
         method: 'POST',
@@ -3156,7 +4829,7 @@ describe('Admin API Handlers', () => {
     it('should update client fields', async () => {
       const clientId = 'client-to-update';
       const mockDB = createMockDB({
-        runResult: { success: true },
+        runResult: { success: true, meta: { changes: 1 } },
       });
 
       // First call checks if client exists, second call gets updated client
@@ -3206,10 +4879,48 @@ describe('Admin API Handlers', () => {
       );
     });
 
+    it('validates and persists the selected OIDC Mapping Set on update', async () => {
+      const clientId = 'mapped-client';
+      const mockDB = createMockDB({
+        firstResult: createOAuthClientRow(clientId),
+        runResult: { success: true, meta: { changes: 1 } },
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: clientId },
+        body: {
+          identity_mapping: {
+            fieldMappingSetId: 'mapping_set_2',
+            fieldMappingVersionId: 'mapping_version_2',
+          },
+        },
+        db: mockDB,
+      });
+
+      const response = await adminClientUpdateHandler(c);
+
+      expect(response.status).toBe(200);
+      expect(resolveIdentityMappingBinding).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          tenantId: 'default',
+          protocol: 'oidc',
+          fieldMappingSetId: 'mapping_set_2',
+          fieldMappingVersionId: 'mapping_version_2',
+        })
+      );
+      expect(mockDB._mockStatement.bind.mock.calls.flat()).toContainEqual(
+        JSON.stringify({
+          fieldMappingSetId: 'mapping_set_2',
+          fieldMappingVersionId: 'mapping_version_2',
+        })
+      );
+    });
+
     it('should update token exchange and downstream grant fields', async () => {
       const clientId = 'client-downstream-update';
       const mockDB = createMockDB({
-        runResult: { success: true },
+        runResult: { success: true, meta: { changes: 1 } },
       });
 
       let queryCount = 0;
@@ -3228,6 +4939,7 @@ describe('Admin API Handlers', () => {
             delegation_mode: 'none',
             client_credentials_allowed: 0,
             allowed_scopes: '["openid"]',
+            requestable_scopes: '["agent:read"]',
             default_scope: 'openid',
             default_audience: null,
           });
@@ -3244,6 +4956,7 @@ describe('Admin API Handlers', () => {
           delegation_mode: 'delegation',
           client_credentials_allowed: 1,
           allowed_scopes: '["openid","profile"]',
+          requestable_scopes: '["agent:read","agent:write"]',
           default_scope: 'openid profile',
           default_audience: 'svc://op-userinfo/customer-profile',
         });
@@ -3259,6 +4972,7 @@ describe('Admin API Handlers', () => {
           allowed_subject_token_clients: ['svc-client-a'],
           allowed_token_exchange_resources: ['svc://op-userinfo/customer-profile'],
           allowed_scopes: ['openid', 'profile'],
+          requestable_scopes: ['agent:read', 'agent:write'],
           default_scope: 'openid profile',
           default_audience: 'svc://op-userinfo/customer-profile',
         },
@@ -3278,6 +4992,7 @@ describe('Admin API Handlers', () => {
             allowed_subject_token_clients: ['svc-client-a'],
             allowed_token_exchange_resources: ['svc://op-userinfo/customer-profile'],
             allowed_scopes: ['openid', 'profile'],
+            requestable_scopes: ['agent:read', 'agent:write'],
             default_scope: 'openid profile',
             default_audience: 'svc://op-userinfo/customer-profile',
           }),
@@ -3288,7 +5003,7 @@ describe('Admin API Handlers', () => {
     it('should update Phase 1 client policy metadata', async () => {
       const clientId = 'client-policy-update';
       const mockDB = createMockDB({
-        runResult: { success: true },
+        runResult: { success: true, meta: { changes: 1 } },
       });
 
       let queryCount = 0;
@@ -3404,7 +5119,7 @@ describe('Admin API Handlers', () => {
     it('should update OIDC claims and ASC client settings', async () => {
       const clientId = 'client-claims-update';
       const mockDB = createMockDB({
-        runResult: { success: true },
+        runResult: { success: true, meta: { changes: 1 } },
       });
 
       let queryCount = 0;
@@ -3706,15 +5421,29 @@ describe('Admin API Handlers', () => {
   describe('adminClientDeleteHandler', () => {
     it('should delete client successfully', async () => {
       const clientId = 'client-to-delete';
+      const settings = createMockKVNamespace({
+        [`settings:client:default:${clientId}:client`]: '{"client.consent_required":false}',
+        [`settings:client:default:${clientId}:login-ui`]: '{"theme":"test"}',
+        'settings:client:default:other-client:client': '{"client.consent_required":true}',
+      });
+      const config = createMockKVNamespace({
+        [`dev:contract:client:default:${clientId}`]: '{"version":1}',
+        'dev:contract:client:default:other-client': '{"version":1}',
+      });
       const mockDB = createMockDB({
         firstResult: { client_id: clientId, client_name: 'Delete Me' },
-        runResult: { success: true },
+        runResult: { success: true, meta: { changes: 1 } },
       });
 
       const c = createMockContext({
         method: 'DELETE',
         params: { id: clientId },
         db: mockDB,
+        envOverrides: {
+          SETTINGS: settings as unknown as KVNamespace,
+          AUTHRIM_CONFIG: config as unknown as KVNamespace,
+          ENVIRONMENT: 'dev',
+        },
       });
 
       await adminClientDeleteHandler(c);
@@ -3724,6 +5453,48 @@ describe('Admin API Handlers', () => {
         expect.objectContaining({
           success: true,
         })
+      );
+      await expect(settings.get(`settings:client:default:${clientId}:client`)).resolves.toBeNull();
+      await expect(
+        settings.get(`settings:client:default:${clientId}:login-ui`)
+      ).resolves.toBeNull();
+      await expect(
+        settings.get('settings:client:default:other-client:client')
+      ).resolves.not.toBeNull();
+      await expect(config.get(`dev:contract:client:default:${clientId}`)).resolves.toBeNull();
+      await expect(config.get('dev:contract:client:default:other-client')).resolves.not.toBeNull();
+      expect(mockDB.prepare).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM client_trust_policies')
+      );
+      expect(mockDB.batch).toHaveBeenCalledTimes(1);
+      expect(mockDB.batch).toHaveBeenCalledWith(expect.arrayContaining([expect.any(Object)]));
+    });
+
+    it('keeps the client retriable when client-scoped KV cleanup fails', async () => {
+      const clientId = 'client-cleanup-failure';
+      const settings = createMockKVNamespace();
+      settings.list.mockRejectedValueOnce(new Error('kv unavailable'));
+      const mockDB = createMockDB({
+        firstResult: { client_id: clientId },
+        runResult: { success: true },
+      });
+      const c = createMockContext({
+        method: 'DELETE',
+        params: { id: clientId },
+        db: mockDB,
+        envOverrides: { SETTINGS: settings as unknown as KVNamespace },
+      });
+
+      await adminClientDeleteHandler(c);
+
+      expect(c.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'server_error' }), 500);
+      const prepareMock = mockDB.prepare as unknown as ReturnType<typeof vi.fn>;
+      const preparedSql = prepareMock.mock.calls.map((call: unknown[]) => String(call[0]));
+      expect(preparedSql).not.toContain(
+        'DELETE FROM oauth_clients WHERE tenant_id = ? AND client_id = ?'
+      );
+      expect(preparedSql.some((sql) => sql.includes('DELETE FROM client_trust_policies'))).toBe(
+        false
       );
     });
 

@@ -195,32 +195,6 @@
 		}
 	}
 
-	function emailResolutionInfo(policy: EmailResolutionPolicy, enabled: boolean) {
-		if (!enabled) {
-			return {
-				description: $LL.admin_tenant_discovery_email_resolution_disabled_description(),
-				sample: $LL.admin_tenant_discovery_email_resolution_disabled_sample()
-			};
-		}
-		switch (policy) {
-			case 'exact_email_only':
-				return {
-					description: $LL.admin_tenant_discovery_email_resolution_exact_only_description(),
-					sample: $LL.admin_tenant_discovery_email_resolution_exact_only_sample()
-				};
-			case 'exact_email_then_domain':
-				return {
-					description: $LL.admin_tenant_discovery_email_resolution_exact_then_domain_description(),
-					sample: $LL.admin_tenant_discovery_email_resolution_exact_then_domain_sample()
-				};
-			case 'disabled':
-				return {
-					description: $LL.admin_tenant_discovery_email_resolution_disabled_policy_description(),
-					sample: $LL.admin_tenant_discovery_email_resolution_disabled_policy_sample()
-				};
-		}
-	}
-
 	function selectionPolicyInfo(policy: LoginEntryForm['selectionPolicy']) {
 		switch (policy) {
 			case 'auto_if_single':
@@ -296,7 +270,7 @@
 			mode: (settings.values['login-entry.mode'] as LoginEntryForm['mode']) ?? 'discovery_optional',
 			emailResolutionPolicy:
 				resolvedEmailResolutionPolicy === 'disabled'
-					? 'exact_email_then_domain'
+					? 'exact_email_only'
 					: resolvedEmailResolutionPolicy,
 			emailEnabled: toggles.emailEnabled,
 			tenantCodeEnabled: toggles.tenantCodeEnabled,
@@ -421,11 +395,7 @@
 		if (!includeOperationalValues) {
 			return values;
 		}
-		const emailResolutionPolicy = form.emailEnabled
-			? form.emailResolutionPolicy === 'disabled'
-				? 'exact_email_then_domain'
-				: form.emailResolutionPolicy
-			: 'disabled';
+		const emailResolutionPolicy = form.emailEnabled ? 'exact_email_only' : 'disabled';
 
 		return {
 			...values,
@@ -853,42 +823,6 @@
 						</div>
 
 						<div class="form-group">
-							<label for="common-email-policy"
-								>{$LL.admin_tenant_discovery_email_resolution()}</label
-							>
-							<select
-								id="common-email-policy"
-								bind:value={commonEntryBehaviorForm.emailResolutionPolicy}
-								disabled={!canEditPlatform ||
-									commonEntryBehaviorSaving ||
-									!commonEntryBehaviorForm.emailEnabled}
-							>
-								<option value="exact_email_then_domain"
-									>{$LL.admin_tenant_discovery_email_resolution_exact_then_domain()}</option
-								>
-								<option value="exact_email_only"
-									>{$LL.admin_tenant_discovery_email_resolution_exact_only()}</option
-								>
-							</select>
-							<div class="inline-help">
-								<p>
-									{emailResolutionInfo(
-										commonEntryBehaviorForm.emailResolutionPolicy,
-										commonEntryBehaviorForm.emailEnabled
-									).description}
-								</p>
-								<code>
-									{$LL.admin_tenant_discovery_example({
-										sample: emailResolutionInfo(
-											commonEntryBehaviorForm.emailResolutionPolicy,
-											commonEntryBehaviorForm.emailEnabled
-										).sample
-									})}
-								</code>
-							</div>
-						</div>
-
-						<div class="form-group">
 							<label for="common-selection-policy"
 								>{$LL.admin_tenant_discovery_selection_policy()}</label
 							>
@@ -1181,38 +1115,6 @@
 										sample: entryModeInfo(behaviorForm.mode).sample
 									})}</code
 								>
-							</div>
-						</div>
-
-						<div class="form-group">
-							<label for="email-policy">{$LL.admin_tenant_discovery_email_resolution()}</label>
-							<select
-								id="email-policy"
-								bind:value={behaviorForm.emailResolutionPolicy}
-								disabled={!canEditTenant || behaviorSaving || !behaviorForm.emailEnabled}
-							>
-								<option value="exact_email_then_domain"
-									>{$LL.admin_tenant_discovery_email_resolution_exact_then_domain()}</option
-								>
-								<option value="exact_email_only"
-									>{$LL.admin_tenant_discovery_email_resolution_exact_only()}</option
-								>
-							</select>
-							<div class="inline-help">
-								<p>
-									{emailResolutionInfo(
-										behaviorForm.emailResolutionPolicy,
-										behaviorForm.emailEnabled
-									).description}
-								</p>
-								<code>
-									{$LL.admin_tenant_discovery_example({
-										sample: emailResolutionInfo(
-											behaviorForm.emailResolutionPolicy,
-											behaviorForm.emailEnabled
-										).sample
-									})}
-								</code>
 							</div>
 						</div>
 

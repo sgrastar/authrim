@@ -26,6 +26,7 @@ import {
   parseAllowedOrigins,
   getSessionStoreBySessionId,
   getSessionStoreForNewSession,
+  getSessionClientMetadata,
   isShardedSessionId,
   getChallengeStoreByChallengeId,
   getChallengeStoreByUserId,
@@ -34,11 +35,14 @@ import {
   buildDOKey,
   buildDOInstanceName,
   getTenantSettings,
+  generateSecureRandomString,
   generateId,
   generateUserIdFromSettings,
   createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   createPIIContextFromHono,
   createErrorResponse,
+  createTenantPlacementWriteFenceResponse,
   AR_ERROR_CODES,
   // Event System
   publishEvent,
@@ -66,13 +70,20 @@ import {
   expireRefreshTokenFamiliesByUser,
   createCompatibilityErrorResponse,
   generateBrowserState,
+  advancePasskeyAuthenticationState,
+  isAccountAuthenticationDeniedError,
   BROWSER_STATE_COOKIE_NAME,
   getBrowserStateCookieSameSite,
-  getRequiredPluginContext,
+  produceNotificationDelivery,
   resolvePostLoginRedirectUrl,
-  // Tenant domain resolution
-  resolveTenantFromEmailDomain,
   CanonicalRuntimeUserStore,
+  ensureDatabaseAdapter,
+  getTenantMetadataContextFromHono,
+  markOtpLoginEmailVerified,
+  resolveOtpAccountCoreDataContextByIdentifierFromHono,
+  resolveAccountDataContextFromHono,
+  type CanonicalOtpLoginUser,
+  type DatabaseAdapter,
 } from '@authrim/ar-lib-core';
 import {
   applyInvitationAssignments,
@@ -115,6 +126,18 @@ import {
 } from './human-verification';
 import { resolveSessionTtl } from './session-ttl';
 import { verifyEmailVerificationProtocol } from './email-verification-protocol';
+import {
+  buildAuthorizeContinuationUrl,
+  createAuthorizationRequestContinuation,
+} from './authorization-continuation';
+import {
+  publishTenantD1PasskeyRoute,
+  provisionTenantD1EmailAccount,
+  resolvePasskeyProvisioningResumeUserId,
+  resolveTenantD1PasskeyAccountRoute,
+  resolveTenantD1EmailAccountRoute,
+  usesTenantD1AccountStorage,
+} from './account-provisioning';
 
 // ===== Constants =====
 
@@ -159,9 +182,12 @@ function isDirectAuthChannel(channel: unknown): channel is DirectAuthChannel {
 
 function createCanonicalRuntimeUserStore(
   c: Context<{ Bindings: Env }>,
-  tenantId: string
+  tenantId: string,
+  options: { accountScoped?: boolean } = {}
 ): CanonicalRuntimeUserStore {
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = options.accountScoped
+    ? createAccountAuthContextFromHono(c, tenantId)
+    : createAuthContextFromHono(c, tenantId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
   return new CanonicalRuntimeUserStore({
     coreAdapter: authCtx.coreAdapter,
@@ -459,6 +485,14 @@ function normalizeStoredCredentialId(id?: string | null): string | null {
   return toBase64URLString(id);
 }
 
+function matchesPasskeyUserHandle(userHandle: string | undefined, userId: string): boolean {
+  return (
+    typeof userHandle === 'string' &&
+    userHandle.length > 0 &&
+    userHandle === isoBase64URL.fromUTF8String(userId)
+  );
+}
+
 /**
  * Verify PKCE code_challenge using S256 method
  * Uses timing-safe comparison to prevent timing attacks
@@ -478,55 +512,15 @@ function metadataString(metadata: Record<string, unknown>, key: string): string 
   return typeof value === 'string' && value ? value : undefined;
 }
 
-function buildAuthorizeContinuationUrl(
-  metadata: Record<string, unknown>,
-  confirmationChallengeId: string,
-  fallbackIssuer: string
-): string {
-  const issuer = metadataString(metadata, 'issuer') || fallbackIssuer;
-  const authorizeUrl = new URL('/authorize', issuer);
-  const params = new URLSearchParams();
-  for (const key of [
-    'response_type',
-    'client_id',
-    'redirect_uri',
-    'scope',
-    'state',
-    'nonce',
-    'code_challenge',
-    'code_challenge_method',
-    'claims',
-    'response_mode',
-    'max_age',
-    'prompt',
-    'acr_values',
-    'id_token_hint',
-    'display',
-    'ui_locales',
-    'login_hint',
-    'error_uri',
-    'cancel_uri',
-  ]) {
-    const value = metadataString(metadata, key);
-    if (value) {
-      params.set(key, value);
-    }
-  }
-
-  params.set('_confirmation_challenge', confirmationChallengeId);
-
-  authorizeUrl.search = params.toString();
-  return authorizeUrl.toString();
-}
-
 export async function consumeAuthorizationChallengeContinuation(
-  env: Env,
+  c: Context<{ Bindings: Env }>,
   tenantId: string,
   challengeId: string,
   authenticatedUserId: string,
   authTime: number,
   fallbackIssuer: string
 ): Promise<AuthorizationChallengeContinuation | { error: Response }> {
+  const env = c.env;
   const challengeStore = await getChallengeStoreByChallengeId(env, challengeId, tenantId);
   let challengeData: AuthorizationChallengeData;
   let type: AuthorizationChallengeType;
@@ -585,6 +579,7 @@ export async function consumeAuthorizationChallengeContinuation(
   }
 
   const confirmationId = crypto.randomUUID();
+  const browserBinding = generateSecureRandomString(32);
   const confirmationStore = await getChallengeStoreByChallengeId(env, confirmationId, tenantId);
   await confirmationStore.storeChallengeRpc({
     id: confirmationId,
@@ -597,8 +592,15 @@ export async function consumeAuthorizationChallengeContinuation(
       purpose: 'authorize_confirmation',
       authTime,
       sessionUserId: expectedUserId || authenticatedUserId,
+      browserBinding,
+      authorization_request: createAuthorizationRequestContinuation(metadata),
     },
   });
+  c.header(
+    'Set-Cookie',
+    `authrim_authorize_confirmation=${encodeURIComponent(browserBinding)}; Path=/authorize; HttpOnly; SameSite=${getSessionCookieSameSite(env)}; Secure; Max-Age=120`,
+    { append: true }
+  );
 
   return {
     type,
@@ -830,7 +832,8 @@ async function generateAuthCode(
     scope,
     codeChallenge,
     codeChallengeMethod: 'S256',
-    authTime: Math.floor(Date.now() / 1000),
+    authTime:
+      typeof metadata?.auth_time === 'number' ? metadata.auth_time : Math.floor(Date.now() / 1000),
     acr: 'urn:mace:incommon:iap:bronze',
   });
 
@@ -1060,7 +1063,21 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     // Get credential ID and lookup passkey
     const credentialIDBase64URL = toBase64URLString(credential.id);
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    const origin = challengeData.metadata?.origin || '';
+    const rpID = challengeData.metadata?.rpID || '';
+    let accountRoute;
+    try {
+      accountRoute = await resolveTenantD1PasskeyAccountRoute(c, {
+        credentialId: credentialIDBase64URL,
+        rpId: rpID,
+      });
+    } catch {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+    }
+    const accountScoped = usesTenantD1AccountStorage(c) && Boolean(accountRoute);
+    const authCtx = accountScoped
+      ? createAccountAuthContextFromHono(c, tenantId)
+      : createAuthContextFromHono(c, tenantId);
 
     let passkey = await authCtx.repositories.passkey.findByCredentialId(credentialIDBase64URL);
 
@@ -1098,10 +1115,18 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       });
     }
 
-    // Verify authentication response
-    const origin = challengeData.metadata?.origin || '';
-    const rpID = challengeData.metadata?.rpID || '';
+    if (
+      (accountRoute && accountRoute.legacyUserId !== passkey.user_id) ||
+      (accountRoute &&
+        !matchesPasskeyUserHandle(credential.response.userHandle, passkey.user_id)) ||
+      (!accountRoute &&
+        credential.response.userHandle !== undefined &&
+        !matchesPasskeyUserHandle(credential.response.userHandle, passkey.user_id))
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+    }
 
+    // Verify authentication response
     const normalizedCredentialId = normalizeStoredCredentialId(passkey.credential_id as string);
     if (!normalizedCredentialId) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -1136,14 +1161,56 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
 
-    // Update counter
-    await authCtx.repositories.passkey.updateCounterAfterAuth(
-      passkey.id,
-      authenticationInfo.newCounter
+    const proofVerifiedAtMs = Date.now();
+    const authTime = Math.floor(proofVerifiedAtMs / 1000);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped });
+    const accountAuthentication = await runtimeUsers.findAccountAuthenticationState(
+      passkey.user_id
     );
+    if (!accountAuthentication) {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+    }
+    try {
+      await advancePasskeyAuthenticationState(
+        c.env,
+        {
+          tenantId,
+          userId: passkey.user_id,
+          credentialId: passkey.id,
+          storedCounter: passkey.counter,
+          observedCounter: authenticationInfo.newCounter,
+          observedAtMs: proofVerifiedAtMs,
+        },
+        () => Promise.resolve(accountAuthentication)
+      );
+    } catch (error) {
+      if (!isAccountAuthenticationDeniedError(error)) {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Authentication state unavailable.',
+          },
+          503,
+          { 'Retry-After': '1' }
+        );
+      }
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+    }
 
-    // Update last_login_at in canonical runtime metadata.
-    await createCanonicalRuntimeUserStore(c, tenantId).touchLastLogin(passkey.user_id);
+    c.executionCtx.waitUntil(
+      Promise.all([
+        authCtx.repositories.passkey.mirrorCounterAfterAuth(
+          passkey.id,
+          authenticationInfo.newCounter
+        ),
+        runtimeUsers.touchLastLogin(passkey.user_id),
+      ]).catch((error: unknown) => {
+        log.error('Failed to mirror direct Passkey authentication state', {
+          action: 'passkey_state_mirror',
+          errorType: error instanceof Error ? error.name : 'Unknown',
+        });
+      })
+    );
 
     // Generate auth_code
     const authCode = await generateAuthCode(
@@ -1158,6 +1225,7 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
         scope: challengeData.metadata?.scope,
         transaction_id: challengeData.metadata?.transaction_id || challenge_id,
         passkey_id: passkey.id,
+        auth_time: authTime,
         authorization_challenge_id: challengeData.metadata?.authorization_challenge_id,
       }
     );
@@ -1178,6 +1246,8 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
       expires_in: AUTH_CODE_TTL,
     });
   } catch (error) {
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     log.error('Direct passkey login finish error', {
       action: 'login_finish',
       errorType: error instanceof Error ? error.name : 'Unknown',
@@ -1211,6 +1281,8 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       authorization_challenge_id?: string;
       human_verification_response?: string;
       cf_turnstile_response?: string;
+      provisioning_token?: string;
+      resume_user_id?: string;
     }>();
 
     const {
@@ -1228,6 +1300,8 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       authorization_challenge_id,
       human_verification_response,
       cf_turnstile_response,
+      provisioning_token,
+      resume_user_id,
     } = body;
 
     if (!client_id || !code_challenge || code_challenge_method !== 'S256' || !channel) {
@@ -1241,6 +1315,22 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
     const tenantId = getTenantIdFromContext(c);
+    const hasProvisioningResumeFields =
+      provisioning_token !== undefined || resume_user_id !== undefined;
+    let resumedUserId: string | null = null;
+    if (hasProvisioningResumeFields) {
+      if (provisioning_token === undefined || resume_user_id === undefined) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
+      resumedUserId = await resolvePasskeyProvisioningResumeUserId(
+        c,
+        provisioning_token,
+        resume_user_id
+      );
+      if (!resumedUserId) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
+    }
     const passkeySignupUsage = authorization_challenge_id
       ? await resolveDirectStartTurnstileAction(c, tenantId, authorization_challenge_id)
       : 'signup';
@@ -1277,14 +1367,24 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
     const rpID = originUrl.hostname;
 
     // Check if user exists or create new
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
     let user: { id: string; email: string | null; name: string | null } | null = null;
     const normalizedEmail =
       typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
+    const tenantD1 = usesTenantD1AccountStorage(c);
+    // Passkey signup is discoverable and does not use email to identify the
+    // account. Email is only used when the caller supplies it as optional
+    // profile data or as an existing-account lookup hint.
+    const accountRoute = normalizedEmail
+      ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail)
+      : 'not_required';
+    let runtimeUsers: CanonicalRuntimeUserStore | null = tenantD1
+      ? accountRoute === 'resolved'
+        ? createCanonicalRuntimeUserStore(c, tenantId, { accountScoped: true })
+        : null
+      : createCanonicalRuntimeUserStore(c, tenantId);
 
     if (normalizedEmail) {
-      const existingUser = await runtimeUsers.findByEmail(normalizedEmail);
+      const existingUser = await runtimeUsers?.findByEmail(normalizedEmail);
       if (existingUser) {
         return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
       }
@@ -1322,26 +1422,59 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
 
     if (!user) {
       // Create new user
-      const newUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+      const newUserId =
+        resumedUserId ?? (await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env));
       const defaultName = display_name || null;
       const preferredUsername = normalizedEmail?.split('@')[0] ?? newUserId;
+      const provisioningRuntimeUser = {
+        active: true as const,
+        emailVerified: false,
+        userType: 'end_user',
+        displayName: defaultName,
+        sourceRef: 'auth:passkey',
+        piiFields: {
+          ...canonicalProfileFields.piiFields,
+          ...(normalizedEmail ? { email: true } : {}),
+          ...(defaultName ? { name: true } : {}),
+        },
+        sensitiveValues: {
+          ...canonicalProfileFields.sensitiveValues,
+          ...(normalizedEmail ? { email: normalizedEmail } : {}),
+          ...(defaultName ? { name: defaultName } : {}),
+        },
+        customAttributesJson: JSON.stringify({ preferred_username: preferredUsername }),
+      };
 
       try {
-        await runtimeUsers.syncUser({
-          userId: newUserId,
-          email: normalizedEmail,
-          name: defaultName,
-          active: true,
-          emailVerified: false,
-          userType: 'end_user',
-          sourceRef: 'direct_auth_passkey',
-          piiFields: canonicalProfileFields.piiFields,
-          sensitiveValues: canonicalProfileFields.sensitiveValues,
-          customAttributesJson: JSON.stringify({
-            preferred_username: preferredUsername,
-          }),
-        });
+        if (tenantD1) {
+          const provisioned = await provisionTenantD1EmailAccount(c, {
+            tenantId,
+            candidateUserId: newUserId,
+            flow: 'passkey',
+            email: normalizedEmail!,
+            runtimeUser: provisioningRuntimeUser,
+          });
+          if (provisioned.status === 'pending') return provisioned.response;
+          await resolveAccountDataContextFromHono(c, provisioned.accountId);
+          runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped: true });
+          user = { id: provisioned.userId, email: normalizedEmail, name: defaultName };
+        } else {
+          await runtimeUsers!.syncUser({
+            userId: newUserId,
+            email: normalizedEmail,
+            name: defaultName,
+            active: true,
+            emailVerified: false,
+            userType: 'end_user',
+            sourceRef: 'direct_auth_passkey',
+            piiFields: canonicalProfileFields.piiFields,
+            sensitiveValues: canonicalProfileFields.sensitiveValues,
+            customAttributesJson: provisioningRuntimeUser.customAttributesJson,
+          });
+        }
       } catch (piiError) {
+        const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, piiError);
+        if (writeFenceResponse) return writeFenceResponse;
         log.error('Failed to create canonical runtime user', {
           action: 'runtime_user_create',
           errorType: piiError instanceof Error ? piiError.name : 'Unknown',
@@ -1349,10 +1482,14 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
-      user = { id: newUserId, email: normalizedEmail, name: defaultName };
+      user ??= { id: newUserId, email: normalizedEmail, name: defaultName };
     }
 
     // Get existing passkeys for exclusion
+    const accountScoped = usesTenantD1AccountStorage(c);
+    const authCtx = accountScoped
+      ? createAccountAuthContextFromHono(c, tenantId)
+      : createAuthContextFromHono(c, tenantId);
     const existingPasskeys = await authCtx.repositories.passkey.findByUserId(user.id);
 
     const excludeCredentials: Array<{
@@ -1474,6 +1611,7 @@ export async function directPasskeySignupStartHandler(c: Context<{ Bindings: Env
  */
 export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('DIRECT-AUTH');
+  let failureStage = 'request_parse';
 
   try {
     const body = await c.req.json<{
@@ -1502,6 +1640,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
 
     // Look up userId from challenge_id mapping
     // We stored this mapping in signup/start using challenge_id-based sharding
+    failureStage = 'challenge_map_store';
     const challengeMapStore = await getChallengeStoreByChallengeId(
       c.env,
       challenge_id,
@@ -1510,6 +1649,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
     let userId: string;
 
     try {
+      failureStage = 'challenge_map_lookup';
       // Get userId from challenge_id mapping
       const mappingData = (await challengeMapStore.getChallengeRpc(
         `direct_passkey_signup_map:${challenge_id}`
@@ -1548,6 +1688,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
     };
 
     try {
+      failureStage = 'challenge_consume';
       challengeData = (await challengeStore.consumeChallengeRpc({
         id: `direct_passkey_signup:${userId}`,
         tenantId: getTenantIdFromContext(c),
@@ -1558,6 +1699,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
     }
 
     // Verify PKCE
+    failureStage = 'pkce_verify';
     const isValidPKCE = await verifyPKCE(
       code_verifier,
       challengeData.metadata?.code_challenge || ''
@@ -1606,24 +1748,42 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
     }
 
     // Store passkey
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    failureStage = 'account_context_resolve';
+    if (usesTenantD1AccountStorage(c)) {
+      await resolveAccountDataContextFromHono(c, userId);
+    }
+    const accountScoped = usesTenantD1AccountStorage(c);
+    const authCtx = accountScoped
+      ? createAccountAuthContextFromHono(c, tenantId)
+      : createAuthContextFromHono(c, tenantId);
     const publicKeyBase64 = Buffer.from(credentialPublicKey).toString('base64');
     const credentialIDBase64URL = toBase64URLString(credentialID as CredentialIDLike);
     const passkeyId = crypto.randomUUID();
 
+    failureStage = 'passkey_create';
     await authCtx.repositories.passkey.create({
       id: passkeyId,
       user_id: userId,
       credential_id: credentialIDBase64URL,
+      rp_id: rpID,
       public_key: publicKeyBase64,
       counter,
       transports: (credential.response.transports || []) as AuthenticatorTransport[],
       device_name: 'Direct Auth Passkey',
       aaguid: regInfo.aaguid ?? null,
     });
+    failureStage = 'passkey_route_publish';
+    await publishTenantD1PasskeyRoute(c, {
+      tenantId,
+      userId,
+      passkeyId,
+      credentialId: credentialIDBase64URL,
+      rpId: rpID,
+    });
 
     const now = Date.now();
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    failureStage = 'runtime_user_lookup';
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped });
 
     // Check if this is a new user (created in this flow)
     const runtimeUser = await runtimeUsers.findById(userId, { includeInactive: true });
@@ -1643,6 +1803,7 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
     }
 
     // Generate auth_code
+    failureStage = 'auth_code_issue';
     const authCode = await generateAuthCode(
       c.env,
       tenantId,
@@ -1666,9 +1827,16 @@ export async function directPasskeySignupFinishHandler(c: Context<{ Bindings: En
       is_new_user: isNewUser,
     });
   } catch (error) {
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     log.error('Direct passkey signup finish error', {
       action: 'signup_finish',
+      failureStage,
       errorType: error instanceof Error ? error.name : 'Unknown',
+      errorCode:
+        error instanceof Error && /^[a-z0-9_]+$/u.test(error.message)
+          ? error.message
+          : 'unclassified',
     });
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
   }
@@ -1681,6 +1849,7 @@ type DirectEmailVerificationMethod = 'email_code' | 'email_verification_protocol
 interface DirectEmailVerificationCompletionInput {
   tenantId: string;
   userId: string;
+  trustedEmail: string;
   channel: DirectAuthChannel;
   transactionId: string;
   method: DirectEmailVerificationMethod;
@@ -1751,20 +1920,52 @@ async function completeDirectEmailVerification(
   c: Context<{ Bindings: Env }>,
   input: DirectEmailVerificationCompletionInput
 ): Promise<Response> {
-  const { tenantId, userId, channel, transactionId, method, metadata } = input;
+  const { tenantId, userId, trustedEmail, channel, transactionId, method, metadata } = input;
   const log = getLogger(c).module('DIRECT-AUTH');
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-  const runtimeUser = await runtimeUsers.findById(userId, {
-    includeInactive: true,
-  });
+  const tenantD1 = usesTenantD1AccountStorage(c);
+  let runtimeUser: CanonicalOtpLoginUser | null;
+  let coreAdapter: DatabaseAdapter;
+
+  if (tenantD1) {
+    const accountData = await resolveOtpAccountCoreDataContextByIdentifierFromHono(c, {
+      indexKind: 'account_id',
+      identifier: `account:${userId}`,
+      expectedAccountId: `account:${userId}`,
+      expectedLegacyUserId: userId,
+      trustedEmail,
+    });
+    runtimeUser = accountData.user;
+    coreAdapter = ensureDatabaseAdapter(accountData.coreDb, 'otp-account-core');
+  } else {
+    const authCtx = createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    runtimeUser = await runtimeUsers.findForOtpLogin(userId, trustedEmail, {
+      includeInactive: true,
+    });
+    coreAdapter = authCtx.coreAdapter;
+  }
 
   if (!runtimeUser || runtimeUser.active !== 1) {
     return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
   }
 
   const now = Date.now();
-  await runtimeUsers.markEmailVerifiedAndTouchLastLogin(userId, now);
+  if (tenantD1) {
+    if (runtimeUser.email_verified !== 1) {
+      c.executionCtx.waitUntil(
+        markOtpLoginEmailVerified(coreAdapter, tenantId, userId, now).catch((error: unknown) => {
+          log.error(
+            'Failed to update user after direct OTP login',
+            { action: 'direct_email_user_update' },
+            error as Error
+          );
+        })
+      );
+    }
+  } else {
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    await runtimeUsers.markEmailVerifiedAndTouchLastLogin(userId, now);
+  }
 
   const isNewUser = now - Date.parse(runtimeUser.created_at) < 60000;
 
@@ -1775,30 +1976,21 @@ async function completeDirectEmailVerification(
   if (inviteId && inviteToken) {
     const inviteNow = Math.floor(now / 1000);
     try {
-      const invitation = await findActiveInvitationByToken(
-        authCtx.coreAdapter,
-        inviteToken,
-        inviteNow
-      );
+      const invitation = await findActiveInvitationByToken(coreAdapter, inviteToken, inviteNow);
       if (!invitation || invitation.id !== inviteId || invitation.tenant_id !== tenantId) {
         log.warn('Invitation metadata no longer matches an active tenant invitation', {
           invite_id: inviteId,
           tenant_id: tenantId,
         });
       } else if (
-        !(await consumeInvitationUse(
-          authCtx.coreAdapter,
-          invitation.id,
-          invitation.tenant_id,
-          inviteNow
-        ))
+        !(await consumeInvitationUse(coreAdapter, invitation.id, invitation.tenant_id, inviteNow))
       ) {
         log.warn('Invitation use_count increment was skipped during email verification', {
           invite_id: inviteId,
           tenant_id: tenantId,
         });
       } else {
-        const assignmentResults = await applyInvitationAssignments(authCtx.coreAdapter, {
+        const assignmentResults = await applyInvitationAssignments(coreAdapter, {
           userId,
           tenantId,
           roleId: invitation.role_id,
@@ -2029,6 +2221,7 @@ async function tryEmailVerificationProtocol(
   return completeDirectEmailVerification(c, {
     tenantId,
     userId,
+    trustedEmail: normalizedEmail,
     channel,
     transactionId: challengeId,
     method: 'email_verification_protocol',
@@ -2160,18 +2353,17 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
         invite_org_id: invitation.org_id,
         invited_email: invitation.invited_email,
       };
-    } else if (!boundRuntimeInteractionId && tenantId === getDefaultTenantId(c.env)) {
-      // If Host header did not resolve a specific tenant, try email domain routing
-      const resolvedTenantId = await resolveTenantFromEmailDomain(routingCoreAdapter, email, c.env);
-      if (resolvedTenantId) {
-        tenantId = resolvedTenantId;
-      }
     }
 
     // A Flow interaction is tenant-bound before Direct Auth begins. Invitations must not move a
     // runtime-bound request into another tenant, otherwise the user, OTP/EVP challenge, artifact,
     // managed session, and Flow interaction would be split across tenant stores.
     if (boundRuntimeInteractionId && tenantId !== challengeTenantId) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
+    const tenantD1 = usesTenantD1AccountStorage(c);
+    if (tenantD1 && tenantId !== challengeTenantId) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
@@ -2192,12 +2384,29 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       });
     }
 
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    let runtimeUsers: CanonicalRuntimeUserStore | null = null;
     let user: { id: string; email: string; name: string | null } | null = null;
+    let routedUser: CanonicalOtpLoginUser | null = null;
     let customFieldValues: Record<string, string> = {};
 
-    const existingUser = await runtimeUsers.findByEmail(normalizedEmail);
+    if (tenantD1) {
+      try {
+        const accountData = await resolveOtpAccountCoreDataContextByIdentifierFromHono(c, {
+          indexKind: 'email_exact',
+          identifier: normalizedEmail,
+          trustedEmail: normalizedEmail,
+        });
+        routedUser = accountData.user.active === 1 ? accountData.user : null;
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== 'account_data_route_not_found') {
+          throw error;
+        }
+      }
+    } else {
+      runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    }
+
+    const existingUser = tenantD1 ? routedUser : await runtimeUsers?.findByEmail(normalizedEmail);
     if (existingUser) {
       user = {
         id: existingUser.id,
@@ -2283,27 +2492,63 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     if (!user) {
       const userId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
       const preferredUsername = normalizedEmail.split('@')[0];
+      const runtimeUser = {
+        active: true as const,
+        emailVerified: false,
+        userType: 'end_user',
+        displayName,
+        sourceRef: 'auth:email_code',
+        piiFields: {
+          ...canonicalProfileFields.piiFields,
+          email: true,
+          ...(displayName ? { name: true } : {}),
+        },
+        sensitiveValues: {
+          ...canonicalProfileFields.sensitiveValues,
+          email: normalizedEmail,
+          ...(displayName ? { name: displayName } : {}),
+        },
+        customAttributesJson: JSON.stringify({
+          preferred_username: preferredUsername,
+        }),
+      };
 
       try {
-        await runtimeUsers.syncUser({
-          userId,
-          email: normalizedEmail,
-          name: displayName,
-          active: true,
-          emailVerified: false,
-          userType: 'end_user',
-          sourceRef: 'direct_auth_email',
-          piiFields: canonicalProfileFields.piiFields,
-          sensitiveValues: canonicalProfileFields.sensitiveValues,
-          customAttributesJson: JSON.stringify({
-            preferred_username: preferredUsername,
-          }),
-        });
-      } catch {
+        if (tenantD1) {
+          const provisioned = await provisionTenantD1EmailAccount(c, {
+            tenantId,
+            candidateUserId: userId,
+            flow: 'email_code',
+            email: normalizedEmail,
+            runtimeUser,
+          });
+          if (provisioned.status === 'pending') return provisioned.response;
+          user = {
+            id: provisioned.userId,
+            email: normalizedEmail,
+            name: displayName,
+          };
+        } else {
+          await runtimeUsers!.syncUser({
+            userId,
+            email: normalizedEmail,
+            name: displayName,
+            active: true,
+            emailVerified: false,
+            userType: 'end_user',
+            sourceRef: 'direct_auth_email',
+            piiFields: canonicalProfileFields.piiFields,
+            sensitiveValues: canonicalProfileFields.sensitiveValues,
+            customAttributesJson: runtimeUser.customAttributesJson,
+          });
+        }
+      } catch (error) {
+        const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+        if (writeFenceResponse) return writeFenceResponse;
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
-      user = { id: userId, email: normalizedEmail, name: displayName };
+      user ??= { id: userId, email: normalizedEmail, name: displayName };
     }
 
     const emailVerificationMetadata: Record<string, unknown> = {
@@ -2342,72 +2587,106 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
     const attemptId = crypto.randomUUID();
     const code = generateEmailCode();
     const issuedAt = Date.now();
-    const hmacSecret = c.env.OTP_HMAC_SECRET;
-    if (!hmacSecret) {
-      log.error('OTP_HMAC_SECRET must be configured for direct email-code auth', {
-        action: 'direct_email_code_send',
-      });
-      return createErrorResponse(c, AR_ERROR_CODES.CONFIG_MISSING_SECRET);
-    }
+    let failureStage = 'prepare';
+    type DirectEmailCodeChallengeStore = {
+      storeChallengeRpc(input: {
+        id: string;
+        tenantId: string;
+        type: string;
+        userId: string;
+        challenge: string;
+        ttl: number;
+        email: string;
+        metadata: Record<string, unknown>;
+      }): Promise<unknown>;
+      deleteChallengeRpc(id: string): Promise<unknown>;
+    };
+    let challengeStore: DirectEmailCodeChallengeStore | undefined;
+    try {
+      const hmacSecret = c.env.OTP_HMAC_SECRET;
+      if (!hmacSecret) {
+        throw new Error('otp_hmac_secret_missing');
+      }
 
-    const [codeHash, emailHash, challengeStore] = await Promise.all([
-      hashEmailCode(code, normalizedEmail, attemptId, issuedAt, hmacSecret),
-      hashEmail(normalizedEmail),
-      getChallengeStoreByChallengeId(c.env, attemptId, getTenantIdFromContext(c)),
-    ]);
+      const [codeHash, emailHash, resolvedChallengeStore] = await Promise.all([
+        hashEmailCode(code, normalizedEmail, attemptId, issuedAt, hmacSecret),
+        hashEmail(normalizedEmail),
+        getChallengeStoreByChallengeId(
+          c.env,
+          attemptId,
+          getTenantIdFromContext(c)
+        ) as Promise<DirectEmailCodeChallengeStore>,
+      ]);
+      challengeStore = resolvedChallengeStore;
 
-    await challengeStore.storeChallengeRpc({
-      id: `direct_email_code:${attemptId}`,
-      tenantId: getTenantIdFromContext(c),
-      type: 'direct_email_code',
-      userId: user.id,
-      challenge: codeHash,
-      ttl: EMAIL_CODE_TTL,
-      email: normalizedEmail,
-      metadata: {
-        ...emailVerificationMetadata,
-        transaction_id: attemptId,
-        email_hash: emailHash,
-        issued_at: issuedAt,
-      },
-    });
-
-    // Send email
-    const pluginCtx = getRequiredPluginContext(c, 'notification');
-    const emailNotifier = pluginCtx.registry.getNotifier('email');
-
-    if (!emailNotifier) {
-      log.warn('No email notifier plugin configured', {
-        action: 'notifier_check',
-      });
-      return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
-    }
-
-    const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
-
-    await emailNotifier.send({
-      channel: 'email',
-      to: normalizedEmail,
-      from: fromEmail,
-      subject: 'Your verification code',
-      body: getEmailCodeHtml({
-        name: user.name || undefined,
+      failureStage = 'challenge_store';
+      await challengeStore.storeChallengeRpc({
+        id: `direct_email_code:${attemptId}`,
+        tenantId: getTenantIdFromContext(c),
+        type: 'direct_email_code',
+        userId: user.id,
+        challenge: codeHash,
+        ttl: EMAIL_CODE_TTL,
         email: normalizedEmail,
-        code,
-        expiresInMinutes: EMAIL_CODE_TTL / 60,
-        appName: 'Authrim',
-        logoUrl: undefined,
-      }),
-      metadata: {
-        textBody: getEmailCodeText({
-          name: user.name || undefined,
-          email: normalizedEmail,
-          code,
-          expiresInMinutes: EMAIL_CODE_TTL / 60,
-          appName: 'Authrim',
-        }),
-      },
-    });
+        metadata: {
+          ...emailVerificationMetadata,
+          transaction_id: attemptId,
+          email_hash: emailHash,
+          issued_at: issuedAt,
+        },
+      });
+
+      failureStage = 'delivery';
+      const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
+      const delivery = await produceNotificationDelivery(c.env, {
+        owner: { owner: 'tenant', tenantId },
+        intentId: `direct-email-code:${attemptId}`,
+        outboxId: `notification:${attemptId}`,
+        notificationKind: 'auth.direct-email-code',
+        accountId: user.id,
+        idempotencyKey: `direct-email-code:${attemptId}`,
+        expiresAt: Math.floor(issuedAt / 1000) + EMAIL_CODE_TTL,
+        payload: {
+          channel: 'email',
+          to: normalizedEmail,
+          from: fromEmail,
+          subject: 'Your verification code',
+          body: getEmailCodeHtml({
+            name: user.name || undefined,
+            email: normalizedEmail,
+            code,
+            expiresInMinutes: EMAIL_CODE_TTL / 60,
+            appName: 'Authrim',
+            logoUrl: undefined,
+          }),
+          metadata: {
+            textBody: getEmailCodeText({
+              name: user.name || undefined,
+              email: normalizedEmail,
+              code,
+              expiresInMinutes: EMAIL_CODE_TTL / 60,
+              appName: 'Authrim',
+            }),
+          },
+        },
+      });
+      if (delivery.delivery === 'permanent_failure') {
+        throw new Error('notification_delivery_permanent_failure');
+      }
+    } catch (error) {
+      // Login and signup must not reveal whether the submitted address belongs to an account.
+      // Delivery failures remain available to operators through notification history and logs,
+      // while the public response stays indistinguishable from a suppressed send.
+      if (challengeStore) {
+        await challengeStore.deleteChallengeRpc(`direct_email_code:${attemptId}`).catch(() => {});
+      }
+      log.error('Failed to send direct email code', {
+        action: 'email_send',
+        failureStage,
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+      return acceptedEmailCodeSendResponse(c, normalizedEmail);
+    }
 
     return c.json({
       attempt_id: attemptId,
@@ -2415,6 +2694,8 @@ export async function directEmailCodeSendHandler(c: Context<{ Bindings: Env }>) 
       masked_email: maskEmail(normalizedEmail),
     });
   } catch (error) {
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     log.error('Direct email code send error', {
       action: 'email_send',
       errorType: error instanceof Error ? error.name : 'Unknown',
@@ -2566,12 +2847,15 @@ export async function directEmailCodeVerifyHandler(c: Context<{ Bindings: Env }>
     return completeDirectEmailVerification(c, {
       tenantId,
       userId: challengeData.userId,
+      trustedEmail: challengeData.email ?? '',
       channel,
       transactionId: attempt_id,
       method: 'email_code',
       metadata: challengeData.metadata ?? {},
     });
   } catch (error) {
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     log.error('Direct email code verify error', {
       action: 'email_verify',
       errorType: error instanceof Error ? error.name : 'Unknown',
@@ -2730,7 +3014,11 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     }
 
     const tenantId = getTenantIdFromContext(c);
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const accountScoped = usesTenantD1AccountStorage(c);
+    if (accountScoped) {
+      await resolveAccountDataContextFromHono(c, artifactData.userId);
+    }
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped });
     const runtimeUser = await runtimeUsers.findById(artifactData.userId);
     if (!runtimeUser) {
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
@@ -2753,7 +3041,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
     let authorizationContinuation: AuthorizationChallengeContinuation | undefined;
     if (effectiveAuthorizationChallengeId) {
       const continuation = await consumeAuthorizationChallengeContinuation(
-        c.env,
+        c,
         tenantId,
         effectiveAuthorizationChallengeId,
         artifactData.userId,
@@ -2773,6 +3061,7 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       artifactData.userId,
       sessionTtl.seconds,
       {
+        ...getSessionClientMetadata(c.req.raw),
         email: runtimeUser.email || null,
         name: runtimeUser.name,
         amr,
@@ -2837,6 +3126,8 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       redirect_url: postLoginRedirect,
     });
   } catch (error) {
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     log.error('Direct Auth session finish error', {
       action: 'direct_auth_session_finish',
       errorType: error instanceof Error ? error.name : 'Unknown',
@@ -3151,7 +3442,13 @@ export async function directPasskeyRegisterFinishHandler(c: Context<{ Bindings: 
 
     // Store passkey
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    if (usesTenantD1AccountStorage(c)) {
+      await resolveAccountDataContextFromHono(c, userId);
+    }
+    const accountScoped = usesTenantD1AccountStorage(c);
+    const authCtx = accountScoped
+      ? createAccountAuthContextFromHono(c, tenantId)
+      : createAuthContextFromHono(c, tenantId);
     const publicKeyBase64 = Buffer.from(credentialPublicKey).toString('base64');
     const credentialIDBase64URL = toBase64URLString(credentialID as CredentialIDLike);
     const passkeyId = crypto.randomUUID();
@@ -3169,11 +3466,19 @@ export async function directPasskeyRegisterFinishHandler(c: Context<{ Bindings: 
       id: passkeyId,
       user_id: userId,
       credential_id: credentialIDBase64URL,
+      rp_id: rpID,
       public_key: publicKeyBase64,
       counter,
       transports,
       device_name: device_name || challengeData.metadata?.display_name || 'Additional Passkey',
       aaguid: regInfo.aaguid ?? null,
+    });
+    await publishTenantD1PasskeyRoute(c, {
+      tenantId,
+      userId,
+      passkeyId,
+      credentialId: credentialIDBase64URL,
+      rpId: rpID,
     });
 
     // Clean up challenge mapping
@@ -3190,6 +3495,8 @@ export async function directPasskeyRegisterFinishHandler(c: Context<{ Bindings: 
       created_at: new Date().toISOString(),
     });
   } catch (error) {
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     log.error('Direct passkey register finish error', {
       action: 'register_finish',
       errorType: error instanceof Error ? error.name : 'Unknown',
@@ -3227,7 +3534,11 @@ export async function directSessionHandler(c: Context<{ Bindings: Env }>) {
 
     // Get user info
     const tenantId = getTenantIdFromContext(c);
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    const accountScoped = usesTenantD1AccountStorage(c);
+    if (accountScoped) {
+      await resolveAccountDataContextFromHono(c, session.userId);
+    }
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped });
 
     const runtimeUser = await runtimeUsers.findById(session.userId, { includeInactive: true });
     if (!runtimeUser || runtimeUser.active !== 1) {
@@ -3423,6 +3734,8 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
       message: 'Logged out successfully',
     });
   } catch (error) {
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     log.error('Direct logout error', {
       action: 'logout',
       errorType: error instanceof Error ? error.name : 'Unknown',

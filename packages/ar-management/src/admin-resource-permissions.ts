@@ -1,6 +1,12 @@
 import type { Context, Hono, Next } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
-import { ADMIN_PERMISSIONS, requireAdminPermissions } from '@authrim/ar-lib-core';
+import {
+  ADMIN_PERMISSIONS,
+  getLogger,
+  hasAdminPermission,
+  requireAdminPermissions,
+  type AdminAuthContext,
+} from '@authrim/ar-lib-core';
 
 type AdminPermissionMiddleware = (
   c: Context<{ Bindings: Env }>,
@@ -59,8 +65,15 @@ function requireSessionManagementPermission(): AdminPermissionMiddleware {
 function requireSettingsManagementPermission(): AdminPermissionMiddleware {
   return async (c, next) => {
     const method = c.req.method.toUpperCase();
+    const path = new URL(c.req.url).pathname;
     const permission =
-      method === 'GET' ? ADMIN_PERMISSIONS.SETTINGS_READ : ADMIN_PERMISSIONS.SETTINGS_WRITE;
+      path === '/api/admin/settings/agent'
+        ? method === 'GET'
+          ? ADMIN_PERMISSIONS.AGENT_SETTINGS_READ
+          : ADMIN_PERMISSIONS.AGENT_SETTINGS_WRITE
+        : method === 'GET'
+          ? ADMIN_PERMISSIONS.SETTINGS_READ
+          : ADMIN_PERMISSIONS.SETTINGS_WRITE;
 
     return requireAdminPermissions([permission])(c, next);
   };
@@ -81,6 +94,21 @@ function requireSecurityCredentialPermission(): AdminPermissionMiddleware {
     const method = c.req.method.toUpperCase();
     const permission =
       method === 'GET' ? ADMIN_PERMISSIONS.SECURITY_READ : ADMIN_PERMISSIONS.SECURITY_WRITE;
+
+    const authContext = (c as unknown as { get: (key: string) => unknown }).get('adminAuth') as
+      | AdminAuthContext
+      | undefined;
+    if (!hasAdminPermission(authContext?.permissions ?? [], permission)) {
+      getLogger(c)
+        .module('ADMIN-RESOURCE-PERMISSIONS')
+        .warn('Security resource access denied', {
+          method,
+          path: new URL(c.req.url).pathname,
+          authMethod: authContext?.authMethod,
+          requiredPermissions: [permission],
+          actualPermissions: authContext?.permissions ?? [],
+        });
+    }
 
     return requireAdminPermissions([permission])(c, next);
   };
@@ -134,6 +162,17 @@ export function registerAdminResourcePermissionMiddleware(app: Hono<any, any, an
   const clientRegistrationTokenPermission = requireClientRegistrationTokenPermission();
   const externalProviderPermission = requireExternalProviderPermission();
   const externalTokenRefreshPermission = requireExternalTokenRefreshPermission();
+  const vcProfilePermission: AdminPermissionMiddleware = async (c, next) => {
+    const path = new URL(c.req.url).pathname;
+    const permission = path.endsWith('/offers')
+      ? ADMIN_PERMISSIONS.VC_CREDENTIAL_OFFERS_CREATE
+      : path.endsWith('/publish')
+        ? ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_PUBLISH
+        : c.req.method === 'GET'
+          ? ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_READ
+          : ADMIN_PERMISSIONS.VC_CREDENTIAL_PROFILES_WRITE;
+    return requireAdminPermissions([permission])(c, next);
+  };
 
   app.use('/api/admin/users', userPermission);
   app.use('/api/admin/users/*', userPermission);
@@ -158,6 +197,7 @@ export function registerAdminResourcePermissionMiddleware(app: Hono<any, any, an
   app.use('/api/admin/signing-keys/*', securityCredentialPermission);
   app.use('/api/admin/scim-tokens', securityCredentialPermission);
   app.use('/api/admin/scim-tokens/*', securityCredentialPermission);
+  app.use('/api/admin/scim-settings', securityCredentialPermission);
   app.use('/api/admin/check-api-keys', securityCredentialPermission);
   app.use('/api/admin/check-api-keys/*', securityCredentialPermission);
   app.use('/api/admin/iat-tokens', clientRegistrationTokenPermission);
@@ -166,4 +206,6 @@ export function registerAdminResourcePermissionMiddleware(app: Hono<any, any, an
   app.use('/api/admin/external-providers/*', externalProviderPermission);
   app.use('/api/admin/external-token-refresh', externalTokenRefreshPermission);
   app.use('/api/admin/external-token-refresh/*', externalTokenRefreshPermission);
+  app.use('/api/admin/credential-profiles', vcProfilePermission);
+  app.use('/api/admin/credential-profiles/*', vcProfilePermission);
 }

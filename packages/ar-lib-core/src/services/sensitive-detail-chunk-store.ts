@@ -1,4 +1,4 @@
-import { createLoggingId, type LogType } from '@authrim/ar-lib-logging';
+import { createLoggingId, type LogType } from '@authrim/ar-lib-logging/contract';
 import { buildLogChunkObjectKey } from '@authrim/ar-lib-logging/chunks';
 import {
   enqueueLoggingDeliveryPayload,

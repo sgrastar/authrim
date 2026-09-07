@@ -19,8 +19,11 @@ const API_BASE_URL = import.meta.env.PUBLIC_API_BASE_URL || '';
 /** Valid field types for custom claims */
 export type FieldType = 'string' | 'number' | 'boolean' | 'date' | 'enum';
 
+/** Whether a field stores one value or an ordered set of values. */
+export type Cardinality = 'single' | 'multi';
+
 /** Operation status */
-export type OperationStatus = 'active' | 'renaming' | 'deleting' | 'error';
+export type OperationStatus = 'active' | 'renaming' | 'deleting' | 'reconfiguring' | 'error';
 
 /** Scope evaluation mode */
 export type ScopeMode = 'all' | 'any';
@@ -59,6 +62,7 @@ export interface CustomClaimSchema {
 	field_key: string;
 	display_label: string;
 	field_type: FieldType;
+	cardinality?: Cardinality;
 	is_pii: number;
 	is_required: number;
 	is_active: number;
@@ -138,13 +142,11 @@ export interface CustomClaimSchemaInput {
 	field_key?: string;
 	display_label?: string;
 	field_type?: FieldType;
+	cardinality?: Cardinality;
 	is_pii?: boolean;
 	is_required?: boolean;
 	is_active?: boolean;
 	validation_rules?: ValidationRules | null;
-	include_in_id_token?: boolean;
-	include_in_userinfo?: boolean;
-	include_in_introspection?: boolean;
 	required_scopes?: string[] | null;
 	scope_mode?: ScopeMode;
 	is_searchable?: boolean;
@@ -168,6 +170,7 @@ export interface CustomClaimPresetField {
 	field_key: string;
 	display_label: string;
 	field_type: FieldType;
+	cardinality?: Cardinality;
 	is_pii: number;
 	is_searchable: number;
 	is_exportable: number;
@@ -455,6 +458,8 @@ export function getOperationStatusInfo(status: OperationStatus): {
 			return { label: 'Renaming...', color: 'yellow' };
 		case 'deleting':
 			return { label: 'Deleting...', color: 'yellow' };
+		case 'reconfiguring':
+			return { label: 'Reconfiguring...', color: 'yellow' };
 		case 'error':
 			return { label: 'Error', color: 'red' };
 		default:

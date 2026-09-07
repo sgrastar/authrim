@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim SCIM API
-  version: 0.3.4
+  version: 0.4.0
   summary: SCIM 2.0 user and group provisioning API.
   description: >
     Initial OpenAPI contract for the SCIM 2.0 endpoints implemented by `@authrim/ar-management`. SCIM resource schemas are represented at a high level here; detailed semantics are governed by RFC 7643, RFC 7644, and the implementation tests.
@@ -105,6 +105,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/ScimJson'
+        '400':
+          $ref: '#/components/responses/ScimError'
         '401':
           $ref: '#/components/responses/ScimError'
       security:
@@ -113,15 +115,53 @@ paths:
       tags:
         - SCIM Users
       summary: Create a SCIM user.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         $ref: '#/components/requestBodies/ScimUser'
       responses:
         '201':
           $ref: '#/components/responses/ScimJson'
+        '202':
+          $ref: '#/components/responses/ScimAccountCreationOperation'
         '400':
           $ref: '#/components/responses/ScimError'
         '409':
           $ref: '#/components/responses/ScimError'
+        '503':
+          description: Account capacity or a newly deployed runtime database binding is unavailable.
+          headers:
+            Retry-After:
+              description: Minimum suggested delay before retrying the same request, in seconds.
+              schema: { type: integer, minimum: 1, example: 1 }
+          content:
+            application/scim+json:
+              schema:
+                $ref: '#/components/schemas/ScimError'
+      description: >-
+        Creates the account through the tenant directory publication workflow. Idempotency-Key is
+        optional for SCIM client compatibility; when omitted, Authrim derives a stable key from the
+        authenticated provisioning token and canonical request body. Returns 202 with an operation
+        Location when directory publication continues asynchronously. userName is unique within the
+        tenant using case-insensitive comparison; externalId is not unique. Capacity provisioning
+        and runtime binding propagation return retryable 503 responses.
+      security:
+        - scimBearer: []
+  /scim/v2/Operations/{id}:
+    get:
+      tags:
+        - SCIM Users
+      summary: Get an account creation operation.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          $ref: '#/components/responses/ScimAccountCreationOperation'
+        '404':
+          $ref: '#/components/responses/ScimError'
+      description: >-
+        Returns only operations owned by the same tenant and SCIM bearer token. Unknown and
+        differently owned operation identifiers return the same 404 response.
       security:
         - scimBearer: []
   /scim/v2/Users/{id}:
@@ -129,6 +169,7 @@ paths:
       tags:
         - SCIM Users
       summary: Get a SCIM user.
+      description: Deactivated users remain readable. Deleted users return 404.
       parameters:
         - $ref: '#/components/parameters/Id'
       responses:
@@ -152,8 +193,16 @@ paths:
           $ref: '#/components/responses/ScimJson'
         '400':
           $ref: '#/components/responses/ScimError'
+        '409':
+          $ref: '#/components/responses/ScimError'
         '412':
           $ref: '#/components/responses/ScimError'
+        '503':
+          $ref: '#/components/responses/ScimError'
+      description: >-
+        Changes to userName or the mapped primary email use the durable identifier replacement
+        workflow. Identifier reservation conflicts return 409; retryable directory convergence
+        failures return 503.
       security:
         - scimBearer: []
     patch:
@@ -170,14 +219,23 @@ paths:
           $ref: '#/components/responses/ScimJson'
         '400':
           $ref: '#/components/responses/ScimError'
+        '409':
+          $ref: '#/components/responses/ScimError'
         '412':
           $ref: '#/components/responses/ScimError'
+        '503':
+          $ref: '#/components/responses/ScimError'
+      description: >-
+        Changes to userName or the mapped primary email use the durable identifier replacement
+        workflow. Identifier reservation conflicts return 409; retryable directory convergence
+        failures return 503.
       security:
         - scimBearer: []
     delete:
       tags:
         - SCIM Users
       summary: Delete a SCIM user.
+      description: An active account legal hold rejects deletion with a SCIM 409 response.
       parameters:
         - $ref: '#/components/parameters/Id'
         - $ref: '#/components/parameters/IfMatch'
@@ -185,6 +243,8 @@ paths:
         '204':
           description: User deleted.
         '404':
+          $ref: '#/components/responses/ScimError'
+        '409':
           $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
@@ -202,6 +262,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/ScimJson'
+        '400':
+          $ref: '#/components/responses/ScimError'
       security:
         - scimBearer: []
     post:
@@ -288,6 +350,11 @@ paths:
       tags:
         - SCIM Bulk
       summary: Execute SCIM bulk operations.
+      description: >-
+        Executes supported SCIM operations and returns each operation's status in the bulk response.
+        A user DELETE operation returns an operation-level 409 error while the account has an active
+        legal hold. A user POST operation returns an operation-level 503 while account capacity or a
+        newly deployed runtime database binding is temporarily unavailable.
       requestBody:
         $ref: '#/components/requestBodies/ScimBulkRequest'
       responses:
@@ -317,6 +384,18 @@ components:
       schema:
         type: string
       description: Optional ETag precondition for replace, patch, or delete operations.
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+      description: >-
+        Stable replay-protection key for one user creation request. Omit to use Authrim's
+        deterministic SCIM request key; send a new explicit value to intentionally recreate an
+        otherwise identical resource after deletion.
     Filter:
       name: filter
       in: query
@@ -399,6 +478,17 @@ components:
           schema:
             $ref: '#/components/schemas/ScimBulkRequest'
   responses:
+    ScimAccountCreationOperation:
+      description: Durable account creation operation state.
+      headers:
+        Location:
+          description: Operation status URL when returned by POST /Users.
+          schema:
+            type: string
+      content:
+        application/scim+json:
+          schema:
+            $ref: '#/components/schemas/ScimAccountCreationOperation'
     ScimJson:
       description: Successful SCIM JSON response.
       content:
@@ -415,6 +505,41 @@ components:
           schema:
             $ref: '#/components/schemas/ScimError'
   schemas:
+    ScimAccountCreationOperation:
+      type: object
+      additionalProperties: false
+      required:
+        - schemas
+        - id
+        - status
+        - operationId
+        - meta
+      properties:
+        schemas:
+          type: array
+          contains:
+            const: urn:authrim:params:scim:api:messages:2.0:AccountCreationOperation
+        id:
+          type: string
+        status:
+          type: string
+          enum:
+            - preparing
+            - reserved
+            - writing
+            - directory_pending
+            - succeeded
+            - blocked
+            - canceled
+        operationId:
+          type: string
+        userId:
+          type: string
+        resourceLocation:
+          type: string
+          format: uri
+        meta:
+          $ref: '#/components/schemas/ScimMeta'
     ScimObject:
       type: object
       additionalProperties: true
@@ -528,8 +653,8 @@ components:
       type: object
       additionalProperties: true
       required:
+        - schemas
         - userName
-        - emails
       properties:
         schemas:
           type: array
@@ -540,8 +665,11 @@ components:
           readOnly: true
         externalId:
           type: string
+          description: Source-system correlation identifier. Authrim does not require uniqueness.
         userName:
           type: string
+          minLength: 1
+          description: Tenant-wide, case-insensitive unique SCIM login identifier.
         name:
           $ref: '#/components/schemas/ScimName'
         displayName:
@@ -572,7 +700,6 @@ components:
             Directory Connector, or External IdP authentication instead.
         emails:
           type: array
-          minItems: 1
           items:
             $ref: '#/components/schemas/ScimEmail'
         phoneNumbers:
@@ -594,6 +721,7 @@ components:
       type: object
       additionalProperties: true
       required:
+        - schemas
         - displayName
       properties:
         schemas:
@@ -617,6 +745,7 @@ components:
       type: object
       additionalProperties: false
       required:
+        - schemas
         - Operations
       properties:
         schemas:

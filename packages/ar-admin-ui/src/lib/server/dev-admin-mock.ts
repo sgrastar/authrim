@@ -1,5 +1,10 @@
 import type { RequestEvent } from '@sveltejs/kit';
 
+import {
+	createLoginUiRuntimeContractPreview,
+	getNewFlowTemplate
+} from '$lib/admin/new-flow-templates';
+
 const DEV_ADMIN_MOCK_FLAG = 'AUTHRIM_ADMIN_UI_DEV_MOCK';
 const DEV_ADMIN_MOCK_SENTINEL = '__AUTHRIM_ADMIN_UI_DEV_MOCK_SENTINEL__';
 const TENANT_ID = 'dev-tenant';
@@ -146,6 +151,7 @@ interface DevClient {
 	delegation_mode?: 'none' | 'delegation' | 'impersonation';
 	client_credentials_allowed?: boolean;
 	allowed_scopes?: string[];
+	requestable_scopes?: string[];
 	default_scope?: string | null;
 	default_audience?: string | null;
 	access_token_ttl?: number;
@@ -374,6 +380,22 @@ interface DevSettings {
 	sources: Record<string, 'default' | 'kv' | 'env'>;
 }
 
+interface DevScreen {
+	id: string;
+	tenant_id: string;
+	screen_key: string;
+	display_name: string;
+	description: string;
+	screen_kind: string;
+	fields: Array<Record<string, unknown>>;
+	localizations: Record<string, unknown>;
+	settings: Record<string, unknown>;
+	is_active: number;
+	is_system: number;
+	created_at: number;
+	updated_at: number;
+}
+
 interface DevStorageDestination {
 	id: string;
 	scope_type: 'tenant' | 'platform';
@@ -497,7 +519,7 @@ interface DevCustomClaimSchema {
 	registration_required: boolean;
 	registration_order: number;
 	registration_placeholder: string | null;
-	operation_status: 'active' | 'renaming' | 'deleting' | 'error';
+	operation_status: 'active' | 'renaming' | 'deleting' | 'reconfiguring' | 'error';
 	operation_detail: string | null;
 	schema_version: number;
 	user_count: number;
@@ -854,6 +876,36 @@ interface DevMachinePrincipal {
 	credentials: DevMachineCredential[];
 }
 
+interface DevAgentGrant {
+	id: string;
+	tenant_id: string;
+	client_id: string;
+	machine_principal_id: string | null;
+	grantor_id: string;
+	delegator_id: string;
+	permissions: string[];
+	scopes: Array<'agent:read' | 'agent:write' | 'agent:execute' | 'agent:admin'>;
+	authorization_details: Record<string, unknown>[] | null;
+	resolved_scope_constraints: Record<string, unknown>;
+	purpose: string | null;
+	consent_version: number;
+	generation: number;
+	status: 'active' | 'suspended' | 'revoked';
+	delegation_mode: 'user_consent' | 'admin_pre_authorized' | 'task_approved';
+	task_set_id: string | null;
+	task_set_version: number | null;
+	scope_policy_id: string | null;
+	scope_policy_version: number | null;
+	resolved_tools: Record<string, unknown>[] | null;
+	access_snapshot_hash: string | null;
+	expires_at: number | null;
+	last_used_at: number | null;
+	created_at: number;
+	updated_at: number;
+	revoked_at: number | null;
+	revoked_by: string | null;
+}
+
 interface DevSigningKey {
 	kid: string;
 	algorithm: string;
@@ -868,6 +920,7 @@ interface DevTenant {
 	tenant_code: string;
 	name: string;
 	description: string | null;
+	isolation_policy: 'shared_pool' | 'tenant_exclusive';
 	lifecycle_state:
 		| 'provisioning'
 		| 'active'
@@ -881,6 +934,24 @@ interface DevTenant {
 	is_default: boolean;
 	created_at: number;
 	updated_at: number;
+}
+
+const DEV_TENANT_PROVISIONING_STEPS = [
+	'request_accepted',
+	'capacity_check',
+	'reserve_default_route',
+	'tenant_seed',
+	'registry_publish',
+	'tenant_smoke',
+	'lookup_activate',
+	'tenant_active'
+] as const;
+
+interface DevTenantProvisioning {
+	operationId: string;
+	tenantId: string;
+	createdAt: number;
+	pollCount: number;
 }
 
 interface DevTenantInvitation {
@@ -1057,6 +1128,16 @@ interface DevSignInConfirmationPolicy {
 
 const fieldMappingSets = [
 	{
+		id: 'field-mapping-scim-inbound',
+		tenantId: TENANT_ID,
+		fieldMappingKey: 'scim-inbound',
+		displayName: 'SCIM inbound user mapping',
+		description: 'Dev mock inbound SCIM mapping set.',
+		lifecycleState: 'active',
+		createdAt: NOW - 86_400_000,
+		updatedAt: NOW
+	},
+	{
 		id: 'field-mapping-gakunin-basic',
 		tenantId: TENANT_ID,
 		fieldMappingKey: 'gakunin-basic',
@@ -1094,21 +1175,57 @@ const fieldMappingVersions = [
 		destinationProfileIds: ['destination-profile-oidc-core', 'destination-profile-saml-sp'],
 		rules: [
 			{
-				id: 'rule-email',
-				ruleKey: 'email',
-				ruleKind: 'field',
+				id: 'rule-source-email',
+				ruleKey: 'source-email',
+				ruleKind: 'source_mapping',
 				action: 'map',
 				priority: 10,
 				metadata: {},
 				edges: [
 					{
-						id: 'edge-email',
+						id: 'edge-source-email',
 						sourceRef: {
 							side: 'source',
-							namespace: 'saml.attribute',
-							path: 'urn:oid:0.9.2342.19200300.100.1.3'
+							namespace: 'csv.column',
+							path: 'mail',
+							role: 'source',
+							profileId: 'source-profile-gakunin-saml'
 						},
-						targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'email' },
+						targetRef: {
+							side: 'destination',
+							namespace: 'authrim.profile',
+							path: 'email',
+							role: 'target'
+						},
+						edgeKind: 'direct',
+						displayOrder: 0
+					}
+				],
+				transforms: []
+			},
+			{
+				id: 'rule-destination-email',
+				ruleKey: 'destination-email',
+				ruleKind: 'destination_release',
+				action: 'map',
+				priority: 20,
+				metadata: {},
+				edges: [
+					{
+						id: 'edge-destination-email',
+						sourceRef: {
+							side: 'source',
+							namespace: 'authrim.profile',
+							path: 'email',
+							role: 'target'
+						},
+						targetRef: {
+							side: 'destination',
+							namespace: 'oidc.claim',
+							path: 'email',
+							role: 'destination',
+							profileId: 'destination-profile-destination-profile-oidc-core'
+						},
 						edgeKind: 'direct',
 						displayOrder: 0
 					}
@@ -1168,7 +1285,157 @@ const catalogEntries = [
 	}
 ];
 
+function devBuiltinProfileClaim(input: {
+	fieldKey: string;
+	displayLabel: string;
+	fieldType?: 'string' | 'boolean';
+	isPii: boolean;
+	isSearchable: boolean;
+	isExportable: boolean;
+	displayOrder: number;
+	groupKey: 'profile' | 'contact';
+	groupLabel: 'Profile' | 'Contact';
+	groupOrder: number;
+	fieldOrder: number;
+}): DevCustomClaimSchema {
+	return {
+		id: `builtin:${TENANT_ID}:${input.fieldKey}`,
+		field_key: input.fieldKey,
+		display_label: input.displayLabel,
+		field_type: input.fieldType ?? 'string',
+		is_pii: input.isPii,
+		is_required: false,
+		is_active: true,
+		is_system: true,
+		description: 'Built-in optional profile attribute available to identity mappings.',
+		validation_rules: null,
+		include_in_id_token: false,
+		include_in_userinfo: false,
+		include_in_introspection: false,
+		required_scopes: null,
+		scope_mode: 'any',
+		display_order: input.displayOrder,
+		claim_namespace: null,
+		is_searchable: input.isSearchable,
+		is_exportable: input.isExportable,
+		is_vc_claim: false,
+		show_on_registration: false,
+		registration_required: false,
+		registration_order: 0,
+		registration_placeholder: null,
+		operation_status: 'active',
+		operation_detail: null,
+		schema_version: 1,
+		user_count: 0,
+		user_count_approximate: input.isPii,
+		ui_group_key: input.groupKey,
+		ui_group_label: input.groupLabel,
+		ui_group_order: input.groupOrder,
+		ui_field_order: input.fieldOrder,
+		created_at: Math.floor(NOW / 1000),
+		updated_at: Math.floor(NOW / 1000),
+		created_by: 'system'
+	};
+}
+
 const customClaimSchemas: DevCustomClaimSchema[] = [
+	devBuiltinProfileClaim({
+		fieldKey: 'display_name',
+		displayLabel: 'Display Name',
+		isPii: true,
+		isSearchable: true,
+		isExportable: true,
+		displayOrder: 1,
+		groupKey: 'profile',
+		groupLabel: 'Profile',
+		groupOrder: 10,
+		fieldOrder: 1
+	}),
+	devBuiltinProfileClaim({
+		fieldKey: 'given_name',
+		displayLabel: 'Given Name',
+		isPii: true,
+		isSearchable: true,
+		isExportable: true,
+		displayOrder: 2,
+		groupKey: 'profile',
+		groupLabel: 'Profile',
+		groupOrder: 10,
+		fieldOrder: 2
+	}),
+	devBuiltinProfileClaim({
+		fieldKey: 'family_name',
+		displayLabel: 'Family Name',
+		isPii: true,
+		isSearchable: true,
+		isExportable: true,
+		displayOrder: 3,
+		groupKey: 'profile',
+		groupLabel: 'Profile',
+		groupOrder: 10,
+		fieldOrder: 3
+	}),
+	devBuiltinProfileClaim({
+		fieldKey: 'preferred_username',
+		displayLabel: 'Preferred Username',
+		isPii: false,
+		isSearchable: true,
+		isExportable: true,
+		displayOrder: 4,
+		groupKey: 'profile',
+		groupLabel: 'Profile',
+		groupOrder: 10,
+		fieldOrder: 4
+	}),
+	devBuiltinProfileClaim({
+		fieldKey: 'picture_url',
+		displayLabel: 'Picture URL',
+		isPii: true,
+		isSearchable: false,
+		isExportable: true,
+		displayOrder: 5,
+		groupKey: 'profile',
+		groupLabel: 'Profile',
+		groupOrder: 10,
+		fieldOrder: 5
+	}),
+	devBuiltinProfileClaim({
+		fieldKey: 'locale',
+		displayLabel: 'Locale',
+		isPii: false,
+		isSearchable: false,
+		isExportable: true,
+		displayOrder: 6,
+		groupKey: 'profile',
+		groupLabel: 'Profile',
+		groupOrder: 10,
+		fieldOrder: 6
+	}),
+	devBuiltinProfileClaim({
+		fieldKey: 'email',
+		displayLabel: 'Email',
+		isPii: true,
+		isSearchable: true,
+		isExportable: true,
+		displayOrder: 20,
+		groupKey: 'contact',
+		groupLabel: 'Contact',
+		groupOrder: 20,
+		fieldOrder: 1
+	}),
+	devBuiltinProfileClaim({
+		fieldKey: 'email_verified',
+		displayLabel: 'Email Verified',
+		fieldType: 'boolean',
+		isPii: false,
+		isSearchable: false,
+		isExportable: false,
+		displayOrder: 21,
+		groupKey: 'contact',
+		groupLabel: 'Contact',
+		groupOrder: 20,
+		fieldOrder: 2
+	}),
 	{
 		id: 'dev-claim-employee-id',
 		field_key: 'employee_id',
@@ -1180,8 +1447,8 @@ const customClaimSchemas: DevCustomClaimSchema[] = [
 		is_system: false,
 		description: 'Stable employee identifier released to selected client applications.',
 		validation_rules: { pattern: '^[A-Z0-9-]{4,32}$' },
-		include_in_id_token: true,
-		include_in_userinfo: true,
+		include_in_id_token: false,
+		include_in_userinfo: false,
 		include_in_introspection: false,
 		required_scopes: ['profile'],
 		scope_mode: 'any',
@@ -1219,7 +1486,7 @@ const customClaimSchemas: DevCustomClaimSchema[] = [
 		description: 'Consent flag used by research applications.',
 		validation_rules: null,
 		include_in_id_token: false,
-		include_in_userinfo: true,
+		include_in_userinfo: false,
 		include_in_introspection: false,
 		required_scopes: ['research'],
 		scope_mode: 'all',
@@ -1260,7 +1527,8 @@ const clients = new Map<string, DevClient>([
 			token_endpoint_auth_method: 'none',
 			browser_public_client_mode: 'strict',
 			browser_refresh_token_policy: 'dpop_bound',
-			scope: 'openid profile email',
+			scope: 'openid profile email agent:read',
+			requestable_scopes: ['openid', 'profile', 'email', 'agent:read'],
 			identity_mapping: {
 				fieldMappingSetId: 'field-mapping-gakunin-basic',
 				destinationNamespace: 'oidc.claim'
@@ -1830,6 +2098,10 @@ const endUsers = new Map<string, DevEndUser>([
 	]
 ]);
 
+const devIdentifierReplacementStates = new Map<string, string>([
+	['dev-user-alice', 'blocked_forward_repair']
+]);
+
 const userSessions = new Map<string, DevSession>([
 	[
 		'sess-alice-mac',
@@ -2395,13 +2667,98 @@ const tenants = new Map<string, DevTenant>([
 			tenant_code: 'dev',
 			name: 'Dev Tenant',
 			description: 'Local Admin UI mock tenant',
+			isolation_policy: 'tenant_exclusive',
 			lifecycle_state: 'active',
 			is_default: true,
 			created_at: NOW,
 			updated_at: NOW
 		}
+	],
+	[
+		'dev-shared',
+		{
+			id: 'dev-shared',
+			tenant_code: 'dev-shared',
+			name: 'Shared Dev Tenant',
+			description: 'Local tenant used to preview online physical isolation migration',
+			isolation_policy: 'shared_pool',
+			lifecycle_state: 'active',
+			is_default: false,
+			created_at: NOW,
+			updated_at: NOW
+		}
 	]
 ]);
+
+const tenantProvisioning = new Map<string, DevTenantProvisioning>();
+
+function devTenantProvisioningStatus(operation: DevTenantProvisioning) {
+	const currentIndex = Math.min(operation.pollCount, DEV_TENANT_PROVISIONING_STEPS.length);
+	const completed = currentIndex >= DEV_TENANT_PROVISIONING_STEPS.length;
+	const currentStep =
+		DEV_TENANT_PROVISIONING_STEPS[Math.min(currentIndex, DEV_TENANT_PROVISIONING_STEPS.length - 1)];
+	const updatedAt = operation.createdAt + currentIndex * 2;
+	return {
+		operation_id: operation.operationId,
+		tenant_id: operation.tenantId,
+		status: completed ? 'succeeded' : 'running',
+		current_step: currentStep,
+		attempt_count: 1,
+		next_attempt_at: null,
+		last_error_code: null,
+		created_at: operation.createdAt,
+		updated_at: updatedAt,
+		completed_at: completed ? updatedAt : null,
+		capacity_operation_ids: {
+			'tenant_core/default': `${operation.operationId}:default`,
+			'tenant_core/users': `${operation.operationId}:users`,
+			tenant_pii: `${operation.operationId}:pii`
+		},
+		capacity_operations:
+			currentIndex === 1
+				? ['tenant_core/default', 'tenant_core/users', 'tenant_pii'].map((dataRole) => ({
+						data_role: dataRole,
+						operation_id: `${operation.operationId}:${dataRole}`,
+						status: 'running',
+						attempt_count: 1,
+						next_attempt_at: null,
+						last_error_code: null,
+						updated_at: updatedAt,
+						steps: [
+							{
+								step_key: 'create_d1',
+								status: 'running',
+								attempt_count: 1,
+								next_attempt_at: null,
+								last_error_code: null,
+								observed_resource_id: null,
+								progress_current: null,
+								progress_total: null,
+								started_at: updatedAt,
+								completed_at: null,
+								updated_at: updatedAt
+							}
+						]
+					}))
+				: [],
+		steps: DEV_TENANT_PROVISIONING_STEPS.map((step, index) => ({
+			step_key: step,
+			status:
+				completed || index < currentIndex
+					? 'succeeded'
+					: index === currentIndex
+						? 'running'
+						: 'queued',
+			attempt_count: index <= currentIndex ? 1 : 0,
+			next_attempt_at: null,
+			last_error_code: null,
+			observed_resource_id: null,
+			started_at: index <= currentIndex ? operation.createdAt + index * 2 : null,
+			completed_at: completed || index < currentIndex ? operation.createdAt + index * 2 + 1 : null,
+			updated_at: updatedAt
+		}))
+	};
+}
 
 const tenantInvitations = new Map<string, DevTenantInvitation>([
 	[
@@ -2478,6 +2835,20 @@ const devShardSettings: Record<string, number> = {
 	'challenge-shards': 16,
 	'refresh-token-sharding': 16
 };
+let devRegionShardTotal = 16;
+let devRegionShardDistribution: Record<string, unknown> = {
+	apac: 25,
+	enam: 25,
+	weur: 25,
+	wnam: 25
+};
+let devReadReplicationEnabled = false;
+let devControlPlaneDriftReviewState: 'unreviewed' | 'reviewed' | 'dismissed' = 'unreviewed';
+let devControlPlaneOperationRetried = false;
+let devControlPlaneOperationCanceled = false;
+let devControlPlaneSettingsRestoreRequested = false;
+let devControlPlaneCleanupApproved = false;
+let devControlPlaneQuarantineStarted = false;
 
 const tenantVanityDomains = new Map<string, DevTenantVanityDomain>([
 	[
@@ -3045,7 +3416,12 @@ function devFlowEditor(
 }
 
 function devRuntimeNodeShouldRender(type: unknown): boolean {
-	return type !== 'entry' && type !== 'session_check' && type !== 'account_action';
+	return (
+		type !== 'entry' &&
+		type !== 'session_check' &&
+		type !== 'account_action' &&
+		type !== 'condition'
+	);
 }
 
 function devFlowRuntime(
@@ -3092,6 +3468,8 @@ function devRuntimeComponentForNode(type: string): string {
 			return 'account_action';
 		case 'complete':
 			return 'completion';
+		case 'condition':
+			return 'condition';
 		default:
 			return 'interaction_context';
 	}
@@ -3101,9 +3479,9 @@ function installDevFlow(
 	id: string,
 	kind: 'login' | 'registration',
 	displayName: string,
-	options: { noConsent?: boolean; templateId?: string } = {}
+	options: { noConsent?: boolean; templateId?: string; editor?: Record<string, unknown> } = {}
 ) {
-	const editor = devFlowEditor(kind, { noConsent: options.noConsent });
+	const editor = options.editor ?? devFlowEditor(kind, { noConsent: options.noConsent });
 	const runtime = devFlowRuntime(id, kind, editor);
 	const publishedVersionId = `${id}-version-1`;
 	flows.set(id, {
@@ -3155,7 +3533,7 @@ installDevFlow('flow-default-login', 'login', 'Default Login Flow', {
 installDevFlow('flow-default-registration', 'registration', 'Default Registration Flow', {
 	templateId: 'default-registration'
 });
-installDevFlow('flow-default-login-no-consent', 'login', 'Login (No consent)', {
+installDevFlow('flow-default-login-no-consent', 'login', 'Authentication-only Login', {
 	noConsent: true,
 	templateId: 'default-login-no-consent'
 });
@@ -3168,6 +3546,14 @@ installDevFlow(
 		templateId: 'default-registration-no-consent'
 	}
 );
+const samlSpOidcRpTemplate = getNewFlowTemplate('saml-sp-oidc-rp');
+if (!samlSpOidcRpTemplate) {
+	throw new Error('Missing SAML SP/OIDC RP Flow template');
+}
+installDevFlow('flow-saml-sp-oidc-rp', 'login', 'SAML SP/OIDC RP Flow', {
+	templateId: 'saml-sp-oidc-rp',
+	editor: createLoginUiRuntimeContractPreview(samlSpOidcRpTemplate).editor
+});
 flowAssignments.set(flowAssignmentKey('tenant', null, 'login'), {
 	id: 'flow-assignment-default-login',
 	tenant_id: TENANT_ID,
@@ -3224,6 +3610,30 @@ const samlProviders = new Map<string, DevSamlProvider>([
 ]);
 
 const machinePrincipals = new Map<string, DevMachinePrincipal>([
+	[
+		'machine-agent-access',
+		{
+			id: 'machine-agent-access',
+			clientId: 'dev-agent-client',
+			displayName: 'Dev Configuration Agent',
+			description: 'Machine-key identity for Agent Access Admin UI development.',
+			principalType: 'ai_agent',
+			status: 'active',
+			defaultAudience: 'authrim-admin',
+			tokenTtlSeconds: 600,
+			createdAt: NOW - 86400 * 1000 * 10,
+			updatedAt: NOW - 3600 * 1000,
+			disabledAt: null,
+			permissions: [
+				'admin:users:read',
+				'admin:clients:read',
+				'admin:admin_audit:read',
+				'admin:agent_settings:read'
+			],
+			tenantScopes: [{ scopeMode: 'allow', tenantId: TENANT_ID }],
+			credentials: []
+		}
+	],
 	[
 		'machine-automation-admin',
 		{
@@ -3308,6 +3718,69 @@ const machinePrincipals = new Map<string, DevMachinePrincipal>([
 		}
 	]
 ]);
+
+const agentGrants = new Map<string, DevAgentGrant>([
+	[
+		'aag-dev-read',
+		{
+			id: 'aag-dev-read',
+			tenant_id: TENANT_ID,
+			client_id: 'dev-agent-client',
+			machine_principal_id: 'machine-agent-access',
+			grantor_id: 'dev-admin',
+			delegator_id: 'dev-admin',
+			permissions: ['admin:users:read', 'admin:clients:read'],
+			scopes: ['agent:read'],
+			authorization_details: null,
+			resolved_scope_constraints: { tenantIds: [TENANT_ID] },
+			purpose: 'Inspect development users and OAuth clients while diagnosing configuration.',
+			consent_version: 1,
+			generation: 1,
+			status: 'active',
+			delegation_mode: 'user_consent',
+			task_set_id: 'ats_dev_inspector',
+			task_set_version: 1,
+			scope_policy_id: 'asp_dev_tenant',
+			scope_policy_version: 1,
+			resolved_tools: [],
+			access_snapshot_hash: 'dev-snapshot-hash',
+			expires_at: NOW + 86400 * 1000 * 30,
+			last_used_at: NOW - 7200 * 1000,
+			created_at: NOW - 86400 * 1000 * 5,
+			updated_at: NOW - 7200 * 1000,
+			revoked_at: null,
+			revoked_by: null
+		}
+	]
+]);
+
+let agentAccessSettings: {
+	enabled: boolean;
+	maxTokenTtlSeconds: number;
+	elevationMode: 'self_reauth' | 'approval' | 'both';
+	elevationTtlSeconds: number;
+	requestRateLimitPerMinute: number;
+	sessionInitializationRateLimitPerMinute: number;
+	maxConcurrentSessions: number;
+	rateLimitPerMinute: number;
+	publicClientStandardRateLimitPerMinute: number;
+	highRiskPermissionsAdditional: string[];
+	publicClientStandardToolIds: string[];
+	bulkCanaryProtected: boolean;
+} = {
+	enabled: true,
+	maxTokenTtlSeconds: 600,
+	elevationMode: 'self_reauth',
+	elevationTtlSeconds: 180,
+	requestRateLimitPerMinute: 600,
+	sessionInitializationRateLimitPerMinute: 30,
+	maxConcurrentSessions: 20,
+	rateLimitPerMinute: 120,
+	publicClientStandardRateLimitPerMinute: 10,
+	highRiskPermissionsAdditional: [] as string[],
+	publicClientStandardToolIds: [] as string[],
+	bulkCanaryProtected: false
+};
 
 const externalIdPProviders = new Map<string, DevExternalIdPProvider>([
 	[
@@ -3394,8 +3867,6 @@ const settings = new Map<string, DevSettings>([
 				'client.par_required': false,
 				'client.dpop_required': false,
 				'client.login_ui_url': '',
-				'client.consent_required': true,
-				'client.first_party': false,
 				'client.app_login_enabled': false
 			},
 			sources: {
@@ -3403,8 +3874,6 @@ const settings = new Map<string, DevSettings>([
 				'client.par_required': 'default',
 				'client.dpop_required': 'default',
 				'client.login_ui_url': 'default',
-				'client.consent_required': 'kv',
-				'client.first_party': 'default',
 				'client.app_login_enabled': 'default'
 			}
 		}
@@ -3419,6 +3888,161 @@ const settings = new Map<string, DevSettings>([
 		}
 	]
 ]);
+
+const accountScreenPresets = [
+	['overview', 'account_overview', 'Account overview', 'アカウント概要', 'heading'],
+	[
+		'launchers',
+		'account_launchers',
+		'Application launchers',
+		'マイアプリ',
+		'account_launcher_widget'
+	],
+	['profile', 'account_profile', 'User profile', 'ユーザー情報', 'account_profile_widget'],
+	['devices', 'account_devices', 'Devices', 'デバイス', 'account_device_list_widget'],
+	['sessions', 'account_sessions', 'Sessions', 'セッション', 'account_session_widget'],
+	['passkeys', 'account_passkeys', 'Passkeys', 'Passkey', 'account_passkey_widget'],
+	['totp', 'account_totp', 'Authenticator app', '認証アプリ', 'account_totp_widget'],
+	['consents', 'account_consents', 'Consents', '同意情報', 'account_consent_widget'],
+	['activity', 'account_activity', 'Account activity', '操作履歴', 'account_activity_widget'],
+	[
+		'social-accounts',
+		'account_social_accounts',
+		'Connected accounts',
+		'外部アカウント',
+		'account_social_account_widget'
+	],
+	['custom', 'account_custom', 'Custom guidance', 'カスタム案内', 'text']
+] as const;
+
+const devScreens = new Map<string, DevScreen>(
+	accountScreenPresets.map(([id, screenKey, displayName, jaDisplayName, blockType]) => [
+		`dev-account-${id}`,
+		{
+			id: `dev-account-${id}`,
+			tenant_id: TENANT_ID,
+			screen_key: screenKey,
+			display_name: displayName,
+			description: `${displayName} account screen`,
+			screen_kind: 'account',
+			fields: [
+				{
+					field: id,
+					label: displayName,
+					required: false,
+					block_type: blockType,
+					block_id: `${id}-widget`,
+					order: 0
+				}
+			],
+			localizations: {
+				ja: {
+					display_name: jaDisplayName,
+					fields: { [`${id}-widget`]: { label: jaDisplayName } }
+				}
+			},
+			settings: { canvas_layout: 'wide' },
+			is_active: 1,
+			is_system: 1,
+			created_at: NOW,
+			updated_at: NOW
+		}
+	])
+);
+
+const devLaunchers = new Map<string, Record<string, unknown>>(
+	[
+		{
+			id: 'dev-launcher-docs',
+			application_type: 'standalone',
+			application_id: null,
+			name: 'Engineering Handbook',
+			description: 'Architecture notes, runbooks, and team standards.',
+			category: 'Knowledge',
+			launch_type: 'bookmark',
+			launch_url: 'https://docs.example.com/',
+			deep_link_url: null,
+			open_in_new_tab: true,
+			icon_type: 'phosphor',
+			icon_value: 'book-open',
+			icon_color: '#ffffff',
+			background_color: '#2563eb',
+			grid_width: 3,
+			sort_order: 10,
+			enabled: true,
+			allow_favorite: true,
+			visibility: {
+				mode: 'everyone',
+				attribute_match: 'all',
+				user_ids: [],
+				group_ids: [],
+				attribute_rules: []
+			},
+			created_at: NOW,
+			updated_at: NOW
+		},
+		{
+			id: 'dev-launcher-console',
+			application_type: 'oidc_client',
+			application_id: 'dev-oidc-client',
+			name: 'Operations Console',
+			description: 'Monitor production services and deployment health.',
+			category: 'Operations',
+			launch_type: 'oidc_third_party_initiated',
+			launch_url: 'https://app.example.com/login/initiate',
+			deep_link_url: 'https://app.example.com/operations',
+			open_in_new_tab: false,
+			icon_type: 'phosphor',
+			icon_value: 'chart-line-up',
+			icon_color: '#ecfdf5',
+			background_color: '#047857',
+			grid_width: 5,
+			sort_order: 20,
+			enabled: true,
+			allow_favorite: true,
+			visibility: {
+				mode: 'groups',
+				attribute_match: 'all',
+				user_ids: [],
+				group_ids: ['dev-group-operators'],
+				attribute_rules: []
+			},
+			created_at: NOW,
+			updated_at: NOW
+		},
+		{
+			id: 'dev-launcher-legacy',
+			application_type: 'saml_sp',
+			application_id: 'dev-saml-sp',
+			name: 'Legacy Finance',
+			description: 'Legacy IdP-initiated finance application.',
+			category: 'Finance',
+			launch_type: 'saml_idp_initiated',
+			launch_url: null,
+			deep_link_url: null,
+			open_in_new_tab: true,
+			icon_type: 'phosphor',
+			icon_value: 'bank',
+			icon_color: '#fffbeb',
+			background_color: '#92400e',
+			grid_width: 2,
+			sort_order: 30,
+			enabled: false,
+			allow_favorite: false,
+			visibility: {
+				mode: 'attributes',
+				attribute_match: 'all',
+				user_ids: [],
+				group_ids: [],
+				attribute_rules: [
+					{ id: 'region', attribute_key: 'region', operator: 'equals', attribute_value: 'JP' }
+				]
+			},
+			created_at: NOW,
+			updated_at: NOW
+		}
+	].map((launcher) => [String(launcher.id), launcher])
+);
 
 const directoryConnectors = new Map<string, DevDirectoryConnectorConfig>([
 	[
@@ -3956,42 +4580,6 @@ const signInConfirmationPolicies = new Map<string, DevSignInConfirmationPolicy>(
 
 const runtimeProfiles = new Map<string, Record<string, unknown>>([
 	[
-		'storage:builtin:shared-d1',
-		{
-			id: 'builtin:shared-d1',
-			kind: 'storage',
-			label: 'Shared D1',
-			description: 'Default shared D1 storage profile for compact deployments.',
-			builtin: true,
-			version: 1,
-			slices: {
-				identity_core: { type: 'd1', bindingRef: 'DB' },
-				identity_pii: { type: 'd1', bindingRef: 'DB' },
-				custom_claims: { type: 'd1', bindingRef: 'DB' },
-				consent: { type: 'd1', bindingRef: 'DB' },
-				authorization: { type: 'd1', bindingRef: 'DB' }
-			}
-		}
-	],
-	[
-		'storage:builtin:tenant-d1',
-		{
-			id: 'builtin:tenant-d1',
-			kind: 'storage',
-			label: 'Tenant D1',
-			description: 'Tenant-isolated D1 storage for larger or regulated deployments.',
-			builtin: true,
-			version: 1,
-			slices: {
-				identity_core: { type: 'd1', bindingRef: 'TENANT_CORE_DB' },
-				identity_pii: { type: 'd1', bindingRef: 'TENANT_PII_DB' },
-				custom_claims: { type: 'd1', bindingRef: 'TENANT_PII_DB' },
-				consent: { type: 'd1', bindingRef: 'TENANT_PII_DB' },
-				authorization: { type: 'd1', bindingRef: 'TENANT_AUTHZ_DB' }
-			}
-		}
-	],
-	[
 		'audit:builtin:audit-archive',
 		{
 			id: 'builtin:audit-archive',
@@ -4001,7 +4589,7 @@ const runtimeProfiles = new Map<string, Record<string, unknown>>([
 			builtin: true,
 			version: 1,
 			primary: { type: 'd1', bindingRef: 'DB' },
-			archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+			archive: { type: 'r2', bucketRef: 'AUDIT_ARCHIVE', prefix: 'audit/' },
 			sinks: [
 				{
 					type: 'http',
@@ -4029,7 +4617,7 @@ const runtimeProfiles = new Map<string, Record<string, unknown>>([
 			description: 'Dev mock custom audit profile with an HTTP sink reference.',
 			version: 2,
 			primary: null,
-			archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/custom/' },
+			archive: { type: 'r2', bucketRef: 'AUDIT_ARCHIVE', prefix: 'audit/custom/' },
 			sinks: [{ type: 'http', url: 'https://example.com/audit', method: 'POST', format: 'json' }],
 			retention: {
 				eventLogRetentionDays: 90,
@@ -4055,7 +4643,6 @@ const runtimeProfiles = new Map<string, Record<string, unknown>>([
 ]);
 
 let runtimeProfileDefaults = {
-	storageProfileId: 'builtin:shared-d1',
 	auditProfileId: 'builtin:audit-archive',
 	residencyProfileId: 'builtin:jp-primary'
 };
@@ -4264,9 +4851,9 @@ const defaultUiPaths = {
 	error: '/error',
 	device: '/device',
 	deviceAuthorize: '/device/authorize',
-	logoutComplete: '/logout/complete',
+	logoutComplete: '/logout-complete',
 	loggedOut: '/logged-out',
-	register: '/register'
+	register: '/signup'
 };
 
 let devUiConfig: { baseUrl: string | null; paths: typeof defaultUiPaths } = {
@@ -4332,20 +4919,6 @@ function settingsMetaResponse(category: string) {
 			description: 'Client settings',
 			writable: true,
 			settings: {
-				'client.consent_required': settingMeta(
-					'client.consent_required',
-					'boolean',
-					true,
-					'Require consent',
-					'Require consent for this client.'
-				),
-				'client.first_party': settingMeta(
-					'client.first_party',
-					'boolean',
-					false,
-					'First-party client',
-					'Treat this client as a first-party application.'
-				),
 				'client.app_login_enabled': settingMeta(
 					'client.app_login_enabled',
 					'boolean',
@@ -4777,17 +5350,7 @@ function runtimeReferenceCatalog() {
 
 function runtimeActivationStatus(profile: Record<string, unknown>) {
 	const id = String(profile.id || '');
-	const blocked = id.includes('tenant-d1');
 	const warning = id.includes('http-export');
-	if (blocked) {
-		return {
-			state: 'blocked',
-			activatable: false,
-			severity: 'error',
-			blockingReasons: ['Tenant D1 bindings are not configured in the dev mock runtime.'],
-			warnings: []
-		};
-	}
 	if (warning) {
 		return {
 			state: 'warning',
@@ -4824,131 +5387,6 @@ function runtimeReferenceStatus(profile: Record<string, unknown>) {
 	return [];
 }
 
-function runtimeStoragePolicy() {
-	const slicePolicies = {
-		identity_core: {
-			slice: 'identity_core',
-			boundaryClass: 'auth_core',
-			tenantOverrideAllowed: false,
-			d1Default: true,
-			nonD1OptionRequired: false
-		},
-		identity_pii: {
-			slice: 'identity_pii',
-			boundaryClass: 'pii',
-			tenantOverrideAllowed: true,
-			d1Default: true,
-			nonD1OptionRequired: false
-		},
-		custom_claims: {
-			slice: 'custom_claims',
-			boundaryClass: 'custom_extension',
-			tenantOverrideAllowed: true,
-			d1Default: true,
-			nonD1OptionRequired: false
-		},
-		consent: {
-			slice: 'consent',
-			boundaryClass: 'pii',
-			tenantOverrideAllowed: true,
-			d1Default: true,
-			nonD1OptionRequired: false
-		},
-		authorization: {
-			slice: 'authorization',
-			boundaryClass: 'authorization',
-			tenantOverrideAllowed: false,
-			d1Default: true,
-			nonD1OptionRequired: false
-		}
-	};
-	return {
-		authCoreSlice: 'identity_core',
-		authCoreSlices: ['identity_core'],
-		slicePolicies,
-		environmentDefaultStorageProfileId: runtimeProfileDefaults.storageProfileId,
-		tenantDatabaseStatsStatus: {
-			available: true,
-			staleAfterHours: 24,
-			cutoffIso: new Date(NOW - 86400000).toISOString(),
-			summary: {
-				active_tenant_core_databases: 4,
-				stats_rows: 12,
-				missing_stats_count: 1,
-				stale_stats_count: 2,
-				warning_count: 2,
-				strong_warning_count: 1,
-				stale_file_size_count: 1,
-				unavailable_file_size_count: 0
-			},
-			attentionRequired: true
-		},
-		runtimeRegistrySecurityNotifications: {
-			available: true,
-			attentionRequired: false,
-			summary: {
-				pending_count: 1,
-				failed_count: 0,
-				dead_letter_count: 0,
-				critical_count: 0,
-				high_count: 1,
-				latest_created_at: new Date(NOW - 3600000).toISOString()
-			}
-		},
-		capabilityStatus: {
-			'builtin:shared-d1': {
-				profileId: 'builtin:shared-d1',
-				deploymentProfile: 'shared-d1',
-				mvpReady: true,
-				unsupportedCount: 0,
-				partialCount: 0,
-				capabilities: []
-			},
-			'builtin:tenant-d1': {
-				profileId: 'builtin:tenant-d1',
-				deploymentProfile: 'tenant-d1',
-				mvpReady: false,
-				unsupportedCount: 1,
-				partialCount: 1,
-				capabilities: [
-					{
-						id: 'tenant-core-binding',
-						label: 'Tenant core D1 binding',
-						state: 'unsupported',
-						criticality: 'security_critical',
-						detail: 'TENANT_CORE_DB is not configured in dev mock.'
-					},
-					{
-						id: 'tenant-stats',
-						label: 'Tenant statistics',
-						state: 'partial',
-						criticality: 'admin_critical',
-						detail: 'Stats are sample data only.'
-					}
-				]
-			}
-		},
-		tenantOverrideEligibility: {
-			'builtin:shared-d1': {
-				authCoreSlice: 'identity_core',
-				authCoreSlices: ['identity_core'],
-				slicePolicies,
-				environmentDefaultStorageProfileId: runtimeProfileDefaults.storageProfileId,
-				tenantOverrideAllowed: true
-			},
-			'builtin:tenant-d1': {
-				authCoreSlice: 'identity_core',
-				authCoreSlices: ['identity_core'],
-				slicePolicies,
-				environmentDefaultStorageProfileId: runtimeProfileDefaults.storageProfileId,
-				tenantOverrideAllowed: false,
-				violationCode: 'auth_core_differs',
-				reason: 'Auth core plane differs from the environment default.'
-			}
-		}
-	};
-}
-
 function runtimeProfilesByKind(kind: string): Record<string, unknown>[] {
 	return [...runtimeProfiles.values()].filter((profile) => profile.kind === kind);
 }
@@ -4962,19 +5400,17 @@ function runtimeProfileListPayload(kind: string) {
 		profiles.map((profile) => [String(profile.id), runtimeReferenceStatus(profile)])
 	);
 	return {
+		registry_backend: 'kv',
+		include_builtins: true,
 		profiles: { [kind]: profiles },
 		reference_status: { [kind]: referenceStatusById },
 		activation_status: { [kind]: activationById },
 		reference_management: runtimeReferenceManagement(),
-		reference_catalog: runtimeReferenceCatalog(),
-		...(kind === 'storage' ? { storage_policy: runtimeStoragePolicy() } : {})
+		reference_catalog: runtimeReferenceCatalog()
 	};
 }
 
 function runtimeDefaultsPayload() {
-	const storage = runtimeProfiles.get(
-		runtimeProfileKey('storage', runtimeProfileDefaults.storageProfileId)
-	);
 	const audit = runtimeProfiles.get(
 		runtimeProfileKey('audit', runtimeProfileDefaults.auditProfileId)
 	);
@@ -4982,14 +5418,17 @@ function runtimeDefaultsPayload() {
 		runtimeProfileKey('residency', runtimeProfileDefaults.residencyProfileId)
 	);
 	return {
+		registry_backend: 'kv',
 		defaults: runtimeProfileDefaults,
 		effective: {
-			storage: storage ?? null,
 			audit: audit ?? null,
 			residency: residency ?? null
 		},
+		reference_status: {
+			audit: audit ? runtimeReferenceStatus(audit) : [],
+			residency: residency ? runtimeReferenceStatus(residency) : []
+		},
 		activation_status: {
-			storage: storage ? runtimeActivationStatus(storage) : runtimeActivationStatus({}),
 			audit: audit ? runtimeActivationStatus(audit) : runtimeActivationStatus({}),
 			residency: residency ? runtimeActivationStatus(residency) : runtimeActivationStatus({})
 		},
@@ -5343,6 +5782,41 @@ async function handleEndUsers(event: RequestEvent, segments: string[]): Promise<
 	const user = endUsers.get(userId);
 	if (!user) return json({ error_description: 'User not found' }, 404);
 
+	if (segments[2] === 'identifier-replacements') {
+		const operationId = 'identifier-replacement:00000000-0000-4000-8000-000000000001';
+		if (segments.length === 3 && method === 'GET') {
+			const state = devIdentifierReplacementStates.get(userId);
+			return json({
+				operations: state
+					? [
+							{
+								operation_id: operationId,
+								authority: 'self_service',
+								state,
+								attention_required: state === 'blocked_forward_repair',
+								error_code:
+									state === 'blocked_forward_repair'
+										? 'identifier_replacement_forward_repair'
+										: null,
+								created_at: Math.floor((NOW - 3600 * 1000) / 1000),
+								updated_at: Math.floor(NOW / 1000),
+								completed_at: state === 'completed' ? Math.floor(NOW / 1000) : null
+							}
+						]
+					: []
+			});
+		}
+		if (
+			segments.length === 5 &&
+			segments[3] === operationId &&
+			segments[4] === 'resume' &&
+			method === 'POST'
+		) {
+			devIdentifierReplacementStates.set(userId, 'completed');
+			return json({ operation_id: operationId, state: 'completed', attention_required: false });
+		}
+	}
+
 	if (segments.length === 2 && method === 'GET') {
 		return json({
 			user,
@@ -5446,6 +5920,68 @@ async function handleEndUsers(event: RequestEvent, segments: string[]): Promise<
 	}
 
 	return null;
+}
+
+function devEmailDeliveryItems() {
+	const users = [...endUsers.values()];
+	const primaryUser = users[0];
+	const secondaryUser = users[1] ?? primaryUser;
+	return [
+		{
+			intent_id: 'notification-intent-dev-provider-accepted',
+			account_id: primaryUser?.id ?? null,
+			notification_kind: 'identifier_replacement_verification',
+			recipient: primaryUser?.email ?? 'al•••@example.test',
+			recipient_visibility: 'full',
+			api_status: 'recorded',
+			provider_installation_id: 'cloudflare-email',
+			provider_message_id: 'dev-email-message-accepted',
+			status: 'provider_accepted',
+			final_delivery_tracked: false,
+			attempts: 1,
+			last_error_code: null,
+			requested_at: Math.floor((NOW - 12 * 60 * 1000) / 1000),
+			provider_accepted_at: Math.floor((NOW - 11 * 60 * 1000) / 1000),
+			status_updated_at: Math.floor((NOW - 11 * 60 * 1000) / 1000)
+		},
+		{
+			intent_id: 'notification-intent-dev-retrying',
+			account_id: secondaryUser?.id ?? null,
+			notification_kind: 'email_otp',
+			recipient: secondaryUser?.email ?? 'bo•••@example.test',
+			recipient_visibility: 'full',
+			api_status: 'recorded',
+			provider_installation_id: 'cloudflare-email',
+			provider_message_id: null,
+			status: 'retrying',
+			final_delivery_tracked: false,
+			attempts: 2,
+			last_error_code: 'provider_delivery_failed',
+			requested_at: Math.floor((NOW - 35 * 60 * 1000) / 1000),
+			provider_accepted_at: null,
+			status_updated_at: Math.floor((NOW - 30 * 60 * 1000) / 1000)
+		}
+	];
+}
+
+async function handleEmailDeliveries(
+	event: RequestEvent,
+	segments: string[]
+): Promise<Response | null> {
+	if (event.request.method !== 'GET') return null;
+	const isList = segments.length === 1 && segments[0] === 'email-deliveries';
+	const isUserList =
+		segments.length === 3 && segments[0] === 'users' && segments[2] === 'email-deliveries';
+	if (!isList && !isUserList) return null;
+
+	const accountId = isUserList ? segments[1] : null;
+	const status = event.url.searchParams.get('status')?.trim();
+	const items = devEmailDeliveryItems().filter((item) => {
+		if (accountId && item.account_id !== accountId) return false;
+		if (status && item.status !== status) return false;
+		return true;
+	});
+	return json({ items, recipient_visibility: 'full' });
 }
 
 function adminRoleListItem(role: DevRole) {
@@ -7125,52 +7661,174 @@ function sampleDestinationProfiles() {
 				id: 'destination-profile-version-saml-sp',
 				versionLabel: 'v1',
 				lifecycleState: 'active',
-				schema: { fields: ['urn:oid:0.9.2342.19200300.100.1.3', 'urn:oid:2.5.4.3'] }
+				schema: {
+					attributes: [
+						{
+							name: 'urn:oid:0.9.2342.19200300.100.1.3',
+							label: 'mail',
+							classification: 'pii',
+							nullable: true
+						},
+						{
+							name: 'urn:oid:2.5.4.3',
+							label: 'cn',
+							classification: 'pii',
+							nullable: true
+						}
+					]
+				}
 			}
 		}
 	];
 }
 
-function handleIdentityMapping(event: RequestEvent, segments: string[]): Response | null {
+async function handleIdentityMapping(
+	event: RequestEvent,
+	segments: string[]
+): Promise<Response | null> {
 	const method = event.request.method;
+	const mutableFieldMappingSets = fieldMappingSets as unknown as Array<Record<string, unknown>>;
+	const mutableFieldMappingVersions = fieldMappingVersions as unknown as Array<
+		Record<string, unknown>
+	>;
+	if (
+		segments[0] === 'persistent-identifier-profiles' &&
+		segments.length === 1 &&
+		method === 'GET'
+	) {
+		return json({ profiles: [] });
+	}
 	if (segments[0] === 'field-mapping-sets' && method === 'GET' && segments.length === 1) {
 		return json({ fieldMappingSets });
 	}
 	if (segments[0] === 'field-mapping-sets' && method === 'POST' && segments.length === 1) {
-		return json({
-			result: {
-				id: `field-mapping-dev-${fieldMappingSets.length + 1}`,
-				tenantId: TENANT_ID,
-				fieldMappingKey: 'dev-created-field-mapping',
-				displayName: 'Dev created field mapping set',
-				lifecycleState: 'draft',
-				createdAt: Date.now(),
-				updatedAt: Date.now()
-			}
-		});
+		const request = await readJson(event.request);
+		const now = Date.now();
+		const result = {
+			id: `field-mapping-dev-${fieldMappingSets.length + 1}`,
+			tenantId: TENANT_ID,
+			fieldMappingKey:
+				typeof request.fieldMappingKey === 'string'
+					? request.fieldMappingKey
+					: 'dev-created-field-mapping',
+			displayName:
+				typeof request.displayName === 'string'
+					? request.displayName
+					: 'Dev created field mapping set',
+			description: typeof request.description === 'string' ? request.description : null,
+			lifecycleState: 'draft',
+			createdAt: now,
+			updatedAt: now
+		};
+		mutableFieldMappingSets.unshift(result);
+		return json({ result });
 	}
-	if (segments[0] === 'field-mapping-sets' && segments[2] === 'versions' && method === 'GET') {
+	if (
+		segments[0] === 'field-mapping-sets' &&
+		segments[2] === 'versions' &&
+		segments.length === 3 &&
+		method === 'GET'
+	) {
 		return json({
 			fieldMappingVersions: fieldMappingVersions.filter(
 				(version) => version.fieldMappingSetId === segments[1]
 			)
 		});
 	}
-	if (segments[0] === 'field-mapping-sets' && segments[2] === 'versions' && method === 'POST') {
-		return json({
-			result: {
-				id: `field-mapping-version-dev-${Date.now()}`,
-				tenantId: TENANT_ID,
-				fieldMappingSetId: segments[1],
-				lifecycleState: 'draft'
-			}
-		});
+	if (
+		segments[0] === 'field-mapping-sets' &&
+		segments[2] === 'versions' &&
+		segments.length === 3 &&
+		method === 'POST'
+	) {
+		const request = await readJson(event.request);
+		const rules = Array.isArray(request.rules) ? request.rules : [];
+		const destinationProfileIds = Array.from(
+			new Set(
+				rules.flatMap((rule) => {
+					if (!rule || typeof rule !== 'object') return [];
+					const edges: unknown[] = 'edges' in rule && Array.isArray(rule.edges) ? rule.edges : [];
+					return edges.flatMap((edge) => {
+						if (!edge || typeof edge !== 'object' || !('targetRef' in edge)) return [];
+						const targetRef = edge.targetRef;
+						if (!targetRef || typeof targetRef !== 'object' || !('profileId' in targetRef)) {
+							return [];
+						}
+						return typeof targetRef.profileId === 'string' ? [targetRef.profileId] : [];
+					});
+				})
+			)
+		);
+		const now = Date.now();
+		const result = {
+			id: `field-mapping-version-dev-${now}`,
+			tenantId: TENANT_ID,
+			fieldMappingSetId: segments[1],
+			versionLabel: typeof request.versionLabel === 'string' ? request.versionLabel : `dev-${now}`,
+			lifecycleState: 'draft',
+			compatibilityRange:
+				typeof request.compatibilityRange === 'string' ? request.compatibilityRange : null,
+			authorId: 'admin-dev-admin',
+			publishedAt: null,
+			createdAt: now,
+			updatedAt: now,
+			directions: {
+				source: rules.some(
+					(rule) =>
+						rule &&
+						typeof rule === 'object' &&
+						'ruleKind' in rule &&
+						typeof rule.ruleKind === 'string' &&
+						rule.ruleKind.includes('source')
+				),
+				destination: rules.some(
+					(rule) =>
+						rule &&
+						typeof rule === 'object' &&
+						'ruleKind' in rule &&
+						typeof rule.ruleKind === 'string' &&
+						(rule.ruleKind.includes('destination') || rule.ruleKind.includes('release'))
+				)
+			},
+			sourceProfileIds: Array.isArray(request.sourceProfileIds) ? request.sourceProfileIds : [],
+			destinationProfileIds,
+			rules,
+			latestSnapshot: null
+		};
+		mutableFieldMappingVersions.unshift(result);
+		return json({ result });
 	}
 	if (segments[0] === 'field-mapping-sets' && method === 'DELETE') {
 		return json({ success: true });
 	}
 	if (segments[0] === 'field-mapping-sets' && method === 'POST') {
-		return json({ success: true, snapshotId: 'snapshot-gakunin-basic-v1' });
+		const version = mutableFieldMappingVersions.find((candidate) => candidate.id === segments[3]);
+		if (segments[4] === 'compile') {
+			const snapshot = {
+				id: `snapshot-${segments[3] ?? 'dev'}`,
+				catalogVersionId: 'catalog-version-core-v1',
+				lifecycleState: 'draft',
+				compiledAt: Date.now()
+			};
+			if (version) version.latestSnapshot = snapshot;
+			return json({ result: snapshot });
+		}
+		if (segments[4] === 'activate') {
+			for (const candidate of mutableFieldMappingVersions) {
+				if (candidate.fieldMappingSetId !== segments[1]) continue;
+				candidate.lifecycleState = candidate.id === segments[3] ? 'active' : 'published';
+			}
+			const latestSnapshot = version?.latestSnapshot;
+			if (latestSnapshot && typeof latestSnapshot === 'object') {
+				(latestSnapshot as Record<string, unknown>).lifecycleState = 'active';
+			}
+			const fieldMappingSet = mutableFieldMappingSets.find(
+				(candidate) => candidate.id === segments[1]
+			);
+			if (fieldMappingSet) fieldMappingSet.lifecycleState = 'active';
+			return json({ success: true });
+		}
+		return json({ success: true });
 	}
 	if (segments[0] === 'catalogs') {
 		return json({
@@ -7220,7 +7878,19 @@ function handleIdentityMapping(event: RequestEvent, segments: string[]): Respons
 						id: 'source-profile-version-gakunin-saml',
 						versionLabel: 'v1',
 						lifecycleState: 'active',
-						schema: { sourceType: 'csv', columns: [] }
+						schema: {
+							sourceType: 'csv',
+							columns: [
+								{
+									stableColumnId: 'csv.mail',
+									headerName: 'mail',
+									label: 'mail',
+									valueType: 'string',
+									required: false,
+									classification: 'pii'
+								}
+							]
+						}
 					}
 				}
 			]
@@ -7275,16 +7945,77 @@ async function handleCustomClaims(
 		return json({
 			presets: [
 				{
-					id: 'dev-standard-profile',
-					label: 'Standard profile',
-					description: 'Dev mock preset for common profile claims.',
+					id: 'oidc_standard',
+					label: 'OIDC Standard Claims',
+					description: 'Standard OIDC profile, email, phone, and address claim fields.',
 					fields: [
 						{
 							field_key: 'department',
 							display_label: 'Department',
 							field_type: 'string',
+							cardinality: 'single',
 							is_pii: false,
 							description: 'Department name'
+						}
+					]
+				},
+				{
+					id: 'scim_core_user',
+					label: 'SCIM Core User',
+					description: 'Common scalar SCIM 2.0 User fields, roles, and group identifiers.',
+					fields: [
+						{
+							field_key: 'scim_roles',
+							display_label: 'SCIM Roles',
+							field_type: 'string',
+							cardinality: 'multi',
+							is_pii: false,
+							description: 'SCIM role values'
+						}
+					]
+				},
+				{
+					id: 'scim_enterprise_user',
+					label: 'SCIM Enterprise User',
+					description: 'Workforce fields from the SCIM Enterprise User extension.',
+					fields: [
+						{
+							field_key: 'employee_number',
+							display_label: 'Employee Number',
+							field_type: 'string',
+							cardinality: 'single',
+							is_pii: true,
+							description: 'Enterprise employee number'
+						}
+					]
+				},
+				{
+					id: 'saml_eduperson',
+					label: 'SAML eduPerson',
+					description: 'Common higher-education identity and authorization source fields.',
+					fields: [
+						{
+							field_key: 'edu_person_affiliation',
+							display_label: 'eduPersonAffiliation',
+							field_type: 'string',
+							cardinality: 'multi',
+							is_pii: false,
+							description: 'eduPerson affiliations'
+						}
+					]
+				},
+				{
+					id: 'authorization_context',
+					label: 'Authorization Context',
+					description: 'Common multi-valued roles, groups, and permissions source fields.',
+					fields: [
+						{
+							field_key: 'roles',
+							display_label: 'Roles',
+							field_type: 'string',
+							cardinality: 'multi',
+							is_pii: false,
+							description: 'Application-independent roles'
 						}
 					]
 				}
@@ -9300,6 +10031,381 @@ function devMachinePrincipalFromInput(
 	};
 }
 
+async function handleAgentAccess(
+	event: RequestEvent,
+	segments: string[]
+): Promise<Response | null> {
+	const method = event.request.method;
+	const now = Date.now();
+
+	if (segments[0] === 'settings' && segments[1] === 'agent') {
+		if (method === 'GET') return json({ settings: agentAccessSettings });
+		if (method === 'PUT') {
+			const input = await readJson(event.request);
+			agentAccessSettings = {
+				enabled: input.enabled === true,
+				maxTokenTtlSeconds: Number(input.maxTokenTtlSeconds),
+				elevationMode:
+					input.elevationMode === 'approval' || input.elevationMode === 'both'
+						? input.elevationMode
+						: 'self_reauth',
+				elevationTtlSeconds: Number(input.elevationTtlSeconds),
+				requestRateLimitPerMinute: Number(input.requestRateLimitPerMinute),
+				sessionInitializationRateLimitPerMinute: Number(
+					input.sessionInitializationRateLimitPerMinute
+				),
+				maxConcurrentSessions: Number(input.maxConcurrentSessions),
+				rateLimitPerMinute: Number(input.rateLimitPerMinute),
+				publicClientStandardRateLimitPerMinute: Number(
+					input.publicClientStandardRateLimitPerMinute
+				),
+				highRiskPermissionsAdditional: parseDevStringArray(input.highRiskPermissionsAdditional, []),
+				publicClientStandardToolIds: parseDevStringArray(input.publicClientStandardToolIds, []),
+				bulkCanaryProtected: input.bulkCanaryProtected === true
+			};
+			return json({ settings: agentAccessSettings, version: 2 });
+		}
+		return null;
+	}
+
+	const devTools = [
+		{
+			tool_id: 'admin.read.clients.get',
+			name: 'get_client',
+			contract_version: '1',
+			permissions: ['admin:clients:read'],
+			risk_level: 'low',
+			requires_elevation: false,
+			public_client_standard_opt_in_eligible: false
+		},
+		{
+			tool_id: 'admin.write.clients.metadata',
+			name: 'update_client_metadata',
+			contract_version: '1',
+			permissions: ['admin:clients:write'],
+			risk_level: 'standard',
+			requires_elevation: false,
+			public_client_standard_opt_in_eligible: true
+		}
+	];
+	const taskSet = {
+		id: 'ats_dev_inspector',
+		name: 'Development inspector',
+		description: 'Read development OAuth client configuration.',
+		kind: 'custom',
+		status: 'active',
+		current_version: 1,
+		catalog_version: 'admin-agent-tools-v1',
+		digest: 'dev-task-set-digest',
+		tools: [
+			{
+				toolId: devTools[0].tool_id,
+				toolName: devTools[0].name,
+				contractVersion: '1',
+				permissions: ['admin:clients:read'],
+				requiredScope: 'agent:read',
+				riskLevel: 'low',
+				requiresElevation: false
+			}
+		],
+		permissions: ['admin:clients:read']
+	};
+	const scopePolicy = {
+		id: 'asp_dev_tenant',
+		name: 'Development tenant',
+		description: 'Masked access within the development tenant.',
+		kind: 'custom',
+		status: 'active',
+		current_version: 1,
+		digest: 'dev-scope-policy-digest',
+		selector_catalog_version: 'agent-selector-catalog-v1',
+		definition: {
+			tenantIds: [TENANT_ID],
+			environmentIds: [],
+			domains: ['clients'],
+			resourceIds: [],
+			selectors: [],
+			allowedFields: [],
+			piiMode: 'masked',
+			maxPerCall: 20,
+			maxPlanOperations: 25,
+			maxBulkTenants: 1
+		}
+	};
+
+	if (segments[0] === 'agent-task-sets') {
+		if (segments[1] === 'catalog' && method === 'GET') {
+			return json({ catalog_version: 'admin-agent-tools-v1', tools: devTools });
+		}
+		if (segments.length === 1 && method === 'GET') return json({ task_sets: [taskSet] });
+		if (segments.length === 1 && method === 'POST') {
+			return json({ id: 'ats_dev_created', version: 1, digest: 'dev-created-task-digest' }, 201);
+		}
+		if (segments.length === 2 && method === 'GET') return json({ task_set: taskSet });
+	}
+	if (segments[0] === 'agent-scope-policies') {
+		if (segments.length === 1 && method === 'GET') {
+			return json({ scope_policies: [scopePolicy] });
+		}
+		if (segments.length === 1 && method === 'POST') {
+			return json({ id: 'asp_dev_created', version: 1, digest: 'dev-created-scope-digest' }, 201);
+		}
+		if (segments.length === 2 && method === 'GET') return json({ scope_policy: scopePolicy });
+	}
+	if (segments[0] === 'agent-config-plans' && method === 'GET') {
+		return segments.length === 1 ? json({ plans: [] }) : json({ plan: null }, 404);
+	}
+	if (segments[0] === 'agent-bulk-plans') {
+		if (segments.length === 1 && method === 'GET') return json({ bulk_plans: [] });
+		if (segments.length === 1 && method === 'POST') {
+			return json({ id: 'abp_dev', version: 1, digest: 'dev-bulk-digest', status: 'draft' }, 201);
+		}
+		if (segments.length === 3 && method === 'GET') {
+			return json({
+				bulk_plan: {
+					id: segments[1],
+					version: Number(segments[2]),
+					controlTenantId: TENANT_ID,
+					grantId: 'aag-dev',
+					actorSub: 'machine:dev',
+					definitionDigest: 'dev-bulk-digest',
+					targetTenantIds: [TENANT_ID],
+					canaryTenantIds: [TENANT_ID],
+					status: 'draft',
+					stage: 'validate',
+					currentWave: 0,
+					succeededCount: 0,
+					failedCount: 0,
+					indeterminateCount: 0,
+					createdAt: Date.now(),
+					updatedAt: Date.now()
+				},
+				tenant_executions: []
+			});
+		}
+		if (segments.length === 4 && method === 'POST') {
+			return json({
+				id: segments[1],
+				version: Number(segments[2]),
+				status:
+					segments[3] === 'validate' ? 'ready' : segments[3] === 'pause' ? 'paused' : 'running'
+			});
+		}
+	}
+	if (segments[0] === 'agent-templates') {
+		if (segments.length === 1 && method === 'GET') return json({ templates: [] });
+		if (segments.length === 1 && method === 'POST')
+			return json({ id: 'act_dev', version: 1, digest: 'dev-template-digest' }, 201);
+		if (segments.length === 4 && segments[3] === 'copies') {
+			return method === 'GET' ? json({ copies: [] }) : json({ copies: [] }, 201);
+		}
+	}
+	if (segments[0] === 'agent-baselines') {
+		if (segments.length === 1 && method === 'GET') return json({ baselines: [] });
+		if (segments.length === 1 && method === 'POST')
+			return json({ id: 'abl_dev', version: 1, digest: 'dev-baseline-digest' }, 201);
+		if (segments.length === 3 && method === 'GET')
+			return json({ baseline: null, assignments: [] }, 404);
+		if (segments.includes('evaluate') && method === 'POST')
+			return json({ drift_status: 'in_sync' });
+		if (segments.includes('exceptions') && method === 'POST') return json({ id: 'abx_dev' }, 201);
+		if (segments.includes('assignments') && method === 'POST')
+			return json({ id: 'aba_dev', drift_status: 'unknown' }, 201);
+	}
+	if (segments[0] === 'agent-secret-refs') {
+		if (method === 'GET') return json({ secret_refs: [] });
+		if (segments.length === 3 && segments[2] === 'revoke' && method === 'POST') {
+			return json({ id: segments[1], status: 'revoked' });
+		}
+		if (segments.length === 1 && method === 'POST') {
+			return json({ id: 'asr_dev_reference', status: 'active' }, 201);
+		}
+	}
+	if (segments[0] === 'agent-elevations' && segments.length >= 2) {
+		const id = segments[1];
+		if (segments.length === 2 && method === 'GET') {
+			return json({
+				elevation: {
+					id,
+					grant_id: 'aag-dev-1',
+					client_id: 'dev-agent-client',
+					actor_sub: 'oauth_client:dev-agent-client',
+					tool: 'suspend_user',
+					title: 'Suspend end user',
+					confirmation_summary: 'Suspend development user dev-user-1 and revoke active sessions.',
+					risk_level: 'high',
+					status: 'pending',
+					expires_at: now + 5 * 60 * 1000,
+					fresh_auth_required: true
+				}
+			});
+		}
+		if (segments[2] === 'decision' && method === 'POST') {
+			const input = await readJson(event.request);
+			const status = input.decision === 'denied' ? 'denied' : 'approved';
+			return json({ id, status });
+		}
+	}
+
+	if (segments[0] !== 'agent-grants') return null;
+	if (segments.length === 1 && method === 'GET') {
+		const status = event.url.searchParams.get('status');
+		const grants = [...agentGrants.values()].filter((grant) => !status || grant.status === status);
+		return json({
+			grants,
+			pagination: {
+				total: grants.length,
+				limit: Number(event.url.searchParams.get('limit') ?? 50),
+				offset: Number(event.url.searchParams.get('offset') ?? 0)
+			}
+		});
+	}
+
+	if (segments.length === 1 && method === 'POST') {
+		const input = await readJson(event.request);
+		const id = `aag-dev-${agentGrants.size + 1}`;
+		const grant: DevAgentGrant = {
+			id,
+			tenant_id: TENANT_ID,
+			client_id: String(input.client_id || ''),
+			machine_principal_id:
+				typeof input.machine_principal_id === 'string' ? input.machine_principal_id : null,
+			grantor_id: 'dev-admin',
+			delegator_id: String(input.delegator_id || ''),
+			permissions: parseDevStringArray(input.permissions, []),
+			scopes: ['agent:read'],
+			authorization_details: null,
+			resolved_scope_constraints: { tenantIds: [TENANT_ID] },
+			purpose: typeof input.purpose === 'string' ? input.purpose : null,
+			consent_version: 1,
+			generation: 1,
+			status: 'active',
+			delegation_mode:
+				input.delegation_mode === 'admin_pre_authorized' ? 'admin_pre_authorized' : 'user_consent',
+			task_set_id: typeof input.task_set_id === 'string' ? input.task_set_id : null,
+			task_set_version: typeof input.task_set_version === 'number' ? input.task_set_version : null,
+			scope_policy_id: typeof input.scope_policy_id === 'string' ? input.scope_policy_id : null,
+			scope_policy_version:
+				typeof input.scope_policy_version === 'number' ? input.scope_policy_version : null,
+			resolved_tools: [],
+			access_snapshot_hash: 'dev-created-snapshot-hash',
+			expires_at: typeof input.expires_at === 'number' ? input.expires_at : null,
+			last_used_at: null,
+			created_at: now,
+			updated_at: now,
+			revoked_at: null,
+			revoked_by: null
+		};
+		agentGrants.set(id, grant);
+		return json(
+			{
+				grant_id: id,
+				status: 'active',
+				consent_version: 1,
+				generation: 1,
+				consent_required: grant.delegation_mode === 'user_consent'
+			},
+			201
+		);
+	}
+	if (segments[1] === 'eligible-permissions' && method === 'GET') {
+		const delegatorId = event.url.searchParams.get('delegator_id');
+		const principalId = event.url.searchParams.get('principal_id');
+		if (!delegatorId) {
+			return json(
+				{ error: 'AGENT_GRANT_INVALID_REQUEST', error_description: 'AGENT_GRANT_INVALID_REQUEST' },
+				400
+			);
+		}
+		const principal = principalId ? machinePrincipals.get(principalId) : null;
+		const candidates = [
+			'admin:users:read',
+			'admin:clients:read',
+			'admin:admin_audit:read',
+			'admin:agent_settings:read'
+		];
+		return json({
+			delegator_id: delegatorId,
+			principal_id: principalId,
+			permissions: principal
+				? candidates.filter((value) => principal.permissions.includes(value))
+				: candidates
+		});
+	}
+
+	const id = segments[1];
+	const grant = agentGrants.get(id);
+	if (!grant) {
+		return json(
+			{ error: 'AGENT_GRANT_NOT_FOUND', error_description: 'AGENT_GRANT_NOT_FOUND' },
+			404
+		);
+	}
+	if (segments.length === 2 && method === 'GET') return json({ grant });
+	if (segments.length === 2 && method === 'PATCH') {
+		const input = await readJson(event.request);
+		const updated: DevAgentGrant = {
+			...grant,
+			permissions: input.permissions
+				? parseDevStringArray(input.permissions, grant.permissions)
+				: grant.permissions,
+			purpose:
+				typeof input.purpose === 'string' || input.purpose === null
+					? (input.purpose as string | null)
+					: grant.purpose,
+			expires_at:
+				typeof input.expires_at === 'number' || input.expires_at === null
+					? (input.expires_at as number | null)
+					: grant.expires_at,
+			generation: grant.generation + 1,
+			consent_version: grant.consent_version + 1,
+			updated_at: now
+		};
+		agentGrants.set(id, updated);
+		return json({ grant_id: id, status: updated.status, generation: updated.generation });
+	}
+	if (segments[2] === 'audit' && method === 'GET') {
+		return json({
+			events: [
+				{
+					id: `audit-${id}`,
+					action: 'agent.grant.created',
+					result: 'success',
+					severity: 'info',
+					actor_type: 'admin_user',
+					actor_sub: 'admin_user:dev-admin',
+					metadata: { client_id: grant.client_id },
+					created_at: grant.created_at
+				}
+			]
+		});
+	}
+	if (
+		(segments[2] === 'suspend' || segments[2] === 'resume' || segments[2] === 'revoke') &&
+		method === 'POST'
+	) {
+		const nextStatus =
+			segments[2] === 'suspend' ? 'suspended' : segments[2] === 'resume' ? 'active' : 'revoked';
+		const updated: DevAgentGrant = {
+			...grant,
+			status: nextStatus,
+			generation: segments[2] === 'resume' ? grant.generation : grant.generation + 1,
+			consent_version: segments[2] === 'resume' ? grant.consent_version : grant.consent_version + 1,
+			updated_at: now,
+			revoked_at: nextStatus === 'revoked' ? now : null,
+			revoked_by: nextStatus === 'revoked' ? 'dev-admin' : null
+		};
+		agentGrants.set(id, updated);
+		return json({
+			grant_id: id,
+			status: nextStatus,
+			generation: updated.generation,
+			consent_required: segments[2] === 'resume'
+		});
+	}
+	return null;
+}
+
 async function handleMachineAccess(
 	event: RequestEvent,
 	segments: string[]
@@ -9838,13 +10944,21 @@ function devRegionShardConfig(
 		maxPreviousGenerations: 2,
 		updatedAt,
 		updatedBy: 'dev-admin',
-		version: 1,
+		version: 2,
 		groups: {
 			default: {
 				totalShards,
 				members: Object.keys(currentRegions),
 				description: 'Dev mock global region shard group'
 			}
+		},
+		residency: {
+			version: 1,
+			residencyPolicyId: 'builtin:residency:default',
+			residencyPartition: 'default',
+			policyGeneration: 1,
+			allowedRegions: ['apac', 'weur', 'eeur', 'enam', 'wnam', 'oc', 'afr', 'me'],
+			jurisdiction: null
 		},
 		validation: {
 			valid: true,
@@ -9856,6 +10970,425 @@ function devRegionShardConfig(
 
 async function handleSettings(event: RequestEvent, segments: string[]): Promise<Response | null> {
 	const method = event.request.method;
+	if (
+		method === 'POST' &&
+		segments[0] === 'platform' &&
+		segments[1] === 'control-plane' &&
+		segments[2] === 'capacity' &&
+		(segments[3] === 'preview' || segments[3] === 'requests') &&
+		segments.length === 4
+	) {
+		const input = await readJson(event.request);
+		const keys = Object.keys(input);
+		const profile = input.profile;
+		const scope = input.scope;
+		const tenantId = input.tenantId;
+		if (
+			keys.length !== 3 ||
+			!keys.every((key) => ['profile', 'scope', 'tenantId'].includes(key)) ||
+			!['minimum', 'recommended', 'extra_headroom'].includes(String(profile)) ||
+			!['shared_pool', 'tenant_exclusive'].includes(String(scope)) ||
+			(scope === 'shared_pool' && tenantId !== null) ||
+			(scope === 'tenant_exclusive' &&
+				(typeof tenantId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(tenantId)))
+		) {
+			return json({ error: 'CONTROL_PLANE_CAPACITY_INVALID_REQUEST' }, 400);
+		}
+		const unitCount = profile === 'extra_headroom' ? 2 : 1;
+		const dataRole = scope === 'tenant_exclusive' ? 'tenant_core/default' : 'tenant_core/users';
+		const roleName = dataRole === 'tenant_core/default' ? 'default' : 'users';
+		const workerScript = dataRole === 'tenant_core/default' ? 'dev-ar-management' : 'dev-ar-auth';
+		const targets = Array.from({ length: unitCount }, (_, index) => ({
+			unitKey: `default:jp:${dataRole}`,
+			unitIndex: index + 1,
+			workerScripts: [workerScript],
+			operationId: `dev-capacity-${scope}-${roleName}-${index + 1}`,
+			environmentId: 'development',
+			dataRole,
+			residencyPolicyId: 'default',
+			residencyPartition: 'jp',
+			logicalShardId: `${roleName}:jp:dev-${index + 1}`,
+			databaseName: `authrim-development-${roleName}-jp-dev-${index + 1}`,
+			bindingRef: `DEVELOPMENT_TDB_${roleName.toUpperCase()}_DEV_${index + 1}_CORE`,
+			readReplicationMode: 'disabled',
+			migrationStreamId: 'core-d1'
+		}));
+		const preview = {
+			dryRun: true,
+			profile,
+			scope,
+			tenantId,
+			available: true,
+			reasonCode: null,
+			capacityUnitsAdded: unitCount,
+			d1DatabasesAdded: unitCount,
+			projectedEnvironmentD1Count: 6 + unitCount,
+			targets
+		};
+		if (segments[3] === 'preview') return json({ preview });
+		if (!event.request.headers.get('idempotency-key')) {
+			return json({ error: 'CONTROL_PLANE_CAPACITY_INVALID_REQUEST' }, 400);
+		}
+		return json(
+			{
+				result: {
+					preview,
+					operations: targets.map((target) => ({
+						operationId: target.operationId,
+						status: 'queued',
+						attemptCount: 0,
+						nextAttemptAt: null,
+						lastErrorCode: null,
+						createdAt: 1_800_000_000,
+						updatedAt: 1_800_000_000
+					}))
+				},
+				auditId: 'dev-capacity-request-audit'
+			},
+			202
+		);
+	}
+	if (
+		method === 'GET' &&
+		segments[0] === 'platform' &&
+		segments[1] === 'control-plane' &&
+		segments[2] === 'release-rollout' &&
+		segments.length === 3
+	) {
+		return json({
+			rollout: {
+				operationId: null,
+				sourceVersion: null,
+				targetVersion: null,
+				phase: 'idle',
+				completedTargets: 0,
+				totalTargets: 0,
+				adminMutationMode: 'available',
+				lastErrorCode: null,
+				updatedAt: null,
+				blockedTargetCount: 0,
+				blockedTargets: []
+			}
+		});
+	}
+	if (
+		method === 'GET' &&
+		segments[0] === 'platform' &&
+		segments[1] === 'control-plane' &&
+		segments[2] === 'provisioning-authority' &&
+		segments.length === 3
+	) {
+		return json({
+			authority: {
+				automaticProvisioningEnabled: true,
+				tokenOwnership: 'account',
+				capabilityState: 'ready',
+				automaticExecutionAvailable: true,
+				activeExecutor: 'control'
+			}
+		});
+	}
+	if (
+		segments[0] === 'platform' &&
+		segments[1] === 'control-plane' &&
+		segments[2] === 'operations'
+	) {
+		const operationId = segments[3];
+		if (operationId !== 'dev-operation-1' && operationId !== 'dev-operation-restore') {
+			return json({ error: 'CONTROL_PLANE_OPERATION_NOT_FOUND' }, 404);
+		}
+		const restoreMode = operationId === 'dev-operation-restore';
+		const operation = () => ({
+			operationId,
+			operationKind: 'provision_shard',
+			status: restoreMode
+				? devControlPlaneSettingsRestoreRequested
+					? 'running'
+					: 'blocked'
+				: devControlPlaneOperationCanceled
+					? 'canceled'
+					: devControlPlaneOperationRetried
+						? 'running'
+						: 'blocked',
+			attemptCount: 3,
+			nextAttemptAt: null,
+			lastErrorCode: restoreMode
+				? devControlPlaneSettingsRestoreRequested
+					? null
+					: 'control_worker_rollback_failed'
+				: devControlPlaneOperationRetried || devControlPlaneOperationCanceled
+					? null
+					: 'cloudflare_d1_request_rejected',
+			createdAt: NOW_SECONDS - 3600,
+			updatedAt:
+				devControlPlaneOperationRetried || devControlPlaneOperationCanceled
+					? NOW_SECONDS
+					: NOW_SECONDS - 300,
+			availableActions: restoreMode
+				? devControlPlaneSettingsRestoreRequested
+					? []
+					: ['restore_previous_settings']
+				: devControlPlaneOperationRetried || devControlPlaneOperationCanceled
+					? []
+					: ['retry_create_d1', 'cancel'],
+			steps: restoreMode
+				? [
+						{
+							stepKey: 'reconcile_worker_bindings',
+							displayOrder: 30,
+							status: devControlPlaneSettingsRestoreRequested ? 'running' : 'blocked',
+							attemptCount: 2,
+							nextAttemptAt: null,
+							lastErrorCode: devControlPlaneSettingsRestoreRequested
+								? null
+								: 'control_worker_rollback_failed',
+							observedResourceId: null,
+							progressCurrent: 0,
+							progressTotal: 1,
+							startedAt: NOW_SECONDS - 900,
+							completedAt: null,
+							updatedAt: devControlPlaneSettingsRestoreRequested ? NOW_SECONDS : NOW_SECONDS - 300
+						}
+					]
+				: [
+						{
+							stepKey: 'create_d1',
+							displayOrder: 10,
+							status: devControlPlaneOperationCanceled
+								? 'canceled'
+								: devControlPlaneOperationRetried
+									? 'running'
+									: 'blocked',
+							attemptCount: 3,
+							nextAttemptAt: null,
+							lastErrorCode: devControlPlaneOperationRetried
+								? null
+								: 'cloudflare_d1_request_rejected',
+							observedResourceId: null,
+							progressCurrent: null,
+							progressTotal: null,
+							startedAt: NOW_SECONDS - 3500,
+							completedAt: null,
+							updatedAt: devControlPlaneOperationRetried ? NOW_SECONDS : NOW_SECONDS - 300
+						},
+						{
+							stepKey: 'apply_migrations',
+							displayOrder: 20,
+							status: devControlPlaneOperationCanceled ? 'canceled' : 'queued',
+							attemptCount: 0,
+							nextAttemptAt: null,
+							lastErrorCode: null,
+							observedResourceId: null,
+							progressCurrent: null,
+							progressTotal: null,
+							startedAt: null,
+							completedAt: null,
+							updatedAt: NOW_SECONDS - 300
+						}
+					]
+		});
+		if (segments.length === 4 && method === 'GET') {
+			return json({ operation: operation() });
+		}
+		if (segments.length === 5 && segments[4] === 'retry-step' && method === 'POST') {
+			const input = await readJson(event.request);
+			if (input.stepKey !== 'create_d1') {
+				return json({ error: 'CONTROL_PLANE_OPERATION_RETRY_NOT_ALLOWED' }, 409);
+			}
+			devControlPlaneOperationRetried = true;
+			return json({ operation: operation(), auditId: 'dev-control-plane-retry-audit' });
+		}
+		if (segments.length === 5 && segments[4] === 'cancel' && method === 'POST') {
+			if (devControlPlaneOperationRetried || devControlPlaneOperationCanceled) {
+				return json({ error: 'CONTROL_PLANE_OPERATION_CANCEL_NOT_ALLOWED' }, 409);
+			}
+			devControlPlaneOperationCanceled = true;
+			return json({ operation: operation(), auditId: 'dev-control-plane-cancel-audit' });
+		}
+		if (segments.length === 5 && segments[4] === 'restore-previous-settings' && method === 'POST') {
+			if (!restoreMode || devControlPlaneSettingsRestoreRequested) {
+				return json({ error: 'CONTROL_PLANE_OPERATION_RESTORE_NOT_ALLOWED' }, 409);
+			}
+			devControlPlaneSettingsRestoreRequested = true;
+			return json({ operation: operation(), auditId: 'dev-control-plane-restore-audit' });
+		}
+	}
+	if (
+		segments[0] === 'platform' &&
+		segments[1] === 'control-plane' &&
+		segments[2] === 'shard-cleanup'
+	) {
+		const cleanupCandidate = () => ({
+			environmentId: 'dev',
+			shardId: 'dev-retired-shard-ready',
+			dataRole: 'tenant_core/default',
+			residencyPartition: 'global',
+			bindingRef: 'DEVELOPMENT_TDB_DEFAULT_DEV_RETIRED',
+			databaseId: 'dev-database-retired-ready',
+			databaseName: 'dev-tenant-core-retired-ready',
+			shardStatus: devControlPlaneCleanupApproved ? 'deleting' : 'retired',
+			quarantineOperationId: 'dev-quarantine-operation-ready',
+			quarantineState: 'quarantined',
+			quarantineOperationState: 'ready_for_cleanup',
+			denyRegistryGeneration: 12,
+			drainNotBefore: NOW_SECONDS - 600,
+			registryVerifiedAt: NOW_SECONDS - 300,
+			referencesVerifiedAt: NOW_SECONDS - 300,
+			cleanupOperationId: devControlPlaneCleanupApproved ? 'dev-cleanup-operation-ready' : null,
+			cleanupState: devControlPlaneCleanupApproved ? 'removing_bindings' : null,
+			exportMode: devControlPlaneCleanupApproved ? 'skipped' : null,
+			deleteDatabase: devControlPlaneCleanupApproved ? true : null,
+			destructiveOperationsEnabled: true,
+			availableActions: devControlPlaneCleanupApproved ? [] : ['approve_cleanup'],
+			bindings: devControlPlaneCleanupApproved
+				? [
+						{
+							workerScriptName: 'dev-ar-auth',
+							bindingRef: 'DEVELOPMENT_TDB_DEFAULT_DEV_RETIRED',
+							state: 'removed',
+							lastErrorCode: null,
+							updatedAt: NOW_SECONDS
+						},
+						{
+							workerScriptName: 'dev-ar-token',
+							bindingRef: 'DEVELOPMENT_TDB_DEFAULT_DEV_RETIRED',
+							state: 'removing',
+							lastErrorCode: null,
+							updatedAt: NOW_SECONDS
+						}
+					]
+				: [],
+			lastErrorCode: null,
+			createdAt: NOW_SECONDS - 7200,
+			updatedAt: devControlPlaneCleanupApproved ? NOW_SECONDS : NOW_SECONDS - 300
+		});
+		const gatedCandidate = () => ({
+			environmentId: 'dev',
+			shardId: 'dev-retired-shard-gated',
+			dataRole: 'tenant_pii',
+			residencyPartition: 'eu',
+			bindingRef: 'DEVELOPMENT_TDB_PII_DEV_RETIRED',
+			databaseId: 'dev-database-retired-gated',
+			databaseName: 'dev-tenant-pii-retired-gated',
+			shardStatus: 'retired',
+			quarantineOperationId: devControlPlaneQuarantineStarted
+				? 'dev-quarantine-operation-gated'
+				: null,
+			quarantineState: devControlPlaneQuarantineStarted ? 'quarantining' : 'none',
+			quarantineOperationState: devControlPlaneQuarantineStarted ? 'draining' : null,
+			denyRegistryGeneration: devControlPlaneQuarantineStarted ? 13 : null,
+			drainNotBefore: devControlPlaneQuarantineStarted ? NOW_SECONDS + 1800 : null,
+			registryVerifiedAt: null,
+			referencesVerifiedAt: null,
+			cleanupOperationId: null,
+			cleanupState: null,
+			exportMode: null,
+			deleteDatabase: null,
+			destructiveOperationsEnabled: false,
+			availableActions: devControlPlaneQuarantineStarted ? [] : ['quarantine'],
+			bindings: [],
+			lastErrorCode: null,
+			createdAt: NOW_SECONDS - 3600,
+			updatedAt: devControlPlaneQuarantineStarted ? NOW_SECONDS : NOW_SECONDS - 600
+		});
+		const candidateFor = (shardId: string | undefined) =>
+			shardId === 'dev-retired-shard-ready'
+				? cleanupCandidate()
+				: shardId === 'dev-retired-shard-gated'
+					? gatedCandidate()
+					: null;
+		if (segments.length === 3 && method === 'GET') {
+			const items = [cleanupCandidate(), gatedCandidate()];
+			return json({ items, count: items.length });
+		}
+		const shardId = segments[3];
+		if (segments.length === 4 && method === 'GET') {
+			const candidate = candidateFor(shardId);
+			return candidate
+				? json({ candidate })
+				: json({ error: 'CONTROL_PLANE_SHARD_CLEANUP_NOT_FOUND' }, 404);
+		}
+		if (segments.length === 5 && segments[4] === 'quarantine' && method === 'POST') {
+			if (shardId !== 'dev-retired-shard-gated' || devControlPlaneQuarantineStarted) {
+				return json({ error: 'CONTROL_PLANE_SHARD_CLEANUP_CONFLICT' }, 409);
+			}
+			devControlPlaneQuarantineStarted = true;
+			return json({ candidate: gatedCandidate(), auditId: 'dev-shard-quarantine-audit' }, 202);
+		}
+		if (segments.length === 5 && segments[4] === 'approve' && method === 'POST') {
+			const input = await readJson(event.request);
+			if (
+				shardId !== 'dev-retired-shard-ready' ||
+				devControlPlaneCleanupApproved ||
+				input.confirmation !== 'DELETE_RETIRED_TENANT_SHARD'
+			) {
+				return json({ error: 'CONTROL_PLANE_SHARD_CLEANUP_CONFLICT' }, 409);
+			}
+			devControlPlaneCleanupApproved = true;
+			return json({ candidate: cleanupCandidate(), auditId: 'dev-shard-cleanup-audit' }, 202);
+		}
+	}
+	if (
+		segments[0] === 'platform' &&
+		segments[1] === 'control-plane' &&
+		segments[2] === 'drift-findings'
+	) {
+		const findingId = 'drift:dev:actual_only:dev-unmanaged-worker';
+		const finding = () => ({
+			findingId,
+			environmentId: 'dev',
+			workerScriptName: 'dev-unmanaged-worker',
+			findingKind: 'actual_only',
+			severity: 'warning',
+			reviewState: devControlPlaneDriftReviewState,
+			notificationState: 'acknowledged',
+			firstObservedAt: NOW_SECONDS - 7200,
+			lastObservedAt: NOW_SECONDS - 300,
+			resolvedAt: null,
+			notifiedAt: NOW_SECONDS - 6900
+		});
+		if (segments.length === 3 && method === 'GET') {
+			return json({ items: [finding()], count: 1 });
+		}
+		if (segments[3] === findingId && segments[4] === 'review' && method === 'POST') {
+			const input = await readJson(event.request);
+			if (input.disposition !== 'reviewed' && input.disposition !== 'dismissed') {
+				return json({ error: 'CONTROL_PLANE_DRIFT_REVIEW_INVALID_REQUEST' }, 400);
+			}
+			devControlPlaneDriftReviewState = input.disposition;
+			return json({ finding: finding(), auditId: 'dev-control-plane-review-audit' });
+		}
+	}
+	if (segments[0] === 'platform' && segments[1] === 'read-replication') {
+		if (method === 'PUT') {
+			const input = await readJson(event.request);
+			if (typeof input.enabled !== 'boolean') {
+				return json({ error: 'READ_REPLICATION_INVALID_REQUEST' }, 400);
+			}
+			devReadReplicationEnabled = input.enabled;
+		}
+		const readReplication = {
+			environmentId: 'dev',
+			desiredMode: devReadReplicationEnabled ? 'enabled' : 'disabled',
+			aggregateStatus: devReadReplicationEnabled ? 'on' : 'off',
+			operationId: method === 'PUT' ? 'dev-read-replication-operation' : null,
+			operationStatus: method === 'PUT' ? 'succeeded' : null,
+			eligiblePolicyCount: 4,
+			convergedPolicyCount: 4,
+			failedPolicyCount: 0,
+			targetCount: 8,
+			convergedTargetCount: 8,
+			pendingTargetCount: 0,
+			failedTargetCount: 0,
+			updatedAt: Math.floor(Date.now() / 1000)
+		};
+		return json(
+			method === 'PUT'
+				? { readReplication, auditId: 'dev-read-replication-audit' }
+				: { readReplication },
+			method === 'PUT' ? 202 : 200
+		);
+	}
 	if (segments[0] === 'settings') {
 		if (
 			segments[1] === 'code-shards' ||
@@ -9917,14 +11450,24 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 				const totalShards =
 					typeof input.totalShards === 'number' && Number.isFinite(input.totalShards)
 						? Math.max(1, Math.floor(input.totalShards))
-						: 16;
+						: devRegionShardTotal;
 				const distribution =
-					input.distribution && typeof input.distribution === 'object'
-						? (input.distribution as Record<string, unknown>)
-						: { apac: 25, enam: 25, weur: 25, wnam: 25 };
+					input.regionDistribution && typeof input.regionDistribution === 'object'
+						? (input.regionDistribution as Record<string, unknown>)
+						: devRegionShardDistribution;
+				const activeRegionCount = Object.values(distribution).filter(
+					(value) => typeof value === 'number' && Number.isFinite(value) && value > 0
+				).length;
+				if (activeRegionCount < 1 || totalShards % activeRegionCount !== 0) {
+					return json({ error: 'invalid_region_shard_multiple' }, 400);
+				}
+				devRegionShardTotal = totalShards;
+				devRegionShardDistribution = { ...distribution };
 				return json(devRegionShardConfig(totalShards, distribution, now));
 			}
-			return json(devRegionShardConfig(16, { apac: 25, enam: 25, weur: 25, wnam: 25 }, now - 3600));
+			return json(
+				devRegionShardConfig(devRegionShardTotal, devRegionShardDistribution, now - 3600)
+			);
 		}
 		if (segments[1] === 'meta' && segments[2]) {
 			return json(settingsMetaResponse(segments[2]));
@@ -10016,7 +11559,6 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 		return json({
 			tenants: items,
 			total: items.length,
-			tenant_d1_pool: { enabled: false },
 			single_tenant_mode: false,
 			single_tenant_reason: null
 		});
@@ -10036,7 +11578,7 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 		if (tenants.has(id)) {
 			return json({ error_description: 'Tenant already exists' }, 409);
 		}
-		const now = Date.now();
+		const now = Math.floor(Date.now() / 1000);
 		const tenant: DevTenant = {
 			id,
 			tenant_code: tenantCode,
@@ -10045,13 +11587,133 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 				typeof input.description === 'string' && input.description.trim()
 					? input.description.trim()
 					: null,
-			lifecycle_state: 'active',
+			isolation_policy:
+				input.isolation_policy === 'shared_pool' ? 'shared_pool' : 'tenant_exclusive',
+			lifecycle_state: 'provisioning',
 			is_default: tenants.size === 0,
 			created_at: now,
 			updated_at: now
 		};
 		tenants.set(id, tenant);
-		return json(tenant, 201);
+		const operation: DevTenantProvisioning = {
+			operationId: `tenant-create-dev-${id}`,
+			tenantId: id,
+			createdAt: now,
+			pollCount: 0
+		};
+		tenantProvisioning.set(id, operation);
+		return json(
+			{
+				...tenant,
+				provisioning: { mode: 'control-plane', ...devTenantProvisioningStatus(operation) }
+			},
+			202
+		);
+	}
+
+	if (segments.length === 3 && segments[2] === 'provisioning' && method === 'GET') {
+		const operation = tenantProvisioning.get(segments[1]);
+		if (!operation) return json({ error_description: 'Tenant provisioning not found' }, 404);
+		operation.pollCount += 1;
+		const status = devTenantProvisioningStatus(operation);
+		if (status.status === 'succeeded') {
+			const tenant = tenants.get(operation.tenantId);
+			if (tenant) {
+				tenant.lifecycle_state = 'active';
+				tenant.updated_at = status.updated_at;
+			}
+		}
+		return json(status);
+	}
+
+	if (
+		segments.length === 4 &&
+		segments[2] === 'lifecycle' &&
+		segments[3] === 'jobs' &&
+		method === 'GET'
+	) {
+		return json({ jobs: [] });
+	}
+
+	if (segments.length === 3 && segments[2] === 'clone' && method === 'POST') {
+		const source = tenants.get(segments[1]);
+		if (!source || source.lifecycle_state !== 'active') {
+			return json({ error_description: 'Active source tenant not found' }, 404);
+		}
+		const input = await readJson(event.request);
+		const id = typeof input.id === 'string' ? input.id.trim() : '';
+		const name = typeof input.name === 'string' ? input.name.trim() : '';
+		if (!id || !name) return json({ error_description: 'id and name are required' }, 400);
+		if (tenants.has(id)) return json({ error_description: 'Tenant already exists' }, 409);
+		const copyInput =
+			input.copy && typeof input.copy === 'object' && !Array.isArray(input.copy)
+				? (input.copy as Record<string, unknown>)
+				: {};
+		const copy = {
+			settings: copyInput.settings !== false,
+			secret_settings: copyInput.secret_settings === true,
+			clients: copyInput.clients === true,
+			client_credentials: copyInput.client_credentials === true,
+			roles: copyInput.roles !== false,
+			admin_access: copyInput.admin_access === true,
+			webhooks: copyInput.webhooks === true,
+			webhook_secrets: copyInput.webhook_secrets === true
+		};
+		const now = Date.now();
+		const tenant: DevTenant = {
+			id,
+			tenant_code:
+				typeof input.tenant_code === 'string' && input.tenant_code.trim()
+					? input.tenant_code.trim()
+					: id,
+			name,
+			description:
+				typeof input.description === 'string' && input.description.trim()
+					? input.description.trim()
+					: null,
+			isolation_policy:
+				input.isolation_policy === 'shared_pool' ? 'shared_pool' : 'tenant_exclusive',
+			lifecycle_state: 'active',
+			is_default: false,
+			created_at: now,
+			updated_at: now
+		};
+		tenants.set(id, tenant);
+		return json(
+			{
+				...tenant,
+				source_tenant_id: source.id,
+				source_tenant_name: source.name,
+				copy,
+				cloned_items: {
+					settings: copy.settings ? 5 : 0,
+					secret_settings_skipped: copy.settings && !copy.secret_settings ? 1 : 0,
+					unclassified_settings_skipped: 0,
+					clients: copy.clients ? 2 : 0,
+					client_settings: copy.clients ? 2 : 0,
+					client_contracts: copy.clients ? 2 : 0,
+					client_web_origins: copy.clients ? 3 : 0,
+					client_trust_policies: copy.clients ? 1 : 0,
+					client_consent_overrides_skipped: 0,
+					client_flow_assignments_skipped: 0,
+					roles: copy.roles ? 2 : 0,
+					role_assignment_rules: copy.roles ? 1 : 0,
+					role_references_unresolved: 0,
+					role_assignment_rules_skipped: 0,
+					admin_roles: copy.admin_access ? 1 : 0,
+					admin_role_assignments: copy.admin_access ? 2 : 0,
+					admin_role_assignments_skipped: 0,
+					admin_role_inheritance_unresolved: 0,
+					webhooks: copy.webhooks ? 2 : 0,
+					client_webhooks_skipped: 0
+				},
+				signing_keys: { copied: false, generated: true },
+				warnings: [
+					'Tenant signing private keys were not copied; a new isolated signing key was generated.'
+				]
+			},
+			201
+		);
 	}
 
 	if (segments.length === 3 && segments[2] === 'invitations' && method === 'GET') {
@@ -10117,6 +11779,15 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 		return json({ success: true });
 	}
 
+	if (
+		segments.length === 4 &&
+		segments[2] === 'placement-migrations' &&
+		segments[3] === 'latest' &&
+		method === 'GET'
+	) {
+		return json({ error_description: 'Tenant placement migration not found' }, 404);
+	}
+
 	if (segments.length === 2 && method === 'GET') {
 		const tenant = tenants.get(segments[1]);
 		if (!tenant) return json({ error_description: 'Tenant not found' }, 404);
@@ -10156,6 +11827,183 @@ async function handleSettings(event: RequestEvent, segments: string[]): Promise<
 				version: current.version
 			});
 		}
+	}
+	return null;
+}
+
+async function handleScreens(event: RequestEvent, segments: string[]): Promise<Response | null> {
+	if (segments[0] !== 'screens') return null;
+
+	const method = event.request.method;
+	const screenId = segments[1];
+	if (!screenId && method === 'GET') {
+		return json({ screens: [...devScreens.values()] });
+	}
+
+	if (!screenId && method === 'POST') {
+		const input = await readJson(event.request);
+		const id = `dev-screen-${Date.now()}`;
+		const screen: DevScreen = {
+			id,
+			tenant_id: TENANT_ID,
+			screen_key:
+				typeof input.screen_key === 'string' && input.screen_key.trim()
+					? input.screen_key.trim()
+					: id,
+			display_name:
+				typeof input.display_name === 'string' && input.display_name.trim()
+					? input.display_name.trim()
+					: 'Custom screen',
+			description: typeof input.description === 'string' ? input.description : '',
+			screen_kind: typeof input.screen_kind === 'string' ? input.screen_kind : 'custom',
+			fields: Array.isArray(input.fields) ? (input.fields as Array<Record<string, unknown>>) : [],
+			localizations:
+				input.localizations && typeof input.localizations === 'object'
+					? (input.localizations as Record<string, unknown>)
+					: {},
+			settings:
+				input.settings && typeof input.settings === 'object'
+					? (input.settings as Record<string, unknown>)
+					: {},
+			is_active: input.is_active === false ? 0 : 1,
+			is_system: 0,
+			created_at: Date.now(),
+			updated_at: Date.now()
+		};
+		devScreens.set(id, screen);
+		return json({ screen }, 201);
+	}
+
+	const screen = screenId ? devScreens.get(screenId) : undefined;
+	if (!screen) return json({ error_description: 'Dev mock screen not found' }, 404);
+	if (method === 'GET') return json({ screen });
+	if (method === 'DELETE') {
+		devScreens.delete(screen.id);
+		return json({ success: true });
+	}
+	if (method === 'PUT') {
+		const input = await readJson(event.request);
+		const updated: DevScreen = {
+			...screen,
+			...Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)),
+			id: screen.id,
+			tenant_id: screen.tenant_id,
+			is_active:
+				input.is_active === undefined ? screen.is_active : input.is_active === false ? 0 : 1,
+			updated_at: Date.now()
+		};
+		devScreens.set(screen.id, updated);
+		return json({ screen: updated });
+	}
+
+	return null;
+}
+
+async function handleLaunchers(event: RequestEvent, segments: string[]): Promise<Response | null> {
+	if (segments[0] !== 'launchers') return null;
+	const method = event.request.method;
+	if (segments[1] === 'options' && method === 'GET') {
+		return json({
+			oidc_clients: [
+				{
+					client_id: 'dev-oidc-client',
+					client_name: 'Operations Console',
+					initiate_login_uri: 'https://app.example.com/login/initiate',
+					logo_uri: null
+				}
+			],
+			groups: [
+				{ id: 'dev-group-operators', group_key: 'operators', display_name: 'Operators' },
+				{ id: 'dev-group-engineering', group_key: 'engineering', display_name: 'Engineering' }
+			],
+			attribute_keys: ['email', 'email_verified', 'department', 'region', 'locale'],
+			phosphor_icons: [
+				'airplane-tilt',
+				'bank',
+				'book-open',
+				'books',
+				'briefcase',
+				'browser',
+				'buildings',
+				'calendar',
+				'chart-line-up',
+				'chat-circle-text',
+				'cloud',
+				'code',
+				'compass',
+				'database',
+				'envelope-simple',
+				'folder-open',
+				'gear',
+				'github-logo',
+				'globe',
+				'graduation-cap',
+				'house',
+				'identification-card',
+				'key',
+				'link',
+				'monitor',
+				'notebook',
+				'presentation-chart',
+				'rocket-launch',
+				'shield-check',
+				'shopping-cart',
+				'student',
+				'terminal-window',
+				'users-three',
+				'wrench'
+			]
+		});
+	}
+	if (segments[1] === 'order' && method === 'PUT') {
+		const input = await readJson(event.request);
+		const launcherIds = Array.isArray(input.launcher_ids) ? input.launcher_ids : [];
+		if (
+			launcherIds.length !== devLaunchers.size ||
+			launcherIds.some((id) => typeof id !== 'string' || !devLaunchers.has(id)) ||
+			new Set(launcherIds).size !== launcherIds.length
+		) {
+			return json(
+				{ error_description: 'Launcher collection changed. Refresh and try again.' },
+				409
+			);
+		}
+		const updatedAt = Date.now();
+		const launchers = launcherIds.map((id, index) => {
+			const launcher = devLaunchers.get(id as string)!;
+			const updated = { ...launcher, sort_order: index * 10, updated_at: updatedAt };
+			devLaunchers.set(id as string, updated);
+			return updated;
+		});
+		return json({ launchers });
+	}
+
+	const launcherId = segments[1];
+	if (!launcherId && method === 'GET') return json({ launchers: [...devLaunchers.values()] });
+	if (!launcherId && method === 'POST') {
+		const input = await readJson(event.request);
+		const id = `dev-launcher-${Date.now()}`;
+		const launcher = { ...input, id, created_at: Date.now(), updated_at: Date.now() };
+		devLaunchers.set(id, launcher);
+		return json({ launcher }, 201);
+	}
+	const launcher = launcherId ? devLaunchers.get(launcherId) : undefined;
+	if (!launcher) return json({ error_description: 'Dev mock launcher not found' }, 404);
+	if (method === 'PUT') {
+		const input = await readJson(event.request);
+		const updated = {
+			...launcher,
+			...input,
+			id: launcherId,
+			created_at: launcher.created_at,
+			updated_at: Date.now()
+		};
+		devLaunchers.set(launcherId, updated);
+		return json({ launcher: updated });
+	}
+	if (method === 'DELETE') {
+		devLaunchers.delete(launcherId);
+		return new Response(null, { status: 204 });
 	}
 	return null;
 }
@@ -10817,7 +12665,7 @@ async function handleLoggingPolicies(
 						log_type: 'security',
 						plane: 'primary',
 						destination_id: 'DB',
-						destination_name: 'Shared D1',
+						destination_name: 'Shared-pool assignment',
 						destination_provider: 'd1',
 						enabled: 1,
 						managed_by: 'setup',
@@ -11310,11 +13158,18 @@ async function handleRuntimeProfiles(
 	if (segments[1] === 'defaults') {
 		if (method === 'PUT') {
 			const input = await readJson(event.request);
+			const allowedKeys = new Set(['auditProfileId', 'residencyProfileId']);
+			if (Object.keys(input).some((key) => !allowedKeys.has(key))) {
+				return json({ error: 'invalid_request', error_description: 'Invalid defaults body' }, 400);
+			}
+			const updated: string[] = [];
+			if (typeof input.auditProfileId === 'string') {
+				updated.push('infra.default_audit_profile_id');
+			}
+			if (typeof input.residencyProfileId === 'string') {
+				updated.push('infra.default_residency_profile_id');
+			}
 			runtimeProfileDefaults = {
-				storageProfileId:
-					typeof input.storageProfileId === 'string'
-						? input.storageProfileId
-						: runtimeProfileDefaults.storageProfileId,
 				auditProfileId:
 					typeof input.auditProfileId === 'string'
 						? input.auditProfileId
@@ -11324,19 +13179,36 @@ async function handleRuntimeProfiles(
 						? input.residencyProfileId
 						: runtimeProfileDefaults.residencyProfileId
 			};
-			return json(runtimeDefaultsPayload());
+			return json({ ...runtimeDefaultsPayload(), updated });
 		}
 		return json(runtimeDefaultsPayload());
 	}
 
 	if (segments.length === 1 && method === 'GET') {
-		const kind = event.url.searchParams.get('kind') || 'audit';
-		return json(runtimeProfileListPayload(kind));
+		const kind = event.url.searchParams.get('kind');
+		if (kind && kind !== 'audit' && kind !== 'residency') {
+			return json({ error: 'invalid_request', error_description: 'Invalid profile kind' }, 400);
+		}
+		if (kind) return json(runtimeProfileListPayload(kind));
+		const audit = runtimeProfileListPayload('audit');
+		const residency = runtimeProfileListPayload('residency');
+		return json({
+			registry_backend: 'kv',
+			include_builtins: true,
+			profiles: { ...audit.profiles, ...residency.profiles },
+			reference_status: { ...audit.reference_status, ...residency.reference_status },
+			activation_status: { ...audit.activation_status, ...residency.activation_status },
+			reference_management: runtimeReferenceManagement(),
+			reference_catalog: runtimeReferenceCatalog()
+		});
 	}
 
 	const kind = segments[1];
 	const id = decodeURIComponent(segments[2] || '');
 	if (!kind || !id) return null;
+	if (kind !== 'audit' && kind !== 'residency') {
+		return json({ error: 'invalid_request', error_description: 'Invalid profile kind' }, 400);
+	}
 
 	const key = runtimeProfileKey(kind, id);
 	if (method === 'GET') {
@@ -11347,8 +13219,7 @@ async function handleRuntimeProfiles(
 			reference_status: runtimeReferenceStatus(profile),
 			activation_status: runtimeActivationStatus(profile),
 			reference_management: runtimeReferenceManagement(),
-			reference_catalog: runtimeReferenceCatalog(),
-			...(kind === 'storage' ? { storage_policy: runtimeStoragePolicy() } : {})
+			reference_catalog: runtimeReferenceCatalog()
 		});
 	}
 
@@ -11592,8 +13463,28 @@ export async function handleDevAdminMock(
 		.split('/')
 		.filter(Boolean)
 		.map(decodeURIComponent);
+	const method = event.request.method;
 
 	if (segments.length === 0) return json({ ok: true, mode: 'dev-admin-mock' });
+	if (segments[0] === 'scim-tokens' && method === 'GET') {
+		return json({ tokens: [], total: 0 });
+	}
+	if (segments[0] === 'scim-settings' && method === 'GET') {
+		return json({
+			settings: {
+				enabled: true,
+				usersEnabled: true,
+				groupsEnabled: true,
+				bulkEnabled: true,
+				mappingSetId: 'field-mapping-scim-inbound',
+				bulkMaxOperations: 100,
+				bulkMaxPayloadSize: 1048576
+			}
+		});
+	}
+	if (segments[0] === 'scim-settings' && method === 'PUT') {
+		return json({ settings: await readJson(event.request) });
+	}
 	if (segments[0] === 'me' && segments[1] === 'session') {
 		return json({
 			active: true,
@@ -11649,7 +13540,9 @@ export async function handleDevAdminMock(
 	if (tenantDomainMappingsResponse) return tenantDomainMappingsResponse;
 	const tenantVanityDomainsResponse = await handleTenantVanityDomains(event, segments);
 	if (tenantVanityDomainsResponse) return tenantVanityDomainsResponse;
-	if (segments[0] === 'field-mapping') return handleIdentityMapping(event, segments.slice(1));
+	if (segments[0] === 'field-mapping') {
+		return await handleIdentityMapping(event, segments.slice(1));
+	}
 	if (
 		segments[0] === 'saml-providers' ||
 		segments[0] === 'saml-settings' ||
@@ -11672,6 +13565,8 @@ export async function handleDevAdminMock(
 	if (directoryConnectorsResponse) return directoryConnectorsResponse;
 	const sessionsResponse = await handleSessions(event, segments);
 	if (sessionsResponse) return sessionsResponse;
+	const emailDeliveriesResponse = await handleEmailDeliveries(event, segments);
+	if (emailDeliveriesResponse) return emailDeliveriesResponse;
 	const endUsersResponse = await handleEndUsers(event, segments);
 	if (endUsersResponse) return endUsersResponse;
 	const adminUsersResponse = await handleAdminUsers(event, segments);
@@ -11694,6 +13589,8 @@ export async function handleDevAdminMock(
 	if (adminPoliciesResponse) return adminPoliciesResponse;
 	const complianceResponse = await handleCompliance(event, segments);
 	if (complianceResponse) return complianceResponse;
+	const agentAccessResponse = await handleAgentAccess(event, segments);
+	if (agentAccessResponse) return agentAccessResponse;
 	const machineAccessResponse = await handleMachineAccess(event, segments);
 	if (machineAccessResponse) return machineAccessResponse;
 	const controlPlaneDestinationsResponse = await handleControlPlaneDestinations(event, segments);
@@ -11710,6 +13607,10 @@ export async function handleDevAdminMock(
 		const response = await handleClients(event, segments);
 		if (response) return response;
 	}
+	const screensResponse = await handleScreens(event, segments);
+	if (screensResponse) return screensResponse;
+	const launchersResponse = await handleLaunchers(event, segments);
+	if (launchersResponse) return launchersResponse;
 	const settingsResponse = await handleSettings(event, segments);
 	if (settingsResponse) return settingsResponse;
 	if (segments[0] === 'logging-policies' && segments[1] === 'notifications') {

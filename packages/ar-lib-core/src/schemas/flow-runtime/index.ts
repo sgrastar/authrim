@@ -11,9 +11,16 @@ export const FLOW_RUNTIME_INTERACTION_TTL_SECONDS = 600 as const;
 
 export type FlowRuntimeMode = 'draft' | 'preview' | 'runtime' | 'export';
 
-export type FlowKind = 'login' | 'registration' | 'approve' | 'account' | `custom:${string}`;
+export type FlowKind =
+  | 'login'
+  | 'registration'
+  | 'approve'
+  | 'account'
+  | 'credential_issuance'
+  | 'attribute_elevation'
+  | `custom:${string}`;
 
-export type FlowAssignmentTargetType = 'tenant' | 'oidc_client' | 'saml_sp';
+export type FlowAssignmentTargetType = 'tenant' | 'oidc_client' | 'saml_sp' | 'credential_profile';
 
 export type FlowRuntimeJsonPrimitive = string | number | boolean | null;
 export type FlowRuntimeJsonValue =
@@ -41,6 +48,10 @@ export type FlowRuntimeComponent =
   | 'account_action'
   | 'completion'
   | 'condition'
+  | 'credential_claims'
+  | 'credential_offer'
+  | 'credential_presentation'
+  | 'verified_attribute'
   | `custom:${string}`;
 
 export type FlowStandardNodeType =
@@ -53,11 +64,21 @@ export type FlowStandardNodeType =
   | 'consent'
   | 'account_action'
   | 'complete'
-  | 'condition';
+  | 'condition'
+  | 'credential_claims'
+  | 'credential_offer'
+  | 'credential_presentation'
+  | 'verified_attribute';
 
 export type FlowNodeType = FlowStandardNodeType | `custom:${string}`;
 
-export type FlowNodeCategory = 'control' | 'decision' | 'input' | 'authentication' | 'consent';
+export type FlowNodeCategory =
+  | 'control'
+  | 'decision'
+  | 'input'
+  | 'authentication'
+  | 'consent'
+  | 'system';
 
 export interface FlowNodeDefinition {
   type: FlowStandardNodeType;
@@ -175,6 +196,50 @@ export const FLOW_NODE_DEFINITIONS: readonly FlowNodeDefinition[] = [
     default_render: false,
     output_handles: 'dynamic',
     required_config_keys: ['conditions'],
+  },
+  {
+    type: 'credential_claims',
+    label: 'Resolve Credential Claims',
+    runtime_component: 'credential_claims',
+    category: 'system',
+    accepts_input: true,
+    emits_output: true,
+    default_render: false,
+    output_handles: ['resolved', 'rejected'],
+    required_config_keys: ['credential_profile_ref'],
+  },
+  {
+    type: 'credential_offer',
+    label: 'Create Credential Offer',
+    runtime_component: 'credential_offer',
+    category: 'system',
+    accepts_input: true,
+    emits_output: true,
+    default_render: false,
+    output_handles: ['created', 'failed'],
+    required_config_keys: ['credential_profile_ref'],
+  },
+  {
+    type: 'credential_presentation',
+    label: 'Verify Credential Presentation',
+    runtime_component: 'credential_presentation',
+    category: 'system',
+    accepts_input: true,
+    emits_output: true,
+    default_render: false,
+    output_handles: ['verified', 'rejected'],
+    required_config_keys: ['credential_profile_ref'],
+  },
+  {
+    type: 'verified_attribute',
+    label: 'Commit Verified Attributes',
+    runtime_component: 'verified_attribute',
+    category: 'system',
+    accepts_input: true,
+    emits_output: true,
+    default_render: false,
+    output_handles: ['committed', 'rejected'],
+    required_config_keys: ['credential_profile_ref'],
   },
 ];
 
@@ -386,6 +451,7 @@ export function validateFlowRuntimeContractPackage(input: unknown): FlowValidati
 
 export type FlowConditionType =
   | 'always'
+  | 'protocol'
   | 'authenticated'
   | 'first_login'
   | 'client_id'
@@ -441,6 +507,7 @@ export interface FlowConditionEvaluationUser {
 }
 
 export interface FlowConditionEvaluationContext {
+  protocol?: 'direct' | 'oidc' | 'saml' | `custom:${string}`;
   authenticated?: boolean;
   first_login?: boolean;
   client_id?: string;
@@ -504,6 +571,8 @@ export async function evaluateFlowCondition(
   switch (condition.type) {
     case 'always':
       return true;
+    case 'protocol':
+      return matchScalar(context.protocol, condition);
     case 'authenticated':
       return context.authenticated === conditionBooleanValue(condition, true);
     case 'first_login':
@@ -889,7 +958,100 @@ export function validateFlowEditorState(
     }
   });
 
+  for (const [conditionNodeId, config] of nodeConfigs.entries()) {
+    if (nodeTypes.get(conditionNodeId) !== 'condition') continue;
+    const conditions = isRecord(config.conditions) ? config.conditions : null;
+    const rows = Array.isArray(conditions?.rows) ? conditions.rows : [];
+    const protocolRows = rows.flatMap((row) => {
+      if (!isRecord(row) || !isRecord(row.condition) || row.condition.type !== 'protocol') {
+        return [];
+      }
+      const protocol = row.condition.value;
+      const outputHandle = row.output_handle;
+      return typeof protocol === 'string' && typeof outputHandle === 'string'
+        ? [{ protocol, outputHandle }]
+        : [];
+    });
+    for (const row of protocolRows) {
+      const branchTargets = edgesValue.flatMap((edge) =>
+        isRecord(edge) &&
+        edge.source === conditionNodeId &&
+        edge.source_handle === row.outputHandle &&
+        typeof edge.target === 'string'
+          ? [edge.target]
+          : []
+      );
+      if (branchTargets.length === 0) {
+        issues.push({
+          level: options.for_publish ? 'error' : 'warning',
+          code: 'missing_protocol_condition_edge',
+          message: `Protocol condition branch ${row.protocol} has no outgoing edge.`,
+          path: '$.editor.edges',
+          node_id: conditionNodeId,
+          ref: { type: 'handle', id: row.outputHandle },
+        });
+        continue;
+      }
+
+      const reachableCompletionIds = collectReachableCompletionNodeIds(
+        branchTargets,
+        edgesValue,
+        nodeTypes
+      );
+      if (reachableCompletionIds.length === 0) {
+        issues.push({
+          level: options.for_publish ? 'error' : 'warning',
+          code: 'missing_protocol_condition_completion',
+          message: `Protocol condition branch ${row.protocol} does not reach a Complete node.`,
+          path: '$.editor.edges',
+          node_id: conditionNodeId,
+          ref: { type: 'handle', id: row.outputHandle },
+        });
+        continue;
+      }
+
+      for (const completionNodeId of reachableCompletionIds) {
+        const completionProtocol = completionBlocks.get(completionNodeId)?.protocol;
+        if (completionProtocol !== row.protocol) {
+          issues.push({
+            level: 'error',
+            code: 'protocol_condition_completion_mismatch',
+            message: `Protocol condition branch ${row.protocol} reaches a completion for ${completionProtocol ?? 'an unspecified protocol'}.`,
+            path: '$.editor.edges',
+            node_id: completionNodeId,
+            ref: { type: 'config', key: 'completion_block.protocol' },
+          });
+        }
+      }
+    }
+  }
+
   return issues;
+}
+
+function collectReachableCompletionNodeIds(
+  initialNodeIds: string[],
+  edges: unknown[],
+  nodeTypes: Map<string, FlowNodeType>
+): string[] {
+  const reachableCompletions = new Set<string>();
+  const visited = new Set<string>();
+  const pending = [...initialNodeIds];
+  while (pending.length > 0) {
+    const nodeId = pending.pop();
+    if (!nodeId || visited.has(nodeId)) continue;
+    visited.add(nodeId);
+    if (nodeTypes.get(nodeId) === 'complete') {
+      reachableCompletions.add(nodeId);
+      continue;
+    }
+    for (const edge of edges) {
+      if (isRecord(edge) && edge.source === nodeId && typeof edge.target === 'string') {
+        pending.push(edge.target);
+      }
+    }
+  }
+  return [...reachableCompletions];
 }
 
 function readCompletionBlock(
@@ -1000,8 +1162,53 @@ function validateConditionNodeConfig(
         node_id: nodeId,
         ref: { type: 'config', key: 'condition.type' },
       });
+    } else if (!FLOW_CONDITION_TYPES.has(condition.type as FlowConditionType)) {
+      issues.push({
+        level,
+        code: 'invalid_condition_type',
+        message: `Condition type is not supported: ${condition.type}.`,
+        path: `${rowPath}.condition.type`,
+        node_id: nodeId,
+        ref: { type: 'config', key: 'condition.type' },
+      });
+    } else if (
+      condition.type === 'protocol' &&
+      condition.value !== 'oidc' &&
+      condition.value !== 'saml'
+    ) {
+      issues.push({
+        level,
+        code: 'invalid_protocol_condition_value',
+        message: 'Protocol condition value must be oidc or saml.',
+        path: `${rowPath}.condition.value`,
+        node_id: nodeId,
+        ref: { type: 'config', key: 'condition.value' },
+      });
     }
   });
+
+  const protocolRows = rows.filter(
+    (row): row is Record<string, unknown> =>
+      isRecord(row) && isRecord(row.condition) && row.condition.type === 'protocol'
+  );
+  if (protocolRows.length > 0) {
+    const configuredProtocols = new Set(
+      protocolRows.flatMap((row) => {
+        const condition = row.condition as Record<string, unknown>;
+        return typeof condition.value === 'string' ? [condition.value] : [];
+      })
+    );
+    if (configuredProtocols.size !== protocolRows.length) {
+      issues.push({
+        level,
+        code: 'duplicate_protocol_condition_branch',
+        message: 'Protocol condition must define each protocol branch exactly once.',
+        path: `${nodePath}.config.conditions.rows`,
+        node_id: nodeId,
+        ref: { type: 'config', key: 'conditions.rows' },
+      });
+    }
+  }
 
   if (!isRecord(conditions.otherwise)) {
     issues.push({
@@ -1033,6 +1240,24 @@ function validateConditionNodeConfig(
 
   return issues;
 }
+
+const FLOW_CONDITION_TYPES = new Set<FlowConditionType>([
+  'always',
+  'protocol',
+  'authenticated',
+  'first_login',
+  'client_id',
+  'saml_sp_id',
+  'flow_kind',
+  'requested_scope',
+  'user.attribute',
+  'user.group',
+  'user.role',
+  'authentication_method',
+  'policy_rule',
+  'policy_evaluation',
+  'organization_membership',
+]);
 
 function validateRuntimeContract(runtime: Record<string, unknown>): FlowValidationIssue[] {
   const issues: FlowValidationIssue[] = [];

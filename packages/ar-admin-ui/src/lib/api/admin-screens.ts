@@ -6,6 +6,7 @@ export type ScreenKind =
 	| 'login'
 	| 'consent'
 	| 'code_input'
+	| 'account'
 	| 'custom';
 export type ScreenBlockType =
 	| 'identity_field'
@@ -16,7 +17,17 @@ export type ScreenBlockType =
 	| 'text'
 	| 'security_verification'
 	| 'divider'
-	| 'layout_row';
+	| 'layout_row'
+	| 'link'
+	| 'account_profile_widget'
+	| 'account_device_list_widget'
+	| 'account_session_widget'
+	| 'account_passkey_widget'
+	| 'account_totp_widget'
+	| 'account_consent_widget'
+	| 'account_activity_widget'
+	| 'account_social_account_widget'
+	| 'account_launcher_widget';
 export type ScreenValueType = 'text' | 'boolean';
 export type ScreenCanvasLayout = 'narrow' | 'wide';
 export type ScreenHumanVerificationTiming = 'initial' | 'submit';
@@ -36,6 +47,8 @@ export interface ScreenDisplayCondition {
 
 export interface ScreenSettings {
 	canvas_layout?: ScreenCanvasLayout;
+	base_preset_key?: string;
+	base_preset_version?: number;
 }
 
 export interface ScreenField {
@@ -51,6 +64,7 @@ export interface ScreenField {
 	text?: string | null;
 	help_text?: string | null;
 	placeholder?: string | null;
+	href?: string | null;
 	human_verification_timing?: ScreenHumanVerificationTiming | null;
 	display_condition?: ScreenDisplayCondition | null;
 	layout_columns?: number | null;

@@ -3,19 +3,44 @@
 	import type { Locales } from '$i18n/i18n-types';
 	import { useLoginUIStores } from '$lib/stores/login-ui-context';
 	import { buildDiagnosticHeaders } from '$lib/api/client';
+	import { isLoginUILocale, toDocumentDirection, toDocumentLanguage } from '$lib/i18n/locales';
+	import { buildLoginUILanguageSelectorModel } from '$lib/i18n/language-selector';
 
-	const { themeStore } = useLoginUIStores();
+	const { languageStore, themeStore } = useLoginUIStores();
 
 	let {
 		showThemeToggle = true,
 		showLanguageSelect = true
 	}: { showThemeToggle?: boolean; showLanguageSelect?: boolean } = $props();
 
-	const availableLocales: Locales[] = ['en', 'ja'];
 	let currentLang = $state<Locales>(getLocale());
+	const selectorModel = $derived(
+		buildLoginUILanguageSelectorModel(
+			languageStore.supportedLocales,
+			languageStore.primaryLocales,
+			languageStore.showEnglishLanguageNames,
+			currentLang
+		)
+	);
+
+	$effect(() => {
+		if (!languageStore.isEnabled(currentLang)) {
+			currentLang = languageStore.defaultLocale;
+			setLocale(currentLang);
+			document.documentElement.lang = toDocumentLanguage(currentLang);
+			document.documentElement.dir = toDocumentDirection(currentLang);
+		}
+	});
 
 	async function switchLanguage(lang: string) {
-		// Save to server-side cookie via API (not affected by Safari ITP 7-day limit)
+		if (!isLoginUILocale(lang) || !languageStore.isEnabled(lang)) return;
+
+		setLocale(lang);
+		currentLang = lang;
+		document.documentElement.lang = toDocumentLanguage(lang);
+		document.documentElement.dir = toDocumentDirection(lang);
+		window.dispatchEvent(new CustomEvent('authrim:locale-change', { detail: { locale: lang } }));
+
 		try {
 			await fetch('/api/set-language', {
 				method: 'POST',
@@ -24,18 +49,6 @@
 				}),
 				body: JSON.stringify({ language: lang })
 			});
-
-			// Update client-side language tag
-			setLocale(lang as Locales);
-			currentLang = lang as Locales;
-
-			// Update html lang attribute
-			document.documentElement.lang = lang;
-
-			// Reload page to apply language change across all components
-			if (typeof window !== 'undefined') {
-				window.location.reload();
-			}
 		} catch (error) {
 			console.error('Failed to set language:', error);
 		}
@@ -68,11 +81,20 @@
 				aria-label={$LL.language_switch()}
 				class="auth-lang-select"
 			>
-				{#each availableLocales as lang (lang)}
-					<option value={lang}>
-						{lang === 'en' ? $LL.language_english() : $LL.language_japanese()}
-					</option>
-				{/each}
+				{#if selectorModel.grouped}
+					{#each selectorModel.mainOptions as option (option.locale)}
+						<option value={option.locale}>{option.label}</option>
+					{/each}
+					<optgroup label={selectorModel.allLanguagesLabel}>
+						{#each selectorModel.allLanguageOptions as option (option.locale)}
+							<option value={option.locale}>{option.label}</option>
+						{/each}
+					</optgroup>
+				{:else}
+					{#each selectorModel.flatOptions as option (option.locale)}
+						<option value={option.locale}>{option.label}</option>
+					{/each}
+				{/if}
 			</select>
 		</div>
 	{/if}

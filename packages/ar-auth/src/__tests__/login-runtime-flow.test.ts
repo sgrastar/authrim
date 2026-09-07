@@ -20,6 +20,16 @@ const mocks = vi.hoisted(() => {
     getType: vi.fn(),
     close: vi.fn(),
   };
+  const adminAdapter = {
+    query: vi.fn(),
+    queryOne: vi.fn(),
+    execute: vi.fn(),
+    transaction: vi.fn(),
+    batch: vi.fn(),
+    isHealthy: vi.fn(),
+    getType: vi.fn(() => 'mock'),
+    close: vi.fn(),
+  };
   const sessionStore = {
     getSessionRpc: vi.fn(),
   };
@@ -34,9 +44,11 @@ const mocks = vi.hoisted(() => {
 
   return {
     coreAdapter,
+    adminAdapter,
     sessionStore,
     challengeStore,
     runtimeUsers,
+    resolveRuntimeIdentityMappingBinding: vi.fn(),
     idQueue,
     consumeAuthorizationChallengeContinuation: vi.fn(),
     getFeatureFlag: vi.fn(),
@@ -72,6 +84,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       })),
     })),
     getTenantIdFromContext: vi.fn(() => 'tenant_test'),
+    resolveRuntimeIdentityMappingBinding: mocks.resolveRuntimeIdentityMappingBinding,
   };
 });
 
@@ -557,6 +570,75 @@ const mixedProtocolCompletionEditor = {
   ],
 };
 
+const protocolBranchRuntime: FlowRuntimeContract = {
+  flow_kind: 'login',
+  ui: {
+    steps: [
+      {
+        id: 'entry:step',
+        source_node_id: 'entry',
+        component: 'interaction_context',
+        render: false,
+      },
+      {
+        id: 'protocol-condition:step',
+        source_node_id: 'protocol-condition',
+        component: 'condition',
+        render: false,
+        config: {
+          conditions: {
+            rows: [
+              {
+                id: 'saml',
+                condition: { type: 'protocol', value: 'saml' },
+                output_handle: 'saml',
+              },
+              {
+                id: 'oidc',
+                condition: { type: 'protocol', value: 'oidc' },
+                output_handle: 'oidc',
+              },
+            ],
+            otherwise: { terminal_error: { error: 'unsupported_protocol' } },
+          },
+        },
+      },
+      ...mixedProtocolCompletionRuntime.ui.steps.filter(
+        (step) => step.source_node_id !== 'session-check'
+      ),
+    ],
+  },
+};
+
+const protocolBranchEditor = {
+  nodes: [
+    { id: 'entry', type: 'entry' },
+    { id: 'protocol-condition', type: 'condition' },
+    { id: 'saml-complete', type: 'complete' },
+    { id: 'oidc-complete', type: 'complete' },
+  ],
+  edges: [
+    {
+      id: 'entry-condition',
+      source: 'entry',
+      source_handle: 'next',
+      target: 'protocol-condition',
+    },
+    {
+      id: 'condition-saml',
+      source: 'protocol-condition',
+      source_handle: 'saml',
+      target: 'saml-complete',
+    },
+    {
+      id: 'condition-oidc',
+      source: 'protocol-condition',
+      source_handle: 'oidc',
+      target: 'oidc-complete',
+    },
+  ],
+};
+
 const conditionRuntime: FlowRuntimeContract = {
   flow_kind: 'login',
   ui: {
@@ -678,6 +760,9 @@ function resetAdapter() {
   mocks.coreAdapter.isHealthy.mockReset();
   mocks.coreAdapter.getType.mockReset();
   mocks.coreAdapter.close.mockReset();
+  mocks.adminAdapter.query.mockReset();
+  mocks.adminAdapter.queryOne.mockReset();
+  mocks.adminAdapter.execute.mockReset();
   mocks.sessionStore.getSessionRpc.mockReset();
   mocks.challengeStore.getChallengeRpc.mockReset();
   mocks.challengeStore.storeChallengeRpc.mockReset();
@@ -825,6 +910,17 @@ describe('LoginUI runtime Flow handlers', () => {
     resetAdapter();
   });
 
+  it('never coerces VC server-side flow kinds into a login flow', async () => {
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({ body: { flow_kind: 'credential_issuance' } })
+    );
+    const data = await readJson(response);
+    expect(response.status).toBe(400);
+    expect(data.error).toBe('unsupported_flow_kind');
+    expect(mocks.coreAdapter.queryOne).not.toHaveBeenCalled();
+    expect(mocks.coreAdapter.transaction).not.toHaveBeenCalled();
+  });
+
   it('creates an interaction from the tenant default published Flow assignment', async () => {
     const { response, data } = await startInteraction();
 
@@ -839,6 +935,34 @@ describe('LoginUI runtime Flow handlers', () => {
     });
     expect(mocks.coreAdapter.transaction).toHaveBeenCalledTimes(2);
   });
+
+  it.each([
+    {
+      protocol: 'oidc',
+      body: { flow_kind: 'login', client_id: 'client_1' },
+      expectedStep: 'oidc-complete',
+    },
+    {
+      protocol: 'saml',
+      body: { flow_kind: 'login', saml_sp_id: 'saml_sp_1' },
+      expectedStep: 'saml-complete',
+    },
+  ])(
+    'routes a $protocol request through the matching protocol branch',
+    async ({ body, expectedStep }) => {
+      const { response, data } = await startInteraction(
+        body,
+        protocolBranchRuntime,
+        protocolBranchEditor
+      );
+
+      expect(response.status).toBe(200);
+      expect(data.interaction).toMatchObject({
+        current_node_id: expectedStep,
+        current_step_id: `${expectedStep}:step`,
+      });
+    }
+  );
 
   it('rejects an authorization challenge bound to a different OIDC client', async () => {
     mocks.challengeStore.getChallengeRpc.mockResolvedValueOnce({
@@ -1314,6 +1438,67 @@ describe('LoginUI runtime Flow handlers', () => {
     expect(data.category).toBe('security_error');
   });
 
+  it('rebuilds and persists a resumed interaction contract for the requested locale', async () => {
+    const { data: started } = await startInteraction({ flow_kind: 'login', locale: 'en' });
+    const startedInteraction = started.interaction as {
+      id: string;
+      flow_id: string;
+      flow_version_id: string;
+      current_node_id: string;
+      current_step_id: string;
+      expires_at: number;
+    };
+    const startedContractHash = String(started.contract_hash);
+    const startedSignature = String(started.signature);
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        id: startedInteraction.id,
+        flow_id: startedInteraction.flow_id,
+        flow_version_id: startedInteraction.flow_version_id,
+        client_id: null,
+        saml_sp_id: null,
+        state: 'active',
+        current_node_id: startedInteraction.current_node_id,
+        current_step_id: startedInteraction.current_step_id,
+        context_json: JSON.stringify({
+          protocol: 'direct',
+          target_type: 'tenant',
+          target_id: null,
+          locale: 'en',
+        }),
+        contract_hash: startedContractHash,
+        signature: startedSignature,
+        expires_at: startedInteraction.expires_at,
+      })
+      .mockResolvedValueOnce({
+        id: 'fv_1',
+        flow_id: 'flow_login',
+        schema_version: 'authrim.login_ui.contract.v1',
+        runtime_snapshot_json: JSON.stringify(runtime),
+        editor_snapshot_json: null,
+        published_at: 1782770000,
+      });
+
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({
+        body: {
+          resume_interaction_id: startedInteraction.id,
+          contract_hash: startedContractHash,
+          signature: startedSignature,
+          locale: 'ko',
+        },
+      })
+    );
+    const resumed = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(resumed.resumed).toBe(true);
+    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('SET context_json = ?'),
+      expect.arrayContaining([expect.stringContaining('"locale":"ko"')])
+    );
+  });
+
   it('hydrates screen steps with the active screen snapshot', async () => {
     mocks.coreAdapter.queryOne
       .mockResolvedValueOnce({
@@ -1339,6 +1524,12 @@ describe('LoginUI runtime Flow handlers', () => {
         screen_kind: 'registration',
         fields_json: JSON.stringify([
           {
+            field: 'email',
+            label: 'Email',
+            required: true,
+            block_type: 'identity_field',
+          },
+          {
             field: 'auth.mail_otp',
             label: 'Send verification code',
             text: 'Send a code to your email address.',
@@ -1352,7 +1543,7 @@ describe('LoginUI runtime Flow handlers', () => {
             display_name: '新規登録',
             description: '標準の新規登録スクリーンです。',
             fields: {
-              'auth.mail_otp-0': {
+              'auth.mail_otp-1': {
                 label: '認証コードを送信',
                 text: 'メールアドレスにコードを送信します。',
               },
@@ -1361,6 +1552,9 @@ describe('LoginUI runtime Flow handlers', () => {
         }),
         settings_json: JSON.stringify({ canvas_layout: 'narrow' }),
       });
+    mocks.coreAdapter.query.mockResolvedValueOnce([
+      { field_key: 'email', registration_required: 0 },
+    ]);
 
     const response = await loginRuntimeInteractionStartHandler(
       createContext({ body: { flow_kind: 'registration', requested_locale: 'ja' } })
@@ -1378,11 +1572,94 @@ describe('LoginUI runtime Flow handlers', () => {
         description: '標準の新規登録スクリーンです。',
         fields: [
           {
+            field: 'email',
+            label: 'Email',
+            required: false,
+            block_type: 'identity_field',
+          },
+          {
             label: '認証コードを送信',
             text: 'メールアドレスにコードを送信します。',
             block_type: 'auth_widget',
             auth_method: 'mail_otp',
           },
+        ],
+      },
+    });
+  });
+
+  it('reconciles every registration identity field with the active schema requirement', async () => {
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        flow_id: 'flow_registration',
+        target_type: 'tenant',
+        target_id: null,
+        flow_kind: 'registration',
+        published_version_id: 'fv_1',
+      })
+      .mockResolvedValueOnce({
+        id: 'fv_1',
+        flow_id: 'flow_registration',
+        schema_version: 'authrim.login_ui.contract.v1',
+        runtime_snapshot_json: JSON.stringify(screenRuntime),
+        editor_snapshot_json: null,
+        published_at: 1782770000,
+      })
+      .mockResolvedValueOnce({
+        id: 'profile_1',
+        screen_key: 'registration_custom',
+        display_name: 'Registration',
+        description: 'Registration screen',
+        screen_kind: 'registration',
+        fields_json: JSON.stringify([
+          {
+            field: 'field.canonical.email',
+            label: 'Email',
+            required: false,
+            block_type: 'identity_field',
+          },
+          {
+            field: 'department',
+            label: 'Department',
+            required: false,
+            block_type: 'identity_field',
+          },
+          {
+            field: 'locale',
+            label: 'Locale',
+            required: true,
+            block_type: 'identity_field',
+          },
+          {
+            field: 'unmanaged',
+            label: 'Unmanaged',
+            required: true,
+            block_type: 'identity_field',
+          },
+        ]),
+        localizations_json: JSON.stringify({}),
+        settings_json: JSON.stringify({ canvas_layout: 'narrow' }),
+      });
+    mocks.coreAdapter.query.mockResolvedValueOnce([
+      { field_key: 'email', registration_required: 1 },
+      { field_key: 'department', registration_required: 1 },
+      { field_key: 'locale', registration_required: 0 },
+    ]);
+
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({ body: { flow_kind: 'registration' } })
+    );
+    const data = await readJson(response);
+    const runtimeData = data.contract as FlowRuntimeContract;
+
+    expect(response.status).toBe(200);
+    expect(runtimeData.ui.steps[0].config).toMatchObject({
+      screen: {
+        fields: [
+          { field: 'field.canonical.email', required: true },
+          { field: 'department', required: true },
+          { field: 'locale', required: false },
+          { field: 'unmanaged', required: true },
         ],
       },
     });
@@ -1568,6 +1845,271 @@ describe('LoginUI runtime Flow handlers', () => {
       expect.stringContaining('AND is_system = 1'),
       ['default', 'login', 'login']
     );
+  });
+
+  it('hydrates Destination Profile fields and records the selected optional OIDC claims', async () => {
+    mockStartQueries(consentRuntime);
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+      })
+      .mockResolvedValueOnce({
+        id: 'policy_registration',
+        display_name: 'Authorization consent',
+        description: null,
+        is_active: 1,
+      });
+    mocks.coreAdapter.query.mockResolvedValueOnce([]);
+    mocks.adminAdapter.queryOne.mockResolvedValueOnce({
+      profile_id: 'destination_oidc_1',
+      destination_type: 'oidc',
+      version_id: 'destination_oidc_version_1',
+      schema_json: JSON.stringify({
+        claims: [
+          { claimName: 'sub', label: 'Subject', required: true, requiredScopes: ['openid'] },
+          { claimName: 'name', label: 'Name', required: false, requiredScopes: ['profile'] },
+          { claimName: 'email', label: 'Email', required: false, requiredScopes: ['email'] },
+        ],
+      }),
+    });
+
+    const startResponse = await loginRuntimeInteractionStartHandler(
+      createContext({
+        env: { DB_ADMIN: mocks.adminAdapter as never },
+        body: {
+          flow_kind: 'login',
+          client_id: 'client_1',
+          requested_scope: ['openid', 'profile'],
+        },
+      })
+    );
+    const startData = await readJson(startResponse);
+    const startContract = startData.contract as FlowRuntimeContract;
+    expect(startResponse.status).toBe(200);
+    expect(startContract.ui.steps[0]?.content?.destination_field_consent).toMatchObject({
+      profile_id: 'destination_oidc_1',
+      profile_version_id: 'destination_oidc_version_1',
+      fields: [
+        expect.objectContaining({ key: 'sub', required: true }),
+        expect.objectContaining({ key: 'name', required: false }),
+      ],
+    });
+
+    resetAdapter();
+    mockSubmitQueries({
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      currentNodeId: 'consent',
+      currentStepId: 'consent:step',
+      stepState: 'waiting_input',
+      runtimeSnapshot: consentRuntime,
+      clientId: 'client_1',
+      context: {
+        protocol: 'oidc',
+        target_type: 'oidc_client',
+        target_id: 'client_1',
+        client_id: 'client_1',
+        requested_scope: ['openid', 'profile'],
+      },
+    });
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+      })
+      .mockResolvedValueOnce({
+        id: 'policy_registration',
+        display_name: 'Authorization consent',
+        description: null,
+        is_active: 1,
+      })
+      .mockResolvedValueOnce({
+        id: 'policy_registration',
+        display_name: 'Authorization consent',
+        description: null,
+        is_active: 1,
+      });
+    mocks.coreAdapter.query.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    mocks.adminAdapter.queryOne.mockResolvedValueOnce({
+      profile_id: 'destination_oidc_1',
+      destination_type: 'oidc',
+      version_id: 'destination_oidc_version_1',
+      schema_json: JSON.stringify({
+        claims: [
+          { claimName: 'sub', label: 'Subject', required: true, requiredScopes: ['openid'] },
+          { claimName: 'name', label: 'Name', required: false, requiredScopes: ['profile'] },
+        ],
+      }),
+    });
+    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
+
+    const submitResponse = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        env: { DB_ADMIN: mocks.adminAdapter as never },
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1', 'User-Agent': 'Vitest' },
+        body: {
+          step_id: 'consent:step',
+          node_id: 'consent',
+          selected_handle: 'accepted',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+          input: {
+            destination_field_decisions: { sub: true, name: false },
+          },
+        },
+      })
+    );
+
+    expect(submitResponse.status).toBe(200);
+    expect(mocks.coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO consent_records'),
+      expect.arrayContaining([
+        'destination_field_mapping_set',
+        'destination_oidc_1',
+        'destination_profile:destination_oidc_1',
+        'destination_oidc_version_1',
+        JSON.stringify(['sub']),
+      ])
+    );
+  });
+
+  it('hydrates OIDC consent from the Mapping Set active Destination Profile', async () => {
+    mockStartQueries(consentRuntime);
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        identity_mapping: JSON.stringify({
+          fieldMappingSetId: 'mapping_set_1',
+          destinationProfileId: 'stale_destination_profile',
+        }),
+      })
+      .mockResolvedValueOnce({
+        id: 'policy_registration',
+        display_name: 'Authorization consent',
+        description: null,
+        is_active: 1,
+      });
+    mocks.coreAdapter.query.mockResolvedValueOnce([]);
+    mocks.resolveRuntimeIdentityMappingBinding.mockResolvedValueOnce({
+      destinationProfileId: 'active_destination_profile',
+      destinationProfileIds: ['active_destination_profile'],
+    });
+    mocks.adminAdapter.queryOne.mockResolvedValueOnce({
+      profile_id: 'active_destination_profile',
+      destination_type: 'oidc',
+      version_id: 'active_destination_profile_v2',
+      schema_json: JSON.stringify({
+        claims: [{ claimName: 'sub', label: 'Subject', required: true }],
+      }),
+    });
+
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({
+        env: { DB_ADMIN: mocks.adminAdapter as never },
+        body: {
+          flow_kind: 'login',
+          client_id: 'client_1',
+          requested_scope: ['openid'],
+        },
+      })
+    );
+    const data = await readJson(response);
+    const contract = data.contract as FlowRuntimeContract;
+
+    expect(response.status).toBe(200);
+    expect(mocks.resolveRuntimeIdentityMappingBinding).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        protocol: 'oidc',
+        fieldMappingSetId: 'mapping_set_1',
+      })
+    );
+    expect(contract.ui.steps[0]?.content?.destination_field_consent).toMatchObject({
+      profile_id: 'active_destination_profile',
+      profile_version_id: 'active_destination_profile_v2',
+    });
+  });
+
+  it('hydrates SAML destination consent from the per-SP release policy', async () => {
+    mockStartQueries(consentRuntime);
+    mocks.coreAdapter.queryOne.mockResolvedValueOnce({
+      id: 'policy_registration',
+      display_name: 'SAML release consent',
+      description: null,
+      is_active: 1,
+    });
+    mocks.coreAdapter.query
+      .mockResolvedValueOnce([
+        {
+          id: 'saml_sp_1',
+          config_json: JSON.stringify({
+            entityId: 'https://sp.example.test/metadata',
+            attributeReleaseConsent: { enabled: true, mode: 'until_attributes_change' },
+            identityMapping: {
+              destinationProfileId: 'destination_saml_1',
+              destinationFieldPolicies: {
+                mail: 'required',
+                displayName: 'optional',
+                eduPersonAffiliation: 'hidden',
+              },
+            },
+          }),
+        },
+      ])
+      .mockResolvedValueOnce([]);
+    mocks.adminAdapter.queryOne.mockResolvedValueOnce({
+      profile_id: 'destination_saml_1',
+      destination_type: 'saml',
+      version_id: 'destination_saml_version_1',
+      schema_json: JSON.stringify({
+        attributes: [
+          { name: 'mail', label: 'Email', required: false, nullable: true },
+          { name: 'displayName', label: 'Display name', required: true, nullable: false },
+          {
+            name: 'eduPersonAffiliation',
+            label: 'Affiliation',
+            required: true,
+            nullable: false,
+          },
+        ],
+      }),
+    });
+
+    const response = await loginRuntimeInteractionStartHandler(
+      createContext({
+        env: { DB_ADMIN: mocks.adminAdapter as never },
+        body: {
+          flow_kind: 'login',
+          saml_sp_id: 'saml_sp_1',
+          saml_sp_entity_id: 'https://sp.example.test/metadata',
+        },
+      })
+    );
+    const data = await readJson(response);
+    const runtimeData = data.contract as FlowRuntimeContract;
+    const destinationConsent = runtimeData.ui.steps[0]?.content?.destination_field_consent as
+      | { fields: Array<{ key: string }>; consent_version: string }
+      | undefined;
+
+    expect(response.status).toBe(200);
+    expect(runtimeData.ui.steps[0]?.content?.destination_field_consent).toMatchObject({
+      profile_id: 'destination_saml_1',
+      profile_version_id: 'destination_saml_version_1',
+      destination_type: 'saml',
+      consent_mode: 'until_attributes_change',
+      fields: [
+        expect.objectContaining({ key: 'mail', required: true, nullable: false }),
+        expect.objectContaining({ key: 'displayName', required: false, nullable: true }),
+      ],
+    });
+    expect(destinationConsent?.fields.map((field) => field.key)).not.toContain(
+      'eduPersonAffiliation'
+    );
+    expect(destinationConsent?.consent_version).not.toBe('destination_saml_version_1');
   });
 
   it('advances a signed active interaction to the next runtime step', async () => {
@@ -2282,6 +2824,126 @@ describe('LoginUI runtime Flow handlers', () => {
       expect.stringContaining('INSERT INTO consent_records'),
       expect.anything()
     );
+  });
+
+  it('keeps every-time Destination Profile consent visible despite an active matching record', async () => {
+    const { data: startData } = await startInteraction(
+      {
+        flow_kind: 'login',
+        client_id: 'client_1',
+        requested_scope: 'openid profile',
+      },
+      acceptedConsentRuntime
+    );
+    resetAdapter();
+    mockSubmitQueries({
+      contractHash: String(startData.contract_hash),
+      signature: String(startData.signature),
+      currentNodeId: 'auth',
+      currentStepId: 'auth:step',
+      stepState: 'waiting_input',
+      runtimeSnapshot: acceptedConsentRuntime,
+      editorSnapshot: acceptedConsentEditor,
+      clientId: 'client_1',
+      context: {
+        protocol: 'oidc',
+        target_type: 'oidc_client',
+        target_id: 'client_1',
+        client_id: 'client_1',
+        requested_scope: ['openid', 'profile'],
+      },
+    });
+    mocks.coreAdapter.queryOne
+      .mockResolvedValueOnce({
+        identity_mapping: JSON.stringify({ destinationProfileId: 'destination_oidc_1' }),
+        attribute_release_consent: JSON.stringify({ enabled: true, mode: 'every_time' }),
+      })
+      .mockResolvedValueOnce({
+        id: 'policy_registration',
+        display_name: 'Registration consent policy',
+        description: null,
+        is_active: 1,
+      })
+      .mockResolvedValueOnce({ id: 'version_terms_current', version: '20260701' })
+      .mockResolvedValueOnce({ id: 'existing_policy_consent_record' })
+      .mockResolvedValueOnce({
+        id: 'existing_destination_consent_record',
+        released_scopes_json: JSON.stringify(['openid', 'profile']),
+      });
+    mocks.coreAdapter.query
+      .mockResolvedValueOnce([
+        {
+          statement_id: 'statement_terms',
+          requirement: 'required',
+          version_mode: 'latest',
+          version_id: null,
+          checkbox_mode: 'required',
+          checkbox_default_checked: 0,
+          binding_type: 'subject',
+          binding_value: null,
+          evidence_profile: null,
+          language_fallback: null,
+          display_order: 0,
+          slug: 'terms_of_service',
+          category: 'terms_of_service',
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          language: 'en',
+          title: 'Terms of Service',
+          description: '',
+          document_url: 'https://example.com/tos',
+          inline_content: 'I agree to %link1%.',
+        },
+      ]);
+    mocks.adminAdapter.queryOne.mockResolvedValueOnce({
+      profile_id: 'destination_oidc_1',
+      destination_type: 'oidc',
+      version_id: 'destination_oidc_version_1',
+      schema_json: JSON.stringify({
+        claims: [
+          { claimName: 'sub', label: 'Subject', required: true, requiredScopes: ['openid'] },
+          { claimName: 'name', label: 'Name', required: false, requiredScopes: ['profile'] },
+        ],
+      }),
+    });
+    mocks.sessionStore.getSessionRpc.mockResolvedValueOnce({
+      userId: 'user_1',
+      expiresAt: Date.now() + 60_000,
+      createdAt: 1_700_000_000_000,
+      data: { authTime: 1_700_000_123 },
+    });
+
+    const response = await loginRuntimeInteractionSubmitHandler(
+      createContext({
+        env: { DB_ADMIN: mocks.adminAdapter as never },
+        params: { interaction_id: 'interaction_1' },
+        headers: { Cookie: 'authrim_session=sess_runtime_1' },
+        body: {
+          step_id: 'auth:step',
+          node_id: 'auth',
+          selected_handle: 'passkey',
+          contract_hash: startData.contract_hash,
+          signature: startData.signature,
+        },
+      })
+    );
+    const data = await readJson(response);
+
+    expect(response.status).toBe(200);
+    expect(data.completed).toBe(false);
+    expect(data.step).toMatchObject({
+      id: 'consent:step',
+      content: {
+        consent_policy: { items: [] },
+        destination_field_consent: {
+          profile_id: 'destination_oidc_1',
+          profile_version_id: 'destination_oidc_version_1',
+          consent_mode: 'every_time',
+        },
+      },
+    });
   });
 
   it('rejects an unknown selected edge handle instead of falling back to the default branch', async () => {

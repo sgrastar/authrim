@@ -15,23 +15,23 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
-  type RegionShardConfig,
   type RegionShardConfigV2,
   type ColocationGroup,
-  getRegionShardConfig,
   saveRegionShardConfig,
-  deleteRegionShardConfig,
   validateRegionShardRequest,
   calculateRegionRanges,
   createNewRegionGeneration,
+  buildPolicyConstrainedRegionShardConfig,
   validateColocationGroups,
-  DEFAULT_TOTAL_SHARDS,
-  DEFAULT_REGION_DISTRIBUTION,
   DEFAULT_COLOCATION_GROUPS,
   createErrorResponse,
   AR_ERROR_CODES,
 } from '@authrim/ar-lib-core';
 import { resolveSettingsTenantId } from './tenant-resolver';
+import {
+  assertRegionDistributionAllowed,
+  requireTenantRegionShardConfig,
+} from '../../tenant-region-shard-policy';
 
 /**
  * Request body for PUT /api/admin/settings/region-shards
@@ -77,8 +77,11 @@ interface MigrateRequest {
  * - updatedAt: Last update timestamp
  */
 export async function getRegionShards(c: Context) {
-  const config = await getRegionShardConfig(c.env, resolveSettingsTenantId(c));
-  const configV2 = config as RegionShardConfigV2;
+  const { config, residency } = await requireTenantRegionShardConfig(
+    c.env as Env,
+    resolveSettingsTenantId(c)
+  );
+  const configV2 = config;
 
   // Merge default groups with custom groups
   const effectiveGroups = { ...DEFAULT_COLOCATION_GROUPS, ...configV2.groups };
@@ -94,6 +97,7 @@ export async function getRegionShards(c: Context) {
     // V2: Include colocation groups
     version: configV2.version || 1,
     groups: effectiveGroups,
+    residency,
     // Validation status
     validation: validateColocationGroups(config),
   });
@@ -113,7 +117,7 @@ export async function getRegionShards(c: Context) {
  *
  * Validation Rules:
  * - regionDistribution must sum to 100
- * - totalShards must be >= number of active regions (percentage > 0)
+ * - totalShards must be a positive multiple of the active region count (percentage > 0)
  * - Each region with percentage > 0 must get at least 1 shard
  * - Regions with 0% are allowed (disabled regions)
  */
@@ -126,7 +130,11 @@ export async function updateRegionShards(c: Context<{ Bindings: Env }>) {
   }
 
   // Basic field validation
-  if (typeof body.totalShards !== 'number' || body.totalShards <= 0) {
+  if (
+    typeof body.totalShards !== 'number' ||
+    !Number.isInteger(body.totalShards) ||
+    body.totalShards <= 0
+  ) {
     return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
   }
 
@@ -144,8 +152,16 @@ export async function updateRegionShards(c: Context<{ Bindings: Env }>) {
 
   // Get current config
   const tenantId = resolveSettingsTenantId(c);
-  const currentConfig = await getRegionShardConfig(c.env, tenantId);
-  const currentConfigV2 = currentConfig as RegionShardConfigV2;
+  const { config: currentConfig, residency } = await requireTenantRegionShardConfig(
+    c.env,
+    tenantId
+  );
+  const currentConfigV2 = currentConfig;
+  try {
+    assertRegionDistributionAllowed(body.regionDistribution, residency);
+  } catch {
+    return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+  }
 
   // Calculate new region ranges
   const newRegions = calculateRegionRanges(body.totalShards, body.regionDistribution);
@@ -184,6 +200,7 @@ export async function updateRegionShards(c: Context<{ Bindings: Env }>) {
       ...baseConfig,
       version: 2,
       groups: newGroups || currentConfigV2.groups,
+      residency,
     };
   } else {
     // No change, just update timestamp
@@ -191,6 +208,7 @@ export async function updateRegionShards(c: Context<{ Bindings: Env }>) {
       ...currentConfig,
       version: currentConfigV2.version || 1,
       groups: currentConfigV2.groups,
+      residency,
       updatedAt: Date.now(),
       updatedBy: 'admin-api',
     };
@@ -218,6 +236,7 @@ export async function updateRegionShards(c: Context<{ Bindings: Env }>) {
     updatedAt: newConfig.updatedAt,
     version: newConfig.version,
     groups: effectiveGroups,
+    residency,
     validation: colocationValidation,
     note: configChanged
       ? 'New generation created. Existing resources will continue to use old config until they expire.'
@@ -234,21 +253,36 @@ export async function updateRegionShards(c: Context<{ Bindings: Env }>) {
  * Note: This does NOT affect existing resources with embedded generation/region info.
  */
 export async function deleteRegionShards(c: Context) {
-  await deleteRegionShardConfig(c.env, resolveSettingsTenantId(c));
-
-  // Return default config info
-  const defaultRegions = calculateRegionRanges(DEFAULT_TOTAL_SHARDS, DEFAULT_REGION_DISTRIBUTION);
+  const tenantId = resolveSettingsTenantId(c);
+  const { config: currentConfig, residency } = await requireTenantRegionShardConfig(
+    c.env as Env,
+    tenantId
+  );
+  const defaults = buildPolicyConstrainedRegionShardConfig({ residency });
+  const baseConfig = createNewRegionGeneration(
+    currentConfig,
+    defaults.currentTotalShards,
+    defaults.currentRegions,
+    'admin-api:reset'
+  );
+  const resetConfig: RegionShardConfigV2 = {
+    ...baseConfig,
+    version: 2,
+    groups: currentConfig.groups,
+    residency,
+  };
+  await saveRegionShardConfig(c.env as Env, tenantId, resetConfig);
 
   return c.json({
     success: true,
-    message: 'Region shard configuration deleted. System will use defaults.',
+    message: 'Region shard configuration reset to the server-owned residency defaults.',
     defaults: {
-      totalShards: DEFAULT_TOTAL_SHARDS,
-      regionDistribution: DEFAULT_REGION_DISTRIBUTION,
-      regions: defaultRegions,
+      totalShards: defaults.currentTotalShards,
+      allowedRegions: residency.allowedRegions,
+      regions: defaults.currentRegions,
       groups: DEFAULT_COLOCATION_GROUPS,
     },
-    note: 'Existing resources with embedded generation/region info will continue to work.',
+    note: 'A new generation was created. Existing resource IDs retain their prior route.',
   });
 }
 
@@ -278,8 +312,11 @@ export async function migrateRegionShards(c: Context) {
 
   // Get current config
   const tenantId = resolveSettingsTenantId(c);
-  const currentConfig = await getRegionShardConfig(c.env, tenantId);
-  const currentConfigV2 = currentConfig as RegionShardConfigV2;
+  const { config: currentConfig, residency } = await requireTenantRegionShardConfig(
+    c.env as Env,
+    tenantId
+  );
+  const currentConfigV2 = currentConfig;
 
   // Create new generation with same settings
   const baseConfig = createNewRegionGeneration(
@@ -293,10 +330,11 @@ export async function migrateRegionShards(c: Context) {
     ...baseConfig,
     version: 2,
     groups: currentConfigV2.groups,
+    residency,
   };
 
   // Save to KV
-  await saveRegionShardConfig(c.env, tenantId, newConfig);
+  await saveRegionShardConfig(c.env as Env, tenantId, newConfig);
 
   return c.json({
     success: true,
@@ -304,6 +342,7 @@ export async function migrateRegionShards(c: Context) {
     previousGeneration: currentConfig.currentGeneration,
     currentGeneration: newConfig.currentGeneration,
     reason,
+    residency,
     note:
       'All new resources will use the new generation. ' +
       'Existing resources will continue to use their embedded generation until they expire.',
@@ -321,8 +360,11 @@ export async function migrateRegionShards(c: Context) {
  * - Warnings for non-critical issues
  */
 export async function validateRegionShardsConfig(c: Context) {
-  const config = await getRegionShardConfig(c.env, resolveSettingsTenantId(c));
-  const configV2 = config as RegionShardConfigV2;
+  const { config, residency } = await requireTenantRegionShardConfig(
+    c.env as Env,
+    resolveSettingsTenantId(c)
+  );
+  const configV2 = config;
 
   const validation = validateColocationGroups(config);
 
@@ -336,6 +378,7 @@ export async function validateRegionShardsConfig(c: Context) {
     currentGeneration: config.currentGeneration,
     currentTotalShards: config.currentTotalShards,
     groups: effectiveGroups,
+    residency,
     recommendation: validation.valid
       ? 'Configuration is valid.'
       : 'CRITICAL: Fix errors before deploying. Colocation group shard mismatch causes intermittent authentication failures.',

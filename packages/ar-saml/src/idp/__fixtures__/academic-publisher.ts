@@ -1,5 +1,5 @@
 import type { SAMLAttributeReleaseConfig, SAMLAttributeSubject } from '../attributes';
-import type { FieldCatalogEntry, TargetType } from '@authrim/ar-lib-field-mapping';
+import type { FieldCatalogEntry, TargetType } from '@authrim/ar-lib-field-mapping/contract';
 import { SAML_ATTRIBUTE_NAME_FORMAT_URI } from '../attribute-presets';
 
 export const academicPublisherSubjectFixture: SAMLAttributeSubject = {

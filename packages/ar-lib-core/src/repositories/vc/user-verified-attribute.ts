@@ -35,6 +35,7 @@ export interface UserVerifiedAttribute extends BaseEntity {
   verification_id: string | null;
   verified_at: number;
   expires_at: number | null;
+  revalidate_after?: number | null;
 }
 
 /**
@@ -50,6 +51,7 @@ export interface CreateUserVerifiedAttributeInput {
   issuer_did?: string | null;
   verification_id?: string | null;
   expires_at?: number | null;
+  revalidate_after?: number | null;
 }
 
 /**
@@ -90,6 +92,7 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
         'verification_id',
         'verified_at',
         'expires_at',
+        'revalidate_after',
       ],
     });
   }
@@ -118,6 +121,7 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
              verification_id = ?,
              verified_at = ?,
              expires_at = ?,
+             revalidate_after = ?,
              updated_at = ?
          WHERE tenant_id = ? AND id = ?`,
         [
@@ -127,6 +131,7 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
           input.verification_id ?? null,
           now,
           input.expires_at ?? null,
+          input.revalidate_after ?? null,
           now,
           input.tenant_id,
           existing.id,
@@ -144,6 +149,7 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
         verification_id: input.verification_id ?? null,
         verified_at: now,
         expires_at: input.expires_at ?? null,
+        revalidate_after: input.revalidate_after ?? null,
         created_at: existing.created_at,
         updated_at: now,
       };
@@ -160,6 +166,7 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
       verification_id: input.verification_id ?? null,
       verified_at: now,
       expires_at: input.expires_at ?? null,
+      revalidate_after: input.revalidate_after ?? null,
       created_at: now,
       updated_at: now,
     };
@@ -168,9 +175,9 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
       await this.adapter.execute(
         `INSERT INTO user_verified_attributes (
           id, tenant_id, user_id, attribute_name, attribute_value,
-          source_type, issuer_did, verification_id, verified_at, expires_at,
+          source_type, issuer_did, verification_id, verified_at, expires_at, revalidate_after,
           created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           createdAttribute.id,
           createdAttribute.tenant_id,
@@ -182,6 +189,7 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
           createdAttribute.verification_id,
           createdAttribute.verified_at,
           createdAttribute.expires_at,
+          createdAttribute.revalidate_after,
           createdAttribute.created_at,
           createdAttribute.updated_at,
         ]
@@ -213,6 +221,7 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
            verification_id = ?,
            verified_at = ?,
            expires_at = ?,
+           revalidate_after = ?,
            updated_at = ?
        WHERE tenant_id = ? AND id = ?`,
       [
@@ -222,6 +231,7 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
         input.verification_id ?? null,
         now,
         input.expires_at ?? null,
+        input.revalidate_after ?? null,
         now,
         input.tenant_id,
         raced.id,
@@ -244,11 +254,24 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
   ): Promise<Record<string, string>> {
     const now = getCurrentTimestamp();
     const rows = await this.adapter.query<UserVerifiedAttribute>(
-      `SELECT attribute_name, attribute_value
-       FROM user_verified_attributes
-       WHERE tenant_id = ? AND user_id = ?
-         AND (expires_at IS NULL OR expires_at > ?)`,
-      [tenantId, userId, now]
+      `SELECT a.attribute_name, a.attribute_value
+       FROM user_verified_attributes a
+       LEFT JOIN attribute_verifications v
+         ON v.id = a.verification_id AND v.tenant_id = a.tenant_id
+       LEFT JOIN trusted_issuers ti
+         ON ti.tenant_id = v.tenant_id AND ti.issuer_did = v.issuer_did
+       WHERE a.tenant_id = ? AND a.user_id = ?
+         AND (a.expires_at IS NULL OR a.expires_at > ?)
+         AND (a.revalidate_after IS NULL OR a.revalidate_after > ?)
+         AND (a.source_type <> 'vc' OR (
+           v.verification_result = 'verified' AND v.holder_binding_verified = 1
+           AND v.issuer_trusted = 1 AND v.status_valid = 1 AND v.invalidated_at IS NULL
+           AND ti.status = 'active'
+           AND (v.expires_at IS NULL OR v.expires_at > ?)
+           AND (v.revalidate_after IS NULL OR v.revalidate_after > ?)
+           AND (v.status_fresh_until IS NULL OR v.status_fresh_until > ?)
+         ))`,
+      [tenantId, userId, now, now, now, now, now]
     );
 
     const attributes: Record<string, string> = {};
@@ -269,11 +292,24 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
   ): Promise<boolean> {
     const now = getCurrentTimestamp();
     const row = await this.adapter.queryOne<UserVerifiedAttribute>(
-      `SELECT attribute_value
-       FROM user_verified_attributes
-       WHERE tenant_id = ? AND user_id = ? AND attribute_name = ?
-         AND (expires_at IS NULL OR expires_at > ?)`,
-      [tenantId, userId, attributeName, now]
+      `SELECT a.attribute_value
+       FROM user_verified_attributes a
+       LEFT JOIN attribute_verifications v
+         ON v.id = a.verification_id AND v.tenant_id = a.tenant_id
+       LEFT JOIN trusted_issuers ti
+         ON ti.tenant_id = v.tenant_id AND ti.issuer_did = v.issuer_did
+       WHERE a.tenant_id = ? AND a.user_id = ? AND a.attribute_name = ?
+         AND (a.expires_at IS NULL OR a.expires_at > ?)
+         AND (a.revalidate_after IS NULL OR a.revalidate_after > ?)
+         AND (a.source_type <> 'vc' OR (
+           v.verification_result = 'verified' AND v.holder_binding_verified = 1
+           AND v.issuer_trusted = 1 AND v.status_valid = 1 AND v.invalidated_at IS NULL
+           AND ti.status = 'active'
+           AND (v.expires_at IS NULL OR v.expires_at > ?)
+           AND (v.revalidate_after IS NULL OR v.revalidate_after > ?)
+           AND (v.status_fresh_until IS NULL OR v.status_fresh_until > ?)
+         ))`,
+      [tenantId, userId, attributeName, now, now, now, now, now]
     );
 
     if (!row) {
@@ -297,10 +333,23 @@ export class UserVerifiedAttributeRepository extends BaseRepository<UserVerified
   ): Promise<UserVerifiedAttribute | null> {
     const now = getCurrentTimestamp();
     return this.adapter.queryOne<UserVerifiedAttribute>(
-      `SELECT * FROM user_verified_attributes
-       WHERE tenant_id = ? AND user_id = ? AND attribute_name = ?
-         AND (expires_at IS NULL OR expires_at > ?)`,
-      [tenantId, userId, attributeName, now]
+      `SELECT a.* FROM user_verified_attributes a
+       LEFT JOIN attribute_verifications v
+         ON v.id = a.verification_id AND v.tenant_id = a.tenant_id
+       LEFT JOIN trusted_issuers ti
+         ON ti.tenant_id = v.tenant_id AND ti.issuer_did = v.issuer_did
+       WHERE a.tenant_id = ? AND a.user_id = ? AND a.attribute_name = ?
+         AND (a.expires_at IS NULL OR a.expires_at > ?)
+         AND (a.revalidate_after IS NULL OR a.revalidate_after > ?)
+         AND (a.source_type <> 'vc' OR (
+           v.verification_result = 'verified' AND v.holder_binding_verified = 1
+           AND v.issuer_trusted = 1 AND v.status_valid = 1 AND v.invalidated_at IS NULL
+           AND ti.status = 'active'
+           AND (v.expires_at IS NULL OR v.expires_at > ?)
+           AND (v.revalidate_after IS NULL OR v.revalidate_after > ?)
+           AND (v.status_fresh_until IS NULL OR v.status_fresh_until > ?)
+         ))`,
+      [tenantId, userId, attributeName, now, now, now, now, now]
     );
   }
 

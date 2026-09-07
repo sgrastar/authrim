@@ -5,7 +5,7 @@ const {
   mockQuery,
   mockExecute,
   mockEnsureDatabaseAdapter,
-  mockResolveUserStoreRuntimeSourcesFromEnv,
+  mockResolveAccountDataContextByIdentifier,
   sqlTracker,
 } = vi.hoisted(() => {
   const tracker = {
@@ -34,21 +34,20 @@ const {
     },
   };
   const ensureDatabaseAdapter = vi.fn(() => adapter);
-  const resolveUserStoreRuntimeSourcesFromEnv = vi.fn(async () => ({ coreDb: {}, piiDb: {} }));
-
+  const resolveAccountDataContextByIdentifier = vi.fn(async () => ({ piiDb: {} }));
   return {
     mockQueryOne: queryOne,
     mockQuery: query,
     mockExecute: execute,
     mockEnsureDatabaseAdapter: ensureDatabaseAdapter,
-    mockResolveUserStoreRuntimeSourcesFromEnv: resolveUserStoreRuntimeSourcesFromEnv,
+    mockResolveAccountDataContextByIdentifier: resolveAccountDataContextByIdentifier,
     sqlTracker: tracker,
   };
 });
 
 vi.mock('@authrim/ar-lib-core', () => ({
   ensureDatabaseAdapter: mockEnsureDatabaseAdapter,
-  resolveUserStoreRuntimeSourcesFromEnv: mockResolveUserStoreRuntimeSourcesFromEnv,
+  resolveAccountDataContextByIdentifier: mockResolveAccountDataContextByIdentifier,
   getDefaultTenantId: vi.fn(() => 'default'),
 }));
 
@@ -58,6 +57,7 @@ import {
   findLinkedIdentitiesAcrossTenantsByProviderSub,
   findLinkedIdentitiesByProviderSub,
   getLinkedIdentityForUserAndProvider,
+  updateLinkedIdentity,
 } from '../services/linked-identity-store';
 
 describe('linked-identity-store', () => {
@@ -65,6 +65,7 @@ describe('linked-identity-store', () => {
     DB: {},
     RP_TOKEN_ENCRYPTION_KEY: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
   } as never;
+  const piiSource = {} as never;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -73,19 +74,17 @@ describe('linked-identity-store', () => {
     mockQueryOne.mockReset().mockResolvedValue(null);
     mockQuery.mockReset().mockResolvedValue([]);
     mockExecute.mockReset().mockResolvedValue({ rowsAffected: 1 });
-    mockResolveUserStoreRuntimeSourcesFromEnv.mockClear();
   });
 
   it('uses tenant-scoped lookup for provider user resolution', async () => {
-    await findLinkedIdentity(env, 'tenant-a', 'google', 'sub-123');
+    await findLinkedIdentity(env, 'tenant-a', 'google', 'sub-123', piiSource);
 
-    expect(mockResolveUserStoreRuntimeSourcesFromEnv).toHaveBeenCalledWith(env, 'tenant-a');
     expect(sqlTracker.calls[0]?.sql).toContain('tenant_id = ?');
     expect(sqlTracker.calls[0]?.params).toEqual(['tenant-a', 'google', 'sub-123']);
   });
 
   it('uses tenant-scoped lookup for user and provider resolution', async () => {
-    await getLinkedIdentityForUserAndProvider(env, 'tenant-a', 'user-1', 'google');
+    await getLinkedIdentityForUserAndProvider(env, 'tenant-a', 'user-1', 'google', piiSource);
 
     expect(sqlTracker.calls[0]?.sql).toContain('tenant_id = ?');
     expect(sqlTracker.calls[0]?.params).toEqual(['tenant-a', 'user-1', 'google']);
@@ -106,25 +105,38 @@ describe('linked-identity-store', () => {
   });
 
   it('uses tenant-scoped provider-sub lookup for backchannel logout paths', async () => {
-    await findLinkedIdentitiesByProviderSub(env, 'tenant-a', 'google', 'sub-123');
+    await findLinkedIdentitiesByProviderSub(env, 'tenant-a', 'google', 'sub-123', piiSource);
 
     expect(sqlTracker.calls[0]?.sql).toContain('tenant_id = ?');
     expect(sqlTracker.calls[0]?.params).toEqual(['tenant-a', 'google', 'sub-123']);
   });
 
   it('persists tenant_id when creating a linked identity', async () => {
-    await createLinkedIdentity(env, {
-      tenantId: 'tenant-a',
-      userId: 'user-1',
-      providerId: 'google',
-      providerUserId: 'sub-123',
-      tokens: {
-        access_token: 'access-token',
-        token_type: 'Bearer',
+    await createLinkedIdentity(
+      env,
+      {
+        tenantId: 'tenant-a',
+        userId: 'user-1',
+        providerId: 'google',
+        providerUserId: 'sub-123',
+        tokens: {
+          access_token: 'access-token',
+          token_type: 'Bearer',
+        },
       },
-    });
+      piiSource
+    );
 
     expect(sqlTracker.calls[0]?.sql).toContain('tenant_id');
     expect(sqlTracker.calls[0]?.params?.[1]).toBe('tenant-a');
+  });
+
+  it('clears access, refresh, and expiry state for backchannel logout', async () => {
+    await updateLinkedIdentity(env, 'tenant-a', 'link-a', { clearTokens: true }, piiSource);
+
+    expect(sqlTracker.calls[0]?.sql).toContain('access_token_encrypted = NULL');
+    expect(sqlTracker.calls[0]?.sql).toContain('refresh_token_encrypted = NULL');
+    expect(sqlTracker.calls[0]?.sql).toContain('token_expires_at = NULL');
+    expect(sqlTracker.calls[0]?.params).toEqual([expect.any(Number), 'tenant-a', 'link-a']);
   });
 });

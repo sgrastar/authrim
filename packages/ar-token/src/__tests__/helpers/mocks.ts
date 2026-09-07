@@ -62,11 +62,17 @@ export interface MockDurableObjectStub {
   id: DurableObjectId;
   // RPC methods for KeyManager
   getActiveKeyWithPrivateRpc?: Mock<() => Promise<{ kid: string; privatePEM: string } | null>>;
+  getActiveOIDCSigningKeyWithPrivateRpc?: Mock<
+    (algorithm: 'RS256' | 'ES256') => Promise<{ kid: string; privatePEM: string }>
+  >;
   rotateKeysWithPrivateRpc?: Mock<() => Promise<{ kid: string; privatePEM: string }>>;
   getAllPublicKeysRpc?: Mock<() => Promise<object[]>>;
   // RPC methods for AuthCodeStore
   consumeCodeRpc?: Mock<
     (params: { code: string; clientId: string; codeVerifier?: string }) => Promise<object>
+  >;
+  registerIssuedTokensRpc?: Mock<
+    (code: string, accessTokenJti: string, refreshTokenJti?: string) => Promise<boolean>
   >;
   // RPC methods for RefreshTokenRotator
   rotateTokenRpc?: Mock<(params: object) => Promise<object>>;
@@ -104,8 +110,8 @@ export interface MockEnv {
   REVOKED_TOKENS: MockKVNamespace;
   SESSIONS: MockKVNamespace;
   RATE_LIMIT_CACHE: MockKVNamespace;
-  // D1 Databases
-  DB: MockD1Database;
+  // Test-only routed tenant core database
+  TDB_TEST_CORE: MockD1Database;
   // Durable Objects
   KEY_MANAGER: MockDurableObjectNamespace;
   AUTH_CODE_STORE: MockDurableObjectNamespace;
@@ -227,12 +233,17 @@ export function createMockDurableObjectStub(options?: {
     id: createMockDurableObjectId(),
     getActiveKeyWithPrivateRpc:
       options?.rpcMethods?.getActiveKeyWithPrivateRpc ?? vi.fn().mockResolvedValue(null),
+    getActiveOIDCSigningKeyWithPrivateRpc:
+      options?.rpcMethods?.getActiveOIDCSigningKeyWithPrivateRpc ??
+      vi.fn().mockRejectedValue(new Error('OIDC signing key not configured')),
     rotateKeysWithPrivateRpc:
       options?.rpcMethods?.rotateKeysWithPrivateRpc ??
       vi.fn().mockResolvedValue({ kid: 'test-kid', privatePEM: 'test-pem' }),
     getAllPublicKeysRpc: options?.rpcMethods?.getAllPublicKeysRpc ?? vi.fn().mockResolvedValue([]),
     consumeCodeRpc:
       options?.rpcMethods?.consumeCodeRpc ?? vi.fn().mockRejectedValue(new Error('Code not found')),
+    registerIssuedTokensRpc:
+      options?.rpcMethods?.registerIssuedTokensRpc ?? vi.fn().mockResolvedValue(true),
     rotateTokenRpc:
       options?.rpcMethods?.rotateTokenRpc ??
       vi.fn().mockRejectedValue(new Error('Token not found')),
@@ -281,8 +292,8 @@ export function createMockEnv(overrides?: Partial<MockEnv>): MockEnv {
     REVOKED_TOKENS: createMockKV(),
     SESSIONS: createMockKV(),
     RATE_LIMIT_CACHE: createMockKV(),
-    // D1 Database
-    DB: createMockD1(),
+    // Routed tenant core database used by request-scoped account context
+    TDB_TEST_CORE: createMockD1(),
     // Durable Objects
     KEY_MANAGER: createMockDurableObjectNamespace({
       rpcMethods: {
@@ -365,7 +376,17 @@ export function createMockContext(options: MockContextOptions = {}): Context<{ B
 
   // Create mock context
   const mockEnv = createMockEnv(env);
-  const contextData = new Map<string, unknown>([['tenantId', tenantId]]);
+  const contextData = new Map<string, unknown>([
+    ['tenantId', tenantId],
+    [
+      'tenantMetadataContext',
+      {
+        tenantId,
+        coreDb: mockEnv.TDB_TEST_CORE,
+        route: {},
+      },
+    ],
+  ]);
 
   // Create a minimal mock context
   const mockContext = {

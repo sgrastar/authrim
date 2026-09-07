@@ -11,11 +11,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import type { Env } from '@authrim/ar-lib-core';
-import {
-  requestContextMiddleware,
-  pluginContextMiddleware,
-  diagnosticLoggingMiddleware,
-} from '@authrim/ar-lib-core';
+import { requestContextMiddleware, diagnosticLoggingMiddleware } from '@authrim/ar-lib-core';
 import { deviceAuthorizationHandler } from './device-authorization';
 import { deviceVerifyHandler } from './device-verify';
 import { deviceVerifyApiHandler } from './device-verify-api';
@@ -24,6 +20,7 @@ import { cibaPendingHandler } from './ciba-pending';
 import { cibaDetailsHandler } from './ciba-details';
 import { cibaApproveHandler } from './ciba-approve';
 import { cibaDenyHandler } from './ciba-deny';
+import { cibaConformanceActionHandler } from './ciba-conformance-action';
 import { cibaTestPageHandler } from './ciba-test-page';
 
 const app = new Hono<{ Bindings: Env }>();
@@ -47,9 +44,6 @@ app.use(
     excludePatterns: [/^\/api\/health/, /^\/health\//],
   })
 );
-
-// Plugin Context - provides access to notifiers, idp handlers, authenticators
-app.use('/*', pluginContextMiddleware());
 
 /**
  * POST /device_authorization
@@ -145,6 +139,7 @@ app.post('/api/ciba/approve', cibaApproveHandler);
  * Headless JSON API for CIBA request denial
  */
 app.post('/api/ciba/deny', cibaDenyHandler);
+app.post('/api/ciba/conformance-action', cibaConformanceActionHandler);
 
 /**
  * GET /api/ciba/test
@@ -155,3 +150,4 @@ app.post('/api/ciba/deny', cibaDenyHandler);
 app.get('/api/ciba/test', cibaTestPageHandler);
 
 export default app;
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

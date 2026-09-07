@@ -95,8 +95,8 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
   }
 
   const createdAt = input.now ?? Date.now();
-  const chunkId = createLoggingId('chk', createdAt);
-  const objectCatalogId = createLoggingId('obj', createdAt);
+  const chunkId = input.chunkId ?? createLoggingId('chk', createdAt);
+  const objectCatalogId = input.objectCatalogId ?? createLoggingId('obj', createdAt);
   const compression: LogChunkCompression = input.compression ?? 'gzip_block';
   const shard = input.shard ?? defaultLogStorageShard({ tenantKey: input.tenantKey });
   const indexProfile = getLogChunkIndexProfile(input.indexProfile ?? input.logType).name;

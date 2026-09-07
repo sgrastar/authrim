@@ -1,4 +1,4 @@
-export type EmailResolutionPolicy = 'exact_email_then_domain' | 'exact_email_only' | 'disabled';
+export type EmailResolutionPolicy = 'exact_email_only' | 'disabled';
 
 export interface DiscoveryMethodFormState {
 	emailEnabled: boolean;
@@ -8,11 +8,7 @@ export interface DiscoveryMethodFormState {
 	wayfEnabled: boolean;
 }
 
-const VALID_POLICIES: EmailResolutionPolicy[] = [
-	'exact_email_then_domain',
-	'exact_email_only',
-	'disabled'
-];
+const VALID_POLICIES: EmailResolutionPolicy[] = ['exact_email_only', 'disabled'];
 
 export function parseDiscoveryMethods(value: unknown): string[] {
 	if (typeof value !== 'string' || !value.trim()) return [];
@@ -31,7 +27,7 @@ export function resolveEmailResolutionPolicy(
 	storedPolicy: unknown
 ): EmailResolutionPolicy {
 	const methods = parseDiscoveryMethods(discoveryMethodsValue);
-	if (!methods.includes('email_domain')) {
+	if (!methods.includes('email_exact')) {
 		return 'disabled';
 	}
 
@@ -42,14 +38,14 @@ export function resolveEmailResolutionPolicy(
 		return storedPolicy as EmailResolutionPolicy;
 	}
 
-	return 'exact_email_then_domain';
+	return 'exact_email_only';
 }
 
 export function buildDiscoveryMethodsValue(state: DiscoveryMethodFormState): string {
 	const methods: string[] = [];
 
 	if (state.emailEnabled && state.emailResolutionPolicy !== 'disabled') {
-		methods.push('email_domain');
+		methods.push('email_exact');
 	}
 
 	if (state.tenantCodeEnabled) {
@@ -75,7 +71,7 @@ export function getMethodToggles(discoveryMethodsValue: unknown): {
 } {
 	const methods = parseDiscoveryMethods(discoveryMethodsValue);
 	return {
-		emailEnabled: methods.includes('email_domain'),
+		emailEnabled: methods.includes('email_exact'),
 		tenantCodeEnabled: methods.includes('tenant_code'),
 		tenantSlugEnabled: methods.includes('tenant_slug'),
 		wayfEnabled: methods.includes('wayf')

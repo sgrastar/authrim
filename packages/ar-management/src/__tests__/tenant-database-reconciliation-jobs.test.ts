@@ -13,6 +13,7 @@ const {
   };
   const notificationRepository = {
     enqueue: vi.fn(),
+    suppressResolvedByDeduplicationKeys: vi.fn(),
   };
   return {
     mockEnsureDatabaseAdapter: vi.fn((source: unknown) => source),
@@ -66,8 +67,8 @@ function createRow(overrides: Record<string, unknown> = {}) {
     signature: null,
     signature_key_id: null,
     metadata_json: null,
-    created_at: '2026-05-16T00:00:00.000Z',
-    updated_at: '2026-05-16T00:00:00.000Z',
+    created_at: '2026-05-15T00:00:00.000Z',
+    updated_at: '2026-05-15T00:00:00.000Z',
     created_by: null,
     updated_by: null,
     ...overrides,
@@ -85,6 +86,7 @@ describe('tenant database reconciliation jobs', () => {
     mockRegistryRepository.listActiveRegistryRowsForRole.mockResolvedValue([]);
     mockRegistryRepository.listActiveRegistryRowsForTenantRole.mockResolvedValue([]);
     mockNotificationRepository.enqueue.mockResolvedValue(undefined);
+    mockNotificationRepository.suppressResolvedByDeduplicationKeys.mockResolvedValue(0);
   });
 
   it('skips reconciliation when DB_ADMIN is not configured', async () => {
@@ -95,6 +97,7 @@ describe('tenant database reconciliation jobs', () => {
       findings: 0,
       critical: 0,
       warning: 0,
+      resolved: 0,
       skippedCloudflareApi: false,
     });
     expect(logger.warn).toHaveBeenCalledWith(
@@ -137,6 +140,7 @@ describe('tenant database reconciliation jobs', () => {
       findings: 2,
       critical: 2,
       warning: 0,
+      resolved: 0,
       skippedCloudflareApi: false,
     });
     expect(mockNotificationRepository.enqueue).toHaveBeenCalledTimes(2);
@@ -148,12 +152,72 @@ describe('tenant database reconciliation jobs', () => {
         tenantId: 'tenant-b',
       })
     );
+    expect(mockNotificationRepository.suppressResolvedByDeduplicationKeys).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        'tenant_database_reconciliation:missing_binding:tenant-a:tenant_core:1:default:0:TDB_TENANT_A_CORE:existing-db-id',
+        'tenant_database_resolver:missing_binding:tenant-a:tenant_core:1:default:0:TDB_TENANT_A_CORE:',
+        'tenant_database_reconciliation:database_id_not_found:tenant-a:tenant_core:1:default:0:TDB_TENANT_A_CORE:existing-db-id',
+      ]),
+      new Date('2026-05-16T00:00:00.000Z')
+    );
     expect(mockNotificationRepository.enqueue).toHaveBeenCalledWith(
       expect.objectContaining({
         eventType: 'tenant_database.reconciliation.database_id_not_found',
         tenantId: 'tenant-b',
       })
     );
+  });
+
+  it('does not resolve database existence alerts when the Cloudflare inventory is unavailable', async () => {
+    mockRegistryRepository.listActiveRegistryRowsForRole
+      .mockResolvedValueOnce([createRow()])
+      .mockResolvedValueOnce([]);
+
+    await refreshTenantDatabaseReconciliation(
+      {
+        DB_ADMIN: 'control-db',
+        TDB_TENANT_A_CORE: { prepare: vi.fn(), batch: vi.fn() },
+      } as never,
+      logger,
+      { now: new Date('2026-05-16T00:00:00.000Z') }
+    );
+
+    const keys = mockNotificationRepository.suppressResolvedByDeduplicationKeys.mock
+      .calls[0][0] as string[];
+    expect(keys).toContain(
+      'tenant_database_reconciliation:missing_binding:tenant-a:tenant_core:1:default:0:TDB_TENANT_A_CORE:db-id'
+    );
+    expect(keys.some((key) => key.includes('database_id_not_found'))).toBe(false);
+  });
+
+  it('does not alert on a missing binding during the provisioning grace period', async () => {
+    mockRegistryRepository.listActiveRegistryRowsForRole
+      .mockResolvedValueOnce([
+        createRow({
+          created_at: '2026-05-16T00:05:00.000Z',
+          binding_ref: 'TDB_TENANT_A_CORE',
+        }),
+      ])
+      .mockResolvedValueOnce([]);
+
+    const summary = await refreshTenantDatabaseReconciliation(
+      { DB_ADMIN: 'control-db' } as never,
+      logger,
+      {
+        now: new Date('2026-05-16T00:10:00.000Z'),
+        cloudflareDatabaseIds: new Set(['db-id']),
+      }
+    );
+
+    expect(summary).toEqual({
+      checked: 1,
+      findings: 0,
+      critical: 0,
+      warning: 0,
+      resolved: 0,
+      skippedCloudflareApi: false,
+    });
+    expect(mockNotificationRepository.enqueue).not.toHaveBeenCalled();
   });
 
   it('fetches Cloudflare D1 database ids when account credentials are configured', async () => {

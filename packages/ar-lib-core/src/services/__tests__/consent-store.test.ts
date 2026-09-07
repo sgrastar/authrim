@@ -1,23 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import type { DatabaseAdapter } from '../../db/adapter';
+import { D1OperationError } from '../../utils/d1-retry';
 import { upsertOAuthClientConsent } from '../consent-store';
 
-function createConsentAdapter(seed?: {
-  id: string;
-  user_id: string;
-  client_id: string;
-  tenant_id: string;
-  scope: string;
-  selected_scopes: string | null;
-  granted_at: number;
-  expires_at: number | null;
-  privacy_policy_version: string | null;
-  tos_version: string | null;
-  consent_version: number | null;
-  created_at: number;
-  updated_at: number;
-}): DatabaseAdapter & { rows: any[] } {
+function createConsentAdapter(
+  seed?: {
+    id: string;
+    user_id: string;
+    client_id: string;
+    tenant_id: string;
+    scope: string;
+    selected_scopes: string | null;
+    granted_at: number;
+    expires_at: number | null;
+    privacy_policy_version: string | null;
+    tos_version: string | null;
+    consent_version: number | null;
+    created_at: number;
+    updated_at: number;
+  },
+  options: { insertConflict?: boolean; wrapInsertConflict?: boolean } = {}
+): DatabaseAdapter & { rows: any[] } {
   const rows = seed ? [seed] : [];
+  let conflictThrown = false;
 
   return {
     rows,
@@ -37,6 +42,30 @@ function createConsentAdapter(seed?: {
     },
     async execute(sql, params = []) {
       if (sql.startsWith('INSERT INTO oauth_client_consents')) {
+        if (options.insertConflict && !conflictThrown) {
+          conflictThrown = true;
+          rows.push({
+            id: 'consent-concurrent',
+            user_id: params[1],
+            client_id: params[2],
+            scope: 'openid',
+            selected_scopes: null,
+            granted_at: 90,
+            expires_at: null,
+            privacy_policy_version: null,
+            tos_version: null,
+            consent_version: 1,
+            created_at: 90,
+            updated_at: 90,
+            tenant_id: params[12],
+          });
+          const conflict = new Error(
+            'D1_ERROR: UNIQUE constraint failed: oauth_client_consents.tenant_id, oauth_client_consents.user_id, oauth_client_consents.client_id'
+          );
+          throw options.wrapInsertConflict
+            ? new D1OperationError('D1Adapter.execute[core]', 1, conflict, false)
+            : conflict;
+        }
         rows.push({
           id: params[0],
           user_id: params[1],
@@ -158,5 +187,47 @@ describe('upsertOAuthClientConsent', () => {
     expect(adapter.rows[0].scope).toBe('openid email');
     expect(adapter.rows[0].consent_version).toBe(3);
     expect(adapter.rows[0].updated_at).toBe(100);
+  });
+
+  it('recovers from a concurrent first-grant unique constraint race', async () => {
+    const adapter = createConsentAdapter(undefined, { insertConflict: true });
+
+    const result = await upsertOAuthClientConsent(adapter, {
+      consentId: 'consent-loser',
+      userId: 'user-1',
+      clientId: 'client-1',
+      tenantId: 'tenant-a',
+      scope: 'openid profile',
+      grantedAt: 100,
+      now: 100,
+    });
+
+    expect(result.inserted).toBe(false);
+    expect(result.id).toBe('consent-concurrent');
+    expect(result.consentVersion).toBe(2);
+    expect(adapter.rows).toHaveLength(1);
+    expect(adapter.rows[0].scope).toBe('openid profile');
+  });
+
+  it('recovers when the adapter preserves a unique conflict as an error cause', async () => {
+    const adapter = createConsentAdapter(undefined, {
+      insertConflict: true,
+      wrapInsertConflict: true,
+    });
+
+    const result = await upsertOAuthClientConsent(adapter, {
+      consentId: 'consent-loser',
+      userId: 'user-1',
+      clientId: 'client-1',
+      tenantId: 'tenant-a',
+      scope: 'openid profile',
+      grantedAt: 100,
+      now: 100,
+    });
+
+    expect(result.inserted).toBe(false);
+    expect(result.id).toBe('consent-concurrent');
+    expect(result.consentVersion).toBe(2);
+    expect(adapter.rows).toHaveLength(1);
   });
 });

@@ -84,8 +84,52 @@ function setNoStore(c: Context<{ Bindings: Env }>): void {
 }
 
 function getPreferredLanguage(c: Context<{ Bindings: Env }>): string {
-  const language = c.req.header('Accept-Language')?.split(',')[0]?.split('-')[0]?.toLowerCase();
-  return language === 'ja' ? 'ja' : 'en';
+  const language = c.req.header('Accept-Language')?.split(',')[0]?.trim();
+  if (!language) return 'en';
+  const lower = language.toLowerCase();
+  if (
+    lower === 'zh-cn' ||
+    lower === 'zh-hans' ||
+    lower.startsWith('zh-hans-') ||
+    lower === 'zh-sg' ||
+    lower === 'zh'
+  ) {
+    return 'zh-CN';
+  }
+  if (
+    lower === 'zh-tw' ||
+    lower === 'zh-hant' ||
+    lower.startsWith('zh-hant-') ||
+    lower === 'zh-hk' ||
+    lower === 'zh-mo'
+  ) {
+    return 'zh-TW';
+  }
+  const base = lower.split('-')[0];
+  return base &&
+    [
+      'en',
+      'ja',
+      'es',
+      'pt',
+      'fr',
+      'de',
+      'ko',
+      'ru',
+      'id',
+      'ar',
+      'it',
+      'th',
+      'vi',
+      'hi',
+      'bn',
+      'tr',
+      'sw',
+      'am',
+      'pl',
+    ].includes(base)
+    ? base
+    : 'en';
 }
 
 function parseSelectedScopes(value: string | null): string[] | undefined {

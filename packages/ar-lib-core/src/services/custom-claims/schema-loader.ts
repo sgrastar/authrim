@@ -22,6 +22,28 @@ interface CachedSchemaData {
   schema_version_max: number;
 }
 
+const BOOLEAN_SCHEMA_FIELDS = [
+  'is_pii',
+  'is_required',
+  'is_active',
+  'include_in_id_token',
+  'include_in_userinfo',
+  'include_in_introspection',
+  'is_searchable',
+  'is_exportable',
+  'is_vc_claim',
+] as const;
+
+function normalizeSchemaFlags(schema: CustomClaimSchema): CustomClaimSchema {
+  const normalized = { ...schema };
+  for (const field of BOOLEAN_SCHEMA_FIELDS) {
+    const value = normalized[field] as unknown;
+    if (value === true) normalized[field] = 1;
+    if (value === false) normalized[field] = 0;
+  }
+  return normalized;
+}
+
 export class SchemaLoader {
   private adapter: DatabaseAdapter;
   private cache: KVNamespace | null;
@@ -43,7 +65,7 @@ export class SchemaLoader {
         if (cached) {
           const data: CachedSchemaData = JSON.parse(cached);
           if (data && Array.isArray(data.schemas)) {
-            return data.schemas;
+            return data.schemas.map(normalizeSchemaFlags);
           }
           log.warn('Schema cache corrupted, falling back to DB', { tenantId });
         }
@@ -86,11 +108,12 @@ export class SchemaLoader {
   }
 
   private async loadFromDb(tenantId: string): Promise<CustomClaimSchema[]> {
-    return this.adapter.query<CustomClaimSchema>(
+    const rows = await this.adapter.query<CustomClaimSchema>(
       `SELECT * FROM custom_claim_schemas
-       WHERE tenant_id = ? AND is_active = 1 AND operation_status = 'active'
+       WHERE tenant_id = ? AND is_active = TRUE AND operation_status = 'active'
        ORDER BY ui_group_order ASC, ui_field_order ASC, display_order ASC`,
       [tenantId]
     );
+    return rows.map(normalizeSchemaFlags);
   }
 }

@@ -14,6 +14,8 @@ import { timingSafeEqual } from './crypto';
 import { createLogger } from './logger';
 
 const log = createLogger().module('DPOP');
+const MAX_DPOP_PROOF_SIZE_BYTES = 16 * 1024;
+const MAX_DPOP_SEGMENT_SIZE_BYTES = 8 * 1024;
 
 interface DPoPHeader {
   typ: string;
@@ -51,6 +53,14 @@ export async function validateDPoPProof(
       };
     }
 
+    if (new TextEncoder().encode(dpopProof).byteLength > MAX_DPOP_PROOF_SIZE_BYTES) {
+      return {
+        valid: false,
+        error: 'invalid_dpop_proof',
+        error_description: 'DPoP proof is too large',
+      };
+    }
+
     // Parse JWT header without verification first to extract JWK
     const parts = dpopProof.split('.');
     if (parts.length !== 3) {
@@ -58,6 +68,17 @@ export async function validateDPoPProof(
         valid: false,
         error: 'invalid_dpop_proof',
         error_description: 'DPoP proof must be a valid JWT',
+      };
+    }
+    if (
+      parts.some(
+        (segment) => new TextEncoder().encode(segment).byteLength > MAX_DPOP_SEGMENT_SIZE_BYTES
+      )
+    ) {
+      return {
+        valid: false,
+        error: 'invalid_dpop_proof',
+        error_description: 'DPoP proof segment is too large',
       };
     }
 
@@ -118,8 +139,45 @@ export async function validateDPoPProof(
       };
     }
 
+    if (jwk.use !== undefined && jwk.use !== 'sig') {
+      return {
+        valid: false,
+        error: 'invalid_dpop_proof',
+        error_description: 'DPoP JWK must be intended for signatures',
+      };
+    }
+    if (
+      jwk.key_ops !== undefined &&
+      (!Array.isArray(jwk.key_ops) ||
+        !jwk.key_ops.includes('verify') ||
+        jwk.key_ops.some((operation) => operation !== 'verify'))
+    ) {
+      return {
+        valid: false,
+        error: 'invalid_dpop_proof',
+        error_description: 'DPoP JWK key operations must only permit signature verification',
+      };
+    }
+    if (jwk.alg !== undefined && jwk.alg !== header.alg) {
+      return {
+        valid: false,
+        error: 'invalid_dpop_proof',
+        error_description: 'DPoP JWK algorithm does not match the proof algorithm',
+      };
+    }
+
     // Ensure JWK does not contain private key material
-    if (jwk.d || jwk.p || jwk.q || jwk.dp || jwk.dq || jwk.qi) {
+    const keyWithPrivateParameters = jwk as JWK & { oth?: unknown };
+    if (
+      jwk.d ||
+      jwk.p ||
+      jwk.q ||
+      jwk.dp ||
+      jwk.dq ||
+      jwk.qi ||
+      keyWithPrivateParameters.oth ||
+      jwk.k
+    ) {
       return {
         valid: false,
         error: 'invalid_dpop_proof',
@@ -178,9 +236,22 @@ export async function validateDPoPProof(
     }
 
     // htu (required) - must match request URL (without query and fragment)
-    const requestUrl = new URL(url);
-    const htu = `${requestUrl.protocol}//${requestUrl.host}${requestUrl.pathname}`;
-    if (!claims.htu || claims.htu !== htu) {
+    const normalizeHtu = (value: string): string => {
+      const parsed = new URL(value);
+      parsed.search = '';
+      parsed.hash = '';
+      return parsed.href;
+    };
+    const normalizedRequestHtu = normalizeHtu(url);
+    let htuMatches = false;
+    if (claims.htu) {
+      try {
+        htuMatches = normalizeHtu(claims.htu) === normalizedRequestHtu;
+      } catch {
+        htuMatches = false;
+      }
+    }
+    if (!htuMatches) {
       return {
         valid: false,
         error: 'invalid_dpop_proof',
@@ -251,8 +322,10 @@ export async function validateDPoPProof(
     // Determine if we have Env (new sharded approach) or DurableObjectNamespace (legacy)
     let stub: { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
 
-    // Check if this is an Env object by looking for the DPOP_JTI_STORE binding
-    const isEnv = 'DPOP_JTI_STORE' in envOrJTIStore && 'SETTINGS' in envOrJTIStore;
+    // A resource server can validate DPoP without a SETTINGS binding. Distinguish the
+    // full Env shape by the binding that this path actually needs; requiring SETTINGS
+    // incorrectly treated ar-userinfo's Env as a DurableObjectNamespace.
+    const isEnv = 'DPOP_JTI_STORE' in envOrJTIStore;
 
     if (isEnv) {
       // New region-aware sharding approach

@@ -5,7 +5,14 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '../../types/env';
-import { clearRateLimitFastPathCache, rateLimitMiddleware, RateLimitProfiles } from '../rate-limit';
+import {
+  clearCloudProviderCache,
+  clearRateLimitConfigCache,
+  clearRateLimitFastPathCache,
+  getRateLimitProfileAsync,
+  rateLimitMiddleware,
+  RateLimitProfiles,
+} from '../rate-limit';
 
 // Mock environment
 const mockEnv: Env = {
@@ -75,11 +82,161 @@ describe('Rate Limiting Middleware', () => {
     // Setup mock KV namespace
     mockEnv.STATE_STORE = createMockKV();
     delete (mockEnv as Partial<Env>).RATE_LIMITER;
+    delete (mockEnv as Partial<Env>).AUTHRIM_CONFIG;
+    delete (mockEnv as Partial<Env>).RATE_LIMIT_PROFILE;
+    delete (mockEnv as Partial<Env>).AUTHRIM_DIAGNOSTIC_TIMING_ENABLED;
     clearRateLimitFastPathCache();
+    clearRateLimitConfigCache();
+    clearCloudProviderCache();
     vi.clearAllMocks();
   });
 
   describe('Basic Rate Limiting', () => {
+    it('uses one global IP counter when tenant partitioning would enable capability brute force', async () => {
+      const resetAt = Math.floor(Date.now() / 1000) + 60;
+      const incrementRpc = vi.fn().mockResolvedValue({
+        allowed: true,
+        current: 1,
+        limit: 5,
+        resetAt,
+        retryAfter: 0,
+      });
+      mockEnv.RATE_LIMITER = createMockRateLimiter(incrementRpc);
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 5,
+          windowSeconds: 60,
+          keyScope: 'global',
+        })
+      );
+      app.get('/test', (c) => c.json({ success: true }));
+
+      const response = await app.request(
+        '/test',
+        { headers: { 'CF-Connecting-IP': '192.168.1.1' } },
+        mockEnv
+      );
+
+      expect(response.status).toBe(200);
+      expect(incrementRpc).toHaveBeenCalledWith('192.168.1.1', {
+        maxRequests: 5,
+        windowSeconds: 60,
+      });
+    });
+
+    it('separates public read buckets from other rate-limited actions', async () => {
+      const resetAt = Math.floor(Date.now() / 1000) + 60;
+      const incrementRpc = vi.fn().mockResolvedValue({
+        allowed: true,
+        current: 1,
+        limit: 5,
+        resetAt,
+        retryAfter: 0,
+      });
+      mockEnv.RATE_LIMITER = createMockRateLimiter(incrementRpc);
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 5,
+          windowSeconds: 60,
+          endpointClass: 'publicRead',
+        })
+      );
+      app.get('/test', (c) => c.json({ success: true }));
+
+      const response = await app.request(
+        '/test',
+        { headers: { 'CF-Connecting-IP': '192.168.1.1' } },
+        mockEnv
+      );
+
+      expect(response.status).toBe(200);
+      expect(incrementRpc).toHaveBeenCalledWith(
+        'tenant:default:rate-limit:publicRead:192.168.1.1',
+        {
+          maxRequests: 5,
+          windowSeconds: 60,
+        }
+      );
+    });
+
+    it('includes endpoint class in diagnostic timing logs', async () => {
+      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        const resetAt = Math.floor(Date.now() / 1000) + 60;
+        const incrementRpc = vi.fn().mockResolvedValue({
+          allowed: true,
+          current: 1,
+          limit: 5,
+          resetAt,
+          retryAfter: 0,
+        });
+        mockEnv.RATE_LIMITER = createMockRateLimiter(incrementRpc);
+        mockEnv.AUTHRIM_DIAGNOSTIC_TIMING_ENABLED = 'true';
+        app.use(
+          '*',
+          rateLimitMiddleware({
+            maxRequests: 5,
+            windowSeconds: 60,
+            endpointClass: 'publicRead',
+          })
+        );
+        app.get('/api/auth/authentication-methods', (c) => c.json({ success: true }));
+
+        const response = await app.request(
+          '/api/auth/authentication-methods',
+          {
+            headers: {
+              'CF-Connecting-IP': '192.168.1.1',
+              'X-Diagnostic-Session-Id': 'diag-public-read',
+            },
+          },
+          mockEnv
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get('Server-Timing')).toContain('rl_total');
+        const logEntries = consoleLogSpy.mock.calls.map(([message]) =>
+          JSON.parse(message as string)
+        ) as Array<Record<string, unknown>>;
+        expect(logEntries).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              message: 'Rate limit timing',
+              mode: 'sync',
+              endpointClass: 'publicRead',
+            }),
+          ])
+        );
+      } finally {
+        consoleLogSpy.mockRestore();
+      }
+    });
+
+    it('fails closed when an endpoint requires the atomic limiter and the binding is absent', async () => {
+      app.use(
+        '*',
+        rateLimitMiddleware({
+          maxRequests: 5,
+          windowSeconds: 60,
+          keyScope: 'global',
+          requireAtomic: true,
+        })
+      );
+      app.get('/test', (c) => c.json({ success: true }));
+
+      const response = await app.request(
+        '/test',
+        { headers: { 'CF-Connecting-IP': '192.168.1.1' } },
+        mockEnv
+      );
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({ error: 'temporarily_unavailable' });
+      expect(mockKVStore.size).toBe(0);
+    });
+
     it('should allow requests within rate limit', async () => {
       app.use(
         '*',
@@ -158,6 +315,71 @@ describe('Rate Limiting Middleware', () => {
       expect(json.retry_after).toBeDefined();
 
       expect(res.headers.get('Retry-After')).toBeDefined();
+    });
+
+    it('rechecks a freshly relaxed global profile before returning a stale-limit denial', async () => {
+      const resetAt = Math.floor(Date.now() / 1000) + 60;
+      const incrementRpc = vi
+        .fn()
+        .mockResolvedValueOnce({
+          allowed: false,
+          current: 11,
+          limit: 10,
+          resetAt,
+          retryAfter: 30,
+        })
+        .mockResolvedValueOnce({
+          allowed: true,
+          current: 12,
+          limit: 10_000,
+          resetAt,
+          retryAfter: 0,
+        });
+      const config = createMockKV();
+      await config.put('rate_limit_profile_override', 'loadTest');
+      mockEnv.AUTHRIM_CONFIG = config;
+      mockEnv.RATE_LIMITER = createMockRateLimiter(incrementRpc);
+      app.use('*', rateLimitMiddleware(RateLimitProfiles.strict));
+      app.get('/test', (c) => c.json({ success: true }));
+
+      const response = await app.request(
+        '/test',
+        { headers: { 'CF-Connecting-IP': '192.168.1.1' } },
+        mockEnv
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('X-RateLimit-Limit')).toBe('10000');
+      expect(incrementRpc).toHaveBeenNthCalledWith(2, 'tenant:default:rate-limit:192.168.1.1', {
+        maxRequests: 10_000,
+        windowSeconds: 60,
+      });
+    });
+
+    it('keeps a denial fail closed when no relaxed override is authoritative', async () => {
+      const resetAt = Math.floor(Date.now() / 1000) + 60;
+      const incrementRpc = vi.fn().mockResolvedValue({
+        allowed: false,
+        current: 11,
+        limit: 10,
+        resetAt,
+        retryAfter: 30,
+      });
+      const config = createMockKV();
+      await config.put('rate_limit_profile_override', 'strict');
+      mockEnv.AUTHRIM_CONFIG = config;
+      mockEnv.RATE_LIMITER = createMockRateLimiter(incrementRpc);
+      app.use('*', rateLimitMiddleware(RateLimitProfiles.strict));
+      app.get('/test', (c) => c.json({ success: true }));
+
+      const response = await app.request(
+        '/test',
+        { headers: { 'CF-Connecting-IP': '192.168.1.1' } },
+        mockEnv
+      );
+
+      expect(response.status).toBe(429);
+      expect(incrementRpc).toHaveBeenCalledTimes(1);
     });
 
     it('should track different IPs separately', async () => {
@@ -882,6 +1104,35 @@ describe('Rate Limiting Middleware', () => {
     it('should have lenient profile (300 req/min)', () => {
       expect(RateLimitProfiles.lenient.maxRequests).toBe(300);
       expect(RateLimitProfiles.lenient.windowSeconds).toBe(60);
+    });
+
+    it('should have public read and login start profiles for shared-IP bursts', () => {
+      expect(RateLimitProfiles.publicRead).toEqual({ maxRequests: 600, windowSeconds: 60 });
+      expect(RateLimitProfiles.loginStart).toEqual({ maxRequests: 300, windowSeconds: 60 });
+      expect(RateLimitProfiles.sendChallenge).toEqual({ maxRequests: 30, windowSeconds: 60 });
+    });
+
+    it('returns built-in defaults before asynchronously refreshing KV overrides', async () => {
+      const configKV = createMockKV();
+      await configKV.put('rate_limit_public_read_max_requests', '123');
+      await configKV.put('rate_limit_public_read_window_seconds', '45');
+      mockEnv.AUTHRIM_CONFIG = configKV;
+      const waitUntil = vi.fn();
+
+      await expect(
+        getRateLimitProfileAsync(mockEnv, 'publicRead', {
+          waitUntil,
+        } as unknown as Parameters<typeof getRateLimitProfileAsync>[2])
+      ).resolves.toEqual(RateLimitProfiles.publicRead);
+
+      expect(waitUntil).toHaveBeenCalledTimes(1);
+      const scheduledRefresh = waitUntil.mock.calls[0]?.[0] as Promise<void> | undefined;
+      expect(scheduledRefresh).toBeDefined();
+      await scheduledRefresh;
+      await expect(getRateLimitProfileAsync(mockEnv, 'publicRead')).resolves.toEqual({
+        maxRequests: 123,
+        windowSeconds: 45,
+      });
     });
 
     it('should work with strict profile', async () => {

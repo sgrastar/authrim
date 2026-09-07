@@ -8,7 +8,6 @@
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import type { SAMLIdPConfig } from '@authrim/ar-lib-core';
-import { verifyHumanVerificationToken } from '@authrim/ar-lib-plugin/builtin/security';
 import {
   createErrorResponse,
   AR_ERROR_CODES,
@@ -16,6 +15,7 @@ import {
   buildIssuerUrl,
   buildSAMLRequestStoreInstanceName,
   getLogger,
+  verifyHumanVerificationWithRunner,
 } from '@authrim/ar-lib-core';
 import * as pako from 'pako';
 import { resolveSAMLTenantIdFromContext } from '../common/tenant';
@@ -39,6 +39,7 @@ import { getIdPConfig, listIdPConfigs } from '../admin/providers';
 import { buildSAMLPostBindingResponse } from '../common/post-binding-form';
 import { getSAMLLocalEntityIds } from '../common/entity-id';
 import { assertSAMLRelayStateSize } from '../common/relay-state';
+import { buildSAMLRequestBindingCookie } from './request-browser-binding';
 
 function remoteIp(c: Context<{ Bindings: Env }>): string | undefined {
   return (
@@ -52,14 +53,18 @@ async function verifySPLoginHumanVerification(
   c: Context<{ Bindings: Env }>,
   tenantId: string
 ): Promise<Response | null> {
-  const result = await verifyHumanVerificationToken({
-    env: c.env,
-    tenantId,
-    actions: ['login', 'signup'],
-    response: c.req.query('human_verification_response') ?? c.req.query('cf_turnstile_response'),
-    remoteIp: remoteIp(c),
-  });
-  if (result.ok) return null;
+  try {
+    const result = await verifyHumanVerificationWithRunner(c.env, {
+      tenantId,
+      action: 'login',
+      responseToken:
+        c.req.query('human_verification_response') ?? c.req.query('cf_turnstile_response'),
+      remoteIp: remoteIp(c),
+    });
+    if (result.verified) return null;
+  } catch {
+    // Provider, configuration, and Runner failures share the same public denial.
+  }
 
   return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE, {
     variables: { field: 'human_verification_response' },
@@ -123,11 +128,11 @@ export async function handleSPLogin(c: Context<{ Bindings: Env }>): Promise<Resp
     assertSAMLRelayStateSize(relayState);
 
     // Redirect to IdP based on preferred binding
-    if (outboundIdpConfig.allowedBindings.includes('redirect')) {
-      return await redirectToIdP(c, env, outboundIdpConfig, authnRequestXml, relayState);
-    } else {
-      return postToIdP(outboundIdpConfig, authnRequestXml, relayState);
-    }
+    const response = outboundIdpConfig.allowedBindings.includes('redirect')
+      ? await redirectToIdP(c, env, outboundIdpConfig, authnRequestXml, relayState)
+      : postToIdP(outboundIdpConfig, authnRequestXml, relayState);
+    response.headers.append('Set-Cookie', buildSAMLRequestBindingCookie(requestId));
+    return response;
   } catch (error) {
     log.error('SP Login Error', {}, error as Error);
     return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);

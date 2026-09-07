@@ -51,10 +51,6 @@ export {
   type CreateClientInput,
   type UpdateClientInput,
   type ClientFilterOptions,
-  SessionRepository,
-  type CreateSessionInput,
-  type UpdateSessionInput,
-  type SessionFilterOptions,
   RoleRepository,
   type UserRole,
   type CreateRoleInput,
@@ -63,7 +59,6 @@ export {
   type SessionClient,
   type SessionClientWithDetails,
   type CreateSessionClientInput,
-  type UpdateSessionClientInput,
   // Native SSO (OIDC Native SSO 1.0)
   DeviceSecretRepository,
   type CreateDeviceSecretResult,
@@ -114,12 +109,17 @@ export {
   CanonicalSensitiveValueResolver,
   decodeCanonicalSensitiveValueRef,
   encodeCanonicalSensitiveValueRef,
+  findCanonicalAccountAuthenticationState,
+  markOtpLoginEmailVerified,
   type AssuranceEvidenceRow,
   type AttributeClassification,
   type AttributeReleaseConsentRow,
   type AttributeReleaseConsentState,
   type AttributeValueType,
   type CanonicalIdentityGraph,
+  type CanonicalAccountAuthenticationState,
+  type CanonicalAuthenticationResponseUser,
+  type CanonicalOtpLoginUser,
   type CanonicalRuntimeUserProjection,
   type CanonicalRuntimeUserProjectionOptions,
   type CanonicalRuntimeUserCreateInput,
@@ -168,12 +168,6 @@ export {
 } from './identity';
 
 // AI Grant repository (Human Auth / AI Ephemeral Auth Two-Layer Model)
-export {
-  AIGrantRepository,
-  type AIGrant,
-  type AIGrantCreateInput,
-  type AIGrantUpdateInput,
-} from './ai-grant';
 
 // VC repositories (Phase 9)
 export {

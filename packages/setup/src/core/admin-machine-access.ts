@@ -1,15 +1,13 @@
 import { createSign, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, readFile, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AuthrimConfig } from './config.js';
 import { generateEs256KeyPair, type JWK } from './keys.js';
-import {
-  fetchWithTimeout,
-  readResponseJsonWithLimit,
-  readResponseTextWithLimit,
-} from './http-limits.js';
+import { readResponseJsonWithLimit, readResponseTextWithLimit } from './http-limits.js';
+import { fetchWithDnsFallback, getRemainingDeadlineMs } from './dns-aware-fetch.js';
 import { getPortableSqlExpressions } from './sql-portability.js';
+import { writePrivateFileAtomically } from './atomic-file.js';
 
 export const ADMIN_MACHINE_AUDIENCE = 'authrim:admin-api';
 export const SETUP_MACHINE_CLIENT_ID = 'authrim-setup';
@@ -21,8 +19,17 @@ export const ADMIN_UI_BFF_PRINCIPAL_ID = 'amp_authrim_admin_ui_bff';
 export const ADMIN_UI_BFF_PRIVATE_KEY_FILE = 'admin_ui_bff_private.pem';
 export const ADMIN_UI_BFF_PUBLIC_JWK_FILE = 'admin_ui_bff_public.jwk.json';
 export const ADMIN_UI_BFF_SCOPES = ['admin-ui:proxy'] as const;
+/**
+ * Hard lifetime of a setup-only machine credential in DB_ADMIN.
+ *
+ * Setup access is normally deleted as soon as the operation completes. This
+ * bounded lease is the fail-safe for process termination or cleanup failure.
+ * Re-running setup renews the same credential for one more bounded window.
+ */
+export const SETUP_MACHINE_CREDENTIAL_LEASE_SECONDS = 30 * 60;
 
 const ADMIN_MACHINE_TOKEN_MAX_ATTEMPTS = 4;
+const SETUP_MACHINE_CREDENTIAL_LEASE_MILLISECONDS = SETUP_MACHINE_CREDENTIAL_LEASE_SECONDS * 1000;
 
 export const SETUP_MACHINE_DEFAULT_SCOPES = [
   'admin:clients:*',
@@ -39,6 +46,9 @@ export const SETUP_MACHINE_DEFAULT_SCOPES = [
   'admin:saml_providers:*',
   'admin:saml_attribute_presets:*',
   'admin:tenant_domains:*',
+  'admin:control_plane:read',
+  'admin:control_plane:rotate',
+  'admin:control_plane:provision',
 ] as const;
 
 export interface AdminMachineTokenRequest {
@@ -48,6 +58,10 @@ export interface AdminMachineTokenRequest {
   clientId?: string;
   scopes?: readonly string[];
   timeoutMs?: number;
+  deadlineAt?: number;
+  signal?: AbortSignal;
+  allowPublicDnsFallback?: boolean;
+  onDnsFallback?: (message: string) => void;
 }
 
 export interface AdminMachineTokenResponse {
@@ -93,8 +107,23 @@ function parseRetryAfterSeconds(body: string): number | null {
   }
 }
 
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
+async function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return false;
+  if (!signal) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    return true;
+  }
+  return await new Promise<boolean>((resolve) => {
+    const timeoutId = setTimeout(() => {
+      signal.removeEventListener('abort', abort);
+      resolve(true);
+    }, ms);
+    const abort = () => {
+      clearTimeout(timeoutId);
+      resolve(false);
+    };
+    signal.addEventListener('abort', abort, { once: true });
+  });
 }
 
 function buildPermissionValuesSql(principalId: string, permissions: readonly string[]): string {
@@ -173,8 +202,7 @@ export async function loadSetupMachinePublicJwk(keysDir: string): Promise<JWK> {
 }
 
 async function writeSensitiveFile(path: string, content: string): Promise<void> {
-  await writeFile(path, content, 'utf-8');
-  await chmod(path, 0o600);
+  await writePrivateFileAtomically(path, content, 0o600);
 }
 
 async function unlinkIfExists(path: string): Promise<void> {
@@ -188,7 +216,10 @@ async function unlinkIfExists(path: string): Promise<void> {
   }
 }
 
-export async function ensureSetupMachineKeyFiles(keysDir: string): Promise<{
+export async function ensureSetupMachineKeyFiles(
+  keysDir: string,
+  keyId = 'authrim-setup-ephemeral'
+): Promise<{
   created: boolean;
 }> {
   const privateKeyPath = getSetupMachinePrivateKeyPath(keysDir);
@@ -201,10 +232,16 @@ export async function ensureSetupMachineKeyFiles(keysDir: string): Promise<{
   }
 
   if (hasPrivateKey !== hasPublicJwk) {
-    throw new Error('setup_machine_key_pair_incomplete');
+    // Setup-machine credentials are deliberately short-lived and are re-registered on every
+    // setup operation. A process may stop between publishing the two local files; discard that
+    // unusable partial generation so the next invocation can recover without manual cleanup.
+    await unlinkIfExists(privateKeyPath);
+    await unlinkIfExists(publicJwkPath);
   }
 
-  const keyPair = generateEs256KeyPair('authrim-setup-ephemeral');
+  await mkdir(keysDir, { recursive: true, mode: 0o700 });
+  await chmod(keysDir, 0o700);
+  const keyPair = generateEs256KeyPair(keyId);
   await writeSensitiveFile(privateKeyPath, keyPair.privateKeyPem);
   await writeSensitiveFile(publicJwkPath, JSON.stringify(keyPair.publicKeyJwk, null, 2));
   return { created: true };
@@ -283,6 +320,9 @@ export async function requestAdminMachineAccessToken(
   const clientId = options.clientId ?? SETUP_MACHINE_CLIENT_ID;
   const scopes = options.scopes ?? SETUP_MACHINE_DEFAULT_SCOPES;
   for (let attempt = 1; attempt <= ADMIN_MACHINE_TOKEN_MAX_ATTEMPTS; attempt += 1) {
+    if (getRemainingDeadlineMs(options.deadlineAt) <= 0 || options.signal?.aborted) {
+      throw new Error('admin_machine_token_deadline_exceeded');
+    }
     const assertion = await createSetupMachineClientAssertion({
       tokenEndpoint,
       keysDir: options.keysDir,
@@ -298,7 +338,7 @@ export async function requestAdminMachineAccessToken(
       scope: scopes.join(' '),
     });
 
-    const response = await fetchWithTimeout(
+    const response = await fetchWithDnsFallback(
       tokenEndpoint,
       {
         method: 'POST',
@@ -308,8 +348,14 @@ export async function requestAdminMachineAccessToken(
           ...(options.tenantId ? { 'X-Tenant-Id': options.tenantId } : {}),
         },
         body: form.toString(),
+        signal: options.signal,
       },
-      options.timeoutMs
+      {
+        timeoutMs: options.timeoutMs,
+        deadlineAt: options.deadlineAt,
+        allowPublicDnsFallback: options.allowPublicDnsFallback,
+        onDnsFallback: options.onDnsFallback,
+      }
     );
 
     if (!response.ok) {
@@ -320,7 +366,13 @@ export async function requestAdminMachineAccessToken(
         retryAfterSeconds &&
         attempt < ADMIN_MACHINE_TOKEN_MAX_ATTEMPTS
       ) {
-        await sleep(retryAfterSeconds * 1000 + 1000);
+        const delayMs = Math.min(
+          retryAfterSeconds * 1000 + 1000,
+          getRemainingDeadlineMs(options.deadlineAt)
+        );
+        if (delayMs <= 0 || !(await sleep(delayMs, options.signal))) {
+          throw new Error('admin_machine_token_deadline_exceeded');
+        }
         continue;
       }
       throw new Error(`admin_machine_token_failed:${response.status}:${body}`);
@@ -394,8 +446,21 @@ export function buildSetupMachineAccessBootstrapSql(
   const credentialId = safeCredentialIdFromKid(publicJwk.kid);
   const publicJwkJson = JSON.stringify(publicJwk);
   const permissionValuesSql = buildPermissionValuesSql(principalId, permissions);
+  const credentialExpiresAtSql = `(${sqlExpr.nowEpochMilliseconds} + ${SETUP_MACHINE_CREDENTIAL_LEASE_MILLISECONDS})`;
 
+  // Expire every previous credential first. If execution stops between SQL
+  // statements, the safe intermediate state has no unbounded active key; the
+  // current key is reactivated only with its fresh hard expiry below.
   return `
+UPDATE admin_machine_credentials
+SET status = CASE
+      WHEN status IN ('active', 'rotating') THEN 'expired'
+      ELSE status
+    END,
+    expires_at = ${sqlExpr.nowEpochMilliseconds},
+    updated_at = ${sqlExpr.nowEpochMilliseconds}
+WHERE principal_id = ${sqlString(principalId)};
+
 INSERT INTO admin_machine_principals (
   id, client_id, display_name, description, principal_type, status,
   default_audience, token_ttl_seconds, created_by_actor_type, created_by_actor_id,
@@ -446,7 +511,7 @@ SELECT
   'System-managed setup tool public JWK.',
   'active',
   NULL,
-  NULL,
+  ${credentialExpiresAtSql},
   'bootstrap',
   'setup',
   ${sqlExpr.nowEpochMilliseconds},
@@ -464,6 +529,8 @@ SET public_jwk_json = ${sqlString(publicJwkJson)},
     display_name = 'Setup tool ES256 key',
     description = 'System-managed setup tool public JWK.',
     status = 'active',
+    not_before = NULL,
+    expires_at = ${credentialExpiresAtSql},
     updated_at = ${sqlExpr.nowEpochMilliseconds},
     revoked_at = NULL,
     revoked_by_actor_type = NULL,
@@ -549,7 +616,7 @@ WHERE id = ${sqlString(principalId)}
 }
 
 export function buildAdminUiBffMachineAccessBootstrapSql(
-  config: AuthrimConfig,
+  _config: AuthrimConfig,
   publicJwk: JWK,
   options: {
     clientId?: string;
@@ -560,7 +627,6 @@ export function buildAdminUiBffMachineAccessBootstrapSql(
   const sqlExpr = getPortableSqlExpressions('sqlite');
   const clientId = options.clientId ?? ADMIN_UI_BFF_CLIENT_ID;
   const principalId = options.principalId ?? ADMIN_UI_BFF_PRINCIPAL_ID;
-  const tenantId = config.tenant?.name?.trim() || 'default';
   const permissions = options.permissions ?? ADMIN_UI_BFF_SCOPES;
 
   if (publicJwk.alg !== 'ES256' || typeof publicJwk.kid !== 'string' || !publicJwk.kid) {
@@ -665,8 +731,8 @@ INSERT INTO admin_machine_principal_tenant_scopes (
 )
 VALUES (
   ${sqlString(principalId)},
-  'allow',
-  ${sqlString(tenantId)},
+  'all',
+  NULL,
   ${sqlExpr.nowEpochMilliseconds},
   'bootstrap',
   'setup'

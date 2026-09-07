@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Verifiable Credentials API
-  version: 0.3.4
+  version: 0.4.0
   summary: OpenID4VP, OpenID4VCI, status list, and DID endpoints.
   description: Initial OpenAPI contract for `@authrim/ar-vc`.
 servers:
@@ -22,120 +22,152 @@ paths:
         - Health
       summary: Return VC Worker health.
       responses:
-        "200":
-          $ref: "#/components/responses/VCHealth"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/VCHealth'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /.well-known/openid-credential-verifier:
     get:
       tags:
         - OpenID4VP
       summary: Return OpenID4VP verifier metadata.
       responses:
-        "200":
-          $ref: "#/components/responses/VerifierMetadata"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/VerifierMetadata'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /vp/authorize:
     post:
       tags:
         - OpenID4VP
       summary: Create an OpenID4VP authorization request.
       requestBody:
-        $ref: "#/components/requestBodies/VPAuthorize"
+        $ref: '#/components/requestBodies/VPAuthorize'
       responses:
-        "200":
-          $ref: "#/components/responses/VPAuthorize"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/VPAuthorize'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /vp/response:
     post:
       tags:
         - OpenID4VP
       summary: Receive a wallet VP response.
       requestBody:
-        $ref: "#/components/requestBodies/VPResponse"
+        $ref: '#/components/requestBodies/VPResponse'
       responses:
-        "200":
-          $ref: "#/components/responses/VPResponse"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/VPResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+  /vp/request/{id}:
+    get:
+      tags:
+        - OpenID4VP
+      summary: Return the wallet-facing OpenID4VP authorization request.
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          $ref: '#/components/responses/VPRequestObject'
+        '404':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /vp/requests/{id}:
     get:
       tags:
         - OpenID4VP
       summary: Get VP request status.
+      security:
+        - vpStatusBearer: []
       parameters:
-        - $ref: "#/components/parameters/Id"
+        - $ref: '#/components/parameters/Id'
       responses:
-        "200":
-          $ref: "#/components/responses/VPRequestStatus"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/VPRequestStatus'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /.well-known/openid-credential-issuer:
     get:
       tags:
         - OpenID4VCI
       summary: Return OpenID4VCI issuer metadata.
       responses:
-        "200":
-          $ref: "#/components/responses/IssuerMetadata"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/IssuerMetadata'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /vci/token:
     post:
       tags:
         - OpenID4VCI
       summary: Exchange a pre-authorized code for a credential access token.
       requestBody:
-        $ref: "#/components/requestBodies/VCIToken"
+        $ref: '#/components/requestBodies/VCIToken'
       responses:
-        "200":
-          $ref: "#/components/responses/VCIToken"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/VCIToken'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
+  /vci/nonce:
+    post:
+      tags:
+        - OpenID4VCI
+      summary: Issue a one-time proof nonce.
+      responses:
+        '200':
+          description: One-time nonce for a credential proof.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NonceResponse'
+        '429':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /vci/offers/{id}:
     get:
       tags:
         - OpenID4VCI
       summary: Get a credential offer.
       parameters:
-        - $ref: "#/components/parameters/Id"
+        - $ref: '#/components/parameters/Id'
       responses:
-        "200":
-          $ref: "#/components/responses/CredentialOffer"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/CredentialOffer'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /vci/credential:
     post:
       tags:
         - OpenID4VCI
       summary: Issue a credential.
       requestBody:
-        $ref: "#/components/requestBodies/CredentialRequest"
+        $ref: '#/components/requestBodies/CredentialRequest'
       responses:
-        "200":
-          $ref: "#/components/responses/Credential"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/Credential'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       security:
         - credentialBearer: []
   /vci/deferred:
@@ -144,14 +176,14 @@ paths:
         - OpenID4VCI
       summary: Retrieve a deferred credential.
       requestBody:
-        $ref: "#/components/requestBodies/DeferredCredential"
+        $ref: '#/components/requestBodies/DeferredCredential'
       responses:
-        "200":
-          $ref: "#/components/responses/Credential"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/Credential'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       security:
         - credentialBearer: []
   /vci/status-lists/{listId}:
@@ -160,55 +192,56 @@ paths:
         - OpenID4VCI
       summary: Return a status list credential.
       parameters:
-        - $ref: "#/components/parameters/ListId"
+        - $ref: '#/components/parameters/ListId'
       responses:
-        "200":
-          $ref: "#/components/responses/StatusListCredential"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/StatusListCredential'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /.well-known/did.json:
     get:
       tags:
         - DID
       summary: Return Authrim DID document.
       responses:
-        "200":
-          $ref: "#/components/responses/DIDDocument"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DIDDocument'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /did/resolve/{did}:
     get:
       tags:
         - DID
       summary: Resolve a DID.
       parameters:
-        - $ref: "#/components/parameters/Did"
+        - $ref: '#/components/parameters/Did'
       responses:
-        "200":
-          $ref: "#/components/responses/DIDResolution"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/DIDResolution'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /health/live:
     get:
       tags:
         - Health
       operationId: getHealthLive
       summary: Return VC Worker liveness probe status.
-      description: Reports whether the VC Worker process is live. This probe is public and is intended for
+      description:
+        Reports whether the VC Worker process is live. This probe is public and is intended for
         platform health checks.
       responses:
-        "200":
-          $ref: "#/components/responses/HealthProbe"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/HealthProbe'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /health/ready:
     get:
       tags:
@@ -217,29 +250,78 @@ paths:
       summary: Return VC Worker readiness probe status.
       description: Checks VC Worker dependencies such as storage bindings before reporting readiness.
       responses:
-        "200":
-          $ref: "#/components/responses/HealthProbe"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/HealthProbe'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
   /vci/status-lists/{listId}/json:
     get:
       tags:
         - Status Lists
       operationId: getVciStatusListsByListIdJson
       summary: Return status list metadata as JSON.
-      description: Returns the stored status list record for debugging and operational inspection. The
+      description:
+        Returns the stored status list record for debugging and operational inspection. The
         primary wallet-facing endpoint returns the JWT status list credential.
       responses:
-        "200":
-          $ref: "#/components/responses/StatusListJson"
-        "400":
-          $ref: "#/components/responses/Error"
-        "500":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/StatusListJson'
+        '400':
+          $ref: '#/components/responses/Error'
+        '500':
+          $ref: '#/components/responses/Error'
       parameters:
-        - $ref: "#/components/parameters/ListId"
+        - $ref: '#/components/parameters/ListId'
+  /vp/initiate:
+    post:
+      tags: [OpenID4VP]
+      summary: Initiate profile-controlled attribute verification
+      security: [{ attributeBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential_profile_id]
+              properties:
+                credential_profile_id: { type: string }
+      responses:
+        '200': { description: Wallet authorization request created. }
+        '401': { description: Access token is invalid, inactive, or has the wrong audience. }
+        '403': { description: Access token lacks the vc.attribute scope. }
+        '409': { description: The pinned profile mapping is unavailable. }
+  /vp/attribute-response:
+    post:
+      tags: [OpenID4VP]
+      summary: Verify a presentation and persist minimized mapped attributes
+      description: The active access token is revalidated immediately before persistence.
+      security: [{ attributeBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [vp_token, state]
+              properties:
+                vp_token: { type: string }
+                state: { type: string }
+                presentation_submission: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Policy-ready attributes were verified and persisted. }
+        '401': { description: Access token is invalid or inactive. }
+        '403': { description: Access-token subject does not own the request. }
+  /vp/attributes:
+    get:
+      tags: [OpenID4VP]
+      summary: Read currently valid verified attributes
+      security: [{ attributeBearer: [] }]
+      responses:
+        '200': { description: Non-expired, non-invalidated and status-fresh attributes. }
+        '401': { description: Access token is invalid or inactive. }
 components:
   parameters:
     Id:
@@ -267,113 +349,124 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/VPAuthorizeRequest"
+            $ref: '#/components/schemas/VPAuthorizeRequest'
     VPResponse:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/VPResponseRequest"
+            $ref: '#/components/schemas/VPResponseRequest'
         application/x-www-form-urlencoded:
           schema:
-            $ref: "#/components/schemas/VPResponseRequest"
+            $ref: '#/components/schemas/VPResponseRequest'
     VCIToken:
       required: true
       content:
         application/x-www-form-urlencoded:
           schema:
-            $ref: "#/components/schemas/VCITokenRequest"
+            $ref: '#/components/schemas/VCITokenRequest'
     CredentialRequest:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/CredentialRequest"
+            $ref: '#/components/schemas/CredentialRequest'
     DeferredCredential:
       required: true
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DeferredCredentialRequest"
+            $ref: '#/components/schemas/DeferredCredentialRequest'
   responses:
     Error:
       description: Error response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/ErrorResponse"
+            $ref: '#/components/schemas/ErrorResponse'
     VCHealth:
       description: VC Worker health response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/VCHealth"
+            $ref: '#/components/schemas/VCHealth'
     HealthProbe:
       description: Health probe response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/HealthProbe"
+            $ref: '#/components/schemas/HealthProbe'
     VerifierMetadata:
       description: OpenID4VP verifier metadata.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/VerifierMetadata"
+            $ref: '#/components/schemas/VerifierMetadata'
     VPAuthorize:
       description: Created OpenID4VP authorization request.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/VPAuthorizeResponse"
+            $ref: '#/components/schemas/VPAuthorizeResponse'
     VPResponse:
       description: Verified VP response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/VPResponseResult"
+            $ref: '#/components/schemas/VPResponseResult'
     VPRequestStatus:
       description: VP request status.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/VPRequestStatus"
+            $ref: '#/components/schemas/VPRequestStatus'
+    VPRequestObject:
+      description: Wallet-facing OpenID4VP authorization request object.
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+          description: Always no-store.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/VPAuthorizationRequestObject'
     IssuerMetadata:
       description: OpenID4VCI issuer metadata.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/IssuerMetadata"
+            $ref: '#/components/schemas/IssuerMetadata'
     VCIToken:
       description: VCI token response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/VCITokenResponse"
+            $ref: '#/components/schemas/VCITokenResponse'
     CredentialOffer:
       description: Credential offer.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/CredentialOffer"
+            $ref: '#/components/schemas/CredentialOffer'
     Credential:
       description: Credential issuance response.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/CredentialResponse"
+            $ref: '#/components/schemas/CredentialResponse'
     DIDDocument:
       description: DID document.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DIDDocument"
+            $ref: '#/components/schemas/DIDDocument'
     DIDResolution:
       description: DID resolution result.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DIDResolutionResult"
+            $ref: '#/components/schemas/DIDResolutionResult'
     StatusListCredential:
       description: JWT status list credential.
       content:
@@ -386,8 +479,17 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/StatusListJson"
+            $ref: '#/components/schemas/StatusListJson'
   securitySchemes:
+    attributeBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Active Authrim access token with the vc.attribute scope and verifier audience.
+    vpStatusBearer:
+      type: http
+      scheme: bearer
+      description: One-time high-entropy status capability returned by /vp/authorize.
     credentialBearer:
       type: http
       scheme: bearer
@@ -470,17 +572,15 @@ components:
           type: object
           properties:
             dc+sd-jwt:
-              $ref: "#/components/schemas/AlgorithmSupport"
+              $ref: '#/components/schemas/AlgorithmSupport'
             mso_mdoc:
-              $ref: "#/components/schemas/AlgorithmSupport"
+              $ref: '#/components/schemas/AlgorithmSupport'
         client_id_schemes_supported:
           type: array
           items:
             type: string
           example:
             - pre-registered
-            - did
-            - redirect_uri
         response_types_supported:
           type: array
           items:
@@ -531,28 +631,13 @@ components:
           type: string
           enum:
             - pre-registered
-            - redirect_uri
-            - entity_id
-            - did
-            - x509_san_dns
-            - x509_san_uri
           example: pre-registered
-        presentation_definition_id:
-          type: string
-          example: identity-v1
         presentation_definition:
           type: object
           description: Presentation Exchange definition requested from the wallet.
         dcql_query:
           type: object
           description: Digital Credentials Query Language query.
-        response_uri:
-          type: string
-          format: uri
-          example: https://auth.example.com/vp/response
-        state:
-          type: string
-          example: state_123
         user_id:
           type: string
           example: user_123
@@ -562,7 +647,6 @@ components:
         presentation_definition:
           id: pd_identity
           input_descriptors: []
-        state: state_123
     VPAuthorizationRequestObject:
       type: object
       required:
@@ -603,6 +687,7 @@ components:
       type: object
       required:
         - request_id
+        - status_token
         - request_uri
         - nonce
         - expires_in
@@ -611,6 +696,9 @@ components:
         request_id:
           type: string
           example: g1:apac:3:vp_550e8400-e29b-41d4-a716-446655440000
+        status_token:
+          type: string
+          description: High-entropy bearer capability required when polling request status.
         request_uri:
           type: string
           format: uri
@@ -622,7 +710,7 @@ components:
           type: integer
           example: 300
         authorization_request:
-          $ref: "#/components/schemas/VPAuthorizationRequestObject"
+          $ref: '#/components/schemas/VPAuthorizationRequestObject'
     VPResponseRequest:
       type: object
       required:
@@ -650,9 +738,10 @@ components:
         request_id:
           type: string
           example: g1:apac:3:vp_550e8400-e29b-41d4-a716-446655440000
-        disclosed_claims:
-          type: object
-          additionalProperties: true
+        verified_claim_names:
+          type: array
+          items:
+            type: string
           example:
             email: user@example.com
             age_over_18: true
@@ -673,7 +762,7 @@ components:
           type: string
           enum:
             - pending
-            - received
+            - processing
             - verified
             - failed
             - expired
@@ -686,9 +775,10 @@ components:
           type: string
           format: date-time
           example: 2026-02-03T04:05:00.000Z
-        verified_claims:
-          type: object
-          additionalProperties: true
+        verified_claim_names:
+          type: array
+          items:
+            type: string
           example:
             email: user@example.com
         error:
@@ -702,15 +792,21 @@ components:
       required:
         - credential_issuer
         - credential_endpoint
+        - nonce_endpoint
         - credential_configurations_supported
       properties:
         credential_issuer:
           type: string
-          example: did:web:auth.example.com
+          format: uri
+          example: https://auth.example.com
         credential_endpoint:
           type: string
           format: uri
           example: https://auth.example.com/vci/credential
+        nonce_endpoint:
+          type: string
+          format: uri
+          example: https://auth.example.com/vci/nonce
         deferred_credential_endpoint:
           type: string
           format: uri
@@ -718,7 +814,7 @@ components:
         credential_configurations_supported:
           type: object
           additionalProperties:
-            $ref: "#/components/schemas/CredentialConfiguration"
+            $ref: '#/components/schemas/CredentialConfiguration'
           example:
             AuthrimIdentityCredential:
               format: dc+sd-jwt
@@ -732,7 +828,7 @@ components:
         display:
           type: array
           items:
-            $ref: "#/components/schemas/DisplayProperties"
+            $ref: '#/components/schemas/DisplayProperties'
     CredentialConfiguration:
       type: object
       required:
@@ -758,6 +854,15 @@ components:
             - ES256
             - ES384
             - ES512
+        proof_types_supported:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              proof_signing_alg_values_supported:
+                type: array
+                items:
+                  type: string
         claims:
           type: object
           additionalProperties:
@@ -765,7 +870,7 @@ components:
         display:
           type: array
           items:
-            $ref: "#/components/schemas/DisplayProperties"
+            $ref: '#/components/schemas/DisplayProperties'
     DisplayProperties:
       type: object
       required:
@@ -786,10 +891,10 @@ components:
               format: uri
         background_color:
           type: string
-          example: "#1E3A8A"
+          example: '#1E3A8A'
         text_color:
           type: string
-          example: "#FFFFFF"
+          example: '#FFFFFF'
     VCITokenRequest:
       type: object
       required:
@@ -802,18 +907,16 @@ components:
             - urn:ietf:params:oauth:grant-type:pre-authorized_code
         pre-authorized_code:
           type: string
-          example: g1:apac:3:co_550e8400-e29b-41d4-a716-446655440000:secret
+          example: g1:apac:3:co_550e8400-e29b-41d4-a716-446655440000.abcdefghijklmnopqrstuvwxyzABCDEF
         tx_code:
           type: string
-          example: "123456"
+          example: '123456'
     VCITokenResponse:
       type: object
       required:
         - access_token
         - token_type
         - expires_in
-        - c_nonce
-        - c_nonce_expires_in
         - authorization_details
       properties:
         access_token:
@@ -827,16 +930,10 @@ components:
         expires_in:
           type: integer
           example: 3600
-        c_nonce:
-          type: string
-          example: nonce_1234567890
-        c_nonce_expires_in:
-          type: integer
-          example: 300
         authorization_details:
           type: array
           items:
-            $ref: "#/components/schemas/AuthorizationDetail"
+            $ref: '#/components/schemas/AuthorizationDetail'
     AuthorizationDetail:
       type: object
       required:
@@ -857,7 +954,8 @@ components:
       properties:
         credential_issuer:
           type: string
-          example: did:web:auth.example.com
+          format: uri
+          example: https://auth.example.com
         credential_configuration_ids:
           type: array
           items:
@@ -865,7 +963,7 @@ components:
           example:
             - AuthrimIdentityCredential
         grants:
-          $ref: "#/components/schemas/CredentialOfferGrants"
+          $ref: '#/components/schemas/CredentialOfferGrants'
     CredentialOfferGrants:
       type: object
       properties:
@@ -876,7 +974,7 @@ components:
           properties:
             pre-authorized_code:
               type: string
-              example: g1:apac:3:co_550e8400-e29b-41d4-a716-446655440000:secret
+              example: g1:apac:3:co_550e8400-e29b-41d4-a716-446655440000.abcdefghijklmnopqrstuvwxyzABCDEF
             tx_code:
               type: object
               properties:
@@ -900,52 +998,52 @@ components:
     CredentialRequest:
       type: object
       required:
-        - format
+        - credential_configuration_id
+        - proofs
       properties:
-        format:
-          type: string
-          enum:
-            - dc+sd-jwt
-          example: dc+sd-jwt
         credential_configuration_id:
           type: string
           example: AuthrimIdentityCredential
-        vct:
-          type: string
-          example: https://authrim.com/credentials/identity/v1
-        proof:
-          $ref: "#/components/schemas/CredentialProof"
-    CredentialProof:
+        proofs:
+          $ref: '#/components/schemas/CredentialProofs'
+    CredentialProofs:
       type: object
       required:
-        - proof_type
+        - jwt
       properties:
-        proof_type:
-          type: string
-          example: jwt
         jwt:
-          type: string
-          example: eyJhbGciOiJFUzI1NiIsInR5cCI6Im9wZW5pZDR2Y2ktcHJvb2Yrand0In0...
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            type: string
+          example:
+            - eyJhbGciOiJFUzI1NiIsInR5cCI6Im9wZW5pZDR2Y2ktcHJvb2Yrand0In0...
     CredentialResponse:
       type: object
       properties:
-        credential:
-          type: string
-          description: Issued SD-JWT VC compact serialization.
-        c_nonce:
-          type: string
-          example: nonce_1234567890
-        c_nonce_expires_in:
-          type: integer
-          example: 300
+        credentials:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: Issued SD-JWT VC compact serializations.
         transaction_id:
           type: string
           description: Present only when issuance is deferred.
       anyOf:
         - required:
-            - credential
+            - credentials
         - required:
             - transaction_id
+    NonceResponse:
+      type: object
+      required:
+        - c_nonce
+      properties:
+        c_nonce:
+          type: string
+          description: Opaque one-time nonce carrying region and shard routing information.
     DeferredCredentialRequest:
       type: object
       required:
@@ -957,10 +1055,10 @@ components:
     DIDDocument:
       type: object
       required:
-        - "@context"
+        - '@context'
         - id
       properties:
-        "@context":
+        '@context':
           type: array
           items:
             type: string
@@ -973,7 +1071,7 @@ components:
         verificationMethod:
           type: array
           items:
-            $ref: "#/components/schemas/VerificationMethod"
+            $ref: '#/components/schemas/VerificationMethod'
         authentication:
           type: array
           items:
@@ -985,7 +1083,7 @@ components:
         service:
           type: array
           items:
-            $ref: "#/components/schemas/DIDService"
+            $ref: '#/components/schemas/DIDService'
     VerificationMethod:
       type: object
       required:
@@ -1029,11 +1127,11 @@ components:
     DIDResolutionResult:
       type: object
       required:
-        - "@context"
+        - '@context'
         - didResolutionMetadata
         - didDocumentMetadata
       properties:
-        "@context":
+        '@context':
           type: string
           example: https://w3id.org/did-resolution/v1
         didDocument:

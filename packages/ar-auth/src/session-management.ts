@@ -17,6 +17,7 @@ import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   generateCheckSessionIframeHtml,
   getSessionStoreBySessionId,
+  getSessionClientMetadata,
   isShardedSessionId,
   getChallengeStoreByChallengeId,
   createAuthContextFromHono,
@@ -277,6 +278,7 @@ export async function verifySessionTokenHandler(c: Context<{ Bindings: Env }>) {
           session.userId,
           86400, // 24 hours TTL
           {
+            ...getSessionClientMetadata(c.req.raw),
             rpOrigin: normalizedRpOrigin,
             parentSessionId: session.id,
           },

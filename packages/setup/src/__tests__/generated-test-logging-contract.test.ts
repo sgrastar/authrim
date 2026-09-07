@@ -1,45 +1,23 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { existsSync, statSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createDefaultConfig, type AuthrimConfig } from '../core/config.js';
+import { generateAllSecrets, saveKeysToDirectory } from '../core/keys.js';
+import { createLockFile, type AuthrimLock } from '../core/lock.js';
+import { WORKER_COMPONENTS, type WorkerComponent } from '../core/naming.js';
+import { buildResourceIdsFromLock, generateWranglerConfig, toToml } from '../core/wrangler.js';
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..');
-const generatedEnvDir = resolve(repoRoot, '.authrim/test');
-const generatedKeysDir = resolve(repoRoot, '.authrim-keys/test');
-const generatedEnvAvailable =
-  existsSync(resolve(generatedEnvDir, 'config.json')) &&
-  existsSync(resolve(generatedEnvDir, 'lock.json')) &&
-  existsSync(resolve(generatedEnvDir, 'wrangler/ar-management.toml')) &&
-  existsSync(generatedKeysDir);
-
-interface GeneratedConfig {
-  features?: {
-    queue?: { enabled?: boolean };
-    r2?: { enabled?: boolean };
-    email?: { provider?: string };
-  };
-  profiles?: {
-    defaults?: {
-      storage?: string;
-      audit?: string;
-      residency?: string;
-    };
-    registry?: { backend?: string };
-  };
-}
-
-interface GeneratedLock {
-  d1?: Record<string, { name?: string; id?: string }>;
-  r2?: Record<string, { name?: string }>;
-  kv?: Record<string, { name?: string; id?: string }>;
-}
-
-function readJson<T>(path: string): T {
-  return JSON.parse(readFileSync(path, 'utf-8')) as T;
-}
+let fixtureRoot: string;
+let generatedKeysDir: string;
+let config: AuthrimConfig;
+let lock: AuthrimLock;
+const generatedWrangler = new Map<WorkerComponent, string>();
 
 function readWrangler(component: string): string {
-  return readFileSync(resolve(generatedEnvDir, `wrangler/${component}.toml`), 'utf-8');
+  const generated = generatedWrangler.get(component as WorkerComponent);
+  if (!generated) throw new Error(`Missing generated Wrangler fixture for ${component}`);
+  return generated;
 }
 
 function section(text: string, name: string): string {
@@ -64,20 +42,95 @@ function vars(text: string): Record<string, string> {
 }
 
 function expectKeyFile(name: string) {
-  const path = resolve(generatedKeysDir, name);
+  const path = join(generatedKeysDir, name);
   expect(existsSync(path), `${name} should exist`).toBe(true);
   expect(statSync(path).size, `${name} should not be empty`).toBeGreaterThan(0);
 }
 
-const describeGenerated = generatedEnvAvailable ? describe : describe.skip;
+beforeAll(async () => {
+  const env = 'test';
+  fixtureRoot = await mkdtemp(join(process.cwd(), '.test-generated-logging-contract-'));
+  generatedKeysDir = join(fixtureRoot, 'keys');
 
-describeGenerated('generated test environment logging/storage contract', () => {
+  config = createDefaultConfig(env);
+  config.cloudflare.accountId = 'fixture-account-id';
+  config.urls = {
+    api: { custom: null, auto: 'https://test-ar-router.workers.dev' },
+    loginUi: { custom: null, auto: 'https://test-ar-login-ui.workers.dev', sameAsApi: false },
+    adminUi: { custom: null, auto: 'https://test-ar-admin-ui.workers.dev', sameAsApi: false },
+  };
+
+  lock = createLockFile(env, {
+    d1: [
+      { binding: 'DB', name: 'test-authrim-core-db', id: 'db-core-id' },
+      { binding: 'DB_PII', name: 'test-authrim-pii-db', id: 'db-pii-id' },
+      { binding: 'DB_ADMIN', name: 'test-authrim-admin-db', id: 'db-admin-id' },
+      { binding: 'CONTROL_DB', name: 'test-authrim-control-db', id: 'db-control-id' },
+      { binding: 'LOOKUP_DB', name: 'test-authrim-lookup-db', id: 'db-lookup-id' },
+      {
+        binding: 'PLUGIN_RUNNER_DB',
+        name: 'test-authrim-plugin-runner-db',
+        id: 'db-plugin-runner-id',
+      },
+      {
+        binding: 'TEST_TDB_DEFAULT_BOOTSTRAP_CORE',
+        name: 'test-authrim-tenant-default-bootstrap-db',
+        id: 'db-tenant-default-id',
+      },
+      {
+        binding: 'TEST_TDB_USERS_BOOTSTRAP_CORE',
+        name: 'test-authrim-tenant-users-bootstrap-db',
+        id: 'db-tenant-users-id',
+      },
+      {
+        binding: 'TEST_TDB_PII_BOOTSTRAP_PII',
+        name: 'test-authrim-tenant-pii-bootstrap-db',
+        id: 'db-tenant-pii-id',
+      },
+    ],
+    kv: [
+      { binding: 'AUTHRIM_CONFIG', name: 'TEST-AUTHRIM_CONFIG', id: 'kv-config-id' },
+      { binding: 'SETTINGS', name: 'TEST-SETTINGS', id: 'kv-settings-id' },
+      {
+        binding: 'TENANT_RUNTIME_REGISTRY',
+        name: 'TEST-TENANT-RUNTIME-REGISTRY',
+        id: 'kv-runtime-registry-id',
+      },
+    ],
+    queues: [],
+    r2: [
+      { binding: 'MIGRATION_RELEASES', name: 'test-migration-releases' },
+      { binding: 'PLUGIN_BUNDLES', name: 'test-plugin-bundles' },
+      { binding: 'DIAGNOSTIC_LOGS', name: 'test-diagnostic-logs' },
+      { binding: 'AUDIT_ARCHIVE', name: 'test-audit-archive' },
+      { binding: 'EXPORT_ARTIFACTS', name: 'test-export-artifacts' },
+      { binding: 'IMPORT_ARTIFACTS', name: 'test-import-artifacts' },
+      { binding: 'PUBLIC_ASSETS', name: 'test-public-assets' },
+      { binding: 'SENSITIVE_DETAILS', name: 'test-sensitive-details' },
+    ],
+  });
+
+  const resourceIds = buildResourceIdsFromLock(lock);
+  for (const component of WORKER_COMPONENTS) {
+    generatedWrangler.set(
+      component,
+      toToml(generateWranglerConfig(component, config, resourceIds), env)
+    );
+  }
+
+  await saveKeysToDirectory(generateAllSecrets('generated-logging-contract'), {
+    targetDir: generatedKeysDir,
+  });
+});
+
+afterAll(async () => {
+  generatedWrangler.clear();
+  if (fixtureRoot) await rm(fixtureRoot, { recursive: true, force: true });
+});
+
+describe('generated environment logging and Control Plane contract', () => {
   it('uses the standard audit profile and provisions the log storage bindings', () => {
-    const config = readJson<GeneratedConfig>(resolve(generatedEnvDir, 'config.json'));
-    const lock = readJson<GeneratedLock>(resolve(generatedEnvDir, 'lock.json'));
-
     expect(config.profiles?.defaults).toMatchObject({
-      storage: 'builtin:storage:shared-d1',
       audit: 'builtin:audit:standard',
       residency: 'builtin:residency:default',
     });
@@ -85,7 +138,13 @@ describeGenerated('generated test environment logging/storage contract', () => {
     expect(config.features?.r2?.enabled).toBe(true);
 
     expect(Object.keys(lock.d1 ?? {}).sort()).toEqual(
-      expect.arrayContaining(['DB', 'DB_ADMIN', 'DB_PII'])
+      expect.arrayContaining([
+        'CONTROL_DB',
+        'LOOKUP_DB',
+        'TEST_TDB_DEFAULT_BOOTSTRAP_CORE',
+        'TEST_TDB_USERS_BOOTSTRAP_CORE',
+        'TEST_TDB_PII_BOOTSTRAP_PII',
+      ])
     );
     expect(Object.keys(lock.r2 ?? {}).sort()).toEqual(
       expect.arrayContaining([
@@ -103,7 +162,6 @@ describeGenerated('generated test environment logging/storage contract', () => {
   });
 
   it('maps each generated worker to the bindings needed by its log write paths', () => {
-    const config = readJson<GeneratedConfig>(resolve(generatedEnvDir, 'config.json'));
     const management = readWrangler('ar-management');
     expect(bindingNames(management, '[[env.test.d1_databases]]')).toEqual(
       expect.arrayContaining(['DB', 'DB_ADMIN', 'DB_PII'])
@@ -118,14 +176,9 @@ describeGenerated('generated test environment logging/storage contract', () => {
         'SENSITIVE_DETAILS',
       ])
     );
-    if (config.features?.email?.provider === 'cloudflare') {
-      expect(bindingNames(management, '[[env.test.send_email]]', 'name')).toContain('EMAIL');
-    } else {
-      expect(bindingNames(management, '[[env.test.send_email]]', 'name')).toEqual([]);
-    }
+    expect(bindingNames(management, '[[env.test.send_email]]', 'name')).toEqual([]);
     expect(vars(management)).toMatchObject({
       DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard',
-      DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:shared-d1',
       PROFILE_REGISTRY_BACKEND: 'kv',
     });
 
@@ -146,7 +199,6 @@ describeGenerated('generated test environment logging/storage contract', () => {
     ]) {
       expect(vars(readWrangler(component))).toMatchObject({
         DEFAULT_AUDIT_PROFILE_ID: 'builtin:audit:standard',
-        DEFAULT_STORAGE_PROFILE_ID: 'builtin:storage:shared-d1',
       });
     }
   });

@@ -26,6 +26,28 @@ import {
 	type HumanVerificationProvider
 } from '$lib/server/authentication-methods-cache';
 import { getAccountPageCanonicalRedirectUrl } from '$lib/server/account-canonical-url';
+import { toDocumentDirection, toDocumentLanguage, type LoginUILocale } from '$lib/i18n/locales';
+import {
+	getLoginUILanguageConfig,
+	resolveEnabledLoginUILocale,
+	resolveEnabledLoginUILocalePreferenceList
+} from '$lib/i18n/config';
+import { shouldUseFastPlainLoginShell } from '$lib/server/login-entry-fast-path';
+import {
+	loadAccountPageInitialData,
+	type AccountPageInitialData
+} from '$lib/server/account-page-initial-data';
+import { sanitizeColor } from '$lib/utils/url-validation';
+import {
+	LOGIN_UI_DARK_VARIANT_HINT_COOKIE,
+	LOGIN_UI_LIGHT_VARIANT_HINT_COOKIE,
+	LOGIN_UI_THEME_HINT_COOKIE,
+	LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS,
+	normalizeLoginUIDarkVariant,
+	normalizeLoginUILightVariant,
+	normalizeLoginUIThemeMode,
+	resolveLoginUIThemeBackground
+} from '$lib/theme-bootstrap';
 
 type ContentSecurityPolicyHumanVerificationProvider = HumanVerificationProvider | 'all';
 
@@ -33,8 +55,14 @@ interface ServiceBinding {
 	fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
 
+type ServerFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+const MAX_PROXY_BODY_BYTES = 10 * 1024 * 1024;
 const EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN_MIN_LENGTH = 32;
 const EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN_MAX_LENGTH = 4096;
+// Keep this aligned with VALIDATION_LIMITS.CLIENT_ID_MAX_LENGTH in ar-lib-core.
+// DCR-generated client identifiers are intentionally longer than 128 characters.
+const CLIENT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
 
 function isLoopbackHost(hostname: string): boolean {
 	return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
@@ -369,6 +397,61 @@ export async function fetchAuthenticationMethodsForPageRequest(
 	);
 }
 
+/**
+ * Fetch account bootstrap data directly from the configured API binding.
+ *
+ * Server-side `event.fetch('/api/...')` normally re-enters the Login UI proxy. On the
+ * Cloudflare UI Worker that nested request can finish without the original platform
+ * binding, leaving the first account document without its published composition. The
+ * browser then has to discover the composition after hydration, which causes the whole
+ * widget grid to appear at once. This path mirrors the proxy request directly so the
+ * initial HTML already knows exactly which configured widgets may render.
+ */
+export function createAccountPageBootstrapFetch(
+	event: RequestEvent,
+	platformEnv: Record<string, unknown> | undefined
+): ServerFetch {
+	const apiBackendUrl = getApiBackendUrl(platformEnv);
+	const forwardedHost = getForwardedHost(event, platformEnv);
+	const apiBinding =
+		(platformEnv?.AR_ROUTER as ServiceBinding | undefined) ??
+		(platformEnv?.API_SERVICE as ServiceBinding | undefined) ??
+		null;
+	const upstreamBaseUrl = apiBinding
+		? getForwardedHostApiBackendUrl(apiBackendUrl, forwardedHost)
+		: apiBackendUrl;
+
+	return async (input, init) => {
+		const sourceUrl =
+			input instanceof Request
+				? new URL(input.url)
+				: new URL(typeof input === 'string' ? input : input.toString(), event.url);
+		if (sourceUrl.origin !== event.url.origin || !sourceUrl.pathname.startsWith('/api/account/')) {
+			throw new TypeError('Account bootstrap requests must use a same-origin account API path');
+		}
+
+		const upstreamUrl = new URL(sourceUrl.pathname + sourceUrl.search, upstreamBaseUrl);
+		const headers = buildProxyHeaders(event, platformEnv, forwardedHost);
+		new Headers(init?.headers).forEach((value, name) => headers.set(name, value));
+		const requestInit: RequestInit = {
+			method: 'GET',
+			headers,
+			redirect: 'manual'
+		};
+
+		return apiBinding
+			? apiBinding.fetch(upstreamUrl.toString(), requestInit)
+			: fetch(new Request(upstreamUrl.toString(), requestInit));
+	};
+}
+
+export async function fetchAccountPageInitialDataForPageRequest(
+	event: RequestEvent,
+	platformEnv: Record<string, unknown> | undefined
+): Promise<AccountPageInitialData> {
+	return loadAccountPageInitialData(createAccountPageBootstrapFetch(event, platformEnv));
+}
+
 export async function fetchLoginChallengeThemeTargetForPageRequest(
 	event: RequestEvent,
 	platformEnv: Record<string, unknown> | undefined
@@ -398,7 +481,7 @@ export async function fetchLoginChallengeThemeTargetForPageRequest(
 		}
 		const data = (await response.json()) as { client?: { client_id?: unknown } };
 		const clientId = typeof data.client?.client_id === 'string' ? data.client.client_id.trim() : '';
-		if (!/^[A-Za-z0-9._:-]{1,128}$/u.test(clientId)) {
+		if (!CLIENT_ID_PATTERN.test(clientId)) {
 			return { challengeId, valid: false, clientId: null };
 		}
 		return { challengeId, valid: true, clientId };
@@ -440,14 +523,154 @@ function isAuthShellPath(pathname: string): boolean {
 export function shouldPrefetchLoginUITheme(pathname: string): boolean {
 	return (
 		isAuthShellPath(pathname) ||
+		pathname === '/callback' ||
 		pathname === '/consent' ||
 		pathname === '/device' ||
+		pathname === '/device/authorize' ||
 		pathname === '/ciba' ||
 		pathname === '/invite' ||
 		pathname === '/error' ||
+		pathname === '/logged-out' ||
+		pathname === '/logout-complete' ||
 		pathname === '/account' ||
 		pathname.startsWith('/account/')
 	);
+}
+
+export function shouldBootstrapLoginUITheme(pathname: string): boolean {
+	return shouldPrefetchLoginUITheme(pathname);
+}
+
+export function shouldResolveLoginChallengeThemeTarget(pathname: string): boolean {
+	return pathname === '/login' || pathname === '/signup';
+}
+
+function hasEmailVerificationOriginTrialConfig(
+	platformEnv: Record<string, unknown> | undefined
+): boolean {
+	const values = [
+		getServerEnvironmentValue(platformEnv, 'EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKENS'),
+		getServerEnvironmentValue(platformEnv, 'EMAIL_VERIFICATION_ORIGIN_TRIAL_TOKEN')
+	];
+	return values.some((value) => typeof value === 'string' && value.trim().length > 0);
+}
+
+export function shouldBootstrapLoginUIThemeForRequest(
+	event: RequestEvent,
+	platformEnv: Record<string, unknown> | undefined
+): boolean {
+	if (!shouldBootstrapLoginUITheme(event.url.pathname)) {
+		return false;
+	}
+
+	if (
+		event.url.pathname === '/login' &&
+		shouldUseFastPlainLoginShell(event) &&
+		!hasEmailVerificationOriginTrialConfig(platformEnv)
+	) {
+		return false;
+	}
+
+	return true;
+}
+
+export function resolveInitialLoginUIAppearance(
+	authenticationMethods: AuthenticationMethodsResponse | null | undefined,
+	themeHint?: {
+		theme?: string | null;
+		lightVariant?: string | null;
+		darkVariant?: string | null;
+	}
+): { background: string; colorScheme: 'light' | 'dark' | 'light dark' } {
+	const ui = authenticationMethods?.ui;
+	const configuredBackground = sanitizeColor(ui?.pageTemplate?.backgroundColor);
+	const theme = ui?.theme?.trim().toLowerCase();
+	if (theme === 'dark') {
+		const variant = ui?.variant?.trim().toLowerCase() || 'brown';
+		return {
+			background: resolveLoginUIThemeBackground('dark', variant, configuredBackground),
+			colorScheme: 'dark'
+		};
+	}
+	if (theme === 'auto') {
+		return {
+			background: configuredBackground || '#eeeae3',
+			colorScheme: 'light dark'
+		};
+	}
+	if (theme === 'light') {
+		const variant = ui?.variant?.trim().toLowerCase() || 'beige';
+		return {
+			background: resolveLoginUIThemeBackground('light', variant, configuredBackground),
+			colorScheme: 'light'
+		};
+	}
+
+	const hintedTheme = normalizeLoginUIThemeMode(themeHint?.theme);
+	if (hintedTheme === 'dark') {
+		return {
+			background: resolveLoginUIThemeBackground('dark', themeHint?.darkVariant),
+			colorScheme: 'dark'
+		};
+	}
+	if (hintedTheme === 'light') {
+		return {
+			background: resolveLoginUIThemeBackground('light', themeHint?.lightVariant),
+			colorScheme: 'light'
+		};
+	}
+
+	return {
+		background: configuredBackground || '#eeeae3',
+		colorScheme: 'light'
+	};
+}
+
+function getInitialLoginUIThemeHint(event: RequestEvent): {
+	theme?: string | null;
+	lightVariant?: string | null;
+	darkVariant?: string | null;
+} {
+	return {
+		theme: event.cookies.get(LOGIN_UI_THEME_HINT_COOKIE),
+		lightVariant: event.cookies.get(LOGIN_UI_LIGHT_VARIANT_HINT_COOKIE),
+		darkVariant: event.cookies.get(LOGIN_UI_DARK_VARIANT_HINT_COOKIE)
+	};
+}
+
+function setInitialLoginUIThemeHint(
+	event: RequestEvent,
+	authenticationMethods: AuthenticationMethodsResponse | null | undefined
+): void {
+	const ui = authenticationMethods?.ui;
+	const theme = normalizeLoginUIThemeMode(ui?.theme);
+	if (!theme) return;
+
+	const cookieOptions = {
+		path: '/',
+		maxAge: LOGIN_UI_THEME_HINT_MAX_AGE_SECONDS,
+		httpOnly: false,
+		sameSite: 'lax' as const,
+		secure: event.url.protocol === 'https:'
+	};
+
+	event.cookies.set(LOGIN_UI_THEME_HINT_COOKIE, theme, cookieOptions);
+
+	const variant = ui?.variant?.trim().toLowerCase();
+	if (theme === 'light') {
+		event.cookies.set(
+			LOGIN_UI_LIGHT_VARIANT_HINT_COOKIE,
+			normalizeLoginUILightVariant(variant) ?? 'beige',
+			cookieOptions
+		);
+	}
+	if (theme === 'dark') {
+		event.cookies.set(
+			LOGIN_UI_DARK_VARIANT_HINT_COOKIE,
+			normalizeLoginUIDarkVariant(variant) ?? 'brown',
+			cookieOptions
+		);
+	}
 }
 
 function parseHumanVerificationProviderForCsp(
@@ -680,6 +903,7 @@ export function buildProxyHeaders(
 		'accept-language',
 		'content-type',
 		'authorization',
+		'dpop',
 		'cookie',
 		'user-agent',
 		'x-request-id',
@@ -746,22 +970,52 @@ export function getForwardedHost(
 	return getConfiguredForwardedHost(platformEnv) ?? event.url.host;
 }
 
-async function readBody(event: RequestEvent): Promise<string | undefined> {
-	if (event.request.method === 'GET' || event.request.method === 'HEAD') {
+export async function readBoundedProxyBody(
+	request: Request,
+	maxBytes = MAX_PROXY_BODY_BYTES
+): Promise<ArrayBuffer | undefined | '__TOO_LARGE__'> {
+	if (request.method === 'GET' || request.method === 'HEAD') {
 		return undefined;
 	}
-
-	const maxBodySize = 10 * 1024 * 1024;
-	const contentLength = event.request.headers.get('content-length');
-	if (contentLength && parseInt(contentLength, 10) > maxBodySize) {
-		return '__TOO_LARGE__';
+	if (maxBytes <= 0) {
+		throw new Error('Proxy body size limit must be greater than zero');
 	}
 
-	const body = await event.request.text();
-	if (body.length > maxBodySize) {
+	const contentLength = request.headers.get('content-length');
+	if (contentLength && parseInt(contentLength, 10) > maxBytes) {
 		return '__TOO_LARGE__';
 	}
-	return body;
+	if (!request.body) {
+		return new ArrayBuffer(0);
+	}
+
+	const reader = request.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let totalBytes = 0;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (!value) continue;
+
+			totalBytes += value.byteLength;
+			if (totalBytes > maxBytes) {
+				void reader.cancel().catch(() => {});
+				return '__TOO_LARGE__';
+			}
+			chunks.push(value);
+		}
+	} finally {
+		reader.releaseLock();
+	}
+
+	const body = new Uint8Array(totalBytes);
+	let offset = 0;
+	for (const chunk of chunks) {
+		body.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return body.buffer;
 }
 
 export function buildProxyResponse(response: Response): Response {
@@ -797,7 +1051,7 @@ export function buildProxyResponse(response: Response): Response {
 	});
 }
 
-const apiProxyHandle: Handle = async ({ event, resolve }) => {
+export const apiProxyHandle: Handle = async ({ event, resolve }) => {
 	const pathname = event.url.pathname;
 	if (!shouldProxyPath(pathname)) {
 		return resolve(event);
@@ -807,7 +1061,7 @@ const apiProxyHandle: Handle = async ({ event, resolve }) => {
 	const apiBackendUrl = getApiBackendUrl(platformEnv);
 	const forwardedHost = getForwardedHost(event, platformEnv);
 
-	const body = await readBody(event);
+	const body = await readBoundedProxyBody(event.request);
 	if (body === '__TOO_LARGE__') {
 		return new Response('Request body too large', { status: 413 });
 	}
@@ -825,7 +1079,8 @@ const apiProxyHandle: Handle = async ({ event, resolve }) => {
 	const requestInit: RequestInit = {
 		method: event.request.method,
 		headers: proxyHeaders,
-		redirect: 'manual'
+		redirect: 'manual',
+		signal: event.request.signal
 	};
 
 	if (body !== undefined) {
@@ -932,19 +1187,30 @@ const csrfHandle: Handle = async ({ event, resolve }) => {
 };
 
 const loginUIThemeBootstrapHandle: Handle = async ({ event, resolve }) => {
-	if (shouldPrefetchLoginUITheme(event.url.pathname)) {
-		const challengeTarget =
-			event.url.pathname === '/login'
-				? await fetchLoginChallengeThemeTargetForPageRequest(event, getPlatformEnv(event))
-				: null;
+	const platformEnv = getPlatformEnv(event);
+	if (shouldBootstrapLoginUIThemeForRequest(event, platformEnv)) {
+		const challengeTarget = shouldResolveLoginChallengeThemeTarget(event.url.pathname)
+			? await fetchLoginChallengeThemeTargetForPageRequest(event, platformEnv)
+			: null;
 		if (challengeTarget) {
 			event.locals.loginChallengeThemeTarget = challengeTarget;
 		}
-		event.locals.authenticationMethods = await fetchAuthenticationMethodsForPageRequest(
-			event,
-			getPlatformEnv(event),
-			challengeTarget?.valid ? challengeTarget.clientId : null
-		);
+		const accountPageInitialPromise =
+			event.url.pathname === '/account' || event.url.pathname.startsWith('/account/')
+				? fetchAccountPageInitialDataForPageRequest(event, platformEnv)
+				: Promise.resolve(undefined);
+		const [authenticationMethods, accountPageInitial] = await Promise.all([
+			fetchAuthenticationMethodsForPageRequest(
+				event,
+				platformEnv,
+				challengeTarget?.valid ? challengeTarget.clientId : null
+			),
+			accountPageInitialPromise
+		]);
+		event.locals.authenticationMethods = authenticationMethods;
+		if (accountPageInitial) {
+			event.locals.accountPageInitial = accountPageInitial;
+		}
 	}
 
 	return resolve(event);
@@ -968,30 +1234,80 @@ export const emailVerificationOriginTrialHandle: Handle = async ({ event, resolv
 	return response;
 };
 
-const localeHandle: Handle = async ({ event, resolve }) => {
-	const supportedLocales = ['en', 'ja'];
-	const cookieLocale = event.cookies.get('lang');
-	if (cookieLocale && supportedLocales.includes(cookieLocale)) {
-		event.locals.locale = cookieLocale;
-		return resolve(event);
+export const localeHandle: Handle = async ({ event, resolve }) => {
+	const languageConfig = getLoginUILanguageConfig(event.locals.authenticationMethods?.ui);
+	const resolveWithLocale = (locale: LoginUILocale) => {
+		event.locals.locale = locale;
+		const initialAppearance = resolveInitialLoginUIAppearance(
+			event.locals.authenticationMethods,
+			getInitialLoginUIThemeHint(event)
+		);
+		setInitialLoginUIThemeHint(event, event.locals.authenticationMethods);
+		return resolve(event, {
+			transformPageChunk: ({ html }) =>
+				html
+					.replace('__AUTHRIM_DOCUMENT_LANGUAGE__', toDocumentLanguage(locale))
+					.replace('__AUTHRIM_DOCUMENT_DIRECTION__', toDocumentDirection(locale))
+					.replaceAll('__AUTHRIM_INITIAL_BACKGROUND__', initialAppearance.background)
+					.replaceAll('__AUTHRIM_INITIAL_COLOR_SCHEME__', initialAppearance.colorScheme)
+		});
+	};
+
+	const requestedLocale = resolveEnabledLoginUILocale(
+		event.url.searchParams.get('lang'),
+		languageConfig
+	);
+	if (requestedLocale) {
+		return resolveWithLocale(requestedLocale);
+	}
+
+	const cookieLocale = resolveEnabledLoginUILocale(
+		event.cookies.get('preferredLanguage'),
+		languageConfig
+	);
+	if (cookieLocale) {
+		return resolveWithLocale(cookieLocale);
+	}
+
+	const oidcLocale = resolveEnabledLoginUILocalePreferenceList(
+		event.url.searchParams.get('ui_locales'),
+		languageConfig
+	);
+	if (oidcLocale) {
+		return resolveWithLocale(oidcLocale);
 	}
 
 	const acceptLanguage = event.request.headers.get('accept-language') || '';
 	const candidates = acceptLanguage
 		.split(',')
-		.map((part) => part.split(';')[0]?.trim().toLowerCase())
-		.filter(Boolean);
+		.map((part, index) => {
+			const [language, ...parameters] = part.split(';');
+			const qualityParameter = parameters.find((parameter) =>
+				parameter.trim().toLowerCase().startsWith('q=')
+			);
+			const parsedQuality = qualityParameter
+				? Number.parseFloat(qualityParameter.trim().slice(2))
+				: 1;
+			return {
+				language: language?.trim().toLowerCase() ?? '',
+				quality: Number.isFinite(parsedQuality) ? Math.min(1, Math.max(0, parsedQuality)) : 0,
+				index
+			};
+		})
+		.filter(
+			(candidate) => candidate.language && candidate.language !== '*' && candidate.quality > 0
+		)
+		.sort((left, right) => right.quality - left.quality || left.index - right.index)
+		.map((candidate) => candidate.language);
 
 	for (const candidate of candidates) {
-		const base = candidate.split('-')[0];
-		if (base && supportedLocales.includes(base)) {
-			event.locals.locale = base;
-			return resolve(event);
+		const locale = resolveEnabledLoginUILocale(candidate, languageConfig);
+		if (locale) {
+			return resolveWithLocale(locale);
 		}
 	}
 
-	event.locals.locale = 'en';
-	return resolve(event);
+	return resolveWithLocale(languageConfig.defaultLocale);
 };
 
 export const handle = sequence(

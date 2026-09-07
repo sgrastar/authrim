@@ -1,12 +1,15 @@
 import {
   ensureDatabaseAdapter,
   InternalNotificationEventRepository,
+  isWithinTenantDatabaseProvisioningGracePeriod,
   readResponseTextWithLimit,
   reconcileTenantDatabaseDerivedBindings,
   safeFetch,
   TenantDatabaseRegistryRepository,
   type Env,
+  type TenantDatabaseDerivedBindingManifestEntry,
   type TenantDatabaseReconciliationFinding,
+  type TenantDatabaseReconciliationFindingType,
   type TenantDatabaseRegistryRow,
   type TenantDatabaseRole,
 } from '@authrim/ar-lib-core';
@@ -16,6 +19,7 @@ export interface TenantDatabaseReconciliationRefreshSummary {
   findings: number;
   critical: number;
   warning: number;
+  resolved: number;
   skippedCloudflareApi: boolean;
 }
 
@@ -54,6 +58,11 @@ const DEFAULT_RECONCILIATION_JOB_LIMIT = 5;
 const TENANT_DATABASE_RECONCILIATION_JOB_TYPE = 'tenant-database/reconciliation';
 const D1_LIST_RESPONSE_LIMIT_BYTES = 256 * 1024;
 const D1_LIST_PAGE_LIMIT = 20;
+const RECONCILIATION_FINDING_TYPES: TenantDatabaseReconciliationFindingType[] = [
+  'missing_binding',
+  'database_id_not_found',
+  'inactive_registry_row',
+];
 
 function getCloudflareAccountId(env: Env): string | null {
   return env.CLOUDFLARE_ACCOUNT_ID || env.CF_ACCOUNT_ID || null;
@@ -145,6 +154,80 @@ function findingDeduplicationKey(finding: TenantDatabaseReconciliationFinding): 
   ].join(':');
 }
 
+function toManifestEntry(
+  row: TenantDatabaseRegistryRow
+): TenantDatabaseDerivedBindingManifestEntry {
+  return {
+    tenantId: row.tenant_id,
+    role: row.role,
+    generation: row.generation,
+    shardGroup: row.shard_group,
+    shardIndex: row.shard_index,
+    bindingRef: row.binding_ref,
+    databaseId: row.database_id,
+    databaseName: row.database_name,
+    workerShard: row.worker_shard,
+    deploymentTarget: row.deployment_target,
+    derivedFrom: 'tenant_database_registry',
+  };
+}
+
+function findingIdentity(entry: TenantDatabaseDerivedBindingManifestEntry): string {
+  return [entry.tenantId, entry.role, entry.generation, entry.shardGroup, entry.shardIndex].join(
+    ':'
+  );
+}
+
+function resolverMissingBindingDeduplicationKey(
+  entry: TenantDatabaseDerivedBindingManifestEntry
+): string {
+  return [
+    'tenant_database_resolver',
+    'missing_binding',
+    entry.tenantId,
+    entry.role,
+    entry.generation,
+    entry.shardGroup,
+    entry.shardIndex,
+    entry.bindingRef ?? '',
+    '',
+  ].join(':');
+}
+
+function resolvedFindingDeduplicationKeys(input: {
+  rows: TenantDatabaseRegistryRow[];
+  findings: TenantDatabaseReconciliationFinding[];
+  cloudflareDatabaseIdsAvailable: boolean;
+}): string[] {
+  const activeFindings = new Map<string, Set<TenantDatabaseReconciliationFindingType>>();
+  for (const finding of input.findings) {
+    const identity = findingIdentity(finding.entry);
+    const types =
+      activeFindings.get(identity) ?? new Set<TenantDatabaseReconciliationFindingType>();
+    types.add(finding.type);
+    activeFindings.set(identity, types);
+  }
+
+  const keys: string[] = [];
+  for (const row of input.rows) {
+    const entry = toManifestEntry(row);
+    const activeTypes = activeFindings.get(findingIdentity(entry)) ?? new Set();
+    for (const type of RECONCILIATION_FINDING_TYPES) {
+      if (type === 'database_id_not_found' && !input.cloudflareDatabaseIdsAvailable) {
+        continue;
+      }
+      if (activeTypes.has(type)) {
+        continue;
+      }
+      keys.push(findingDeduplicationKey({ type, severity: 'warning', entry }));
+      if (type === 'missing_binding') {
+        keys.push(resolverMissingBindingDeduplicationKey(entry));
+      }
+    }
+  }
+  return keys;
+}
+
 async function enqueueFindingNotification(
   repository: InternalNotificationEventRepository,
   logger: TenantDatabaseReconciliationLogger,
@@ -158,6 +241,7 @@ async function enqueueFindingNotification(
       eventType: `tenant_database.reconciliation.${finding.type}`,
       severity: finding.severity === 'critical' ? 'critical' : 'medium',
       deduplicationKey: findingDeduplicationKey(finding),
+      reopenSuppressed: true,
       payload: {
         finding_type: finding.type,
         severity: finding.severity,
@@ -194,6 +278,7 @@ export async function refreshTenantDatabaseReconciliation(
     findings: 0,
     critical: 0,
     warning: 0,
+    resolved: 0,
     skippedCloudflareApi: false,
   };
   if (!env.DB_ADMIN) {
@@ -231,6 +316,13 @@ export async function refreshTenantDatabaseReconciliation(
     rows,
     cloudflareDatabaseIds,
   });
+  result.findings = result.findings.filter((finding) => {
+    if (finding.type !== 'missing_binding') return true;
+    const row = rows.find(
+      (candidate) => findingIdentity(toManifestEntry(candidate)) === findingIdentity(finding.entry)
+    );
+    return !isWithinTenantDatabaseProvisioningGracePeriod(row?.created_at, options.now);
+  });
   summary.checked = result.checked;
   summary.findings = result.findings.length;
   summary.critical = result.findings.filter((finding) => finding.severity === 'critical').length;
@@ -240,6 +332,14 @@ export async function refreshTenantDatabaseReconciliation(
   for (const finding of result.findings) {
     await enqueueFindingNotification(notificationRepository, logger, finding, now);
   }
+  summary.resolved = await notificationRepository.suppressResolvedByDeduplicationKeys(
+    resolvedFindingDeduplicationKeys({
+      rows,
+      findings: result.findings,
+      cloudflareDatabaseIdsAvailable: Boolean(cloudflareDatabaseIds),
+    }),
+    now
+  );
 
   if (result.findings.length > 0) {
     logger.warn('Tenant database reconciliation detected drift', { ...summary });

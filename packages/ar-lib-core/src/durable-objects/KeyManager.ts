@@ -17,9 +17,10 @@
  */
 
 import { DurableObject } from 'cloudflare:workers';
-import { importPKCS8, type JWK } from 'jose';
+import { importPKCS8, SignJWT, type JWK, type JWTPayload } from 'jose';
 import { generateKeySet } from '../utils/keys';
 import { generateECKeySet, type ECAlgorithm, type ECCurve } from '../utils/ec-keys';
+import type { OIDCSigningAlgorithm } from '../utils/oidc-signing';
 import { timingSafeEqual } from '../utils/crypto';
 import type { Env } from '../types/env';
 import type { KeyStatus } from '../types/admin';
@@ -28,6 +29,21 @@ import { createLogger } from '../utils/logger';
 
 const log = createLogger().module('DO-KEY-MANAGER');
 const MAX_KEY_MANAGER_JSON_BODY_BYTES = 64 * 1024;
+const SECRET_REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u;
+const FORBIDDEN_SECRET_REFS = new Set(['__proto__', 'constructor', 'prototype']);
+
+class InvalidSecretRefError extends Error {
+  constructor() {
+    super('Invalid secret reference');
+    this.name = 'InvalidSecretRefError';
+  }
+}
+
+function validateSecretRef(secretRef: string): void {
+  if (!SECRET_REF_PATTERN.test(secretRef) || FORBIDDEN_SECRET_REFS.has(secretRef)) {
+    throw new InvalidSecretRefError();
+  }
+}
 
 /**
  * Stored key metadata (RSA)
@@ -81,6 +97,31 @@ interface StoredECKey {
   revokedReason?: string;
 }
 
+export interface SignVCIAccessTokenInput {
+  tenantId: string;
+  userId: string;
+  offerId: string;
+  credentialConfigurationId: string;
+  issuer: string;
+  expiresInSeconds?: number;
+}
+
+export interface SignVCIAccessTokenResult {
+  token: string;
+  kid: string;
+  jti: string;
+}
+
+export interface SignSDJWTIssuerResult {
+  token: string;
+  kid: string;
+}
+
+export interface SignStatusListCredentialResult {
+  token: string;
+  kid: string;
+}
+
 interface StoredSecretVersion {
   kid: string;
   value: string;
@@ -120,6 +161,22 @@ interface KeyManagerState {
 interface ECKeyManagerState {
   keys: StoredECKey[];
   activeKeyIds: Record<ECAlgorithm, string | null>;
+  config: KeyRotationConfig;
+  lastRotation: number | null;
+}
+
+/** Dedicated EC state for OIDC ID Token and UserInfo signing. Never shared with VC keys. */
+interface OIDCECKeyManagerState {
+  keys: StoredECKey[];
+  activeKeyId: string | null;
+  config: KeyRotationConfig;
+  lastRotation: number | null;
+}
+
+/** Dedicated RSA-PSS state for OIDC PS256 signing. Never shared with RS256 keys. */
+interface OIDCPS256KeyManagerState {
+  keys: StoredKey[];
+  activeKeyId: string | null;
   config: KeyRotationConfig;
   lastRotation: number | null;
 }
@@ -215,6 +272,10 @@ async function verifyImportedKeyPair(
 export class KeyManager extends DurableObject<Env> {
   private keyManagerState: KeyManagerState | null = null;
   private ecKeyManagerState: ECKeyManagerState | null = null;
+  private oidcECKeyManagerState: OIDCECKeyManagerState | null = null;
+  private oidcPS256KeyManagerState: OIDCPS256KeyManagerState | null = null;
+  private oidcES256CreationPromise: Promise<StoredECKey> | null = null;
+  private oidcPS256CreationPromise: Promise<StoredKey> | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -279,6 +340,39 @@ export class KeyManager extends DurableObject<Env> {
 
       await this.saveECState();
     }
+
+    const storedOIDCECState = await this.ctx.storage.get<OIDCECKeyManagerState>('oidcECState');
+    if (storedOIDCECState) {
+      this.oidcECKeyManagerState = storedOIDCECState;
+    } else {
+      this.oidcECKeyManagerState = {
+        keys: [],
+        activeKeyId: null,
+        config: {
+          rotationIntervalDays: 90,
+          retentionPeriodDays: 30,
+        },
+        lastRotation: null,
+      };
+      await this.saveOIDCECState();
+    }
+
+    const storedOIDCPS256State =
+      await this.ctx.storage.get<OIDCPS256KeyManagerState>('oidcPS256State');
+    if (storedOIDCPS256State) {
+      this.oidcPS256KeyManagerState = storedOIDCPS256State;
+    } else {
+      this.oidcPS256KeyManagerState = {
+        keys: [],
+        activeKeyId: null,
+        config: {
+          rotationIntervalDays: 90,
+          retentionPeriodDays: 30,
+        },
+        lastRotation: null,
+      };
+      await this.saveOIDCPS256State();
+    }
   }
 
   // ==========================================
@@ -306,6 +400,46 @@ export class KeyManager extends DurableObject<Env> {
    */
   async getAllPublicKeysRpc(): Promise<JWK[]> {
     return this.getAllPublicKeys();
+  }
+
+  /** RPC: Get or create the active key for an OIDC signing algorithm. */
+  async getActiveOIDCSigningKeyWithPrivateRpc(
+    algorithm: OIDCSigningAlgorithm
+  ): Promise<StoredKey | StoredECKey> {
+    if (algorithm === 'RS256') {
+      return (await this.getActiveKey()) ?? (await this.rotateKeys());
+    }
+    if (algorithm === 'ES256') {
+      return this.ensureActiveOIDCES256Key();
+    }
+    if (algorithm === 'PS256') {
+      return this.ensureActiveOIDCPS256Key();
+    }
+    throw new Error('unsupported_oidc_signing_algorithm');
+  }
+
+  /** RPC: Public OIDC JWKS, including RSA and the purpose-separated OIDC ES256 key. */
+  async getAllOIDCPublicKeysRpc(): Promise<JWK[]> {
+    if (!(await this.getActiveKey())) {
+      await this.rotateKeys();
+    }
+    await this.ensureActiveOIDCES256Key();
+    await this.ensureActiveOIDCPS256Key();
+    return [
+      ...(await this.getAllPublicKeys()),
+      ...this.getAllOIDCECPublicKeys(),
+      ...this.getAllOIDCPS256PublicKeys(),
+    ];
+  }
+
+  /** RPC: Rotate only the purpose-separated OIDC ES256 key. */
+  async rotateOIDCES256KeyRpc(): Promise<Omit<StoredECKey, 'privatePEM'>> {
+    return this.sanitizeECKey(await this.rotateOIDCES256Key());
+  }
+
+  /** RPC: Rotate only the purpose-separated OIDC PS256 key. */
+  async rotateOIDCPS256KeyRpc(): Promise<Omit<StoredKey, 'privatePEM'>> {
+    return this.sanitizeKey(await this.rotateOIDCPS256Key());
   }
 
   /**
@@ -403,6 +537,125 @@ export class KeyManager extends DurableObject<Env> {
    */
   async getActiveECKeyWithPrivateRpc(algorithm: ECAlgorithm): Promise<StoredECKey | null> {
     return this.getActiveECKey(algorithm);
+  }
+
+  /** Sign the narrowly defined VCI access-token contract without exporting key material. */
+  async signVCIAccessTokenRpc(input: SignVCIAccessTokenInput): Promise<SignVCIAccessTokenResult> {
+    const tenantId = input.tenantId?.trim();
+    const userId = input.userId?.trim();
+    const offerId = input.offerId?.trim();
+    const configurationId = input.credentialConfigurationId?.trim();
+    const issuer = input.issuer?.trim();
+    if (
+      !tenantId ||
+      tenantId.length > 128 ||
+      !userId ||
+      userId.length > 256 ||
+      !offerId ||
+      offerId.length > 512 ||
+      !configurationId ||
+      configurationId.length > 256 ||
+      !issuer ||
+      issuer.length > 2048
+    ) {
+      throw new Error('invalid_vci_access_token_signing_input');
+    }
+    const expiresIn = Math.min(Math.max(input.expiresInSeconds ?? 3600, 60), 3600);
+    const activeKey = await this.getActiveECKey('ES256');
+    if (!activeKey) throw new Error('vci_access_token_signing_key_unavailable');
+    const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
+    const now = Math.floor(Date.now() / 1000);
+    const jti = crypto.randomUUID();
+    const token = await new SignJWT({
+      tenant_id: tenantId,
+      offer_id: offerId,
+      credential_configuration_id: configurationId,
+      scope: 'credential',
+    })
+      .setProtectedHeader({ alg: 'ES256', typ: 'at+jwt', kid: activeKey.kid })
+      .setSubject(userId)
+      .setIssuedAt(now)
+      .setJti(jti)
+      .setExpirationTime(now + expiresIn)
+      .setIssuer(issuer)
+      .setAudience(issuer)
+      .sign(privateKey);
+    return { token, kid: activeKey.kid, jti };
+  }
+
+  /** Sign a bounded SD-JWT VC issuer payload without exporting the EC private key. */
+  async signSDJWTIssuerRpc(payload: JWTPayload): Promise<SignSDJWTIssuerResult> {
+    const now = Math.floor(Date.now() / 1000);
+    const issuer = typeof payload.iss === 'string' ? payload.iss.trim() : '';
+    const vct = typeof payload.vct === 'string' ? payload.vct.trim() : '';
+    const encodedPayload = JSON.stringify(payload);
+    const disclosureHashes = payload._sd;
+    if (
+      !issuer ||
+      issuer.length > 2048 ||
+      !vct ||
+      vct.length > 512 ||
+      typeof payload.iat !== 'number' ||
+      Math.abs(payload.iat - now) > 300 ||
+      payload._sd_alg !== 'sha-256' ||
+      encodedPayload.length > 64 * 1024 ||
+      (disclosureHashes !== undefined &&
+        (!Array.isArray(disclosureHashes) ||
+          disclosureHashes.length > 128 ||
+          disclosureHashes.some((value) => typeof value !== 'string' || value.length > 128)))
+    ) {
+      throw new Error('invalid_sd_jwt_issuer_signing_input');
+    }
+    const activeKey = await this.getActiveECKey('ES256');
+    if (!activeKey) throw new Error('sd_jwt_issuer_signing_key_unavailable');
+    const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
+    const token = await new SignJWT(payload)
+      .setProtectedHeader({ alg: 'ES256', typ: 'dc+sd-jwt', kid: activeKey.kid })
+      .sign(privateKey);
+    return { token, kid: activeKey.kid };
+  }
+
+  /** Sign the fixed Bitstring Status List JWT contract without exporting key material. */
+  async signStatusListCredentialRpc(payload: JWTPayload): Promise<SignStatusListCredentialResult> {
+    const now = Math.floor(Date.now() / 1000);
+    const vc = payload.vc as
+      | {
+          type?: unknown;
+          credentialSubject?: {
+            type?: unknown;
+            statusPurpose?: unknown;
+            encodedList?: unknown;
+          };
+        }
+      | undefined;
+    const subject = vc?.credentialSubject;
+    const encodedPayload = JSON.stringify(payload);
+    if (
+      typeof payload.iss !== 'string' ||
+      !payload.iss.startsWith('did:web:') ||
+      typeof payload.sub !== 'string' ||
+      !payload.sub.startsWith('https://') ||
+      typeof payload.iat !== 'number' ||
+      Math.abs(payload.iat - now) > 300 ||
+      typeof payload.exp !== 'number' ||
+      payload.exp <= now ||
+      payload.exp > now + 86400 ||
+      !Array.isArray(vc?.type) ||
+      !vc.type.includes('BitstringStatusListCredential') ||
+      subject?.type !== 'BitstringStatusList' ||
+      !['revocation', 'suspension'].includes(String(subject.statusPurpose)) ||
+      typeof subject.encodedList !== 'string' ||
+      encodedPayload.length > 4 * 1024 * 1024
+    ) {
+      throw new Error('invalid_status_list_signing_input');
+    }
+    const activeKey = await this.getActiveECKey('ES256');
+    if (!activeKey) throw new Error('status_list_signing_key_unavailable');
+    const privateKey = await importPKCS8(activeKey.privatePEM, 'ES256');
+    const token = await new SignJWT(payload)
+      .setProtectedHeader({ alg: 'ES256', typ: 'statuslist+jwt', kid: activeKey.kid })
+      .sign(privateKey);
+    return { token, kid: activeKey.kid };
   }
 
   /**
@@ -545,6 +798,132 @@ export class KeyManager extends DurableObject<Env> {
     if (this.ecKeyManagerState) {
       await this.ctx.storage.put('ecState', this.ecKeyManagerState);
     }
+  }
+
+  private async saveOIDCECState(): Promise<void> {
+    if (this.oidcECKeyManagerState) {
+      await this.ctx.storage.put('oidcECState', this.oidcECKeyManagerState);
+    }
+  }
+
+  private async saveOIDCPS256State(): Promise<void> {
+    if (this.oidcPS256KeyManagerState) {
+      await this.ctx.storage.put('oidcPS256State', this.oidcPS256KeyManagerState);
+    }
+  }
+
+  private getOIDCECState(): OIDCECKeyManagerState {
+    if (!this.oidcECKeyManagerState) {
+      throw new Error('OIDC EC KeyManager state not initialized');
+    }
+    return this.oidcECKeyManagerState;
+  }
+
+  private getOIDCPS256State(): OIDCPS256KeyManagerState {
+    if (!this.oidcPS256KeyManagerState) {
+      throw new Error('OIDC PS256 KeyManager state not initialized');
+    }
+    return this.oidcPS256KeyManagerState;
+  }
+
+  private getAllOIDCECPublicKeys(): JWK[] {
+    return this.getOIDCECState()
+      .keys.filter((key) => key.status !== 'revoked')
+      .map((key) => key.publicJWK);
+  }
+
+  private getAllOIDCPS256PublicKeys(): JWK[] {
+    return this.getOIDCPS256State()
+      .keys.filter((key) => key.status !== 'revoked')
+      .map((key) => key.publicJWK);
+  }
+
+  private async ensureActiveOIDCES256Key(): Promise<StoredECKey> {
+    const state = this.getOIDCECState();
+    const active = state.keys.find(
+      (key) => key.kid === state.activeKeyId && key.status === 'active'
+    );
+    if (active) return active;
+
+    if (!this.oidcES256CreationPromise) {
+      this.oidcES256CreationPromise = this.rotateOIDCES256Key().finally(() => {
+        this.oidcES256CreationPromise = null;
+      });
+    }
+    return this.oidcES256CreationPromise;
+  }
+
+  private async rotateOIDCES256Key(): Promise<StoredECKey> {
+    const state = this.getOIDCECState();
+    const now = Date.now();
+    const previousActive = state.keys.find((key) => key.status === 'active');
+    if (previousActive) {
+      previousActive.status = 'overlap';
+      previousActive.expiresAt = now + 24 * 60 * 60 * 1000;
+    }
+
+    const kid = `oidc-es256-${now}-${crypto.randomUUID()}`;
+    const keySet = await generateECKeySet(kid, 'ES256');
+    const newKey: StoredECKey = {
+      kid,
+      algorithm: 'ES256',
+      curve: 'P-256',
+      publicJWK: keySet.publicJWK,
+      privatePEM: keySet.privatePEM,
+      createdAt: now,
+      status: 'active',
+    };
+    state.keys.push(newKey);
+    state.activeKeyId = kid;
+    state.lastRotation = now;
+    state.keys = state.keys.filter(
+      (key) => key.status === 'active' || !key.expiresAt || key.expiresAt >= now
+    );
+    await this.saveOIDCECState();
+    return newKey;
+  }
+
+  private async ensureActiveOIDCPS256Key(): Promise<StoredKey> {
+    const state = this.getOIDCPS256State();
+    const active = state.keys.find(
+      (key) => key.kid === state.activeKeyId && key.status === 'active'
+    );
+    if (active) return active;
+
+    if (!this.oidcPS256CreationPromise) {
+      this.oidcPS256CreationPromise = this.rotateOIDCPS256Key().finally(() => {
+        this.oidcPS256CreationPromise = null;
+      });
+    }
+    return this.oidcPS256CreationPromise;
+  }
+
+  private async rotateOIDCPS256Key(): Promise<StoredKey> {
+    const state = this.getOIDCPS256State();
+    const now = Date.now();
+    const previousActive = state.keys.find((key) => key.status === 'active');
+    if (previousActive) {
+      previousActive.status = 'overlap';
+      previousActive.expiresAt = now + 24 * 60 * 60 * 1000;
+    }
+
+    const kid = `oidc-ps256-${now}-${crypto.randomUUID()}`;
+    const keySet = await generateKeySet(kid);
+    const newKey: StoredKey = {
+      kid,
+      publicJWK: { ...keySet.publicJWK, kid, use: 'sig', alg: 'PS256' },
+      privatePEM: keySet.privatePEM,
+      createdAt: now,
+      status: 'active',
+    };
+    state.keys.push(newKey);
+    state.activeKeyId = kid;
+    state.lastRotation = now;
+    state.keys = state.keys.filter(
+      (key) => key.status === 'active' || !key.expiresAt || key.expiresAt >= now
+    );
+    await this.saveOIDCPS256State();
+    return newKey;
   }
 
   /**
@@ -883,12 +1262,15 @@ export class KeyManager extends DurableObject<Env> {
   }
 
   private async getOrCreateSecret(secretRef: string): Promise<StoredSecret> {
+    validateSecretRef(secretRef);
     await this.initializeState();
 
     const state = this.getState();
     state.secrets ??= {};
 
-    const existing = state.secrets[secretRef];
+    const existing = Object.getOwnPropertyDescriptor(state.secrets, secretRef)?.value as
+      | StoredSecret
+      | undefined;
     if (existing) {
       return existing;
     }
@@ -898,7 +1280,12 @@ export class KeyManager extends DurableObject<Env> {
       active: this.generateSecretVersion(),
       updatedAt: Date.now(),
     };
-    state.secrets[secretRef] = secret;
+    Object.defineProperty(state.secrets, secretRef, {
+      value: secret,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
     await this.saveState();
     return secret;
   }
@@ -1835,6 +2222,12 @@ export class KeyManager extends DurableObject<Env> {
 
       return new Response('Not Found', { status: 404 });
     } catch (error) {
+      if (error instanceof InvalidSecretRefError) {
+        return new Response(JSON.stringify({ error: 'Bad Request', message: error.message }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
       log.error('Request error', {}, error as Error);
       return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
         status: 500,

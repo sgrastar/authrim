@@ -342,6 +342,33 @@ describe('admin-shared audit detail externalization', () => {
     expect(detailCatalog.public_artifact_id).toMatch(/^oa_/);
   });
 
+  it('resolves the opaque tenant key from Core instead of the Admin database', async () => {
+    const coreQueryOne = vi.fn(async (sql: string) =>
+      sql.includes('SELECT tenant_key FROM tenants') ? { tenant_key: 't_core_tenant' } : null
+    );
+    const coreAdapter = {
+      ...mockAdapter,
+      queryOne: coreQueryOne,
+    };
+    const { c } = createMockContext({ DB: coreAdapter as unknown as Env['DB'] });
+
+    await writeAdminAuditLog(c, {
+      action: 'admin.user.created',
+      resourceType: 'admin_user',
+      resourceId: 'admin-core-key',
+      result: 'success',
+      metadata: { source: 'test' },
+    });
+
+    expect(coreQueryOne).toHaveBeenCalledWith('SELECT tenant_key FROM tenants WHERE id = ?', [
+      'tenant-1',
+    ]);
+    expect(mockAdapter.queryOne).not.toHaveBeenCalledWith(
+      'SELECT tenant_key FROM tenants WHERE id = ?',
+      ['tenant-1']
+    );
+  });
+
   it('falls back to inline JSON when encrypted object storage is unavailable', async () => {
     const { c } = createMockContext({
       SENSITIVE_DETAILS: undefined,
@@ -388,6 +415,7 @@ describe('admin-shared audit detail externalization', () => {
       after: { email: 'fallback-admin@example.com' },
     });
 
+    expect(dbState.objectCatalog).toHaveLength(0);
     expect(dbState.objectCatalogObjects).toHaveLength(0);
     expect(dbState.sensitiveDetailChunkIndex).toHaveLength(0);
     expect(dbState.adminAuditLogs).toHaveLength(1);
@@ -404,7 +432,7 @@ describe('admin-shared audit detail externalization', () => {
     });
   });
 
-  it('emits admin audit D-format archive chunks to AUDIT_ARCHIVE when standard archive storage is configured', async () => {
+  it('writes admin audit D-format chunks directly to the standard AUDIT_ARCHIVE', async () => {
     const archiveStore = createMockBucket();
     const { c, loggingQueue } = createMockContext({
       AUDIT_ARCHIVE: archiveStore.bucket,
@@ -427,14 +455,16 @@ describe('admin-shared audit detail externalization', () => {
     );
     expect(object.contentType).toBe('application/authrim.log-chunk+encrypted');
     expect(object.body.byteLength).toBeGreaterThan(0);
-    expect(loggingQueue.send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        payload_type: 'delivery_fanout',
-        destination_id: 'platform_default_r2_archive',
-        log_type: 'admin_audit',
-        plane: 'archive',
-        record_count: 1,
-      })
+    expect(loggingQueue.send).not.toHaveBeenCalled();
+    expect(mockAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO logging_delivery_events'),
+      expect.arrayContaining([
+        'platform_default_r2_archive',
+        'admin_audit',
+        'archive',
+        'critical',
+        'delivered',
+      ])
     );
   });
 
@@ -523,6 +553,50 @@ describe('admin-shared audit detail externalization', () => {
       admin_machine_client_auth_method: 'private_key_jwt',
       admin_machine_credential_strength: 'asymmetric_key',
       admin_machine_sender_constrained: false,
+    });
+  });
+
+  it('records Agent actor separately from the delegating admin user', async () => {
+    const { c } = createMockContext({
+      SENSITIVE_DETAILS: undefined,
+      OBJECT_ENCRYPTION_ROOT_KEY: undefined,
+    });
+    (c as any).set('adminAuth', {
+      userId: 'admin-1',
+      authMethod: 'bearer',
+      actorType: 'agent',
+      actorId: 'client:client-1',
+      clientId: 'client-1',
+      agentMode: 'mode_a',
+      agentAssurance: 'public_client_transaction',
+      agentGrantId: 'grant-1',
+      agentGrantGeneration: 2,
+      agentConsentVersion: 3,
+      sourceTokenJti: 'source-jti',
+      correlationId: 'correlation-1',
+    });
+
+    await writeAdminAuditLog(c, {
+      action: 'agent.tool.executed',
+      resourceType: 'admin_user',
+      resourceId: 'user-1',
+      result: 'success',
+    });
+
+    const logRow = dbState.adminAuditLogs[0];
+    expect(logRow.admin_user_id).toBe('admin-1');
+    expect(JSON.parse(logRow.metadata_json as string)).toMatchObject({
+      admin_actor_type: 'agent',
+      admin_actor_id: 'client:client-1',
+      admin_delegator_id: 'admin-1',
+      admin_agent_client_id: 'client-1',
+      admin_agent_mode: 'mode_a',
+      admin_agent_assurance: 'public_client_transaction',
+      admin_agent_grant_id: 'grant-1',
+      admin_agent_grant_generation: 2,
+      admin_agent_consent_version: 3,
+      admin_agent_source_token_jti: 'source-jti',
+      admin_agent_correlation_id: 'correlation-1',
     });
   });
 });

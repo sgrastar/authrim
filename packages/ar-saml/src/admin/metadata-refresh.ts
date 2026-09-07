@@ -1,4 +1,5 @@
 import type {
+  SAMLMetadataRefreshPolicy,
   SAMLMetadataCriticalFields,
   SAMLMetadataDiffSummary,
   SAMLMetadataEndpointSnapshot,
@@ -17,6 +18,96 @@ import {
 export interface SAMLMetadataAnalysis {
   hash: string;
   criticalFields: SAMLMetadataCriticalFields;
+}
+
+export const DEFAULT_SAML_METADATA_REFRESH_INTERVAL_SECONDS = 6 * 60 * 60;
+export const MIN_SAML_METADATA_REFRESH_INTERVAL_SECONDS = 15 * 60;
+export const MAX_SAML_METADATA_REFRESH_INTERVAL_SECONDS = 7 * 24 * 60 * 60;
+
+export function normalizeSAMLMetadataRefreshPolicy(
+  policy: SAMLMetadataRefreshPolicy | undefined,
+  metadataUrl: string | undefined,
+  now = Date.now()
+): SAMLMetadataRefreshPolicy {
+  const requestedInterval = policy?.intervalSeconds;
+  const intervalSeconds =
+    typeof requestedInterval === 'number' && Number.isFinite(requestedInterval)
+      ? Math.min(
+          MAX_SAML_METADATA_REFRESH_INTERVAL_SECONDS,
+          Math.max(MIN_SAML_METADATA_REFRESH_INTERVAL_SECONDS, Math.floor(requestedInterval))
+        )
+      : DEFAULT_SAML_METADATA_REFRESH_INTERVAL_SECONDS;
+  const mode = metadataUrl ? (policy?.mode === 'manual' ? 'manual' : 'automatic') : 'manual';
+  const validatorsMatchSource =
+    !!metadataUrl && !!policy?.validatorSourceUrl && policy.validatorSourceUrl === metadataUrl;
+
+  return {
+    ...policy,
+    mode,
+    intervalSeconds,
+    nextRefreshAt:
+      policy?.nextRefreshAt ?? (mode === 'automatic' ? now + intervalSeconds * 1000 : undefined),
+    consecutiveFailures: policy?.consecutiveFailures ?? 0,
+    sourceState: policy?.sourceState ?? (metadataUrl ? 'healthy' : 'stale'),
+    etag: validatorsMatchSource ? policy?.etag : undefined,
+    lastModified: validatorsMatchSource ? policy?.lastModified : undefined,
+    validatorSourceUrl: validatorsMatchSource ? policy?.validatorSourceUrl : undefined,
+    acceptedValidUntil: validatorsMatchSource ? policy?.acceptedValidUntil : undefined,
+  };
+}
+
+export function isSAMLMetadataRefreshDue(
+  policy: SAMLMetadataRefreshPolicy | undefined,
+  metadataUrl: string | undefined,
+  now = Date.now()
+): boolean {
+  if (!metadataUrl) return false;
+  if (policy?.mode === 'manual') return false;
+  if (policy?.nextRefreshAt === undefined) return true;
+  const normalized = normalizeSAMLMetadataRefreshPolicy(policy, metadataUrl, now);
+  return normalized.mode === 'automatic' && (normalized.nextRefreshAt ?? 0) <= now;
+}
+
+export function markSAMLMetadataRefreshSuccess(
+  policy: SAMLMetadataRefreshPolicy | undefined,
+  metadataUrl: string,
+  now = Date.now()
+): SAMLMetadataRefreshPolicy {
+  const normalized = normalizeSAMLMetadataRefreshPolicy(policy, metadataUrl, now);
+  return {
+    ...normalized,
+    lastAttemptAt: now,
+    lastSuccessAt: now,
+    nextRefreshAt:
+      normalized.mode === 'automatic' ? now + normalized.intervalSeconds * 1000 : undefined,
+    consecutiveFailures: 0,
+    sourceState: 'healthy',
+    lastErrorCode: undefined,
+    suspendedByMetadataSync: undefined,
+  };
+}
+
+export function markSAMLMetadataRefreshFailure(
+  policy: SAMLMetadataRefreshPolicy | undefined,
+  metadataUrl: string,
+  errorCode: string,
+  sourceState: NonNullable<SAMLMetadataRefreshPolicy['sourceState']> = 'error',
+  now = Date.now()
+): SAMLMetadataRefreshPolicy {
+  const normalized = normalizeSAMLMetadataRefreshPolicy(policy, metadataUrl, now);
+  const consecutiveFailures = (normalized.consecutiveFailures ?? 0) + 1;
+  const retrySeconds = Math.min(
+    normalized.intervalSeconds,
+    MIN_SAML_METADATA_REFRESH_INTERVAL_SECONDS * 2 ** Math.min(consecutiveFailures - 1, 5)
+  );
+  return {
+    ...normalized,
+    lastAttemptAt: now,
+    nextRefreshAt: normalized.mode === 'automatic' ? now + retrySeconds * 1000 : undefined,
+    consecutiveFailures,
+    sourceState,
+    lastErrorCode: errorCode,
+  };
 }
 
 export function analyzeSAMLMetadata(xml: string): SAMLMetadataAnalysis {

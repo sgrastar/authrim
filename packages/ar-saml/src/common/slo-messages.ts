@@ -13,7 +13,7 @@ import {
   appendChild,
   addNamespaceDeclarations,
   serializeXml,
-  parseXml,
+  parseSAMLXml,
   findDirectChildElement,
   findDirectChildElements,
   base64Encode,
@@ -251,7 +251,7 @@ export function parseLogoutRequestRedirect(samlRequestEncoded: string): ParsedLo
  * Parse LogoutRequest XML
  */
 export function parseLogoutRequestXml(xml: string): ParsedLogoutRequest {
-  const doc = parseXml(xml);
+  const doc = parseSAMLXml(xml);
   const logoutRequestElement = doc.documentElement;
 
   if (
@@ -352,7 +352,7 @@ export function parseLogoutResponseRedirect(samlResponseEncoded: string): Parsed
  * Parse LogoutResponse XML
  */
 export function parseLogoutResponseXml(xml: string): ParsedLogoutResponse {
-  const doc = parseXml(xml);
+  const doc = parseSAMLXml(xml);
   const logoutResponseElement = doc.documentElement;
 
   if (

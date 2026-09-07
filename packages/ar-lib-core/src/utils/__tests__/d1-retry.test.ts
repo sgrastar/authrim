@@ -20,6 +20,8 @@ vi.mock('../logger', () => ({
 }));
 
 import {
+  D1OperationError,
+  isTransientD1Error,
   retryD1Operation,
   retryD1Batch,
   type D1PreparedStatement,
@@ -27,6 +29,11 @@ import {
 } from '../d1-retry';
 
 describe('D1 Retry Utilities', () => {
+  it('classifies overloads as transient and permanent SQL failures as non-retryable', () => {
+    expect(isTransientD1Error(new Error('D1 DB is overloaded'))).toBe(true);
+    expect(isTransientD1Error(new Error('UNIQUE constraint failed: users.id'))).toBe(false);
+    expect(isTransientD1Error(new Error('d1_admission_queue_full'))).toBe(false);
+  });
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
@@ -109,6 +116,26 @@ describe('D1 Retry Utilities', () => {
         }),
         expect.any(Error)
       );
+    });
+
+    it('preserves a retryable final cause for request-serving adapters', async () => {
+      const operation = vi.fn().mockRejectedValue(new Error('D1 DB is overloaded'));
+
+      const promise = retryD1Operation(operation, 'request-query', {
+        maxRetries: 0,
+        shouldRetry: isTransientD1Error,
+        throwOnExhausted: true,
+      });
+      const rejection = expect(promise).rejects.toEqual(
+        expect.objectContaining<D1OperationError>({
+          name: 'D1OperationError',
+          code: 'd1_temporarily_unavailable',
+          retryable: true,
+          attempts: 1,
+        })
+      );
+      await vi.runAllTimersAsync();
+      await rejection;
     });
 
     it('should use exponential backoff for delays', async () => {

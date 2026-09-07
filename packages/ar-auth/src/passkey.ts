@@ -10,15 +10,17 @@ import {
   isAllowedOrigin,
   parseAllowedOrigins,
   getSessionStoreForNewSession,
+  getSessionClientMetadata,
   getChallengeStoreByChallengeId,
   getChallengeStoreByUserId,
   getTenantIdFromContext,
   getTenantSettings,
-  generateId,
   generateUserIdFromSettings,
   createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   createPIIContextFromHono,
   createErrorResponse,
+  createTenantPlacementWriteFenceResponse,
   AR_ERROR_CODES,
   // Event System
   publishEvent,
@@ -38,6 +40,9 @@ import {
   AdminSessionRepository,
   requireDedicatedAdminDatabaseAdapter,
   CanonicalRuntimeUserStore,
+  advancePasskeyAuthenticationState,
+  isAccountAuthenticationDeniedError,
+  resolveAccountDataContextFromHono,
 } from '@authrim/ar-lib-core';
 import {
   buildCanonicalProfileRuntimeUserFields,
@@ -45,6 +50,15 @@ import {
   validateRegistrationFieldSubmissionFromEnv,
 } from './registration-field-utils';
 import { resolveSessionTtl } from './session-ttl';
+import { timeAuthRequestDiagnosticOperation } from './request-diagnostics';
+import {
+  publishTenantD1PasskeyRoute,
+  provisionTenantD1EmailAccount,
+  resolvePasskeyProvisioningResumeUserId,
+  resolveTenantD1PasskeyAccountRoute,
+  resolveTenantD1EmailAccountRoute,
+  usesTenantD1AccountStorage,
+} from './account-provisioning';
 
 // ===== Module-level Logger for Helper Functions =====
 const moduleLogger = createLogger().module('PASSKEY');
@@ -71,9 +85,12 @@ type AuthenticatorTransport = 'usb' | 'nfc' | 'ble' | 'internal' | 'hybrid';
 
 function createCanonicalRuntimeUserStore(
   c: Context<{ Bindings: Env }>,
-  tenantId: string
+  tenantId: string,
+  options: { accountScoped?: boolean } = {}
 ): CanonicalRuntimeUserStore {
-  const authCtx = createAuthContextFromHono(c, tenantId);
+  const authCtx = options.accountScoped
+    ? createAccountAuthContextFromHono(c, tenantId)
+    : createAuthContextFromHono(c, tenantId);
   const piiCtx = createPIIContextFromHono(c, tenantId);
   return new CanonicalRuntimeUserStore({
     coreAdapter: authCtx.coreAdapter,
@@ -209,6 +226,14 @@ function normalizeStoredCredentialId(id?: string | null): string | null {
   return toBase64URLString(id);
 }
 
+function matchesPasskeyUserHandle(userHandle: string | undefined, userId: string): boolean {
+  return (
+    typeof userHandle === 'string' &&
+    userHandle.length > 0 &&
+    userHandle === isoBase64URL.fromUTF8String(userId)
+  );
+}
+
 /**
  * Generate registration options for Passkey creation
  * POST /auth/passkey/register/options
@@ -217,22 +242,21 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
   const log = getLogger(c).module('PASSKEY');
   try {
     const body = await c.req.json<{
-      email: string;
+      email?: string;
       userId?: string;
       name?: string;
       custom_fields?: Record<string, unknown>;
+      provisioning_token?: string;
+      resume_user_id?: string;
     }>();
 
-    const { email, userId, name, custom_fields } = body;
-
-    if (!email) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_REQUIRED_FIELD, {
-        variables: { field: 'email' },
-      });
-    }
+    const { email, userId, name, custom_fields, provisioning_token, resume_user_id } = body;
     if (userId) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
+
+    const normalizedEmail =
+      typeof email === 'string' && email.trim() ? email.trim().toLowerCase() : null;
 
     // Validate Origin header against allowlist
     const originHeader = c.req.header('origin');
@@ -249,13 +273,30 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     const origin = originHeader;
 
     const tenantId = getTenantIdFromContext(c);
+    const hasProvisioningResumeFields =
+      provisioning_token !== undefined || resume_user_id !== undefined;
+    let resumedUserId: string | null = null;
+    if (hasProvisioningResumeFields) {
+      if (provisioning_token === undefined || resume_user_id === undefined) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
+      resumedUserId = await resolvePasskeyProvisioningResumeUserId(
+        c,
+        provisioning_token,
+        resume_user_id
+      );
+      if (!resumedUserId) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
+    }
     const customFieldValidation = await validateRegistrationFieldSubmissionFromEnv(
       c.env,
       tenantId,
       {
         ...(custom_fields ?? {}),
-        email,
-        'field.canonical.email': email,
+        ...(normalizedEmail
+          ? { email: normalizedEmail, 'field.canonical.email': normalizedEmail }
+          : {}),
         ...(name ? { name, 'field.canonical.name': name } : {}),
       }
     );
@@ -279,38 +320,81 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
     });
 
     // Check if user exists in the canonical runtime user store.
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-    let user: { id: string; email: string; name: string | null } | null = null;
+    const tenantD1 = usesTenantD1AccountStorage(c);
+    const accountRoute = normalizedEmail
+      ? await resolveTenantD1EmailAccountRoute(c, normalizedEmail)
+      : 'not_required';
+    let runtimeUsers: CanonicalRuntimeUserStore | null = tenantD1
+      ? accountRoute === 'resolved'
+        ? createCanonicalRuntimeUserStore(c, tenantId, { accountScoped: true })
+        : null
+      : createCanonicalRuntimeUserStore(c, tenantId);
+    let user: { id: string; email: string | null; name: string | null } | null = null;
 
-    const normalizedEmail = email.toLowerCase();
-    const runtimeUser = await runtimeUsers.findByEmail(normalizedEmail);
+    const runtimeUser = normalizedEmail ? await runtimeUsers?.findByEmail(normalizedEmail) : null;
     if (runtimeUser) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_CONFLICT);
     }
 
     // If user doesn't exist, create a new canonical runtime user.
     if (!user) {
-      const newUserId = await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env);
+      const newUserId =
+        resumedUserId ?? (await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env));
       const defaultName = name || null;
-      const preferredUsername = email.split('@')[0];
+      const preferredUsername = normalizedEmail?.split('@')[0] ?? newUserId;
+      const provisioningRuntimeUser = {
+        active: true as const,
+        emailVerified: false,
+        userType: 'end_user',
+        displayName: defaultName,
+        sourceRef: 'auth:passkey',
+        piiFields: {
+          ...canonicalProfileFields.piiFields,
+          ...(normalizedEmail ? { email: true } : {}),
+          ...(defaultName ? { name: true } : {}),
+        },
+        sensitiveValues: {
+          ...canonicalProfileFields.sensitiveValues,
+          ...(normalizedEmail ? { email: normalizedEmail } : {}),
+          ...(defaultName ? { name: defaultName } : {}),
+        },
+        customAttributesJson: JSON.stringify({ preferred_username: preferredUsername }),
+      };
 
       try {
-        await runtimeUsers.syncUser({
-          userId: newUserId,
-          email: normalizedEmail,
-          name: defaultName,
-          active: true,
-          emailVerified: false,
-          userType: 'end_user',
-          sourceRef: 'passkey',
-          piiFields: canonicalProfileFields.piiFields,
-          sensitiveValues: canonicalProfileFields.sensitiveValues,
-          customAttributesJson: JSON.stringify({
-            preferred_username: preferredUsername,
-          }),
-        });
+        if (tenantD1) {
+          const provisioned = await provisionTenantD1EmailAccount(c, {
+            tenantId,
+            candidateUserId: newUserId,
+            flow: 'passkey',
+            email: normalizedEmail,
+            runtimeUser: provisioningRuntimeUser,
+          });
+          if (provisioned.status === 'pending') return provisioned.response;
+          await resolveAccountDataContextFromHono(c, provisioned.accountId);
+          runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped: true });
+          user = {
+            id: provisioned.userId,
+            email: normalizedEmail,
+            name: defaultName || normalizedEmail?.split('@')[0] || provisioned.userId,
+          };
+        } else {
+          await runtimeUsers!.syncUser({
+            userId: newUserId,
+            email: normalizedEmail,
+            name: defaultName,
+            active: true,
+            emailVerified: false,
+            userType: 'end_user',
+            sourceRef: 'passkey',
+            piiFields: canonicalProfileFields.piiFields,
+            sensitiveValues: canonicalProfileFields.sensitiveValues,
+            customAttributesJson: provisioningRuntimeUser.customAttributesJson,
+          });
+        }
       } catch (piiError: unknown) {
+        const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, piiError);
+        if (writeFenceResponse) return writeFenceResponse;
         // PII Protection: Don't log full error (may contain PII)
         log.error('Failed to create canonical runtime user', {
           action: 'runtime_user_create',
@@ -319,10 +403,18 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
         return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
       }
 
-      user = { id: newUserId, email: normalizedEmail, name: defaultName || email.split('@')[0] };
+      user ??= {
+        id: newUserId,
+        email: normalizedEmail,
+        name: defaultName || normalizedEmail?.split('@')[0] || newUserId,
+      };
     }
 
     // Get user's existing passkeys via Repository
+    const accountScoped = usesTenantD1AccountStorage(c) && Boolean(accountRoute);
+    const authCtx = accountScoped
+      ? createAccountAuthContextFromHono(c, tenantId)
+      : createAuthContextFromHono(c, tenantId);
     const existingPasskeys = await authCtx.repositories.passkey.findByUserId(user.id);
 
     const excludeCredentials: Array<{
@@ -351,8 +443,8 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       rpID,
       // @ts-ignore - TextEncoder.encode() returns compatible Uint8Array
       userID: encoder.encode(user.id as string),
-      userName: normalizedEmail,
-      userDisplayName: (user.name as string) || normalizedEmail,
+      userName: normalizedEmail ?? user.id,
+      userDisplayName: (user.name as string) || normalizedEmail || user.id,
       excludeCredentials: excludeCredentials,
       // Use platform authenticator (device-bound) for better security
       authenticatorSelection: {
@@ -377,7 +469,7 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       userId: user.id as string,
       challenge: options.challenge,
       ttl: 300, // 5 minutes
-      email: normalizedEmail,
+      email: normalizedEmail ?? undefined,
       metadata:
         Object.keys(customFieldValidation.values).length > 0
           ? { custom_fields: customFieldValidation.values }
@@ -389,6 +481,8 @@ export async function passkeyRegisterOptionsHandler(c: Context<{ Bindings: Env }
       userId: user.id,
     });
   } catch (error) {
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     // PII Protection: Don't log full error (may contain user data)
     log.error('Passkey registration options error', {
       action: 'register_options',
@@ -511,6 +605,10 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
     const tenantId = getTenantIdFromContext(c);
     const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'passkey_registration');
 
+    if (usesTenantD1AccountStorage(c)) {
+      await resolveAccountDataContextFromHono(c, userId);
+    }
+
     // Step 1: Create session using SessionStore Durable Object (FIRST, sharded) via RPC
     // This ensures that if session creation fails, we don't store the passkey
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
@@ -522,6 +620,7 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
         userId,
         sessionTtl.seconds,
         {
+          ...getSessionClientMetadata(c.req.raw),
           amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
         },
@@ -537,19 +636,30 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       return createErrorResponse(c, AR_ERROR_CODES.SESSION_STORE_ERROR);
     }
 
-    // Step 2: Store passkey via Repository
-    const authCtx = createAuthContextFromHono(c, tenantId);
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+    // Step 2: Store passkey via the routed account database when tenant-exclusive storage is used.
+    const accountScoped = usesTenantD1AccountStorage(c);
+    const authCtx = accountScoped
+      ? createAccountAuthContextFromHono(c, tenantId)
+      : createAuthContextFromHono(c, tenantId);
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped });
 
     await authCtx.repositories.passkey.create({
       id: passkeyId,
       user_id: userId,
       credential_id: credentialIDBase64URL,
+      rp_id: rpID,
       public_key: publicKeyBase64,
       counter,
       transports: (credential.response.transports || []) as AuthenticatorTransport[],
       device_name: deviceName || 'Unknown Device',
       aaguid: regInfo.aaguid ?? null,
+    });
+    await publishTenantD1PasskeyRoute(c, {
+      tenantId,
+      userId,
+      passkeyId,
+      credentialId: credentialIDBase64URL,
+      rpId: rpID,
     });
 
     // Registration creates an authenticated session, so retain it as the user's first login.
@@ -592,6 +702,8 @@ export async function passkeyRegisterVerifyHandler(c: Context<{ Bindings: Env }>
       },
     });
   } catch (error) {
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     // PII Protection: Don't log full error (may contain credential data)
     log.error('Passkey registration verify error', {
       action: 'register_verify_final',
@@ -711,9 +823,31 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     // Get credential ID from response
     const credentialIDBase64URL = toBase64URLString(credential.id);
 
+    // Validate Origin before using rpID as part of the credential routing namespace.
+    const originHeader = c.req.header('origin');
+    const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
+    if (!originHeader || !isAllowedPasskeyRequestOrigin(c, originHeader, allowedOrigins)) {
+      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+    }
+    const originUrl = new URL(originHeader);
+    const rpID = originUrl.hostname;
+    const origin = originHeader;
+
     // Look up passkey via Repository
     const tenantId = getTenantIdFromContext(c);
-    const authCtx = createAuthContextFromHono(c, tenantId);
+    let accountRoute;
+    try {
+      accountRoute = await resolveTenantD1PasskeyAccountRoute(c, {
+        credentialId: credentialIDBase64URL,
+        rpId: rpID,
+      });
+    } catch {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+    }
+    const accountScoped = usesTenantD1AccountStorage(c) && Boolean(accountRoute);
+    const authCtx = accountScoped
+      ? createAccountAuthContextFromHono(c, tenantId)
+      : createAuthContextFromHono(c, tenantId);
 
     let passkey = await authCtx.repositories.passkey.findByCredentialId(credentialIDBase64URL);
 
@@ -753,20 +887,16 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       // Security: Generic message to prevent passkey enumeration
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
-
-    // Validate Origin header against allowlist
-    const originHeader = c.req.header('origin');
-    const allowedOrigins = await getAllowedOriginsFromKV(c.env, getTenantIdFromContext(c));
-
-    // Reject unauthorized origins
-    if (!originHeader || !isAllowedPasskeyRequestOrigin(c, originHeader, allowedOrigins)) {
-      return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+    if (
+      (accountRoute && accountRoute.legacyUserId !== passkey.user_id) ||
+      (accountRoute &&
+        !matchesPasskeyUserHandle(credential.response.userHandle, passkey.user_id)) ||
+      (!accountRoute &&
+        credential.response.userHandle !== undefined &&
+        !matchesPasskeyUserHandle(credential.response.userHandle, passkey.user_id))
+    ) {
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
-
-    // Use validated origin for RP ID and origin
-    const originUrl = new URL(originHeader);
-    const rpID = originUrl.hostname;
-    const origin = originHeader;
 
     // Convert stored public key from base64 to Uint8Array
     const normalizedCredentialId = normalizeStoredCredentialId(passkey.credential_id as string);
@@ -838,40 +968,75 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
 
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-    const runtimeUser = await runtimeUsers.findById(passkey.user_id);
-    if (!runtimeUser || runtimeUser.active !== 1) {
-      publishEvent(c, {
-        type: AUTH_EVENTS.PASSKEY_FAILED,
-        tenantId,
-        data: {
-          userId: passkey.user_id,
-          method: 'passkey',
-          clientId: 'passkey-auth',
-          errorCode: 'user_inactive',
-        } satisfies AuthEventData,
-      }).catch((err) => {
-        log.error('Failed to publish auth.passkey.failed event', {
-          action: 'event_publish',
-          errorType: err instanceof Error ? err.name : 'Unknown',
-        });
-      });
-
+    const proofVerifiedAtMs = Date.now();
+    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId, { accountScoped });
+    const [accountAuthenticationRecord, responseUser] = await Promise.all([
+      runtimeUsers.findAccountAuthenticationState(passkey.user_id),
+      runtimeUsers.findAuthenticationResponseUser(passkey.user_id),
+    ]);
+    if (!accountAuthenticationRecord) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
-
-    const now = Date.now();
+    const authTime = Math.floor(proofVerifiedAtMs / 1000);
+    try {
+      await timeAuthRequestDiagnosticOperation(c, 'auth_passkey_counter_advance', () =>
+        advancePasskeyAuthenticationState(
+          c.env,
+          {
+            tenantId,
+            userId: passkey.user_id,
+            credentialId: passkey.id,
+            storedCounter: passkey.counter,
+            observedCounter: authenticationInfo.newCounter,
+            observedAtMs: proofVerifiedAtMs,
+          },
+          () => Promise.resolve(accountAuthenticationRecord)
+        )
+      );
+    } catch (error) {
+      if (!isAccountAuthenticationDeniedError(error)) {
+        return c.json(
+          {
+            error: 'temporarily_unavailable',
+            error_description: 'Authentication state unavailable.',
+          },
+          503,
+          { 'Retry-After': '1' }
+        );
+      }
+      c.executionCtx.waitUntil(
+        publishEvent(c, {
+          type: AUTH_EVENTS.PASSKEY_FAILED,
+          tenantId,
+          data: {
+            userId: passkey.user_id,
+            method: 'passkey',
+            clientId: 'passkey-auth',
+            errorCode:
+              error instanceof Error && error.message === 'passkey_counter_replay'
+                ? 'counter_replay'
+                : 'user_inactive',
+          } satisfies AuthEventData,
+        }).catch((eventError: unknown) => {
+          log.error('Failed to publish auth.passkey.failed event', {
+            action: 'event_publish',
+            errorType: eventError instanceof Error ? eventError.name : 'Unknown',
+          });
+        })
+      );
+      return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
+    }
     const referer = c.req.header('Referer') || '';
     const isAdminContext = referer.includes('/admin');
-    const isAdminSessionContext = isAdminContext && runtimeUser.account_type === 'admin';
+    const isAdminSessionContext =
+      isAdminContext && accountAuthenticationRecord.accountType === 'admin';
     const sessionTtl = await resolveSessionTtl(
       c.env,
       tenantId,
       isAdminSessionContext ? 'admin_passkey' : 'passkey'
     );
 
-    // Step 1: Create session using SessionStore Durable Object (FIRST, sharded) via RPC
-    // This ensures that if session creation fails, we don't update the database
+    // Create a session only after the user-scoped DO accepted the WebAuthn counter.
     const { stub: sessionStore, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
 
     let sessionData: { id: string };
@@ -881,8 +1046,10 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         passkey.user_id as string,
         sessionTtl.seconds,
         {
+          ...getSessionClientMetadata(c.req.raw),
           amr: ['passkey'],
           acr: 'urn:mace:incommon:iap:bronze',
+          authTime,
         },
         tenantId
       )) as Session;
@@ -896,21 +1063,27 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       return createErrorResponse(c, AR_ERROR_CODES.SESSION_STORE_ERROR);
     }
 
-    // Step 2: Update counter and last_used_at via Repository
-    await authCtx.repositories.passkey.updateCounterAfterAuth(
-      passkey.id,
-      authenticationInfo.newCounter
+    c.executionCtx.waitUntil(
+      Promise.all([
+        authCtx.repositories.passkey.mirrorCounterAfterAuth(
+          passkey.id,
+          authenticationInfo.newCounter
+        ),
+        runtimeUsers.touchLastLogin(passkey.user_id),
+      ]).catch((error: unknown) => {
+        log.error('Failed to mirror Passkey authentication state', {
+          action: 'passkey_state_mirror',
+          errorType: error instanceof Error ? error.name : 'Unknown',
+        });
+      })
     );
-
-    // Step 3: Update user's last_login_at in canonical runtime metadata.
-    await runtimeUsers.touchLastLogin(passkey.user_id);
 
     // Admin/EndUser Separation: Create session in admin_sessions table for admin users
     // This is required because admin-auth middleware reads from admin_sessions (DB_ADMIN)
-    if (runtimeUser?.account_type === 'admin' && c.env.DB_ADMIN) {
+    if (accountAuthenticationRecord.accountType === 'admin' && c.env.DB_ADMIN) {
       try {
         const adminAdapter = requireDedicatedAdminDatabaseAdapter(c.env, 'passkey-admin');
-        const adminSessionRepo = new AdminSessionRepository(adminAdapter);
+        const adminSessionRepo = new AdminSessionRepository(adminAdapter, tenantId);
 
         // Get client IP from Cloudflare header
         const clientIp =
@@ -923,7 +1096,7 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           admin_user_id: passkey.user_id,
           ip_address: clientIp || undefined,
           user_agent: userAgent || undefined,
-          expires_at: now + sessionTtl.milliseconds,
+          expires_at: Date.now() + sessionTtl.milliseconds,
           mfa_verified: true, // Passkey is MFA
         });
 
@@ -1037,16 +1210,18 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       sessionId: sessionData.id,
       userId: passkey.user_id,
       user: {
-        id: runtimeUser!.id,
-        email: runtimeUser!.email,
-        name: runtimeUser!.name,
-        email_verified: runtimeUser!.email_verified,
-        created_at: runtimeUser!.created_at,
-        updated_at: runtimeUser!.updated_at,
-        last_login_at: runtimeUser!.last_login_at,
+        id: responseUser.id,
+        email: responseUser.email,
+        name: responseUser.name,
+        email_verified: responseUser.emailVerified,
+        created_at: responseUser.createdAt,
+        updated_at: responseUser.updatedAt,
+        last_login_at: responseUser.lastLoginAt,
       },
     });
   } catch (error) {
+    const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, error);
+    if (writeFenceResponse) return writeFenceResponse;
     // PII Protection: Don't log full error (may contain credential data)
     log.error('Passkey login verify error', {
       action: 'login_verify_final',

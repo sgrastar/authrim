@@ -821,7 +821,8 @@
 				ja: 'この同意文をどの対象に紐付けるかの初期指定です。',
 				en: 'Initial binding target for this consent statement.'
 			},
-			bindingType: { ja: '対象種別', en: 'Target type' }
+			bindingType: { ja: '対象種別', en: 'Target type' },
+			bindingSubject: { ja: '本人', en: 'Subject' }
 		};
 		return ja ? labels[key]?.ja || key : labels[key]?.en || key;
 	}
@@ -1017,7 +1018,7 @@
 						<div class="form-group">
 							<label for="binding-type">{localText('bindingType')}</label>
 							<select id="binding-type" class="input" bind:value={bindingDraft.binding_type}>
-								<option value="subject">本人 / Subject</option>
+								<option value="subject">{localText('bindingSubject')}</option>
 								<option value="identity_schema">Identity Schema</option>
 								<option value="destination_field_mapping_set">
 									Destination Field Mapping Sets

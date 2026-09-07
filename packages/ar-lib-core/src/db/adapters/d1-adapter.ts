@@ -4,13 +4,14 @@
  * Implementation of DatabaseAdapter for Cloudflare D1.
  * Provides:
  * - Type-safe query methods
- * - Transaction support via batch API
+ * - Explicit atomic batches and non-atomic callback compatibility
  * - Retry logic with exponential backoff
  * - Health check functionality
  *
  * D1 Characteristics:
  * - Serverless SQLite database
- * - Batch API provides transaction-like semantics (all-or-nothing)
+ * - Batch API provides all-or-nothing semantics
+ * - Callback transactions execute immediately and cannot roll back
  * - No persistent connections (stateless)
  */
 
@@ -22,7 +23,7 @@ import type {
   HealthStatus,
   QueryOptions,
 } from '../adapter';
-import { retryD1Operation, type RetryConfig } from '../../utils/d1-retry';
+import { isTransientD1Error, retryD1Operation, type RetryConfig } from '../../utils/d1-retry';
 import { createLogger } from '../../utils/logger';
 
 const log = createLogger().module('D1');
@@ -34,6 +35,13 @@ interface D1Database {
   prepare(query: string): D1PreparedStatement;
   batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
   exec(query: string): Promise<D1ExecResult>;
+  withSession?(constraintOrBookmark?: string): D1DatabaseSession;
+}
+
+interface D1DatabaseSession {
+  prepare(query: string): D1PreparedStatement;
+  batch<T = unknown>(statements: D1PreparedStatement[]): Promise<D1Result<T>[]>;
+  getBookmark(): string | null;
 }
 
 interface D1PreparedStatement {
@@ -76,6 +84,23 @@ export interface D1AdapterConfig {
   retryConfig?: RetryConfig;
   /** Enable debug logging */
   debug?: boolean;
+  /** Maximum concurrent operations within this adapter/request context. */
+  maxConcurrentOperations?: number;
+  /** Maximum queued operations within this adapter instance (request-scoped in Worker paths). */
+  maxQueuedOperations?: number;
+  /** Maximum time to wait for local admission. */
+  admissionWaitMs?: number;
+}
+
+interface D1AdmissionWaiter {
+  resolve: (release: () => void) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+interface D1AdmissionState {
+  active: number;
+  waiters: D1AdmissionWaiter[];
 }
 
 /**
@@ -86,12 +111,78 @@ export class D1Adapter implements DatabaseAdapter {
   private readonly partition: string;
   private readonly retryConfig: RetryConfig;
   private readonly debug: boolean;
+  private readonly maxConcurrentOperations: number;
+  private readonly maxQueuedOperations: number;
+  private readonly admissionWaitMs: number;
+  // Deliberately adapter-local. Sharing pending promises across Worker requests causes
+  // cross-request I/O violations; callers create adapters inside one request/actor context.
+  private readonly admissionState: D1AdmissionState = { active: 0, waiters: [] };
 
   constructor(config: D1AdapterConfig) {
     this.db = config.db;
     this.partition = config.partition ?? 'default';
-    this.retryConfig = config.retryConfig ?? {};
+    this.retryConfig = {
+      maxRetries: 1,
+      initialDelayMs: 40,
+      maxDelayMs: 250,
+      backoffMultiplier: 2,
+      jitterRatio: 0.35,
+      maxElapsedMs: 1200,
+      shouldRetry: isTransientD1Error,
+      throwOnExhausted: true,
+      ...(config.retryConfig ?? {}),
+    };
     this.debug = config.debug ?? false;
+    this.maxConcurrentOperations = Math.max(1, config.maxConcurrentOperations ?? 8);
+    this.maxQueuedOperations = Math.max(0, config.maxQueuedOperations ?? 64);
+    this.admissionWaitMs = Math.max(1, config.admissionWaitMs ?? 500);
+  }
+
+  private async withAdmission<T>(operation: () => Promise<T>): Promise<T> {
+    const release = await this.acquireAdmission();
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  private acquireAdmission(): Promise<() => void> {
+    const state = this.admissionState;
+    if (state.active < this.maxConcurrentOperations) {
+      state.active += 1;
+      return Promise.resolve(this.releaseAdmission(state));
+    }
+    if (state.waiters.length >= this.maxQueuedOperations) {
+      return Promise.reject(new Error('d1_admission_queue_full'));
+    }
+    return new Promise((resolve, reject) => {
+      const waiter: D1AdmissionWaiter = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          const index = state.waiters.indexOf(waiter);
+          if (index >= 0) state.waiters.splice(index, 1);
+          reject(new Error('d1_admission_queue_timeout'));
+        }, this.admissionWaitMs),
+      };
+      state.waiters.push(waiter);
+    });
+  }
+
+  private releaseAdmission(state: D1AdmissionState): () => void {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const waiter = state.waiters.shift();
+      if (waiter) {
+        clearTimeout(waiter.timer);
+        waiter.resolve(this.releaseAdmission(state));
+        return;
+      }
+      state.active = Math.max(0, state.active - 1);
+    };
   }
 
   /**
@@ -99,12 +190,14 @@ export class D1Adapter implements DatabaseAdapter {
    */
   async query<T>(sql: string, params?: unknown[], options?: QueryOptions): Promise<T[]> {
     const startTime = Date.now();
+    const sessionConstraint = this.readSessionConstraint(options);
 
     try {
       const result = await retryD1Operation(
         async () => {
-          const stmt = params ? this.db.prepare(sql).bind(...params) : this.db.prepare(sql);
-          return stmt.all<T>();
+          const session = this.readSession(sessionConstraint);
+          const stmt = params ? session.prepare(sql).bind(...params) : session.prepare(sql);
+          return this.withAdmission(() => stmt.all<T>());
         },
         `D1Adapter.query[${this.partition}]`,
         this.retryConfig
@@ -147,26 +240,36 @@ export class D1Adapter implements DatabaseAdapter {
    */
   async queryOne<T>(sql: string, params?: unknown[], options?: QueryOptions): Promise<T | null> {
     const startTime = Date.now();
+    const sessionConstraint = this.readSessionConstraint(options);
 
     try {
       const result = await retryD1Operation(
         async () => {
-          const stmt = params ? this.db.prepare(sql).bind(...params) : this.db.prepare(sql);
-          return stmt.first<T>();
+          const session = this.readSession(sessionConstraint);
+          const stmt = params ? session.prepare(sql).bind(...params) : session.prepare(sql);
+          return { value: await this.withAdmission(() => stmt.first<T>()) };
         },
         `D1Adapter.queryOne[${this.partition}]`,
         this.retryConfig
       );
 
+      if (!result) {
+        log.error('D1Adapter.queryOne failed after retries exhausted', {
+          partition: this.partition,
+          sql: this.truncateSql(sql),
+        });
+        throw new Error('D1Adapter.queryOne failed after retries exhausted');
+      }
+
       if (this.debug) {
         log.debug('D1Adapter.queryOne completed', {
           partition: this.partition,
           durationMs: Date.now() - startTime,
-          found: result !== null,
+          found: result.value !== null,
         });
       }
 
-      return result;
+      return result.value;
     } catch (error) {
       log.error(
         'D1Adapter.queryOne error',
@@ -190,7 +293,7 @@ export class D1Adapter implements DatabaseAdapter {
       const result = await retryD1Operation(
         async () => {
           const stmt = params ? this.db.prepare(sql).bind(...params) : this.db.prepare(sql);
-          return stmt.run();
+          return this.withAdmission(() => stmt.run());
         },
         `D1Adapter.execute[${this.partition}]`,
         this.retryConfig
@@ -308,7 +411,7 @@ export class D1Adapter implements DatabaseAdapter {
       );
 
       const results = await retryD1Operation(
-        async () => this.db.batch(preparedStatements),
+        async () => this.withAdmission(() => this.db.batch(preparedStatements)),
         `D1Adapter.batch[${this.partition}]`,
         this.retryConfig
       );
@@ -359,7 +462,7 @@ export class D1Adapter implements DatabaseAdapter {
 
     try {
       // Simple health check query
-      const result = await this.db.prepare('SELECT 1').first();
+      const result = await this.readSession('first-primary').prepare('SELECT 1').first();
       const latencyMs = Date.now() - startTime;
 
       return {
@@ -391,6 +494,31 @@ export class D1Adapter implements DatabaseAdapter {
    */
   async close(): Promise<void> {
     // D1 is stateless, no connection to close
+  }
+
+  private readSessionConstraint(options?: QueryOptions): string {
+    const consistencyClass =
+      options?.consistencyClass ??
+      (options?.useReadReplica === true ? 'replica_eligible' : 'primary_required');
+    const bookmark = options?.bookmark?.trim() || null;
+    if (consistencyClass === 'read_after_write') {
+      if (!bookmark) throw new Error('d1_read_after_write_bookmark_required');
+      if (typeof this.db.withSession !== 'function') throw new Error('d1_sessions_api_required');
+      return bookmark;
+    }
+    if (bookmark) throw new Error(`d1_bookmark_not_allowed_for:${consistencyClass}`);
+    const constraint =
+      consistencyClass === 'replica_eligible' ? 'first-unconstrained' : 'first-primary';
+    if (constraint !== 'first-primary' && typeof this.db.withSession !== 'function') {
+      throw new Error('d1_sessions_api_required');
+    }
+    return constraint;
+  }
+
+  private readSession(constraint: string): D1DatabaseSession {
+    if (typeof this.db.withSession === 'function') return this.db.withSession(constraint);
+    if (constraint !== 'first-primary') throw new Error('d1_sessions_api_required');
+    return this.db as unknown as D1DatabaseSession;
   }
 
   /**

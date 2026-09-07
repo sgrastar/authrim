@@ -2,7 +2,7 @@ import type { RuntimeProfileRecord } from '$lib/api/admin-runtime-profiles';
 
 export type EditableAuditSinkType = 'http' | 'logpush';
 export type EditableAuditFailureMode = 'archiveFailureMode' | 'sinkFailureMode';
-export type EditableAuditPrimaryType = 'archive-only' | 'd1' | 'postgres' | 'mysql';
+export type EditableAuditPrimaryType = 'archive-only' | 'd1';
 export type EditableAuditRetentionField =
 	| 'eventLogRetentionDays'
 	| 'piiLogRetentionDays'
@@ -108,16 +108,9 @@ function createAuditSinkTemplate(sinkType: EditableAuditSinkType): AuditTargetDr
 function createAuditPrimaryTarget(
 	type: Exclude<EditableAuditPrimaryType, 'archive-only'>
 ): AuditTargetDraft {
-	if (type === 'd1') {
-		return {
-			type: 'd1',
-			bindingRef: 'DB'
-		};
-	}
-
 	return {
 		type,
-		connectionRef: type === 'postgres' ? 'AUDIT_HYPERDRIVE_POSTGRES' : 'AUDIT_HYPERDRIVE_MYSQL'
+		bindingRef: 'DB'
 	};
 }
 
@@ -134,7 +127,7 @@ export function createEmptyAuditProfileDraftJson(): string {
 		primary: null,
 		archive: {
 			type: 'r2',
-			bucketRef: 'DIAGNOSTIC_LOGS',
+			bucketRef: 'AUDIT_ARCHIVE',
 			prefix: 'audit/'
 		},
 		sinks: [
@@ -190,7 +183,7 @@ export function ensureAuditArchiveTemplate(json: string): string {
 	return updateAuditProfileJson(json, (raw) => {
 		raw.archive = {
 			type: 'r2',
-			bucketRef: 'DIAGNOSTIC_LOGS',
+			bucketRef: 'AUDIT_ARCHIVE',
 			prefix: 'audit/'
 		};
 	});
@@ -247,7 +240,7 @@ export function updateAuditArchiveField(
 function createR2ArchiveTemplate(): Record<string, unknown> {
 	return {
 		type: 'r2',
-		bucketRef: 'DIAGNOSTIC_LOGS',
+		bucketRef: 'AUDIT_ARCHIVE',
 		prefix: 'audit/'
 	};
 }

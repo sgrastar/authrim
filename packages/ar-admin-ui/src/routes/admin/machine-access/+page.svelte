@@ -133,7 +133,7 @@
 
 	function parseLines(value: string): string[] {
 		return value
-			.split(/\r?\n|,/)
+			.split(/[\s,]+/)
 			.map((entry) => entry.trim())
 			.filter(Boolean);
 	}

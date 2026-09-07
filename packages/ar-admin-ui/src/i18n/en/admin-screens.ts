@@ -1,8 +1,7 @@
 const adminScreens = {
 	admin_screens_page_title: 'Screens - Authrim Admin',
 	admin_screens_title: 'Screens',
-	admin_screens_description:
-		'Manage reusable screens used by Flow nodes for registration, profile completion, and login.',
+	admin_screens_description: 'Manage reusable screens used by login flows and the account page.',
 	admin_screens_loading: 'Loading screens...',
 	admin_screens_load_failed: 'Failed to load screens.',
 	admin_screens_save_failed: 'Failed to save screen.',
@@ -29,16 +28,10 @@ const adminScreens = {
 	admin_screens_active: 'Active',
 	admin_screens_system: 'System',
 	admin_screens_fields: 'Fields',
-	admin_screens_field_name: 'Identity Schema field',
-	admin_screens_field_label: 'Label',
 	admin_screens_field_required: 'Required on this screen',
-	admin_screens_add_field: 'Add field',
 	admin_screens_remove_field: 'Remove',
 	admin_screens_no_fields: 'This screen does not have any fields.',
 	admin_screens_required_mark: 'Required',
-	admin_screens_preview_checkbox_text: 'I have reviewed the entered information',
-	admin_screens_preview_footer_text:
-		'In the actual flow, this screen is shown according to the Flow configuration.',
 	admin_screens_external_idp_action_text_label: 'Add sign-in text',
 	admin_screens_save: 'Save',
 	admin_screens_saving: 'Saving...',

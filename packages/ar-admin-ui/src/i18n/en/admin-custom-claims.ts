@@ -5,7 +5,7 @@ const adminCustomClaims = {
 	admin_custom_claims_schema_fallback: 'Schema',
 	admin_custom_claims_title: 'Schema Settings',
 	admin_custom_claims_description:
-		'Define and manage claim fields for users. Control field types, validation rules, and how claims map to OIDC tokens.',
+		'Define stored user fields, value types, cardinality, and validation rules. Configure protocol release separately in Schema Mapping and Destination Profiles.',
 	admin_custom_claims_add_from_preset: 'Add from Preset',
 	admin_custom_claims_add_schema: 'Add Schema',
 	admin_custom_claims_retry: 'Retry',
@@ -38,9 +38,6 @@ const adminCustomClaims = {
 	admin_custom_claims_operation_errors_title: 'Operation Errors Detected',
 	admin_custom_claims_operation_errors_description:
 		'{count:number} schema(s) have failed operations that require attention. Filter by "Error" status to review and retry.',
-	admin_custom_claims_system_note_title: 'System schema fields',
-	admin_custom_claims_system_note_description:
-		'Standard OIDC fields such as email, name, phone, and address are available as presets. Apply only the groups this tenant needs; custom fields remain manually managed.',
 	admin_custom_claims_search_placeholder: 'Search field key, label, description...',
 	admin_custom_claims_all_types: 'All Types',
 	admin_custom_claims_all_pii: 'All (PII/Non-PII)',
@@ -53,7 +50,6 @@ const adminCustomClaims = {
 	admin_custom_claims_label: 'Label',
 	admin_custom_claims_display_label: 'Display Label',
 	admin_custom_claims_type: 'Type',
-	admin_custom_claims_token: 'Token',
 	admin_custom_claims_required: 'Required',
 	admin_custom_claims_status: 'Status',
 	admin_custom_claims_required_badge: 'Required',
@@ -74,6 +70,14 @@ const adminCustomClaims = {
 	admin_custom_claims_field_key_required: 'Field Key *',
 	admin_custom_claims_display_label_required: 'Display Label *',
 	admin_custom_claims_field_type: 'Field Type',
+	admin_custom_claims_cardinality: 'Cardinality',
+	admin_custom_claims_cardinality_single: 'Single value',
+	admin_custom_claims_cardinality_multi: 'Multiple values',
+	admin_custom_claims_cardinality_hint:
+		'Multiple values are stored as a validated JSON array and mapped as an array.',
+	admin_custom_claims_release_mapping_title: 'Attribute Release',
+	admin_custom_claims_release_mapping_hint:
+		'This schema defines stored data only. Schema Mapping and the active Destination Profile decide the output name, scope requirements, and whether it is released to ID Token, UserInfo, or Introspection.',
 	admin_custom_claims_field_key_placeholder: 'e.g. employee_id',
 	admin_custom_claims_display_label_placeholder: 'e.g. Employee ID',
 	admin_custom_claims_field_key_hint:
@@ -90,20 +94,6 @@ const adminCustomClaims = {
 	admin_custom_claims_validation_placeholder: 'e.g. min_length / max_length JSON object',
 	admin_custom_claims_validation_hint:
 		'String: min_length, max_length, pattern. Number: min, max. Enum: enum_values (array). Date: min_date, max_date (ISO 8601).',
-	admin_custom_claims_token_integration: 'Token / Endpoint Integration',
-	admin_custom_claims_introspection_disabled:
-		'Custom claim embedding in Introspection responses is currently disabled.',
-	admin_custom_claims_introspection_disabled_use_userinfo:
-		'Custom claim embedding in Introspection responses is currently disabled. Please use the UserInfo endpoint instead.',
-	admin_custom_claims_required_scopes: 'Required Scopes (comma-separated)',
-	admin_custom_claims_required_scopes_placeholder: 'e.g. profile, employee',
-	admin_custom_claims_required_scopes_hint:
-		'Leave empty to always include when token flags are set.',
-	admin_custom_claims_scope_mode: 'Scope Mode',
-	admin_custom_claims_scope_mode_any: 'Any (one scope suffices)',
-	admin_custom_claims_scope_mode_all: 'All (all scopes required)',
-	admin_custom_claims_claim_namespace: 'Claim Namespace (optional)',
-	admin_custom_claims_claim_namespace_placeholder: 'e.g. https://example.com/claims/',
 	admin_custom_claims_delete_title: 'Delete Custom Claim Schema',
 	admin_custom_claims_warning_label: 'Warning:',
 	admin_custom_claims_delete_warning:
@@ -127,9 +117,9 @@ const adminCustomClaims = {
 	admin_custom_claims_rename_step_delete: 'Delete the old schema',
 	admin_custom_claims_direct_rename_warning_label: 'Direct rename warning:',
 	admin_custom_claims_direct_rename_warning:
-		'Renaming changes the claim name in API responses and tokens. This may break integrations with Relying Parties (RP) that expect the old claim name.',
+		'Renaming changes the canonical source key. Existing Schema Mappings that reference the old key must be updated.',
 	admin_custom_claims_rename_warning:
-		'Renaming changes the claim name in API responses and tokens. This may break integrations with Relying Parties (RP) expecting the old claim name.',
+		'Renaming changes the canonical source key. Existing Schema Mappings that reference the old key must be updated.',
 	admin_custom_claims_current_field_key: 'Current Field Key',
 	admin_custom_claims_current_key: 'Current key',
 	admin_custom_claims_new_field_key: 'New Field Key',
@@ -146,9 +136,6 @@ const adminCustomClaims = {
 	admin_custom_claims_non_pii_storage_badge: 'Non-PII - stored in core database',
 	admin_custom_claims_cannot_change_after_creation: 'Cannot be changed after creation.',
 	admin_custom_claims_display_order: 'Display Order',
-	admin_custom_claims_token_endpoint_inclusion: 'Token & Endpoint Inclusion',
-	admin_custom_claims_token_endpoint_description:
-		'Controls which tokens and endpoints include this claim by default.',
 	admin_custom_claims_advanced: 'Advanced',
 	admin_custom_claims_searchable: 'Searchable',
 	admin_custom_claims_exportable: 'Exportable',
@@ -163,7 +150,7 @@ const adminCustomClaims = {
 		'Enable "Show on signup form" to edit required, order, and placeholder settings.',
 	admin_custom_claims_danger_zone: 'Danger Zone',
 	admin_custom_claims_rename_description:
-		'Changes the claim name in API responses and tokens. May break RP integrations.',
+		'Changes the canonical source key and may break existing Schema Mappings.',
 	admin_custom_claims_rename: 'Rename',
 	admin_custom_claims_system_rename_disabled: 'System claims cannot be renamed',
 	admin_custom_claims_delete_schema: 'Delete Schema',
@@ -194,6 +181,7 @@ const adminCustomClaims = {
 	admin_custom_claims_field_type_enum: 'Enum',
 	admin_custom_claims_status_renaming: 'Renaming...',
 	admin_custom_claims_status_deleting: 'Deleting...',
+	admin_custom_claims_status_reconfiguring: 'Reconfiguring...',
 	admin_custom_claims_status_error: 'Error'
 } as const;
 

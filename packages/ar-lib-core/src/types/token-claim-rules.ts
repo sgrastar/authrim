@@ -170,6 +170,11 @@ export const RESERVED_CLAIMS = [
   'acr',
   'amr',
   'azp',
+  'scope',
+  'client_id',
+  'cnf',
+  'sid',
+  'token_use',
 ] as const;
 
 export type ReservedClaim = (typeof RESERVED_CLAIMS)[number];

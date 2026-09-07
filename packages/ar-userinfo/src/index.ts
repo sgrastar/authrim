@@ -11,10 +11,12 @@ import {
   // Health Check
   createHealthCheckHandlers,
   getLogger,
+  createTenantPlacementWriteFenceResponse,
 } from '@authrim/ar-lib-core';
 
 // Import handlers
 import { userinfoHandler } from './userinfo';
+import { fapiResourceHandler } from './fapi-resource';
 import { createProtectedCustomerProfileRouter } from './protected-customer-profile';
 
 // Create Hono app with Cloudflare Workers types
@@ -114,6 +116,7 @@ app.get('/health/ready', healthHandlers.readiness);
 // UserInfo endpoint
 app.get('/userinfo', userinfoHandler);
 app.post('/userinfo', userinfoHandler);
+app.get('/api/protected/fapi-resource', fapiResourceHandler);
 app.route('/api/protected/customer-profiles', createProtectedCustomerProfileRouter());
 
 // 404 handler
@@ -123,6 +126,8 @@ app.notFound((c) => {
 
 // Error handler
 app.onError((err, c) => {
+  const writeFenceResponse = createTenantPlacementWriteFenceResponse(c, err);
+  if (writeFenceResponse) return writeFenceResponse;
   const log = getLogger(c).module('USERINFO');
   log.error('Unhandled error in UserInfo service', { error: err.message }, err as Error);
   return c.json({ error: 'server_error', error_description: 'An unexpected error occurred' }, 500);
@@ -130,3 +135,4 @@ app.onError((err, c) => {
 
 // Export for Cloudflare Workers
 export default app;
+export { RuntimeSmokeEntrypoint } from '@authrim/ar-lib-core';

@@ -16,7 +16,10 @@ import {
   ADMIN_PERMISSIONS,
   getTenantIdFromContext,
   createAuthContextFromHono,
+  createAccountAuthContextFromHono,
   createPIIContextFromHono,
+  resolveAccountDataContextFromHono,
+  getAccountDataContextFromHono,
   hasPIIDatabase,
   D1Adapter,
   type DatabaseAdapter,
@@ -121,10 +124,14 @@ function createAdaptersFromContext(c: Context<{ Bindings: Env }>): {
   piiAdapter: DatabaseAdapter | null;
 } {
   const tenantId = getTenantIdFromContext(c);
-  const coreAdapter = createAuthContextFromHono(c, tenantId).coreAdapter;
-  const piiAdapter = hasPIIDatabase(c)
-    ? createPIIContextFromHono(c, tenantId).defaultPiiAdapter
-    : null;
+  const accountData = getAccountDataContextFromHono(c);
+  const coreAdapter = accountData
+    ? createAccountAuthContextFromHono(c, tenantId).coreAdapter
+    : createAuthContextFromHono(c, tenantId).coreAdapter;
+  const piiAdapter =
+    accountData || hasPIIDatabase(c)
+      ? createPIIContextFromHono(c, tenantId).defaultPiiAdapter
+      : null;
   return { coreAdapter, piiAdapter };
 }
 
@@ -1068,9 +1075,10 @@ export async function adminRoleGetHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
+    await resolveAccountDataContextFromHono(c, userId);
+    const { coreAdapter, piiAdapter } = createAdaptersFromContext(c);
 
     if (!(await runtimeUserExists(coreAdapter, piiAdapter, tenantId, userId))) {
       return c.json(
@@ -1135,11 +1143,12 @@ export async function adminUserRolesListHandler(c: Context<{ Bindings: Env }>) {
  */
 export async function adminUserRoleAssignHandler(c: AdminContext) {
   try {
+    const tenantId = getTenantIdFromContext(c as unknown as Context<{ Bindings: Env }>);
+    const userId = c.req.param('id')!;
+    await resolveAccountDataContextFromHono(c as unknown as Context<{ Bindings: Env }>, userId);
     const { coreAdapter, piiAdapter } = createAdaptersFromContext(
       c as unknown as Context<{ Bindings: Env }>
     );
-    const tenantId = getTenantIdFromContext(c as unknown as Context<{ Bindings: Env }>);
-    const userId = c.req.param('id')!;
     const adminAuth = getAdminAuth(c);
     const body = await c.req.json<{
       role_id?: string;
@@ -1309,10 +1318,11 @@ export async function adminUserRoleAssignHandler(c: AdminContext) {
  */
 export async function adminUserRoleRemoveHandler(c: Context<{ Bindings: Env }>) {
   try {
-    const { coreAdapter } = createAdaptersFromContext(c);
     const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('id')!;
     const assignmentId = c.req.param('assignmentId')!;
+    await resolveAccountDataContextFromHono(c, userId);
+    const { coreAdapter } = createAdaptersFromContext(c);
     const adminAuth = getAdminAuthFromContext(c);
 
     if (adminAuth?.userId === userId) {

@@ -56,6 +56,19 @@ describe('adminIdentityMappingAPI', () => {
 		)?.[1];
 	}
 
+	it('unwraps the federation trust source delete response', async () => {
+		fetchMock.mockResolvedValueOnce(
+			new Response(JSON.stringify({ result: { success: true } }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+
+		await expect(adminIdentityMappingAPI.deleteFederationTrustSource('source-1')).resolves.toEqual({
+			success: true
+		});
+	});
+
 	it('loads field mapping control-plane collections from admin endpoints', async () => {
 		await adminIdentityMappingAPI.listFieldMappingSets();
 		await adminIdentityMappingAPI.listCatalogs();
@@ -241,6 +254,23 @@ describe('adminIdentityMappingAPI', () => {
 		);
 
 		expect(response.result.id).toBe('snapshot_1');
+	});
+
+	it('sends the observed revision when updating a federation trust source', async () => {
+		await adminIdentityMappingAPI.updateFederationTrustSource('source/1', {
+			expectedUpdatedAt: 1_788_249_600_000,
+			sourceType: 'saml_aggregate',
+			sourceKey: 'research-federation',
+			displayName: 'Research Federation'
+		});
+
+		expect(requestPath(fetchMock.mock.calls[0]?.[0])).toBe(
+			'/api/admin/field-mapping/federation-trust-sources/source%2F1'
+		);
+		expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'PUT' });
+		expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({
+			expectedUpdatedAt: 1_788_249_600_000
+		});
 	});
 
 	it('surfaces API error descriptions', async () => {

@@ -5,8 +5,8 @@ import {
   type TenantDatabaseRole,
   type TenantDatabaseRegistryRepository,
 } from '../repositories/admin/tenant-database-registry';
-import type { StorageTarget } from '../types/runtime-profile';
 import { createTenantDatabaseRegistryRepository } from './tenant-database-registry-factory';
+import { isWithinTenantDatabaseProvisioningGracePeriod } from './tenant-database-reconciliation';
 import {
   loadTenantDatabaseRegistrySignatureKeysFromEnv,
   verifyTenantDatabaseRegistryRowSignature,
@@ -16,9 +16,12 @@ import {
   RUNTIME_REGISTRY_SNAPSHOT_VERSION,
   buildTenantRuntimeRegistryGenerationKey,
   buildTenantRuntimeRegistrySnapshotKey,
+  hasPhysicalCorePiiDatabaseSeparation,
   loadTenantRuntimeRegistryVerificationKeysFromEnv,
   verifyTenantRuntimeRegistrySnapshotSignature,
   type TenantRuntimeRegistrySnapshot,
+  type TenantRuntimeRegistryGenerationDocument,
+  type TenantRuntimeRegistryRouteStatus,
   type TenantRuntimeRegistryStoreSnapshot,
   type RuntimeRegistrySnapshotVerificationEnv,
 } from './tenant-runtime-registry-snapshot';
@@ -29,15 +32,21 @@ import {
 
 export type TenantDatabaseResolverErrorCode =
   | 'missing_snapshot'
+  | 'missing_generation'
+  | 'snapshot_generation_propagating'
   | 'expired_snapshot'
   | 'invalid_snapshot_signature'
+  | 'quarantined_route'
   | 'missing_active_pointer'
   | 'missing_registry_row'
   | 'invalid_registry_signature'
   | 'inactive_registry_row'
   | 'missing_binding'
   | 'schema_version_too_old'
-  | 'unsupported_storage_profile'
+  | 'invalid_route_contract'
+  | 'route_owner_mismatch'
+  | 'route_generation_mismatch'
+  | 'route_role_residency_mismatch'
   | 'tenant_assigned_to_other_deployment_target'
   | 'unsupported_provider';
 
@@ -66,6 +75,11 @@ export interface TenantRuntimeRegistryGenerationStore {
 export interface TenantDatabaseResolveOptions {
   tenantId: string;
   role: TenantDatabaseRole;
+  dataRole?: TenantRuntimeRegistryStoreSnapshot['dataRole'];
+  residencyPartition?: string;
+  shardId?: string;
+  bindingRef?: string;
+  requiredBindingRouteGeneration?: number;
   shardGroup?: string;
   shardIndex?: number;
   minimumSchemaVersion?: number;
@@ -73,7 +87,6 @@ export interface TenantDatabaseResolveOptions {
   requestCache?: TenantDatabaseRequestCache;
   memoryCacheTtlMs?: number;
   generationCacheTtlMs?: number;
-  runtimeSnapshotMode?: 'optional' | 'required';
 }
 
 export type TenantDatabaseRequestCache = Map<string, ResolvedTenantStore>;
@@ -93,6 +106,16 @@ export interface ResolvedTenantStore {
   bindingRef: string;
   deploymentTarget: string | null;
   healthStatus: 'active' | 'degraded' | 'degraded_pending_snapshot';
+  resolutionSource: 'runtime_registry' | 'control_registry';
+  dataRole: TenantRuntimeRegistryStoreSnapshot['dataRole'];
+  residencyPolicyId: string;
+  residencyPartition: string;
+  shardId: string;
+  assignmentGeneration: number;
+  bindingRouteGeneration: number;
+  placementPolicy: TenantRuntimeRegistrySnapshot['placement'];
+  allocationScope: TenantRuntimeRegistryStoreSnapshot['allocationScope'];
+  ownerTenantId: string | null;
   registryRow: TenantDatabaseRegistryRow;
 }
 
@@ -100,40 +123,57 @@ export type ResolvedTenantDatabaseSource = ResolvedTenantStore;
 
 type RuntimeSnapshotResolveResult =
   | { status: 'resolved'; resolved: ResolvedTenantStore }
-  | { status: 'missing' | 'expired' | 'invalid' };
+  | {
+      status: 'missing' | 'generation_mismatch' | 'expired' | 'invalid' | 'invalid_contract';
+    };
 
 export const DEFAULT_TENANT_DATABASE_RESOLVER_MEMORY_CACHE_TTL_MS = 60_000;
 export const DEFAULT_TENANT_RUNTIME_GENERATION_MEMORY_CACHE_TTL_MS = 1_000;
 
-const tenantDatabaseResolverMemoryCache = new Map<
-  string,
-  { value: ResolvedTenantStore; expiresAt: number }
+type CachedResolvedTenantStore = Omit<ResolvedTenantStore, 'source'>;
+
+let tenantDatabaseResolverMemoryCache = new WeakMap<
+  object,
+  Map<string, { value: CachedResolvedTenantStore; expiresAt: number }>
 >();
-const tenantRuntimeGenerationMemoryCache = new Map<
-  string,
-  { generation: number; expiresAt: number }
+let tenantRuntimeGenerationMemoryCache = new WeakMap<
+  object,
+  Map<string, { state: RuntimeGenerationState; expiresAt: number }>
 >();
 
-export function clearTenantDatabaseResolverMemoryCache(): void {
-  tenantDatabaseResolverMemoryCache.clear();
-  tenantRuntimeGenerationMemoryCache.clear();
+interface RuntimeGenerationState {
+  runtimeGeneration: number;
+  routeStatus: TenantRuntimeRegistryRouteStatus;
+  quarantineDenyGeneration: number;
 }
 
-export function mapStorageTargetToTenantDatabaseRole(
-  target: StorageTarget
-): TenantDatabaseRole | null {
-  switch (target.role) {
-    case 'tenant_core':
-      return 'tenant_core';
-    case 'tenant_pii':
-      return 'tenant_pii';
-    case 'tenant_audit':
-      return 'tenant_audit';
-    case 'tenant_custom':
-      return 'tenant_custom';
-    default:
-      return null;
+export function clearTenantDatabaseResolverMemoryCache(): void {
+  tenantDatabaseResolverMemoryCache = new WeakMap();
+  tenantRuntimeGenerationMemoryCache = new WeakMap();
+}
+
+function getTenantDatabaseMemoryCache(
+  env: TenantDatabaseResolverEnv
+): Map<string, { value: CachedResolvedTenantStore; expiresAt: number }> {
+  const cacheKey = env as object;
+  let cache = tenantDatabaseResolverMemoryCache.get(cacheKey);
+  if (!cache) {
+    cache = new Map();
+    tenantDatabaseResolverMemoryCache.set(cacheKey, cache);
   }
+  return cache;
+}
+
+function getRuntimeGenerationMemoryCache(
+  generationStore: TenantRuntimeRegistryGenerationStore
+): Map<string, { state: RuntimeGenerationState; expiresAt: number }> {
+  const cacheKey = generationStore as object;
+  let cache = tenantRuntimeGenerationMemoryCache.get(cacheKey);
+  if (!cache) {
+    cache = new Map();
+    tenantRuntimeGenerationMemoryCache.set(cacheKey, cache);
+  }
+  return cache;
 }
 
 function getDeploymentTarget(
@@ -156,9 +196,16 @@ async function reportTenantDatabaseResolverHealthFailure(
     schemaVersion?: number | null;
     minimumSchemaVersion?: number | null;
     deploymentTarget?: string | null;
+    createdAt?: string | null;
   }
 ): Promise<void> {
   if (!env.DB_ADMIN) return;
+  if (
+    input.code === 'missing_binding' &&
+    isWithinTenantDatabaseProvisioningGracePeriod(input.createdAt)
+  ) {
+    return;
+  }
   try {
     const adapter = ensureDatabaseAdapter(env.DB_ADMIN, 'tenant-database-resolver-health');
     const notificationRepo = new InternalNotificationEventRepository(adapter);
@@ -247,6 +294,7 @@ async function getBinding(
     shardGroup?: string | null;
     shardIndex?: number | null;
     deploymentTarget?: string | null;
+    createdAt?: string | null;
   }
 ): Promise<DatabaseSource> {
   const binding = (env as Record<string, unknown>)[bindingRef];
@@ -272,6 +320,11 @@ function buildRequestCacheKey(
   return [
     options.tenantId,
     options.role,
+    options.dataRole ?? '',
+    options.residencyPartition ?? '',
+    options.shardId ?? '',
+    options.bindingRef ?? '',
+    options.requiredBindingRouteGeneration ?? '',
     options.shardGroup ?? 'default',
     options.shardIndex ?? 0,
     options.minimumSchemaVersion ?? 1,
@@ -279,14 +332,86 @@ function buildRequestCacheKey(
   ].join(':');
 }
 
-function parseRuntimeGeneration(value: string | null): number | null {
+function isRuntimeRegistryRouteStatus(value: unknown): value is TenantRuntimeRegistryRouteStatus {
+  return (
+    value === 'active' ||
+    value === 'quarantining' ||
+    value === 'quarantined' ||
+    value === 'disabled'
+  );
+}
+
+function parseRuntimeGeneration(value: string | null): RuntimeGenerationState | null {
   if (!value) return null;
   try {
-    const parsed = JSON.parse(value) as { runtimeGeneration?: unknown };
-    return typeof parsed.runtimeGeneration === 'number' ? parsed.runtimeGeneration : null;
+    const parsed = JSON.parse(value) as Partial<TenantRuntimeRegistryGenerationDocument>;
+    if (
+      !Number.isSafeInteger(parsed.runtimeGeneration) ||
+      (parsed.runtimeGeneration as number) < 1
+    ) {
+      return null;
+    }
+    const routeStatus = parsed.routeStatus;
+    const quarantineDenyGeneration = parsed.quarantineDenyGeneration;
+    const publishedAt = Date.parse(String(parsed.publishedAt ?? ''));
+    const expiresAt = Date.parse(String(parsed.expiresAt ?? ''));
+    if (
+      !isRuntimeRegistryRouteStatus(routeStatus) ||
+      typeof quarantineDenyGeneration !== 'number' ||
+      !Number.isSafeInteger(quarantineDenyGeneration) ||
+      quarantineDenyGeneration < 0 ||
+      (routeStatus !== 'active' && quarantineDenyGeneration < 1) ||
+      !Number.isFinite(publishedAt) ||
+      !Number.isFinite(expiresAt) ||
+      publishedAt > expiresAt ||
+      expiresAt <= Date.now()
+    ) {
+      return null;
+    }
+    return {
+      runtimeGeneration: parsed.runtimeGeneration as number,
+      routeStatus,
+      quarantineDenyGeneration,
+    };
   } catch {
     return null;
   }
+}
+
+function createQuarantinedRouteError(
+  tenantId: string,
+  routeStatus: Exclude<TenantRuntimeRegistryRouteStatus, 'active'>,
+  quarantineDenyGeneration: number
+): TenantDatabaseResolverError {
+  return new TenantDatabaseResolverError(
+    'quarantined_route',
+    `Tenant database route is unavailable: ${routeStatus}`,
+    { tenantId, routeStatus, quarantineDenyGeneration }
+  );
+}
+
+async function assertRuntimeRouteAvailable(
+  env: TenantDatabaseResolverEnv,
+  cacheKey: string,
+  tenantId: string,
+  deploymentTarget: string | null,
+  generationCacheTtlMs: number
+): Promise<RuntimeGenerationState | null> {
+  if (!env.TENANT_RUNTIME_REGISTRY) return null;
+  const generationKey = buildTenantRuntimeRegistryGenerationKey(
+    tenantId,
+    deploymentTarget ?? 'default'
+  );
+  const state = await getRuntimeGeneration(
+    env.TENANT_RUNTIME_REGISTRY,
+    generationKey,
+    generationCacheTtlMs
+  );
+  if (state && state.routeStatus !== 'active') {
+    getTenantDatabaseMemoryCache(env).delete(cacheKey);
+    throw createQuarantinedRouteError(tenantId, state.routeStatus, state.quarantineDenyGeneration);
+  }
+  return state;
 }
 
 async function getMemoryCachedTenantDatabase(
@@ -296,10 +421,11 @@ async function getMemoryCachedTenantDatabase(
   deploymentTarget: string | null,
   generationCacheTtlMs: number
 ): Promise<ResolvedTenantStore | null> {
-  const cached = tenantDatabaseResolverMemoryCache.get(cacheKey);
+  const memoryCache = getTenantDatabaseMemoryCache(env);
+  const cached = memoryCache.get(cacheKey);
   if (!cached) return null;
   if (cached.expiresAt <= Date.now()) {
-    tenantDatabaseResolverMemoryCache.delete(cacheKey);
+    memoryCache.delete(cacheKey);
     return null;
   }
   if (env.TENANT_RUNTIME_REGISTRY) {
@@ -307,56 +433,136 @@ async function getMemoryCachedTenantDatabase(
       tenantId,
       deploymentTarget ?? 'default'
     );
-    const generation = await getRuntimeGeneration(
+    const state = await getRuntimeGeneration(
       env.TENANT_RUNTIME_REGISTRY,
       generationKey,
       generationCacheTtlMs
     );
-    if (generation !== null && generation !== cached.value.runtimeGeneration) {
-      tenantDatabaseResolverMemoryCache.delete(cacheKey);
+    if (state === null || state.runtimeGeneration !== cached.value.runtimeGeneration) {
+      memoryCache.delete(cacheKey);
       return null;
     }
   }
-  return cached.value;
+  return {
+    ...cached.value,
+    source: await getBinding(env, cached.value.bindingRef, {
+      tenantId: cached.value.tenantId,
+      role: cached.value.role,
+      generation: cached.value.generation,
+      shardGroup: cached.value.shardGroup,
+      shardIndex: cached.value.shardIndex,
+      deploymentTarget: cached.value.deploymentTarget,
+    }),
+  };
 }
 
 async function getRuntimeGeneration(
   generationStore: TenantRuntimeRegistryGenerationStore,
   generationKey: string,
   ttlMs: number
-): Promise<number | null> {
-  const cached = tenantRuntimeGenerationMemoryCache.get(generationKey);
+): Promise<RuntimeGenerationState | null> {
+  const memoryCache = getRuntimeGenerationMemoryCache(generationStore);
+  const cached = memoryCache.get(generationKey);
   if (cached && cached.expiresAt > Date.now()) {
-    return cached.generation;
+    return cached.state;
   }
   if (cached) {
-    tenantRuntimeGenerationMemoryCache.delete(generationKey);
+    memoryCache.delete(generationKey);
   }
 
-  const generation = parseRuntimeGeneration(await generationStore.get(generationKey));
-  if (generation !== null && ttlMs > 0) {
-    tenantRuntimeGenerationMemoryCache.set(generationKey, {
-      generation,
+  const state = parseRuntimeGeneration(await generationStore.get(generationKey));
+  if (state !== null && ttlMs > 0) {
+    memoryCache.set(generationKey, {
+      state,
       expiresAt: Date.now() + ttlMs,
     });
   }
-  return generation;
+  return state;
 }
 
 function setMemoryCachedTenantDatabase(
+  env: TenantDatabaseResolverEnv,
   cacheKey: string,
   resolved: ResolvedTenantStore,
   ttlMs: number
 ): void {
   if (ttlMs <= 0) return;
-  tenantDatabaseResolverMemoryCache.set(cacheKey, {
-    value: resolved,
+  const { source: _source, ...cached } = resolved;
+  getTenantDatabaseMemoryCache(env).set(cacheKey, {
+    value: cached,
     expiresAt: Date.now() + ttlMs,
   });
 }
 
 function isResolvableRegistryStatus(status: TenantDatabaseRegistryRow['status']): boolean {
   return ['ready', 'active', 'degraded', 'degraded_pending_snapshot'].includes(status);
+}
+
+function parseControlRegistryRouteMetadata(row: TenantDatabaseRegistryRow): {
+  dataRole: TenantRuntimeRegistryStoreSnapshot['dataRole'];
+  residencyPolicyId: string;
+  residencyPartition: string;
+  shardId: string;
+  assignmentGeneration: number;
+  placementPolicy: TenantRuntimeRegistrySnapshot['placement'];
+  allocationScope: TenantRuntimeRegistryStoreSnapshot['allocationScope'];
+  ownerTenantId: string | null;
+} {
+  let value: unknown;
+  try {
+    value = JSON.parse(row.metadata_json ?? 'null') as unknown;
+  } catch {
+    value = null;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TenantDatabaseResolverError(
+      'invalid_route_contract',
+      'Control registry route metadata is missing or invalid'
+    );
+  }
+  const metadata = value as Record<string, unknown>;
+  const dataRole = metadata.control_data_role;
+  const allocationScope = metadata.control_allocation_scope;
+  const ownerTenantId = metadata.control_owner_tenant_id ?? null;
+  const assignmentGeneration = metadata.control_assignment_generation;
+  const policyGeneration = metadata.control_placement_policy_generation;
+  if (
+    (dataRole !== 'tenant_core/default' &&
+      dataRole !== 'tenant_core/users' &&
+      dataRole !== 'tenant_pii') ||
+    typeof metadata.control_residency_policy_id !== 'string' ||
+    !metadata.control_residency_policy_id ||
+    typeof metadata.control_residency_partition !== 'string' ||
+    !metadata.control_residency_partition ||
+    typeof metadata.control_shard_id !== 'string' ||
+    !metadata.control_shard_id ||
+    !Number.isSafeInteger(assignmentGeneration) ||
+    Number(assignmentGeneration) < 1 ||
+    !Number.isSafeInteger(policyGeneration) ||
+    Number(policyGeneration) < 1 ||
+    (allocationScope !== 'shared_pool' && allocationScope !== 'tenant_exclusive') ||
+    (allocationScope === 'shared_pool' && ownerTenantId !== null) ||
+    (allocationScope === 'tenant_exclusive' && ownerTenantId !== row.tenant_id)
+  ) {
+    throw new TenantDatabaseResolverError(
+      'invalid_route_contract',
+      'Control registry route metadata does not satisfy the unified route contract',
+      { tenantId: row.tenant_id, role: row.role }
+    );
+  }
+  return {
+    dataRole,
+    residencyPolicyId: metadata.control_residency_policy_id,
+    residencyPartition: metadata.control_residency_partition,
+    shardId: metadata.control_shard_id,
+    assignmentGeneration: Number(assignmentGeneration),
+    placementPolicy: {
+      isolationPolicy: allocationScope,
+      policyGeneration: Number(policyGeneration),
+    },
+    allocationScope,
+    ownerTenantId: ownerTenantId as string | null,
+  };
 }
 
 async function assertRegistryRowSignatureIfConfigured(
@@ -388,7 +594,87 @@ function parseRuntimeRegistrySnapshot(value: string | null): TenantRuntimeRegist
   if (!value) return null;
   try {
     const parsed = JSON.parse(value) as TenantRuntimeRegistrySnapshot;
-    if (parsed.version !== RUNTIME_REGISTRY_SNAPSHOT_VERSION || !Array.isArray(parsed.stores)) {
+    const roles = Array.isArray(parsed.stores)
+      ? Array.from(new Set(parsed.stores.map((store) => store.role))).sort()
+      : [];
+    const routeKeys = Array.isArray(parsed.stores)
+      ? parsed.stores.map((store) =>
+          [
+            store.tenantId,
+            store.dataRole,
+            store.residencyPolicyId,
+            store.residencyPartition,
+            store.shardId,
+            store.bindingRef,
+            store.bindingRouteGeneration,
+          ].join(':')
+        )
+      : [];
+    if (
+      parsed.version !== RUNTIME_REGISTRY_SNAPSHOT_VERSION ||
+      typeof parsed.tenantId !== 'string' ||
+      !parsed.tenantId ||
+      typeof parsed.deploymentTarget !== 'string' ||
+      !parsed.deploymentTarget ||
+      !Number.isSafeInteger(parsed.runtimeGeneration) ||
+      parsed.runtimeGeneration < 1 ||
+      !Array.isArray(parsed.stores) ||
+      !parsed.metadata ||
+      parsed.metadata.storeCount !== parsed.stores.length ||
+      !Array.isArray(parsed.metadata.roles) ||
+      JSON.stringify(parsed.metadata.roles) !== JSON.stringify(roles) ||
+      new Set(routeKeys).size !== routeKeys.length ||
+      !hasPhysicalCorePiiDatabaseSeparation(parsed.stores) ||
+      parsed.backend?.provider !== 'd1' ||
+      parsed.backend.resolver !== 'control-plane' ||
+      (parsed.placement?.isolationPolicy !== 'shared_pool' &&
+        parsed.placement?.isolationPolicy !== 'tenant_exclusive') ||
+      !Number.isSafeInteger(parsed.placement?.policyGeneration) ||
+      parsed.placement.policyGeneration < 1 ||
+      !isRuntimeRegistryRouteStatus(parsed.routeStatus) ||
+      !Number.isSafeInteger(parsed.quarantineDenyGeneration) ||
+      parsed.quarantineDenyGeneration < 0 ||
+      (parsed.routeStatus !== 'active' && parsed.quarantineDenyGeneration < 1) ||
+      parsed.stores.some(
+        (store) =>
+          store.tenantId !== parsed.tenantId ||
+          store.runtimeGeneration !== parsed.runtimeGeneration ||
+          !Number.isSafeInteger(store.generation) ||
+          store.generation < 1 ||
+          !Number.isSafeInteger(store.schemaVersion) ||
+          store.schemaVersion < 1 ||
+          !Number.isSafeInteger(store.shardIndex) ||
+          store.shardIndex < 0 ||
+          !Number.isSafeInteger(store.shardCount) ||
+          store.shardCount < 1 ||
+          store.shardIndex >= store.shardCount ||
+          store.provider !== 'd1' ||
+          store.driver !== 'd1' ||
+          !isResolvableRegistryStatus(store.status) ||
+          (store.deploymentTarget !== null && store.deploymentTarget !== parsed.deploymentTarget) ||
+          (store.dataRole !== 'tenant_core/default' &&
+            store.dataRole !== 'tenant_core/users' &&
+            store.dataRole !== 'tenant_pii') ||
+          (store.role === 'tenant_pii') !== (store.dataRole === 'tenant_pii') ||
+          typeof store.residencyPolicyId !== 'string' ||
+          !store.residencyPolicyId ||
+          typeof store.residencyPartition !== 'string' ||
+          !store.residencyPartition ||
+          typeof store.shardId !== 'string' ||
+          !store.shardId ||
+          !Number.isSafeInteger(store.assignmentGeneration) ||
+          store.assignmentGeneration < 1 ||
+          !Number.isSafeInteger(store.bindingRouteGeneration) ||
+          store.bindingRouteGeneration !== store.generation ||
+          typeof store.bindingRef !== 'string' ||
+          !store.bindingRef ||
+          store.placementPolicyGeneration !== parsed.placement.policyGeneration ||
+          store.allocationScope !== parsed.placement.isolationPolicy ||
+          (parsed.placement.isolationPolicy === 'tenant_exclusive'
+            ? store.ownerTenantId !== parsed.tenantId
+            : store.ownerTenantId !== null)
+      )
+    ) {
       return null;
     }
     return parsed;
@@ -403,15 +689,101 @@ function findSnapshotStore(
   shardGroup: string,
   shardIndex: number
 ): TenantRuntimeRegistryStoreSnapshot | null {
-  return (
-    snapshot.stores.find(
-      (store) =>
-        store.tenantId === options.tenantId &&
-        store.role === options.role &&
-        store.shardGroup === shardGroup &&
-        store.shardIndex === shardIndex
-    ) ?? null
+  const routeIdentityProvided =
+    options.dataRole !== undefined ||
+    options.residencyPartition !== undefined ||
+    options.shardId !== undefined ||
+    options.bindingRef !== undefined ||
+    options.requiredBindingRouteGeneration !== undefined;
+  const roleStores = snapshot.stores.filter(
+    (store) => store.tenantId === options.tenantId && store.role === options.role
   );
+  let stores = roleIdentityCandidates(roleStores, options, shardGroup, shardIndex);
+  if (routeIdentityProvided) {
+    const roleAndResidencyStores = stores.filter(
+      (store) =>
+        (options.dataRole === undefined || store.dataRole === options.dataRole) &&
+        (options.residencyPartition === undefined ||
+          store.residencyPartition === options.residencyPartition)
+    );
+    if (roleAndResidencyStores.length === 0) {
+      throw new TenantDatabaseResolverError(
+        'route_role_residency_mismatch',
+        'Runtime route role or residency does not match the signed tenant assignment',
+        { tenantId: options.tenantId, role: options.role }
+      );
+    }
+    stores = roleAndResidencyStores.filter(
+      (store) =>
+        (options.shardId === undefined || store.shardId === options.shardId) &&
+        (options.bindingRef === undefined || store.bindingRef === options.bindingRef)
+    );
+  }
+  if (stores.length > 1) {
+    throw new TenantDatabaseResolverError(
+      'invalid_route_contract',
+      'Signed Runtime Registry contains an ambiguous route target',
+      { tenantId: options.tenantId, role: options.role }
+    );
+  }
+  if (stores.length === 0 && routeIdentityProvided) {
+    throw new TenantDatabaseResolverError(
+      'route_owner_mismatch',
+      'Lookup route target is not assigned to the tenant in the signed Runtime Registry',
+      { tenantId: options.tenantId, role: options.role }
+    );
+  }
+  const store = stores[0] ?? null;
+  if (!store) return null;
+  if (
+    (options.dataRole !== undefined && store.dataRole !== options.dataRole) ||
+    (options.residencyPartition !== undefined &&
+      store.residencyPartition !== options.residencyPartition)
+  ) {
+    throw new TenantDatabaseResolverError(
+      'route_role_residency_mismatch',
+      'Runtime route role or residency does not match the requested destination',
+      { tenantId: options.tenantId, role: options.role }
+    );
+  }
+  if (
+    (options.shardId !== undefined && store.shardId !== options.shardId) ||
+    (options.bindingRef !== undefined && store.bindingRef !== options.bindingRef)
+  ) {
+    throw new TenantDatabaseResolverError(
+      'route_owner_mismatch',
+      'Runtime route target does not match the signed tenant assignment',
+      { tenantId: options.tenantId, role: options.role }
+    );
+  }
+  if (
+    options.requiredBindingRouteGeneration !== undefined &&
+    store.bindingRouteGeneration !== options.requiredBindingRouteGeneration
+  ) {
+    throw new TenantDatabaseResolverError(
+      'route_generation_mismatch',
+      'Runtime route binding generation does not match the signed tenant assignment',
+      { tenantId: options.tenantId, role: options.role }
+    );
+  }
+  return store;
+}
+
+function roleIdentityCandidates(
+  stores: TenantRuntimeRegistryStoreSnapshot[],
+  options: TenantDatabaseResolveOptions,
+  shardGroup: string,
+  shardIndex: number
+): TenantRuntimeRegistryStoreSnapshot[] {
+  const routeIdentityProvided =
+    options.dataRole !== undefined ||
+    options.residencyPartition !== undefined ||
+    options.shardId !== undefined ||
+    options.bindingRef !== undefined ||
+    options.requiredBindingRouteGeneration !== undefined;
+  return routeIdentityProvided
+    ? stores
+    : stores.filter((store) => store.shardGroup === shardGroup && store.shardIndex === shardIndex);
 }
 
 function snapshotStoreToRegistryRow(
@@ -439,7 +811,16 @@ function snapshotStoreToRegistryRow(
     jurisdiction: store.jurisdiction,
     signature: null,
     signature_key_id: null,
-    metadata_json: null,
+    metadata_json: JSON.stringify({
+      control_data_role: store.dataRole,
+      control_residency_policy_id: store.residencyPolicyId,
+      control_residency_partition: store.residencyPartition,
+      control_shard_id: store.shardId,
+      control_assignment_generation: store.assignmentGeneration,
+      control_allocation_scope: store.allocationScope,
+      control_owner_tenant_id: store.ownerTenantId,
+      control_placement_policy_generation: store.placementPolicyGeneration,
+    }),
     created_at: publishedAt,
     updated_at: publishedAt,
     created_by: null,
@@ -498,11 +879,13 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
   );
   let snapshot: TenantRuntimeRegistrySnapshot | null = null;
   try {
-    snapshot = parseRuntimeRegistrySnapshot(await env.TENANT_RUNTIME_REGISTRY.get(snapshotKey));
+    const rawSnapshot = await env.TENANT_RUNTIME_REGISTRY.get(snapshotKey);
+    if (!rawSnapshot) return { status: 'missing' };
+    snapshot = parseRuntimeRegistrySnapshot(rawSnapshot);
   } catch {
     return { status: 'invalid' };
   }
-  if (!snapshot) return { status: 'missing' };
+  if (!snapshot) return { status: 'invalid_contract' };
   if (snapshot.tenantId !== options.tenantId) return { status: 'invalid' };
   const expectedDeploymentTarget = deploymentTarget ?? 'default';
   if (snapshot.deploymentTarget !== expectedDeploymentTarget) {
@@ -521,7 +904,7 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
     options.tenantId,
     expectedDeploymentTarget
   );
-  let lightweightGeneration: number | null = null;
+  let lightweightGeneration: RuntimeGenerationState | null = null;
   try {
     lightweightGeneration = parseRuntimeGeneration(
       await env.TENANT_RUNTIME_REGISTRY.get(generationKey)
@@ -529,8 +912,12 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
   } catch {
     return { status: 'invalid' };
   }
-  if (lightweightGeneration === null || lightweightGeneration !== snapshot.runtimeGeneration) {
-    return { status: 'invalid' };
+  if (lightweightGeneration && lightweightGeneration.routeStatus !== 'active') {
+    throw createQuarantinedRouteError(
+      options.tenantId,
+      lightweightGeneration.routeStatus,
+      lightweightGeneration.quarantineDenyGeneration
+    );
   }
   let signatureStatus: Awaited<ReturnType<typeof verifyTenantRuntimeRegistrySnapshotSignature>>;
   try {
@@ -557,6 +944,23 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
       runtimeGeneration: snapshot.runtimeGeneration,
     });
     return { status: 'invalid' };
+  }
+  if (
+    lightweightGeneration === null ||
+    lightweightGeneration.runtimeGeneration !== snapshot.runtimeGeneration
+  ) {
+    // Runtime snapshot and generation marker are stored under separate KV keys. Even though the
+    // publisher writes the signed snapshot first, edge propagation is not atomic and readers can
+    // temporarily observe two individually valid generations. Never consume the stale snapshot,
+    // but classify this as unavailable so callers retry instead of reporting a signature attack.
+    return { status: 'generation_mismatch' };
+  }
+  if (snapshot.routeStatus !== 'active') {
+    throw createQuarantinedRouteError(
+      options.tenantId,
+      snapshot.routeStatus,
+      snapshot.quarantineDenyGeneration
+    );
   }
   const expiresAt = new Date(snapshot.expiresAt).getTime();
   if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return { status: 'expired' };
@@ -587,6 +991,7 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
       schemaVersion: row.schema_version,
       minimumSchemaVersion,
       deploymentTarget,
+      createdAt: row.created_at,
     });
     throw new TenantDatabaseResolverError(
       'schema_version_too_old',
@@ -615,10 +1020,11 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
       shardGroup: row.shard_group,
       shardIndex: row.shard_index,
       deploymentTarget,
+      createdAt: row.created_at,
     });
     throw new TenantDatabaseResolverError(
       'missing_binding',
-      'Tenant D1 registry row is missing binding_ref',
+      'Runtime registry row is missing binding_ref',
       { tenantId: options.tenantId, role: options.role }
     );
   }
@@ -635,6 +1041,7 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
         shardGroup: row.shard_group,
         shardIndex: row.shard_index,
         deploymentTarget,
+        createdAt: row.created_at,
       }),
       generation: row.generation,
       runtimeGeneration: snapshot.runtimeGeneration,
@@ -650,6 +1057,16 @@ async function resolveTenantDatabaseSourceFromRuntimeSnapshot(
         row.status === 'degraded' || row.status === 'degraded_pending_snapshot'
           ? row.status
           : 'active',
+      resolutionSource: 'runtime_registry',
+      dataRole: store.dataRole,
+      residencyPolicyId: store.residencyPolicyId,
+      residencyPartition: store.residencyPartition,
+      shardId: store.shardId,
+      assignmentGeneration: store.assignmentGeneration,
+      bindingRouteGeneration: store.bindingRouteGeneration,
+      placementPolicy: snapshot.placement,
+      allocationScope: store.allocationScope,
+      ownerTenantId: store.ownerTenantId,
       registryRow: row,
     },
   };
@@ -670,6 +1087,20 @@ function createRequiredSnapshotError(
     return new TenantDatabaseResolverError(
       'invalid_snapshot_signature',
       `Runtime registry snapshot is invalid for ${options.tenantId}/${options.role}`,
+      { tenantId: options.tenantId, role: options.role }
+    );
+  }
+  if (status === 'invalid_contract') {
+    return new TenantDatabaseResolverError(
+      'invalid_route_contract',
+      `Runtime registry snapshot contract is invalid for ${options.tenantId}/${options.role}`,
+      { tenantId: options.tenantId, role: options.role }
+    );
+  }
+  if (status === 'generation_mismatch') {
+    return new TenantDatabaseResolverError(
+      'snapshot_generation_propagating',
+      `Runtime registry generation is propagating for ${options.tenantId}/${options.role}`,
       { tenantId: options.tenantId, role: options.role }
     );
   }
@@ -695,6 +1126,223 @@ function createDefaultTenantDatabaseRegistryRepository(
 
 export async function resolveTenantDatabaseSourceFromRegistry(
   env: TenantDatabaseResolverEnv,
+  options: TenantDatabaseResolveOptions
+): Promise<ResolvedTenantDatabaseSource> {
+  const shardGroup = options.shardGroup ?? 'default';
+  const shardIndex = options.shardIndex ?? 0;
+  const deploymentTarget = getDeploymentTarget(env, options);
+  const cacheKey = buildRequestCacheKey(options, deploymentTarget);
+  const routeState = await assertRuntimeRouteAvailable(
+    env,
+    cacheKey,
+    options.tenantId,
+    deploymentTarget,
+    options.generationCacheTtlMs ?? DEFAULT_TENANT_RUNTIME_GENERATION_MEMORY_CACHE_TTL_MS
+  );
+  if (!routeState) {
+    throw new TenantDatabaseResolverError(
+      'missing_generation',
+      `Runtime registry generation is missing or invalid for ${options.tenantId}`,
+      { tenantId: options.tenantId, role: options.role }
+    );
+  }
+  const cached = options.requestCache?.get(cacheKey);
+  if (
+    cached?.resolutionSource === 'runtime_registry' &&
+    cached.runtimeGeneration === routeState.runtimeGeneration
+  ) {
+    return cached;
+  }
+  if (cached) options.requestCache?.delete(cacheKey);
+  const memoryCached = await getMemoryCachedTenantDatabase(
+    cacheKey,
+    env,
+    options.tenantId,
+    deploymentTarget,
+    options.generationCacheTtlMs ?? DEFAULT_TENANT_RUNTIME_GENERATION_MEMORY_CACHE_TTL_MS
+  );
+  if (memoryCached?.resolutionSource === 'runtime_registry') {
+    options.requestCache?.set(cacheKey, memoryCached);
+    return memoryCached;
+  }
+  const snapshotResult = await resolveTenantDatabaseSourceFromRuntimeSnapshot(
+    env,
+    options,
+    shardGroup,
+    shardIndex,
+    deploymentTarget
+  );
+  if (snapshotResult.status !== 'resolved') {
+    throw createRequiredSnapshotError(snapshotResult.status, options);
+  }
+  options.requestCache?.set(cacheKey, snapshotResult.resolved);
+  setMemoryCachedTenantDatabase(
+    env,
+    cacheKey,
+    snapshotResult.resolved,
+    options.memoryCacheTtlMs ?? DEFAULT_TENANT_DATABASE_RESOLVER_MEMORY_CACHE_TTL_MS
+  );
+  return snapshotResult.resolved;
+}
+
+export interface ResolveTenantAssignedDatabaseSourcesOptions {
+  tenantId: string;
+  role: TenantDatabaseRole;
+  dataRole?: TenantRuntimeRegistryStoreSnapshot['dataRole'];
+  residencyPartition?: string;
+  minimumSchemaVersion?: number;
+  deploymentTarget?: string;
+  maxStores?: number;
+  concurrency?: number;
+}
+
+/**
+ * Resolve the complete signed, generation-bound store set for an administrative tenant-wide job.
+ * Runtime account requests must use exact Lookup routes instead. The limits are request-local and
+ * deliberately prevent an unbounded D1 fan-out.
+ */
+export async function resolveTenantAssignedDatabaseSourcesFromRegistry(
+  env: TenantDatabaseResolverEnv,
+  options: ResolveTenantAssignedDatabaseSourcesOptions
+): Promise<ResolvedTenantDatabaseSource[]> {
+  const maxStores = options.maxStores ?? 32;
+  const concurrency = options.concurrency ?? 4;
+  if (!Number.isSafeInteger(maxStores) || maxStores < 1 || maxStores > 64) {
+    throw new TenantDatabaseResolverError('invalid_route_contract', 'Invalid store fan-out limit');
+  }
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 8) {
+    throw new TenantDatabaseResolverError('invalid_route_contract', 'Invalid store concurrency');
+  }
+  if (!env.TENANT_RUNTIME_REGISTRY) {
+    throw new TenantDatabaseResolverError('missing_snapshot', 'Runtime registry is unavailable');
+  }
+
+  const deploymentTarget = options.deploymentTarget ?? env.AUTHRIM_DEPLOYMENT_TARGET ?? 'default';
+  const snapshotKey = buildTenantRuntimeRegistrySnapshotKey(options.tenantId, deploymentTarget);
+  const generationKey = buildTenantRuntimeRegistryGenerationKey(options.tenantId, deploymentTarget);
+  const [rawSnapshot, rawGeneration] = await Promise.all([
+    env.TENANT_RUNTIME_REGISTRY.get(snapshotKey),
+    env.TENANT_RUNTIME_REGISTRY.get(generationKey),
+  ]);
+  if (!rawSnapshot) {
+    throw new TenantDatabaseResolverError(
+      'missing_snapshot',
+      'Runtime registry snapshot is missing'
+    );
+  }
+  const snapshot = parseRuntimeRegistrySnapshot(rawSnapshot);
+  if (!snapshot || snapshot.tenantId !== options.tenantId) {
+    throw new TenantDatabaseResolverError(
+      'invalid_route_contract',
+      'Runtime registry snapshot is invalid'
+    );
+  }
+  if (snapshot.deploymentTarget !== deploymentTarget) {
+    throw new TenantDatabaseResolverError(
+      'tenant_assigned_to_other_deployment_target',
+      'Tenant is assigned to another deployment target'
+    );
+  }
+  const generation = parseRuntimeGeneration(rawGeneration);
+  if (!generation || generation.runtimeGeneration !== snapshot.runtimeGeneration) {
+    throw new TenantDatabaseResolverError(
+      'missing_generation',
+      'Runtime generation is unavailable'
+    );
+  }
+  if (generation.routeStatus !== 'active') {
+    throw createQuarantinedRouteError(
+      options.tenantId,
+      generation.routeStatus,
+      generation.quarantineDenyGeneration
+    );
+  }
+  const signatureStatus = await verifyTenantRuntimeRegistrySnapshotSignature(
+    snapshot,
+    loadTenantRuntimeRegistryVerificationKeysFromEnv(env)
+  );
+  if (signatureStatus !== 'valid') {
+    throw new TenantDatabaseResolverError(
+      'invalid_snapshot_signature',
+      'Runtime registry snapshot signature is invalid'
+    );
+  }
+  if (snapshot.routeStatus !== 'active') {
+    throw createQuarantinedRouteError(
+      options.tenantId,
+      snapshot.routeStatus,
+      snapshot.quarantineDenyGeneration
+    );
+  }
+  if (new Date(snapshot.expiresAt).getTime() <= Date.now()) {
+    throw new TenantDatabaseResolverError(
+      'expired_snapshot',
+      'Runtime registry snapshot is expired'
+    );
+  }
+
+  const stores = snapshot.stores
+    .filter(
+      (store) =>
+        store.tenantId === options.tenantId &&
+        store.role === options.role &&
+        (options.dataRole === undefined || store.dataRole === options.dataRole) &&
+        (options.residencyPartition === undefined ||
+          store.residencyPartition === options.residencyPartition) &&
+        isResolvableRegistryStatus(store.status)
+    )
+    .sort(
+      (left, right) =>
+        left.residencyPartition.localeCompare(right.residencyPartition) ||
+        left.shardGroup.localeCompare(right.shardGroup) ||
+        left.shardIndex - right.shardIndex
+    );
+  if (stores.length === 0) {
+    throw new TenantDatabaseResolverError(
+      'missing_registry_row',
+      'No assigned tenant stores match the requested role'
+    );
+  }
+  if (stores.length > maxStores) {
+    throw new TenantDatabaseResolverError(
+      'invalid_route_contract',
+      'Assigned tenant store set exceeds the bounded fan-out limit',
+      { storeCount: stores.length, maxStores }
+    );
+  }
+
+  const requestCache: TenantDatabaseRequestCache = new Map();
+  const results = new Array<ResolvedTenantDatabaseSource>(stores.length);
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, stores.length) }, async () => {
+      while (cursor < stores.length) {
+        const index = cursor++;
+        const store = stores[index];
+        results[index] = await resolveTenantDatabaseSourceFromRegistry(env, {
+          tenantId: options.tenantId,
+          role: options.role,
+          dataRole: store.dataRole,
+          residencyPartition: store.residencyPartition,
+          shardId: store.shardId,
+          bindingRef: store.bindingRef!,
+          requiredBindingRouteGeneration: store.bindingRouteGeneration,
+          minimumSchemaVersion: options.minimumSchemaVersion,
+          deploymentTarget,
+          requestCache,
+        });
+      }
+    })
+  );
+  return results;
+}
+
+/**
+ * Control/management-only registry inspection path. Runtime request handlers must use
+ * resolveTenantDatabaseSourceFromRegistry(), which accepts signed Runtime Registry state only.
+ */
+export async function resolveTenantDatabaseSourceFromControlRegistry(
+  env: TenantDatabaseResolverEnv,
   options: TenantDatabaseResolveOptions,
   repository?: TenantDatabaseRegistryRepository
 ): Promise<ResolvedTenantDatabaseSource> {
@@ -702,6 +1350,13 @@ export async function resolveTenantDatabaseSourceFromRegistry(
   const shardIndex = options.shardIndex ?? 0;
   const deploymentTarget = getDeploymentTarget(env, options);
   const cacheKey = buildRequestCacheKey(options, deploymentTarget);
+  await assertRuntimeRouteAvailable(
+    env,
+    cacheKey,
+    options.tenantId,
+    deploymentTarget,
+    options.generationCacheTtlMs ?? DEFAULT_TENANT_RUNTIME_GENERATION_MEMORY_CACHE_TTL_MS
+  );
   const cached = options.requestCache?.get(cacheKey);
   if (cached) {
     return cached;
@@ -728,16 +1383,13 @@ export async function resolveTenantDatabaseSourceFromRegistry(
   if (snapshotResult.status === 'resolved') {
     options.requestCache?.set(cacheKey, snapshotResult.resolved);
     setMemoryCachedTenantDatabase(
+      env,
       cacheKey,
       snapshotResult.resolved,
       options.memoryCacheTtlMs ?? DEFAULT_TENANT_DATABASE_RESOLVER_MEMORY_CACHE_TTL_MS
     );
     return snapshotResult.resolved;
   }
-  if (options.runtimeSnapshotMode === 'required') {
-    throw createRequiredSnapshotError(snapshotResult.status, options);
-  }
-
   const registryRepository = repository ?? createDefaultTenantDatabaseRegistryRepository(env);
   const pointer = await registryRepository.getActivePointer(
     options.tenantId,
@@ -798,6 +1450,7 @@ export async function resolveTenantDatabaseSourceFromRegistry(
       schemaVersion: row.schema_version,
       minimumSchemaVersion,
       deploymentTarget,
+      createdAt: row.created_at,
     });
     throw new TenantDatabaseResolverError(
       'schema_version_too_old',
@@ -827,14 +1480,16 @@ export async function resolveTenantDatabaseSourceFromRegistry(
       shardGroup: row.shard_group,
       shardIndex: row.shard_index,
       deploymentTarget,
+      createdAt: row.created_at,
     });
     throw new TenantDatabaseResolverError(
       'missing_binding',
-      'Tenant D1 registry row is missing binding_ref',
+      'Runtime registry row is missing binding_ref',
       { tenantId: options.tenantId, role: options.role }
     );
   }
 
+  const route = parseControlRegistryRouteMetadata(row);
   const resolved: ResolvedTenantStore = {
     tenantId: options.tenantId,
     role: options.role,
@@ -845,6 +1500,7 @@ export async function resolveTenantDatabaseSourceFromRegistry(
       shardGroup: row.shard_group,
       shardIndex: row.shard_index,
       deploymentTarget,
+      createdAt: row.created_at,
     }),
     generation: row.generation,
     runtimeGeneration: pointer.runtime_generation,
@@ -860,48 +1516,24 @@ export async function resolveTenantDatabaseSourceFromRegistry(
       row.status === 'degraded' || row.status === 'degraded_pending_snapshot'
         ? row.status
         : 'active',
+    resolutionSource: 'control_registry',
+    dataRole: route.dataRole,
+    residencyPolicyId: route.residencyPolicyId,
+    residencyPartition: route.residencyPartition,
+    shardId: route.shardId,
+    assignmentGeneration: route.assignmentGeneration,
+    bindingRouteGeneration: row.generation,
+    placementPolicy: route.placementPolicy,
+    allocationScope: route.allocationScope,
+    ownerTenantId: route.ownerTenantId,
     registryRow: row,
   };
   options.requestCache?.set(cacheKey, resolved);
   setMemoryCachedTenantDatabase(
+    env,
     cacheKey,
     resolved,
     options.memoryCacheTtlMs ?? DEFAULT_TENANT_DATABASE_RESOLVER_MEMORY_CACHE_TTL_MS
   );
   return resolved;
-}
-
-export async function resolveTenantDatabaseSourceForTarget(
-  env: TenantDatabaseResolverEnv,
-  tenantId: string,
-  target: StorageTarget,
-  options: Omit<TenantDatabaseResolveOptions, 'tenantId' | 'role'> = {},
-  repository?: TenantDatabaseRegistryRepository
-): Promise<ResolvedTenantDatabaseSource> {
-  if (target.resolverRef !== 'tenant-database-registry') {
-    throw new TenantDatabaseResolverError(
-      'unsupported_storage_profile',
-      `Unsupported storage target resolver ${target.resolverRef ?? 'none'}`,
-      { resolverRef: target.resolverRef }
-    );
-  }
-
-  const role = mapStorageTargetToTenantDatabaseRole(target);
-  if (!role) {
-    throw new TenantDatabaseResolverError(
-      'unsupported_storage_profile',
-      `Storage target role ${target.role ?? 'none'} cannot resolve tenant database`,
-      { role: target.role }
-    );
-  }
-
-  return resolveTenantDatabaseSourceFromRegistry(
-    env,
-    {
-      ...options,
-      tenantId,
-      role,
-    },
-    repository
-  );
 }

@@ -28,11 +28,10 @@ import {
   getPrimaryTenantVanityDomain,
   resolveTenantFromVanityHost,
 } from '../services/tenant-vanity-domain-resolver';
-import { resolveAuthCorePersistenceSourceFromEnv } from '../services/auth-core-persistence-context';
 import {
-  resolveUserStoreRuntimeSourcesFromEnv,
-  type ResolvedUserStoreRuntimeSources,
-} from '../services/user-store-runtime-sources';
+  resolveTenantMetadataContext,
+  type TenantMetadataContext,
+} from '../services/runtime-data-context';
 import { TenantDatabaseResolverError } from '../services/tenant-database-resolver';
 
 /**
@@ -93,17 +92,37 @@ const REQUEST_CONTEXT_CACHE_DEFAULT_TTL_MS = 180_000;
 const REQUEST_CONTEXT_CACHE_MIN_TTL_MS = 10_000;
 const REQUEST_CONTEXT_CACHE_MAX_TTL_MS = 600_000;
 const REQUEST_CONTEXT_CACHE_MAX_ENTRIES = 256;
+const DIAGNOSTIC_SESSION_ID_HEADER = 'X-Diagnostic-Session-Id';
+const MAX_DIAGNOSTIC_SESSION_ID_LENGTH = 128;
+const DIAGNOSTIC_TIMING_PATHS = new Set([
+  '/api/auth/authentication-methods',
+  '/api/v1/login/interactions/start',
+]);
 const tenantExistsCache = new WeakMap<object, Map<string, RequestContextCacheEntry<true>>>();
-const runtimeUserStoreSourcesCache = new WeakMap<
-  object,
-  Map<string, RequestContextCacheEntry<ResolvedUserStoreRuntimeSources>>
->();
 
-function isFlowRuntimeTimingEnabled(env: Env, path: string): boolean {
+function sanitizeDiagnosticSessionId(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, MAX_DIAGNOSTIC_SESSION_ID_LENGTH);
+}
+
+function isFlowRuntimeTimingEnabled(env: Env, path: string, request: Request): boolean {
+  if (
+    DIAGNOSTIC_TIMING_PATHS.has(path) &&
+    isDiagnosticTimingEnabled(env) &&
+    sanitizeDiagnosticSessionId(request.headers.get(DIAGNOSTIC_SESSION_ID_HEADER))
+  ) {
+    return true;
+  }
   if (path !== '/api/v1/login/interactions/start') {
     return false;
   }
   const value = env.AUTHRIM_FLOW_RUNTIME_TIMING?.trim().toLowerCase();
+  return value === 'true' || value === '1' || value === 'yes';
+}
+
+function isDiagnosticTimingEnabled(env: Env): boolean {
+  const value = env.AUTHRIM_DIAGNOSTIC_TIMING_ENABLED?.trim().toLowerCase();
   return value === 'true' || value === '1' || value === 'yes';
 }
 
@@ -203,11 +222,11 @@ function shouldAttemptVanityHostResolution(
   return true;
 }
 
-function isTenantDatabaseControlPlanePath(path: string): boolean {
-  return path.startsWith('/api/admin/jobs/tenant-databases/');
+function isPublicAuthenticationMethodsPath(path: string): boolean {
+  return path === '/api/auth/authentication-methods';
 }
 
-function shouldResolveRuntimeUserStoreSources(
+function shouldResolveTenantDataContexts(
   requestClass:
     | 'platform_admin'
     | 'tenant_inventory_admin'
@@ -217,11 +236,15 @@ function shouldResolveRuntimeUserStoreSources(
     | 'public_protocol_or_rest',
   path: string
 ): boolean {
-  if (isTenantDatabaseControlPlanePath(path)) {
+  if (isPublicAuthenticationMethodsPath(path)) {
     return false;
   }
 
-  return requestClass === 'tenant_scoped_admin' || requestClass === 'public_protocol_or_rest';
+  return (
+    requestClass === 'tenant_scoped_admin' ||
+    requestClass === 'discovery_ui' ||
+    requestClass === 'public_protocol_or_rest'
+  );
 }
 
 async function validateTenantExistsWithIsolateCache(
@@ -247,27 +270,6 @@ async function validateTenantExistsWithIsolateCache(
     cache.delete(cacheKey);
   }
   return exists;
-}
-
-async function resolveRuntimeUserStoreSourcesWithIsolateCache(
-  env: Env,
-  tenantId: string,
-  requestPath: string
-): Promise<ResolvedUserStoreRuntimeSources> {
-  const cache = getEnvScopedCache(runtimeUserStoreSourcesCache, env);
-  const cacheKey = `tenant:${tenantId}:path:${requestPath}`;
-  const now = Date.now();
-  const cached = cache.get(cacheKey);
-  if (cached && cached.expiresAt > now) {
-    return cached.value;
-  }
-
-  const value = await resolveUserStoreRuntimeSourcesFromEnv(env, tenantId, { requestPath });
-  setBoundedCacheEntry(cache, cacheKey, {
-    value,
-    expiresAt: now + getRequestContextCacheTtlMs(env),
-  });
-  return value;
 }
 
 function getConfiguredUrlHostname(value: string | undefined): string | null {
@@ -324,7 +326,10 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
   return async (c: Context<{ Bindings: Env }>, next: Next) => {
     const requestId = crypto.randomUUID();
     const startTime = Date.now();
-    const timingEnabled = isFlowRuntimeTimingEnabled(c.env, c.req.path);
+    const diagnosticSessionId = sanitizeDiagnosticSessionId(
+      c.req.raw.headers.get(DIAGNOSTIC_SESSION_ID_HEADER)
+    );
+    const timingEnabled = isFlowRuntimeTimingEnabled(c.env, c.req.path, c.req.raw);
     const timingSpans: DiagnosticTimingSpan[] | null = timingEnabled ? [] : null;
     const requestClass = classifyTenantRequestPath(c.req.path);
     const requestedTenantId = isAdminTenantHeaderRequired(c.req.path)
@@ -368,9 +373,6 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     // Single-tenant mode: always returns default tenant
     // Multi-tenant mode: extracts from subdomain
     const tenantResult = resolveTenantFromRequest(c.req.raw, c.env);
-    const authCoreSource = await timeDiagnosticSpan(timingSpans, 'rc_auth_source', () =>
-      resolveAuthCorePersistenceSourceFromEnv(c.env).catch(() => c.env.DB)
-    );
     let tenantId = tenantResult.tenantId;
     const requestHost = getRequestHost(c.req.raw)?.split(':')[0]?.toLowerCase();
     if (isReservedUiHost(c.env, requestHost)) {
@@ -385,10 +387,8 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       !tenantResult.success &&
       shouldAttemptVanityHostResolution(c.env, requestHost, requestClass)
     ) {
-      const vanityTenantId = await resolveTenantFromVanityHost(
-        authCoreSource,
-        c.env.AUTHRIM_CONFIG,
-        requestHost
+      const vanityTenantId = await timeDiagnosticSpan(timingSpans, 'rc_vanity_host', () =>
+        resolveTenantFromVanityHost(c.env, requestHost)
       );
       if (vanityTenantId) {
         tenantResult.success = true;
@@ -457,15 +457,51 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
 
     // In multi-tenant mode, validate that the resolved tenant actually exists in D1.
     // Uses positive-only isolate/KV caches to avoid per-request storage lookups.
-    // Fail-open on D1 errors to prevent outages from blocking all requests.
+    // Missing routes and storage errors fail closed unless a positive cache entry already exists.
     const shouldValidateTenantExists =
       isMultiTenantEnabled(c.env) &&
       !!tenantId &&
-      (requestClass === 'tenant_scoped_admin' || tenantResult.success);
+      (requestClass === 'tenant_scoped_admin' ||
+        (requestClass !== 'platform_admin' &&
+          requestClass !== 'tenant_inventory_admin' &&
+          tenantResult.success));
+
+    let tenantMetadataContext: TenantMetadataContext | undefined;
+    if (shouldResolveTenantDataContexts(requestClass, c.req.path)) {
+      try {
+        tenantMetadataContext = await timeDiagnosticSpan(timingSpans, 'rc_tenant_metadata', () =>
+          resolveTenantMetadataContext(c.env, tenantId)
+        );
+      } catch (error) {
+        if (error instanceof TenantDatabaseResolverError) {
+          const generationPropagating = error.code === 'snapshot_generation_propagating';
+          if (generationPropagating) c.header('Retry-After', '1');
+          return c.json(
+            {
+              error: error.code,
+              route: c.req.path,
+              tenant_id: tenantId,
+            },
+            generationPropagating ? 503 : 409
+          );
+        }
+        const code = error instanceof Error ? error.message : 'tenant_metadata_source_unavailable';
+        const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
+        errorLogger.warn('Tenant metadata source resolution failed', {
+          error: code,
+          tenantId,
+          path: c.req.path,
+        });
+        return c.json(
+          { error: 'temporarily_unavailable', error_description: 'Tenant unavailable' },
+          503
+        );
+      }
+    }
 
     if (shouldValidateTenantExists) {
       const exists = await timeDiagnosticSpan(timingSpans, 'rc_tenant_exists', () =>
-        validateTenantExistsWithIsolateCache(c.env, authCoreSource, tenantId)
+        validateTenantExistsWithIsolateCache(c.env, tenantMetadataContext?.coreDb, tenantId)
       );
       if (!exists) {
         const errorLogger = createLogger({ requestId, tenantId: 'unknown' });
@@ -478,16 +514,23 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       }
     }
 
+    // The legacy tenant subdomain is a platform-controlled alias, so it can be
+    // canonicalized before tenant-configured host binding is evaluated.
     if (
       isMultiTenantEnabled(c.env) &&
       tenantResult.success &&
       requestHost &&
-      !!c.env.BASE_DOMAIN &&
-      requestHost === `${tenantId}.${c.env.BASE_DOMAIN}`
+      c.env.BASE_DOMAIN &&
+      requestHost === `${tenantId}.${c.env.BASE_DOMAIN.toLowerCase()}`
     ) {
-      const primaryVanity = await getPrimaryTenantVanityDomain(
-        { AUTHRIM_CONFIG: c.env.AUTHRIM_CONFIG, DB: authCoreSource },
-        tenantId
+      const primaryVanity = await timeDiagnosticSpan(timingSpans, 'rc_primary_vanity', () =>
+        getPrimaryTenantVanityDomain(
+          {
+            AUTHRIM_CONFIG: c.env.AUTHRIM_CONFIG,
+            tenantCoreDb: tenantMetadataContext?.coreDb,
+          },
+          tenantId
+        )
       );
       if (primaryVanity && primaryVanity.hostname !== requestHost) {
         const isBrowserNavigation =
@@ -528,6 +571,37 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
       }
     }
 
+    // Every public protocol transaction for a tenant has exactly one issuer
+    // namespace. Validate that the incoming host is tenant-bound before
+    // canonicalizing it so an unapproved alias cannot disclose tenant routing.
+    if (isMultiTenantEnabled(c.env) && tenantResult.success && requestHost) {
+      const primaryVanity = await timeDiagnosticSpan(timingSpans, 'rc_primary_vanity', () =>
+        getPrimaryTenantVanityDomain(
+          {
+            AUTHRIM_CONFIG: c.env.AUTHRIM_CONFIG,
+            tenantCoreDb: tenantMetadataContext?.coreDb,
+          },
+          tenantId
+        )
+      );
+      if (primaryVanity && primaryVanity.hostname !== requestHost) {
+        const isBrowserNavigation =
+          ['GET', 'HEAD'].includes(c.req.method) &&
+          !c.req.path.startsWith('/api/') &&
+          (c.req.header('Accept') || '').includes('text/html');
+
+        if (isBrowserNavigation) {
+          const redirectUrl = new URL(c.req.url);
+          redirectUrl.hostname = primaryVanity.hostname;
+          return c.redirect(redirectUrl.toString(), 308);
+        }
+
+        if (requestClass === 'public_protocol_or_rest') {
+          return c.json({ error: 'not_found', error_description: 'Tenant not found' }, 404);
+        }
+      }
+    }
+
     // Create logger with request context
     const logger = createLogger({
       requestId,
@@ -542,36 +616,9 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
     ctx.set('tenantId', tenantId);
     ctx.set('logger', logger);
     ctx.set('startTime', startTime);
-    if (shouldResolveRuntimeUserStoreSources(requestClass, c.req.path)) {
-      try {
-        ctx.set(
-          'runtimeUserStoreSources',
-          await timeDiagnosticSpan(timingSpans, 'rc_user_sources', () =>
-            resolveRuntimeUserStoreSourcesWithIsolateCache(c.env, tenantId, c.req.path)
-          )
-        );
-      } catch (error) {
-        if (error instanceof TenantDatabaseResolverError) {
-          logger.warn('Tenant database runtime source resolution failed', {
-            error: error.code,
-            tenantId,
-            path: c.req.path,
-            storageProfile: c.env.DEFAULT_STORAGE_PROFILE_ID ?? 'unknown',
-          });
-          return c.json(
-            {
-              error: error.code,
-              storage_profile: c.env.DEFAULT_STORAGE_PROFILE_ID ?? 'unknown',
-              route: c.req.path,
-              tenant_id: tenantId,
-            },
-            409
-          );
-        }
-        throw error;
-      }
+    if (tenantMetadataContext) {
+      ctx.set('tenantMetadataContext', tenantMetadataContext);
     }
-
     // Log request start
     logger.debug('Request started', {
       method: c.req.method,
@@ -592,6 +639,7 @@ export function requestContextMiddleware(options: RequestContextMiddlewareOption
         });
         appendServerTiming(c, timingSpans);
         logger.info('Request context timing', {
+          diagnosticSessionId,
           path: c.req.path,
           request_class: requestClass,
           duration_ms: roundDiagnosticDurationMs(duration),
@@ -633,7 +681,7 @@ export function getRequestContext(c: Context<{ Bindings: Env }>): RequestContext
  * @param c - Hono context
  * @returns Logger instance
  */
-export function getLogger(c: Context<{ Bindings: Env }>): Logger {
+export function getLogger<TBindings extends object>(c: Context<{ Bindings: TBindings }>): Logger {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const logger = (c as any).get('logger');
   if (logger) {

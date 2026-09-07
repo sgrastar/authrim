@@ -15,7 +15,7 @@ const adminDatabaseConnections = {
 	admin_database_connections_create_title: 'Connectionを作成',
 	admin_database_connections_detail_title: 'Database Connection',
 	admin_database_connections_create_description:
-		'Runtime profile、audit、tenant storage routingで使うdatabase targetを登録します。',
+		'Auditと将来のbackend integration用databaseを登録します。Tenant D1配置はControl Planeが管理します。',
 	admin_database_connections_detail_description: 'Database connection metadataを表示・管理します。',
 	admin_database_connections_test_connection: 'Connectionをtest',
 	admin_database_connections_save_changes: '変更を保存',

@@ -92,6 +92,24 @@ describe('validateSAMLAuthnRequestSignature', () => {
     });
   });
 
+  it('returns authenticated references for signed POST AuthnRequest processing', async () => {
+    const references = [{ uri: '#_request123', xml: '<AuthnRequest ID="_request123" />' }];
+    await expect(
+      validateSAMLAuthnRequestSignature(
+        {
+          authnRequest,
+          spConfig: { ...baseSpConfig, authnRequestSignaturePolicy: 'required' },
+          binding: 'post',
+          xml: '<AuthnRequest><Signature /></AuthnRequest>',
+        },
+        {
+          hasSignature: () => true,
+          verifyXmlSignatureAndGetReferences: vi.fn(() => references),
+        }
+      )
+    ).resolves.toEqual(references);
+  });
+
   it('tries rollover certificates when verifying signed POST AuthnRequest', async () => {
     const verifyXmlSignature = vi.fn((_xml, options) => options.certificateOrKey === 'sp-next');
 

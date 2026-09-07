@@ -2,7 +2,7 @@
 project: Authrim
 lang: en
 date: 2026-01-19
-description: "Load testing framework for Authrim OIDC Provider using K6."
+description: 'Load testing framework for Authrim OIDC Provider using K6.'
 type: reference
 tags:
   - authrim
@@ -11,6 +11,7 @@ tags:
   - oidc
   - testing
 ---
+
 # Authrim Load Testing
 
 Load testing framework for Authrim OIDC Provider using K6.
@@ -18,10 +19,11 @@ Load testing framework for Authrim OIDC Provider using K6.
 > **See also**: [Testing Guide](../docs/getting-started/testing.md) for unit tests, E2E tests, conformance tests, and other test types.
 >
 > **Scope note**:
+>
 > - This folder is primarily for throughput / capacity benchmarking.
 > - Some benchmark or seed flows assume benchmark-only helpers or permissive preconditions that are not always available in a hardened deployed environment.
 > - For generated/deployed env validation against supported APIs only, use
->   `test/environment-validation/load-generated-live-safe.ts`.
+>   `test/generated-environment/load-generated-live-safe.ts`.
 
 ## Table of Contents
 
@@ -46,6 +48,8 @@ This framework measures the performance and capacity of Authrim OIDC endpoints:
 - **Refresh Token Rotation** (`POST /token`) - Token refresh with rotation
 - **Audit-heavy Token Activity** (`POST /token`) - refresh-token activity with audit sink focus
 - **Full Login Flows** - Complete OAuth flows with Mail OTP or Passkey
+- **SCIM Provisioning** (`POST/GET/PATCH /scim/v2/Users`) - single-resource lifecycle load
+- **SCIM Bulk Provisioning** (`POST /scim/v2/Bulk`) - batched account creation load
 
 ### Performance Highlights
 
@@ -126,15 +130,15 @@ k6 run \
   scripts/benchmarks/test-userinfo-benchmark.js
 ```
 
-For `tenant-d1` production-readiness checks, run UserInfo against a large seeded core/PII
-dataset and tag the result so it can be compared with Cloudflare D1/DO analytics:
+For Control Plane production-readiness checks, run UserInfo against a large seeded Core/PII dataset
+within the tenant-assigned shard set and tag the tenant placement for analytics comparison:
 
 ```bash
 k6 run \
   --env BASE_URL=https://your-authrim.example.com \
   --env TOKEN_PATH=../seeds/access_tokens.json \
   --env PRESET=rps500 \
-  --env STORAGE_PROFILE=tenant-d1 \
+  --env TENANT_PLACEMENT_POLICY=tenant_exclusive \
   --env DATASET_USER_COUNT=1000000 \
   scripts/benchmarks/test-userinfo-benchmark.js
 ```
@@ -144,8 +148,8 @@ k6 run \
 If you want to exercise a real generated/deployed environment without relying on benchmark-only helpers, use:
 
 ```bash
-pnpm exec tsx test/environment-validation/load-generated-live-safe.ts --env single --profile safe
-pnpm exec tsx test/environment-validation/load-generated-live-safe.ts --config /path/to/.authrim/single/config.json --profile medium --json
+pnpm exec tsx test/generated-environment/load-generated-live-safe.ts --env single --profile safe
+pnpm exec tsx test/generated-environment/load-generated-live-safe.ts --config /path/to/.authrim/single/config.json --profile medium --json
 ```
 
 This runner:
@@ -210,6 +214,11 @@ CF_API_TOKEN=xxx node scripts/utils/report-cf-analytics.js \
 
 ## Available Benchmarks
 
+Admin seed and setup calls require a short-lived Admin Machine Access token in
+`ADMIN_MACHINE_ACCESS_TOKEN`. Issue it with explicit permissions for the Admin endpoints used by
+the selected seed or benchmark, scope it to `TENANT_ID`, and start the run before it expires. Static
+`ADMIN_API_SECRET` credentials are not supported.
+
 | Benchmark           | Endpoint                     | Seed Script              | K6 Script                               |
 | ------------------- | ---------------------------- | ------------------------ | --------------------------------------- |
 | Token Introspection | `POST /introspect`           | `seed-access-tokens.js`  | `test-introspect-benchmark.js`          |
@@ -220,6 +229,74 @@ CF_API_TOKEN=xxx node scripts/utils/report-cf-analytics.js \
 | Audit-heavy Token   | `POST /token`                | `seed-refresh-tokens.js` | `test-audit-heavy-benchmark.js`         |
 | Mail OTP Login      | 5-step OAuth flow            | `seed-otp-users.js`      | `test-mail-otp-full-login-benchmark.js` |
 | Passkey Login       | 6-step OAuth flow            | `seed-passkey-users.js`  | `test-passkey-full-login-benchmark.js`  |
+| SCIM Provisioning   | User create/get/lifecycle    | None                     | `test-scim-provisioning-benchmark.js`   |
+| SCIM Scale Seed     | Controlled single-user POSTs | None                     | `test-scim-scale-provision.js`          |
+| SCIM Bulk           | `POST /scim/v2/Bulk`         | None                     | `test-scim-bulk-benchmark.js`           |
+
+### SCIM Provisioning
+
+Use a dedicated, short-lived SCIM bearer token. The scripts do not print the token. Run the
+single-resource lifecycle benchmark first, and only then increase Bulk throughput.
+
+```bash
+k6 run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env SCIM_TOKEN=... \
+  --env TENANT_ID=default \
+  --env TARGET_USERS=1000 \
+  --env VUS=3 \
+  scripts/benchmarks/test-scim-scale-provision.js
+
+k6 run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env SCIM_TOKEN=... \
+  --env TENANT_ID=default \
+  --env PRESET=smoke \
+  scripts/benchmarks/test-scim-provisioning-benchmark.js
+
+k6 run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env SCIM_TOKEN=... \
+  --env TENANT_ID=default \
+  --env PRESET=smoke \
+  --env BULK_SIZE=20 \
+  scripts/benchmarks/test-scim-bulk-benchmark.js
+```
+
+Each run uses a unique `RUN_ID` by default. Set it explicitly when correlating a run with
+Cloudflare Analytics. These benchmarks intentionally retain their provisioned users so that
+post-run directory and lifecycle consistency can be inspected.
+
+The Bulk benchmark defaults to a 30-second p95 and 60-second p99 request guardrail and fails when
+the arrival-rate executor drops a batch. Override `P95_LIMIT_MS` and `P99_LIMIT_MS` when validating
+an explicitly agreed environment SLO. `FAIL_ON_ERRORS=0` allows independent `/Users` creates to use
+the server's bounded parallel path; non-zero values retain RFC stop-after-error sequencing.
+
+Mapped SCIM attribute updates have separate PATCH benchmarks:
+
+```bash
+k6 run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env SCIM_TOKEN=... \
+  --env TENANT_ID=default \
+  --env PRESET=rps14 \
+  --env POOL_SIZE=1000 \
+  scripts/benchmarks/test-scim-attribute-update-benchmark.js
+
+k6 run \
+  --env BASE_URL=https://your-authrim.example.com \
+  --env SCIM_TOKEN=... \
+  --env TENANT_ID=default \
+  --env PRESET=rps30 \
+  --env POOL_SIZE=2000 \
+  --env BULK_SIZE=20 \
+  scripts/benchmarks/test-scim-bulk-attribute-update-benchmark.js
+```
+
+The default update payload changes `displayName`, which is part of the Minimal SCIM mapping set.
+Identifier changes (`userName` and primary email) use the durable identifier-replacement workflow
+and should be benchmarked separately. Deep `startIndex` pool loading is setup work and is excluded
+from update throughput; for repeated long runs, generate and reuse a dedicated user-ID pool.
 
 ### Token Introspection / Token Exchange / UserInfo
 
@@ -228,7 +305,7 @@ These benchmarks share the same seed data (access tokens).
 ```bash
 # 1. Generate access tokens
 BASE_URL=https://your-authrim.example.com \
-CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz \
+CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_MACHINE_ACCESS_TOKEN=zzz \
 TOKEN_COUNT=3000 \
 node scripts/seeds/seed-access-tokens.js
 
@@ -245,13 +322,13 @@ k6 run \
 ```bash
 # 1. Seed users
 BASE_URL=https://your-authrim.example.com \
-ADMIN_API_SECRET=zzz OTP_USER_COUNT=500 \
+ADMIN_MACHINE_ACCESS_TOKEN=zzz OTP_USER_COUNT=500 \
 node scripts/seeds/seed-otp-users.js
 
 # 2. Run benchmark (sessions created in setup phase)
 k6 run \
   --env BASE_URL=https://your-authrim.example.com \
-  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_API_SECRET=zzz \
+  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_MACHINE_ACCESS_TOKEN=zzz \
   --env PRESET=rps200 \
   scripts/benchmarks/test-authorize-silent-benchmark.js
 ```
@@ -261,47 +338,36 @@ k6 run \
 ```bash
 # 1. Seed OTP users
 BASE_URL=https://your-authrim.example.com \
-ADMIN_API_SECRET=zzz OTP_USER_COUNT=500 \
+ADMIN_MACHINE_ACCESS_TOKEN=zzz OTP_USER_COUNT=500 \
 node scripts/seeds/seed-otp-users.js
 
 # 2. Run benchmark
 k6 run \
   --env BASE_URL=https://your-authrim.example.com \
-  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_API_SECRET=zzz \
+  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_MACHINE_ACCESS_TOKEN=zzz \
   --env PRESET=rps50 \
   scripts/benchmarks/test-mail-otp-full-login-benchmark.js
 ```
 
-### Transient Auth Mirror Comparison
+### Transient Authentication State Verification
 
-Use the Mail OTP Full Login benchmark for transient auth state comparison because it exercises
-ChallengeStore, SessionStore, AuthorizationCodeStore, RefreshTokenRotator, and `session_clients`
-registration on the `/authorize` and `/token` path. Run it twice against deployments that differ
-only by transient auth mirror policy, then compare k6 latency with Cloudflare D1 read/write counts.
+Use the Mail OTP Full Login benchmark to verify ChallengeStore, SessionStore, AuthCodeStore,
+RefreshTokenRotator, SessionRevocationStore, and the `/authorize` and `/token` paths. The Control
+Plane runtime policy is fixed: session and Device/CIBA cold D1 persistence are disabled, so the
+benchmark does not expose a mirror-mode switch.
 
 ```bash
-# D1 mirrors enabled, for shared-d1 or compatibility profiles
 k6 run \
   --env BASE_URL=https://your-authrim.example.com \
-  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_API_SECRET=zzz \
+  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_MACHINE_ACCESS_TOKEN=zzz \
   --env PRESET=rps100 \
-  --env STORAGE_PROFILE=shared-d1 \
-  --env TRANSIENT_AUTH_MIRROR_MODE=d1-enabled \
-  scripts/benchmarks/test-mail-otp-full-login-benchmark.js
-
-# D1 mirrors disabled or minimized, for tenant-d1/external-durable scale profiles
-k6 run \
-  --env BASE_URL=https://your-authrim.example.com \
-  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_API_SECRET=zzz \
-  --env PRESET=rps100 \
-  --env STORAGE_PROFILE=tenant-d1 \
-  --env TRANSIENT_AUTH_MIRROR_MODE=d1-disabled \
+  --env TENANT_PLACEMENT_POLICY=tenant_exclusive \
   scripts/benchmarks/test-mail-otp-full-login-benchmark.js
 ```
 
 For the comparison report, record `authorize_code_latency`, `token_latency`, `full_flow_latency`,
 D1 write/read counts by binding, Durable Object request counts, and queue retry/backlog metrics if
-async mirrors or audit sinks are enabled.
+audit sinks are enabled. Confirm that no session or Device/CIBA cold-mirror D1 statements appear.
 
 ### Audit-heavy Token Activity
 
@@ -312,7 +378,7 @@ remain reusable.
 ```bash
 # 1. Generate refresh-token families
 BASE_URL=https://your-authrim.example.com \
-CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_API_SECRET=zzz COUNT=2000 \
+CLIENT_ID=xxx CLIENT_SECRET=yyy ADMIN_MACHINE_ACCESS_TOKEN=zzz COUNT=2000 \
 node scripts/seeds/seed-refresh-tokens.js
 
 # 2. Run audit-heavy benchmark
@@ -331,6 +397,7 @@ writes between audit profiles after each run.
 > **⚠️ Note (Jan 2026)**: The xk6-passkeys extension previously located at `extensions/xk6-passkeys/` has been removed due to 66 security vulnerabilities in its Go dependencies (go@1.23.0) with no available fixes. The extension was a fork of [corbado/xk6-passkeys](https://github.com/corbado/xk6-passkeys) with added `ImportCredential` support for credential serialization in k6's setup/teardown phases.
 >
 > **For future passkey load testing**:
+>
 > - Use the upstream [corbado/xk6-passkeys](https://github.com/corbado/xk6-passkeys) extension directly
 > - Or rebuild from the [descope/virtualwebauthn](https://github.com/descope/virtualwebauthn) library
 > - Original implementation: `passkeys.go` with iCloud Keychain AAGUID (`fbfc3007-154e-4ecc-8c0b-6e020557d7bd`)
@@ -343,13 +410,13 @@ writes between audit profiles after each run.
 
 # 2. Seed passkey users
 BASE_URL=https://your-authrim.example.com \
-ADMIN_API_SECRET=zzz PASSKEY_USER_COUNT=100 \
+ADMIN_MACHINE_ACCESS_TOKEN=zzz PASSKEY_USER_COUNT=100 \
 node scripts/seeds/seed-passkey-users.js
 
 # 3. Run benchmark
 ./bin/k6-passkeys run \
   --env BASE_URL=https://your-authrim.example.com \
-  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_API_SECRET=zzz \
+  --env CLIENT_ID=xxx --env CLIENT_SECRET=yyy --env ADMIN_MACHINE_ACCESS_TOKEN=zzz \
   --env PRESET=rps30 \
   scripts/benchmarks/test-passkey-full-login-benchmark.js
 ```
@@ -376,7 +443,7 @@ All seed scripts are in `scripts/seeds/`. Create a test client first via Admin A
 
 ```bash
 curl -X POST "https://your-authrim.example.com/api/admin/clients" \
-  -H "Authorization: Bearer YOUR_ADMIN_API_SECRET" \
+  -H "Authorization: Bearer YOUR_ADMIN_MACHINE_ACCESS_TOKEN" \
   -H "X-Tenant-Id: default" \
   -H "Content-Type: application/json" \
   -d '{
@@ -391,13 +458,13 @@ curl -X POST "https://your-authrim.example.com/api/admin/clients" \
 
 ### Script Reference
 
-| Script                   | Required Env Vars                                            | Optional                                       | Description                             |
-| ------------------------ | ------------------------------------------------------------ | ---------------------------------------------- | --------------------------------------- |
-| `seed-access-tokens.js`  | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_API_SECRET` | `TENANT_ID` (`default`), `TOKEN_COUNT` (1000), `CONCURRENCY` (20)       | Tokens for introspect/exchange/userinfo |
-| `seed-otp-users.js`      | `BASE_URL`, `ADMIN_API_SECRET`                               | `TENANT_ID` (`default`), `OTP_USER_COUNT` (500), `CONCURRENCY` (20)     | Users for OTP login / silent auth       |
-| `seed-passkey-users.js`  | `BASE_URL`, `ADMIN_API_SECRET`                               | `TENANT_ID` (`default`), `PASSKEY_USER_COUNT` (100), `CONCURRENCY` (10) | Users with passkey credentials          |
-| `seed-refresh-tokens.js` | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_API_SECRET` | `TENANT_ID` (`default`), `COUNT` (120)                                  | Refresh tokens for rotation tests       |
-| `seed-authcodes.js`      | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_API_SECRET` | `TENANT_ID` (`default`), `AUTH_CODE_COUNT` (200)                        | Authorization codes                     |
+| Script                   | Required Env Vars                                                      | Optional                                                                | Description                             |
+| ------------------------ | ---------------------------------------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------- |
+| `seed-access-tokens.js`  | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_MACHINE_ACCESS_TOKEN` | `TENANT_ID` (`default`), `TOKEN_COUNT` (1000), `CONCURRENCY` (20)       | Tokens for introspect/exchange/userinfo |
+| `seed-otp-users.js`      | `BASE_URL`, `ADMIN_MACHINE_ACCESS_TOKEN`                               | `TENANT_ID` (`default`), `OTP_USER_COUNT` (500), `CONCURRENCY` (20)     | Users for OTP login / silent auth       |
+| `seed-passkey-users.js`  | `BASE_URL`, `ADMIN_MACHINE_ACCESS_TOKEN`                               | `TENANT_ID` (`default`), `PASSKEY_USER_COUNT` (100), `CONCURRENCY` (10) | Users with passkey credentials          |
+| `seed-refresh-tokens.js` | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_MACHINE_ACCESS_TOKEN` | `TENANT_ID` (`default`), `COUNT` (120)                                  | Refresh tokens for rotation tests       |
+| `seed-authcodes.js`      | `BASE_URL`, `CLIENT_ID`, `CLIENT_SECRET`, `ADMIN_MACHINE_ACCESS_TOKEN` | `TENANT_ID` (`default`), `AUTH_CODE_COUNT` (200)                        | Authorization codes                     |
 
 **Token Mix** (`seed-access-tokens.js`): Valid 60%, Token Exchange 5%, Expired 12%, Revoked 12%, Wrong Audience 6%, Wrong Client 5%
 
@@ -413,6 +480,7 @@ Notes:
 
 Detailed load test reports with performance analysis:
 
+- [SCIM Attribute Update Benchmark](./reports/Aug2026/scim-attribute-update.md)
 - [Silent Auth Benchmark](./reports/Dec2025/silent-auth.md)
 - [UserInfo Benchmark](./reports/Dec2025/userinfo.md)
 - [Token Exchange Benchmark](./reports/Dec2025/token-exchange.md)
@@ -430,7 +498,9 @@ See [Reports Index](./reports/Dec2025/README.md) for performance summary across 
 load-testing/
 ├── README.md
 ├── reports/
-│   └── Dec2025/                    # Load test reports
+│   ├── Aug2026/
+│   │   └── scim-attribute-update.md  # SCIM update capacity report
+│   └── Dec2025/                    # OIDC load test reports
 │       ├── README.md               # Performance summary
 │       ├── silent-auth.md
 │       ├── userinfo.md

@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
-import { expect } from 'vitest';
+import { expect, vi } from 'vitest';
 import type { Env, LoginEntrySettings } from '@authrim/ar-lib-core';
 import { generateEmailDomainHash } from '@authrim/ar-lib-core/utils/email-domain-hash';
 import {
   getDiscoveryConfigHandler,
+  postDiscoveryEmailStartHandler,
   postDiscoveryGrantHandler,
   postDiscoveryGrantVerifyHandler,
   postDiscoveryHandler,
@@ -13,11 +14,115 @@ import {
   tenantSystemOidcClients,
   tenantSystemTenants,
   tenantSystemVanityDomains,
-} from '../../fixtures/tenant-system/tenants';
+} from './fixtures/tenants';
 import { createMockEnv } from '../fixtures';
-import { loadMatrixCsv as loadTenantMatrixCsv } from '../../fixtures/tenant-system/matrix-loader';
 
-export { loadTenantMatrixCsv as loadMatrixCsv };
+/**
+ * These integration tests exercise the discovery handlers and login UI against a local D1
+ * dataset. Signed Runtime Registry verification and physical binding selection are tested by the
+ * runtime-topology security matrix, so this suite replaces only that cross-process routing
+ * boundary with deterministic tenant routes.
+ */
+vi.mock('@authrim/ar-lib-core', async () => {
+  const actual =
+    await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+
+  type TestLookupIndex = { aliasKind: string; value: string };
+
+  const tenantForAlias = (index: TestLookupIndex): string[] => {
+    switch (index.aliasKind) {
+      case 'tenant_code':
+        return index.value === 'first'
+          ? ['first']
+          : index.value === 'second-code'
+            ? ['second']
+            : [];
+      case 'environment_tenant':
+        return ['first', 'second', 'inactive'];
+      case 'client_id':
+        return index.value === 'client_first'
+          ? ['first']
+          : index.value === 'client_second'
+            ? ['second']
+            : [];
+      case 'invitation_token':
+        return ['valid-invite', 'expired-invite', 'exhausted-invite'].includes(index.value)
+          ? ['first']
+          : index.value === 'inactive-invite'
+            ? ['inactive']
+            : [];
+      default:
+        return [];
+    }
+  };
+
+  const routeProjection = (tenantId: string) => ({
+    schemaVersion: 1,
+    tenantRouteGeneration: 1,
+    residencyPolicyId: 'tenant-system-policy',
+    target: {
+      dataRole: 'tenant_core/default' as const,
+      residencyPartition: 'default',
+      shardId: 'shard-0',
+      bindingRef: 'DB',
+      requiredBindingRouteGeneration: 1,
+    },
+    tenantId,
+  });
+
+  class TestLookupRouteResolver {
+    async resolveAlias(input: { index: TestLookupIndex }) {
+      const tenantId = tenantForAlias(input.index)[0];
+      return tenantId ? { tenantId, routeProjection: routeProjection(tenantId) } : null;
+    }
+
+    async resolveAliases(input: { index: TestLookupIndex }) {
+      return tenantForAlias(input.index).map((tenantId) => ({
+        tenantId,
+        routeProjection: routeProjection(tenantId),
+      }));
+    }
+  }
+
+  return {
+    ...actual,
+    createLookupAliasIndex: vi.fn(async (aliasKind: string, value: string) => ({
+      aliasKind,
+      value: value.trim().toLowerCase(),
+    })),
+    loadVerifiedLookupBucketAssignmentProvider: vi.fn(async () => ({})),
+    LookupRouteResolver: TestLookupRouteResolver,
+    resolveTenantDatabaseSourceFromRegistry: vi.fn(
+      async (env: Env, options: { tenantId: string; role: string }) => ({
+        tenantId: options.tenantId,
+        role: options.role,
+        source: env.DB,
+        generation: 1,
+        runtimeGeneration: 1,
+        schemaVersion: 1,
+        shardGroup: 'default',
+        shardIndex: 0,
+        shardCount: 1,
+        shardKeyStrategy: 'tenant_id',
+        driver: 'd1',
+        bindingRef: 'DB',
+        deploymentTarget: null,
+        healthStatus: 'active',
+        resolutionSource: 'runtime_registry',
+        dataRole: 'tenant_core/default',
+        residencyPolicyId: 'tenant-system-policy',
+        residencyPartition: 'default',
+        shardId: 'shard-0',
+        assignmentGeneration: 1,
+        bindingRouteGeneration: 1,
+        placementPolicy: {},
+        allocationScope: 'tenant_exclusive',
+        ownerTenantId: options.tenantId,
+        registryRow: {},
+      })
+    ),
+  };
+});
 
 export type TenantSystemTopology =
   | 'D1_single'
@@ -175,6 +280,27 @@ class TenantSystemD1Database {
         .map(({ id: userId, tenant_id }) => ({ id: userId, tenant_id })) as T[];
     }
 
+    if (query.includes("FROM tenants WHERE tenant_code = ? AND lifecycle_state = 'active'")) {
+      const tenantCode = String(params[0] ?? '');
+      return this.data.tenants
+        .filter((tenant) => tenant.tenant_code === tenantCode && tenant.is_active === 1)
+        .map((tenant) => ({ ...tenant, lifecycle_state: 'active' })) as T[];
+    }
+
+    if (query.includes("FROM tenants WHERE id = ? AND lifecycle_state = 'active'")) {
+      const tenantId = String(params[0] ?? '');
+      return this.data.tenants
+        .filter((tenant) => tenant.id === tenantId && tenant.is_active === 1)
+        .map((tenant) => ({ ...tenant, lifecycle_state: 'active' })) as T[];
+    }
+
+    if (query.includes('FROM tenants') && query.includes("WHERE lifecycle_state = 'active'")) {
+      return this.data.tenants
+        .filter((tenant) => tenant.is_active === 1)
+        .sort((a, b) => a.id.localeCompare(b.id))
+        .map((tenant) => ({ ...tenant, lifecycle_state: 'active' })) as T[];
+    }
+
     if (query.includes('FROM tenants WHERE tenant_code = ? AND is_active = 1')) {
       const tenantCode = String(params[0] ?? '');
       return this.data.tenants.filter(
@@ -197,10 +323,17 @@ class TenantSystemD1Database {
         .slice(0, Number.isFinite(limit) && limit > 0 ? limit : 2) as T[];
     }
 
-    if (query.includes('FROM oauth_clients WHERE client_id = ?')) {
-      const clientId = String(params[0] ?? '');
+    if (
+      query.includes('FROM oauth_clients WHERE tenant_id = ? AND client_id = ?') ||
+      query.includes('FROM oauth_clients WHERE client_id = ?')
+    ) {
+      const tenantId = query.includes('WHERE tenant_id = ?') ? String(params[0] ?? '') : null;
+      const clientId = String(params[tenantId === null ? 0 : 1] ?? '');
       return this.data.clients
-        .filter((client) => client.client_id === clientId)
+        .filter(
+          (client) =>
+            client.client_id === clientId && (tenantId === null || client.tenant_id === tenantId)
+        )
         .map((client) => ({
           client_id: client.client_id,
           client_secret_hash: null,
@@ -296,8 +429,8 @@ class TenantSystemD1Database {
 
     if (
       query.includes('FROM tenant_vanity_domains') &&
-      query.includes('tenant_id = ?') &&
-      query.includes('is_primary = 1')
+      (query.includes('primary_active_tenant_key = ?') ||
+        (query.includes('tenant_id = ?') && query.includes('is_primary = 1')))
     ) {
       const tenantId = String(params[0] ?? '');
       return this.data.vanityDomains.filter(
@@ -348,6 +481,10 @@ export async function buildEnvForTopology(
   env.DEFAULT_TENANT_ID = 'first';
   env.PRIMARY_TENANT_ID = 'first';
   env.EMAIL_DOMAIN_HASH_SECRET = 'tenant-system-domain-hash-secret';
+  env.OTP_HMAC_SECRET = 'tenant-system-discovery-grant-secret';
+  env.AUTHRIM_ENVIRONMENT_NAME = 'tenant-system-test';
+  env.TENANT_RUNTIME_REGISTRY = env.AUTHRIM_CONFIG;
+  env.TENANT_RUNTIME_REGISTRY_VERIFYING_PUBLIC_JWKS = '{"keys":[]}';
 
   if (topology !== 'D1_single' && topology !== 'D2_mt_no_custom') {
     env.BASE_DOMAIN = commonHost;
@@ -363,6 +500,7 @@ export async function buildEnvForTopology(
 
 export function loginEntrySettingsFromRow(row: SettingsMatrixRow): LoginEntrySettings {
   return {
+    'login-entry.override_enabled': false,
     'login-entry.mode': row.entry_mode,
     'login-entry.email_resolution_policy': row.email_resolution,
     'login-entry.selection_policy': row.selection_policy,
@@ -374,6 +512,12 @@ export function loginEntrySettingsFromRow(row: SettingsMatrixRow): LoginEntrySet
       row.require_common_before_tenant_login === 'true',
     'login-entry.skip_discovery_if_only_one_tenant': row.skip_if_one_tenant === 'true',
     'login-entry.redirect_tenant_discover_to_common_entry': true,
+    'login-entry.post_login_behavior': 'account',
+    'login-entry.post_login_redirect_url': '/',
+    'login-entry.app_login_client_id': '',
+    'login-entry.app_login_redirect_uri': '',
+    'login-entry.app_login_final_return_to': '',
+    'login-entry.app_login_scope': 'openid profile email',
   };
 }
 
@@ -531,10 +675,12 @@ export function createTenantSystemDiscoveryApp(tenantId = 'first'): Hono<{ Bindi
 
   app.use('*', async (c, next) => {
     c.set('tenantId', tenantId);
+    c.set('tenantMetadataContext' as never, { tenantId, coreDb: c.env.DB } as never);
     await next();
   });
   app.get('/api/auth/discovery', getDiscoveryConfigHandler);
   app.post('/api/auth/discovery', postDiscoveryHandler);
+  app.post('/api/auth/discovery/email/start', postDiscoveryEmailStartHandler);
   app.post('/api/auth/discovery/grant', postDiscoveryGrantHandler);
   app.post('/api/auth/discovery/grant/verify', postDiscoveryGrantVerifyHandler);
 

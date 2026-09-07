@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Locale, LocaleInfo } from '../i18n/types.js';
-import { D1_DATABASES, KV_NAMESPACES } from '../core/naming.js';
+import { D1_DATABASES, KV_NAMESPACES, WORKER_COMPONENTS } from '../core/naming.js';
 import { SETUP_CAPABILITY_COPY } from '../core/setup-capability-copy.js';
 import {
   CLOUDFLARE_DNS_RECORDS_DOCS_URL,
@@ -35,6 +35,17 @@ function readSetupPackageVersion(): string {
 }
 
 const SETUP_PACKAGE_VERSION = readSetupPackageVersion();
+
+export const CONTROL_OPERATION_RESULT_TRANSLATION_KEYS = {
+  awaiting_migration: 'web.control.operationAwaitingMigration',
+  awaiting_worker_bindings: 'web.control.operationAwaitingWorkerBindings',
+  awaiting_smoke: 'web.control.operationAwaitingSmoke',
+  awaiting_quarantine: 'web.control.operationAwaitingQuarantine',
+  retry_required: 'web.control.operationRetryRequired',
+  lease_unavailable: 'web.control.operationLeaseUnavailable',
+  succeeded: 'web.control.operationSucceeded',
+  blocked: 'web.control.operationBlocked',
+} as const;
 
 interface SetupUiCopy {
   stepLabels: readonly string[];
@@ -834,6 +845,8 @@ const DOMAIN_FORM_BROWSER_SCRIPT = String.raw`
           const suggested = apiPrefixLabels[apiPrefixLabels.length - 1] + '.' + zoneName;
           issues.push({
             field: 'apiDomain',
+            kind: 'baseDomainDepth',
+            hostname: apiDomain,
             message: buildBaseMessage(apiDomain),
             suggestion: suggested,
           });
@@ -858,6 +871,8 @@ const DOMAIN_FORM_BROWSER_SCRIPT = String.raw`
           const suggestion = uiPrefixLabels.join('-') + '.' + parentDomain;
           issues.push({
             field: field,
+            kind: 'uiDomainDepth',
+            hostname: hostname,
             message: buildUiMessage(label, hostname, suggestion),
             suggestion: suggestion,
           });
@@ -948,6 +963,9 @@ export function getHtmlTemplate(
   // Safely stringify translations for embedding in JavaScript
   const translationsJson = JSON.stringify(translations);
   const availableLocalesJson = JSON.stringify(availableLocales);
+  const controlOperationResultTranslationKeysJson = JSON.stringify(
+    CONTROL_OPERATION_RESULT_TRANSLATION_KEYS
+  );
   const wildcardDnsManualCopyJson = JSON.stringify(
     Object.fromEntries(
       Object.entries(WILDCARD_DNS_MANUAL_COPY).map(([code, copy]) => [
@@ -1117,13 +1135,28 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'Multi-tenant',
           'web.loadConfig.enabledInitialTenant': 'Enabled (initial tenant: {{tenant}})',
           'web.loadConfig.components': 'Components',
-          'web.loadConfig.storageProfile': 'Storage profile',
           'web.loadConfig.d1Regions': 'D1 regions',
           'web.loadConfig.emailProvider': 'Email provider',
           'web.loadConfig.envConflictConfirm': 'This configuration uses an existing environment name.\\n\\nEnvironment: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\nContinuing and deploying with this configuration may overwrite the existing environment. Continue?',
           'web.loadConfig.validating': 'Validating',
           'web.loadConfig.loadDeploy': 'Load & Deploy',
           'web.loadConfig.provisionedValid': 'The configuration is valid. Resources are already provisioned, so setup can resume from Step 08 (Deploy).',
+          'web.envDetail.initialDeployRecoveryTitle': 'Initial deployment incomplete',
+          'web.envDetail.initialDeployRecoveryDesc': 'The previous deployment stopped before verification. Existing resources will be reused when you resume.',
+          'web.envDetail.initialDeployRecoveryAction': 'Resume initial deployment',
+          'web.envDetail.initialDeployRecoveryVerified': 'Cloudflare state verified. Completed: {{completed}}. Resume from {{stage}}.',
+          'web.envDetail.initialDeployRecoveryStageMigrations': 'database migration verification',
+          'web.envDetail.initialDeployRecoveryStageControlPlane': 'initial deployment setup',
+          'web.envDetail.initialDeployRecoveryStageWorkers': 'Worker deployment',
+          'web.envDetail.initialDeployRecoveryStageVerification': 'post-deployment verification',
+          'web.envDetail.initialDeployRecoveryResources': 'resource provisioning',
+          'web.envDetail.initialDeployRecoverySchema': 'database migrations',
+          'web.envDetail.initialDeployRecoveryWorkers': 'Worker deployment',
+          'web.envDetail.initialDeployRecoveryRecreate': 'The saved checkpoint does not match Cloudflare. Resume is disabled. Delete this incomplete environment and create it again.',
+          'web.envDetail.initialDeployRecoveryManifestChanged': 'The draft migration definition changed after initial deployment started, so the saved deployment state may no longer match the databases. Resume is disabled. Delete this incomplete environment and create it again.',
+          'web.envDetail.initialDeployRecoveryBlocked': 'The current state could not be verified, so resume is disabled. Check the Cloudflare connection and recheck this environment. If verification continues to fail, delete the incomplete environment and create it again.',
+          'web.envDetail.initialDeployRecoveryTokenRequired': ' Deployment credentials need to be refreshed; a new one-time Cloudflare token will be requested.',
+          'web.deploy.retryDeploy': 'Retry deployment',
           'web.loadConfig.checkingEnvironment': 'Checking environment',
           'web.provision.resourcesToCreate': 'Resources to Create',
           'web.provision.queues': 'Queues',
@@ -1147,8 +1180,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'wrangler log',
           'web.deploy.cancelDeploy': 'Cancel Deploy',
           'web.deploy.continueComplete': 'Continue to Complete',
-          'web.deploy.manualWildcardTitle': 'Manual action - wildcard DNS record',
-          'web.deploy.manualWildcardSummary': 'DNS edit permission is unavailable for zone {{zone}}. Add the wildcard record manually before relying on tenant URLs.',
+          'web.deploy.manualWildcardTitle': 'Check wildcard DNS setup',
+          'web.deploy.manualWildcardSummary': 'The wildcard DNS record for tenant URLs could not be confirmed. If you already created it, click Re-check DNS. Otherwise, add the record shown below.',
           'web.deploy.manualWildcardStep1': 'Open Cloudflare Dashboard -> {{zone}} -> DNS > Records.',
           'web.deploy.manualWildcardStep2': 'Add a CNAME record: name {{record}}, target {{target}}, proxy on.',
           'web.deploy.manualWildcardStep3': 'After adding it, click Re-check DNS on this screen.',
@@ -1213,13 +1246,28 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'マルチテナント',
           'web.loadConfig.enabledInitialTenant': '有効（初期テナント: {{tenant}}）',
           'web.loadConfig.components': 'コンポーネント',
-          'web.loadConfig.storageProfile': 'ストレージプロファイル',
           'web.loadConfig.d1Regions': 'D1 リージョン',
           'web.loadConfig.emailProvider': 'メールプロバイダ',
           'web.loadConfig.envConflictConfirm': '既存の環境名と同じです。\\n\\n環境: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\nこのまま設定を継続してデプロイした場合、既存環境が上書きされる可能性があります。続行しますか？',
           'web.loadConfig.validating': '検証中',
           'web.loadConfig.loadDeploy': '読み込んでデプロイへ',
           'web.loadConfig.provisionedValid': '設定は有効です。リソース作成は完了しているため、ステップ08（デプロイ）から再開できます。',
+          'web.envDetail.initialDeployRecoveryTitle': '初回デプロイが完了していません',
+          'web.envDetail.initialDeployRecoveryDesc': '前回のデプロイは検証前に停止しました。作成済みのリソースを再利用して再開できます。',
+          'web.envDetail.initialDeployRecoveryAction': '初回デプロイを再開',
+          'web.envDetail.initialDeployRecoveryVerified': 'Cloudflare 上の状態を確認しました。完了済み: {{completed}}。{{stage}}から再開できます。',
+          'web.envDetail.initialDeployRecoveryStageMigrations': 'データベースマイグレーションの検証',
+          'web.envDetail.initialDeployRecoveryStageControlPlane': '初回デプロイの準備',
+          'web.envDetail.initialDeployRecoveryStageWorkers': 'Worker のデプロイ',
+          'web.envDetail.initialDeployRecoveryStageVerification': 'デプロイ後の検証',
+          'web.envDetail.initialDeployRecoveryResources': 'リソース作成',
+          'web.envDetail.initialDeployRecoverySchema': 'データベースマイグレーション',
+          'web.envDetail.initialDeployRecoveryWorkers': 'Worker のデプロイ',
+          'web.envDetail.initialDeployRecoveryRecreate': '保存されたチェックポイントと Cloudflare 上の状態が一致しないため、再開を無効にしました。この不完全な環境を削除して、最初から作り直してください。',
+          'web.envDetail.initialDeployRecoveryManifestChanged': '初回デプロイ開始後にデータベースの定義が変わり、保存済みの進行状況と現在のデータベースが一致しない可能性があります。安全のため再開を無効にしました。この不完全な環境を削除して、最初から作り直してください。',
+          'web.envDetail.initialDeployRecoveryBlocked': '現在の状態を確認できなかったため、再開を無効にしました。Cloudflare 接続を確認して、この環境を再チェックしてください。確認できない状態が続く場合は、不完全な環境を削除して作り直してください。',
+          'web.envDetail.initialDeployRecoveryTokenRequired': ' デプロイ用の接続情報を更新するため、新しい一時 Cloudflare token の入力が必要です。',
+          'web.deploy.retryDeploy': 'デプロイを再試行',
           'web.loadConfig.checkingEnvironment': '既存環境を確認中',
           'web.provision.resourcesToCreate': '作成されるリソース',
           'web.provision.queues': 'Queues',
@@ -1243,8 +1291,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'wrangler log',
           'web.deploy.cancelDeploy': 'デプロイを中止',
           'web.deploy.continueComplete': '完了へ',
-          'web.deploy.manualWildcardTitle': '手動作業 - ワイルドカードDNSレコード',
-          'web.deploy.manualWildcardSummary': 'ゾーン {{zone}} へのDNS編集権限がないため、ワイルドカードレコードを手動で追加してください。追加が終わるまでテナントURLは解決されません。',
+          'web.deploy.manualWildcardTitle': 'ワイルドカードDNS設定の確認',
+          'web.deploy.manualWildcardSummary': 'テナントURL用のワイルドカードDNSレコードを確認できていません。すでに設定済みの場合は「DNSを再確認」を押してください。未設定の場合は、以下のレコードを追加してください。',
           'web.deploy.manualWildcardStep1': 'Cloudflareダッシュボード -> {{zone}} -> DNS > Records を開く',
           'web.deploy.manualWildcardStep2': 'タイプ CNAME、名前 {{record}}、ターゲット {{target}}、Proxy オンで追加',
           'web.deploy.manualWildcardStep3': '追加後にこの画面の「DNSを再確認」を押す',
@@ -1545,13 +1593,16 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': '多租户',
           'web.loadConfig.enabledInitialTenant': '已启用（初始租户：{{tenant}}）',
           'web.loadConfig.components': '组件',
-          'web.loadConfig.storageProfile': '存储配置',
           'web.loadConfig.d1Regions': 'D1 区域',
           'web.loadConfig.emailProvider': '邮件服务商',
           'web.loadConfig.envConflictConfirm': '此配置使用了已有环境名称。\\n\\n环境：{{env}}\\nWorkers：{{workers}} / D1：{{d1}} / KV：{{kv}}\\n\\n继续并部署可能会覆盖现有环境。是否继续？',
           'web.loadConfig.validating': '验证中',
           'web.loadConfig.loadDeploy': '加载并部署',
           'web.loadConfig.provisionedValid': '配置有效。资源已创建，可从步骤08（部署）继续。',
+          'web.envDetail.initialDeployRecoveryTitle': '初始部署未完成',
+          'web.envDetail.initialDeployRecoveryDesc': '上次部署在验证前停止。继续时将重复使用已创建的资源。',
+          'web.envDetail.initialDeployRecoveryAction': '继续初始部署',
+          'web.deploy.retryDeploy': '重试部署',
           'web.loadConfig.checkingEnvironment': '正在检查环境',
           'web.provision.resourcesToCreate': '将创建的资源',
           'web.provision.queues': '队列',
@@ -1575,8 +1626,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'wrangler 日志',
           'web.deploy.cancelDeploy': '取消部署',
           'web.deploy.continueComplete': '继续到完成',
-          'web.deploy.manualWildcardTitle': '手动操作 - 通配 DNS 记录',
-          'web.deploy.manualWildcardSummary': '没有 {{zone}} 的 DNS 编辑权限。请手动添加通配记录；添加前租户 URL 不会解析。',
+          'web.deploy.manualWildcardTitle': '检查通配 DNS 设置',
+          'web.deploy.manualWildcardSummary': '无法确认租户 URL 所需的通配 DNS 记录。如果已经创建，请点击重新检查 DNS；否则请添加下方显示的记录。',
           'web.deploy.manualWildcardStep1': '打开 Cloudflare Dashboard -> {{zone}} -> DNS > Records。',
           'web.deploy.manualWildcardStep2': '添加 CNAME：名称 {{record}}，目标 {{target}}，开启代理。',
           'web.deploy.manualWildcardStep3': '添加后点击本页面的重新检查 DNS。',
@@ -1614,13 +1665,16 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': '多租戶',
           'web.loadConfig.enabledInitialTenant': '已啟用（初始租戶：{{tenant}}）',
           'web.loadConfig.components': '元件',
-          'web.loadConfig.storageProfile': '儲存設定',
           'web.loadConfig.d1Regions': 'D1 區域',
           'web.loadConfig.emailProvider': '郵件服務商',
           'web.loadConfig.envConflictConfirm': '此設定使用了既有環境名稱。\\n\\n環境：{{env}}\\nWorkers：{{workers}} / D1：{{d1}} / KV：{{kv}}\\n\\n繼續並部署可能會覆蓋既有環境。是否繼續？',
           'web.loadConfig.validating': '驗證中',
           'web.loadConfig.loadDeploy': '載入並部署',
           'web.loadConfig.provisionedValid': '設定有效。資源已建立，可從步驟08（部署）繼續。',
+          'web.envDetail.initialDeployRecoveryTitle': '初始部署尚未完成',
+          'web.envDetail.initialDeployRecoveryDesc': '上次部署在驗證前停止。繼續時會重複使用已建立的資源。',
+          'web.envDetail.initialDeployRecoveryAction': '繼續初始部署',
+          'web.deploy.retryDeploy': '重試部署',
           'web.loadConfig.checkingEnvironment': '正在檢查環境',
           'web.provision.resourcesToCreate': '將建立的資源',
           'web.provision.queues': '佇列',
@@ -1644,8 +1698,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'wrangler 日誌',
           'web.deploy.cancelDeploy': '取消部署',
           'web.deploy.continueComplete': '繼續到完成',
-          'web.deploy.manualWildcardTitle': '手動操作 - 萬用 DNS 記錄',
-          'web.deploy.manualWildcardSummary': '沒有 {{zone}} 的 DNS 編輯權限。請手動新增萬用記錄；新增前租戶 URL 不會解析。',
+          'web.deploy.manualWildcardTitle': '檢查萬用 DNS 設定',
+          'web.deploy.manualWildcardSummary': '無法確認租戶 URL 所需的萬用 DNS 記錄。如果已經建立，請點擊重新檢查 DNS；否則請新增下方顯示的記錄。',
           'web.deploy.manualWildcardStep1': '開啟 Cloudflare Dashboard -> {{zone}} -> DNS > Records。',
           'web.deploy.manualWildcardStep2': '新增 CNAME：名稱 {{record}}，目標 {{target}}，開啟代理。',
           'web.deploy.manualWildcardStep3': '新增後點擊本頁面的重新檢查 DNS。',
@@ -1683,13 +1737,16 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'Multi-tenant',
           'web.loadConfig.enabledInitialTenant': 'Activado (tenant inicial: {{tenant}})',
           'web.loadConfig.components': 'Componentes',
-          'web.loadConfig.storageProfile': 'Perfil de almacenamiento',
           'web.loadConfig.d1Regions': 'Regiones D1',
           'web.loadConfig.emailProvider': 'Proveedor de email',
           'web.loadConfig.envConflictConfirm': 'Esta configuración usa un nombre de entorno existente.\\n\\nEntorno: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\nContinuar y desplegar puede sobrescribir el entorno existente. ¿Continuar?',
           'web.loadConfig.validating': 'Validando',
           'web.loadConfig.loadDeploy': 'Cargar y desplegar',
           'web.loadConfig.provisionedValid': 'La configuración es válida. Los recursos ya están creados, así que puedes continuar desde el paso 08 (Deploy).',
+          'web.envDetail.initialDeployRecoveryTitle': 'El despliegue inicial está incompleto',
+          'web.envDetail.initialDeployRecoveryDesc': 'El despliegue anterior se detuvo antes de la verificación. Al reanudar, se reutilizarán los recursos existentes.',
+          'web.envDetail.initialDeployRecoveryAction': 'Reanudar despliegue inicial',
+          'web.deploy.retryDeploy': 'Reintentar despliegue',
           'web.loadConfig.checkingEnvironment': 'Comprobando entorno',
           'web.provision.resourcesToCreate': 'Recursos a crear',
           'web.provision.queues': 'Colas',
@@ -1713,8 +1770,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'log de wrangler',
           'web.deploy.cancelDeploy': 'Cancelar despliegue',
           'web.deploy.continueComplete': 'Continuar a finalización',
-          'web.deploy.manualWildcardTitle': 'Acción manual - registro DNS wildcard',
-          'web.deploy.manualWildcardSummary': 'No hay permiso para editar DNS en la zona {{zone}}. Añade manualmente el registro wildcard antes de usar URLs de tenants.',
+          'web.deploy.manualWildcardTitle': 'Comprobar la configuración del DNS wildcard',
+          'web.deploy.manualWildcardSummary': 'No se pudo confirmar el registro DNS wildcard de las URLs de tenants. Si ya lo has creado, pulsa Revisar DNS. Si no, añade el registro que se muestra abajo.',
           'web.deploy.manualWildcardStep1': 'Abre Cloudflare Dashboard -> {{zone}} -> DNS > Records.',
           'web.deploy.manualWildcardStep2': 'Añade un CNAME: nombre {{record}}, destino {{target}}, proxy activado.',
           'web.deploy.manualWildcardStep3': 'Después, pulsa Re-check DNS en esta pantalla.',
@@ -1752,13 +1809,16 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'Multi-tenant',
           'web.loadConfig.enabledInitialTenant': 'Ativado (tenant inicial: {{tenant}})',
           'web.loadConfig.components': 'Componentes',
-          'web.loadConfig.storageProfile': 'Perfil de armazenamento',
           'web.loadConfig.d1Regions': 'Regiões D1',
           'web.loadConfig.emailProvider': 'Provedor de email',
           'web.loadConfig.envConflictConfirm': 'Esta configuração usa um nome de ambiente existente.\\n\\nAmbiente: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\nContinuar e fazer deploy pode sobrescrever o ambiente existente. Continuar?',
           'web.loadConfig.validating': 'Validando',
           'web.loadConfig.loadDeploy': 'Carregar e fazer deploy',
           'web.loadConfig.provisionedValid': 'A configuração é válida. Os recursos já foram criados; você pode continuar do passo 08 (Deploy).',
+          'web.envDetail.initialDeployRecoveryTitle': 'O deploy inicial não foi concluído',
+          'web.envDetail.initialDeployRecoveryDesc': 'O deploy anterior parou antes da verificação. Os recursos existentes serão reutilizados ao continuar.',
+          'web.envDetail.initialDeployRecoveryAction': 'Continuar o deploy inicial',
+          'web.deploy.retryDeploy': 'Tentar deploy novamente',
           'web.loadConfig.checkingEnvironment': 'Verificando ambiente',
           'web.provision.resourcesToCreate': 'Recursos a criar',
           'web.provision.queues': 'Filas',
@@ -1782,8 +1842,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'log do wrangler',
           'web.deploy.cancelDeploy': 'Cancelar deploy',
           'web.deploy.continueComplete': 'Continuar para conclusão',
-          'web.deploy.manualWildcardTitle': 'Ação manual - registro DNS wildcard',
-          'web.deploy.manualWildcardSummary': 'Não há permissão para editar DNS na zona {{zone}}. Adicione manualmente o registro wildcard antes de usar URLs de tenants.',
+          'web.deploy.manualWildcardTitle': 'Verificar a configuração do DNS wildcard',
+          'web.deploy.manualWildcardSummary': 'Não foi possível confirmar o registro DNS wildcard das URLs dos tenants. Se você já o criou, clique em Verificar DNS novamente. Caso contrário, adicione o registro mostrado abaixo.',
           'web.deploy.manualWildcardStep1': 'Abra Cloudflare Dashboard -> {{zone}} -> DNS > Records.',
           'web.deploy.manualWildcardStep2': 'Adicione CNAME: nome {{record}}, destino {{target}}, proxy ativado.',
           'web.deploy.manualWildcardStep3': 'Depois, clique em verificar DNS novamente nesta tela.',
@@ -1821,13 +1881,16 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'Multi-tenant',
           'web.loadConfig.enabledInitialTenant': 'Activé (tenant initial : {{tenant}})',
           'web.loadConfig.components': 'Composants',
-          'web.loadConfig.storageProfile': 'Profil de stockage',
           'web.loadConfig.d1Regions': 'Régions D1',
           'web.loadConfig.emailProvider': 'Fournisseur email',
           'web.loadConfig.envConflictConfirm': 'Cette configuration utilise un nom d’environnement existant.\\n\\nEnvironnement : {{env}}\\nWorkers : {{workers}} / D1 : {{d1}} / KV : {{kv}}\\n\\nContinuer et déployer peut écraser l’environnement existant. Continuer ?',
           'web.loadConfig.validating': 'Validation',
           'web.loadConfig.loadDeploy': 'Charger et déployer',
           'web.loadConfig.provisionedValid': 'La configuration est valide. Les ressources existent déjà ; vous pouvez reprendre à l’étape 08 (Déploiement).',
+          'web.envDetail.initialDeployRecoveryTitle': 'Le déploiement initial est incomplet',
+          'web.envDetail.initialDeployRecoveryDesc': 'Le déploiement précédent s’est arrêté avant la vérification. Les ressources existantes seront réutilisées lors de la reprise.',
+          'web.envDetail.initialDeployRecoveryAction': 'Reprendre le déploiement initial',
+          'web.deploy.retryDeploy': 'Réessayer le déploiement',
           'web.loadConfig.checkingEnvironment': 'Vérification de l’environnement',
           'web.provision.resourcesToCreate': 'Ressources à créer',
           'web.provision.queues': 'Files',
@@ -1851,8 +1914,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'journal wrangler',
           'web.deploy.cancelDeploy': 'Annuler le déploiement',
           'web.deploy.continueComplete': 'Continuer vers la fin',
-          'web.deploy.manualWildcardTitle': 'Action manuelle - enregistrement DNS wildcard',
-          'web.deploy.manualWildcardSummary': 'L’autorisation DNS est indisponible pour la zone {{zone}}. Ajoutez manuellement l’enregistrement wildcard avant d’utiliser les URLs de tenants.',
+          'web.deploy.manualWildcardTitle': 'Vérifier la configuration du DNS wildcard',
+          'web.deploy.manualWildcardSummary': 'L’enregistrement DNS wildcard des URLs de tenants n’a pas pu être confirmé. S’il existe déjà, cliquez sur Revérifier DNS. Sinon, ajoutez l’enregistrement indiqué ci-dessous.',
           'web.deploy.manualWildcardStep1': 'Ouvrez Cloudflare Dashboard -> {{zone}} -> DNS > Records.',
           'web.deploy.manualWildcardStep2': 'Ajoutez un CNAME : nom {{record}}, cible {{target}}, proxy activé.',
           'web.deploy.manualWildcardStep3': 'Après ajout, cliquez sur Revérifier DNS sur cet écran.',
@@ -1890,13 +1953,16 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'Multi-Tenant',
           'web.loadConfig.enabledInitialTenant': 'Aktiviert (erster Tenant: {{tenant}})',
           'web.loadConfig.components': 'Komponenten',
-          'web.loadConfig.storageProfile': 'Speicherprofil',
           'web.loadConfig.d1Regions': 'D1-Regionen',
           'web.loadConfig.emailProvider': 'E-Mail-Anbieter',
           'web.loadConfig.envConflictConfirm': 'Diese Konfiguration verwendet einen bestehenden Umgebungsnamen.\\n\\nUmgebung: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\nFortfahren und deployen kann die bestehende Umgebung überschreiben. Fortfahren?',
           'web.loadConfig.validating': 'Validierung',
           'web.loadConfig.loadDeploy': 'Laden und deployen',
           'web.loadConfig.provisionedValid': 'Die Konfiguration ist gültig. Ressourcen sind bereits erstellt; Sie können bei Schritt 08 (Deploy) fortfahren.',
+          'web.envDetail.initialDeployRecoveryTitle': 'Das initiale Deployment ist unvollständig',
+          'web.envDetail.initialDeployRecoveryDesc': 'Das vorherige Deployment wurde vor der Prüfung beendet. Vorhandene Ressourcen werden beim Fortsetzen wiederverwendet.',
+          'web.envDetail.initialDeployRecoveryAction': 'Initiales Deployment fortsetzen',
+          'web.deploy.retryDeploy': 'Deployment erneut versuchen',
           'web.loadConfig.checkingEnvironment': 'Umgebung wird geprüft',
           'web.provision.resourcesToCreate': 'Zu erstellende Ressourcen',
           'web.provision.queues': 'Queues',
@@ -1920,8 +1986,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'wrangler-Log',
           'web.deploy.cancelDeploy': 'Deployment abbrechen',
           'web.deploy.continueComplete': 'Weiter zum Abschluss',
-          'web.deploy.manualWildcardTitle': 'Manuelle Aktion - Wildcard-DNS-Eintrag',
-          'web.deploy.manualWildcardSummary': 'DNS-Bearbeitung ist für Zone {{zone}} nicht verfügbar. Fügen Sie den Wildcard-Eintrag manuell hinzu, bevor Sie Tenant-URLs verwenden.',
+          'web.deploy.manualWildcardTitle': 'Wildcard-DNS-Einstellungen prüfen',
+          'web.deploy.manualWildcardSummary': 'Der Wildcard-DNS-Eintrag für Tenant-URLs konnte nicht bestätigt werden. Wenn Sie ihn bereits erstellt haben, klicken Sie auf DNS erneut prüfen. Andernfalls fügen Sie den unten gezeigten Eintrag hinzu.',
           'web.deploy.manualWildcardStep1': 'Öffnen Sie Cloudflare Dashboard -> {{zone}} -> DNS > Records.',
           'web.deploy.manualWildcardStep2': 'CNAME hinzufügen: Name {{record}}, Ziel {{target}}, Proxy an.',
           'web.deploy.manualWildcardStep3': 'Klicken Sie danach auf DNS erneut prüfen.',
@@ -1959,13 +2025,16 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': '멀티 테넌트',
           'web.loadConfig.enabledInitialTenant': '활성화됨(초기 테넌트: {{tenant}})',
           'web.loadConfig.components': '컴포넌트',
-          'web.loadConfig.storageProfile': '스토리지 프로필',
           'web.loadConfig.d1Regions': 'D1 리전',
           'web.loadConfig.emailProvider': '이메일 제공자',
           'web.loadConfig.envConflictConfirm': '이 구성은 기존 환경 이름을 사용합니다.\\n\\n환경: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\n계속 배포하면 기존 환경을 덮어쓸 수 있습니다. 계속할까요?',
           'web.loadConfig.validating': '검증 중',
           'web.loadConfig.loadDeploy': '불러오고 배포',
           'web.loadConfig.provisionedValid': '구성이 유효합니다. 리소스가 이미 생성되었으므로 08단계(배포)부터 재개할 수 있습니다.',
+          'web.envDetail.initialDeployRecoveryTitle': '초기 배포가 완료되지 않았습니다',
+          'web.envDetail.initialDeployRecoveryDesc': '이전 배포가 검증 전에 중단되었습니다. 계속하면 이미 생성된 리소스를 재사용합니다.',
+          'web.envDetail.initialDeployRecoveryAction': '초기 배포 재개',
+          'web.deploy.retryDeploy': '배포 재시도',
           'web.loadConfig.checkingEnvironment': '환경 확인 중',
           'web.provision.resourcesToCreate': '생성할 리소스',
           'web.provision.queues': 'Queues',
@@ -1989,8 +2058,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'wrangler 로그',
           'web.deploy.cancelDeploy': '배포 취소',
           'web.deploy.continueComplete': '완료로 계속',
-          'web.deploy.manualWildcardTitle': '수동 작업 - 와일드카드 DNS 레코드',
-          'web.deploy.manualWildcardSummary': '{{zone}} Zone의 DNS 편집 권한이 없습니다. 테넌트 URL을 사용하기 전에 와일드카드 레코드를 수동으로 추가하세요.',
+          'web.deploy.manualWildcardTitle': '와일드카드 DNS 설정 확인',
+          'web.deploy.manualWildcardSummary': '테넌트 URL에 필요한 와일드카드 DNS 레코드를 확인할 수 없습니다. 이미 만들었다면 DNS 다시 확인을 누르고, 아직이라면 아래 레코드를 추가하세요.',
           'web.deploy.manualWildcardStep1': 'Cloudflare Dashboard -> {{zone}} -> DNS > Records를 엽니다.',
           'web.deploy.manualWildcardStep2': 'CNAME 추가: 이름 {{record}}, 대상 {{target}}, 프록시 켬.',
           'web.deploy.manualWildcardStep3': '추가 후 이 화면에서 DNS 다시 확인을 누릅니다.',
@@ -2028,13 +2097,16 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'Мультитенантность',
           'web.loadConfig.enabledInitialTenant': 'Включено (первый тенант: {{tenant}})',
           'web.loadConfig.components': 'Компоненты',
-          'web.loadConfig.storageProfile': 'Профиль хранения',
           'web.loadConfig.d1Regions': 'Регионы D1',
           'web.loadConfig.emailProvider': 'Провайдер почты',
           'web.loadConfig.envConflictConfirm': 'Эта конфигурация использует имя существующей среды.\\n\\nСреда: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\nПродолжение и деплой могут перезаписать существующую среду. Продолжить?',
           'web.loadConfig.validating': 'Проверка',
           'web.loadConfig.loadDeploy': 'Загрузить и деплоить',
           'web.loadConfig.provisionedValid': 'Конфигурация корректна. Ресурсы уже созданы, можно продолжить с шага 08 (Deploy).',
+          'web.envDetail.initialDeployRecoveryTitle': 'Первоначальный деплой не завершен',
+          'web.envDetail.initialDeployRecoveryDesc': 'Предыдущий деплой остановился до проверки. При продолжении будут повторно использованы существующие ресурсы.',
+          'web.envDetail.initialDeployRecoveryAction': 'Продолжить первоначальный деплой',
+          'web.deploy.retryDeploy': 'Повторить деплой',
           'web.loadConfig.checkingEnvironment': 'Проверка среды',
           'web.provision.resourcesToCreate': 'Ресурсы для создания',
           'web.provision.queues': 'Очереди',
@@ -2058,8 +2130,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'лог wrangler',
           'web.deploy.cancelDeploy': 'Отменить деплой',
           'web.deploy.continueComplete': 'Перейти к завершению',
-          'web.deploy.manualWildcardTitle': 'Ручное действие - wildcard DNS-запись',
-          'web.deploy.manualWildcardSummary': 'Нет права редактировать DNS в зоне {{zone}}. Добавьте wildcard-запись вручную перед использованием URL тенантов.',
+          'web.deploy.manualWildcardTitle': 'Проверка настройки wildcard DNS',
+          'web.deploy.manualWildcardSummary': 'Не удалось подтвердить wildcard DNS-запись для URL тенантов. Если вы уже создали ее, нажмите «Проверить DNS снова». Иначе добавьте запись ниже.',
           'web.deploy.manualWildcardStep1': 'Откройте Cloudflare Dashboard -> {{zone}} -> DNS > Records.',
           'web.deploy.manualWildcardStep2': 'Добавьте CNAME: имя {{record}}, цель {{target}}, proxy включен.',
           'web.deploy.manualWildcardStep3': 'После добавления нажмите повторную проверку DNS на этом экране.',
@@ -2097,13 +2169,16 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.loadConfig.multiTenant': 'Multi-tenant',
           'web.loadConfig.enabledInitialTenant': 'Aktif (tenant awal: {{tenant}})',
           'web.loadConfig.components': 'Komponen',
-          'web.loadConfig.storageProfile': 'Profil storage',
           'web.loadConfig.d1Regions': 'Region D1',
           'web.loadConfig.emailProvider': 'Provider email',
           'web.loadConfig.envConflictConfirm': 'Konfigurasi ini memakai nama environment yang sudah ada.\\n\\nEnvironment: {{env}}\\nWorkers: {{workers}} / D1: {{d1}} / KV: {{kv}}\\n\\nMelanjutkan deployment dapat menimpa environment yang ada. Lanjutkan?',
           'web.loadConfig.validating': 'Memvalidasi',
           'web.loadConfig.loadDeploy': 'Muat & Deploy',
           'web.loadConfig.provisionedValid': 'Konfigurasi valid. Resource sudah dibuat, jadi setup dapat dilanjutkan dari langkah 08 (Deploy).',
+          'web.envDetail.initialDeployRecoveryTitle': 'Deployment awal belum selesai',
+          'web.envDetail.initialDeployRecoveryDesc': 'Deployment sebelumnya berhenti sebelum verifikasi. Resource yang sudah ada akan digunakan kembali saat dilanjutkan.',
+          'web.envDetail.initialDeployRecoveryAction': 'Lanjutkan deployment awal',
+          'web.deploy.retryDeploy': 'Coba deployment lagi',
           'web.loadConfig.checkingEnvironment': 'Memeriksa environment',
           'web.provision.resourcesToCreate': 'Resource yang dibuat',
           'web.provision.queues': 'Queue',
@@ -2127,8 +2202,8 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.deploy.wranglerLog': 'log wrangler',
           'web.deploy.cancelDeploy': 'Batalkan deploy',
           'web.deploy.continueComplete': 'Lanjut ke selesai',
-          'web.deploy.manualWildcardTitle': 'Tindakan manual - record DNS wildcard',
-          'web.deploy.manualWildcardSummary': 'Izin edit DNS tidak tersedia untuk zone {{zone}}. Tambahkan record wildcard secara manual sebelum memakai URL tenant.',
+          'web.deploy.manualWildcardTitle': 'Periksa pengaturan DNS wildcard',
+          'web.deploy.manualWildcardSummary': 'Record DNS wildcard untuk URL tenant belum dapat dikonfirmasi. Jika sudah dibuat, klik Periksa ulang DNS. Jika belum, tambahkan record yang ditampilkan di bawah.',
           'web.deploy.manualWildcardStep1': 'Buka Cloudflare Dashboard -> {{zone}} -> DNS > Records.',
           'web.deploy.manualWildcardStep2': 'Tambahkan CNAME: nama {{record}}, target {{target}}, proxy aktif.',
           'web.deploy.manualWildcardStep3': 'Setelah ditambahkan, klik Periksa ulang DNS di layar ini.',
@@ -2155,13 +2230,57 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.start': 'Start',
           'web.env.rescan': 'Rescan',
           'web.envDetail.overview': 'Overview',
+          'web.envDetail.capacityTab': 'D1 Capacity',
+          'web.envDetail.capacityTitle': 'Control Plane Capacity',
+          'web.envDetail.capacityHint': 'Server-owned placement plan',
+          'web.envDetail.capacityScope': 'Scope',
+          'web.envDetail.capacityShared': 'Shared pool',
+          'web.envDetail.capacityDedicated': 'Dedicated tenant',
+          'web.envDetail.capacityTenant': 'Tenant',
+          'web.envDetail.capacityProfile': 'Capacity profile',
+          'web.envDetail.capacityMinimum': 'Minimum',
+          'web.envDetail.capacityRecommended': 'Recommended',
+          'web.envDetail.capacityExtra': 'Extra headroom',
+          'web.envDetail.capacityPreview': 'Preview',
+          'web.envDetail.capacityAdd': 'Add capacity',
+          'web.envDetail.capacityPlan': 'Capacity plan',
+          'web.envDetail.capacitySelectEnvironment': 'Select an environment first.',
+          'web.envDetail.capacityNoTenant': 'No active dedicated tenant is available.',
+          'web.envDetail.capacitySummary': '{{units}} unit(s) / {{d1}} D1 / {{total}} total',
+          'web.envDetail.capacityPreviewState': 'preview',
+          'web.envDetail.capacityLoading': 'Loading capacity plan...',
+          'web.envDetail.capacityCreating': 'Creating capacity operations...',
+          'web.envDetail.capacityRequestFailed': 'Capacity request failed.',
+          'web.envDetail.capacityCreated': 'Canonical Control operations created. Pending setup actions are now available.',
+          'web.envDetail.capacitySatisfied': 'Current capacity already satisfies this profile.',
+          'web.envDetail.capacityReady': 'Capacity preview is ready.',
           'web.envDetail.workersUpdates': 'Workers / Updates',
           'web.envDetail.storage': 'Storage',
           'web.envDetail.migrations': 'Migrations',
           'web.envDetail.email': 'Email',
           'web.envDetail.resources': 'Resources',
           'web.envDetail.updates': 'Updates',
-          'web.envDetail.verified': 'verified ✓',
+          'web.envDetail.releaseUpdateAvailable': 'A new Authrim version is available',
+          'web.envDetail.releaseUpdateResume': 'Continue the interrupted update',
+          'web.envDetail.releaseUpdateDesc': 'Setup will apply required database changes when present, update the services, and verify the result. Your settings and data are preserved.',
+          'web.envDetail.releaseUpdateBlocked': 'This update cannot start until the previous operation is resolved.',
+          'web.envDetail.releaseUpdateOlderTool': 'This setup source is older than the installed environment. Start setup again with the latest package.',
+          'web.envDetail.releaseUpdateAction': 'Update now',
+          'web.envDetail.releaseUpdateDatabaseOnlyAction': 'Update databases only (advanced)',
+          'web.envDetail.releaseUpdateDatabaseOnlyConfirm': 'Update databases without updating Workers? This is allowed only when the release manifest explicitly declares the installed Worker version compatible with the new schema.',
+          'web.envDetail.releaseUpdateResumeAction': 'Continue update',
+          'web.envDetail.releaseUpdatePreparing': 'Preparing the update...',
+          'web.envDetail.releaseUpdateDatabase': 'Updating databases...',
+          'web.envDetail.releaseUpdateServices': 'Updating services...',
+          'web.envDetail.releaseUpdateVerifying': 'Verifying the update...',
+          'web.envDetail.releaseUpdateComplete': 'Authrim is up to date.',
+          'web.envDetail.releaseUpdateContinuing': 'Database migration continues safely in Control. You can close Setup and monitor or retry from Admin UI.',
+          'web.envDetail.releaseUpdateFailed': 'The update stopped. You can safely retry from this screen.',
+          'web.envDetail.releaseUpdateDetails': 'Show update details',
+          'web.envDetail.verified': 'Deployment verified ✓',
+          'web.envDetail.deploymentChecking': 'Checking deployment status...',
+          'web.envDetail.deploymentIncomplete': 'Deployment incomplete',
+          'web.envDetail.deploymentStatusUnknown': 'Status not verified',
           'web.envDetail.adminAccount': 'Admin Account',
           'web.envDetail.workerUpdateHint': 'Compare deployed and local builds',
           'web.envDetail.serviceSiteFallback': 'Service Site Binding',
@@ -2188,15 +2307,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.versionComparison': 'Version comparison',
           'web.envDetail.uiUpdates': 'UI Updates',
           'web.envDetail.origin': 'Origin',
-          'web.envDetail.tenantD1Pool': 'Tenant D1 Pool',
-          'web.envDetail.loadingTenantStorage': 'Loading tenant storage status...',
-          'web.envDetail.capacity': 'Capacity',
-          'web.envDetail.available': 'Available',
-          'web.envDetail.assigned': 'Assigned',
-          'web.envDetail.needsReset': 'Needs Reset',
-          'web.envDetail.addTenantD1Slots': 'Add Tenant D1 Slots',
-          'web.envDetail.expandPoolDeploy': 'Expand Pool and Deploy',
-          'web.envDetail.tenantD1PoolProgress': 'Tenant D1 Pool Progress',
           'web.envDetail.dedicatedR2Buckets': 'Dedicated R2 Buckets',
           'web.envDetail.loadingR2Status': 'Loading R2 bucket status...',
           'web.envDetail.r2ProvisionDesc': 'Create Authrim R2 buckets, record lock bindings, enable the R2 feature flag, and redeploy workers.',
@@ -2241,8 +2351,16 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'Custom domain DNS records are not deleted automatically. Remove them manually in Cloudflare if they are no longer needed.',
           'web.delete.deleteLog': 'Delete log',
           'web.delete.deleteTarget': 'Delete target',
-          'web.delete.resourcesIrreversible': 'resources - irreversible',
+          'web.delete.resourcesLabel': 'resources',
           'web.delete.deletePermanently': 'Delete permanently',
+          'web.delete.manualR2Title': 'Large R2 buckets were not deleted automatically. Empty them in Cloudflare Dashboard:',
+          'web.delete.manualR2Open': 'Open R2 Dashboard ↗',
+          'web.delete.manualR2Summary': 'All other selected environment resources were deleted. One or more R2 buckets are waiting for the manual actions below; this is not an API failure.',
+          'web.delete.manualControlTokensTitle': 'Control API token review',
+          'web.delete.manualControlTokensSummary': 'Setup could not automatically revoke one or more setup-managed Control API tokens. Environment resource deletion continued using exact ownership evidence. Review exact token IDs when shown and candidate names in both Cloudflare token lists; do not delete a token based on its name alone.',
+          'web.delete.manualControlTokenId': 'Token ID: {{tokenId}}',
+          'web.delete.manualControlTokensAccountOpen': 'Open account API tokens ↗',
+          'web.delete.manualControlTokensUserOpen': 'Open user API tokens ↗',
         },
         ja: {
           'web.common.setupTool': 'セットアップツール',
@@ -2253,13 +2371,57 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.start': '開始画面へ',
           'web.env.rescan': '再スキャン',
           'web.envDetail.overview': '概要',
+          'web.envDetail.capacityTab': 'D1キャパシティ',
+          'web.envDetail.capacityTitle': 'テナントD1キャパシティ',
+          'web.envDetail.capacityHint': 'サーバー管理の配置プラン',
+          'web.envDetail.capacityScope': '対象',
+          'web.envDetail.capacityShared': '共有プール',
+          'web.envDetail.capacityDedicated': '専用テナント',
+          'web.envDetail.capacityTenant': 'テナント',
+          'web.envDetail.capacityProfile': 'キャパシティプロファイル',
+          'web.envDetail.capacityMinimum': '最小',
+          'web.envDetail.capacityRecommended': '推奨',
+          'web.envDetail.capacityExtra': '追加余力',
+          'web.envDetail.capacityPreview': 'プレビュー',
+          'web.envDetail.capacityAdd': 'キャパシティを追加',
+          'web.envDetail.capacityPlan': 'キャパシティプラン',
+          'web.envDetail.capacitySelectEnvironment': '先に環境を選択してください。',
+          'web.envDetail.capacityNoTenant': '利用可能な有効な専用テナントがありません。',
+          'web.envDetail.capacitySummary': '{{units}} unit / {{d1}} D1 / 合計 {{total}}',
+          'web.envDetail.capacityPreviewState': 'プレビュー',
+          'web.envDetail.capacityLoading': 'キャパシティプランを読み込み中...',
+          'web.envDetail.capacityCreating': 'キャパシティoperationを作成中...',
+          'web.envDetail.capacityRequestFailed': 'キャパシティ要求に失敗しました。',
+          'web.envDetail.capacityCreated': '正規のControl operationを作成しました。setupで保留中の操作を実行できます。',
+          'web.envDetail.capacitySatisfied': '現在のキャパシティはこのプロファイルを満たしています。',
+          'web.envDetail.capacityReady': 'キャパシティプレビューを作成しました。',
           'web.envDetail.workersUpdates': 'Workers・更新',
           'web.envDetail.storage': 'ストレージ運用',
           'web.envDetail.migrations': 'マイグレーション',
           'web.envDetail.email': 'メール',
           'web.envDetail.resources': 'リソース一覧',
           'web.envDetail.updates': '更新可能',
-          'web.envDetail.verified': '稼働確認済み ✓',
+          'web.envDetail.releaseUpdateAvailable': '新しいAuthrimがあります',
+          'web.envDetail.releaseUpdateResume': '中断した更新を続けられます',
+          'web.envDetail.releaseUpdateDesc': '必要なデータベース変更がある場合だけ先に適用し、サービスを更新して、最後に動作を確認します。設定とデータは維持されます。',
+          'web.envDetail.releaseUpdateBlocked': '前回の処理を解決するまで、この更新は開始できません。',
+          'web.envDetail.releaseUpdateOlderTool': 'セットアップソースが導入済み環境より古いため、最新のnpx @authrim/setupを起動してください。',
+          'web.envDetail.releaseUpdateAction': '今すぐ更新',
+          'web.envDetail.releaseUpdateDatabaseOnlyAction': 'データベースのみ更新（詳細設定）',
+          'web.envDetail.releaseUpdateDatabaseOnlyConfirm': 'Workersを更新せずにデータベースだけ更新しますか？リリースmanifestが、現在のWorkerバージョンと更新後スキーマの互換性を明示している場合にのみ実行できます。',
+          'web.envDetail.releaseUpdateResumeAction': '更新を続ける',
+          'web.envDetail.releaseUpdatePreparing': '更新を準備しています…',
+          'web.envDetail.releaseUpdateDatabase': 'データベースを更新しています…',
+          'web.envDetail.releaseUpdateServices': 'サービスを更新しています…',
+          'web.envDetail.releaseUpdateVerifying': '更新結果を確認しています…',
+          'web.envDetail.releaseUpdateComplete': '最新バージョンになりました。',
+          'web.envDetail.releaseUpdateContinuing': 'データベース更新はControlで安全に継続しています。Setupを閉じても、Admin UIから監視・再試行できます。',
+          'web.envDetail.releaseUpdateFailed': '更新が途中で停止しました。この画面から安全に再開できます。',
+          'web.envDetail.releaseUpdateDetails': '更新の詳細を表示',
+          'web.envDetail.verified': 'デプロイ検証済み ✓',
+          'web.envDetail.deploymentChecking': 'デプロイ状態を確認中…',
+          'web.envDetail.deploymentIncomplete': 'デプロイ未完了',
+          'web.envDetail.deploymentStatusUnknown': '状態未確認',
           'web.envDetail.adminAccount': '管理者アカウント',
           'web.envDetail.workerUpdateHint': 'デプロイ済みバージョンとローカルのビルドを比較',
           'web.envDetail.serviceSiteFallback': 'Service Site Binding',
@@ -2286,15 +2448,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.versionComparison': 'バージョン比較',
           'web.envDetail.uiUpdates': 'UIの個別更新',
           'web.envDetail.origin': '配信元',
-          'web.envDetail.tenantD1Pool': 'Tenant D1 プール',
-          'web.envDetail.loadingTenantStorage': 'テナントストレージの状態を読み込み中...',
-          'web.envDetail.capacity': '容量',
-          'web.envDetail.available': '空き',
-          'web.envDetail.assigned': '割り当て済み',
-          'web.envDetail.needsReset': 'リセット要否',
-          'web.envDetail.addTenantD1Slots': 'Tenant D1 スロットを追加',
-          'web.envDetail.expandPoolDeploy': 'プールを拡張してデプロイ',
-          'web.envDetail.tenantD1PoolProgress': 'Tenant D1 プールの進行状況',
           'web.envDetail.dedicatedR2Buckets': '専用R2バケット',
           'web.envDetail.loadingR2Status': 'R2バケットの状態を読み込み中...',
           'web.envDetail.r2ProvisionDesc': 'AuthrimのR2バケットを作成し、ロック用バインディングを記録、R2機能フラグを有効化してWorkerを再デプロイします。',
@@ -2339,8 +2492,16 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'カスタムドメインのDNSレコードは削除されません。不要であればCloudflareダッシュボードから手動で削除してください。',
           'web.delete.deleteLog': '削除ログ',
           'web.delete.deleteTarget': '削除対象',
-          'web.delete.resourcesIrreversible': 'リソース - 戻すことはできません',
+          'web.delete.resourcesLabel': 'リソース',
           'web.delete.deletePermanently': '完全に削除する',
+          'web.delete.manualR2Title': '大容量のR2バケットは自動削除していません。Cloudflare DashboardでEmpty Bucketを実行してください：',
+          'web.delete.manualR2Open': 'R2 Dashboardを開く ↗',
+          'web.delete.manualR2Summary': '選択したその他の環境リソースは削除済みです。以下のR2バケットだけが手動作業待ちです。APIエラーではありません。',
+          'web.delete.manualControlTokensTitle': 'Control APIトークンの手動確認',
+          'web.delete.manualControlTokensSummary': 'Setupが管理するControl APIトークンの一部を自動取消しできませんでした。正確な所有権情報で検証済みの環境リソース削除は続行しました。表示される場合は正確なトークンIDと候補名をCloudflareの両方の一覧で確認してください。名前だけを根拠に削除しないでください。',
+          'web.delete.manualControlTokenId': 'トークンID: {{tokenId}}',
+          'web.delete.manualControlTokensAccountOpen': 'アカウントAPIトークンを開く ↗',
+          'web.delete.manualControlTokensUserOpen': 'ユーザーAPIトークンを開く ↗',
         },
         'zh-CN': {
           'web.common.setupTool': '设置工具',
@@ -2356,21 +2517,15 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': '邮件',
           'web.envDetail.resources': '资源',
           'web.envDetail.updates': '更新',
-          'web.envDetail.verified': '已验证 ✓',
+          'web.envDetail.verified': '部署已验证 ✓',
+          'web.envDetail.deploymentChecking': '正在检查部署状态…',
+          'web.envDetail.deploymentIncomplete': '部署未完成',
+          'web.envDetail.deploymentStatusUnknown': '状态未验证',
           'web.envDetail.adminAccount': '管理员账户',
           'web.envDetail.workerUpdateHint': '比较已部署版本和本地构建',
           'web.envDetail.versionComparison': '版本比较',
           'web.envDetail.uiUpdates': 'UI 更新',
           'web.envDetail.origin': '来源',
-          'web.envDetail.tenantD1Pool': '租户 D1 池',
-          'web.envDetail.loadingTenantStorage': '正在加载租户存储状态...',
-          'web.envDetail.capacity': '容量',
-          'web.envDetail.available': '可用',
-          'web.envDetail.assigned': '已分配',
-          'web.envDetail.needsReset': '需要重置',
-          'web.envDetail.addTenantD1Slots': '添加租户 D1 槽位',
-          'web.envDetail.expandPoolDeploy': '扩展池并部署',
-          'web.envDetail.tenantD1PoolProgress': '租户 D1 池进度',
           'web.envDetail.dedicatedR2Buckets': '专用 R2 存储桶',
           'web.envDetail.loadingR2Status': '正在加载 R2 存储桶状态...',
           'web.envDetail.r2ProvisionDesc': '创建 Authrim R2 存储桶，记录锁定绑定，启用 R2 功能标志，并重新部署 Workers。',
@@ -2388,8 +2543,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': '自定义域名的 DNS 记录不会自动删除。如不再需要，请在 Cloudflare 手动删除。',
           'web.delete.deleteLog': '删除日志',
           'web.delete.deleteTarget': '删除目标',
-          'web.delete.resourcesIrreversible': '资源 - 不可恢复',
+          'web.delete.resourcesLabel': '资源',
           'web.delete.deletePermanently': '永久删除',
+          'web.delete.manualR2Title': '大型 R2 存储桶不会自动删除。请在 Cloudflare Dashboard 中将其清空：',
+          'web.delete.manualR2Open': '打开 R2 Dashboard ↗',
+          'web.delete.manualR2Summary': '其他选中的环境资源已删除。以下 R2 存储桶正在等待手动操作；这不是 API 错误。',
         },
         'zh-TW': {
           'web.common.setupTool': '設定工具',
@@ -2405,21 +2563,15 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': '郵件',
           'web.envDetail.resources': '資源',
           'web.envDetail.updates': '更新',
-          'web.envDetail.verified': '已驗證 ✓',
+          'web.envDetail.verified': '部署已驗證 ✓',
+          'web.envDetail.deploymentChecking': '正在檢查部署狀態…',
+          'web.envDetail.deploymentIncomplete': '部署未完成',
+          'web.envDetail.deploymentStatusUnknown': '狀態未驗證',
           'web.envDetail.adminAccount': '管理員帳戶',
           'web.envDetail.workerUpdateHint': '比較已部署版本與本機建置',
           'web.envDetail.versionComparison': '版本比較',
           'web.envDetail.uiUpdates': 'UI 更新',
           'web.envDetail.origin': '來源',
-          'web.envDetail.tenantD1Pool': '租戶 D1 池',
-          'web.envDetail.loadingTenantStorage': '正在載入租戶儲存狀態...',
-          'web.envDetail.capacity': '容量',
-          'web.envDetail.available': '可用',
-          'web.envDetail.assigned': '已分配',
-          'web.envDetail.needsReset': '需要重設',
-          'web.envDetail.addTenantD1Slots': '新增租戶 D1 槽位',
-          'web.envDetail.expandPoolDeploy': '擴充池並部署',
-          'web.envDetail.tenantD1PoolProgress': '租戶 D1 池進度',
           'web.envDetail.dedicatedR2Buckets': '專用 R2 儲存桶',
           'web.envDetail.loadingR2Status': '正在載入 R2 儲存桶狀態...',
           'web.envDetail.r2ProvisionDesc': '建立 Authrim R2 儲存桶，記錄鎖定綁定，啟用 R2 功能旗標，並重新部署 Workers。',
@@ -2437,8 +2589,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': '自訂網域的 DNS 記錄不會自動刪除。如不再需要，請在 Cloudflare 手動刪除。',
           'web.delete.deleteLog': '刪除日誌',
           'web.delete.deleteTarget': '刪除目標',
-          'web.delete.resourcesIrreversible': '資源 - 無法復原',
+          'web.delete.resourcesLabel': '資源',
           'web.delete.deletePermanently': '永久刪除',
+          'web.delete.manualR2Title': '大型 R2 儲存貯體不會自動刪除。請在 Cloudflare Dashboard 中將其清空：',
+          'web.delete.manualR2Open': '開啟 R2 Dashboard ↗',
+          'web.delete.manualR2Summary': '其他已選取的環境資源已刪除。以下 R2 儲存貯體正在等待手動操作；這不是 API 錯誤。',
         },
         es: {
           'web.common.setupTool': 'Herramienta de setup',
@@ -2454,21 +2609,15 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'Email',
           'web.envDetail.resources': 'Recursos',
           'web.envDetail.updates': 'Updates',
-          'web.envDetail.verified': 'verificado ✓',
+          'web.envDetail.verified': 'Despliegue verificado ✓',
+          'web.envDetail.deploymentChecking': 'Comprobando el estado del despliegue…',
+          'web.envDetail.deploymentIncomplete': 'Despliegue incompleto',
+          'web.envDetail.deploymentStatusUnknown': 'Estado sin verificar',
           'web.envDetail.adminAccount': 'Cuenta admin',
           'web.envDetail.workerUpdateHint': 'Comparar versiones desplegadas con la build local',
           'web.envDetail.versionComparison': 'Comparación de versiones',
           'web.envDetail.uiUpdates': 'Updates de UI',
           'web.envDetail.origin': 'Origen',
-          'web.envDetail.tenantD1Pool': 'Pool D1 de tenants',
-          'web.envDetail.loadingTenantStorage': 'Cargando estado de almacenamiento de tenants...',
-          'web.envDetail.capacity': 'Capacidad',
-          'web.envDetail.available': 'Disponible',
-          'web.envDetail.assigned': 'Asignado',
-          'web.envDetail.needsReset': 'Requiere reset',
-          'web.envDetail.addTenantD1Slots': 'Agregar slots D1 de tenant',
-          'web.envDetail.expandPoolDeploy': 'Expandir pool y desplegar',
-          'web.envDetail.tenantD1PoolProgress': 'Progreso del pool D1',
           'web.envDetail.dedicatedR2Buckets': 'Buckets R2 dedicados',
           'web.envDetail.loadingR2Status': 'Cargando estado de buckets R2...',
           'web.envDetail.r2ProvisionDesc': 'Crea buckets R2 de Authrim, registra bindings de lock, activa la feature R2 y redespliega workers.',
@@ -2486,8 +2635,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'Los registros DNS de dominios personalizados no se eliminan automáticamente. Elimínalos manualmente en Cloudflare si ya no son necesarios.',
           'web.delete.deleteLog': 'Log de eliminación',
           'web.delete.deleteTarget': 'Objetivo',
-          'web.delete.resourcesIrreversible': 'recursos - irreversible',
+          'web.delete.resourcesLabel': 'recursos',
           'web.delete.deletePermanently': 'Eliminar definitivamente',
+          'web.delete.manualR2Title': 'Los buckets R2 grandes no se eliminan automáticamente. Vacíelos en Cloudflare Dashboard:',
+          'web.delete.manualR2Open': 'Abrir R2 Dashboard ↗',
+          'web.delete.manualR2Summary': 'Los demás recursos seleccionados del entorno se eliminaron. Los siguientes buckets R2 esperan una acción manual; no es un error de la API.',
         },
         pt: {
           'web.common.setupTool': 'Ferramenta de setup',
@@ -2503,21 +2655,15 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'Email',
           'web.envDetail.resources': 'Recursos',
           'web.envDetail.updates': 'Updates',
-          'web.envDetail.verified': 'verificado ✓',
+          'web.envDetail.verified': 'Deploy verificado ✓',
+          'web.envDetail.deploymentChecking': 'Verificando o status do deploy…',
+          'web.envDetail.deploymentIncomplete': 'Deploy incompleto',
+          'web.envDetail.deploymentStatusUnknown': 'Status não verificado',
           'web.envDetail.adminAccount': 'Conta admin',
           'web.envDetail.workerUpdateHint': 'Compare versões implantadas com o build local',
           'web.envDetail.versionComparison': 'Comparação de versões',
           'web.envDetail.uiUpdates': 'Updates da UI',
           'web.envDetail.origin': 'Origem',
-          'web.envDetail.tenantD1Pool': 'Pool D1 de tenants',
-          'web.envDetail.loadingTenantStorage': 'Carregando status de storage dos tenants...',
-          'web.envDetail.capacity': 'Capacidade',
-          'web.envDetail.available': 'Disponível',
-          'web.envDetail.assigned': 'Atribuído',
-          'web.envDetail.needsReset': 'Precisa reset',
-          'web.envDetail.addTenantD1Slots': 'Adicionar slots D1 de tenant',
-          'web.envDetail.expandPoolDeploy': 'Expandir pool e fazer deploy',
-          'web.envDetail.tenantD1PoolProgress': 'Progresso do pool D1',
           'web.envDetail.dedicatedR2Buckets': 'Buckets R2 dedicados',
           'web.envDetail.loadingR2Status': 'Carregando status dos buckets R2...',
           'web.envDetail.r2ProvisionDesc': 'Cria buckets R2 do Authrim, registra bindings de lock, ativa a flag R2 e faz redeploy dos workers.',
@@ -2535,8 +2681,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'Registros DNS de domínios personalizados não são excluídos automaticamente. Remova manualmente no Cloudflare se não forem mais necessários.',
           'web.delete.deleteLog': 'Log de exclusão',
           'web.delete.deleteTarget': 'Alvo',
-          'web.delete.resourcesIrreversible': 'recursos - irreversível',
+          'web.delete.resourcesLabel': 'recursos',
           'web.delete.deletePermanently': 'Excluir permanentemente',
+          'web.delete.manualR2Title': 'Buckets R2 grandes não são excluídos automaticamente. Esvazie-os no Cloudflare Dashboard:',
+          'web.delete.manualR2Open': 'Abrir R2 Dashboard ↗',
+          'web.delete.manualR2Summary': 'Os outros recursos selecionados do ambiente foram excluídos. Os buckets R2 abaixo aguardam uma ação manual; isso não é um erro da API.',
         },
         fr: {
           'web.common.setupTool': 'Outil de setup',
@@ -2552,21 +2701,15 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'Email',
           'web.envDetail.resources': 'Ressources',
           'web.envDetail.updates': 'Mises à jour',
-          'web.envDetail.verified': 'vérifié ✓',
+          'web.envDetail.verified': 'Déploiement vérifié ✓',
+          'web.envDetail.deploymentChecking': 'Vérification de l’état du déploiement…',
+          'web.envDetail.deploymentIncomplete': 'Déploiement incomplet',
+          'web.envDetail.deploymentStatusUnknown': 'État non vérifié',
           'web.envDetail.adminAccount': 'Compte admin',
           'web.envDetail.workerUpdateHint': 'Comparer les versions déployées et le build local',
           'web.envDetail.versionComparison': 'Comparaison des versions',
           'web.envDetail.uiUpdates': 'Mises à jour UI',
           'web.envDetail.origin': 'Origine',
-          'web.envDetail.tenantD1Pool': 'Pool D1 de tenants',
-          'web.envDetail.loadingTenantStorage': 'Chargement du stockage des tenants...',
-          'web.envDetail.capacity': 'Capacité',
-          'web.envDetail.available': 'Disponible',
-          'web.envDetail.assigned': 'Assigné',
-          'web.envDetail.needsReset': 'Réinitialisation',
-          'web.envDetail.addTenantD1Slots': 'Ajouter des slots D1',
-          'web.envDetail.expandPoolDeploy': 'Étendre le pool et déployer',
-          'web.envDetail.tenantD1PoolProgress': 'Progression du pool D1',
           'web.envDetail.dedicatedR2Buckets': 'Buckets R2 dédiés',
           'web.envDetail.loadingR2Status': 'Chargement du statut R2...',
           'web.envDetail.r2ProvisionDesc': 'Crée les buckets R2 Authrim, enregistre les bindings de verrou, active le flag R2 et redéploie les workers.',
@@ -2584,8 +2727,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'Les enregistrements DNS des domaines personnalisés ne sont pas supprimés automatiquement. Supprimez-les manuellement dans Cloudflare si nécessaire.',
           'web.delete.deleteLog': 'Journal de suppression',
           'web.delete.deleteTarget': 'Cible',
-          'web.delete.resourcesIrreversible': 'ressources - irréversible',
+          'web.delete.resourcesLabel': 'ressources',
           'web.delete.deletePermanently': 'Supprimer définitivement',
+          'web.delete.manualR2Title': 'Les grands buckets R2 ne sont pas supprimés automatiquement. Videz-les dans Cloudflare Dashboard :',
+          'web.delete.manualR2Open': 'Ouvrir R2 Dashboard ↗',
+          'web.delete.manualR2Summary': 'Les autres ressources sélectionnées ont été supprimées. Les buckets R2 ci-dessous attendent une action manuelle ; il ne s’agit pas d’une erreur API.',
         },
         de: {
           'web.common.setupTool': 'Setup-Tool',
@@ -2601,21 +2747,15 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'E-Mail',
           'web.envDetail.resources': 'Ressourcen',
           'web.envDetail.updates': 'Updates',
-          'web.envDetail.verified': 'geprüft ✓',
+          'web.envDetail.verified': 'Bereitstellung verifiziert ✓',
+          'web.envDetail.deploymentChecking': 'Bereitstellungsstatus wird geprüft…',
+          'web.envDetail.deploymentIncomplete': 'Bereitstellung unvollständig',
+          'web.envDetail.deploymentStatusUnknown': 'Status nicht verifiziert',
           'web.envDetail.adminAccount': 'Admin-Konto',
           'web.envDetail.workerUpdateHint': 'Deployte Versionen mit lokalem Build vergleichen',
           'web.envDetail.versionComparison': 'Versionsvergleich',
           'web.envDetail.uiUpdates': 'UI-Updates',
           'web.envDetail.origin': 'Origin',
-          'web.envDetail.tenantD1Pool': 'Tenant-D1-Pool',
-          'web.envDetail.loadingTenantStorage': 'Tenant-Speicherstatus wird geladen...',
-          'web.envDetail.capacity': 'Kapazität',
-          'web.envDetail.available': 'Verfügbar',
-          'web.envDetail.assigned': 'Zugewiesen',
-          'web.envDetail.needsReset': 'Reset nötig',
-          'web.envDetail.addTenantD1Slots': 'Tenant-D1-Slots hinzufügen',
-          'web.envDetail.expandPoolDeploy': 'Pool erweitern und deployen',
-          'web.envDetail.tenantD1PoolProgress': 'Fortschritt Tenant-D1-Pool',
           'web.envDetail.dedicatedR2Buckets': 'Dedizierte R2-Buckets',
           'web.envDetail.loadingR2Status': 'R2-Bucket-Status wird geladen...',
           'web.envDetail.r2ProvisionDesc': 'Erstellt Authrim-R2-Buckets, schreibt Lock-Bindings, aktiviert das R2-Feature-Flag und deployt Workers erneut.',
@@ -2633,8 +2773,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'DNS-Einträge für Custom Domains werden nicht automatisch gelöscht. Entfernen Sie sie bei Bedarf manuell in Cloudflare.',
           'web.delete.deleteLog': 'Löschprotokoll',
           'web.delete.deleteTarget': 'Ziel',
-          'web.delete.resourcesIrreversible': 'Ressourcen - unumkehrbar',
+          'web.delete.resourcesLabel': 'Ressourcen',
           'web.delete.deletePermanently': 'Endgültig löschen',
+          'web.delete.manualR2Title': 'Große R2-Buckets werden nicht automatisch gelöscht. Leeren Sie sie im Cloudflare Dashboard:',
+          'web.delete.manualR2Open': 'R2 Dashboard öffnen ↗',
+          'web.delete.manualR2Summary': 'Die übrigen ausgewählten Umgebungsressourcen wurden gelöscht. Die folgenden R2-Buckets warten auf eine manuelle Aktion; dies ist kein API-Fehler.',
         },
         ko: {
           'web.common.setupTool': '설정 도구',
@@ -2650,21 +2793,15 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': '이메일',
           'web.envDetail.resources': '리소스',
           'web.envDetail.updates': '업데이트',
-          'web.envDetail.verified': '검증됨 ✓',
+          'web.envDetail.verified': '배포 검증 완료 ✓',
+          'web.envDetail.deploymentChecking': '배포 상태 확인 중…',
+          'web.envDetail.deploymentIncomplete': '배포 미완료',
+          'web.envDetail.deploymentStatusUnknown': '상태 미확인',
           'web.envDetail.adminAccount': '관리자 계정',
           'web.envDetail.workerUpdateHint': '배포된 버전과 로컬 빌드 비교',
           'web.envDetail.versionComparison': '버전 비교',
           'web.envDetail.uiUpdates': 'UI 업데이트',
           'web.envDetail.origin': '출처',
-          'web.envDetail.tenantD1Pool': '테넌트 D1 풀',
-          'web.envDetail.loadingTenantStorage': '테넌트 스토리지 상태 로딩 중...',
-          'web.envDetail.capacity': '용량',
-          'web.envDetail.available': '사용 가능',
-          'web.envDetail.assigned': '할당됨',
-          'web.envDetail.needsReset': '초기화 필요',
-          'web.envDetail.addTenantD1Slots': '테넌트 D1 슬롯 추가',
-          'web.envDetail.expandPoolDeploy': '풀 확장 후 배포',
-          'web.envDetail.tenantD1PoolProgress': '테넌트 D1 풀 진행 상황',
           'web.envDetail.dedicatedR2Buckets': '전용 R2 버킷',
           'web.envDetail.loadingR2Status': 'R2 버킷 상태 로딩 중...',
           'web.envDetail.r2ProvisionDesc': 'Authrim R2 버킷을 만들고 lock binding을 기록하며 R2 기능 플래그를 켠 뒤 Workers를 다시 배포합니다.',
@@ -2682,8 +2819,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': '사용자 지정 도메인의 DNS 레코드는 자동 삭제되지 않습니다. 필요 없으면 Cloudflare에서 수동으로 삭제하세요.',
           'web.delete.deleteLog': '삭제 로그',
           'web.delete.deleteTarget': '삭제 대상',
-          'web.delete.resourcesIrreversible': '리소스 - 되돌릴 수 없음',
+          'web.delete.resourcesLabel': '리소스',
           'web.delete.deletePermanently': '영구 삭제',
+          'web.delete.manualR2Title': '대용량 R2 버킷은 자동으로 삭제되지 않습니다. Cloudflare Dashboard에서 비워 주세요:',
+          'web.delete.manualR2Open': 'R2 Dashboard 열기 ↗',
+          'web.delete.manualR2Summary': '선택한 다른 환경 리소스는 삭제되었습니다. 아래 R2 버킷은 수동 작업을 기다리고 있으며 API 오류가 아닙니다.',
         },
         ru: {
           'web.common.setupTool': 'Инструмент setup',
@@ -2699,21 +2839,15 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'Почта',
           'web.envDetail.resources': 'Ресурсы',
           'web.envDetail.updates': 'Обновления',
-          'web.envDetail.verified': 'проверено ✓',
+          'web.envDetail.verified': 'Развертывание подтверждено ✓',
+          'web.envDetail.deploymentChecking': 'Проверка состояния развертывания…',
+          'web.envDetail.deploymentIncomplete': 'Развертывание не завершено',
+          'web.envDetail.deploymentStatusUnknown': 'Статус не подтвержден',
           'web.envDetail.adminAccount': 'Аккаунт администратора',
           'web.envDetail.workerUpdateHint': 'Сравнить развернутые версии с локальной сборкой',
           'web.envDetail.versionComparison': 'Сравнение версий',
           'web.envDetail.uiUpdates': 'Обновления UI',
           'web.envDetail.origin': 'Источник',
-          'web.envDetail.tenantD1Pool': 'Пул tenant D1',
-          'web.envDetail.loadingTenantStorage': 'Загрузка статуса tenant storage...',
-          'web.envDetail.capacity': 'Емкость',
-          'web.envDetail.available': 'Доступно',
-          'web.envDetail.assigned': 'Назначено',
-          'web.envDetail.needsReset': 'Нужен сброс',
-          'web.envDetail.addTenantD1Slots': 'Добавить слоты tenant D1',
-          'web.envDetail.expandPoolDeploy': 'Расширить пул и деплоить',
-          'web.envDetail.tenantD1PoolProgress': 'Прогресс пула tenant D1',
           'web.envDetail.dedicatedR2Buckets': 'Выделенные R2 buckets',
           'web.envDetail.loadingR2Status': 'Загрузка статуса R2 bucket...',
           'web.envDetail.r2ProvisionDesc': 'Создает R2 buckets Authrim, записывает lock bindings, включает флаг R2 и повторно деплоит Workers.',
@@ -2731,8 +2865,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'DNS-записи custom domains не удаляются автоматически. Удалите их вручную в Cloudflare, если они больше не нужны.',
           'web.delete.deleteLog': 'Лог удаления',
           'web.delete.deleteTarget': 'Цель удаления',
-          'web.delete.resourcesIrreversible': 'ресурсы - необратимо',
+          'web.delete.resourcesLabel': 'ресурсов',
           'web.delete.deletePermanently': 'Удалить навсегда',
+          'web.delete.manualR2Title': 'Большие бакеты R2 не удаляются автоматически. Очистите их в Cloudflare Dashboard:',
+          'web.delete.manualR2Open': 'Открыть R2 Dashboard ↗',
+          'web.delete.manualR2Summary': 'Остальные выбранные ресурсы окружения удалены. Указанные ниже бакеты R2 ожидают ручного действия; это не ошибка API.',
         },
         id: {
           'web.common.setupTool': 'Alat setup',
@@ -2748,21 +2885,15 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.email': 'Email',
           'web.envDetail.resources': 'Resource',
           'web.envDetail.updates': 'Update',
-          'web.envDetail.verified': 'terverifikasi ✓',
+          'web.envDetail.verified': 'Deployment terverifikasi ✓',
+          'web.envDetail.deploymentChecking': 'Memeriksa status deployment…',
+          'web.envDetail.deploymentIncomplete': 'Deployment belum selesai',
+          'web.envDetail.deploymentStatusUnknown': 'Status belum diverifikasi',
           'web.envDetail.adminAccount': 'Akun admin',
           'web.envDetail.workerUpdateHint': 'Bandingkan versi deploy dengan build lokal',
           'web.envDetail.versionComparison': 'Perbandingan versi',
           'web.envDetail.uiUpdates': 'Update UI',
           'web.envDetail.origin': 'Origin',
-          'web.envDetail.tenantD1Pool': 'Pool D1 tenant',
-          'web.envDetail.loadingTenantStorage': 'Memuat status storage tenant...',
-          'web.envDetail.capacity': 'Kapasitas',
-          'web.envDetail.available': 'Tersedia',
-          'web.envDetail.assigned': 'Ditugaskan',
-          'web.envDetail.needsReset': 'Perlu reset',
-          'web.envDetail.addTenantD1Slots': 'Tambah slot D1 tenant',
-          'web.envDetail.expandPoolDeploy': 'Perluas pool dan deploy',
-          'web.envDetail.tenantD1PoolProgress': 'Progres pool D1 tenant',
           'web.envDetail.dedicatedR2Buckets': 'Bucket R2 khusus',
           'web.envDetail.loadingR2Status': 'Memuat status bucket R2...',
           'web.envDetail.r2ProvisionDesc': 'Membuat bucket R2 Authrim, mencatat lock binding, mengaktifkan flag R2, dan redeploy Workers.',
@@ -2780,10 +2911,173 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.dnsNote': 'Record DNS domain kustom tidak dihapus otomatis. Hapus manual di Cloudflare jika tidak diperlukan.',
           'web.delete.deleteLog': 'Log penghapusan',
           'web.delete.deleteTarget': 'Target hapus',
-          'web.delete.resourcesIrreversible': 'resource - tidak dapat dibatalkan',
+          'web.delete.resourcesLabel': 'resource',
           'web.delete.deletePermanently': 'Hapus permanen',
+          'web.delete.manualR2Title': 'Bucket R2 berukuran besar tidak dihapus secara otomatis. Kosongkan melalui Cloudflare Dashboard:',
+          'web.delete.manualR2Open': 'Buka R2 Dashboard ↗',
+          'web.delete.manualR2Summary': 'Resource environment lain yang dipilih sudah dihapus. Bucket R2 berikut menunggu tindakan manual; ini bukan error API.',
         },
       };
+      const envManagementSupplementalLocaleOrder = [
+        'zh-CN',
+        'zh-TW',
+        'es',
+        'pt',
+        'fr',
+        'de',
+        'ko',
+        'ru',
+        'id',
+      ];
+      const envManagementSupplementalRows = {
+        'web.envDetail.capacityTab': ['D1 容量', 'D1 容量', 'Capacidad D1', 'Capacidade D1', 'Capacité D1', 'D1-Kapazität', 'D1 용량', 'Емкость D1', 'Kapasitas D1'],
+        'web.envDetail.capacityTitle': ['控制平面容量', '控制平面容量', 'Capacidad del plano de control', 'Capacidade do plano de controle', 'Capacité du plan de contrôle', 'Kapazität der Steuerungsebene', '컨트롤 플레인 용량', 'Емкость плоскости управления', 'Kapasitas control plane'],
+        'web.envDetail.capacityHint': ['由服务器管理的放置方案', '由伺服器管理的配置方案', 'Plan de ubicación administrado por el servidor', 'Plano de alocação gerenciado pelo servidor', 'Plan de placement géré par le serveur', 'Serververwalteter Platzierungsplan', '서버 관리 배치 계획', 'Управляемый сервером план размещения', 'Rencana penempatan yang dikelola server'],
+        'web.envDetail.capacityScope': ['范围', '範圍', 'Ámbito', 'Escopo', 'Portée', 'Bereich', '범위', 'Область', 'Cakupan'],
+        'web.envDetail.capacityShared': ['共享池', '共用集區', 'Grupo compartido', 'Pool compartilhado', 'Pool partagé', 'Gemeinsamer Pool', '공유 풀', 'Общий пул', 'Pool bersama'],
+        'web.envDetail.capacityDedicated': ['专用租户', '專用租戶', 'Tenant dedicado', 'Tenant dedicado', 'Tenant dédié', 'Dedizierter Tenant', '전용 테넌트', 'Выделенный тенант', 'Tenant khusus'],
+        'web.envDetail.capacityTenant': ['租户', '租戶', 'Tenant', 'Tenant', 'Tenant', 'Tenant', '테넌트', 'Тенант', 'Tenant'],
+        'web.envDetail.capacityProfile': ['容量配置', '容量設定檔', 'Perfil de capacidad', 'Perfil de capacidade', 'Profil de capacité', 'Kapazitätsprofil', '용량 프로필', 'Профиль емкости', 'Profil kapasitas'],
+        'web.envDetail.capacityMinimum': ['最低', '最低', 'Mínimo', 'Mínimo', 'Minimum', 'Minimum', '최소', 'Минимум', 'Minimum'],
+        'web.envDetail.capacityRecommended': ['推荐', '建議', 'Recomendado', 'Recomendado', 'Recommandé', 'Empfohlen', '권장', 'Рекомендуется', 'Direkomendasikan'],
+        'web.envDetail.capacityExtra': ['额外余量', '額外餘裕', 'Margen adicional', 'Margem adicional', 'Marge supplémentaire', 'Zusätzliche Reserve', '추가 여유', 'Дополнительный резерв', 'Cadangan tambahan'],
+        'web.envDetail.capacityPreview': ['预览', '預覽', 'Vista previa', 'Prévia', 'Aperçu', 'Vorschau', '미리 보기', 'Предпросмотр', 'Pratinjau'],
+        'web.envDetail.capacityAdd': ['增加容量', '新增容量', 'Añadir capacidad', 'Adicionar capacidade', 'Ajouter de la capacité', 'Kapazität hinzufügen', '용량 추가', 'Добавить емкость', 'Tambah kapasitas'],
+        'web.envDetail.capacityPlan': ['容量方案', '容量方案', 'Plan de capacidad', 'Plano de capacidade', 'Plan de capacité', 'Kapazitätsplan', '용량 계획', 'План емкости', 'Rencana kapasitas'],
+        'web.envDetail.capacitySelectEnvironment': ['请先选择环境。', '請先選擇環境。', 'Seleccione primero un entorno.', 'Selecione primeiro um ambiente.', 'Sélectionnez d’abord un environnement.', 'Wählen Sie zuerst eine Umgebung aus.', '먼저 환경을 선택하세요.', 'Сначала выберите среду.', 'Pilih environment terlebih dahulu.'],
+        'web.envDetail.capacityNoTenant': ['没有可用的活动专用租户。', '沒有可用的有效專用租戶。', 'No hay ningún tenant dedicado activo disponible.', 'Nenhum tenant dedicado ativo está disponível.', 'Aucun tenant dédié actif n’est disponible.', 'Es ist kein aktiver dedizierter Tenant verfügbar.', '사용 가능한 활성 전용 테넌트가 없습니다.', 'Нет доступного активного выделенного тенанта.', 'Tidak ada tenant khusus aktif yang tersedia.'],
+        'web.envDetail.capacitySummary': ['{{units}} 个单元 / {{d1}} 个 D1 / 共 {{total}} 个', '{{units}} 個單元 / {{d1}} 個 D1 / 共 {{total}} 個', '{{units}} unidad(es) / {{d1}} D1 / {{total}} en total', '{{units}} unidade(s) / {{d1}} D1 / {{total}} no total', '{{units}} unité(s) / {{d1}} D1 / {{total}} au total', '{{units}} Einheit(en) / {{d1}} D1 / {{total}} insgesamt', '{{units}}개 단위 / D1 {{d1}}개 / 총 {{total}}개', '{{units}} ед. / {{d1}} D1 / всего {{total}}', '{{units}} unit / {{d1}} D1 / total {{total}}'],
+        'web.envDetail.capacityPreviewState': ['预览', '預覽', 'vista previa', 'prévia', 'aperçu', 'Vorschau', '미리 보기', 'предпросмотр', 'pratinjau'],
+        'web.envDetail.capacityLoading': ['正在加载容量方案...', '正在載入容量方案...', 'Cargando el plan de capacidad...', 'Carregando o plano de capacidade...', 'Chargement du plan de capacité...', 'Kapazitätsplan wird geladen...', '용량 계획을 불러오는 중...', 'Загрузка плана емкости...', 'Memuat rencana kapasitas...'],
+        'web.envDetail.capacityCreating': ['正在创建容量操作...', '正在建立容量作業...', 'Creando operaciones de capacidad...', 'Criando operações de capacidade...', 'Création des opérations de capacité...', 'Kapazitätsvorgänge werden erstellt...', '용량 작업을 생성하는 중...', 'Создание операций емкости...', 'Membuat operasi kapasitas...'],
+        'web.envDetail.capacityRequestFailed': ['容量请求失败。', '容量要求失敗。', 'Error en la solicitud de capacidad.', 'Falha na solicitação de capacidade.', 'Échec de la demande de capacité.', 'Kapazitätsanfrage fehlgeschlagen.', '용량 요청에 실패했습니다.', 'Запрос емкости завершился ошибкой.', 'Permintaan kapasitas gagal.'],
+        'web.envDetail.capacityCreated': ['已创建规范的 Control 操作。现在可以执行待处理的 Setup 操作。', '已建立正式的 Control 作業。現在可以執行待處理的 Setup 動作。', 'Se crearon las operaciones de Control canónicas. Las acciones pendientes de Setup ya están disponibles.', 'As operações canônicas do Control foram criadas. As ações pendentes do Setup já estão disponíveis.', 'Les opérations Control canoniques ont été créées. Les actions Setup en attente sont disponibles.', 'Die kanonischen Control-Vorgänge wurden erstellt. Ausstehende Setup-Aktionen sind jetzt verfügbar.', '정식 Control 작업을 생성했습니다. 이제 보류 중인 Setup 작업을 실행할 수 있습니다.', 'Созданы канонические операции Control. Ожидающие действия Setup теперь доступны.', 'Operasi Control kanonis telah dibuat. Tindakan Setup yang tertunda kini tersedia.'],
+        'web.envDetail.capacitySatisfied': ['当前容量已满足此配置。', '目前容量已符合此設定檔。', 'La capacidad actual ya satisface este perfil.', 'A capacidade atual já atende a este perfil.', 'La capacité actuelle satisfait déjà ce profil.', 'Die aktuelle Kapazität erfüllt dieses Profil bereits.', '현재 용량이 이미 이 프로필을 충족합니다.', 'Текущая емкость уже соответствует этому профилю.', 'Kapasitas saat ini sudah memenuhi profil ini.'],
+        'web.envDetail.capacityReady': ['容量预览已准备好。', '容量預覽已就緒。', 'La vista previa de capacidad está lista.', 'A prévia de capacidade está pronta.', 'L’aperçu de capacité est prêt.', 'Die Kapazitätsvorschau ist bereit.', '용량 미리 보기가 준비되었습니다.', 'Предпросмотр емкости готов.', 'Pratinjau kapasitas sudah siap.'],
+        'web.envDetail.migrations': ['迁移', '移轉', 'Migraciones', 'Migrações', 'Migrations', 'Migrationen', '마이그레이션', 'Миграции', 'Migrasi'],
+        'web.envDetail.releaseUpdateAvailable': ['有新的 Authrim 版本可用', '有新的 Authrim 版本可用', 'Hay una nueva versión de Authrim disponible', 'Uma nova versão do Authrim está disponível', 'Une nouvelle version d’Authrim est disponible', 'Eine neue Authrim-Version ist verfügbar', '새 Authrim 버전을 사용할 수 있습니다', 'Доступна новая версия Authrim', 'Versi Authrim baru tersedia'],
+        'web.envDetail.releaseUpdateResume': ['继续中断的更新', '繼續中斷的更新', 'Continuar la actualización interrumpida', 'Continuar a atualização interrompida', 'Reprendre la mise à jour interrompue', 'Unterbrochenes Update fortsetzen', '중단된 업데이트 계속하기', 'Продолжить прерванное обновление', 'Lanjutkan update yang terhenti'],
+        'web.envDetail.releaseUpdateDesc': ['Setup 会先应用所需的数据库更改，再更新服务并验证结果。您的设置和数据将被保留。', 'Setup 會先套用必要的資料庫變更，再更新服務並驗證結果。您的設定與資料都會保留。', 'Setup aplicará los cambios de base de datos necesarios, actualizará los servicios y verificará el resultado. Se conservarán la configuración y los datos.', 'O Setup aplicará as alterações de banco de dados necessárias, atualizará os serviços e verificará o resultado. Suas configurações e dados serão preservados.', 'Setup appliquera les modifications de base de données requises, mettra à jour les services et vérifiera le résultat. Vos paramètres et données seront conservés.', 'Setup wendet erforderliche Datenbankänderungen an, aktualisiert die Dienste und prüft das Ergebnis. Einstellungen und Daten bleiben erhalten.', 'Setup이 필요한 데이터베이스 변경을 적용하고 서비스를 업데이트한 뒤 결과를 확인합니다. 설정과 데이터는 유지됩니다.', 'Setup применит необходимые изменения базы данных, обновит сервисы и проверит результат. Настройки и данные будут сохранены.', 'Setup akan menerapkan perubahan database yang diperlukan, memperbarui layanan, lalu memverifikasi hasilnya. Pengaturan dan data Anda tetap dipertahankan.'],
+        'web.envDetail.releaseUpdateBlocked': ['必须先解决上一个操作，才能开始此次更新。', '必須先解決上一個作業，才能開始此次更新。', 'Esta actualización no puede comenzar hasta resolver la operación anterior.', 'Esta atualização não pode começar até que a operação anterior seja resolvida.', 'Cette mise à jour ne peut pas démarrer avant la résolution de l’opération précédente.', 'Dieses Update kann erst nach Klärung des vorherigen Vorgangs gestartet werden.', '이전 작업을 해결하기 전에는 이 업데이트를 시작할 수 없습니다.', 'Обновление нельзя начать, пока не будет устранена предыдущая операция.', 'Update ini tidak dapat dimulai sebelum operasi sebelumnya diselesaikan.'],
+        'web.envDetail.releaseUpdateOlderTool': ['此 Setup 源比已安装的环境旧。请使用最新的软件包重新启动 Setup。', '此 Setup 來源比已安裝的環境舊。請使用最新套件重新啟動 Setup。', 'Esta fuente de Setup es anterior al entorno instalado. Inicie Setup de nuevo con el paquete más reciente.', 'Esta fonte do Setup é mais antiga que o ambiente instalado. Inicie o Setup novamente com o pacote mais recente.', 'Cette source Setup est plus ancienne que l’environnement installé. Relancez Setup avec le paquet le plus récent.', 'Diese Setup-Quelle ist älter als die installierte Umgebung. Starten Sie Setup mit dem neuesten Paket neu.', '이 Setup 소스가 설치된 환경보다 오래되었습니다. 최신 패키지로 Setup을 다시 시작하세요.', 'Исходный пакет Setup старее установленной среды. Перезапустите Setup с последним пакетом.', 'Sumber Setup ini lebih lama daripada environment yang terpasang. Jalankan kembali Setup dengan paket terbaru.'],
+        'web.envDetail.releaseUpdateAction': ['立即更新', '立即更新', 'Actualizar ahora', 'Atualizar agora', 'Mettre à jour maintenant', 'Jetzt aktualisieren', '지금 업데이트', 'Обновить сейчас', 'Update sekarang'],
+        'web.envDetail.releaseUpdateDatabaseOnlyAction': ['仅更新数据库（高级）', '僅更新資料庫（進階）', 'Actualizar solo las bases de datos (avanzado)', 'Atualizar apenas bancos de dados (avançado)', 'Mettre à jour uniquement les bases de données (avancé)', 'Nur Datenbanken aktualisieren (erweitert)', '데이터베이스만 업데이트(고급)', 'Обновить только базы данных (расширенный режим)', 'Update database saja (lanjutan)'],
+        'web.envDetail.releaseUpdateDatabaseOnlyConfirm': ['是否在不更新 Workers 的情况下仅更新数据库？只有发布清单明确声明已安装的 Worker 版本与新架构兼容时才允许这样做。', '是否在不更新 Workers 的情況下僅更新資料庫？只有發布資訊清單明確宣告已安裝的 Worker 版本與新結構相容時才允許。', '¿Actualizar las bases de datos sin actualizar Workers? Solo se permite si el manifiesto de la versión declara explícitamente que la versión de Worker instalada es compatible con el nuevo esquema.', 'Atualizar os bancos de dados sem atualizar os Workers? Isso só é permitido quando o manifesto da versão declara explicitamente que a versão instalada do Worker é compatível com o novo esquema.', 'Mettre à jour les bases de données sans mettre à jour les Workers ? Cela n’est permis que si le manifeste de version déclare explicitement la version Worker installée compatible avec le nouveau schéma.', 'Datenbanken aktualisieren, ohne Workers zu aktualisieren? Dies ist nur zulässig, wenn das Release-Manifest die installierte Worker-Version ausdrücklich als mit dem neuen Schema kompatibel erklärt.', 'Workers를 업데이트하지 않고 데이터베이스만 업데이트할까요? 릴리스 매니페스트가 설치된 Worker 버전과 새 스키마의 호환성을 명시한 경우에만 허용됩니다.', 'Обновить базы данных без обновления Workers? Это разрешено, только если манифест релиза явно указывает совместимость установленной версии Worker с новой схемой.', 'Update database tanpa memperbarui Workers? Ini hanya diizinkan jika manifes rilis secara eksplisit menyatakan versi Worker yang terpasang kompatibel dengan skema baru.'],
+        'web.envDetail.releaseUpdateResumeAction': ['继续更新', '繼續更新', 'Continuar actualización', 'Continuar atualização', 'Reprendre la mise à jour', 'Update fortsetzen', '업데이트 계속', 'Продолжить обновление', 'Lanjutkan update'],
+        'web.envDetail.releaseUpdatePreparing': ['正在准备更新...', '正在準備更新...', 'Preparando la actualización...', 'Preparando a atualização...', 'Préparation de la mise à jour...', 'Update wird vorbereitet...', '업데이트 준비 중...', 'Подготовка обновления...', 'Menyiapkan update...'],
+        'web.envDetail.releaseUpdateDatabase': ['正在更新数据库...', '正在更新資料庫...', 'Actualizando las bases de datos...', 'Atualizando os bancos de dados...', 'Mise à jour des bases de données...', 'Datenbanken werden aktualisiert...', '데이터베이스 업데이트 중...', 'Обновление баз данных...', 'Memperbarui database...'],
+        'web.envDetail.releaseUpdateServices': ['正在更新服务...', '正在更新服務...', 'Actualizando los servicios...', 'Atualizando os serviços...', 'Mise à jour des services...', 'Dienste werden aktualisiert...', '서비스 업데이트 중...', 'Обновление сервисов...', 'Memperbarui layanan...'],
+        'web.envDetail.releaseUpdateVerifying': ['正在验证更新...', '正在驗證更新...', 'Verificando la actualización...', 'Verificando a atualização...', 'Vérification de la mise à jour...', 'Update wird überprüft...', '업데이트 확인 중...', 'Проверка обновления...', 'Memverifikasi update...'],
+        'web.envDetail.releaseUpdateComplete': ['Authrim 已是最新版本。', 'Authrim 已是最新版本。', 'Authrim está actualizado.', 'O Authrim está atualizado.', 'Authrim est à jour.', 'Authrim ist auf dem neuesten Stand.', 'Authrim이 최신 상태입니다.', 'Authrim обновлен.', 'Authrim sudah terbaru.'],
+        'web.envDetail.releaseUpdateContinuing': ['数据库迁移正在 Control 中安全地继续。您可以关闭 Setup，并在 Admin UI 中监控或重试。', '資料庫移轉正在 Control 中安全地繼續。您可以關閉 Setup，並在 Admin UI 中監控或重試。', 'La migración de la base de datos continúa de forma segura en Control. Puede cerrar Setup y supervisar o reintentar desde Admin UI.', 'A migração do banco de dados continua com segurança no Control. Você pode fechar o Setup e monitorar ou tentar novamente pela Admin UI.', 'La migration de la base de données se poursuit en toute sécurité dans Control. Vous pouvez fermer Setup et la surveiller ou la relancer depuis Admin UI.', 'Die Datenbankmigration wird sicher in Control fortgesetzt. Sie können Setup schließen und sie in der Admin UI überwachen oder erneut versuchen.', '데이터베이스 마이그레이션은 Control에서 안전하게 계속됩니다. Setup을 닫고 Admin UI에서 모니터링하거나 재시도할 수 있습니다.', 'Миграция базы данных безопасно продолжается в Control. Можно закрыть Setup и отслеживать или повторить операцию в Admin UI.', 'Migrasi database tetap berjalan dengan aman di Control. Anda dapat menutup Setup dan memantau atau mencoba lagi dari Admin UI.'],
+        'web.envDetail.releaseUpdateFailed': ['更新已停止。您可以从此页面安全地重试。', '更新已停止。您可以從此畫面安全地重試。', 'La actualización se detuvo. Puede reintentarlo de forma segura desde esta pantalla.', 'A atualização parou. Você pode tentar novamente com segurança nesta tela.', 'La mise à jour s’est arrêtée. Vous pouvez la relancer en toute sécurité depuis cet écran.', 'Das Update wurde angehalten. Sie können es auf diesem Bildschirm sicher erneut versuchen.', '업데이트가 중지되었습니다. 이 화면에서 안전하게 다시 시도할 수 있습니다.', 'Обновление остановлено. Его можно безопасно повторить с этого экрана.', 'Update terhenti. Anda dapat mencoba lagi dengan aman dari layar ini.'],
+        'web.envDetail.releaseUpdateDetails': ['显示更新详情', '顯示更新詳細資料', 'Mostrar detalles de la actualización', 'Mostrar detalhes da atualização', 'Afficher les détails de la mise à jour', 'Update-Details anzeigen', '업데이트 세부 정보 표시', 'Показать сведения об обновлении', 'Tampilkan detail update'],
+        'web.envDetail.serviceSiteFallback': ['服务站点绑定', '服務網站繫結', 'Binding del sitio de servicio', 'Binding do site de serviço', 'Binding du site de service', 'Service-Site-Binding', '서비스 사이트 바인딩', 'Привязка сервисного сайта', 'Binding situs layanan'],
+        'web.envDetail.serviceSiteFallbackHint': ['将 ar-router 绑定到您的服务 Worker', '將 ar-router 繫結至您的服務 Worker', 'Vincular ar-router a su Worker de servicio', 'Vincular o ar-router ao seu Worker de serviço', 'Lier ar-router à votre Worker de service', 'ar-router an Ihren Service-Worker binden', 'ar-router를 서비스 Worker에 바인딩', 'Привязать ar-router к сервисному Worker', 'Bind ar-router ke Worker layanan Anda'],
+        'web.envDetail.serviceSiteFallbackDesc': ['当 Authrim、Admin UI、Login UI 和服务站点共用一个域名时使用。此页面会添加 Service Binding 并部署 ar-router；之后可在 Admin UI > Login UI 中启用运行时回退。', '當 Authrim、Admin UI、Login UI 與服務網站共用一個網域時使用。此畫面會新增 Service Binding 並部署 ar-router；之後可在 Admin UI > Login UI 中啟用執行階段後援。', 'Úselo cuando Authrim, Admin UI, Login UI y el sitio de servicio compartan un dominio. Esta pantalla añade el Service Binding y despliega ar-router; active después el fallback de runtime en Admin UI > Login UI.', 'Use quando Authrim, Admin UI, Login UI e o site de serviço compartilharem um domínio. Esta tela adiciona o Service Binding e implanta o ar-router; depois, ative o fallback de runtime em Admin UI > Login UI.', 'Utilisez cette option quand Authrim, Admin UI, Login UI et le site de service partagent un domaine. Cet écran ajoute le Service Binding et déploie ar-router ; activez ensuite le fallback runtime dans Admin UI > Login UI.', 'Verwenden Sie dies, wenn Authrim, Admin UI, Login UI und die Service-Site eine Domain teilen. Dieser Bildschirm fügt das Service Binding hinzu und stellt ar-router bereit; aktivieren Sie den Runtime-Fallback später unter Admin UI > Login UI.', 'Authrim, Admin UI, Login UI와 서비스 사이트가 하나의 도메인을 공유할 때 사용합니다. 이 화면은 Service Binding을 추가하고 ar-router를 배포합니다. 런타임 폴백은 나중에 Admin UI > Login UI에서 활성화하세요.', 'Используйте, когда Authrim, Admin UI, Login UI и сервисный сайт работают на одном домене. Этот экран добавляет Service Binding и разворачивает ar-router; затем включите runtime fallback в Admin UI > Login UI.', 'Gunakan saat Authrim, Admin UI, Login UI, dan situs layanan memakai satu domain. Layar ini menambahkan Service Binding dan men-deploy ar-router; aktifkan fallback runtime nanti dari Admin UI > Login UI.'],
+        'web.envDetail.serviceSiteEnabled': ['添加 Service Binding', '新增 Service Binding', 'Añadir Service Binding', 'Adicionar Service Binding', 'Ajouter le Service Binding', 'Service Binding hinzufügen', 'Service Binding 추가', 'Добавить Service Binding', 'Tambahkan Service Binding'],
+        'web.envDetail.serviceSiteEnabledHint': ['将配置的 Worker 作为 Service Binding 添加到 ar-router。运行时回退仍由 Admin UI 设置控制。', '將設定的 Worker 作為 Service Binding 新增至 ar-router。執行階段後援仍由 Admin UI 設定控制。', 'Añade el Worker configurado como Service Binding en ar-router. El fallback de runtime continúa bajo el control de Admin UI.', 'Adiciona o Worker configurado como Service Binding no ar-router. O fallback de runtime continua sendo controlado pela Admin UI.', 'Ajoute le Worker configuré comme Service Binding sur ar-router. Le fallback runtime reste contrôlé par les paramètres de l’Admin UI.', 'Fügt den konfigurierten Worker als Service Binding zu ar-router hinzu. Der Runtime-Fallback wird weiterhin über die Admin UI gesteuert.', '설정한 Worker를 ar-router의 Service Binding으로 추가합니다. 런타임 폴백은 계속 Admin UI 설정에서 제어합니다.', 'Добавляет настроенный Worker как Service Binding для ar-router. Runtime fallback по-прежнему управляется настройками Admin UI.', 'Menambahkan Worker yang dikonfigurasi sebagai Service Binding pada ar-router. Fallback runtime tetap dikendalikan oleh pengaturan Admin UI.'],
+        'web.envDetail.serviceSiteWorkerName': ['服务 Worker 名称', '服務 Worker 名稱', 'Nombre del Worker de servicio', 'Nome do Worker de serviço', 'Nom du Worker de service', 'Name des Service-Workers', '서비스 Worker 이름', 'Имя сервисного Worker', 'Nama Worker layanan'],
+        'web.envDetail.serviceSiteBinding': ['绑定名称', '繫結名稱', 'Nombre del binding', 'Nome do binding', 'Nom du binding', 'Binding-Name', '바인딩 이름', 'Имя привязки', 'Nama binding'],
+        'web.envDetail.serviceSiteSaveDeploy': ['保存并部署 Router', '儲存並部署 Router', 'Guardar y desplegar Router', 'Salvar e implantar o Router', 'Enregistrer et déployer le Router', 'Speichern und Router bereitstellen', '저장 후 Router 배포', 'Сохранить и развернуть Router', 'Simpan dan deploy Router'],
+        'web.envDetail.serviceSiteProgress': ['服务站点进度', '服務網站進度', 'Progreso del sitio de servicio', 'Progresso do site de serviço', 'Progression du site de service', 'Fortschritt der Service-Site', '서비스 사이트 진행 상황', 'Ход настройки сервисного сайта', 'Progres situs layanan'],
+        'web.envDetail.serviceSiteLoading': ['正在加载服务站点绑定状态...', '正在載入服務網站繫結狀態...', 'Cargando el estado del binding del sitio de servicio...', 'Carregando o status do binding do site de serviço...', 'Chargement de l’état du binding du site de service...', 'Status des Service-Site-Bindings wird geladen...', '서비스 사이트 바인딩 상태를 불러오는 중...', 'Загрузка состояния привязки сервисного сайта...', 'Memuat status binding situs layanan...'],
+        'web.envDetail.serviceSiteEnabledSummary': ['已配置绑定：{{binding}} -> {{worker}}', '已設定繫結：{{binding}} -> {{worker}}', 'Binding configurado: {{binding}} -> {{worker}}', 'Binding configurado: {{binding}} -> {{worker}}', 'Binding configuré : {{binding}} -> {{worker}}', 'Binding konfiguriert: {{binding}} -> {{worker}}', '바인딩 구성됨: {{binding}} -> {{worker}}', 'Привязка настроена: {{binding}} -> {{worker}}', 'Binding dikonfigurasi: {{binding}} -> {{worker}}'],
+        'web.envDetail.serviceSiteDisabledSummary': ['ar-router 上未配置服务站点绑定。', 'ar-router 上未設定服務網站繫結。', 'No hay ningún binding del sitio de servicio configurado en ar-router.', 'Nenhum binding de site de serviço está configurado no ar-router.', 'Aucun binding de site de service n’est configuré sur ar-router.', 'Für ar-router ist kein Service-Site-Binding konfiguriert.', 'ar-router에 서비스 사이트 바인딩이 구성되어 있지 않습니다.', 'Для ar-router не настроена привязка сервисного сайта.', 'Tidak ada binding situs layanan yang dikonfigurasi pada ar-router.'],
+        'web.envDetail.serviceSiteWorkerRequired': ['添加绑定前，请输入服务 Worker 名称。', '新增繫結前，請輸入服務 Worker 名稱。', 'Introduzca el nombre del Worker de servicio antes de añadir el binding.', 'Informe o nome do Worker de serviço antes de adicionar o binding.', 'Saisissez le nom du Worker de service avant d’ajouter le binding.', 'Geben Sie vor dem Hinzufügen des Bindings den Namen des Service-Workers ein.', '바인딩을 추가하기 전에 서비스 Worker 이름을 입력하세요.', 'Перед добавлением привязки введите имя сервисного Worker.', 'Masukkan nama Worker layanan sebelum menambahkan binding.'],
+        'web.envDetail.serviceSiteWorkerInvalid': ['Worker 名称只能包含小写字母、数字和连字符。', 'Worker 名稱只能包含小寫字母、數字與連字號。', 'El nombre del Worker debe usar letras minúsculas, números y guiones.', 'O nome do Worker deve usar letras minúsculas, números e hífens.', 'Le nom du Worker doit contenir des lettres minuscules, des chiffres et des tirets.', 'Der Worker-Name darf nur Kleinbuchstaben, Zahlen und Bindestriche enthalten.', 'Worker 이름에는 소문자, 숫자, 하이픈만 사용할 수 있습니다.', 'Имя Worker должно содержать строчные буквы, цифры и дефисы.', 'Nama Worker harus menggunakan huruf kecil, angka, dan tanda hubung.'],
+        'web.envDetail.serviceSiteBindingInvalid': ['绑定名称只能包含大写字母、数字和下划线。', '繫結名稱只能包含大寫字母、數字與底線。', 'El nombre del binding debe usar letras mayúsculas, números y guiones bajos.', 'O nome do binding deve usar letras maiúsculas, números e underscores.', 'Le nom du binding doit contenir des lettres majuscules, des chiffres et des tirets bas.', 'Der Binding-Name darf nur Großbuchstaben, Zahlen und Unterstriche enthalten.', '바인딩 이름에는 대문자, 숫자, 밑줄만 사용할 수 있습니다.', 'Имя привязки должно содержать заглавные буквы, цифры и символы подчеркивания.', 'Nama binding harus menggunakan huruf besar, angka, dan garis bawah.'],
+        'web.envDetail.serviceSiteConfirm': ['是否保存服务站点绑定设置并部署 ar-router？', '是否儲存服務網站繫結設定並部署 ar-router？', '¿Guardar la configuración del binding del sitio de servicio y desplegar ar-router?', 'Salvar as configurações de binding do site de serviço e implantar o ar-router?', 'Enregistrer les paramètres du binding du site de service et déployer ar-router ?', 'Service-Site-Binding speichern und ar-router bereitstellen?', '서비스 사이트 바인딩 설정을 저장하고 ar-router를 배포할까요?', 'Сохранить настройки привязки сервисного сайта и развернуть ar-router?', 'Simpan pengaturan binding situs layanan dan deploy ar-router?'],
+        'web.envDetail.serviceSiteSaving': ['正在保存服务站点绑定设置...', '正在儲存服務網站繫結設定...', 'Guardando la configuración del binding del sitio de servicio...', 'Salvando as configurações de binding do site de serviço...', 'Enregistrement des paramètres du binding du site de service...', 'Service-Site-Binding wird gespeichert...', '서비스 사이트 바인딩 설정 저장 중...', 'Сохранение настроек привязки сервисного сайта...', 'Menyimpan pengaturan binding situs layanan...'],
+        'web.envDetail.serviceSiteDeployComplete': ['服务站点绑定已部署。', '服務網站繫結已部署。', 'Se desplegó el binding del sitio de servicio.', 'O binding do site de serviço foi implantado.', 'Le binding du site de service a été déployé.', 'Das Service-Site-Binding wurde bereitgestellt.', '서비스 사이트 바인딩을 배포했습니다.', 'Привязка сервисного сайта развернута.', 'Binding situs layanan telah di-deploy.'],
+        'web.envDetail.appLoginGuideTitle': ['App Login 后续步骤', 'App Login 後續步驟', 'Siguientes pasos de App Login', 'Próximas etapas do App Login', 'Étapes suivantes pour App Login', 'Nächste Schritte für App Login', 'App Login 다음 단계', 'Следующие шаги App Login', 'Langkah berikutnya untuk App Login'],
+        'web.envDetail.appLoginGuideDesc': ['要将 Login UI 的直接登录引导至服务应用，请在 Admin UI 中将服务注册为 OIDC Client，在该 Client 上启用 First Party App 和 App Login，然后在 Admin UI > Login UI 的登录后设置中选择 App Login。', '若要將 Login UI 的直接登入導向服務應用程式，請在 Admin UI 中將服務註冊為 OIDC Client，在該 Client 啟用 First Party App 與 App Login，然後在 Admin UI > Login UI 的登入後設定中選擇 App Login。', 'Para enviar los inicios de sesión directos de Login UI a su aplicación de servicio, registre el servicio como OIDC Client en Admin UI, active First Party App y App Login en ese Client y seleccione App Login en la configuración posterior al inicio de sesión de Admin UI > Login UI.', 'Para enviar logins diretos da Login UI ao aplicativo de serviço, registre o serviço como OIDC Client na Admin UI, ative First Party App e App Login nesse Client e selecione App Login nas configurações pós-login em Admin UI > Login UI.', 'Pour diriger les connexions directes de Login UI vers votre application de service, enregistrez le service comme OIDC Client dans Admin UI, activez First Party App et App Login sur ce Client, puis sélectionnez App Login dans les paramètres après connexion de Admin UI > Login UI.', 'Um direkte Anmeldungen der Login UI an Ihre Service-App weiterzuleiten, registrieren Sie den Dienst in der Admin UI als OIDC Client, aktivieren Sie First Party App und App Login für diesen Client und wählen Sie dann App Login in den Einstellungen unter Admin UI > Login UI.', 'Login UI의 직접 로그인을 서비스 앱으로 보내려면 Admin UI에서 서비스를 OIDC Client로 등록하고 해당 Client에서 First Party App과 App Login을 활성화한 다음 Admin UI > Login UI의 로그인 후 설정에서 App Login을 선택하세요.', 'Чтобы направлять прямые входы Login UI в сервисное приложение, зарегистрируйте сервис как OIDC Client в Admin UI, включите для этого Client параметры First Party App и App Login, затем выберите App Login в настройках после входа в Admin UI > Login UI.', 'Untuk mengarahkan login langsung dari Login UI ke aplikasi layanan, daftarkan layanan sebagai OIDC Client di Admin UI, aktifkan First Party App dan App Login pada Client tersebut, lalu pilih App Login di pengaturan setelah login pada Admin UI > Login UI.'],
+        'web.envDetail.appLoginGuideLink': ['打开 Admin UI 的 Login UI 设置', '開啟 Admin UI 的 Login UI 設定', 'Abrir la configuración de Login UI en Admin UI', 'Abrir configurações da Login UI na Admin UI', 'Ouvrir les paramètres Login UI dans Admin UI', 'Login-UI-Einstellungen in der Admin UI öffnen', 'Admin UI의 Login UI 설정 열기', 'Открыть настройки Login UI в Admin UI', 'Buka pengaturan Login UI di Admin UI'],
+        'web.envDetail.migrationTitle': ['数据库迁移', '資料庫移轉', 'Migraciones de base de datos', 'Migrações de banco de dados', 'Migrations de base de données', 'Datenbankmigrationen', '데이터베이스 마이그레이션', 'Миграции базы данных', 'Migrasi database'],
+        'web.envDetail.migrationLoading': ['正在加载迁移状态...', '正在載入移轉狀態...', 'Cargando el estado de las migraciones...', 'Carregando o status das migrações...', 'Chargement de l’état des migrations...', 'Migrationsstatus wird geladen...', '마이그레이션 상태를 불러오는 중...', 'Загрузка состояния миграций...', 'Memuat status migrasi...'],
+        'web.envDetail.migrationApplied': ['已应用', '已套用', 'Aplicadas', 'Aplicadas', 'Appliquées', 'Angewendet', '적용됨', 'Применено', 'Diterapkan'],
+        'web.envDetail.migrationPending': ['待处理', '待處理', 'Pendientes', 'Pendentes', 'En attente', 'Ausstehend', '대기 중', 'Ожидает', 'Tertunda'],
+        'web.envDetail.migrationChanged': ['已更改', '已變更', 'Modificadas', 'Alteradas', 'Modifiées', 'Geändert', '변경됨', 'Изменено', 'Diubah'],
+        'web.envDetail.migrationOrphaned': ['已孤立', '已孤立', 'Huérfanas', 'Órfãs', 'Orphelines', 'Verwaist', '고립됨', 'Потеряно', 'Orphan'],
+        'web.envDetail.migrationRefresh': ['刷新', '重新整理', 'Actualizar', 'Atualizar', 'Actualiser', 'Aktualisieren', '새로 고침', 'Обновить', 'Muat ulang'],
+        'web.envDetail.migrationApplyAllPending': ['应用所有待处理项', '套用所有待處理項目', 'Aplicar todas las pendientes', 'Aplicar todas as pendentes', 'Appliquer toutes les migrations en attente', 'Alle ausstehenden anwenden', '대기 중인 항목 모두 적용', 'Применить все ожидающие', 'Terapkan semua yang tertunda'],
+        'web.envDetail.migrationProgress': ['迁移进度：', '移轉進度：', 'Progreso de migración:', 'Progresso da migração:', 'Progression des migrations :', 'Migrationsfortschritt:', '마이그레이션 진행 상황:', 'Ход миграции:', 'Progres migrasi:'],
+        'web.envDetail.migrationStatus': ['状态', '狀態', 'Estado', 'Status', 'État', 'Status', '상태', 'Состояние', 'Status'],
+        'web.envDetail.migrationFile': ['迁移文件', '移轉檔案', 'Archivo de migración', 'Arquivo de migração', 'Fichier de migration', 'Migrationsdatei', '마이그레이션 파일', 'Файл миграции', 'File migrasi'],
+        'web.envDetail.migrationAppliedAt': ['应用时间', '套用時間', 'Aplicada el', 'Aplicada em', 'Appliquée le', 'Angewendet am', '적용 시간', 'Время применения', 'Diterapkan pada'],
+        'web.envDetail.migrationChecksum': ['校验和', '總和檢查碼', 'Suma de comprobación', 'Checksum', 'Somme de contrôle', 'Prüfsumme', '체크섬', 'Контрольная сумма', 'Checksum'],
+        'web.envDetail.migrationApplyPending': ['应用', '套用', 'Aplicar', 'Aplicar', 'Appliquer', 'Anwenden', '적용', 'Применить', 'Terapkan'],
+        'web.envDetail.migrationStatusApplied': ['已应用', '已套用', 'Aplicada', 'Aplicada', 'Appliquée', 'Angewendet', '적용됨', 'Применено', 'Diterapkan'],
+        'web.envDetail.migrationStatusPending': ['待处理', '待處理', 'Pendiente', 'Pendente', 'En attente', 'Ausstehend', '대기 중', 'Ожидает', 'Tertunda'],
+        'web.envDetail.migrationStatusChanged': ['已更改', '已變更', 'Modificada', 'Alterada', 'Modifiée', 'Geändert', '변경됨', 'Изменено', 'Diubah'],
+        'web.envDetail.migrationStatusOrphaned': ['已孤立', '已孤立', 'Huérfana', 'Órfã', 'Orpheline', 'Verwaist', '고립됨', 'Потеряно', 'Orphan'],
+        'web.envDetail.migrationChangedBlocked': ['已应用的迁移文件发生了更改。“全部应用”已禁用；仍可单独应用待处理的行。', '已套用的移轉檔案已變更。「全部套用」已停用；仍可逐筆套用待處理項目。', 'Los archivos de migración aplicados han cambiado. Aplicar todo está desactivado; las filas pendientes pueden aplicarse individualmente.', 'Os arquivos de migração aplicados foram alterados. Aplicar tudo está desativado; as linhas pendentes podem ser aplicadas individualmente.', 'Les fichiers de migration appliqués ont changé. Tout appliquer est désactivé ; les lignes en attente peuvent être appliquées séparément.', 'Angewendete Migrationsdateien wurden geändert. „Alle anwenden“ ist deaktiviert; ausstehende Zeilen können einzeln angewendet werden.', '적용된 마이그레이션 파일이 변경되었습니다. 모두 적용은 비활성화되지만 대기 중인 행은 개별 적용할 수 있습니다.', 'Примененные файлы миграции изменились. «Применить все» отключено; ожидающие строки можно применить отдельно.', 'File migrasi yang telah diterapkan berubah. Terapkan semua dinonaktifkan; baris tertunda dapat diterapkan satu per satu.'],
+        'web.envDetail.migrationPendingSummary': ['{{count}} 个待处理迁移', '{{count}} 個待處理移轉', '{{count}} migración(es) pendiente(s)', '{{count}} migração(ões) pendente(s)', '{{count}} migration(s) en attente', '{{count}} ausstehende Migration(en)', '대기 중인 마이그레이션 {{count}}개', '{{count}} ожидающих миграций', '{{count}} migrasi tertunda'],
+        'web.envDetail.migrationMiniSummary': ['已应用 {{applied}} / 待处理 {{pending}} / 已更改 {{changed}}', '已套用 {{applied}} / 待處理 {{pending}} / 已變更 {{changed}}', '{{applied}} aplicadas / {{pending}} pendientes / {{changed}} modificadas', '{{applied}} aplicadas / {{pending}} pendentes / {{changed}} alteradas', '{{applied}} appliquées / {{pending}} en attente / {{changed}} modifiées', '{{applied}} angewendet / {{pending}} ausstehend / {{changed}} geändert', '적용 {{applied}} / 대기 {{pending}} / 변경 {{changed}}', 'применено {{applied}} / ожидает {{pending}} / изменено {{changed}}', '{{applied}} diterapkan / {{pending}} tertunda / {{changed}} diubah'],
+        'web.envDetail.migrationNoPending': ['所有迁移均已应用。', '所有移轉皆已套用。', 'Todas las migraciones están aplicadas.', 'Todas as migrações foram aplicadas.', 'Toutes les migrations sont appliquées.', 'Alle Migrationen wurden angewendet.', '모든 마이그레이션이 적용되었습니다.', 'Все миграции применены.', 'Semua migrasi telah diterapkan.'],
+        'web.envDetail.migrationNoFiles': ['未找到迁移文件。', '找不到移轉檔案。', 'No se encontraron archivos de migración.', 'Nenhum arquivo de migração foi encontrado.', 'Aucun fichier de migration trouvé.', 'Keine Migrationsdateien gefunden.', '마이그레이션 파일을 찾을 수 없습니다.', 'Файлы миграции не найдены.', 'Tidak ada file migrasi.'],
+        'web.envDetail.migrationLoadFailed': ['无法加载迁移状态。', '無法載入移轉狀態。', 'No se pudo cargar el estado de las migraciones.', 'Falha ao carregar o status das migrações.', 'Échec du chargement de l’état des migrations.', 'Migrationsstatus konnte nicht geladen werden.', '마이그레이션 상태를 불러오지 못했습니다.', 'Не удалось загрузить состояние миграций.', 'Gagal memuat status migrasi.'],
+        'web.envDetail.migrationApplyConfirm': ['是否应用所有待处理的数据库迁移？', '是否套用所有待處理的資料庫移轉？', '¿Aplicar todas las migraciones de base de datos pendientes?', 'Aplicar todas as migrações de banco de dados pendentes?', 'Appliquer toutes les migrations de base de données en attente ?', 'Alle ausstehenden Datenbankmigrationen anwenden?', '대기 중인 데이터베이스 마이그레이션을 모두 적용할까요?', 'Применить все ожидающие миграции базы данных?', 'Terapkan semua migrasi database yang tertunda?'],
+        'web.envDetail.migrationApplying': ['正在应用数据库迁移...', '正在套用資料庫移轉...', 'Aplicando migraciones de base de datos...', 'Aplicando migrações de banco de dados...', 'Application des migrations de base de données...', 'Datenbankmigrationen werden angewendet...', '데이터베이스 마이그레이션 적용 중...', 'Применение миграций базы данных...', 'Menerapkan migrasi database...'],
+        'web.envDetail.migrationComplete': ['数据库迁移已完成。', '資料庫移轉已完成。', 'Las migraciones de base de datos se completaron.', 'As migrações de banco de dados foram concluídas.', 'Les migrations de base de données sont terminées.', 'Datenbankmigrationen abgeschlossen.', '데이터베이스 마이그레이션이 완료되었습니다.', 'Миграции базы данных завершены.', 'Migrasi database selesai.'],
+        'web.envDetail.r2OwnershipRecoverySummary': ['{{count}} 个 R2 存储桶绑定只有旧版名称所有权信息。继续前请显式验证：{{command}}', '{{count}} 個 R2 儲存桶繫結只有舊版名稱擁有權資訊。繼續前請明確驗證：{{command}}', '{{count}} binding(s) de R2 solo tienen propiedad heredada por nombre. Verifíquelos explícitamente antes de continuar: {{command}}', '{{count}} binding(s) R2 têm apenas propriedade legada por nome. Verifique-os explicitamente antes de continuar: {{command}}', '{{count}} liaison(s) R2 ne disposent que d’une propriété héritée basée sur le nom. Vérifiez-les explicitement avant de continuer : {{command}}', '{{count}} R2-Bindung(en) besitzen nur veraltete namensbasierte Eigentumsdaten. Prüfen Sie sie vor dem Fortfahren ausdrücklich: {{command}}', '{{count}}개의 R2 버킷 바인딩에 레거시 이름 기반 소유권 정보만 있습니다. 계속하기 전에 명시적으로 확인하세요: {{command}}', 'Для {{count}} привязок R2 сохранены только устаревшие данные владения по имени. Перед продолжением явно проверьте их: {{command}}', '{{count}} binding bucket R2 hanya memiliki kepemilikan lama berbasis nama. Verifikasi secara eksplisit sebelum melanjutkan: {{command}}'],
+        'web.envDetail.r2OwnershipRecreateSummary': ['{{count}} 个 R2 存储桶绑定的旧版所有权信息不完整，无法安全验证。请重新创建环境后再预配 R2。', '{{count}} 個 R2 儲存桶繫結的舊版擁有權資訊不完整，無法安全驗證。請重新建立環境後再佈建 R2。', 'La propiedad heredada de {{count}} binding(s) de R2 está incompleta y no se puede verificar con seguridad. Vuelva a crear el entorno antes de aprovisionar R2.', 'A propriedade legada de {{count}} binding(s) R2 está incompleta e não pode ser verificada com segurança. Recrie o ambiente antes de provisionar o R2.', 'Les données de propriété héritées de {{count}} liaison(s) R2 sont incomplètes et ne peuvent pas être vérifiées en toute sécurité. Recréez l’environnement avant de provisionner R2.', 'Die veralteten Eigentumsdaten für {{count}} R2-Bindung(en) sind unvollständig und können nicht sicher geprüft werden. Erstellen Sie die Umgebung vor der R2-Bereitstellung neu.', '{{count}}개의 R2 버킷 바인딩에 대한 레거시 소유권 정보가 불완전하여 안전하게 확인할 수 없습니다. R2를 프로비저닝하기 전에 환경을 다시 만드세요.', 'Устаревшие данные владения для {{count}} привязок R2 неполны, поэтому их нельзя безопасно проверить. Пересоздайте среду перед подготовкой R2.', 'Kepemilikan lama untuk {{count}} binding R2 tidak lengkap dan tidak dapat diverifikasi dengan aman. Buat ulang environment sebelum melakukan provisioning R2.'],
+        'web.envDetail.r2IdentityMismatchSummary': ['检测到 {{count}} 个 R2 存储桶身份不匹配。继续前请检查 Cloudflare 存储桶和环境锁。', '偵測到 {{count}} 個 R2 儲存桶身分不相符。繼續前請檢查 Cloudflare 儲存桶與環境鎖定。', 'Se detectaron {{count}} discrepancia(s) de identidad de R2. Revise el bucket de Cloudflare y el bloqueo del entorno antes de continuar.', 'Foram detectadas {{count}} divergência(s) de identidade R2. Revise o bucket da Cloudflare e o bloqueio do ambiente antes de continuar.', '{{count}} incohérence(s) d’identité R2 ont été détectées. Vérifiez le bucket Cloudflare et le verrou d’environnement avant de continuer.', '{{count}} R2-Identitätsabweichung(en) wurden erkannt. Prüfen Sie vor dem Fortfahren den Cloudflare-Bucket und die Umgebungssperre.', '{{count}}개의 R2 버킷 ID 불일치를 감지했습니다. 계속하기 전에 Cloudflare 버킷과 환경 잠금을 확인하세요.', 'Обнаружено несоответствий идентификаторов R2: {{count}}. Перед продолжением проверьте бакет Cloudflare и блокировку среды.', 'Terdeteksi {{count}} ketidakcocokan identitas R2. Tinjau bucket Cloudflare dan kunci environment sebelum melanjutkan.'],
+        'web.status.percentComplete': ['已完成 {{percent}}%', '已完成 {{percent}}%', '{{percent}} % completado', '{{percent}}% concluído', '{{percent}} % terminé', '{{percent}} % abgeschlossen', '{{percent}}% 완료', 'Выполнено {{percent}}%', '{{percent}}% selesai'],
+        'web.status.resourceProgress': ['{{current}} / {{total}} 个资源', '{{current}} / {{total}} 個資源', '{{current}} / {{total}} recursos', '{{current}} / {{total}} recursos', '{{current}} / {{total}} ressources', '{{current}} / {{total}} Ressourcen', '{{current}} / {{total}}개 리소스', '{{current}} / {{total}} ресурсов', '{{current}} / {{total}} resource'],
+        'web.status.ok': ['正常', '正常', 'Correcto', 'OK', 'OK', 'OK', '정상', 'Готово', 'OK'],
+        'web.status.checkRequired': ['需要检查', '需要檢查', 'Revisión necesaria', 'Verificação necessária', 'Vérification requise', 'Prüfung erforderlich', '확인 필요', 'Требуется проверка', 'Perlu diperiksa'],
+        'web.status.unknown': ['未知', '未知', 'Desconocido', 'Desconhecido', 'Inconnu', 'Unbekannt', '알 수 없음', 'Неизвестно', 'Tidak diketahui'],
+        'web.env.updateBadge': ['更新到 v{{version}}', '更新至 v{{version}}', 'Actualizar a v{{version}}', 'Atualizar para v{{version}}', 'Mettre à jour vers v{{version}}', 'Auf v{{version}} aktualisieren', 'v{{version}}(으)로 업데이트', 'Обновить до v{{version}}', 'Perbarui ke v{{version}}'],
+        'web.delete.manualReviewRequired': ['需要手动检查', '需要手動檢查', 'Se requiere revisión manual', 'Revisão manual necessária', 'Vérification manuelle requise', 'Manuelle Prüfung erforderlich', '수동 확인 필요', 'Требуется ручная проверка', 'Perlu peninjauan manual'],
+        'web.envDetail.capacityTargetsUnavailable': ['无法获取租户容量目标。', '無法取得租戶容量目標。', 'Los destinos de capacidad del tenant no están disponibles.', 'Os destinos de capacidade do tenant não estão disponíveis.', 'Les cibles de capacité du tenant ne sont pas disponibles.', 'Mandanten-Kapazitätsziele sind nicht verfügbar.', '테넌트 용량 대상을 가져올 수 없습니다.', 'Целевые ресурсы емкости тенанта недоступны.', 'Target kapasitas tenant tidak tersedia.'],
+        'web.control.pendingTenant': ['租户 {{tenantId}}', '租戶 {{tenantId}}', 'Tenant {{tenantId}}', 'Tenant {{tenantId}}', 'Tenant {{tenantId}}', 'Mandant {{tenantId}}', '테넌트 {{tenantId}}', 'Тенант {{tenantId}}', 'Tenant {{tenantId}}'],
+        'web.control.pendingDisasterRecovery': ['灾难恢复', '災難復原', 'Recuperación ante desastres', 'Recuperação de desastres', 'Reprise après sinistre', 'Notfallwiederherstellung', '재해 복구', 'Аварийное восстановление', 'Pemulihan bencana'],
+        'web.control.pendingVerifyRuntimeBindings': ['验证运行时绑定', '驗證執行階段繫結', 'Verificar bindings de runtime', 'Verificar bindings de runtime', 'Vérifier les liaisons d’exécution', 'Laufzeitbindungen prüfen', '런타임 바인딩 확인', 'Проверка привязок среды выполнения', 'Verifikasi binding runtime'],
+        'web.control.pendingSharedPool': ['共享池', '共用集區', 'Pool compartido', 'Pool compartilhado', 'Pool partagé', 'Gemeinsamer Pool', '공유 풀', 'Общий пул', 'Pool bersama'],
+        'web.control.pendingProvisioning': ['正在预配', '正在佈建', 'Aprovisionamiento', 'Provisionamento', 'Provisionnement', 'Bereitstellung', '프로비저닝', 'Подготовка ресурсов', 'Provisioning'],
+        'web.control.pendingTitle': ['待处理的预配操作', '待處理的佈建操作', 'Operaciones de aprovisionamiento pendientes', 'Operações de provisionamento pendentes', 'Opérations de provisionnement en attente', 'Ausstehende Bereitstellungsvorgänge', '대기 중인 프로비저닝 작업', 'Ожидающие операции подготовки', 'Operasi provisioning tertunda'],
+        'web.control.pendingDescription': ['Setup将执行需要操作员权限的步骤，并持续显示Control的验证进度。', 'Setup 將執行需要操作員權限的步驟，並持續顯示 Control 的驗證進度。', 'Setup ejecuta los pasos que requieren permisos de operador y sigue mostrando el progreso de verificación de Control.', 'O Setup executa as etapas que exigem permissões do operador e continua exibindo o progresso da verificação do Control.', 'Setup exécute les étapes nécessitant les droits de l’opérateur et continue d’afficher la progression de la vérification de Control.', 'Setup führt Schritte aus, die Operatorrechte erfordern, und zeigt den Prüfungsfortschritt von Control weiter an.', 'Setup은 운영자 권한이 필요한 단계를 실행하고 Control 검증 진행 상황을 계속 표시합니다.', 'Setup выполняет этапы, требующие прав оператора, и продолжает показывать ход проверки Control.', 'Setup menjalankan langkah yang memerlukan izin operator dan terus menampilkan progres verifikasi Control.'],
+        'web.control.pendingRun': ['运行待处理操作', '執行待處理操作', 'Ejecutar operación pendiente', 'Executar operação pendente', 'Exécuter l’opération en attente', 'Ausstehenden Vorgang ausführen', '대기 중인 작업 실행', 'Выполнить ожидающую операцию', 'Jalankan operasi tertunda'],
+        'web.control.pendingObserving': ['Control正在执行私有冒烟测试或稳定化。此状态将自动刷新。', 'Control 正在執行私有冒煙測試或穩定化。此狀態將自動重新整理。', 'Control está ejecutando la prueba privada o la estabilización. Este estado se actualizará automáticamente.', 'O Control está executando o smoke test privado ou a estabilização. Este status será atualizado automaticamente.', 'Control exécute le test privé ou la stabilisation. Cet état sera actualisé automatiquement.', 'Control führt den privaten Smoke-Test oder die Stabilisierung aus. Dieser Status wird automatisch aktualisiert.', 'Control이 비공개 스모크 테스트 또는 안정화를 실행 중입니다. 상태가 자동으로 새로 고쳐집니다.', 'Control выполняет закрытую проверку или стабилизацию. Состояние обновится автоматически.', 'Control sedang menjalankan smoke test privat atau stabilisasi. Status ini akan dimuat ulang secara otomatis.'],
+        'web.control.operationRunning': ['正在执行预配操作...', '正在執行佈建操作...', 'Ejecutando la operación de aprovisionamiento...', 'Executando a operação de provisionamento...', 'Exécution de l’opération de provisionnement...', 'Bereitstellungsvorgang wird ausgeführt...', '프로비저닝 작업 실행 중...', 'Выполняется операция подготовки ресурсов...', 'Menjalankan operasi provisioning...'],
+        'web.control.operationFailed': ['Control 操作失败。', 'Control 操作失敗。', 'La operación de Control falló.', 'A operação de Control falhou.', 'L’opération Control a échoué.', 'Control-Vorgang fehlgeschlagen.', 'Control 작업에 실패했습니다.', 'Операция Control завершилась ошибкой.', 'Operasi Control gagal.'],
+        'web.control.operationAwaitingMigration': ['D1 已创建。迁移已准备好进入下一操作步骤。', 'D1 已建立。移轉已可進入下一個操作步驟。', 'D1 creado. La migración está lista para el siguiente paso del operador.', 'D1 criado. A migração está pronta para a próxima etapa do operador.', 'D1 créé. La migration est prête pour l’étape opérateur suivante.', 'D1 erstellt. Die Migration ist für den nächsten Bedienerschritt bereit.', 'D1을 만들었습니다. 다음 운영자 단계에서 마이그레이션을 실행할 수 있습니다.', 'D1 создана. Миграция готова к следующему шагу оператора.', 'D1 dibuat. Migrasi siap untuk langkah operator berikutnya.'],
+        'web.control.operationAwaitingWorkerBindings': ['迁移已完成。Worker 绑定协调已准备好进入下一操作步骤。', '移轉已完成。Worker 繫結協調已可進入下一個操作步驟。', 'Migración completada. La conciliación de bindings de Worker está lista para el siguiente paso.', 'Migração concluída. A reconciliação de bindings do Worker está pronta para a próxima etapa.', 'Migration terminée. La réconciliation des liaisons Worker est prête pour l’étape suivante.', 'Migration abgeschlossen. Der Abgleich der Worker-Bindungen ist für den nächsten Schritt bereit.', '마이그레이션이 완료되었습니다. 다음 운영자 단계에서 Worker 바인딩을 조정할 수 있습니다.', 'Миграция завершена. Согласование привязок Worker готово к следующему шагу.', 'Migrasi selesai. Rekonsiliasi binding Worker siap untuk langkah berikutnya.'],
+        'web.control.operationAwaitingSmoke': ['Worker 绑定已修补。正在运行私有冒烟测试和稳定化。', 'Worker 繫結已修補。正在執行私有冒煙測試與穩定化。', 'Bindings de Worker actualizados. Se ejecutan las pruebas privadas y la estabilización.', 'Bindings do Worker atualizados. O smoke test privado e a estabilização estão em execução.', 'Liaisons Worker mises à jour. Le test privé et la stabilisation sont en cours.', 'Worker-Bindungen aktualisiert. Privater Smoke-Test und Stabilisierung laufen.', 'Worker 바인딩을 패치했습니다. 비공개 스모크 테스트와 안정화가 진행 중입니다.', 'Привязки Worker обновлены. Выполняются закрытая проверка и стабилизация.', 'Binding Worker diperbarui. Smoke test privat dan stabilisasi sedang berjalan.'],
+        'web.control.operationAwaitingQuarantine': ['资源清理正在等待隔离期结束。', '資源清理正在等待隔離期結束。', 'La limpieza de recursos espera a que termine el período de cuarentena.', 'A limpeza de recursos aguarda o fim do período de quarentena.', 'Le nettoyage des ressources attend la fin de la période de quarantaine.', 'Die Ressourcenbereinigung wartet auf das Ende der Quarantänefrist.', '리소스 정리가 격리 기간 종료를 기다리고 있습니다.', 'Очистка ресурсов ожидает окончания периода карантина.', 'Pembersihan resource menunggu periode karantina selesai.'],
+        'web.control.operationRetryRequired': ['预配需要重试。', '佈建需要重試。', 'El aprovisionamiento requiere un reintento.', 'O provisionamento requer nova tentativa.', 'Le provisionnement doit être relancé.', 'Die Bereitstellung muss wiederholt werden.', '프로비저닝을 다시 시도해야 합니다.', 'Требуется повторить подготовку ресурсов.', 'Provisioning perlu dicoba lagi.'],
+        'web.control.operationLeaseUnavailable': ['另一个执行器当前拥有此操作。', '另一個執行器目前擁有此操作。', 'Otro ejecutor controla actualmente esta operación.', 'Outro executor controla esta operação no momento.', 'Un autre exécuteur contrôle actuellement cette opération.', 'Ein anderer Executor besitzt diesen Vorgang derzeit.', '다른 실행자가 현재 이 작업을 처리 중입니다.', 'Операция сейчас принадлежит другому исполнителю.', 'Executor lain sedang menangani operasi ini.'],
+        'web.control.operationSucceeded': ['预配成功完成。', '佈建已成功完成。', 'El aprovisionamiento se completó correctamente.', 'O provisionamento foi concluído com sucesso.', 'Le provisionnement s’est terminé avec succès.', 'Die Bereitstellung wurde erfolgreich abgeschlossen.', '프로비저닝이 완료되었습니다.', 'Подготовка ресурсов успешно завершена.', 'Provisioning berhasil diselesaikan.'],
+        'web.control.operationBlocked': ['预配被阻止。请检查操作状态。', '佈建已被阻擋。請檢查操作狀態。', 'El aprovisionamiento está bloqueado. Revise el estado de la operación.', 'O provisionamento está bloqueado. Revise o status da operação.', 'Le provisionnement est bloqué. Vérifiez l’état de l’opération.', 'Die Bereitstellung ist blockiert. Prüfen Sie den Vorgangsstatus.', '프로비저닝이 차단되었습니다. 작업 상태를 확인하세요.', 'Подготовка ресурсов заблокирована. Проверьте состояние операции.', 'Provisioning diblokir. Tinjau status operasi.'],
+        'web.control.tokenLinkFailed': ['无法创建 Cloudflare 令牌链接。', '無法建立 Cloudflare 權杖連結。', 'No se pudo crear el enlace del token de Cloudflare.', 'Não foi possível criar o link do token da Cloudflare.', 'Impossible de créer le lien du jeton Cloudflare.', 'Der Cloudflare-Token-Link konnte nicht erstellt werden.', 'Cloudflare 토큰 링크를 만들 수 없습니다.', 'Не удалось создать ссылку для токена Cloudflare.', 'Tidak dapat membuat tautan token Cloudflare.'],
+        'web.control.preparationFailed': ['Control 准备失败。', 'Control 準備失敗。', 'La preparación de Control falló.', 'A preparação do Control falhou.', 'La préparation de Control a échoué.', 'Control-Vorbereitung fehlgeschlagen.', 'Control 준비에 실패했습니다.', 'Подготовка Control завершилась ошибкой.', 'Persiapan Control gagal.'],
+        'web.control.deploymentFailed': ['Control 部署失败。', 'Control 部署失敗。', 'El despliegue de Control falló.', 'A implantação do Control falhou.', 'Le déploiement de Control a échoué.', 'Control-Bereitstellung fehlgeschlagen.', 'Control 배포에 실패했습니다.', 'Развертывание Control завершилось ошибкой.', 'Deployment Control gagal.'],
+        'web.control.credentialBootstrapFailed': ['凭据引导失败。', '認證資訊啟動失敗。', 'La inicialización de credenciales falló.', 'A inicialização das credenciais falhou.', 'L’amorçage des identifiants a échoué.', 'Anmeldedaten-Bootstrap fehlgeschlagen.', '자격 증명 부트스트랩에 실패했습니다.', 'Инициализация учетных данных завершилась ошибкой.', 'Bootstrap kredensial gagal.'],
+        'web.control.revocationInterrupted': ['上一次撤销响应被中断。', '上次撤銷回應遭到中斷。', 'La respuesta de revocación anterior se interrumpió.', 'A resposta de revogação anterior foi interrompida.', 'La réponse de révocation précédente a été interrompue.', 'Die vorherige Widerrufsantwort wurde unterbrochen.', '이전 취소 응답이 중단되었습니다.', 'Предыдущий ответ на отзыв был прерван.', 'Respons pencabutan sebelumnya terputus.'],
+        'web.control.revocationRecoveryRequired': ['{{error}} 请创建新的一次性令牌，在此输入，然后选择“启用”以验证并完成清理。', '{{error}} 請建立新的單次權杖，在此輸入，然後選取「啟用」以驗證並完成清理。', '{{error}} Cree un nuevo token de un solo uso, introdúzcalo aquí y seleccione Activar para verificar y terminar la limpieza.', '{{error}} Crie um novo token de uso único, insira-o aqui e selecione Ativar para verificar e concluir a limpeza.', '{{error}} Créez un nouveau jeton à usage unique, saisissez-le ici, puis sélectionnez Activer pour vérifier et terminer le nettoyage.', '{{error}} Erstellen Sie ein neues Einmal-Token, geben Sie es hier ein und wählen Sie Aktivieren, um Prüfung und Bereinigung abzuschließen.', '{{error}} 새 일회용 토큰을 만들어 여기에 입력한 후 활성화를 선택하여 확인 및 정리를 완료하세요.', '{{error}} Создайте новый одноразовый токен, введите его здесь и выберите «Включить», чтобы проверить и завершить очистку.', '{{error}} Buat token sekali pakai baru, masukkan di sini, lalu pilih Aktifkan untuk memverifikasi dan menyelesaikan pembersihan.'],
+        'web.control.cutoverPaused': ['自动预配切换已暂停。', '自動佈建切換已暫停。', 'La transición del aprovisionamiento automático está pausada.', 'A transição do provisionamento automático está pausada.', 'Le basculement du provisionnement automatique est en pause.', 'Die Umschaltung der automatischen Bereitstellung wurde angehalten.', '자동 프로비저닝 전환이 일시 중지되었습니다.', 'Переключение автоматической подготовки ресурсов приостановлено.', 'Peralihan provisioning otomatis dijeda.'],
+        'web.control.cutoverResumeRequired': ['{{error}} 请再次选择“启用”以恢复持久化的切换。', '{{error}} 請再次選取「啟用」以繼續持久化的切換。', '{{error}} Seleccione Activar de nuevo para reanudar la transición persistente.', '{{error}} Selecione Ativar novamente para retomar a transição persistente.', '{{error}} Sélectionnez de nouveau Activer pour reprendre le basculement persistant.', '{{error}} Wählen Sie erneut Aktivieren, um die dauerhafte Umschaltung fortzusetzen.', '{{error}} 활성화를 다시 선택하여 영속 전환을 재개하세요.', '{{error}} Снова выберите «Включить», чтобы возобновить сохраненное переключение.', '{{error}} Pilih Aktifkan lagi untuk melanjutkan peralihan persisten.'],
+        'web.control.automaticProvisioningPaused': ['自动预配设置已暂停。', '自動佈建設定已暫停。', 'La configuración del aprovisionamiento automático está pausada.', 'A configuração do provisionamento automático está pausada.', 'La configuration du provisionnement automatique est en pause.', 'Die Einrichtung der automatischen Bereitstellung wurde angehalten.', '자동 프로비저닝 설정이 일시 중지되었습니다.', 'Настройка автоматической подготовки ресурсов приостановлена.', 'Penyiapan provisioning otomatis dijeda.'],
+        'web.control.automaticProvisioningFailed': ['自动预配设置失败。', '自動佈建設定失敗。', 'La configuración del aprovisionamiento automático falló.', 'A configuração do provisionamento automático falhou.', 'La configuration du provisionnement automatique a échoué.', 'Die Einrichtung der automatischen Bereitstellung ist fehlgeschlagen.', '자동 프로비저닝 설정에 실패했습니다.', 'Настройка автоматической подготовки ресурсов завершилась ошибкой.', 'Penyiapan provisioning otomatis gagal.'],
+        'web.delete.manualControlTokensTitle': ['手动检查 Control API 令牌', '手動檢查 Control API 權杖', 'Revisión manual de tokens de la API de Control', 'Revisão manual dos tokens da API de Control', 'Vérification manuelle des jetons de l’API Control', 'Manuelle Prüfung der Control-API-Token', 'Control API 토큰 수동 확인', 'Ручная проверка токенов Control API', 'Pemeriksaan manual token Control API'],
+        'web.delete.manualControlTokensSummary': ['Setup 无法自动撤销一个或多个由其管理的 Control API 令牌。已使用准确的所有权证据继续删除已验证的环境资源。如果显示了准确的令牌 ID，请同时在 Cloudflare 的两个令牌列表中核对它们和候选名称；切勿仅凭名称删除令牌。', 'Setup 無法自動撤銷一或多個由其管理的 Control API 權杖。已使用精確的擁有權證據繼續刪除已驗證的環境資源。如果顯示精確的權杖 ID，請同時在 Cloudflare 的兩個權杖清單中核對它們與候選名稱；切勿僅憑名稱刪除權杖。', 'Setup no pudo revocar automáticamente uno o más tokens de la API de Control administrados por Setup. La eliminación de recursos verificados continuó usando pruebas exactas de propiedad. Revise los ID exactos que se muestren y los nombres candidatos en ambas listas de tokens de Cloudflare; no elimine un token basándose solo en su nombre.', 'O Setup não conseguiu revogar automaticamente um ou mais tokens da API de Control gerenciados pelo Setup. A exclusão dos recursos verificados continuou usando evidências exatas de propriedade. Confira os IDs exatos exibidos e os nomes candidatos nas duas listas de tokens da Cloudflare; não exclua um token apenas pelo nome.', 'Setup n’a pas pu révoquer automatiquement un ou plusieurs jetons de l’API Control qu’il gère. La suppression des ressources vérifiées s’est poursuivie à partir de preuves de propriété exactes. Vérifiez les ID exacts affichés et les noms candidats dans les deux listes de jetons Cloudflare ; ne supprimez jamais un jeton d’après son seul nom.', 'Setup konnte mindestens ein von Setup verwaltetes Control-API-Token nicht automatisch widerrufen. Die Löschung verifizierter Umgebungsressourcen wurde anhand eindeutiger Eigentumsnachweise fortgesetzt. Prüfen Sie angezeigte exakte Token-IDs und mögliche Namen in beiden Cloudflare-Tokenlisten; löschen Sie ein Token nie allein anhand seines Namens.', 'Setup에서 관리하는 Control API 토큰 하나 이상을 자동으로 취소하지 못했습니다. 정확한 소유권 증거로 확인된 환경 리소스 삭제는 계속 진행했습니다. 표시된 정확한 토큰 ID와 후보 이름을 Cloudflare의 두 토큰 목록에서 모두 확인하세요. 이름만으로 토큰을 삭제하지 마세요.', 'Setup не удалось автоматически отозвать один или несколько управляемых им токенов Control API. Удаление проверенных ресурсов среды продолжилось на основе точных данных о владении. Сверьте показанные точные ID и возможные имена в обоих списках токенов Cloudflare; не удаляйте токен только по имени.', 'Setup tidak dapat mencabut otomatis satu atau beberapa token Control API yang dikelolanya. Penghapusan resource environment terverifikasi dilanjutkan berdasarkan bukti kepemilikan yang tepat. Cocokkan ID token persis yang ditampilkan dan nama kandidat di kedua daftar token Cloudflare; jangan hapus token hanya berdasarkan namanya.'],
+        'web.delete.manualControlTokenId': ['令牌 ID：{{tokenId}}', '權杖 ID：{{tokenId}}', 'ID del token: {{tokenId}}', 'ID do token: {{tokenId}}', 'ID du jeton : {{tokenId}}', 'Token-ID: {{tokenId}}', '토큰 ID: {{tokenId}}', 'ID токена: {{tokenId}}', 'ID token: {{tokenId}}'],
+        'web.delete.manualControlTokensAccountOpen': ['打开账户 API 令牌 ↗', '開啟帳戶 API 權杖 ↗', 'Abrir tokens de API de la cuenta ↗', 'Abrir tokens de API da conta ↗', 'Ouvrir les jetons API du compte ↗', 'Konto-API-Token öffnen ↗', '계정 API 토큰 열기 ↗', 'Открыть API-токены аккаунта ↗', 'Buka token API akun ↗'],
+        'web.delete.manualControlTokensUserOpen': ['打开用户 API 令牌 ↗', '開啟使用者 API 權杖 ↗', 'Abrir tokens de API del usuario ↗', 'Abrir tokens de API do usuário ↗', 'Ouvrir les jetons API utilisateur ↗', 'Benutzer-API-Token öffnen ↗', '사용자 API 토큰 열기 ↗', 'Открыть пользовательские API-токены ↗', 'Buka token API pengguna ↗'],
+        'web.envDetail.uiUpdatesHint': ['单独重新部署 Admin UI 或 Login UI', '個別重新部署 Admin UI 或 Login UI', 'Vuelva a desplegar Admin UI o Login UI por separado', 'Reimplante a Admin UI ou a Login UI separadamente', 'Redéployez Admin UI ou Login UI séparément', 'Admin UI oder Login UI einzeln erneut bereitstellen', 'Admin UI 또는 Login UI를 개별적으로 다시 배포', 'Повторно разверните Admin UI или Login UI отдельно', 'Deploy ulang Admin UI atau Login UI secara terpisah'],
+      };
+      const envManagementSupplementalCopyByLocale = Object.fromEntries(
+        envManagementSupplementalLocaleOrder.map((language, localeIndex) => [
+          language,
+          Object.fromEntries(
+            Object.entries(envManagementSupplementalRows).map(([key, translations]) => [
+              key,
+              translations[localeIndex],
+            ])
+          ),
+        ])
+      );
       const envDynamicCopyByLocale = {
         en: {
           'web.env.heroKicker': 'Environment Management',
@@ -2794,7 +3088,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'Mode {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': 'Environment Management - Delete',
           'web.env.heroDeleteTitle': 'Delete {{env}}',
-          'web.env.heroDeleteAside': '<b>This action cannot be undone.</b> Selected resources will be permanently deleted from Cloudflare.',
+          'web.env.heroDeleteAside': '<b>Review your selection.</b> Selected resources will be deleted from Cloudflare.',
           'web.env.accountMeta': 'Account <b>{{account}}</b>',
           'web.env.modeSingle': 'Single tenant',
           'web.env.modeMulti': 'Multi-tenant',
@@ -2817,21 +3111,28 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': 'No environment selected.',
           'web.envDetail.positiveSlotCountRequired': 'Enter a positive slot count.',
           'web.envDetail.tenantStorageLoadFailed': 'Failed to load tenant storage status.',
-          'web.envDetail.sharedD1ModeSummary': 'Shared D1 mode: tenant additions use the existing deployment-wide core/PII D1 databases. No pool expansion is required.',
-          'web.envDetail.tenantD1InventoryMissing': 'Tenant D1 pool is configured, but slot inventory is not available yet. Run deployment to create slots and publish inventory.',
-          'web.envDetail.tenantD1PoolModeSummary': 'Tenant D1 pool mode: Admin UI can add tenants while available slots remain. Expand only when capacity is low or exhausted.',
-          'web.envDetail.expandTenantD1Confirm': 'This will update the environment config, create additional Tenant D1 databases, refresh Worker bindings, and redeploy workers. Continue?',
-          'web.envDetail.tenantD1UpdatingConfig': 'Updating Tenant D1 pool config...',
-          'web.envDetail.tenantD1ConfiguredSlots': 'Configured slots: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Tenant D1 pool expansion completed.',
           'web.envDetail.r2StatusLoadFailed': 'Failed to load R2 bucket status.',
           'web.envDetail.r2ConfiguredSummary': 'R2 buckets are configured: {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'R2 buckets need provisioning: {{configured}} / {{required}} configured.',
+          'web.envDetail.r2OwnershipRecoverySummary': '{{count}} R2 bucket binding(s) have legacy name-only ownership. Verify them explicitly before continuing: {{command}}',
+          'web.envDetail.r2OwnershipRecreateSummary': 'Legacy ownership for {{count}} R2 bucket binding(s) is incomplete and cannot be verified safely. Recreate the environment before provisioning R2.',
+          'web.envDetail.r2IdentityMismatchSummary': '{{count}} R2 bucket identity mismatch(es) were detected. Review the Cloudflare bucket and the environment lock before continuing.',
           'web.envDetail.provisionR2Confirm': 'This will create missing R2 buckets, refresh Worker bindings, and redeploy workers. Continue?',
           'web.envDetail.r2Provisioning': 'Provisioning R2 buckets...',
           'web.envDetail.r2ConfiguredBuckets': 'Configured buckets: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'R2 bucket provisioning completed.',
           'web.envDetail.workerUpdateStarting': 'Starting worker update for {{env}}...',
+          'web.envDetail.fullDeployTitle': 'Deploy Entire Environment',
+          'web.envDetail.fullDeployScope': 'API Workers + UI Workers',
+          'web.envDetail.fullDeployDesc': 'Build and deploy all API Workers and enabled UI Workers from the current source. Existing data and settings are preserved.',
+          'web.envDetail.fullDeployAction': 'Deploy Entire Environment',
+          'web.envDetail.fullDeployProgress': 'Deployment Progress',
+          'web.envDetail.fullDeployStarting': 'Starting full environment deployment for {{env}}...',
+          'web.envDetail.fullDeployApiPhase': 'Deploying all API Workers...',
+          'web.envDetail.fullDeployUiComponent': 'Deploying {{component}}...',
+          'web.envDetail.fullDeploySummary': 'Completed: {{success}} / {{total}} components',
+          'web.envDetail.fullDeployComplete': 'Full environment deployment completed.',
+          'web.envDetail.fullDeployFailed': 'Full environment deployment failed: {{error}}',
           'web.envDetail.updateCompletedSuccess': 'Update completed successfully.',
           'web.envDetail.workerUpdateSummary': 'Summary: {{success}} / {{total}} workers updated',
           'web.envDetail.updateFailedWithMessage': 'Update failed: {{error}}',
@@ -2849,10 +3150,50 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': 'Starting deletion...',
           'web.delete.deletedItems': 'Deleted {{count}} items',
           'web.delete.complete': 'Deletion complete.',
+          'web.delete.manualActionRequired': 'Manual action required.',
           'web.delete.success': 'Environment deleted successfully.',
+          'web.delete.partialSuccess': 'Selected resources were deleted. The environment and remaining local state were preserved.',
           'web.delete.errorList': 'Some errors occurred: {{errors}}',
+          'web.delete.inventoryUnavailable': 'Cloudflare resource inventory could not be verified, so deletion did not start. Check your connection and Cloudflare sign-in, then retry.',
           'web.status.errorWithMessage': 'Error: {{error}}',
           'web.status.unknownError': 'Unknown error',
+          'web.status.percentComplete': '{{percent}}% complete',
+          'web.status.resourceProgress': '{{current}} / {{total}} resources',
+          'web.status.ok': 'OK',
+          'web.status.checkRequired': 'Check required',
+          'web.status.unknown': 'Unknown',
+          'web.env.updateBadge': 'Update to v{{version}}',
+          'web.delete.manualReviewRequired': 'Manual review required',
+          'web.envDetail.capacityTargetsUnavailable': 'Tenant capacity targets are unavailable.',
+          'web.control.pendingTenant': 'Tenant {{tenantId}}',
+          'web.control.pendingDisasterRecovery': 'Disaster recovery',
+          'web.control.pendingVerifyRuntimeBindings': 'Verify runtime bindings',
+          'web.control.pendingSharedPool': 'Shared pool',
+          'web.control.pendingProvisioning': 'Provisioning',
+          'web.control.pendingTitle': 'Pending provisioning operations',
+          'web.control.pendingDescription': 'Setup runs steps that require operator permissions and continues to show Control verification progress.',
+          'web.control.pendingRun': 'Run pending operation',
+          'web.control.pendingObserving': 'Control is running private smoke or stabilization. This status refreshes automatically.',
+          'web.control.operationRunning': 'Running provisioning operation...',
+          'web.control.operationFailed': 'Control operation failed.',
+          'web.control.operationAwaitingMigration': 'D1 created. Migration is ready for the next operator step.',
+          'web.control.operationAwaitingWorkerBindings': 'Migration completed. Worker binding reconciliation is ready for the next operator step.',
+          'web.control.operationAwaitingSmoke': 'Worker bindings patched. Private smoke and stabilization are running.',
+          'web.control.operationAwaitingQuarantine': 'Resource cleanup is waiting for the quarantine period to finish.',
+          'web.control.operationRetryRequired': 'Provisioning requires a retry.',
+          'web.control.operationLeaseUnavailable': 'Another executor currently owns this operation.',
+          'web.control.operationSucceeded': 'Provisioning completed successfully.',
+          'web.control.operationBlocked': 'Provisioning is blocked. Review the operation status.',
+          'web.control.tokenLinkFailed': 'Could not create the Cloudflare token link.',
+          'web.control.preparationFailed': 'Control preparation failed.',
+          'web.control.deploymentFailed': 'Control deployment failed.',
+          'web.control.credentialBootstrapFailed': 'Credential bootstrap failed.',
+          'web.control.revocationInterrupted': 'The previous revocation response was interrupted.',
+          'web.control.revocationRecoveryRequired': '{{error}} Create a new one-time token, enter it here, and select Enable to verify and finish cleanup.',
+          'web.control.cutoverPaused': 'Automatic provisioning cutover paused.',
+          'web.control.cutoverResumeRequired': '{{error}} Select Enable again to resume the durable cutover.',
+          'web.control.automaticProvisioningPaused': 'Automatic provisioning setup paused.',
+          'web.control.automaticProvisioningFailed': 'Automatic provisioning setup failed.',
           'web.delete.confirmExact': 'To delete this environment, type <b>{{env}}</b> exactly.',
           'web.delete.countWorkers': '{{count}} Workers',
           'web.delete.countDatabases': '{{count}} D1',
@@ -2870,7 +3211,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'モード {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': '環境管理 - 削除確認',
           'web.env.heroDeleteTitle': '環境 {{env}} を削除',
-          'web.env.heroDeleteAside': '<b>この操作は取り消せません。</b>選択したリソースはCloudflareアカウントから完全に削除されます。',
+          'web.env.heroDeleteAside': '<b>選択内容を確認してください。</b>選択したリソースをCloudflareアカウントから削除します。',
           'web.env.accountMeta': 'アカウント <b>{{account}}</b>',
           'web.env.modeSingle': 'シングルテナント',
           'web.env.modeMulti': 'マルチテナント',
@@ -2893,21 +3234,28 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': '環境が選択されていません。',
           'web.envDetail.positiveSlotCountRequired': '追加するスロット数には1以上の数値を入力してください。',
           'web.envDetail.tenantStorageLoadFailed': 'テナントストレージの状態を読み込めませんでした。',
-          'web.envDetail.sharedD1ModeSummary': '共有D1モードです。テナント追加時はデプロイ全体で共有する core / PII D1 データベースを使用するため、プール拡張は不要です。',
-          'web.envDetail.tenantD1InventoryMissing': 'Tenant D1 プールは設定されていますが、スロット一覧はまだ利用できません。デプロイを実行してスロットを作成し、一覧を公開してください。',
-          'web.envDetail.tenantD1PoolModeSummary': 'Tenant D1 プールモードです。空きスロットがある間はAdmin UIからテナントを追加できます。容量が少ない、または枯渇した場合のみ拡張してください。',
-          'web.envDetail.expandTenantD1Confirm': '環境設定を更新し、Tenant D1データベースを追加作成し、Workerバインディングを更新して再デプロイします。続行しますか？',
-          'web.envDetail.tenantD1UpdatingConfig': 'Tenant D1 プール設定を更新中...',
-          'web.envDetail.tenantD1ConfiguredSlots': '設定済みスロット: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Tenant D1 プールの拡張が完了しました。',
           'web.envDetail.r2StatusLoadFailed': 'R2バケットの状態を読み込めませんでした。',
           'web.envDetail.r2ConfiguredSummary': 'R2バケットは設定済みです: {{configured}} / {{required}}。',
           'web.envDetail.r2NeedsProvisioningSummary': 'R2バケットの作成が必要です: {{configured}} / {{required}} 設定済み。',
+          'web.envDetail.r2OwnershipRecoverySummary': '{{count}}個のR2バケットが旧形式の名前のみの所有権情報です。続行前に明示的に検証してください: {{command}}',
+          'web.envDetail.r2OwnershipRecreateSummary': '{{count}}個のR2バケットについて旧形式の所有権情報が不足しており、安全に検証できません。環境を再作成してからR2をプロビジョニングしてください。',
+          'web.envDetail.r2IdentityMismatchSummary': '{{count}}個のR2バケットで所有権IDの不一致を検出しました。続行前にCloudflare上のバケットと環境ロックを確認してください。',
           'web.envDetail.provisionR2Confirm': '不足しているR2バケットを作成し、Workerバインディングを更新して再デプロイします。続行しますか？',
           'web.envDetail.r2Provisioning': 'R2バケットを作成中...',
           'web.envDetail.r2ConfiguredBuckets': '設定済みバケット: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'R2バケットの作成が完了しました。',
           'web.envDetail.workerUpdateStarting': '{{env}} のWorker更新を開始しています...',
+          'web.envDetail.fullDeployTitle': '環境全体をデプロイ',
+          'web.envDetail.fullDeployScope': 'API Worker + UI Worker',
+          'web.envDetail.fullDeployDesc': '現在のソースからAPI Workerと有効なUI Workerをすべてビルド・デプロイします。既存のデータと設定は維持されます。',
+          'web.envDetail.fullDeployAction': '環境全体をデプロイ',
+          'web.envDetail.fullDeployProgress': 'デプロイ進捗',
+          'web.envDetail.fullDeployStarting': '{{env}} の環境全体デプロイを開始しています...',
+          'web.envDetail.fullDeployApiPhase': 'API Workerをすべてデプロイ中...',
+          'web.envDetail.fullDeployUiComponent': '{{component}}をデプロイ中...',
+          'web.envDetail.fullDeploySummary': '完了: {{success}} / {{total}} コンポーネント',
+          'web.envDetail.fullDeployComplete': '環境全体のデプロイが完了しました。',
+          'web.envDetail.fullDeployFailed': '環境全体のデプロイに失敗しました: {{error}}',
           'web.envDetail.updateCompletedSuccess': '更新が完了しました。',
           'web.envDetail.workerUpdateSummary': '概要: {{success}} / {{total}} Workers 更新済み',
           'web.envDetail.updateFailedWithMessage': '更新に失敗しました: {{error}}',
@@ -2925,10 +3273,50 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': '削除を開始しています...',
           'web.delete.deletedItems': '{{count}} 件削除しました',
           'web.delete.complete': '削除が完了しました。',
+          'web.delete.manualActionRequired': '手動対応が必要です。',
           'web.delete.success': '環境を削除しました。',
+          'web.delete.partialSuccess': '選択したリソースを削除しました。環境と残りのローカル状態は保持されています。',
           'web.delete.errorList': 'エラーが発生しました: {{errors}}',
+          'web.delete.inventoryUnavailable': 'Cloudflareのリソース一覧を確認できなかったため、削除を開始しませんでした。接続とCloudflareへのログイン状態を確認して、再試行してください。',
           'web.status.errorWithMessage': 'エラー: {{error}}',
           'web.status.unknownError': '不明なエラー',
+          'web.status.percentComplete': '{{percent}}% 完了',
+          'web.status.resourceProgress': '{{current}} / {{total}} リソース',
+          'web.status.ok': '正常',
+          'web.status.checkRequired': '確認が必要',
+          'web.status.unknown': '不明',
+          'web.env.updateBadge': 'v{{version}}へ更新',
+          'web.delete.manualReviewRequired': '手動確認が必要です',
+          'web.envDetail.capacityTargetsUnavailable': 'テナント容量の対象を取得できません。',
+          'web.control.pendingTenant': 'テナント {{tenantId}}',
+          'web.control.pendingDisasterRecovery': '災害復旧',
+          'web.control.pendingVerifyRuntimeBindings': 'ランタイムバインディングを検証',
+          'web.control.pendingSharedPool': '共有プール',
+          'web.control.pendingProvisioning': 'プロビジョニング',
+          'web.control.pendingTitle': '保留中のプロビジョニング操作',
+          'web.control.pendingDescription': 'Setupはオペレーター権限が必要な手順を実行し、Controlによる検証の進捗も継続して表示します。',
+          'web.control.pendingRun': '保留中の操作を実行',
+          'web.control.pendingObserving': 'Controlが非公開スモークテストまたは安定化を実行中です。この状態は自動更新されます。',
+          'web.control.operationRunning': 'プロビジョニング操作を実行中...',
+          'web.control.operationFailed': 'Control操作に失敗しました。',
+          'web.control.operationAwaitingMigration': 'D1を作成しました。次のオペレーター操作でマイグレーションを実行できます。',
+          'web.control.operationAwaitingWorkerBindings': 'マイグレーションが完了しました。次のオペレーター操作でWorkerバインディングを調整できます。',
+          'web.control.operationAwaitingSmoke': 'Workerバインディングを更新しました。非公開スモークテストと安定化処理を実行中です。',
+          'web.control.operationAwaitingQuarantine': 'リソースのクリーンアップは隔離期間の終了を待っています。',
+          'web.control.operationRetryRequired': 'プロビジョニングを再試行する必要があります。',
+          'web.control.operationLeaseUnavailable': '別の実行者がこの操作を処理中です。',
+          'web.control.operationSucceeded': 'プロビジョニングが正常に完了しました。',
+          'web.control.operationBlocked': 'プロビジョニングがブロックされています。操作状態を確認してください。',
+          'web.control.tokenLinkFailed': 'Cloudflareトークン作成リンクを生成できませんでした。',
+          'web.control.preparationFailed': 'Controlの準備に失敗しました。',
+          'web.control.deploymentFailed': 'Controlのデプロイに失敗しました。',
+          'web.control.credentialBootstrapFailed': '認証情報のブートストラップに失敗しました。',
+          'web.control.revocationInterrupted': '前回の取消し応答が中断されました。',
+          'web.control.revocationRecoveryRequired': '{{error}} 新しいワンタイムトークンを作成してここに入力し、「有効化」を選択して検証とクリーンアップを完了してください。',
+          'web.control.cutoverPaused': '自動プロビジョニングの切替が一時停止しました。',
+          'web.control.cutoverResumeRequired': '{{error}} もう一度「有効化」を選択して、永続化された切替処理を再開してください。',
+          'web.control.automaticProvisioningPaused': '自動プロビジョニングの設定が一時停止しました。',
+          'web.control.automaticProvisioningFailed': '自動プロビジョニングの設定に失敗しました。',
           'web.delete.confirmExact': '削除を実行するには、環境名 <b>{{env}}</b> を正確に入力してください。',
           'web.delete.countWorkers': '{{count}} Workers',
           'web.delete.countDatabases': '{{count}} D1',
@@ -2946,7 +3334,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': '模式 {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': '环境管理 - 删除确认',
           'web.env.heroDeleteTitle': '删除环境 {{env}}',
-          'web.env.heroDeleteAside': '<b>此操作无法撤销。</b>选中的资源将从 Cloudflare 中永久删除。',
+          'web.env.heroDeleteAside': '<b>请确认您的选择。</b>选中的资源将从 Cloudflare 中删除。',
           'web.env.accountMeta': '账户 <b>{{account}}</b>',
           'web.env.modeSingle': '单租户',
           'web.env.modeMulti': '多租户',
@@ -2969,13 +3357,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': '未选择环境。',
           'web.envDetail.positiveSlotCountRequired': '请输入大于 0 的槽位数量。',
           'web.envDetail.tenantStorageLoadFailed': '无法加载租户存储状态。',
-          'web.envDetail.sharedD1ModeSummary': '共享 D1 模式：新增租户会使用本部署共用的 core / PII D1 数据库，不需要扩展池。',
-          'web.envDetail.tenantD1InventoryMissing': '租户 D1 池已配置，但槽位清单尚不可用。请运行部署以创建槽位并发布清单。',
-          'web.envDetail.tenantD1PoolModeSummary': '租户 D1 池模式：只要还有可用槽位，Admin UI 就可以添加租户。仅在容量不足或耗尽时扩展。',
-          'web.envDetail.expandTenantD1Confirm': '这将更新环境配置，创建额外的租户 D1 数据库，刷新 Worker 绑定并重新部署 Workers。要继续吗？',
-          'web.envDetail.tenantD1UpdatingConfig': '正在更新租户 D1 池配置...',
-          'web.envDetail.tenantD1ConfiguredSlots': '已配置槽位：{{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': '租户 D1 池扩展已完成。',
           'web.envDetail.r2StatusLoadFailed': '无法加载 R2 存储桶状态。',
           'web.envDetail.r2ConfiguredSummary': 'R2 存储桶已配置：{{configured}} / {{required}}。',
           'web.envDetail.r2NeedsProvisioningSummary': '需要创建 R2 存储桶：{{configured}} / {{required}} 已配置。',
@@ -2984,6 +3365,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': '已配置存储桶：{{count}}',
           'web.envDetail.r2ProvisioningComplete': 'R2 存储桶创建已完成。',
           'web.envDetail.workerUpdateStarting': '正在开始更新 {{env}} 的 Worker...',
+          'web.envDetail.fullDeployTitle': '部署整个环境',
+          'web.envDetail.fullDeployScope': 'API Workers + UI Workers',
+          'web.envDetail.fullDeployDesc': '从当前源代码构建并部署所有 API Worker 和已启用的 UI Worker。现有数据和设置会保留。',
+          'web.envDetail.fullDeployAction': '部署整个环境',
+          'web.envDetail.fullDeployProgress': '部署进度',
+          'web.envDetail.fullDeployStarting': '正在开始部署环境 {{env}}...',
+          'web.envDetail.fullDeployApiPhase': '正在部署所有 API Worker...',
+          'web.envDetail.fullDeployUiComponent': '正在部署 {{component}}...',
+          'web.envDetail.fullDeploySummary': '已完成：{{success}} / {{total}} 个组件',
+          'web.envDetail.fullDeployComplete': '整个环境部署已完成。',
+          'web.envDetail.fullDeployFailed': '整个环境部署失败：{{error}}',
           'web.envDetail.updateCompletedSuccess': '更新已完成。',
           'web.envDetail.workerUpdateSummary': '摘要：{{success}} / {{total}} Workers 已更新',
           'web.envDetail.updateFailedWithMessage': '更新失败：{{error}}',
@@ -3001,8 +3393,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': '正在开始删除...',
           'web.delete.deletedItems': '已删除 {{count}} 项',
           'web.delete.complete': '删除已完成。',
+          'web.delete.manualActionRequired': '需要手动处理。',
           'web.delete.success': '环境已删除。',
+          'web.delete.partialSuccess': '已删除所选资源。环境和剩余本地状态已保留。',
           'web.delete.errorList': '发生错误：{{errors}}',
+          'web.delete.inventoryUnavailable': '无法验证 Cloudflare 资源清单，因此未开始删除。请检查网络连接和 Cloudflare 登录状态后重试。',
           'web.status.errorWithMessage': '错误：{{error}}',
           'web.status.unknownError': '未知错误',
           'web.delete.confirmExact': '要删除此环境，请准确输入 <b>{{env}}</b>。',
@@ -3022,7 +3417,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': '模式 {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': '環境管理 - 刪除確認',
           'web.env.heroDeleteTitle': '刪除環境 {{env}}',
-          'web.env.heroDeleteAside': '<b>此操作無法復原。</b>選取的資源將從 Cloudflare 永久刪除。',
+          'web.env.heroDeleteAside': '<b>請確認您的選擇。</b>選取的資源將從 Cloudflare 刪除。',
           'web.env.accountMeta': '帳戶 <b>{{account}}</b>',
           'web.env.modeSingle': '單租戶',
           'web.env.modeMulti': '多租戶',
@@ -3045,13 +3440,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': '未選擇環境。',
           'web.envDetail.positiveSlotCountRequired': '請輸入大於 0 的槽位數量。',
           'web.envDetail.tenantStorageLoadFailed': '無法載入租戶儲存狀態。',
-          'web.envDetail.sharedD1ModeSummary': '共享 D1 模式：新增租戶會使用本部署共用的 core / PII D1 資料庫，不需要擴充池。',
-          'web.envDetail.tenantD1InventoryMissing': '租戶 D1 池已設定，但槽位清單尚不可用。請執行部署以建立槽位並發布清單。',
-          'web.envDetail.tenantD1PoolModeSummary': '租戶 D1 池模式：只要仍有可用槽位，Admin UI 就能新增租戶。僅在容量不足或耗盡時擴充。',
-          'web.envDetail.expandTenantD1Confirm': '這將更新環境設定、建立額外租戶 D1 資料庫、刷新 Worker 綁定並重新部署 Workers。要繼續嗎？',
-          'web.envDetail.tenantD1UpdatingConfig': '正在更新租戶 D1 池設定...',
-          'web.envDetail.tenantD1ConfiguredSlots': '已設定槽位：{{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': '租戶 D1 池擴充已完成。',
           'web.envDetail.r2StatusLoadFailed': '無法載入 R2 儲存桶狀態。',
           'web.envDetail.r2ConfiguredSummary': 'R2 儲存桶已設定：{{configured}} / {{required}}。',
           'web.envDetail.r2NeedsProvisioningSummary': '需要建立 R2 儲存桶：{{configured}} / {{required}} 已設定。',
@@ -3060,6 +3448,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': '已設定儲存桶：{{count}}',
           'web.envDetail.r2ProvisioningComplete': 'R2 儲存桶建立已完成。',
           'web.envDetail.workerUpdateStarting': '正在開始更新 {{env}} 的 Worker...',
+          'web.envDetail.fullDeployTitle': '部署整個環境',
+          'web.envDetail.fullDeployScope': 'API Workers + UI Workers',
+          'web.envDetail.fullDeployDesc': '從目前的原始碼建置並部署所有 API Worker 與已啟用的 UI Worker。現有資料與設定會保留。',
+          'web.envDetail.fullDeployAction': '部署整個環境',
+          'web.envDetail.fullDeployProgress': '部署進度',
+          'web.envDetail.fullDeployStarting': '正在開始部署環境 {{env}}...',
+          'web.envDetail.fullDeployApiPhase': '正在部署所有 API Worker...',
+          'web.envDetail.fullDeployUiComponent': '正在部署 {{component}}...',
+          'web.envDetail.fullDeploySummary': '已完成：{{success}} / {{total}} 個元件',
+          'web.envDetail.fullDeployComplete': '整個環境部署已完成。',
+          'web.envDetail.fullDeployFailed': '整個環境部署失敗：{{error}}',
           'web.envDetail.updateCompletedSuccess': '更新已完成。',
           'web.envDetail.workerUpdateSummary': '摘要：{{success}} / {{total}} Workers 已更新',
           'web.envDetail.updateFailedWithMessage': '更新失敗：{{error}}',
@@ -3077,8 +3476,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': '正在開始刪除...',
           'web.delete.deletedItems': '已刪除 {{count}} 項',
           'web.delete.complete': '刪除已完成。',
+          'web.delete.manualActionRequired': '需要手動處理。',
           'web.delete.success': '環境已刪除。',
+          'web.delete.partialSuccess': '已刪除所選資源。環境和剩餘本機狀態已保留。',
           'web.delete.errorList': '發生錯誤：{{errors}}',
+          'web.delete.inventoryUnavailable': '無法驗證 Cloudflare 資源清單，因此未開始刪除。請檢查網路連線和 Cloudflare 登入狀態後重試。',
           'web.status.errorWithMessage': '錯誤：{{error}}',
           'web.status.unknownError': '未知錯誤',
           'web.delete.confirmExact': '若要刪除此環境，請正確輸入 <b>{{env}}</b>。',
@@ -3098,7 +3500,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'Modo {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': 'Gestión de entornos - Eliminar',
           'web.env.heroDeleteTitle': 'Eliminar {{env}}',
-          'web.env.heroDeleteAside': '<b>Esta acción no se puede deshacer.</b> Los recursos seleccionados se eliminarán permanentemente de Cloudflare.',
+          'web.env.heroDeleteAside': '<b>Revise su selección.</b> Los recursos seleccionados se eliminarán de Cloudflare.',
           'web.env.accountMeta': 'Cuenta <b>{{account}}</b>',
           'web.env.modeSingle': 'Tenant único',
           'web.env.modeMulti': 'Multi-tenant',
@@ -3120,11 +3522,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': 'No se seleccionó ningún entorno.',
           'web.envDetail.positiveSlotCountRequired': 'Introduce un número positivo de slots.',
           'web.envDetail.tenantStorageLoadFailed': 'No se pudo cargar el estado del almacenamiento de tenants.',
-          'web.envDetail.tenantD1PoolModeSummary': 'Modo pool D1 de tenants: Admin UI puede añadir tenants mientras queden slots disponibles. Amplía solo cuando la capacidad sea baja o se agote.',
-          'web.envDetail.expandTenantD1Confirm': 'Esto actualizará la configuración, creará bases D1 de tenant adicionales, refrescará los bindings de Workers y redesplegará workers. ¿Continuar?',
-          'web.envDetail.tenantD1UpdatingConfig': 'Actualizando configuración del pool D1...',
-          'web.envDetail.tenantD1ConfiguredSlots': 'Slots configurados: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Expansión del pool D1 completada.',
           'web.envDetail.r2StatusLoadFailed': 'No se pudo cargar el estado de buckets R2.',
           'web.envDetail.r2ConfiguredSummary': 'Buckets R2 configurados: {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'Se deben provisionar buckets R2: {{configured}} / {{required}} configurados.',
@@ -3133,6 +3530,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': 'Buckets configurados: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'Provisionamiento R2 completado.',
           'web.envDetail.workerUpdateStarting': 'Iniciando actualización de workers para {{env}}...',
+          'web.envDetail.fullDeployTitle': 'Desplegar todo el entorno',
+          'web.envDetail.fullDeployScope': 'Workers API + Workers UI',
+          'web.envDetail.fullDeployDesc': 'Compila y despliega todos los Workers API y los Workers UI habilitados desde el código actual. Los datos y la configuración existentes se conservan.',
+          'web.envDetail.fullDeployAction': 'Desplegar todo el entorno',
+          'web.envDetail.fullDeployProgress': 'Progreso del despliegue',
+          'web.envDetail.fullDeployStarting': 'Iniciando el despliegue completo del entorno {{env}}...',
+          'web.envDetail.fullDeployApiPhase': 'Desplegando todos los Workers API...',
+          'web.envDetail.fullDeployUiComponent': 'Desplegando {{component}}...',
+          'web.envDetail.fullDeploySummary': 'Completado: {{success}} / {{total}} componentes',
+          'web.envDetail.fullDeployComplete': 'El despliegue completo del entorno ha terminado.',
+          'web.envDetail.fullDeployFailed': 'El despliegue completo del entorno ha fallado: {{error}}',
           'web.envDetail.updateCompletedSuccess': 'Actualización completada.',
           'web.envDetail.workerUpdateSummary': 'Resumen: {{success}} / {{total}} workers actualizados',
           'web.envDetail.updateFailedWithMessage': 'La actualización falló: {{error}}',
@@ -3150,8 +3558,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': 'Iniciando eliminación...',
           'web.delete.deletedItems': '{{count}} elementos eliminados',
           'web.delete.complete': 'Eliminación completada.',
+          'web.delete.manualActionRequired': 'Se requiere una acción manual.',
           'web.delete.success': 'Entorno eliminado.',
+          'web.delete.partialSuccess': 'Se eliminaron los recursos seleccionados. Se conservaron el entorno y el estado local restante.',
           'web.delete.errorList': 'Se produjeron errores: {{errors}}',
+          'web.delete.inventoryUnavailable': 'No se pudo verificar el inventario de recursos de Cloudflare, por lo que no se inició la eliminación. Comprueba la conexión y la sesión de Cloudflare e inténtalo de nuevo.',
           'web.status.errorWithMessage': 'Error: {{error}}',
           'web.status.unknownError': 'Error desconocido',
           'web.delete.confirmExact': 'Para eliminar este entorno, escribe <b>{{env}}</b> exactamente.',
@@ -3171,7 +3582,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'Modo {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': 'Gerenciamento de ambientes - Exclusão',
           'web.env.heroDeleteTitle': 'Excluir {{env}}',
-          'web.env.heroDeleteAside': '<b>Esta ação não pode ser desfeita.</b> Os recursos selecionados serão removidos permanentemente do Cloudflare.',
+          'web.env.heroDeleteAside': '<b>Revise sua seleção.</b> Os recursos selecionados serão removidos do Cloudflare.',
           'web.env.accountMeta': 'Conta <b>{{account}}</b>',
           'web.env.modeSingle': 'Tenant único',
           'web.env.modeMulti': 'Multi-tenant',
@@ -3193,11 +3604,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': 'Nenhum ambiente selecionado.',
           'web.envDetail.positiveSlotCountRequired': 'Informe um número positivo de slots.',
           'web.envDetail.tenantStorageLoadFailed': 'Falha ao carregar o status do storage dos tenants.',
-          'web.envDetail.tenantD1PoolModeSummary': 'Modo pool D1 de tenants: o Admin UI pode adicionar tenants enquanto houver slots disponíveis. Expanda apenas quando a capacidade estiver baixa ou esgotada.',
-          'web.envDetail.expandTenantD1Confirm': 'Isso atualizará a configuração, criará bancos D1 de tenant adicionais, atualizará bindings de Workers e fará redeploy. Continuar?',
-          'web.envDetail.tenantD1UpdatingConfig': 'Atualizando configuração do pool D1...',
-          'web.envDetail.tenantD1ConfiguredSlots': 'Slots configurados: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Expansão do pool D1 concluída.',
           'web.envDetail.r2StatusLoadFailed': 'Falha ao carregar status dos buckets R2.',
           'web.envDetail.r2ConfiguredSummary': 'Buckets R2 configurados: {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'Buckets R2 precisam ser provisionados: {{configured}} / {{required}} configurados.',
@@ -3206,6 +3612,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': 'Buckets configurados: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'Provisionamento R2 concluído.',
           'web.envDetail.workerUpdateStarting': 'Iniciando atualização de workers para {{env}}...',
+          'web.envDetail.fullDeployTitle': 'Fazer deploy do ambiente inteiro',
+          'web.envDetail.fullDeployScope': 'Workers de API + Workers de UI',
+          'web.envDetail.fullDeployDesc': 'Compile e faça deploy de todos os Workers de API e Workers de UI habilitados a partir do código atual. Os dados e as configurações existentes serão preservados.',
+          'web.envDetail.fullDeployAction': 'Fazer deploy do ambiente inteiro',
+          'web.envDetail.fullDeployProgress': 'Progresso do deploy',
+          'web.envDetail.fullDeployStarting': 'Iniciando o deploy completo do ambiente {{env}}...',
+          'web.envDetail.fullDeployApiPhase': 'Fazendo deploy de todos os Workers de API...',
+          'web.envDetail.fullDeployUiComponent': 'Fazendo deploy de {{component}}...',
+          'web.envDetail.fullDeploySummary': 'Concluído: {{success}} / {{total}} componentes',
+          'web.envDetail.fullDeployComplete': 'O deploy completo do ambiente foi concluído.',
+          'web.envDetail.fullDeployFailed': 'Falha no deploy completo do ambiente: {{error}}',
           'web.envDetail.updateCompletedSuccess': 'Atualização concluída.',
           'web.envDetail.workerUpdateSummary': 'Resumo: {{success}} / {{total}} workers atualizados',
           'web.envDetail.updateFailedWithMessage': 'Falha na atualização: {{error}}',
@@ -3223,8 +3640,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': 'Iniciando exclusão...',
           'web.delete.deletedItems': '{{count}} itens excluídos',
           'web.delete.complete': 'Exclusão concluída.',
+          'web.delete.manualActionRequired': 'É necessária uma ação manual.',
           'web.delete.success': 'Ambiente excluído.',
+          'web.delete.partialSuccess': 'Os recursos selecionados foram excluídos. O ambiente e o estado local restante foram preservados.',
           'web.delete.errorList': 'Ocorreram erros: {{errors}}',
+          'web.delete.inventoryUnavailable': 'Não foi possível verificar o inventário de recursos da Cloudflare, portanto a exclusão não foi iniciada. Verifique a conexão e o login da Cloudflare e tente novamente.',
           'web.status.errorWithMessage': 'Erro: {{error}}',
           'web.status.unknownError': 'Erro desconhecido',
           'web.delete.confirmExact': 'Para excluir este ambiente, digite <b>{{env}}</b> exatamente.',
@@ -3244,7 +3664,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'Mode {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': 'Gestion des environnements - Suppression',
           'web.env.heroDeleteTitle': 'Supprimer {{env}}',
-          'web.env.heroDeleteAside': '<b>Cette action est irréversible.</b> Les ressources sélectionnées seront supprimées définitivement de Cloudflare.',
+          'web.env.heroDeleteAside': '<b>Vérifiez votre sélection.</b> Les ressources sélectionnées seront supprimées de Cloudflare.',
           'web.env.accountMeta': 'Compte <b>{{account}}</b>',
           'web.env.modeSingle': 'Tenant unique',
           'web.env.modeMulti': 'Multi-tenant',
@@ -3266,11 +3686,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': 'Aucun environnement sélectionné.',
           'web.envDetail.positiveSlotCountRequired': 'Saisissez un nombre de slots positif.',
           'web.envDetail.tenantStorageLoadFailed': 'Échec du chargement de l’état du stockage des tenants.',
-          'web.envDetail.tenantD1PoolModeSummary': 'Mode pool D1 de tenants : l’Admin UI peut ajouter des tenants tant que des slots restent disponibles. Étendez uniquement quand la capacité est faible ou épuisée.',
-          'web.envDetail.expandTenantD1Confirm': 'Cela mettra à jour la configuration, créera des bases D1 de tenant supplémentaires, rafraîchira les bindings Workers et redéploiera les workers. Continuer ?',
-          'web.envDetail.tenantD1UpdatingConfig': 'Mise à jour de la configuration du pool D1...',
-          'web.envDetail.tenantD1ConfiguredSlots': 'Slots configurés : {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Extension du pool D1 terminée.',
           'web.envDetail.r2StatusLoadFailed': 'Impossible de charger le statut des buckets R2.',
           'web.envDetail.r2ConfiguredSummary': 'Buckets R2 configurés : {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'Buckets R2 à provisionner : {{configured}} / {{required}} configurés.',
@@ -3279,6 +3694,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': 'Buckets configurés : {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'Provisionnement R2 terminé.',
           'web.envDetail.workerUpdateStarting': 'Démarrage de la mise à jour des workers pour {{env}}...',
+          'web.envDetail.fullDeployTitle': 'Déployer tout l’environnement',
+          'web.envDetail.fullDeployScope': 'Workers API + Workers UI',
+          'web.envDetail.fullDeployDesc': 'Construisez et déployez tous les Workers API et les Workers UI activés depuis le code actuel. Les données et paramètres existants sont conservés.',
+          'web.envDetail.fullDeployAction': 'Déployer tout l’environnement',
+          'web.envDetail.fullDeployProgress': 'Progression du déploiement',
+          'web.envDetail.fullDeployStarting': 'Démarrage du déploiement complet de l’environnement {{env}}...',
+          'web.envDetail.fullDeployApiPhase': 'Déploiement de tous les Workers API...',
+          'web.envDetail.fullDeployUiComponent': 'Déploiement de {{component}}...',
+          'web.envDetail.fullDeploySummary': 'Terminé : {{success}} / {{total}} composants',
+          'web.envDetail.fullDeployComplete': 'Le déploiement complet de l’environnement est terminé.',
+          'web.envDetail.fullDeployFailed': 'Échec du déploiement complet de l’environnement : {{error}}',
           'web.envDetail.updateCompletedSuccess': 'Mise à jour terminée.',
           'web.envDetail.workerUpdateSummary': 'Résumé : {{success}} / {{total}} workers mis à jour',
           'web.envDetail.updateFailedWithMessage': 'Échec de la mise à jour : {{error}}',
@@ -3296,8 +3722,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': 'Suppression en cours...',
           'web.delete.deletedItems': '{{count}} éléments supprimés',
           'web.delete.complete': 'Suppression terminée.',
+          'web.delete.manualActionRequired': 'Une action manuelle est requise.',
           'web.delete.success': 'Environnement supprimé.',
+          'web.delete.partialSuccess': 'Les ressources sélectionnées ont été supprimées. L’environnement et l’état local restant ont été conservés.',
           'web.delete.errorList': 'Des erreurs sont survenues : {{errors}}',
+          'web.delete.inventoryUnavailable': 'L’inventaire des ressources Cloudflare n’a pas pu être vérifié. La suppression n’a donc pas commencé. Vérifiez la connexion et la session Cloudflare, puis réessayez.',
           'web.status.errorWithMessage': 'Erreur : {{error}}',
           'web.status.unknownError': 'Erreur inconnue',
           'web.delete.confirmExact': 'Pour supprimer cet environnement, saisissez exactement <b>{{env}}</b>.',
@@ -3317,7 +3746,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'Modus {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': 'Umgebungsverwaltung - Löschen',
           'web.env.heroDeleteTitle': '{{env}} löschen',
-          'web.env.heroDeleteAside': '<b>Diese Aktion kann nicht rückgängig gemacht werden.</b> Ausgewählte Ressourcen werden dauerhaft aus Cloudflare gelöscht.',
+          'web.env.heroDeleteAside': '<b>Prüfen Sie Ihre Auswahl.</b> Ausgewählte Ressourcen werden aus Cloudflare gelöscht.',
           'web.env.accountMeta': 'Konto <b>{{account}}</b>',
           'web.env.modeSingle': 'Single-Tenant',
           'web.env.modeMulti': 'Multi-Tenant',
@@ -3339,11 +3768,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': 'Keine Umgebung ausgewählt.',
           'web.envDetail.positiveSlotCountRequired': 'Geben Sie eine positive Slot-Anzahl ein.',
           'web.envDetail.tenantStorageLoadFailed': 'Tenant-Speicherstatus konnte nicht geladen werden.',
-          'web.envDetail.tenantD1PoolModeSummary': 'Tenant-D1-Pool-Modus: Admin UI kann Tenants hinzufügen, solange Slots verfügbar sind. Erweitern Sie nur bei geringer oder erschöpfter Kapazität.',
-          'web.envDetail.expandTenantD1Confirm': 'Dies aktualisiert die Umgebungskonfiguration, erstellt zusätzliche Tenant-D1-Datenbanken, aktualisiert Worker-Bindings und deployt Workers erneut. Fortfahren?',
-          'web.envDetail.tenantD1UpdatingConfig': 'Tenant-D1-Pool-Konfiguration wird aktualisiert...',
-          'web.envDetail.tenantD1ConfiguredSlots': 'Konfigurierte Slots: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Tenant-D1-Pool-Erweiterung abgeschlossen.',
           'web.envDetail.r2StatusLoadFailed': 'R2-Bucket-Status konnte nicht geladen werden.',
           'web.envDetail.r2ConfiguredSummary': 'R2-Buckets konfiguriert: {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'R2-Buckets müssen bereitgestellt werden: {{configured}} / {{required}} konfiguriert.',
@@ -3352,6 +3776,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': 'Konfigurierte Buckets: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'R2-Bereitstellung abgeschlossen.',
           'web.envDetail.workerUpdateStarting': 'Worker-Update für {{env}} wird gestartet...',
+          'web.envDetail.fullDeployTitle': 'Gesamte Umgebung bereitstellen',
+          'web.envDetail.fullDeployScope': 'API-Worker + UI-Worker',
+          'web.envDetail.fullDeployDesc': 'Alle API-Worker und aktivierten UI-Worker aus dem aktuellen Quellcode bauen und bereitstellen. Vorhandene Daten und Einstellungen bleiben erhalten.',
+          'web.envDetail.fullDeployAction': 'Gesamte Umgebung bereitstellen',
+          'web.envDetail.fullDeployProgress': 'Bereitstellungsfortschritt',
+          'web.envDetail.fullDeployStarting': 'Gesamte Bereitstellung für {{env}} wird gestartet...',
+          'web.envDetail.fullDeployApiPhase': 'Alle API-Worker werden bereitgestellt...',
+          'web.envDetail.fullDeployUiComponent': '{{component}} wird bereitgestellt...',
+          'web.envDetail.fullDeploySummary': 'Abgeschlossen: {{success}} / {{total}} Komponenten',
+          'web.envDetail.fullDeployComplete': 'Die gesamte Umgebung wurde bereitgestellt.',
+          'web.envDetail.fullDeployFailed': 'Die gesamte Bereitstellung ist fehlgeschlagen: {{error}}',
           'web.envDetail.updateCompletedSuccess': 'Update abgeschlossen.',
           'web.envDetail.workerUpdateSummary': 'Zusammenfassung: {{success}} / {{total}} Workers aktualisiert',
           'web.envDetail.updateFailedWithMessage': 'Update fehlgeschlagen: {{error}}',
@@ -3369,8 +3804,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': 'Löschen wird gestartet...',
           'web.delete.deletedItems': '{{count}} Elemente gelöscht',
           'web.delete.complete': 'Löschen abgeschlossen.',
+          'web.delete.manualActionRequired': 'Eine manuelle Aktion ist erforderlich.',
           'web.delete.success': 'Umgebung gelöscht.',
+          'web.delete.partialSuccess': 'Die ausgewählten Ressourcen wurden gelöscht. Die Umgebung und der verbleibende lokale Status wurden beibehalten.',
           'web.delete.errorList': 'Es sind Fehler aufgetreten: {{errors}}',
+          'web.delete.inventoryUnavailable': 'Der Cloudflare-Ressourcenbestand konnte nicht verifiziert werden. Die Löschung wurde daher nicht gestartet. Prüfen Sie die Verbindung und die Cloudflare-Anmeldung und versuchen Sie es erneut.',
           'web.status.errorWithMessage': 'Fehler: {{error}}',
           'web.status.unknownError': 'Unbekannter Fehler',
           'web.delete.confirmExact': 'Zum Löschen dieser Umgebung geben Sie <b>{{env}}</b> exakt ein.',
@@ -3390,7 +3828,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': '모드 {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': '환경 관리 - 삭제 확인',
           'web.env.heroDeleteTitle': '{{env}} 삭제',
-          'web.env.heroDeleteAside': '<b>이 작업은 되돌릴 수 없습니다.</b> 선택한 리소스는 Cloudflare에서 영구 삭제됩니다.',
+          'web.env.heroDeleteAside': '<b>선택 내용을 확인하세요.</b> 선택한 리소스는 Cloudflare에서 삭제됩니다.',
           'web.env.accountMeta': '계정 <b>{{account}}</b>',
           'web.env.modeSingle': '단일 테넌트',
           'web.env.modeMulti': '멀티 테넌트',
@@ -3412,11 +3850,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': '선택된 환경이 없습니다.',
           'web.envDetail.positiveSlotCountRequired': '1 이상의 슬롯 수를 입력하세요.',
           'web.envDetail.tenantStorageLoadFailed': '테넌트 스토리지 상태를 불러오지 못했습니다.',
-          'web.envDetail.tenantD1PoolModeSummary': '테넌트 D1 풀 모드입니다. 사용 가능한 슬롯이 남아 있으면 Admin UI에서 테넌트를 추가할 수 있습니다. 용량이 부족하거나 소진된 경우에만 확장하세요.',
-          'web.envDetail.expandTenantD1Confirm': '환경 설정을 업데이트하고 추가 테넌트 D1 데이터베이스를 만들며 Worker 바인딩을 새로고침한 뒤 Workers를 다시 배포합니다. 계속할까요?',
-          'web.envDetail.tenantD1UpdatingConfig': '테넌트 D1 풀 설정 업데이트 중...',
-          'web.envDetail.tenantD1ConfiguredSlots': '설정된 슬롯: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': '테넌트 D1 풀 확장이 완료되었습니다.',
           'web.envDetail.r2StatusLoadFailed': 'R2 버킷 상태를 불러오지 못했습니다.',
           'web.envDetail.r2ConfiguredSummary': 'R2 버킷 설정됨: {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'R2 버킷 생성 필요: {{configured}} / {{required}} 설정됨.',
@@ -3425,6 +3858,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': '설정된 버킷: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'R2 버킷 생성이 완료되었습니다.',
           'web.envDetail.workerUpdateStarting': '{{env}}의 Worker 업데이트를 시작합니다...',
+          'web.envDetail.fullDeployTitle': '전체 환경 배포',
+          'web.envDetail.fullDeployScope': 'API Worker + UI Worker',
+          'web.envDetail.fullDeployDesc': '현재 소스에서 모든 API Worker와 활성화된 UI Worker를 빌드하고 배포합니다. 기존 데이터와 설정은 유지됩니다.',
+          'web.envDetail.fullDeployAction': '전체 환경 배포',
+          'web.envDetail.fullDeployProgress': '배포 진행 상황',
+          'web.envDetail.fullDeployStarting': '{{env}} 전체 환경 배포를 시작합니다...',
+          'web.envDetail.fullDeployApiPhase': '모든 API Worker를 배포하는 중...',
+          'web.envDetail.fullDeployUiComponent': '{{component}} 배포 중...',
+          'web.envDetail.fullDeploySummary': '완료: {{success}} / {{total}}개 구성 요소',
+          'web.envDetail.fullDeployComplete': '전체 환경 배포가 완료되었습니다.',
+          'web.envDetail.fullDeployFailed': '전체 환경 배포에 실패했습니다: {{error}}',
           'web.envDetail.updateCompletedSuccess': '업데이트가 완료되었습니다.',
           'web.envDetail.workerUpdateSummary': '요약: {{success}} / {{total}} Workers 업데이트됨',
           'web.envDetail.updateFailedWithMessage': '업데이트 실패: {{error}}',
@@ -3442,8 +3886,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': '삭제 시작 중...',
           'web.delete.deletedItems': '{{count}}개 항목 삭제됨',
           'web.delete.complete': '삭제가 완료되었습니다.',
+          'web.delete.manualActionRequired': '수동 작업이 필요합니다.',
           'web.delete.success': '환경이 삭제되었습니다.',
+          'web.delete.partialSuccess': '선택한 리소스를 삭제했습니다. 환경과 남은 로컬 상태는 유지되었습니다.',
           'web.delete.errorList': '오류가 발생했습니다: {{errors}}',
+          'web.delete.inventoryUnavailable': 'Cloudflare 리소스 목록을 확인할 수 없어 삭제를 시작하지 않았습니다. 연결 및 Cloudflare 로그인 상태를 확인한 후 다시 시도하세요.',
           'web.status.errorWithMessage': '오류: {{error}}',
           'web.status.unknownError': '알 수 없는 오류',
           'web.delete.confirmExact': '이 환경을 삭제하려면 <b>{{env}}</b>를 정확히 입력하세요.',
@@ -3463,7 +3910,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'Режим {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': 'Управление средами - удаление',
           'web.env.heroDeleteTitle': 'Удалить {{env}}',
-          'web.env.heroDeleteAside': '<b>Это действие нельзя отменить.</b> Выбранные ресурсы будут навсегда удалены из Cloudflare.',
+          'web.env.heroDeleteAside': '<b>Проверьте выбранные элементы.</b> Выбранные ресурсы будут удалены из Cloudflare.',
           'web.env.accountMeta': 'Аккаунт <b>{{account}}</b>',
           'web.env.modeSingle': 'Single-tenant',
           'web.env.modeMulti': 'Multi-tenant',
@@ -3485,11 +3932,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': 'Среда не выбрана.',
           'web.envDetail.positiveSlotCountRequired': 'Введите положительное число слотов.',
           'web.envDetail.tenantStorageLoadFailed': 'Не удалось загрузить состояние хранилища tenants.',
-          'web.envDetail.tenantD1PoolModeSummary': 'Режим пула tenant D1: Admin UI может добавлять tenants, пока есть свободные слоты. Расширяйте только при нехватке или исчерпании емкости.',
-          'web.envDetail.expandTenantD1Confirm': 'Будет обновлена конфигурация среды, созданы дополнительные tenant D1 databases, обновлены Worker bindings и повторно развернуты Workers. Продолжить?',
-          'web.envDetail.tenantD1UpdatingConfig': 'Обновление конфигурации пула tenant D1...',
-          'web.envDetail.tenantD1ConfiguredSlots': 'Настроенные слоты: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Расширение пула tenant D1 завершено.',
           'web.envDetail.r2StatusLoadFailed': 'Не удалось загрузить статус R2 buckets.',
           'web.envDetail.r2ConfiguredSummary': 'R2 buckets настроены: {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'Требуется создать R2 buckets: {{configured}} / {{required}} настроено.',
@@ -3498,6 +3940,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': 'Настроенные buckets: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'Создание R2 buckets завершено.',
           'web.envDetail.workerUpdateStarting': 'Запуск обновления Workers для {{env}}...',
+          'web.envDetail.fullDeployTitle': 'Развернуть всё окружение',
+          'web.envDetail.fullDeployScope': 'API Workers + UI Workers',
+          'web.envDetail.fullDeployDesc': 'Соберите и разверните все API Workers и включённые UI Workers из текущего исходного кода. Существующие данные и настройки сохраняются.',
+          'web.envDetail.fullDeployAction': 'Развернуть всё окружение',
+          'web.envDetail.fullDeployProgress': 'Прогресс развертывания',
+          'web.envDetail.fullDeployStarting': 'Запуск полного развертывания окружения {{env}}...',
+          'web.envDetail.fullDeployApiPhase': 'Развертывание всех API Workers...',
+          'web.envDetail.fullDeployUiComponent': 'Развертывание {{component}}...',
+          'web.envDetail.fullDeploySummary': 'Завершено: {{success}} / {{total}} компонентов',
+          'web.envDetail.fullDeployComplete': 'Полное развертывание окружения завершено.',
+          'web.envDetail.fullDeployFailed': 'Полное развертывание окружения не удалось: {{error}}',
           'web.envDetail.updateCompletedSuccess': 'Обновление завершено.',
           'web.envDetail.workerUpdateSummary': 'Итог: {{success}} / {{total}} Workers обновлено',
           'web.envDetail.updateFailedWithMessage': 'Обновление не удалось: {{error}}',
@@ -3515,8 +3968,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': 'Запуск удаления...',
           'web.delete.deletedItems': 'Удалено элементов: {{count}}',
           'web.delete.complete': 'Удаление завершено.',
+          'web.delete.manualActionRequired': 'Требуется ручное действие.',
           'web.delete.success': 'Среда удалена.',
+          'web.delete.partialSuccess': 'Выбранные ресурсы удалены. Среда и оставшееся локальное состояние сохранены.',
           'web.delete.errorList': 'Произошли ошибки: {{errors}}',
+          'web.delete.inventoryUnavailable': 'Не удалось проверить список ресурсов Cloudflare, поэтому удаление не было начато. Проверьте подключение и вход в Cloudflare, затем повторите попытку.',
           'web.status.errorWithMessage': 'Ошибка: {{error}}',
           'web.status.unknownError': 'Неизвестная ошибка',
           'web.delete.confirmExact': 'Чтобы удалить эту среду, введите <b>{{env}}</b> точно.',
@@ -3536,7 +3992,7 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.env.heroDetailAside': 'Mode {{mode}}<br>Issuer <b>{{issuer}}</b>',
           'web.env.heroDeleteKicker': 'Manajemen environment - Hapus',
           'web.env.heroDeleteTitle': 'Hapus {{env}}',
-          'web.env.heroDeleteAside': '<b>Tindakan ini tidak dapat dibatalkan.</b> Resource yang dipilih akan dihapus permanen dari Cloudflare.',
+          'web.env.heroDeleteAside': '<b>Periksa pilihan Anda.</b> Resource yang dipilih akan dihapus dari Cloudflare.',
           'web.env.accountMeta': 'Akun <b>{{account}}</b>',
           'web.env.modeSingle': 'Single tenant',
           'web.env.modeMulti': 'Multi-tenant',
@@ -3558,11 +4014,6 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.noEnvironmentSelected': 'Belum ada environment yang dipilih.',
           'web.envDetail.positiveSlotCountRequired': 'Masukkan jumlah slot positif.',
           'web.envDetail.tenantStorageLoadFailed': 'Gagal memuat status storage tenant.',
-          'web.envDetail.tenantD1PoolModeSummary': 'Mode pool D1 tenant: Admin UI dapat menambah tenant selama slot masih tersedia. Perluas hanya saat kapasitas rendah atau habis.',
-          'web.envDetail.expandTenantD1Confirm': 'Ini akan memperbarui konfigurasi environment, membuat database D1 tenant tambahan, memperbarui binding Worker, dan redeploy Workers. Lanjutkan?',
-          'web.envDetail.tenantD1UpdatingConfig': 'Memperbarui konfigurasi pool D1 tenant...',
-          'web.envDetail.tenantD1ConfiguredSlots': 'Slot terkonfigurasi: {{current}} -> {{next}}',
-          'web.envDetail.tenantD1ExpansionComplete': 'Perluasan pool D1 tenant selesai.',
           'web.envDetail.r2StatusLoadFailed': 'Gagal memuat status bucket R2.',
           'web.envDetail.r2ConfiguredSummary': 'Bucket R2 terkonfigurasi: {{configured}} / {{required}}.',
           'web.envDetail.r2NeedsProvisioningSummary': 'Bucket R2 perlu dibuat: {{configured}} / {{required}} terkonfigurasi.',
@@ -3571,6 +4022,17 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.envDetail.r2ConfiguredBuckets': 'Bucket terkonfigurasi: {{count}}',
           'web.envDetail.r2ProvisioningComplete': 'Pembuatan bucket R2 selesai.',
           'web.envDetail.workerUpdateStarting': 'Memulai update Worker untuk {{env}}...',
+          'web.envDetail.fullDeployTitle': 'Deploy seluruh environment',
+          'web.envDetail.fullDeployScope': 'Worker API + Worker UI',
+          'web.envDetail.fullDeployDesc': 'Build dan deploy semua Worker API serta Worker UI yang diaktifkan dari source saat ini. Data dan pengaturan yang ada tetap dipertahankan.',
+          'web.envDetail.fullDeployAction': 'Deploy seluruh environment',
+          'web.envDetail.fullDeployProgress': 'Progres deploy',
+          'web.envDetail.fullDeployStarting': 'Memulai deploy seluruh environment {{env}}...',
+          'web.envDetail.fullDeployApiPhase': 'Men-deploy semua Worker API...',
+          'web.envDetail.fullDeployUiComponent': 'Men-deploy {{component}}...',
+          'web.envDetail.fullDeploySummary': 'Selesai: {{success}} / {{total}} komponen',
+          'web.envDetail.fullDeployComplete': 'Deploy seluruh environment selesai.',
+          'web.envDetail.fullDeployFailed': 'Deploy seluruh environment gagal: {{error}}',
           'web.envDetail.updateCompletedSuccess': 'Update selesai.',
           'web.envDetail.workerUpdateSummary': 'Ringkasan: {{success}} / {{total}} Workers diperbarui',
           'web.envDetail.updateFailedWithMessage': 'Update gagal: {{error}}',
@@ -3588,8 +4050,11 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.starting': 'Memulai penghapusan...',
           'web.delete.deletedItems': '{{count}} item dihapus',
           'web.delete.complete': 'Penghapusan selesai.',
+          'web.delete.manualActionRequired': 'Diperlukan tindakan manual.',
           'web.delete.success': 'Environment dihapus.',
+          'web.delete.partialSuccess': 'Resource yang dipilih telah dihapus. Environment dan status lokal yang tersisa dipertahankan.',
           'web.delete.errorList': 'Terjadi error: {{errors}}',
+          'web.delete.inventoryUnavailable': 'Inventaris resource Cloudflare tidak dapat diverifikasi, sehingga penghapusan tidak dimulai. Periksa koneksi dan status login Cloudflare, lalu coba lagi.',
           'web.status.errorWithMessage': 'Error: {{error}}',
           'web.status.unknownError': 'Error tidak diketahui',
           'web.delete.confirmExact': 'Untuk menghapus environment ini, ketik <b>{{env}}</b> persis.',
@@ -3599,6 +4064,274 @@ ${SETUP_WEB_UI_STYLE}</style>
           'web.delete.countQueues': '{{count}} Queues',
           'web.delete.countBuckets': '{{count}} R2',
           'web.delete.countProjects': '{{count}} Pages',
+        },
+      };
+      const deleteProgressCopyByLocale = {
+        en: {
+          'web.delete.progress.preparing': 'Preparing deletion...',
+          'web.delete.progress.scanningResource': 'Scanning {{resource}}...',
+          'web.delete.progress.inventoryReady': 'Resource inventory verified.',
+          'web.delete.progress.deletingResource': 'Deleting {{resource}}...',
+          'web.delete.progress.reconcilingDns': 'Reconciling managed DNS records...',
+          'web.delete.progress.revokingTokens': 'Revoking managed Control API tokens...',
+          'web.delete.progress.verifyingInventory': 'Verifying Cloudflare inventory...',
+        },
+        ja: {
+          'web.delete.progress.preparing': '削除の準備中...',
+          'web.delete.progress.scanningResource': '{{resource}}をスキャン中...',
+          'web.delete.progress.inventoryReady': 'リソース一覧を確認しました。',
+          'web.delete.progress.deletingResource': '{{resource}}を削除中...',
+          'web.delete.progress.reconcilingDns': '管理対象DNSレコードを確認中...',
+          'web.delete.progress.revokingTokens': '管理対象Control APIトークンを取消中...',
+          'web.delete.progress.verifyingInventory': 'Cloudflareの残存リソースを確認中...',
+        },
+        'zh-CN': {
+          'web.delete.progress.preparing': '正在准备删除...',
+          'web.delete.progress.scanningResource': '正在扫描 {{resource}}...',
+          'web.delete.progress.inventoryReady': '资源清单已验证。',
+          'web.delete.progress.deletingResource': '正在删除 {{resource}}...',
+          'web.delete.progress.reconcilingDns': '正在核对托管的 DNS 记录...',
+          'web.delete.progress.revokingTokens': '正在撤销托管的 Control API 令牌...',
+          'web.delete.progress.verifyingInventory': '正在验证 Cloudflare 资源清单...',
+        },
+        'zh-TW': {
+          'web.delete.progress.preparing': '正在準備刪除...',
+          'web.delete.progress.scanningResource': '正在掃描 {{resource}}...',
+          'web.delete.progress.inventoryReady': '資源清單已驗證。',
+          'web.delete.progress.deletingResource': '正在刪除 {{resource}}...',
+          'web.delete.progress.reconcilingDns': '正在核對受管理的 DNS 記錄...',
+          'web.delete.progress.revokingTokens': '正在撤銷受管理的 Control API 權杖...',
+          'web.delete.progress.verifyingInventory': '正在驗證 Cloudflare 資源清單...',
+        },
+        es: {
+          'web.delete.progress.preparing': 'Preparando la eliminación...',
+          'web.delete.progress.scanningResource': 'Escaneando {{resource}}...',
+          'web.delete.progress.inventoryReady': 'Inventario de recursos verificado.',
+          'web.delete.progress.deletingResource': 'Eliminando {{resource}}...',
+          'web.delete.progress.reconcilingDns': 'Conciliando los registros DNS administrados...',
+          'web.delete.progress.revokingTokens': 'Revocando los tokens administrados de la API de Control...',
+          'web.delete.progress.verifyingInventory': 'Verificando el inventario de Cloudflare...',
+        },
+        pt: {
+          'web.delete.progress.preparing': 'Preparando a exclusão...',
+          'web.delete.progress.scanningResource': 'Escaneando {{resource}}...',
+          'web.delete.progress.inventoryReady': 'Inventário de recursos verificado.',
+          'web.delete.progress.deletingResource': 'Excluindo {{resource}}...',
+          'web.delete.progress.reconcilingDns': 'Reconciliando registros DNS gerenciados...',
+          'web.delete.progress.revokingTokens': 'Revogando tokens gerenciados da API de Control...',
+          'web.delete.progress.verifyingInventory': 'Verificando o inventário da Cloudflare...',
+        },
+        fr: {
+          'web.delete.progress.preparing': 'Préparation de la suppression...',
+          'web.delete.progress.scanningResource': 'Analyse de {{resource}}...',
+          'web.delete.progress.inventoryReady': 'Inventaire des ressources vérifié.',
+          'web.delete.progress.deletingResource': 'Suppression de {{resource}}...',
+          'web.delete.progress.reconcilingDns': 'Réconciliation des enregistrements DNS gérés...',
+          'web.delete.progress.revokingTokens': 'Révocation des jetons API Control gérés...',
+          'web.delete.progress.verifyingInventory': 'Vérification de l’inventaire Cloudflare...',
+        },
+        de: {
+          'web.delete.progress.preparing': 'Löschung wird vorbereitet...',
+          'web.delete.progress.scanningResource': '{{resource}} wird geprüft...',
+          'web.delete.progress.inventoryReady': 'Ressourcenbestand wurde geprüft.',
+          'web.delete.progress.deletingResource': '{{resource}} wird gelöscht...',
+          'web.delete.progress.reconcilingDns': 'Verwaltete DNS-Einträge werden abgeglichen...',
+          'web.delete.progress.revokingTokens': 'Verwaltete Control-API-Token werden widerrufen...',
+          'web.delete.progress.verifyingInventory': 'Cloudflare-Bestand wird überprüft...',
+        },
+        ko: {
+          'web.delete.progress.preparing': '삭제 준비 중...',
+          'web.delete.progress.scanningResource': '{{resource}} 스캔 중...',
+          'web.delete.progress.inventoryReady': '리소스 인벤토리를 확인했습니다.',
+          'web.delete.progress.deletingResource': '{{resource}} 삭제 중...',
+          'web.delete.progress.reconcilingDns': '관리되는 DNS 레코드를 조정하는 중...',
+          'web.delete.progress.revokingTokens': '관리되는 Control API 토큰을 취소하는 중...',
+          'web.delete.progress.verifyingInventory': 'Cloudflare 인벤토리를 확인하는 중...',
+        },
+        ru: {
+          'web.delete.progress.preparing': 'Подготовка к удалению...',
+          'web.delete.progress.scanningResource': 'Сканирование {{resource}}...',
+          'web.delete.progress.inventoryReady': 'Инвентаризация ресурсов проверена.',
+          'web.delete.progress.deletingResource': 'Удаление {{resource}}...',
+          'web.delete.progress.reconcilingDns': 'Согласование управляемых записей DNS...',
+          'web.delete.progress.revokingTokens': 'Отзыв управляемых токенов Control API...',
+          'web.delete.progress.verifyingInventory': 'Проверка ресурсов Cloudflare...',
+        },
+        id: {
+          'web.delete.progress.preparing': 'Menyiapkan penghapusan...',
+          'web.delete.progress.scanningResource': 'Memindai {{resource}}...',
+          'web.delete.progress.inventoryReady': 'Inventaris resource telah diverifikasi.',
+          'web.delete.progress.deletingResource': 'Menghapus {{resource}}...',
+          'web.delete.progress.reconcilingDns': 'Merekonsiliasi record DNS terkelola...',
+          'web.delete.progress.revokingTokens': 'Mencabut token Control API terkelola...',
+          'web.delete.progress.verifyingInventory': 'Memverifikasi inventaris Cloudflare...',
+        },
+      };
+      const deployProgressCopyByLocale = {
+        en: {
+          'web.deploy.phase.preparation': 'Preparing deployment',
+          'web.deploy.phase.schema': 'Applying database schema',
+          'web.deploy.phase.configuration': 'Generating configuration',
+          'web.deploy.phase.workers': 'Deploying API Workers',
+          'web.deploy.phase.verification': 'Verifying Worker readiness',
+          'web.deploy.phase.control': 'Reconciling the Control Plane',
+          'web.deploy.phase.bootstrap': 'Bootstrapping tenant services',
+          'web.deploy.phase.routing': 'Verifying tenant routing',
+          'web.deploy.phase.integrations': 'Configuring optional integrations',
+          'web.deploy.phase.ui': 'Deploying Login and Admin UI',
+          'web.deploy.phase.progress': 'Phase {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'Deployment phase {{current}} of {{total}}',
+          'web.deploy.phase.complete': 'Deployment complete!',
+        },
+        ja: {
+          'web.deploy.phase.preparation': 'デプロイを準備しています',
+          'web.deploy.phase.schema': 'データベーススキーマを適用しています',
+          'web.deploy.phase.configuration': '設定を生成しています',
+          'web.deploy.phase.workers': 'API Workerをデプロイしています',
+          'web.deploy.phase.verification': 'Workerの準備状態を確認しています',
+          'web.deploy.phase.control': 'コントロールプレーンを整合しています',
+          'web.deploy.phase.bootstrap': 'テナントサービスを初期化しています',
+          'web.deploy.phase.routing': 'テナントルーティングを確認しています',
+          'web.deploy.phase.integrations': '任意の連携機能を設定しています',
+          'web.deploy.phase.ui': 'Login UIとAdmin UIをデプロイしています',
+          'web.deploy.phase.progress': 'フェーズ {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'デプロイフェーズ {{current}} / {{total}}',
+          'web.deploy.phase.complete': 'デプロイが完了しました',
+        },
+        'zh-CN': {
+          'web.deploy.phase.preparation': '正在准备部署',
+          'web.deploy.phase.schema': '正在应用数据库架构',
+          'web.deploy.phase.configuration': '正在生成配置',
+          'web.deploy.phase.workers': '正在部署 API Workers',
+          'web.deploy.phase.verification': '正在验证 Worker 就绪状态',
+          'web.deploy.phase.control': '正在协调控制平面',
+          'web.deploy.phase.bootstrap': '正在初始化租户服务',
+          'web.deploy.phase.routing': '正在验证租户路由',
+          'web.deploy.phase.integrations': '正在配置可选集成',
+          'web.deploy.phase.ui': '正在部署 Login UI 和 Admin UI',
+          'web.deploy.phase.progress': '阶段 {{current}} / {{total}}',
+          'web.deploy.phase.aria': '部署阶段 {{current}}，共 {{total}} 个阶段',
+          'web.deploy.phase.complete': '部署完成！',
+        },
+        'zh-TW': {
+          'web.deploy.phase.preparation': '正在準備部署',
+          'web.deploy.phase.schema': '正在套用資料庫結構',
+          'web.deploy.phase.configuration': '正在產生設定',
+          'web.deploy.phase.workers': '正在部署 API Workers',
+          'web.deploy.phase.verification': '正在驗證 Worker 就緒狀態',
+          'web.deploy.phase.control': '正在協調控制平面',
+          'web.deploy.phase.bootstrap': '正在初始化租戶服務',
+          'web.deploy.phase.routing': '正在驗證租戶路由',
+          'web.deploy.phase.integrations': '正在設定選用整合',
+          'web.deploy.phase.ui': '正在部署 Login UI 和 Admin UI',
+          'web.deploy.phase.progress': '階段 {{current}} / {{total}}',
+          'web.deploy.phase.aria': '部署階段 {{current}}，共 {{total}} 個階段',
+          'web.deploy.phase.complete': '部署完成！',
+        },
+        es: {
+          'web.deploy.phase.preparation': 'Preparando el despliegue',
+          'web.deploy.phase.schema': 'Aplicando el esquema de la base de datos',
+          'web.deploy.phase.configuration': 'Generando la configuración',
+          'web.deploy.phase.workers': 'Desplegando los API Workers',
+          'web.deploy.phase.verification': 'Verificando la disponibilidad de los Workers',
+          'web.deploy.phase.control': 'Reconciliando el plano de control',
+          'web.deploy.phase.bootstrap': 'Inicializando los servicios del tenant',
+          'web.deploy.phase.routing': 'Verificando el enrutamiento del tenant',
+          'web.deploy.phase.integrations': 'Configurando integraciones opcionales',
+          'web.deploy.phase.ui': 'Desplegando Login UI y Admin UI',
+          'web.deploy.phase.progress': 'Fase {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'Fase de despliegue {{current}} de {{total}}',
+          'web.deploy.phase.complete': '¡Despliegue completado!',
+        },
+        pt: {
+          'web.deploy.phase.preparation': 'Preparando o deploy',
+          'web.deploy.phase.schema': 'Aplicando o schema do banco de dados',
+          'web.deploy.phase.configuration': 'Gerando a configuração',
+          'web.deploy.phase.workers': 'Fazendo deploy dos API Workers',
+          'web.deploy.phase.verification': 'Verificando a disponibilidade dos Workers',
+          'web.deploy.phase.control': 'Reconciliando o plano de controle',
+          'web.deploy.phase.bootstrap': 'Inicializando os serviços do tenant',
+          'web.deploy.phase.routing': 'Verificando o roteamento do tenant',
+          'web.deploy.phase.integrations': 'Configurando integrações opcionais',
+          'web.deploy.phase.ui': 'Fazendo deploy da Login UI e Admin UI',
+          'web.deploy.phase.progress': 'Fase {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'Fase de deploy {{current}} de {{total}}',
+          'web.deploy.phase.complete': 'Deploy concluído!',
+        },
+        fr: {
+          'web.deploy.phase.preparation': 'Préparation du déploiement',
+          'web.deploy.phase.schema': 'Application du schéma de base de données',
+          'web.deploy.phase.configuration': 'Génération de la configuration',
+          'web.deploy.phase.workers': 'Déploiement des API Workers',
+          'web.deploy.phase.verification': 'Vérification de la disponibilité des Workers',
+          'web.deploy.phase.control': 'Réconciliation du plan de contrôle',
+          'web.deploy.phase.bootstrap': 'Initialisation des services du tenant',
+          'web.deploy.phase.routing': 'Vérification du routage du tenant',
+          'web.deploy.phase.integrations': 'Configuration des intégrations facultatives',
+          'web.deploy.phase.ui': 'Déploiement de Login UI et Admin UI',
+          'web.deploy.phase.progress': 'Phase {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'Phase de déploiement {{current}} sur {{total}}',
+          'web.deploy.phase.complete': 'Déploiement terminé !',
+        },
+        de: {
+          'web.deploy.phase.preparation': 'Deployment wird vorbereitet',
+          'web.deploy.phase.schema': 'Datenbankschema wird angewendet',
+          'web.deploy.phase.configuration': 'Konfiguration wird erzeugt',
+          'web.deploy.phase.workers': 'API Workers werden bereitgestellt',
+          'web.deploy.phase.verification': 'Worker-Bereitschaft wird geprüft',
+          'web.deploy.phase.control': 'Control Plane wird abgeglichen',
+          'web.deploy.phase.bootstrap': 'Tenant-Dienste werden initialisiert',
+          'web.deploy.phase.routing': 'Tenant-Routing wird geprüft',
+          'web.deploy.phase.integrations': 'Optionale Integrationen werden konfiguriert',
+          'web.deploy.phase.ui': 'Login UI und Admin UI werden bereitgestellt',
+          'web.deploy.phase.progress': 'Phase {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'Deployment-Phase {{current}} von {{total}}',
+          'web.deploy.phase.complete': 'Deployment abgeschlossen!',
+        },
+        ko: {
+          'web.deploy.phase.preparation': '배포를 준비하는 중',
+          'web.deploy.phase.schema': '데이터베이스 스키마를 적용하는 중',
+          'web.deploy.phase.configuration': '구성을 생성하는 중',
+          'web.deploy.phase.workers': 'API Worker를 배포하는 중',
+          'web.deploy.phase.verification': 'Worker 준비 상태를 확인하는 중',
+          'web.deploy.phase.control': '컨트롤 플레인을 조정하는 중',
+          'web.deploy.phase.bootstrap': '테넌트 서비스를 초기화하는 중',
+          'web.deploy.phase.routing': '테넌트 라우팅을 확인하는 중',
+          'web.deploy.phase.integrations': '선택적 연동을 구성하는 중',
+          'web.deploy.phase.ui': 'Login UI와 Admin UI를 배포하는 중',
+          'web.deploy.phase.progress': '단계 {{current}} / {{total}}',
+          'web.deploy.phase.aria': '배포 단계 {{current}} / {{total}}',
+          'web.deploy.phase.complete': '배포가 완료되었습니다!',
+        },
+        ru: {
+          'web.deploy.phase.preparation': 'Подготовка развертывания',
+          'web.deploy.phase.schema': 'Применение схемы базы данных',
+          'web.deploy.phase.configuration': 'Создание конфигурации',
+          'web.deploy.phase.workers': 'Развертывание API Workers',
+          'web.deploy.phase.verification': 'Проверка готовности Workers',
+          'web.deploy.phase.control': 'Согласование Control Plane',
+          'web.deploy.phase.bootstrap': 'Инициализация сервисов тенанта',
+          'web.deploy.phase.routing': 'Проверка маршрутизации тенанта',
+          'web.deploy.phase.integrations': 'Настройка дополнительных интеграций',
+          'web.deploy.phase.ui': 'Развертывание Login UI и Admin UI',
+          'web.deploy.phase.progress': 'Этап {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'Этап развертывания {{current}} из {{total}}',
+          'web.deploy.phase.complete': 'Развертывание завершено!',
+        },
+        id: {
+          'web.deploy.phase.preparation': 'Menyiapkan deployment',
+          'web.deploy.phase.schema': 'Menerapkan skema database',
+          'web.deploy.phase.configuration': 'Membuat konfigurasi',
+          'web.deploy.phase.workers': 'Men-deploy API Workers',
+          'web.deploy.phase.verification': 'Memverifikasi kesiapan Workers',
+          'web.deploy.phase.control': 'Merekonsiliasi Control Plane',
+          'web.deploy.phase.bootstrap': 'Menginisialisasi layanan tenant',
+          'web.deploy.phase.routing': 'Memverifikasi routing tenant',
+          'web.deploy.phase.integrations': 'Mengonfigurasi integrasi opsional',
+          'web.deploy.phase.ui': 'Men-deploy Login UI dan Admin UI',
+          'web.deploy.phase.progress': 'Fase {{current}} / {{total}}',
+          'web.deploy.phase.aria': 'Fase deployment {{current}} dari {{total}}',
+          'web.deploy.phase.complete': 'Deployment selesai!',
         },
       };
       const themeCopyByLocale = {
@@ -3656,6 +4389,11 @@ ${SETUP_WEB_UI_STYLE}</style>
         ...(envManagementCopyByLocale[language] || {}),
         ...envDynamicCopyByLocale.en,
         ...(envDynamicCopyByLocale[language] || {}),
+        ...(envManagementSupplementalCopyByLocale[language] || {}),
+        ...deleteProgressCopyByLocale.en,
+        ...(deleteProgressCopyByLocale[language] || {}),
+        ...deployProgressCopyByLocale.en,
+        ...(deployProgressCopyByLocale[language] || {}),
         ...(themeCopyByLocale[language] || themeCopyByLocale.en),
       };
     }
@@ -4477,6 +5215,14 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         <span><span data-setup-copy="startSubdomain">${startCopy.subdomain}</span> <b id="setup-recap-subdomain">${startCopy.unknown}</b> <span class="ok">✓</span></span>
       </div>
 
+      <section id="pending-control-operations" class="alert warn hidden" aria-live="polite">
+        <div class="a-head" data-i18n="web.control.pendingTitle">Pending provisioning operations</div>
+        <p data-i18n="web.control.pendingDescription">Setup runs steps that require operator permissions and continues to show Control verification progress.</p>
+        <div id="pending-control-operation-items"></div>
+        <p id="pending-control-operation-result" aria-live="polite"></p>
+        <button type="button" class="btn btn-next" id="btn-open-pending-operation" data-i18n="web.control.pendingRun">Run pending operation</button>
+      </section>
+
       <div class="modegrid setup-modegrid">
         <div class="modepanel primary" id="menu-new-setup" role="button" tabindex="0">
           <span class="mp-num">${startCopy.newNum}</span>
@@ -4615,18 +5361,20 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             <div class="radiocards" role="radiogroup" aria-label="User ID Format">
               <button type="button" class="radiocard on" data-user-id-format="nanoid">
                 <span class="dot" aria-hidden="true"></span>
-                <span class="nm"><span data-i18n="web.form.userIdNanoid">NanoID (recommended)</span><small><span data-i18n="web.form.userIdFormatHint">User ID generation format. Cannot be changed after users are created.</span></small></span>
+                <span class="nm"><span data-i18n="web.form.userIdNanoid">NanoID (recommended)</span><small data-i18n="userId.nanoidDesc">URL-safe 21-character IDs, compact and secure</small><small class="user-id-format-example"><span data-i18n="web.form.userIdExample">Example:</span> <code class="inline">V1StGXR8_Z5jdHi6B-myT</code></small></span>
                 <span class="st"></span>
               </button>
               <button type="button" class="radiocard" data-user-id-format="uuid">
                 <span class="dot" aria-hidden="true"></span>
-                <span class="nm"><span data-i18n="web.form.userIdUuid">UUID v4</span><small><code class="inline">550e8400-e29b-41d4-a716-446655440000</code></small></span>
+                <span class="nm"><span data-i18n="web.form.userIdUuid">UUID v4</span><small data-i18n="userId.uuidDesc">Standard 36-character UUIDs with hyphens</small><small class="user-id-format-example"><span data-i18n="web.form.userIdExample">Example:</span> <code class="inline">550e8400-e29b-41d4-a716-446655440000</code></small></span>
                 <span class="st"></span>
               </button>
             </div>
             <div class="alert basic-alert">
               <div class="a-head" data-i18n="web.form.userIdFormat">User ID Format</div>
-              <p data-i18n="web.form.userIdFormatHint">User ID generation format. Cannot be changed after users are created.</p>
+              <p id="user-id-format-description" data-i18n="userId.nanoidDesc">URL-safe 21-character IDs, compact and secure</p>
+              <p class="user-id-format-example"><span data-i18n="web.form.userIdExample">Example:</span> <code class="inline" id="user-id-format-example-value">V1StGXR8_Z5jdHi6B-myT</code></p>
+              <p class="f-help" data-i18n="web.form.userIdFormatHint">Cannot be changed after users are created.</p>
             </div>
           </div>
         </section>
@@ -4664,6 +5412,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
               <span class="sw-label">
                 <span data-i18n="domain.configureBinding">Configure custom domain binding for Workers</span>
                 <small><span data-i18n="web.domain.bindingHint">Bind the selected domain to</span> <span id="binding-router-name">router Worker</span></small>
+                <small data-i18n="domain.configureBindingDesc">Assign the base domain directly to the router Worker so Cloudflare manages its DNS and TLS certificate. Tenant subdomains continue to use wildcard routing.</small>
               </span>
               <span class="sw-state" data-i18n="config.enabled">Enabled</span>
             </label>
@@ -4828,42 +5577,45 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     <div id="section-database" class="setup-database-section hidden">
       <section class="row">
         <div class="rowlabel">
-          <h2 data-i18n="web.db.storageProfileTitle">Storage Profile</h2>
+          <h2 data-i18n="web.db.controlPlaneTitle">D1 Control Plane</h2>
+        </div>
+        <div class="rowbody">
+          <p data-i18n="web.db.controlPlaneWorkerDesc">Control Worker, Control DB, Lookup, and the signed Runtime Registry are always provisioned.</p>
+          <p class="f-help" data-i18n="web.db.controlPlaneTenantPlacement">The initial tenant uses <code>tenant_exclusive</code> placement. Tenant placement can later be selected per tenant.</p>
+        </div>
+        <div class="rownote">
+          <span data-i18n="web.db.controlPlaneResolverNote">Single and multiple D1 assignments use the same runtime resolver.</span>
+        </div>
+      </section>
+
+      <section class="row" id="automatic-provisioning-row">
+        <div class="rowlabel">
+          <h2 data-i18n="web.db.automaticProvisioningTitle">Automatic provisioning</h2>
         </div>
         <div class="rowbody">
           <div class="radiocards db-profile-cards">
             <label class="radiocard db-profile-card">
-              <input type="radio" name="storage-profile" value="builtin:storage:shared-d1" checked>
+              <input type="radio" name="automatic-provisioning" value="on" checked>
               <span class="dot" aria-hidden="true"></span>
               <span class="nm">
-                <span data-i18n="web.db.sharedD1Title">Shared D1</span>
-                <small data-i18n="web.db.sharedD1Desc">One deployment-wide core D1 and PII D1. Lowest setup cost and the default path.</small>
+                <span data-i18n="web.db.automaticProvisioningOn">On</span>
+                <small data-i18n="web.db.automaticProvisioningOnDesc">Control creates capacity automatically with separate scoped Cloudflare tokens.</small>
+                <strong class="db-profile-security-note" data-i18n="web.db.automaticProvisioningTokenNote">A dedicated Control Worker stores and uses the scoped Cloudflare API token needed to create tenant databases.</strong>
               </span>
               <span class="st"></span>
             </label>
             <label class="radiocard db-profile-card">
-              <input type="radio" name="storage-profile" value="builtin:storage:tenant-d1">
+              <input type="radio" name="automatic-provisioning" value="off">
               <span class="dot" aria-hidden="true"></span>
               <span class="nm">
-                <span data-i18n="web.db.tenantD1Title">Tenant D1</span>
-                <small data-i18n="web.db.tenantD1Desc">One core/PII D1 pair per tenant. Requires tenant database provisioning before tenant activation.</small>
+                <span data-i18n="web.db.automaticProvisioningOff">Off</span>
+                <small data-i18n="web.db.automaticProvisioningOffDesc">No Cloudflare API token is stored on Control. Setup executes pending operations.</small>
               </span>
               <span class="st"></span>
             </label>
           </div>
-
-          <div id="tenant-d1-slot-config" class="tenant-d1-slot-config" style="display: none;">
-            <label class="f-label" for="tenant-d1-preallocated-slots" data-i18n="web.db.preallocatedSlotsTitle">Preallocated tenant slots</label>
-            <div class="sliderline">
-              <input id="tenant-d1-preallocated-slots" type="range" min="1" max="500" step="1" value="3">
-              <span class="val"><span id="tenant-d1-preallocated-slots-value">3</span> <small>/ 500</small></span>
-            </div>
-            <div class="f-help" data-i18n="web.db.slotsHelp">One slot creates two D1 databases: core and PII. Default is 3, maximum is 500. You can expand this later from environment management.</div>
-          </div>
         </div>
-        <div class="rownote" data-i18n="web.db.storageProfileDesc">
-          Select how user core/PII data is placed for this deployment.
-        </div>
+        <div class="rownote" data-i18n="web.db.automaticProvisioningNote">This can be skipped without changing tenant physical isolation.</div>
       </section>
 
       <section class="row">
@@ -5081,7 +5833,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     <!-- Step 7: Resource Provisioning -->
     <div id="section-provision" class="setup-provision-section hidden">
-      <section class="row">
+      <section class="row" id="provision-preflight-row" data-setup-progress-prelude>
         <div class="rowlabel">
           <h2 data-i18n="web.provision.resourcesToCreate">Resources to Create</h2>
         </div>
@@ -5089,7 +5841,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           <div id="resource-preview" class="provision-resource-preview">
             <div class="resgrid">
               <div class="bigtable">
-                <div class="cap"><span data-i18n="web.provision.d1Databases">D1 Databases:</span><em id="preview-d1-count">3</em></div>
+                <div class="cap"><span data-i18n="web.provision.d1Databases">D1 Databases:</span><em id="preview-d1-count">${D1_DATABASES.length + 3}</em></div>
                 <table><tbody id="preview-d1"></tbody></table>
               </div>
 
@@ -5129,8 +5881,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             <div class="progress-side provision-progress-wide">
               <div id="provision-progress-ui" class="provision-progress-panel">
                 <div class="percent"><span id="provision-percent">46</span><small>%</small></div>
-                <div class="percentbar">
-                  <i id="provision-progress-bar" style="width: 46%"></i>
+                <div class="percentbar setup-progress-track" role="progressbar" aria-labelledby="provision-current-task" aria-valuemin="0" aria-valuemax="100" aria-valuenow="46">
+                  <i id="provision-progress-bar" class="setup-progress-fill" style="width: 46%"></i>
                 </div>
                 <div class="elapsed">
                   <span id="provision-current-task" data-i18n="web.provision.runningMigrations">Running migrations</span>
@@ -5192,29 +5944,58 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     <!-- Step 8: Deployment -->
     <div id="section-deploy" class="hidden setup-step-surface">
-      <p class="section-lead hidden" id="deploy-ready-text" data-i18n="web.deploy.readyText">
-        Ready to deploy Authrim workers to Cloudflare.
-      </p>
+      <section class="row wide hidden" id="control-token-bootstrap-row" data-setup-progress-prelude>
+        <div class="rowlabel">
+          <h2 data-i18n="web.deploy.controlCredentialsTitle">Cloudflare connection</h2>
+        </div>
+        <div class="rowbody">
+          <div class="cred">
+            <div class="c-head" data-i18n="web.deploy.bootstrapTokenTitle">Temporary Cloudflare token for automatic setup</div>
+            <div class="c-note" data-i18n="web.deploy.cloudflareLoginNote">Cloudflare Dashboard login is separate from Wrangler OAuth and may ask you to sign in again.</div>
+            <div class="c-note" data-i18n="web.deploy.bootstrapTokenDescription">This one-time token lets Authrim set up automatic tenant database provisioning. It needs account token management permission. Setup uses it to create narrowly scoped API tokens for D1, Workers, KV, and R2, registers them with the Control Worker, and then revokes the one-time token.</div>
+            <button type="button" class="btn btn-ghost sm" id="btn-create-control-bootstrap-token" data-i18n="web.deploy.createBootstrapToken">Create one-time Cloudflare token</button>
+            <label class="f-label" for="control-bootstrap-token" data-i18n="web.deploy.bootstrapTokenLabel">Temporary token</label>
+            <input
+              class="f-input sm"
+              type="password"
+              id="control-bootstrap-token"
+              autocomplete="off"
+              autocapitalize="none"
+              spellcheck="false"
+              aria-describedby="control-bootstrap-token-status"
+              data-i18n-placeholder="web.deploy.bootstrapTokenPlaceholder"
+            >
+            <div class="f-help" id="control-bootstrap-token-status" aria-live="polite" data-i18n="web.deploy.bootstrapTokenHelp">The token is used once and revoked after split tokens are registered.</div>
+          </div>
+        </div>
+      </section>
 
-      <div id="deploy-manual-wildcard-warning" class="alert manual-wildcard-warning hidden">
-        <div class="a-head" id="deploy-manual-wildcard-title"></div>
-        <p id="deploy-manual-wildcard-summary"></p>
-        <p id="deploy-manual-wildcard-timing" class="manual-guide-timing"></p>
-        <div id="deploy-manual-wildcard-steps" class="manual-guide-steps"></div>
-        <div class="manual-guide-visual hidden">
-          <img
-            id="deploy-manual-wildcard-example-image"
-            alt="Cloudflare DNS Add record example"
-            src=${cloudflareDnsAddRecordImageDataUriJson}
-          >
+      <section class="row wide hidden" id="deploy-manual-wildcard-warning" data-setup-progress-prelude>
+        <div class="rowlabel">
+          <h2 data-i18n="web.deploy.manualDnsSectionTitle">DNS settings</h2>
         </div>
-        <p id="deploy-manual-wildcard-retry" class="manual-guide-retry"></p>
-        <div class="manual-guide-actions">
-          <a id="deploy-manual-wildcard-dashboard-link" class="btn btn-ghost sm hidden" target="_blank" rel="noreferrer">Open Cloudflare DNS</a>
-          <a id="deploy-manual-wildcard-docs-link" class="btn btn-ghost sm" target="_blank" rel="noreferrer">Open DNS docs</a>
-          <button type="button" id="deploy-manual-wildcard-recheck" class="btn btn-ghost sm">↻ <span data-i18n="web.deploy.recheckDns">Re-check DNS</span></button>
+        <div class="rowbody">
+          <div class="alert manual-wildcard-warning">
+            <div class="a-head" id="deploy-manual-wildcard-title"></div>
+            <p id="deploy-manual-wildcard-summary"></p>
+            <p id="deploy-manual-wildcard-timing" class="manual-guide-timing"></p>
+            <div id="deploy-manual-wildcard-steps" class="manual-guide-steps"></div>
+            <div class="manual-guide-visual hidden">
+              <img
+                id="deploy-manual-wildcard-example-image"
+                alt="Cloudflare DNS Add record example"
+                src=${cloudflareDnsAddRecordImageDataUriJson}
+              >
+            </div>
+            <p id="deploy-manual-wildcard-retry" class="manual-guide-retry"></p>
+            <div class="manual-guide-actions">
+              <a id="deploy-manual-wildcard-dashboard-link" class="btn btn-ghost sm hidden" target="_blank" rel="noreferrer">Open Cloudflare DNS</a>
+              <a id="deploy-manual-wildcard-docs-link" class="btn btn-ghost sm" target="_blank" rel="noreferrer">Open DNS docs</a>
+              <button type="button" id="deploy-manual-wildcard-recheck" class="btn btn-ghost sm">↻ <span data-i18n="web.deploy.recheckDns">Re-check DNS</span></button>
+            </div>
+          </div>
         </div>
-      </div>
+      </section>
 
       <section class="row wide">
         <div class="rowlabel">
@@ -5223,13 +6004,23 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         <div class="rowbody rowbody-tight">
           <div class="deploygrid deploygrid-progress-only">
             <div class="progress-side deploy-progress-wide">
-              <div id="deploy-progress-ui" class="deploy-progress-panel">
-                <div class="percent"><span id="deploy-percent">38</span><small>%</small></div>
-                <div class="percentbar"><i id="deploy-progress-bar" style="width: 38%"></i></div>
+              <div id="deploy-ready-text" class="deploy-ready-card" data-i18n="web.deploy.readyText">
+                Ready to deploy Authrim workers to Cloudflare.
+              </div>
+
+              <div id="deploy-progress-ui" class="deploy-progress-panel hidden">
+                <div class="percent"><span id="deploy-percent">0</span><small>%</small></div>
+                <div class="percentbar setup-progress-track" aria-hidden="true"><i id="deploy-progress-bar" class="setup-progress-fill" style="width: 0%"></i></div>
+                <div id="deploy-phase-rail" class="deploy-phase-rail" role="progressbar" aria-valuemin="1" aria-valuemax="10" aria-valuenow="1">
+                  ${Array.from({ length: 10 }, (_, index) => `<span data-deploy-phase="${index + 1}" aria-hidden="true"></span>`).join('')}
+                </div>
                 <div class="elapsed">
-                  <span id="deploy-current-task">prod-ar-userinfo uploading...</span>
+                  <span id="deploy-current-task" data-i18n="web.status.initializing">Initializing...</span>
                   <span id="deploy-progress-text" data-i18n="web.deploy.elapsedPending">Waiting for progress...</span>
-                  <span id="deploy-spinner" class="spinner"></span>
+                  <div id="deploy-current-message-line" class="deploy-current-message running" role="status" aria-live="polite" aria-atomic="true">
+                    <span id="deploy-spinner" class="ora-frame" aria-hidden="true">⠋</span>
+                    <span id="deploy-current-message">Initializing...</span>
+                  </div>
                 </div>
                 <button type="button" class="log-toggle" id="deploy-log-toggle">
                   <span class="arrow">▶</span>
@@ -5237,20 +6028,16 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
                 </button>
               </div>
 
-              <div class="logbox" id="deploy-log">
+              <div class="logbox hidden" id="deploy-log">
                 <div class="cap">
                   <span data-i18n="web.deploy.wranglerLog">wrangler log</span>
                   <button type="button" id="deploy-log-copy-btn"><span data-copy-label data-i18n="web.envDetail.copyBtn">Copy</span></button>
                 </div>
-                <pre id="deploy-output">→ <b>prod-ar-token</b>
-  bindings: D1(3) KV(9) DO(12)
-  <span class="ok">✓ deployed</span> — 14:02:11
-→ <b>prod-ar-userinfo</b>
-  uploading <span class="hot">▮▮▮▮▮▮▮▯▯▯</span> 71%
-→ <b>prod-ar-management</b>
-  bundling… 388 modules
-  vars: ENVIRONMENT=prod
-  …</pre>
+                <div id="deploy-log-ora" class="ora-log-line">
+                  <span id="deploy-log-ora-frame" class="ora-frame" aria-hidden="true">⠋</span>
+                  <span id="deploy-log-ora-text">Preparing deployment...</span>
+                </div>
+                <pre id="deploy-output"></pre>
               </div>
             </div>
           </div>
@@ -5313,7 +6100,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       </div>
 
       <div class="actions setup-env-actions">
-        <span class="progress"><span data-i18n="web.env.detected">Detected</span> <b id="env-list-count">0</b> <span data-i18n="web.env.environments">environments</span></span>
+        <span class="progress" id="env-list-progress-summary"><span data-i18n="web.env.detected">Detected</span> <b id="env-list-count">0</b> <span data-i18n="web.env.environments">environments</span></span>
         <span class="spacer"></span>
         <button class="btn btn-back" id="btn-back-env-list"><span class="setup-action-icon" aria-hidden="true">←</span><span data-i18n="web.env.start">Start</span></button>
         <button class="btn btn-ghost" id="btn-refresh-env-list"><span class="setup-action-icon" aria-hidden="true">↻</span><span data-i18n="web.env.rescan">Rescan</span></button>
@@ -5326,6 +6113,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         <button type="button" class="tab on" data-env-tab="overview" data-i18n="web.envDetail.overview">Overview</button>
         <button type="button" class="tab" data-env-tab="email" data-i18n="web.envDetail.email">Email</button>
         <button type="button" class="tab" data-env-tab="storage" data-i18n="web.envDetail.storage">Storage</button>
+        <button type="button" class="tab" data-env-tab="capacity" data-i18n="web.envDetail.capacityTab">D1 Capacity</button>
         <button type="button" class="tab" data-env-tab="workers"><span data-i18n="web.envDetail.workersUpdates">Workers / Updates</span> <span class="cnt" id="detail-workers-tab-count">0</span></button>
         <button type="button" class="tab" data-env-tab="migrations"><span data-i18n="web.envDetail.migrations">Migrations</span> <span class="cnt" id="detail-migrations-tab-count">0</span></button>
         <button type="button" class="tab" data-env-tab="resources"><span data-i18n="web.envDetail.resources">Resources</span> <span class="cnt" id="detail-resource-tab-count">0</span></button>
@@ -5339,10 +6127,66 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           <div class="stat"><div class="s-k" data-i18n="web.loadConfig.environment">Environment</div><div class="s-v env-code" id="detail-env-name">-</div></div>
         </div>
 
+        <div id="env-release-update" class="release-update-card hidden" aria-live="polite">
+          <div class="release-update-main">
+            <div>
+              <div class="release-version-flow"><span id="release-current-version">—</span><span aria-hidden="true">→</span><strong id="release-target-version">—</strong></div>
+              <div class="a-head" id="release-update-title" data-i18n="web.envDetail.releaseUpdateAvailable">A new Authrim version is available</div>
+              <p id="release-update-message" data-i18n="web.envDetail.releaseUpdateDesc">Setup will apply required database changes when present, update the services, and verify the result. Your settings and data are preserved.</p>
+            </div>
+            <button type="button" class="btn btn-next" id="btn-start-release-update" aria-busy="false">
+              <span class="inline-action-spinner hidden" aria-hidden="true"></span>
+              <span data-release-update-label data-i18n="web.envDetail.releaseUpdateAction">Update now</span>
+              <span class="arr" aria-hidden="true">→</span>
+            </button>
+            <button type="button" class="btn sm hidden" id="btn-start-database-only-update" aria-busy="false" data-i18n="web.envDetail.releaseUpdateDatabaseOnlyAction">Update databases only (advanced)</button>
+          </div>
+          <div id="release-update-progress" class="release-update-progress hidden">
+            <div class="release-progress-line">
+              <span id="release-update-stage" data-i18n="web.envDetail.releaseUpdatePreparing">Preparing the update...</span>
+              <div class="setup-progress-track release-progress-track" role="progressbar" aria-labelledby="release-update-stage">
+                <i id="release-update-progress-bar" class="setup-progress-fill indeterminate"></i>
+              </div>
+            </div>
+            <details>
+              <summary data-i18n="web.envDetail.releaseUpdateDetails">Show update details</summary>
+              <pre id="release-update-log"></pre>
+            </details>
+          </div>
+        </div>
+
+        <div id="env-initial-deploy-recovery" class="alert warn hidden">
+          <div class="a-head" data-i18n="web.envDetail.initialDeployRecoveryTitle">Initial deployment incomplete</div>
+          <p id="env-initial-deploy-recovery-message" data-i18n="web.envDetail.initialDeployRecoveryDesc">The previous deployment stopped before verification. Existing resources will be reused when you resume.</p>
+          <button type="button" class="btn btn-next sm" id="btn-resume-initial-deploy" aria-busy="false">
+            <span class="inline-action-spinner hidden" aria-hidden="true"></span>
+            <span data-resume-label data-i18n="web.envDetail.initialDeployRecoveryAction">Resume initial deployment</span>
+          </button>
+        </div>
+
         <div class="sechead"><span class="idx">URL</span><h3 data-i18n="web.complete.endpoints">Endpoints</h3></div>
         <div class="bigtable">
-          <div class="cap"><span>URLs</span><em data-i18n="web.envDetail.verified">verified ✓</em></div>
+          <div class="cap"><span>URLs</span><em id="detail-url-deployment-status">Checking deployment status...</em></div>
           <table><tbody id="detail-url-list"></tbody></table>
+        </div>
+
+        <div id="env-control-automatic-provisioning" class="hidden">
+          <div class="sechead"><span class="idx">D1</span><h3 data-i18n="web.envDetail.automaticProvisioningTitle">Automatic provisioning</h3><span class="hint" id="env-control-automatic-status" data-i18n="web.envDetail.automaticProvisioningChecking">Checking...</span></div>
+          <div id="env-control-automatic-inputs" class="inline-form">
+            <button type="button" class="btn btn-ghost sm" id="btn-env-create-control-bootstrap-token" data-i18n="web.envDetail.createOneTimeCloudflareToken">Create one-time Cloudflare token</button>
+            <input
+              class="f-input sm"
+              type="password"
+              id="env-control-bootstrap-token"
+              autocomplete="off"
+              spellcheck="false"
+              aria-label="One-time Cloudflare bootstrap token"
+              placeholder="One-time bootstrap token"
+              data-i18n-placeholder="web.envDetail.oneTimeBootstrapTokenPlaceholder"
+            >
+            <button type="button" class="btn btn-next sm" id="btn-env-enable-control-automatic" data-i18n="web.envDetail.enableAutomaticProvisioning">Enable</button>
+          </div>
+          <div class="f-help" id="env-control-automatic-message" aria-live="polite"></div>
         </div>
 
         <div class="sechead"><span class="idx">ADMIN</span><h3 data-i18n="web.envDetail.adminAccount">Admin Account</h3></div>
@@ -5368,6 +6212,27 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       </div>
 
       <div id="pane-workers" class="tabpane" data-env-pane="workers">
+        <div class="bigtable env-full-deploy-card" id="full-environment-deploy-card">
+          <div class="cap">
+            <span data-i18n="web.envDetail.fullDeployTitle">Deploy Entire Environment</span>
+            <em data-i18n="web.envDetail.fullDeployScope">API Workers + UI Workers</em>
+          </div>
+          <div class="secdesc" data-i18n="web.envDetail.fullDeployDesc">
+            Build and deploy all API Workers and enabled UI Workers from the current source. Existing data and settings are preserved.
+          </div>
+          <div class="inline-form env-full-deploy-actions">
+            <button class="btn btn-next" id="btn-deploy-full-environment">
+              <span data-i18n="web.envDetail.fullDeployAction">Deploy Entire Environment</span><span class="arr">→</span>
+            </button>
+          </div>
+        </div>
+        <div id="full-environment-deploy-progress" class="hidden logbox">
+          <div class="cap">
+            <span data-i18n="web.envDetail.fullDeployProgress">Deployment Progress</span>
+            <button type="button" id="full-environment-deploy-log-copy-btn"><span data-copy-label data-i18n="web.envDetail.copyBtn">Copy</span></button>
+          </div>
+          <pre id="full-environment-deploy-log"></pre>
+        </div>
         <div class="sechead">
           <span class="idx">UPDATE</span><h3 data-i18n="web.envDetail.workerUpdate">Update Workers</h3>
           <span class="hint" data-i18n="web.envDetail.workerUpdateHint">Compare deployed and local builds</span>
@@ -5476,22 +6341,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       </div>
 
       <div id="pane-storage" class="tabpane" data-env-pane="storage">
-        <div id="env-tenant-d1-section">
-          <div class="sechead"><span class="idx">D1 POOL</span><h3 data-i18n="web.envDetail.tenantD1Pool">Tenant D1 Pool</h3><span class="hint" id="env-tenant-d1-summary" data-i18n="web.envDetail.loadingTenantStorage">Loading tenant storage status...</span></div>
-          <div id="env-tenant-d1-stats" class="stats hidden">
-            <div class="stat"><div class="s-k" data-i18n="web.envDetail.capacity">Capacity</div><div class="s-v" id="env-tenant-d1-capacity">-</div></div>
-            <div class="stat"><div class="s-k" data-i18n="web.envDetail.available">Available</div><div class="s-v" id="env-tenant-d1-available">-</div></div>
-            <div class="stat"><div class="s-k" data-i18n="web.envDetail.assigned">Assigned</div><div class="s-v" id="env-tenant-d1-assigned">-</div></div>
-            <div class="stat"><div class="s-k" data-i18n="web.envDetail.needsReset">Needs Reset</div><div class="s-v hot" id="env-tenant-d1-reset-required">-</div></div>
-          </div>
-          <div id="env-tenant-d1-expand" class="hidden inline-form">
-            <div class="fi"><label class="f-label" for="env-tenant-d1-add-slots" data-i18n="web.envDetail.addTenantD1Slots">Add Tenant D1 Slots</label><input class="f-input sm" id="env-tenant-d1-add-slots" type="number" min="1" max="500" value="1"></div>
-            <button class="btn btn-next" id="btn-expand-tenant-d1-pool"><span data-i18n="web.envDetail.expandPoolDeploy">Expand Pool and Deploy</span> <span class="arr">→</span></button>
-            <button class="btn btn-ghost" id="btn-refresh-tenant-d1-pool" data-i18n="web.envDetail.refreshVersions">Refresh</button>
-          </div>
-          <div id="env-tenant-d1-progress" class="hidden logbox"><div class="cap"><span data-i18n="web.envDetail.tenantD1PoolProgress">Tenant D1 Pool Progress</span></div><pre id="env-tenant-d1-log"></pre></div>
-        </div>
-
         <div id="env-r2-provision-section">
           <div class="sechead"><span class="idx">R2</span><h3 data-i18n="web.envDetail.dedicatedR2Buckets">Dedicated R2 Buckets</h3><span class="hint" id="env-r2-provision-summary" data-i18n="web.envDetail.loadingR2Status">Loading R2 bucket status...</span></div>
           <div class="secdesc" data-i18n="web.envDetail.r2ProvisionDesc">Create Authrim R2 buckets, record lock bindings, enable the R2 feature flag, and redeploy workers.</div>
@@ -5501,6 +6350,43 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           </div>
           <div id="env-r2-provision-progress" class="hidden logbox"><div class="cap"><span data-i18n="web.envDetail.r2ProvisioningProgress">R2 Provisioning Progress</span></div><pre id="env-r2-provision-log"></pre></div>
         </div>
+      </div>
+
+      <div id="pane-capacity" class="tabpane" data-env-pane="capacity">
+        <div class="sechead">
+          <span class="idx">D1</span><h3 data-i18n="web.envDetail.capacityTitle">Control Plane Capacity</h3>
+          <span class="hint" data-i18n="web.envDetail.capacityHint">Server-owned placement plan</span>
+        </div>
+        <div class="twocol">
+          <div>
+            <label class="f-label" for="control-capacity-scope" data-i18n="web.envDetail.capacityScope">Scope</label>
+            <select class="f-input sm" id="control-capacity-scope">
+              <option value="shared_pool" data-i18n="web.envDetail.capacityShared">Shared pool</option>
+              <option value="tenant_exclusive" data-i18n="web.envDetail.capacityDedicated">Dedicated tenant</option>
+            </select>
+          </div>
+          <div id="control-capacity-tenant-field" class="hidden">
+            <label class="f-label" for="control-capacity-tenant" data-i18n="web.envDetail.capacityTenant">Tenant</label>
+            <select class="f-input sm" id="control-capacity-tenant"></select>
+          </div>
+          <div>
+            <label class="f-label" for="control-capacity-profile" data-i18n="web.envDetail.capacityProfile">Capacity profile</label>
+            <select class="f-input sm" id="control-capacity-profile">
+              <option value="minimum" data-i18n="web.envDetail.capacityMinimum">Minimum</option>
+              <option value="recommended" selected data-i18n="web.envDetail.capacityRecommended">Recommended</option>
+              <option value="extra_headroom" data-i18n="web.envDetail.capacityExtra">Extra headroom</option>
+            </select>
+          </div>
+        </div>
+        <div class="inline-form">
+          <button type="button" class="btn btn-ghost" id="btn-control-capacity-preview" data-i18n="web.envDetail.capacityPreview">Preview</button>
+          <button type="button" class="btn btn-next" id="btn-control-capacity-request" disabled><span data-i18n="web.envDetail.capacityAdd">Add capacity</span> <span class="arr">→</span></button>
+        </div>
+        <div id="control-capacity-result" class="bigtable hidden" aria-live="polite">
+          <div class="cap"><span data-i18n="web.envDetail.capacityPlan">Capacity plan</span><em id="control-capacity-summary"></em></div>
+          <table><tbody id="control-capacity-targets"></tbody></table>
+        </div>
+        <p id="control-capacity-status" aria-live="polite"></p>
       </div>
 
       <div id="pane-migrations" class="tabpane" data-env-pane="migrations">
@@ -5637,7 +6523,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
           <div class="alert danger-alert">
             <div class="a-head" data-i18n="web.delete.finalConfirmation">Final Confirmation</div>
-            <p id="delete-confirm-copy"><span data-i18n="web.delete.warning">This action is irreversible. All selected resources will be permanently deleted.</span></p>
+            <p id="delete-confirm-copy"><span data-i18n="web.delete.warning">The selected resources will be deleted from this environment.</span></p>
             <div class="delete-confirm-input-wrap">
               <input class="f-input sm" id="delete-confirm-input" type="text" autocomplete="off">
             </div>
@@ -5654,10 +6540,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           <div class="spinner" id="delete-spinner"></div>
           <span id="delete-current-task" data-i18n="web.provision.initializing">Initializing...</span>
         </div>
-        <div class="progress-bar-wrapper">
-          <div class="progress-bar" id="delete-progress-bar" style="width: 0%"></div>
+        <div class="progress-bar-wrapper setup-progress-track" role="progressbar" aria-labelledby="delete-current-task" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="delete-progress-bar" class="progress-bar setup-progress-fill" style="width: 0%"></div>
         </div>
-        <div class="progress-text" id="delete-progress-text">0 / 0 resources</div>
+        <div class="progress-text" id="delete-progress-text" data-i18n="web.status.resourceProgress" data-i18n-params='{"current":0,"total":0}'>0 / 0 resources</div>
 
         <div class="log-toggle" id="delete-log-toggle">
           <span class="arrow">▶</span>
@@ -5676,9 +6562,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       <div id="delete-result" class="hidden"></div>
 
       <div class="actions setup-env-actions">
-        <span class="progress" id="delete-progress-summary"><span data-i18n="web.delete.deleteTarget">Delete target</span> <b id="delete-total-count">0</b> <span data-i18n="web.delete.resourcesIrreversible">resources - irreversible</span></span>
+        <span class="progress" id="delete-progress-summary"><span data-i18n="web.delete.deleteTarget">Delete target</span> <b id="delete-total-count">0</b> <span data-i18n="web.delete.resourcesLabel">resources</span></span>
         <span class="spacer"></span>
-        <button class="btn btn-back" id="btn-back-env-delete">← <span data-i18n="common.cancel">Cancel</span></button>
+        <button class="btn btn-back" id="btn-back-env-delete">← <span id="delete-back-label" data-i18n="common.cancel">Cancel</span></button>
         <button class="btn-danger-solid" id="btn-confirm-delete" disabled><span data-i18n="web.delete.deletePermanently">Delete permanently</span></button>
       </div>
     </div>
@@ -5809,6 +6695,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     // ========================================
     // Session token for API authentication (embedded by server)
     const SESSION_TOKEN = '${safeToken}';
+    const CONTROL_OPERATION_RESULT_TRANSLATION_KEYS = ${controlOperationResultTranslationKeysJson};
     const MANAGE_ONLY = ${manageOnlyFlag};
 
     // State
@@ -5821,16 +6708,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     let provisionPollInterval = null;
     let lastPrerequisitesResult = null;
 
-    function normalizeStorageProfileId(value) {
-      return value === 'builtin:storage:tenant-d1'
-        ? 'builtin:storage:tenant-d1'
-        : 'builtin:storage:shared-d1';
-    }
-
-    function buildProfilesConfig(storageProfileId) {
+    function buildProfilesConfig() {
       return {
         defaults: {
-          storage: normalizeStorageProfileId(storageProfileId),
           audit: 'builtin:audit:standard',
           residency: 'builtin:residency:default',
         },
@@ -5841,61 +6721,68 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           hyperdrive: {},
         },
         seed: {
-          storage: [],
           audit: [],
           residency: [],
         },
       };
     }
 
-    function getSelectedStorageProfileId() {
-      return normalizeStorageProfileId(
-        document.querySelector('input[name="storage-profile"]:checked')?.value
-      );
+    let resumeControlBootstrapReady = false;
+    let resumeWorkerOwnershipRecovery = false;
+
+    function automaticProvisioningEnabled() {
+      return document.querySelector('input[name="automatic-provisioning"]:checked')?.value !== 'off';
     }
 
-    function getTenantD1PreallocatedSlots() {
-      const value = Number.parseInt(
-        document.getElementById('tenant-d1-preallocated-slots')?.value || '3',
-        10
-      );
-      return Number.isInteger(value) ? Math.min(500, Math.max(1, value)) : 3;
-    }
-
-    function setTenantD1PreallocatedSlots(value) {
-      const normalized = Math.min(500, Math.max(1, Number.parseInt(value || '3', 10) || 3));
-      const input = document.getElementById('tenant-d1-preallocated-slots');
-      const label = document.getElementById('tenant-d1-preallocated-slots-value');
-      if (input) input.value = String(normalized);
-      if (label) label.textContent = String(normalized);
-    }
-
-    function updateTenantD1SlotConfigVisibility() {
-      const visible = getSelectedStorageProfileId() === 'builtin:storage:tenant-d1';
-      const panel = document.getElementById('tenant-d1-slot-config');
-      if (panel) panel.style.display = visible ? 'block' : 'none';
-    }
-
-    function setSelectedStorageProfileId(profileId) {
-      const normalized = normalizeStorageProfileId(profileId);
-      document.querySelectorAll('input[name="storage-profile"]').forEach((input) => {
-        input.checked = input.value === normalized;
+    function setAutomaticProvisioningEnabled(enabled) {
+      document.querySelectorAll('input[name="automatic-provisioning"]').forEach((input) => {
+        input.checked = input.value === (enabled ? 'on' : 'off');
       });
-      updateTenantD1SlotConfigVisibility();
+      syncAutomaticProvisioningUi();
     }
 
-    document.querySelectorAll('input[name="storage-profile"]').forEach((input) => {
-      input.addEventListener('change', updateTenantD1SlotConfigVisibility);
+    function syncAutomaticProvisioningUi() {
+      document
+        .getElementById('control-token-bootstrap-row')
+        ?.classList.toggle(
+          'hidden',
+          !automaticProvisioningEnabled() || resumeControlBootstrapReady
+        );
+    }
+    document.querySelectorAll('input[name="automatic-provisioning"]').forEach((input) => {
+      input.addEventListener('change', syncAutomaticProvisioningUi);
     });
-    document.getElementById('tenant-d1-preallocated-slots')?.addEventListener('input', (event) => {
-      setTenantD1PreallocatedSlots(event.currentTarget.value);
-    });
+    syncAutomaticProvisioningUi();
 
     function getConfiguredWorkerCount() {
-      const apiWorkers = 12;
+      const apiWorkers = ${WORKER_COMPONENTS.length};
       const loginUi = config?.components?.loginUi !== false ? 1 : 0;
       const adminUi = config?.components?.adminUi !== false ? 1 : 0;
       return apiWorkers + loginUi + adminUi;
+    }
+
+    const deployedWorkerNames = new Set();
+
+    function updateDeployedWorkerCount(messages) {
+      for (const message of Array.isArray(messages) ? messages : []) {
+        const apiMatch = message.match(
+          /(?:^|\\s)✓\\s+([a-z0-9-]+-ar-[a-z0-9-]+)\\s+(?:re)?deployed successfully\\b/iu
+        );
+        const uiMatch = message.match(
+          /(?:^|\\s)✓\\s+(ar-(?:admin|login)-ui)\\s+deployed as UI Worker:/iu
+        );
+        const workerName = apiMatch?.[1] || uiMatch?.[1];
+        if (workerName) deployedWorkerNames.add(workerName);
+      }
+
+      const status = document.getElementById('deploy-status');
+      if (!status) return;
+      status.innerHTML =
+        escapeHtml(t('web.envDetail.workers')) +
+        ' <b>' +
+        deployedWorkerNames.size +
+        '</b> / ' +
+        getConfiguredWorkerCount();
     }
 
     function getCompleteWorkerSummary() {
@@ -5920,11 +6807,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     function getCompleteD1Count() {
       const baseCount = ${D1_DATABASES.length};
-      if (config?.profiles?.defaults?.storage !== 'builtin:storage:tenant-d1') {
-        return baseCount;
-      }
-      const slots = Number(config?.tenantD1?.preallocatedSlots || 3);
-      return baseCount + Math.max(0, slots) * 2;
+      return baseCount + 3;
     }
 
     function getCompleteKvCount() {
@@ -6048,28 +6931,74 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     // Environment management state
     let detectedEnvironments = [];
+    let pendingControlOperations = [];
+    let pendingControlPollTimer = null;
     let selectedEnvForDetail = null;
     let selectedEnvDetailConfig = null;
+    let selectedEnvRecoveryStatus = null;
+    let envControlBootstrapOwnership = null;
+    let envControlBootstrapPhase = 'unknown';
+    let controlCapacityPreview = null;
     let selectedEnvForDelete = null;
     let envCardRenderGeneration = 0;
+    let environmentScanState = 'idle';
+    let environmentScanGeneration = 0;
     let migrationStatusLoadGeneration = 0;
     let migrationApplyInProgress = false;
+    let inFlightMutationRequests = 0;
     let workingDirectory = '';
     let workersSubdomain = ''; // e.g., 'sgrastar' for {worker}.sgrastar.workers.dev
 
     // API helpers (with session token authentication)
     async function api(endpoint, options = {}) {
       const { headers: customHeaders, body, ...restOptions } = options;
-      const response = await fetch('/api' + endpoint, {
-        ...restOptions,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Session-Token': SESSION_TOKEN,
-          ...(customHeaders || {}),
-        },
-        body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
-      });
-      return response.json();
+      const method = String(restOptions.method || 'GET').toUpperCase();
+      const isMutation = method !== 'GET' && method !== 'HEAD';
+      if (isMutation) inFlightMutationRequests += 1;
+      try {
+        const response = await fetch('/api' + endpoint, {
+          ...restOptions,
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Session-Token': SESSION_TOKEN,
+            ...(customHeaders || {}),
+          },
+          body: body ? (typeof body === 'string' ? body : JSON.stringify(body)) : undefined,
+        });
+        const result = await response.json();
+        if (result?.errorCode === 'setup_operation_in_progress') {
+          result.error = t('web.status.operationInProgress');
+        }
+        if (result?.errorCode === 'environment_inventory_unavailable') {
+          result.error = t('web.delete.inventoryUnavailable');
+          result.errors = [result.error];
+        }
+        if (result?.errorCode === 'r2_legacy_ownership_requires_explicit_adoption') {
+          result.error = t('web.envDetail.r2OwnershipRecoverySummary', {
+            count: Array.isArray(result.bindings) ? result.bindings.length : 0,
+            command: result.requiredCommand || '',
+          });
+        }
+        if (result?.errorCode === 'r2_legacy_ownership_requires_environment_recreation') {
+          result.error = t('web.envDetail.r2OwnershipRecreateSummary', {
+            count: Array.isArray(result.bindings) ? result.bindings.length : 0,
+          });
+        }
+        return result;
+      } finally {
+        if (isMutation) inFlightMutationRequests = Math.max(0, inFlightMutationRequests - 1);
+      }
+    }
+
+    function apiErrorMessages(result) {
+      const messages = Array.isArray(result?.errors)
+        ? result.errors.filter(message => typeof message === 'string' && message.trim())
+        : [];
+      const summary = typeof result?.error === 'string' ? result.error.trim() : '';
+      if (summary && !messages.includes(summary) && summary !== messages.join(', ')) {
+        messages.push(summary);
+      }
+      return messages.length > 0 ? messages : [t('web.status.unknownError')];
     }
 
     const WILDCARD_DNS_MANUAL_COPY_DATA = ${wildcardDnsManualCopyJson};
@@ -6210,10 +7139,10 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const zoneName = getManualWildcardDnsZoneName(baseDomain);
       const dashboardRecordName = getManualWildcardDnsRecordName(baseDomain, zoneName);
       const dashboardUrl = getManualWildcardDnsDashboardUrl();
-      const envName = config?.env || config?.environment?.prefix || 'prod';
-      const target = workersSubdomain
-        ? envName + '-ar-router.' + workersSubdomain + '.workers.dev'
-        : envName + '-ar-router.workers.dev';
+      // The canonical manual action aliases the wildcard to the API base custom domain. Do not
+      // show the router workers.dev hostname here: that disagrees with deploy/CLI validation and
+      // can leave the operator with a record the retry path will reject.
+      const target = config?.manualAction?.target || baseDomain;
       document.getElementById('deploy-manual-wildcard-title').textContent =
         t('web.deploy.manualWildcardTitle') || copy.title;
       const summaryEl = document.getElementById('deploy-manual-wildcard-summary');
@@ -6254,6 +7183,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       const recheckButton = document.getElementById('deploy-manual-wildcard-recheck');
       recheckButton.textContent = '↻ ' + t('web.deploy.recheckDns');
+      recheckButton.disabled = false;
 
       warning.classList.remove('hidden');
     }
@@ -6442,8 +7372,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         sections.envDelete &&
         !sections.envDelete.classList.contains('hidden')
       ) {
-        showDeleteConfirmation(selectedEnvForDelete);
+        showDeleteConfirmation(selectedEnvForDelete, false);
       }
+
+      renderEnvironmentListSummary(
+        environmentScanState === 'complete' ? detectedEnvironments.length : null,
+        environmentScanState
+      );
     }
 
     function setLoadConfigHero() {
@@ -6494,11 +7429,18 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       document.getElementById('step-indicator')?.classList.add('hidden');
       const primaryMeta = document.getElementById('setup-primary-meta');
       if (primaryMeta) {
-        const account =
+        const directAccount =
           lastPrerequisitesResult?.auth?.email ||
           lastPrerequisitesResult?.auth?.accountEmail ||
-          document.getElementById('setup-recap-account')?.textContent ||
+          lastPrerequisitesResult?.auth?.accountId ||
           '';
+        const recapAccount = document.getElementById('setup-recap-account')?.textContent?.trim() || '';
+        const unknownAccountValues = new Set(
+          Object.values(_setupUiCopy || {})
+            .map((entry) => entry?.startUnknown)
+            .filter(Boolean)
+        );
+        const account = directAccount || (unknownAccountValues.has(recapAccount) ? '' : recapAccount);
         primaryMeta.innerHTML = account
           ? t('web.env.accountMeta', { account: escapeHtml(String(account).toUpperCase()) })
           : t('web.env.accountMeta', { account: 'Cloudflare' });
@@ -6535,7 +7477,54 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
+    const setupProgressPreludeHideTimers = new Map();
+
+    function dismissSetupProgressPreludes(ids) {
+      const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      ids.forEach((id) => {
+        const element = document.getElementById(id);
+        if (!element || element.classList.contains('hidden')) return;
+
+        const existingTimer = setupProgressPreludeHideTimers.get(element);
+        if (existingTimer) clearTimeout(existingTimer);
+        element.dataset.setupProgressPreludeWasVisible = 'true';
+
+        if (reduceMotion) {
+          element.classList.add('hidden');
+          return;
+        }
+
+        element.classList.add('setup-progress-prelude-exit');
+        const timer = setTimeout(() => {
+          element.classList.remove('setup-progress-prelude-exit');
+          element.classList.add('hidden');
+          setupProgressPreludeHideTimers.delete(element);
+        }, 220);
+        setupProgressPreludeHideTimers.set(element, timer);
+      });
+    }
+
+    function restoreSetupProgressPreludes(ids) {
+      ids.forEach((id) => {
+        const element = document.getElementById(id);
+        if (!element) return;
+
+        const existingTimer = setupProgressPreludeHideTimers.get(element);
+        if (existingTimer) clearTimeout(existingTimer);
+        setupProgressPreludeHideTimers.delete(element);
+        element.classList.remove('setup-progress-prelude-exit');
+        if (element.dataset.setupProgressPreludeWasVisible === 'true') {
+          element.classList.remove('hidden');
+        }
+        delete element.dataset.setupProgressPreludeWasVisible;
+      });
+    }
+
     function showSection(name) {
+      if (name !== 'topMenu' && pendingControlPollTimer !== null) {
+        clearTimeout(pendingControlPollTimer);
+        pendingControlPollTimer = null;
+      }
       Object.values(sections).forEach(s => {
         s.classList.add('hidden');
         s.classList.remove('setup-section-enter');
@@ -6571,8 +7560,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       return String(message || '')
         .replaceAll('✅', '✓')
         .replaceAll('❌', '✕')
-        .replaceAll('⚠️', 'Warning:')
-        .replaceAll('⚠', 'Warning:')
+        .replaceAll('⚠️', t('web.status.warning'))
+        .replaceAll('⚠', t('web.status.warning'))
         .replaceAll('📁', '')
         .replaceAll('📝', 'Log:')
         .replaceAll('☁️', '')
@@ -6652,8 +7641,154 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     setupLogCopyButton('deploy-log-copy-btn', 'deploy-output');
     setupLogCopyButton('provision-log-copy-btn', 'provision-output');
     setupLogCopyButton('delete-log-copy-btn', 'delete-output');
+    setupLogCopyButton('full-environment-deploy-log-copy-btn', 'full-environment-deploy-log');
     setupLogCopyButton('worker-update-log-copy-btn', 'worker-update-log');
     setupLogCopyButton('ui-update-log-copy-btn', 'ui-update-log');
+
+    const WEB_ORA_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    const DEPLOY_PHASE_LABEL_KEYS = {
+      preparation: 'web.deploy.phase.preparation',
+      schema: 'web.deploy.phase.schema',
+      configuration: 'web.deploy.phase.configuration',
+      workers: 'web.deploy.phase.workers',
+      verification: 'web.deploy.phase.verification',
+      control: 'web.deploy.phase.control',
+      bootstrap: 'web.deploy.phase.bootstrap',
+      routing: 'web.deploy.phase.routing',
+      integrations: 'web.deploy.phase.integrations',
+      ui: 'web.deploy.phase.ui',
+    };
+    const DEPLOY_PHASE_IDS = Object.keys(DEPLOY_PHASE_LABEL_KEYS);
+    let deployOraTimer = null;
+    let deployOraFrameIndex = 0;
+    let lastRenderedDeployStep = 1;
+
+    function stopDeployOraTimer() {
+      if (deployOraTimer) window.clearInterval(deployOraTimer);
+      deployOraTimer = null;
+    }
+
+    function paintDeployOraFrame(frame) {
+      const mainFrame = document.getElementById('deploy-spinner');
+      const logFrame = document.getElementById('deploy-log-ora-frame');
+      if (mainFrame) mainFrame.textContent = frame;
+      if (logFrame) logFrame.textContent = frame;
+    }
+
+    function startDeployOraTimer() {
+      stopDeployOraTimer();
+      deployOraFrameIndex = 0;
+      if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        paintDeployOraFrame('•');
+        return;
+      }
+      paintDeployOraFrame(WEB_ORA_FRAMES[deployOraFrameIndex]);
+      deployOraFrameIndex += 1;
+      deployOraTimer = window.setInterval(() => {
+        paintDeployOraFrame(WEB_ORA_FRAMES[deployOraFrameIndex % WEB_ORA_FRAMES.length]);
+        deployOraFrameIndex += 1;
+      }, 80);
+    }
+
+    function updateProgressBarVisual(progressBar, percent, status = 'running', indeterminate = false) {
+      if (!progressBar) return;
+      const normalizedPercent = Math.min(100, Math.max(0, Number(percent) || 0));
+      progressBar.classList.toggle('indeterminate', indeterminate);
+      progressBar.classList.toggle('is-complete', status === 'complete');
+      progressBar.classList.toggle('is-error', status === 'error');
+      progressBar.style.width = indeterminate ? '28%' : normalizedPercent + '%';
+
+      const track = progressBar.closest('.setup-progress-track');
+      if (!track || track.getAttribute('role') !== 'progressbar') return;
+      if (indeterminate) {
+        track.removeAttribute('aria-valuenow');
+        track.setAttribute('aria-busy', 'true');
+      } else {
+        track.setAttribute('aria-valuenow', String(normalizedPercent));
+        track.removeAttribute('aria-busy');
+      }
+    }
+
+    function markProgressBarError(prefix) {
+      const progressBar = document.getElementById(prefix + '-progress-bar');
+      const currentWidth = Number.parseFloat(progressBar?.style.width || '0');
+      updateProgressBarVisual(progressBar, currentWidth, 'error');
+    }
+
+    function renderDeploymentSnapshot(snapshot) {
+      if (!snapshot || snapshot.operation !== 'deploy') return;
+      const total = Math.max(1, Number(snapshot.totalSteps) || 10);
+      const step = Math.min(
+        total,
+        Math.max(lastRenderedDeployStep, Math.max(1, Number(snapshot.step) || 1))
+      );
+      lastRenderedDeployStep = step;
+      const terminal =
+        snapshot.status === 'complete' ||
+        snapshot.status === 'error' ||
+        snapshot.terminal === true;
+      const percent = snapshot.status === 'complete'
+        ? 100
+        : Math.min(99, Math.round(((step - 0.5) / total) * 100));
+      const progressBar = document.getElementById('deploy-progress-bar');
+      const percentEl = document.getElementById('deploy-percent');
+      const currentTask = document.getElementById('deploy-current-task');
+      const progressText = document.getElementById('deploy-progress-text');
+      const rail = document.getElementById('deploy-phase-rail');
+      const currentMessageLine = document.getElementById('deploy-current-message-line');
+      const currentMessage = document.getElementById('deploy-current-message');
+      const oraLine = document.getElementById('deploy-log-ora');
+      const oraText = document.getElementById('deploy-log-ora-text');
+
+      updateProgressBarVisual(progressBar, percent, snapshot.status);
+      if (percentEl) percentEl.textContent = String(percent);
+      const renderedPhase = DEPLOY_PHASE_IDS[step - 1] || snapshot.phase;
+      const phaseLabelKey = DEPLOY_PHASE_LABEL_KEYS[renderedPhase];
+      const phaseLabel = phaseLabelKey ? t(phaseLabelKey) : renderedPhase;
+      if (currentTask && currentTask.textContent !== phaseLabel) {
+        currentTask.textContent = phaseLabel;
+      }
+      if (progressText) {
+        progressText.textContent = t('web.deploy.phase.progress', { current: step, total });
+      }
+      if (rail) {
+        rail.setAttribute('aria-valuemax', String(total));
+        rail.setAttribute('aria-valuenow', String(step));
+        rail.setAttribute(
+          'aria-label',
+          t('web.deploy.phase.aria', { current: step, total })
+        );
+        rail.setAttribute('aria-valuetext', phaseLabel);
+        rail.querySelectorAll('[data-deploy-phase]').forEach((item) => {
+          const itemStep = Number(item.getAttribute('data-deploy-phase'));
+          item.className = itemStep < step
+            ? 'complete'
+            : itemStep === step
+              ? snapshot.status
+              : '';
+        });
+      }
+      if (oraLine) oraLine.className = 'ora-log-line ' + snapshot.status;
+      if (currentMessageLine) {
+        currentMessageLine.className = 'deploy-current-message ' + snapshot.status;
+      }
+      const oraMessage = snapshot.message || phaseLabel || '';
+      if (currentMessage && currentMessage.textContent !== oraMessage) {
+        currentMessage.textContent = oraMessage;
+      }
+      if (oraText && oraText.textContent !== oraMessage) {
+        oraText.textContent = oraMessage;
+      }
+
+      if (terminal) {
+        stopDeployOraTimer();
+        paintDeployOraFrame(
+          snapshot.status === 'complete' ? '✓' : snapshot.status === 'error' ? '✕' : '!'
+        );
+      } else if (!deployOraTimer) {
+        startDeployOraTimer();
+      }
+    }
 
     // Progress UI update helper
     function updateProgressUI(prefix, current, total, currentTask) {
@@ -6664,18 +7799,35 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const percentEl = document.getElementById(prefix + '-percent');
 
       if (progressBar && total > 0) {
+        const isIndeterminate = prefix === 'delete' && current === 0;
         const percent = Math.min(Math.round((current / total) * 100), 100);
-        progressBar.style.width = percent + '%';
-        if (percentEl) percentEl.textContent = String(percent);
+        updateProgressBarVisual(
+          progressBar,
+          percent,
+          current >= total ? 'complete' : 'running',
+          isIndeterminate
+        );
+        if (!isIndeterminate && percentEl) percentEl.textContent = String(percent);
       }
       if (progressText) {
-        // For deploy, show percentage; for others, show count
+        // Deploy is percentage-based, provisioning tracks logical tasks, and deletion tracks
+        // concrete resources. Keep those units explicit so an 8-step provisioning operation is
+        // never presented as though the environment only contained eight Cloudflare resources.
         if (prefix === 'deploy') {
           const percent = Math.min(Math.round((current / total) * 100), 100);
-          progressText.textContent = percent + '% complete';
+          progressText.textContent = t('web.status.percentComplete', { percent });
+        } else if (prefix === 'provision') {
+          const displayCurrent = Math.min(current, total);
+          progressText.textContent = t('web.provision.runningTasks', {
+            current: displayCurrent,
+            total,
+          });
         } else {
           const displayCurrent = Math.min(current, total);
-          progressText.textContent = displayCurrent + ' / ' + total + ' resources';
+          progressText.textContent = t('web.status.resourceProgress', {
+            current: displayCurrent,
+            total,
+          });
         }
       }
       if (currentTaskEl && currentTask) {
@@ -6744,12 +7896,67 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       return null;
     }
 
-    function getExpectedDeployWorkerCount() {
-      return 12;
+    function getDeleteProgressTask(message) {
+      const normalized = String(message || '')
+        .trimStart()
+        .replace(/^[⚠️✕✓✅⏳🧹🌐📊🗄️🔎]+/u, '')
+        .trim();
+      if (!normalized) return null;
+
+      if (
+        normalized.startsWith('Preparing to delete environment:') ||
+        normalized.startsWith('Using ')
+      ) {
+        return t('web.delete.progress.preparing');
+      }
+
+      const scanningResources = [
+        ['Scanning Workers', 'Workers'],
+        ['Scanning D1 databases', 'D1'],
+        ['Scanning KV namespaces', 'KV'],
+        ['Scanning Queues', 'Queues'],
+        ['Scanning R2 buckets', 'R2'],
+        ['Scanning legacy Pages projects', 'Legacy Pages'],
+      ];
+      for (const [prefix, resource] of scanningResources) {
+        if (normalized.startsWith(prefix)) {
+          return t('web.delete.progress.scanningResource', { resource });
+        }
+      }
+
+      if (normalized.startsWith('Found ') && normalized.includes(' environment(s)')) {
+        return t('web.delete.progress.inventoryReady');
+      }
+      if (normalized.startsWith('Reconciling Setup-managed DNS records')) {
+        return t('web.delete.progress.reconcilingDns');
+      }
+      if (normalized.startsWith('Revoking setup-managed Control API tokens')) {
+        return t('web.delete.progress.revokingTokens');
+      }
+      if (normalized.startsWith('Verifying Cloudflare inventory after deletion')) {
+        return t('web.delete.progress.verifyingInventory');
+      }
+
+      const deletingResources = [
+        ['Deleting Workers', 'Workers'],
+        ['Deleting D1 Databases', 'D1'],
+        ['Deleting KV Namespaces', 'KV'],
+        ['Deleting Queues', 'Queues'],
+        ['Deleting R2 Buckets', 'R2'],
+        ['Deleting legacy Pages Projects', 'Legacy Pages'],
+      ];
+      for (const [prefix, resource] of deletingResources) {
+        if (normalized.startsWith(prefix)) {
+          return t('web.delete.progress.deletingResource', { resource });
+        }
+      }
+
+      return null;
     }
 
     function createProvisionProgressTracker(totalResources) {
       const completedMilestones = new Set();
+      let completed = false;
       const milestonePatterns = [
         { key: 'keys', test: (message) => message.includes('Admin secrets generated') },
         { key: 'd1', test: (message) => /D1 Databases\\s*\\([^)]*\\)\\s*✓/.test(message) },
@@ -6765,7 +7972,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
 
       function handle(message) {
+        if (completed) return;
         if (message.includes('Provisioning complete')) {
+          completed = true;
           updateProgressUI('provision', totalResources, totalResources, t('web.status.complete'));
           return;
         }
@@ -6789,136 +7998,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
 
       function complete() {
+        completed = true;
         updateProgressUI('provision', totalResources, totalResources, t('web.status.complete'));
       }
 
       return { handle, complete };
-    }
-
-    function createDeployProgressTracker() {
-      let percent = 0;
-      let currentTask = t('web.status.initializing');
-      let expectedWorkers = getExpectedDeployWorkerCount();
-      let finalUiStarted = false;
-      const workerCompleted = new Set();
-      const counters = {};
-
-      function setProgress(nextPercent, task) {
-        const normalized = Math.max(0, Math.min(Math.round(nextPercent), 99));
-        percent = Math.max(percent, normalized);
-        if (task) currentTask = task;
-        updateProgressUI('deploy', percent, 100, currentTask);
-      }
-
-      function complete(task) {
-        percent = 100;
-        currentTask = task || 'Deployment complete!';
-        updateProgressUI('deploy', 100, 100, currentTask);
-      }
-
-      function bump(key, start, end, step, task) {
-        counters[key] = (counters[key] || 0) + 1;
-        setProgress(Math.min(start + counters[key] * step, end), task);
-      }
-
-      function trackWorkerSuccess(message) {
-        const match = message.match(/^\\s*✓\\s+([a-z0-9-]+-ar-[a-z0-9-]+)\\s+deployed successfully/i);
-        if (!match) return false;
-
-        workerCompleted.add(match[1]);
-        const completed = workerCompleted.size;
-        const workerPercent = 45 + (Math.min(completed, expectedWorkers) / expectedWorkers) * 21;
-        setProgress(workerPercent, 'Deploying API Workers (' + completed + '/' + expectedWorkers + ')');
-        return true;
-      }
-
-      return {
-        handle(message) {
-          const taskInfo = parseProgressMessage(message);
-          const totalMatch = message.match(/^Total:\\s+(\\d+)\\s*$/);
-          if (totalMatch) {
-            expectedWorkers = Math.max(parseInt(totalMatch[1], 10), 1);
-            setProgress(66, 'API Workers deployed (' + workerCompleted.size + '/' + expectedWorkers + ')');
-            return;
-          }
-
-          if (message.includes('Clearing build cache')) {
-            setProgress(2, 'Preparing build...');
-          } else if (message.includes('Building packages')) {
-            setProgress(6, 'Building packages...');
-          } else if (message.includes('Packages built successfully')) {
-            setProgress(12, 'Packages built successfully');
-          } else if (message.includes('Uploading secrets from')) {
-            setProgress(14, 'Uploading secrets...');
-          } else if (message.includes('uploaded')) {
-            bump('secrets', 14, 29, 1, 'Uploading secrets...');
-          } else if (message.includes('Refreshing wrangler.toml')) {
-            setProgress(31, 'Refreshing Worker configuration...');
-          } else if (message.includes('wrangler.toml files refreshed')) {
-            setProgress(34, 'Worker configuration refreshed');
-          } else if (message.includes('Ensuring wildcard DNS')) {
-            setProgress(36, 'Checking wildcard DNS...');
-          } else if (message.includes('Wildcard DNS resolves')) {
-            setProgress(38, 'Wildcard DNS ready');
-          } else if (message.includes('Preparing UI Worker binding targets')) {
-            setProgress(39, 'Preparing UI Worker bindings...');
-          } else if (
-            !finalUiStarted &&
-            (message.includes('Building ar-login-ui') || message.includes('Building ar-admin-ui'))
-          ) {
-            bump('uiBindingBuild', 39, 42, 1.5, taskInfo || 'Preparing UI Worker bindings...');
-          } else if (!finalUiStarted && message.includes('deployed as UI Worker')) {
-            bump('uiBindingDeploy', 42, 44, 1, 'UI Worker bindings ready');
-          } else if (message.includes('Starting Authrim deployment')) {
-            setProgress(45, 'Deploying API Workers (0/' + expectedWorkers + ')');
-          } else if (trackWorkerSuccess(message)) {
-            return;
-          } else if (message.includes('Deployment Summary')) {
-            setProgress(66, 'API Worker deployment summary');
-          } else if (message.includes('Verifying Worker deployments')) {
-            setProgress(68, 'Verifying Worker deployments...');
-          } else if (message.includes('Worker deployments are visible')) {
-            setProgress(71, 'Worker deployments are visible');
-          } else if (message.includes('Verifying Worker HTTP health')) {
-            setProgress(73, 'Checking Worker health...');
-          } else if (message.includes('Worker HTTP health checks passed')) {
-            setProgress(76, 'Worker health checks passed');
-          } else if (message.includes('Waiting for API router')) {
-            setProgress(78, 'Waiting for API router...');
-          } else if (message.includes('API router is reachable')) {
-            setProgress(80, 'API router is reachable');
-          } else if (message.includes('Running D1 database migrations')) {
-            setProgress(82, 'Running database migrations...');
-          } else if (message.includes('Database migrations completed successfully')) {
-            setProgress(87, 'Database migrations complete');
-          } else if (
-            message.includes('Ensuring initial tenant') ||
-            message.includes('Ensuring initial admin roles') ||
-            message.includes('Ensuring setup machine access') ||
-            message.includes('Seeding runtime profiles') ||
-            message.includes('runtime snapshot')
-          ) {
-            bump('bootstrap', 87, 91, 1, taskInfo || 'Finalizing runtime bootstrap...');
-          } else if (message.includes('Deploying Login/Admin UI')) {
-            finalUiStarted = true;
-            setProgress(92, 'Deploying Login/Admin UI...');
-          } else if (
-            finalUiStarted &&
-            (message.includes('Building ar-login-ui') || message.includes('Building ar-admin-ui'))
-          ) {
-            bump('finalUiBuild', 92, 95, 1.5, taskInfo || 'Building UI Workers...');
-          } else if (finalUiStarted && message.includes('deployed as UI Worker')) {
-            bump('finalUiDeploy', 95, 98, 1.5, 'Deploying UI Workers...');
-          } else if (message.includes('All UI packages deployed to Workers')) {
-            setProgress(98, 'UI Workers deployed');
-          } else if (message.includes('Deployment complete')) {
-            complete('✓ Deployment complete!');
-          } else if (taskInfo) {
-            setProgress(percent, taskInfo);
-          }
-        },
-        complete,
-      };
     }
 
     // Safe DOM element creation helpers
@@ -6931,6 +8015,124 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         div.appendChild(content);
       }
       return div;
+    }
+
+    function appendManualR2CleanupNotice(parent, targets) {
+      if (!Array.isArray(targets) || targets.length === 0) return;
+
+      const content = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = t('web.delete.manualR2Title');
+      content.appendChild(title);
+
+      const list = document.createElement('ul');
+      for (const target of targets) {
+        const item = document.createElement('li');
+        item.textContent =
+          target.bucketName +
+          ' (' +
+          Number(target.objectCount || 0).toLocaleString() +
+          ' objects) ';
+        if (target.dashboardUrl) {
+          const link = document.createElement('a');
+          link.href = target.dashboardUrl;
+          link.target = '_blank';
+          link.rel = 'noreferrer';
+          link.textContent = t('web.delete.manualR2Open');
+          item.appendChild(link);
+        }
+        list.appendChild(item);
+      }
+      content.appendChild(list);
+      parent.appendChild(createAlert('warning', content));
+    }
+
+    function appendManualDnsCleanupNotice(parent, issues) {
+      if (!Array.isArray(issues) || issues.length === 0) return;
+
+      const content = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = t('web.deploy.manualDnsSectionTitle');
+      content.appendChild(title);
+
+      const list = document.createElement('ul');
+      for (const issue of issues) {
+        const item = document.createElement('li');
+        item.textContent =
+          String(issue.name || issue.role || 'DNS') +
+          ': ' +
+          String(issue.reason || t('web.delete.manualReviewRequired'));
+        list.appendChild(item);
+      }
+      content.appendChild(list);
+
+      const dashboardLink = document.createElement('a');
+      dashboardLink.href =
+        issues.find((issue) => issue && issue.dashboardUrl)?.dashboardUrl ||
+        getManualWildcardDnsDashboardUrl() ||
+        'https://dash.cloudflare.com/';
+      dashboardLink.target = '_blank';
+      dashboardLink.rel = 'noreferrer';
+      dashboardLink.textContent = t('web.deploy.openCloudflareDns');
+      content.appendChild(dashboardLink);
+
+      parent.appendChild(createAlert('warning', content));
+    }
+
+    function appendManualControlTokenCleanupNotice(parent, targets) {
+      if (!Array.isArray(targets) || targets.length === 0) return;
+
+      const content = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = t('web.delete.manualControlTokensTitle');
+      content.appendChild(title);
+
+      const summary = document.createElement('p');
+      summary.textContent = t('web.delete.manualControlTokensSummary');
+      content.appendChild(summary);
+
+      const exactTokenIds = Array.from(
+        new Set(targets.flatMap((target) => Array.isArray(target.targetTokenIds) ? target.targetTokenIds : []))
+      );
+      if (exactTokenIds.length > 0) {
+        const list = document.createElement('ul');
+        for (const tokenId of exactTokenIds) {
+          const item = document.createElement('li');
+          item.textContent = t('web.delete.manualControlTokenId', { tokenId: String(tokenId) });
+          list.appendChild(item);
+        }
+        content.appendChild(list);
+      }
+
+      const candidateNames = Array.from(
+        new Set(targets.flatMap((target) => Array.isArray(target.expectedTokenNames) ? target.expectedTokenNames : []))
+      );
+      if (candidateNames.length > 0) {
+        const list = document.createElement('ul');
+        for (const tokenName of candidateNames) {
+          const item = document.createElement('li');
+          item.textContent = String(tokenName);
+          list.appendChild(item);
+        }
+        content.appendChild(list);
+      }
+
+      const accountLink = document.createElement('a');
+      accountLink.href = targets.find((target) => target && target.accountTokensDashboardUrl)?.accountTokensDashboardUrl || 'https://dash.cloudflare.com/';
+      accountLink.target = '_blank';
+      accountLink.rel = 'noreferrer';
+      accountLink.textContent = t('web.delete.manualControlTokensAccountOpen');
+      content.appendChild(accountLink);
+      content.appendChild(document.createTextNode(' '));
+
+      const userLink = document.createElement('a');
+      userLink.href = targets.find((target) => target && target.userTokensDashboardUrl)?.userTokensDashboardUrl || 'https://dash.cloudflare.com/profile/api-tokens';
+      userLink.target = '_blank';
+      userLink.rel = 'noreferrer';
+      userLink.textContent = t('web.delete.manualControlTokensUserOpen');
+      content.appendChild(userLink);
+
+      parent.appendChild(createAlert('warning', content));
     }
 
     function createUrlItem(label, text, href) {
@@ -6995,7 +8197,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const progressDiv = document.getElementById(prefix + '-progress-ui');
       const percentEl = document.getElementById(prefix + '-percent');
 
-      if (progressBar) progressBar.style.width = '0%';
+      updateProgressBarVisual(progressBar, 0);
       if (percentEl) percentEl.textContent = '0';
       if (spinner) spinner.style.display = 'block';
       if (progressDiv) progressDiv.classList.add('hidden');
@@ -7006,7 +8208,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       if (progressText) {
         progressText.textContent =
-          prefix === 'deploy' ? '0% complete' : '0 / 0 resources';
+          prefix === 'deploy'
+            ? t('web.status.percentComplete', { percent: 0 })
+            : t('web.status.resourceProgress', { current: 0, total: 0 });
       }
     }
 
@@ -7114,13 +8318,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         components.loginUi !== false ? 'Login UI' : null,
         components.adminUi !== false ? 'Admin UI' : null,
       ].filter(Boolean);
-      const profile = (
-        raw.profiles?.defaults?.storage ||
-        config.profiles?.defaults?.storage ||
-        raw.storageProfile ||
-        config.storageProfile ||
-        'shared-d1'
-      ).replace(/^builtin:storage:/, '');
+      const placement = raw.tenant?.placementPolicy || config.tenant?.placementPolicy || 'tenant_exclusive';
       const coreRegion =
         raw.residency?.core?.location ||
         config.residency?.core?.location ||
@@ -7159,7 +8357,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             : t('config.disabled'),
         ],
         [t('web.loadConfig.components'), componentNames.join(' + ') || '-'],
-        [t('web.loadConfig.storageProfile'), profile],
+        ['D1 routing', 'Control Plane'],
+        ['Initial tenant placement', placement],
         [t('web.loadConfig.d1Regions'), 'core: ' + coreRegion + ' / pii: ' + piiRegion],
         [
           t('web.loadConfig.emailProvider'),
@@ -7229,7 +8428,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     function resetDatabaseAndEmailForm() {
-      setSelectedStorageProfileId('builtin:storage:shared-d1');
+      setAutomaticProvisioningEnabled(true);
       document.getElementById('feature-queue-enabled').checked = false;
 
       document.querySelectorAll('input[name="db-core-location"]').forEach((input) => {
@@ -7300,8 +8499,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       document.getElementById('delete-options-section').classList.remove('hidden');
       document.getElementById('btn-confirm-delete').classList.remove('hidden');
       document.getElementById('btn-confirm-delete').disabled = false;
+      const backLabel = document.getElementById('delete-back-label');
+      if (backLabel) backLabel.textContent = t('common.cancel');
       resetProgressContainer('delete');
       resetLogToggle('delete-log-toggle', 'delete-log');
+    }
+
+    function markDeleteNavigationComplete() {
+      const backLabel = document.getElementById('delete-back-label');
+      if (backLabel) {
+        backLabel.textContent = t('web.env.backToList').replace(/^←[ ]*/u, '');
+      }
     }
 
     async function resetSetupFlowState() {
@@ -7760,6 +8968,15 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       content.appendChild(alert);
     }
 
+    async function loadRuntimeContext() {
+      const result = await api('/prerequisites');
+      lastPrerequisitesResult = result;
+      workingDirectory = result.cwd || '';
+      workersSubdomain = result.workersSubdomain || '';
+      updateStartRecap();
+      return result;
+    }
+
     // Check prerequisites
     async function checkPrerequisites() {
       setStep(1);
@@ -7776,11 +8993,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       );
 
       try {
-        const result = await api('/prerequisites');
-        lastPrerequisitesResult = result;
-
-        workingDirectory = result.cwd || '';
-        workersSubdomain = result.workersSubdomain || '';
+        const result = await loadRuntimeContext();
         renderPrereqCheckRows(result);
 
         if (!result.wranglerInstalled) {
@@ -7802,10 +9015,86 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     // Show top menu
-    function showTopMenu() {
+    async function loadPendingControlOperations() {
+      const panel = document.getElementById('pending-control-operations');
+      const items = document.getElementById('pending-control-operation-items');
+      const button = document.getElementById('btn-open-pending-operation');
+      const status = document.getElementById('pending-control-operation-result');
+      if (!panel || !items) return [];
+      if (pendingControlPollTimer !== null) {
+        clearTimeout(pendingControlPollTimer);
+        pendingControlPollTimer = null;
+      }
+      try {
+        const result = await api('/control/pending-operations');
+        const operations = result.success && Array.isArray(result.operations) ? result.operations : [];
+        if (operations.length === 0) {
+          panel.classList.add('hidden');
+          items.replaceChildren();
+          if (button) button.classList.remove('hidden');
+          if (status) status.textContent = '';
+          return [];
+        }
+        items.replaceChildren();
+        for (const operation of operations.slice(0, 5)) {
+          const row = document.createElement('p');
+          if (operation.operationKind === 'tenant_disaster_recovery') {
+            row.textContent = operation.environmentId + ' / ' +
+              t('web.control.pendingTenant', { tenantId: operation.tenantId }) + ' / ' +
+              t('web.control.pendingDisasterRecovery') + ' / ' +
+              (operation.currentStep || t('web.control.pendingVerifyRuntimeBindings'));
+          } else {
+            const owner = operation.scope === 'tenant_exclusive'
+              ? t('web.control.pendingTenant', { tenantId: operation.tenantId })
+              : t('web.control.pendingSharedPool');
+            row.textContent = operation.environmentId + ' / ' + owner + ' / ' +
+              operation.dataRole + ' / ' +
+              (operation.currentStep || t('web.control.pendingProvisioning'));
+          }
+          items.appendChild(row);
+        }
+        const executable = operations.find(isPendingControlOperationExecutable);
+        if (button) button.classList.toggle('hidden', !executable);
+        if (status) status.textContent = executable ? '' : t('web.control.pendingObserving');
+        panel.classList.remove('hidden');
+        if (!sections.topMenu.classList.contains('hidden')) {
+          pendingControlPollTimer = setTimeout(async () => {
+            pendingControlPollTimer = null;
+            if (!sections.topMenu.classList.contains('hidden')) {
+              pendingControlOperations = await loadPendingControlOperations();
+            }
+          }, 5000);
+        }
+        return operations;
+      } catch {
+        if (!sections.topMenu.classList.contains('hidden')) {
+          pendingControlPollTimer = setTimeout(async () => {
+            pendingControlPollTimer = null;
+            if (!sections.topMenu.classList.contains('hidden')) {
+              pendingControlOperations = await loadPendingControlOperations();
+            }
+          }, 5000);
+        }
+        return pendingControlOperations;
+      }
+    }
+
+    function isPendingControlOperationExecutable(operation) {
+      if (!operation || typeof operation !== 'object') return false;
+      if (
+        operation.operationKind === 'provision_plugin_resources' ||
+        operation.operationKind === 'cleanup_plugin_resources'
+      ) return true;
+      return ['create_d1', 'apply_migrations', 'reconcile_worker_bindings'].includes(
+        operation.currentStep
+      );
+    }
+
+    async function showTopMenu() {
       setStep(2);
       updateStartRecap();
       showSection('topMenu');
+      pendingControlOperations = await loadPendingControlOperations();
     }
 
     function updateStartRecap() {
@@ -7822,7 +9111,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       const wrangler = document.getElementById('setup-recap-wrangler');
       if (wrangler) {
-        wrangler.textContent = result?.wranglerInstalled ? 'ok' : 'check';
+        wrangler.textContent = result?.wranglerInstalled
+          ? t('web.status.ok')
+          : t('web.status.checkRequired');
       }
     }
 
@@ -7833,6 +9124,38 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     const menuNewSetup = document.getElementById('menu-new-setup');
     const menuLoadConfig = document.getElementById('menu-load-config');
     const menuManageEnv = document.getElementById('menu-manage-env');
+
+    document.getElementById('btn-open-pending-operation')?.addEventListener('click', async () => {
+      const pending = pendingControlOperations.find(isPendingControlOperationExecutable);
+      if (!pending) return;
+      const button = document.getElementById('btn-open-pending-operation');
+      const status = document.getElementById('pending-control-operation-result');
+      if (button) button.disabled = true;
+      if (status) status.textContent = t('web.control.operationRunning');
+      try {
+        const result = await api('/control/pending-operations/execute', {
+          method: 'POST',
+          body: {
+            environmentId: pending.environmentId,
+            operationId: pending.operationId,
+          },
+        });
+        if (!result.success) throw new Error(result.error || t('web.control.operationFailed'));
+        pendingControlOperations = await loadPendingControlOperations();
+        if (status) {
+          const resultKey =
+            CONTROL_OPERATION_RESULT_TRANSLATION_KEYS[result.result?.state] ||
+            CONTROL_OPERATION_RESULT_TRANSLATION_KEYS.blocked;
+          status.textContent = t(resultKey);
+        }
+      } catch (error) {
+        if (status) {
+          status.textContent = error instanceof Error ? error.message : t('web.control.operationFailed');
+        }
+      } finally {
+        if (button) button.disabled = false;
+      }
+    });
 
     function activatePanelWithKeyboard(element) {
       element.addEventListener('keydown', (event) => {
@@ -8023,7 +9346,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         bridge: true,
         policy: true,
       };
-      const profiles = loadedConfig.profiles || buildProfilesConfig('builtin:storage:shared-d1');
+      const profiles = loadedConfig.profiles || buildProfilesConfig();
       const features = {
         queue: { enabled: loadedConfig.features?.queue?.enabled === true },
         r2: { enabled: loadedConfig.features?.r2?.enabled !== false },
@@ -8060,8 +9383,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         document.getElementById('primary-tenant').value = config.tenant?.primaryTenant || '';
       }
       updateBaseDomainUI();
-      setSelectedStorageProfileId(config.profiles?.defaults?.storage);
-      setTenantD1PreallocatedSlots(config.tenantD1?.preallocatedSlots || 3);
+      setAutomaticProvisioningEnabled(config.controlPlane?.automaticProvisioning === true);
       document.getElementById('comp-login-ui').checked = config.components.loginUi !== false;
       document.getElementById('comp-admin-ui').checked = config.components.adminUi !== false;
       document.getElementById('feature-queue-enabled').checked =
@@ -8120,9 +9442,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         return;
       }
 
+      const message = issue.kind === 'baseDomainDepth'
+        ? t('domain.baseDomainDepthError', { hostname: issue.hostname })
+        : t('domain.uiDomainDepthError', {
+            label: issue.field === 'loginUiDomain'
+              ? t('web.domain.loginUi')
+              : t('web.domain.adminUi'),
+            hostname: issue.hostname,
+          });
       el.textContent = issue.suggestion
-        ? issue.message + ' Suggested host: ' + issue.suggestion
-        : issue.message;
+        ? message + ' ' + t('domain.suggestedHost', { hostname: issue.suggestion })
+        : message;
       el.style.display = 'block';
     }
 
@@ -8577,6 +9907,18 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           status.textContent = '';
         }
       });
+      const description = document.getElementById('user-id-format-description');
+      const example = document.getElementById('user-id-format-example-value');
+      const descriptionKey = selected === 'uuid' ? 'userId.uuidDesc' : 'userId.nanoidDesc';
+      if (description) {
+        description.setAttribute('data-i18n', descriptionKey);
+        description.textContent = t(descriptionKey);
+      }
+      if (example) {
+        example.textContent = selected === 'uuid'
+          ? '550e8400-e29b-41d4-a716-446655440000'
+          : 'V1StGXR8_Z5jdHi6B-myT';
+      }
     }
 
     // Attach event listeners to all inputs
@@ -9035,6 +10377,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         configureBtn.disabled = false;
       }
 
+      // The step 4 header already shows the chosen environment. Store the validated name before
+      // changing steps so the generic placeholder is never flashed while the full config is built.
+      config = { ...(config || {}), env };
       setStep(4);
       showSection('domain');
       updateBaseDomainUI();
@@ -9109,6 +10454,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         tenant: {
           name: tenantName,
           displayName: tenantDisplayName,
+          placementPolicy: 'tenant_exclusive',
           multiTenant: multiTenantEnabled,
           baseDomain: multiTenantEnabled ? baseDomain : undefined,
           nakedDomain: nakedDomain,
@@ -9130,7 +10476,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           r2: { enabled: true },
           email: { provider: 'none' },
         },
-        profiles: buildProfilesConfig('builtin:storage:shared-d1'),
+        profiles: buildProfilesConfig(),
+        controlPlane: { automaticProvisioning: true },
         zoneId: domainZoneId || null,
         customDomainBinding: baseDomain
           ? (document.getElementById('custom-domain-binding')?.checked ?? false)
@@ -9178,7 +10525,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
     document.getElementById('btn-continue-database').addEventListener('click', () => {
       // Get selected values
-      const storageProfileId = getSelectedStorageProfileId();
       const coreLocation = document.querySelector('input[name="db-core-location"]:checked').value;
       const piiLocation = document.querySelector('input[name="db-pii-location"]:checked').value;
 
@@ -9195,22 +10541,18 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         core: parseDbLocation(coreLocation),
         pii: parseDbLocation(piiLocation),
       };
-      config.tenantD1 = {
-        ...(config.tenantD1 || {}),
-        preallocatedSlots: getTenantD1PreallocatedSlots(),
-      };
       config.profiles = {
-        ...(config.profiles || buildProfilesConfig(storageProfileId)),
+        ...(config.profiles || buildProfilesConfig()),
         defaults: {
           ...((config.profiles && config.profiles.defaults) || {}),
-          storage: storageProfileId,
           audit: config.profiles?.defaults?.audit || 'builtin:audit:standard',
           residency: config.profiles?.defaults?.residency || 'builtin:residency:default',
         },
         registry: config.profiles?.registry || { backend: 'kv' },
         references: config.profiles?.references || { hyperdrive: {} },
-        seed: config.profiles?.seed || { storage: [], audit: [], residency: [] },
+        seed: config.profiles?.seed || { audit: [], residency: [] },
       };
+      config.controlPlane = { automaticProvisioning: automaticProvisioningEnabled() };
 
       // Proceed to email configuration
       setStep(6);
@@ -9428,17 +10770,21 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       btnSaveConfig.classList.remove('hidden');
       btnGotoDeploy.classList.remove('hidden');
       btnGotoDeploy.disabled = true;
-      status.textContent = t('web.provision.runningTasks', { current: 0, total: 5 });
+      const totalProvisionTasks = 8;
+      status.textContent = t('web.provision.runningTasks', {
+        current: 0,
+        total: totalProvisionTasks,
+      });
       status.className = '';
       progressUI.classList.remove('hidden');
+      dismissSetupProgressPreludes(['provision-preflight-row']);
       setLogVisibility('provision-log-toggle', 'provision-log', true);
       resourcePreview.classList.remove('hidden');
       keysSavedInfo.classList.add('hidden');
       output.textContent = '';
 
-      const totalResources = 8; // D1 Core, D1 PII, KV Settings, KV Cache, KV Tokens, R2 (optional), Queues (optional), Keys
-      const provisionProgress = createProvisionProgressTracker(totalResources);
-      updateProgressUI('provision', 0, totalResources, t('web.status.initializing'));
+      const provisionProgress = createProvisionProgressTracker(totalProvisionTasks);
+      updateProgressUI('provision', 0, totalProvisionTasks, t('web.status.initializing'));
 
       // Start polling for progress
       let lastProgressLength = 0;
@@ -9461,25 +10807,22 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }, 500);
 
       try {
-        // Check if keys already exist for this environment
-        const keysCheck = await api('/keys/check/' + config.env);
-        if (keysCheck.exists) {
-          output.textContent += 'Warning: Keys already exist for environment "' + config.env + '"\\n';
-          output.textContent += '   Existing keys will be overwritten.\\n';
-          output.textContent += '\\n';
-          scrollToBottom(log);
-        }
-
         // Generate keys
-        output.textContent += 'Generating cryptographic keys...\\n';
+        output.textContent += t('keys.generating') + '\\n';
         scrollToBottom(log);
         const keyResult = await api('/keys/generate', {
           method: 'POST',
           body: { keyId: config.env + '-key-' + Date.now(), env: config.env },
         });
+        if (!keyResult.success) {
+          throw new Error(apiErrorMessages(keyResult).join('; '));
+        }
         output.textContent += '  ✓ RSA key pair generated\\n';
         output.textContent += '  ✓ Encryption keys generated\\n';
         output.textContent += '  ✓ Admin secrets generated\\n';
+        if (keyResult.reusedExistingKeys === true) {
+          output.textContent += '  ✓ Existing environment keys reused\\n';
+        }
         output.textContent += '\\n';
         provisionProgress.handle('Admin secrets generated');
         scrollToBottom(log);
@@ -9504,7 +10847,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             databaseConfig: config.database,
             createQueues: config.features?.queue?.enabled === true,
             createR2: true,
-            storageProfileId: config.profiles?.defaults?.storage || 'builtin:storage:shared-d1',
+            automaticProvisioning: config.controlPlane?.automaticProvisioning === true,
           },
         });
 
@@ -9552,12 +10895,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
 
         output.textContent += '\\nError: ' + error.message + '\\n';
+        markProgressBarError('provision');
         scrollToBottom(log);
         status.textContent = t('web.status.error');
         status.className = '';
         btn.classList.remove('hidden');
         btn.disabled = false;
-        btnGotoDeploy.disabled = false;
+        btnGotoDeploy.disabled = !provisioningCompleted;
         resourcePreview.classList.remove('hidden');
       }
     });
@@ -9584,6 +10928,201 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       await copyTextWithFeedback(document.getElementById('keys-copy-btn'), keysPath);
     });
 
+    let controlBootstrapOwnership = null;
+    document
+      .getElementById('btn-create-control-bootstrap-token')
+      .addEventListener('click', async () => {
+        const status = document.getElementById('control-bootstrap-token-status');
+        const dashboardWindow = window.open('about:blank', '_blank');
+        if (dashboardWindow) dashboardWindow.opener = null;
+        const result = await api('/cloudflare/control-token-template', {
+          method: 'POST',
+          body: { env: config.env },
+        });
+        if (!result.success || !result.url || !result.expiresOnDate) {
+          dashboardWindow?.close();
+          status.textContent = result.error || t('web.control.tokenLinkFailed');
+          return;
+        }
+        resumeControlBootstrapReady = false;
+        controlBootstrapOwnership = result.ownership;
+        if (dashboardWindow) dashboardWindow.location.replace(result.url);
+        status.textContent = dashboardWindow
+          ? t('web.deploy.bootstrapTokenCreateStatus', { endDate: result.expiresOnDate })
+          : t('web.deploy.bootstrapPopupBlocked');
+      });
+
+    document
+      .getElementById('btn-env-create-control-bootstrap-token')
+      .addEventListener('click', async () => {
+        if (!selectedEnvForDetail) return;
+        const status = document.getElementById('env-control-automatic-message');
+        const dashboardWindow = window.open('about:blank', '_blank');
+        if (dashboardWindow) dashboardWindow.opener = null;
+        const result = await api('/cloudflare/control-token-template', {
+          method: 'POST',
+          body: { env: selectedEnvForDetail.env },
+        });
+        if (!result.success || !result.url || !result.expiresOnDate) {
+          dashboardWindow?.close();
+          status.textContent = result.error || t('web.control.tokenLinkFailed');
+          return;
+        }
+        envControlBootstrapOwnership = result.ownership;
+        if (dashboardWindow) dashboardWindow.location.replace(result.url);
+        status.textContent = dashboardWindow
+          ? t('web.envDetail.enterOneTimeTokenThenEnable', { endDate: result.expiresOnDate })
+          : t('web.envDetail.bootstrapPopupBlocked');
+      });
+
+    document
+      .getElementById('btn-env-enable-control-automatic')
+      .addEventListener('click', async () => {
+        if (!selectedEnvForDetail) return;
+        const envName = selectedEnvForDetail.env;
+        const input = document.getElementById('env-control-bootstrap-token');
+        const button = document.getElementById('btn-env-enable-control-automatic');
+        const status = document.getElementById('env-control-automatic-message');
+        let bootstrapToken = input.value.trim();
+        let bootstrapSubmitted = false;
+        const recoveringCutover = envControlBootstrapPhase !== 'none';
+        if (!bootstrapToken && !recoveringCutover) {
+          status.textContent = t('web.envDetail.enterOneTimeTokenFirst');
+          input.focus();
+          return;
+        }
+        button.disabled = true;
+        status.textContent = t('web.envDetail.preparingControlAuthority');
+        try {
+          if (!recoveringCutover) {
+            const prepared = await api('/control/automatic-provisioning/prepare', {
+              method: 'POST',
+              body: {
+                env: envName,
+                ...(envControlBootstrapOwnership
+                  ? { ownership: envControlBootstrapOwnership }
+                  : {}),
+              },
+            });
+            if (!prepared.success) throw new Error(prepared.error || t('web.control.preparationFailed'));
+            status.textContent = t('web.envDetail.deployingControlWorker');
+            const deployed = await api('/deploy/component/ar-control', {
+              method: 'POST',
+              body: {
+                env: envName,
+                dryRun: false,
+                skipBuild: false,
+                initialControlBootstrap: true,
+              },
+            });
+            if (!deployed.success) throw new Error(deployed.error || t('web.control.deploymentFailed'));
+          }
+          status.textContent = t('web.envDetail.registeringScopedCredentials');
+          bootstrapSubmitted = true;
+          input.value = '';
+          const completed = await api('/control/automatic-provisioning/complete', {
+            method: 'POST',
+            body: {
+              env: envName,
+              ...(bootstrapToken ? { bootstrapToken } : {}),
+              ...(envControlBootstrapOwnership
+                ? { ownership: envControlBootstrapOwnership }
+                : {}),
+            },
+          });
+          if (!completed.success) {
+            const completionError = new Error(
+              completed.error || t('web.control.credentialBootstrapFailed')
+            );
+            completionError.cleanupRequired = completed.cleanupRequired === true;
+            completionError.bootstrapRetainedForRetry =
+              completed.bootstrapRetainedForRetry === true;
+            completionError.cutoverPending = completed.cutoverPending === true;
+            completionError.recoveryTokenRequired = completed.recoveryTokenRequired === true;
+            throw completionError;
+          }
+          envControlBootstrapOwnership = null;
+          await loadEnvControlAutomaticProvisioning(envName);
+        } catch (error) {
+          if (!bootstrapSubmitted && bootstrapToken) {
+            input.value = bootstrapToken;
+            status.textContent =
+              (error.message || t('web.control.automaticProvisioningPaused')) +
+              ' ' +
+              t('web.envDetail.bootstrapNotSubmittedForRetry');
+            input.focus();
+            return;
+          }
+          if (error.recoveryTokenRequired === true) {
+            envControlBootstrapOwnership = null;
+            document
+              .getElementById('btn-env-create-control-bootstrap-token')
+              .classList.remove('hidden');
+            status.textContent = t('web.control.revocationRecoveryRequired', {
+              error: error.message || t('web.control.revocationInterrupted'),
+            });
+            input.focus();
+            return;
+          }
+          if (recoveringCutover || error.cutoverPending === true) {
+            status.textContent = t('web.control.cutoverResumeRequired', {
+              error: error.message || t('web.control.cutoverPaused'),
+            });
+            return;
+          }
+          if (error.bootstrapRetainedForRetry === true) {
+            status.textContent =
+              (error.message || t('web.control.automaticProvisioningPaused')) +
+              ' ' +
+              t('web.envDetail.bootstrapRetainedForRetry');
+            input.focus();
+            return;
+          }
+          let cleanupConfirmed = error.cleanupRequired === false;
+          if (!cleanupConfirmed) {
+            try {
+              const cleanup = await api('/control/automatic-provisioning/cleanup-bootstrap', {
+                method: 'POST',
+                body: {
+                  env: envName,
+                  bootstrapToken,
+                  ...(envControlBootstrapOwnership
+                    ? { ownership: envControlBootstrapOwnership }
+                    : {}),
+                },
+              });
+              cleanupConfirmed = cleanup.success === true && cleanup.revoked === true;
+            } catch {
+              cleanupConfirmed = false;
+            }
+          }
+          const manualCleanup = error.cleanupRequired === true || !cleanupConfirmed;
+          let pendingCanceled = false;
+          if (!manualCleanup) {
+            try {
+              const canceled = await api('/control/automatic-provisioning/cancel-pending', {
+                method: 'POST',
+                body: { env: envName },
+              });
+              pendingCanceled = canceled.success === true && canceled.enabled === false;
+            } catch {
+              pendingCanceled = false;
+            }
+          }
+          status.textContent = manualCleanup
+            ? (error.message || t('web.control.automaticProvisioningFailed')) +
+              ' ' + t('web.envDetail.revokeTokensBeforeRetry')
+            : !pendingCanceled
+              ? (error.message || t('web.control.automaticProvisioningFailed')) +
+                ' ' + t('web.envDetail.bootstrapRevokedPendingReset')
+              : (error.message || t('web.control.automaticProvisioningFailed')) +
+                ' ' + t('web.envDetail.bootstrapRevokedDisabled');
+        } finally {
+          bootstrapToken = '';
+          button.disabled = false;
+        }
+      });
+
     // Deploy
     document.getElementById('btn-deploy').addEventListener('click', async () => {
       const btn = document.getElementById('btn-deploy');
@@ -9595,23 +11134,56 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const output = document.getElementById('deploy-output');
       const progressUI = document.getElementById('deploy-progress-ui');
       const readyText = document.getElementById('deploy-ready-text');
+      const bootstrapTokenInput = document.getElementById('control-bootstrap-token');
+      const bootstrapToken = bootstrapTokenInput.value.trim();
+
+      if (
+        automaticProvisioningEnabled() &&
+        !resumeControlBootstrapReady &&
+        (!bootstrapToken || !controlBootstrapOwnership)
+      ) {
+        document.getElementById('control-bootstrap-token-status').textContent =
+          t('web.deploy.bootstrapTokenRequired');
+        // A wildcard-DNS preflight can return before the one-time Control token is consumed.
+        // Keep the credential step reachable on retry instead of leaving the operator on a
+        // re-check button that silently returns because its hidden prerequisite is missing.
+        restoreSetupProgressPreludes([
+          'control-token-bootstrap-row',
+          'deploy-manual-wildcard-warning',
+        ]);
+        syncAutomaticProvisioningUi();
+        bootstrapTokenInput.focus();
+        return;
+      }
 
       btn.disabled = true;
       btn.classList.add('hidden');
       btnBack.classList.add('hidden');
-      btnCancel.classList.remove('hidden');
-      btnGotoComplete.classList.remove('hidden');
       btnGotoComplete.disabled = true;
-      status.innerHTML = escapeHtml(t('web.envDetail.workers')) + ' <b>0</b> / 14';
+      deployedWorkerNames.clear();
+      updateDeployedWorkerCount([]);
       status.className = '';
       readyText.classList.add('hidden');
       progressUI.classList.remove('hidden');
-      setLogVisibility('deploy-log-toggle', 'deploy-log', true);
+      dismissSetupProgressPreludes([
+        'control-token-bootstrap-row',
+        'deploy-manual-wildcard-warning',
+      ]);
+      setLogVisibility('deploy-log-toggle', 'deploy-log', false);
       output.textContent = t('web.status.startingDeploy') + '\\n\\n';
 
-      const deployProgress = createDeployProgressTracker();
       let pollInterval = null;
+      let lastProgressLength = 0;
+      lastRenderedDeployStep = 1;
       updateProgressUI('deploy', 0, 100, t('web.status.initializing'));
+      renderDeploymentSnapshot({
+        operation: 'deploy',
+        phase: 'preparation',
+        step: 1,
+        totalSteps: 10,
+        status: 'running',
+        message: t('web.status.startingDeploy'),
+      });
 
       try {
         // Generate wrangler configs first
@@ -9629,7 +11201,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         scrollToBottom(log);
 
         // Poll for status updates
-        let lastProgressLength = 0;
         pollInterval = setInterval(async () => {
           try {
             const statusResult = await api('/deploy/status');
@@ -9641,10 +11212,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
               const newMessages = progress.slice(lastProgressLength);
               newMessages.forEach(msg => {
                 output.textContent += formatProgressMessageForDisplay(msg) + '\\n';
-                deployProgress.handle(msg);
               });
               lastProgressLength = progress.length;
               scrollToBottom(log);
+            }
+            updateDeployedWorkerCount(progress);
+            if (statusResult.deploymentProgress) {
+              renderDeploymentSnapshot(statusResult.deploymentProgress);
             }
           } catch (e) {
             // Ignore transient polling errors while deployment is running.
@@ -9656,6 +11230,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           body: {
             env: config.env,
             dryRun: false,
+            ...(resumeWorkerOwnershipRecovery ? { recoverWorkerOwnership: true } : {}),
+            ...(automaticProvisioningEnabled() && !resumeControlBootstrapReady
+              ? {
+                  bootstrapToken,
+                  tokenOwnership: controlBootstrapOwnership,
+                }
+              : {}),
           },
         });
 
@@ -9665,8 +11246,16 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         }
 
         if (result.success) {
+          bootstrapTokenInput.value = '';
           // Final progress update
-          deployProgress.complete('✓ Deployment complete!');
+          renderDeploymentSnapshot({
+            operation: 'deploy',
+            phase: 'ui',
+            step: 10,
+            totalSteps: 10,
+            status: 'complete',
+            message: t('web.deploy.phase.complete'),
+          });
           output.textContent += '\\n✓ Deployment complete!\\n';
           if (result.logPath) {
             output.textContent += 'Log: ' + result.logPath + '\\n';
@@ -9749,40 +11338,127 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         } else if (result.manualAction?.kind === 'wildcard-dns' && result.manualAction.baseDomain) {
           config.manualAction = result.manualAction;
           renderDeployManualWildcardWarning();
+          // DNS validation happens before Control token consumption. Preserve the one-time token
+          // in this page and keep both prerequisites visible so a DNS retry is a single explicit
+          // action rather than an invisible-token failure.
+          restoreSetupProgressPreludes([
+            'control-token-bootstrap-row',
+            'deploy-manual-wildcard-warning',
+          ]);
+          syncAutomaticProvisioningUi();
           output.textContent += '\\n' + buildWildcardDnsManualMessage(result.manualAction.baseDomain) + '\\n';
           if (result.logPath) {
             output.textContent += '\\nLog: ' + result.logPath + '\\n';
           }
           scrollToBottom(log);
-          status.textContent = t('web.status.error');
+          status.textContent = t('web.deploy.manualWildcardTitle');
           status.className = '';
           btn.disabled = false;
-          btn.classList.remove('hidden');
+          btn.classList.add('hidden');
           btnBack.classList.remove('hidden');
           btnCancel.classList.add('hidden');
           btnGotoComplete.classList.add('hidden');
+          renderDeploymentSnapshot({
+            operation: 'deploy',
+            phase: 'routing',
+            step: 8,
+            totalSteps: 10,
+            status: 'warning',
+            message: t('web.deploy.manualWildcardTitle'),
+            terminal: true,
+          });
           return;
         } else {
           if (result.logPath) {
             output.textContent += '\\nLog: ' + result.logPath + '\\n';
           }
-          throw new Error(result.error || t('web.status.error'));
+          const deploymentError = new Error(result.error || t('web.status.error'));
+          deploymentError.cleanupRequired = result.cleanupRequired === true;
+          deploymentError.bootstrapRetainedForRetry =
+            result.bootstrapRetainedForRetry === true;
+          deploymentError.recoveryTokenRequired = result.recoveryTokenRequired === true;
+          throw deploymentError;
         }
       } catch (error) {
+        bootstrapTokenInput.value = '';
         if (pollInterval) {
           clearInterval(pollInterval);
           pollInterval = null;
         }
         output.textContent += '\\n✗ Error: ' + error.message + '\\n';
-        scrollToBottom(log);
+        if (error.bootstrapRetainedForRetry === true) {
+          output.textContent +=
+            t('web.envDetail.bootstrapRetainedForRetry') + '\\n';
+        }
+        if (error.recoveryTokenRequired === true) {
+          resumeControlBootstrapReady = false;
+          controlBootstrapOwnership = null;
+          document.getElementById('control-bootstrap-token-status').textContent =
+            'Create and enter a new one-time token to verify the interrupted revocation, then retry deployment.';
+        }
         status.textContent = t('web.status.error');
         status.className = '';
+        let renderedServerSnapshot = false;
+        try {
+          const finalStatus = await api('/deploy/status');
+          const finalProgress = finalStatus.progress || [];
+          if (finalProgress.length < lastProgressLength) lastProgressLength = 0;
+          if (finalProgress.length > lastProgressLength) {
+            finalProgress.slice(lastProgressLength).forEach((message) => {
+              output.textContent += formatProgressMessageForDisplay(message) + '\\n';
+            });
+            lastProgressLength = finalProgress.length;
+          }
+          if (finalStatus.deploymentProgress) {
+            renderDeploymentSnapshot(finalStatus.deploymentProgress);
+            renderedServerSnapshot = true;
+          }
+        } catch {
+          // Fall back to a preparation-phase error when final server state is unavailable.
+        }
+        if (!renderedServerSnapshot) {
+          renderDeploymentSnapshot({
+            operation: 'deploy',
+            phase: 'preparation',
+            step: 1,
+            totalSteps: 10,
+            status: 'error',
+            message: error.message,
+          });
+        }
         btn.disabled = false;
-        btn.classList.remove('hidden');
+        let recoveryStatus = null;
+        try {
+          recoveryStatus = await api('/deploy/recovery/' + encodeURIComponent(config.env));
+        } catch {
+          // An unverified checkpoint must never enable a blind retry.
+        }
+        if (recoveryStatus?.success === true && recoveryStatus.canResume === true) {
+          btn.textContent = t('web.envDetail.initialDeployRecoveryAction');
+          output.textContent += '\\n' + describeInitialDeploymentRecovery(recoveryStatus) + '\\n';
+        } else {
+          output.textContent +=
+            '\\n' +
+            (recoveryStatus
+              ? describeInitialDeploymentRecovery(recoveryStatus)
+              : t('web.envDetail.initialDeployRecoveryBlocked')) +
+            '\\n';
+          btn.classList.add('hidden');
+        }
+        scrollToBottom(log);
+        if (recoveryStatus?.success === true && recoveryStatus.canResume === true) {
+          btn.classList.remove('hidden');
+        }
         btnBack.classList.remove('hidden');
         btnCancel.classList.add('hidden');
         btnGotoComplete.classList.add('hidden');
       }
+    });
+
+    document.getElementById('deploy-manual-wildcard-recheck').addEventListener('click', () => {
+      const deployButton = document.getElementById('btn-deploy');
+      if (deployButton.disabled) return;
+      deployButton.click();
     });
 
     function buildCompleteUrls(env, config) {
@@ -9963,11 +11639,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     function getResourceNames(env) {
       const kvPrefix = env.toUpperCase();
       return {
-        d1: [
-          env + '-authrim-core-db',
-          env + '-authrim-pii-db',
-          env + '-authrim-admin-db'
-        ],
+        d1: ${JSON.stringify(D1_DATABASES.map((database) => database.dbType))}.map(
+          dbType => env + '-authrim-' + dbType
+        ),
         kv: [
           kvPrefix + '-SETTINGS',
           kvPrefix + '-CLIENTS_CACHE',
@@ -10018,21 +11692,23 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const coreRegion = config.database?.core || { location: 'apac', jurisdiction: 'none' };
       const piiRegion = config.database?.pii || { location: 'apac', jurisdiction: 'none' };
 
-      // D1 databases with region info
-      const coreDbName = env + '-authrim-core-db';
-      const piiDbName = env + '-authrim-pii-db';
-      const adminDbName = env + '-authrim-admin-db';
-      // admin-db uses the same region as pii-db (both contain sensitive data)
-      const adminRegion = piiRegion;
-
-      appendDatabasePreviewItem(d1List, coreDbName, getRegionLabel(coreRegion.location, coreRegion.jurisdiction));
-      appendDatabasePreviewItem(d1List, piiDbName, getRegionLabel(piiRegion.location, piiRegion.jurisdiction));
-      appendDatabasePreviewItem(d1List, adminDbName, getRegionLabel(adminRegion.location, adminRegion.jurisdiction));
-      if (d1Count) d1Count.textContent = '3';
-      if (config.profiles?.defaults?.storage === 'builtin:storage:tenant-d1') {
-        const slots = config.tenantD1?.preallocatedSlots || 3;
-        appendPreviewRow(d1List, 'Preallocated tenant D1 slots: ' + slots, (slots * 2) + ' D1');
-      }
+      // Fixed D1 databases use the same canonical inventory as provisioning.
+      const d1LocationProfiles = ${JSON.stringify(
+        Object.fromEntries(
+          D1_DATABASES.map((database) => [database.dbType, database.locationProfile])
+        )
+      )};
+      resources.d1.forEach(dbName => {
+        const dbType = dbName.slice((env + '-authrim-').length);
+        const region = d1LocationProfiles[dbType] === 'pii' ? piiRegion : coreRegion;
+        appendDatabasePreviewItem(
+          d1List,
+          dbName,
+          getRegionLabel(region.location, region.jurisdiction)
+        );
+      });
+      if (d1Count) d1Count.textContent = String(resources.d1.length + 3);
+      appendPreviewRow(d1List, 'Control Plane bootstrap tenant shards', '3 D1');
 
       for (let i = 0; i < resources.kv.length; i += 2) {
         appendPreviewPair(kvList, resources.kv[i], resources.kv[i + 1] || '');
@@ -10192,7 +11868,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           core: { location: 'auto', jurisdiction: 'none' },
           pii: { location: 'auto', jurisdiction: 'none' },
         },
-        profiles: config.profiles || buildProfilesConfig('builtin:storage:shared-d1'),
+        profiles: config.profiles || buildProfilesConfig(),
         features: {
           queue: {
             enabled: config.features?.queue?.enabled === true,
@@ -10278,43 +11954,63 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       showSection('envList');
     });
 
+    function renderEnvironmentListSummary(count, scanState = environmentScanState) {
+      const summary = document.getElementById('env-list-progress-summary');
+      if (!summary) return;
+
+      summary.replaceChildren();
+      if (scanState === 'scanning') {
+        summary.textContent = t('web.env.scanningEnvironments');
+        summary.setAttribute('aria-busy', 'true');
+        return;
+      }
+      summary.removeAttribute('aria-busy');
+      if (scanState === 'error') {
+        summary.textContent = t('web.status.error');
+        return;
+      }
+
+      const detectedLabel = document.createElement('span');
+      detectedLabel.textContent = t('web.env.detected');
+      const countElement = document.createElement('b');
+      countElement.id = 'env-list-count';
+      countElement.textContent = String(Math.max(0, Number(count) || 0));
+      const environmentLabel = document.createElement('span');
+      environmentLabel.textContent = t('web.env.environments');
+      summary.append(detectedLabel, document.createTextNode(' '), countElement);
+      summary.append(document.createTextNode(' '), environmentLabel);
+    }
+
     // Load environments
     async function loadEnvironments() {
+      const scanGeneration = ++environmentScanGeneration;
       const status = document.getElementById('env-list-status');
       const loading = document.getElementById('env-list-loading');
       const content = document.getElementById('env-list-content');
       const output = document.getElementById('env-scan-output');
       const noEnvsMessage = document.getElementById('no-envs-message');
+      const refreshButton = document.getElementById('btn-refresh-env-list');
 
       status.textContent = t('web.status.scanning');
       status.className = 'env-scan-status status-running';
       loading.classList.remove('hidden');
       content.classList.add('hidden');
       output.textContent = '';
-
-      // Poll for progress
-      let lastProgressLength = 0;
-      const pollInterval = setInterval(async () => {
-        try {
-          const statusResult = await api('/deploy/status');
-          if (statusResult.progress && statusResult.progress.length > lastProgressLength) {
-            const newMessages = statusResult.progress.slice(lastProgressLength);
-            newMessages.forEach(msg => {
-              output.textContent += formatProgressMessageForDisplay(msg) + '\\n';
-            });
-            lastProgressLength = statusResult.progress.length;
-          }
-        } catch (e) {}
-      }, 500);
+      environmentScanState = 'scanning';
+      renderEnvironmentListSummary(null, environmentScanState);
+      if (refreshButton) refreshButton.disabled = true;
 
       try {
         const result = await api('/environments');
-        clearInterval(pollInterval);
+        if (scanGeneration !== environmentScanGeneration) return;
 
         if (result.success) {
+          if (Array.isArray(result.progress)) {
+            output.textContent = result.progress.map(formatProgressMessageForDisplay).join('\\n');
+          }
           detectedEnvironments = result.environments || [];
-          const countEl = document.getElementById('env-list-count');
-          if (countEl) countEl.textContent = String(detectedEnvironments.length);
+          environmentScanState = 'complete';
+          renderEnvironmentListSummary(detectedEnvironments.length, environmentScanState);
 
           status.textContent = t('web.status.found', { count: detectedEnvironments.length });
           status.className = 'env-scan-status status-success';
@@ -10326,10 +12022,16 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           throw new Error(result.error);
         }
       } catch (error) {
-        clearInterval(pollInterval);
+        if (scanGeneration !== environmentScanGeneration) return;
+        environmentScanState = 'error';
+        renderEnvironmentListSummary(null, environmentScanState);
         status.textContent = t('web.status.error');
         status.className = 'env-scan-status status-error';
         output.textContent += '\\nError: ' + error.message;
+      } finally {
+        if (scanGeneration === environmentScanGeneration && refreshButton) {
+          refreshButton.disabled = false;
+        }
       }
     }
 
@@ -10342,13 +12044,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       return env.env + '-ar-router.workers.dev';
     }
 
-    function getEnvironmentModePreview(env) {
-      const hasLogin = (env.workers || []).some((worker) => worker?.name === env.env + '-ar-login-ui');
-      const hasAdmin = (env.workers || []).some((worker) => worker?.name === env.env + '-ar-admin-ui');
-      if (!hasLogin && !hasAdmin) {
-        return t('web.env.modeSingle');
-      }
-      return t('web.env.modeMulti');
+    function getEnvironmentModePreview(env, config = null) {
+      const multiTenant = config?.tenant?.multiTenant ?? env?.multiTenant;
+      return multiTenant === true ? t('web.env.modeMulti') : t('web.env.modeSingle');
     }
 
     function appendEnvCardKv(body, key, value, className, rowClassName) {
@@ -10383,7 +12081,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     async function updateEnvCardIssuerFromConfig(env, generation) {
       const card = document.getElementById('env-card-' + env.env.replace(/[^a-zA-Z0-9-]/g, '_'));
       const issuerValue = card?.querySelector('.e-kv-issuer .v');
-      if (!issuerValue) return;
+      const modeValue = card?.querySelector('.e-kv-mode .v');
+      if (!issuerValue && !modeValue) return;
 
       try {
         const configResponse = await api('/config?env=' + encodeURIComponent(env.env));
@@ -10391,8 +12090,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         if (!configResponse.exists || !configResponse.config) return;
 
         const issuer = stripProtocol(resolveEnvDetailIssuerUrl(env, configResponse.config));
-        if (issuer) {
+        if (issuer && issuerValue) {
           issuerValue.textContent = issuer;
+        }
+        if (modeValue) {
+          modeValue.textContent = getEnvironmentModePreview(env, configResponse.config);
         }
       } catch (error) {
         console.warn('Failed to load config issuer for ' + env.env + ':', error);
@@ -10430,12 +12132,27 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         name.textContent = env.env;
         head.appendChild(name);
 
+        if (env.release?.canUpdate) {
+          const releaseBadge = document.createElement('span');
+          releaseBadge.className = 'env-release-badge';
+          releaseBadge.textContent = t('web.env.updateBadge', {
+            version: env.release.targetVersion,
+          });
+          head.appendChild(releaseBadge);
+        }
+
         card.appendChild(head);
 
         const body = document.createElement('div');
         body.className = 'e-body';
         appendEnvCardIssuer(body, getEnvironmentIssuerPreview(env));
-        appendEnvCardKv(body, t('web.env.cardMode'), getEnvironmentModePreview(env));
+        appendEnvCardKv(
+          body,
+          t('web.env.cardMode'),
+          getEnvironmentModePreview(env),
+          undefined,
+          'e-kv-mode'
+        );
         appendEnvCardKv(body, 'Workers', String(env.workers.length));
         appendEnvCardKv(body, 'D1 / KV', env.d1.length + ' / ' + env.kv.length);
         appendEnvCardKv(
@@ -10505,6 +12222,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     function showEnvDetail(env) {
       selectedEnvForDetail = env;
       selectedEnvDetailConfig = null;
+      selectedEnvRecoveryStatus = null;
+      renderEnvDetailDeploymentStatus(null);
+      resetReleaseUpdateCard();
 
       const totalResources =
         (env.workers?.length || 0) +
@@ -10527,8 +12247,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         });
       }
       renderEnvDetailUrls(env);
+      loadEnvControlAutomaticProvisioning(env.env);
+      loadInitialDeploymentRecovery(env.env);
       loadEnvEmailStatus(env.env);
       loadServiceSiteStatus(env.env);
+      loadReleaseUpdateStatus(env.env);
       document.getElementById('env-email-progress').classList.add('hidden');
       document.getElementById('env-email-log').textContent = '';
       document.getElementById('env-service-site-progress').classList.add('hidden');
@@ -10573,6 +12296,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       adminSetupSection.classList.add('hidden');
       resultDiv.classList.add('hidden');
       btn.disabled = false;
+      btn.classList.remove('hidden');
+      adminSetupSection.querySelector('p')?.classList.remove('hidden');
       btn.textContent =
         t('web.envDetail.startPasskey');
 
@@ -10584,12 +12309,9 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       if (configKv && configKv.id) {
         // Check admin setup status asynchronously
-        checkAndShowAdminSetup(configKv.id);
+        checkAndShowAdminSetup(configKv.id, env.env);
       }
 
-      document.getElementById('env-tenant-d1-progress').classList.add('hidden');
-      document.getElementById('env-tenant-d1-log').textContent = '';
-      loadTenantD1PoolStatus(env.env);
       document.getElementById('env-r2-provision-progress').classList.add('hidden');
       document.getElementById('env-r2-provision-log').textContent = '';
       document.getElementById('btn-provision-r2-buckets').disabled = false;
@@ -10605,6 +12327,451 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
       // Load details asynchronously
       loadResourceDetails(env);
+    }
+
+    function resetReleaseUpdateCard() {
+      const card = document.getElementById('env-release-update');
+      if (!card) return;
+      card.classList.add('hidden');
+      card.dataset.state = '';
+      document.getElementById('release-update-progress')?.classList.add('hidden');
+      const log = document.getElementById('release-update-log');
+      if (log) log.textContent = '';
+      const button = document.getElementById('btn-start-release-update');
+      const databaseOnlyButton = document.getElementById('btn-start-database-only-update');
+      if (button) {
+        button.disabled = false;
+        button.classList.remove('hidden');
+        button.setAttribute('aria-busy', 'false');
+        button.querySelector('.inline-action-spinner')?.classList.add('hidden');
+      }
+      if (databaseOnlyButton) {
+        databaseOnlyButton.disabled = false;
+        databaseOnlyButton.classList.remove('hidden');
+      }
+      const updates = document.getElementById('detail-stat-updates');
+      if (updates) updates.textContent = '0';
+    }
+
+    function renderReleaseUpdateStatus(release) {
+      const card = document.getElementById('env-release-update');
+      const title = document.getElementById('release-update-title');
+      const message = document.getElementById('release-update-message');
+      const button = document.getElementById('btn-start-release-update');
+      const databaseOnlyButton = document.getElementById('btn-start-database-only-update');
+      const label = button?.querySelector('[data-release-update-label]');
+      if (!card || !release) return;
+
+      const visibleStatuses = [
+        'update_available',
+        'resume_available',
+        'reconciliation_required',
+        'setup_tool_older',
+        'blocked',
+      ];
+      card.classList.toggle('hidden', !visibleStatuses.includes(release.status));
+      document.getElementById('release-current-version').textContent =
+        release.currentVersion ? 'v' + release.currentVersion : 'legacy';
+      document.getElementById('release-target-version').textContent = 'v' + release.targetVersion;
+      const updates = document.getElementById('detail-stat-updates');
+      if (updates) updates.textContent = release.canUpdate ? '1' : '0';
+
+      card.dataset.state = release.canUpdate ? 'available' : 'blocked';
+      button?.classList.toggle('hidden', !release.canUpdate);
+      databaseOnlyButton?.classList.toggle(
+        'hidden',
+        !release.canUpdate || release.databaseOnlyAvailable !== true
+      );
+      if (release.status === 'resume_available') {
+        title.textContent = t('web.envDetail.releaseUpdateResume');
+        message.textContent = t('web.envDetail.releaseUpdateDesc');
+        if (label) label.textContent = t('web.envDetail.releaseUpdateResumeAction');
+      } else if (release.status === 'setup_tool_older') {
+        title.textContent = t('web.envDetail.releaseUpdateBlocked');
+        message.textContent = t('web.envDetail.releaseUpdateOlderTool');
+      } else if (release.status === 'blocked') {
+        title.textContent = t('web.envDetail.releaseUpdateBlocked');
+        message.textContent = t('web.envDetail.releaseUpdateBlocked');
+      } else {
+        title.textContent = t('web.envDetail.releaseUpdateAvailable');
+        message.textContent = t('web.envDetail.releaseUpdateDesc');
+        if (label) label.textContent = t('web.envDetail.releaseUpdateAction');
+      }
+    }
+
+    async function loadReleaseUpdateStatus(envName) {
+      try {
+        const response = await api('/update/release/' + encodeURIComponent(envName));
+        if (selectedEnvForDetail?.env !== envName || response.success !== true) return;
+        renderReleaseUpdateStatus(response.release);
+      } catch (error) {
+        console.warn('Failed to load release update status:', error);
+      }
+    }
+
+    function releaseUpdateStageFromProgress(progress) {
+      const recent = (Array.isArray(progress) ? progress.slice(-20) : [])
+        .join('\\n')
+        .toLowerCase();
+      if (/verif|health|readiness|healthy/u.test(recent)) {
+        return t('web.envDetail.releaseUpdateVerifying');
+      }
+      if (/deploy|worker|wrangler/u.test(recent)) {
+        return t('web.envDetail.releaseUpdateServices');
+      }
+      if (/migrat|schema|database|d1/u.test(recent)) {
+        return t('web.envDetail.releaseUpdateDatabase');
+      }
+      return t('web.envDetail.releaseUpdatePreparing');
+    }
+
+    async function startReleaseUpdate(databaseOnly = false) {
+      if (!selectedEnvForDetail) return;
+      if (databaseOnly && !window.confirm(t('web.envDetail.releaseUpdateDatabaseOnlyConfirm'))) {
+        return;
+      }
+      const envName = selectedEnvForDetail.env;
+      const card = document.getElementById('env-release-update');
+      const button = document.getElementById('btn-start-release-update');
+      const databaseOnlyButton = document.getElementById('btn-start-database-only-update');
+      const spinner = button?.querySelector('.inline-action-spinner');
+      const progressPanel = document.getElementById('release-update-progress');
+      const progressBar = document.getElementById('release-update-progress-bar');
+      const stage = document.getElementById('release-update-stage');
+      const log = document.getElementById('release-update-log');
+      button.disabled = true;
+      if (databaseOnlyButton) databaseOnlyButton.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      spinner?.classList.remove('hidden');
+      progressPanel?.classList.remove('hidden');
+      updateProgressBarVisual(progressBar, 28, 'running', true);
+      card.dataset.state = 'updating';
+      if (stage) stage.textContent = t('web.envDetail.releaseUpdatePreparing');
+      if (log) log.textContent = '';
+
+      let lastProgressLength = 0;
+      const appendProgress = (messages) => {
+        if (!Array.isArray(messages)) return;
+        if (messages.length < lastProgressLength) lastProgressLength = 0;
+        if (messages.length > lastProgressLength && log) {
+          const next = messages
+            .slice(lastProgressLength)
+            .map((message) => formatProgressMessageForDisplay(message))
+            .join('\\n');
+          log.textContent += (log.textContent ? '\\n' : '') + next;
+          log.scrollTop = log.scrollHeight;
+          lastProgressLength = messages.length;
+        }
+        if (stage) stage.textContent = releaseUpdateStageFromProgress(messages);
+      };
+      const poll = async () => {
+        try {
+          const result = await api('/deploy/status');
+          appendProgress(result.progress || []);
+        } catch {
+          // The update request provides the final result.
+        }
+      };
+      const pollTimer = window.setInterval(poll, 1000);
+      window.setTimeout(poll, 250);
+
+      try {
+        const response = await api('/update/release', {
+          method: 'POST',
+          body: JSON.stringify({ env: envName, databaseOnly }),
+        });
+        appendProgress(response.progress || []);
+        if (response.success !== true) {
+          throw new Error(response.error || t('web.envDetail.releaseUpdateFailed'));
+        }
+        if (response.inProgress === true) {
+          card.dataset.state = 'updating';
+          document.getElementById('release-update-title').textContent =
+            t('web.envDetail.releaseUpdateResume');
+          document.getElementById('release-update-message').textContent =
+            t('web.envDetail.releaseUpdateContinuing');
+          if (stage) stage.textContent = t('web.envDetail.releaseUpdateDatabase');
+          button.disabled = false;
+          const continuingLabel = button.querySelector('[data-release-update-label]');
+          if (continuingLabel) continuingLabel.textContent = t('web.envDetail.releaseUpdateResumeAction');
+          return;
+        }
+        card.dataset.state = 'complete';
+        updateProgressBarVisual(progressBar, 100, 'complete');
+        document.getElementById('release-update-title').textContent =
+          t('web.envDetail.releaseUpdateComplete');
+        document.getElementById('release-update-message').textContent =
+          t('web.envDetail.releaseUpdateDesc');
+        if (stage) stage.textContent = t('web.envDetail.releaseUpdateComplete');
+        button.classList.add('hidden');
+        databaseOnlyButton?.classList.add('hidden');
+        document.getElementById('detail-stat-updates').textContent = '0';
+        selectedEnvForDetail.release = response.release;
+        const detected = detectedEnvironments.find((environment) => environment.env === envName);
+        if (detected) detected.release = response.release;
+        await loadWorkerVersionComparison(envName);
+      } catch (error) {
+        card.dataset.state = 'blocked';
+        updateProgressBarVisual(progressBar, 28, 'error');
+        document.getElementById('release-update-title').textContent =
+          t('web.envDetail.releaseUpdateFailed');
+        document.getElementById('release-update-message').textContent =
+          error instanceof Error ? error.message : String(error);
+        if (stage) stage.textContent = t('web.envDetail.releaseUpdateFailed');
+        button.disabled = false;
+        if (databaseOnlyButton) databaseOnlyButton.disabled = false;
+        const label = button.querySelector('[data-release-update-label]');
+        if (label) label.textContent = t('web.envDetail.releaseUpdateResumeAction');
+      } finally {
+        window.clearInterval(pollTimer);
+        await poll();
+        button.setAttribute('aria-busy', 'false');
+        spinner?.classList.add('hidden');
+      }
+    }
+
+    function describeInitialDeploymentRecovery(result) {
+      if (result?.status === 'recreate_required') {
+        if (result.reasonCode === 'initial_manifest_changed') {
+          return t('web.envDetail.initialDeployRecoveryManifestChanged');
+        }
+        return t('web.envDetail.initialDeployRecoveryRecreate');
+      }
+      if (result?.status === 'blocked') {
+        return t('web.envDetail.initialDeployRecoveryBlocked');
+      }
+      if (result?.status !== 'resumable') {
+        return t('web.envDetail.initialDeployRecoveryDesc');
+      }
+      const completed = [];
+      if (result.completedSteps?.resourcesProvisioned) {
+        completed.push(t('web.envDetail.initialDeployRecoveryResources'));
+      }
+      if (result.completedSteps?.schemaApplied) {
+        completed.push(t('web.envDetail.initialDeployRecoverySchema'));
+      }
+      if (result.completedSteps?.workersDeployed) {
+        completed.push(t('web.envDetail.initialDeployRecoveryWorkers'));
+      }
+      const stageKey =
+        result.resumeFrom === 'database_migrations'
+          ? 'web.envDetail.initialDeployRecoveryStageMigrations'
+          : result.resumeFrom === 'control_plane_bootstrap'
+            ? 'web.envDetail.initialDeployRecoveryStageControlPlane'
+          : result.resumeFrom === 'worker_deployment'
+            ? 'web.envDetail.initialDeployRecoveryStageWorkers'
+            : 'web.envDetail.initialDeployRecoveryStageVerification';
+      return (
+        t('web.envDetail.initialDeployRecoveryVerified', {
+          completed: completed.join(' / '),
+          stage: t(stageKey),
+        }) +
+        (result.requiresBootstrapToken
+          ? t('web.envDetail.initialDeployRecoveryTokenRequired')
+          : '')
+      );
+    }
+
+    async function loadInitialDeploymentRecovery(envName) {
+      const recovery = document.getElementById('env-initial-deploy-recovery');
+      if (!recovery) return;
+      recovery.classList.add('hidden');
+      renderEnvDetailDeploymentStatus(null);
+      try {
+        const result = await api('/deploy/recovery/' + encodeURIComponent(envName));
+        if (selectedEnvForDetail?.env !== envName) return;
+        selectedEnvRecoveryStatus = result;
+        renderEnvDetailDeploymentStatus(result);
+        const visible =
+          result.success === true &&
+          ['resumable', 'blocked', 'recreate_required'].includes(result.status);
+        recovery.classList.toggle('hidden', !visible);
+        const message = document.getElementById('env-initial-deploy-recovery-message');
+        if (message && visible) message.textContent = describeInitialDeploymentRecovery(result);
+        const button = document.getElementById('btn-resume-initial-deploy');
+        if (button) button.classList.toggle('hidden', result.canResume !== true);
+      } catch (error) {
+        if (selectedEnvForDetail?.env !== envName) return;
+        selectedEnvRecoveryStatus = { success: false };
+        renderEnvDetailDeploymentStatus(selectedEnvRecoveryStatus);
+        recovery.classList.remove('hidden');
+        const message = document.getElementById('env-initial-deploy-recovery-message');
+        if (message) message.textContent = t('web.envDetail.initialDeployRecoveryBlocked');
+        document.getElementById('btn-resume-initial-deploy')?.classList.add('hidden');
+        console.warn('Failed to load initial deployment recovery status:', error);
+      }
+    }
+
+    function renderEnvDetailDeploymentStatus(result) {
+      const status = document.getElementById('detail-url-deployment-status');
+      if (!status) return;
+
+      if (result === null) {
+        status.textContent = t('web.envDetail.deploymentChecking');
+        status.dataset.state = 'checking';
+        return;
+      }
+
+      const deploymentVerified =
+        result?.success === true &&
+        result.status === 'complete' &&
+        result.completedSteps?.verificationComplete === true;
+      if (deploymentVerified) {
+        status.textContent = t('web.envDetail.verified');
+        status.dataset.state = 'verified';
+        return;
+      }
+
+      if (result?.success === true) {
+        status.textContent = t('web.envDetail.deploymentIncomplete');
+        status.dataset.state = 'incomplete';
+        return;
+      }
+
+      status.textContent = t('web.envDetail.deploymentStatusUnknown');
+      status.dataset.state = 'unknown';
+    }
+
+    function buildSetupConfigFromSavedConfig(savedConfig) {
+      const isNewFormat = savedConfig.version === '1.0.0' || savedConfig.environment?.prefix;
+      const env = isNewFormat ? savedConfig.environment?.prefix : savedConfig.env || 'prod';
+      const apiDomain = isNewFormat ? savedConfig.urls?.api?.custom : savedConfig.apiDomain;
+      const loginUiDomain = isNewFormat
+        ? savedConfig.urls?.loginUi?.custom
+        : savedConfig.loginUiDomain;
+      const adminUiDomain = isNewFormat
+        ? savedConfig.urls?.adminUi?.custom
+        : savedConfig.adminUiDomain;
+      return {
+        env,
+        apiDomain: stripProtocol(apiDomain) || null,
+        loginUiDomain: stripProtocol(loginUiDomain) || null,
+        adminUiDomain: stripProtocol(adminUiDomain) || null,
+        tenant: savedConfig.tenant || {
+          name: 'default',
+          displayName: 'Initial Tenant',
+          multiTenant: false,
+        },
+        components: {
+          api: true,
+          ...(savedConfig.components || {}),
+          loginUi: savedConfig.components?.loginUi ?? true,
+          adminUi: savedConfig.components?.adminUi ?? true,
+          saml: true,
+          async: true,
+          vc: true,
+          bridge: true,
+          policy: true,
+        },
+        features: {
+          queue: { enabled: savedConfig.features?.queue?.enabled === true },
+          r2: { enabled: savedConfig.features?.r2?.enabled !== false },
+          email: savedConfig.features?.email || { provider: 'none' },
+        },
+        profiles: savedConfig.profiles || buildProfilesConfig(),
+        controlPlane: {
+          automaticProvisioning: savedConfig.controlPlane?.automaticProvisioning === true,
+        },
+        database: savedConfig.database,
+        zoneId: isNewFormat ? savedConfig.urls?.api?.zoneId || null : savedConfig.zoneId || null,
+        customDomainBinding:
+          isNewFormat
+            ? savedConfig.urls?.api?.customDomainBinding === true
+            : savedConfig.customDomainBinding === true,
+      };
+    }
+
+    async function resumeInitialDeploymentFromEnvironment() {
+      const envName = selectedEnvForDetail?.env || config?.env;
+      if (!envName) return;
+      const button = document.getElementById('btn-resume-initial-deploy');
+      const spinner = button.querySelector('.inline-action-spinner');
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      spinner?.classList.remove('hidden');
+      try {
+        const recoveryStatus = await api(
+          '/deploy/recovery/' + encodeURIComponent(envName)
+        );
+        if (recoveryStatus.success !== true || recoveryStatus.canResume !== true) {
+          throw new Error(describeInitialDeploymentRecovery(recoveryStatus));
+        }
+        const response = await api('/config?env=' + encodeURIComponent(envName));
+        if (!response.exists || !response.config) {
+          throw new Error(t('web.loadConfig.provisionedValid'));
+        }
+        config = buildSetupConfigFromSavedConfig(response.config);
+        controlBootstrapOwnership = null;
+        resumeControlBootstrapReady = false;
+        resumeWorkerOwnershipRecovery =
+          recoveryStatus.requiresWorkerOwnershipRecovery === true;
+        if (config.controlPlane?.automaticProvisioning === true) {
+          resumeControlBootstrapReady = recoveryStatus.requiresBootstrapToken !== true;
+        }
+        const bootstrapInput = document.getElementById('control-bootstrap-token');
+        if (bootstrapInput) bootstrapInput.value = '';
+        setAutomaticProvisioningEnabled(config.controlPlane?.automaticProvisioning === true);
+        renderDeployManualWildcardWarning();
+        setStep(8);
+        showSection('deploy');
+      } catch (error) {
+        alert(error instanceof Error ? error.message : String(error));
+      } finally {
+        spinner?.classList.add('hidden');
+        button.setAttribute('aria-busy', 'false');
+        button.disabled = false;
+      }
+    }
+
+    function renderEnvControlAutomaticProvisioning(result) {
+      const section = document.getElementById('env-control-automatic-provisioning');
+      const status = document.getElementById('env-control-automatic-status');
+      const inputs = document.getElementById('env-control-automatic-inputs');
+      const message = document.getElementById('env-control-automatic-message');
+      const controlPlane = result?.success && result.controlPlane === true;
+      section.classList.toggle('hidden', !controlPlane);
+      if (!controlPlane) return;
+      const capabilityState = result.authority?.capabilityState ||
+        (result.enabled ? 'pending' : 'disabled');
+      envControlBootstrapPhase = result.authority?.bootstrapPhase || 'none';
+      status.textContent = envControlBootstrapPhase !== 'none'
+        ? envControlBootstrapPhase.replaceAll('_', ' ')
+        : capabilityState === 'ready'
+        ? t('web.envDetail.automaticProvisioningOn')
+        : capabilityState === 'disabled'
+          ? t('web.envDetail.automaticProvisioningOff')
+          : capabilityState;
+      inputs.classList.toggle('hidden', capabilityState === 'ready');
+      document
+        .getElementById('btn-env-create-control-bootstrap-token')
+        .classList.toggle('hidden', envControlBootstrapPhase !== 'none');
+      const missingResourceClasses = Array.isArray(result.missingResourceClasses)
+        ? result.missingResourceClasses.join(', ')
+        : '';
+      message.textContent = capabilityState === 'ready'
+        ? t('web.envDetail.automaticProvisioningCredentialsRegistered')
+        : capabilityState === 'blocked'
+          ? t('web.envDetail.automaticProvisioningBlocked') +
+            (missingResourceClasses
+              ? ' ' + t('web.envDetail.automaticProvisioningMissing', { missing: missingResourceClasses })
+              : '') +
+            ' ' + t('web.envDetail.automaticProvisioningRepairHint')
+          : '';
+    }
+
+    async function loadEnvControlAutomaticProvisioning(envName) {
+      const status = document.getElementById('env-control-automatic-status');
+      envControlBootstrapPhase = 'unknown';
+      document.getElementById('env-control-automatic-inputs').classList.add('hidden');
+      document.getElementById('btn-env-create-control-bootstrap-token').classList.add('hidden');
+      status.textContent = t('web.envDetail.automaticProvisioningChecking');
+      try {
+        renderEnvControlAutomaticProvisioning(
+          await api('/control/automatic-provisioning/status?env=' + encodeURIComponent(envName))
+        );
+      } catch (error) {
+        status.textContent = t('web.envDetail.automaticProvisioningUnavailable');
+      }
     }
 
     function stripTrailingSlash(url) {
@@ -10836,7 +13003,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (!aside) return;
 
       const issuer = stripProtocol(resolveEnvDetailIssuerUrl(env, config || null));
-      const mode = getEnvironmentModePreview(env);
+      const mode = getEnvironmentModePreview(env, config);
       aside.innerHTML = t('web.env.heroDetailAside', {
         mode: escapeHtml(mode),
         issuer: escapeHtml(issuer),
@@ -11042,155 +13209,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       }
     }
 
-    function renderTenantD1PoolStatus(response) {
-      const summaryEl = document.getElementById('env-tenant-d1-summary');
-      const statsEl = document.getElementById('env-tenant-d1-stats');
-      const expandEl = document.getElementById('env-tenant-d1-expand');
-      const addInput = document.getElementById('env-tenant-d1-add-slots');
-
-      if (!response || !response.success) {
-        summaryEl.textContent = response?.error || t('web.envDetail.tenantStorageLoadFailed');
-        statsEl.classList.add('hidden');
-        expandEl.classList.add('hidden');
-        return;
-      }
-
-      const pool = response.tenantD1Pool || {};
-      if (!pool.enabled) {
-        summaryEl.textContent = t('web.envDetail.sharedD1ModeSummary');
-        statsEl.classList.add('hidden');
-        expandEl.classList.add('hidden');
-        return;
-      }
-
-      expandEl.classList.remove('hidden');
-      const configuredSlots = Number(pool.configuredSlots || pool.capacity || 0);
-      const maxAdd = Math.max(0, 500 - configuredSlots);
-      addInput.max = String(maxAdd || 1);
-      if (Number(addInput.value || '1') > maxAdd && maxAdd > 0) {
-        addInput.value = String(maxAdd);
-      }
-
-      if (!pool.tableReady) {
-        summaryEl.textContent = t('web.envDetail.tenantD1InventoryMissing');
-        statsEl.classList.add('hidden');
-        document.getElementById('btn-expand-tenant-d1-pool').disabled = maxAdd <= 0;
-        return;
-      }
-
-      const counts = pool.counts || {};
-      document.getElementById('env-tenant-d1-capacity').textContent = String(pool.capacity ?? 0);
-      document.getElementById('env-tenant-d1-available').textContent = String(pool.available ?? 0);
-      document.getElementById('env-tenant-d1-assigned').textContent = String(counts.assigned || 0);
-      document.getElementById('env-tenant-d1-reset-required').textContent = String(
-        counts.reset_required || 0
-      );
-      summaryEl.textContent = t('web.envDetail.tenantD1PoolModeSummary');
-      statsEl.classList.remove('hidden');
-      document.getElementById('btn-expand-tenant-d1-pool').disabled = maxAdd <= 0;
-    }
-
-    async function loadTenantD1PoolStatus(envName) {
-      const summaryEl = document.getElementById('env-tenant-d1-summary');
-      summaryEl.textContent = t('web.envDetail.loadingTenantStorage');
-      try {
-        const response = await api('/tenant-d1/pool/' + encodeURIComponent(envName) + '/status');
-        renderTenantD1PoolStatus(response);
-      } catch (error) {
-        renderTenantD1PoolStatus({ success: false, error: error.message });
-      }
-    }
-
-    async function expandTenantD1PoolForEnv() {
-      if (!selectedEnvForDetail) {
-        alert(t('web.envDetail.noEnvironmentSelected'));
-        return;
-      }
-
-      const envName = selectedEnvForDetail.env;
-      const addSlots = Number.parseInt(
-        document.getElementById('env-tenant-d1-add-slots').value || '0',
-        10
-      );
-      if (!Number.isInteger(addSlots) || addSlots < 1) {
-        alert(t('web.envDetail.positiveSlotCountRequired'));
-        return;
-      }
-
-      const confirmed = confirm(
-        t('web.envDetail.expandTenantD1Confirm')
-      );
-      if (!confirmed) return;
-
-      const btn = document.getElementById('btn-expand-tenant-d1-pool');
-      const progressDiv = document.getElementById('env-tenant-d1-progress');
-      const logDiv = document.getElementById('env-tenant-d1-log');
-      btn.disabled = true;
-      progressDiv.classList.remove('hidden');
-      logDiv.textContent = '';
-
-      const addLog = (message) => {
-        const line = document.createElement('div');
-        line.textContent = message;
-        logDiv.appendChild(line);
-        logDiv.scrollTop = logDiv.scrollHeight;
-      };
-
-      let pollInterval = null;
-      try {
-        addLog(t('web.envDetail.tenantD1UpdatingConfig'));
-        const expansion = await api('/tenant-d1/pool/' + encodeURIComponent(envName) + '/expand', {
-          method: 'POST',
-          body: { addSlots },
-        });
-        if (!expansion.success) {
-          throw new Error(expansion.error || t('web.status.error'));
-        }
-        addLog(t('web.envDetail.tenantD1ConfiguredSlots', {
-          current: expansion.currentSlots,
-          next: expansion.nextSlots,
-        }));
-        addLog(t('web.status.startingDeploy'));
-
-        let lastProgressLength = 0;
-        pollInterval = setInterval(async () => {
-          try {
-            const statusResult = await api('/deploy/status');
-            if (statusResult.progress && statusResult.progress.length > lastProgressLength) {
-              const newMessages = statusResult.progress.slice(lastProgressLength);
-              newMessages.forEach(msg => addLog(formatProgressMessageForDisplay(msg)));
-              lastProgressLength = statusResult.progress.length;
-            }
-          } catch (error) {
-            // Ignore transient polling errors while deploy is running.
-          }
-        }, 1000);
-
-        const deployResult = await api('/deploy', {
-          method: 'POST',
-          body: {
-            env: envName,
-            dryRun: false,
-          },
-        });
-
-        if (!deployResult.success) {
-          throw new Error(deployResult.error || t('web.status.error'));
-        }
-
-        addLog(t('web.envDetail.tenantD1ExpansionComplete'));
-        await loadTenantD1PoolStatus(envName);
-        await loadWorkerVersionComparison(envName);
-      } catch (error) {
-        addLog(t('web.status.errorWithMessage', { error: error.message }));
-      } finally {
-        if (pollInterval !== null) {
-          clearInterval(pollInterval);
-        }
-        btn.disabled = false;
-      }
-    }
-
     function renderR2ProvisionStatus(response) {
       const summaryEl = document.getElementById('env-r2-provision-summary');
       const provisionBtn = document.getElementById('btn-provision-r2-buckets');
@@ -11198,6 +13216,28 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (!response || !response.success) {
         summaryEl.textContent = response?.error || t('web.envDetail.r2StatusLoadFailed');
         provisionBtn.disabled = false;
+        return;
+      }
+
+      if (response.identityMismatchCount > 0) {
+        summaryEl.textContent = t('web.envDetail.r2IdentityMismatchSummary', {
+          count: response.identityMismatchCount,
+        });
+        provisionBtn.disabled = true;
+        return;
+      }
+
+      if (response.ownershipRecoveryRequired > 0) {
+        summaryEl.textContent =
+          response.ownershipRecoveryMode === 'explicit_adoption'
+            ? t('web.envDetail.r2OwnershipRecoverySummary', {
+                count: response.ownershipRecoveryRequired,
+                command: response.requiredCommand || '',
+              })
+            : t('web.envDetail.r2OwnershipRecreateSummary', {
+                count: response.ownershipRecoveryRequired,
+              });
+        provisionBtn.disabled = true;
         return;
       }
 
@@ -11280,11 +13320,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           }
         }, 1000);
 
-        const deployResult = await api('/deploy', {
+        const deployResult = await api('/update/workers', {
           method: 'POST',
           body: {
             env: envName,
-            dryRun: false,
+            onlyChanged: false,
+            topologyDeploymentToken: provisionResult.topologyDeploymentToken,
           },
         });
 
@@ -12028,17 +14069,16 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
           // Refresh version table
           await loadWorkerVersionComparison(currentEnvForUpdate);
+        } else if (response.manualAction?.kind === 'wildcard-dns' && response.manualAction.baseDomain) {
+          addLog('');
+          buildWildcardDnsManualMessage(response.manualAction.baseDomain)
+            .split('\\n')
+            .forEach((line) => addLog(line));
         } else {
           addLog('');
           addLog(t('web.envDetail.updateFailedWithMessage', {
             error: response.error || t('web.status.unknownError'),
           }));
-          if (response.manualAction?.kind === 'wildcard-dns' && response.manualAction.baseDomain) {
-            addLog('');
-            buildWildcardDnsManualMessage(response.manualAction.baseDomain)
-              .split('\\n')
-              .forEach((line) => addLog(line));
-          }
         }
       } catch (error) {
         addLog(t('web.status.errorWithMessage', { error: error.message }));
@@ -12050,6 +14090,137 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         updateWorkerUpdateButtonState();
         const btnSpan2 = btn.querySelector('span');
         if (btnSpan2) btnSpan2.textContent = t('web.envDetail.updateAllWorkers') || 'Update All Workers';
+      }
+    }
+
+    function getFullDeployUiComponents() {
+      const configuredComponents = selectedEnvDetailConfig?.components;
+      if (configuredComponents && typeof configuredComponents === 'object') {
+        return ['ar-admin-ui', 'ar-login-ui'].filter((componentName) => {
+          const configKey = componentName === 'ar-admin-ui' ? 'adminUi' : 'loginUi';
+          return configuredComponents[configKey] !== false;
+        });
+      }
+
+      if (!selectedEnvForDetail) return [];
+      return ['ar-admin-ui', 'ar-login-ui'].filter((componentName) =>
+        hasUiWorker(selectedEnvForDetail, currentEnvForUpdate + '-' + componentName)
+      );
+    }
+
+    async function runFullDeployStep(endpoint, body, startMarker, addLog) {
+      let lastProgressLength = 0;
+      let hasSeenStart = false;
+      const appendProgressMessages = (progress) => {
+        if (!Array.isArray(progress)) return;
+
+        if (!hasSeenStart) {
+          const startIndex = progress.findIndex((msg) => String(msg || '').includes(startMarker));
+          if (startIndex === -1) return;
+          hasSeenStart = true;
+          lastProgressLength = startIndex + 1;
+        }
+
+        if (progress.length < lastProgressLength) lastProgressLength = 0;
+        if (progress.length > lastProgressLength) {
+          progress.slice(lastProgressLength).forEach((msg) => addLog(formatProgressMessageForDisplay(msg)));
+          lastProgressLength = progress.length;
+        }
+      };
+
+      const pollProgress = async () => {
+        try {
+          const statusResult = await api('/deploy/status');
+          appendProgressMessages(statusResult.progress || []);
+        } catch {
+          // The deployment request remains the source of truth for the final result.
+        }
+      };
+
+      const pollTimer = window.setInterval(pollProgress, 1000);
+      window.setTimeout(pollProgress, 300);
+      try {
+        const response = await api(endpoint, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        appendProgressMessages(response.progress || []);
+        return response;
+      } finally {
+        window.clearInterval(pollTimer);
+        await pollProgress();
+      }
+    }
+
+    async function startFullEnvironmentDeploy() {
+      if (!currentEnvForUpdate) {
+        alert(t('web.envDetail.noEnvironmentSelected'));
+        return;
+      }
+
+      const btn = document.getElementById('btn-deploy-full-environment');
+      const progressDiv = document.getElementById('full-environment-deploy-progress');
+      const logDiv = document.getElementById('full-environment-deploy-log');
+      if (!btn || !progressDiv || !logDiv) return;
+
+      const workerUpdateButton = document.getElementById('btn-update-workers');
+      const adminUpdateButton = document.getElementById('btn-update-admin-ui');
+      const loginUpdateButton = document.getElementById('btn-update-login-ui');
+      const buttons = [btn, workerUpdateButton, adminUpdateButton, loginUpdateButton].filter(Boolean);
+      const uiComponents = getFullDeployUiComponents();
+      const totalComponents = 1 + uiComponents.length;
+      let completedComponents = 0;
+
+      buttons.forEach((button) => { button.disabled = true; });
+      progressDiv.classList.remove('hidden');
+      logDiv.textContent = '';
+
+      const addLog = (msg) => {
+        const line = document.createElement('div');
+        line.textContent = msg;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      };
+
+      try {
+        addLog(t('web.envDetail.fullDeployStarting', { env: currentEnvForUpdate }));
+        addLog(t('web.envDetail.fullDeployApiPhase'));
+        const workerResponse = await runFullDeployStep(
+          '/update/workers',
+          { env: currentEnvForUpdate, onlyChanged: false, includeUiWorkers: true },
+          'Starting worker update for environment: ' + currentEnvForUpdate,
+          addLog
+        );
+        if (!workerResponse.success) {
+          throw new Error(workerResponse.error || t('web.status.unknownError'));
+        }
+        completedComponents += 1;
+
+        for (const componentName of uiComponents) {
+          addLog(t('web.envDetail.fullDeployUiComponent', { component: componentName }));
+          const uiResponse = await runFullDeployStep(
+            '/deploy/component/' + encodeURIComponent(componentName),
+            { env: currentEnvForUpdate, skipBuild: false, dryRun: false },
+            'Deploying component: ' + componentName,
+            addLog
+          );
+          if (!uiResponse.success) {
+            throw new Error(uiResponse.error || t('web.status.unknownError'));
+          }
+          completedComponents += 1;
+        }
+
+        addLog(t('web.envDetail.fullDeploySummary', {
+          success: completedComponents,
+          total: totalComponents,
+        }));
+        addLog(t('web.envDetail.fullDeployComplete'));
+        await loadWorkerVersionComparison(currentEnvForUpdate);
+      } catch (error) {
+        addLog(t('web.envDetail.fullDeployFailed', { error: error.message }));
+      } finally {
+        buttons.forEach((button) => { button.disabled = false; });
+        updateWorkerUpdateButtonState();
       }
     }
 
@@ -12112,6 +14283,11 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
           // Refresh version table from the lock file after the deploy endpoint saves it.
           await loadWorkerVersionComparison(currentEnvForUpdate);
+        } else if (response.manualAction?.kind === 'wildcard-dns' && response.manualAction.baseDomain) {
+          addLog('');
+          buildWildcardDnsManualMessage(response.manualAction.baseDomain)
+            .split('\\n')
+            .forEach((line) => addLog(line));
         } else {
           addLog('');
           addLog(t('web.envDetail.updateFailedWithMessage', {
@@ -12186,6 +14362,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     // Event listeners for Worker Update
+    document.getElementById('btn-deploy-full-environment')?.addEventListener('click', startFullEnvironmentDeploy);
     document.getElementById('btn-update-workers')?.addEventListener('click', startWorkerUpdate);
     document.getElementById('update-only-changed')?.addEventListener('change', () => {
       updateWorkerUpdateButtonState();
@@ -12213,12 +14390,6 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     document.getElementById('btn-save-service-site')?.addEventListener('click', configureServiceSiteForEnv);
     document.getElementById('btn-enable-cloudflare-email')?.addEventListener('click', enableCloudflareEmailForEnv);
     document.getElementById('btn-enable-resend-email')?.addEventListener('click', enableResendEmailForEnv);
-    document.getElementById('btn-refresh-tenant-d1-pool')?.addEventListener('click', () => {
-      if (selectedEnvForDetail) {
-        loadTenantD1PoolStatus(selectedEnvForDetail.env);
-      }
-    });
-    document.getElementById('btn-expand-tenant-d1-pool')?.addEventListener('click', expandTenantD1PoolForEnv);
     document.getElementById('btn-refresh-r2-buckets')?.addEventListener('click', () => {
       if (selectedEnvForDetail) {
         loadR2ProvisionStatus(selectedEnvForDetail.env);
@@ -12231,9 +14402,12 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     // ===========================================
 
     // Check admin setup status and show section if needed
-    async function checkAndShowAdminSetup(kvNamespaceId) {
+    async function checkAndShowAdminSetup(kvNamespaceId, envName) {
       try {
-        const response = await api('/admin/status/' + encodeURIComponent(kvNamespaceId));
+        const response = await api(
+          '/admin/status/' + encodeURIComponent(kvNamespaceId) +
+          '?env=' + encodeURIComponent(envName)
+        );
         if (!response.success) return;
 
         const section = document.getElementById('admin-setup-section');
@@ -12241,10 +14415,30 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         const description = section.querySelector('p');
         const button = document.getElementById('btn-start-admin-setup');
 
-        if (response.adminSetupCompleted) {
+        if (response.statusKnown === false) {
+          // Do not turn a transient Cloudflare/namespace status failure into a false
+          // "not configured" instruction that invites another setup-token operation.
           section.classList.add('hidden');
+          return;
+        }
+
+        if (response.adminSetupCompleted) {
+          section.className = 'alert ok';
+          section.classList.remove('hidden');
+          if (heading) {
+            heading.setAttribute('data-i18n', 'web.env.adminConfigured');
+            heading.textContent = t('web.env.adminConfigured');
+          }
+          if (description) {
+            description.removeAttribute('data-i18n');
+            description.textContent = '';
+            description.classList.add('hidden');
+          }
           document.getElementById('admin-setup-result')?.classList.add('hidden');
-          if (button) button.disabled = true;
+          if (button) {
+            button.disabled = true;
+            button.classList.add('hidden');
+          }
           return;
         }
 
@@ -12255,11 +14449,13 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           heading.textContent = t('web.envDetail.adminNotConfigured');
         }
         if (description) {
+          description.classList.remove('hidden');
           description.setAttribute('data-i18n', 'web.envDetail.adminNotConfiguredDesc');
           description.textContent = t('web.envDetail.adminNotConfiguredDesc');
         }
         if (button) {
           button.disabled = false;
+          button.classList.remove('hidden');
           button.setAttribute('data-i18n', 'web.envDetail.startPasskey');
           button.textContent = t('web.envDetail.startPasskey');
         }
@@ -12293,7 +14489,8 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
 
         const nameDiv = document.createElement('td');
         nameDiv.className = 'resource-item-name';
-        nameDiv.textContent = resource[nameKey] || resource.title || resource.id || 'Unknown';
+        nameDiv.textContent =
+          resource[nameKey] || resource.title || resource.id || t('web.status.unknown');
         item.appendChild(nameDiv);
 
         // Add loading placeholder for D1 and Workers
@@ -12426,15 +14623,18 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     }
 
     // Show delete confirmation
-    function showDeleteConfirmation(env) {
+    function showDeleteConfirmation(env, resetState = true) {
       selectedEnvForDelete = env;
+      if (resetState) {
+        resetDeleteSection();
+      }
       const resourceCount = (count, key) => t(key, { count });
       const setDeleteOption = (optionId, inputId, countId, count, key) => {
         const option = document.getElementById(optionId);
         const input = document.getElementById(inputId);
         const countEl = document.getElementById(countId);
         if (countEl) countEl.textContent = resourceCount(count, key);
-        if (input) input.checked = count > 0;
+        if (input && resetState) input.checked = count > 0;
         if (option) option.classList.toggle('hidden', count === 0);
       };
 
@@ -12459,26 +14659,22 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         confirmCopy.innerHTML = t('web.delete.confirmExact', { env: escapeHtml(env.env) });
       }
       const confirmInput = document.getElementById('delete-confirm-input');
-      if (confirmInput) {
+      if (confirmInput && resetState) {
         confirmInput.value = '';
         confirmInput.placeholder = env.env;
       }
 
-      // Reset checkboxes
-      document.getElementById('delete-workers').checked = true;
-      document.getElementById('delete-d1').checked = true;
-      document.getElementById('delete-kv').checked = true;
-      document.getElementById('delete-queues').checked = env.queues.length > 0;
-      document.getElementById('delete-r2').checked = env.r2.length > 0;
-      document.getElementById('delete-pages').checked = (env.pages || []).length > 0;
-
-      // Reset UI state
-      document.getElementById('delete-options-section').classList.remove('hidden');
-      document.getElementById('delete-log').classList.add('hidden');
-      document.getElementById('delete-result').classList.add('hidden');
-      document.getElementById('delete-result').textContent = '';
-      document.getElementById('btn-confirm-delete').classList.remove('hidden');
-      document.getElementById('btn-confirm-delete').disabled = true;
+      if (resetState) {
+        // Current resource inventories remain strict even at zero. Legacy Pages is selected only
+        // when observed; the API separately records that this flow intends to finish the environment.
+        document.getElementById('delete-workers').checked = true;
+        document.getElementById('delete-d1').checked = true;
+        document.getElementById('delete-kv').checked = true;
+        document.getElementById('delete-queues').checked = true;
+        document.getElementById('delete-r2').checked = true;
+        document.getElementById('delete-pages').checked = (env.pages || []).length > 0;
+        document.getElementById('btn-confirm-delete').disabled = true;
+      }
 
       showSection('envDelete');
     }
@@ -12489,7 +14685,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     });
 
     window.addEventListener('beforeunload', (event) => {
-      if (!migrationApplyInProgress) return;
+      if (!migrationApplyInProgress && inFlightMutationRequests === 0) return;
       event.preventDefault();
       event.returnValue = '';
     });
@@ -12497,6 +14693,172 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
     document.getElementById('btn-refresh-env-list').addEventListener('click', () => {
       loadEnvironments();
     });
+
+    function resetControlCapacityPreview() {
+      controlCapacityPreview = null;
+      document.getElementById('control-capacity-result')?.classList.add('hidden');
+      const targets = document.getElementById('control-capacity-targets');
+      if (targets) targets.replaceChildren();
+      const requestButton = document.getElementById('btn-control-capacity-request');
+      if (requestButton) requestButton.disabled = true;
+      const status = document.getElementById('control-capacity-status');
+      if (status) status.textContent = '';
+    }
+
+    function getControlCapacityRequest() {
+      if (!selectedEnvForDetail) throw new Error(t('web.envDetail.capacitySelectEnvironment'));
+      const scope = document.getElementById('control-capacity-scope')?.value;
+      const profile = document.getElementById('control-capacity-profile')?.value;
+      const tenantId =
+        scope === 'tenant_exclusive'
+          ? document.getElementById('control-capacity-tenant')?.value || null
+          : null;
+      if (scope === 'tenant_exclusive' && !tenantId) {
+        throw new Error(t('web.envDetail.capacityNoTenant'));
+      }
+      return { environmentId: selectedEnvForDetail.env, profile, scope, tenantId };
+    }
+
+    async function loadControlCapacityTenants() {
+      if (!selectedEnvForDetail) return;
+      const select = document.getElementById('control-capacity-tenant');
+      if (!select) return;
+      select.replaceChildren();
+      try {
+        const result = await api(
+          '/control/capacity/tenants?environmentId=' +
+            encodeURIComponent(selectedEnvForDetail.env)
+        );
+        for (const tenantId of Array.isArray(result.tenants) ? result.tenants : []) {
+          const option = document.createElement('option');
+          option.value = tenantId;
+          option.textContent = tenantId;
+          select.appendChild(option);
+        }
+      } catch (error) {
+        const status = document.getElementById('control-capacity-status');
+        if (status) {
+          status.textContent =
+            error.message || t('web.envDetail.capacityTargetsUnavailable');
+        }
+      }
+    }
+
+    function appendControlCapacityCell(row, primary, secondary) {
+      const cell = document.createElement('td');
+      const title = document.createElement('strong');
+      title.textContent = primary;
+      cell.appendChild(title);
+      if (secondary) {
+        const detail = document.createElement('small');
+        detail.textContent = secondary;
+        cell.appendChild(document.createElement('br'));
+        cell.appendChild(detail);
+      }
+      row.appendChild(cell);
+    }
+
+    function renderControlCapacityPlan(preview, operations = []) {
+      controlCapacityPreview = preview;
+      const result = document.getElementById('control-capacity-result');
+      const summary = document.getElementById('control-capacity-summary');
+      const targets = document.getElementById('control-capacity-targets');
+      const requestButton = document.getElementById('btn-control-capacity-request');
+      if (!result || !summary || !targets || !requestButton) return;
+      result.classList.remove('hidden');
+      summary.textContent = t('web.envDetail.capacitySummary', {
+        units: preview.capacityUnitsAdded,
+        d1: preview.d1DatabasesAdded,
+        total: preview.projectedEnvironmentD1Count,
+      });
+      targets.replaceChildren();
+      for (const target of preview.targets || []) {
+        const row = document.createElement('tr');
+        appendControlCapacityCell(
+          row,
+          target.dataRole + ' / ' + target.residencyPartition,
+          target.databaseName
+        );
+        appendControlCapacityCell(row, target.bindingRef, (target.workerScripts || []).join(', '));
+        const operation = operations.find((item) => item.operationId === target.operationId);
+        appendControlCapacityCell(
+          row,
+          operation?.lastErrorCode || operation?.status || t('web.envDetail.capacityPreviewState'),
+          target.operationId
+        );
+        targets.appendChild(row);
+      }
+      requestButton.disabled =
+        !preview.available || !Array.isArray(preview.targets) || preview.targets.length === 0;
+    }
+
+    async function runControlCapacityAction(action) {
+      const status = document.getElementById('control-capacity-status');
+      const previewButton = document.getElementById('btn-control-capacity-preview');
+      const requestButton = document.getElementById('btn-control-capacity-request');
+      if (previewButton) previewButton.disabled = true;
+      if (requestButton) requestButton.disabled = true;
+      if (status) {
+        status.textContent =
+          action === 'preview'
+            ? t('web.envDetail.capacityLoading')
+            : t('web.envDetail.capacityCreating');
+      }
+      try {
+        const response = await api('/control/capacity/' + action, {
+          method: 'POST',
+          body: getControlCapacityRequest(),
+        });
+        if (!response.success) {
+          throw new Error(response.error || t('web.envDetail.capacityRequestFailed'));
+        }
+        const preview = action === 'preview' ? response.preview : response.result?.preview;
+        const operations = action === 'request' ? response.result?.operations || [] : [];
+        renderControlCapacityPlan(preview, operations);
+        if (status) {
+          status.textContent =
+            action === 'request'
+              ? t('web.envDetail.capacityCreated')
+              : preview.targets.length === 0
+                ? t('web.envDetail.capacitySatisfied')
+                : t('web.envDetail.capacityReady');
+        }
+        if (action === 'request') {
+          pendingControlOperations = await loadPendingControlOperations();
+        }
+      } catch (error) {
+        if (status) {
+          status.textContent = error.message || t('web.envDetail.capacityRequestFailed');
+        }
+      } finally {
+        if (previewButton) previewButton.disabled = false;
+        if (requestButton) {
+          requestButton.disabled =
+            !controlCapacityPreview?.available || controlCapacityPreview.targets.length === 0;
+        }
+      }
+    }
+
+    document.getElementById('control-capacity-scope')?.addEventListener('change', (event) => {
+      const exclusive = event.target.value === 'tenant_exclusive';
+      document
+        .getElementById('control-capacity-tenant-field')
+        ?.classList.toggle('hidden', !exclusive);
+      resetControlCapacityPreview();
+      if (exclusive) loadControlCapacityTenants();
+    });
+    document
+      .getElementById('control-capacity-profile')
+      ?.addEventListener('change', resetControlCapacityPreview);
+    document
+      .getElementById('control-capacity-tenant')
+      ?.addEventListener('change', resetControlCapacityPreview);
+    document
+      .getElementById('btn-control-capacity-preview')
+      ?.addEventListener('click', () => runControlCapacityAction('preview'));
+    document
+      .getElementById('btn-control-capacity-request')
+      ?.addEventListener('click', () => runControlCapacityAction('request'));
 
     document.getElementById('btn-back-env-detail').addEventListener('click', () => {
       showSection('envList');
@@ -12514,8 +14876,23 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           pane.classList.toggle('on', pane.getAttribute('data-env-pane') === name);
         });
 
+        const activePane = [...document.querySelectorAll('[data-env-pane]')].find(
+          (pane) => pane.getAttribute('data-env-pane') === name
+        );
+        if (activePane) {
+          activePane.classList.remove('env-tab-enter');
+          void activePane.offsetWidth;
+          activePane.classList.add('env-tab-enter');
+        }
+
         if (name === 'migrations' && selectedEnvForDetail) {
           loadMigrationStatus(selectedEnvForDetail.env);
+        }
+        if (name === 'capacity' && selectedEnvForDetail) {
+          resetControlCapacityPreview();
+          if (document.getElementById('control-capacity-scope')?.value === 'tenant_exclusive') {
+            loadControlCapacityTenants();
+          }
         }
       });
     });
@@ -12543,6 +14920,17 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       if (selectedEnvForDetail) {
         showDeleteConfirmation(selectedEnvForDetail);
       }
+    });
+
+    document.getElementById('btn-resume-initial-deploy')?.addEventListener('click', () => {
+      resumeInitialDeploymentFromEnvironment();
+    });
+
+    document.getElementById('btn-start-release-update')?.addEventListener('click', () => {
+      startReleaseUpdate();
+    });
+    document.getElementById('btn-start-database-only-update')?.addEventListener('click', () => {
+      startReleaseUpdate(true);
     });
 
     // Admin setup button
@@ -12697,6 +15085,7 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
         deleteQueues: document.getElementById('delete-queues').checked,
         deleteR2: document.getElementById('delete-r2').checked,
         deletePages: document.getElementById('delete-pages').checked,
+        finalizeEnvironment: true,
       };
 
       // Count actual resources to delete based on environment info
@@ -12715,19 +15104,29 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
       const pollInterval = setInterval(async () => {
         try {
           const statusResult = await api('/deploy/status');
+          const structuredProgress = statusResult.operationProgress?.operation === 'delete'
+            ? statusResult.operationProgress
+            : null;
+          if (structuredProgress) {
+            deleteCompleted = Math.max(0, Number(structuredProgress.current) || 0);
+            if (Number(structuredProgress.total) > 0) {
+              totalToDelete = Number(structuredProgress.total);
+            }
+            updateProgressUI('delete', deleteCompleted, totalToDelete);
+          }
           if (statusResult.progress && statusResult.progress.length > lastProgressLength) {
             const newMessages = statusResult.progress.slice(lastProgressLength);
             newMessages.forEach(msg => {
               output.textContent += formatProgressMessageForDisplay(msg) + '\\n';
               // Update progress UI based on message content
-              const taskInfo = parseProgressMessage(msg);
+              const taskInfo = getDeleteProgressTask(msg) || parseProgressMessage(msg);
               if (taskInfo) {
                 updateProgressUI('delete', deleteCompleted, totalToDelete, taskInfo);
               }
               // Count completed items (lines with checkmark)
-              if (msg.includes('✓') || msg.includes('✅') || msg.includes('Deleted')) {
+              if (!structuredProgress && (msg.includes('✓') || msg.includes('✅'))) {
                 deleteCompleted++;
-                 updateProgressUI('delete', deleteCompleted, totalToDelete, taskInfo || t('web.delete.deletedItems', { count: deleteCompleted }));
+                updateProgressUI('delete', deleteCompleted, totalToDelete, taskInfo || t('web.delete.deletedItems', { count: deleteCompleted }));
               }
             });
             lastProgressLength = statusResult.progress.length;
@@ -12749,13 +15148,59 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
           output.textContent = deleteResult.progress.map(formatProgressMessageForDisplay).join('\\n');
         }
 
+        const finalStructuredProgress = deleteResult.operationProgress?.operation === 'delete'
+          ? deleteResult.operationProgress
+          : null;
+        if (finalStructuredProgress && Number(finalStructuredProgress.total) > 0) {
+          deleteCompleted = Math.max(0, Number(finalStructuredProgress.current) || 0);
+          totalToDelete = Number(finalStructuredProgress.total);
+          updateProgressUI('delete', deleteCompleted, totalToDelete);
+        }
+
         result.classList.remove('hidden');
 
-        if (deleteResult.success) {
+        if (deleteResult.success && deleteResult.completion === 'manual_action_required') {
+          const environmentDeleted = deleteResult.environmentDeleted === true;
+          updateProgressUI(
+            'delete',
+            totalToDelete,
+            totalToDelete,
+            t(environmentDeleted ? 'web.delete.complete' : 'web.delete.manualActionRequired')
+          );
+          result.textContent = '';
+          const manualR2Targets = Array.isArray(deleteResult.manualR2) ? deleteResult.manualR2 : [];
+          const manualDnsIssues = Array.isArray(deleteResult.manualDns) ? deleteResult.manualDns : [];
+          const manualControlTokenTargets = Array.isArray(deleteResult.manualControlTokens) ? deleteResult.manualControlTokens : [];
+          if (manualR2Targets.length > 0) {
+            result.appendChild(createAlert('warning', t('web.delete.manualR2Summary')));
+            appendManualR2CleanupNotice(result, manualR2Targets);
+          }
+          if (manualDnsIssues.length > 0) {
+            result.appendChild(createAlert('warning', t('web.delete.dnsNote')));
+            appendManualDnsCleanupNotice(result, manualDnsIssues);
+          }
+          appendManualControlTokenCleanupNotice(result, manualControlTokenTargets);
+          if (environmentDeleted) {
+            markDeleteNavigationComplete();
+            // Keep the follow-up guidance visible while refreshing the hidden environment list so
+            // navigating back cannot resurrect an entry whose local recovery state was removed.
+            setTimeout(async () => {
+              await resetServerState();
+              selectedEnvForDelete = null;
+              selectedEnvForDetail = null;
+              await loadEnvironments();
+            }, 0);
+          }
+        } else if (deleteResult.success) {
           // Final progress update
           updateProgressUI('delete', totalToDelete, totalToDelete, t('web.delete.complete'));
           result.textContent = '';
-          result.appendChild(createAlert('success', t('web.delete.success')));
+          const environmentDeleted = deleteResult.environmentDeleted === true;
+          if (environmentDeleted) markDeleteNavigationComplete();
+          result.appendChild(createAlert(
+            environmentDeleted ? 'success' : 'warning',
+            t(environmentDeleted ? 'web.delete.success' : 'web.delete.partialSuccess')
+          ));
 
           // Refresh environment list after a short delay
           setTimeout(async () => {
@@ -12767,27 +15212,46 @@ ${DOMAIN_FORM_BROWSER_SCRIPT}
             showSection('envList');
           }, 2000);
         } else {
+          markProgressBarError('delete');
           result.textContent = '';
-          result.appendChild(createAlert('error', t('web.delete.errorList', { errors: (deleteResult.errors || []).join(', ') })));
+          result.appendChild(createAlert('error', t('web.delete.errorList', { errors: apiErrorMessages(deleteResult).join(', ') })));
+          appendManualR2CleanupNotice(result, deleteResult.manualR2);
+          appendManualDnsCleanupNotice(result, deleteResult.manualDns);
+          appendManualControlTokenCleanupNotice(result, deleteResult.manualControlTokens);
           btn.classList.remove('hidden');
           btn.disabled = false;
         }
       } catch (error) {
         clearInterval(pollInterval);
+        markProgressBarError('delete');
         result.classList.remove('hidden');
         result.textContent = '';
-        result.appendChild(createAlert('error', t('web.status.errorWithMessage', { error: error.message })));
+        const message = error instanceof Error && error.message
+          ? error.message
+          : t('web.status.unknownError');
+        result.appendChild(createAlert('error', t('web.status.errorWithMessage', { error: message })));
         btn.classList.remove('hidden');
         btn.disabled = false;
       }
     });
 
+    async function initializeManageOnly() {
+      showSection('envList');
+      const runtimeContextPromise = loadRuntimeContext()
+        .then(() => {
+          setEnvManagementHero('envList');
+        })
+        .catch((error) => {
+          console.warn('Failed to load Cloudflare account context:', error);
+        });
+      await Promise.allSettled([runtimeContextPromise, loadEnvironments()]);
+    }
+
     // Initialize
     if (MANAGE_ONLY) {
-      // Skip prerequisites UI and go directly to environment management
-      // Prerequisites were already checked by CLI
-      loadEnvironments();
-      showSection('envList');
+      // The CLI already enforced prerequisites, but the browser still needs the same read-only
+      // context so account and workers.dev metadata do not remain as placeholders.
+      initializeManageOnly();
     } else {
       checkPrerequisites();
     }

@@ -12,19 +12,21 @@
  */
 
 import type { Context } from 'hono';
-import type { JWK } from 'jose';
+import type { JWTPayload } from 'jose';
 import type { Env } from '../../types';
 import {
+  ensureDatabaseAdapter,
   getLogger,
   getTenantIdFromContext,
-  resolveAuthCorePersistenceAdapterFromEnv,
+  resolveTenantMetadataContext,
+  type Env as CoreEnv,
 } from '@authrim/ar-lib-core';
 import { getRequestIssuerUrl } from '../../request-identifiers';
 
 /**
  * Status List Credential response format
  */
-interface StatusListCredentialPayload {
+interface StatusListCredentialPayload extends JWTPayload {
   iss: string;
   iat: number;
   exp: number;
@@ -77,9 +79,8 @@ async function getStatusList(
   tenantId: string,
   listId: string
 ): Promise<StatusListData | null> {
-  const adapter = await resolveAuthCorePersistenceAdapterFromEnv(env, 'vc-status-list', {
-    tenantId,
-  });
+  const tenantMetadata = await resolveTenantMetadataContext(env as unknown as CoreEnv, tenantId);
+  const adapter = ensureDatabaseAdapter(tenantMetadata.coreDb, 'vc-status-list');
   return adapter.queryOne<StatusListData>(
     `SELECT public_id AS id, tenant_id, purpose, encoded_list, updated_at
      FROM status_lists
@@ -100,30 +101,8 @@ async function generateStatusListCredentialJWT(
   const keyManagerId = env.KEY_MANAGER.idFromName(`${listData.tenant_id}-v3`);
   const keyManager = env.KEY_MANAGER.get(keyManagerId);
 
-  // Get active EC key for signing
-  const keyResponse = await keyManager.fetch(new Request('https://internal/active-ec-key'));
-  if (!keyResponse.ok) {
-    throw new Error('Failed to get signing key');
-  }
-
-  const keyData = (await keyResponse.json()) as {
-    kid: string;
-    privateKeyJwk: JWK;
-    publicKeyJwk: JWK;
-    algorithm: string;
-  };
-
-  // Import private key (JWK type from jose is compatible with Web Crypto's JsonWebKey)
-  const privateKey = await crypto.subtle.importKey(
-    'jwk',
-    keyData.privateKeyJwk as unknown as globalThis.JsonWebKey,
-    { name: 'ECDSA', namedCurve: (keyData.privateKeyJwk.crv as string) || 'P-256' },
-    false,
-    ['sign']
-  );
-
   const now = Math.floor(Date.now() / 1000);
-  const statusListUri = `${issuerUrl}/vci/status/${listData.id}`;
+  const statusListUri = `${issuerUrl}/vci/status-lists/${listData.id}`;
 
   const payload: StatusListCredentialPayload = {
     iss: `did:web:${new URL(issuerUrl).hostname}`,
@@ -145,49 +124,20 @@ async function generateStatusListCredentialJWT(
     },
   };
 
-  // Create JWT header
-  const header = {
-    alg: keyData.algorithm || 'ES256',
-    typ: 'statuslist+jwt',
-    kid: keyData.kid,
+  const signingStub = keyManager as unknown as {
+    signStatusListCredentialRpc(input: JWTPayload): Promise<{ token: string }>;
   };
-
-  // Encode and sign
-  const encodedHeader = btoa(JSON.stringify(header))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/[=]/g, '');
-  const encodedPayload = btoa(JSON.stringify(payload))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/[=]/g, '');
-  const signingInput = `${encodedHeader}.${encodedPayload}`;
-
-  const signature = await crypto.subtle.sign(
-    { name: 'ECDSA', hash: 'SHA-256' },
-    privateKey,
-    new TextEncoder().encode(signingInput)
-  );
-
-  // Convert signature to base64url
-  const signatureArray = new Uint8Array(signature);
-  const signatureBase64url = btoa(String.fromCharCode(...signatureArray))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/[=]/g, '');
-
-  return `${signingInput}.${signatureBase64url}`;
+  return (await signingStub.signStatusListCredentialRpc(payload)).token;
 }
 
 /**
- * GET /vci/status/:listId
+ * GET /vci/status-lists/:listId
  *
  * Returns a Status List Credential in JWT format.
  * Supports ETag-based caching for efficient status checks.
  */
 export async function statusListRoute(c: Context<{ Bindings: Env }>): Promise<Response> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const log = getLogger(c as any).module('VC-ISSUER');
+  const log = getLogger(c).module('VC-ISSUER');
   const listId = c.req.param('listId');
 
   if (!listId) {
@@ -251,7 +201,7 @@ export async function statusListRoute(c: Context<{ Bindings: Env }>): Promise<Re
 }
 
 /**
- * GET /vci/status/:listId/json
+ * GET /vci/status-lists/:listId/json
  *
  * Returns status list data in JSON format (for debugging/admin).
  */

@@ -11,17 +11,20 @@
  * 4. deploy command cleans up .env after build
  */
 
-import { writeFile, readFile, copyFile, unlink, access, mkdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { readFile, unlink, access } from 'node:fs/promises';
+import { join } from 'node:path';
 import { constants } from 'node:fs';
 import type { AuthrimConfig } from './config.js';
 import { ensureHttps } from './url-config.js';
+import { writePrivateFileAtomically } from './atomic-file.js';
 
 // =============================================================================
 // Types
 // =============================================================================
 
 export interface UiEnvConfig {
+  /** Deployment environment shown in the UI runtime context (for example, test or production). */
+  PUBLIC_AUTHRIM_ENVIRONMENT_NAME?: string;
   /** API base URL for UI to connect to (e.g., https://prod-ar-router.workers.dev) */
   PUBLIC_API_BASE_URL: string;
   /**
@@ -178,6 +181,7 @@ export function buildInitialUiEnvConfig(config: AuthrimConfig): UiEnvConfig | nu
   }
 
   return {
+    PUBLIC_AUTHRIM_ENVIRONMENT_NAME: config.environment.prefix,
     PUBLIC_API_BASE_URL: apiUrl,
     PUBLIC_AUTHRIM_ISSUER: apiUrl,
     PUBLIC_DIAGNOSTIC_LOGGING_ENABLED: 'false',
@@ -195,12 +199,8 @@ export function buildInitialUiEnvConfig(config: AuthrimConfig): UiEnvConfig | nu
  * @param config - UI environment configuration
  */
 export async function saveUiEnv(envPath: string, config: UiEnvConfig): Promise<void> {
-  // Ensure directory exists
-  const dir = dirname(envPath);
-  await mkdir(dir, { recursive: true });
-
   const content = generateUiEnvContent(config);
-  await writeFile(envPath, content, 'utf-8');
+  await writePrivateFileAtomically(envPath, content);
 }
 
 /**
@@ -211,7 +211,7 @@ export async function saveUiEnv(envPath: string, config: UiEnvConfig): Promise<v
  */
 export async function copyUiEnvToPackage(uiEnvPath: string, packageDir: string): Promise<void> {
   const targetPath = join(packageDir, '.env');
-  await copyFile(uiEnvPath, targetPath);
+  await writePrivateFileAtomically(targetPath, await readFile(uiEnvPath, 'utf-8'));
 }
 
 /**

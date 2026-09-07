@@ -3,10 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
-  buildTenantDatabaseSlotPlan,
-  buildTenantDatabaseSlotPlans,
   buildTenantDatabaseProvisioningPlan,
-  buildTenantDatabaseAdminJobSql,
   buildTenantDatabaseActivationBatchJobConfig,
   buildTenantDatabaseMigrationPlan,
   buildTenantDatabaseMigrationOperatorActionJobConfig,
@@ -17,14 +14,16 @@ import {
   evaluateTenantDatabaseSizeWarning,
   evaluateTenantDatabaseStatsFreshness,
   getTenantDatabaseRoleFromBinding,
+  getControlGeneratedDatabaseDataRoleFromBinding,
   getLatestMigrationVersionFromDirectory,
   isTenantDatabaseBinding,
+  isControlGeneratedDatabaseBinding,
+  isLookupDatabaseBinding,
   listTenantDatabaseMigrationTargets,
   loadTenantDatabaseRegistrySignatureConfigFromEnv,
   reconcileTenantDatabaseDerivedBindings,
   signTenantDatabaseRegistryResource,
   signTenantDatabaseRegistryResources,
-  MAX_TENANT_D1_PREALLOCATED_SLOTS,
   TENANT_DATABASE_PROVISIONING_STATES,
 } from '../core/tenant-database.js';
 
@@ -39,13 +38,17 @@ describe('tenant database setup helpers', () => {
     expect(plan.resources).toEqual([
       expect.objectContaining({
         role: 'tenant_core',
-        databaseName: 'authrim-prod-example-university-core',
-        binding: expect.stringMatching(/^TDB_EXAMPLE_UNIVERSITY_[A-Z0-9]{6}_CORE$/),
+        databaseName: expect.stringMatching(
+          /^prod-authrim-tenant-example-university-core-db-[a-f0-9]{8}$/u
+        ),
+        binding: expect.stringMatching(/^PROD_TDB_EXAMPLE_UNIVERSITY_[A-F0-9]{8}_CORE$/u),
       }),
       expect.objectContaining({
         role: 'tenant_pii',
-        databaseName: 'authrim-prod-example-university-pii',
-        binding: expect.stringMatching(/^TDB_EXAMPLE_UNIVERSITY_[A-Z0-9]{6}_PII$/),
+        databaseName: expect.stringMatching(
+          /^prod-authrim-tenant-example-university-pii-db-[a-f0-9]{8}$/u
+        ),
+        binding: expect.stringMatching(/^PROD_TDB_EXAMPLE_UNIVERSITY_[A-F0-9]{8}_PII$/u),
       }),
     ]);
   });
@@ -62,74 +65,52 @@ describe('tenant database setup helpers', () => {
     expect(plan.resources.every((resource) => resource.generation === 2)).toBe(true);
   });
 
-  it('identifies generated tenant D1 bindings', () => {
-    expect(isTenantDatabaseBinding('TDB_EXAMPLE_ABC123_CORE')).toBe(true);
-    expect(isTenantDatabaseBinding('TDB_EXAMPLE_ABC123_PII')).toBe(true);
-    expect(isTenantDatabaseBinding('TDB_SLOT_0001_CORE')).toBe(true);
-    expect(isTenantDatabaseBinding('TDB_SLOT_0001_PII')).toBe(true);
+  it('identifies generated assignment bindings', () => {
+    expect(isTenantDatabaseBinding('TDB_EXAMPLE_ABC123_CORE')).toBe(false);
+    expect(isTenantDatabaseBinding('TDB_EXAMPLE_ABC123_PII')).toBe(false);
+    expect(isTenantDatabaseBinding('TEST_UCP_TDB_EXAMPLE_ABC123_CORE')).toBe(true);
+    expect(isLookupDatabaseBinding('TEST_UCP_TDB_LOOKUP_ED83F354_LOOKUP')).toBe(true);
+    expect(isTenantDatabaseBinding('TEST_TDB_SLOT_0001_CORE')).toBe(true);
+    expect(isTenantDatabaseBinding('TEST_TDB_SLOT_0001_PII')).toBe(true);
     expect(isTenantDatabaseBinding('DB')).toBe(false);
-    expect(getTenantDatabaseRoleFromBinding('TDB_EXAMPLE_ABC123_CORE')).toBe('tenant_core');
-    expect(getTenantDatabaseRoleFromBinding('TDB_EXAMPLE_ABC123_PII')).toBe('tenant_pii');
+    expect(isLookupDatabaseBinding('TEST_TDB_LOOKUP_ED83F354_LOOKUP')).toBe(true);
+    expect(isTenantDatabaseBinding('TEST_TDB_LOOKUP_ED83F354_LOOKUP')).toBe(false);
+    expect(isControlGeneratedDatabaseBinding('TEST_TDB_LOOKUP_ED83F354_LOOKUP')).toBe(true);
+    expect(getControlGeneratedDatabaseDataRoleFromBinding('TEST_TDB_LOOKUP_ED83F354_LOOKUP')).toBe(
+      'lookup'
+    );
+    expect(getTenantDatabaseRoleFromBinding('TEST_TDB_EXAMPLE_ABC123_CORE')).toBe('tenant_core');
+    expect(getTenantDatabaseRoleFromBinding('TEST_TDB_EXAMPLE_ABC123_PII')).toBe('tenant_pii');
+    expect(getTenantDatabaseRoleFromBinding('TEST_UCP_TDB_EXAMPLE_ABC123_CORE')).toBe(
+      'tenant_core'
+    );
   });
 
-  it('builds stable preallocated tenant D1 slot names and bindings', () => {
-    expect(buildTenantDatabaseSlotPlan({ env: 'phase9-tenant-d1', slotNumber: 1 })).toEqual({
-      slotNumber: 1,
-      slotId: 'tdb-slot-0001',
-      resources: [
-        {
-          slotNumber: 1,
-          role: 'tenant_core',
-          databaseName: 'authrim-phase9-tenant-d1-tdb-slot-0001-core',
-          binding: 'TDB_SLOT_0001_CORE',
-        },
-        {
-          slotNumber: 1,
-          role: 'tenant_pii',
-          databaseName: 'authrim-phase9-tenant-d1-tdb-slot-0001-pii',
-          binding: 'TDB_SLOT_0001_PII',
-        },
-      ],
-    });
-
-    expect(buildTenantDatabaseSlotPlans({ env: 'prod', slots: 2, startSlotNumber: 4 })).toEqual([
-      expect.objectContaining({ slotNumber: 4, slotId: 'tdb-slot-0004' }),
-      expect.objectContaining({ slotNumber: 5, slotId: 'tdb-slot-0005' }),
-    ]);
-    expect(() =>
-      buildTenantDatabaseSlotPlans({
-        env: 'prod',
-        slots: 1,
-        startSlotNumber: MAX_TENANT_D1_PREALLOCATED_SLOTS + 1,
-      })
-    ).toThrow('tenant_database_slot_number_exceeds_maximum');
-  });
-
-  it('lists tenant D1 migration targets from the lock file', () => {
+  it('lists assignment migration targets from the lock file', () => {
     const targets = listTenantDatabaseMigrationTargets({
       d1: {
         DB: { id: 'shared-core-id', name: 'shared-core' },
-        TDB_ALPHA_ABC123_CORE: { id: 'alpha-core-id', name: 'alpha-core' },
-        TDB_ALPHA_ABC123_PII: { id: 'alpha-pii-id', name: 'alpha-pii' },
-        TDB_BETA_DEF456_CORE: { id: 'beta-core-id', name: 'beta-core' },
+        TEST_TDB_ALPHA_ABC123_CORE: { id: 'alpha-core-id', name: 'alpha-core' },
+        TEST_TDB_ALPHA_ABC123_PII: { id: 'alpha-pii-id', name: 'alpha-pii' },
+        TEST_TDB_BETA_DEF456_CORE: { id: 'beta-core-id', name: 'beta-core' },
       },
     });
 
     expect(targets).toEqual([
       {
-        binding: 'TDB_ALPHA_ABC123_CORE',
+        binding: 'TEST_TDB_ALPHA_ABC123_CORE',
         databaseId: 'alpha-core-id',
         databaseName: 'alpha-core',
         role: 'tenant_core',
       },
       {
-        binding: 'TDB_ALPHA_ABC123_PII',
+        binding: 'TEST_TDB_ALPHA_ABC123_PII',
         databaseId: 'alpha-pii-id',
         databaseName: 'alpha-pii',
         role: 'tenant_pii',
       },
       {
-        binding: 'TDB_BETA_DEF456_CORE',
+        binding: 'TEST_TDB_BETA_DEF456_CORE',
         databaseId: 'beta-core-id',
         databaseName: 'beta-core',
         role: 'tenant_core',
@@ -140,24 +121,26 @@ describe('tenant database setup helpers', () => {
   it('builds a fixed-concurrency all-tenant migration plan with canaries', () => {
     const targets = listTenantDatabaseMigrationTargets({
       d1: {
-        TDB_ALPHA_ABC123_CORE: { id: 'alpha-core-id', name: 'alpha-core' },
-        TDB_ALPHA_ABC123_PII: { id: 'alpha-pii-id', name: 'alpha-pii' },
-        TDB_BETA_DEF456_CORE: { id: 'beta-core-id', name: 'beta-core' },
+        TEST_TDB_ALPHA_ABC123_CORE: { id: 'alpha-core-id', name: 'alpha-core' },
+        TEST_TDB_ALPHA_ABC123_PII: { id: 'alpha-pii-id', name: 'alpha-pii' },
+        TEST_TDB_BETA_DEF456_CORE: { id: 'beta-core-id', name: 'beta-core' },
       },
     });
 
     const plan = buildTenantDatabaseMigrationPlan(targets, {
       concurrency: 3,
-      canaryBindings: ['TDB_BETA_DEF456_CORE'],
+      canaryBindings: ['TEST_TDB_BETA_DEF456_CORE'],
       canaryCount: 1,
     });
 
     expect(plan.concurrency).toBe(3);
     expect(plan.canaryTargets.map((target) => target.binding)).toEqual([
-      'TDB_BETA_DEF456_CORE',
-      'TDB_ALPHA_ABC123_CORE',
+      'TEST_TDB_BETA_DEF456_CORE',
+      'TEST_TDB_ALPHA_ABC123_CORE',
     ]);
-    expect(plan.remainingTargets.map((target) => target.binding)).toEqual(['TDB_ALPHA_ABC123_PII']);
+    expect(plan.remainingTargets.map((target) => target.binding)).toEqual([
+      'TEST_TDB_ALPHA_ABC123_PII',
+    ]);
   });
 
   it('defines tenant database provisioning states used by the registry schema', () => {
@@ -177,7 +160,7 @@ describe('tenant database setup helpers', () => {
     ]);
   });
 
-  it('evaluates generated tenant D1 binding count thresholds', () => {
+  it('evaluates generated assignment binding count thresholds', () => {
     expect(
       evaluateTenantDatabaseBindingCapacity({
         currentBindings: 2998,
@@ -192,7 +175,7 @@ describe('tenant database setup helpers', () => {
     ).toBe('strong_warning');
   });
 
-  it('evaluates tenant D1 account and storage warning thresholds', () => {
+  it('evaluates assignment account and storage warning thresholds', () => {
     expect(
       evaluateTenantDatabaseSizeWarning({
         accountCount: 699_999,
@@ -270,7 +253,7 @@ describe('tenant database setup helpers', () => {
     );
   });
 
-  it('can preserve active pointer runtime generation for initial tenant-d1 bootstrap', () => {
+  it('can preserve active pointer runtime generation for initial Control Plane bootstrap', () => {
     const sql = buildTenantDatabaseRegistrySql({
       tenantId: 'tenant-a',
       tenantSlug: 'Tenant A',
@@ -360,59 +343,6 @@ describe('tenant database setup helpers', () => {
     expect(sql).toContain("'tenant_core', 2");
     expect(sql).toContain("'failed', 1, 'none'");
     expect(sql).not.toContain('INSERT INTO tenant_database_active_pointers');
-  });
-
-  it('builds idempotent admin job SQL for tenant database provisioning progress', () => {
-    const sql = buildTenantDatabaseAdminJobSql({
-      jobId: 'tenant-db-provision:tenant-a:1',
-      tenantId: 'tenant-a',
-      jobType: 'tenant-database/provision',
-      status: 'completed',
-      createdBy: 'setup',
-      createdAt: 1_779_000_000,
-      progress: {
-        total: 2,
-        processed: 2,
-        succeeded: 2,
-        failed: 0,
-        stage: 'ready',
-      },
-      config: {
-        env: 'prod',
-        generation: 1,
-        activate: false,
-      },
-      result: {
-        resources: [{ role: 'tenant_core', binding: 'TDB_TENANT_A_ABC123_CORE' }],
-      },
-    });
-
-    expect(sql).toContain('INSERT INTO admin_jobs');
-    expect(sql).toContain("'tenant-db-provision:tenant-a:1'");
-    expect(sql).toContain("'tenant-database/provision'");
-    expect(sql).toContain('"stage":"ready"');
-    expect(sql).toContain('ON CONFLICT(id) DO UPDATE SET');
-  });
-
-  it('builds idempotent admin job SQL for post-activation health checks', () => {
-    const sql = buildTenantDatabaseAdminJobSql({
-      jobId: 'tenant-db-health:tenant-a:2',
-      tenantId: 'tenant-a',
-      jobType: 'tenant-database/health-check',
-      status: 'pending',
-      createdBy: 'setup',
-      createdAt: 1_779_000_000,
-      progress: { total: 2, processed: 0, succeeded: 0, failed: 0, stage: 'requested' },
-      config: {
-        reason: 'post_activation',
-        generation: 2,
-        roles: ['tenant_core', 'tenant_pii'],
-      },
-    });
-
-    expect(sql).toContain("'tenant-db-health:tenant-a:2'");
-    expect(sql).toContain("'tenant-database/health-check'");
-    expect(sql).toContain('"reason":"post_activation"');
   });
 
   it('reserves worker shard split job config and package role requirement manifest contracts', () => {
@@ -508,13 +438,13 @@ describe('tenant database setup helpers', () => {
     });
   });
 
-  it('reconciles generated tenant D1 bindings against Cloudflare D1 state', () => {
+  it('reconciles generated assignment bindings against Cloudflare D1 state', () => {
     const result = reconcileTenantDatabaseDerivedBindings({
       lock: {
         d1: {
-          TDB_ALPHA_ABC123_CORE: { id: 'core-id', name: 'alpha-core' },
-          TDB_ALPHA_ABC123_PII: { id: 'pii-id', name: 'alpha-pii' },
-          TDB_BETA_DEF456_CORE: { id: 'stale-id', name: 'beta-core' },
+          TEST_TDB_ALPHA_ABC123_CORE: { id: 'core-id', name: 'alpha-core' },
+          TEST_TDB_ALPHA_ABC123_PII: { id: 'pii-id', name: 'alpha-pii' },
+          TEST_TDB_BETA_DEF456_CORE: { id: 'stale-id', name: 'beta-core' },
         },
       },
       cloudflareD1Databases: [
@@ -529,13 +459,13 @@ describe('tenant database setup helpers', () => {
       issues: [
         {
           type: 'missing_cloudflare_database',
-          binding: 'TDB_ALPHA_ABC123_PII',
+          binding: 'TEST_TDB_ALPHA_ABC123_PII',
           databaseName: 'alpha-pii',
           lockDatabaseId: 'pii-id',
         },
         {
           type: 'database_id_mismatch',
-          binding: 'TDB_BETA_DEF456_CORE',
+          binding: 'TEST_TDB_BETA_DEF456_CORE',
           databaseName: 'beta-core',
           lockDatabaseId: 'stale-id',
           cloudflareDatabaseId: 'fresh-id',

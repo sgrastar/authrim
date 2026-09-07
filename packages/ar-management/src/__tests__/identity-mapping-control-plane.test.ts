@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type {
   DatabaseAdapter,
   ExecuteResult,
   Env,
   HealthStatus,
+  PreparedStatement,
   TransactionContext,
 } from '@authrim/ar-lib-core';
 import {
@@ -34,9 +35,14 @@ function createAdapter(options: {
   queryRows?: Record<string, unknown>[];
   queryRowSets?: Record<string, unknown>[][];
   queryOneRows?: Array<Record<string, unknown> | null>;
-}): DatabaseAdapter & { executes: RecordedExecute[]; queries: RecordedQuery[] } {
+}): DatabaseAdapter & {
+  executes: RecordedExecute[];
+  queries: RecordedQuery[];
+  batches: PreparedStatement[][];
+} {
   const executes: RecordedExecute[] = [];
   const queries: RecordedQuery[] = [];
+  const batches: PreparedStatement[][] = [];
   const queryRows = [...(options.queryRows ?? [])];
   const queryRowSets = [...(options.queryRowSets ?? [])];
   const queryOneRows = [...(options.queryOneRows ?? [])];
@@ -44,6 +50,7 @@ function createAdapter(options: {
   return {
     executes,
     queries,
+    batches,
     async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
       queries.push({ sql, params });
       if (queryRowSets.length > 0) {
@@ -61,8 +68,11 @@ function createAdapter(options: {
     async transaction<T>(fn: (tx: TransactionContext) => Promise<T>): Promise<T> {
       return fn(this);
     },
-    async batch(): Promise<ExecuteResult[]> {
-      return [];
+    async batch(statements: PreparedStatement[]): Promise<ExecuteResult[]> {
+      batches.push(statements);
+      return Promise.all(
+        statements.map((statement) => this.execute(statement.sql, statement.params ?? []))
+      );
     },
     async isHealthy(): Promise<HealthStatus> {
       return { healthy: true, latencyMs: 1, type: 'test' };
@@ -72,6 +82,19 @@ function createAdapter(options: {
     },
     async close(): Promise<void> {},
   };
+}
+
+function createIdentityMappingApiApp(coreAdapter: DatabaseAdapter) {
+  const app = new Hono<{ Bindings: Env }>();
+  app.use('*', async (c, next) => {
+    c.set('tenantId' as never, 'tenant_a' as never);
+    c.set(
+      'tenantMetadataContext' as never,
+      { tenantId: 'tenant_a', coreDb: coreAdapter, route: {} } as never
+    );
+    await next();
+  });
+  return app;
 }
 
 const catalogEntry = {
@@ -147,6 +170,32 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
             customKey: 'field.canonical.email',
             displayName: 'Email Shadow',
             valueType: 'string',
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects OIDC catalog entries for authorization-server protocol claims', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createCatalog('tenant_a', {
+        catalogKey: 'unsafe-oidc',
+        displayName: 'Unsafe OIDC Catalog',
+        versionLabel: 'v1',
+        entries: [
+          {
+            ...catalogEntry,
+            id: 'field.oidc.acr',
+            namespace: 'oidc.claim',
+            path: 'acr',
+            targetType: 'destination-only',
           },
         ],
       })
@@ -362,6 +411,10 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
       'John Doe',
       '山田 太郎',
     ]);
+    expect(catalogs[0].entries.find((entry) => entry.path === 'name')).toMatchObject({
+      required: false,
+      nullable: true,
+    });
     expect(catalogs[0].entries.find((entry) => entry.path === 'locale')).toMatchObject({
       valueType: 'string',
       allowedValues: ['ja-JP', 'en-US'],
@@ -446,6 +499,17 @@ describe('IdentityMappingControlPlaneRepository catalog operations', () => {
 });
 
 describe('IdentityMappingControlPlaneRepository source profiles', () => {
+  it('selects the newest created source version when lifecycle timestamps tie', async () => {
+    const adapter = createAdapter({ queryRows: [] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await repository.listSourceProfiles('tenant_a');
+
+    expect(adapter.queries[0]?.sql).toContain(
+      'ORDER BY latest.updated_at DESC, latest.created_at DESC, latest.id DESC'
+    );
+  });
+
   it('includes built-in directory facts as an external schema', async () => {
     const adapter = createAdapter({ queryRows: [] });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
@@ -569,6 +633,74 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
       expect.stringContaining('UPDATE source_profile_versions'),
       expect.stringContaining('UPDATE source_profiles'),
     ]);
+  });
+
+  it('creates a tenant-managed SCIM source profile from template schema metadata', async () => {
+    const adapter = createAdapter({ queryOneRows: [null] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    const created = await repository.createSourceProfile('tenant_a', {
+      sourceType: 'scim',
+      profileKey: 'scim_enterprise_user',
+      displayName: 'SCIM Enterprise User',
+      schema: {
+        sourceType: 'scim',
+        resourceType: 'User',
+        schemaUris: [
+          'urn:ietf:params:scim:schemas:core:2.0:User',
+          'urn:ietf:params:scim:schemas:extension:enterprise:2.0:User',
+        ],
+        attributes: [
+          {
+            name: 'userName',
+            label: 'User name',
+            type: 'string',
+            required: true,
+            mappingRequired: true,
+          },
+          {
+            name: 'enterprise.employeeNumber',
+            label: 'Employee number',
+            type: 'string',
+          },
+        ],
+      },
+    });
+
+    expect(created).toMatchObject({
+      sourceType: 'scim',
+      profileKey: 'scim_enterprise_user',
+      version: {
+        lifecycleState: 'draft',
+        schema: {
+          sourceType: 'scim',
+          resourceType: 'User',
+        },
+      },
+    });
+    expect(adapter.executes[0]?.params?.[2]).toBe('scim');
+  });
+
+  it('rejects a non-boolean mappingRequired source field flag', async () => {
+    const adapter = createAdapter({ queryOneRows: [null] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createSourceProfile('tenant_a', {
+        sourceType: 'scim',
+        profileKey: 'invalid_mapping_required',
+        displayName: 'Invalid mapping required',
+        schema: {
+          sourceType: 'scim',
+          attributes: [{ name: 'userName', mappingRequired: 'yes' }],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+      message: expect.stringContaining('mappingRequired must be boolean'),
+    });
+    expect(adapter.executes).toHaveLength(0);
   });
 
   it('blocks review until PII and regulated candidates are confirmed', async () => {
@@ -728,6 +860,17 @@ describe('IdentityMappingControlPlaneRepository source profiles', () => {
 });
 
 describe('IdentityMappingControlPlaneRepository destination profiles', () => {
+  it('selects the newest created destination version when lifecycle timestamps tie', async () => {
+    const adapter = createAdapter({ queryRows: [] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await repository.listDestinationProfiles('tenant_a');
+
+    expect(adapter.queries[0]?.sql).toContain(
+      'ORDER BY latest.updated_at DESC, latest.created_at DESC, latest.id DESC'
+    );
+  });
+
   it('creates OIDC attribute registries and validates destination profile release contracts', async () => {
     const adapter = createAdapter({
       queryRows: [
@@ -759,6 +902,25 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
         {
           tenant_id: 'tenant_a',
           lifecycle_state: 'reviewed',
+          destination_type: 'oidc',
+          owner_scope_type: 'tenant',
+          owner_scope_id: null,
+          schema_json: JSON.stringify({
+            destinationType: 'oidc',
+            claims: [
+              {
+                claimName: 'sub',
+                required: true,
+                surfaces: ['id_token', 'userinfo'],
+              },
+              {
+                claimName: 'library_card',
+                classification: 'pii',
+                surfaces: ['userinfo'],
+                requiredScopes: ['library'],
+              },
+            ],
+          }),
         },
       ],
     });
@@ -794,13 +956,14 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
         claims: [
           {
             claimName: 'sub',
+            required: true,
             valueType: 'string',
             classification: 'internal',
             surfaces: ['id_token', 'userinfo'],
-            requiredScopes: ['openid'],
           },
           {
             claimName: 'library_card',
+            required: false,
             valueType: 'string',
             classification: 'pii',
             surfaces: ['userinfo'],
@@ -827,11 +990,14 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
       expect.stringContaining('UPDATE destination_profile_versions'),
       expect.stringContaining('UPDATE destination_profiles'),
     ]);
+    expect(adapter.batches).toHaveLength(1);
+    expect(adapter.batches[0]).toHaveLength(3);
     expect(created.version.releaseImpact).toMatchObject({
       destinationType: 'oidc',
       claimCount: 2,
       claimsParameterClaimCount: 1,
       essentialClaimCount: 1,
+      requiredClaimCount: 1,
       piiClaimCount: 1,
     });
   });
@@ -853,6 +1019,103 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
               classification: 'pii',
               surfaces: ['userinfo'],
               requiredScopes: ['email'],
+            },
+          ],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+  });
+
+  it('rejects activation when a stored OIDC profile releases PII without a scope', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          tenant_id: 'tenant_a',
+          lifecycle_state: 'reviewed',
+          destination_type: 'oidc',
+          owner_scope_type: 'tenant',
+          owner_scope_id: null,
+          schema_json: JSON.stringify({
+            destinationType: 'oidc',
+            claims: [
+              {
+                claimName: 'sub',
+                required: true,
+                surfaces: ['id_token', 'userinfo'],
+              },
+              {
+                claimName: 'email',
+                classification: 'pii',
+                surfaces: ['userinfo'],
+                requiredScopes: [],
+              },
+            ],
+          }),
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.activateDestinationProfileVersion('tenant_a', 'profile_1', 'version_1')
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+      message: expect.stringContaining('email must require at least one scope'),
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects activating a second Resource Server profile for the same client', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          tenant_id: 'tenant_a',
+          lifecycle_state: 'reviewed',
+          destination_type: 'resource_server',
+          owner_scope_type: 'client',
+          owner_scope_id: 'payments-api',
+          schema_json: JSON.stringify({
+            destinationType: 'resource_server',
+            claims: [{ claimName: 'active', required: true }],
+          }),
+        },
+        { id: 'profile_already_active' },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.activateDestinationProfileVersion('tenant_a', 'profile_2', 'version_2')
+    ).rejects.toMatchObject({
+      status: 409,
+      code: 'conflict',
+      message: expect.stringContaining('already owns this client'),
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects an OIDC destination profile that makes sub optional', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createDestinationProfile('tenant_a', {
+        destinationType: 'oidc',
+        profileKey: 'optional_sub',
+        displayName: 'Optional subject',
+        schema: {
+          destinationType: 'oidc',
+          claims: [
+            {
+              claimName: 'sub',
+              required: false,
+              classification: 'internal',
+              surfaces: ['id_token'],
+              requiredScopes: ['openid'],
             },
           ],
         },
@@ -1043,6 +1306,99 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
     ]);
   });
 
+  it('requires a client-owned Resource Server profile and scoped sensitive claims', async () => {
+    const repository = new IdentityMappingControlPlaneRepository(createAdapter({}), () => 1000);
+
+    await expect(
+      repository.createDestinationProfile('tenant_a', {
+        destinationType: 'resource_server',
+        profileKey: 'payments_introspection',
+        displayName: 'Payments Introspection',
+        ownerScopeType: 'tenant',
+        schema: {
+          destinationType: 'resource_server',
+          claims: [{ claimName: 'active', required: true }],
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+
+    await expect(
+      repository.createDestinationProfile('tenant_a', {
+        destinationType: 'resource_server',
+        profileKey: 'payments_introspection',
+        displayName: 'Payments Introspection',
+        ownerScopeType: 'client',
+        ownerScopeId: 'payments-api',
+        schema: {
+          destinationType: 'resource_server',
+          claims: [
+            { claimName: 'active', required: true },
+            { claimName: 'employee_number', classification: 'pii' },
+          ],
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+
+    const adapter = createAdapter({});
+    const validRepository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+    const created = await validRepository.createDestinationProfile('tenant_a', {
+      destinationType: 'resource_server',
+      profileKey: 'payments_introspection',
+      displayName: 'Payments Introspection',
+      ownerScopeType: 'client',
+      ownerScopeId: 'payments-api',
+      schema: {
+        destinationType: 'resource_server',
+        claims: [
+          { claimName: 'active', required: true },
+          {
+            claimName: 'employee_number',
+            classification: 'pii',
+            requiredScopes: ['employee'],
+          },
+        ],
+      },
+    });
+
+    expect(created).toMatchObject({
+      destinationType: 'resource_server',
+      ownerScopeType: 'client',
+      ownerScopeId: 'payments-api',
+      version: {
+        releaseImpact: {
+          destinationType: 'resource_server',
+          claimCount: 2,
+          piiClaimCount: 1,
+        },
+      },
+    });
+  });
+
+  it('rejects required flags on SAML Destination Profile attributes', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createDestinationProfile('tenant_a', {
+        destinationType: 'saml',
+        profileKey: 'invalid_required_saml',
+        displayName: 'Invalid required SAML',
+        schema: {
+          destinationType: 'saml',
+          nameId: {
+            format: 'urn:oasis:names:tc:SAML:2.0:nameid-format:persistent',
+            source: 'subject_identifier',
+          },
+          attributes: [{ name: 'mail', required: true }],
+        },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
   it('rejects duplicate destination profile keys before hitting database constraints', async () => {
     const adapter = createAdapter({
       queryOneRows: [{ id: 'existing_destination_profile' }],
@@ -1230,6 +1586,26 @@ describe('IdentityMappingControlPlaneRepository destination profiles', () => {
 });
 
 describe('IdentityMappingControlPlaneRepository policy activation', () => {
+  const sensitiveCatalogRow = {
+    id: 'schema_email',
+    field_key: 'email',
+    active_field_key: 'email',
+    display_label: 'Email',
+    field_type: 'string',
+    cardinality: 'single',
+    is_pii: 1,
+    is_required: 0,
+    validation_rules: '{}',
+    description: 'Email address',
+    display_order: 10,
+    ui_group_key: 'profile',
+    ui_group_label: 'Profile',
+    ui_group_order: 10,
+    ui_field_order: 10,
+    examples_json: '[]',
+    schema_version: 1,
+  };
+
   it('lists policy versions with latest compiled snapshot for operations UI', async () => {
     const adapter = createAdapter({
       queryRowSets: [
@@ -1260,9 +1636,13 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             rule_kind: 'source_mapping',
             action: 'map',
             priority: 0,
+            scope_json: JSON.stringify({ tenant: 'tenant_a' }),
+            condition_json: JSON.stringify({ when: 'present' }),
             metadata_json: JSON.stringify({ source: 'test' }),
             edge_id: 'edge_1',
-            source_ref_json: JSON.stringify({ profileId: 'source-profile-workforce' }),
+            source_ref_json: JSON.stringify({
+              profileId: 'source-profile-source_profile_workforce',
+            }),
             target_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
             edge_kind: 'direct',
             display_order: 0,
@@ -1274,10 +1654,14 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             rule_kind: 'destination_release',
             action: 'map',
             priority: 0,
+            scope_json: '{}',
+            condition_json: '{}',
             metadata_json: JSON.stringify({ source: 'test' }),
             edge_id: 'edge_2',
             source_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
-            target_ref_json: JSON.stringify({ profileId: 'destination-profile-oidc' }),
+            target_ref_json: JSON.stringify({
+              profileId: 'destination-profile-destination_profile_oidc',
+            }),
             edge_kind: 'transform_input',
             display_order: 0,
           },
@@ -1293,6 +1677,41 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
             parameters_json: JSON.stringify({ mode: 'whitespace' }),
           },
         ],
+        [
+          {
+            field_mapping_version_id: 'policy_version_1',
+            rule_id: 'rule_1',
+            validation_id: 'validation_1',
+            target_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
+            validation_kind: 'required',
+            severity: 'error',
+            parameters_json: JSON.stringify({ allowEmpty: false }),
+          },
+        ],
+        [
+          {
+            field_mapping_version_id: 'policy_version_1',
+            release_id: 'release_1',
+            destination_type: 'oidc',
+            destination_id: 'destination-profile-destination_profile_oidc',
+            source_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
+            release_action: 'allow',
+            legal_basis: 'consent',
+            purpose: 'authentication',
+            condition_json: JSON.stringify({ scope: 'email' }),
+            priority: 5,
+          },
+        ],
+        [
+          {
+            field_mapping_version_id: 'policy_version_1',
+            conflict_id: 'conflict_1',
+            target_ref_json: JSON.stringify({ nodeId: 'canonical-email' }),
+            conflict_strategy: 'prefer_verified',
+            source_priority_json: JSON.stringify(['scim', 'oidc']),
+            condition_json: JSON.stringify({ when: 'different' }),
+          },
+        ],
       ],
     });
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
@@ -1306,20 +1725,30 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
         fieldMappingSetId: 'policy_1',
         versionLabel: 'draft-1',
         directions: { source: true, destination: true },
-        sourceProfileIds: ['source-profile-workforce'],
-        destinationProfileIds: ['destination-profile-oidc'],
+        sourceProfileIds: ['source_profile_workforce'],
+        destinationProfileIds: ['destination_profile_oidc'],
         rules: [
           expect.objectContaining({
             id: 'rule_1',
             ruleKind: 'source_mapping',
+            scope: { tenant: 'tenant_a' },
+            condition: { when: 'present' },
             edges: [
               expect.objectContaining({
                 id: 'edge_1',
-                sourceRef: { profileId: 'source-profile-workforce' },
+                sourceRef: { profileId: 'source-profile-source_profile_workforce' },
                 targetRef: { nodeId: 'canonical-email' },
               }),
             ],
             transforms: [],
+            validationRules: [
+              expect.objectContaining({
+                id: 'validation_1',
+                validationKind: 'required',
+                severity: 'error',
+                parameters: { allowEmpty: false },
+              }),
+            ],
           }),
           expect.objectContaining({
             id: 'rule_2',
@@ -1337,6 +1766,23 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
                 parameters: { mode: 'whitespace' },
               }),
             ],
+          }),
+        ],
+        releaseRules: [
+          expect.objectContaining({
+            id: 'release_1',
+            destinationType: 'oidc',
+            destinationId: 'destination-profile-destination_profile_oidc',
+            releaseAction: 'allow',
+            condition: { scope: 'email' },
+          }),
+        ],
+        conflictRules: [
+          expect.objectContaining({
+            id: 'conflict_1',
+            conflictStrategy: 'prefer_verified',
+            sourcePriority: ['scim', 'oidc'],
+            condition: { when: 'different' },
           }),
         ],
         latestSnapshot: expect.objectContaining({
@@ -1490,6 +1936,254 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     expect(adapter.executes).toHaveLength(0);
   });
 
+  it('rejects activation when a PII source is downgraded to an unscoped internal claim', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_version_1',
+          tenant_id: 'tenant_a',
+          field_mapping_set_id: 'policy_1',
+          version_label: 'v1',
+          lifecycle_state: 'published',
+          field_mapping_hash: 'field_mapping_hash_1',
+        },
+        {
+          id: 'snapshot_1',
+          tenant_id: 'tenant_a',
+          field_mapping_version_id: 'policy_version_1',
+          catalog_version_id: 'system_default_canonical_catalog_schema_v1',
+          snapshot_hash: 'snapshot_hash_1',
+          lifecycle_state: 'draft',
+        },
+      ],
+      queryRowSets: [
+        [
+          {
+            source_ref_json: JSON.stringify({
+              side: 'source',
+              namespace: 'authrim.profile',
+              path: 'email',
+              catalogEntryId: 'field.canonical.email',
+            }),
+            target_ref_json: JSON.stringify({
+              side: 'destination',
+              namespace: 'oidc.claim',
+              path: 'email',
+              profileId: 'destination-profile-profile_oidc',
+            }),
+          },
+        ],
+        [
+          {
+            id: 'profile_oidc',
+            tenant_id: 'tenant_a',
+            destination_type: 'oidc',
+            lifecycle_state: 'active',
+            schema_json: JSON.stringify({
+              destinationType: 'oidc',
+              claims: [{ claimName: 'email', classification: 'internal', requiredScopes: [] }],
+            }),
+          },
+        ],
+      ],
+    });
+    const coreAdapter = createAdapter({ queryRows: [sensitiveCatalogRow] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000, coreAdapter);
+
+    await expect(
+      repository.activateFieldMappingVersion('tenant_a', 'policy_1', 'policy_version_1', {
+        snapshotId: 'snapshot_1',
+        activationScope: { kind: 'tenant', id: 'tenant_a' },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+      message: expect.stringContaining('cannot lower classification'),
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('allows activation when a PII source remains PII and requires a scope', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_version_1',
+          tenant_id: 'tenant_a',
+          field_mapping_set_id: 'policy_1',
+          version_label: 'v1',
+          lifecycle_state: 'published',
+          field_mapping_hash: 'field_mapping_hash_1',
+        },
+        {
+          id: 'snapshot_1',
+          tenant_id: 'tenant_a',
+          field_mapping_version_id: 'policy_version_1',
+          catalog_version_id: 'system_default_canonical_catalog_schema_v1',
+          snapshot_hash: 'snapshot_hash_1',
+          lifecycle_state: 'draft',
+        },
+        null,
+      ],
+      queryRowSets: [
+        [
+          {
+            source_ref_json: JSON.stringify({
+              side: 'source',
+              namespace: 'authrim.profile',
+              path: 'email',
+              catalogEntryId: 'field.canonical.email',
+            }),
+            target_ref_json: JSON.stringify({
+              side: 'destination',
+              namespace: 'oidc.claim',
+              path: 'email',
+              profileId: 'destination-profile-profile_oidc',
+            }),
+          },
+        ],
+        [
+          {
+            id: 'profile_oidc',
+            tenant_id: 'tenant_a',
+            destination_type: 'oidc',
+            lifecycle_state: 'active',
+            schema_json: JSON.stringify({
+              destinationType: 'oidc',
+              claims: [{ claimName: 'email', classification: 'pii', requiredScopes: ['email'] }],
+            }),
+          },
+        ],
+      ],
+    });
+    const coreAdapter = createAdapter({ queryRows: [sensitiveCatalogRow] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000, coreAdapter);
+
+    await expect(
+      repository.activateFieldMappingVersion('tenant_a', 'policy_1', 'policy_version_1', {
+        snapshotId: 'snapshot_1',
+        activationScope: { kind: 'tenant', id: 'tenant_a' },
+      })
+    ).resolves.toMatchObject({ lifecycleState: 'active' });
+    expect(
+      adapter.executes.some(
+        (item) =>
+          item.sql.includes('UPDATE compiled_mapping_snapshots') &&
+          item.sql.includes('field_mapping_version_id IN')
+      )
+    ).toBe(true);
+    expect(
+      adapter.executes.some(
+        (item) => item.sql.includes('UPDATE field_mapping_versions') && item.sql.includes('id <> ?')
+      )
+    ).toBe(true);
+  });
+
+  it('allows activation for a built-in system identity source absent from the custom claim catalog', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_version_1',
+          tenant_id: 'tenant_a',
+          field_mapping_set_id: 'policy_1',
+          version_label: 'v1',
+          lifecycle_state: 'published',
+          field_mapping_hash: 'field_mapping_hash_1',
+        },
+        {
+          id: 'snapshot_1',
+          tenant_id: 'tenant_a',
+          field_mapping_version_id: 'policy_version_1',
+          catalog_version_id: 'system_default_canonical_catalog_schema_v1',
+          snapshot_hash: 'snapshot_hash_1',
+          lifecycle_state: 'draft',
+        },
+        null,
+      ],
+      queryRowSets: [
+        [
+          {
+            source_ref_json: JSON.stringify({
+              side: 'source',
+              namespace: 'authrim.profile',
+              path: 'account_id',
+              catalogEntryId: 'system.identity.account_uuid',
+            }),
+            target_ref_json: JSON.stringify({
+              side: 'destination',
+              namespace: 'saml.attribute',
+              path: 'urn:oid:1.3.6.1.4.1.5923.1.1.1.10',
+              profileId: 'destination-profile-profile_saml',
+            }),
+          },
+        ],
+      ],
+    });
+    const coreAdapter = createAdapter({ queryRows: [sensitiveCatalogRow] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000, coreAdapter);
+
+    await expect(
+      repository.activateFieldMappingVersion('tenant_a', 'policy_1', 'policy_version_1', {
+        snapshotId: 'snapshot_1',
+        activationScope: { kind: 'tenant' },
+      })
+    ).resolves.toMatchObject({ lifecycleState: 'active' });
+  });
+
+  it('still rejects an unknown tenant claim absent from the compiled catalog', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_version_1',
+          tenant_id: 'tenant_a',
+          field_mapping_set_id: 'policy_1',
+          version_label: 'v1',
+          lifecycle_state: 'published',
+          field_mapping_hash: 'field_mapping_hash_1',
+        },
+        {
+          id: 'snapshot_1',
+          tenant_id: 'tenant_a',
+          field_mapping_version_id: 'policy_version_1',
+          catalog_version_id: 'system_default_canonical_catalog_schema_v1',
+          snapshot_hash: 'snapshot_hash_1',
+          lifecycle_state: 'draft',
+        },
+      ],
+      queryRowSets: [
+        [
+          {
+            source_ref_json: JSON.stringify({
+              side: 'source',
+              namespace: 'authrim.profile',
+              path: 'unknown_claim',
+              catalogEntryId: 'field.canonical.unknown_claim',
+            }),
+            target_ref_json: JSON.stringify({
+              side: 'destination',
+              namespace: 'saml.attribute',
+              path: 'urn:example:unknown',
+              profileId: 'destination-profile-profile_saml',
+            }),
+          },
+        ],
+      ],
+    });
+    const coreAdapter = createAdapter({ queryRows: [sensitiveCatalogRow] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000, coreAdapter);
+
+    await expect(
+      repository.activateFieldMappingVersion('tenant_a', 'policy_1', 'policy_version_1', {
+        snapshotId: 'snapshot_1',
+        activationScope: { kind: 'tenant' },
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+      message: expect.stringContaining('mapping source field is missing from compiled catalog'),
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
   it('deactivates an active field mapping set version', async () => {
     const adapter = createAdapter({});
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
@@ -1511,6 +2205,49 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
       expect.stringContaining('UPDATE field_mapping_activations'),
       expect.stringContaining('UPDATE compiled_mapping_snapshots'),
       expect.stringContaining('UPDATE field_mapping_versions'),
+      expect.stringContaining('UPDATE field_mapping_sets'),
+    ]);
+  });
+
+  it('repairs parent lifecycle state when an already-active version is activated again', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_version_1',
+          tenant_id: 'tenant_a',
+          field_mapping_set_id: 'policy_1',
+          version_label: 'v1',
+          lifecycle_state: 'published',
+          field_mapping_hash: 'field_mapping_hash_1',
+        },
+        {
+          id: 'snapshot_1',
+          tenant_id: 'tenant_a',
+          field_mapping_version_id: 'policy_version_1',
+          catalog_version_id: 'catalog_version_1',
+          snapshot_hash: 'snapshot_hash_1',
+          lifecycle_state: 'active',
+        },
+        { id: 'activation_1' },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.activateFieldMappingVersion('tenant_a', 'policy_1', 'policy_version_1', {
+        snapshotId: 'snapshot_1',
+        activationScope: { kind: 'tenant' },
+      })
+    ).resolves.toMatchObject({
+      id: 'activation_1',
+      lifecycleState: 'active',
+      alreadyActive: true,
+    });
+    expect(adapter.executes.map((item) => item.sql)).toEqual([
+      expect.stringContaining('UPDATE field_mapping_versions'),
+      expect.stringContaining('UPDATE compiled_mapping_snapshots'),
+      expect.stringContaining('UPDATE field_mapping_versions'),
+      expect.stringContaining('UPDATE field_mapping_sets'),
     ]);
   });
 
@@ -1607,6 +2344,186 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
     expect(adapter.executes).toHaveLength(0);
   });
 
+  it('rejects saving when a mapping-required source field is not connected', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_1',
+          tenant_id: 'tenant_a',
+          field_mapping_key: 'default',
+          display_name: 'Default field mapping set',
+          description: null,
+          lifecycle_state: 'draft',
+        },
+      ],
+      queryRows: [
+        {
+          id: 'source_profile_1',
+          profile_key: 'scim_users',
+          source_type: 'scim',
+          schema_json: JSON.stringify({
+            sourceType: 'scim',
+            attributes: [
+              { name: 'userName', mappingRequired: true },
+              { name: 'displayName', mappingRequired: false },
+            ],
+          }),
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+        versionLabel: 'v1',
+        sourceProfileIds: ['source-profile-source_profile_1'],
+        rules: [
+          {
+            ruleKey: 'display-name',
+            ruleKind: 'source_mapping',
+            action: 'map',
+            edges: [
+              {
+                sourceRef: {
+                  profileId: 'source-profile-source_profile_1',
+                  namespace: 'scim.attribute',
+                  path: 'displayName',
+                },
+                targetRef: { namespace: 'authrim.profile', path: 'display_name' },
+              },
+            ],
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+      message: 'mapping-required source fields are not connected: scim_users:userName',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('saves when every mapping-required source field is connected', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_1',
+          tenant_id: 'tenant_a',
+          field_mapping_key: 'default',
+          display_name: 'Default field mapping set',
+          description: null,
+          lifecycle_state: 'draft',
+        },
+        null,
+      ],
+      queryRows: [
+        {
+          id: 'source_profile_1',
+          profile_key: 'scim_users',
+          source_type: 'scim',
+          schema_json: JSON.stringify({
+            sourceType: 'scim',
+            attributes: [{ name: 'userName', mappingRequired: true }],
+          }),
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+        versionLabel: 'v1',
+        sourceProfileIds: ['source-profile-source_profile_1'],
+        rules: [
+          {
+            ruleKey: 'user-name',
+            ruleKind: 'source_mapping',
+            action: 'map',
+            edges: [
+              {
+                sourceRef: {
+                  profileId: 'source-profile-source_profile_1',
+                  namespace: 'scim.attribute',
+                  path: 'userName',
+                },
+                targetRef: { namespace: 'authrim.profile', path: 'preferred_username' },
+              },
+            ],
+          },
+        ],
+      })
+    ).resolves.toMatchObject({
+      fieldMappingSetId: 'policy_1',
+      versionLabel: 'v1',
+    });
+    expect(
+      adapter.executes.some((item) => item.sql.includes('INSERT INTO field_mapping_versions'))
+    ).toBe(true);
+  });
+
+  it('saves a destination-only mapping without validating an unrelated SCIM source profile', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [
+        {
+          id: 'policy_1',
+          tenant_id: 'tenant_a',
+          field_mapping_key: 'oidc-release',
+          display_name: 'OIDC release',
+          description: null,
+          lifecycle_state: 'draft',
+        },
+        null,
+      ],
+      queryRows: [
+        {
+          id: 'source_profile_scim',
+          profile_key: 'scim_users',
+          source_type: 'scim',
+          schema_json: JSON.stringify({
+            sourceType: 'scim',
+            attributes: [{ name: 'userName', mappingRequired: true }],
+          }),
+        },
+      ],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+        versionLabel: 'v1',
+        sourceProfileIds: [],
+        rules: [
+          {
+            ruleKey: 'release-email',
+            ruleKind: 'destination_release',
+            action: 'map',
+            edges: [
+              {
+                sourceRef: {
+                  namespace: 'authrim.profile',
+                  path: 'email',
+                  role: 'target',
+                },
+                targetRef: {
+                  namespace: 'oidc.claim',
+                  path: 'email',
+                  role: 'destination',
+                  profileId: 'destination-profile-destination_profile_oidc',
+                },
+              },
+            ],
+          },
+        ],
+      })
+    ).resolves.toMatchObject({
+      fieldMappingSetId: 'policy_1',
+      versionLabel: 'v1',
+    });
+    expect(
+      adapter.executes.some((item) => item.sql.includes('INSERT INTO field_mapping_versions'))
+    ).toBe(true);
+  });
+
   it('rejects sensitive policy rule references before persistence', async () => {
     const adapter = createAdapter({});
     const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
@@ -1630,6 +2547,34 @@ describe('IdentityMappingControlPlaneRepository policy activation', () => {
                   namespace: 'authrim.profile',
                   path: 'email',
                 },
+              },
+            ],
+          },
+        ],
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects mapping edges that target OIDC protocol claims', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFieldMappingVersion('tenant_a', 'policy_1', {
+        versionLabel: 'v1',
+        rules: [
+          {
+            ruleKey: 'unsafe-acr-destination',
+            ruleKind: 'mapping',
+            action: 'allow',
+            edges: [
+              {
+                sourceRef: { side: 'source', namespace: 'authrim.profile', path: 'assurance' },
+                targetRef: { side: 'destination', namespace: 'oidc.claim', path: 'acr' },
               },
             ],
           },
@@ -2453,6 +3398,31 @@ describe('IdentityMappingControlPlaneRepository provisioning assignment operatio
     ]);
   });
 
+  it('invokes the account suspension fence before applying a SCIM account signal', async () => {
+    const adapter = createAdapter({ queryOneRows: [null] });
+    const fence = vi.fn(async () => {
+      expect(adapter.executes).toHaveLength(0);
+    });
+    const repository = new IdentityMappingControlPlaneRepository(
+      adapter,
+      () => 1000,
+      undefined,
+      fence
+    );
+
+    await repository.recordExternalLifecycleSignal('tenant_a', {
+      sourceType: 'scim',
+      sourceId: 'directory-1',
+      sourceEventId: 'event-1',
+      signalType: 'scim_active_false',
+      accountId: 'account-1',
+      targetType: 'account',
+      targetId: 'account-1',
+    });
+
+    expect(fence).toHaveBeenCalledWith('tenant_a', 'account-1', 1000, expect.any(String));
+  });
+
   it('routes protected SCIM group removal, CSV diff, and claim disappearance to review instead of silent revoke', async () => {
     for (const signalType of [
       'scim_group_removed',
@@ -2690,8 +3660,27 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
         displayName: 'eduGAIN pilot',
         lifecycleState: 'active',
         protocolPayload: {
+          metadataUrl: 'https://metadata.example.test/federation.xml',
           metadataUrlPatterns: ['https://metadata.example.test/*.xml'],
           policy: 'strict',
+          polling: { mode: 'automatic', intervalSeconds: 21_600 },
+          runtimeResolution: {
+            mode: 'automatic',
+            roles: ['saml_sp'],
+            priority: 10,
+            spFieldMappingSetId: 'mapping-sp',
+            defaultAttributePresetId: 'basic.v1',
+            entityCategoryPolicy: {
+              defaultDecision: 'deny',
+              rules: [
+                {
+                  entityCategory: 'http://refeds.org/category/research-and-scholarship',
+                  decision: 'allow',
+                  attributePresetId: 'research_federation.v1',
+                },
+              ],
+            },
+          },
         },
         anchors: [
           {
@@ -2715,6 +3704,385 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
       expect.stringContaining('INSERT INTO federation_trust_context_snapshots'),
     ]);
     expect(String(adapter.executes[3].params[4])).toContain('sourceKey');
+  });
+
+  it('removes aggregate runtime entities before deleting their trust source', async () => {
+    const adapter = createAdapter({ queryOneRows: [{ id: 'trust-source-1' }] });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.deleteFederationTrustSource('tenant_a', 'trust-source-1')
+    ).resolves.toEqual({ success: true });
+
+    const statements = adapter.executes.map((item) => item.sql);
+    const runtimeIndex = statements.findIndex((sql) =>
+      sql.includes('DELETE FROM federation_saml_runtime_entities')
+    );
+    const sourceIndex = statements.findIndex((sql) =>
+      sql.includes('DELETE FROM federation_trust_sources')
+    );
+    expect(
+      statements.some((sql) => sql.includes('DELETE FROM federation_metadata_refresh_jobs'))
+    ).toBe(true);
+    expect(
+      statements.some((sql) => sql.includes('DELETE FROM federation_selected_entity_import_events'))
+    ).toBe(true);
+    expect(statements.some((sql) => sql.includes('DELETE FROM federation_entity_statements'))).toBe(
+      true
+    );
+    expect(statements.some((sql) => sql.includes('DELETE FROM federation_trust_chains'))).toBe(
+      true
+    );
+    expect(runtimeIndex).toBeGreaterThanOrEqual(0);
+    expect(sourceIndex).toBeGreaterThan(runtimeIndex);
+  });
+
+  it('does not delete federation state while a metadata refresh lease is active', async () => {
+    const adapter = createAdapter({ queryOneRows: [{ id: 'trust-source-1' }] });
+    const originalExecute = adapter.execute.bind(adapter);
+    adapter.execute = async (sql, params = []) => {
+      if (sql.includes("SET lifecycle_state = 'retired'")) {
+        adapter.executes.push({ sql, params });
+        return { rowsAffected: 0, success: true };
+      }
+      return originalExecute(sql, params);
+    };
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1_000);
+
+    await expect(
+      repository.deleteFederationTrustSource('tenant_a', 'trust-source-1')
+    ).rejects.toMatchObject({ status: 409 });
+    expect(adapter.executes).toHaveLength(1);
+    expect(adapter.executes[0]?.sql).toContain('refresh_operation_expires_at');
+  });
+
+  it('invalidates aggregate runtime entities when the trust context changes', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ updated_at: 999, snapshot_hash: 'old-snapshot' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await repository.updateFederationTrustSource('tenant_a', 'trust-source-1', {
+      expectedUpdatedAt: 999,
+      sourceType: 'saml_aggregate',
+      sourceKey: 'research-federation',
+      displayName: 'Research Federation',
+      lifecycleState: 'active',
+      protocolPayload: {
+        metadataUrl: 'https://metadata.example.test/federation.xml',
+        polling: { mode: 'automatic', intervalSeconds: 21_600 },
+        runtimeResolution: { mode: 'inventory_only', roles: [] },
+      },
+      anchors: [],
+      scopeBindings: [],
+    });
+
+    expect(
+      adapter.executes.some((item) =>
+        item.sql.includes('DELETE FROM federation_saml_runtime_entities')
+      )
+    ).toBe(true);
+  });
+
+  it('requires the source revision before replacing federation trust state', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1_000);
+
+    await expect(
+      repository.updateFederationTrustSource('tenant_a', 'trust-source-1', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'research-federation',
+        displayName: 'Research Federation',
+        anchors: [],
+        scopeBindings: [],
+      } as never)
+    ).rejects.toMatchObject({ status: 400 });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('rejects a stale federation trust source update before writing dependent state', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ updated_at: 2_000, snapshot_hash: 'current-snapshot' }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 3_000);
+
+    await expect(
+      repository.updateFederationTrustSource('tenant_a', 'trust-source-1', {
+        expectedUpdatedAt: 1_999,
+        sourceType: 'saml_aggregate',
+        sourceKey: 'research-federation',
+        displayName: 'Research Federation',
+        anchors: [],
+        scopeBindings: [],
+      })
+    ).rejects.toMatchObject({ status: 409 });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('stops before dependent federation writes when the source CAS loses', async () => {
+    const adapter = createAdapter({
+      queryOneRows: [{ updated_at: 2_000, snapshot_hash: 'current-snapshot' }],
+    });
+    const originalExecute = adapter.execute.bind(adapter);
+    adapter.execute = async (sql, params = []) => {
+      if (sql.includes('UPDATE federation_trust_sources')) {
+        adapter.executes.push({ sql, params });
+        return { rowsAffected: 0, success: true };
+      }
+      return originalExecute(sql, params);
+    };
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 3_000);
+
+    await expect(
+      repository.updateFederationTrustSource('tenant_a', 'trust-source-1', {
+        expectedUpdatedAt: 2_000,
+        sourceType: 'saml_aggregate',
+        sourceKey: 'research-federation',
+        displayName: 'Research Federation',
+        anchors: [],
+        scopeBindings: [],
+      })
+    ).rejects.toMatchObject({ status: 409 });
+    expect(adapter.executes).toHaveLength(1);
+    expect(adapter.executes[0]?.sql).toContain('updated_at = ?');
+  });
+
+  it('keeps the trust generation for display and polling-state-only source edits', async () => {
+    const createAdapterInstance = createAdapter({});
+    const createRepository = new IdentityMappingControlPlaneRepository(
+      createAdapterInstance,
+      () => 1_000
+    );
+    const created = await createRepository.createFederationTrustSource('tenant_a', {
+      sourceType: 'saml_aggregate',
+      sourceKey: 'research-federation',
+      displayName: 'Old display name',
+      lifecycleState: 'active',
+      protocolPayload: {
+        description: 'Old description',
+        metadataUrl: 'https://metadata.example.test/federation.xml',
+        polling: {
+          mode: 'automatic',
+          intervalSeconds: 21_600,
+          etag: 'old-etag',
+          lastSuccessAt: 500,
+        },
+        runtimeResolution: { mode: 'inventory_only', roles: [] },
+        certificates: [
+          {
+            id: 'certificate-old-id',
+            name: 'Old label',
+            certificate: 'CERTIFICATE',
+            fingerprintSha256: 'sha256:abc',
+            createdAt: 1,
+          },
+        ],
+      },
+      anchors: [
+        {
+          anchorType: 'x509_sha256',
+          anchorHash: 'sha256:abc',
+          anchorRef: 'certificate-old-id',
+        },
+      ],
+      scopeBindings: [{ scopeType: 'tenant', priority: 0 }],
+    });
+
+    const adapter = createAdapter({
+      queryOneRows: [{ updated_at: 1_000, snapshot_hash: created.snapshotHash }],
+    });
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 2_000);
+    const updated = await repository.updateFederationTrustSource('tenant_a', 'trust-source-1', {
+      expectedUpdatedAt: 1_000,
+      sourceType: 'saml_aggregate',
+      sourceKey: 'research-federation',
+      displayName: 'New display name',
+      lifecycleState: 'active',
+      protocolPayload: {
+        description: 'New description',
+        metadataUrl: 'https://metadata.example.test/federation.xml',
+        polling: {
+          mode: 'automatic',
+          intervalSeconds: 21_600,
+          etag: 'client-replayed-etag',
+          lastSuccessAt: 1_500,
+        },
+        runtimeResolution: { mode: 'inventory_only', roles: [] },
+        certificates: [
+          {
+            id: 'certificate-new-id',
+            name: 'New label',
+            certificate: 'CERTIFICATE',
+            fingerprintSha256: 'sha256:abc',
+            createdAt: 2,
+          },
+        ],
+      },
+      anchors: [
+        {
+          anchorType: 'x509_sha256',
+          anchorHash: 'sha256:abc',
+          anchorRef: 'certificate-new-id',
+        },
+      ],
+      scopeBindings: [{ scopeType: 'tenant', priority: 0 }],
+    });
+
+    expect(updated.snapshotHash).toBe(created.snapshotHash);
+    expect(updated.updatedAt).toBe(2_000);
+    expect(
+      adapter.executes.some((item) =>
+        item.sql.includes('DELETE FROM federation_saml_runtime_entities')
+      )
+    ).toBe(false);
+    expect(
+      adapter.executes.some((item) => item.sql.includes("SET lifecycle_state = 'retired'"))
+    ).toBe(true);
+    const sourceUpdate = adapter.executes.find((item) =>
+      item.sql.includes('UPDATE federation_trust_sources')
+    );
+    const persistedPayload = JSON.parse(String(sourceUpdate?.params[4])) as {
+      polling: Record<string, unknown>;
+    };
+    expect(persistedPayload.polling).toEqual({
+      mode: 'automatic',
+      intervalSeconds: 21_600,
+      consecutiveFailures: 0,
+      sourceState: 'stale',
+    });
+  });
+
+  it('rejects unsafe URLs and invalid polling intervals for SAML federation sources', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'unsafe-source',
+        displayName: 'Unsafe source',
+        protocolPayload: {
+          metadataUrl: 'http://127.0.0.1/metadata.xml',
+          polling: { mode: 'automatic', intervalSeconds: 21_600 },
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'unsafe-query-pattern-source',
+        displayName: 'Unsafe query pattern source',
+        protocolPayload: {
+          metadataUrlPatterns: ['https://127.0.0.1/metadata.xml?feed=research'],
+          polling: { mode: 'automatic', intervalSeconds: 21_600 },
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'unsafe-exact-pattern-source',
+        displayName: 'Unsafe exact pattern source',
+        protocolPayload: {
+          metadataUrlPatterns: ['https://127.0.0.1/metadata.xml'],
+          polling: { mode: 'automatic', intervalSeconds: 21_600 },
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'too-fast-source',
+        displayName: 'Too fast source',
+        protocolPayload: {
+          metadataUrl: 'https://metadata.example.test/federation.xml',
+          polling: { mode: 'automatic', intervalSeconds: 60 },
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'missing-url-source',
+        displayName: 'Missing URL source',
+        protocolPayload: {
+          metadataUrlPatterns: ['https://metadata.example.test/*'],
+          polling: { mode: 'automatic', intervalSeconds: 21_600 },
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'missing-mapping-source',
+        displayName: 'Missing mapping source',
+        protocolPayload: {
+          metadataUrl: 'https://metadata.example.test/federation.xml',
+          runtimeResolution: {
+            mode: 'automatic',
+            roles: ['saml_idp'],
+          },
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+    expect(adapter.executes).toHaveLength(0);
+  });
+
+  it('accepts an exact legacy metadata URL pattern containing a query string', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'query-url-source',
+        displayName: 'Query URL source',
+        protocolPayload: {
+          metadataUrlPatterns: ['https://metadata.example.test/federation.xml?feed=research'],
+          polling: { mode: 'automatic', intervalSeconds: 21_600 },
+        },
+      })
+    ).resolves.toMatchObject({ sourceKey: 'query-url-source' });
+  });
+
+  it('rejects duplicate Entity Category policy rules', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.createFederationTrustSource('tenant_a', {
+        sourceType: 'saml_aggregate',
+        sourceKey: 'duplicate-category-source',
+        displayName: 'Duplicate category source',
+        protocolPayload: {
+          metadataUrl: 'https://metadata.example.test/federation.xml',
+          runtimeResolution: {
+            mode: 'automatic',
+            roles: ['saml_sp'],
+            spFieldMappingSetId: 'mapping-sp',
+            entityCategoryPolicy: {
+              defaultDecision: 'deny',
+              rules: [
+                {
+                  entityCategory: 'http://refeds.org/category/research-and-scholarship',
+                  decision: 'allow',
+                },
+                {
+                  entityCategory: ' http://refeds.org/category/research-and-scholarship ',
+                  decision: 'deny',
+                },
+              ],
+            },
+          },
+        },
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+    expect(adapter.executes).toHaveLength(0);
   });
 
   it('rejects unsupported federation trust source lifecycle states', async () => {
@@ -2798,6 +4166,21 @@ describe('IdentityMappingControlPlaneRepository federation trust and key lifecyc
       expect.stringContaining('INSERT INTO federation_metadata_entity_summaries'),
     ]);
     expect(String(adapter.executes[2].params[6])).toContain('requestedAttributes');
+  });
+
+  it('rejects the document type reserved for managed SAML runtime snapshots', async () => {
+    const adapter = createAdapter({});
+    const repository = new IdentityMappingControlPlaneRepository(adapter, () => 1000);
+
+    await expect(
+      repository.registerFederationMetadataDocument('tenant_a', {
+        trustSourceId: 'trust-source-1',
+        documentType: 'saml_aggregate_runtime_snapshot',
+        documentHash: 'sha256:metadata',
+        validationState: 'valid',
+      })
+    ).rejects.toMatchObject({ status: 400, code: 'invalid_request' });
+    expect(adapter.executes).toHaveLength(0);
   });
 
   it('lists federation metadata documents with normalized entity summaries', async () => {
@@ -3006,7 +4389,7 @@ describe('identity mapping control plane Admin API handlers', () => {
         },
       ],
     });
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.get(
       '/api/admin/field-mapping/field-mapping-sets',
       adminIdentityFieldMappingSetsListHandler
@@ -3051,7 +4434,7 @@ describe('identity mapping control plane Admin API handlers', () => {
         },
       ],
     });
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.get(
       '/api/admin/field-mapping/protocol-schemas',
       adminIdentityMappingProtocolSchemasListHandler
@@ -3064,24 +4447,23 @@ describe('identity mapping control plane Admin API handlers', () => {
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      protocolSchemas: [
-        {
-          id: 'protocol_schema_1',
-          tenantId: 'tenant_a',
-          protocol: 'scim',
-          schemaKey: 'User',
-          schemaVersion: '2.0',
-          schema: { attributes: [{ name: 'userName' }] },
-          lifecycleState: 'active',
-        },
-      ],
-    });
+    const body = (await response.json()) as { protocolSchemas: Array<Record<string, unknown>> };
+    expect(body.protocolSchemas).toEqual([
+      expect.objectContaining({
+        id: 'protocol_schema_1',
+        tenantId: 'tenant_a',
+        protocol: 'scim',
+        schemaKey: 'User',
+        schemaVersion: '2.0',
+        schema: { attributes: [{ name: 'userName' }] },
+        lifecycleState: 'active',
+      }),
+    ]);
   });
 
   it('rejects tenant admins creating platform-scoped destination profiles', async () => {
     const adapter = createAdapter({});
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.use('*', async (c, next) => {
       (c as unknown as { set(key: string, value: unknown): void }).set('tenantId', 'tenant_a');
       (c as unknown as { set(key: string, value: unknown): void }).set('adminAuth', {
@@ -3126,7 +4508,7 @@ describe('identity mapping control plane Admin API handlers', () => {
 
   it('rejects tenant admins creating platform-scoped attribute registries', async () => {
     const adapter = createAdapter({});
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.use('*', async (c, next) => {
       (c as unknown as { set(key: string, value: unknown): void }).set('tenantId', 'tenant_a');
       (c as unknown as { set(key: string, value: unknown): void }).set('adminAuth', {
@@ -3215,7 +4597,7 @@ describe('identity mapping control plane Admin API handlers', () => {
         },
       ],
     });
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.use('*', async (c, next) => {
       (c as unknown as { set(key: string, value: string): void }).set('tenantId', 'tenant_a');
       await next();
@@ -3264,7 +4646,7 @@ describe('identity mapping control plane Admin API handlers', () => {
         { name: 'attribute_release_consents' },
       ],
     });
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.use('*', async (c, next) => {
       (c as unknown as { set(key: string, value: string): void }).set('tenantId', 'tenant_a');
       await next();
@@ -3340,7 +4722,7 @@ describe('identity mapping control plane Admin API handlers', () => {
         },
       ],
     });
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.use('*', async (c, next) => {
       (c as unknown as { set(key: string, value: string): void }).set('tenantId', 'tenant_a');
       await next();
@@ -3379,7 +4761,7 @@ describe('identity mapping control plane Admin API handlers', () => {
 
   it('requires idempotency keys for mutation handlers', async () => {
     const adapter = createAdapter({});
-    const app = new Hono<{ Bindings: Env }>();
+    const app = createIdentityMappingApiApp(adapter);
     app.post(
       '/api/admin/field-mapping/field-mapping-sets',
       adminIdentityFieldMappingSetCreateHandler

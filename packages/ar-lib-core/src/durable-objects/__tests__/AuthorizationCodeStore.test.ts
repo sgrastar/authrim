@@ -2,13 +2,19 @@
  * AuthorizationCodeStore Durable Object Unit Tests
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AuthorizationCodeStore } from '../AuthorizationCodeStore';
 import type { Env } from '../../types/env';
+import { generateCodeChallenge } from '../../utils/crypto';
+
+const securityRegressionIt =
+  process.env.AUTHRIM_SECURITY_REGRESSION_SUITE === 'true' ? it : it.skip;
 
 // Mock DurableObjectState
 class MockDurableObjectState implements Partial<DurableObjectState> {
   private _storage = new Map<string, unknown>();
+  private failPutKey: string | null = null;
+  private blockedInitialization: Promise<unknown> = Promise.resolve();
   id!: DurableObjectId;
   storage: DurableObjectStorage;
 
@@ -18,6 +24,10 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
         return Promise.resolve(this._storage.get(key) as T | undefined);
       },
       put: (keyOrEntries: string | Record<string, unknown>, value?: unknown): Promise<void> => {
+        if (typeof keyOrEntries === 'string' && keyOrEntries === this.failPutKey) {
+          this.failPutKey = null;
+          return Promise.reject(new Error('Durable Storage unavailable'));
+        }
         if (typeof keyOrEntries === 'string') {
           this._storage.set(keyOrEntries, value);
         } else {
@@ -72,11 +82,21 @@ class MockDurableObjectState implements Partial<DurableObjectState> {
   }
 
   blockConcurrencyWhile<T>(callback: () => Promise<T>): Promise<T> {
-    return callback();
+    const result = callback();
+    this.blockedInitialization = result;
+    return result;
   }
 
   waitUntil(): void {
     // No-op for testing
+  }
+
+  failNextPut(key: string): void {
+    this.failPutKey = key;
+  }
+
+  async waitForBlockedInitialization(): Promise<void> {
+    await this.blockedInitialization;
   }
 }
 
@@ -156,9 +176,60 @@ describe('AuthorizationCodeStore', () => {
       const response = await codeStore.fetch(request);
       expect(response.status).toBe(201);
     });
+
+    it('does not expose a code when its durable write fails', async () => {
+      mockState.failNextPut('code:undurable_code');
+
+      await expect(
+        codeStore.storeCodeRpc({
+          code: 'undurable_code',
+          clientId: 'client_1',
+          tenantId: 'default',
+          redirectUri: 'https://app.example.com/callback',
+          userId: 'user_123',
+          scope: 'openid',
+        })
+      ).rejects.toThrow('Durable Storage unavailable');
+
+      await expect(
+        codeStore.consumeCodeRpc({
+          code: 'undurable_code',
+          clientId: 'client_1',
+          tenantId: 'default',
+        })
+      ).rejects.toThrow('Authorization code not found');
+    });
   });
 
   describe('Code Consumption (One-Time Use)', () => {
+    it('does not publish a consumed marker before its durable write succeeds', async () => {
+      await codeStore.storeCodeRpc({
+        code: 'consume_write_failure',
+        clientId: 'client_1',
+        tenantId: 'default',
+        redirectUri: 'https://app.example.com/callback',
+        userId: 'user_123',
+        scope: 'openid',
+      });
+      mockState.failNextPut('code:consume_write_failure');
+
+      await expect(
+        codeStore.consumeCodeRpc({
+          code: 'consume_write_failure',
+          clientId: 'client_1',
+          tenantId: 'default',
+        })
+      ).rejects.toThrow('Durable Storage unavailable');
+
+      await expect(
+        codeStore.consumeCodeRpc({
+          code: 'consume_write_failure',
+          clientId: 'client_1',
+          tenantId: 'default',
+        })
+      ).resolves.toMatchObject({ userId: 'user_123', scope: 'openid' });
+    });
+
     it('should consume valid authorization code', async () => {
       // Store code
       const storeRequest = new Request('http://localhost/code', {
@@ -199,6 +270,51 @@ describe('AuthorizationCodeStore', () => {
       expect(body.acr).toBe('urn:mace:incommon:iap:silver');
       expect(body.amr).toEqual(['passkey', 'webauthn']);
     });
+
+    securityRegressionIt(
+      '[security regression][AO-01] permits only one grant-bearing concurrent code redemption',
+      async () => {
+        const code = 'auth_code_concurrent_redeem';
+        const codeVerifier = 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+        const authorizationData = {
+          userId: 'victim_user',
+          scope: 'openid profile offline_access',
+          redirectUri: 'https://client.example.com/callback',
+        };
+
+        await codeStore.storeCodeRpc({
+          code,
+          clientId: 'public_client',
+          tenantId: 'default',
+          ...authorizationData,
+          codeChallenge: await generateCodeChallenge(codeVerifier),
+          codeChallengeMethod: 'S256',
+        });
+
+        const redeem = () =>
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'public_client',
+            tenantId: 'default',
+            codeVerifier,
+          });
+
+        const results = await Promise.allSettled([redeem(), redeem()]);
+        const fulfilledValues = results.flatMap((result) =>
+          result.status === 'fulfilled' ? [result.value] : []
+        );
+        const grantBearingValues = fulfilledValues.filter(
+          (value) => value.replayAttack === undefined && value.userId === authorizationData.userId
+        );
+        const replayOutcomes = results.filter(
+          (result) => result.status === 'rejected' || result.value.replayAttack !== undefined
+        );
+
+        expect(grantBearingValues).toHaveLength(1);
+        expect(grantBearingValues[0]).toMatchObject(authorizationData);
+        expect(replayOutcomes).toHaveLength(1);
+      }
+    );
 
     it('should prevent replay attack (code already used)', async () => {
       // Store code
@@ -302,6 +418,146 @@ describe('AuthorizationCodeStore', () => {
       expect(body._replayAttack.refreshTokenJti).toBe('rt_jti_67890');
     });
 
+    securityRegressionIt(
+      '[security regression] requires the PKCE verifier before returning replay revocation metadata',
+      async () => {
+        const code = 'auth_code_replay_pkce_binding';
+        const codeVerifier = 'p'.repeat(43);
+        await codeStore.storeCodeRpc({
+          code,
+          clientId: 'public_client',
+          tenantId: 'default',
+          redirectUri: 'https://app.example.com/callback',
+          userId: 'victim_user',
+          scope: 'openid',
+          codeChallenge: await generateCodeChallenge(codeVerifier),
+          codeChallengeMethod: 'S256',
+        });
+        await codeStore.consumeCodeRpc({
+          code,
+          clientId: 'public_client',
+          tenantId: 'default',
+          codeVerifier,
+          accessTokenJti: 'victim_access_jti',
+          refreshTokenJti: 'victim_refresh_jti',
+        });
+
+        await expect(
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'public_client',
+            tenantId: 'default',
+          })
+        ).rejects.toThrow('code_verifier required');
+
+        await expect(
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'public_client',
+            tenantId: 'default',
+            codeVerifier: 'x'.repeat(43),
+          })
+        ).rejects.toThrow('PKCE validation failed');
+
+        await expect(
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'public_client',
+            tenantId: 'default',
+            codeVerifier,
+          })
+        ).resolves.toMatchObject({
+          replayAttack: {
+            accessTokenJti: 'victim_access_jti',
+            refreshTokenJti: 'victim_refresh_jti',
+          },
+        });
+      }
+    );
+
+    securityRegressionIt(
+      '[security regression] rejects token registration after a valid replay races issuance',
+      async () => {
+        const code = 'auth_code_replay_registration_race';
+        await codeStore.storeCodeRpc({
+          code,
+          clientId: 'public_client',
+          tenantId: 'default',
+          redirectUri: 'https://app.example.com/callback',
+          userId: 'victim_user',
+          scope: 'openid',
+        });
+        await codeStore.consumeCodeRpc({
+          code,
+          clientId: 'public_client',
+          tenantId: 'default',
+        });
+
+        await expect(
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'public_client',
+            tenantId: 'default',
+          })
+        ).resolves.toMatchObject({ replayAttack: {} });
+        await expect(
+          codeStore.registerIssuedTokensRpc(code, 'late_access_jti', 'late_refresh_jti')
+        ).resolves.toBe(false);
+      }
+    );
+
+    securityRegressionIt(
+      '[security regression] validates redirect and DPoP bindings before consuming the code',
+      async () => {
+        const code = 'admin_agent_binding_preservation';
+        await codeStore.storeCodeRpc({
+          code,
+          clientId: 'admin_agent_client',
+          tenantId: 'default',
+          redirectUri: 'https://client.example.com/callback',
+          userId: 'admin_user:admin-1',
+          scope: 'agent:read',
+          dpopJkt: 'legitimate-dpop-jkt',
+          authorizationServer: 'admin_agent',
+          subjectType: 'admin_user',
+          resource: 'https://tenant.example.com/mcp',
+        });
+
+        await expect(
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'admin_agent_client',
+            tenantId: 'default',
+            expectedRedirectUri: 'https://attacker.example/callback',
+            enforceDpopBinding: true,
+            expectedDpopJkt: 'legitimate-dpop-jkt',
+          })
+        ).rejects.toThrow('Redirect URI mismatch');
+
+        await expect(
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'admin_agent_client',
+            tenantId: 'default',
+            expectedRedirectUri: 'https://client.example.com/callback',
+            enforceDpopBinding: true,
+            expectedDpopJkt: 'attacker-dpop-jkt',
+          })
+        ).rejects.toThrow('DPoP key mismatch');
+
+        await expect(
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'admin_agent_client',
+            tenantId: 'default',
+            expectedRedirectUri: 'https://client.example.com/callback',
+            enforceDpopBinding: true,
+            expectedDpopJkt: 'legitimate-dpop-jkt',
+          })
+        ).resolves.toMatchObject({ userId: 'admin_user:admin-1' });
+      }
+    );
+
     it('should fail on non-existent code', async () => {
       const request = new Request('http://localhost/code/consume', {
         method: 'POST',
@@ -353,6 +609,66 @@ describe('AuthorizationCodeStore', () => {
       expect(body.error).toBe('invalid_grant');
       // Security: Generic message to prevent client enumeration
       expect(body.error_description).toContain('Authorization code');
+    });
+
+    it('binds Admin Agent codes to the dedicated authorization server, subject, and resource', async () => {
+      const codeVerifier = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~';
+      const expectedChallenge = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(codeVerifier)
+      );
+      const encodedChallenge = btoa(String.fromCharCode(...new Uint8Array(expectedChallenge)))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/g, '');
+      await codeStore.storeCodeRpc({
+        code: 'admin_agent_code',
+        clientId: 'mcp_client',
+        tenantId: 'default',
+        redirectUri: 'https://client.example/callback',
+        userId: 'admin_123',
+        scope: 'agent:read',
+        codeChallenge: encodedChallenge,
+        codeChallengeMethod: 'S256',
+        authorizationServer: 'admin_agent',
+        subjectType: 'admin_user',
+        resource: 'https://default.example/mcp',
+        agentGrantId: 'grant_123',
+        agentGrantGeneration: 4,
+        agentConsentVersion: 2,
+      });
+
+      await expect(
+        codeStore.consumeCodeRpc({
+          code: 'admin_agent_code',
+          clientId: 'mcp_client',
+          tenantId: 'default',
+          codeVerifier,
+          expectedAuthorizationServer: 'default',
+          expectedSubjectType: 'end_user',
+        })
+      ).rejects.toThrow('Authorization server mismatch');
+
+      // A boundary mismatch must not consume the code. The dedicated endpoint can still redeem it.
+      const consumed = await codeStore.consumeCodeRpc({
+        code: 'admin_agent_code',
+        clientId: 'mcp_client',
+        tenantId: 'default',
+        codeVerifier,
+        expectedAuthorizationServer: 'admin_agent',
+        expectedSubjectType: 'admin_user',
+        expectedResource: 'https://default.example/mcp',
+      });
+
+      expect(consumed).toMatchObject({
+        userId: 'admin_123',
+        authorizationServer: 'admin_agent',
+        subjectType: 'admin_user',
+        resource: 'https://default.example/mcp',
+        agentGrantId: 'grant_123',
+        agentGrantGeneration: 4,
+        agentConsentVersion: 2,
+      });
     });
   });
 
@@ -465,6 +781,36 @@ describe('AuthorizationCodeStore', () => {
       // Security: Generic message to prevent PKCE state enumeration
       expect(body.error_description).toContain('PKCE verification failed');
     });
+
+    securityRegressionIt.each([
+      ['short', 'weak'],
+      ['long', 'a'.repeat(129)],
+      ['invalid-character', `${'a'.repeat(42)}+`],
+    ])(
+      '[security regression][AO-14] rejects a matching but RFC 7636-invalid %s code_verifier',
+      async (_caseName, codeVerifier) => {
+        const code = `auth_code_pkce_${_caseName}`;
+        await codeStore.storeCodeRpc({
+          code,
+          clientId: 'client_1',
+          tenantId: 'default',
+          redirectUri: 'https://app.example.com/callback',
+          userId: 'user_123',
+          scope: 'openid',
+          codeChallenge: await generateCodeChallenge(codeVerifier),
+          codeChallengeMethod: 'S256',
+        });
+
+        await expect(
+          codeStore.consumeCodeRpc({
+            code,
+            clientId: 'client_1',
+            tenantId: 'default',
+            codeVerifier,
+          })
+        ).rejects.toThrow('Invalid code_verifier format');
+      }
+    );
   });
 
   describe('Code Expiration (60 seconds TTL)', () => {
@@ -472,6 +818,90 @@ describe('AuthorizationCodeStore', () => {
       // Note: This test is difficult to implement without mocking time
       // In a real scenario, we would mock Date.now() or use a time-based library
       // For now, we rely on the TTL being set correctly in the implementation
+    });
+
+    securityRegressionIt(
+      '[security regression][AO-11] releases the per-user limit when expired codes are consumed',
+      async () => {
+        const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+        const limitedState = new MockDurableObjectState();
+        const limitedEnv = {
+          AUTH_CODE_EXPIRY: '60',
+          MAX_CODES_PER_USER: '2',
+        } as Env;
+        const limitedStore = new AuthorizationCodeStore(
+          limitedState as unknown as DurableObjectState,
+          limitedEnv
+        );
+        const userId = 'expired-counter-victim';
+
+        try {
+          await limitedState.waitForBlockedInitialization();
+          for (const code of ['expired-counter-code-1', 'expired-counter-code-2']) {
+            await limitedStore.storeCodeRpc({
+              code,
+              clientId: 'client_1',
+              tenantId: 'default',
+              redirectUri: 'https://app.example.com/callback',
+              userId,
+              scope: 'openid',
+            });
+            expect(await limitedState.storage.get(`code:${code}`)).toBeDefined();
+          }
+
+          now.mockReturnValue(1_061_000);
+          for (const code of ['expired-counter-code-1', 'expired-counter-code-2']) {
+            await expect(
+              limitedStore.consumeCodeRpc({
+                code,
+                clientId: 'client_1',
+                tenantId: 'default',
+              })
+            ).rejects.toThrow('Authorization code expired');
+
+            // The expired grant is really removed, so periodic cleanup cannot later repair its count.
+            expect(await limitedState.storage.get(`code:${code}`)).toBeUndefined();
+          }
+
+          await expect(
+            limitedStore.storeCodeRpc({
+              code: 'replacement-after-expired-consumption',
+              clientId: 'client_1',
+              tenantId: 'default',
+              redirectUri: 'https://app.example.com/callback',
+              userId,
+              scope: 'openid',
+            })
+          ).resolves.toMatchObject({ success: true });
+        } finally {
+          now.mockRestore();
+        }
+      }
+    );
+
+    it('decrements the per-user counter on explicit deletion as a negative control', async () => {
+      const limitedState = new MockDurableObjectState();
+      const limitedStore = new AuthorizationCodeStore(
+        limitedState as unknown as DurableObjectState,
+        {
+          AUTH_CODE_EXPIRY: '60',
+          MAX_CODES_PER_USER: '1',
+        } as Env
+      );
+      await limitedState.waitForBlockedInitialization();
+      const request = {
+        clientId: 'client_1',
+        tenantId: 'default',
+        redirectUri: 'https://app.example.com/callback',
+        userId: 'delete-counter-control',
+        scope: 'openid',
+      };
+
+      await limitedStore.storeCodeRpc({ code: 'delete-counter-original', ...request });
+      await expect(limitedStore.deleteCodeRpc('delete-counter-original')).resolves.toBe(true);
+      await expect(
+        limitedStore.storeCodeRpc({ code: 'delete-counter-replacement', ...request })
+      ).resolves.toMatchObject({ success: true });
     });
   });
 

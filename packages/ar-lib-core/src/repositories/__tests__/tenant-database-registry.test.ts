@@ -353,14 +353,71 @@ describe('TenantDatabaseRegistryRepository', () => {
     );
   });
 
+  it('reads persisted runtime cache generation state', async () => {
+    const row = {
+      tenant_id: 'tenant-a',
+      cache_namespace: 'runtime_registry',
+      generation: 5,
+      updated_at: '2026-05-16T00:00:00.000Z',
+      updated_by: 'system',
+      metadata_json: '{"route_status":"quarantining","quarantine_deny_generation":1}',
+    };
+    const queryOne = vi.fn().mockResolvedValue(row);
+    const repo = new TenantDatabaseRegistryRepository(createAdapter({ queryOne }));
+
+    await expect(repo.getRuntimeCacheGeneration('tenant-a', 'runtime_registry')).resolves.toBe(row);
+    expect(queryOne).toHaveBeenCalledWith(
+      expect.stringContaining('FROM tenant_runtime_cache_generations'),
+      ['tenant-a', 'runtime_registry']
+    );
+  });
+
+  it('commits runtime publication metadata only against the observed state', async () => {
+    const execute = vi.fn().mockResolvedValue({ success: true, rowsAffected: 1 });
+    const repo = new TenantDatabaseRegistryRepository(createAdapter({ execute }));
+    const expected = {
+      tenant_id: 'tenant-a',
+      cache_namespace: 'runtime_registry' as const,
+      generation: 5,
+      updated_at: '2026-05-16T00:00:00.000Z',
+      updated_by: 'system',
+      metadata_json: '{"route_status":"active"}',
+    };
+
+    await expect(
+      repo.commitRuntimeCacheGenerationPublication(
+        {
+          tenant_id: 'tenant-a',
+          cache_namespace: 'runtime_registry',
+          generation: 5,
+          metadata_json: '{"route_status":"active","snapshot_key":"snapshot"}',
+        },
+        expected
+      )
+    ).resolves.toBe(true);
+    expect(execute).toHaveBeenCalledWith(expect.stringContaining('AND metadata_json IS ?'), [
+      5,
+      expect.any(String),
+      null,
+      '{"route_status":"active","snapshot_key":"snapshot"}',
+      'tenant-a',
+      'runtime_registry',
+      5,
+      '2026-05-16T00:00:00.000Z',
+      '{"route_status":"active"}',
+    ]);
+  });
+
   it('upserts runtime registry snapshot metadata', async () => {
     const row = {
       tenant_id: 'tenant-a',
       snapshot_scope: 'tenant',
       deployment_target: 'default',
       runtime_generation: 4,
-      storage_profile_id: 'builtin:storage:tenant-d1',
-      snapshot_version: 1,
+      backend_provider: 'd1' as const,
+      placement_policy: 'tenant_exclusive' as const,
+      placement_policy_generation: 3,
+      snapshot_version: 3,
       status: 'active',
       object_ref: 'tenant:tenant-a:runtime-registry:snapshot:tenant:default',
       published_at: '2026-05-16T00:00:00.000Z',
@@ -377,7 +434,9 @@ describe('TenantDatabaseRegistryRepository', () => {
       repo.upsertRuntimeRegistrySnapshot({
         tenant_id: 'tenant-a',
         runtime_generation: 4,
-        storage_profile_id: 'builtin:storage:tenant-d1',
+        backend_provider: 'd1',
+        placement_policy: 'tenant_exclusive',
+        placement_policy_generation: 3,
         object_ref: 'tenant:tenant-a:runtime-registry:snapshot:tenant:default',
         published_at: '2026-05-16T00:00:00.000Z',
         expires_at: '2026-05-16T00:30:00.000Z',
@@ -390,8 +449,10 @@ describe('TenantDatabaseRegistryRepository', () => {
         'tenant',
         'default',
         4,
-        'builtin:storage:tenant-d1',
-        1,
+        'd1',
+        'tenant_exclusive',
+        3,
+        3,
         'active',
         'tenant:tenant-a:runtime-registry:snapshot:tenant:default',
         '2026-05-16T00:00:00.000Z',

@@ -18,12 +18,18 @@ import {
   AR_ERROR_CODES,
   createAuditLogFromContext,
   getLogger,
-  getRequiredPluginContext,
+  produceNotificationDelivery,
 } from '@authrim/ar-lib-core';
 import { z } from 'zod';
 import { ensureSupportedTenantId } from './single-tenant-guard';
 import { getCanonicalTenantBaseUrl } from './request-issuer';
 import { requireTenantResourceAccess } from './admin-tenant-access';
+import {
+  disableTenantDiscoveryAliasDirectory,
+  ensureActiveTenantDiscoveryAliasDirectory,
+  prepareTenantDiscoveryAliasDirectory,
+  resolveTenantDiscoveryAliasDirectoryInput,
+} from './tenant-alias-directory';
 
 // =============================================================================
 // Constants
@@ -140,12 +146,39 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    if (role_id) {
+      const role = await adapter.queryOne<{ id: string }>(
+        'SELECT id FROM roles WHERE id = ? AND tenant_id = ? AND is_assignable = 1',
+        [role_id, tenantId]
+      );
+      if (!role) {
+        return c.json({ error: 'invalid_request', message: 'role_id is not assignable' }, 400);
+      }
+    }
+
+    if (org_id) {
+      const organization = await adapter.queryOne<{ id: string }>(
+        'SELECT id FROM organizations WHERE id = ? AND tenant_id = ? AND is_active = 1',
+        [org_id, tenantId]
+      );
+      if (!organization) {
+        return c.json({ error: 'invalid_request', message: 'org_id is not active' }, 400);
+      }
+    }
+
     const now = Math.floor(Date.now() / 1000);
     const expiresAt = now + expires_in_hours * 3600;
     const invitationId = crypto.randomUUID();
     const token = generateInvitationToken();
     const adminId = getAdminUserId(c);
+    const discoveryAlias = await resolveTenantDiscoveryAliasDirectoryInput(c.env, {
+      tenantId,
+      aliasKind: 'invitation_token',
+      aliasValue: token,
+      now,
+    });
 
+    await prepareTenantDiscoveryAliasDirectory(c.env, discoveryAlias);
     await adapter.execute(
       `INSERT INTO tenant_invitations
         (id, token, tenant_id, invited_email, invited_by, role_id, org_id, max_uses, use_count, expires_at, created_at, updated_at)
@@ -164,45 +197,51 @@ export async function createTenantInvitationHandler(c: Context<{ Bindings: Env }
         now,
       ]
     );
+    await ensureActiveTenantDiscoveryAliasDirectory(c.env, discoveryAlias);
 
     const inviteUrl = `${getCanonicalTenantBaseUrl(c.env, tenantId)}/discover?invite_token=${token}`;
 
-    // Conditionally send email if invited_email is specified and email plugin is available
+    // Conditionally enqueue email if invited_email is specified.
     let emailSent = false;
     if (invited_email) {
-      const pluginCtx = getRequiredPluginContext(c, 'notification');
-      const emailNotifier = pluginCtx.registry.getNotifier('email');
-
-      if (emailNotifier) {
-        const fromEmail = c.env.EMAIL_FROM || 'noreply@authrim.dev';
-        const emailResult = await emailNotifier.send({
-          channel: 'email',
-          to: invited_email,
-          from: fromEmail,
-          subject: `You've been invited to ${tenant.name}`,
-          body: getInvitationEmailHtml({
-            tenantName: tenant.name,
-            inviteUrl,
-            expiresInHours: expires_in_hours,
-          }),
-          metadata: {
-            textBody: getInvitationEmailText({
+      try {
+        const delivery = await produceNotificationDelivery(c.env, {
+          owner: { owner: 'tenant', tenantId },
+          intentId: `tenant-invitation:${invitationId}`,
+          outboxId: `notification:${invitationId}`,
+          notificationKind: 'admin.tenant-invitation',
+          idempotencyKey: `tenant-invitation:${invitationId}`,
+          expiresAt,
+          payload: {
+            channel: 'email',
+            to: invited_email,
+            from: c.env.EMAIL_FROM || 'noreply@authrim.dev',
+            subject: `You've been invited to ${sanitizeEmailHeader(tenant.name)}`,
+            body: getInvitationEmailHtml({
               tenantName: tenant.name,
               inviteUrl,
               expiresInHours: expires_in_hours,
             }),
+            metadata: {
+              textBody: getInvitationEmailText({
+                tenantName: tenant.name,
+                inviteUrl,
+                expiresInHours: expires_in_hours,
+              }),
+            },
           },
         });
 
-        if (emailResult.success) {
-          emailSent = true;
-        } else {
-          log.warn('Failed to send invitation email', { error: emailResult.error });
+        emailSent = delivery.delivery !== 'permanent_failure';
+        if (!emailSent) {
+          log.warn('Failed to enqueue invitation email', {
+            tenant_id: tenantId,
+          });
         }
-      } else {
-        log.warn('Email notifier not configured, invitation URL returned without sending email', {
+      } catch (error) {
+        log.warn('Invitation email delivery failed', {
           tenant_id: tenantId,
-          invited_email,
+          errorType: error instanceof Error ? error.name : 'Unknown',
         });
       }
     }
@@ -308,14 +347,22 @@ export async function cancelTenantInvitationHandler(c: Context<{ Bindings: Env }
   try {
     const adapter = createAuthContextFromHono(c, tenantId).coreAdapter;
 
-    const invitation = await adapter.queryOne<{ id: string }>(
-      'SELECT id FROM tenant_invitations WHERE id = ? AND tenant_id = ?',
+    const invitation = await adapter.queryOne<{ id: string; token: string }>(
+      'SELECT id, token FROM tenant_invitations WHERE id = ? AND tenant_id = ?',
       [invId, tenantId]
     );
     if (!invitation) {
       return createErrorResponse(c, AR_ERROR_CODES.ADMIN_RESOURCE_NOT_FOUND);
     }
 
+    await disableTenantDiscoveryAliasDirectory(
+      c.env,
+      await resolveTenantDiscoveryAliasDirectoryInput(c.env, {
+        tenantId,
+        aliasKind: 'invitation_token',
+        aliasValue: invitation.token,
+      })
+    );
     await adapter.execute('DELETE FROM tenant_invitations WHERE id = ? AND tenant_id = ?', [
       invId,
       tenantId,
@@ -348,17 +395,40 @@ interface InvitationEmailParams {
 
 function getInvitationEmailHtml(params: InvitationEmailParams): string {
   const { tenantName, inviteUrl, expiresInHours } = params;
+  const safeTenantName = escapeHtml(tenantName);
+  const safeInviteUrl = escapeHtml(inviteUrl);
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="referrer" content="no-referrer"></head>
 <body style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <h2>You've been invited to ${tenantName}</h2>
+  <h2>You've been invited to ${safeTenantName}</h2>
   <p>Click the link below to accept your invitation and create your account:</p>
-  <p><a href="${inviteUrl}" style="display:inline-block;padding:12px 24px;background:#4f46e5;color:#fff;text-decoration:none;border-radius:6px;">Accept Invitation</a></p>
+  <p><a href="${safeInviteUrl}" style="display:inline-block;padding:12px 24px;background:#4f46e5;color:#fff;text-decoration:none;border-radius:6px;">Accept Invitation</a></p>
   <p style="color:#666;font-size:14px;">This invitation link expires in ${expiresInHours} hours.</p>
   <p style="color:#999;font-size:12px;">If you did not expect this invitation, you can safely ignore this email.</p>
 </body>
 </html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/gu, (character) => {
+    switch (character) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '"':
+        return '&quot;';
+      default:
+        return '&#39;';
+    }
+  });
+}
+
+function sanitizeEmailHeader(value: string): string {
+  return value.replace(/[\r\n\u0000-\u001f\u007f]+/gu, ' ').trim();
 }
 
 function getInvitationEmailText(params: InvitationEmailParams): string {

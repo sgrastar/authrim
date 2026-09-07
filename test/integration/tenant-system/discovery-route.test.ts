@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { loadMatrixCsv } from './helpers';
+import { loadMatrixCsv } from './fixtures/matrix-loader';
 
 interface EntryRouteMatrixRow {
   case_id: string;

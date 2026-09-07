@@ -13,6 +13,7 @@ import {
   introspectTokenFromContext,
   isShardedSessionId,
 } from '@authrim/ar-lib-core';
+import { recordAccountOperation } from './account-operation-log';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
@@ -484,7 +485,7 @@ export async function listMyDevicesHandler(c: Context<{ Bindings: Env }>): Promi
   const tenantId = getTenantIdFromContext(c);
   const cursor = await parseCursor(
     c.req.query('cursor'),
-    c.env.KEY_MANAGER_SECRET,
+    c.env.LOGGING_CURSOR_HMAC_SECRET,
     access.sub,
     tenantId
   );
@@ -547,7 +548,7 @@ export async function listMyDevicesHandler(c: Context<{ Bindings: Env }>): Promi
     nextOffset < devices.length
       ? await buildCursor(
           { offset: nextOffset, sub: access.sub, tenant_id: tenantId },
-          c.env.KEY_MANAGER_SECRET
+          c.env.LOGGING_CURSOR_HMAC_SECRET
         )
       : undefined;
 
@@ -605,6 +606,13 @@ export async function updateMyDeviceHandler(c: Context<{ Bindings: Env }>): Prom
     if (updated.linked_device_secret_id) {
       await repo.update(updated.linked_device_secret_id, { device_name: displayName }, tenantId);
     }
+    await recordAccountOperation(c, {
+      userId: access.sub,
+      action: 'account.device.updated',
+      resourceType: 'device',
+      resourceId: updated.id,
+      metadata: { fields: ['display_name'] },
+    });
     const clientId = getInstallationInventoryClientId(updated, access);
     const appDisplayNames = await buildAppDisplayNameMap(authCtx.repositories.client, [clientId]);
     return c.json({
@@ -624,6 +632,13 @@ export async function updateMyDeviceHandler(c: Context<{ Bindings: Env }>): Prom
   const updated =
     (await repo.update(existing.id, { device_name: displayName }, tenantId)) ?? existing;
   await installationRepo.ensureForDeviceSecret(updated);
+  await recordAccountOperation(c, {
+    userId: access.sub,
+    action: 'account.device.updated',
+    resourceType: 'device',
+    resourceId: getDeviceSecretInstallationId(updated),
+    metadata: { fields: ['display_name'] },
+  });
   const clientId = getDeviceSecretInventoryClientId(updated, access);
   const appDisplayNames = await buildAppDisplayNameMap(authCtx.repositories.client, [clientId]);
   return c.json({
@@ -671,6 +686,14 @@ export async function deleteMyDeviceHandler(c: Context<{ Bindings: Env }>): Prom
       await repo.revoke(existingInstallation.linked_device_secret_id, 'device_unlink', tenantId);
     }
 
+    await recordAccountOperation(c, {
+      userId: access.sub,
+      action: 'account.device.unlinked',
+      resourceType: 'device',
+      resourceId: existingInstallation.id,
+      metadata: { current: isCurrent },
+    });
+
     return c.json({
       ok: true,
       device_unlink_result: {
@@ -698,6 +721,14 @@ export async function deleteMyDeviceHandler(c: Context<{ Bindings: Env }>): Prom
   if (legacyInstallation) {
     await installationRepo.revoke(legacyInstallation.id, tenantId, 'device_unlink');
   }
+
+  await recordAccountOperation(c, {
+    userId: access.sub,
+    action: 'account.device.unlinked',
+    resourceType: 'device',
+    resourceId: getDeviceSecretInstallationId(existing),
+    metadata: { current: isCurrent },
+  });
 
   return c.json({
     ok: true,

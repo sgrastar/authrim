@@ -1,9 +1,10 @@
 import type { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
-import type { Env } from '@authrim/ar-lib-core';
+import type { Env, Session } from '@authrim/ar-lib-core';
 import {
-  createAuthContextFromHono,
   getLogger,
+  describeSessionClient,
+  getSessionRevocationStore,
   getSessionStoreBySessionId,
   getTenantIdFromContext,
   isShardedSessionId,
@@ -11,25 +12,32 @@ import {
 import { requireAccountSession } from './account-page';
 import { recordAccountOperation } from './account-operation-log';
 
-type SessionRow = {
-  id: string;
-  tenant_id: string;
-  user_id: string;
-  expires_at: number;
-  created_at: number;
-};
-
 function setNoStore(c: Context<{ Bindings: Env }>): void {
   c.header('Cache-Control', 'no-store');
   c.header('Pragma', 'no-cache');
 }
 
-function toSessionItem(row: SessionRow, currentSessionId: string) {
+function toSessionItem(
+  session: Pick<Session, 'id' | 'createdAt' | 'expiresAt' | 'data'>,
+  currentSessionId: string
+) {
+  const client = describeSessionClient(session.data?.userAgent);
+  const countryCode =
+    typeof session.data?.countryCode === 'string' &&
+    /^[A-Z]{2}$/.test(session.data.countryCode.toUpperCase()) &&
+    session.data.countryCode.toUpperCase() !== 'XX'
+      ? session.data.countryCode.toUpperCase()
+      : null;
+
   return {
-    id: row.id,
-    current: row.id === currentSessionId,
-    created_at: row.created_at * 1000,
-    expires_at: row.expires_at * 1000,
+    id: session.id,
+    current: session.id === currentSessionId,
+    created_at: session.createdAt,
+    expires_at: session.expiresAt,
+    browser: client.browser,
+    os: client.os,
+    device_type: client.deviceType,
+    country_code: countryCode,
   };
 }
 
@@ -38,13 +46,17 @@ function currentSessionRow(accountSession: {
   userId: string;
   createdAt: number;
   expiresAt: number;
-}): SessionRow {
+  userAgent?: string;
+  countryCode?: string;
+}): Pick<Session, 'id' | 'createdAt' | 'expiresAt' | 'data'> {
   return {
     id: accountSession.sessionId,
-    tenant_id: '',
-    user_id: accountSession.userId,
-    created_at: Math.floor(accountSession.createdAt / 1000),
-    expires_at: Math.floor(accountSession.expiresAt / 1000),
+    createdAt: accountSession.createdAt,
+    expiresAt: accountSession.expiresAt,
+    data: {
+      ...(accountSession.userAgent ? { userAgent: accountSession.userAgent } : {}),
+      ...(accountSession.countryCode ? { countryCode: accountSession.countryCode } : {}),
+    },
   };
 }
 
@@ -56,17 +68,25 @@ export async function listAccountSessionsHandler(c: Context<{ Bindings: Env }>):
   }
 
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const rows = await authCtx.coreAdapter.query<SessionRow>(
-    `SELECT id, tenant_id, user_id, expires_at, created_at
-       FROM sessions
-      WHERE tenant_id = ? AND user_id = ? AND expires_at > ?
-      ORDER BY created_at DESC
-      LIMIT 100`,
-    [tenantId, accountSession.userId, nowSeconds]
+  const indexed = await getSessionRevocationStore(
+    c.env,
+    tenantId,
+    accountSession.userId
+  ).listActiveSessionsRpc(
+    tenantId,
+    accountSession.userId,
+    `account:${accountSession.userId}`,
+    Date.now()
   );
-  const sessions = rows.map((row) => toSessionItem(row, accountSession.sessionId));
+  const sessions: ReturnType<typeof toSessionItem>[] = [];
+  for (const entry of indexed.slice(0, 100)) {
+    if (!isShardedSessionId(entry.sessionId)) continue;
+    const { stub } = getSessionStoreBySessionId(c.env, entry.sessionId, tenantId);
+    const session = (await stub.getSessionRpc(entry.sessionId)) as Session | null;
+    if (session?.tenantId === tenantId && session.userId === accountSession.userId) {
+      sessions.push(toSessionItem(session, accountSession.sessionId));
+    }
+  }
   if (!sessions.some((session) => session.id === accountSession.sessionId)) {
     sessions.push(toSessionItem(currentSessionRow(accountSession), accountSession.sessionId));
     sessions.sort((a, b) => b.created_at - a.created_at);
@@ -92,44 +112,29 @@ export async function deleteAccountSessionHandler(
   }
 
   const tenantId = getTenantIdFromContext(c);
-  const authCtx = createAuthContextFromHono(c, tenantId);
-  let row = await authCtx.coreAdapter.queryOne<SessionRow>(
-    `SELECT id, tenant_id, user_id, expires_at, created_at
-       FROM sessions
-      WHERE id = ? AND tenant_id = ? AND user_id = ?`,
-    [sessionId, tenantId, accountSession.userId]
-  );
-
-  if (!row && sessionId === accountSession.sessionId) {
-    row = currentSessionRow(accountSession);
-  }
-
-  if (!row) {
+  if (!isShardedSessionId(sessionId)) {
     return c.json({ error: 'not_found', error_description: 'Session was not found' }, 404);
   }
 
-  let storeStatus: 'revoked' | 'not_found' | 'not_applicable' = 'not_applicable';
-  if (isShardedSessionId(sessionId)) {
-    try {
-      const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
-      storeStatus = (await sessionStore.invalidateSessionRpc(sessionId)) ? 'revoked' : 'not_found';
-    } catch (error) {
-      const log = getLogger(c).module('ACCOUNT-SESSIONS');
-      log.error('SessionStore invalidation failed', { action: 'session_revoke' }, error as Error);
-      return c.json(
-        {
-          error: 'server_error',
-          error_description: 'Failed to revoke session',
-        },
-        503
-      );
+  let storeStatus: 'revoked' | 'not_found' = 'not_found';
+  try {
+    const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
+    const session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
+    if (!session || session.tenantId !== tenantId || session.userId !== accountSession.userId) {
+      return c.json({ error: 'not_found', error_description: 'Session was not found' }, 404);
     }
+    storeStatus = (await sessionStore.invalidateSessionRpc(sessionId)) ? 'revoked' : 'not_found';
+  } catch (error) {
+    const log = getLogger(c).module('ACCOUNT-SESSIONS');
+    log.error('SessionStore invalidation failed', { action: 'session_revoke' }, error as Error);
+    return c.json(
+      {
+        error: 'server_error',
+        error_description: 'Failed to revoke session',
+      },
+      503
+    );
   }
-
-  await authCtx.coreAdapter.execute('DELETE FROM sessions WHERE id = ? AND tenant_id = ?', [
-    sessionId,
-    tenantId,
-  ]);
 
   const current = sessionId === accountSession.sessionId;
   if (current) {

@@ -23,6 +23,21 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     safeFetchText: mocks.safeFetchText,
     createAuthContextFromHono: mocks.createAuthContextFromHono,
     resolveAuthCorePersistenceAdapterFromEnv: mocks.resolveAuthCorePersistenceAdapterFromEnv,
+    requireAdminDatabaseAdapter: vi.fn(
+      (env: { DB_ADMIN?: unknown }) => env.DB_ADMIN ?? mocks.createAuthContextFromHono().coreAdapter
+    ),
+    resolveRuntimeIdentityMappingBinding: vi.fn(async () => ({
+      fieldMappingSetId: 'test-saml-outbound',
+      fieldMappingVersionId: 'version-1',
+      destinationProfileId: 'destination-profile-saml',
+      destinationProfileIds: ['destination-profile-saml'],
+    })),
+    loadDestinationProfileConsentDescriptor: vi.fn(async () => ({
+      profileId: 'destination-profile-saml',
+      profileVersionId: 'destination-profile-saml-v1',
+      destinationType: 'saml',
+      fields: [{ key: 'mail' }],
+    })),
     createAuditLog: mocks.createAuditLog,
     getLogger: () => ({
       module: () => ({
@@ -88,6 +103,28 @@ const aggregateXml = `<?xml version="1.0" encoding="UTF-8"?>
     </md:SPSSODescriptor>
   </md:EntityDescriptor>
 </md:EntitiesDescriptor>`;
+
+const providerUpdatedAt = 1_700_000_000_000;
+const providerUpdatedAtIso = new Date(providerUpdatedAt).toISOString();
+const trustContextSnapshotHash = 'sha256:current-trust-context';
+
+const mixedAggregateXml = aggregateXml.replace(
+  '</md:EntitiesDescriptor>',
+  `<md:EntityDescriptor entityID="https://idp.example.test/idp">
+    <md:IDPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
+      <md:KeyDescriptor use="signing">
+        <ds:KeyInfo><ds:X509Data><ds:X509Certificate>${expiredCertificate.replace(
+          /-----BEGIN CERTIFICATE-----|-----END CERTIFICATE-----|\s/g,
+          ''
+        )}</ds:X509Certificate></ds:X509Data></ds:KeyInfo>
+      </md:KeyDescriptor>
+      <md:SingleSignOnService
+        Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+        Location="https://idp.example.test/sso" />
+    </md:IDPSSODescriptor>
+  </md:EntityDescriptor>
+</md:EntitiesDescriptor>`
+);
 
 interface StoredBatch {
   batchId: string;
@@ -201,6 +238,7 @@ function createAggregateStoreNamespace(input: {
 
 function createContext(input: {
   body?: unknown;
+  rawRequest?: Request;
   params?: Record<string, string>;
   query?: Record<string, string | undefined>;
   tenantId?: string;
@@ -209,6 +247,7 @@ function createContext(input: {
 }) {
   return {
     req: {
+      raw: input.rawRequest,
       json: async () => input.body,
       header: () => undefined,
       query: (name: string) => input.query?.[name],
@@ -279,6 +318,40 @@ describe('SAML aggregate provider API', () => {
       'https://metadata.example.test/aggregate.xml',
       expect.objectContaining({ maxResponseSize: 10 * 1024 * 1024 })
     );
+  });
+
+  it('rejects an oversized aggregate preview request before buffering its JSON body', async () => {
+    const response = await handlePreviewMetadata(
+      createContext({
+        rawRequest: new Request('https://authrim.example.test/api/admin/saml-metadata/preview', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': String(12 * 1024 * 1024 + 1),
+          },
+          body: '{}',
+        }),
+      })
+    );
+    const body = (await response.json()) as { error_description: string };
+
+    expect(response.status).toBe(400);
+    expect(body.error_description).toContain('request body exceeds size limit');
+    expect(mocks.safeFetchText).not.toHaveBeenCalled();
+  });
+
+  it('rejects oversized single-entity XML received through the aggregate preview endpoint', async () => {
+    const oversizedSingleMetadata = singleSPMetadata.replace(
+      '</md:EntityDescriptor>',
+      `<md:Extensions>${'x'.repeat(1024 * 1024)}</md:Extensions></md:EntityDescriptor>`
+    );
+    const response = await handlePreviewMetadata(
+      createContext({ body: { metadataXml: oversizedSingleMetadata } }) as never
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error_description?: string };
+    expect(body.error_description).toContain('Single-entity SAML metadata exceeds size limit');
   });
 
   it('loads normalized SAML federation trust sources during aggregate preview', async () => {
@@ -353,7 +426,10 @@ describe('SAML aggregate provider API', () => {
           providerType: 'saml_sp',
           metadataUrl: 'https://sp.example.test/metadata.xml',
           config: {
-            identityMapping: { fieldMappingSetId: 'test-saml-outbound' },
+            identityMapping: {
+              fieldMappingSetId: 'test-saml-outbound',
+              destinationFieldPolicies: { mail: 'optional' },
+            },
           },
         },
       })
@@ -443,6 +519,173 @@ describe('SAML aggregate provider API', () => {
     );
   });
 
+  it('registers a provider disabled when its Field Mapping Set will be configured later', async () => {
+    const coreAdapter = createMockAdapter();
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleCreateProvider(
+      createContext({
+        body: {
+          name: 'Draft SP',
+          providerType: 'saml_sp',
+          enabled: false,
+          config: {
+            entityId: 'https://sp.example.test/sp',
+            acsUrl: 'https://sp.example.test/acs',
+            signResponses: true,
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ enabled: false });
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO identity_providers'),
+      expect.arrayContaining([0])
+    );
+  });
+
+  it('registers a disabled provider with a mapping that must be repaired before enablement', async () => {
+    const coreAdapter = createMockAdapter();
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleCreateProvider(
+      createContext({
+        body: {
+          name: 'Repairable SP',
+          providerType: 'saml_sp',
+          enabled: false,
+          config: {
+            entityId: 'https://sp.example.test/sp',
+            acsUrl: 'https://sp.example.test/acs',
+            signResponses: true,
+            identityMapping: {
+              fieldMappingSetId: 'mapping-set-pending-repair',
+              fieldMappingVersionId: 'mapping-version-pending-repair',
+            },
+          },
+        },
+      })
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      enabled: false,
+      config: {
+        identityMapping: {
+          fieldMappingSetId: 'mapping-set-pending-repair',
+          fieldMappingVersionId: 'mapping-version-pending-repair',
+        },
+      },
+    });
+  });
+
+  it('rejects enabling a provider until its Field Mapping Set is configured', async () => {
+    const coreAdapter = createMockAdapter();
+    coreAdapter.queryOne.mockResolvedValue({
+      id: 'draft-sp',
+      name: 'Draft SP',
+      provider_type: 'saml_sp',
+      enabled: 0,
+      updated_at: providerUpdatedAt,
+      config_json: JSON.stringify({
+        entityId: 'https://sp.example.test/sp',
+        acsUrl: 'https://sp.example.test/acs',
+        signResponses: true,
+      }),
+    });
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleUpdateProvider(
+      createContext({
+        params: { id: 'draft-sp' },
+        body: { enabled: true, expectedUpdatedAt: providerUpdatedAtIso },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(coreAdapter.execute).not.toHaveBeenCalled();
+  });
+
+  it('allows an invalidly mapped provider to be disabled for emergency containment', async () => {
+    const coreAdapter = createMockAdapter();
+    coreAdapter.queryOne.mockResolvedValue({
+      id: 'broken-sp',
+      name: 'Broken SP',
+      provider_type: 'saml_sp',
+      enabled: 1,
+      updated_at: providerUpdatedAt,
+      config_json: JSON.stringify({
+        entityId: 'https://sp.example.test/sp',
+        acsUrl: 'https://sp.example.test/acs',
+        signResponses: true,
+        identityMapping: {
+          fieldMappingSetId: 'deleted-mapping-set',
+          fieldMappingVersionId: 'deleted-mapping-version',
+          sourceProfileId: 'directory-subject',
+          attributeDescriptors: { mail: { name: 'mail' } },
+        },
+      }),
+    });
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleUpdateProvider(
+      createContext({
+        params: { id: 'broken-sp' },
+        body: { enabled: false, expectedUpdatedAt: providerUpdatedAtIso },
+      })
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      enabled: false,
+      config: {
+        identityMapping: {
+          fieldMappingSetId: 'deleted-mapping-set',
+          fieldMappingVersionId: 'deleted-mapping-version',
+          sourceProfileId: 'directory-subject',
+          attributeDescriptors: { mail: { name: 'mail' } },
+        },
+      },
+    });
+    expect(coreAdapter.execute).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE identity_providers'),
+      expect.arrayContaining([expect.stringContaining('deleted-mapping-version'), 0])
+    );
+  });
+
+  it('revalidates a pending Mapping Set before a disabled provider can be enabled again', async () => {
+    const coreAdapter = createMockAdapter();
+    coreAdapter.queryOne.mockResolvedValue({
+      id: 'repairable-sp',
+      name: 'Repairable SP',
+      provider_type: 'saml_sp',
+      enabled: 0,
+      updated_at: providerUpdatedAt,
+      config_json: JSON.stringify({
+        entityId: 'https://sp.example.test/sp',
+        acsUrl: 'https://sp.example.test/acs',
+        signResponses: true,
+        identityMapping: {
+          fieldMappingSetId: 'mapping-set-pending-repair',
+          fieldMappingVersionId: 'mapping-version-pending-repair',
+        },
+      }),
+    });
+    mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
+
+    const response = await handleUpdateProvider(
+      createContext({
+        params: { id: 'repairable-sp' },
+        body: { enabled: true, expectedUpdatedAt: providerUpdatedAtIso },
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(coreAdapter.execute).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid SAML IdP JIT linking policy values on create', async () => {
     const coreAdapter = createMockAdapter();
     mocks.createAuthContextFromHono.mockReturnValue({ coreAdapter });
@@ -477,6 +720,7 @@ describe('SAML aggregate provider API', () => {
       name: 'Example IdP',
       provider_type: 'saml_idp',
       enabled: 1,
+      updated_at: providerUpdatedAt,
       config_json: JSON.stringify({
         entityId: 'https://idp.example.test/idp',
         ssoUrl: 'https://idp.example.test/sso',
@@ -493,6 +737,7 @@ describe('SAML aggregate provider API', () => {
       createContext({
         params: { id: 'idp-1' },
         body: {
+          expectedUpdatedAt: providerUpdatedAtIso,
           config: {
             jitEmailLinkingPolicy: 'unsafe_email_takeover',
           },
@@ -511,6 +756,7 @@ describe('SAML aggregate provider API', () => {
       name: 'Example IdP',
       provider_type: 'saml_idp',
       enabled: 1,
+      updated_at: providerUpdatedAt,
       config_json: JSON.stringify({
         entityId: 'https://idp.example.test/idp',
         ssoUrl: 'https://idp.example.test/sso',
@@ -527,6 +773,7 @@ describe('SAML aggregate provider API', () => {
       createContext({
         params: { id: 'idp-1' },
         body: {
+          expectedUpdatedAt: providerUpdatedAtIso,
           config: {
             jitEmailLinkingPolicy: 'disabled',
             allowSyntheticEmailFallback: true,
@@ -554,11 +801,15 @@ describe('SAML aggregate provider API', () => {
     );
   });
 
-  it.each(['single tenant', 'multi tenant', 'shared D1', 'tenant D1', 'external DB'])(
+  it.each(['single shard', 'multiple shards', 'shared_pool', 'tenant_exclusive', 'adapter source'])(
     'creates selected aggregate entities through the batch API using the runtime storage resolver: %s',
     async () => {
       const coreAdapter = createMockAdapter();
       const adminAdapter = createMockAdapter();
+      adminAdapter.queryOne.mockResolvedValue({
+        id: 'trust-source-1',
+        snapshot_hash: trustContextSnapshotHash,
+      });
       const waitUntil: Array<Promise<unknown>> = [];
       mocks.resolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue(coreAdapter);
       const previewId = 'preview-1';
@@ -571,10 +822,19 @@ describe('SAML aggregate provider API', () => {
             tenantId: 'tenant-a',
             metadataXml: aggregateXml,
             metadataUrl: 'https://metadata.example.test/aggregate.xml',
+            entities: [
+              {
+                entityId: 'https://sp.example.test/sp',
+                role: 'saml_sp',
+                acsUrl: 'https://sp.example.test/acs',
+                certificateCount: 0,
+              },
+            ],
             verification: {
               status: 'skipped',
               policy: 'disabled',
               trustProfileId: 'trust-source-1',
+              trustContextSnapshotHash,
             },
           },
         }) as never,
@@ -583,7 +843,14 @@ describe('SAML aggregate provider API', () => {
       const startResponse = await handleStartAggregateBatchCreate(
         createContext({
           params: { previewId },
-          body: { entityIds: ['https://sp.example.test/sp'], enabled: true },
+          body: {
+            entityIds: ['https://sp.example.test/sp'],
+            enabled: true,
+            identityMapping: {
+              fieldMappingSetId: 'test-saml-outbound',
+              destinationFieldPolicies: { mail: 'optional' },
+            },
+          },
           env,
           waitUntil,
         })
@@ -638,6 +905,82 @@ describe('SAML aggregate provider API', () => {
       );
     }
   );
+
+  it('rejects an aggregate batch without a Mapping Set before starting async work', async () => {
+    const previewId = 'preview-invalid-mapping';
+    const waitUntil: Array<Promise<unknown>> = [];
+    const response = await handleStartAggregateBatchCreate(
+      createContext({
+        params: { previewId },
+        body: { entityIds: ['https://sp.example.test/sp'] },
+        env: {
+          DEFAULT_TENANT_ID: 'tenant-a',
+          SAML_AGGREGATE_METADATA_STORE: createAggregateStoreNamespace({
+            previewId,
+            preview: {
+              tenantId: 'tenant-a',
+              metadataXml: aggregateXml,
+              entities: [
+                {
+                  entityId: 'https://sp.example.test/sp',
+                  role: 'saml_sp',
+                  acsUrl: 'https://sp.example.test/acs',
+                  certificateCount: 0,
+                },
+              ],
+              verification: { status: 'skipped', policy: 'disabled' },
+            },
+          }) as never,
+        },
+        waitUntil,
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(waitUntil).toHaveLength(0);
+    expect(mocks.resolveAuthCorePersistenceAdapterFromEnv).not.toHaveBeenCalled();
+  });
+
+  it('registers mixed IdP and SP aggregate entities disabled for per-provider mapping setup', async () => {
+    const previewId = 'preview-mixed-draft';
+    const waitUntil: Array<Promise<unknown>> = [];
+    const coreAdapter = createMockAdapter();
+    mocks.resolveAuthCorePersistenceAdapterFromEnv.mockResolvedValue(coreAdapter);
+    const response = await handleStartAggregateBatchCreate(
+      createContext({
+        params: { previewId },
+        body: {
+          entityIds: ['https://sp.example.test/sp', 'https://idp.example.test/idp'],
+          enabled: false,
+        },
+        env: {
+          DEFAULT_TENANT_ID: 'tenant-a',
+          SAML_AGGREGATE_METADATA_STORE: createAggregateStoreNamespace({
+            previewId,
+            preview: {
+              tenantId: 'tenant-a',
+              metadataXml: mixedAggregateXml,
+              entities: [
+                { entityId: 'https://sp.example.test/sp', role: 'saml_sp' },
+                { entityId: 'https://idp.example.test/idp', role: 'saml_idp' },
+              ],
+              verification: { status: 'skipped', policy: 'disabled' },
+            },
+          }) as never,
+        },
+        waitUntil,
+      })
+    );
+
+    expect(response.status).toBe(202);
+    expect(waitUntil).toHaveLength(1);
+    await Promise.all(waitUntil);
+    const inserts = coreAdapter.execute.mock.calls.filter(([sql]) =>
+      String(sql).includes('INSERT INTO identity_providers')
+    );
+    expect(inserts).toHaveLength(2);
+    expect(inserts.every(([, params]) => Array.isArray(params) && params[5] === 0)).toBe(true);
+  });
 
   it('does not expose aggregate preview entities across tenants', async () => {
     const previewId = 'preview-foreign';

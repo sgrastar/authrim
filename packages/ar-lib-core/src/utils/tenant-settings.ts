@@ -12,10 +12,70 @@ export type TenantSettingsCategory =
   | 'login-ui'
   | 'authentication-methods'
   | 'feature-flags'
+  | 'tokens'
   | 'step-up'
   | 'login-entry'
   | 'tenant-discovery-ui'
   | 'support-ops';
+
+/** Tenant-scoped compatibility overlay for legacy `system_settings` consumers. */
+export const TENANT_SYSTEM_SETTINGS_CATEGORY = 'certification-profile';
+
+export function buildTenantSystemSettingsKey(tenantId: string): string {
+  return `settings:tenant:${tenantId}:${TENANT_SYSTEM_SETTINGS_CATEGORY}`;
+}
+
+function parseSettingsObject(raw: string | null, failOnError = false): Record<string, unknown> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    if (failOnError) {
+      throw new TypeError('Tenant system settings must be a JSON object');
+    }
+    return {};
+  } catch (error) {
+    if (failOnError) throw error;
+    return {};
+  }
+}
+
+export interface TenantSystemSettingsReadOptions {
+  /** Propagate KV and malformed-JSON errors so security profiles can fail closed. */
+  failOnError?: boolean;
+}
+
+/**
+ * Read effective legacy system settings for a tenant.
+ *
+ * The global `system_settings` value remains the deployment default. A tenant may
+ * override complete top-level sections (for example `oidc` and `fapi`) without
+ * changing the behavior of other tenants.
+ */
+export async function getTenantSystemSettings(
+  kv: KVNamespace | undefined,
+  tenantId: string,
+  options: TenantSystemSettingsReadOptions = {}
+): Promise<Record<string, unknown> | null> {
+  if (!kv) return null;
+
+  try {
+    const [globalRaw, tenantRaw] = await Promise.all([
+      kv.get('system_settings'),
+      kv.get(buildTenantSystemSettingsKey(tenantId)),
+    ]);
+    if (!globalRaw && !tenantRaw) return null;
+    return {
+      ...parseSettingsObject(globalRaw, options.failOnError),
+      ...parseSettingsObject(tenantRaw, options.failOnError),
+    };
+  } catch (error) {
+    if (options.failOnError) throw error;
+    return null;
+  }
+}
 
 /**
  * Read a tenant settings object from KV.

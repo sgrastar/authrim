@@ -668,6 +668,9 @@ export const ADMIN_PERMISSION_DEFINITIONS: AdminPermissionCategory[] = [
 		permissions: [
 			{ key: 'admin:clients:read', description: 'View OAuth clients' },
 			{ key: 'admin:clients:write', description: 'Create and update OAuth clients' },
+			{ key: 'admin:clients:create', description: 'Create OAuth clients' },
+			{ key: 'admin:clients:update', description: 'Update OAuth clients' },
+			{ key: 'admin:clients:secret:rotate', description: 'Rotate OAuth client secrets' },
 			{ key: 'admin:clients:delete', description: 'Delete OAuth clients' },
 			{ key: 'admin:clients:*', description: 'Full OAuth client management' }
 		]
@@ -703,7 +706,29 @@ export const ADMIN_PERMISSION_DEFINITIONS: AdminPermissionCategory[] = [
 		description: 'Manage system settings',
 		permissions: [
 			{ key: 'admin:settings:read', description: 'View system settings' },
-			{ key: 'admin:settings:write', description: 'Update system settings' }
+			{ key: 'admin:settings:write', description: 'Update system settings' },
+			{
+				key: 'admin:settings:assurance:update',
+				description: 'Update tenant authentication assurance settings'
+			},
+			{
+				key: 'admin:settings:security:update',
+				description: 'Update tenant protocol security settings'
+			},
+			{
+				key: 'admin:settings:token_exchange:update',
+				description: 'Update tenant token exchange settings'
+			},
+			{ key: 'admin:settings:oauth:update', description: 'Update tenant OAuth settings' },
+			{
+				key: 'admin:settings:session:update',
+				description: 'Update tenant session and logout settings'
+			},
+			{ key: 'admin:settings:login_ui:update', description: 'Update tenant login UI settings' },
+			{ key: 'admin:policy:simulate', description: 'Simulate tenant authorization policies' },
+			{ key: 'admin:flows:validate', description: 'Validate authentication Flows' },
+			{ key: 'admin:flows:compile', description: 'Compile authentication Flows' },
+			{ key: 'admin:flows:publish', description: 'Publish authentication Flows' }
 		]
 	},
 	{

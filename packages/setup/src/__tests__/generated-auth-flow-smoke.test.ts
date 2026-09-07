@@ -28,6 +28,18 @@ async function createGeneratedEnv(grantTypes: string[]) {
   };
 
   await writeFile(join(envDir, 'config.json'), JSON.stringify(config, null, 2));
+  await writeFile(
+    join(envDir, 'lock.json'),
+    JSON.stringify({
+      version: '1.0.0',
+      env,
+      createdAt: '2026-08-31T00:00:00.000Z',
+      d1: {
+        DB_ADMIN: { id: 'admin-immutable-id', name: `${env}-authrim-admin-db` },
+      },
+      kv: {},
+    })
+  );
   await saveKeysToDirectory(generateAllSecrets('auth-flow-setup-key'), { targetDir: keysDir });
 
   return { baseDir, env };
@@ -134,6 +146,8 @@ describe('generated auth flow smoke', () => {
     expect(result.ok).toBe(true);
     expect(result.clientId).toBe('client-1');
     expect(result.checks.map((check) => check.id)).toContain('token-introspect-after-revoke');
+    const createHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(createHeaders['Idempotency-Key']).toMatch(/^setup-auth-flow-smoke-client-\d+$/u);
   });
 
   it('downgrades client_credentials unsupported response to warning in auto mode', async () => {

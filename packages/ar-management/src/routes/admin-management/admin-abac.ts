@@ -11,6 +11,7 @@ import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   AdminAttributeRepository,
   AdminAttributeValueRepository,
+  AdminUserRepository,
   createErrorResponse,
   AR_ERROR_CODES,
   getTenantIdFromContext,
@@ -30,13 +31,13 @@ export const adminAbacRouter = new Hono<{
   Variables: { adminAuth?: AdminAuthContext };
 }>();
 
-// Apply admin authentication with ABAC permissions
-adminAbacRouter.use(
-  '*',
-  adminAuthMiddleware({
-    requirePermissions: [ADMIN_PERMISSIONS.ADMIN_ROLES_READ],
-  })
-);
+const adminAbacAuth = adminAuthMiddleware({
+  requirePermissions: [ADMIN_PERMISSIONS.ADMIN_ROLES_READ],
+});
+adminAbacRouter.use('/admin-attributes', adminAbacAuth);
+adminAbacRouter.use('/admin-attributes/*', adminAbacAuth);
+adminAbacRouter.use('/admins/:userId/attributes', adminAbacAuth);
+adminAbacRouter.use('/admins/:userId/attributes/*', adminAbacAuth);
 
 /**
  * Helper to get DB_ADMIN adapter
@@ -51,6 +52,15 @@ function getAdminAdapter(c: AdminContext) {
 function hasWritePermission(authContext: AdminAuthContext): boolean {
   const permissions = authContext.permissions || [];
   return hasAdminPermission(permissions, ADMIN_PERMISSIONS.ADMIN_ROLES_WRITE);
+}
+
+async function adminUserBelongsToTenant(
+  adapter: ReturnType<typeof getAdminAdapter>,
+  tenantId: string,
+  userId: string
+): Promise<boolean> {
+  const userRepo = new AdminUserRepository(adapter);
+  return (await userRepo.findByTenantAndId(tenantId, userId)) !== null;
 }
 
 /**
@@ -318,7 +328,12 @@ adminAbacRouter.get('/admins/:userId/attributes', async (c: AdminContext) => {
   try {
     const adapter = getAdminAdapter(c);
     const repo = new AdminAttributeValueRepository(adapter);
+    const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('userId')!;
+
+    if (!(await adminUserBelongsToTenant(adapter, tenantId, userId))) {
+      return c.json({ error: 'not_found', message: 'Admin user not found' }, 404);
+    }
 
     const values = await repo.getAttributesByUser(userId);
 
@@ -348,6 +363,10 @@ adminAbacRouter.put('/admins/:userId/attributes/:attributeId', async (c: AdminCo
     const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('userId')!;
     const attributeId = c.req.param('attributeId')!;
+
+    if (!(await adminUserBelongsToTenant(adapter, tenantId, userId))) {
+      return c.json({ error: 'not_found', message: 'Admin user not found' }, 404);
+    }
 
     // Verify attribute exists and belongs to this tenant
     const attribute = await attrRepo.getAttribute(attributeId);
@@ -400,9 +419,20 @@ adminAbacRouter.delete('/admins/:userId/attributes/:attributeId', async (c: Admi
   try {
     const adapter = getAdminAdapter(c);
     const repo = new AdminAttributeValueRepository(adapter);
+    const attrRepo = new AdminAttributeRepository(adapter);
+    const tenantId = getTenantIdFromContext(c);
     const userId = c.req.param('userId')!;
     const attributeId = c.req.param('attributeId')!;
     const valueIndex = parseInt(c.req.query('value_index') || '0');
+
+    if (!(await adminUserBelongsToTenant(adapter, tenantId, userId))) {
+      return c.json({ error: 'not_found', message: 'Admin user not found' }, 404);
+    }
+
+    const attribute = await attrRepo.getAttribute(attributeId);
+    if (!attribute || (attribute.tenant_id !== tenantId && !attribute.is_system)) {
+      return c.json({ error: 'not_found', message: 'Attribute not found' }, 404);
+    }
 
     const deleted = await repo.deleteAttributeValue(userId, attributeId, valueIndex);
     if (!deleted) {

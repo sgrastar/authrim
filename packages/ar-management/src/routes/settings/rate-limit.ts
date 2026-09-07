@@ -16,11 +16,30 @@ import {
  * - rate_limit_{profile}_max_requests - Maximum requests per window
  * - rate_limit_{profile}_window_seconds - Time window in seconds
  *
- * Profiles: strict, moderate, lenient, loadTest
+ * Profiles: strict, moderate, lenient, publicRead, loginStart, sendChallenge, loadTest
  */
 
-const VALID_PROFILES = ['strict', 'moderate', 'lenient', 'loadTest'] as const;
+const VALID_PROFILES = [
+  'strict',
+  'moderate',
+  'lenient',
+  'publicRead',
+  'loginStart',
+  'sendChallenge',
+  'loadTest',
+] as const;
 type ProfileName = (typeof VALID_PROFILES)[number];
+const RATE_LIMIT_REFRESH_NOTE =
+  'Changes refresh asynchronously and may take up to a few minutes to apply across active isolates.';
+const RATE_LIMIT_PROFILE_KV_NAMES: Record<ProfileName, string> = {
+  strict: 'strict',
+  moderate: 'moderate',
+  lenient: 'lenient',
+  publicRead: 'public_read',
+  loginStart: 'login_start',
+  sendChallenge: 'send_challenge',
+  loadTest: 'loadtest',
+};
 
 /**
  * Get KV keys for a rate limit profile
@@ -29,10 +48,9 @@ function getRateLimitKVKeys(profileName: string): {
   maxRequestsKey: string;
   windowSecondsKey: string;
 } {
-  const normalizedName = profileName
-    .toLowerCase()
-    .replace(/([A-Z])/g, '_$1')
-    .toLowerCase();
+  const normalizedName =
+    RATE_LIMIT_PROFILE_KV_NAMES[profileName as ProfileName] ??
+    profileName.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
   return {
     maxRequestsKey: `rate_limit_${normalizedName}_max_requests`,
     windowSecondsKey: `rate_limit_${normalizedName}_window_seconds`,
@@ -105,8 +123,8 @@ export async function getRateLimitSettings(c: Context<{ Bindings: Env }>) {
   return c.json({
     profiles,
     env_rate_limit_profile: envProfile,
-    cache_ttl_seconds: 10,
-    note: 'Changes take effect within 10 seconds (cache TTL)',
+    cache_ttl_seconds: 300,
+    note: RATE_LIMIT_REFRESH_NOTE,
   });
 }
 
@@ -263,7 +281,7 @@ export async function updateRateLimitProfile(c: Context<{ Bindings: Env }>) {
       maxRequests: maxRequestsKey,
       windowSeconds: windowSecondsKey,
     },
-    note: 'Changes will take effect within 10 seconds (cache TTL)',
+    note: RATE_LIMIT_REFRESH_NOTE,
   });
 }
 
@@ -314,7 +332,7 @@ export async function resetRateLimitProfile(c: Context<{ Bindings: Env }>) {
       maxRequests: defaultConfig.maxRequests,
       windowSeconds: defaultConfig.windowSeconds,
     },
-    note: 'Profile reset to default values. Changes will take effect within 10 seconds.',
+    note: `Profile reset to default values. ${RATE_LIMIT_REFRESH_NOTE}`,
   });
 }
 
@@ -361,7 +379,7 @@ export async function setProfileOverride(c: Context<{ Bindings: Env }>) {
     );
   }
 
-  const body = await c.req.json<{ profile: string }>();
+  const body = await c.req.json<{ profile: string; expires_in?: number }>();
   const { profile } = body;
 
   if (!profile) {
@@ -384,8 +402,36 @@ export async function setProfileOverride(c: Context<{ Bindings: Env }>) {
     );
   }
 
+  const loadTestExpiresIn =
+    profile === 'loadTest' ? (body.expires_in === undefined ? 15 * 60 : body.expires_in) : null;
+  if (
+    loadTestExpiresIn !== null &&
+    (!Number.isSafeInteger(loadTestExpiresIn) || loadTestExpiresIn < 60 || loadTestExpiresIn > 3600)
+  ) {
+    return c.json(
+      {
+        error: 'invalid_expiration',
+        error_description: 'loadTest expires_in must be an integer between 60 and 3600 seconds',
+      },
+      400
+    );
+  }
+  if (profile !== 'loadTest' && body.expires_in !== undefined) {
+    return c.json(
+      {
+        error: 'invalid_expiration',
+        error_description: 'expires_in is supported only for the loadTest profile',
+      },
+      400
+    );
+  }
+
   const kvKey = getProfileOverrideKVKey();
-  await c.env.AUTHRIM_CONFIG.put(kvKey, profile);
+  await c.env.AUTHRIM_CONFIG.put(
+    kvKey,
+    profile,
+    loadTestExpiresIn === null ? undefined : { expirationTtl: loadTestExpiresIn }
+  );
 
   // Clear cache to apply immediately
   clearRateLimitConfigCache();
@@ -395,12 +441,13 @@ export async function setProfileOverride(c: Context<{ Bindings: Env }>) {
   return c.json({
     success: true,
     profile_override: profile,
+    expires_in: loadTestExpiresIn,
     effective_config: {
       maxRequests: profileConfig.maxRequests,
       windowSeconds: profileConfig.windowSeconds,
     },
     kv_key: kvKey,
-    note: `All rate-limited endpoints now using "${profile}" profile. Changes take effect within 10 seconds.`,
+    note: `All rate-limited endpoints will use "${profile}" after their runtime caches refresh. ${RATE_LIMIT_REFRESH_NOTE}`,
     warning:
       profile === 'loadTest'
         ? 'Load test profile is active. Remember to clear override after testing!'
@@ -432,6 +479,6 @@ export async function clearProfileOverride(c: Context<{ Bindings: Env }>) {
   return c.json({
     success: true,
     profile_override: null,
-    note: 'Profile override cleared. Endpoints now use their default profiles.',
+    note: `Profile override cleared. Endpoints now use their default profiles. ${RATE_LIMIT_REFRESH_NOTE}`,
   });
 }

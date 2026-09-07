@@ -5,7 +5,11 @@ const messages = {
 	unknown: () => 'unknown',
 	invalidRequest: () => 'invalid request',
 	accessDenied: () => 'access denied',
+	unauthorizedClient: () => 'unauthorized client',
+	unsupportedResponseType: () => 'unsupported response type',
+	invalidScope: () => 'invalid scope',
 	serverError: () => 'server error',
+	temporarilyUnavailable: () => 'temporarily unavailable',
 	loginRequired: () => 'login required',
 	emailCodeInvalid: () => 'invalid code'
 };
@@ -23,13 +27,49 @@ describe('messageForApiError', () => {
 				{ error: 'token_binding_failed', error_description: 'raw token binding detail' },
 				messages
 			)
-		).toBe('invalid code');
+		).toBe('invalid request');
 		expect(
 			messageForApiError({ error: 'login_required', error_description: 'raw login' }, messages)
 		).toBe('login required');
 	});
 
-	it('exposes actionable invalid_request details for direct session and authorization challenge failures', () => {
+	it('maps standard OAuth errors without exposing their descriptions', () => {
+		expect(
+			messageForApiError(
+				{ error: 'unauthorized_client', error_description: 'raw client details' },
+				messages
+			)
+		).toBe('unauthorized client');
+		expect(
+			messageForApiError({ error: 'invalid_client', error_description: 'unknown client' }, messages)
+		).toBe('unauthorized client');
+		expect(
+			messageForApiError(
+				{ error: 'configuration_error', error_description: 'missing client setting' },
+				messages
+			)
+		).toBe('unauthorized client');
+		expect(
+			messageForApiError(
+				{ error: 'unsupported_response_type', error_description: 'raw response details' },
+				messages
+			)
+		).toBe('unsupported response type');
+		expect(
+			messageForApiError(
+				{ error: 'invalid_scope', error_description: 'raw scope details' },
+				messages
+			)
+		).toBe('invalid scope');
+		expect(
+			messageForApiError(
+				{ error: 'temporarily_unavailable', error_description: 'raw outage details' },
+				messages
+			)
+		).toBe('temporarily unavailable');
+	});
+
+	it('does not expose untranslated invalid_request details', () => {
 		expect(
 			messageForApiError(
 				{
@@ -39,7 +79,7 @@ describe('messageForApiError', () => {
 				},
 				messages
 			)
-		).toBe('Missing required fields: direct_auth_artifact');
+		).toBe('invalid request');
 		expect(
 			messageForApiError(
 				{
@@ -48,13 +88,13 @@ describe('messageForApiError', () => {
 				},
 				messages
 			)
-		).toBe('Authorization challenge is invalid or expired');
+		).toBe('invalid request');
 	});
 
-	it('falls back to server description only for unknown errors', () => {
+	it('uses the localized fallback for unknown errors', () => {
 		expect(
 			messageForApiError({ error: 'custom_error', error_description: 'Custom failure' }, messages)
-		).toBe('Custom failure');
+		).toBe('unknown');
 		expect(messageForApiError(undefined, messages)).toBe('unknown');
 	});
 });

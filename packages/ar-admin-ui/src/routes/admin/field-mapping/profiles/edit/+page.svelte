@@ -11,8 +11,10 @@
 		type IdentityMappingDestinationProfileSummary,
 		type IdentityMappingDestinationType,
 		type IdentityMappingOidcSurface,
+		type IdentityMappingCsvSourceProfileSchema,
+		type IdentityMappingScimSourceAttribute,
+		type IdentityMappingScimSourceProfileSchema,
 		type IdentityMappingSourceProfileColumn,
-		type IdentityMappingSourceProfileSchema,
 		type IdentityMappingSourceProfileSummary
 	} from '$lib/api/admin-identity-mapping';
 	import { adminOidcScopesAPI, type OidcScope } from '$lib/api/admin-oidc-scopes';
@@ -20,12 +22,19 @@
 		destinationTemplates,
 		type DestinationTemplate
 	} from '$lib/admin/identity-mapping-destination-templates';
+	import {
+		sourceTemplates,
+		type ScimSourceTemplate
+	} from '$lib/admin/identity-mapping-source-templates';
+	import { completeProfileLifecycle } from '$lib/admin/profile-lifecycle';
 	import { AdminPageHeader, AdminPageShell } from '$lib/components/admin';
 	import { LL } from '$i18n/i18n-svelte';
 
 	type EditorKind = 'source' | 'destination';
 	type CsvCreateMode = 'upload' | 'manual';
 	type CsvDetailTab = 'summary' | 'parser' | 'columns' | 'warnings';
+	type SourceKind = 'csv' | 'scim';
+	type ScimCreateMode = 'existing' | 'template' | 'manual';
 	type DestinationCreateMode = 'existing' | 'template' | 'manual';
 
 	interface OidcClaimDraft {
@@ -34,6 +43,7 @@
 		valueType: string;
 		allowedValues: string;
 		valueMultiplicity: 'single' | 'multi';
+		required: boolean;
 		nullable: boolean;
 		classification: string;
 		surfaces: IdentityMappingOidcSurface[];
@@ -84,6 +94,7 @@
 		label: string;
 		type: string;
 		required: boolean;
+		mappingRequired: boolean;
 	}
 
 	const valueTypeOptions = [
@@ -109,6 +120,9 @@
 	const oidcSurfaceOptions: IdentityMappingOidcSurface[] = ['id_token', 'userinfo'];
 	const nullHandlingOptions = ['empty', 'omit', 'literal_null'];
 	const requiredMissingPolicyOptions = ['error', 'review', 'omit'];
+	// Keep the staged lifecycle controls available for a future review workflow.
+	// For now, operators use one Save action that completes all three lifecycle steps.
+	const stagedProfileLifecycleControlsEnabled = false;
 	const csvSourceProfileMaxBytes = 2 * 1024 * 1024;
 	const delimiterOptions = [
 		{ value: 'auto', label: $LL.admin_identity_mapping_profile_edit_delimiter_auto() },
@@ -166,6 +180,7 @@
 	let oidcScopes = $state<OidcScope[]>([]);
 
 	let csvMode = $state<CsvCreateMode>('upload');
+	let sourceKind = $state<SourceKind>('csv');
 	let csvDetailTab = $state<CsvDetailTab>('summary');
 	let editingSourceProfileId = $state<string | null>(null);
 	let csvDisplayName = $state('');
@@ -178,7 +193,7 @@
 	let parsingCsv = $state(false);
 	let savingCsv = $state(false);
 	let parsedCsvDraftId = $state<string | null>(null);
-	let parsedCsvSchema = $state<IdentityMappingSourceProfileSchema | null>(null);
+	let parsedCsvSchema = $state<IdentityMappingCsvSourceProfileSchema | null>(null);
 	let parsedCsvParserOptions = $state<Record<string, unknown>>({});
 	let parsedCsvWarningSummary = $state<Record<string, unknown>>({});
 	let blockingWarningsConfirmed = $state(false);
@@ -187,6 +202,15 @@
 	let sourceAdvancedSettings = $state(false);
 	let manualColumns = $state<IdentityMappingSourceProfileColumn[]>([
 		createManualColumn('email', 'Email', 'email')
+	]);
+	let scimCreateMode = $state<ScimCreateMode>('template');
+	let selectedExistingScimSourceId = $state('');
+	let selectedScimTemplateCategory = $state('');
+	let selectedScimTemplateId = $state('');
+	let scimSchemaUris = $state<string[]>(['urn:ietf:params:scim:schemas:core:2.0:User']);
+	let scimAttributes = $state<IdentityMappingScimSourceAttribute[]>([
+		createScimAttribute('userName', 'User name', 'string', 'pii', true, true),
+		createScimAttribute('emails.value', 'Primary email', 'email', 'pii', true)
 	]);
 
 	let destinationKind = $state<IdentityMappingDestinationType>('oidc');
@@ -203,27 +227,21 @@
 	let savingDestination = $state(false);
 	let reviewingProfile = $state(false);
 	let activatingProfile = $state(false);
+	let completingProfileLifecycle = $state(false);
 	let deletingProfile = $state(false);
 	let destinationAdvancedSettings = $state(false);
 	let destinationCreateMode = $state<DestinationCreateMode>('manual');
 	let selectedExistingDestinationId = $state('');
 	let selectedTemplateCategory = $state('');
 	let selectedTemplateId = $state('');
-	let previewTemplate = $state<DestinationTemplate | null>(null);
+	let previewTemplate = $state<DestinationTemplate | ScimSourceTemplate | null>(null);
 	let oidcClaimsParameterJson = $state('');
 	let creatingScopeForClaimIndex = $state<number | null>(null);
 	let newScopeName = $state('');
 	let newScopeDisplayName = $state('');
 	let creatingScope = $state(false);
 	let oidcClaims = $state<OidcClaimDraft[]>([
-		createOidcClaimDraft(
-			'sub',
-			'Subject',
-			'string',
-			'internal',
-			['id_token', 'userinfo'],
-			'openid'
-		),
+		createOidcClaimDraft('sub', 'Subject', 'string', 'internal', ['id_token', 'userinfo'], ''),
 		createOidcClaimDraft('email', 'Email', 'email', 'pii', ['userinfo'], 'email')
 	]);
 	let csvDestinationEncoding = $state('utf-8');
@@ -267,19 +285,30 @@
 			Boolean(activeCsvSchema) &&
 			(csvBlockingWarningCount === 0 || blockingWarningsConfirmed)
 	);
+	const canSaveScim = $derived(
+		Boolean(csvDisplayName.trim()) &&
+			Boolean(csvProfileKey.trim()) &&
+			scimAttributes.some((attribute) => attribute.name.trim() === 'userName')
+	);
 	const canSaveDestination = $derived(
 		Boolean(destinationDisplayName.trim()) &&
 			Boolean(destinationProfileKey.trim()) &&
 			(destinationKind === 'oidc'
 				? oidcClaims.some((claim) => claim.claimName.trim() === 'sub')
-				: destinationKind === 'saml'
-					? Boolean(selectedSamlNameIdFormat().trim()) &&
-						Boolean(selectedSamlNameIdValue().trim()) &&
-						samlAttributes.length > 0
-					: csvDestinationColumns.length > 0) &&
-			(destinationBlockingWarningCount === 0 || destinationBlockingWarningsConfirmed)
+				: destinationKind === 'resource_server'
+					? oidcClaims.some((claim) => claim.claimName.trim() === 'active') &&
+						Boolean(destinationOwnerScopeId.trim())
+					: destinationKind === 'saml'
+						? Boolean(selectedSamlNameIdFormat().trim()) &&
+							Boolean(selectedSamlNameIdValue().trim()) &&
+							samlAttributes.length > 0
+						: csvDestinationColumns.length > 0) &&
+			(destinationBlockingWarningCount === 0 ||
+				(!['oidc', 'resource_server'].includes(destinationKind) &&
+					destinationBlockingWarningsConfirmed))
 	);
 	const canSaveCsvDraft = $derived(canSaveCsv && canSaveDraft(sourceProfileVersionState));
+	const canSaveScimDraft = $derived(canSaveScim && canSaveDraft(sourceProfileVersionState));
 	const canReviewCsvDraft = $derived(
 		Boolean(editingSourceProfileId) &&
 			Boolean(sourceProfileVersionId) &&
@@ -302,6 +331,29 @@
 		Boolean(editingDestinationProfileId) &&
 			Boolean(destinationProfileVersionId) &&
 			destinationProfileVersionState === 'reviewed'
+	);
+	const profileLifecycleBusy = $derived(
+		savingCsv ||
+			savingDestination ||
+			reviewingProfile ||
+			activatingProfile ||
+			completingProfileLifecycle
+	);
+	const canCompleteSourceProfileSave = $derived(
+		sourceProfileVersionState === 'draft'
+			? canReviewCsvDraft
+			: sourceProfileVersionState === 'reviewed'
+				? canActivateCsvDraft
+				: sourceKind === 'scim'
+					? canSaveScimDraft
+					: canSaveCsvDraft
+	);
+	const canCompleteDestinationProfileSave = $derived(
+		destinationProfileVersionState === 'draft'
+			? canReviewDestinationDraft
+			: destinationProfileVersionState === 'reviewed'
+				? canActivateDestinationDraft
+				: canSaveDestinationDraft
 	);
 
 	onMount(() => {
@@ -353,7 +405,7 @@
 	function applyRequestedProfile() {
 		const profileId = getRequestedId();
 		if (!profileId) {
-			if (editorKind === 'source') resetCsvComposer();
+			if (editorKind === 'source') resetSourceComposer();
 			else resetDestinationComposer();
 			return;
 		}
@@ -365,16 +417,30 @@
 				return;
 			}
 			editingSourceProfileId = sourceProfile.id;
-			csvMode = 'upload';
-			csvDetailTab = 'columns';
 			csvDisplayName = sourceProfile.displayName;
 			csvProfileKey = sourceProfile.profileKey;
 			csvVersionLabel = nextVersionLabel(sourceProfile.version?.versionLabel);
 			sourceProfileVersionId = sourceProfile.version?.id ?? null;
 			sourceProfileVersionState = sourceProfile.version?.lifecycleState ?? null;
+			if (sourceProfile.sourceType === 'scim' && schema.sourceType === 'scim') {
+				sourceKind = 'scim';
+				scimSchemaUris = [...schema.schemaUris];
+				scimAttributes = schema.attributes.map(cloneScimAttribute);
+				message = $LL.admin_identity_mapping_profile_edit_editing_message({
+					name: sourceProfile.displayName
+				});
+				return;
+			}
+			if (sourceProfile.sourceType !== 'csv' || schema.sourceType !== 'csv') {
+				message = $LL.admin_identity_mapping_profile_edit_source_schema_unavailable();
+				return;
+			}
+			sourceKind = 'csv';
+			csvMode = 'upload';
+			csvDetailTab = 'columns';
 			selectedCsvFile = null;
 			parsedCsvDraftId = null;
-			parsedCsvSchema = cloneSchema(schema);
+			parsedCsvSchema = cloneCsvSchema(schema);
 			parsedCsvParserOptions = schema.parser ?? {};
 			parsedCsvWarningSummary = sourceProfile.version?.warningSummary ?? {};
 			blockingWarningsConfirmed = getBlockingWarningCount(parsedCsvSchema) === 0;
@@ -494,7 +560,7 @@
 				}
 			});
 			parsedCsvDraftId = response.result.parseDraftId;
-			parsedCsvSchema = cloneSchema(response.result.schema);
+			parsedCsvSchema = cloneCsvSchema(response.result.schema);
 			parsedCsvParserOptions = response.result.parserOptions;
 			parsedCsvWarningSummary = response.result.warningSummary;
 			blockingWarningsConfirmed = false;
@@ -512,58 +578,77 @@
 		}
 	}
 
-	async function saveCsvProfile() {
-		const schema = activeCsvSchema;
-		if (!schema || !canSaveCsvDraft) {
-			message = $LL.admin_identity_mapping_profile_edit_save_csv_required();
-			return;
+	async function saveSourceProfile(): Promise<boolean> {
+		const schema = sourceKind === 'scim' ? buildScimSourceSchema() : activeCsvSchema;
+		const canSave = sourceKind === 'scim' ? canSaveScimDraft : canSaveCsvDraft;
+		if (!schema || !canSave) {
+			message =
+				sourceKind === 'scim'
+					? $LL.admin_identity_mapping_profile_edit_save_scim_required()
+					: $LL.admin_identity_mapping_profile_edit_save_csv_required();
+			return false;
 		}
 		savingCsv = true;
 		message = null;
 		try {
 			const request = {
-				sourceType: 'csv' as const,
+				sourceType: sourceKind,
 				profileKey: csvProfileKey.trim(),
 				displayName: csvDisplayName.trim(),
 				versionLabel: csvVersionLabel.trim() || 'v1',
 				parseDraftId:
-					csvMode === 'upload' && !editingSourceProfileId
+					sourceKind === 'csv' && csvMode === 'upload' && !editingSourceProfileId
 						? (parsedCsvDraftId ?? undefined)
 						: undefined,
 				schema,
-				parserOptions: csvMode === 'upload' ? parsedCsvParserOptions : {},
+				parserOptions: sourceKind === 'csv' && csvMode === 'upload' ? parsedCsvParserOptions : {},
 				warningSummary: {
-					...(csvMode === 'manual' ? schema.summary : parsedCsvWarningSummary),
-					confirmedBlockingWarningCount: blockingWarningsConfirmed ? csvBlockingWarningCount : 0
+					...(sourceKind === 'csv'
+						? csvMode === 'manual'
+							? (activeCsvSchema?.summary ?? {})
+							: parsedCsvWarningSummary
+						: { blockingWarningCount: 0 }),
+					confirmedBlockingWarningCount:
+						sourceKind === 'csv' && blockingWarningsConfirmed ? csvBlockingWarningCount : 0
 				},
 				sourceMetadata: {
-					creationMode: editingSourceProfileId ? 'edit' : csvMode,
+					creationMode: editingSourceProfileId
+						? 'edit'
+						: sourceKind === 'scim'
+							? scimCreateMode
+							: csvMode,
 					rawContentPersisted: false
 				}
 			};
 			const response = editingSourceProfileId
 				? await adminIdentityMappingAPI.updateSourceProfile(editingSourceProfileId, request)
 				: await adminIdentityMappingAPI.createSourceProfile(request);
-			message = $LL.admin_identity_mapping_profile_edit_saved_review_activate({
-				name: response.result.displayName
-			});
+			if (!completingProfileLifecycle) {
+				message = $LL.admin_identity_mapping_profile_edit_saved_review_activate({
+					name: response.result.displayName
+				});
+			}
 			editingSourceProfileId = response.result.id;
 			sourceProfileVersionId = response.result.version?.id ?? null;
 			sourceProfileVersionState = response.result.version?.lifecycleState ?? 'draft';
+			return true;
 		} catch (error) {
 			message =
 				error instanceof Error
 					? error.message
-					: $LL.admin_identity_mapping_profile_edit_save_csv_failed();
+					: sourceKind === 'scim'
+						? $LL.admin_identity_mapping_profile_edit_save_scim_failed()
+						: $LL.admin_identity_mapping_profile_edit_save_csv_failed();
+			return false;
 		} finally {
 			savingCsv = false;
 		}
 	}
 
-	async function saveDestinationProfile() {
+	async function saveDestinationProfile(): Promise<boolean> {
 		if (!canSaveDestinationDraft) {
 			message = $LL.admin_identity_mapping_profile_edit_destination_required();
-			return;
+			return false;
 		}
 		savingDestination = true;
 		message = null;
@@ -571,9 +656,11 @@
 			const schema =
 				destinationKind === 'oidc'
 					? buildOidcDestinationSchema()
-					: destinationKind === 'saml'
-						? buildSamlDestinationSchema()
-						: buildCsvDestinationSchema();
+					: destinationKind === 'resource_server'
+						? buildResourceServerDestinationSchema()
+						: destinationKind === 'saml'
+							? buildSamlDestinationSchema()
+							: buildCsvDestinationSchema();
 			const request = {
 				destinationType: destinationKind,
 				profileKey: destinationProfileKey.trim(),
@@ -596,91 +683,121 @@
 						request
 					)
 				: await adminIdentityMappingAPI.createDestinationProfile(request);
-			message = $LL.admin_identity_mapping_profile_edit_saved_review_activate({
-				name: response.result.displayName
-			});
+			if (!completingProfileLifecycle) {
+				message = $LL.admin_identity_mapping_profile_edit_saved_review_activate({
+					name: response.result.displayName
+				});
+			}
 			editingDestinationProfileId = response.result.id;
 			destinationProfileVersionId = response.result.version?.id ?? null;
 			destinationProfileVersionState = response.result.version?.lifecycleState ?? 'draft';
+			return true;
 		} catch (error) {
 			message =
 				error instanceof Error
 					? error.message
 					: $LL.admin_identity_mapping_profile_edit_save_destination_failed();
+			return false;
 		} finally {
 			savingDestination = false;
 		}
 	}
 
-	async function reviewCurrentProfileVersion() {
+	async function reviewCurrentProfileVersion(): Promise<boolean> {
 		reviewingProfile = true;
 		message = null;
 		try {
 			if (editorKind === 'source') {
-				if (!editingSourceProfileId || !sourceProfileVersionId || !canReviewCsvDraft) return;
+				if (!editingSourceProfileId || !sourceProfileVersionId || !canReviewCsvDraft) return false;
 				await adminIdentityMappingAPI.reviewSourceProfileVersion(
 					editingSourceProfileId,
 					sourceProfileVersionId
 				);
 				sourceProfileVersionState = 'reviewed';
-				message = $LL.admin_identity_mapping_profile_edit_source_reviewed();
-				return;
+				if (!completingProfileLifecycle) {
+					message = $LL.admin_identity_mapping_profile_edit_source_reviewed();
+				}
+				return true;
 			}
 			if (
 				!editingDestinationProfileId ||
 				!destinationProfileVersionId ||
 				!canReviewDestinationDraft
 			)
-				return;
+				return false;
 			await adminIdentityMappingAPI.reviewDestinationProfileVersion(
 				editingDestinationProfileId,
 				destinationProfileVersionId
 			);
 			destinationProfileVersionState = 'reviewed';
-			message = $LL.admin_identity_mapping_profile_edit_destination_reviewed();
+			if (!completingProfileLifecycle) {
+				message = $LL.admin_identity_mapping_profile_edit_destination_reviewed();
+			}
+			return true;
 		} catch (error) {
 			message =
 				error instanceof Error
 					? error.message
 					: $LL.admin_identity_mapping_profile_edit_review_failed();
+			return false;
 		} finally {
 			reviewingProfile = false;
 		}
 	}
 
-	async function activateCurrentProfileVersion() {
+	async function activateCurrentProfileVersion(): Promise<boolean> {
 		activatingProfile = true;
 		message = null;
 		try {
 			if (editorKind === 'source') {
-				if (!editingSourceProfileId || !sourceProfileVersionId || !canActivateCsvDraft) return;
+				if (!editingSourceProfileId || !sourceProfileVersionId || !canActivateCsvDraft)
+					return false;
 				await adminIdentityMappingAPI.activateSourceProfileVersion(
 					editingSourceProfileId,
 					sourceProfileVersionId
 				);
 				sourceProfileVersionState = 'active';
 				message = $LL.admin_identity_mapping_profile_edit_source_activated();
-				return;
+				return true;
 			}
 			if (
 				!editingDestinationProfileId ||
 				!destinationProfileVersionId ||
 				!canActivateDestinationDraft
 			)
-				return;
+				return false;
 			await adminIdentityMappingAPI.activateDestinationProfileVersion(
 				editingDestinationProfileId,
 				destinationProfileVersionId
 			);
 			destinationProfileVersionState = 'active';
 			message = $LL.admin_identity_mapping_profile_edit_destination_activated();
+			return true;
 		} catch (error) {
 			message =
 				error instanceof Error
 					? error.message
 					: $LL.admin_identity_mapping_profile_edit_activate_failed();
+			return false;
 		} finally {
 			activatingProfile = false;
+		}
+	}
+
+	async function saveAndActivateCurrentProfile() {
+		if (profileLifecycleBusy) return;
+		completingProfileLifecycle = true;
+		message = null;
+		try {
+			await completeProfileLifecycle({
+				getLifecycleState: () =>
+					editorKind === 'source' ? sourceProfileVersionState : destinationProfileVersionState,
+				saveDraft: () => (editorKind === 'source' ? saveSourceProfile() : saveDestinationProfile()),
+				reviewDraft: reviewCurrentProfileVersion,
+				activateVersion: activateCurrentProfileVersion
+			});
+		} finally {
+			completingProfileLifecycle = false;
 		}
 	}
 
@@ -805,7 +922,13 @@
 
 	function updateOidcClaim(index: number, field: keyof OidcClaimDraft, value: string | boolean) {
 		oidcClaims = oidcClaims.map((claim, claimIndex) =>
-			claimIndex === index ? { ...claim, [field]: value } : claim
+			claimIndex === index
+				? {
+						...claim,
+						[field]: value,
+						...(field === 'claimName' && value === 'sub' ? { required: true } : {})
+					}
+				: claim
 		);
 	}
 
@@ -931,8 +1054,117 @@
 			: fieldSurfaces.filter((item) => item !== surface);
 	}
 
+	function setSourceKind(kind: SourceKind, csvCreateMode: CsvCreateMode = 'upload') {
+		sourceKind = kind;
+		if (kind === 'csv') csvMode = csvCreateMode;
+		if (kind === 'scim' && !editingSourceProfileId && scimAttributes.length === 0) {
+			resetScimComposer();
+		}
+	}
+
+	function scimSourceProfiles() {
+		return sourceProfiles.filter((profile) => profile.sourceType === 'scim');
+	}
+
+	function scimTemplateCategories() {
+		return Array.from(new Set(sourceTemplates.map((template) => template.category)));
+	}
+
+	function scimTemplateCategoryCount(category: string) {
+		return sourceTemplates.filter((template) => template.category === category).length;
+	}
+
+	function currentScimTemplateCategory() {
+		const categories = scimTemplateCategories();
+		return categories.includes(selectedScimTemplateCategory)
+			? selectedScimTemplateCategory
+			: (categories[0] ?? '');
+	}
+
+	function scimTemplatesForCurrentCategory() {
+		const category = currentScimTemplateCategory();
+		return sourceTemplates.filter((template) => template.category === category);
+	}
+
+	function selectedScimTemplate() {
+		const templates = scimTemplatesForCurrentCategory();
+		return (
+			templates.find((template) => template.id === selectedScimTemplateId) ?? templates[0] ?? null
+		);
+	}
+
+	function copyExistingScimSourceProfile() {
+		const selected = scimSourceProfiles().find(
+			(profile) => profile.id === selectedExistingScimSourceId
+		);
+		const schema = selected?.version?.schema;
+		if (!selected || !schema || schema.sourceType !== 'scim') {
+			message = $LL.admin_identity_mapping_profile_edit_existing_source_schema_required();
+			return;
+		}
+
+		const copyDisplayName = uniqueCopyDisplayName(
+			selected.displayName,
+			sourceProfiles.map((profile) => profile.displayName)
+		);
+		resetScimComposer();
+		sourceKind = 'scim';
+		csvDisplayName = copyDisplayName;
+		csvProfileKey = uniqueProfileKey(copyDisplayName, sourceProfiles);
+		scimSchemaUris = [...schema.schemaUris];
+		scimAttributes = schema.attributes.map(cloneScimAttribute);
+		message = $LL.admin_identity_mapping_profile_edit_copied_existing_source({
+			name: selected.displayName
+		});
+	}
+
+	function copyScimSourceTemplate(template: ScimSourceTemplate) {
+		resetScimComposer();
+		sourceKind = 'scim';
+		csvDisplayName = template.displayName;
+		csvProfileKey = uniqueProfileKey(template.profileKey, sourceProfiles);
+		scimSchemaUris = [...template.schema.schemaUris];
+		scimAttributes = template.schema.attributes.map(cloneScimAttribute);
+		previewTemplate = null;
+		message = $LL.admin_identity_mapping_profile_edit_copied_source_template({
+			name: template.displayName
+		});
+	}
+
+	function updateScimAttribute(
+		index: number,
+		field: keyof IdentityMappingScimSourceAttribute,
+		value: string | boolean
+	) {
+		scimAttributes = scimAttributes.map((attribute, attributeIndex) =>
+			attributeIndex === index ? { ...attribute, [field]: value } : attribute
+		);
+	}
+
+	function addScimAttribute() {
+		const order = scimAttributes.length + 1;
+		scimAttributes = [
+			...scimAttributes,
+			createScimAttribute(`custom.attribute${order}`, `Custom attribute ${order}`)
+		];
+	}
+
+	function removeScimAttribute(index: number) {
+		scimAttributes = scimAttributes.filter((_, attributeIndex) => attributeIndex !== index);
+	}
+
 	function setDestinationKind(kind: IdentityMappingDestinationType) {
 		destinationKind = kind;
+		if (kind === 'resource_server') {
+			destinationOwnerScopeType = 'client';
+			oidcClaims = [
+				createOidcClaimDraft('active', 'Active', 'boolean', 'internal', ['userinfo'], '')
+			];
+		} else if (oidcClaims.some((claim) => claim.claimName === 'active')) {
+			oidcClaims = [
+				createOidcClaimDraft('sub', 'Subject', 'string', 'internal', ['id_token', 'userinfo'], '')
+			];
+		}
 		destinationAdvancedSettings = false;
 		selectedExistingDestinationId = '';
 		selectedTemplateCategory = '';
@@ -966,6 +1198,8 @@
 				return 'i-ph-briefcase';
 			case 'Academic federation':
 				return 'i-ph-graduation-cap';
+			case 'Workforce':
+				return 'i-ph-buildings';
 			default:
 				return 'i-ph-folder';
 		}
@@ -990,32 +1224,38 @@
 		return templates.find((template) => template.id === selectedTemplateId) ?? templates[0] ?? null;
 	}
 
-	function templatePreviewRows(template: DestinationTemplate | null): TemplatePreviewRow[] {
+	function templatePreviewRows(
+		template: DestinationTemplate | ScimSourceTemplate | null
+	): TemplatePreviewRow[] {
 		if (!template) return [];
-		if (template.destinationType === 'saml' && Array.isArray(template.schema.attributes)) {
-			return template.schema.attributes.filter(isRecord).map((attribute) => ({
+		const templateSchema = template.schema as Record<string, unknown>;
+		if (Array.isArray(templateSchema.attributes)) {
+			return templateSchema.attributes.filter(isRecord).map((attribute) => ({
 				name: String(attribute.name ?? ''),
 				label: String(attribute.label ?? attribute.name ?? ''),
-				type: String(attribute.valueType ?? 'string'),
-				required: Boolean(attribute.required)
+				type: String(attribute.valueType ?? attribute.type ?? 'string'),
+				required: Boolean(attribute.required),
+				mappingRequired: Boolean(attribute.mappingRequired)
 			}));
 		}
-		if (template.destinationType === 'csv' && Array.isArray(template.schema.columns)) {
-			return template.schema.columns.filter(isRecord).map((column) => ({
+		if (Array.isArray(templateSchema.columns)) {
+			return templateSchema.columns.filter(isRecord).map((column) => ({
 				name: String(column.columnName ?? ''),
 				label: String(column.label ?? column.columnName ?? ''),
 				type: String(column.valueType ?? 'string'),
-				required: Boolean(column.required)
+				required: Boolean(column.required),
+				mappingRequired: Boolean(column.mappingRequired)
 			}));
 		}
-		if (Array.isArray(template.schema.claims)) {
-			return template.schema.claims.filter(isRecord).map((claim) => {
+		if (Array.isArray(templateSchema.claims)) {
+			return templateSchema.claims.filter(isRecord).map((claim) => {
 				const claimName = String(claim.claimName ?? '');
 				return {
 					name: claimName,
 					label: String(claim.label ?? claimName),
 					type: String(claim.valueType ?? 'string'),
-					required: Boolean(claim.required) || claimName === 'sub'
+					required: Boolean(claim.required) || claimName === 'sub',
+					mappingRequired: Boolean(claim.mappingRequired)
 				};
 			});
 		}
@@ -1074,6 +1314,7 @@
 			label,
 			valueType,
 			required: false,
+			mappingRequired: false,
 			examples: [],
 			note: null,
 			allowedValues: [],
@@ -1084,6 +1325,28 @@
 			warnings: [],
 			emptyRate: 0,
 			observedNonEmptyRows: 0
+		};
+	}
+
+	function createScimAttribute(
+		name: string,
+		label: string,
+		type = 'string',
+		classification = 'internal',
+		required = false,
+		mappingRequired = false
+	): IdentityMappingScimSourceAttribute {
+		return {
+			name,
+			label,
+			type,
+			required,
+			mappingRequired,
+			classification,
+			valueMultiplicity: 'single',
+			nullable: !required,
+			examples: [],
+			note: null
 		};
 	}
 
@@ -1101,6 +1364,7 @@
 			valueType,
 			allowedValues: '',
 			valueMultiplicity: 'single',
+			required: claimName === 'sub',
 			nullable: false,
 			classification,
 			surfaces,
@@ -1162,7 +1426,7 @@
 		};
 	}
 
-	function buildManualCsvSchema(): IdentityMappingSourceProfileSchema {
+	function buildManualCsvSchema(): IdentityMappingCsvSourceProfileSchema {
 		return {
 			sourceType: 'csv',
 			columns: manualColumns,
@@ -1175,6 +1439,15 @@
 				requiredCandidateCount: manualColumns.filter((column) => column.required).length,
 				blockingWarningCount: 0
 			}
+		};
+	}
+
+	function buildScimSourceSchema(): IdentityMappingScimSourceProfileSchema {
+		return {
+			sourceType: 'scim',
+			resourceType: 'User',
+			schemaUris: [...scimSchemaUris],
+			attributes: scimAttributes.map(cloneScimAttribute)
 		};
 	}
 
@@ -1191,6 +1464,7 @@
 				valueType: claim.valueType,
 				allowedValues: splitCsv(claim.allowedValues),
 				valueMultiplicity: claim.valueMultiplicity,
+				required: claim.required,
 				nullable: claim.nullable,
 				classification: claim.classification,
 				surfaces: claim.surfaces,
@@ -1206,6 +1480,28 @@
 				? { type: 'protocol_schema', id: destinationProtocolSchemaRef }
 				: undefined,
 			claimsParameter: parseOptionalJsonObject(oidcClaimsParameterJson, 'claims parameter policy')
+		};
+	}
+
+	function buildResourceServerDestinationSchema(): Record<string, unknown> {
+		return {
+			destinationType: 'resource_server',
+			claims: oidcClaims.map((claim) => ({
+				claimName: claim.claimName.trim(),
+				label: claim.label.trim() || claim.claimName.trim(),
+				valueType: claim.valueType,
+				allowedValues: splitCsv(claim.allowedValues),
+				valueMultiplicity: claim.valueMultiplicity,
+				required: claim.claimName === 'active' ? true : claim.required,
+				nullable: claim.claimName === 'active' ? false : claim.nullable,
+				classification: claim.classification,
+				requiredScopes: claim.claimName === 'active' ? [] : splitCsv(claim.requiredScopes),
+				releasePolicy: {
+					legalBasis: claim.legalBasis,
+					purpose: claim.purpose.trim() || 'attribute_release'
+				},
+				formatter: claim.formatter.trim() ? { operation: claim.formatter.trim() } : undefined
+			}))
 		};
 	}
 
@@ -1260,7 +1556,6 @@
 				valueMultiplicity: attribute.valueMultiplicity,
 				nullable: attribute.nullable,
 				classification: attribute.classification,
-				required: attribute.required,
 				releaseCondition: attribute.releaseCondition.trim() || undefined,
 				formatter: attribute.formatter.trim()
 					? { operation: attribute.formatter.trim() }
@@ -1278,6 +1573,37 @@
 
 	function loadDestinationSchemaDraft(schema: Record<string, unknown>) {
 		destinationProtocolSchemaRef = getProtocolSchemaRef(schema);
+		if (schema.destinationType === 'resource_server') {
+			oidcClaims = Array.isArray(schema.claims)
+				? schema.claims.filter(isRecord).map((claim) => {
+						const releasePolicy = isRecord(claim.releasePolicy) ? claim.releasePolicy : {};
+						return {
+							...createOidcClaimDraft(
+								String(claim.claimName ?? ''),
+								String(claim.label ?? claim.claimName ?? ''),
+								String(claim.valueType ?? 'string'),
+								String(claim.classification ?? 'internal'),
+								['userinfo'],
+								Array.isArray(claim.requiredScopes)
+									? claim.requiredScopes.map(String).join(',')
+									: ''
+							),
+							valueMultiplicity: claim.valueMultiplicity === 'multi' ? 'multi' : 'single',
+							required: claim.required === true || claim.claimName === 'active',
+							nullable: claim.claimName === 'active' ? false : Boolean(claim.nullable),
+							legalBasis: String(releasePolicy.legalBasis ?? 'legitimate_interest'),
+							purpose: String(releasePolicy.purpose ?? 'attribute_release')
+						};
+					})
+				: [];
+			if (!oidcClaims.some((claim) => claim.claimName === 'active')) {
+				oidcClaims = [
+					createOidcClaimDraft('active', 'Active', 'boolean', 'internal', ['userinfo'], ''),
+					...oidcClaims
+				];
+			}
+			return;
+		}
 		if (schema.destinationType === 'csv') {
 			const defaults = isRecord(schema.defaults) ? schema.defaults : {};
 			csvDestinationEncoding = String(defaults.encoding ?? 'utf-8');
@@ -1374,6 +1700,7 @@
 							? claim.allowedValues.map(String).join(',')
 							: '',
 						valueMultiplicity: claim.valueMultiplicity === 'multi' ? 'multi' : 'single',
+						required: claim.required === true || claim.claimName === 'sub',
 						nullable: Boolean(claim.nullable),
 						releaseCondition: String(claim.releaseCondition ?? ''),
 						legalBasis: String(
@@ -1387,24 +1714,17 @@
 					};
 				})
 			: [
-					createOidcClaimDraft(
-						'sub',
-						'Subject',
-						'string',
-						'internal',
-						['id_token', 'userinfo'],
-						'openid'
-					)
+					createOidcClaimDraft('sub', 'Subject', 'string', 'internal', ['id_token', 'userinfo'], '')
 				];
 		if (!oidcClaims.some((claim) => claim.claimName === 'sub')) {
 			oidcClaims = [
-				createOidcClaimDraft('sub', 'Subject', 'string', 'internal', ['id_token'], 'openid'),
+				createOidcClaimDraft('sub', 'Subject', 'string', 'internal', ['id_token', 'userinfo'], ''),
 				...oidcClaims
 			];
 		}
 	}
 
-	function getBlockingWarningCount(schema: IdentityMappingSourceProfileSchema | null): number {
+	function getBlockingWarningCount(schema: IdentityMappingCsvSourceProfileSchema | null): number {
 		const summaryCount = schema?.summary?.blockingWarningCount;
 		if (typeof summaryCount === 'number') return summaryCount;
 		return (
@@ -1417,7 +1737,7 @@
 	}
 
 	function getDestinationBlockingWarningCount(): number {
-		if (destinationKind === 'oidc') {
+		if (destinationKind === 'oidc' || destinationKind === 'resource_server') {
 			return oidcClaims.filter(
 				(claim) =>
 					['pii', 'regulated'].includes(claim.classification) &&
@@ -1438,6 +1758,12 @@
 		).length;
 	}
 
+	function resetSourceComposer() {
+		resetCsvComposer();
+		resetScimComposer();
+		sourceKind = 'csv';
+	}
+
 	function resetCsvComposer() {
 		editingSourceProfileId = null;
 		csvMode = 'upload';
@@ -1456,6 +1782,24 @@
 		manualColumns = [createManualColumn('email', 'Email', 'email')];
 	}
 
+	function resetScimComposer() {
+		editingSourceProfileId = null;
+		csvDisplayName = '';
+		csvProfileKey = '';
+		csvVersionLabel = 'v1';
+		sourceProfileVersionId = null;
+		sourceProfileVersionState = null;
+		scimCreateMode = 'template';
+		selectedExistingScimSourceId = '';
+		selectedScimTemplateCategory = '';
+		selectedScimTemplateId = '';
+		scimSchemaUris = ['urn:ietf:params:scim:schemas:core:2.0:User'];
+		scimAttributes = [
+			createScimAttribute('userName', 'User name', 'string', 'pii', true, true),
+			createScimAttribute('emails.value', 'Primary email', 'email', 'pii', true)
+		];
+	}
+
 	function resetDestinationComposer() {
 		editingDestinationProfileId = null;
 		destinationAdvancedSettings = false;
@@ -1470,14 +1814,7 @@
 		destinationProfileVersionState = null;
 		oidcClaimsParameterJson = '';
 		oidcClaims = [
-			createOidcClaimDraft(
-				'sub',
-				'Subject',
-				'string',
-				'internal',
-				['id_token', 'userinfo'],
-				'openid'
-			),
+			createOidcClaimDraft('sub', 'Subject', 'string', 'internal', ['id_token', 'userinfo'], ''),
 			createOidcClaimDraft('email', 'Email', 'email', 'pii', ['userinfo'], 'email')
 		];
 		csvDestinationColumns = [createCsvDestinationColumnDraft('email', 'Email', 1, 'email', 'pii')];
@@ -1507,9 +1844,9 @@
 		return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 	}
 
-	function cloneSchema(
-		schema: IdentityMappingSourceProfileSchema
-	): IdentityMappingSourceProfileSchema {
+	function cloneCsvSchema(
+		schema: IdentityMappingCsvSourceProfileSchema
+	): IdentityMappingCsvSourceProfileSchema {
 		return {
 			...schema,
 			columns: schema.columns.map((column) => ({
@@ -1518,6 +1855,15 @@
 			})),
 			warnings: schema.warnings?.map((warning) => ({ ...warning })),
 			summary: schema.summary ? { ...schema.summary } : {}
+		};
+	}
+
+	function cloneScimAttribute(
+		attribute: IdentityMappingScimSourceAttribute
+	): IdentityMappingScimSourceAttribute {
+		return {
+			...attribute,
+			examples: attribute.examples ? [...attribute.examples] : []
 		};
 	}
 
@@ -1640,17 +1986,24 @@
 				{#if editorKind === 'source'}
 					<button
 						type="button"
-						class:active={csvMode === 'upload'}
-						onclick={() => (csvMode = 'upload')}
+						class:active={sourceKind === 'csv' && csvMode === 'upload'}
+						onclick={() => setSourceKind('csv', 'upload')}
 					>
 						CSV
 					</button>
 					<button
 						type="button"
-						class:active={csvMode === 'manual'}
-						onclick={() => (csvMode = 'manual')}
+						class:active={sourceKind === 'csv' && csvMode === 'manual'}
+						onclick={() => setSourceKind('csv', 'manual')}
 					>
 						{$LL.admin_identity_mapping_profile_edit_manual()}
+					</button>
+					<button
+						type="button"
+						class:active={sourceKind === 'scim'}
+						onclick={() => setSourceKind('scim')}
+					>
+						SCIM
 					</button>
 				{:else}
 					<button
@@ -1665,6 +2018,12 @@
 					>
 					<button
 						type="button"
+						class:active={destinationKind === 'resource_server'}
+						onclick={() => setDestinationKind('resource_server')}
+						>{$LL.admin_identity_mapping_profile_edit_resource_server()}</button
+					>
+					<button
+						type="button"
 						class:active={destinationKind === 'csv'}
 						onclick={() => setDestinationKind('csv')}>CSV</button
 					>
@@ -1675,6 +2034,315 @@
 		{#if loading}
 			<section class="panel">
 				<div class="empty-state">{$LL.admin_identity_mapping_profile_edit_loading()}</div>
+			</section>
+		{:else if editorKind === 'source' && sourceKind === 'scim'}
+			{#if !getRequestedId()}
+				<section class="panel">
+					<div class="panel-heading">
+						<div>
+							<p class="eyebrow">{$LL.admin_identity_mapping_profile_edit_create_method()}</p>
+							<h2>{$LL.admin_identity_mapping_profile_edit_start_from_source()}</h2>
+						</div>
+					</div>
+					<div
+						class="profile-tabs"
+						aria-label={$LL.admin_identity_mapping_profile_edit_source_method_aria()}
+					>
+						<button
+							type="button"
+							class:active={scimCreateMode === 'existing'}
+							onclick={() => (scimCreateMode = 'existing')}
+						>
+							{$LL.admin_identity_mapping_profile_edit_create_from_existing()}
+						</button>
+						<button
+							type="button"
+							class:active={scimCreateMode === 'template'}
+							onclick={() => (scimCreateMode = 'template')}
+						>
+							{$LL.admin_identity_mapping_profile_edit_create_from_template()}
+						</button>
+						<button
+							type="button"
+							class:active={scimCreateMode === 'manual'}
+							onclick={() => (scimCreateMode = 'manual')}
+						>
+							{$LL.admin_identity_mapping_profile_edit_manual()}
+						</button>
+					</div>
+
+					{#if scimCreateMode === 'existing'}
+						<div class="creation-source-grid">
+							<label>
+								<span>{$LL.admin_identity_mapping_profile_edit_existing_scim_source()}</span>
+								<select
+									value={selectedExistingScimSourceId}
+									onchange={(event) => (selectedExistingScimSourceId = getInputValue(event))}
+								>
+									<option value=""
+										>{$LL.admin_identity_mapping_profile_edit_choose_source_profile()}</option
+									>
+									{#each scimSourceProfiles() as profile (profile.id)}
+										<option value={profile.id}>{profile.displayName}</option>
+									{/each}
+								</select>
+							</label>
+							<button
+								type="button"
+								onclick={copyExistingScimSourceProfile}
+								disabled={!selectedExistingScimSourceId}
+							>
+								{$LL.admin_identity_mapping_profile_edit_copy()}
+							</button>
+						</div>
+					{:else if scimCreateMode === 'template'}
+						<div
+							class="template-browser"
+							aria-label={$LL.admin_identity_mapping_profile_edit_source_template_browser_aria()}
+						>
+							<div class="template-pane template-category-pane">
+								{#each scimTemplateCategories() as category (category)}
+									<button
+										type="button"
+										class:active={currentScimTemplateCategory() === category}
+										onclick={() => {
+											selectedScimTemplateCategory = category;
+											selectedScimTemplateId = '';
+										}}
+									>
+										<i
+											class={`template-category-icon ${templateCategoryIcon(category)}`}
+											aria-hidden="true"
+										></i>
+										<span>{category}</span>
+										<small>({scimTemplateCategoryCount(category)})</small>
+									</button>
+								{/each}
+							</div>
+							<div class="template-pane">
+								{#each scimTemplatesForCurrentCategory() as template (template.id)}
+									<button
+										type="button"
+										class:active={selectedScimTemplate()?.id === template.id}
+										onclick={() => (selectedScimTemplateId = template.id)}
+									>
+										{template.displayName}
+									</button>
+								{/each}
+							</div>
+							<div class="template-detail">
+								{#if selectedScimTemplate()}
+									<span>{$LL.admin_identity_mapping_profile_edit_template({ kind: 'SCIM' })}</span>
+									<strong>{selectedScimTemplate()?.displayName}</strong>
+									<p>{selectedScimTemplate()?.description}</p>
+									<dl>
+										<div>
+											<dt>{$LL.admin_identity_mapping_profile_edit_version()}</dt>
+											<dd>{selectedScimTemplate()?.version}</dd>
+										</div>
+										<div>
+											<dt>{$LL.admin_identity_mapping_profile_edit_updated()}</dt>
+											<dd>{selectedScimTemplate()?.updatedAt}</dd>
+										</div>
+									</dl>
+									<div class="template-detail-actions">
+										<button
+											type="button"
+											onclick={() => (previewTemplate = selectedScimTemplate())}
+										>
+											{$LL.admin_identity_mapping_profile_edit_preview()}
+										</button>
+										<button
+											type="button"
+											onclick={() => {
+												const template = selectedScimTemplate();
+												if (template) copyScimSourceTemplate(template);
+											}}
+										>
+											{$LL.admin_identity_mapping_profile_edit_use_template()}
+										</button>
+									</div>
+								{:else}
+									<div class="empty-state">
+										{$LL.admin_identity_mapping_profile_edit_no_source_templates()}
+									</div>
+								{/if}
+							</div>
+						</div>
+					{:else}
+						<div class="empty-state">
+							{$LL.admin_identity_mapping_profile_edit_blank_scim_source()}
+						</div>
+					{/if}
+				</section>
+			{/if}
+
+			<section class="panel">
+				<div class="panel-heading">
+					<div>
+						<p class="eyebrow">
+							{editingSourceProfileId
+								? $LL.admin_identity_mapping_profile_edit_edit_source()
+								: $LL.admin_identity_mapping_profile_edit_create_source()}
+						</p>
+						<h2>{$LL.admin_identity_mapping_profile_edit_scim_source_profile()}</h2>
+					</div>
+				</div>
+
+				<div class="settings-grid">
+					<label>
+						<span>{$LL.admin_identity_mapping_profile_edit_display_name()}</span>
+						<input
+							value={csvDisplayName}
+							placeholder={$LL.admin_identity_mapping_profile_edit_scim_display_placeholder()}
+							oninput={(event) => {
+								csvDisplayName = getInputValue(event);
+								if (!csvProfileKey.trim()) csvProfileKey = normalizeProfileKey(csvDisplayName);
+							}}
+						/>
+					</label>
+					<label>
+						<span>{$LL.admin_identity_mapping_profile_edit_scim_schema_uris()}</span>
+						<input
+							value={scimSchemaUris.join(',')}
+							oninput={(event) => (scimSchemaUris = splitCsv(getInputValue(event)))}
+						/>
+					</label>
+				</div>
+
+				<div class="detail-panel">
+					<div class="table-toolbar">
+						<strong>{$LL.admin_identity_mapping_profile_edit_scim_attributes()}</strong>
+						<span></span>
+					</div>
+					<div class="column-table">
+						<div class="scim-attribute-row scim-attribute-header">
+							<span>{$LL.admin_identity_mapping_profile_edit_path()}</span>
+							<span>{$LL.admin_identity_mapping_profile_edit_label()}</span>
+							<span>{$LL.admin_identity_mapping_profile_edit_type()}</span>
+							<span>{$LL.admin_identity_mapping_profile_edit_multiplicity()}</span>
+							<span>{$LL.admin_identity_mapping_profile_edit_nullable()}</span>
+							<span>{$LL.admin_identity_mapping_profile_edit_class()}</span>
+							<span>{$LL.admin_identity_mapping_profile_edit_required()}</span>
+							<span>{$LL.admin_identity_mapping_profile_edit_mapping_required()}</span>
+							<span>{$LL.admin_audit_action()}</span>
+						</div>
+						{#each scimAttributes as attribute, index (`${attribute.name}-${index}`)}
+							<div class="scim-attribute-row">
+								<input
+									value={attribute.name}
+									oninput={(event) => updateScimAttribute(index, 'name', getInputValue(event))}
+								/>
+								<input
+									value={attribute.label}
+									oninput={(event) => updateScimAttribute(index, 'label', getInputValue(event))}
+								/>
+								<select
+									value={attribute.type}
+									onchange={(event) => updateScimAttribute(index, 'type', getInputValue(event))}
+								>
+									{#each valueTypeOptions as option (option)}
+										<option value={option}>{option}</option>
+									{/each}
+								</select>
+								<select
+									value={attribute.valueMultiplicity ?? 'single'}
+									onchange={(event) =>
+										updateScimAttribute(index, 'valueMultiplicity', getInputValue(event))}
+								>
+									{#each valueMultiplicityOptions as option (option)}
+										<option value={option}>{option}</option>
+									{/each}
+								</select>
+								<label class="mini-check">
+									<input
+										type="checkbox"
+										checked={attribute.nullable === true}
+										onchange={(event) =>
+											updateScimAttribute(index, 'nullable', getCheckboxValue(event))}
+									/>
+								</label>
+								<select
+									value={attribute.classification}
+									onchange={(event) =>
+										updateScimAttribute(index, 'classification', getInputValue(event))}
+								>
+									{#each classificationOptions as option (option)}
+										<option value={option}>{option}</option>
+									{/each}
+								</select>
+								<label class="mini-check">
+									<input
+										type="checkbox"
+										checked={attribute.required}
+										onchange={(event) =>
+											updateScimAttribute(index, 'required', getCheckboxValue(event))}
+									/>
+								</label>
+								<label class="mini-check">
+									<input
+										type="checkbox"
+										checked={attribute.mappingRequired === true}
+										onchange={(event) =>
+											updateScimAttribute(index, 'mappingRequired', getCheckboxValue(event))}
+									/>
+								</label>
+								<button type="button" onclick={() => removeScimAttribute(index)}
+									>{$LL.admin_identity_mapping_profile_edit_remove()}</button
+								>
+							</div>
+						{/each}
+					</div>
+					<div class="table-add-action">
+						<button type="button" onclick={addScimAttribute}
+							>{$LL.admin_identity_mapping_profile_edit_add_scim_attribute()}</button
+						>
+					</div>
+				</div>
+
+				<div class="profile-actions">
+					{#if stagedProfileLifecycleControlsEnabled}
+						<button
+							type="button"
+							onclick={saveSourceProfile}
+							disabled={savingCsv || !canSaveScimDraft}
+						>
+							{savingCsv
+								? $LL.admin_identity_mapping_profile_edit_saving()
+								: $LL.admin_identity_mapping_profile_edit_save_draft_profile()}
+						</button>
+						<div class="profile-action-row">
+							<button
+								type="button"
+								onclick={reviewCurrentProfileVersion}
+								disabled={!canReviewCsvDraft || reviewingProfile}
+							>
+								{reviewingProfile
+									? $LL.admin_identity_mapping_profile_edit_reviewing()
+									: $LL.admin_identity_mapping_profile_edit_review()}
+							</button>
+							<button
+								type="button"
+								onclick={activateCurrentProfileVersion}
+								disabled={!canActivateCsvDraft || activatingProfile}
+							>
+								{activatingProfile
+									? $LL.admin_identity_mapping_profile_edit_activating()
+									: $LL.admin_identity_mapping_profile_edit_activate()}
+							</button>
+						</div>
+					{:else}
+						<button
+							type="button"
+							onclick={saveAndActivateCurrentProfile}
+							disabled={profileLifecycleBusy || !canCompleteSourceProfileSave}
+						>
+							{profileLifecycleBusy
+								? $LL.admin_identity_mapping_profile_edit_saving()
+								: $LL.admin_identity_mapping_profile_edit_save()}
+						</button>
+					{/if}
+				</div>
 			</section>
 		{:else if editorKind === 'source'}
 			<section class="panel">
@@ -1850,6 +2518,7 @@
 										>{$LL.admin_identity_mapping_profile_edit_nullable()}</span
 									><span>{$LL.admin_identity_mapping_profile_edit_class()}</span><span
 										>{$LL.admin_identity_mapping_profile_edit_required()}</span
+									><span>{$LL.admin_identity_mapping_profile_edit_mapping_required()}</span
 									>{#if sourceAdvancedSettings}<span
 											>{$LL.admin_identity_mapping_profile_edit_examples()}</span
 										><span>{$LL.admin_identity_mapping_profile_edit_note()}</span>{/if}<span
@@ -1916,6 +2585,14 @@
 													updateCsvColumn(index, 'required', getCheckboxValue(event))}
 											/>
 										</label>
+										<label class="mini-check">
+											<input
+												type="checkbox"
+												checked={column.mappingRequired === true}
+												onchange={(event) =>
+													updateCsvColumn(index, 'mappingRequired', getCheckboxValue(event))}
+											/>
+										</label>
 										{#if sourceAdvancedSettings}
 											<input
 												value={(column.examples ?? []).map(String).join(',')}
@@ -1960,31 +2637,47 @@
 				{/if}
 
 				<div class="profile-actions">
-					<button type="button" onclick={saveCsvProfile} disabled={savingCsv || !canSaveCsvDraft}>
-						{savingCsv
-							? $LL.admin_identity_mapping_profile_edit_saving()
-							: $LL.admin_identity_mapping_profile_edit_save_draft_profile()}
-					</button>
-					<div class="profile-action-row">
+					{#if stagedProfileLifecycleControlsEnabled}
 						<button
 							type="button"
-							onclick={reviewCurrentProfileVersion}
-							disabled={!canReviewCsvDraft || reviewingProfile}
+							onclick={saveSourceProfile}
+							disabled={savingCsv || !canSaveCsvDraft}
 						>
-							{reviewingProfile
-								? $LL.admin_identity_mapping_profile_edit_reviewing()
-								: $LL.admin_identity_mapping_profile_edit_review()}
+							{savingCsv
+								? $LL.admin_identity_mapping_profile_edit_saving()
+								: $LL.admin_identity_mapping_profile_edit_save_draft_profile()}
 						</button>
+						<div class="profile-action-row">
+							<button
+								type="button"
+								onclick={reviewCurrentProfileVersion}
+								disabled={!canReviewCsvDraft || reviewingProfile}
+							>
+								{reviewingProfile
+									? $LL.admin_identity_mapping_profile_edit_reviewing()
+									: $LL.admin_identity_mapping_profile_edit_review()}
+							</button>
+							<button
+								type="button"
+								onclick={activateCurrentProfileVersion}
+								disabled={!canActivateCsvDraft || activatingProfile}
+							>
+								{activatingProfile
+									? $LL.admin_identity_mapping_profile_edit_activating()
+									: $LL.admin_identity_mapping_profile_edit_activate()}
+							</button>
+						</div>
+					{:else}
 						<button
 							type="button"
-							onclick={activateCurrentProfileVersion}
-							disabled={!canActivateCsvDraft || activatingProfile}
+							onclick={saveAndActivateCurrentProfile}
+							disabled={profileLifecycleBusy || !canCompleteSourceProfileSave}
 						>
-							{activatingProfile
-								? $LL.admin_identity_mapping_profile_edit_activating()
-								: $LL.admin_identity_mapping_profile_edit_activate()}
+							{profileLifecycleBusy
+								? $LL.admin_identity_mapping_profile_edit_saving()
+								: $LL.admin_identity_mapping_profile_edit_save()}
 						</button>
-					</div>
+					{/if}
 				</div>
 			</section>
 		{:else}
@@ -2153,9 +2846,11 @@
 							value={destinationDisplayName}
 							placeholder={destinationKind === 'oidc'
 								? $LL.admin_identity_mapping_profile_edit_oidc_display_placeholder()
-								: destinationKind === 'saml'
-									? $LL.admin_identity_mapping_profile_edit_saml_display_placeholder()
-									: $LL.admin_identity_mapping_profile_edit_csv_destination_display_placeholder()}
+								: destinationKind === 'resource_server'
+									? $LL.admin_identity_mapping_profile_edit_resource_server_display_placeholder()
+									: destinationKind === 'saml'
+										? $LL.admin_identity_mapping_profile_edit_saml_display_placeholder()
+										: $LL.admin_identity_mapping_profile_edit_csv_destination_display_placeholder()}
 							oninput={(event) => {
 								destinationDisplayName = getInputValue(event);
 								if (!destinationProfileKey.trim())
@@ -2163,11 +2858,23 @@
 							}}
 						/>
 					</label>
+					{#if destinationKind === 'resource_server'}
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_resource_server_client_id()}</span>
+							<input
+								value={destinationOwnerScopeId}
+								placeholder={$LL.admin_identity_mapping_profile_edit_resource_server_client_id_placeholder()}
+								oninput={(event) => (destinationOwnerScopeId = getInputValue(event))}
+							/>
+						</label>
+					{/if}
 				</div>
 
-				{#if destinationKind === 'oidc'}
+				{#if destinationKind === 'oidc' || destinationKind === 'resource_server'}
 					<p class="profile-note">
-						{$LL.admin_identity_mapping_profile_edit_oidc_note()}
+						{destinationKind === 'resource_server'
+							? $LL.admin_identity_mapping_profile_edit_resource_server_note()
+							: $LL.admin_identity_mapping_profile_edit_oidc_note()}
 					</p>
 					<div class="table-toolbar">
 						<span></span>
@@ -2187,10 +2894,11 @@
 							><span>{$LL.admin_identity_mapping_profile_edit_type()}</span><span
 								>{$LL.admin_identity_mapping_profile_edit_allowed()}</span
 							><span>{$LL.admin_identity_mapping_profile_edit_multiplicity()}</span><span
-								>{$LL.admin_identity_mapping_profile_edit_nullable()}</span
-							><span>{$LL.admin_identity_mapping_profile_edit_class()}</span><span
-								>{$LL.admin_identity_mapping_profile_edit_surfaces()}</span
-							><span>{$LL.admin_identity_mapping_profile_edit_scopes()}</span
+								>{$LL.admin_identity_mapping_profile_edit_required()}</span
+							><span>{$LL.admin_identity_mapping_profile_edit_nullable()}</span><span
+								>{$LL.admin_identity_mapping_profile_edit_class()}</span
+							><span>{$LL.admin_identity_mapping_profile_edit_surfaces()}</span><span
+								>{$LL.admin_identity_mapping_profile_edit_scopes()}</span
 							>{#if destinationAdvancedSettings}<span
 									>{$LL.admin_identity_mapping_profile_edit_legal_basis()}</span
 								>{/if}<span>{$LL.admin_audit_action()}</span>
@@ -2231,6 +2939,15 @@
 								<label class="mini-check">
 									<input
 										type="checkbox"
+										checked={claim.required}
+										disabled={claim.claimName === 'sub' || claim.claimName === 'active'}
+										onchange={(event) =>
+											updateOidcClaim(index, 'required', getCheckboxValue(event))}
+									/>
+								</label>
+								<label class="mini-check">
+									<input
+										type="checkbox"
 										checked={claim.nullable}
 										onchange={(event) =>
 											updateOidcClaim(index, 'nullable', getCheckboxValue(event))}
@@ -2246,17 +2963,21 @@
 										>{/each}
 								</select>
 								<div class="surface-checks">
-									{#each oidcSurfaceOptions as surface (surface)}
-										<label class="mini-check">
-											<input
-												type="checkbox"
-												checked={claim.surfaces.includes(surface)}
-												onchange={(event) =>
-													toggleOidcClaimSurface(index, surface, getCheckboxValue(event))}
-											/>
-											<span>{surface}</span>
-										</label>
-									{/each}
+									{#if destinationKind === 'resource_server'}
+										<span>{$LL.admin_identity_mapping_profile_edit_introspection_surface()}</span>
+									{:else}
+										{#each oidcSurfaceOptions as surface (surface)}
+											<label class="mini-check">
+												<input
+													type="checkbox"
+													checked={claim.surfaces.includes(surface)}
+													onchange={(event) =>
+														toggleOidcClaimSurface(index, surface, getCheckboxValue(event))}
+												/>
+												<span>{surface}</span>
+											</label>
+										{/each}
+									{/if}
 								</div>
 								<details class="scope-picker">
 									<summary>
@@ -2304,7 +3025,7 @@
 								<button
 									type="button"
 									onclick={() => removeOidcClaim(index)}
-									disabled={claim.claimName === 'sub'}
+									disabled={claim.claimName === 'sub' || claim.claimName === 'active'}
 									>{$LL.admin_identity_mapping_profile_edit_remove()}</button
 								>
 							</div>
@@ -2342,14 +3063,16 @@
 							>{$LL.admin_identity_mapping_profile_edit_add_claim()}</button
 						>
 					</div>
-					<label>
-						<span>{$LL.admin_identity_mapping_profile_edit_claims_parameter_policy_json()}</span>
-						<textarea
-							rows="4"
-							value={oidcClaimsParameterJson}
-							oninput={(event) => (oidcClaimsParameterJson = getInputValue(event))}
-						></textarea>
-					</label>
+					{#if destinationKind === 'oidc'}
+						<label>
+							<span>{$LL.admin_identity_mapping_profile_edit_claims_parameter_policy_json()}</span>
+							<textarea
+								rows="4"
+								value={oidcClaimsParameterJson}
+								oninput={(event) => (oidcClaimsParameterJson = getInputValue(event))}
+							></textarea>
+						</label>
+					{/if}
 				{:else if destinationKind === 'csv'}
 					<div class="settings-grid">
 						<label>
@@ -2414,8 +3137,7 @@
 								>{$LL.admin_identity_mapping_profile_edit_allowed()}</span
 							><span>{$LL.admin_identity_mapping_profile_edit_multiplicity()}</span><span
 								>{$LL.admin_identity_mapping_profile_edit_nullable()}</span
-							><span>{$LL.admin_identity_mapping_profile_edit_class()}</span><span
-								>{$LL.admin_identity_mapping_profile_edit_required()}</span
+							><span>{$LL.admin_identity_mapping_profile_edit_class()}</span
 							>{#if destinationAdvancedSettings}<span
 									>{$LL.admin_identity_mapping_profile_edit_legal_basis()}</span
 								>{/if}<span>{$LL.admin_audit_action()}</span>
@@ -2629,14 +3351,6 @@
 											>{option}</option
 										>{/each}
 								</select>
-								<label class="mini-check"
-									><input
-										type="checkbox"
-										checked={attribute.required}
-										onchange={(event) =>
-											updateSamlAttribute(index, 'required', getCheckboxValue(event))}
-									/></label
-								>
 								{#if destinationAdvancedSettings}
 									<input
 										value={attribute.legalBasis}
@@ -2671,7 +3385,7 @@
 				<div class="impact-preview">
 					<span>{$LL.admin_identity_mapping_profile_edit_release_impact()}</span>
 					<strong>
-						{#if destinationKind === 'oidc'}
+						{#if destinationKind === 'oidc' || destinationKind === 'resource_server'}
 							{$LL.admin_identity_mapping_profile_edit_claims_count({
 								count: oidcClaims.length
 							})}
@@ -2693,37 +3407,49 @@
 				</div>
 
 				<div class="profile-actions">
-					<div class="profile-action-row">
+					{#if stagedProfileLifecycleControlsEnabled}
+						<div class="profile-action-row">
+							<button
+								type="button"
+								onclick={saveDestinationProfile}
+								disabled={savingDestination || !canSaveDestinationDraft}
+							>
+								{savingDestination
+									? $LL.admin_identity_mapping_profile_edit_saving()
+									: $LL.admin_identity_mapping_profile_edit_save_destination_draft()}
+							</button>
+						</div>
+						<div class="profile-action-row">
+							<button
+								type="button"
+								onclick={reviewCurrentProfileVersion}
+								disabled={!canReviewDestinationDraft || reviewingProfile}
+							>
+								{reviewingProfile
+									? $LL.admin_identity_mapping_profile_edit_reviewing()
+									: $LL.admin_identity_mapping_profile_edit_review()}
+							</button>
+							<button
+								type="button"
+								onclick={activateCurrentProfileVersion}
+								disabled={!canActivateDestinationDraft || activatingProfile}
+							>
+								{activatingProfile
+									? $LL.admin_identity_mapping_profile_edit_activating()
+									: $LL.admin_identity_mapping_profile_edit_activate()}
+							</button>
+						</div>
+					{:else}
 						<button
 							type="button"
-							onclick={saveDestinationProfile}
-							disabled={savingDestination || !canSaveDestinationDraft}
+							onclick={saveAndActivateCurrentProfile}
+							disabled={profileLifecycleBusy || !canCompleteDestinationProfileSave}
 						>
-							{savingDestination
+							{profileLifecycleBusy
 								? $LL.admin_identity_mapping_profile_edit_saving()
-								: $LL.admin_identity_mapping_profile_edit_save_destination_draft()}
+								: $LL.admin_identity_mapping_profile_edit_save()}
 						</button>
-					</div>
-					<div class="profile-action-row">
-						<button
-							type="button"
-							onclick={reviewCurrentProfileVersion}
-							disabled={!canReviewDestinationDraft || reviewingProfile}
-						>
-							{reviewingProfile
-								? $LL.admin_identity_mapping_profile_edit_reviewing()
-								: $LL.admin_identity_mapping_profile_edit_review()}
-						</button>
-						<button
-							type="button"
-							onclick={activateCurrentProfileVersion}
-							disabled={!canActivateDestinationDraft || activatingProfile}
-						>
-							{activatingProfile
-								? $LL.admin_identity_mapping_profile_edit_activating()
-								: $LL.admin_identity_mapping_profile_edit_activate()}
-						</button>
-					</div>
+					{/if}
 				</div>
 			</section>
 
@@ -2940,6 +3666,9 @@
 						<span role="columnheader">{$LL.admin_identity_mapping_profile_edit_label()}</span>
 						<span role="columnheader">{$LL.admin_identity_mapping_profile_edit_type()}</span>
 						<span role="columnheader">{$LL.admin_identity_mapping_profile_edit_required()}</span>
+						<span role="columnheader"
+							>{$LL.admin_identity_mapping_profile_edit_mapping_required()}</span
+						>
 					</div>
 					{#each templatePreviewRows(previewTemplate) as row, index (`${row.name}-${index}`)}
 						<div class="template-preview-row" role="row">
@@ -2948,6 +3677,11 @@
 							<span role="cell">{row.type}</span>
 							<span role="cell"
 								>{row.required
+									? $LL.admin_identity_mapping_profile_edit_yes()
+									: $LL.admin_identity_mapping_profile_edit_no()}</span
+							>
+							<span role="cell"
+								>{row.mappingRequired
 									? $LL.admin_identity_mapping_profile_edit_yes()
 									: $LL.admin_identity_mapping_profile_edit_no()}</span
 							>
@@ -3289,7 +4023,7 @@
 
 	.template-preview-row {
 		display: grid;
-		grid-template-columns: minmax(220px, 1.3fr) minmax(180px, 1fr) 120px 110px;
+		grid-template-columns: minmax(220px, 1.3fr) minmax(180px, 1fr) 120px 110px 130px;
 		gap: 12px;
 		min-width: 660px;
 		padding: 9px 10px;
@@ -3411,6 +4145,8 @@
 
 	.column-header,
 	.column-row,
+	.scim-attribute-header,
+	.scim-attribute-row,
 	.claim-header,
 	.claim-row,
 	.destination-column-header,
@@ -3422,28 +4158,34 @@
 		align-items: center;
 	}
 
+	.scim-attribute-header,
+	.scim-attribute-row {
+		grid-template-columns: 1.4fr 1.15fr 0.75fr 0.85fr 76px 0.85fr 80px 110px 90px;
+		min-width: 1230px;
+	}
+
 	.column-header,
 	.column-row {
-		grid-template-columns: 1.2fr 1.2fr 0.85fr 1.15fr 0.75fr 76px 0.9fr 80px 90px;
-		min-width: 1180px;
+		grid-template-columns: 1.2fr 1.2fr 0.85fr 1.15fr 0.75fr 76px 0.9fr 80px 110px 90px;
+		min-width: 1290px;
 	}
 
 	.column-header.advanced,
 	.column-row.advanced {
-		grid-template-columns: 1.2fr 1.2fr 0.85fr 1.15fr 0.75fr 76px 0.9fr 80px 1fr 1.3fr 90px;
-		min-width: 1480px;
+		grid-template-columns: 1.2fr 1.2fr 0.85fr 1.15fr 0.75fr 76px 0.9fr 80px 110px 1fr 1.3fr 90px;
+		min-width: 1590px;
 	}
 
 	.claim-header,
 	.claim-row {
-		grid-template-columns: 1fr 1fr 0.72fr 1.05fr 0.95fr 90px 0.78fr 1.15fr 0.95fr 90px;
-		min-width: 1400px;
+		grid-template-columns: 1fr 1fr 0.72fr 1.05fr 0.95fr 76px 90px 0.78fr 1.15fr 0.95fr 90px;
+		min-width: 1476px;
 	}
 
 	.claim-header.advanced,
 	.claim-row.advanced {
-		grid-template-columns: 1fr 1fr 0.72fr 1.05fr 0.95fr 90px 0.78fr 1.15fr 0.95fr 1fr 90px;
-		min-width: 1520px;
+		grid-template-columns: 1fr 1fr 0.72fr 1.05fr 0.95fr 76px 90px 0.78fr 1.15fr 0.95fr 1fr 90px;
+		min-width: 1596px;
 	}
 
 	.destination-column-header,
@@ -3460,17 +4202,18 @@
 
 	.saml-attribute-header,
 	.saml-attribute-row {
-		grid-template-columns: 1.25fr 1fr 0.75fr 1.1fr 0.75fr 76px 0.8fr 80px 90px;
-		min-width: 1160px;
+		grid-template-columns: 1.25fr 1fr 0.75fr 1.1fr 0.75fr 76px 0.8fr 90px;
+		min-width: 1080px;
 	}
 
 	.saml-attribute-header.advanced,
 	.saml-attribute-row.advanced {
-		grid-template-columns: 1.25fr 1fr 1.25fr 0.75fr 1.1fr 0.75fr 76px 0.8fr 80px 1fr 90px;
-		min-width: 1440px;
+		grid-template-columns: 1.25fr 1fr 1.25fr 0.75fr 1.1fr 0.75fr 76px 0.8fr 1fr 90px;
+		min-width: 1360px;
 	}
 
 	.column-header,
+	.scim-attribute-header,
 	.claim-header,
 	.destination-column-header,
 	.saml-attribute-header {
@@ -3482,10 +4225,12 @@
 	}
 
 	.column-header > span,
+	.scim-attribute-header > span,
 	.claim-header > span,
 	.destination-column-header > span,
 	.saml-attribute-header > span,
 	.column-row > :where(input, select, label, div, button),
+	.scim-attribute-row > :where(input, select, label, div, button),
 	.claim-row > :where(input, select, label, div, button),
 	.destination-column-row > :where(input, select, label, div, button),
 	.saml-attribute-row > :where(input, select, label, div, button) {
@@ -3498,6 +4243,7 @@
 	}
 
 	.column-header > span,
+	.scim-attribute-header > span,
 	.claim-header > span,
 	.destination-column-header > span,
 	.saml-attribute-header > span {
@@ -3515,10 +4261,12 @@
 	}
 
 	.column-header > span:last-child,
+	.scim-attribute-header > span:last-child,
 	.claim-header > span:last-child,
 	.destination-column-header > span:last-child,
 	.saml-attribute-header > span:last-child,
 	.column-row > :where(input, select, label, div, button):last-child,
+	.scim-attribute-row > :where(input, select, label, div, button):last-child,
 	.claim-row > :where(input, select, label, div, button):last-child,
 	.destination-column-row > :where(input, select, label, div, button):last-child,
 	.saml-attribute-row > :where(input, select, label, div, button):last-child {
@@ -3526,6 +4274,7 @@
 	}
 
 	.column-header > span:last-child,
+	.scim-attribute-header > span:last-child,
 	.claim-header > span:last-child,
 	.destination-column-header > span:last-child,
 	.saml-attribute-header > span:last-child {
@@ -3547,6 +4296,8 @@
 
 	.column-row input,
 	.column-row select,
+	.scim-attribute-row input,
+	.scim-attribute-row select,
 	.claim-row input,
 	.claim-row select,
 	.scope-picker > summary,
@@ -3568,6 +4319,7 @@
 	}
 
 	.column-row select,
+	.scim-attribute-row select,
 	.claim-row select,
 	.scope-picker > summary,
 	.destination-column-row select,
@@ -3595,6 +4347,7 @@
 	}
 
 	.column-row input::placeholder,
+	.scim-attribute-row input::placeholder,
 	.claim-row input::placeholder,
 	.destination-column-row input::placeholder,
 	.saml-attribute-row input::placeholder {
@@ -3603,6 +4356,8 @@
 
 	.column-row input:focus,
 	.column-row select:focus,
+	.scim-attribute-row input:focus,
+	.scim-attribute-row select:focus,
 	.claim-row input:focus,
 	.claim-row select:focus,
 	.scope-picker:focus-within > summary,
@@ -3618,6 +4373,7 @@
 	}
 
 	.claim-row > input:first-child,
+	.scim-attribute-row > input:first-child,
 	.claim-row > .scope-picker,
 	.destination-column-row > input:first-child,
 	.saml-attribute-row > input:first-child {
@@ -3626,6 +4382,7 @@
 	}
 
 	.column-row,
+	.scim-attribute-row,
 	.claim-row,
 	.destination-column-row,
 	.saml-attribute-row {
@@ -3633,6 +4390,7 @@
 	}
 
 	.column-row:hover,
+	.scim-attribute-row:hover,
 	.claim-row:hover,
 	.destination-column-row:hover,
 	.saml-attribute-row:hover {
@@ -3640,6 +4398,7 @@
 	}
 
 	.column-row > button,
+	.scim-attribute-row > button,
 	.claim-row > button,
 	.destination-column-row > button,
 	.saml-attribute-row > button {
@@ -3665,6 +4424,8 @@
 
 	.column-row > button:not(:disabled):hover,
 	.column-row > button:not(:disabled):focus-visible,
+	.scim-attribute-row > button:not(:disabled):hover,
+	.scim-attribute-row > button:not(:disabled):focus-visible,
 	.claim-row > button:not(:disabled):hover,
 	.claim-row > button:not(:disabled):focus-visible,
 	.destination-column-row > button:not(:disabled):hover,
@@ -3680,6 +4441,7 @@
 	}
 
 	.column-row > button:disabled,
+	.scim-attribute-row > button:disabled,
 	.claim-row > button:disabled,
 	.destination-column-row > button:disabled,
 	.saml-attribute-row > button:disabled {
@@ -3691,6 +4453,8 @@
 
 	.column-row:hover > button,
 	.column-row:focus-within > button,
+	.scim-attribute-row:hover > button,
+	.scim-attribute-row:focus-within > button,
 	.claim-row:hover > button,
 	.claim-row:focus-within > button,
 	.destination-column-row:hover > button,
@@ -3702,6 +4466,8 @@
 
 	.column-row:hover > button:not(:disabled),
 	.column-row:focus-within > button:not(:disabled),
+	.scim-attribute-row:hover > button:not(:disabled),
+	.scim-attribute-row:focus-within > button:not(:disabled),
 	.claim-row:hover > button:not(:disabled),
 	.claim-row:focus-within > button:not(:disabled),
 	.destination-column-row:hover > button:not(:disabled),
@@ -3897,6 +4663,7 @@
 		}
 
 		.column-row > button,
+		.scim-attribute-row > button,
 		.claim-row > button,
 		.destination-column-row > button,
 		.saml-attribute-row > button {

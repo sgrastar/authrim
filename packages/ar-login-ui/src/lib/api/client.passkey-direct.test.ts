@@ -227,6 +227,216 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		});
 	});
 
+	it('keeps the request pending and replays it through a tenant placement write fence', async () => {
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						error: 'temporarily_unavailable',
+						error_description: 'Tenant data is temporarily unavailable. Retry shortly.',
+						extensions: {
+							reason: 'tenant_placement_write_fence',
+							retryable: true,
+							retry_after_ms: 250
+						}
+					}),
+					{ status: 503, headers: { 'Content-Type': 'application/json', 'Retry-After': '1' } }
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						attempt_id: 'attempt_after_write_fence',
+						expires_in: 300,
+						masked_email: 'u***@example.com'
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { emailCodeAPI } = await loadClient();
+
+		await expect(emailCodeAPI.send({ email: 'user@example.com' })).resolves.toMatchObject({
+			data: { success: true, messageId: 'attempt_after_write_fence' }
+		});
+
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+		expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(fetchMock.mock.calls[0]?.[1]?.body);
+	});
+
+	it('keeps the Email Code request loading until routed provisioning is ready', async () => {
+		const token = 'A'.repeat(43);
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						status: 'provisioning',
+						provisioning_token: token,
+						status_endpoint: '/api/v1/auth/account-provisioning/status',
+						retry_after_ms: 250
+					}),
+					{ status: 202, headers: { 'Content-Type': 'application/json' } }
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ status: 'pending', retry_after_ms: 250 }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ status: 'ready' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						attempt_id: 'attempt_after_provisioning',
+						expires_in: 300,
+						masked_email: 'u***@example.com'
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', {
+			value: fetchMock,
+			configurable: true
+		});
+		const { emailCodeAPI } = await loadClient();
+
+		await expect(emailCodeAPI.send({ email: 'user@example.com' })).resolves.toMatchObject({
+			data: { success: true, messageId: 'attempt_after_provisioning' }
+		});
+
+		expect(fetchMock).toHaveBeenCalledTimes(4);
+		expect(fetchMock.mock.calls[1]?.[0].toString()).toContain(
+			'/api/v1/auth/account-provisioning/status'
+		);
+		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+			provisioning_token: token
+		});
+		const initialBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+		const retriedBody = JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body));
+		expect(retriedBody).toEqual(initialBody);
+	});
+
+	it('replays email-less Passkey signup with the provisioning continuation values', async () => {
+		const token = 'A'.repeat(43);
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						status: 'provisioning',
+						provisioning_token: token,
+						status_endpoint: '/api/v1/auth/account-provisioning/status',
+						retry_after_ms: 250,
+						resume_user_id: 'user_passkey_resume'
+					}),
+					{ status: 202, headers: { 'Content-Type': 'application/json' } }
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ status: 'ready' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						challenge_id: 'challenge_passkey_resume',
+						options: { challenge: 'passkey-challenge' }
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { passkeyAPI } = await loadClient();
+
+		await expect(passkeyAPI.getRegisterOptions({})).resolves.toMatchObject({
+			data: { userId: 'challenge_passkey_resume' }
+		});
+
+		const initialBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+		const replayBody = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
+		expect(initialBody).not.toHaveProperty('provisioning_token');
+		expect(replayBody).toMatchObject({
+			provisioning_token: token,
+			resume_user_id: 'user_passkey_resume'
+		});
+		expect(replayBody.client_id).toBe(initialBody.client_id);
+		expect(replayBody.code_challenge).toBe(initialBody.code_challenge);
+	});
+
+	it('continues polling when the resumed request returns a second provisioning operation', async () => {
+		const firstToken = 'A'.repeat(43);
+		const secondToken = 'B'.repeat(43);
+		const accepted = (token: string) =>
+			new Response(
+				JSON.stringify({
+					status: 'provisioning',
+					provisioning_token: token,
+					status_endpoint: '/api/v1/auth/account-provisioning/status',
+					retry_after_ms: 250
+				}),
+				{ status: 202, headers: { 'Content-Type': 'application/json' } }
+			);
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(accepted(firstToken))
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ status: 'ready' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(accepted(secondToken))
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ status: 'pending', retry_after_ms: 250 }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ status: 'ready' }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						attempt_id: 'attempt_after_second_operation',
+						expires_in: 300,
+						masked_email: 'u***@example.com'
+					}),
+					{ status: 200, headers: { 'Content-Type': 'application/json' } }
+				)
+			);
+		Object.defineProperty(globalThis, 'fetch', { value: fetchMock, configurable: true });
+		const { emailCodeAPI } = await loadClient();
+
+		await expect(emailCodeAPI.send({ email: 'user@example.com' })).resolves.toMatchObject({
+			data: { success: true, messageId: 'attempt_after_second_operation' }
+		});
+
+		expect(fetchMock).toHaveBeenCalledTimes(6);
+		const initialBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+		expect(JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body))).toEqual(initialBody);
+		expect(JSON.parse(String(fetchMock.mock.calls[5]?.[1]?.body))).toEqual(initialBody);
+		expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
+			provisioning_token: firstToken
+		});
+		expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))).toEqual({
+			provisioning_token: secondToken
+		});
+	});
+
 	it('redeems a valid Email Verification Protocol artifact without entering the OTP state', async () => {
 		const fetchMock = vi
 			.fn<typeof fetch>()
