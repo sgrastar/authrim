@@ -281,6 +281,8 @@ export interface DeployOptions {
   deploymentStrategy?: 'auto' | 'direct' | 'staged';
   /** Worker entries already known to exist remotely, normally sourced from authrim.lock. */
   existingComponents?: readonly WorkerComponent[];
+  /** Exact immutable Worker version IDs used to verify an existing deployment when inventory is empty. */
+  expectedWorkerVersionIds?: Readonly<Record<string, string | undefined>>;
   /** Secret values keyed by Wrangler secret name. Only each Worker's allow-list is written. */
   secrets?: Readonly<Record<string, string>>;
   /** Whether ar-control must receive scoped Cloudflare provisioning tokens. */
@@ -3731,43 +3733,84 @@ async function cloudflareWorkerHasActiveDeployment(
   workerName: string,
   cwd: string,
   options: DeployOptions,
-  throttle: DeploymentThrottle
+  throttle: DeploymentThrottle,
+  expectedVersionId?: string
 ): Promise<boolean> {
   return runWithAdaptiveRetry(
     `Checking Worker deployment ${workerName}`,
     options,
     throttle,
     async () => {
+      const workersToken = process.env.CLOUDFLARE_WORKERS_API_TOKEN?.trim();
+      const commandOptions = {
+        cwd,
+        reject: false as const,
+        cancelSignal: options.signal,
+        ...(workersToken ? { env: { CLOUDFLARE_API_TOKEN: workersToken } } : {}),
+      };
       const result = await execa(
         'pnpm',
         ['exec', 'wrangler', 'deployments', 'list', '--name', workerName, '--json'],
-        {
-          cwd,
-          reject: false,
-          cancelSignal: options.signal,
-        }
+        commandOptions
       );
       if (result.exitCode === 0) {
         try {
           const deployments = JSON.parse(String(result.stdout || '[]')) as unknown;
-          return Array.isArray(deployments) && deployments.length > 0;
+          if (!Array.isArray(deployments)) {
+            throw new Error(`Wrangler returned invalid deployment JSON for ${workerName}`);
+          }
+          if (deployments.length > 0) return true;
         } catch {
           throw new Error(`Wrangler returned invalid deployment JSON for ${workerName}`);
         }
+      } else {
+        const errorText = getErrorText({
+          message: String(result.stderr || result.stdout || 'Unknown Wrangler error'),
+          stderr: result.stderr,
+          stdout: result.stdout,
+        });
+        if (!/does not exist|not found|\b10007\b|\b404\b/i.test(errorText)) {
+          const commandError = new Error(errorText) as Error & {
+            stderr?: unknown;
+            stdout?: unknown;
+          };
+          commandError.stderr = result.stderr;
+          commandError.stdout = result.stdout;
+          throw commandError;
+        }
       }
 
-      const errorText = getErrorText({
-        message: String(result.stderr || result.stdout || 'Unknown Wrangler error'),
-        stderr: result.stderr,
-        stdout: result.stdout,
-      });
-      if (/does not exist|not found|\b10007\b|\b404\b/i.test(errorText)) {
-        return false;
+      const expected = expectedVersionId?.trim();
+      if (!expected) return false;
+      const versionResult = await execa(
+        'pnpm',
+        ['exec', 'wrangler', 'versions', 'view', expected, '--name', workerName, '--json'],
+        commandOptions
+      );
+      if (versionResult.exitCode === 0) {
+        try {
+          const version = JSON.parse(String(versionResult.stdout || '{}')) as { id?: unknown };
+          if (version.id !== expected) {
+            throw new Error(`Worker version identity mismatch for ${workerName}`);
+          }
+          return true;
+        } catch {
+          throw new Error(`Wrangler returned invalid or mismatched version JSON for ${workerName}`);
+        }
       }
-      const commandError = new Error(errorText) as Error & { stderr?: unknown; stdout?: unknown };
-      commandError.stderr = result.stderr;
-      commandError.stdout = result.stdout;
-      throw commandError;
+      const versionErrorText = getErrorText({
+        message: String(versionResult.stderr || versionResult.stdout || 'Unknown Wrangler error'),
+        stderr: versionResult.stderr,
+        stdout: versionResult.stdout,
+      });
+      if (/does not exist|not found|\b10007\b|\b404\b/i.test(versionErrorText)) return false;
+      const versionError = new Error(versionErrorText) as Error & {
+        stderr?: unknown;
+        stdout?: unknown;
+      };
+      versionError.stderr = versionResult.stderr;
+      versionError.stdout = versionResult.stdout;
+      throw versionError;
     }
   );
 }
@@ -3788,7 +3831,8 @@ export async function resolveMissingUiWorkerBindingTargets(
           `${options.env}-ar-login-ui`,
           options.rootDir,
           options,
-          throttle
+          throttle,
+          options.expectedWorkerVersionIds?.['ar-login-ui']
         )
       : Promise.resolve(true),
     enabled.adminUi
@@ -3796,7 +3840,8 @@ export async function resolveMissingUiWorkerBindingTargets(
           `${options.env}-ar-admin-ui`,
           options.rootDir,
           options,
-          throttle
+          throttle,
+          options.expectedWorkerVersionIds?.['ar-admin-ui']
         )
       : Promise.resolve(true),
   ]);
@@ -3818,7 +3863,8 @@ export async function resolveExistingWorkerComponents(
       getWorkerName(options.env, component),
       join(options.rootDir, 'packages', component),
       options,
-      throttle
+      throttle,
+      options.expectedWorkerVersionIds?.[component]
     ),
   }));
   return components.filter((component) => results.get(component)?.exists === true);

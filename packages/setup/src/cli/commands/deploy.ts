@@ -2943,6 +2943,12 @@ export async function deployCommand(options: DeployCommandOptions): Promise<void
       existingComponents: CORE_WORKER_COMPONENTS.filter(
         (component) => currentLock.workers?.[component] !== undefined
       ),
+      expectedWorkerVersionIds: Object.fromEntries(
+        Object.entries(currentLock.workers ?? {}).map(([component, worker]) => [
+          component,
+          worker.cloudflareVersionId,
+        ])
+      ),
       secrets: deploymentSecrets,
       automaticProvisioning: automaticProvisioning && pendingControlTokenBootstrap === null,
       cloudflareAccountId: config.cloudflare?.accountId,
