@@ -10653,7 +10653,11 @@ export async function getWorkerDeployments(name: string): Promise<WorkerDeployme
   const maxAttempts = process.env.NODE_ENV === 'test' ? 2 : 4;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const { stdout, stderr } = await wrangler(['deployments', 'list', '--name', name]);
+      const { stdout, stderr } = await wrangler(['deployments', 'list', '--name', name], {
+        // This output is parsed below. A process-wide WRANGLER_LOG=warn suppresses successful
+        // Wrangler output entirely, so force the machine-consumer level for this subprocess.
+        env: { WRANGLER_LOG: 'log' },
+      });
 
       // Check if worker doesn't exist
       if (isWorkerInventoryNotFoundError(stderr)) {

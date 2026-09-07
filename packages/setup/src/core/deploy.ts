@@ -2456,7 +2456,14 @@ async function readWorkerTrafficSnapshot(
           '--env',
           options.env,
         ],
-        { cwd: context.packageDir, reject: true, cancelSignal: options.signal }
+        {
+          cwd: context.packageDir,
+          reject: true,
+          cancelSignal: options.signal,
+          // Machine-readable Wrangler output is emitted at the `log` level. A process-wide
+          // WRANGLER_LOG=warn (used by CI) otherwise turns a successful response into empty stdout.
+          env: { WRANGLER_LOG: 'log' },
+        }
       )
   );
   const deployments = JSON.parse(String(deploymentsResult.stdout)) as WranglerDeploymentListItem[];
@@ -3746,7 +3753,11 @@ async function cloudflareWorkerHasActiveDeployment(
         cwd,
         reject: false as const,
         cancelSignal: options.signal,
-        ...(workersToken ? { env: { CLOUDFLARE_API_TOKEN: workersToken } } : {}),
+        env: {
+          // Keep --json machine-readable even when the parent process reduces Wrangler logging.
+          WRANGLER_LOG: 'log',
+          ...(workersToken ? { CLOUDFLARE_API_TOKEN: workersToken } : {}),
+        },
       };
       const result = await execa(
         'pnpm',
@@ -3755,7 +3766,7 @@ async function cloudflareWorkerHasActiveDeployment(
       );
       if (result.exitCode === 0) {
         try {
-          const deployments = JSON.parse(String(result.stdout || '[]')) as unknown;
+          const deployments = JSON.parse(String(result.stdout)) as unknown;
           if (!Array.isArray(deployments)) {
             throw new Error(`Wrangler returned invalid deployment JSON for ${workerName}`);
           }
@@ -3789,7 +3800,7 @@ async function cloudflareWorkerHasActiveDeployment(
       );
       if (versionResult.exitCode === 0) {
         try {
-          const version = JSON.parse(String(versionResult.stdout || '{}')) as { id?: unknown };
+          const version = JSON.parse(String(versionResult.stdout)) as { id?: unknown };
           if (version.id !== expected) {
             throw new Error(`Worker version identity mismatch for ${workerName}`);
           }
