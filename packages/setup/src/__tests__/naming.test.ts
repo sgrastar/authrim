@@ -191,8 +191,13 @@ describe('getBuiltinD1BindingsForComponent', () => {
     expect(getBuiltinD1BindingsForComponent('ar-policy')).toEqual([]);
     expect(getBuiltinD1BindingsForComponent('ar-agent-access')).toEqual(['DB_ADMIN']);
     expect(getBuiltinD1BindingsForComponent('ar-async')).toEqual([]);
-    expect(getBuiltinD1BindingsForComponent('ar-saml')).toEqual(['DB', 'DB_PII', 'DB_ADMIN']);
-    expect(getBuiltinD1BindingsForComponent('ar-vc')).toEqual(['DB_ADMIN']);
+    expect(getBuiltinD1BindingsForComponent('ar-saml')).toEqual([
+      'DB',
+      'DB_PII',
+      'DB_ADMIN',
+      'LOOKUP_DB',
+    ]);
+    expect(getBuiltinD1BindingsForComponent('ar-vc')).toEqual(['DB_ADMIN', 'LOOKUP_DB']);
     expect(getBuiltinD1BindingsForComponent('ar-lib-core')).toEqual(['DB', 'DB_PII', 'LOOKUP_DB']);
     expect(getBuiltinD1BindingsForComponent('ar-router')).toEqual([]);
     expect(getBuiltinD1BindingsForComponent('ar-auth')).not.toContain('PLUGIN_RUNNER_DB');

@@ -2,8 +2,10 @@
   "schemaVersion": 1,
   "packageName": "@authrim/ar-saml",
   "worker": "ar-saml",
-  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii"],
+  "lookupBlindIndex": true,
+  "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
   "bindings": [
+    { "name": "LOOKUP_DB", "kind": "d1", "required": true, "dataRole": "lookup" },
     { "name": "DB", "kind": "d1", "required": true, "capability": "audit.event" },
     { "name": "DB_PII", "kind": "d1", "required": true, "capability": "audit.pii" },
     { "name": "DB_ADMIN", "kind": "d1", "required": true, "capability": "saml_metadata" },
@@ -40,6 +42,8 @@
     { "name": "CONTROL_SMOKE_VERSION", "kind": "version_metadata", "required": true }
   ],
   "secrets": [
+    { "name": "LOOKUP_HMAC_KEY_SLOT_A", "capability": "lookup_blind_index", "required": true },
+    { "name": "LOOKUP_HMAC_KEY_SLOT_B", "capability": "lookup_blind_index", "required": false },
     {
       "name": "OBJECT_ENCRYPTION_ROOT_KEY",
       "capability": "object_encryption.encrypt",

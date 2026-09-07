@@ -25,6 +25,9 @@ export const LOOKUP_HMAC_VERIFICATION_BINDINGS = {
   'ar-token': 'SMOKE_AR_TOKEN',
   'ar-userinfo': 'SMOKE_AR_USERINFO',
   'ar-management': 'SMOKE_AR_MANAGEMENT',
+  'ar-saml': 'SMOKE_AR_SAML',
+  'ar-bridge': 'SMOKE_AR_BRIDGE',
+  'ar-vc': 'SMOKE_AR_VC',
 } as const satisfies Readonly<Record<string, keyof ControlEnv>>;
 
 export const LOOKUP_HMAC_VERIFICATION_COMPONENTS = Object.keys(

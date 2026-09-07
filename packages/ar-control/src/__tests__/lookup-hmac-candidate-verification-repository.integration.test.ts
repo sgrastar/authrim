@@ -134,8 +134,8 @@ describe('D1LookupHmacCandidateVerificationRepository', () => {
 
     await expect(repository.status('test', rotation.operationId, 'distribution')).resolves.toEqual({
       phase: 'distribution',
-      expected: 5,
-      succeeded: 5,
+      expected: 8,
+      succeeded: 8,
       failed: 0,
       pending: [],
       complete: true,
@@ -148,7 +148,7 @@ describe('D1LookupHmacCandidateVerificationRepository', () => {
            FROM control_lookup_hmac_candidate_verifications`
       )
       .get();
-    expect(row).toEqual({ count: 5, current_length: 64, candidate_length: 64 });
+    expect(row).toEqual({ count: 8, current_length: 64, candidate_length: 64 });
     expect(JSON.stringify(row)).not.toContain('secret');
   });
 
