@@ -14,6 +14,8 @@ import {
   getUiComponentsToUpdate,
   isUpdateSourceLockUnchanged,
   updateLockWithDeploymentsAndVersions,
+  finalizeDeferredInstalledControlReleaseRollout,
+  isVerifiedInstalledRolloutReadyForDeferredCompletion,
   recoverActiveControlReleaseRollout,
   withRecoveredReleaseUpdateState,
   withReleaseUpdateState,
@@ -604,6 +606,174 @@ describe('release update orchestration', () => {
       controlCompletedTargets: 3,
       controlTotalTargets: 3,
     });
+  });
+
+  it('defers completion of a fully migrated installed-version rollout until new Workers verify', async () => {
+    const sourceLock = AuthrimLockSchema.parse({
+      ...lock(),
+      d1: {
+        CONTROL_DB: { id: 'control-database-id', name: 'prod-authrim-control-db' },
+      },
+      workers: {
+        'ar-control': {
+          name: 'prod-ar-control',
+          version: '1.0.0',
+          cloudflareVersionId: '11111111-1111-4111-8111-111111111111',
+        },
+      },
+      releaseUpdate: {
+        targetVersion: '1.0.0',
+        phase: 'verified',
+        manifestChecksum: 'a'.repeat(64),
+        startedAt: '2026-07-21T00:00:00.000Z',
+        updatedAt: '2026-07-21T00:01:00.000Z',
+        appliedTargets: [],
+        manualTargets: [],
+      },
+    });
+    const installedRollout = {
+      operationId: `op_release_rollout_${'6'.repeat(32)}`,
+      sourceVersion: '1.0.0',
+      targetVersion: '1.0.0',
+      releaseId: '1.0.0-draft.abcdef123456',
+      manifestDigest: 'e'.repeat(64),
+      phase: 'awaiting_setup' as const,
+      completedTargets: 3,
+      totalTargets: 3,
+      lastErrorCode: null,
+      updatedAt: 100,
+    };
+
+    const recovered = await recoverActiveControlReleaseRollout({
+      lock: sourceLock,
+      environmentId: 'prod',
+      targetVersion: '1.1.0',
+      manifestChecksum: 'b'.repeat(64),
+      deferVerifiedInstalledRolloutCompletion: true,
+      loadActiveRollout: async () => installedRollout,
+    });
+
+    expect(recovered.lock).toBe(sourceLock);
+    expect(recovered.activeRollout).toBeNull();
+    expect(recovered.installedRolloutToFinalize).toEqual(installedRollout);
+  });
+
+  it('fails closed when an older active rollout lacks complete installed-release evidence', async () => {
+    const verifiedLock = AuthrimLockSchema.parse({
+      ...lock(),
+      d1: {
+        CONTROL_DB: { id: 'control-database-id', name: 'prod-authrim-control-db' },
+      },
+      workers: {
+        'ar-control': {
+          name: 'prod-ar-control',
+          version: '1.0.0',
+          cloudflareVersionId: '11111111-1111-4111-8111-111111111111',
+        },
+      },
+      releaseUpdate: {
+        targetVersion: '1.0.0',
+        phase: 'verified',
+        manifestChecksum: 'a'.repeat(64),
+        startedAt: '2026-07-21T00:00:00.000Z',
+        updatedAt: '2026-07-21T00:01:00.000Z',
+        appliedTargets: [],
+        manualTargets: [],
+      },
+    });
+    const baseRollout = {
+      operationId: `op_release_rollout_${'7'.repeat(32)}`,
+      sourceVersion: '1.0.0',
+      targetVersion: '1.0.0',
+      releaseId: '1.0.0-draft.abcdef123456',
+      manifestDigest: 'e'.repeat(64),
+      phase: 'awaiting_setup' as const,
+      completedTargets: 3,
+      totalTargets: 3,
+      lastErrorCode: null,
+      updatedAt: 100,
+    };
+
+    expect(
+      isVerifiedInstalledRolloutReadyForDeferredCompletion(verifiedLock, {
+        ...baseRollout,
+        phase: 'database_rollout',
+      })
+    ).toBe(false);
+    expect(
+      isVerifiedInstalledRolloutReadyForDeferredCompletion(verifiedLock, {
+        ...baseRollout,
+        completedTargets: 2,
+      })
+    ).toBe(false);
+    expect(
+      isVerifiedInstalledRolloutReadyForDeferredCompletion(
+        AuthrimLockSchema.parse({
+          ...verifiedLock,
+          workers: { 'ar-control': { name: 'prod-ar-control', version: '1.0.0' } },
+        }),
+        baseRollout
+      )
+    ).toBe(false);
+    await expect(
+      recoverActiveControlReleaseRollout({
+        lock: verifiedLock,
+        environmentId: 'prod',
+        targetVersion: '1.1.0',
+        manifestChecksum: 'b'.repeat(64),
+        deferVerifiedInstalledRolloutCompletion: false,
+        loadActiveRollout: async () => baseRollout,
+      })
+    ).rejects.toThrow('release_rollout_active_target_mismatch');
+  });
+
+  it('revalidates and finalizes a deferred installed rollout only after verification begins', async () => {
+    const rollout = {
+      operationId: `op_release_rollout_${'8'.repeat(32)}`,
+      sourceVersion: '1.0.0',
+      targetVersion: '1.0.0',
+      releaseId: '1.0.0-draft.abcdef123456',
+      manifestDigest: 'f'.repeat(64),
+      phase: 'awaiting_setup' as const,
+      completedTargets: 3,
+      totalTargets: 3,
+      lastErrorCode: null,
+      updatedAt: 100,
+    };
+    const calls: string[] = [];
+
+    await finalizeDeferredInstalledControlReleaseRollout({
+      controlDatabaseId: 'control-database-id',
+      environmentId: 'prod',
+      rollout,
+      getStatus: async () => {
+        calls.push('get');
+        return rollout;
+      },
+      beginVerification: async () => {
+        calls.push('begin');
+        return { ...rollout, phase: 'verifying' };
+      },
+      complete: async () => {
+        calls.push('complete');
+        return { ...rollout, phase: 'completed' };
+      },
+    });
+
+    expect(calls).toEqual(['get', 'begin', 'complete']);
+
+    await expect(
+      finalizeDeferredInstalledControlReleaseRollout({
+        controlDatabaseId: 'control-database-id',
+        environmentId: 'prod',
+        rollout,
+        getStatus: async () => ({
+          ...rollout,
+          phase: 'completed',
+          completedTargets: 2,
+        }),
+      })
+    ).rejects.toThrow('release_rollout_deferred_completed_state_inconsistent');
   });
 
   it('fails closed instead of adopting an unrelated active rollout', () => {
