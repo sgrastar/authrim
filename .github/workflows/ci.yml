@@ -12,6 +12,12 @@ permissions:
   issues: write
   pull-requests: write
 
+# A newer commit makes earlier PR checks obsolete. Cancel superseded runs so
+# resource-heavy TypeScript builds and coverage suites cannot pile up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   dependency-audit:
     name: Dependency Audit
