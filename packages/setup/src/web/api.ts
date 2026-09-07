@@ -3141,6 +3141,12 @@ export function createApiRoutes(): Hono {
           existingComponents: WORKER_COMPONENTS.filter(
             (component) => lock.workers?.[component] !== undefined
           ),
+          expectedWorkerVersionIds: Object.fromEntries(
+            Object.entries(lock.workers ?? {}).map(([component, worker]) => [
+              component,
+              worker.cloudflareVersionId,
+            ])
+          ),
           cleanupLegacyStaticSecrets: true,
           deployConfigLockProof: deployConfigLock.proof,
           onProgress: addProgress,
@@ -3443,6 +3449,12 @@ export function createApiRoutes(): Hono {
           deploymentStrategy: 'auto' as const,
           existingComponents: WORKER_COMPONENTS.filter(
             (component) => lock.workers?.[component] !== undefined
+          ),
+          expectedWorkerVersionIds: Object.fromEntries(
+            Object.entries(lock.workers ?? {}).map(([component, worker]) => [
+              component,
+              worker.cloudflareVersionId,
+            ])
           ),
           deployConfigLockProof: deployConfigLock.proof,
           onProgress: addProgress,
@@ -4624,6 +4636,11 @@ export function createApiRoutes(): Hono {
                 dryRun: false,
                 concurrency: 2,
                 existingComponents: locallyRecordedComponents,
+                expectedWorkerVersionIds: Object.fromEntries(
+                  Object.entries(existingDeploymentLock?.workers ?? {}).map(
+                    ([component, worker]) => [component, worker.cloudflareVersionId]
+                  )
+                ),
                 onProgress: addProgress,
               },
               WORKER_COMPONENTS
@@ -5159,7 +5176,16 @@ export function createApiRoutes(): Hono {
           ? dryRun
             ? enabledUiBindingTargets
             : await resolveMissingUiWorkerBindingTargets(
-                { env, rootDir: resolve(rootDir), onProgress: addProgress },
+                {
+                  env,
+                  rootDir: resolve(rootDir),
+                  expectedWorkerVersionIds: Object.fromEntries(
+                    Object.entries(existingDeploymentLock?.workers ?? {}).map(
+                      ([component, worker]) => [component, worker.cloudflareVersionId]
+                    )
+                  ),
+                  onProgress: addProgress,
+                },
                 enabledUiBindingTargets
               )
           : { loginUi: false, adminUi: false };
@@ -8754,6 +8780,12 @@ export function createApiRoutes(): Hono {
           existingComponents: WORKER_COMPONENTS.filter(
             (component) => lock!.workers?.[component] !== undefined
           ),
+          expectedWorkerVersionIds: Object.fromEntries(
+            Object.entries(lock!.workers ?? {}).map(([component, worker]) => [
+              component,
+              worker.cloudflareVersionId,
+            ])
+          ),
           secrets: deploymentSecrets,
           cleanupLegacyStaticSecrets: true,
           deployConfigLockProof: deployConfigLock.proof,
@@ -8776,7 +8808,12 @@ export function createApiRoutes(): Hono {
           componentsToUpdate.includes('ar-router')
         ) {
           const missingUiBindingTargets = await resolveMissingUiWorkerBindingTargets(
-            { env, rootDir: resolve(rootDir), onProgress: addProgress },
+            {
+              env,
+              rootDir: resolve(rootDir),
+              expectedWorkerVersionIds: workerDeployOptions.expectedWorkerVersionIds,
+              onProgress: addProgress,
+            },
             {
               loginUi: config.components.loginUi ?? true,
               adminUi: config.components.adminUi ?? true,
@@ -9612,6 +9649,12 @@ export function createApiRoutes(): Hono {
             existingComponents: WORKER_COMPONENTS.filter(
               (component) => componentLock?.workers?.[component] !== undefined
             ),
+            expectedWorkerVersionIds: Object.fromEntries(
+              Object.entries(componentLock?.workers ?? {}).map(([component, worker]) => [
+                component,
+                worker.cloudflareVersionId,
+              ])
+            ),
             secrets: deploymentSecrets,
             cleanupLegacyStaticSecrets: true,
             deployConfigLockProof: deployConfigLock?.proof,
@@ -9693,7 +9736,12 @@ export function createApiRoutes(): Hono {
 
           if (!dryRun && componentName === 'ar-router') {
             const missingUiBindingTargets = await resolveMissingUiWorkerBindingTargets(
-              { env, rootDir, onProgress: addProgress },
+              {
+                env,
+                rootDir,
+                expectedWorkerVersionIds: componentDeployOptions.expectedWorkerVersionIds,
+                onProgress: addProgress,
+              },
               {
                 loginUi: cfg?.components?.loginUi ?? true,
                 adminUi: cfg?.components?.adminUi ?? true,

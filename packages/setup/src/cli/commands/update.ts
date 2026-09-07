@@ -2019,6 +2019,12 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       existingComponents: CORE_WORKER_COMPONENTS.filter(
         (component) => workingLock.workers?.[component] !== undefined
       ),
+      expectedWorkerVersionIds: Object.fromEntries(
+        Object.entries(workingLock.workers ?? {}).map(([component, worker]) => [
+          component,
+          worker.cloudflareVersionId,
+        ])
+      ),
       secrets: deploymentSecrets,
       deploymentLease: {
         controlDatabaseId: deploymentControlDatabase.id,
