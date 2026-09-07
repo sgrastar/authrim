@@ -175,6 +175,50 @@ describe('CIBA session authorization', () => {
     await expect(response.json()).resolves.toMatchObject({ error: 'access_denied' });
   });
 
+  it('rejects request details when the resolved subject belongs to another user', async () => {
+    mocks.authenticatedUser.mockResolvedValue({
+      userId: 'user-1',
+      sub: 'subject-1',
+      email: 'user@example.com',
+    });
+    mocks.storeFetch.mockResolvedValue(
+      Response.json(
+        metadata({
+          resolved_subject_id: 'victim-user',
+          login_hint: 'user@example.com',
+        })
+      )
+    );
+    const response = await createApp().request(
+      'http://localhost/requests/legacy-request-id',
+      {},
+      createEnv()
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it('allows a request resolved to the authenticated subject without a login hint', async () => {
+    mocks.authenticatedUser.mockResolvedValue({
+      userId: 'user-1',
+      sub: 'subject-1',
+      email: 'user@example.com',
+    });
+    mocks.storeFetch.mockResolvedValue(
+      Response.json(
+        metadata({
+          resolved_subject_id: 'subject-1',
+          login_hint: undefined,
+        })
+      )
+    );
+    const response = await createApp().request(
+      'http://localhost/requests/legacy-request-id',
+      {},
+      createEnv()
+    );
+    expect(response.status).toBe(200);
+  });
+
   it('allows the authenticated owner to view and deny a pending request', async () => {
     mocks.authenticatedUser.mockResolvedValue({
       userId: 'user-1',
