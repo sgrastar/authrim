@@ -78,8 +78,6 @@ jobs:
       # Runtime child tokens for ar-control. Keep these distinct from the broad CI operator token.
       CLOUDFLARE_D1_API_TOKEN: ${{ secrets.AUTHRIM_TEST_CLOUDFLARE_D1_API_TOKEN }}
       CLOUDFLARE_WORKERS_API_TOKEN: ${{ secrets.AUTHRIM_TEST_CLOUDFLARE_WORKERS_API_TOKEN }}
-      # Use warn level to suppress Wrangler binding output that may contain resource IDs.
-      WRANGLER_LOG: warn
 
     steps:
       - name: Checkout code

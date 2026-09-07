@@ -980,7 +980,10 @@ async function wrangler(
     // Default timeout: 30 seconds (wrangler API calls can be slow)
     const result = await execa('npx', ['wrangler', ...args], {
       cwd: options.cwd,
-      env: { ...process.env, ...options.env },
+      // Setup consumes stdout from this wrapper for inventory, identity and stored-value reads.
+      // Do not allow a parent WRANGLER_LOG=warn/error setting to silently suppress successful
+      // command output. Callers can still deliberately override this for commands that do not read.
+      env: { ...process.env, WRANGLER_LOG: 'log', ...options.env },
       reject: false,
       timeout: options.timeout ?? 30000,
     });
