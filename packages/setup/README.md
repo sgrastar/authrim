@@ -53,10 +53,38 @@ pre-1.0 resource layout is intentionally not backward compatible: if an environm
 contains the removed `AVATARS` bucket, recreate that environment instead of attempting an in-place
 R2 topology conversion.
 
+## npm launcher and source handoff
+
+The npm package is a standalone launcher. It does not install Authrim Worker or shared-library
+packages from npm. When no source repository is available, `npx @authrim/setup` asks before
+downloading the matching `v<launcher-version>` GitHub tag into `./authrim` (or `--keep <path>`).
+Existing non-source directories are never replaced by the launcher.
+
+The launcher reuses an existing repository in the current directory or its parents, or an
+explicit `--source` directory where the command supports it. It runs `pnpm install --frozen-lockfile`,
+builds setup's workspace dependencies, then invokes `pnpm run setup` in that repository with the
+original arguments. Relative configuration, key, and source paths are resolved before changing
+working directory. The selected repository must satisfy its own Node.js requirement (currently 22+).
+
+`--help`, `--version`, and `download --help` work without downloading source or installing workspace
+dependencies. Operational commands such as `delete` require an existing source repository.
+`download` only downloads source and defaults to the matching launcher version; use `--ref` to
+select another Git ref explicitly.
+
+Internal workspace dependencies remain development dependencies of setup. Worker packages retain
+`private: true`. `pnpm pack` / `npm pack` runs `build:launcher` and includes only the launcher and its
+source-download helpers. The source CLI entry remains `src/index.ts` for repository development.
+
+Before publishing, run `pnpm --filter @authrim/setup run test:package`. This explicit release check
+uses the public npm registry to install the tarball into a temporary directory, rejects internal
+runtime dependencies, and checks launcher help/version without any Authrim source checkout. It does
+not publish packages or deploy resources.
+
+
 ## Requirements
 
 - Node.js `>=20.0.0`
-- `pnpm@9` for repository development
+- `pnpm@9` for source preparation and repository development
 - Wrangler CLI installed and authenticated with `wrangler login`
 
 ### Deployment readiness and DNS propagation

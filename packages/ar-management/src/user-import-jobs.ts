@@ -341,11 +341,11 @@ export async function cleanupOrphanedUserImportUploads(
   const storedCursor = env.AUTHRIM_CONFIG
     ? (await env.AUTHRIM_CONFIG.get(USER_IMPORT_CLEANUP_CURSOR_KEY))?.trim() || undefined
     : undefined;
-  const listOptions = {
+  const listOptions: R2ListOptions = {
     prefix: 'imports/',
     limit: USER_IMPORT_CLEANUP_BATCH_SIZE,
     cursor: storedCursor,
-    include: ['customMetadata'] as const,
+    include: ['customMetadata'],
   };
   const listed = await bucket.list(listOptions);
   const summary: UserImportArtifactCleanupSummary = {

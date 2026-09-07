@@ -15,11 +15,6 @@ const SAFE_ERROR = /^(?:runtime|control|lookup)_[a-z0-9_]{1,119}$/u;
 function keyRotationTestBinding(environmentId: string): string {
   return `${getTenantDatabaseBindingPrefix(environmentId)}_KEY_ROTATION_TEST`;
 }
-type RuntimeRegistryPrivateJwk = Exclude<
-  Parameters<typeof signRuntimeRegistrySnapshotPayloadJws>[0]['privateJwk'],
-  string
->;
-
 export type SigningKeyVerificationPurpose = 'runtime_registry' | 'smoke_rpc';
 
 export interface StagedSigningKeyRow {
@@ -266,11 +261,7 @@ export class SigningKeyCandidateVerifier {
     );
     const token = await signRuntimeRegistrySnapshotPayloadJws({
       payload,
-      privateJwk: runtimeRegistryPrivateJwkForSlot(
-        this.env,
-        staged.slot,
-        staged.keyId
-      ) as RuntimeRegistryPrivateJwk,
+      privateJwk: runtimeRegistryPrivateJwkForSlot(this.env, staged.slot, staged.keyId),
       keyId: staged.keyId,
     });
     return binding.verifyControlKeyCandidate({

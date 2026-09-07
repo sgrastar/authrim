@@ -728,10 +728,10 @@ async function scanBucketMetric(
     ? parseJson<MetricScanAccumulator>(await env.AUTHRIM_CONFIG.get(accumulatorKey))
     : null;
   const accumulator = stored ?? emptyAccumulator(binding);
-  const listOptions = {
+  const listOptions: R2ListOptions = {
     limit: 1000,
     cursor: accumulator.cursor ?? undefined,
-    include: ['customMetadata'] as const,
+    include: ['customMetadata'],
   };
   const listed = await bucket.list(listOptions);
   const policy = retentionPolicy(binding);

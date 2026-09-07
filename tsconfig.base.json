@@ -4,6 +4,9 @@
     "module": "ESNext",
     "lib": ["ES2022"],
     "moduleResolution": "bundler",
+    "paths": {
+      "@cloudflare/workers-types": ["./types/cloudflare-workers-imports.d.ts"]
+    },
     "allowSyntheticDefaultImports": true,
     "strict": true,
     "skipLibCheck": true,

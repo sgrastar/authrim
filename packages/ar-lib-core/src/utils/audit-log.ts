@@ -1134,7 +1134,7 @@ export async function createAuditLogFromContext(
  * @param auditLogPromise - Promise that creates the audit log entry
  */
 export function scheduleAuditLog(
-  executionCtx: ExecutionContext | undefined,
+  executionCtx: { waitUntil(promise: Promise<unknown>): void } | undefined,
   auditLogPromise: Promise<void>
 ): void {
   if (executionCtx) {

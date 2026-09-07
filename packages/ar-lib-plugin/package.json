@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-lib-plugin",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -50,7 +50,7 @@
     "@authrim/ar-lib-core": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20251121.0",
+    "@cloudflare/workers-types": "^5.20260903.1",
     "@types/node": "^20.19.25",
     "typescript": "^5.9.3",
     "vitest": "^4.1.8",
