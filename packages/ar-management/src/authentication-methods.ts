@@ -27,6 +27,8 @@ import {
   getRequestHost,
   getLogger,
   getTenantIdFromContext,
+  resolveGuestSettings,
+  loadClientContractCached,
   profileForTotpPreset,
   readAuthenticationMethodsCacheRevision,
   resolveAuthCorePersistenceAdapterFromEnv,
@@ -141,6 +143,7 @@ interface ExternalAuthenticationMethod {
 }
 
 interface AuthenticationMethods {
+  guest: { enabled: boolean; deletionAfterDays: number | null };
   passkey: PasskeyMethod;
   emailCode: EmailCodeMethod;
   totp: TotpMethod;
@@ -2491,8 +2494,18 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     const directoryPasswordEnabled = directoryPassword.enabled;
     const externalEnabled = externalProviders.length > 0;
 
+    const guestSettings = await resolveGuestSettings(env, tenantId).catch(() => ({
+      loginEnabled: false,
+      policy: { deletionAfterDays: null },
+    }));
+    const guestClient = requestedClientId
+      ? await loadClientContractCached(c, env.AUTHRIM_CONFIG, env, tenantId, requestedClientId)
+      : null;
+    const guestEnabled = guestSettings.loginEnabled && guestClient?.anonymousAuth?.enabled === true;
+
     // Check if at least one method is available
     if (
+      !guestEnabled &&
       !passkeyEnabled &&
       !emailCodeEnabled &&
       !totpEnabled &&
@@ -2511,6 +2524,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     }
 
     const methods: AuthenticationMethods = {
+      guest: { enabled: guestEnabled, deletionAfterDays: guestSettings.policy.deletionAfterDays },
       passkey: {
         enabled: passkeyEnabled,
         loginEnabled: passkeyLoginEnabled,

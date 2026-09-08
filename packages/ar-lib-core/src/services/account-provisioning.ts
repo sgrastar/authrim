@@ -23,6 +23,12 @@ export interface AuthAnonymousDeviceProvisioningInput {
   platform: 'ios' | 'android' | 'web' | 'other' | null;
   stability: 'session' | 'installation' | 'device';
   expiresInDays: number | null;
+  /** Human browser guest policy captured before publication; omitted for legacy devices. */
+  guestLifecycle?: {
+    clientId: string;
+    deletionAfterDays: number | null;
+    policyVersion: string;
+  };
 }
 
 export interface AuthExternalIdpIdentityProvisioningInput {

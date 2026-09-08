@@ -114,3 +114,10 @@ describe('Account Page published composition', () => {
 		expect(source).toContain('capabilitiesLoading = $state(!embeddedCapabilitiesResolved)');
 	});
 });
+
+it('passes the localized configured title into the guest widget and guards both logout paths', () => {
+	expect(source).toMatch(/<AccountUpgradeSection\s+title=\{accountWidgetTitle\(field\)\}/);
+	expect(source).toContain("await handleLogout('/login?prompt=login')");
+	expect(source).toContain('onclick={() => handleLogout()}');
+	expect(source).toContain('await logoutWithGuestWarning(');
+});

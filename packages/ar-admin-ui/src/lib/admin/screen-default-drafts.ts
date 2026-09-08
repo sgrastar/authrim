@@ -81,3 +81,20 @@ export function createDefaultRegistrationScreenFields(translate: Translate): Scr
 		}
 	];
 }
+
+export function createGuestLoginWidget(
+	blockId: string,
+	order: number,
+	translate: Translate,
+	patch: Partial<ScreenField> = {}
+): ScreenField {
+	return {
+		field: 'auth.guest',
+		label: translate('ゲストとして続ける', 'Continue as a guest'),
+		required: false,
+		block_type: 'guest_login_widget',
+		block_id: blockId,
+		order,
+		...patch
+	};
+}

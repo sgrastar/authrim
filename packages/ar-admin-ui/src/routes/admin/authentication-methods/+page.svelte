@@ -13,6 +13,9 @@
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 
 	const DEFAULT_BUILT_IN: AuthenticationMethodBuiltInSettings = {
+		guestLoginEnabled: false,
+		passkeyGuestUpgradeEnabled: true,
+		emailOtpGuestUpgradeEnabled: true,
 		passkeyLoginEnabled: true,
 		passkeySignupEnabled: true,
 		passkeyReauthEnabled: true,
@@ -98,6 +101,7 @@
 	function enabledMethods(usage: Usage): string[] {
 		const labels: string[] = [];
 		if (usage === 'signup' && builtIn.passkeySignupEnabled) labels.push('Passkey');
+		if (usage === 'login' && builtIn.guestLoginEnabled) labels.push($LL.admin_guest_login_title());
 		if (usage === 'login' && builtIn.passkeyLoginEnabled) labels.push('Passkey');
 		if (usage === 'reauth' && builtIn.passkeyReauthEnabled) labels.push('Passkey');
 		if (usage === 'account_link' && builtIn.passkeyAccountLinkEnabled) labels.push('Passkey');

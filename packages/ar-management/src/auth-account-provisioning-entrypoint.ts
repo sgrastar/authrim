@@ -1,6 +1,7 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import {
   anonymousDeviceLookupSubject,
+  GuestLifecycleRepository,
   directoryIdentityLookupSubject,
   createLogger,
   ensureDatabaseAdapter,
@@ -553,11 +554,31 @@ function validateExternalIdentity(
   return true;
 }
 
+function validateGuestLifecycle(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    jsonObject(value) &&
+    Object.keys(value).length === 3 &&
+    typeof value.clientId === 'string' &&
+    value.clientId.length > 0 &&
+    value.clientId.length <= 256 &&
+    typeof value.policyVersion === 'string' &&
+    value.policyVersion.length > 0 &&
+    value.policyVersion.length <= 256 &&
+    (value.deletionAfterDays === null ||
+      (Number.isSafeInteger(value.deletionAfterDays) &&
+        Number(value.deletionAfterDays) >= 1 &&
+        Number(value.deletionAfterDays) <= 3650))
+  );
+}
+
 function validateAnonymousDevice(value: unknown): value is AuthAnonymousDeviceProvisioningInput {
   if (
     !jsonObject(value) ||
-    Object.keys(value).length !== ANONYMOUS_DEVICE_KEYS.size ||
-    Object.keys(value).some((key) => !ANONYMOUS_DEVICE_KEYS.has(key)) ||
+    Object.keys(value).filter((key) => key !== 'guestLifecycle').length !==
+      ANONYMOUS_DEVICE_KEYS.size ||
+    Object.keys(value).some((key) => !ANONYMOUS_DEVICE_KEYS.has(key) && key !== 'guestLifecycle') ||
+    !validateGuestLifecycle(value.guestLifecycle) ||
     typeof value.id !== 'string' ||
     !SAFE_ID.test(value.id) ||
     typeof value.deviceIdHash !== 'string' ||
@@ -827,6 +848,21 @@ async function writeAnonymousDeviceAuthority(input: {
     reflected.device_stability !== input.device.stability
   ) {
     throw new Error('auth_anonymous_device_authority_conflict');
+  }
+  if (input.device.guestLifecycle) {
+    const account = await input.tenantCoreUsers.queryOne<{ created_at: number }>(
+      'SELECT created_at FROM identity_accounts WHERE tenant_id = ? AND legacy_user_id = ?',
+      [input.tenantId, input.userId],
+      { consistencyClass: 'primary_required' }
+    );
+    if (!account) throw new Error('guest_account_authority_missing');
+    await new GuestLifecycleRepository(input.tenantCoreUsers, input.tenantId).enroll({
+      userId: input.userId,
+      clientId: input.device.guestLifecycle.clientId,
+      createdAt: Math.floor(account.created_at / 1000),
+      deletionAfterDays: input.device.guestLifecycle.deletionAfterDays,
+      policyVersion: input.device.guestLifecycle.policyVersion,
+    });
   }
 }
 

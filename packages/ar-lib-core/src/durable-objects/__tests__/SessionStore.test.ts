@@ -166,6 +166,79 @@ describe('SessionStore', () => {
     sessionStore = new SessionStore(mockState as unknown as DurableObjectState, mockEnv);
   });
 
+  describe('conditional guest upgrade session repair', () => {
+    const id = '0_guest_repair';
+    const repair = { is_anonymous: false, authTime: 100, amr: ['otp'] };
+    it('repairs a guest once while preserving unrelated metadata', async () => {
+      await sessionStore.createSessionRpc(
+        id,
+        'guest',
+        3600,
+        { is_anonymous: true, client_id: 'client' },
+        'tenant'
+      );
+      const result = await sessionStore.updateSessionDataRpc(id, repair, { onlyIfAnonymous: true });
+      expect(result?.data).toMatchObject({ ...repair, client_id: 'client' });
+      const retry = await sessionStore.updateSessionDataRpc(
+        id,
+        { ...repair, authTime: 999 },
+        { onlyIfAnonymous: true }
+      );
+      expect(retry?.data?.authTime).toBe(100);
+    });
+    it('merges an unrelated delayed update into the latest session instead of restoring guest data', async () => {
+      const stale = await sessionStore.createSessionRpc(
+        id,
+        'guest',
+        3600,
+        { is_anonymous: true },
+        'tenant'
+      );
+      await sessionStore.updateSessionDataRpc(id, repair, { onlyIfAnonymous: true });
+      vi.spyOn(sessionStore, 'getSession').mockResolvedValueOnce(stale);
+      const result = await sessionStore.updateSessionDataRpc(id, { client_id: 'client' });
+      expect(result?.data).toMatchObject({ ...repair, client_id: 'client' });
+    });
+    it('preserves newer authentication written after the initiating read', async () => {
+      const stale = await sessionStore.createSessionRpc(
+        id,
+        'guest',
+        3600,
+        { is_anonymous: true },
+        'tenant'
+      );
+      await sessionStore.updateSessionDataRpc(id, {
+        is_anonymous: false,
+        authTime: 500,
+        amr: ['webauthn'],
+      });
+      vi.spyOn(sessionStore, 'getSession').mockResolvedValueOnce(stale);
+      const result = await sessionStore.updateSessionDataRpc(id, repair, { onlyIfAnonymous: true });
+      expect(result?.data).toMatchObject({ authTime: 500, amr: ['webauthn'] });
+      expect((await mockState.storage.get<Session>(`session:${id}`))?.data?.authTime).toBe(500);
+    });
+    it.each(['deleted', 'expired'])(
+      'does not recreate a session that became %s after validation',
+      async (state) => {
+        const stale = await sessionStore.createSessionRpc(
+          id,
+          'guest',
+          3600,
+          { is_anonymous: true },
+          'tenant'
+        );
+        if (state === 'deleted') await mockState.storage.delete(`session:${id}`);
+        else await mockState.storage.put(`session:${id}`, { ...stale, expiresAt: Date.now() });
+        vi.spyOn(sessionStore, 'getSession').mockResolvedValueOnce(stale);
+        expect(
+          await sessionStore.updateSessionDataRpc(id, repair, { onlyIfAnonymous: true })
+        ).toBeNull();
+        const persisted = await mockState.storage.get<Session>(`session:${id}`);
+        expect(persisted?.data?.is_anonymous).not.toBe(false);
+      }
+    );
+  });
+
   describe('Session Creation', () => {
     it('should create a new session with valid data', async () => {
       const sessionId = '0_session_test_123';

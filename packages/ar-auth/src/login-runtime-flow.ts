@@ -1031,7 +1031,8 @@ async function prepareRuntimeContract(input: {
     input.db,
     input.tenantId,
     normalizeRuntime(input.runtimeSnapshot, input.assignment, input.version, input.requestContext),
-    input.requestContext
+    input.requestContext,
+    parseEditorSnapshot(input.version.editor_snapshot_json)
   );
   const contractHash = await sha256Base64Url(JSON.stringify(contract));
   rememberPreparedRuntimeContract(cacheKey, contract, contractHash, now);
@@ -1396,6 +1397,13 @@ async function resolveRuntimeAuthenticationHandles(
     readBooleanSetting(settings, 'authentication-methods.directory_password.enabled', false)
   ) {
     handles.push('directory_password');
+  }
+
+  if (
+    usage === 'login' &&
+    readBooleanSetting(settings, 'authentication-methods.guest.login_enabled', false)
+  ) {
+    handles.push('guest');
   }
 
   const rawProviderUsage = settings['authentication-methods.external_provider_usage'];
@@ -1886,7 +1894,8 @@ async function hydrateRuntimeContract(
   db: DatabaseAdapter,
   tenantId: string,
   runtime: FlowRuntimeContract,
-  requestContext: FlowRequestContext
+  requestContext: FlowRequestContext,
+  editor: FlowEditorState | null = null
 ): Promise<FlowRuntimeContract> {
   const destinationFieldConsent = await resolveRuntimeDestinationFieldConsent(
     c,
@@ -1911,6 +1920,16 @@ async function hydrateRuntimeContract(
           runtime.flow_kind,
           step.component
         );
+        // Never advertise a guest action that has no route through the published Flow.
+        if (
+          editor &&
+          !editor.edges.some(
+            (edge) => edge.source === step.source_node_id && edge.source_handle === 'guest'
+          )
+        ) {
+          const guestIndex = handles.indexOf('guest');
+          if (guestIndex >= 0) handles.splice(guestIndex, 1);
+        }
         nextConfig.output_handles = handles;
         nextContent.authentication_profile = {
           id: readString(config.authentication_profile_ref, 200) ?? 'default',
@@ -4622,7 +4641,8 @@ export async function loginRuntimeEmailVerificationChallengeHandler(c: AuthConte
             version,
             requestContext
           ),
-          requestContext
+          requestContext,
+          editor
         )
       : null;
   const current = runtime ? findCurrentStep(runtime, interaction) : null;
@@ -4912,7 +4932,8 @@ export async function loginRuntimeInteractionSubmitHandler(c: AuthContext) {
             version,
             requestContext
           ),
-          requestContext
+          requestContext,
+          editor
         )
       : null;
   if (!version || !runtime) {

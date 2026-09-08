@@ -111,6 +111,11 @@
 				label: $LL.admin_nav_login_methods(),
 				icon: 'i-ph-sign-in'
 			},
+			{
+				path: '/admin/account-lifecycle',
+				label: $LL.admin_lifecycle_title(),
+				icon: 'i-ph-clock-clockwise'
+			},
 			{ path: '/admin/themes', label: $LL.admin_header_theme(), icon: 'i-ph-palette' },
 			{ path: '/admin/login-ui', label: $LL.admin_nav_login_ui(), icon: 'i-ph-paint-brush' },
 			{

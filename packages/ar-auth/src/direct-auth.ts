@@ -22,6 +22,8 @@ import { setCookie, getCookie, deleteCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import { getRefreshTokenRotatorStubByJti } from '@authrim/ar-lib-core/services/refresh-token-family-store';
 import {
+  revokeGuestResumeForSession,
+  GUEST_RESUME_COOKIE,
   isAllowedOrigin,
   parseAllowedOrigins,
   getSessionStoreBySessionId,
@@ -38,6 +40,7 @@ import {
   generateSecureRandomString,
   generateId,
   generateUserIdFromSettings,
+  assertGuestCredentialAuthenticationAllowed,
   createAuthContextFromHono,
   createAccountAuthContextFromHono,
   createPIIContextFromHono,
@@ -174,6 +177,25 @@ interface AuthenticationMethodKVSettings {
   'authentication-methods.email_otp.signup_enabled'?: boolean | string;
   'authentication-methods.email_otp.reauth_enabled'?: boolean | string;
   'authentication-methods.email_otp.account_link_enabled'?: boolean | string;
+}
+
+async function guestCredentialDenial(
+  c: Context<{ Bindings: Env }>,
+  adapter: DatabaseAdapter,
+  tenantId: string,
+  userId: string
+): Promise<Response | null> {
+  try {
+    await assertGuestCredentialAuthenticationAllowed(adapter, tenantId, userId);
+    return null;
+  } catch (error) {
+    if (isAccountAuthenticationDeniedError(error))
+      return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
+    return c.json(
+      { error: 'temporarily_unavailable', error_description: 'Authentication state unavailable.' },
+      503
+    );
+  }
 }
 
 function isDirectAuthChannel(channel: unknown): channel is DirectAuthChannel {
@@ -1170,6 +1192,13 @@ export async function directPasskeyLoginFinishHandler(c: Context<{ Bindings: Env
     if (!accountAuthentication) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_PASSKEY_FAILED);
     }
+    const guestDenial = await guestCredentialDenial(
+      c,
+      authCtx.coreAdapter,
+      tenantId,
+      passkey.user_id
+    );
+    if (guestDenial) return guestDenial;
     try {
       await advancePasskeyAuthenticationState(
         c.env,
@@ -1948,6 +1977,9 @@ async function completeDirectEmailVerification(
   if (!runtimeUser || runtimeUser.active !== 1) {
     return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
   }
+
+  const guestDenial = await guestCredentialDenial(c, coreAdapter, tenantId, userId);
+  if (guestDenial) return guestDenial;
 
   const now = Date.now();
   if (tenantD1) {
@@ -3024,6 +3056,17 @@ export async function directSessionCreateHandler(c: Context<{ Bindings: Env }>) 
       return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
     }
 
+    const accountAuth = accountScoped
+      ? createAccountAuthContextFromHono(c, tenantId)
+      : createAuthContextFromHono(c, tenantId);
+    const guestDenial = await guestCredentialDenial(
+      c,
+      accountAuth.coreAdapter,
+      tenantId,
+      artifactData.userId
+    );
+    if (guestDenial) return guestDenial;
+
     const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'direct_auth');
     const now = Date.now();
     const authTime = Math.floor(now / 1000);
@@ -3615,20 +3658,15 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
 
         try {
           session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
-        } catch (error) {
-          log.warn('Failed to load session before logout', {
-            action: 'logout_session_load',
-            errorType: error instanceof Error ? error.name : 'Unknown',
-          });
-        }
-
-        try {
+          // Revoke the durable resume credential before losing the session that identifies it.
+          await revokeGuestResumeForSession(c, session);
           await sessionStore.invalidateSessionRpc(sessionId);
         } catch (error) {
-          log.warn('Failed to invalidate session', {
-            action: 'logout_session_invalidate',
+          log.warn('Failed to revoke session during logout', {
+            action: 'logout_session_revoke',
             errorType: error instanceof Error ? error.name : 'Unknown',
           });
+          return c.json({ error: 'logout_unavailable' }, 503);
         }
       }
 
@@ -3721,6 +3759,12 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
         }
       }
     }
+
+    deleteCookie(c, GUEST_RESUME_COOKIE, {
+      path: '/',
+      secure: true,
+      sameSite: getSessionCookieSameSite(c.env),
+    });
 
     // Clear session cookie (SameSite must match when setting)
     deleteCookie(c, 'authrim_session', {

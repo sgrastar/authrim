@@ -33,6 +33,7 @@ export * from './check-api-audit';
 export * from './dcr';
 export * from './login-ui';
 export * from './authentication-methods';
+export * from './account-lifecycle';
 export * from './diagnostic-logging';
 export * from './dr-backup';
 export * from './login-entry';
@@ -93,6 +94,7 @@ import { ASSURANCE_LEVELS_CATEGORY_META } from './assurance-levels';
 import { CHECK_API_AUDIT_CATEGORY_META } from './check-api-audit';
 import { DCR_CATEGORY_META } from './dcr';
 import { LOGIN_UI_CATEGORY_META } from './login-ui';
+import { ACCOUNT_LIFECYCLE_CATEGORY_META } from './account-lifecycle';
 import { AUTHENTICATION_METHODS_CATEGORY_META } from './authentication-methods';
 import { DIAGNOSTIC_LOGGING_CATEGORY_META } from './diagnostic-logging';
 import { DR_BACKUP_CATEGORY_META } from './dr-backup';
@@ -148,6 +150,7 @@ export const ALL_CATEGORY_META = {
   // Login UI Customization
   'login-ui': LOGIN_UI_CATEGORY_META,
   'authentication-methods': AUTHENTICATION_METHODS_CATEGORY_META,
+  'account-lifecycle': ACCOUNT_LIFECYCLE_CATEGORY_META,
   // Diagnostic Logging
   'diagnostic-logging': DIAGNOSTIC_LOGGING_CATEGORY_META,
   'dr-backup': DR_BACKUP_CATEGORY_META,
@@ -276,6 +279,9 @@ export const CATEGORY_SCOPE_CONFIG: Record<
     allowedScopes: ['tenant', 'client'],
   },
   'authentication-methods': {
+    allowedScopes: ['tenant'],
+  },
+  'account-lifecycle': {
     allowedScopes: ['tenant'],
   },
   'login-entry': {

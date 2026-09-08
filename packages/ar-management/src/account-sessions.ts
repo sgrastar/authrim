@@ -3,6 +3,8 @@ import { setCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   getLogger,
+  revokeGuestResumeForSession,
+  GUEST_RESUME_COOKIE,
   describeSessionClient,
   getSessionRevocationStore,
   getSessionStoreBySessionId,
@@ -123,6 +125,7 @@ export async function deleteAccountSessionHandler(
     if (!session || session.tenantId !== tenantId || session.userId !== accountSession.userId) {
       return c.json({ error: 'not_found', error_description: 'Session was not found' }, 404);
     }
+    await revokeGuestResumeForSession(c, session);
     storeStatus = (await sessionStore.invalidateSessionRpc(sessionId)) ? 'revoked' : 'not_found';
   } catch (error) {
     const log = getLogger(c).module('ACCOUNT-SESSIONS');
@@ -138,6 +141,13 @@ export async function deleteAccountSessionHandler(
 
   const current = sessionId === accountSession.sessionId;
   if (current) {
+    setCookie(c, GUEST_RESUME_COOKIE, '', {
+      path: '/',
+      httpOnly: true,
+      secure: true,
+      sameSite: 'Lax',
+      maxAge: 0,
+    });
     setCookie(c, 'authrim_session', '', {
       path: '/',
       httpOnly: true,

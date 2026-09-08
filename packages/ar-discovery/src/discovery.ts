@@ -363,6 +363,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
     // Dynamic scopes based on AI Ephemeral Auth configuration
     scopes_supported: [
       'openid',
+      'account:lifecycle:read',
       'profile',
       'email',
       'address',
@@ -382,6 +383,7 @@ export async function discoveryHandler(c: Context<{ Bindings: Env }>) {
       : {}),
     // Dynamic claims based on OIDC config
     claims_supported: oidcConfig.claimsSupported || [
+      'authrim_account_lifecycle',
       // Standard claims (always present)
       'sub',
       'iss',

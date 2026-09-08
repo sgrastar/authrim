@@ -2,6 +2,30 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const zhCN = createTranslation({
+	account_guestLogoutWarning:
+		'退出登录后，即使已关闭自动删除，也无法再返回此访客账户。请先注册以保留对账户和数据的访问权限。仍要退出吗？',
+	account_guestTitle: 'Register your account',
+	account_guestDescription: 'Keep the same account and data when you register.',
+	account_guestDue: 'Eligible for automatic deletion from {date}.',
+	account_guestNoExpiry: 'No automatic deletion is scheduled.',
+	account_guestEmail: 'Email address',
+	account_guestSend: 'Register with email',
+	account_guestPasskey: 'Register with a passkey',
+	account_guestCode: 'Confirmation code',
+	account_guestConfirm: 'Confirm registration',
+	account_guestPending: 'Registration is in progress. You can retry to check completion.',
+	account_guestRetry: 'Retry',
+	account_guestError:
+		'Registration could not be completed. Check the confirmation code or try again.',
+	account_guestCollision:
+		'This identity already has an account. Sign in to that account separately. Your guest account will not be merged.',
+	account_guestExistingLogin: 'Sign in to an existing account',
+	account_guestRegistered: 'Your account has been registered.',
+	account_guestChangeMethod: 'Choose another method',
+	login_guestContinue: '以访客身份继续',
+	login_guestRetention: '访客账户在创建{days}天后可被自动删除。请注册账户以继续使用。',
+	login_guestNoExpiry: '新访客账户未设置自动删除。',
+
 	...completion,
 	app_subtitle: '身份与访问，无处不在',
 	dialog_cancel: '取消',

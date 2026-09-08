@@ -71,6 +71,9 @@
 	type Props = {
 		screen: Record<string, unknown> | null;
 		disabled?: boolean;
+		guestEnabled?: boolean;
+		guestRetentionDescription?: string;
+		onGuestLogin?: () => void;
 		fieldValues?: Record<string, string | boolean>;
 		fieldErrors?: Record<string, string>;
 		authMethodMode?: 'login' | 'signup';
@@ -108,6 +111,9 @@
 	let {
 		screen,
 		disabled = false,
+		guestEnabled = false,
+		guestRetentionDescription = '',
+		onGuestLogin,
 		fieldValues = {},
 		fieldErrors = {},
 		authMethodMode = 'login',
@@ -179,7 +185,9 @@
 	function normalizeField(value: unknown): RuntimeField | null {
 		if (!isRecord(value)) return null;
 		const field = readString(value.field);
-		const label = readString(value.label) ?? field;
+		const label =
+			readString(value.label) ??
+			(value.block_type === 'guest_login_widget' ? $LL.login_guestContinue() : field);
 		if (!field || !label) return null;
 		return {
 			field,
@@ -318,6 +326,7 @@
 	function shouldRenderLayoutField(field: RuntimeField): boolean {
 		if (!shouldRenderField(field)) return false;
 		const blockType = field.block_type ?? 'identity_field';
+		if (blockType === 'guest_login_widget') return guestEnabled && authMethodMode === 'login';
 		if (blockType === 'auth_widget') {
 			return authMethodAvailable(authWidgetMethod(field));
 		}
@@ -866,6 +875,15 @@
 				>
 			{/if}
 		</div>
+	{:else if blockType === 'guest_login_widget'}
+		{#if guestEnabled && authMethodMode === 'login'}
+			<div class="runtime-auth-widget">
+				<button class="runtime-auth-button" type="button" {disabled} onclick={onGuestLogin}
+					>{field.label || $LL.login_guestContinue()}</button
+				>
+				{#if guestRetentionDescription}<p>{guestRetentionDescription}</p>{/if}
+			</div>
+		{/if}
 	{:else if blockType === 'auth_widget'}
 		{@const method = authWidgetMethod(field)}
 		{#if authMethodAvailable(method)}

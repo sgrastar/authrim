@@ -15,7 +15,10 @@ vi.mock('../notification-intent-routing', async (importOriginal) => ({
   resolveNotificationIntentTarget: mocks.resolve,
 }));
 
-import { produceNotificationDelivery } from '../notification-delivery-producer';
+import {
+  produceNotificationDelivery,
+  isNotificationDeliveryAvailable,
+} from '../notification-delivery-producer';
 
 const input = {
   owner: { owner: 'tenant' as const, tenantId: 'tenant-a' },
@@ -88,6 +91,39 @@ describe('notification delivery producer', () => {
       bindingRef: 'TDB_TENANT_A_CORE',
     });
   });
+
+  it('checks readiness without creating, encrypting or delivering a notification', async () => {
+    const env =
+      environment() as unknown as import('../notification-delivery-producer').NotificationDeliveryProducerEnv;
+    expect(await isNotificationDeliveryAvailable(env, input.owner)).toBe(true);
+    expect(mocks.create).not.toHaveBeenCalled();
+    expect(env.PLUGIN_RUNNER!.deliverNotification).not.toHaveBeenCalled();
+    expect(env.PLUGIN_RUNNER!.encryptNotificationPayload).not.toHaveBeenCalled();
+  });
+  it.each(['disabled', 'cross-tenant', 'empty', 'outage', 'configuration', 'route'])(
+    'fails readiness closed for %s',
+    async (failure) => {
+      const env =
+        environment() as unknown as import('../notification-delivery-producer').NotificationDeliveryProducerEnv;
+      if (failure === 'configuration') env.NOTIFICATION_INTENT_HMAC_KEY = '';
+      else if (failure === 'route') mocks.resolve.mockRejectedValueOnce(new Error('unavailable'));
+      else if (failure === 'outage')
+        vi.mocked(env.PLUGIN_RUNNER!.resolveNotificationProviderOrder).mockRejectedValueOnce(
+          new Error('unavailable')
+        );
+      else
+        vi.mocked(env.PLUGIN_RUNNER!.resolveNotificationProviderOrder).mockResolvedValueOnce({
+          tenantId: failure === 'cross-tenant' ? 'other' : 'tenant-a',
+          channel: 'email',
+          state: failure === 'disabled' ? 'disabled' : 'enabled',
+          configVersion: 1,
+          installationIds: failure === 'empty' ? [] : ['installation'],
+        });
+      expect(await isNotificationDeliveryAvailable(env, input.owner)).toBe(false);
+      expect(mocks.create).not.toHaveBeenCalled();
+      expect(env.PLUGIN_RUNNER!.deliverNotification).not.toHaveBeenCalled();
+    }
+  );
 
   it('commits the encrypted intent before invoking the reference-only RPC', async () => {
     const order: string[] = [];

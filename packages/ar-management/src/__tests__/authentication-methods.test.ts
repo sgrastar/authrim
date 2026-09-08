@@ -1504,6 +1504,7 @@ describe('Authentication Methods API', () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as any;
 
+      expect(body.methods.guest.enabled).toBe(false);
       expect(body.methods.passkey.enabled).toBe(true);
       expect(body.methods.emailCode.enabled).toBe(false);
     });

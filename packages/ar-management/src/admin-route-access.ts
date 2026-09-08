@@ -397,6 +397,24 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     ADMIN_PERMISSIONS.SETTINGS_WRITE,
     'Login UI public assets'
   ),
+  rule({
+    pattern: '/api/admin/account-lifecycle/guests',
+    methods: ['GET'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'Inspect guest lifecycle progress',
+  }),
+  rule({
+    pattern: '/api/admin/account-lifecycle/guest-retention/preview',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_READ],
+    description: 'Preview existing guest retention',
+  }),
+  rule({
+    pattern: '/api/admin/account-lifecycle/guest-retention/apply',
+    methods: ['POST'],
+    permissions: [ADMIN_PERMISSIONS.SETTINGS_WRITE],
+    description: 'Apply reviewed guest retention',
+  }),
   ...byMethod(
     '/api/admin/anonymous-users',
     ADMIN_PERMISSIONS.USERS_READ,

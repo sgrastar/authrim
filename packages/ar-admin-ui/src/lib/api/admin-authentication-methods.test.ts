@@ -73,12 +73,38 @@ describe('adminAuthenticationMethodsAPI', () => {
 			'tenant-a'
 		);
 		expect(result.builtIn).toMatchObject({
+			guestLoginEnabled: false,
+			passkeyGuestUpgradeEnabled: true,
+			emailOtpGuestUpgradeEnabled: true,
 			totpLoginEnabled: true,
 			totpSignupEnabled: false,
 			totpReauthEnabled: true,
 			totpAccountLinkEnabled: true,
 			totpPreset: 'strong',
 			totpDefaultAcr: 'urn:authrim:aal:3'
+		});
+	});
+
+	it('keeps guest promotion independent from signup and login permissions', async () => {
+		mockAdminSettingsAPI.getSettings.mockResolvedValue({
+			version: 'v3',
+			values: {
+				'authentication-methods.guest.login_enabled': true,
+				'authentication-methods.passkey.signup_enabled': false,
+				'authentication-methods.passkey.login_enabled': false,
+				'authentication-methods.passkey.guest_upgrade_enabled': true,
+				'authentication-methods.email_otp.signup_enabled': true,
+				'authentication-methods.email_otp.guest_upgrade_enabled': false
+			}
+		});
+		const result = await adminAuthenticationMethodsAPI.get('tenant-b');
+		expect(result.builtIn).toMatchObject({
+			guestLoginEnabled: true,
+			passkeySignupEnabled: false,
+			passkeyLoginEnabled: false,
+			passkeyGuestUpgradeEnabled: true,
+			emailOtpSignupEnabled: true,
+			emailOtpGuestUpgradeEnabled: false
 		});
 	});
 
@@ -94,6 +120,9 @@ describe('adminAuthenticationMethodsAPI', () => {
 			sources: {}
 		};
 		const builtIn: AuthenticationMethodBuiltInSettings = {
+			guestLoginEnabled: false,
+			passkeyGuestUpgradeEnabled: true,
+			emailOtpGuestUpgradeEnabled: true,
 			passkeyLoginEnabled: true,
 			passkeySignupEnabled: true,
 			passkeyReauthEnabled: true,
@@ -139,6 +168,9 @@ describe('adminAuthenticationMethodsAPI', () => {
 			expect.objectContaining({
 				ifMatch: 'v1',
 				set: expect.objectContaining({
+					'authentication-methods.guest.login_enabled': false,
+					'authentication-methods.passkey.guest_upgrade_enabled': true,
+					'authentication-methods.email_otp.guest_upgrade_enabled': true,
 					'authentication-methods.totp.login_enabled': true,
 					'authentication-methods.totp.signup_enabled': false,
 					'authentication-methods.totp.reauth_enabled': true,

@@ -2,6 +2,9 @@ import type { Context } from 'hono';
 import type { DatabaseAdapter, DatabaseSource, Env } from '@authrim/ar-lib-core';
 import {
   CanonicalRuntimeUserProjectionRepository,
+  areGuestScopesAllowed,
+  assertGuestSessionAuthenticationAllowed,
+  loadClientContractCached,
   CanonicalSensitiveValueResolver,
   CanonicalIdentityRepository,
   createAccountAuthContextFromHono,
@@ -2259,6 +2262,43 @@ async function handleAuthorizationCodeGrant(
     }
   }
 
+  if (subjectAccountResult.status === 'rejected') {
+    return oauthError(
+      c,
+      'temporarily_unavailable',
+      'Account authorization state is unavailable',
+      503
+    );
+  }
+  if (subjectAccount?.account_type === 'anonymous' || authCodeData.amr?.includes('anon')) {
+    try {
+      await assertGuestSessionAuthenticationAllowed(
+        authCtx.coreAdapter,
+        tenantId,
+        authCodeData.sub
+      );
+    } catch (error) {
+      return error instanceof Error && error.message === 'account_authentication_not_allowed'
+        ? oauthError(c, 'invalid_grant', 'The account is no longer available', 400)
+        : oauthError(c, 'temporarily_unavailable', 'Account state is unavailable', 503);
+    }
+    const guestClient = await loadClientContractCached(
+      c,
+      c.env.AUTHRIM_CONFIG,
+      c.env,
+      tenantId,
+      client_id
+    );
+    if (!areGuestScopesAllowed(guestClient?.anonymousAuth, authCodeData.scope ?? '')) {
+      return oauthError(
+        c,
+        'invalid_scope',
+        'The client does not permit the requested guest scopes',
+        400
+      );
+    }
+  }
+
   if (tenantRBACClaimsConfigResult.status === 'rejected') {
     throw tenantRBACClaimsConfigResult.reason;
   }
@@ -2346,12 +2386,11 @@ async function handleAuthorizationCodeGrant(
   }
 
   // Anonymous user claims (architecture-decisions.md §17)
-  let anonymousClaims: { user_type?: string; upgrade_eligible?: boolean } = {};
+  let anonymousClaims: { user_type?: string } = {};
   try {
     if (subjectAccount?.account_type === 'anonymous') {
       anonymousClaims = {
         user_type: 'anonymous',
-        upgrade_eligible: true, // Anonymous users can always upgrade
       };
     }
   } catch (anonError) {
@@ -3521,7 +3560,7 @@ async function handleRefreshTokenGrant(
   }
 
   // Anonymous user claims for refresh token flow (architecture-decisions.md §17)
-  let anonymousClaimsRefresh: { user_type?: string; upgrade_eligible?: boolean } = {};
+  let anonymousClaimsRefresh: { user_type?: string } = {};
   try {
     const userAccount = await findCanonicalRuntimeAccount(
       authCtx.coreAdapter,
@@ -3529,13 +3568,40 @@ async function handleRefreshTokenGrant(
       refreshTokenData.sub
     );
     if (userAccount?.account_type === 'anonymous') {
+      await assertGuestSessionAuthenticationAllowed(
+        authCtx.coreAdapter,
+        tenantId,
+        refreshTokenData.sub
+      );
+      const guestClient = await loadClientContractCached(
+        c,
+        c.env.AUTHRIM_CONFIG,
+        c.env,
+        tenantId,
+        client_id
+      );
+      if (!areGuestScopesAllowed(guestClient?.anonymousAuth, grantedScope ?? '')) {
+        return oauthError(
+          c,
+          'invalid_scope',
+          'The client does not permit the requested guest scopes',
+          400
+        );
+      }
       anonymousClaimsRefresh = {
         user_type: 'anonymous',
-        upgrade_eligible: true,
       };
     }
   } catch (anonError) {
+    if (anonError instanceof Error && anonError.message === 'account_authentication_not_allowed')
+      return oauthError(c, 'invalid_grant', 'The account is no longer available', 400);
     log.error('Failed to fetch anonymous user claims for refresh token', {}, anonError as Error);
+    return oauthError(
+      c,
+      'temporarily_unavailable',
+      'Account authorization state is unavailable',
+      503
+    );
   }
 
   // DPoP support (RFC 9449)

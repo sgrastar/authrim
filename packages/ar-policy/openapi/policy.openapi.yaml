@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Policy API
-  version: 0.4.1
+  version: 0.4.2
   summary: Policy, ReBAC, and authorization check APIs.
   description: Initial OpenAPI contract for `@authrim/ar-policy`.
 servers:
@@ -24,16 +24,16 @@ paths:
       security: []
       summary: Return policy API health.
       responses:
-        "200":
-          $ref: "#/components/responses/PolicyHealth"
+        '200':
+          $ref: '#/components/responses/PolicyHealth'
   /api/policy/flags:
     get:
       tags:
         - Policy
       summary: List policy feature flags.
       responses:
-        "200":
-          $ref: "#/components/responses/List"
+        '200':
+          $ref: '#/components/responses/List'
       security:
         - bearerAuth: []
   /api/policy/flags/{name}:
@@ -42,12 +42,12 @@ paths:
         - Policy
       summary: Upsert a policy feature flag.
       parameters:
-        - $ref: "#/components/parameters/Name"
+        - $ref: '#/components/parameters/Name'
       requestBody:
-        $ref: "#/components/requestBodies/PolicyFlagUpdate"
+        $ref: '#/components/requestBodies/PolicyFlagUpdate'
       responses:
-        "200":
-          $ref: "#/components/responses/PolicyFlagUpdate"
+        '200':
+          $ref: '#/components/responses/PolicyFlagUpdate'
       security:
         - bearerAuth: []
     delete:
@@ -55,10 +55,10 @@ paths:
         - Policy
       summary: Delete a policy feature flag.
       parameters:
-        - $ref: "#/components/parameters/Name"
+        - $ref: '#/components/parameters/Name'
       responses:
-        "200":
-          $ref: "#/components/responses/PolicyFlagDelete"
+        '200':
+          $ref: '#/components/responses/PolicyFlagDelete'
       security:
         - bearerAuth: []
   /api/policy/evaluate:
@@ -67,10 +67,10 @@ paths:
         - Policy
       summary: Evaluate policy input.
       requestBody:
-        $ref: "#/components/requestBodies/PolicyContext"
+        $ref: '#/components/requestBodies/PolicyContext'
       responses:
-        "200":
-          $ref: "#/components/responses/PolicyDecision"
+        '200':
+          $ref: '#/components/responses/PolicyDecision'
       security:
         - bearerAuth: []
   /api/policy/check-role:
@@ -79,10 +79,10 @@ paths:
         - Policy
       summary: Check role membership.
       requestBody:
-        $ref: "#/components/requestBodies/RoleCheck"
+        $ref: '#/components/requestBodies/RoleCheck'
       responses:
-        "200":
-          $ref: "#/components/responses/RoleCheck"
+        '200':
+          $ref: '#/components/responses/RoleCheck'
       security:
         - bearerAuth: []
   /api/policy/check-access:
@@ -91,10 +91,10 @@ paths:
         - Policy
       summary: Check access against policy.
       requestBody:
-        $ref: "#/components/requestBodies/AccessCheck"
+        $ref: '#/components/requestBodies/AccessCheck'
       responses:
-        "200":
-          $ref: "#/components/responses/AccessCheck"
+        '200':
+          $ref: '#/components/responses/AccessCheck'
       security:
         - bearerAuth: []
   /api/policy/is-admin:
@@ -103,10 +103,10 @@ paths:
         - Policy
       summary: Check whether a subject is an admin.
       requestBody:
-        $ref: "#/components/requestBodies/IsAdmin"
+        $ref: '#/components/requestBodies/IsAdmin'
       responses:
-        "200":
-          $ref: "#/components/responses/IsAdmin"
+        '200':
+          $ref: '#/components/responses/IsAdmin'
       security:
         - bearerAuth: []
   /api/rebac/health:
@@ -116,18 +116,18 @@ paths:
       security: []
       summary: Return ReBAC API health.
       responses:
-        "200":
-          $ref: "#/components/responses/RebacHealth"
+        '200':
+          $ref: '#/components/responses/RebacHealth'
   /api/rebac/check:
     post:
       tags:
         - ReBAC
       summary: Check a relationship-based authorization decision.
       requestBody:
-        $ref: "#/components/requestBodies/RebacCheck"
+        $ref: '#/components/requestBodies/RebacCheck'
       responses:
-        "200":
-          $ref: "#/components/responses/RebacCheck"
+        '200':
+          $ref: '#/components/responses/RebacCheck'
       security:
         - bearerAuth: []
   /api/rebac/batch-check:
@@ -136,10 +136,10 @@ paths:
         - ReBAC
       summary: Check relationship-based authorization decisions in batch.
       requestBody:
-        $ref: "#/components/requestBodies/RebacBatchCheck"
+        $ref: '#/components/requestBodies/RebacBatchCheck'
       responses:
-        "200":
-          $ref: "#/components/responses/RebacBatchCheck"
+        '200':
+          $ref: '#/components/responses/RebacBatchCheck'
       security:
         - bearerAuth: []
   /api/rebac/list-objects:
@@ -148,10 +148,10 @@ paths:
         - ReBAC
       summary: List objects reachable by a subject and relation.
       requestBody:
-        $ref: "#/components/requestBodies/RebacListObjects"
+        $ref: '#/components/requestBodies/RebacListObjects'
       responses:
-        "200":
-          $ref: "#/components/responses/RebacListObjects"
+        '200':
+          $ref: '#/components/responses/RebacListObjects'
       security:
         - bearerAuth: []
   /api/rebac/list-users:
@@ -160,10 +160,10 @@ paths:
         - ReBAC
       summary: List users reachable by an object and relation.
       requestBody:
-        $ref: "#/components/requestBodies/RebacListUsers"
+        $ref: '#/components/requestBodies/RebacListUsers'
       responses:
-        "200":
-          $ref: "#/components/responses/RebacListUsers"
+        '200':
+          $ref: '#/components/responses/RebacListUsers'
       security:
         - bearerAuth: []
   /api/rebac/invalidate:
@@ -172,10 +172,10 @@ paths:
         - ReBAC
       summary: Invalidate ReBAC cache entries.
       requestBody:
-        $ref: "#/components/requestBodies/RebacInvalidate"
+        $ref: '#/components/requestBodies/RebacInvalidate'
       responses:
-        "200":
-          $ref: "#/components/responses/Success"
+        '200':
+          $ref: '#/components/responses/Success'
       security:
         - bearerAuth: []
   /api/check/health:
@@ -185,18 +185,18 @@ paths:
       security: []
       summary: Return check API health.
       responses:
-        "200":
-          $ref: "#/components/responses/CheckHealth"
+        '200':
+          $ref: '#/components/responses/CheckHealth'
   /api/check:
     post:
       tags:
         - Check
       summary: Run an authorization check.
       requestBody:
-        $ref: "#/components/requestBodies/CheckApi"
+        $ref: '#/components/requestBodies/CheckApi'
       responses:
-        "200":
-          $ref: "#/components/responses/CheckApi"
+        '200':
+          $ref: '#/components/responses/CheckApi'
       security:
         - bearerAuth: []
   /api/check/batch:
@@ -205,10 +205,10 @@ paths:
         - Check
       summary: Run authorization checks in batch.
       requestBody:
-        $ref: "#/components/requestBodies/BatchCheckApi"
+        $ref: '#/components/requestBodies/BatchCheckApi'
       responses:
-        "200":
-          $ref: "#/components/responses/BatchCheckApi"
+        '200':
+          $ref: '#/components/responses/BatchCheckApi'
       security:
         - bearerAuth: []
   /api/check/subscribe:
@@ -217,11 +217,12 @@ paths:
         - Subscriptions
       operationId: getApiCheckSubscribe
       summary: Open a permission-change subscription WebSocket.
-      description: Upgrades the request to a WebSocket used by clients to receive permission and policy
+      description:
+        Upgrades the request to a WebSocket used by clients to receive permission and policy
         change notifications. The caller must be authorized for the subscribe operation.
       responses:
-        "101":
-          $ref: "#/components/responses/SubscribeUpgrade"
+        '101':
+          $ref: '#/components/responses/SubscribeUpgrade'
       security:
         - bearerAuth: []
   /api/check/subscribe/stats:
@@ -230,11 +231,12 @@ paths:
         - Subscriptions
       operationId: getApiCheckSubscribeStats
       summary: Return permission subscription hub statistics.
-      description: Returns operational statistics from the subscription Durable Object, including current
+      description:
+        Returns operational statistics from the subscription Durable Object, including current
         connection and subscription counters when available.
       responses:
-        "200":
-          $ref: "#/components/responses/SubscribeStats"
+        '200':
+          $ref: '#/components/responses/SubscribeStats'
       security:
         - bearerAuth: []
   /api/rebac/tuples:
@@ -245,10 +247,10 @@ paths:
       summary: Delete a ReBAC relationship tuple.
       description: Deletes the specified relationship tuple and invalidates related authorization cache entries.
       responses:
-        "200":
-          $ref: "#/components/responses/RebacDelete"
+        '200':
+          $ref: '#/components/responses/RebacDelete'
       requestBody:
-        $ref: "#/components/requestBodies/RebacTuple"
+        $ref: '#/components/requestBodies/RebacTuple'
       security:
         - bearerAuth: []
   /api/rebac/write:
@@ -257,13 +259,14 @@ paths:
         - ReBAC
       operationId: postApiRebacWrite
       summary: Write a ReBAC relationship tuple.
-      description: Creates or updates a relationship tuple used by relationship-based authorization checks
+      description:
+        Creates or updates a relationship tuple used by relationship-based authorization checks
         and invalidates related cache entries.
       responses:
-        "200":
-          $ref: "#/components/responses/RebacWrite"
+        '200':
+          $ref: '#/components/responses/RebacWrite'
       requestBody:
-        $ref: "#/components/requestBodies/RebacTuple"
+        $ref: '#/components/requestBodies/RebacTuple'
       security:
         - bearerAuth: []
 components:
@@ -291,7 +294,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PolicyFlagUpdateRequest"
+            $ref: '#/components/schemas/PolicyFlagUpdateRequest'
           example:
             value: true
     PolicyContext:
@@ -299,7 +302,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PolicyContextRequest"
+            $ref: '#/components/schemas/PolicyContextRequest'
           example:
             subject:
               id: user_123
@@ -316,7 +319,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/RoleCheckRequest"
+            $ref: '#/components/schemas/RoleCheckRequest'
           example:
             subject:
               claims:
@@ -329,7 +332,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccessCheckRequest"
+            $ref: '#/components/schemas/AccessCheckRequest'
           example:
             subjectId: user_123
             roles:
@@ -343,7 +346,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/IsAdminRequest"
+            $ref: '#/components/schemas/IsAdminRequest'
           example:
             roles:
               - admin
@@ -352,7 +355,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/RebacCheckRequest"
+            $ref: '#/components/schemas/RebacCheckRequest'
           example:
             tenant_id: tenant_123
             user_id: user:user_123
@@ -363,7 +366,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/RebacBatchCheckRequest"
+            $ref: '#/components/schemas/RebacBatchCheckRequest'
           example:
             checks:
               - tenant_id: tenant_123
@@ -375,7 +378,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/RebacListObjectsRequest"
+            $ref: '#/components/schemas/RebacListObjectsRequest'
           example:
             tenant_id: tenant_123
             user_id: user:user_123
@@ -387,7 +390,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/RebacListUsersRequest"
+            $ref: '#/components/schemas/RebacListUsersRequest'
           example:
             tenant_id: tenant_123
             object: document:doc_123
@@ -398,7 +401,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/RebacInvalidateRequest"
+            $ref: '#/components/schemas/RebacInvalidateRequest'
           example:
             tenant_id: tenant_123
             type: object
@@ -409,7 +412,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/CheckApiRequest"
+            $ref: '#/components/schemas/CheckApiRequest'
           example:
             subject_id: user_123
             permission: documents:doc_123:read
@@ -419,7 +422,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/BatchCheckApiRequest"
+            $ref: '#/components/schemas/BatchCheckApiRequest'
           example:
             checks:
               - subject_id: user_123
@@ -430,7 +433,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/RebacTupleRequest"
+            $ref: '#/components/schemas/RebacTupleRequest'
           example:
             tenant_id: tenant_123
             object_type: document
@@ -458,7 +461,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PolicyHealth"
+            $ref: '#/components/schemas/PolicyHealth'
           example:
             status: ok
             service: ar-policy
@@ -475,7 +478,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PolicyFlagUpdateResponse"
+            $ref: '#/components/schemas/PolicyFlagUpdateResponse'
           example:
             success: true
             flag: ENABLE_REBAC
@@ -485,7 +488,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PolicyFlagDeleteResponse"
+            $ref: '#/components/schemas/PolicyFlagDeleteResponse'
           example:
             success: true
             flag: ENABLE_REBAC
@@ -495,7 +498,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/PolicyDecision"
+            $ref: '#/components/schemas/PolicyDecision'
           example:
             allowed: true
             reason: Matched allow rule
@@ -505,7 +508,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/RoleCheckResponse"
+            $ref: '#/components/schemas/RoleCheckResponse'
           example:
             hasRole: true
             activeRoles:
@@ -515,7 +518,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/AccessCheckResponse"
+            $ref: '#/components/schemas/AccessCheckResponse'
           example:
             allowed: true
             reason: Matched allow rule
@@ -524,7 +527,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/IsAdminResponse"
+            $ref: '#/components/schemas/IsAdminResponse'
           example:
             isAdmin: true
     RebacHealth:
@@ -532,7 +535,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/ServiceHealth"
+            $ref: '#/components/schemas/ServiceHealth'
           example:
             status: ok
             service: ar-policy-rebac
@@ -546,7 +549,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/RebacCheckResponse"
+            $ref: '#/components/schemas/RebacCheckResponse'
           example:
             allowed: true
             cached: false
@@ -555,7 +558,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/RebacBatchCheckResponse"
+            $ref: '#/components/schemas/RebacBatchCheckResponse'
           example:
             results:
               - allowed: true
@@ -565,7 +568,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/RebacListObjectsResponse"
+            $ref: '#/components/schemas/RebacListObjectsResponse'
           example:
             objects:
               - document:doc_123
@@ -575,7 +578,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/RebacListUsersResponse"
+            $ref: '#/components/schemas/RebacListUsersResponse'
           example:
             users:
               - user:user_123
@@ -585,7 +588,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SuccessResponse"
+            $ref: '#/components/schemas/SuccessResponse'
           example:
             success: true
     CheckHealth:
@@ -593,7 +596,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/ServiceHealth"
+            $ref: '#/components/schemas/ServiceHealth'
           example:
             status: ok
             service: check-api
@@ -609,7 +612,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/CheckApiResponse"
+            $ref: '#/components/schemas/CheckApiResponse'
           example:
             allowed: true
             resolved_via:
@@ -621,7 +624,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/BatchCheckApiResponse"
+            $ref: '#/components/schemas/BatchCheckApiResponse'
           example:
             results:
               - allowed: true
@@ -638,7 +641,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/SubscribeStatsResponse"
+            $ref: '#/components/schemas/SubscribeStatsResponse'
           example:
             tenant_id: tenant_123
             websocket_enabled: true
@@ -649,7 +652,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/RebacWriteResponse"
+            $ref: '#/components/schemas/RebacWriteResponse'
           example:
             success: true
             tuple:
@@ -666,7 +669,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/RebacDeleteResponse"
+            $ref: '#/components/schemas/RebacDeleteResponse'
           example:
             success: true
             deleted: true
@@ -691,7 +694,7 @@ components:
           format: date-time
     PolicyHealth:
       allOf:
-        - $ref: "#/components/schemas/ServiceHealth"
+        - $ref: '#/components/schemas/ServiceHealth'
         - type: object
           properties:
             features:
@@ -763,7 +766,7 @@ components:
         - action
       properties:
         subject:
-          $ref: "#/components/schemas/PolicySubject"
+          $ref: '#/components/schemas/PolicySubject'
         resource:
           type: object
           additionalProperties: true
@@ -799,7 +802,7 @@ components:
       properties:
         subject:
           oneOf:
-            - $ref: "#/components/schemas/PolicySubject"
+            - $ref: '#/components/schemas/PolicySubject'
             - type: object
               required:
                 - claims
@@ -927,7 +930,7 @@ components:
         checks:
           type: array
           items:
-            $ref: "#/components/schemas/RebacCheckRequest"
+            $ref: '#/components/schemas/RebacCheckRequest'
     RebacBatchCheckResponse:
       type: object
       required:
@@ -937,7 +940,7 @@ components:
         results:
           type: array
           items:
-            $ref: "#/components/schemas/RebacCheckResponse"
+            $ref: '#/components/schemas/RebacCheckResponse'
     RebacListObjectsRequest:
       type: object
       required:
@@ -1084,7 +1087,7 @@ components:
         checks:
           type: array
           items:
-            $ref: "#/components/schemas/CheckApiRequest"
+            $ref: '#/components/schemas/CheckApiRequest'
         stop_on_deny:
           type: boolean
     BatchCheckApiResponse:
@@ -1096,7 +1099,7 @@ components:
         results:
           type: array
           items:
-            $ref: "#/components/schemas/CheckApiResponse"
+            $ref: '#/components/schemas/CheckApiResponse'
         allowed:
           type: boolean
         final_decision:

@@ -112,6 +112,7 @@ export interface HumanVerificationMethod {
 }
 
 export interface AuthenticationMethods {
+	guest?: { enabled: boolean; deletionAfterDays: number | null };
 	passkey: PasskeyMethod;
 	emailCode: EmailCodeMethod;
 	totp: TotpMethod;

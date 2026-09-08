@@ -7,6 +7,7 @@ import { Context } from 'hono';
 import { setCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import {
+  assertGuestCredentialAuthenticationAllowed,
   isAllowedOrigin,
   parseAllowedOrigins,
   getSessionStoreForNewSession,
@@ -979,6 +980,13 @@ export async function passkeyLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
     }
     const authTime = Math.floor(proofVerifiedAtMs / 1000);
     try {
+      if (accountAuthenticationRecord.accountType !== 'admin') {
+        await assertGuestCredentialAuthenticationAllowed(
+          authCtx.coreAdapter,
+          tenantId,
+          passkey.user_id
+        );
+      }
       await timeAuthRequestDiagnosticOperation(c, 'auth_passkey_counter_advance', () =>
         advancePasskeyAuthenticationState(
           c.env,

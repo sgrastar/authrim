@@ -1,6 +1,31 @@
 import { createTranslation } from '../create-translation';
 
 const th = createTranslation({
+	account_guestLogoutWarning:
+		'เมื่อออกจากระบบ คุณจะไม่สามารถกลับมาใช้บัญชีผู้เยี่ยมชมนี้ได้ แม้จะปิดการลบอัตโนมัติไว้ก็ตาม โปรดลงทะเบียนก่อนเพื่อคงสิทธิ์เข้าถึงบัญชีและข้อมูลของคุณ ต้องการออกจากระบบต่อไปหรือไม่?',
+	account_guestTitle: 'Register your account',
+	account_guestDescription: 'Keep the same account and data when you register.',
+	account_guestDue: 'Eligible for automatic deletion from {date}.',
+	account_guestNoExpiry: 'No automatic deletion is scheduled.',
+	account_guestEmail: 'Email address',
+	account_guestSend: 'Register with email',
+	account_guestPasskey: 'Register with a passkey',
+	account_guestCode: 'Confirmation code',
+	account_guestConfirm: 'Confirm registration',
+	account_guestPending: 'Registration is in progress. You can retry to check completion.',
+	account_guestRetry: 'Retry',
+	account_guestError:
+		'Registration could not be completed. Check the confirmation code or try again.',
+	account_guestCollision:
+		'This identity already has an account. Sign in to that account separately. Your guest account will not be merged.',
+	account_guestExistingLogin: 'Sign in to an existing account',
+	account_guestRegistered: 'Your account has been registered.',
+	account_guestChangeMethod: 'Choose another method',
+	login_guestContinue: 'ดำเนินการต่อในฐานะผู้เยี่ยมชม',
+	login_guestRetention:
+		'บัญชีผู้เยี่ยมชมอาจถูกลบโดยอัตโนมัติหลังสร้าง {days} วัน โปรดลงทะเบียนบัญชีเพื่อใช้งานต่อ',
+	login_guestNoExpiry: 'ไม่มีการกำหนดให้ลบบัญชีผู้เยี่ยมชมใหม่โดยอัตโนมัติ',
+
 	app_title: 'Authrim',
 	app_subtitle: 'อัตลักษณ์และการเข้าถึงได้จากทุกที่',
 	button_openDialog: 'เปิดกล่องโต้ตอบ',

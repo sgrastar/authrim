@@ -1,4 +1,77 @@
 const adminOther = {
+	admin_lifecycle_progressTitle: 'Guest lifecycle progress',
+	admin_lifecycle_progressHelp:
+		'Deletion runs hourly. Attempt status may be delayed and is retained for 30 days. Refresh to see current progress.',
+	admin_lifecycle_refresh: 'Refresh',
+	admin_lifecycle_progressError: 'Could not load lifecycle progress. Please refresh.',
+	admin_lifecycle_subject: 'Subject',
+	admin_lifecycle_phase: 'Phase',
+	admin_lifecycle_due: 'Deletion due',
+	admin_lifecycle_delay: 'Overdue (minutes)',
+	admin_lifecycle_attempt: 'Latest attempt',
+	admin_lifecycle_phaseValue:
+		'{phase|{active: Guest, upgrading: Upgrading, registered: Registered, deleting: Deleting, deleted: Deleted}}',
+	admin_lifecycle_maintenanceValue:
+		'{state|{processing: Processing, pending: Pending, completed: Completed, retrying: Retry pending}}',
+	admin_lifecycle_noAccounts: 'No guest lifecycle records.',
+	admin_lifecycle_loadMore: 'Load more',
+	admin_retentionPreviewTitle: 'Apply retention to existing guests',
+	admin_retentionPreviewDescription:
+		'Save the policy first, then review up to 100 accounts per page. Only accounts in the reviewed page are changed. Deadlines are calculated from creation. Changed, registered or deleting accounts are skipped. Previews expire after 15 minutes.',
+	admin_retentionPreviewButton: 'Preview existing guests',
+	admin_retentionPreviewCounts:
+		'{count:number} accounts in this page; {due:number} become eligible for deletion immediately.',
+	admin_retentionApplyButton: 'Apply to these {count:number} accounts',
+	admin_retentionApplied:
+		'Applied: {applied:number}; unchanged: {unchanged:number}; skipped: {skipped:number}.',
+	admin_retentionNextPage: 'Preview next page',
+	admin_retentionAccount: 'Account',
+	admin_retentionBefore: 'Current deadline',
+	admin_retentionAfter: 'Previewed deadline',
+	admin_retentionNoDeadline: 'No automatic deletion',
+	admin_retentionPreviewError:
+		'Could not load the preview. Reload it using the current saved policy.',
+	admin_retentionApplyError:
+		'Could not finish applying the preview. It may have expired or the policy may have changed. Retry the same preview after a temporary error.',
+
+	admin_guestClientTitle: 'Guest access',
+	admin_guestClientDescription:
+		'Explicitly allow guest login for this client. Tenant guest login must also be enabled.',
+	admin_guestClientEnabled: 'Allow guest login',
+	admin_guestClientScopes: 'Allowed guest scopes',
+	admin_guestClientScopeHint:
+		'Enter one scope per line. The actual request and the client’s normal scope permissions must also allow each scope. Registration never increases existing grants.',
+	admin_guestClientScopesInvalid: 'Include openid and enter valid scope names.',
+	admin_guestClientSave: 'Save guest access',
+	admin_guestClientSaved: 'Guest access saved.',
+	admin_guestClientLoadError: 'Could not load guest access settings.',
+	admin_guestClientSaveError: 'Could not save guest access settings.',
+	admin_guestClientConflict: 'The client profile changed. Reload before saving.',
+	admin_guestClientTenantRequired: 'Configure the tenant policy before saving a client profile.',
+
+	admin_guest_login_title: 'Guest login',
+	admin_guest_login_description:
+		'Allow guests to start or resume an account. Each client must also explicitly allow guest login.',
+	admin_guest_upgrade_methods: 'Use for guest upgrade',
+	admin_guest_upgrade_methods_description:
+		'These switches are independent of login and signup. Account lifecycle settings must also allow upgrades.',
+	admin_account_lifecycle_saved: 'Account lifecycle settings saved.',
+	admin_lifecycle_title: 'Account lifecycle',
+	admin_lifecycle_description: 'Manage guest retention and promotion to a registered account.',
+	admin_lifecycle_new_only:
+		'Saving applies to newly created guests only. Existing guests keep their current deletion date.',
+	admin_lifecycle_delete: 'Automatically delete guest accounts',
+	admin_lifecycle_days: 'Days after account creation',
+	admin_lifecycle_delete_help:
+		'The hourly cleanup deletes eligible guests after this period. Upgrading cancels guest deletion.',
+	admin_lifecycle_upgrade: 'Allow guest upgrades',
+	admin_lifecycle_hold: 'Deletion hold when upgrading (minutes)',
+	admin_lifecycle_hold_help:
+		'One hold per guest, from 1 to 60 minutes. Retrying never extends it. The default is 10 minutes.',
+	admin_lifecycle_other:
+		'Registered accounts, including accounts with attributes, have no automatic deletion policy in this release. Device and agent policies will be managed separately.',
+	admin_lifecycle_invalid: 'Enter whole numbers: 1–3650 days and 1–60 minutes.',
+
 	admin_settings_title: 'Settings',
 	admin_settings_page_title: 'Settings - Admin Dashboard - Authrim',
 	admin_settings_description: 'Configure system settings, security policies, and feature flags',

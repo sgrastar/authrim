@@ -8,6 +8,7 @@ import type {
   QueryOptions,
   TransactionContext,
 } from '@authrim/ar-lib-core';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { eraseAccountPiiAfterDirectoryRemovalPrepared } from '../account-directory-removal-producer';
 
@@ -92,6 +93,12 @@ describe('account directory removal PII erasure', () => {
 
   beforeEach(() => {
     database = new DatabaseSync(':memory:');
+    database.exec(
+      readFileSync(
+        new URL('../../../../migrations/pii/d1/002_guest_upgrade_operations.sql', import.meta.url),
+        'utf8'
+      )
+    );
     database.exec(`
       CREATE TABLE identity_identifier_replacement_operations (
         operation_id TEXT PRIMARY KEY, tenant_id TEXT, account_id TEXT, state TEXT,

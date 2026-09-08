@@ -1,3 +1,4 @@
+import { ACCOUNT_LIFECYCLE_CLAIM, readAccountLifecycleClaim } from './account-lifecycle';
 import type { Context } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 import {
@@ -323,6 +324,35 @@ export async function userinfoHandler(c: Context<{ Bindings: Env }>) {
         500
       );
     }
+  }
+
+  // Reserved runtime claim: neither a claims parameter nor mapping can bypass its scope.
+  delete userClaims[ACCOUNT_LIFECYCLE_CLAIM];
+  try {
+    const lifecycle = await readAccountLifecycleClaim({
+      c,
+      adapter: piiCtx.coreAdapter,
+      tenantId,
+      clientId: client_id,
+      user: projection!,
+      scopes,
+    });
+    if (lifecycle) userClaims[ACCOUNT_LIFECYCLE_CLAIM] = lifecycle;
+  } catch (error) {
+    c.header('Cache-Control', 'no-store');
+    c.header('Pragma', 'no-cache');
+    if (error instanceof Error && error.message === 'account_lifecycle_deleted') {
+      c.header('WWW-Authenticate', 'Bearer error="invalid_token"');
+      return c.json(
+        { error: 'invalid_token', error_description: 'The access token is invalid' },
+        401
+      );
+    }
+    log.error('Failed to read account lifecycle', {}, error as Error);
+    return c.json(
+      { error: 'temporarily_unavailable', error_description: 'User data is unavailable' },
+      503
+    );
   }
 
   if (client_id && clientMetadata) {

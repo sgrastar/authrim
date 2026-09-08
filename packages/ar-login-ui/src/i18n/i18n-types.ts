@@ -34,6 +34,88 @@ export type Translations = RootTranslation
 
 type RootTranslation = {
 	/**
+	 * L​o​g​g​i​n​g​ ​o​u​t​ ​w​i​l​l​ ​p​r​e​v​e​n​t​ ​y​o​u​ ​f​r​o​m​ ​r​e​t​u​r​n​i​n​g​ ​t​o​ ​t​h​i​s​ ​g​u​e​s​t​ ​a​c​c​o​u​n​t​,​ ​e​v​e​n​ ​i​f​ ​a​u​t​o​m​a​t​i​c​ ​d​e​l​e​t​i​o​n​ ​i​s​ ​d​i​s​a​b​l​e​d​.​ ​R​e​g​i​s​t​e​r​ ​f​i​r​s​t​ ​t​o​ ​k​e​e​p​ ​a​c​c​e​s​s​ ​t​o​ ​y​o​u​r​ ​a​c​c​o​u​n​t​ ​a​n​d​ ​d​a​t​a​.​ ​L​o​g​ ​o​u​t​ ​a​n​y​w​a​y​?
+	 */
+	account_guestLogoutWarning: string
+	/**
+	 * R​e​g​i​s​t​e​r​ ​y​o​u​r​ ​a​c​c​o​u​n​t
+	 */
+	account_guestTitle: string
+	/**
+	 * K​e​e​p​ ​t​h​e​ ​s​a​m​e​ ​a​c​c​o​u​n​t​ ​a​n​d​ ​d​a​t​a​ ​w​h​e​n​ ​y​o​u​ ​r​e​g​i​s​t​e​r​.
+	 */
+	account_guestDescription: string
+	/**
+	 * E​l​i​g​i​b​l​e​ ​f​o​r​ ​a​u​t​o​m​a​t​i​c​ ​d​e​l​e​t​i​o​n​ ​f​r​o​m​ ​{​d​a​t​e​}​.
+	 * @param {string} date
+	 */
+	account_guestDue: RequiredParams<'date'>
+	/**
+	 * N​o​ ​a​u​t​o​m​a​t​i​c​ ​d​e​l​e​t​i​o​n​ ​i​s​ ​s​c​h​e​d​u​l​e​d​.
+	 */
+	account_guestNoExpiry: string
+	/**
+	 * E​m​a​i​l​ ​a​d​d​r​e​s​s
+	 */
+	account_guestEmail: string
+	/**
+	 * R​e​g​i​s​t​e​r​ ​w​i​t​h​ ​e​m​a​i​l
+	 */
+	account_guestSend: string
+	/**
+	 * R​e​g​i​s​t​e​r​ ​w​i​t​h​ ​a​ ​p​a​s​s​k​e​y
+	 */
+	account_guestPasskey: string
+	/**
+	 * C​o​n​f​i​r​m​a​t​i​o​n​ ​c​o​d​e
+	 */
+	account_guestCode: string
+	/**
+	 * C​o​n​f​i​r​m​ ​r​e​g​i​s​t​r​a​t​i​o​n
+	 */
+	account_guestConfirm: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​i​s​ ​i​n​ ​p​r​o​g​r​e​s​s​.​ ​Y​o​u​ ​c​a​n​ ​r​e​t​r​y​ ​t​o​ ​c​h​e​c​k​ ​c​o​m​p​l​e​t​i​o​n​.
+	 */
+	account_guestPending: string
+	/**
+	 * R​e​t​r​y
+	 */
+	account_guestRetry: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​c​o​u​l​d​ ​n​o​t​ ​b​e​ ​c​o​m​p​l​e​t​e​d​.​ ​C​h​e​c​k​ ​t​h​e​ ​c​o​n​f​i​r​m​a​t​i​o​n​ ​c​o​d​e​ ​o​r​ ​t​r​y​ ​a​g​a​i​n​.
+	 */
+	account_guestError: string
+	/**
+	 * T​h​i​s​ ​i​d​e​n​t​i​t​y​ ​a​l​r​e​a​d​y​ ​h​a​s​ ​a​n​ ​a​c​c​o​u​n​t​.​ ​S​i​g​n​ ​i​n​ ​t​o​ ​t​h​a​t​ ​a​c​c​o​u​n​t​ ​s​e​p​a​r​a​t​e​l​y​.​ ​Y​o​u​r​ ​g​u​e​s​t​ ​a​c​c​o​u​n​t​ ​w​i​l​l​ ​n​o​t​ ​b​e​ ​m​e​r​g​e​d​.
+	 */
+	account_guestCollision: string
+	/**
+	 * S​i​g​n​ ​i​n​ ​t​o​ ​a​n​ ​e​x​i​s​t​i​n​g​ ​a​c​c​o​u​n​t
+	 */
+	account_guestExistingLogin: string
+	/**
+	 * Y​o​u​r​ ​a​c​c​o​u​n​t​ ​h​a​s​ ​b​e​e​n​ ​r​e​g​i​s​t​e​r​e​d​.
+	 */
+	account_guestRegistered: string
+	/**
+	 * C​h​o​o​s​e​ ​a​n​o​t​h​e​r​ ​m​e​t​h​o​d
+	 */
+	account_guestChangeMethod: string
+	/**
+	 * C​o​n​t​i​n​u​e​ ​a​s​ ​a​ ​g​u​e​s​t
+	 */
+	login_guestContinue: string
+	/**
+	 * G​u​e​s​t​ ​a​c​c​o​u​n​t​s​ ​a​r​e​ ​e​l​i​g​i​b​l​e​ ​f​o​r​ ​a​u​t​o​m​a​t​i​c​ ​d​e​l​e​t​i​o​n​ ​{​d​a​y​s​}​ ​d​a​y​s​ ​a​f​t​e​r​ ​c​r​e​a​t​i​o​n​.​ ​R​e​g​i​s​t​e​r​ ​a​n​ ​a​c​c​o​u​n​t​ ​t​o​ ​k​e​e​p​ ​u​s​i​n​g​ ​i​t​.
+	 * @param {number} days
+	 */
+	login_guestRetention: RequiredParams<'days'>
+	/**
+	 * N​o​ ​a​u​t​o​m​a​t​i​c​ ​d​e​l​e​t​i​o​n​ ​i​s​ ​s​c​h​e​d​u​l​e​d​ ​f​o​r​ ​n​e​w​ ​g​u​e​s​t​ ​a​c​c​o​u​n​t​s​.
+	 */
+	login_guestNoExpiry: string
+	/**
 	 * A​u​t​h​r​i​m
 	 */
 	app_title: string
@@ -1526,6 +1608,86 @@ type RootTranslation = {
 }
 
 export type TranslationFunctions = {
+	/**
+	 * Logging out will prevent you from returning to this guest account, even if automatic deletion is disabled. Register first to keep access to your account and data. Log out anyway?
+	 */
+	account_guestLogoutWarning: () => LocalizedString
+	/**
+	 * Register your account
+	 */
+	account_guestTitle: () => LocalizedString
+	/**
+	 * Keep the same account and data when you register.
+	 */
+	account_guestDescription: () => LocalizedString
+	/**
+	 * Eligible for automatic deletion from {date}.
+	 */
+	account_guestDue: (arg: { date: string }) => LocalizedString
+	/**
+	 * No automatic deletion is scheduled.
+	 */
+	account_guestNoExpiry: () => LocalizedString
+	/**
+	 * Email address
+	 */
+	account_guestEmail: () => LocalizedString
+	/**
+	 * Register with email
+	 */
+	account_guestSend: () => LocalizedString
+	/**
+	 * Register with a passkey
+	 */
+	account_guestPasskey: () => LocalizedString
+	/**
+	 * Confirmation code
+	 */
+	account_guestCode: () => LocalizedString
+	/**
+	 * Confirm registration
+	 */
+	account_guestConfirm: () => LocalizedString
+	/**
+	 * Registration is in progress. You can retry to check completion.
+	 */
+	account_guestPending: () => LocalizedString
+	/**
+	 * Retry
+	 */
+	account_guestRetry: () => LocalizedString
+	/**
+	 * Registration could not be completed. Check the confirmation code or try again.
+	 */
+	account_guestError: () => LocalizedString
+	/**
+	 * This identity already has an account. Sign in to that account separately. Your guest account will not be merged.
+	 */
+	account_guestCollision: () => LocalizedString
+	/**
+	 * Sign in to an existing account
+	 */
+	account_guestExistingLogin: () => LocalizedString
+	/**
+	 * Your account has been registered.
+	 */
+	account_guestRegistered: () => LocalizedString
+	/**
+	 * Choose another method
+	 */
+	account_guestChangeMethod: () => LocalizedString
+	/**
+	 * Continue as a guest
+	 */
+	login_guestContinue: () => LocalizedString
+	/**
+	 * Guest accounts are eligible for automatic deletion {days} days after creation. Register an account to keep using it.
+	 */
+	login_guestRetention: (arg: { days: number }) => LocalizedString
+	/**
+	 * No automatic deletion is scheduled for new guest accounts.
+	 */
+	login_guestNoExpiry: () => LocalizedString
 	/**
 	 * Authrim
 	 */

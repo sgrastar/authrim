@@ -415,6 +415,9 @@ export interface Env {
   EXTERNAL_IDP?: Fetcher; // External IdP worker (ar-bridge) for social login and enterprise IdP
   CONTROL?: ControlServiceBinding; // Narrow Control Worker RPC facade for ar-management
   ACCOUNT_DIRECTORY?: AccountDirectoryServiceBinding; // Named ar-management directory coordinator RPC
+  GUEST_UPGRADE_READINESS?: {
+    read(tenantId: string): Promise<{ tenantId: string; email: boolean }>;
+  };
   ACCOUNT_PROVISIONER?: AuthAccountProvisioningServiceBinding; // Narrow ar-auth account-creation RPC
   SAML_ACCOUNT_PROVISIONER?: AuthAccountProvisioningServiceBinding &
     Pick<ExternalIdpAccountProvisioningServiceBinding, 'publishExternalIdpRoute'>;

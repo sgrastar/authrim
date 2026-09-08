@@ -2,6 +2,31 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const de = createTranslation({
+	account_guestLogoutWarning:
+		'Nach dem Abmelden können Sie nicht zu diesem Gastkonto zurückkehren, auch wenn die automatische Löschung deaktiviert ist. Registrieren Sie sich zuerst, um den Zugriff auf Ihr Konto und Ihre Daten zu behalten. Trotzdem abmelden?',
+	account_guestTitle: 'Register your account',
+	account_guestDescription: 'Keep the same account and data when you register.',
+	account_guestDue: 'Eligible for automatic deletion from {date}.',
+	account_guestNoExpiry: 'No automatic deletion is scheduled.',
+	account_guestEmail: 'Email address',
+	account_guestSend: 'Register with email',
+	account_guestPasskey: 'Register with a passkey',
+	account_guestCode: 'Confirmation code',
+	account_guestConfirm: 'Confirm registration',
+	account_guestPending: 'Registration is in progress. You can retry to check completion.',
+	account_guestRetry: 'Retry',
+	account_guestError:
+		'Registration could not be completed. Check the confirmation code or try again.',
+	account_guestCollision:
+		'This identity already has an account. Sign in to that account separately. Your guest account will not be merged.',
+	account_guestExistingLogin: 'Sign in to an existing account',
+	account_guestRegistered: 'Your account has been registered.',
+	account_guestChangeMethod: 'Choose another method',
+	login_guestContinue: 'Als Gast fortfahren',
+	login_guestRetention:
+		'Gastkonten können {days} Tage nach ihrer Erstellung automatisch gelöscht werden. Registrieren Sie ein Konto, um es weiter zu nutzen.',
+	login_guestNoExpiry: 'Für neue Gastkonten ist keine automatische Löschung geplant.',
+
 	...completion,
 	app_subtitle: 'Identität und Zugriff überall.',
 	dialog_cancel: 'Abbrechen',

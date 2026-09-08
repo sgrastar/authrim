@@ -1,6 +1,31 @@
 import { createTranslation } from '../create-translation';
 
 const vi = createTranslation({
+	account_guestLogoutWarning:
+		'Sau khi đăng xuất, bạn sẽ không thể quay lại tài khoản khách này, ngay cả khi tính năng tự động xóa đã tắt. Hãy đăng ký trước để giữ quyền truy cập tài khoản và dữ liệu. Vẫn đăng xuất?',
+	account_guestTitle: 'Register your account',
+	account_guestDescription: 'Keep the same account and data when you register.',
+	account_guestDue: 'Eligible for automatic deletion from {date}.',
+	account_guestNoExpiry: 'No automatic deletion is scheduled.',
+	account_guestEmail: 'Email address',
+	account_guestSend: 'Register with email',
+	account_guestPasskey: 'Register with a passkey',
+	account_guestCode: 'Confirmation code',
+	account_guestConfirm: 'Confirm registration',
+	account_guestPending: 'Registration is in progress. You can retry to check completion.',
+	account_guestRetry: 'Retry',
+	account_guestError:
+		'Registration could not be completed. Check the confirmation code or try again.',
+	account_guestCollision:
+		'This identity already has an account. Sign in to that account separately. Your guest account will not be merged.',
+	account_guestExistingLogin: 'Sign in to an existing account',
+	account_guestRegistered: 'Your account has been registered.',
+	account_guestChangeMethod: 'Choose another method',
+	login_guestContinue: 'Tiếp tục với tư cách khách',
+	login_guestRetention:
+		'Tài khoản khách có thể bị tự động xóa sau {days} ngày kể từ khi tạo. Hãy đăng ký tài khoản để tiếp tục sử dụng.',
+	login_guestNoExpiry: 'Chưa lên lịch tự động xóa cho tài khoản khách mới.',
+
 	app_title: 'Authrim',
 	app_subtitle: 'Danh tính và quyền truy cập ở mọi nơi.',
 	button_openDialog: 'Mở hộp thoại',

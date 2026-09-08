@@ -17,6 +17,7 @@ import { Context } from 'hono';
 import { setCookie, getCookie } from 'hono/cookie';
 import type { Env, Session } from '@authrim/ar-lib-core';
 import {
+  assertGuestCredentialAuthenticationAllowed,
   getSessionStoreForNewSession,
   getSessionClientMetadata,
   getSessionStoreBySessionId,
@@ -671,6 +672,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           ? ensureDatabaseAdapter(userLookup.context.coreDb, 'otp-account-core')
           : createAccountAuthContextFromHono(c, tenantId).coreAdapter;
       try {
+        await assertGuestCredentialAuthenticationAllowed(accountCoreAdapter, tenantId, user.id);
         await timeAuthRequestDiagnosticOperation(c, 'auth_account_state_read', () =>
           ensureAccountAuthenticationState(c.env, tenantId, user.id, () =>
             findCanonicalAccountAuthenticationState(accountCoreAdapter, tenantId, user.id)
@@ -726,7 +728,10 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
           )) as Session | null;
 
           // Check if this is an anonymous session for the same tenant
-          if (existingSession?.data?.is_anonymous === true) {
+          if (
+            existingSession?.data?.is_anonymous === true &&
+            existingSession.data.guest_resume_credential !== true
+          ) {
             // SECURITY FIX: Prevent email takeover attack
             // For anonymous upgrade, only allow emails that:
             // 1. Are NOT already verified by another user, OR

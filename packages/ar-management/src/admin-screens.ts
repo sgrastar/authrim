@@ -49,6 +49,7 @@ const SCREEN_KINDS = new Set<ScreenKind>([
 const SCREEN_BLOCK_TYPES = new Set([
   'identity_field',
   'auth_widget',
+  'guest_login_widget',
   'code_input_widget',
   'consent_widget',
   'heading',
@@ -57,6 +58,7 @@ const SCREEN_BLOCK_TYPES = new Set([
   'divider',
   'layout_row',
   'link',
+  'account_upgrade_widget',
   'account_profile_widget',
   'account_device_list_widget',
   'account_session_widget',
@@ -68,6 +70,7 @@ const SCREEN_BLOCK_TYPES = new Set([
   'account_launcher_widget',
 ]);
 const ACCOUNT_WIDGET_BLOCK_TYPES = new Set([
+  'account_upgrade_widget',
   'account_profile_widget',
   'account_device_list_widget',
   'account_session_widget',
@@ -1444,6 +1447,13 @@ const DEFAULT_SCREENS: Array<{
         order: 0,
       },
       ...defaultAuthenticationFields('login'),
+      {
+        field: 'auth.guest',
+        label: 'Continue as a guest',
+        required: false,
+        block_type: 'guest_login_widget',
+        order: 100,
+      },
     ],
   },
   {
@@ -1496,6 +1506,13 @@ const DEFAULT_SCREENS: Array<{
     screen_kind: 'account',
     settings: { canvas_layout: 'wide' },
     fields: [
+      {
+        field: 'account.upgrade',
+        label: 'Register your account',
+        required: false,
+        block_type: 'account_upgrade_widget',
+        order: 5,
+      },
       {
         field: 'heading.account_overview',
         label: 'Manage your account',

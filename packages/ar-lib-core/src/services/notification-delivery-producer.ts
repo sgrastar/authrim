@@ -54,6 +54,35 @@ function configuration(env: NotificationDeliveryProducerEnv) {
   return { environmentId, idempotencyHmacKey };
 }
 
+/** Read-only readiness check: never creates an intent or sends a probe notification. */
+export async function isNotificationDeliveryAvailable(
+  env: NotificationDeliveryProducerEnv,
+  owner: NotificationIntentOwner
+): Promise<boolean> {
+  try {
+    configuration(env);
+    if (!env.PLUGIN_RUNNER) return false;
+    const target = await resolveNotificationIntentTarget(env, owner);
+    const order = await env.PLUGIN_RUNNER.resolveNotificationProviderOrder({
+      tenantId: target.tenantId,
+      channel: 'email',
+    });
+    return (
+      !!order &&
+      order.tenantId === target.tenantId &&
+      order.channel === 'email' &&
+      order.state === 'enabled' &&
+      Number.isSafeInteger(order.configVersion) &&
+      order.configVersion >= 1 &&
+      Array.isArray(order.installationIds) &&
+      order.installationIds.length >= 1 &&
+      order.installationIds.length <= 8
+    );
+  } catch {
+    return false;
+  }
+}
+
 function maskRecipient(value: string): string {
   const separator = value.lastIndexOf('@');
   if (separator < 1) return '***';

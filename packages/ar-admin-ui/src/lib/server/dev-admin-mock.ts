@@ -5307,7 +5307,15 @@ function getSettings(tenantId: string, category: string, clientId?: string): Dev
 	const created = {
 		category,
 		version: 'dev-1',
-		values: {},
+		values:
+			category === 'account-lifecycle'
+				? {
+						'account-lifecycle.guest.deletion_enabled': false,
+						'account-lifecycle.guest.deletion_after_days': 30,
+						'account-lifecycle.guest.upgrade_enabled': true,
+						'account-lifecycle.guest.upgrade_hold_minutes': 10
+					}
+				: {},
 		sources: {}
 	};
 	settings.set(key, created);
@@ -8080,6 +8088,11 @@ async function handleCustomClaims(
 	});
 }
 
+const guestClientProfiles = new Map<
+	string,
+	{ version: number; anonymousAuth: Record<string, unknown> }
+>();
+
 async function handleClients(event: RequestEvent, segments: string[]): Promise<Response | null> {
 	const method = event.request.method;
 	if (segments.length === 1 && method === 'GET') return json(listClients());
@@ -8113,6 +8126,33 @@ async function handleClients(event: RequestEvent, segments: string[]): Promise<R
 	const client = clients.get(clientId);
 	if (!client)
 		return json({ error: 'not_found', error_description: 'Dev mock client not found' }, 404);
+
+	if (segments[2] === 'profile' && segments.length === 3) {
+		const profile = guestClientProfiles.get(clientId) ?? {
+			version: 0,
+			anonymousAuth: {
+				enabled: false,
+				expiresInDays: null,
+				allowedScopes: ['openid', 'account:lifecycle:read'],
+				preserveSubOnUpgrade: true,
+				deviceStability: 'installation',
+				allowPromptNone: false,
+				allowedUpgradeMethods: ['email', 'passkey']
+			}
+		};
+		if (method === 'GET') return json({ profile });
+		if (method === 'PUT') {
+			const input = await readJson(event.request);
+			if (input.ifMatch !== String(profile.version)) return json({ error: 'conflict' }, 409);
+			const update = input.profile as { anonymousAuth?: Record<string, unknown> } | undefined;
+			const updated = {
+				version: profile.version + 1,
+				anonymousAuth: update?.anonymousAuth ?? profile.anonymousAuth
+			};
+			guestClientProfiles.set(clientId, updated);
+			return json({ profile: updated });
+		}
+	}
 	if (segments.length === 2 && method === 'GET') return json({ client });
 	if (segments.length === 2 && method === 'PUT') {
 		const input = await readJson(event.request);
@@ -10968,8 +11008,59 @@ function devRegionShardConfig(
 	};
 }
 
+const guestRetentionPreviews = new Map<string, number>();
+
 async function handleSettings(event: RequestEvent, segments: string[]): Promise<Response | null> {
 	const method = event.request.method;
+	if (segments[0] === 'account-lifecycle' && segments[1] === 'guests' && method === 'GET') {
+		return Response.json({
+			items: [],
+			next_cursor: null,
+			observed_at: Math.floor(Date.now() / 1000)
+		});
+	}
+	if (
+		segments[0] === 'account-lifecycle' &&
+		segments[1] === 'guest-retention' &&
+		method === 'POST'
+	) {
+		if (segments[2] === 'preview') {
+			const values = getSettings(TENANT_ID, 'account-lifecycle');
+			const now = Math.floor(Date.now() / 1000);
+			const days =
+				values.values['account-lifecycle.guest.deletion_enabled'] === true
+					? Number(values.values['account-lifecycle.guest.deletion_after_days'] ?? 30)
+					: null;
+			const token = crypto.randomUUID();
+			guestRetentionPreviews.set(token, now + 900);
+			const items = [40, 2].map((age, index) => ({
+				user_id: `dev-guest-${index + 1}`,
+				created_at: now - age * 86400,
+				previous_due_at: null,
+				new_due_at: days === null ? null : now + (days - age) * 86400
+			}));
+			return json({
+				preview_token: token,
+				expires_at: now + 900,
+				policy_version: values.version,
+				deletion_after_days: days,
+				count: 2,
+				due_now: items.filter((item) => item.new_due_at !== null && item.new_due_at <= now).length,
+				next_cursor: null,
+				items
+			});
+		}
+		if (segments[2] === 'apply') {
+			const input = await readJson(event.request);
+			if (
+				typeof input.preview_token !== 'string' ||
+				(guestRetentionPreviews.get(input.preview_token) ?? 0) <= Math.floor(Date.now() / 1000)
+			)
+				return json({ error: 'retention_preview_expired' }, 409);
+			return json({ applied: 2, unchanged: 0, skipped: 0, total: 2 });
+		}
+	}
+
 	if (
 		method === 'POST' &&
 		segments[0] === 'platform' &&

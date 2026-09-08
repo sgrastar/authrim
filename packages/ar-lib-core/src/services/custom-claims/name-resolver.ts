@@ -44,6 +44,7 @@ const STANDARD_CLAIM_NAMES = new Set([
   'phone_number_verified',
   'address',
   'updated_at',
+  'authrim_account_lifecycle',
 ]);
 
 export interface CustomClaimSchemaBase {

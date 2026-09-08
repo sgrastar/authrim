@@ -333,3 +333,49 @@ describe('RuntimeScreen signup email fields', () => {
 		expect(body.match(/runtime-destination-fields/g)).toHaveLength(1);
 	});
 });
+
+describe('guest login widget', () => {
+	const screen = {
+		fields: [
+			{
+				field: 'guest',
+				label: 'Guest',
+				required: false,
+				block_type: 'guest_login_widget',
+				order: 1
+			}
+		]
+	};
+	it('shows the login action and retention explanation only when enabled', () => {
+		setLocale('en');
+		const enabled = render(RuntimeScreen, {
+			props: { screen, guestEnabled: true, guestRetentionDescription: 'Retained for 30 days' }
+		}).body;
+		expect(enabled).toContain('Guest');
+		expect(enabled).toContain('Retained for 30 days');
+		const disabled = render(RuntimeScreen, { props: { screen, guestEnabled: false } }).body;
+		expect(disabled).not.toContain('Guest');
+	});
+	it('uses the translated default when the configured label is empty', () => {
+		setLocale('en');
+		const body = render(RuntimeScreen, {
+			props: { screen: { fields: [{ ...screen.fields[0], label: '' }] }, guestEnabled: true }
+		}).body;
+		expect(body).toContain('Continue as a guest');
+	});
+	it('does not offer guest creation on a signup screen', () => {
+		setLocale('en');
+		const body = render(RuntimeScreen, {
+			props: { screen, guestEnabled: true, authMethodMode: 'signup' }
+		}).body;
+		expect(body).not.toContain('Guest');
+	});
+	it('respects the global pending-action lock', () => {
+		setLocale('en');
+		const body = render(RuntimeScreen, {
+			props: { screen, guestEnabled: true, disabled: true }
+		}).body;
+		expect(body).toContain('disabled');
+		expect(body).toContain('Guest');
+	});
+});

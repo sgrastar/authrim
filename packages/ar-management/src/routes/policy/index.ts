@@ -36,6 +36,8 @@ import {
   createPolicyResolver,
   type TenantContract,
   type ClientContract,
+  createDefaultGuestClientPolicy,
+  isValidGuestClientPolicy,
   type TenantPolicyPreset,
   type ClientProfilePreset,
   TENANT_POLICY_PRESETS,
@@ -376,6 +378,7 @@ function createDefaultClientContract(
   const now = new Date().toISOString();
   return {
     clientId,
+    anonymousAuth: createDefaultGuestClientPolicy(),
     version: 1,
     tenantContractVersion,
     preset,
@@ -439,6 +442,7 @@ const ALLOWED_CLIENT_PROFILE_KEYS = [
   'encryption',
   'scopes',
   'authMethods',
+  'anonymousAuth',
   'consent',
   'redirect',
   'tokens',
@@ -1037,6 +1041,18 @@ policyRouter.put('/clients/:clientId/profile', async (c) => {
         400
       );
     }
+  }
+
+  if (
+    body.profile?.anonymousAuth !== undefined &&
+    !isValidGuestClientPolicy(body.profile.anonymousAuth)
+  ) {
+    return errorResponse(
+      c,
+      'bad_request',
+      'Invalid guest policy. Use explicit scope and upgrade method lists and preserve the existing subject.',
+      400
+    );
   }
 
   // Get existing contract

@@ -242,6 +242,10 @@ export async function eraseAccountPiiAfterDirectoryRemovalPrepared(
   const accountId = `account:${input.userId}`;
   const statements = [
     {
+      sql: `UPDATE guest_upgrade_operations SET state = CASE WHEN state = 'completed' THEN state ELSE 'canceled' END, proof_payload_json = NULL, reservation_publication_json = NULL, challenge_verifier = NULL, lease_owner = NULL, lease_expires_at = NULL, updated_at = ? WHERE tenant_id = ? AND user_id = ?`,
+      params: [now, input.tenantId, input.userId],
+    },
+    {
       sql: `UPDATE identity_identifier_replacement_operations
           SET state = 'canceled', error_code = 'account_deleted', lease_owner = NULL,
               lease_expires_at = NULL, next_attempt_at = NULL, updated_at = ?

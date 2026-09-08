@@ -29,6 +29,7 @@ vi.mock('hono/cookie', () => ({
 
 // Mock session store for sharded session support (RPC pattern)
 const mockShardedSessionStore = {
+  getSessionRpc: vi.fn().mockResolvedValue(null),
   invalidateSessionRpc: vi.fn().mockResolvedValue(true),
 };
 
@@ -37,6 +38,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
   const actual = await vi.importActual('@authrim/ar-lib-core');
   return {
     ...actual,
+    revokeGuestResumeForSession: vi.fn().mockResolvedValue(undefined),
     timingSafeEqual: vi.fn((a: string, b: string) => a === b),
     verifyClientSecretHash: vi.fn(async (secret: string, hash: string) => {
       // Simple mock: check if hash equals 'hash_' + secret
@@ -69,6 +71,7 @@ import { frontChannelLogoutHandler, backChannelLogoutHandler } from '../logout';
 import { getCookie, setCookie } from 'hono/cookie';
 import { jwtVerify, importJWK } from 'jose';
 import {
+  revokeGuestResumeForSession,
   timingSafeEqual,
   verifyClientSecretHash,
   validateIdTokenHint,
@@ -226,6 +229,36 @@ describe('Front-channel Logout', () => {
       );
     });
 
+    it('does not clear the browser session when its credential binding cannot be read', async () => {
+      const { c } = createMockContext({ query: {}, body: { confirmation_token: '0_session_123' } });
+      vi.mocked(getCookie).mockReturnValue('0_session_123');
+      mockShardedSessionStore.getSessionRpc.mockRejectedValue(new Error('storage_unavailable'));
+      try {
+        await frontChannelLogoutHandler(c);
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({ error: 'temporarily_unavailable' }),
+          503
+        );
+        expect(mockShardedSessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
+      } finally {
+        mockShardedSessionStore.getSessionRpc.mockReset().mockResolvedValue(null);
+      }
+    });
+
+    it('keeps the session retryable when guest credential revocation fails', async () => {
+      const { c } = createMockContext({ query: {}, body: { confirmation_token: '0_session_123' } });
+      vi.mocked(getCookie).mockReturnValue('0_session_123');
+      vi.mocked(revokeGuestResumeForSession).mockRejectedValueOnce(
+        new Error('guest_resume_revocation_failed')
+      );
+      await frontChannelLogoutHandler(c);
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'temporarily_unavailable' }),
+        503
+      );
+      expect(mockShardedSessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
+    });
+
     it('should invalidate session in SessionStore (sharded format)', async () => {
       const { c } = createMockContext({
         query: {},
@@ -243,6 +276,9 @@ describe('Front-channel Logout', () => {
 
       // Should call sharded session store's invalidateSessionRpc
       expect(mockShardedSessionStore.invalidateSessionRpc).toHaveBeenCalledWith('0_session_123');
+      expect(vi.mocked(revokeGuestResumeForSession).mock.invocationCallOrder[0]).toBeLessThan(
+        mockShardedSessionStore.invalidateSessionRpc.mock.invocationCallOrder[0]
+      );
     });
 
     securityRegressionIt(

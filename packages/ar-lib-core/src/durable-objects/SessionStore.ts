@@ -192,9 +192,10 @@ export class SessionStore extends DurableObject<Env> {
    */
   async updateSessionDataRpc(
     sessionId: string,
-    dataUpdates: Partial<SessionData>
+    dataUpdates: Partial<SessionData>,
+    options?: { onlyIfAnonymous?: boolean }
   ): Promise<Session | null> {
-    return this.updateSessionData(sessionId, dataUpdates);
+    return this.updateSessionData(sessionId, dataUpdates, options);
   }
 
   /**
@@ -646,24 +647,28 @@ export class SessionStore extends DurableObject<Env> {
    */
   async updateSessionData(
     sessionId: string,
-    dataUpdates: Partial<SessionData>
+    dataUpdates: Partial<SessionData>,
+    options?: { onlyIfAnonymous?: boolean }
   ): Promise<Session | null> {
-    const current = await this.getSession(sessionId);
-    if (!current) {
-      return null;
-    }
-
-    const session = {
-      ...current,
-      data: {
-        ...current.data,
-        ...dataUpdates,
-      },
-    };
-    await this.actorCtx.storage.put(this.buildSessionKey(sessionId), session);
-    this.sessionCache.set(sessionId, session);
-
-    return session;
+    if (!(await this.getSession(sessionId))) return null;
+    // Validation can await another actor. Re-read authoritative data in a storage-only
+    // critical section so stale updates cannot replace a newer login or revive a session.
+    return this.actorCtx.blockConcurrencyWhile(async () => {
+      const key = this.buildSessionKey(sessionId);
+      const current = await this.actorCtx.storage.get<Session>(key);
+      if (!current || current.expiresAt <= Date.now()) {
+        this.sessionCache.delete(sessionId);
+        return null;
+      }
+      if (options?.onlyIfAnonymous && current.data?.is_anonymous !== true) {
+        this.sessionCache.set(sessionId, current);
+        return current;
+      }
+      const updated = { ...current, data: { ...current.data, ...dataUpdates } };
+      await this.actorCtx.storage.put(key, updated);
+      this.sessionCache.set(sessionId, updated);
+      return updated;
+    });
   }
 
   /**

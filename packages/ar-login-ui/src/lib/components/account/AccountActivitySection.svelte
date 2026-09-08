@@ -18,6 +18,10 @@
 	function formatAction(action: string): string {
 		const ja = getLocale() === 'ja';
 		switch (action) {
+			case 'account.guest.upgrade_started':
+				return ja ? 'ゲストアカウント登録開始' : 'Guest registration started';
+			case 'account.guest.upgraded':
+				return ja ? 'ゲストアカウント登録完了' : 'Guest account registered';
 			case 'account.profile.name_updated':
 				return $LL.account_operationNameUpdated();
 			case 'account.email.added':

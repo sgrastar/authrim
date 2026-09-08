@@ -174,7 +174,7 @@ describe('Phase 0b D1 capacity harness', () => {
         { CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32) },
         client
       );
-      expect(result.evidence.manifestProductVersion).toBe('0.4.1');
+      expect(result.evidence.manifestProductVersion).toBe('0.4.2');
       expect(result.evidence.manifestDigest).toMatch(/^[a-f0-9]{64}$/u);
       expect(result.evidence.measurements.map((entry) => entry.accountCount)).toEqual([
         10_000, 100_000, 200_000,

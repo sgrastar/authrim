@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim UserInfo API
-  version: 0.4.1
+  version: 0.4.2
   summary: OIDC UserInfo and protected customer profile APIs.
   description: Initial OpenAPI contract for `@authrim/ar-userinfo`.
 servers:
@@ -24,8 +24,8 @@ paths:
       security: []
       summary: Return UserInfo Worker health.
       responses:
-        "200":
-          $ref: "#/components/responses/UserInfoHealth"
+        '200':
+          $ref: '#/components/responses/UserInfoHealth'
   /health/live:
     get:
       tags:
@@ -33,8 +33,8 @@ paths:
       security: []
       summary: Return liveness probe status.
       responses:
-        "200":
-          $ref: "#/components/responses/ProbeHealth"
+        '200':
+          $ref: '#/components/responses/ProbeHealth'
   /health/ready:
     get:
       tags:
@@ -42,18 +42,18 @@ paths:
       security: []
       summary: Return readiness probe status.
       responses:
-        "200":
-          $ref: "#/components/responses/ProbeHealth"
+        '200':
+          $ref: '#/components/responses/ProbeHealth'
   /userinfo:
     get:
       tags:
         - UserInfo
       summary: Return OIDC claims for the bearer access token.
       responses:
-        "200":
-          $ref: "#/components/responses/UserInfo"
-        "401":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/UserInfo'
+        '401':
+          $ref: '#/components/responses/Error'
       security:
         - bearerAuth: []
     post:
@@ -61,10 +61,10 @@ paths:
         - UserInfo
       summary: Return OIDC claims for the bearer access token.
       responses:
-        "200":
-          $ref: "#/components/responses/UserInfo"
-        "401":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/UserInfo'
+        '401':
+          $ref: '#/components/responses/Error'
       security:
         - bearerAuth: []
   /api/protected/fapi-resource:
@@ -81,16 +81,16 @@ paths:
             type: string
           description: Correlation identifier echoed in the response when supplied.
       responses:
-        "200":
+        '200':
           description: Valid machine-client token.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/FapiClientCredentialsResource"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+                $ref: '#/components/schemas/FapiClientCredentialsResource'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       security:
         - dpopAuth: []
   /api/protected/customer-profiles/{userId}:
@@ -105,10 +105,10 @@ paths:
           schema:
             type: string
       responses:
-        "200":
-          $ref: "#/components/responses/CustomerProfileRead"
-        "401":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/CustomerProfileRead'
+        '401':
+          $ref: '#/components/responses/Error'
       security:
         - bearerAuth: []
   /api/protected/customer-profiles/users/{userId}:
@@ -121,14 +121,14 @@ paths:
         Idempotency-Key header and an Authrim step-up receipt for the operation hash before the
         profile is mutated.
       responses:
-        "200":
-          $ref: "#/components/responses/CustomerProfileWrite"
-        "400":
-          $ref: "#/components/responses/Error"
-        "401":
-          $ref: "#/components/responses/Error"
-        "403":
-          $ref: "#/components/responses/Error"
+        '200':
+          $ref: '#/components/responses/CustomerProfileWrite'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
       parameters:
         - name: userId
           in: path
@@ -147,7 +147,8 @@ paths:
           required: false
           schema:
             type: string
-          description: Step-up receipt bound to the profile update operation. When omitted, the API returns
+          description:
+            Step-up receipt bound to the profile update operation. When omitted, the API returns
             step_up_required.
         - name: include
           in: query
@@ -157,7 +158,7 @@ paths:
             example: actor,subject,audit
           description: Optional comma-separated response expansions.
       requestBody:
-        $ref: "#/components/requestBodies/CustomerProfileUpdate"
+        $ref: '#/components/requestBodies/CustomerProfileUpdate'
       security:
         - bearerAuth: []
 components:
@@ -189,7 +190,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/UserInfoHealth"
+            $ref: '#/components/schemas/UserInfoHealth'
           example:
             status: ok
             service: op-userinfo
@@ -199,7 +200,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/ProbeHealth"
+            $ref: '#/components/schemas/ProbeHealth'
           example:
             status: ok
             service: op-userinfo
@@ -210,7 +211,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/UserInfoClaims"
+            $ref: '#/components/schemas/UserInfoClaims'
           example:
             sub: user_123
             name: Example User
@@ -222,7 +223,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/CustomerProfileReadResponse"
+            $ref: '#/components/schemas/CustomerProfileReadResponse'
           example:
             profile:
               sub: user_123
@@ -241,7 +242,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/CustomerProfileWriteResponse"
+            $ref: '#/components/schemas/CustomerProfileWriteResponse'
           example:
             customer_profile:
               sub: user_123
@@ -264,7 +265,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/DelegatedWriteEnvelope"
+            $ref: '#/components/schemas/DelegatedWriteEnvelope'
           example:
             input:
               name: Example User
@@ -281,7 +282,7 @@ components:
       properties:
         sub:
           type: string
-          pattern: "^client:"
+          pattern: '^client:'
         client_id:
           type: string
         scope:
@@ -320,12 +321,41 @@ components:
         checks:
           type: object
           additionalProperties: true
+    AccountLifecycle:
+      type: object
+      description: >-
+        Human account lifecycle, returned only with the granted account:lifecycle:read scope.
+        This scope grants no mutation permission. This object is not added to ID tokens.
+        Device and agent identities do not receive this human lifecycle object. When a guest lifecycle row exists, its committed phase determines account_kind even if the user projection is temporarily ahead of or behind that phase.
+        Passing deletion_due_at does not by itself revoke access; deletion runs asynchronously.
+      additionalProperties: false
+      required: [account_kind, created_at, deletion_due_at, upgrade_eligible, profile_complete]
+      properties:
+        account_kind:
+          type: string
+          enum: [guest, registered]
+        created_at:
+          type: integer
+          minimum: 0
+          description: Account creation time in Unix seconds.
+        deletion_due_at:
+          type: [integer, 'null']
+          minimum: 0
+          description: Stored deletion eligibility time in Unix seconds, or null if unscheduled or promoted.
+        upgrade_eligible:
+          type: boolean
+          description: Whether current lifecycle state, tenant, method, and originating client permissions allow an upgrade. An upgrade cannot be initiated by another client. Email upgrades additionally require configured OTP proof protection and available notification delivery. Readiness lookup failures return a service error rather than optimistic eligibility.
+        profile_complete:
+          type: boolean
+          description: Whether all required custom profile fields are present.
     UserInfoClaims:
       type: object
       required:
         - sub
       additionalProperties: true
       properties:
+        authrim_account_lifecycle:
+          $ref: '#/components/schemas/AccountLifecycle'
         sub:
           type: string
         name:
@@ -365,32 +395,32 @@ components:
         name:
           type:
             - string
-            - "null"
+            - 'null'
         given_name:
           type:
             - string
-            - "null"
+            - 'null'
         family_name:
           type:
             - string
-            - "null"
+            - 'null'
         email:
           type:
             - string
-            - "null"
+            - 'null'
           format: email
         email_verified:
           type: boolean
         phone_number:
           type:
             - string
-            - "null"
+            - 'null'
         phone_number_verified:
           type: boolean
         address:
           type:
             - object
-            - "null"
+            - 'null'
           additionalProperties: true
         updated_at:
           type: integer
@@ -404,7 +434,7 @@ components:
         - fail_closed
       properties:
         profile:
-          $ref: "#/components/schemas/CustomerProfile"
+          $ref: '#/components/schemas/CustomerProfile'
         correlation_id:
           type: string
         redaction_level:
@@ -434,7 +464,7 @@ components:
         - customer_profile
       properties:
         customer_profile:
-          $ref: "#/components/schemas/CustomerProfile"
+          $ref: '#/components/schemas/CustomerProfile'
         actor:
           type: object
           properties:

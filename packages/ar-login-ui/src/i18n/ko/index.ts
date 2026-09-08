@@ -2,6 +2,31 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const ko = createTranslation({
+	account_guestLogoutWarning:
+		'로그아웃하면 자동 삭제가 비활성화되어 있어도 이 게스트 계정으로 돌아올 수 없습니다. 계정과 데이터에 계속 접근하려면 먼저 등록하세요. 그래도 로그아웃하시겠습니까?',
+	account_guestTitle: 'Register your account',
+	account_guestDescription: 'Keep the same account and data when you register.',
+	account_guestDue: 'Eligible for automatic deletion from {date}.',
+	account_guestNoExpiry: 'No automatic deletion is scheduled.',
+	account_guestEmail: 'Email address',
+	account_guestSend: 'Register with email',
+	account_guestPasskey: 'Register with a passkey',
+	account_guestCode: 'Confirmation code',
+	account_guestConfirm: 'Confirm registration',
+	account_guestPending: 'Registration is in progress. You can retry to check completion.',
+	account_guestRetry: 'Retry',
+	account_guestError:
+		'Registration could not be completed. Check the confirmation code or try again.',
+	account_guestCollision:
+		'This identity already has an account. Sign in to that account separately. Your guest account will not be merged.',
+	account_guestExistingLogin: 'Sign in to an existing account',
+	account_guestRegistered: 'Your account has been registered.',
+	account_guestChangeMethod: 'Choose another method',
+	login_guestContinue: '게스트로 계속하기',
+	login_guestRetention:
+		'게스트 계정은 생성 후 {days}일이 지나면 자동 삭제 대상이 됩니다. 계속 사용하려면 계정을 등록하세요.',
+	login_guestNoExpiry: '새 게스트 계정의 자동 삭제가 설정되지 않았습니다.',
+
 	...completion,
 	app_subtitle: '어디서나 가능한 아이덴티티 및 액세스',
 	dialog_cancel: '취소',

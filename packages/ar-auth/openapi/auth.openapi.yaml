@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Authentication API
-  version: 0.4.1
+  version: 0.4.2
   summary: Browser and API authentication endpoints.
   description: >
     Initial OpenAPI contract for endpoints owned by `@authrim/ar-auth`. This document intentionally
@@ -698,6 +698,63 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/DIDUnlink'
+  /api/auth/guest/login:
+    post:
+      tags:
+        - Anonymous Login
+      summary: Create or resume a human guest browser session.
+      description: >-
+        Requires an unexpired, unconsumed login authorization challenge for this tenant,
+        tenant guest login permission, explicit client guest permission, and requested scopes
+        within the client's anonymous allow-list. Reauthentication challenges are rejected.
+        Subject creation and resumption use a private HttpOnly Secure SameSite=Lax cookie,
+        authrim_guest_resume; a device identifier alone is never accepted as proof.
+        Resume credentials expire 180 days after creation without deleting the account.
+        A live registered browser session must be logged out first (409).
+        Success sets authrim_session and returns no tokens or redirect URL; continue the original
+        authorization transaction through the standard login continuation.
+        Requests are subject to browser CSRF protection, configured login human verification,
+        and strict rate limiting. Human verification is bound to this login transaction and
+        private resume credential for up to five minutes to permit asynchronous provisioning retries.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [authorizationChallengeId]
+              properties:
+                authorizationChallengeId:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                human_verification_response:
+                  type: string
+                  description: Token from the configured login human-verification provider.
+      responses:
+        '200':
+          description: Guest browser session established.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success]
+                properties:
+                  success:
+                    type: boolean
+                    const: true
+        '202':
+          $ref: '#/components/responses/AnonymousLoginPending'
+        '400':
+          description: Invalid challenge, disabled guest login, or disallowed guest scopes.
+        '401':
+          description: Resume credential expired or revoked, or account no longer eligible.
+        '409':
+          description: A registered browser session already exists; log out before creating a guest.
+        '429':
+          description: Too many login attempts.
+        '500':
+          description: Guest account storage or settings are temporarily unavailable.
   /api/auth/anon-login/challenge:
     post:
       tags:
@@ -1288,6 +1345,9 @@ paths:
         code; missing, unsupported, or invalid presentations use the normal mail-OTP response. The
         accepted response intentionally does not disclose whether the account exists or whether the
         delivery provider accepted the message.
+        Credential authentication requires a completed guest upgrade. Uncommitted or deleting
+        guest accounts cannot receive a regular authentication artifact or session. Unavailable
+        lifecycle state returns temporarily_unavailable (503).
       responses:
         '200':
           $ref: '#/components/responses/DirectEmailCodeSend'
@@ -1298,6 +1358,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DirectEmailCodeSend'
@@ -1334,6 +1396,9 @@ paths:
       description:
         Verifies the email code and returns a short-lived Direct Auth artifact bound to client,
         channel, provider, and PKCE metadata.
+        Credential authentication requires a completed guest upgrade. Uncommitted or deleting
+        guest accounts cannot receive a regular authentication artifact or session. Unavailable
+        lifecycle state returns temporarily_unavailable (503).
       responses:
         '200':
           $ref: '#/components/responses/DirectAuthArtifact'
@@ -1342,6 +1407,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DirectEmailCodeVerify'
@@ -1353,7 +1420,8 @@ paths:
       summary: End a Direct Auth managed browser session.
       description:
         Invalidates the current Direct Auth session when present, optionally revokes associated
-        device secrets according to logout_scope, and clears Direct Auth cookies.
+        device secrets according to logout_scope, and clears Direct Auth cookies. Guest resume credentials are revoked before session invalidation.
+        If session retrieval or revocation fails, returns 503 and preserves cookies for retry.
       responses:
         '200':
           $ref: '#/components/responses/DirectLogout'
@@ -1363,6 +1431,15 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+        '503':
+          description: Logout could not complete. Retry with the same cookies.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: { type: string, const: logout_unavailable }
       requestBody:
         $ref: '#/components/requestBodies/DirectLogout'
   /api/v1/auth/direct/passkey/login/finish:
@@ -1374,6 +1451,9 @@ paths:
       description:
         Verifies the passkey authentication response and returns a short-lived Direct Auth
         artifact for session redemption or token exchange.
+        Credential authentication requires a completed guest upgrade. Uncommitted or deleting
+        guest accounts cannot receive a regular authentication artifact or session. Unavailable
+        lifecycle state returns temporarily_unavailable (503).
       responses:
         '200':
           $ref: '#/components/responses/DirectAuthArtifact'
@@ -1382,6 +1462,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DirectPasskeyLoginFinish'
@@ -1514,6 +1596,9 @@ paths:
         Consumes a short-lived Direct Auth artifact, verifies its client/channel/provider/PKCE
         bindings, creates an HttpOnly managed browser session, and returns session and user
         metadata.
+        Credential authentication requires a completed guest upgrade. Uncommitted or deleting
+        guest accounts cannot receive a regular authentication artifact or session. Unavailable
+        lifecycle state returns temporarily_unavailable (503).
       responses:
         '200':
           $ref: '#/components/responses/DirectSessionCreate'
@@ -1522,6 +1607,8 @@ paths:
         '401':
           $ref: '#/components/responses/Error'
         '403':
+          $ref: '#/components/responses/Error'
+        '503':
           $ref: '#/components/responses/Error'
       requestBody:
         $ref: '#/components/requestBodies/DirectSessionCreate'
@@ -4693,6 +4780,8 @@ components:
           example: email
         preserve_sub:
           type: boolean
+          enum: [true]
+          description: Guest upgrades always retain the same subject. False is rejected with HTTP 400.
           example: true
       required:
         - upgrade_token
@@ -4706,11 +4795,9 @@ components:
         user_id:
           type: string
           example: user_123
-        previous_user_id:
-          type: string
-          example: anon_123
         preserve_sub:
           type: boolean
+          enum: [true]
           example: true
         method:
           type: string

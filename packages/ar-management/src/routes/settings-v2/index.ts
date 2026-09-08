@@ -85,6 +85,7 @@ import { markGlobalProviderDesiredRevision } from '../../provider-reprojection-j
 const log = createLogger().module('SETTINGS_AUDIT');
 const AUTHENTICATION_METHODS_TENANT_CACHE_CATEGORIES = new Set<CategoryName>([
   'authentication-methods',
+  'account-lifecycle',
   'login-ui',
   'self-service',
 ]);
@@ -235,7 +236,7 @@ function checkRolePermission(
   return perms.viewRoles.some((role) => userRoles.includes(role));
 }
 
-function hasTenantSettingsPermission(
+export function hasTenantSettingsPermission(
   adminAuth: AdminAuthContext | undefined,
   category: CategoryName,
   action: 'view' | 'edit'
@@ -334,7 +335,10 @@ async function getClientTenantId(
  * super_admin, system_admin and distributor_admin can access any tenant
  * org_admin can only access their own tenant
  */
-function canAccessTenant(adminAuth: AdminAuthContext | undefined, tenantId: string): boolean {
+export function canAccessTenant(
+  adminAuth: AdminAuthContext | undefined,
+  tenantId: string
+): boolean {
   if (!adminAuth) return false;
 
   if (adminAuth.actorType === 'agent') {

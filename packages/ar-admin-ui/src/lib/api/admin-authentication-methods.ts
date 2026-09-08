@@ -77,6 +77,9 @@ export interface AuthenticationMethodExternalProviderUsage {
 }
 
 export interface AuthenticationMethodBuiltInSettings {
+	guestLoginEnabled: boolean;
+	passkeyGuestUpgradeEnabled: boolean;
+	emailOtpGuestUpgradeEnabled: boolean;
 	passkeyLoginEnabled: boolean;
 	passkeySignupEnabled: boolean;
 	passkeyReauthEnabled: boolean;
@@ -361,6 +364,18 @@ export const adminAuthenticationMethodsAPI = {
 		return {
 			settings,
 			builtIn: {
+				guestLoginEnabled: parseBoolean(
+					settings.values['authentication-methods.guest.login_enabled'],
+					false
+				),
+				passkeyGuestUpgradeEnabled: parseBoolean(
+					settings.values['authentication-methods.passkey.guest_upgrade_enabled'],
+					true
+				),
+				emailOtpGuestUpgradeEnabled: parseBoolean(
+					settings.values['authentication-methods.email_otp.guest_upgrade_enabled'],
+					true
+				),
 				passkeyLoginEnabled: parseBoolean(
 					settings.values[PASSKEY_LOGIN_ENABLED_KEY],
 					legacyPasskeyEnabled
@@ -446,6 +461,11 @@ export const adminAuthenticationMethodsAPI = {
 				{
 					ifMatch: settings.version,
 					set: {
+						'authentication-methods.guest.login_enabled': builtIn.guestLoginEnabled,
+						'authentication-methods.passkey.guest_upgrade_enabled':
+							builtIn.passkeyGuestUpgradeEnabled,
+						'authentication-methods.email_otp.guest_upgrade_enabled':
+							builtIn.emailOtpGuestUpgradeEnabled,
 						[PASSKEY_LOGIN_ENABLED_KEY]: builtIn.passkeyLoginEnabled,
 						[PASSKEY_SIGNUP_ENABLED_KEY]: builtIn.passkeySignupEnabled,
 						[PASSKEY_REAUTH_ENABLED_KEY]: builtIn.passkeyReauthEnabled,

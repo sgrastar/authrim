@@ -73,6 +73,12 @@ import {
   isLookupScaleOutObservationDue,
   processNextLookupBucketMigration,
 } from './lookup-bucket-migration-scheduled';
+import {
+  previewGuestRetentionHandler,
+  applyGuestRetentionHandler,
+  listGuestLifecycleHandler,
+} from './admin-guest-retention';
+import { processGuestLifecycleMaintenance } from './guest-lifecycle-scheduled';
 import { processScheduledIdentifierReplacements } from './identifier-replacement-scheduled';
 import {
   getR2MaintenanceDashboard,
@@ -961,6 +967,11 @@ import {
   regenerateAccountTotpBackupCodesHandler,
   updateAccountTotpCredentialHandler,
 } from './account-totp';
+import {
+  getAccountGuestUpgradeHandler,
+  startAccountGuestUpgradeHandler,
+  completeAccountGuestUpgradeHandler,
+} from './account-guest-upgrade';
 import { createAccountReturnHandler, consumeAccountReturnHandler } from './account-return';
 import {
   completeAccountIdentifierReplacementHandler,
@@ -1502,6 +1513,17 @@ app.use('/api/account/*', async (c, next) => {
     endpoints: ['/api/account/*'],
   })(c, next);
 });
+app.get('/api/account/guest-upgrade', getAccountGuestUpgradeHandler);
+app.post(
+  '/api/account/guest-upgrade/start',
+  rateLimitMiddleware(RateLimitProfiles.strict),
+  startAccountGuestUpgradeHandler
+);
+app.post(
+  '/api/account/guest-upgrade/complete',
+  rateLimitMiddleware(RateLimitProfiles.strict),
+  completeAccountGuestUpgradeHandler
+);
 app.get('/api/account/profile', getAccountProfileHandler);
 app.patch('/api/account/profile', updateAccountProfileHandler);
 app.post('/api/account/return', createAccountReturnHandler);
@@ -1722,6 +1744,9 @@ app.get('/api/admin/audit-logs/:id', adminAuditLogGetHandler);
 app.get('/api/admin/email-deliveries', adminEmailDeliveriesListHandler);
 
 // Admin Settings endpoints (legacy - will be deprecated)
+app.get('/api/admin/account-lifecycle/guests', listGuestLifecycleHandler);
+app.post('/api/admin/account-lifecycle/guest-retention/preview', previewGuestRetentionHandler);
+app.post('/api/admin/account-lifecycle/guest-retention/apply', applyGuestRetentionHandler);
 app.get('/api/admin/settings', adminSettingsGetHandler);
 app.put('/api/admin/settings', adminSettingsUpdateHandler);
 
@@ -4238,6 +4263,8 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     const maintenanceTargets = maintenancePage.targets;
     const maintenanceTenantIds = maintenanceTargets.map((target) => target.tenantId);
 
+    await processGuestLifecycleMaintenance(env, maintenanceTargets, log.module('GUEST-LIFECYCLE'));
+
     // Session expiration is owned by SessionStore alarms and its authoritative DO state.
 
     // 1. Cleanup expired/used password reset tokens
@@ -4524,3 +4551,5 @@ export {
   resolveInitialAccountDirectoryWriteTargets,
 } from './account-directory-producer';
 export { CrossShardAccountListService } from './cross-shard-account-list';
+
+export { GuestUpgradeReadinessEntrypoint } from './guest-upgrade-readiness-entrypoint';

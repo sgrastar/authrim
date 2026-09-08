@@ -481,9 +481,8 @@ export interface AnonymousAuthConfig {
   allowedScopes: string[];
 
   /**
-   * Whether to preserve the user ID (sub) when upgrading to registered user.
-   * - true (default): Same ID is used, app data associations remain intact
-   * - false: New ID is generated, original ID stored in upgraded_from
+   * Legacy compatibility setting. Guest upgrades always preserve the user ID (sub).
+   * A previously stored false value is ignored; new configurations should use true.
    */
   preserveSubOnUpgrade: boolean;
 

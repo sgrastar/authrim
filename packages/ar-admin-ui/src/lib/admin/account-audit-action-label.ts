@@ -1,4 +1,9 @@
 const ACCOUNT_AUDIT_ACTION_LABELS = {
+	'account.guest.upgrade_started': {
+		en: 'Guest registration started',
+		ja: 'ゲストアカウント登録開始'
+	},
+	'account.guest.upgraded': { en: 'Guest account registered', ja: 'ゲストアカウント登録完了' },
 	'account.profile.name_updated': {
 		en: 'Account Page: Name changed',
 		ja: 'アカウントページ: 名前変更'

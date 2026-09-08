@@ -1,14 +1,14 @@
 /**
  * Anonymous User Upgrade API
  *
- * Upgrades anonymous users to full accounts while optionally preserving their sub.
+ * Upgrades anonymous users to full accounts while preserving their sub.
  * Supports multiple upgrade methods: email, passkey, social.
  *
  * Security Features:
  * - Requires authenticated anonymous session
  * - Validates upgrade method is allowed for client
  * - Records upgrade history for audit
- * - Supports sub preservation or new sub assignment
+ * - Preserves the existing subject; rejects subject replacement requests
  *
  * Flow:
  * 1. Anonymous user starts upgrade process
@@ -100,7 +100,8 @@ async function getAnonymousSession(
     }
 
     // Verify session is anonymous
-    if (!session.data?.is_anonymous) {
+    // Browser guests use the durable, session-bound account-page upgrade protocol.
+    if (!session.data?.is_anonymous || session.data?.guest_resume_credential === true) {
       return null;
     }
 
@@ -259,6 +260,11 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
 
     const { method, name, provider_id, upgrade_token } = body;
 
+    // Guest upgrades retain the same subject. Reject before consuming proof or writing state.
+    if (body.preserve_sub !== undefined && body.preserve_sub !== true) {
+      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    }
+
     if (!method || !['email', 'passkey', 'social', 'phone'].includes(method)) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
@@ -351,9 +357,8 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       email = body.email;
     }
 
-    // Determine if we should preserve sub (client default or explicit request)
-    const preserveSub =
-      body.preserve_sub ?? clientContract?.anonymousAuth?.preserveSubOnUpgrade ?? true;
+    // Legacy client configuration cannot change the identity of an upgrading guest.
+    const preserveSub = true;
 
     const authCtx = createAuthContextFromHono(c, tenantId);
     const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
@@ -372,51 +377,19 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       throw new Error('anonymous_upgrade_device_limit_exceeded');
     }
 
-    let finalUserId: string;
-    let previousUserId: string | undefined;
-
-    if (preserveSub) {
-      // Keep the same user ID (sub)
-      finalUserId = anonymousUserId;
-
-      await runtimeUsers.syncUser({
-        userId: anonymousUserId,
-        email: email?.toLowerCase() ?? null,
-        name: name || null,
-        active: true,
-        emailVerified: method === 'email',
-        userType: 'end_user',
-        sourceRef: 'anonymous_upgrade',
-        customAttributesJson: email
-          ? JSON.stringify({ preferred_username: email.split('@')[0] })
-          : null,
-      });
-    } else {
-      // Create new user with new sub
-      finalUserId = generateId();
-      previousUserId = anonymousUserId;
-
-      await runtimeUsers.syncUser({
-        userId: finalUserId,
-        email: email?.toLowerCase() ?? null,
-        name: name || null,
-        active: true,
-        emailVerified: method === 'email',
-        userType: 'end_user',
-        sourceRef: 'anonymous_upgrade',
-        customAttributesJson: email
-          ? JSON.stringify({ preferred_username: email.split('@')[0] })
-          : null,
-      });
-
-      // Deactivate old anonymous user
-      await runtimeUsers.syncUser({
-        userId: anonymousUserId,
-        active: false,
-        userType: 'anonymous',
-        sourceRef: 'anonymous_upgrade',
-      });
-    }
+    const finalUserId = anonymousUserId;
+    await runtimeUsers.syncUser({
+      userId: anonymousUserId,
+      email: email?.toLowerCase() ?? null,
+      name: name || null,
+      active: true,
+      emailVerified: method === 'email',
+      userType: 'end_user',
+      sourceRef: 'anonymous_upgrade',
+      customAttributesJson: email
+        ? JSON.stringify({ preferred_username: email.split('@')[0] })
+        : null,
+    });
 
     // Record upgrade history
     const upgradeId = generateId();
@@ -511,11 +484,6 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       });
     }
 
-    // If user ID changed, we need to update the session's user ID
-    if (!preserveSub) {
-      await sessionStore.updateSessionUserIdRpc(sessionId, finalUserId);
-    }
-
     // Publish upgrade event
     publishEvent(c, {
       type: 'user.upgraded',
@@ -524,7 +492,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
         userId: finalUserId,
         method: 'upgrade',
         clientId,
-        previousUserId: preserveSub ? undefined : previousUserId,
+
         upgradeMethod: method,
         preserveSub,
       } satisfies AuthEventData & {
@@ -539,7 +507,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
     return c.json({
       success: true,
       user_id: finalUserId,
-      previous_user_id: preserveSub ? undefined : previousUserId,
+
       preserve_sub: preserveSub,
       method,
       upgraded_at: now,

@@ -195,6 +195,7 @@ export type AccountPageScreenField = {
 		| 'link'
 		| 'divider'
 		| 'layout_row'
+		| 'account_upgrade_widget'
 		| 'account_profile_widget'
 		| 'account_device_list_widget'
 		| 'account_session_widget'
@@ -323,7 +324,46 @@ async function accountFetch<T>(endpoint: string, options: RequestInit = {}): Acc
 	}
 }
 
+export type GuestUpgradeStatus = {
+	account_kind: 'guest' | 'registered';
+	deletion_due_at: number | null;
+	upgrade_hold_until: number | null;
+	upgrade_eligible: boolean;
+	allowed_methods: ('email' | 'passkey')[];
+	upgrade_in_progress: boolean;
+	profile_complete: boolean;
+};
+export type GuestUpgradeAttempt = {
+	operation_id: string;
+	upgrade_token: string;
+	method: 'email' | 'passkey';
+	expires_at: number;
+	options?: PublicKeyCredentialCreationOptionsJSON;
+};
+
 export const accountAPI = {
+	getGuestUpgrade: () => accountFetch<GuestUpgradeStatus>('/api/account/guest-upgrade'),
+	startGuestUpgrade: (method: 'email' | 'passkey', email?: string) =>
+		accountFetch<GuestUpgradeAttempt>('/api/account/guest-upgrade/start', {
+			method: 'POST',
+			body: JSON.stringify({ method, ...(email && { email }) })
+		}),
+	completeGuestUpgrade: (
+		attempt: GuestUpgradeAttempt,
+		proof: { code?: string; passkey_response?: RegistrationResponseJSON }
+	) =>
+		accountFetch<{ success?: boolean; status?: 'in_progress' }>(
+			'/api/account/guest-upgrade/complete',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					operation_id: attempt.operation_id,
+					upgrade_token: attempt.upgrade_token,
+					...proof
+				})
+			}
+		),
+
 	createAccountReturn: (path: string) =>
 		accountFetch<{ account_return: string; expires_in: number }>('/api/account/return', {
 			method: 'POST',

@@ -9,6 +9,7 @@
 	import { normalizeLoginUILocale } from '$lib/i18n/locales';
 	import {
 		passkeyAPI,
+		guestAPI,
 		emailCodeAPI,
 		totpAPI,
 		directoryPasswordAPI,
@@ -90,6 +91,8 @@
 	);
 
 	interface AuthenticationMethodsViewState {
+		guestEnabled: boolean;
+		guestDeletionAfterDays: number | null;
 		passkeyEnabled: boolean;
 		emailCodeEnabled: boolean;
 		emailCodeDigits: number;
@@ -131,6 +134,8 @@
 		);
 
 		return {
+			guestEnabled: data.methods.guest?.enabled === true,
+			guestDeletionAfterDays: data.methods.guest?.deletionAfterDays ?? null,
 			passkeyEnabled: data.methods.passkey.loginEnabled ?? data.methods.passkey.enabled,
 			emailCodeEnabled: data.methods.emailCode.loginEnabled ?? data.methods.emailCode.enabled,
 			emailCodeDigits: normalizeSixOrEightDigits(data.methods.emailCode.digits),
@@ -199,6 +204,7 @@
 	} | null>(null);
 	let directoryMigrationEmailChallengeId = $state('');
 	let directoryMigrationEmailCode = $state('');
+	let guestLoading = $state(false);
 	let passkeyLoading = $state(false);
 	let passkeyProgress = $state<PasskeyProgressPhase>('idle');
 	let emailCodeLoading = $state(false);
@@ -224,7 +230,8 @@
 	const MAIL_OTP_RESEND_SECONDS = 60;
 	let mailOtpResendTimer: number | null = null;
 	const authActionLoading = $derived(
-		passkeyLoading ||
+		guestLoading ||
+			passkeyLoading ||
 			emailCodeLoading ||
 			totpLoading ||
 			directoryPasswordLoading ||
@@ -1089,6 +1096,10 @@
 	}
 
 	function resumeTurnstileTarget(target: string) {
+		if (target === 'guest') {
+			void handleGuestLogin();
+			return;
+		}
 		if (target === 'passkey') {
 			void handlePasskeyLogin();
 			return;
@@ -1210,6 +1221,40 @@
 				return $LL.login_passkeyVerifying();
 			default:
 				return '';
+		}
+	}
+
+	async function handleGuestLogin() {
+		if (
+			authActionLoading ||
+			!authenticationMethodsState?.guestEnabled ||
+			!runtimeAllowsAuthenticationHandle('guest')
+		)
+			return;
+		error = '';
+		if (!ensureAuthorizationChallengeCanContinue()) return;
+		guestLoading = true;
+		try {
+			const proof = getTurnstileToken('guest');
+			if (turnstileRequired && !proof) return;
+			const result = await guestAPI.login(authorizationChallengeId, proof);
+			markHumanVerificationTokenSubmitted(proof);
+			if (result.error) throw loginUiDisplayError(getApiErrorMessage(result.error));
+			if (result.data?.success !== true) throw loginUiDisplayError($LL.error_server_error());
+			await auth.refreshFromSession();
+			if (
+				!(await continueAfterRuntimeStep(
+					'guest',
+					undefined,
+					getRuntimeStepSubmitInputForAuthenticatedAction()
+				))
+			)
+				return;
+			window.location.href = await buildCompletedAuthRedirect();
+		} catch (err) {
+			error = messageForCaughtError(err, $LL.error_unknown());
+		} finally {
+			guestLoading = false;
 		}
 	}
 
@@ -2305,6 +2350,14 @@
 								<div class="runtime-screen-step mb-4">
 									<RuntimeScreen
 										screen={runtimeScreen}
+										guestEnabled={authenticationMethodsState?.guestEnabled === true &&
+											runtimeAllowsAuthenticationHandle('guest')}
+										guestRetentionDescription={authenticationMethodsState?.guestDeletionAfterDays
+											? $LL.login_guestRetention({
+													days: authenticationMethodsState.guestDeletionAfterDays
+												})
+											: $LL.login_guestNoExpiry()}
+										onGuestLogin={handleGuestLogin}
 										headingOverride={localizedLoginTitle}
 										disabled={authActionDisabled}
 										authMethodMode="login"

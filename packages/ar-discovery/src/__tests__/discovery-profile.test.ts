@@ -47,6 +47,7 @@ describe('Discovery Profile Tests', () => {
       const metadata = (await response.json()) as OIDCProviderMetadata;
 
       expect(metadata.scopes_supported).toContain('openid');
+      expect(metadata.scopes_supported).toContain('account:lifecycle:read');
       expect(metadata.scopes_supported).toContain('profile');
       expect(metadata.scopes_supported).toContain('email');
       expect(metadata.scopes_supported).not.toContain('ai:read');

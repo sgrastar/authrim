@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Frontend Auth Discovery API
-  version: 0.4.1
+  version: 0.4.2
   summary: Login UI discovery and grant bootstrap endpoints.
   description: OpenAPI contract for frontend authentication discovery endpoints owned by the management Worker.
 servers:
@@ -76,7 +76,12 @@ paths:
       description:
         Returns the enabled login methods and Login UI configuration for the current tenant,
         including passkey, email code, TOTP, directory password, human verification, SAML, and external
-        provider options when configured.
+        provider options when configured. methods.guest contains enabled (boolean) and deletionAfterDays
+        (integer or null). Guest login is advertised only when the tenant and the requested client
+        both explicitly permit it; without client_id it is disabled. deletionAfterDays describes
+        retention for newly created guests, not the actual deletion date of an existing account.
+        If guest settings are unavailable, guest login is omitted from available choices while
+        other authentication methods retain their existing fallback behavior.
       parameters:
         - name: client_id
           in: query

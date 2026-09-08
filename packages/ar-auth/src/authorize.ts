@@ -50,6 +50,7 @@ import {
   getClientCached,
   loadTenantProfileCached,
   loadClientContractCached,
+  areGuestScopesAllowed,
   // Logging
   getLogger,
   createLogger,
@@ -3241,6 +3242,19 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     sessionUserId = undefined;
     authTime = undefined;
     isAnonymousSession = false;
+  }
+
+  if (sessionUserId && isAnonymousSession) {
+    const guestClient = await loadClientContractCached(
+      c,
+      c.env.AUTHRIM_CONFIG,
+      c.env,
+      tenantId,
+      validClientId
+    );
+    if (!areGuestScopesAllowed(guestClient?.anonymousAuth, scope ?? '')) {
+      return sendError('invalid_scope', 'The client does not permit the requested guest scopes');
+    }
   }
 
   // Handle prompt parameter (OIDC Core 3.1.2.1)

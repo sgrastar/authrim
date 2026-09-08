@@ -9,6 +9,7 @@ export type ScreenKind =
 export type ScreenBlockType =
   | 'identity_field'
   | 'auth_widget'
+  | 'guest_login_widget'
   | 'code_input_widget'
   | 'consent_widget'
   | 'heading'
@@ -17,6 +18,7 @@ export type ScreenBlockType =
   | 'divider'
   | 'layout_row'
   | 'link'
+  | 'account_upgrade_widget'
   | 'account_profile_widget'
   | 'account_device_list_widget'
   | 'account_session_widget'

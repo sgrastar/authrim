@@ -15,7 +15,10 @@
 		type ScreenLocalizationLanguage
 	} from '$lib/admin/screen-localizations';
 	import { shouldShowAuthWidgetEmailInput } from '$lib/admin/screen-auth-widget-layout';
-	import { createDefaultRegistrationScreenFields } from '$lib/admin/screen-default-drafts';
+	import {
+		createDefaultRegistrationScreenFields,
+		createGuestLoginWidget
+	} from '$lib/admin/screen-default-drafts';
 	import {
 		findMissingRequiredRegistrationFields,
 		normalizeRegistrationFieldKey,
@@ -175,6 +178,14 @@
 			icon: 'i-ph-line-segment'
 		},
 		{
+			type: 'account_upgrade_widget',
+			labelJa: 'アカウント昇格Widget',
+			labelEn: 'Guest registration widget',
+			descriptionJa: 'ゲストの登録と削除予定日時を表示します。',
+			descriptionEn: 'Guest registration and retention deadline.',
+			icon: 'i-ph-user-plus'
+		},
+		{
 			type: 'account_profile_widget',
 			labelJa: 'ユーザー情報Widget',
 			labelEn: 'User profile widget',
@@ -239,6 +250,14 @@
 			icon: 'i-ph-link'
 		},
 		{
+			type: 'guest_login_widget',
+			labelJa: 'ゲストログインWidget',
+			labelEn: 'Guest login widget',
+			descriptionJa: 'ゲストログインボタンと保持期間の説明を表示します。',
+			descriptionEn: 'Guest login action and retention explanation.',
+			icon: 'i-ph-user-circle'
+		},
+		{
 			type: 'account_launcher_widget',
 			labelJa: 'ランチャーWidget',
 			labelEn: 'Launcher widget',
@@ -248,6 +267,7 @@
 		}
 	];
 	const accountWidgetTypes = new Set<ScreenBlockType>([
+		'account_upgrade_widget',
 		'account_profile_widget',
 		'account_device_list_widget',
 		'account_session_widget',
@@ -884,6 +904,7 @@
 				...patch
 			};
 		}
+		if (type === 'guest_login_widget') return createGuestLoginWidget(blockId, order, t, patch);
 		if (type === 'auth_widget') {
 			const method = normalizeAuthMethod(patch.auth_method);
 			return {
@@ -1049,6 +1070,8 @@
 
 	function blockTitle(block: ScreenField): string {
 		const type = getBlockType(block);
+		if (type === 'guest_login_widget')
+			return block.label || t('ゲストとして続ける', 'Continue as a guest');
 		if (type === 'identity_field') return block.label || block.field;
 		if (type === 'auth_widget')
 			return block.label || authWidgetDefaultLabel(selectedAuthWidgetMethod(block));
@@ -1070,6 +1093,7 @@
 		const withCondition = (value: string) => [value, condition].filter(Boolean).join(' / ');
 		if (type === 'identity_field')
 			return withCondition(`${block.field} / ${normalizeValueType(block.value_type)}`);
+		if (type === 'guest_login_widget') return t('ゲストログイン', 'Guest login');
 		if (type === 'auth_widget') return authMethodLabel(selectedAuthWidgetMethod(block));
 		if (type === 'code_input_widget') {
 			const mode = selectedCodeInputMode(block);
@@ -1749,6 +1773,13 @@
 																{#if field.help_text}
 																	<small>{field.help_text}</small>
 																{/if}
+															</div>
+														{:else if blockType === 'guest_login_widget'}
+															<div class="preview-auth-widget">
+																<button type="button" disabled
+																	>{field.label ||
+																		t('ゲストとして続ける', 'Continue as a guest')}</button
+																>
 															</div>
 														{:else if blockType === 'auth_widget'}
 															{@const method = selectedAuthWidgetMethod(field)}
@@ -2553,6 +2584,13 @@
 																	{#if field.help_text}
 																		<small>{field.help_text}</small>
 																	{/if}
+																</div>
+															{:else if blockType === 'guest_login_widget'}
+																<div class="preview-auth-widget">
+																	<button type="button" disabled
+																		>{field.label ||
+																			t('ゲストとして続ける', 'Continue as a guest')}</button
+																	>
 																</div>
 															{:else if blockType === 'auth_widget'}
 																{@const method = selectedAuthWidgetMethod(field)}

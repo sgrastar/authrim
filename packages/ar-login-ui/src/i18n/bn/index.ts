@@ -1,6 +1,31 @@
 import type { Translation } from '../i18n-types';
 
 const translation = {
+	account_guestLogoutWarning:
+		'লগ আউট করলে এই অতিথি অ্যাকাউন্টে আর ফিরতে পারবেন না, স্বয়ংক্রিয় মুছে ফেলা বন্ধ থাকলেও। অ্যাকাউন্ট ও ডেটার অ্যাক্সেস রাখতে আগে নিবন্ধন করুন। তবুও লগ আউট করবেন?',
+	account_guestTitle: 'Register your account',
+	account_guestDescription: 'Keep the same account and data when you register.',
+	account_guestDue: 'Eligible for automatic deletion from {date}.',
+	account_guestNoExpiry: 'No automatic deletion is scheduled.',
+	account_guestEmail: 'Email address',
+	account_guestSend: 'Register with email',
+	account_guestPasskey: 'Register with a passkey',
+	account_guestCode: 'Confirmation code',
+	account_guestConfirm: 'Confirm registration',
+	account_guestPending: 'Registration is in progress. You can retry to check completion.',
+	account_guestRetry: 'Retry',
+	account_guestError:
+		'Registration could not be completed. Check the confirmation code or try again.',
+	account_guestCollision:
+		'This identity already has an account. Sign in to that account separately. Your guest account will not be merged.',
+	account_guestExistingLogin: 'Sign in to an existing account',
+	account_guestRegistered: 'Your account has been registered.',
+	account_guestChangeMethod: 'Choose another method',
+	login_guestContinue: 'অতিথি হিসেবে চালিয়ে যান',
+	login_guestRetention:
+		'অতিথি অ্যাকাউন্ট তৈরির {days} দিন পরে স্বয়ংক্রিয়ভাবে মুছে ফেলা হতে পারে। ব্যবহার চালিয়ে যেতে অ্যাকাউন্ট নিবন্ধন করুন।',
+	login_guestNoExpiry: 'নতুন অতিথি অ্যাকাউন্টের স্বয়ংক্রিয় মুছে ফেলার সময় নির্ধারিত নেই।',
+
 	app_title: 'Authrim',
 	app_subtitle: 'পরিচয় ও অ্যাক্সেস সর্বত্র প্রান্তে।',
 	button_openDialog: 'ডায়ালগ খুলুন',

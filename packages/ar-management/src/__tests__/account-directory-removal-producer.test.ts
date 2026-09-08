@@ -231,9 +231,15 @@ describe('account directory removal producer', () => {
       100
     );
 
-    expect(calls[0].sql).toContain('identity_identifier_replacement_operations');
+    expect(calls[0]).toEqual({
+      sql: expect.stringContaining('UPDATE guest_upgrade_operations'),
+      params: [100, 'tenant-a', 'user-a'],
+    });
+    expect(calls[1].sql).toContain('identity_identifier_replacement_operations');
     expect(calls.map((call) => call.sql)).toEqual(
       expect.arrayContaining([
+        expect.stringContaining('proof_payload_json = NULL'),
+        expect.stringContaining('challenge_verifier = NULL'),
         expect.stringContaining('old_value_json = NULL'),
         expect.stringContaining("normalized_value_json = 'null'"),
         expect.stringContaining('value_json = NULL'),

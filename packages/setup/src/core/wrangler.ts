@@ -313,7 +313,13 @@ const COMPONENT_KV_BINDINGS: Record<WorkerComponent, KVNamespace[]> = {
     'AUTHRIM_CONFIG',
     'TENANT_RUNTIME_REGISTRY',
   ],
-  'ar-userinfo': ['CLIENTS_CACHE', 'USER_CACHE', 'AUTHRIM_CONFIG', 'TENANT_RUNTIME_REGISTRY'],
+  'ar-userinfo': [
+    'CLIENTS_CACHE',
+    'USER_CACHE',
+    'SETTINGS',
+    'AUTHRIM_CONFIG',
+    'TENANT_RUNTIME_REGISTRY',
+  ],
   'ar-management': [
     'CLIENTS_CACHE',
     'SETTINGS',
@@ -970,6 +976,22 @@ export function generateWranglerConfig(
         binding: 'AGENT_DOWNSCOPE',
         service: `${env}-ar-token`,
         entrypoint: 'AgentDownscopeEntrypoint',
+      },
+    ];
+  }
+
+  if (component === 'ar-userinfo') {
+    wranglerConfig.services = [
+      ...(wranglerConfig.services ?? []),
+      {
+        binding: 'GUEST_UPGRADE_READINESS',
+        service: `${env}-ar-management`,
+        entrypoint: 'GuestUpgradeReadinessEntrypoint',
+        props: {
+          caller: 'ar-userinfo',
+          environmentId: env,
+          audience: 'authrim-guest-upgrade-readiness-v1',
+        },
       },
     ];
   }

@@ -13,6 +13,24 @@ import type { AuthrimLock } from '../core/lock.js';
 import { WORKER_COMPONENTS, getRequiredDataRolesForComponent } from '../core/naming.js';
 
 describe('Worker placement generation', () => {
+  it('binds UserInfo to the read-only guest readiness entrypoint', () => {
+    const config = createDefaultConfig('test');
+    config.components.adminUi = false;
+    const generated = generateWranglerConfig('ar-userinfo', config, { d1: {}, kv: {} });
+    expect(generated.services).toContainEqual({
+      binding: 'GUEST_UPGRADE_READINESS',
+      service: 'test-ar-management',
+      entrypoint: 'GuestUpgradeReadinessEntrypoint',
+      props: {
+        caller: 'ar-userinfo',
+        environmentId: 'test',
+        audience: 'authrim-guest-upgrade-readiness-v1',
+      },
+    });
+    expect(generated.services).not.toContainEqual(
+      expect.objectContaining({ binding: 'ACCOUNT_PROVISIONER' })
+    );
+  });
   it('protects generated deployment config with the setup-managed build guard', () => {
     const config = createDefaultConfig('test');
     config.components.adminUi = false;

@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const lifecycleGate = vi.hoisted(() => vi.fn());
+const lifecycleRow = vi.hoisted(() => vi.fn());
+
 const challengeStore = {
   consumeChallengeRpc: vi.fn(),
   storeChallengeRpc: vi.fn(),
@@ -11,8 +14,10 @@ const sessionStore = {
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
+  lifecycleGate.mockImplementation(actual.assertGuestCredentialAuthenticationAllowed);
   return {
     ...actual,
+    assertGuestCredentialAuthenticationAllowed: lifecycleGate,
     CanonicalRuntimeUserStore: class {
       async findById(userId: string) {
         if (userId !== 'user_123') return null;
@@ -39,6 +44,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
     })),
     getTenantIdFromContext: vi.fn(() => 'tenant_test'),
     createAuthContextFromHono: vi.fn(() => ({
+      coreAdapter: { queryOne: lifecycleRow },
       repositories: {
         userCore: {
           findById: vi.fn(async () => ({ id: 'user_123', is_active: true })),
@@ -46,7 +52,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
       },
     })),
     createAccountAuthContextFromHono: vi.fn(() => ({
-      coreAdapter: {},
+      coreAdapter: { queryOne: lifecycleRow },
       repositories: {
         userCore: {
           findById: vi.fn(async () => ({ id: 'user_123', is_active: true })),
@@ -122,6 +128,7 @@ function createContext(body: Record<string, unknown>, env: Record<string, unknow
 describe('managed Direct Auth browser session finish', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    lifecycleRow.mockResolvedValue(null);
     sessionStore.createSessionRpc.mockResolvedValue({ id: 'sess_managed_browser' });
     challengeStore.storeChallengeRpc.mockResolvedValue(undefined);
   });
@@ -153,6 +160,30 @@ describe('managed Direct Auth browser session finish', () => {
     expect(challengeStore.consumeChallengeRpc).not.toHaveBeenCalled();
   });
 
+  it.each(['active', 'upgrading', 'deleting', 'deleted'])(
+    'does not create a credential session in %s lifecycle state',
+    async (phase) => {
+      const verifier = 'verifier-for-managed-browser-session';
+      challengeStore.consumeChallengeRpc.mockResolvedValue({
+        challenge: await s256Challenge(verifier),
+        userId: 'user_123',
+        metadata: { client_id: 'login-ui', channel: 'browser', method: 'passkey' },
+      });
+      lifecycleRow.mockResolvedValue({ phase });
+      const { directSessionCreateHandler } = await import('../direct-auth');
+      const response = await directSessionCreateHandler(
+        createContext({
+          direct_auth_artifact: 'artifact_123',
+          client_id: 'login-ui',
+          code_verifier: verifier,
+          channel: 'browser',
+        }) as never
+      );
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(lifecycleGate).toHaveBeenCalledWith(expect.anything(), 'tenant_test', 'user_123');
+      expect(sessionStore.createSessionRpc).not.toHaveBeenCalled();
+    }
+  );
   it('redeems an artifact into a cookie session without returning token material', async () => {
     const codeVerifier = 'verifier-for-managed-browser-session';
     const codeChallenge = await s256Challenge(codeVerifier);
