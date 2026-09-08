@@ -9,13 +9,22 @@ export class MemoryQueue implements Queue<unknown> {
     private readonly label = 'queue'
   ) {}
 
-  async send(message: unknown): Promise<void> {
-    this.ledger?.record('queue.send', this.label, message);
+  async metrics(): Promise<QueueMetrics> {
+    return { backlogCount: 0, backlogBytes: 0 };
   }
 
-  async sendBatch(messages: Iterable<MessageSendRequest<unknown>>): Promise<void> {
+  async send(message: unknown, _options?: QueueSendOptions): Promise<QueueSendResponse> {
+    this.ledger?.record('queue.send', this.label, message);
+    return { metadata: { metrics: await this.metrics() } };
+  }
+
+  async sendBatch(
+    messages: Iterable<MessageSendRequest<unknown>>,
+    _options?: QueueSendBatchOptions
+  ): Promise<QueueSendBatchResponse> {
     for (const message of messages) {
       this.ledger?.record('queue.send', this.label, message.body);
     }
+    return { metadata: { metrics: await this.metrics() } };
   }
 }

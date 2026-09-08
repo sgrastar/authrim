@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-agent-access",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "type": "module",
   "private": true,
   "engines": {
@@ -73,12 +73,12 @@
   "dependencies": {
     "@authrim/ar-lib-core": "workspace:*",
     "@cfworker/json-schema": "4.1.1",
-    "@modelcontextprotocol/sdk": "1.29.0",
-    "agents": "0.17.4",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "agents": "0.22.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "4.20260424.1",
+    "@cloudflare/workers-types": "5.20260903.1",
     "@modelcontextprotocol/conformance": "0.1.16",
     "@modelcontextprotocol/inspector": "0.22.0",
     "@types/node": "^20.19.25",

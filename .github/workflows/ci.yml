@@ -12,6 +12,12 @@ permissions:
   issues: write
   pull-requests: write
 
+# A newer commit makes earlier PR checks obsolete. Cancel superseded runs so
+# resource-heavy TypeScript builds and coverage suites cannot pile up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   dependency-audit:
     name: Dependency Audit
@@ -74,6 +80,8 @@ jobs:
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
+    env:
+      TURBO_CONCURRENCY: 2
 
     steps:
       - name: Checkout code
@@ -110,6 +118,8 @@ jobs:
   api-tests:
     name: API Tests with Coverage
     runs-on: ubuntu-latest
+    env:
+      TURBO_CONCURRENCY: 2
 
     steps:
       - name: Checkout code
@@ -292,6 +302,8 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    env:
+      TURBO_CONCURRENCY: 2
 
     steps:
       - name: Checkout code
@@ -316,8 +328,18 @@ jobs:
           echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-login-ui/.env
           echo "PUBLIC_API_BASE_URL=http://localhost:8786" > packages/ar-admin-ui/.env
 
-      - name: Build project
-        run: pnpm run build
+      - name: Build API, Setup, and shared packages
+        run: pnpm run build:api
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Build Login UI
+        run: pnpm run build:login-ui
+        env:
+          NODE_OPTIONS: '--max-old-space-size=4096'
+
+      - name: Build Admin UI
+        run: pnpm run build:admin-ui
         env:
           NODE_OPTIONS: '--max-old-space-size=4096'
 

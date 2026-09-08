@@ -142,8 +142,8 @@ describe('LookupHmacCandidateVerifier', () => {
       () => 1_800_000_000
     ).reconcile();
 
-    expect(result).toEqual({ attempted: 5, succeeded: 5, failed: 0 });
-    expect(state.evidence).toHaveLength(5);
+    expect(result).toEqual({ attempted: 8, succeeded: 8, failed: 0 });
+    expect(state.evidence).toHaveLength(8);
     expect(state.evidence.every((entry) => entry.status === 'succeeded')).toBe(true);
     expect(JSON.stringify(state.evidence)).not.toContain(smokePrivate.d);
   });
@@ -156,28 +156,31 @@ describe('LookupHmacCandidateVerifier', () => {
       () => 1_800_000_000
     ).reconcile();
 
-    expect(result).toEqual({ attempted: 5, succeeded: 5, failed: 0 });
+    expect(result).toEqual({ attempted: 8, succeeded: 8, failed: 0 });
   });
 
-  it('fails only the divergent target and records a redacted code', async () => {
-    const state = repository();
-    const result = await new LookupHmacCandidateVerifier(
-      state.value,
-      env('ar-token'),
-      () => 1_800_000_000
-    ).reconcile();
+  it.each(['ar-token', 'ar-saml', 'ar-bridge', 'ar-vc'])(
+    'fails only the divergent target %s and records a redacted code',
+    async (component) => {
+      const state = repository();
+      const result = await new LookupHmacCandidateVerifier(
+        state.value,
+        env(component),
+        () => 1_800_000_000
+      ).reconcile();
 
-    expect(result).toEqual({ attempted: 5, succeeded: 4, failed: 1 });
-    expect(state.evidence).toContainEqual(
-      expect.objectContaining({
-        workerScriptName: 'test-ar-token',
-        status: 'failed',
-        errorCode: 'control_lookup_hmac_candidate_digest_mismatch',
-        currentDigest: null,
-        candidateDigest: null,
-      })
-    );
-  });
+      expect(result).toEqual({ attempted: 8, succeeded: 7, failed: 1 });
+      expect(state.evidence).toContainEqual(
+        expect.objectContaining({
+          workerScriptName: `test-${component}`,
+          status: 'failed',
+          errorCode: 'control_lookup_hmac_candidate_digest_mismatch',
+          currentDigest: null,
+          candidateDigest: null,
+        })
+      );
+    }
+  );
 
   it('records active-generation observation only after each target resolves the signed state', async () => {
     const state = repository([], [rotation]);
@@ -187,8 +190,8 @@ describe('LookupHmacCandidateVerifier', () => {
       () => 1_800_000_000
     ).reconcile();
 
-    expect(result).toEqual({ attempted: 5, succeeded: 5, failed: 0 });
-    expect(state.evidence).toHaveLength(5);
+    expect(result).toEqual({ attempted: 8, succeeded: 8, failed: 0 });
+    expect(state.evidence).toHaveLength(8);
     expect(state.evidence).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

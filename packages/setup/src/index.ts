@@ -714,6 +714,12 @@ program
             existingComponents: WORKER_COMPONENTS.filter(
               (component) => upgradeLock?.workers?.[component] !== undefined
             ),
+            expectedWorkerVersionIds: Object.fromEntries(
+              Object.entries(upgradeLock?.workers ?? {}).map(([component, worker]) => [
+                component,
+                worker.cloudflareVersionId,
+              ])
+            ),
             secrets,
             cleanupLegacyStaticSecrets: true,
             deployConfigLockProof: deployConfigLock?.proof,

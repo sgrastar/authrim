@@ -38,6 +38,10 @@ import type { DiagnosticLogPrivacyMode } from './types';
 const log = createLogger().module('DIAGNOSTIC_LOGGER');
 const DIAGNOSTIC_BODY_SUMMARY_MAX_BYTES = 64 * 1024;
 
+export interface DiagnosticLoggerExecutionContext {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
 /**
  * Diagnostic Logger Configuration
  */
@@ -55,7 +59,7 @@ export interface DiagnosticLoggerConfig {
   settings: DiagnosticLoggingSettings;
 
   /** Request context (for Queue integration) */
-  ctx?: ExecutionContext;
+  ctx?: DiagnosticLoggerExecutionContext;
 }
 
 /**
@@ -66,7 +70,7 @@ export class DiagnosticLogger {
   private readonly tenantId: string;
   private readonly clientId?: string;
   private readonly settings: DiagnosticLoggingSettings;
-  private readonly ctx?: ExecutionContext;
+  private readonly ctx?: DiagnosticLoggerExecutionContext;
   private r2Adapter?: DiagnosticLogR2Adapter;
   private readonly storageMode: DiagnosticLogPrivacyMode;
   private readonly hashSecret: string;

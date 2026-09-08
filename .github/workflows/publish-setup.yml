@@ -29,9 +29,12 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           cache: 'pnpm'
 
-      - name: Update npm for OIDC trusted publishing
-        # Pin the npm CLI source to the commit that publishes npm 11.5.1.
-        run: npm install -g https://github.com/npm/cli.git#5bcdc023fc022499cb6fc2ca31cb1c7d76e0d46c
+      - name: Install npm for OIDC trusted publishing
+        # npm Trusted Publishing requires npm 11.5.1 or newer. Pin the first supported
+        # registry release instead of installing the npm CLI from a Git commit.
+        run: |
+          npm install --global npm@11.5.1
+          test "$(npm --version)" = "11.5.1"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -60,6 +63,10 @@ jobs:
             echo "should_publish=false" >> $GITHUB_OUTPUT
             echo "✅ Version unchanged: $PACKAGE_VERSION"
           fi
+
+      - name: Verify npm package tarball
+        if: steps.version-check.outputs.should_publish == 'true'
+        run: pnpm --filter @authrim/setup run test:package
 
       - name: Publish to npm
         if: steps.version-check.outputs.should_publish == 'true'

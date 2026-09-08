@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim External Identity Bridge API
-  version: 0.4.0
+  version: 0.4.1
   description: Browser continuation endpoints owned by the external identity bridge.
 paths:
   /api/external/links/{id}:

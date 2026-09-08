@@ -980,7 +980,10 @@ async function wrangler(
     // Default timeout: 30 seconds (wrangler API calls can be slow)
     const result = await execa('npx', ['wrangler', ...args], {
       cwd: options.cwd,
-      env: { ...process.env, ...options.env },
+      // Setup consumes stdout from this wrapper for inventory, identity and stored-value reads.
+      // Do not allow a parent WRANGLER_LOG=warn/error setting to silently suppress successful
+      // command output. Callers can still deliberately override this for commands that do not read.
+      env: { ...process.env, WRANGLER_LOG: 'log', ...options.env },
       reject: false,
       timeout: options.timeout ?? 30000,
     });
@@ -10653,7 +10656,11 @@ export async function getWorkerDeployments(name: string): Promise<WorkerDeployme
   const maxAttempts = process.env.NODE_ENV === 'test' ? 2 : 4;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const { stdout, stderr } = await wrangler(['deployments', 'list', '--name', name]);
+      const { stdout, stderr } = await wrangler(['deployments', 'list', '--name', name], {
+        // This output is parsed below. A process-wide WRANGLER_LOG=warn suppresses successful
+        // Wrangler output entirely, so force the machine-consumer level for this subprocess.
+        env: { WRANGLER_LOG: 'log' },
+      });
 
       // Check if worker doesn't exist
       if (isWorkerInventoryNotFoundError(stderr)) {

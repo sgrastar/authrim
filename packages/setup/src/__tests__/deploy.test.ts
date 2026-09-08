@@ -28,6 +28,7 @@ import {
   nodeVersionSatisfiesEngine,
   reconcileWorkerCronTriggers,
   resolveExistingWorkerComponents,
+  resolveMissingUiWorkerBindingTargets,
   updateLockWithDeployments,
   type DeployOptions,
   type WorkerDeploymentLeaseCoordinator,
@@ -1818,6 +1819,166 @@ describe('resolveExistingWorkerComponents', () => {
       resolveExistingWorkerComponents({ env: 'test', rootDir }, ['ar-auth'])
     ).rejects.toThrow('401 authentication failed');
   });
+
+  it('does not treat successful but empty Wrangler inventory output as an absent Worker', async () => {
+    const rootDir = createTempRoot();
+    vi.mocked(execa).mockResolvedValue({
+      ...successfulCommandResult(),
+      stdout: '',
+    } as Awaited<ReturnType<typeof execa>>);
+
+    await expect(
+      resolveExistingWorkerComponents({ env: 'test', rootDir }, ['ar-auth'])
+    ).rejects.toThrow('invalid deployment JSON');
+  });
+
+  it('uses the dedicated Workers token for inventory without exposing it in arguments', async () => {
+    const rootDir = createTempRoot();
+    const previousWorkersToken = process.env.CLOUDFLARE_WORKERS_API_TOKEN;
+    const previousWranglerLog = process.env.WRANGLER_LOG;
+    process.env.CLOUDFLARE_WORKERS_API_TOKEN = 'dedicated-workers-token';
+    process.env.WRANGLER_LOG = 'warn';
+    vi.mocked(execa).mockResolvedValue({
+      ...successfulCommandResult(),
+      stdout: JSON.stringify([{ id: 'active-auth' }]),
+    } as Awaited<ReturnType<typeof execa>>);
+
+    try {
+      await expect(
+        resolveExistingWorkerComponents({ env: 'test', rootDir }, ['ar-auth'])
+      ).resolves.toEqual(['ar-auth']);
+      const [, args, commandOptions] = vi.mocked(execa).mock.calls[0]!;
+      expect(args).not.toContain('dedicated-workers-token');
+      expect(commandOptions?.env?.CLOUDFLARE_API_TOKEN).toBe('dedicated-workers-token');
+      expect(commandOptions?.env?.WRANGLER_LOG).toBe('log');
+    } finally {
+      if (previousWorkersToken === undefined) delete process.env.CLOUDFLARE_WORKERS_API_TOKEN;
+      else process.env.CLOUDFLARE_WORKERS_API_TOKEN = previousWorkersToken;
+      if (previousWranglerLog === undefined) delete process.env.WRANGLER_LOG;
+      else process.env.WRANGLER_LOG = previousWranglerLog;
+    }
+  });
+
+  it('verifies an exact locked Worker version when deployment inventory is empty', async () => {
+    const rootDir = createTempRoot();
+    const expectedVersionId = '11111111-1111-4111-8111-111111111111';
+    vi.mocked(execa)
+      .mockResolvedValueOnce({
+        ...successfulCommandResult(),
+        stdout: JSON.stringify([]),
+      } as Awaited<ReturnType<typeof execa>>)
+      .mockResolvedValueOnce({
+        ...successfulCommandResult(),
+        stdout: JSON.stringify({ id: expectedVersionId }),
+      } as Awaited<ReturnType<typeof execa>>);
+
+    await expect(
+      resolveExistingWorkerComponents(
+        {
+          env: 'test',
+          rootDir,
+          expectedWorkerVersionIds: { 'ar-auth': expectedVersionId },
+        },
+        ['ar-auth']
+      )
+    ).resolves.toEqual(['ar-auth']);
+    expect(vi.mocked(execa).mock.calls[1]?.[1]).toEqual([
+      'exec',
+      'wrangler',
+      'versions',
+      'view',
+      expectedVersionId,
+      '--name',
+      'test-ar-auth',
+      '--json',
+    ]);
+  });
+
+  it('fails closed when exact locked Worker version verification is malformed or mismatched', async () => {
+    const rootDir = createTempRoot();
+    vi.mocked(execa)
+      .mockResolvedValueOnce({
+        ...successfulCommandResult(),
+        stdout: JSON.stringify([]),
+      } as Awaited<ReturnType<typeof execa>>)
+      .mockResolvedValueOnce({
+        ...successfulCommandResult(),
+        stdout: JSON.stringify({ id: 'different-version' }),
+      } as Awaited<ReturnType<typeof execa>>);
+
+    await expect(
+      resolveExistingWorkerComponents(
+        {
+          env: 'test',
+          rootDir,
+          expectedWorkerVersionIds: {
+            'ar-auth': '11111111-1111-4111-8111-111111111111',
+          },
+        },
+        ['ar-auth']
+      )
+    ).rejects.toThrow('invalid or mismatched version JSON');
+  });
+
+  it('treats an exact locked Worker version as absent only after confirmed not-found readback', async () => {
+    const rootDir = createTempRoot();
+    vi.mocked(execa)
+      .mockResolvedValueOnce({
+        ...successfulCommandResult(),
+        stdout: JSON.stringify([]),
+      } as Awaited<ReturnType<typeof execa>>)
+      .mockResolvedValueOnce({
+        ...successfulCommandResult(),
+        exitCode: 1,
+        stderr: 'Worker version not found [code: 10007]',
+      } as Awaited<ReturnType<typeof execa>>);
+
+    await expect(
+      resolveExistingWorkerComponents(
+        {
+          env: 'test',
+          rootDir,
+          expectedWorkerVersionIds: {
+            'ar-auth': '11111111-1111-4111-8111-111111111111',
+          },
+        },
+        ['ar-auth']
+      )
+    ).resolves.toEqual([]);
+  });
+
+  it('uses exact locked UI versions before deciding placeholder binding targets are missing', async () => {
+    const rootDir = createTempRoot();
+    const loginVersionId = '11111111-1111-4111-8111-111111111111';
+    const adminVersionId = '22222222-2222-4222-8222-222222222222';
+    vi.mocked(execa).mockImplementation(async (_command, args) => {
+      if (args?.includes('deployments')) {
+        return {
+          ...successfulCommandResult(),
+          stdout: JSON.stringify([]),
+        } as Awaited<ReturnType<typeof execa>>;
+      }
+      const expected = args?.[args.indexOf('view') + 1];
+      return {
+        ...successfulCommandResult(),
+        stdout: JSON.stringify({ id: expected }),
+      } as Awaited<ReturnType<typeof execa>>;
+    });
+
+    await expect(
+      resolveMissingUiWorkerBindingTargets(
+        {
+          env: 'test',
+          rootDir,
+          expectedWorkerVersionIds: {
+            'ar-login-ui': loginVersionId,
+            'ar-admin-ui': adminVersionId,
+          },
+        },
+        { loginUi: true, adminUi: true }
+      )
+    ).resolves.toEqual({ loginUi: false, adminUi: false });
+  });
 });
 
 describe('deployWorkerGradually', () => {
@@ -1834,6 +1995,9 @@ describe('deployWorkerGradually', () => {
     vi.mocked(execa).mockImplementation(async (_command, args, options) => {
       const commandArgs = [...(args ?? [])];
       if (commandArgs.includes('deployments') && commandArgs.includes('list')) {
+        if (commandArgs.includes('--json')) {
+          expect(options?.env?.WRANGLER_LOG).toBe('log');
+        }
         return {
           ...successfulCommandResult(),
           stdout: JSON.stringify([

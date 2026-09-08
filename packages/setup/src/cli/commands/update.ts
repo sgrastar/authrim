@@ -163,18 +163,38 @@ export async function recoverActiveControlReleaseRollout(input: {
   environmentId: string;
   targetVersion: string;
   manifestChecksum: string;
+  deferVerifiedInstalledRolloutCompletion?: boolean;
   loadActiveRollout?: (input: {
     controlDatabaseId: string;
     environmentId: string;
   }) => Promise<ReleaseRolloutHandoffStatus | null>;
-}): Promise<{ lock: AuthrimLock; activeRollout: ReleaseRolloutHandoffStatus | null }> {
+}): Promise<{
+  lock: AuthrimLock;
+  activeRollout: ReleaseRolloutHandoffStatus | null;
+  installedRolloutToFinalize: ReleaseRolloutHandoffStatus | null;
+}> {
   const controlDatabase = input.lock.d1.CONTROL_DB;
-  if (!controlDatabase) return { lock: input.lock, activeRollout: null };
+  if (!controlDatabase) {
+    return { lock: input.lock, activeRollout: null, installedRolloutToFinalize: null };
+  }
   const activeRollout = await (input.loadActiveRollout ?? getActiveReleaseRolloutHandoffStatus)({
     controlDatabaseId: controlDatabase.id,
     environmentId: input.environmentId,
   });
-  if (!activeRollout) return { lock: input.lock, activeRollout: null };
+  if (!activeRollout) {
+    return { lock: input.lock, activeRollout: null, installedRolloutToFinalize: null };
+  }
+  if (
+    activeRollout.targetVersion !== input.targetVersion &&
+    input.deferVerifiedInstalledRolloutCompletion === true &&
+    isVerifiedInstalledRolloutReadyForDeferredCompletion(input.lock, activeRollout)
+  ) {
+    return {
+      lock: input.lock,
+      activeRollout: null,
+      installedRolloutToFinalize: activeRollout,
+    };
+  }
   return {
     lock: withRecoveredReleaseUpdateState(input.lock, {
       targetVersion: input.targetVersion,
@@ -182,7 +202,92 @@ export async function recoverActiveControlReleaseRollout(input: {
       activeRollout,
     }),
     activeRollout,
+    installedRolloutToFinalize: null,
   };
+}
+
+export function isVerifiedInstalledRolloutReadyForDeferredCompletion(
+  lock: AuthrimLock,
+  activeRollout: ReleaseRolloutHandoffStatus
+): boolean {
+  const installedVersion = lock.productVersion;
+  const release = lock.releaseUpdate;
+  const workers = Object.values(lock.workers ?? {});
+  return Boolean(
+    installedVersion &&
+    activeRollout.targetVersion === installedVersion &&
+    (activeRollout.sourceVersion === null ||
+      activeRollout.sourceVersion === installedVersion ||
+      activeRollout.sourceVersion === release?.previousProductVersion) &&
+    (activeRollout.phase === 'awaiting_setup' || activeRollout.phase === 'verifying') &&
+    activeRollout.completedTargets === activeRollout.totalTargets &&
+    activeRollout.lastErrorCode === null &&
+    release?.targetVersion === installedVersion &&
+    release.phase === 'verified' &&
+    workers.length > 0 &&
+    workers.every(
+      (worker) => worker.version === installedVersion && Boolean(worker.cloudflareVersionId)
+    )
+  );
+}
+
+export async function finalizeDeferredInstalledControlReleaseRollout(input: {
+  controlDatabaseId: string;
+  environmentId: string;
+  rollout: ReleaseRolloutHandoffStatus | null;
+  getStatus?: typeof getReleaseRolloutHandoffStatus;
+  beginVerification?: typeof beginReleaseRolloutVerification;
+  complete?: typeof completeReleaseRolloutHandoff;
+}): Promise<void> {
+  if (!input.rollout) return;
+  const getStatus = input.getStatus ?? getReleaseRolloutHandoffStatus;
+  const beginVerification = input.beginVerification ?? beginReleaseRolloutVerification;
+  const complete = input.complete ?? completeReleaseRolloutHandoff;
+  let current = await getStatus({
+    controlDatabaseId: input.controlDatabaseId,
+    environmentId: input.environmentId,
+    operationId: input.rollout.operationId,
+  });
+  if (
+    current.operationId !== input.rollout.operationId ||
+    current.targetVersion !== input.rollout.targetVersion ||
+    current.manifestDigest !== input.rollout.manifestDigest
+  ) {
+    throw new Error('release_rollout_deferred_identity_mismatch');
+  }
+  if (current.phase === 'completed') {
+    if (current.completedTargets !== current.totalTargets || current.lastErrorCode !== null) {
+      throw new Error('release_rollout_deferred_completed_state_inconsistent');
+    }
+    return;
+  }
+  if (
+    current.completedTargets !== current.totalTargets ||
+    current.lastErrorCode !== null ||
+    (current.phase !== 'awaiting_setup' && current.phase !== 'verifying')
+  ) {
+    throw new Error(`release_rollout_deferred_completion_not_ready:${current.phase}`);
+  }
+  if (current.phase === 'awaiting_setup') {
+    current = await beginVerification({
+      controlDatabaseId: input.controlDatabaseId,
+      environmentId: input.environmentId,
+      operationId: input.rollout.operationId,
+      actorId: 'setup:update',
+    });
+  }
+  if (current.phase !== 'verifying') {
+    throw new Error(`release_rollout_deferred_verification_conflict:${current.phase}`);
+  }
+  const completed = await complete({
+    controlDatabaseId: input.controlDatabaseId,
+    environmentId: input.environmentId,
+    operationId: input.rollout.operationId,
+    actorId: 'setup:update',
+  });
+  if (completed.phase !== 'completed') {
+    throw new Error(`release_rollout_deferred_completion_conflict:${completed.phase}`);
+  }
 }
 
 // =============================================================================
@@ -1260,12 +1365,20 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
     environmentId: env,
     targetVersion: productVersion,
     manifestChecksum,
+    deferVerifiedInstalledRolloutCompletion: controlManagedStreamIds.length === 0,
   });
   workingLock = recoveredRollout.lock;
   if (recoveredRollout.activeRollout) {
     console.log(
       chalk.yellow(
         `  Recovered active Control release rollout ${recoveredRollout.activeRollout.operationId} (${recoveredRollout.activeRollout.phase}).`
+      )
+    );
+  }
+  if (recoveredRollout.installedRolloutToFinalize) {
+    console.log(
+      chalk.yellow(
+        `  Preserving verified ${recoveredRollout.installedRolloutToFinalize.targetVersion} Control rollout ${recoveredRollout.installedRolloutToFinalize.operationId} until the new Worker release is verified.`
       )
     );
   }
@@ -1707,6 +1820,11 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           environmentId: env,
           operationId: workingLock.releaseUpdate?.controlOperationId,
         });
+        await finalizeDeferredInstalledControlReleaseRollout({
+          controlDatabaseId: controlDatabase.id,
+          environmentId: env,
+          rollout: recoveredRollout.installedRolloutToFinalize,
+        });
       }
       workingLock = withReleaseUpdateState(workingLock, {
         targetVersion: productVersion,
@@ -1900,6 +2018,12 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
       deploymentStrategy: 'auto',
       existingComponents: CORE_WORKER_COMPONENTS.filter(
         (component) => workingLock.workers?.[component] !== undefined
+      ),
+      expectedWorkerVersionIds: Object.fromEntries(
+        Object.entries(workingLock.workers ?? {}).map(([component, worker]) => [
+          component,
+          worker.cloudflareVersionId,
+        ])
       ),
       secrets: deploymentSecrets,
       deploymentLease: {
@@ -2182,6 +2306,11 @@ export async function updateCommand(options: UpdateCommandOptions): Promise<void
           controlDatabaseId: controlDatabase.id,
           environmentId: env,
           operationId: workingLock.releaseUpdate?.controlOperationId,
+        });
+        await finalizeDeferredInstalledControlReleaseRollout({
+          controlDatabaseId: controlDatabase.id,
+          environmentId: env,
+          rollout: recoveredRollout.installedRolloutToFinalize,
         });
       }
       workingLock = withReleaseUpdateState(workingLock, {
