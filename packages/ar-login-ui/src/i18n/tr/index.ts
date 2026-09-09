@@ -1,6 +1,31 @@
 import type { Translation } from '../i18n-types';
 
 const translation = {
+	account_guestLogoutWarning:
+		'Çıkış yaptıktan sonra bu misafir hesabına geri dönemezsiniz. Hesabınıza ve verilerinize erişimi korumak için önce kaydolun. Yine de çıkış yapılsın mı?',
+	account_guestTitle: 'Register your account',
+	account_guestDescription: 'Keep the same account and data when you register.',
+	account_guestDue: 'Eligible for automatic deletion from {date}.',
+	account_guestNoExpiry: 'No automatic deletion is scheduled.',
+	account_guestEmail: 'Email address',
+	account_guestSend: 'Register with email',
+	account_guestPasskey: 'Register with a passkey',
+	account_guestCode: 'Confirmation code',
+	account_guestConfirm: 'Confirm registration',
+	account_guestPending: 'Registration is in progress. You can retry to check completion.',
+	account_guestRetry: 'Retry',
+	account_guestError:
+		'Registration could not be completed. Check the confirmation code or try again.',
+	account_guestCollision:
+		'This identity already has an account. Sign in to that account separately. Your guest account will not be merged.',
+	account_guestExistingLogin: 'Sign in to an existing account',
+	account_guestRegistered: 'Your account has been registered.',
+	account_guestChangeMethod: 'Choose another method',
+	login_guestContinue: 'Misafir olarak devam et',
+	login_guestRetention:
+		'Misafir hesapları oluşturulduktan {days} gün sonra otomatik olarak silinebilir. Kullanmaya devam etmek için hesabınızı kaydedin.',
+	login_guestNoExpiry: 'Yeni misafir hesapları için otomatik silme planlanmamıştır.',
+
 	app_title: 'Authrim',
 	app_subtitle: 'Her yerde uçta kimlik ve erişim.',
 	button_openDialog: 'İletişim kutusunu aç',

@@ -1,0 +1,21 @@
+diff --git a/index.js b/index.js
+index 23384ea16bb848616886f356d8d69f94325535bf..ab409487cdbbeeb4b7fa38e0e5f065ea3d7f55c9 100644
+--- a/index.js
++++ b/index.js
+@@ -126,10 +126,15 @@ class Extractor {
+ 
+     if (symlink) {
+       const link = await getStream(readStream)
++      const target = path.resolve(path.dirname(dest), link)
++      const relativeTarget = path.relative(this.opts.dir, target)
++      if (relativeTarget === '..' || relativeTarget.startsWith(`..${path.sep}`) || path.isAbsolute(relativeTarget)) {
++        throw new Error('Symlink target escapes extraction directory')
++      }
+       debug('creating symlink', link, dest)
+       await fs.symlink(link, dest)
+     } else {
+-      await pipeline(readStream, createWriteStream(dest, { mode: procMode }))
++      await pipeline(readStream, createWriteStream(dest, { mode: procMode, flags: 'wx' }))
+     }
+   }
+ 

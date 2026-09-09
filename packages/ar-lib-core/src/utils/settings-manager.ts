@@ -65,6 +65,8 @@ export interface SettingMeta {
   min?: number;
   /** Maximum value (for number/duration) */
   max?: number;
+  /** Require a safe integer for numeric settings. */
+  integer?: boolean;
   /** Unit (e.g., "seconds", "ms") */
   unit?: string;
   /** Allowed values (for enum type) */
@@ -291,17 +293,20 @@ export class SettingsManager {
   // In-memory cache for runtime performance
   private cache: Map<string, { data: Record<string, unknown>; expiresAt: number }> = new Map();
   private cacheTTL: number;
+  private strictReads: boolean;
 
   constructor(options: {
     env: Record<string, string | undefined>;
     kv?: KVNamespace | null;
     cacheTTL?: number;
+    strictReads?: boolean;
     auditCallback?: (event: SettingsAuditEvent) => Promise<void>;
   }) {
     this.env = options.env;
     this.kv = options.kv ?? null;
     this.cacheTTL = options.cacheTTL ?? 5000; // Default 5 seconds
     this.auditCallback = options.auditCallback;
+    this.strictReads = options.strictReads ?? false;
   }
 
   /**
@@ -613,6 +618,7 @@ export class SettingsManager {
         if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
           data = sanitizeObject(parsed);
         } else {
+          if (this.strictReads) throw new Error('settings_data_invalid');
           log.warn(
             `Invalid KV data format for ${key}: expected object, got ${Array.isArray(parsed) ? 'array' : typeof parsed}`
           );
@@ -628,6 +634,7 @@ export class SettingsManager {
       return data;
     } catch (error) {
       log.warn('Failed to load settings from KV');
+      if (this.strictReads) throw new Error('settings_read_failed');
       return {};
     }
   }
@@ -722,9 +729,12 @@ export class SettingsManager {
     switch (meta.type) {
       case 'number':
       case 'duration':
-        if (typeof value !== 'number') {
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
           errors.push({ key, reason: `Expected number, got ${typeof value}` });
         } else {
+          if (meta.integer && !Number.isSafeInteger(value)) {
+            errors.push({ key, reason: 'Value must be a safe integer' });
+          }
           if (meta.min !== undefined && value < meta.min) {
             errors.push({ key, reason: `Value must be >= ${meta.min}` });
           }
@@ -835,6 +845,7 @@ export function createSettingsManager(options: {
   env: Record<string, string | undefined>;
   kv?: KVNamespace | null;
   cacheTTL?: number;
+  strictReads?: boolean;
   auditCallback?: (event: SettingsAuditEvent) => Promise<void>;
 }): SettingsManager {
   return new SettingsManager(options);

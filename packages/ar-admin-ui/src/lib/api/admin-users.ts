@@ -1,3 +1,4 @@
+import type { AccountRegistrationState } from '@authrim/ar-lib-core';
 /**
  * Admin Users API Client
  *
@@ -39,6 +40,7 @@ export interface User {
 	email_verified: boolean;
 	phone_number_verified: boolean;
 	user_type: string;
+	registration_state?: AccountRegistrationState;
 	is_active: boolean;
 	pii_partition: string;
 	pii_status: string;

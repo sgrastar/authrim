@@ -22,6 +22,7 @@
 	import AccountConsentSection from '$lib/components/account/AccountConsentSection.svelte';
 	import AccountLauncherSection from '$lib/components/account/AccountLauncherSection.svelte';
 	import AccountProfileSection from '$lib/components/account/AccountProfileSection.svelte';
+	import AccountUpgradeSection from '$lib/components/account/AccountUpgradeSection.svelte';
 	import AccountSecuritySection from '$lib/components/account/AccountSecuritySection.svelte';
 	import ConfiguredFooter from '$lib/components/ConfiguredFooter.svelte';
 	import LanguageSwitcher from '$lib/components/LanguageSwitcher.svelte';
@@ -30,6 +31,7 @@
 		type AuthenticationMethods,
 		type AuthenticationMethodsResponse
 	} from '$lib/api/authentication-methods';
+	import { logoutWithGuestWarning } from '$lib/account/guest-logout';
 	import { auth } from '$lib/stores/auth';
 	import {
 		signalAllAcceptedCredentials,
@@ -386,6 +388,7 @@
 		const defaultTitles: Partial<
 			Record<NonNullable<AccountPageScreenField['block_type']>, string>
 		> = {
+			account_upgrade_widget: $LL.account_guestTitle(),
 			account_profile_widget: $LL.account_profileTitle(),
 			account_device_list_widget: $LL.account_devices(),
 			account_session_widget: $LL.account_sessions(),
@@ -1145,13 +1148,21 @@
 		}
 	}
 
-	async function handleLogout() {
+	async function handleLogout(destination = '/') {
 		if (logoutLoading) return;
 		logoutLoading = true;
 		accountError = '';
 		try {
-			await auth.logout();
-			window.location.href = '/';
+			const current = await accountAPI.getProfile();
+			if (current.error || !current.data?.session) throw new Error('account_session_unavailable');
+			const loggedOut = await logoutWithGuestWarning({
+				amr: current.data.session.amr,
+				warning: $LL.account_guestLogoutWarning(),
+				confirm: (message) => window.confirm(message),
+				logout: () => auth.logout()
+			});
+			if (loggedOut) window.location.href = destination;
+			else logoutLoading = false;
 		} catch {
 			accountError = $LL.account_actionFailed();
 			logoutLoading = false;
@@ -1176,7 +1187,7 @@
 						{localizedPageCopy().description}
 					</p>{/if}
 			</div>
-			<Button variant="secondary" loading={logoutLoading} onclick={handleLogout}>
+			<Button variant="secondary" loading={logoutLoading} onclick={() => handleLogout()}>
 				{$LL.header_logout()}
 			</Button>
 		</header>
@@ -1220,6 +1231,17 @@
 											>
 										{:else if field.block_type === 'divider'}
 											<div class="account-screen__divider"><span>{field.text ?? ''}</span></div>
+										{:else if field.block_type === 'account_upgrade_widget'}
+											<AccountUpgradeSection
+												title={accountWidgetTitle(field)}
+												onExistingLogin={async () => {
+													await handleLogout('/login?prompt=login');
+												}}
+												onCompleted={async () => {
+													await auth.refreshFromSession();
+													await loadAccountPage();
+												}}
+											/>
 										{:else if field.block_type === 'account_profile_widget'}
 											<AccountProfileSection
 												{profile}

@@ -1,6 +1,6 @@
 {
   "name": "@authrim/ar-lib-scim",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -28,7 +28,7 @@
     "@cloudflare/workers-types": "^5.20260903.1",
     "fast-check": "^4.5.3",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.8",
+    "vitest": "^4.1.11",
     "yaml": "2.8.3"
   }
 }

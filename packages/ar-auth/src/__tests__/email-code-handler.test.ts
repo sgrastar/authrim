@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   ensureDatabaseAdapter: vi.fn((source) => source),
   provisionTenantD1EmailAccount: vi.fn(),
   ensureAccountAuthenticationState: vi.fn(),
+  guestCredentialFence: vi.fn(),
   findCanonicalAccountAuthenticationState: vi.fn(),
 }));
 
@@ -58,6 +59,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     ensureDatabaseAdapter: mocks.ensureDatabaseAdapter,
     createAccountAuthContextFromHono: mocks.createAccountAuthContextFromHono,
     ensureAccountAuthenticationState: mocks.ensureAccountAuthenticationState,
+    assertGuestCredentialAuthenticationAllowed: mocks.guestCredentialFence,
     findCanonicalAccountAuthenticationState: mocks.findCanonicalAccountAuthenticationState,
     createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: {} })),
     CanonicalRuntimeUserStore: class {
@@ -607,6 +609,26 @@ describe('email code handlers through HTTP', () => {
       }
     );
 
+    it.each(['account_authentication_not_allowed', 'database_unavailable'])(
+      'does not create a session when the guest credential fence fails (%s)',
+      async (reason) => {
+        mocks.guestCredentialFence.mockRejectedValueOnce(new Error(reason));
+        const response = await post(
+          '/verify',
+          { code: '123456', email: 'user@example.com' },
+          { OTP_HMAC_SECRET: 'private-secret' },
+          cookie
+        );
+        expect(response.status).toBeGreaterThanOrEqual(400);
+        expect(mocks.guestCredentialFence).toHaveBeenCalledWith(
+          expect.anything(),
+          'tenant-1',
+          'user-1'
+        );
+        expect(mocks.createSessionRpc).not.toHaveBeenCalled();
+        expect(mocks.updateExistingSessionRpc).not.toHaveBeenCalled();
+      }
+    );
     it('creates a session, clears the OTP cookie, and records observable side effects', async () => {
       const response = await post(
         '/verify',
@@ -785,7 +807,7 @@ describe('email code handlers through HTTP', () => {
     });
 
     it('upgrades an unverified anonymous session without creating a replacement session', async () => {
-      mocks.getExistingSessionRpc.mockResolvedValueOnce({ data: { is_anonymous: true } });
+      mocks.getExistingSessionRpc.mockResolvedValueOnce({ data: { is_guest_session: true } });
 
       const response = await post(
         '/verify',
@@ -815,7 +837,7 @@ describe('email code handlers through HTTP', () => {
         active: 1,
         email_verified: 1,
       });
-      mocks.getExistingSessionRpc.mockResolvedValueOnce({ data: { is_anonymous: true } });
+      mocks.getExistingSessionRpc.mockResolvedValueOnce({ data: { is_guest_session: true } });
 
       const response = await post(
         '/verify',

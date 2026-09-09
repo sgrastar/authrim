@@ -1,13 +1,13 @@
 {
   "formatVersion": 2,
-  "productVersion": "0.4.1",
+  "productVersion": "0.4.2",
   "databaseCompatibility": "fresh_and_forward",
   "freshInstallBaseline": {
     "productVersion": "0.4.0"
   },
   "upgradePaths": [
     {
-      "fromProductVersion": "0.4.0",
+      "fromProductVersion": "0.4.1",
       "kind": "delta",
       "streams": [
         {
@@ -19,7 +19,16 @@
             "core",
             "tenant_core"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "002_guest_account_lifecycle.sql",
+              "checksum": "5b3fa2c718a5429f7f2375148ec9ce494814ca702888a939b19dad4430b48821"
+            },
+            {
+              "path": "003_account_registration_state.sql",
+              "checksum": "37a9716f565903b6459728ede9a5b564dea974c7dd40b5b1281b7a6f8c153dce"
+            }
+          ]
         },
         {
           "id": "pii-d1",
@@ -30,7 +39,12 @@
             "pii",
             "tenant_pii"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "002_guest_upgrade_operations.sql",
+              "checksum": "b351fb80247f74fddbbdcedadd96342173a5bf369a7e50c74b7c8e15c9fb6fcf"
+            }
+          ]
         },
         {
           "id": "admin-d1",
@@ -82,7 +96,16 @@
             "custom",
             "policy"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "002_guest_account_lifecycle.sql",
+              "checksum": "c3a2c5a2acf35636cdff0bc30409f0f16c0eab7445d45d477b410cdcebad23b0"
+            },
+            {
+              "path": "003_account_registration_state.sql",
+              "checksum": "60b307e2ba21508be995877247aeb59e41991b9c609475e6b82ff30524fda787"
+            }
+          ]
         },
         {
           "id": "pii-postgresql",
@@ -92,7 +115,12 @@
           "logicalRoles": [
             "pii"
           ],
-          "files": []
+          "files": [
+            {
+              "path": "002_guest_upgrade_operations.sql",
+              "checksum": "9395701e9d5d647e18805b3ab8fd23e504e424de162d25aa1f20d29b963a5f0d"
+            }
+          ]
         }
       ]
     }
@@ -116,6 +144,14 @@
         {
           "path": "001_0_4_0_core_baseline.sql",
           "checksum": "11a7eeb61266e9386e2fac051508d403231cf81be9a4a7cc9eadb83bec8808d0"
+        },
+        {
+          "path": "002_guest_account_lifecycle.sql",
+          "checksum": "5b3fa2c718a5429f7f2375148ec9ce494814ca702888a939b19dad4430b48821"
+        },
+        {
+          "path": "003_account_registration_state.sql",
+          "checksum": "37a9716f565903b6459728ede9a5b564dea974c7dd40b5b1281b7a6f8c153dce"
         }
       ]
     },
@@ -132,6 +168,10 @@
         {
           "path": "001_0_4_0_pii_baseline.sql",
           "checksum": "53918709e01fbb3cb54cb914c1f6634c8bb91af91cdb3a817788c73bb0b601be"
+        },
+        {
+          "path": "002_guest_upgrade_operations.sql",
+          "checksum": "b351fb80247f74fddbbdcedadd96342173a5bf369a7e50c74b7c8e15c9fb6fcf"
         }
       ]
     },
@@ -209,6 +249,14 @@
         {
           "path": "001_0_4_0_core_baseline.sql",
           "checksum": "ead973bb194468efc15226076c56e4e8ea544993bf2bddcb42672279f46f86a2"
+        },
+        {
+          "path": "002_guest_account_lifecycle.sql",
+          "checksum": "c3a2c5a2acf35636cdff0bc30409f0f16c0eab7445d45d477b410cdcebad23b0"
+        },
+        {
+          "path": "003_account_registration_state.sql",
+          "checksum": "60b307e2ba21508be995877247aeb59e41991b9c609475e6b82ff30524fda787"
         }
       ]
     },
@@ -224,6 +272,10 @@
         {
           "path": "001_0_4_0_pii_baseline.sql",
           "checksum": "278050d1fe0bbfb31ac188fd70b047329b101cde322cac5767bb84509053771c"
+        },
+        {
+          "path": "002_guest_upgrade_operations.sql",
+          "checksum": "9395701e9d5d647e18805b3ab8fd23e504e424de162d25aa1f20d29b963a5f0d"
         }
       ]
     }

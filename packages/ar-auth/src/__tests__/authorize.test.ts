@@ -1413,7 +1413,7 @@ describe('Authorization Handler', () => {
 
     it('should reject invalid code_challenge format', async () => {
       const response = await app.request(
-        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&code_challenge=invalid!@#&code_challenge_method=S256',
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&code_challenge=invalid%21%40%23&code_challenge_method=S256',
         { method: 'GET' },
         env
       );
@@ -1424,6 +1424,20 @@ describe('Authorization Handler', () => {
       expect(redirectUrl.searchParams.get('error')).toBe('invalid_request');
       expect(redirectUrl.searchParams.get('error_description')).toContain(
         'Invalid code_challenge format'
+      );
+    });
+
+    it('does not read a PKCE method from the URL fragment', async () => {
+      const response = await app.request(
+        '/authorize?response_type=code&client_id=test-client&redirect_uri=https://example.com/callback&scope=openid&code_challenge=invalid!@#&code_challenge_method=S256',
+        { method: 'GET' },
+        env
+      );
+      expect(response.status).toBe(302);
+      const redirectUrl = new URL(response.headers.get('Location')!, 'https://example.com');
+      expect(redirectUrl.searchParams.get('error')).toBe('invalid_request');
+      expect(redirectUrl.searchParams.get('error_description')).toContain(
+        'code_challenge_method is required'
       );
     });
 

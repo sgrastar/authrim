@@ -213,7 +213,7 @@ async function seedSources(users: DatabaseSync, pii: DatabaseSync): Promise<void
       id TEXT PRIMARY KEY, tenant_id TEXT, user_id TEXT, rp_id TEXT,
       credential_id TEXT, created_at INTEGER
     );
-    CREATE TABLE anonymous_devices (
+    CREATE TABLE guest_devices (
       id TEXT PRIMARY KEY, tenant_id TEXT, user_id TEXT, device_id_hash TEXT,
       is_active INTEGER, created_at INTEGER
     );

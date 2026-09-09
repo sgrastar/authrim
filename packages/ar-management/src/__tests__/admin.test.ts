@@ -446,6 +446,9 @@ function runtimeInputToUser(input: any) {
     email_verified: input.emailVerified ? 1 : 0,
     phone_number_verified: input.phoneNumberVerified ? 1 : 0,
     user_type: input.userType ?? 'end_user',
+    ...(input.registrationState !== undefined
+      ? { registration_state: input.registrationState }
+      : {}),
     external_id: input.externalId ?? null,
     password_hash: input.passwordHash ?? null,
     created_at: Math.floor(now / 1000),
@@ -462,8 +465,9 @@ function toCanonicalProjection(userId: string, row: any, tenantId: string) {
     subject_id: row.primary_subject_id ?? `subject:${userId}`,
     account_id: row.id?.startsWith?.('account:') ? row.id : `account:${userId}`,
     account_type: row.account_type ?? 'user',
+    registration_state: row.registration_state ?? 'registered',
     lifecycle_state: lifecycleState,
-    account_status:
+    status:
       row.status ??
       (lifecycleState === 'suspended' || lifecycleState === 'locked' || lifecycleState === 'deleted'
         ? lifecycleState
@@ -1660,76 +1664,91 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUsersListHandler', () => {
-    it('uses cursor-based routed projection for tenant-D1 storage without exposing bindings', async () => {
-      const userId = 'user-route';
-      const createdAt = Date.UTC(2026, 6, 10, 10, 35, 4);
-      canonicalRuntimeUsers.set(userId, {
-        id: userId,
-        tenant_id: 'default',
-        lifecycle_state: 'active',
-        active: 1,
-        email: 'routed@example.com',
-        name: 'Routed User',
-        email_verified: 1,
-        phone_number_verified: 0,
-        created_at: new Date(createdAt).toISOString(),
-        updated_at: new Date(createdAt).toISOString(),
-      });
-      listCrossShardAccounts.mockResolvedValue({
-        items: [
-          {
-            id: `account:${userId}`,
-            legacyUserId: userId,
-            tenantId: 'default',
-            accountType: 'user',
-            lifecycleState: 'active',
-            displayLabel: 'Routed User',
-            createdAt,
-            coreBindingRef: 'DB',
-            piiBindingRef: 'DB_PII',
-          },
-        ],
-        nextCursor: 'opaque-next-cursor',
-      });
-      const core = createMockDB({ allResults: [] });
-      const pii = createMockDB({ allResults: [] });
-      const c = createMockContext({
-        db: core,
-        dbPII: pii,
-        runtimeUserStoreSources: {
-          storageProfile: {
-            id: 'builtin:storage:tenant-d1',
-            kind: 'storage',
-            label: 'Tenant D1',
-            slices: {},
-          },
-          coreDb: core,
-          piiDb: pii,
-          policyDb: core,
-          userCacheScope: {
-            storageProfileId: 'builtin:storage:tenant-d1',
-            sourceGeneration: 'test',
-            schemaVersion: 'test',
-          },
-          piiCacheMode: 'no_cross_request_pii',
-        },
-      });
-
-      const response = await adminUsersListHandler(c);
-      expect(response.status).toBe(200);
-      const body = (await response.json()) as Record<string, unknown>;
-      expect(body).toMatchObject({
-        users: [expect.objectContaining({ id: userId, email: 'routed@example.com' })],
-        pagination: {
-          mode: 'cursor',
-          limit: 20,
+    it.each(['registered', 'guest'])(
+      'includes %s in cursor-based tenant-D1 user lists without exposing bindings',
+      async (registrationState) => {
+        const userId = 'user-route';
+        const createdAt = Date.UTC(2026, 6, 10, 10, 35, 4);
+        canonicalRuntimeUsers.set(userId, {
+          id: userId,
+          account_type: 'user',
+          registration_state: registrationState,
+          tenant_id: 'default',
+          lifecycle_state: 'active',
+          active: 1,
+          email: 'routed@example.com',
+          name: 'Routed User',
+          email_verified: 1,
+          phone_number_verified: 0,
+          created_at: new Date(createdAt).toISOString(),
+          updated_at: new Date(createdAt).toISOString(),
+        });
+        listCrossShardAccounts.mockResolvedValue({
+          items: [
+            {
+              id: `account:${userId}`,
+              legacyUserId: userId,
+              tenantId: 'default',
+              accountType: 'user',
+              lifecycleState: 'active',
+              displayLabel: 'Routed User',
+              createdAt,
+              coreBindingRef: 'DB',
+              piiBindingRef: 'DB_PII',
+            },
+          ],
           nextCursor: 'opaque-next-cursor',
-          hasNext: true,
-        },
-      });
-      expect(JSON.stringify(body)).not.toContain('DB_PII');
-      expect(JSON.stringify(body)).not.toContain('coreBindingRef');
-    });
+        });
+        const core = createMockDB({ allResults: [] });
+        const pii = createMockDB({ allResults: [] });
+        const c = createMockContext({
+          db: core,
+          dbPII: pii,
+          runtimeUserStoreSources: {
+            storageProfile: {
+              id: 'builtin:storage:tenant-d1',
+              kind: 'storage',
+              label: 'Tenant D1',
+              slices: {},
+            },
+            coreDb: core,
+            piiDb: pii,
+            policyDb: core,
+            userCacheScope: {
+              storageProfileId: 'builtin:storage:tenant-d1',
+              sourceGeneration: 'test',
+              schemaVersion: 'test',
+            },
+            piiCacheMode: 'no_cross_request_pii',
+          },
+        });
+
+        const response = await adminUsersListHandler(c);
+        expect(response.status).toBe(200);
+        expect(listCrossShardAccounts).toHaveBeenCalledWith(
+          expect.objectContaining({ accountType: 'user' })
+        );
+        const body = (await response.json()) as Record<string, unknown>;
+        expect(body).toMatchObject({
+          users: [
+            expect.objectContaining({
+              id: userId,
+              email: 'routed@example.com',
+              user_type: 'end_user',
+              registration_state: registrationState,
+            }),
+          ],
+          pagination: {
+            mode: 'cursor',
+            limit: 20,
+            nextCursor: 'opaque-next-cursor',
+            hasNext: true,
+          },
+        });
+        expect(JSON.stringify(body)).not.toContain('DB_PII');
+        expect(JSON.stringify(body)).not.toContain('coreBindingRef');
+      }
+    );
 
     it('uses exact routed search for shared-pool metadata without runtime sources', async () => {
       const userId = 'user-metadata-route';
@@ -2438,6 +2457,21 @@ describe('Admin API Handlers', () => {
   });
 
   describe('adminUserCreateHandler', () => {
+    it.each([{ user_type: 'anonymous' }, { registration_state: 'guest' }])(
+      'rejects guest registration through the admin create endpoint: %j',
+      async (fields) => {
+        const c = createMockContext({
+          method: 'POST',
+          body: { email: 'test@example.com', ...fields },
+          db: createMockDB({}),
+        });
+        await adminUserCreateHandler(c);
+        expect(c.json).toHaveBeenCalledWith(
+          expect.objectContaining({ error: 'invalid_request' }),
+          400
+        );
+      }
+    );
     it('should require email field', async () => {
       const mockDB = createMockDB({});
 
@@ -3135,6 +3169,49 @@ describe('Admin API Handlers', () => {
             id: userId,
           }),
         })
+      );
+    });
+
+    it('preserves guest registration when saving the public end_user classification', async () => {
+      const userId = 'guest-save-classification';
+      canonicalRuntimeUsers.set(userId, {
+        id: userId,
+        tenant_id: 'default',
+        account_type: 'user',
+        registration_state: 'guest',
+        active: 1,
+      });
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: userId },
+        body: { user_type: 'end_user' },
+        db: createMockDB({ firstResult: null, allResults: [], runResult: { success: true } }),
+        dbPII: createMockDB({ firstResult: null }),
+      });
+      await adminUserUpdateHandler(c);
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          user: expect.objectContaining({ registration_state: 'guest', user_type: 'end_user' }),
+        })
+      );
+      expect(canonicalRuntimeUsers.get(userId)).toMatchObject({
+        registration_state: 'guest',
+        user_type: 'end_user',
+      });
+    });
+
+    it('rejects attempts to set registration_state through profile updates', async () => {
+      const c = createMockContext({
+        method: 'PUT',
+        params: { id: 'guest' },
+        body: { registration_state: 'registered' },
+        db: createMockDB({}),
+        dbPII: createMockDB({}),
+      });
+      await adminUserUpdateHandler(c);
+      expect(c.json).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'invalid_request' }),
+        400
       );
     });
 

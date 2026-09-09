@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim User Self-Service API
-  version: 0.4.1
+  version: 0.4.2
   summary: Authenticated user consent and data export endpoints.
   description: OpenAPI contract for user-facing self-service endpoints owned by the management Worker.
 servers:
@@ -18,6 +18,163 @@ tags:
   - name: User Consent
   - name: User Data Export
 paths:
+  /api/account/guest-upgrade:
+    get:
+      tags: [Account Page]
+      operationId: getAccountGuestUpgrade
+      summary: Read guest registration eligibility and retention deadline.
+      description: Reads current settings without extending retention. Only methods with available prerequisites are advertised (OTP secret and tenant email delivery configuration for email, a secure browser origin for passkeys). The deadline remains visible when registration is disabled. After a durable upgrade completes, this request repairs guest flags only on the session that initiated the verified upgrade. Machine and agent accounts are excluded.
+      security:
+        - accountSessionCookie: []
+      responses:
+        '200':
+          description: Current account registration state. All timestamps are Unix seconds.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  [
+                    registration_state,
+                    status,
+                    deletion_due_at,
+                    upgrade_hold_until,
+                    upgrade_eligible,
+                    allowed_methods,
+                    upgrade_in_progress,
+                    profile_complete,
+                  ]
+                properties:
+                  status:
+                    type: string
+                    description: Operational account status, independent of registration state.
+                  registration_state: { type: string, enum: [guest, registered] }
+                  deletion_due_at: { type: [integer, 'null'] }
+                  upgrade_hold_until: { type: [integer, 'null'] }
+                  upgrade_eligible: { type: boolean }
+                  allowed_methods:
+                    type: array
+                    items: { type: string, enum: [email, passkey] }
+                  upgrade_in_progress: { type: boolean }
+                  profile_complete: { type: boolean }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /api/account/guest-upgrade/start:
+    post:
+      tags: [Account Page]
+      operationId: startAccountGuestUpgrade
+      summary: Start email or passkey registration for the current guest.
+      description: Requires an authenticated guest browser session and CSRF protection. Tenant, method and originating-client registration permissions must allow the method. Method prerequisites are rechecked before acquiring a hold; unavailable methods return 403 without consuming it. Starting a valid attempt acquires the guest's one-time deletion hold; retries never renew it. Proof expires independently after ten minutes. Disabling guest login does not disable registration.
+      security:
+        - accountSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [method]
+              properties:
+                method: { type: string, enum: [email, passkey] }
+                email:
+                  {
+                    type: string,
+                    format: email,
+                    maxLength: 320,
+                    description: Required for email verification.,
+                  }
+                preserve_sub: { type: boolean, enum: [true], default: true }
+      responses:
+        '200':
+          description: A session-bound registration operation. Store the opaque token only for this attempt. Email confirmation may be delivered asynchronously.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [operation_id, upgrade_token, method, expires_at]
+                properties:
+                  operation_id: { type: string }
+                  upgrade_token: { type: string, pattern: '^[a-f0-9]{64}$' }
+                  method: { type: string, enum: [email, passkey] }
+                  expires_at: { type: integer }
+                  options:
+                    {
+                      type: object,
+                      description: WebAuthn PublicKeyCredentialCreationOptionsJSON for passkey registration.,
+                    }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /api/account/guest-upgrade/complete:
+    post:
+      tags: [Account Page]
+      operationId: completeAccountGuestUpgrade
+      summary: Verify proof and register the guest while retaining the subject.
+      description: Requires the initiating browser session, opaque token and CSRF protection. Email codes allow at most five attempts. Passkeys require user verification and the original origin and relying-party ID. Permissions are rechecked before registration is admitted. Existing identities return identity_already_registered without merging accounts. Passing the deletion deadline does not prevent registration until deletion starts. Accepted operations can be retried after a transient failure, including after proof expiry. Completion cancels guest retention without increasing previously granted scopes.
+      security:
+        - accountSessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [operation_id, upgrade_token]
+              properties:
+                operation_id: { type: string, maxLength: 100 }
+                upgrade_token: { type: string, pattern: '^[a-f0-9]{64}$' }
+                code:
+                  {
+                    type: string,
+                    pattern: '^[0-9]{6}$',
+                    description: Required for the initial email proof.,
+                  }
+                passkey_response:
+                  {
+                    type: object,
+                    description: WebAuthn RegistrationResponseJSON for the initial passkey proof.,
+                  }
+                preserve_sub: { type: boolean, enum: [true], default: true }
+      responses:
+        '200':
+          description: Registration completed with the original subject.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, user_id, preserve_sub]
+                properties:
+                  success: { type: boolean, enum: [true] }
+                  user_id: { type: string }
+                  preserve_sub: { type: boolean, enum: [true] }
+        '202':
+          description: Registration is in progress. Retry the same operation and token.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [in_progress] }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '409':
+          description: Registration is unavailable or the identity already belongs to an account. identity_already_registered includes existing_login_available=true so the UI can offer a separate login.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: { type: string }
+                  existing_login_available: { type: boolean }
+        '429': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
   /api/account/profile:
     get:
       tags:

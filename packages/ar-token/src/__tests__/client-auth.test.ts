@@ -86,6 +86,8 @@ const mocks = vi.hoisted(() => {
     mockCalculateAtHash: vi.fn().mockResolvedValue('at-hash-value'),
     mockCalculateDsHash: vi.fn().mockResolvedValue('presented-ds-hash'),
 
+    mockGuestContract: vi.fn<() => unknown>(),
+
     // Client authentication
     mockValidateClientAssertion: vi
       .fn()
@@ -192,9 +194,15 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
-  const actual = await importOriginal<object>();
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    loadClientContractCached: (...args: Parameters<typeof actual.loadClientContractCached>) => {
+      const override = mocks.mockGuestContract();
+      return override === undefined
+        ? actual.loadClientContractCached(...args)
+        : Promise.resolve(override as Awaited<ReturnType<typeof actual.loadClientContractCached>>);
+    },
     ensureAccountAuthenticationState: mocks.mockEnsureAccountAuthenticationState,
     findCanonicalAccountAuthenticationState: vi.fn(async (_adapter, _tenantId, userId) => ({
       userId,
@@ -512,6 +520,7 @@ function resetAllMocks() {
   mocks.mockGenerateRegionAwareJti.mockReset().mockResolvedValue({ jti: 'jti-region-001' });
 
   // Reset RBAC mocks
+  mocks.mockGuestContract.mockReset();
   mocks.mockGetIDTokenRBACClaims.mockReset().mockResolvedValue({});
   mocks.mockGetAccessTokenRBACClaims.mockReset().mockResolvedValue({});
   mocks.mockIsPolicyEmbeddingEnabled.mockReset().mockResolvedValue(false);
@@ -727,6 +736,53 @@ describe('Client Authentication Tests', () => {
         body: await parseJsonResponse<Record<string, unknown>>(response),
       };
     }
+
+    it.each([true, false])(
+      'keeps guest scope checks while removing duplicate registration claims (allowed=%s)',
+      async (allowed) => {
+        const client = createConfidentialClient({
+          token_endpoint_auth_method: 'client_secret_post',
+        });
+        const code = 'guest-registration-claims';
+        const { store } = attachActualAuthorizationCodeStore(mockEnv);
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockGetSystemSettingsCached.mockResolvedValue({ fapi: { enabled: false } });
+        mocks.mockVerifyClientSecretHash.mockResolvedValue(true);
+        mocks.mockFindCanonicalRuntimeAccount.mockResolvedValue({
+          tenant_id: 'default',
+          legacy_user_id: 'victim-user',
+          account_type: 'user',
+          registration_state: 'guest',
+          lifecycle_state: 'active',
+          metadata_json: '{}',
+        });
+        mocks.mockGuestContract.mockReturnValue({
+          guestAuth: { enabled: allowed, allowedScopes: ['openid', 'profile'] },
+        });
+        await storeCode(store, client.client_id, code);
+        const { response, body } = await exchangeCode({ clientId: client.client_id, code });
+        if (!allowed) {
+          expect(response.status).toBe(400);
+          expect(body.error).toBe('invalid_scope');
+          expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+          return;
+        }
+        expect(response.status).toBe(200);
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalled();
+        expect(mocks.mockCreateIDToken).toHaveBeenCalled();
+        for (const call of [
+          ...mocks.mockCreateAccessToken.mock.calls,
+          ...mocks.mockCreateIDToken.mock.calls,
+        ]) {
+          for (const argument of call) {
+            if (argument && typeof argument === 'object') {
+              expect(argument).not.toHaveProperty('user_type', 'anonymous');
+              expect(argument).not.toHaveProperty('authrim_account_lifecycle');
+            }
+          }
+        }
+      }
+    );
 
     securityRegressionIt(
       '[security regression][AO-08] preserves a code after rejecting a redirect_uri mismatch',

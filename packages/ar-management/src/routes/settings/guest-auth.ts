@@ -5,15 +5,15 @@
  * and anonymous users.
  *
  * Configuration APIs:
- * GET  /api/admin/settings/anonymous-auth        - Get anonymous auth config
- * PUT  /api/admin/settings/anonymous-auth        - Update anonymous auth config
+ * GET  /api/admin/settings/guest-auth        - Get anonymous auth config
+ * PUT  /api/admin/settings/guest-auth        - Update anonymous auth config
  *
  * Anonymous User Management APIs:
- * GET    /api/admin/anonymous-users              - List anonymous users
- * GET    /api/admin/anonymous-users/:id          - Get specific anonymous user
- * GET    /api/admin/anonymous-users/:id/upgrades - Get upgrade history
- * DELETE /api/admin/anonymous-users/:id          - Delete anonymous user
- * POST   /api/admin/anonymous-users/cleanup      - Cleanup expired anonymous users
+ * GET    /api/admin/guest-users              - List anonymous users
+ * GET    /api/admin/guest-users/:id          - Get specific anonymous user
+ * GET    /api/admin/guest-users/:id/upgrades - Get upgrade history
+ * DELETE /api/admin/guest-users/:id          - Delete anonymous user
+ * POST   /api/admin/guest-users/cleanup      - Cleanup expired anonymous users
  *
  * @see architecture-decisions.md §17 for design details
  */
@@ -24,7 +24,7 @@ import {
   createPIIContextFromHono,
   CanonicalRuntimeUserStore,
   getTenantIdFromContext,
-  isAnonymousAuthEnabled,
+  isGuestDeviceAuthEnabled,
   getLogger,
   transitionAccountAuthenticationState,
   type Env,
@@ -46,27 +46,25 @@ function createRuntimeUserStore(c: Context<{ Bindings: Env }>, tenantId: string)
 // ============================================================================
 
 /**
- * GET /api/admin/settings/anonymous-auth
+ * GET /api/admin/settings/guest-auth
  * Get anonymous authentication configuration
  */
-export async function getAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('AnonymousAuthConfigAPI');
+export async function getGuestAuthConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('GuestAuthConfigAPI');
   try {
-    const enabled = await isAnonymousAuthEnabled(c.env);
+    const enabled = await isGuestDeviceAuthEnabled(c.env);
 
     // Get additional config from KV if available
     let defaultExpiresInDays: number | null = null;
     let cleanupIntervalHours = 24;
 
     if (c.env.AUTHRIM_CONFIG) {
-      const expiresConfig = await c.env.AUTHRIM_CONFIG.get(
-        'anonymous_auth:default_expires_in_days'
-      );
+      const expiresConfig = await c.env.AUTHRIM_CONFIG.get('guest_auth:default_expires_in_days');
       if (expiresConfig) {
         defaultExpiresInDays = parseInt(expiresConfig, 10);
       }
 
-      const cleanupConfig = await c.env.AUTHRIM_CONFIG.get('anonymous_auth:cleanup_interval_hours');
+      const cleanupConfig = await c.env.AUTHRIM_CONFIG.get('guest_auth:cleanup_interval_hours');
       if (cleanupConfig) {
         cleanupIntervalHours = parseInt(cleanupConfig, 10);
       }
@@ -78,7 +76,7 @@ export async function getAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
         default_expires_in_days: defaultExpiresInDays,
         cleanup_interval_hours: cleanupIntervalHours,
       },
-      source: c.env.ENABLE_ANONYMOUS_AUTH ? 'env' : 'default',
+      source: c.env.ENABLE_GUEST_DEVICE_AUTH ? 'env' : 'default',
     });
   } catch (error) {
     log.error('Error getting config', {}, error as Error);
@@ -93,7 +91,7 @@ export async function getAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
 }
 
 /**
- * PUT /api/admin/settings/anonymous-auth
+ * PUT /api/admin/settings/guest-auth
  * Update anonymous authentication configuration
  *
  * Request body:
@@ -103,8 +101,8 @@ export async function getAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
  *   "cleanup_interval_hours": number
  * }
  */
-export async function updateAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('AnonymousAuthConfigAPI');
+export async function updateGuestAuthConfig(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('GuestAuthConfigAPI');
   if (!c.env.AUTHRIM_CONFIG) {
     return c.json(
       {
@@ -127,7 +125,7 @@ export async function updateAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
     // Update enabled flag
     if (body.enabled !== undefined) {
       await c.env.AUTHRIM_CONFIG.put(
-        'feature_flag:ENABLE_ANONYMOUS_AUTH',
+        'feature_flag:ENABLE_GUEST_DEVICE_AUTH',
         body.enabled ? 'true' : 'false'
       );
       updates.push(`enabled: ${body.enabled}`);
@@ -136,7 +134,7 @@ export async function updateAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
     // Update default expiration
     if (body.default_expires_in_days !== undefined) {
       if (body.default_expires_in_days === null) {
-        await c.env.AUTHRIM_CONFIG.delete('anonymous_auth:default_expires_in_days');
+        await c.env.AUTHRIM_CONFIG.delete('guest_auth:default_expires_in_days');
         updates.push('default_expires_in_days: null (unlimited)');
       } else {
         if (typeof body.default_expires_in_days !== 'number' || body.default_expires_in_days < 1) {
@@ -149,7 +147,7 @@ export async function updateAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
           );
         }
         await c.env.AUTHRIM_CONFIG.put(
-          'anonymous_auth:default_expires_in_days',
+          'guest_auth:default_expires_in_days',
           body.default_expires_in_days.toString()
         );
         updates.push(`default_expires_in_days: ${body.default_expires_in_days}`);
@@ -168,7 +166,7 @@ export async function updateAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
         );
       }
       await c.env.AUTHRIM_CONFIG.put(
-        'anonymous_auth:cleanup_interval_hours',
+        'guest_auth:cleanup_interval_hours',
         body.cleanup_interval_hours.toString()
       );
       updates.push(`cleanup_interval_hours: ${body.cleanup_interval_hours}`);
@@ -196,7 +194,7 @@ export async function updateAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
 // ============================================================================
 
 /**
- * GET /api/admin/anonymous-users
+ * GET /api/admin/guest-users
  * List anonymous users with pagination
  *
  * Query params:
@@ -204,8 +202,8 @@ export async function updateAnonymousAuthConfig(c: Context<{ Bindings: Env }>) {
  * - offset: number (default: 0)
  * - include_expired: boolean (default: false)
  */
-export async function listAnonymousUsers(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('AnonymousUsersAPI');
+export async function listGuestUsers(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('GuestUsersAPI');
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
@@ -227,7 +225,7 @@ export async function listAnonymousUsers(c: Context<{ Bindings: Env }>) {
 
     // Get total count
     const countResult = await authCtx.coreAdapter.queryOne<{ count: number }>(
-      `SELECT COUNT(*) as count FROM anonymous_devices ad ${whereClause}`,
+      `SELECT COUNT(*) as count FROM guest_devices ad ${whereClause}`,
       params
     );
 
@@ -251,7 +249,7 @@ export async function listAnonymousUsers(c: Context<{ Bindings: Env }>) {
         ad.created_at,
         ad.last_used_at,
         ad.is_active
-      FROM anonymous_devices ad
+      FROM guest_devices ad
       ${whereClause}
       ORDER BY ad.last_used_at DESC
       LIMIT ? OFFSET ?`,
@@ -287,11 +285,11 @@ export async function listAnonymousUsers(c: Context<{ Bindings: Env }>) {
 }
 
 /**
- * GET /api/admin/anonymous-users/:id
+ * GET /api/admin/guest-users/:id
  * Get specific anonymous user details
  */
-export async function getAnonymousUser(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('AnonymousUsersAPI');
+export async function getGuestUser(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('GuestUsersAPI');
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
@@ -321,7 +319,7 @@ export async function getAnonymousUser(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    if (user.account_type !== 'anonymous') {
+    if (user.registration_state !== 'guest') {
       return c.json(
         {
           error: 'invalid_request',
@@ -342,7 +340,7 @@ export async function getAnonymousUser(c: Context<{ Bindings: Env }>) {
       is_active: number;
     }>(
       `SELECT id, device_platform, device_stability, expires_at, created_at, last_used_at, is_active
-       FROM anonymous_devices
+       FROM guest_devices
        WHERE tenant_id = ? AND user_id = ?
        ORDER BY last_used_at DESC`,
       [tenantId, userId]
@@ -357,8 +355,8 @@ export async function getAnonymousUser(c: Context<{ Bindings: Env }>) {
       preserve_sub: number;
     }>(
       `SELECT id, upgraded_user_id, upgrade_method, upgraded_at, preserve_sub
-       FROM user_upgrades
-       WHERE tenant_id = ? AND anonymous_user_id = ?
+       FROM guest_account_upgrades
+       WHERE tenant_id = ? AND guest_user_id = ?
        ORDER BY upgraded_at DESC
        LIMIT 1`,
       [tenantId, userId]
@@ -368,7 +366,8 @@ export async function getAnonymousUser(c: Context<{ Bindings: Env }>) {
 
     return c.json({
       user_id: userId,
-      user_type: 'anonymous',
+      user_type: 'end_user',
+      registration_state: 'guest',
       created_at: Date.parse(user.created_at),
       last_login_at: user.last_login_at,
       devices: devices.map((d) => ({
@@ -403,11 +402,11 @@ export async function getAnonymousUser(c: Context<{ Bindings: Env }>) {
 }
 
 /**
- * GET /api/admin/anonymous-users/:id/upgrades
+ * GET /api/admin/guest-users/:id/upgrades
  * Get upgrade history for an anonymous user (audit trail)
  */
-export async function getAnonymousUserUpgrades(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('AnonymousUsersAPI');
+export async function getGuestUserUpgrades(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('GuestUsersAPI');
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
@@ -426,7 +425,7 @@ export async function getAnonymousUserUpgrades(c: Context<{ Bindings: Env }>) {
     // Get all upgrades related to this user (as anonymous or as upgraded target)
     const upgrades = await authCtx.coreAdapter.query<{
       id: string;
-      anonymous_user_id: string;
+      guest_user_id: string;
       upgraded_user_id: string;
       upgrade_method: string;
       provider_id: string | null;
@@ -434,10 +433,10 @@ export async function getAnonymousUserUpgrades(c: Context<{ Bindings: Env }>) {
       upgraded_at: number;
       data_migrated: number;
     }>(
-      `SELECT id, anonymous_user_id, upgraded_user_id, upgrade_method, provider_id,
+      `SELECT id, guest_user_id, upgraded_user_id, upgrade_method, provider_id,
               preserve_sub, upgraded_at, data_migrated
-       FROM user_upgrades
-       WHERE tenant_id = ? AND (anonymous_user_id = ? OR upgraded_user_id = ?)
+       FROM guest_account_upgrades
+       WHERE tenant_id = ? AND (guest_user_id = ? OR upgraded_user_id = ?)
        ORDER BY upgraded_at DESC`,
       [tenantId, userId, userId]
     );
@@ -446,7 +445,7 @@ export async function getAnonymousUserUpgrades(c: Context<{ Bindings: Env }>) {
       user_id: userId,
       upgrades: upgrades.map((u) => ({
         id: u.id,
-        anonymous_user_id: u.anonymous_user_id,
+        guest_user_id: u.guest_user_id,
         upgraded_user_id: u.upgraded_user_id,
         method: u.upgrade_method,
         provider_id: u.provider_id,
@@ -468,11 +467,11 @@ export async function getAnonymousUserUpgrades(c: Context<{ Bindings: Env }>) {
 }
 
 /**
- * DELETE /api/admin/anonymous-users/:id
+ * DELETE /api/admin/guest-users/:id
  * Delete an anonymous user and their devices
  */
-export async function deleteAnonymousUser(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('AnonymousUsersAPI');
+export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('GuestUsersAPI');
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
@@ -502,7 +501,7 @@ export async function deleteAnonymousUser(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    if (user.account_type !== 'anonymous') {
+    if (user.registration_state !== 'guest') {
       return c.json(
         {
           error: 'invalid_request',
@@ -536,7 +535,7 @@ export async function deleteAnonymousUser(c: Context<{ Bindings: Env }>) {
 
     // Delete devices first (foreign key constraint)
     await authCtx.coreAdapter.execute(
-      'DELETE FROM anonymous_devices WHERE tenant_id = ? AND user_id = ?',
+      'DELETE FROM guest_devices WHERE tenant_id = ? AND user_id = ?',
       [tenantId, userId]
     );
 
@@ -569,7 +568,7 @@ export async function deleteAnonymousUser(c: Context<{ Bindings: Env }>) {
 }
 
 /**
- * POST /api/admin/anonymous-users/cleanup
+ * POST /api/admin/guest-users/cleanup
  * Cleanup expired anonymous users
  *
  * Request body:
@@ -578,8 +577,8 @@ export async function deleteAnonymousUser(c: Context<{ Bindings: Env }>) {
  *   "limit": number (default: 100, max: 1000)
  * }
  */
-export async function cleanupExpiredAnonymousUsers(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('AnonymousUsersAPI');
+export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
+  const log = getLogger(c).module('GuestUsersAPI');
   try {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
@@ -602,10 +601,10 @@ export async function cleanupExpiredAnonymousUsers(c: Context<{ Bindings: Env }>
       expires_at: number;
     }>(
       `SELECT ad.user_id, ad.id as device_id, ad.expires_at
-       FROM anonymous_devices ad
+       FROM guest_devices ad
        INNER JOIN identity_accounts uc ON ad.user_id = uc.legacy_user_id
        WHERE ad.tenant_id = ? AND ad.is_active = 1 AND ad.expires_at IS NOT NULL AND ad.expires_at < ?
-         AND uc.account_type = 'anonymous'
+         AND uc.registration_state = 'guest'
        ORDER BY ad.expires_at ASC
        LIMIT ?`,
       [tenantId, now, limit]
@@ -635,7 +634,7 @@ export async function cleanupExpiredAnonymousUsers(c: Context<{ Bindings: Env }>
     for (const userId of userIds) {
       // Check if user has any active (non-expired) devices
       const activeDevice = await authCtx.coreAdapter.queryOne<{ id: string }>(
-        `SELECT id FROM anonymous_devices
+        `SELECT id FROM guest_devices
          WHERE tenant_id = ? AND user_id = ? AND is_active = 1
            AND (expires_at IS NULL OR expires_at > ?)`,
         [tenantId, userId, now]
@@ -657,7 +656,7 @@ export async function cleanupExpiredAnonymousUsers(c: Context<{ Bindings: Env }>
         });
         // No active devices, delete user
         await authCtx.coreAdapter.execute(
-          'DELETE FROM anonymous_devices WHERE tenant_id = ? AND user_id = ?',
+          'DELETE FROM guest_devices WHERE tenant_id = ? AND user_id = ?',
           [tenantId, userId]
         );
         await createRuntimeUserStore(c, tenantId).deleteUser(userId);
@@ -674,7 +673,7 @@ export async function cleanupExpiredAnonymousUsers(c: Context<{ Bindings: Env }>
       } else {
         // User has active devices, just deactivate expired ones
         await authCtx.coreAdapter.execute(
-          `UPDATE anonymous_devices SET is_active = 0
+          `UPDATE guest_devices SET is_active = 0
            WHERE tenant_id = ? AND user_id = ? AND expires_at IS NOT NULL AND expires_at < ?`,
           [tenantId, userId, now]
         );

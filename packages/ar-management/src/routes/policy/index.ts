@@ -31,11 +31,14 @@ import { Context, Hono } from 'hono';
 import type { Env, AdminAuthContext } from '@authrim/ar-lib-core';
 import {
   getTenantIdFromContext,
+  bumpAuthenticationMethodsCacheRevision,
   type DatabaseAdapter,
   createAuthContextFromHono,
   createPolicyResolver,
   type TenantContract,
   type ClientContract,
+  createDefaultGuestClientPolicy,
+  isValidGuestClientPolicy,
   type TenantPolicyPreset,
   type ClientProfilePreset,
   TENANT_POLICY_PRESETS,
@@ -324,6 +327,8 @@ async function saveClientContract(
 ): Promise<void> {
   const key = buildContractKey(env, 'client', tenantId, clientId);
   await kv.put(key, JSON.stringify(contract));
+  // Public authentication methods depend on client guest permission as well as tenant settings.
+  await bumpAuthenticationMethodsCacheRevision(env, tenantId);
 }
 
 // =============================================================================
@@ -376,6 +381,7 @@ function createDefaultClientContract(
   const now = new Date().toISOString();
   return {
     clientId,
+    guestAuth: createDefaultGuestClientPolicy(),
     version: 1,
     tenantContractVersion,
     preset,
@@ -439,6 +445,7 @@ const ALLOWED_CLIENT_PROFILE_KEYS = [
   'encryption',
   'scopes',
   'authMethods',
+  'guestAuth',
   'consent',
   'redirect',
   'tokens',
@@ -1039,13 +1046,38 @@ policyRouter.put('/clients/:clientId/profile', async (c) => {
     }
   }
 
+  if (body.profile?.guestAuth !== undefined && !isValidGuestClientPolicy(body.profile.guestAuth)) {
+    return errorResponse(
+      c,
+      'bad_request',
+      'Invalid guest policy. Use explicit scope and upgrade method lists and preserve the existing subject.',
+      400
+    );
+  }
+
   // Get existing contract
   const existing = await getClientContract(kv, c.env, tenantId, clientId);
   const existingVersion = existing?.version ?? 0;
   const existingStatus = existing?.metadata?.status ?? 'draft';
 
-  // Get tenant policy for validation
-  const tenantContract = await getTenantContract(kv, c.env, tenantId);
+  // A guest-only update can use the same initial policy as the tenant-policy page.
+  // Read failures must not be mistaken for an unconfigured tenant.
+  let tenantContract: TenantContract | null;
+  try {
+    tenantContract = await kv.get<TenantContract>(
+      buildContractKey(c.env, 'tenant', tenantId),
+      'json'
+    );
+  } catch {
+    return errorResponse(c, 'service_unavailable', 'Tenant policy could not be loaded', 503);
+  }
+  const initializeTenantPolicy =
+    !tenantContract &&
+    Object.keys(body.profile ?? {}).length === 1 &&
+    body.profile?.guestAuth !== undefined;
+  if (initializeTenantPolicy) {
+    tenantContract = createDefaultTenantContract(tenantId, 'b2c-standard', actor);
+  }
   if (!tenantContract) {
     return errorResponse(
       c,
@@ -1148,6 +1180,9 @@ policyRouter.put('/clients/:clientId/profile', async (c) => {
     );
   }
 
+  if (initializeTenantPolicy) {
+    await saveTenantContract(kv, c.env, tenantId, tenantContract);
+  }
   await saveClientContract(kv, c.env, tenantId, clientId, updatedContract);
 
   // Audit logging

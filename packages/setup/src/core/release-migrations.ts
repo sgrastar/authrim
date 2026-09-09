@@ -499,6 +499,8 @@ export function generateReleaseMigrationManifest(input: {
   previousManifest?: ReleaseMigrationManifest;
   previousManifests?: readonly ReleaseMigrationManifest[];
   semanticBaselineSource?: boolean;
+  /** Draft generation only; published manifests are validated independently before writing. */
+  refreshCurrentVersionFiles?: boolean;
 }): ReleaseMigrationManifest {
   const history = [
     ...(input.previousManifests ?? []),
@@ -542,6 +544,29 @@ export function generateReleaseMigrationManifest(input: {
       }),
     };
   });
+
+  const earlierFiles = previousFileByStreamAndPath(
+    history.filter(
+      (manifest) => compareProductVersions(manifest.productVersion, input.productVersion) < 0
+    )
+  );
+  const refreshDraftFiles = (
+    streamId: string,
+    files: readonly ReleaseMigrationFile[]
+  ): ReleaseMigrationFile[] => {
+    if (!input.refreshCurrentVersionFiles) return [...files];
+    const discovered = new Map(
+      discoveredStreams
+        .find((stream) => stream.id === streamId)
+        ?.files.map((file) => [file.path, file])
+    );
+    return files.map((file) => {
+      // Prior release artifacts remain immutable, even when a draft refers to them.
+      if (earlierFiles.has(`${streamId}:${file.path}`)) return file;
+      const current = discovered.get(file.path);
+      return current && current.checksum !== file.checksum ? current : file;
+    });
+  };
 
   const priorRelease = history
     .filter((manifest) => compareProductVersions(manifest.productVersion, input.productVersion) < 0)
@@ -625,7 +650,10 @@ export function generateReleaseMigrationManifest(input: {
                 );
                 return streamWithFiles(
                   stream,
-                  mergeMigrationFiles(previous?.files ?? [], newFilesByStream.get(stream.id) ?? [])
+                  mergeMigrationFiles(
+                    refreshDraftFiles(stream.id, previous?.files ?? []),
+                    newFilesByStream.get(stream.id) ?? []
+                  )
                 );
               })
             : priorRelease && sameReleaseSeries(priorRelease.productVersion, input.productVersion)
@@ -643,7 +671,13 @@ export function generateReleaseMigrationManifest(input: {
                 })
               : discoveredStreams;
 
-  const previousUpgradePaths = sameVersion?.upgradePaths ?? [];
+  const previousUpgradePaths = (sameVersion?.upgradePaths ?? []).map((path) => ({
+    ...path,
+    streams: path.streams.map((stream) => ({
+      ...stream,
+      files: refreshDraftFiles(stream.id, stream.files),
+    })),
+  }));
   const directUpgradePath = priorRelease
     ? {
         fromProductVersion: priorRelease.productVersion,
@@ -656,7 +690,10 @@ export function generateReleaseMigrationManifest(input: {
             ?.streams.find((candidate) => candidate.id === stream.id);
           return streamWithFiles(
             stream,
-            mergeMigrationFiles(existing?.files ?? [], newFilesByStream.get(stream.id) ?? [])
+            mergeMigrationFiles(
+              refreshDraftFiles(stream.id, existing?.files ?? []),
+              newFilesByStream.get(stream.id) ?? []
+            )
           );
         }),
       }
@@ -868,6 +905,7 @@ export function syncDraftReleaseMigrationManifest(input: {
     productVersion: input.productVersion,
     previousManifest,
     previousManifests: releaseManifests,
+    refreshCurrentVersionFiles: true,
   });
   const publishedSameVersion = join(
     input.migrationsRoot,

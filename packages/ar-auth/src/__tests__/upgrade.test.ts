@@ -129,9 +129,9 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getSessionStoreBySessionId: vi.fn().mockReturnValue({
       stub: hoistedMocks.mockSessionStore,
     }),
-    isAnonymousAuthEnabled: vi.fn().mockResolvedValue(true),
+    isGuestDeviceAuthEnabled: vi.fn().mockResolvedValue(true),
     loadClientContract: vi.fn().mockResolvedValue({
-      anonymousAuth: {
+      guestAuth: {
         enabled: true,
         preserveSubOnUpgrade: true,
       },
@@ -190,7 +190,7 @@ describe('Upgrade Handlers', () => {
     vi.clearAllMocks();
     mockGetCookie.mockReturnValue('session-123');
     mockLoadClientContractCached.mockResolvedValue({
-      anonymousAuth: {
+      guestAuth: {
         enabled: true,
         preserveSubOnUpgrade: true,
       },
@@ -207,7 +207,7 @@ describe('Upgrade Handlers', () => {
     mockSessionStore.getSessionRpc.mockResolvedValue({
       userId: 'anon-user-123',
       data: {
-        is_anonymous: true,
+        is_guest_session: true,
         upgrade_eligible: true,
         client_id: 'client-123',
         pending_upgrade_token: 'upgrade-token',
@@ -244,19 +244,19 @@ describe('Upgrade Handlers', () => {
         mockSessionStore.getSessionRpc.mockResolvedValueOnce({
           userId: 'regular-user-123',
           data: {
-            is_anonymous: false,
+            is_guest_session: false,
           },
         });
 
         const session = await mockSessionStore.getSessionRpc('session-id');
-        expect(session?.data?.is_anonymous).toBe(false);
+        expect(session?.data?.is_guest_session).toBe(false);
       });
 
       it('should reject non-upgrade-eligible sessions', async () => {
         mockSessionStore.getSessionRpc.mockResolvedValueOnce({
           userId: 'anon-user-123',
           data: {
-            is_anonymous: true,
+            is_guest_session: true,
             upgrade_eligible: false, // Already upgraded
           },
         });
@@ -291,7 +291,7 @@ describe('Upgrade Handlers', () => {
     describe('Response Format', () => {
       it('returns email upgrade instructions for an eligible anonymous session', async () => {
         mockLoadClientContractCached.mockResolvedValueOnce({
-          anonymousAuth: {
+          guestAuth: {
             enabled: true,
             preserveSubOnUpgrade: true,
             allowedUpgradeMethods: ['email', 'passkey'],
@@ -337,7 +337,7 @@ describe('Upgrade Handlers', () => {
 
       it('rejects upgrade methods that are not allowed by the client contract', async () => {
         mockLoadClientContractCached.mockResolvedValueOnce({
-          anonymousAuth: {
+          guestAuth: {
             enabled: true,
             preserveSubOnUpgrade: true,
             allowedUpgradeMethods: ['email'],
@@ -439,16 +439,7 @@ describe('Upgrade Handlers', () => {
           'client-123'
         );
 
-        expect(contract?.anonymousAuth?.preserveSubOnUpgrade).toBe(true);
-      });
-
-      it('should allow explicit preserve_sub=false', () => {
-        const request = {
-          method: 'email',
-          preserve_sub: false, // Explicit opt-out
-        };
-
-        expect(request.preserve_sub).toBe(false);
+        expect(contract?.guestAuth?.preserveSubOnUpgrade).toBe(true);
       });
 
       it('should update user_type when preserving sub', async () => {
@@ -464,23 +455,15 @@ describe('Upgrade Handlers', () => {
           })
         );
       });
-
-      it('should create new user when not preserving sub', async () => {
-        // When preserve_sub=false, create new user and link
-        const newUserId = 'new-user-456';
-        const previousUserId = 'anon-user-123';
-
-        expect(newUserId).not.toBe(previousUserId);
-      });
     });
 
     describe('Upgrade History Recording', () => {
-      it('should record upgrade in user_upgrades table', async () => {
+      it('should record upgrade in guest_account_upgrades table', async () => {
         const now = Date.now();
 
         await mockDatabaseAdapter.execute(
-          `INSERT INTO user_upgrades (
-            id, tenant_id, anonymous_user_id, upgraded_user_id,
+          `INSERT INTO guest_account_upgrades (
+            id, tenant_id, guest_user_id, upgraded_user_id,
             upgrade_method, provider_id, preserve_sub, upgraded_at, data_migrated
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
@@ -497,7 +480,7 @@ describe('Upgrade Handlers', () => {
         );
 
         expect(mockDatabaseAdapter.execute).toHaveBeenCalledWith(
-          expect.stringContaining('INSERT INTO user_upgrades'),
+          expect.stringContaining('INSERT INTO guest_account_upgrades'),
           expect.any(Array)
         );
       });
@@ -515,7 +498,7 @@ describe('Upgrade Handlers', () => {
     describe('Session Update', () => {
       it('should update session to mark as upgraded', async () => {
         await mockSessionStore.updateSessionDataRpc('session-123', {
-          is_anonymous: false,
+          is_guest_session: false,
           upgrade_eligible: false,
           upgraded_at: Date.now(),
         });
@@ -523,20 +506,9 @@ describe('Upgrade Handlers', () => {
         expect(mockSessionStore.updateSessionDataRpc).toHaveBeenCalledWith(
           'session-123',
           expect.objectContaining({
-            is_anonymous: false,
+            is_guest_session: false,
             upgrade_eligible: false,
           })
-        );
-      });
-
-      it('should update session userId when preserve_sub=false', async () => {
-        const newUserId = 'new-user-456';
-
-        await mockSessionStore.updateSessionUserIdRpc('session-123', newUserId);
-
-        expect(mockSessionStore.updateSessionUserIdRpc).toHaveBeenCalledWith(
-          'session-123',
-          newUserId
         );
       });
     });
@@ -544,12 +516,12 @@ describe('Upgrade Handlers', () => {
     describe('Device Record Update', () => {
       it('should deactivate anonymous devices after upgrade', async () => {
         await mockDatabaseAdapter.execute(
-          'UPDATE anonymous_devices SET is_active = 0 WHERE user_id = ?',
+          'UPDATE guest_devices SET is_active = 0 WHERE user_id = ?',
           ['anon-user-123']
         );
 
         expect(mockDatabaseAdapter.execute).toHaveBeenCalledWith(
-          expect.stringContaining('UPDATE anonymous_devices SET is_active = 0'),
+          expect.stringContaining('UPDATE guest_devices SET is_active = 0'),
           expect.arrayContaining(['anon-user-123'])
         );
       });
@@ -574,17 +546,6 @@ describe('Upgrade Handlers', () => {
         };
 
         expect(response.user_id).toBeDefined();
-      });
-
-      it('should return previous_user_id when preserve_sub=false', () => {
-        const response = {
-          success: true,
-          user_id: 'new-user-456',
-          previous_user_id: 'anon-user-123', // Only when preserve_sub=false
-          preserve_sub: false,
-        };
-
-        expect(response.previous_user_id).toBe('anon-user-123');
       });
 
       it('should not return previous_user_id when preserve_sub=true', () => {
@@ -631,7 +592,7 @@ describe('Upgrade Handlers', () => {
         mockSessionStore.getSessionRpc.mockResolvedValueOnce({
           userId: 'anon-user-123',
           data: {
-            is_anonymous: true,
+            is_guest_session: true,
             upgrade_eligible: true,
             client_id: 'client-123',
             verified_email: 'Verified@Example.com',
@@ -698,73 +659,37 @@ describe('Upgrade Handlers', () => {
         );
       });
 
-      it('creates a new subject and updates the session user when preserve_sub=false', async () => {
-        mockSessionStore.getSessionRpc.mockResolvedValueOnce({
-          userId: 'anon-user-123',
-          data: {
-            is_anonymous: true,
-            upgrade_eligible: true,
-            client_id: 'client-123',
-            pending_upgrade_token: 'upgrade-token',
-            pending_upgrade_method: 'social',
-            verified_upgrade_method: 'social',
-          },
-        });
-        const c = createMockContext({
-          method: 'POST',
-          body: {
-            method: 'social',
-            upgrade_token: 'upgrade-token',
-            preserve_sub: false,
-            provider_id: 'google',
-          },
-        });
+      it.each([false, null, 'false', 0])(
+        'rejects subject replacement %s without writes',
+        async (preserveSub) => {
+          const c = createMockContext({
+            body: { method: 'passkey', upgrade_token: 'upgrade-token', preserve_sub: preserveSub },
+          });
+          const response = await upgradeCompleteHandler(c);
+          expect(response.status).toBe(400);
+          expect(mockUserCoreRepository.createUser).not.toHaveBeenCalled();
+          expect(mockDatabaseAdapter.execute).not.toHaveBeenCalled();
+          expect(mockSessionStore.updateSessionDataRpc).not.toHaveBeenCalled();
+          expect(mockSessionStore.updateSessionUserIdRpc).not.toHaveBeenCalled();
+        }
+      );
 
-        const response = await upgradeCompleteHandler(c);
-        const body = (await response.json()) as {
-          success: boolean;
-          user_id: string;
-          previous_user_id: string;
-          preserve_sub: boolean;
-          method: string;
-        };
-
-        expect(response.status).toBe(200);
-        expect(body).toMatchObject({
-          success: true,
-          user_id: 'generated-id',
-          previous_user_id: 'anon-user-123',
-          preserve_sub: false,
-          method: 'social',
+      it('preserves the subject even when legacy client configuration requests replacement', async () => {
+        mockLoadClientContractCached.mockResolvedValueOnce({
+          guestAuth: { enabled: true, preserveSubOnUpgrade: false },
         });
-        expect(mockUserCoreRepository.createUser).toHaveBeenCalledWith(
-          expect.objectContaining({
-            id: 'generated-id',
-            tenant_id: 'default',
-            user_type: 'end_user',
-            pii_status: 'none',
+        const response = await upgradeCompleteHandler(
+          createMockContext({
+            body: { method: 'passkey', upgrade_token: 'upgrade-token' },
           })
         );
-        expect(mockDatabaseAdapter.execute).toHaveBeenCalledWith(
-          'UPDATE users_core SET is_active = 0, updated_at = ? WHERE id = ? AND tenant_id = ?',
-          expect.arrayContaining(['anon-user-123', 'default'])
-        );
-        expect(mockDatabaseAdapter.execute).toHaveBeenCalledWith(
-          expect.stringContaining('INSERT INTO user_upgrades'),
-          expect.arrayContaining([
-            'generated-id',
-            'default',
-            'anon-user-123',
-            'generated-id',
-            'social',
-            'google',
-            0,
-          ])
-        );
-        expect(mockSessionStore.updateSessionUserIdRpc).toHaveBeenCalledWith(
-          'session-123',
-          'generated-id'
-        );
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({
+          user_id: 'anon-user-123',
+          preserve_sub: true,
+        });
+        expect(mockUserCoreRepository.createUser).not.toHaveBeenCalled();
+        expect(mockSessionStore.updateSessionUserIdRpc).not.toHaveBeenCalled();
       });
 
       it('should expose profile completion hints when required claims remain missing', async () => {
@@ -828,7 +753,7 @@ describe('Upgrade Handlers', () => {
       it('should return user_id', () => {
         const response = {
           user_id: 'anon-user-123',
-          is_anonymous: true,
+          is_guest_session: true,
           upgrade_eligible: true,
           upgrade_history: [],
         };
@@ -836,12 +761,12 @@ describe('Upgrade Handlers', () => {
         expect(response.user_id).toBeDefined();
       });
 
-      it('should return is_anonymous flag', () => {
-        const anonymousResponse = { is_anonymous: true };
-        const upgradedResponse = { is_anonymous: false };
+      it('should return is_guest_session flag', () => {
+        const anonymousResponse = { is_guest_session: true };
+        const upgradedResponse = { is_guest_session: false };
 
-        expect(anonymousResponse.is_anonymous).toBe(true);
-        expect(upgradedResponse.is_anonymous).toBe(false);
+        expect(anonymousResponse.is_guest_session).toBe(true);
+        expect(upgradedResponse.is_guest_session).toBe(false);
       });
 
       it('should return upgrade_eligible flag', () => {
@@ -864,8 +789,8 @@ describe('Upgrade Handlers', () => {
 
         const history = await mockDatabaseAdapter.query(
           `SELECT id, upgrade_method, upgraded_at, preserve_sub
-           FROM user_upgrades
-           WHERE tenant_id = ? AND (anonymous_user_id = ? OR upgraded_user_id = ?)
+           FROM guest_account_upgrades
+           WHERE tenant_id = ? AND (guest_user_id = ? OR upgraded_user_id = ?)
            ORDER BY upgraded_at DESC`,
           ['default', 'anon-user-123', 'anon-user-123']
         );
@@ -901,7 +826,7 @@ describe('Upgrade Handlers', () => {
         mockSessionStore.getSessionRpc.mockResolvedValueOnce({
           userId: 'user-123',
           data: {
-            is_anonymous: false,
+            is_guest_session: false,
             upgrade_eligible: false,
           },
         });
@@ -925,7 +850,7 @@ describe('Upgrade Handlers', () => {
         const c = createMockContext({ method: 'GET' });
         const response = await upgradeStatusHandler(c);
         const body = (await response.json()) as {
-          is_anonymous: boolean;
+          registration_state: string;
           profile_completion_required: boolean;
           account_lifecycle_state: string;
           missing_required_custom_claims: Array<{
@@ -936,7 +861,7 @@ describe('Upgrade Handlers', () => {
         };
 
         expect(response.status).toBe(200);
-        expect(body.is_anonymous).toBe(false);
+        expect(body.registration_state).toBe('registered');
         expect(body.profile_completion_required).toBe(true);
         expect(body.account_lifecycle_state).toBe('incomplete');
         expect(body.missing_required_custom_claims).toEqual([
@@ -972,7 +897,7 @@ describe('Upgrade Handlers', () => {
         const alreadyUpgradedSession = {
           userId: 'user-123',
           data: {
-            is_anonymous: false, // Already upgraded
+            is_guest_session: false, // Already upgraded
             upgrade_eligible: false,
           },
         };

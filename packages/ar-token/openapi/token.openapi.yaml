@@ -1,7 +1,7 @@
 openapi: 3.2.0
 info:
   title: Authrim Token API
-  version: 0.4.1
+  version: 0.4.2
   summary: OAuth/OIDC token endpoint.
   description: Initial OpenAPI contract for `@authrim/ar-token`.
 servers:
@@ -46,6 +46,11 @@ paths:
         Processes supported OAuth grants. Token exchange requests fail with `invalid_scope` when
         no requested scope remains after applying the subject token and client scope constraints.
         Native SSO scope requests must include `openid`, and client policy must permit it.
+        Guest registration does not inject a user_type=anonymous claim into access or ID tokens.
+        When RBAC user type claims are enabled, human guests are classified as end_user.
+        Request account:lifecycle:read and call UserInfo for authrim_account_lifecycle,
+        including registration_state and operational status; this object is not embedded in tokens.
+        Guest scope restrictions and account availability checks also apply on refresh.
       requestBody:
         required: true
         content:

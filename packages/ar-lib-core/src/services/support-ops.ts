@@ -105,7 +105,7 @@ const USER_RESOURCE: SupportOpsSqlResourceDescriptor = {
       aggregatable: true,
       sensitive: false,
       operators: DEFAULT_OPERATORS.enum,
-      values: ['user', 'admin', 'service_account', 'anonymous'],
+      values: ['user', 'admin', 'service_account'],
     },
     created_at: {
       column: 'created_at',

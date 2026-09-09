@@ -78,7 +78,11 @@ import {
   didListHandler,
   didUnlinkHandler,
 } from './did-link';
-import { anonLoginChallengeHandler, anonLoginVerifyHandler } from './anon-login';
+import {
+  guestDeviceLoginChallengeHandler,
+  guestDeviceLoginVerifyHandler,
+} from './guest-device-login';
+import { guestLoginHandler } from './guest-login';
 import { upgradeHandler, upgradeCompleteHandler, upgradeStatusHandler } from './upgrade';
 import { setupApp } from './setup';
 import { adminSetupApiApp } from './admin-setup-api';
@@ -493,11 +497,16 @@ app.use('/oauth/admin-agent/authorize', csrfProtectionMiddleware());
 
 // Rate limiting for anonymous login endpoints (architecture-decisions.md §17)
 // Strict profile: prevent brute-force attacks on device authentication
-app.use('/api/auth/anon-login/*', async (c, next) => {
+app.use('/api/auth/guest/login', async (c, next) => {
+  const profile = await getRateLimitProfileAsync(c.env, 'strict');
+  return rateLimitMiddleware({ ...profile, endpoints: ['/api/auth/guest/login'] })(c, next);
+});
+
+app.use('/api/auth/guest-device-login/*', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'strict');
   return rateLimitMiddleware({
     ...profile,
-    endpoints: ['/api/auth/anon-login/challenge', '/api/auth/anon-login/verify'],
+    endpoints: ['/api/auth/guest-device-login/challenge', '/api/auth/guest-device-login/verify'],
   })(c, next);
 });
 
@@ -677,8 +686,9 @@ app.delete('/api/auth/dids/:did', didUnlinkHandler);
 
 // Anonymous Login endpoints (architecture-decisions.md §17)
 // Device-based anonymous authentication with upgrade capability
-app.post('/api/auth/anon-login/challenge', anonLoginChallengeHandler);
-app.post('/api/auth/anon-login/verify', anonLoginVerifyHandler);
+app.post('/api/auth/guest/login', guestLoginHandler);
+app.post('/api/auth/guest-device-login/challenge', guestDeviceLoginChallengeHandler);
+app.post('/api/auth/guest-device-login/verify', guestDeviceLoginVerifyHandler);
 
 // Anonymous User Upgrade endpoints (architecture-decisions.md §17)
 // Upgrade anonymous users to full accounts

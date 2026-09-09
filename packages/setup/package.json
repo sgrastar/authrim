@@ -1,6 +1,6 @@
 {
   "name": "@authrim/setup",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "CLI tool for setting up Authrim OIDC Provider on Cloudflare Workers",
   "type": "module",
   "bin": {
@@ -46,7 +46,7 @@
     "@types/tar": "^6.1.13",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.8",
+    "vitest": "^4.1.11",
     "yaml": "2.8.3",
     "@authrim/ar-control": "workspace:*",
     "@authrim/ar-lib-core": "workspace:*"

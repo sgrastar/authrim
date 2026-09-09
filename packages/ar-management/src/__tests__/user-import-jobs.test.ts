@@ -4,6 +4,7 @@ import {
   buildUserImportResultKey,
   buildUserImportUploadKey,
   normalizeImportRecord,
+  resolveImportedAccountUserType,
   parseUserImportCsv,
   sanitizeUserImportFilename,
 } from '../user-import-jobs';
@@ -89,5 +90,29 @@ describe('user-import-jobs helpers', () => {
         password_reset_secret: 'secret-value',
       })
     ).toThrow('Unsupported credential field in user import: password_reset_secret');
+  });
+});
+
+describe('registration state in imports', () => {
+  it.each<Record<string, string>>([
+    { registration_state: 'registered' },
+    { user_type: 'anonymous' },
+  ])('rejects a registration write: %j', (fields) => {
+    expect(() => normalizeImportRecord({ email: 'user@example.com', ...fields })).toThrow();
+  });
+  it.each([undefined, 'end_user'] as const)(
+    'preserves guest storage classification for %s',
+    (requested) => {
+      expect(resolveImportedAccountUserType('guest', requested)).toBe(requested);
+    }
+  );
+  it.each(['admin', 'm2m'] as const)('rejects guest reclassification to %s', (requested) => {
+    expect(() => resolveImportedAccountUserType('guest', requested)).toThrow(
+      'account upgrade flow'
+    );
+  });
+  it('preserves ordinary account import behavior', () => {
+    expect(resolveImportedAccountUserType('registered', 'end_user')).toBe('end_user');
+    expect(resolveImportedAccountUserType('registered', undefined)).toBeUndefined();
   });
 });

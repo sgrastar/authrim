@@ -517,6 +517,7 @@ export const CATEGORY_NAMES = [
 	// Login UI Customization
 	'login-ui',
 	'authentication-methods',
+	'account-lifecycle',
 	// Login Entry / Discovery
 	'login-entry',
 	'tenant-discovery-ui',

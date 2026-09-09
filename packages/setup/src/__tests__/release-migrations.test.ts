@@ -1337,6 +1337,42 @@ describe('release migration manifests', () => {
     ).toThrow('delta is not canonical');
   });
 
+  it('refreshes edited unpublished SQL in both install and upgrade plans without rewriting a release candidate', () => {
+    const migrationsRoot = temporaryMigrations();
+    const previous = generateReleaseMigrationManifest({ migrationsRoot, productVersion: '1.1.0' });
+    writeReleaseMigrationManifest(join(migrationsRoot, 'releases/1.1.0.json'), previous);
+    const file = join(migrationsRoot, 'core/d1/002_guest.sql');
+    writeFileSync(file, 'CREATE TABLE guest (id TEXT);\n');
+    const first = syncDraftReleaseMigrationManifest({ migrationsRoot, productVersion: '1.1.1' });
+    writeReleaseMigrationManifest(join(migrationsRoot, 'releases/1.1.1.json'), first.manifest);
+    writeFileSync(file, 'CREATE TABLE guest (id TEXT, phase TEXT);\n');
+    const refreshed = syncDraftReleaseMigrationManifest({
+      migrationsRoot,
+      productVersion: '1.1.1',
+    });
+    const checksum = calculateReleaseMigrationChecksum(file, 'sqlite');
+    expect(
+      refreshed.manifest.streams
+        .find((stream) => stream.id === 'core-d1')
+        ?.files.find((file) => file.path === '002_guest.sql')?.checksum
+    ).toBe(checksum);
+    expect(
+      refreshed.manifest.upgradePaths
+        ?.find((path) => path.fromProductVersion === '1.1.0')
+        ?.streams.find((stream) => stream.id === 'core-d1')
+        ?.files.find((file) => file.path === '002_guest.sql')?.checksum
+    ).toBe(checksum);
+    expect(readReleaseMigrationManifest(join(migrationsRoot, 'releases/1.1.1.json'))).toEqual(
+      first.manifest
+    );
+    expect(readReleaseMigrationManifest(join(migrationsRoot, 'releases/1.1.0.json'))).toEqual(
+      previous
+    );
+    expect(() =>
+      validateReleaseMigrationManifestFiles(migrationsRoot, refreshed.manifest)
+    ).not.toThrow();
+  });
+
   it('preserves an explicit database-only compatibility contract when refreshing a draft', () => {
     const migrationsRoot = temporaryMigrations();
     const draft = generateReleaseMigrationManifest({

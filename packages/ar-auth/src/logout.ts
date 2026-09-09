@@ -19,7 +19,7 @@
 
 import { Context } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
-import type { Env } from '@authrim/ar-lib-core';
+import type { Env, Session } from '@authrim/ar-lib-core';
 import {
   timingSafeEqual,
   verifyClientSecretHash,
@@ -27,6 +27,8 @@ import {
   validatePostLogoutRedirectUri,
   validateLogoutParameters,
   getSessionStoreBySessionId,
+  revokeGuestResumeForSession,
+  GUEST_RESUME_COOKIE,
   recordHybridUserSessionRevocationEpoch,
   isShardedSessionId,
   createAuthContextFromHono,
@@ -459,6 +461,12 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         await collectSessionData(sessionId, userId);
 
         const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
+        await revokeGuestResumeForSession(
+          c,
+          (await sessionStore.getSessionRpc(sessionId).catch(() => {
+            throw new Error('guest_resume_revocation_failed');
+          })) as Session | null
+        );
         const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
         if (deleted) {
@@ -468,6 +476,15 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           log.warn('Failed to delete cookie session', { sessionId });
         }
       } catch (error) {
+        if (error instanceof Error && error.message === 'guest_resume_revocation_failed') {
+          return c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description: 'Guest sign-out could not be completed',
+            },
+            503
+          );
+        }
         log.warn('Failed to route to session store', {
           sessionId,
           error: (error as Error).message,
@@ -544,6 +561,12 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
         }
 
         const { stub: sessionStore } = getSessionStoreBySessionId(c.env, hintedSessionId, tenantId);
+        await revokeGuestResumeForSession(
+          c,
+          (await sessionStore.getSessionRpc(hintedSessionId).catch(() => {
+            throw new Error('guest_resume_revocation_failed');
+          })) as Session | null
+        );
         const deleted = await sessionStore.invalidateSessionRpc(hintedSessionId);
 
         if (deleted) {
@@ -554,6 +577,15 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           log.debug('Session from id_token_hint not found or already deleted', { sid });
         }
       } catch (error) {
+        if (error instanceof Error && error.message === 'guest_resume_revocation_failed') {
+          return c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description: 'Guest sign-out could not be completed',
+            },
+            503
+          );
+        }
         log.warn('Failed to route to session store for sid', {
           sid,
           error: (error as Error).message,
@@ -880,6 +912,13 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
 
     // Step 3: Clear session cookies immediately (both session and browser state)
     // SameSite must match the original cookie setting for proper deletion
+    setCookie(c, GUEST_RESUME_COOKIE, '', {
+      path: '/',
+      httpOnly: true,
+      secure: true,
+      sameSite: 'Lax',
+      maxAge: 0,
+    });
     setCookie(c, 'authrim_session', '', {
       path: '/',
       httpOnly: true,
@@ -1100,6 +1139,10 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
     const headers = new Headers(response.headers);
     headers.append(
       'Set-Cookie',
+      `${GUEST_RESUME_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`
+    );
+    headers.append(
+      'Set-Cookie',
       `authrim_session=; Path=/; HttpOnly; Secure; SameSite=${sessionSameSiteRedirect}; Max-Age=0`
     );
     headers.append(
@@ -1118,6 +1161,13 @@ export async function frontChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
   } catch (error) {
     log.error('Front-channel logout error', {}, error as Error);
     // Even on error, try to clear session cookies
+    setCookie(c, GUEST_RESUME_COOKIE, '', {
+      path: '/',
+      httpOnly: true,
+      secure: true,
+      sameSite: 'Lax',
+      maxAge: 0,
+    });
     setCookie(c, 'authrim_session', '', {
       path: '/',
       httpOnly: true,
@@ -1366,6 +1416,12 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
       // Invalidate specific session using sharded routing via RPC
       try {
         const { stub: sessionStore } = getSessionStoreBySessionId(c.env, sessionId, tenantId);
+        await revokeGuestResumeForSession(
+          c,
+          (await sessionStore.getSessionRpc(sessionId).catch(() => {
+            throw new Error('guest_resume_revocation_failed');
+          })) as Session | null
+        );
         const deleted = await sessionStore.invalidateSessionRpc(sessionId);
 
         if (deleted) {
@@ -1374,6 +1430,15 @@ export async function backChannelLogoutHandler(c: Context<{ Bindings: Env }>) {
           log.warn('Failed to delete session', { sessionId, action: 'BackchannelLogout' });
         }
       } catch (error) {
+        if (error instanceof Error && error.message === 'guest_resume_revocation_failed') {
+          return c.json(
+            {
+              error: 'temporarily_unavailable',
+              error_description: 'Guest sign-out could not be completed',
+            },
+            503
+          );
+        }
         log.warn('Failed to route to session store for back-channel logout', {
           sessionId,
           error: (error as Error).message,

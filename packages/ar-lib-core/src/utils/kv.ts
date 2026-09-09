@@ -530,9 +530,7 @@ export async function getCachedUserCore(
       ? 'admin'
       : account.account_type === 'service_account'
         ? 'm2m'
-        : account.account_type === 'anonymous'
-          ? 'anonymous'
-          : 'end_user';
+        : 'end_user';
 
   return {
     id: userId,

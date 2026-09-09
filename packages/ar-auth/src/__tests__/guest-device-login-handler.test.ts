@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  isAnonymousAuthEnabled: vi.fn(),
+  isGuestDeviceAuthEnabled: vi.fn(),
   validateDeviceId: vi.fn(),
   validateDeviceStability: vi.fn(),
   loadClientContractCached: vi.fn(),
@@ -34,7 +34,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
     ...actual,
     getTenantIdFromContext: vi.fn(() => 'tenant-1'),
     resolveAccountDataContextFromHono: mocks.resolveAccountDataContextFromHono,
-    isAnonymousAuthEnabled: mocks.isAnonymousAuthEnabled,
+    isGuestDeviceAuthEnabled: mocks.isGuestDeviceAuthEnabled,
     validateDeviceId: mocks.validateDeviceId,
     validateDeviceStability: mocks.validateDeviceStability,
     loadClientContractCached: mocks.loadClientContractCached,
@@ -56,7 +56,7 @@ vi.mock('@authrim/ar-lib-core', async () => {
       touchLastLogin = mocks.touchLastLogin;
     },
     generateUserIdFromSettings: vi.fn(async () => 'new-user-1'),
-    generateId: vi.fn(() => 'anonymous-device-1'),
+    generateId: vi.fn(() => 'guest-device-1'),
     getSessionStoreForNewSession: vi.fn(async () => ({
       stub: { createSessionRpc: mocks.createSessionRpc },
       sessionId: 'session-1',
@@ -73,12 +73,15 @@ vi.mock('@authrim/ar-lib-core', async () => {
 });
 
 vi.mock('../account-provisioning', () => ({
-  resolveAnonymousAccountRoute: mocks.resolveAnonymousRoute,
-  provisionAnonymousAccount: mocks.provisionAnonymous,
-  removeAnonymousDeviceRoute: mocks.removeAnonymousRoute,
+  resolveGuestAccountRoute: mocks.resolveAnonymousRoute,
+  provisionGuestAccount: mocks.provisionAnonymous,
+  removeGuestDeviceRoute: mocks.removeAnonymousRoute,
 }));
 
-import { anonLoginChallengeHandler, anonLoginVerifyHandler } from '../anon-login';
+import {
+  guestDeviceLoginChallengeHandler,
+  guestDeviceLoginVerifyHandler,
+} from '../guest-device-login';
 
 const validBody = {
   client_id: 'client-1',
@@ -90,8 +93,8 @@ const validBody = {
 
 function createApp() {
   const app = new Hono();
-  app.post('/challenge', anonLoginChallengeHandler);
-  app.post('/verify', anonLoginVerifyHandler);
+  app.post('/challenge', guestDeviceLoginChallengeHandler);
+  app.post('/verify', guestDeviceLoginVerifyHandler);
   return app;
 }
 
@@ -147,11 +150,11 @@ describe('anonymous login challenge handler', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    mocks.isAnonymousAuthEnabled.mockResolvedValue(true);
+    mocks.isGuestDeviceAuthEnabled.mockResolvedValue(true);
     mocks.validateDeviceId.mockReturnValue(true);
     mocks.validateDeviceStability.mockReturnValue(true);
     mocks.loadClientContractCached.mockResolvedValue({
-      anonymousAuth: {
+      guestAuth: {
         enabled: true,
         deviceStability: 'installation',
       },
@@ -181,7 +184,7 @@ describe('anonymous login challenge handler', () => {
     mocks.verifyChallengeResponse.mockResolvedValue(true);
     mocks.verifyDeviceSignature.mockResolvedValue(true);
     mocks.queryOne.mockResolvedValue({
-      id: 'anonymous-device-existing',
+      id: 'guest-device-existing',
       user_id: 'existing-user-1',
       expires_at: null,
       is_active: 1,
@@ -210,7 +213,7 @@ describe('anonymous login challenge handler', () => {
   });
 
   it('rejects requests when anonymous authentication is disabled', async () => {
-    mocks.isAnonymousAuthEnabled.mockResolvedValueOnce(false);
+    mocks.isGuestDeviceAuthEnabled.mockResolvedValueOnce(false);
 
     const response = await requestChallenge(validBody);
 
@@ -247,7 +250,7 @@ describe('anonymous login challenge handler', () => {
   });
 
   it('rejects a client that has not enabled anonymous authentication', async () => {
-    mocks.loadClientContractCached.mockResolvedValueOnce({ anonymousAuth: { enabled: false } });
+    mocks.loadClientContractCached.mockResolvedValueOnce({ guestAuth: { enabled: false } });
 
     const response = await requestChallenge(validBody);
 
@@ -339,7 +342,7 @@ describe('anonymous login verify handler', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    mocks.isAnonymousAuthEnabled.mockResolvedValue(true);
+    mocks.isGuestDeviceAuthEnabled.mockResolvedValue(true);
     mocks.validateDeviceId.mockReturnValue(true);
     mocks.consumeChallengeRpc.mockResolvedValue({
       challenge: 'challenge-value',
@@ -360,7 +363,7 @@ describe('anonymous login verify handler', () => {
       device_platform: 'ios',
     });
     mocks.queryOne.mockResolvedValue({
-      id: 'anonymous-device-existing',
+      id: 'guest-device-existing',
       user_id: 'existing-user-1',
       expires_at: null,
       is_active: 1,
@@ -373,7 +376,7 @@ describe('anonymous login verify handler', () => {
     mocks.publishEvent.mockResolvedValue(undefined);
     mocks.createAuditLog.mockResolvedValue(undefined);
     mocks.loadClientContractCached.mockResolvedValue({
-      anonymousAuth: { enabled: true, deviceStability: 'installation', expiresInDays: 30 },
+      guestAuth: { enabled: true, deviceStability: 'installation', expiresInDays: 30 },
     });
     mocks.resolveAnonymousRoute.mockReset().mockResolvedValue({
       accountId: 'account:existing-user-1',
@@ -396,7 +399,7 @@ describe('anonymous login verify handler', () => {
   });
 
   it('rejects verification when the feature is disabled without consuming a challenge', async () => {
-    mocks.isAnonymousAuthEnabled.mockResolvedValueOnce(false);
+    mocks.isGuestDeviceAuthEnabled.mockResolvedValueOnce(false);
 
     const response = await requestVerify(validVerifyBody);
 
@@ -493,8 +496,8 @@ describe('anonymous login verify handler', () => {
       upgrade_eligible: true,
     });
     expect(mocks.execute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE anonymous_devices SET last_used_at'),
-      [expect.any(Number), 'anonymous-device-existing', 'tenant-1']
+      expect.stringContaining('UPDATE guest_devices SET last_used_at'),
+      [expect.any(Number), 'guest-device-existing', 'tenant-1']
     );
     expect(mocks.createSessionRpc).toHaveBeenCalledWith(
       'session-1',
@@ -502,7 +505,7 @@ describe('anonymous login verify handler', () => {
       86_400,
       expect.objectContaining({
         amr: ['anon'],
-        is_anonymous: true,
+        is_guest_session: true,
         device_id_hash: 'device-hash',
         client_id: 'client-1',
       }),
@@ -531,7 +534,7 @@ describe('anonymous login verify handler', () => {
     expect(response.status).toBe(200);
     expect(mocks.resolveAnonymousRoute).toHaveBeenCalledWith(expect.anything(), 'device-hash');
     expect(mocks.queryOne).toHaveBeenCalledWith(
-      expect.stringContaining('FROM anonymous_devices'),
+      expect.stringContaining('FROM guest_devices'),
       ['tenant-1', 'device-hash'],
       { consistencyClass: 'primary_required' }
     );
@@ -545,7 +548,7 @@ describe('anonymous login verify handler', () => {
       legacyUserId: 'existing-user-1',
     });
     mocks.queryOne.mockResolvedValueOnce({
-      id: 'anonymous-device-existing',
+      id: 'guest-device-existing',
       user_id: 'existing-user-1',
       expires_at: 1,
     });
@@ -554,19 +557,19 @@ describe('anonymous login verify handler', () => {
 
     expect(response.status).toBe(202);
     expect(await response.json()).toEqual({
-      status: 'anonymous_credential_recycling',
+      status: 'guest_credential_recycling',
       restart_required: true,
       retry_after_ms: 500,
     });
     expect(mocks.execute).toHaveBeenCalledWith(expect.stringContaining('SET is_active = FALSE'), [
-      'anonymous-device-existing',
+      'guest-device-existing',
       'tenant-1',
       'existing-user-1',
     ]);
     expect(mocks.removeAnonymousRoute).toHaveBeenCalledWith(expect.anything(), {
       tenantId: 'tenant-1',
       userId: 'existing-user-1',
-      deviceId: 'anonymous-device-existing',
+      deviceId: 'guest-device-existing',
       deviceIdHash: 'device-hash',
     });
     expect(mocks.createSessionRpc).not.toHaveBeenCalled();

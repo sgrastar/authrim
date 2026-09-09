@@ -2,6 +2,30 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const zhTW = createTranslation({
+	account_guestLogoutWarning:
+		'登出後，無法再返回此訪客帳戶。請先註冊以保留帳戶和資料的存取權。仍要登出嗎？',
+	account_guestTitle: 'Register your account',
+	account_guestDescription: 'Keep the same account and data when you register.',
+	account_guestDue: 'Eligible for automatic deletion from {date}.',
+	account_guestNoExpiry: 'No automatic deletion is scheduled.',
+	account_guestEmail: 'Email address',
+	account_guestSend: 'Register with email',
+	account_guestPasskey: 'Register with a passkey',
+	account_guestCode: 'Confirmation code',
+	account_guestConfirm: 'Confirm registration',
+	account_guestPending: 'Registration is in progress. You can retry to check completion.',
+	account_guestRetry: 'Retry',
+	account_guestError:
+		'Registration could not be completed. Check the confirmation code or try again.',
+	account_guestCollision:
+		'This identity already has an account. Sign in to that account separately. Your guest account will not be merged.',
+	account_guestExistingLogin: 'Sign in to an existing account',
+	account_guestRegistered: 'Your account has been registered.',
+	account_guestChangeMethod: 'Choose another method',
+	login_guestContinue: '以訪客身分繼續',
+	login_guestRetention: '訪客帳戶在建立{days}天後可被自動刪除。請註冊帳戶以繼續使用。',
+	login_guestNoExpiry: '新訪客帳戶未設定自動刪除。',
+
 	...completion,
 	app_subtitle: '身分與存取，無所不在',
 	dialog_cancel: '取消',

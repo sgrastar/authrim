@@ -41,7 +41,7 @@ export function createAgentAccessMcpSdkServer(
     {
       name: 'authrim-agent-access',
       title: getAgentAccessDisplayName(options.environmentName),
-      version: '0.4.1',
+      version: '0.4.2',
       description: 'Authrim administration and configuration through delegated Agent Access.',
       websiteUrl: 'https://authrim.com',
     },

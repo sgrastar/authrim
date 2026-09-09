@@ -1,3 +1,4 @@
+import type { AccountRegistrationState } from '../../services/guest-lifecycle';
 import type { DatabaseAdapter, PreparedStatement, TransactionContext } from '../../db/adapter';
 import {
   accountDirectoryOutboxId,
@@ -10,7 +11,7 @@ import { generateId, getCurrentTimestamp } from '../base';
 const log = createLogger().module('CANONICAL-IDENTITY');
 
 export type IdentitySubjectType = 'person' | 'service_account' | 'agent' | string;
-export type IdentityAccountType = 'user' | 'admin' | 'service_account' | 'anonymous' | string;
+export type IdentityAccountType = 'user' | 'admin' | 'service_account' | string;
 export type IdentityLifecycleState =
   | 'active'
   | 'inactive'
@@ -83,6 +84,7 @@ export interface IdentityAccountRow {
   id: string;
   tenant_id: string;
   account_type: IdentityAccountType;
+  registration_state: AccountRegistrationState;
   lifecycle_state: IdentityLifecycleState;
   legacy_user_id: string | null;
   primary_subject_id: string | null;
@@ -327,6 +329,7 @@ export interface CreateIdentityAccountInput {
   id?: string;
   tenant_id?: string;
   account_type?: IdentityAccountType;
+  registration_state?: AccountRegistrationState;
   lifecycle_state?: IdentityLifecycleState;
   legacy_user_id?: string | null;
   primary_subject_id?: string | null;
@@ -640,6 +643,7 @@ export class CanonicalIdentityRepository {
       id: accountId,
       tenant_id: resolveTenantId(this.tenantId, accountInput.tenant_id),
       account_type: accountInput.account_type ?? 'user',
+      registration_state: accountInput.registration_state ?? 'registered',
       lifecycle_state: accountInput.lifecycle_state ?? 'active',
       legacy_user_id: accountInput.legacy_user_id ?? null,
       primary_subject_id: subjectId,
@@ -708,14 +712,15 @@ export class CanonicalIdentityRepository {
       },
       {
         sql: `INSERT INTO identity_accounts (
-          id, tenant_id, account_type, lifecycle_state, legacy_user_id, primary_subject_id,
+          id, tenant_id, account_type, registration_state, lifecycle_state, legacy_user_id, primary_subject_id,
           display_label, metadata_json, directory_publication_state, account_route_generation,
           created_at, updated_at, deleted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         params: [
           account.id,
           account.tenant_id,
           account.account_type,
+          account.registration_state,
           account.lifecycle_state,
           account.legacy_user_id,
           account.primary_subject_id,
@@ -1888,6 +1893,7 @@ export class CanonicalIdentityRepository {
       id,
       tenant_id: tenantId,
       account_type: input.account_type ?? 'user',
+      registration_state: input.registration_state ?? 'registered',
       lifecycle_state: input.lifecycle_state ?? 'active',
       legacy_user_id: input.legacy_user_id ?? null,
       primary_subject_id: input.primary_subject_id ?? null,
@@ -1902,14 +1908,15 @@ export class CanonicalIdentityRepository {
 
     await executor.execute(
       `INSERT INTO identity_accounts (
-        id, tenant_id, account_type, lifecycle_state, legacy_user_id, primary_subject_id,
+        id, tenant_id, account_type, registration_state, lifecycle_state, legacy_user_id, primary_subject_id,
         display_label, metadata_json, directory_publication_state, account_route_generation,
         created_at, updated_at, deleted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         row.id,
         row.tenant_id,
         row.account_type,
+        row.registration_state,
         row.lifecycle_state,
         row.legacy_user_id,
         row.primary_subject_id,

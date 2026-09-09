@@ -998,6 +998,31 @@ export const adminSessionsAPI = {
 /**
  * Auth API - Passkey
  */
+export const guestAPI = {
+	async login(
+		authorizationChallengeId: string,
+		humanVerificationResponse?: string
+	): Promise<{ data?: { success: boolean }; error?: APIError }> {
+		const response = await loginUiDirectAuthHttp.fetch<{ success: boolean } | APIError>(
+			`${resolveApiBaseUrl()}/api/auth/guest/login`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					...(authorizationChallengeId
+						? { authorizationChallengeId }
+						: { clientId: getAuthConfig().clientId }),
+					human_verification_response: humanVerificationResponse
+				}),
+				timeout: DEFAULT_API_TIMEOUT
+			}
+		);
+		return response.ok
+			? { data: response.data as { success: boolean } }
+			: { error: response.data as APIError };
+	}
+};
+
 export const passkeyAPI = {
 	/**
 	 * Get registration options for Passkey

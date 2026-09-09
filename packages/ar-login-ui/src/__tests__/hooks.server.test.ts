@@ -1403,3 +1403,23 @@ describe('Login UI proxy hooks', () => {
 		expect(setCookie).not.toHaveBeenCalled();
 	});
 });
+
+describe('guest authentication methods client selection', () => {
+	it.each([
+		['/login?lang=ja', null, 'login-ui'],
+		['/login?challenge_id=', null, null],
+		['/login?challenge_id=valid', { valid: true, clientId: 'rp-client' }, 'rp-client'],
+		['/login?challenge_id=expired', { valid: false, clientId: null }, null],
+		['/login?saml_request_id=saml', null, null],
+		['/signup', null, null]
+	])('selects the correct client for %s', async (path, target, expected) => {
+		const { resolveAuthenticationMethodsClientId } = await import('../hooks.server');
+		expect(
+			resolveAuthenticationMethodsClientId(
+				new URL(path as string, 'https://login.example.com'),
+				target as { valid: boolean; clientId: string | null } | null,
+				'login-ui'
+			)
+		).toBe(expected);
+	});
+});

@@ -1,6 +1,31 @@
 import type { BaseTranslation } from '../i18n-types';
 
 const en = {
+	account_guestLogoutWarning:
+		'Logging out will prevent you from returning to this guest account. Register first to keep access to your account and data. Log out anyway?',
+	account_guestTitle: 'Register your account',
+	account_guestDescription: 'Keep the same account and data when you register.',
+	account_guestDue: 'Eligible for automatic deletion from {date:string}.',
+	account_guestNoExpiry: 'No automatic deletion is scheduled.',
+	account_guestEmail: 'Email address',
+	account_guestSend: 'Register with email',
+	account_guestPasskey: 'Register with a passkey',
+	account_guestCode: 'Confirmation code',
+	account_guestConfirm: 'Confirm registration',
+	account_guestPending: 'Registration is in progress. You can retry to check completion.',
+	account_guestRetry: 'Retry',
+	account_guestError:
+		'Registration could not be completed. Check the confirmation code or try again.',
+	account_guestCollision:
+		'This identity already has an account. Sign in to that account separately. Your guest account will not be merged.',
+	account_guestExistingLogin: 'Sign in to an existing account',
+	account_guestRegistered: 'Your account has been registered.',
+	account_guestChangeMethod: 'Choose another method',
+	login_guestContinue: 'Continue as a guest',
+	login_guestRetention:
+		'Guest accounts are eligible for automatic deletion {days:number} days after creation. Register an account to keep using it.',
+	login_guestNoExpiry: 'No automatic deletion is scheduled for new guest accounts.',
+
 	app_title: 'Authrim',
 	app_subtitle: 'Identity & Access at the edge of everywhere.',
 	button_openDialog: 'Open Dialog',

@@ -178,7 +178,7 @@ describe('Lookup HMAC reindex processor', () => {
          id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
          credential_id TEXT NOT NULL, rp_id TEXT, created_at INTEGER NOT NULL
        );
-       CREATE TABLE anonymous_devices (
+       CREATE TABLE guest_devices (
          id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, user_id TEXT NOT NULL,
          device_id_hash TEXT NOT NULL, created_at INTEGER NOT NULL, is_active INTEGER NOT NULL
        );`
@@ -345,7 +345,7 @@ describe('Lookup HMAC reindex processor', () => {
     );
     const sourceAnonymousIndex = await createLookupBlindIndex(
       'external_subject',
-      { issuer: 'urn:authrim:anonymous-device:v1', subject: 'd'.repeat(64) },
+      { issuer: 'urn:authrim:guest-device:v1', subject: 'd'.repeat(64) },
       { generation: 1, secret: KEY_A }
     );
     const projection = JSON.stringify(publication.routeProjection);
@@ -416,7 +416,7 @@ describe('Lookup HMAC reindex processor', () => {
       .run(NOW_MS - 5_000);
     core
       .prepare(
-        `INSERT INTO anonymous_devices (
+        `INSERT INTO guest_devices (
            id, tenant_id, user_id, device_id_hash, created_at, is_active
          ) VALUES ('anonymous-a', 'tenant-a', 'user-a', ?, ?, 1)`
       )
@@ -465,7 +465,7 @@ describe('Lookup HMAC reindex processor', () => {
     ).toEqual({ account_id: 'account:user-a', lifecycle_state: 'active' });
     const anonymousCandidate = await createLookupBlindIndex(
       'external_subject',
-      { issuer: 'urn:authrim:anonymous-device:v1', subject: 'd'.repeat(64) },
+      { issuer: 'urn:authrim:guest-device:v1', subject: 'd'.repeat(64) },
       { generation: 2, secret: KEY_B }
     );
     expect(

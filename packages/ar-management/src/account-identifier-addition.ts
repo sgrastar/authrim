@@ -43,6 +43,7 @@ interface IdentifierAdditionDependencies {
   tenantCoreUsers: DatabaseAdapter;
   directory: AccountDirectoryServiceBinding;
   now?: () => number;
+  preparedPublication?: AccountDirectoryPublication;
 }
 
 interface OutboxReflection {
@@ -281,7 +282,9 @@ export async function publishAccountExternalSubjectAddition(
   input: AccountExternalSubjectAdditionInput,
   dependencies: IdentifierAdditionDependencies
 ): Promise<AccountDirectoryPublishResult> {
-  const publication = await buildAccountExternalSubjectAddition(env, input);
+  const publication = dependencies.preparedPublication
+    ? await validatePreparedAddition(dependencies.preparedPublication, input)
+    : await buildAccountExternalSubjectAddition(env, input);
   return publishAccountIdentifierAddition(env, publication, dependencies);
 }
 
@@ -290,6 +293,23 @@ export async function publishAccountEmailAddition(
   input: AccountEmailAdditionInput,
   dependencies: IdentifierAdditionDependencies
 ): Promise<AccountDirectoryPublishResult> {
-  const publication = await buildAccountEmailAddition(env, input);
+  const publication = dependencies.preparedPublication
+    ? await validatePreparedAddition(dependencies.preparedPublication, input)
+    : await buildAccountEmailAddition(env, input);
   return publishAccountIdentifierAddition(env, publication, dependencies);
+}
+
+async function validatePreparedAddition(
+  value: AccountDirectoryPublication,
+  input: AccountEmailAdditionInput | AccountExternalSubjectAdditionInput
+): Promise<AccountDirectoryPublication> {
+  const publication = await validateAccountDirectoryPublication(value);
+  if (
+    publication.operationId !== input.operationId ||
+    publication.tenantId !== input.tenantId ||
+    publication.accountId !== input.accountId ||
+    publication.idempotencyKey !== input.idempotencyKey
+  )
+    throw new Error('account_identifier_prepared_publication_mismatch');
+  return publication;
 }

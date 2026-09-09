@@ -1,3 +1,4 @@
+import type { AccountRegistrationState } from '../../services/guest-lifecycle';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { getCurrentTimestamp } from '../base';
 import { createLogger } from '../../utils/logger';
@@ -19,7 +20,8 @@ export interface CanonicalRuntimeUserWriteInput {
   active: boolean;
   emailVerified?: boolean;
   phoneNumberVerified?: boolean;
-  userType?: 'end_user' | 'admin' | 'm2m' | 'anonymous' | string;
+  userType?: 'end_user' | 'admin' | 'm2m' | string;
+  registrationState?: AccountRegistrationState;
   displayName?: string | null;
   locale?: string | null;
   zoneinfo?: string | null;
@@ -71,9 +73,6 @@ function accountTypeFromUserType(userType: string | undefined): string {
   if (userType === 'm2m') {
     return 'service_account';
   }
-  if (userType === 'anonymous') {
-    return 'anonymous';
-  }
   return 'user';
 }
 
@@ -119,6 +118,7 @@ export class CanonicalRuntimeUserWriter {
           id: `account:${input.userId}`,
           tenant_id: input.tenantId,
           account_type: accountTypeFromUserType(input.userType),
+          registration_state: input.registrationState ?? 'registered',
           lifecycle_state: lifecycleState,
           legacy_user_id: input.userId,
           display_label: null,

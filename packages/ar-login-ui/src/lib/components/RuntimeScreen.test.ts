@@ -1,5 +1,7 @@
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
+import { locales, loadedLocales } from '$i18n/i18n-util';
+import { loadAllLocales } from '$i18n/i18n-util.sync';
 import { setLocale } from '$i18n/i18n-svelte';
 import RuntimeScreen from './RuntimeScreen.svelte';
 
@@ -331,5 +333,80 @@ describe('RuntimeScreen signup email fields', () => {
 		expect(body).toContain('Subject');
 		expect(body).toContain('Name');
 		expect(body.match(/runtime-destination-fields/g)).toHaveLength(1);
+	});
+});
+
+describe('guest login widget', () => {
+	const screen = {
+		fields: [
+			{
+				field: 'guest',
+				label: 'Guest',
+				required: false,
+				block_type: 'guest_login_widget',
+				order: 1
+			}
+		]
+	};
+	it('shows the login action and retention explanation only when enabled', () => {
+		setLocale('en');
+		const enabled = render(RuntimeScreen, {
+			props: { screen, guestEnabled: true, guestRetentionDescription: 'Retained for 30 days' }
+		}).body;
+		expect(enabled).toContain('Guest');
+		expect(enabled).toContain('Retained for 30 days');
+		const disabled = render(RuntimeScreen, { props: { screen, guestEnabled: false } }).body;
+		expect(disabled).not.toContain('Guest');
+	});
+	it('uses the translated default when the configured label is empty', () => {
+		setLocale('en');
+		const body = render(RuntimeScreen, {
+			props: { screen: { fields: [{ ...screen.fields[0], label: '' }] }, guestEnabled: true }
+		}).body;
+		expect(body).toContain('Continue as a guest');
+	});
+	it.each(locales)(
+		'localizes persisted Japanese defaults in %s, including stale screen translations',
+		(locale) => {
+			loadAllLocales();
+			setLocale(locale);
+			const body = render(RuntimeScreen, {
+				props: {
+					screen: {
+						fields: [{ ...screen.fields[0], label: 'ゲストとして続ける' }],
+						localizations: { [locale]: { fields: { guest: { label: 'ゲストとして続ける' } } } }
+					},
+					guestEnabled: true
+				}
+			}).body;
+			expect(body).toContain(loadedLocales[locale].login_guestContinue);
+			if (locale !== 'ja') expect(body).not.toContain('ゲストとして続ける');
+		}
+	);
+	it('preserves a custom guest label', () => {
+		setLocale('ar');
+		expect(
+			render(RuntimeScreen, {
+				props: {
+					screen: { fields: [{ ...screen.fields[0], label: 'Try our demo' }] },
+					guestEnabled: true
+				}
+			}).body
+		).toContain('Try our demo');
+	});
+	it('does not offer guest creation on a signup screen', () => {
+		setLocale('en');
+		const body = render(RuntimeScreen, {
+			props: { screen, guestEnabled: true, authMethodMode: 'signup' }
+		}).body;
+		expect(body).not.toContain('Guest');
+	});
+	it('respects the global pending-action lock', () => {
+		setLocale('en');
+		const body = render(RuntimeScreen, {
+			props: { screen, guestEnabled: true, disabled: true }
+		}).body;
+		expect(body).toContain('disabled');
+		expect(body).toContain('Guest');
 	});
 });

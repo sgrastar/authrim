@@ -1,4 +1,5 @@
 <script lang="ts">
+	import AccountRegistrationState from '$lib/components/admin/AccountRegistrationState.svelte';
 	import { onMount } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 	import { page } from '$app/stores';
@@ -1306,6 +1307,10 @@
 					<div class="account-info-row">
 						<dt>{$LL.admin_user_detail_user_type()}</dt>
 						<dd class="info-value">{sanitizeText(user.user_type || '-')}</dd>
+					</div>
+					<div class="account-info-row">
+						<dt>{$LL.admin_registration_label()}</dt>
+						<dd class="info-value"><AccountRegistrationState state={user.registration_state} /></dd>
 					</div>
 					<div class="account-info-row">
 						<dt>{$LL.admin_user_detail_role()}</dt>

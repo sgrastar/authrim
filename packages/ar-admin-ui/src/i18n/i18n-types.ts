@@ -30589,6 +30589,242 @@ type RootTranslation = {
 	 */
 	admin_control_plane_dismiss: string
 	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n
+	 */
+	admin_registration_label: string
+	/**
+	 * G​u​e​s​t
+	 */
+	admin_registration_guest: string
+	/**
+	 * R​e​g​i​s​t​e​r​e​d
+	 */
+	admin_registration_registered: string
+	/**
+	 * G​u​e​s​t​ ​l​i​f​e​c​y​c​l​e​ ​p​r​o​g​r​e​s​s
+	 */
+	admin_lifecycle_progressTitle: string
+	/**
+	 * D​e​l​e​t​i​o​n​ ​r​u​n​s​ ​h​o​u​r​l​y​.​ ​A​t​t​e​m​p​t​ ​s​t​a​t​u​s​ ​m​a​y​ ​b​e​ ​d​e​l​a​y​e​d​ ​a​n​d​ ​i​s​ ​r​e​t​a​i​n​e​d​ ​f​o​r​ ​3​0​ ​d​a​y​s​.​ ​R​e​f​r​e​s​h​ ​t​o​ ​s​e​e​ ​c​u​r​r​e​n​t​ ​p​r​o​g​r​e​s​s​.
+	 */
+	admin_lifecycle_progressHelp: string
+	/**
+	 * R​e​f​r​e​s​h
+	 */
+	admin_lifecycle_refresh: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​l​o​a​d​ ​l​i​f​e​c​y​c​l​e​ ​p​r​o​g​r​e​s​s​.​ ​P​l​e​a​s​e​ ​r​e​f​r​e​s​h​.
+	 */
+	admin_lifecycle_progressError: string
+	/**
+	 * S​u​b​j​e​c​t
+	 */
+	admin_lifecycle_subject: string
+	/**
+	 * P​h​a​s​e
+	 */
+	admin_lifecycle_phase: string
+	/**
+	 * D​e​l​e​t​i​o​n​ ​d​u​e
+	 */
+	admin_lifecycle_due: string
+	/**
+	 * O​v​e​r​d​u​e​ ​(​m​i​n​u​t​e​s​)
+	 */
+	admin_lifecycle_delay: string
+	/**
+	 * L​a​t​e​s​t​ ​a​t​t​e​m​p​t
+	 */
+	admin_lifecycle_attempt: string
+	/**
+	 * {​p​h​a​s​e​|​{​a​c​t​i​v​e​:​ ​G​u​e​s​t​,​ ​u​p​g​r​a​d​i​n​g​:​ ​U​p​g​r​a​d​i​n​g​,​ ​r​e​g​i​s​t​e​r​e​d​:​ ​R​e​g​i​s​t​e​r​e​d​,​ ​d​e​l​e​t​i​n​g​:​ ​D​e​l​e​t​i​n​g​,​ ​d​e​l​e​t​e​d​:​ ​D​e​l​e​t​e​d​}​}
+	 * @param {'active' | 'upgrading' | 'registered' | 'deleting' | 'deleted'} phase
+	 */
+	admin_lifecycle_phaseValue: RequiredParams<`phase|{active:${string}, upgrading:${string}, registered:${string}, deleting:${string}, deleted:${string}}`>
+	/**
+	 * {​s​t​a​t​e​|​{​p​r​o​c​e​s​s​i​n​g​:​ ​P​r​o​c​e​s​s​i​n​g​,​ ​p​e​n​d​i​n​g​:​ ​P​e​n​d​i​n​g​,​ ​c​o​m​p​l​e​t​e​d​:​ ​C​o​m​p​l​e​t​e​d​,​ ​r​e​t​r​y​i​n​g​:​ ​R​e​t​r​y​ ​p​e​n​d​i​n​g​}​}
+	 * @param {'processing' | 'pending' | 'completed' | 'retrying'} state
+	 */
+	admin_lifecycle_maintenanceValue: RequiredParams<`state|{processing:${string}, pending:${string}, completed:${string}, retrying:${string}}`>
+	/**
+	 * N​o​ ​g​u​e​s​t​ ​l​i​f​e​c​y​c​l​e​ ​r​e​c​o​r​d​s​.
+	 */
+	admin_lifecycle_noAccounts: string
+	/**
+	 * L​o​a​d​ ​m​o​r​e
+	 */
+	admin_lifecycle_loadMore: string
+	/**
+	 * A​p​p​l​y​ ​r​e​t​e​n​t​i​o​n​ ​t​o​ ​e​x​i​s​t​i​n​g​ ​g​u​e​s​t​s
+	 */
+	admin_retentionPreviewTitle: string
+	/**
+	 * S​a​v​e​ ​t​h​e​ ​p​o​l​i​c​y​ ​f​i​r​s​t​,​ ​t​h​e​n​ ​r​e​v​i​e​w​ ​u​p​ ​t​o​ ​1​0​0​ ​a​c​c​o​u​n​t​s​ ​p​e​r​ ​p​a​g​e​.​ ​O​n​l​y​ ​a​c​c​o​u​n​t​s​ ​i​n​ ​t​h​e​ ​r​e​v​i​e​w​e​d​ ​p​a​g​e​ ​a​r​e​ ​c​h​a​n​g​e​d​.​ ​D​e​a​d​l​i​n​e​s​ ​a​r​e​ ​c​a​l​c​u​l​a​t​e​d​ ​f​r​o​m​ ​c​r​e​a​t​i​o​n​.​ ​C​h​a​n​g​e​d​,​ ​r​e​g​i​s​t​e​r​e​d​ ​o​r​ ​d​e​l​e​t​i​n​g​ ​a​c​c​o​u​n​t​s​ ​a​r​e​ ​s​k​i​p​p​e​d​.​ ​P​r​e​v​i​e​w​s​ ​e​x​p​i​r​e​ ​a​f​t​e​r​ ​1​5​ ​m​i​n​u​t​e​s​.
+	 */
+	admin_retentionPreviewDescription: string
+	/**
+	 * P​r​e​v​i​e​w​ ​e​x​i​s​t​i​n​g​ ​g​u​e​s​t​s
+	 */
+	admin_retentionPreviewButton: string
+	/**
+	 * {​c​o​u​n​t​}​ ​a​c​c​o​u​n​t​s​ ​i​n​ ​t​h​i​s​ ​p​a​g​e​;​ ​{​d​u​e​}​ ​b​e​c​o​m​e​ ​e​l​i​g​i​b​l​e​ ​f​o​r​ ​d​e​l​e​t​i​o​n​ ​i​m​m​e​d​i​a​t​e​l​y​.
+	 * @param {number} count
+	 * @param {number} due
+	 */
+	admin_retentionPreviewCounts: RequiredParams<'count' | 'due'>
+	/**
+	 * A​p​p​l​y​ ​t​o​ ​t​h​e​s​e​ ​{​c​o​u​n​t​}​ ​a​c​c​o​u​n​t​s
+	 * @param {number} count
+	 */
+	admin_retentionApplyButton: RequiredParams<'count'>
+	/**
+	 * A​p​p​l​i​e​d​:​ ​{​a​p​p​l​i​e​d​}​;​ ​u​n​c​h​a​n​g​e​d​:​ ​{​u​n​c​h​a​n​g​e​d​}​;​ ​s​k​i​p​p​e​d​:​ ​{​s​k​i​p​p​e​d​}​.
+	 * @param {number} applied
+	 * @param {number} skipped
+	 * @param {number} unchanged
+	 */
+	admin_retentionApplied: RequiredParams<'applied' | 'skipped' | 'unchanged'>
+	/**
+	 * P​r​e​v​i​e​w​ ​n​e​x​t​ ​p​a​g​e
+	 */
+	admin_retentionNextPage: string
+	/**
+	 * A​c​c​o​u​n​t
+	 */
+	admin_retentionAccount: string
+	/**
+	 * C​u​r​r​e​n​t​ ​d​e​a​d​l​i​n​e
+	 */
+	admin_retentionBefore: string
+	/**
+	 * P​r​e​v​i​e​w​e​d​ ​d​e​a​d​l​i​n​e
+	 */
+	admin_retentionAfter: string
+	/**
+	 * N​o​ ​a​u​t​o​m​a​t​i​c​ ​d​e​l​e​t​i​o​n
+	 */
+	admin_retentionNoDeadline: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​l​o​a​d​ ​t​h​e​ ​p​r​e​v​i​e​w​.​ ​R​e​l​o​a​d​ ​i​t​ ​u​s​i​n​g​ ​t​h​e​ ​c​u​r​r​e​n​t​ ​s​a​v​e​d​ ​p​o​l​i​c​y​.
+	 */
+	admin_retentionPreviewError: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​f​i​n​i​s​h​ ​a​p​p​l​y​i​n​g​ ​t​h​e​ ​p​r​e​v​i​e​w​.​ ​I​t​ ​m​a​y​ ​h​a​v​e​ ​e​x​p​i​r​e​d​ ​o​r​ ​t​h​e​ ​p​o​l​i​c​y​ ​m​a​y​ ​h​a​v​e​ ​c​h​a​n​g​e​d​.​ ​R​e​t​r​y​ ​t​h​e​ ​s​a​m​e​ ​p​r​e​v​i​e​w​ ​a​f​t​e​r​ ​a​ ​t​e​m​p​o​r​a​r​y​ ​e​r​r​o​r​.
+	 */
+	admin_retentionApplyError: string
+	/**
+	 * G​u​e​s​t​ ​a​c​c​e​s​s
+	 */
+	admin_guestClientTitle: string
+	/**
+	 * E​x​p​l​i​c​i​t​l​y​ ​a​l​l​o​w​ ​g​u​e​s​t​ ​l​o​g​i​n​ ​f​o​r​ ​t​h​i​s​ ​c​l​i​e​n​t​.​ ​T​e​n​a​n​t​ ​g​u​e​s​t​ ​l​o​g​i​n​ ​m​u​s​t​ ​a​l​s​o​ ​b​e​ ​e​n​a​b​l​e​d​.
+	 */
+	admin_guestClientDescription: string
+	/**
+	 * A​l​l​o​w​ ​g​u​e​s​t​ ​l​o​g​i​n
+	 */
+	admin_guestClientEnabled: string
+	/**
+	 * A​l​l​o​w​e​d​ ​g​u​e​s​t​ ​s​c​o​p​e​s
+	 */
+	admin_guestClientScopes: string
+	/**
+	 * E​n​t​e​r​ ​o​n​e​ ​s​c​o​p​e​ ​p​e​r​ ​l​i​n​e​.​ ​T​h​e​ ​a​c​t​u​a​l​ ​r​e​q​u​e​s​t​ ​a​n​d​ ​t​h​e​ ​c​l​i​e​n​t​’​s​ ​n​o​r​m​a​l​ ​s​c​o​p​e​ ​p​e​r​m​i​s​s​i​o​n​s​ ​m​u​s​t​ ​a​l​s​o​ ​a​l​l​o​w​ ​e​a​c​h​ ​s​c​o​p​e​.​ ​R​e​g​i​s​t​r​a​t​i​o​n​ ​n​e​v​e​r​ ​i​n​c​r​e​a​s​e​s​ ​e​x​i​s​t​i​n​g​ ​g​r​a​n​t​s​.
+	 */
+	admin_guestClientScopeHint: string
+	/**
+	 * I​n​c​l​u​d​e​ ​o​p​e​n​i​d​ ​a​n​d​ ​e​n​t​e​r​ ​v​a​l​i​d​ ​s​c​o​p​e​ ​n​a​m​e​s​.
+	 */
+	admin_guestClientScopesInvalid: string
+	/**
+	 * S​a​v​e​ ​g​u​e​s​t​ ​a​c​c​e​s​s
+	 */
+	admin_guestClientSave: string
+	/**
+	 * G​u​e​s​t​ ​a​c​c​e​s​s​ ​s​a​v​e​d​.
+	 */
+	admin_guestClientSaved: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​l​o​a​d​ ​g​u​e​s​t​ ​a​c​c​e​s​s​ ​s​e​t​t​i​n​g​s​.
+	 */
+	admin_guestClientLoadError: string
+	/**
+	 * C​o​u​l​d​ ​n​o​t​ ​s​a​v​e​ ​g​u​e​s​t​ ​a​c​c​e​s​s​ ​s​e​t​t​i​n​g​s​.
+	 */
+	admin_guestClientSaveError: string
+	/**
+	 * T​h​e​ ​c​l​i​e​n​t​ ​p​r​o​f​i​l​e​ ​c​h​a​n​g​e​d​.​ ​R​e​l​o​a​d​ ​b​e​f​o​r​e​ ​s​a​v​i​n​g​.
+	 */
+	admin_guestClientConflict: string
+	/**
+	 * C​o​n​f​i​g​u​r​e​ ​t​h​e​ ​t​e​n​a​n​t​ ​p​o​l​i​c​y​ ​b​e​f​o​r​e​ ​s​a​v​i​n​g​ ​a​ ​c​l​i​e​n​t​ ​p​r​o​f​i​l​e​.
+	 */
+	admin_guestClientTenantRequired: string
+	/**
+	 * G​u​e​s​t​ ​l​o​g​i​n
+	 */
+	admin_guest_login_title: string
+	/**
+	 * A​l​l​o​w​ ​g​u​e​s​t​s​ ​t​o​ ​s​t​a​r​t​ ​o​r​ ​r​e​s​u​m​e​ ​a​n​ ​a​c​c​o​u​n​t​.​ ​E​a​c​h​ ​c​l​i​e​n​t​ ​m​u​s​t​ ​a​l​s​o​ ​e​x​p​l​i​c​i​t​l​y​ ​a​l​l​o​w​ ​g​u​e​s​t​ ​l​o​g​i​n​.
+	 */
+	admin_guest_login_description: string
+	/**
+	 * U​s​e​ ​f​o​r​ ​g​u​e​s​t​ ​u​p​g​r​a​d​e
+	 */
+	admin_guest_upgrade_methods: string
+	/**
+	 * T​h​e​s​e​ ​s​w​i​t​c​h​e​s​ ​a​r​e​ ​i​n​d​e​p​e​n​d​e​n​t​ ​o​f​ ​l​o​g​i​n​ ​a​n​d​ ​s​i​g​n​u​p​.​ ​A​c​c​o​u​n​t​ ​l​i​f​e​c​y​c​l​e​ ​s​e​t​t​i​n​g​s​ ​m​u​s​t​ ​a​l​s​o​ ​a​l​l​o​w​ ​u​p​g​r​a​d​e​s​.
+	 */
+	admin_guest_upgrade_methods_description: string
+	/**
+	 * A​c​c​o​u​n​t​ ​l​i​f​e​c​y​c​l​e​ ​s​e​t​t​i​n​g​s​ ​s​a​v​e​d​.
+	 */
+	admin_account_lifecycle_saved: string
+	/**
+	 * A​c​c​o​u​n​t​ ​l​i​f​e​c​y​c​l​e
+	 */
+	admin_lifecycle_title: string
+	/**
+	 * M​a​n​a​g​e​ ​g​u​e​s​t​ ​r​e​t​e​n​t​i​o​n​ ​a​n​d​ ​p​r​o​m​o​t​i​o​n​ ​t​o​ ​a​ ​r​e​g​i​s​t​e​r​e​d​ ​a​c​c​o​u​n​t​.
+	 */
+	admin_lifecycle_description: string
+	/**
+	 * S​a​v​i​n​g​ ​a​p​p​l​i​e​s​ ​t​o​ ​n​e​w​l​y​ ​c​r​e​a​t​e​d​ ​g​u​e​s​t​s​ ​o​n​l​y​.​ ​E​x​i​s​t​i​n​g​ ​g​u​e​s​t​s​ ​k​e​e​p​ ​t​h​e​i​r​ ​c​u​r​r​e​n​t​ ​d​e​l​e​t​i​o​n​ ​d​a​t​e​.
+	 */
+	admin_lifecycle_new_only: string
+	/**
+	 * A​u​t​o​m​a​t​i​c​a​l​l​y​ ​d​e​l​e​t​e​ ​g​u​e​s​t​ ​a​c​c​o​u​n​t​s
+	 */
+	admin_lifecycle_delete: string
+	/**
+	 * D​a​y​s​ ​a​f​t​e​r​ ​a​c​c​o​u​n​t​ ​c​r​e​a​t​i​o​n
+	 */
+	admin_lifecycle_days: string
+	/**
+	 * T​h​e​ ​h​o​u​r​l​y​ ​c​l​e​a​n​u​p​ ​d​e​l​e​t​e​s​ ​e​l​i​g​i​b​l​e​ ​g​u​e​s​t​s​ ​a​f​t​e​r​ ​t​h​i​s​ ​p​e​r​i​o​d​.​ ​U​p​g​r​a​d​i​n​g​ ​c​a​n​c​e​l​s​ ​g​u​e​s​t​ ​d​e​l​e​t​i​o​n​.
+	 */
+	admin_lifecycle_delete_help: string
+	/**
+	 * A​l​l​o​w​ ​g​u​e​s​t​ ​u​p​g​r​a​d​e​s
+	 */
+	admin_lifecycle_upgrade: string
+	/**
+	 * D​e​l​e​t​i​o​n​ ​h​o​l​d​ ​w​h​e​n​ ​u​p​g​r​a​d​i​n​g​ ​(​m​i​n​u​t​e​s​)
+	 */
+	admin_lifecycle_hold: string
+	/**
+	 * O​n​e​ ​h​o​l​d​ ​p​e​r​ ​g​u​e​s​t​,​ ​f​r​o​m​ ​1​ ​t​o​ ​6​0​ ​m​i​n​u​t​e​s​.​ ​R​e​t​r​y​i​n​g​ ​n​e​v​e​r​ ​e​x​t​e​n​d​s​ ​i​t​.​ ​T​h​e​ ​d​e​f​a​u​l​t​ ​i​s​ ​1​0​ ​m​i​n​u​t​e​s​.
+	 */
+	admin_lifecycle_hold_help: string
+	/**
+	 * R​e​g​i​s​t​e​r​e​d​ ​a​c​c​o​u​n​t​s​,​ ​i​n​c​l​u​d​i​n​g​ ​a​c​c​o​u​n​t​s​ ​w​i​t​h​ ​a​t​t​r​i​b​u​t​e​s​,​ ​h​a​v​e​ ​n​o​ ​a​u​t​o​m​a​t​i​c​ ​d​e​l​e​t​i​o​n​ ​p​o​l​i​c​y​ ​i​n​ ​t​h​i​s​ ​r​e​l​e​a​s​e​.​ ​D​e​v​i​c​e​ ​a​n​d​ ​a​g​e​n​t​ ​p​o​l​i​c​i​e​s​ ​w​i​l​l​ ​b​e​ ​m​a​n​a​g​e​d​ ​s​e​p​a​r​a​t​e​l​y​.
+	 */
+	admin_lifecycle_other: string
+	/**
+	 * E​n​t​e​r​ ​w​h​o​l​e​ ​n​u​m​b​e​r​s​:​ ​1​–​3​6​5​0​ ​d​a​y​s​ ​a​n​d​ ​1​–​6​0​ ​m​i​n​u​t​e​s​.
+	 */
+	admin_lifecycle_invalid: string
+	/**
 	 * S​e​t​t​i​n​g​s
 	 */
 	admin_settings_title: string
@@ -63595,6 +63831,234 @@ Remove this role from {email}?
 	 * Dismiss
 	 */
 	admin_control_plane_dismiss: () => LocalizedString
+	/**
+	 * Registration
+	 */
+	admin_registration_label: () => LocalizedString
+	/**
+	 * Guest
+	 */
+	admin_registration_guest: () => LocalizedString
+	/**
+	 * Registered
+	 */
+	admin_registration_registered: () => LocalizedString
+	/**
+	 * Guest lifecycle progress
+	 */
+	admin_lifecycle_progressTitle: () => LocalizedString
+	/**
+	 * Deletion runs hourly. Attempt status may be delayed and is retained for 30 days. Refresh to see current progress.
+	 */
+	admin_lifecycle_progressHelp: () => LocalizedString
+	/**
+	 * Refresh
+	 */
+	admin_lifecycle_refresh: () => LocalizedString
+	/**
+	 * Could not load lifecycle progress. Please refresh.
+	 */
+	admin_lifecycle_progressError: () => LocalizedString
+	/**
+	 * Subject
+	 */
+	admin_lifecycle_subject: () => LocalizedString
+	/**
+	 * Phase
+	 */
+	admin_lifecycle_phase: () => LocalizedString
+	/**
+	 * Deletion due
+	 */
+	admin_lifecycle_due: () => LocalizedString
+	/**
+	 * Overdue (minutes)
+	 */
+	admin_lifecycle_delay: () => LocalizedString
+	/**
+	 * Latest attempt
+	 */
+	admin_lifecycle_attempt: () => LocalizedString
+	/**
+	 * {phase|{active: Guest, upgrading: Upgrading, registered: Registered, deleting: Deleting, deleted: Deleted}}
+	 */
+	admin_lifecycle_phaseValue: (arg: { phase: 'active' | 'upgrading' | 'registered' | 'deleting' | 'deleted' }) => LocalizedString
+	/**
+	 * {state|{processing: Processing, pending: Pending, completed: Completed, retrying: Retry pending}}
+	 */
+	admin_lifecycle_maintenanceValue: (arg: { state: 'processing' | 'pending' | 'completed' | 'retrying' }) => LocalizedString
+	/**
+	 * No guest lifecycle records.
+	 */
+	admin_lifecycle_noAccounts: () => LocalizedString
+	/**
+	 * Load more
+	 */
+	admin_lifecycle_loadMore: () => LocalizedString
+	/**
+	 * Apply retention to existing guests
+	 */
+	admin_retentionPreviewTitle: () => LocalizedString
+	/**
+	 * Save the policy first, then review up to 100 accounts per page. Only accounts in the reviewed page are changed. Deadlines are calculated from creation. Changed, registered or deleting accounts are skipped. Previews expire after 15 minutes.
+	 */
+	admin_retentionPreviewDescription: () => LocalizedString
+	/**
+	 * Preview existing guests
+	 */
+	admin_retentionPreviewButton: () => LocalizedString
+	/**
+	 * {count} accounts in this page; {due} become eligible for deletion immediately.
+	 */
+	admin_retentionPreviewCounts: (arg: { count: number, due: number }) => LocalizedString
+	/**
+	 * Apply to these {count} accounts
+	 */
+	admin_retentionApplyButton: (arg: { count: number }) => LocalizedString
+	/**
+	 * Applied: {applied}; unchanged: {unchanged}; skipped: {skipped}.
+	 */
+	admin_retentionApplied: (arg: { applied: number, skipped: number, unchanged: number }) => LocalizedString
+	/**
+	 * Preview next page
+	 */
+	admin_retentionNextPage: () => LocalizedString
+	/**
+	 * Account
+	 */
+	admin_retentionAccount: () => LocalizedString
+	/**
+	 * Current deadline
+	 */
+	admin_retentionBefore: () => LocalizedString
+	/**
+	 * Previewed deadline
+	 */
+	admin_retentionAfter: () => LocalizedString
+	/**
+	 * No automatic deletion
+	 */
+	admin_retentionNoDeadline: () => LocalizedString
+	/**
+	 * Could not load the preview. Reload it using the current saved policy.
+	 */
+	admin_retentionPreviewError: () => LocalizedString
+	/**
+	 * Could not finish applying the preview. It may have expired or the policy may have changed. Retry the same preview after a temporary error.
+	 */
+	admin_retentionApplyError: () => LocalizedString
+	/**
+	 * Guest access
+	 */
+	admin_guestClientTitle: () => LocalizedString
+	/**
+	 * Explicitly allow guest login for this client. Tenant guest login must also be enabled.
+	 */
+	admin_guestClientDescription: () => LocalizedString
+	/**
+	 * Allow guest login
+	 */
+	admin_guestClientEnabled: () => LocalizedString
+	/**
+	 * Allowed guest scopes
+	 */
+	admin_guestClientScopes: () => LocalizedString
+	/**
+	 * Enter one scope per line. The actual request and the client’s normal scope permissions must also allow each scope. Registration never increases existing grants.
+	 */
+	admin_guestClientScopeHint: () => LocalizedString
+	/**
+	 * Include openid and enter valid scope names.
+	 */
+	admin_guestClientScopesInvalid: () => LocalizedString
+	/**
+	 * Save guest access
+	 */
+	admin_guestClientSave: () => LocalizedString
+	/**
+	 * Guest access saved.
+	 */
+	admin_guestClientSaved: () => LocalizedString
+	/**
+	 * Could not load guest access settings.
+	 */
+	admin_guestClientLoadError: () => LocalizedString
+	/**
+	 * Could not save guest access settings.
+	 */
+	admin_guestClientSaveError: () => LocalizedString
+	/**
+	 * The client profile changed. Reload before saving.
+	 */
+	admin_guestClientConflict: () => LocalizedString
+	/**
+	 * Configure the tenant policy before saving a client profile.
+	 */
+	admin_guestClientTenantRequired: () => LocalizedString
+	/**
+	 * Guest login
+	 */
+	admin_guest_login_title: () => LocalizedString
+	/**
+	 * Allow guests to start or resume an account. Each client must also explicitly allow guest login.
+	 */
+	admin_guest_login_description: () => LocalizedString
+	/**
+	 * Use for guest upgrade
+	 */
+	admin_guest_upgrade_methods: () => LocalizedString
+	/**
+	 * These switches are independent of login and signup. Account lifecycle settings must also allow upgrades.
+	 */
+	admin_guest_upgrade_methods_description: () => LocalizedString
+	/**
+	 * Account lifecycle settings saved.
+	 */
+	admin_account_lifecycle_saved: () => LocalizedString
+	/**
+	 * Account lifecycle
+	 */
+	admin_lifecycle_title: () => LocalizedString
+	/**
+	 * Manage guest retention and promotion to a registered account.
+	 */
+	admin_lifecycle_description: () => LocalizedString
+	/**
+	 * Saving applies to newly created guests only. Existing guests keep their current deletion date.
+	 */
+	admin_lifecycle_new_only: () => LocalizedString
+	/**
+	 * Automatically delete guest accounts
+	 */
+	admin_lifecycle_delete: () => LocalizedString
+	/**
+	 * Days after account creation
+	 */
+	admin_lifecycle_days: () => LocalizedString
+	/**
+	 * The hourly cleanup deletes eligible guests after this period. Upgrading cancels guest deletion.
+	 */
+	admin_lifecycle_delete_help: () => LocalizedString
+	/**
+	 * Allow guest upgrades
+	 */
+	admin_lifecycle_upgrade: () => LocalizedString
+	/**
+	 * Deletion hold when upgrading (minutes)
+	 */
+	admin_lifecycle_hold: () => LocalizedString
+	/**
+	 * One hold per guest, from 1 to 60 minutes. Retrying never extends it. The default is 10 minutes.
+	 */
+	admin_lifecycle_hold_help: () => LocalizedString
+	/**
+	 * Registered accounts, including accounts with attributes, have no automatic deletion policy in this release. Device and agent policies will be managed separately.
+	 */
+	admin_lifecycle_other: () => LocalizedString
+	/**
+	 * Enter whole numbers: 1–3650 days and 1–60 minutes.
+	 */
+	admin_lifecycle_invalid: () => LocalizedString
 	/**
 	 * Settings
 	 */

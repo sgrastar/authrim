@@ -1,6 +1,31 @@
 import type { Translation } from '../i18n-types';
 
 const translation = {
+	account_guestLogoutWarning:
+		'Po wylogowaniu nie będzie można wrócić do tego konta gościa. Najpierw zarejestruj konto, aby zachować dostęp do konta i danych. Wylogować mimo to?',
+	account_guestTitle: 'Register your account',
+	account_guestDescription: 'Keep the same account and data when you register.',
+	account_guestDue: 'Eligible for automatic deletion from {date}.',
+	account_guestNoExpiry: 'No automatic deletion is scheduled.',
+	account_guestEmail: 'Email address',
+	account_guestSend: 'Register with email',
+	account_guestPasskey: 'Register with a passkey',
+	account_guestCode: 'Confirmation code',
+	account_guestConfirm: 'Confirm registration',
+	account_guestPending: 'Registration is in progress. You can retry to check completion.',
+	account_guestRetry: 'Retry',
+	account_guestError:
+		'Registration could not be completed. Check the confirmation code or try again.',
+	account_guestCollision:
+		'This identity already has an account. Sign in to that account separately. Your guest account will not be merged.',
+	account_guestExistingLogin: 'Sign in to an existing account',
+	account_guestRegistered: 'Your account has been registered.',
+	account_guestChangeMethod: 'Choose another method',
+	login_guestContinue: 'Kontynuuj jako gość',
+	login_guestRetention:
+		'Konta gości mogą zostać automatycznie usunięte po {days} dniach od utworzenia. Zarejestruj konto, aby nadal z niego korzystać.',
+	login_guestNoExpiry: 'Nie zaplanowano automatycznego usuwania nowych kont gości.',
+
 	app_title: 'Authrim',
 	app_subtitle: 'Tożsamość i dostęp na brzegu sieci — wszędzie.',
 	button_openDialog: 'Otwórz okno dialogowe',

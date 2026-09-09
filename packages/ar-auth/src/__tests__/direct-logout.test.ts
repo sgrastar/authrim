@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
+  revokeGuestResumeForSession,
   sessionStore,
   revokeDeviceSecretsForLogoutScope,
   listRefreshTokenFamiliesByUser,
@@ -13,6 +14,7 @@ const {
   };
 
   return {
+    revokeGuestResumeForSession: vi.fn(),
     sessionStore: {
       getSessionRpc: vi.fn(),
       invalidateSessionRpc: vi.fn(),
@@ -29,6 +31,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    revokeGuestResumeForSession,
     getSessionStoreBySessionId: vi.fn(() => ({ stub: sessionStore })),
     isShardedSessionId: vi.fn(() => true),
     getTenantIdFromContext: vi.fn(() => 'tenant_test'),
@@ -62,7 +65,7 @@ function createContext(body: Record<string, unknown>) {
   const responseHeaders = new Headers();
   const request = new Request('https://auth.example.com/api/v1/auth/direct/logout', {
     headers: {
-      Authorization: 'Bearer g1:global:0:session_test',
+      Cookie: 'authrim_session=g1:global:0:session_test; authrim_guest_resume=resume-secret',
     },
   });
 
@@ -89,6 +92,7 @@ function createContext(body: Record<string, unknown>) {
 describe('Direct Auth logout scope', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    revokeGuestResumeForSession.mockResolvedValue(undefined);
     sessionStore.getSessionRpc.mockResolvedValue({
       id: 'g1:global:0:session_test',
       userId: 'user_123',
@@ -211,4 +215,51 @@ describe('Direct Auth logout scope', () => {
       }
     );
   });
+});
+
+describe('Direct Auth guest logout', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sessionStore.getSessionRpc.mockResolvedValue({
+      id: 'session',
+      userId: 'guest',
+      tenantId: 'tenant_test',
+      data: { guest_resume_credential: true },
+    });
+    revokeGuestResumeForSession.mockResolvedValue(undefined);
+    sessionStore.invalidateSessionRpc.mockResolvedValue(undefined);
+  });
+  it('revokes the resume credential before invalidation and clears both browser cookies', async () => {
+    const { directLogoutHandler } = await import('../direct-auth');
+    const c = createContext({});
+    const response = await directLogoutHandler(c as never);
+    expect(response.status).toBe(200);
+    expect(revokeGuestResumeForSession).toHaveBeenCalledWith(
+      c,
+      expect.objectContaining({ userId: 'guest' })
+    );
+    expect(revokeGuestResumeForSession.mock.invocationCallOrder[0]).toBeLessThan(
+      sessionStore.invalidateSessionRpc.mock.invocationCallOrder[0]
+    );
+    expect(response.headers.get('set-cookie')).toContain('authrim_guest_resume=;');
+    expect(response.headers.get('set-cookie')).toContain('authrim_session=;');
+  });
+  it.each(['read', 'revoke', 'invalidate'])(
+    'preserves cookies and reports failure on %s failure',
+    async (stage) => {
+      const { directLogoutHandler } = await import('../direct-auth');
+      const failing =
+        stage === 'read'
+          ? sessionStore.getSessionRpc
+          : stage === 'revoke'
+            ? revokeGuestResumeForSession
+            : sessionStore.invalidateSessionRpc;
+      failing.mockRejectedValueOnce(new Error('unavailable'));
+      const response = await directLogoutHandler(createContext({}) as never);
+      expect(response.status).toBe(503);
+      expect(response.headers.get('set-cookie')).toBeNull();
+      if (stage !== 'invalidate') expect(sessionStore.invalidateSessionRpc).not.toHaveBeenCalled();
+      expect(revokeDeviceSecretsForLogoutScope).not.toHaveBeenCalled();
+    }
+  );
 });

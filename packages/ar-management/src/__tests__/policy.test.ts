@@ -23,7 +23,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
-import type { Env, TenantContract, ClientContract } from '@authrim/ar-lib-core';
+import {
+  createDefaultGuestClientPolicy,
+  type Env,
+  type TenantContract,
+  type ClientContract,
+} from '@authrim/ar-lib-core';
 
 // Use vi.hoisted to define mocks that will be used in vi.mock factory
 // CRITICAL: requireAnyRole and createLogger need default implementations
@@ -172,7 +177,11 @@ function createMockKV(options: {
       return JSON.stringify(value);
     }),
     put: vi.fn().mockImplementation(async (key: string, value: string) => {
-      storage.set(key, JSON.parse(value));
+      try {
+        storage.set(key, JSON.parse(value));
+      } catch {
+        storage.set(key, value);
+      }
       options.putCallback?.(key, value);
     }),
     delete: vi.fn().mockResolvedValue(undefined),
@@ -961,6 +970,61 @@ describe('Policy API - Client Profile', () => {
       expect(res.status).toBe(409);
       const body = await parseJson(res);
       expect(body.currentVersion).toBe(5);
+    });
+
+    it('initializes the default tenant policy for a guest-only save', async () => {
+      const actual =
+        await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
+      mockCreatePolicyResolver.mockImplementation(actual.createPolicyResolver);
+      mockD1AdapterQueryOne.mockResolvedValue({
+        client_id: 'client-123',
+        tenant_id: 'test-tenant',
+      });
+      const mockKV = createMockKV({ getValues: {} });
+      const { app } = createApp({ kv: mockKV });
+      const res = await app.request('/api/admin/clients/client-123/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ifMatch: '0',
+          profile: { guestAuth: { ...createDefaultGuestClientPolicy(), enabled: true } },
+        }),
+      });
+      expect(res.status).toBe(200);
+      const body = await parseJson(res);
+      expect(body.profile.guestAuth.enabled).toBe(true);
+      expect(mockKV.put).toHaveBeenCalledWith(
+        'cache:authentication-methods:v1:revision:tenant:test-tenant',
+        expect.any(String)
+      );
+      expect(mockKV.put).toHaveBeenCalledWith(
+        'test:contract:tenant:test-tenant',
+        expect.stringContaining('"preset":"b2c-standard"')
+      );
+      expect(mockKV.put).toHaveBeenCalledWith(
+        'test:contract:client:test-tenant:client-123',
+        expect.stringContaining('"enabled":true')
+      );
+    });
+
+    it('does not initialize a tenant policy after a failed policy read', async () => {
+      mockD1AdapterQueryOne.mockResolvedValue({
+        client_id: 'client-123',
+        tenant_id: 'test-tenant',
+      });
+      const mockKV = createMockKV({ getValues: {} });
+      vi.mocked(mockKV.get).mockRejectedValue(new Error('unavailable'));
+      const { app } = createApp({ kv: mockKV });
+      const res = await app.request('/api/admin/clients/client-123/profile', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ifMatch: '0',
+          profile: { guestAuth: createDefaultGuestClientPolicy() },
+        }),
+      });
+      expect(res.status).toBe(503);
+      expect(mockKV.put).not.toHaveBeenCalled();
     });
 
     it('should return 412 when tenant policy does not exist', async () => {

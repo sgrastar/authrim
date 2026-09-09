@@ -209,7 +209,7 @@ describe('RBAC token claims', () => {
   it.each([
     ['admin', 'system_admin'],
     ['service_account', 'end_user'],
-    ['anonymous', 'anonymous'],
+    ['user', 'end_user'],
     ['user', 'end_user'],
     [null, 'end_user'],
   ])('maps account type %s to token user type %s', async (accountType, expected) => {
@@ -289,7 +289,7 @@ describe('RBAC token claims', () => {
       if (sql.includes('SELECT DISTINCT r.name')) return [{ name: 'admin' }];
       if (sql.includes('scope_type'))
         return [{ name: 'editor', scope_type: 'organization', scope_target: 'org-1' }];
-      if (sql.includes('identity_accounts')) return { account_type: 'anonymous' };
+      if (sql.includes('identity_accounts')) return { account_type: 'user' };
       if (sql.includes('o.id as org_id'))
         return { org_id: 'org-1', plan: 'free', org_type: 'enterprise' };
       if (sql.includes('SELECT o.name')) return { name: 'Acme' };
@@ -308,7 +308,7 @@ describe('RBAC token claims', () => {
       )
     ).resolves.toMatchObject({
       authrim_roles: ['admin'],
-      authrim_user_type: 'anonymous',
+      authrim_user_type: 'end_user',
       authrim_org_id: 'org-1',
       authrim_org_name: 'Acme',
       authrim_relationships_summary: { children_ids: ['child-1'], parent_ids: [] },

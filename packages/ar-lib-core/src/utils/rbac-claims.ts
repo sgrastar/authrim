@@ -537,7 +537,7 @@ export async function resolveUserType(
 
   if (result?.account_type === 'admin') return 'system_admin';
   if (result?.account_type === 'service_account') return 'end_user';
-  if (result?.account_type === 'anonymous') return 'anonymous';
+  // Guest registration is exposed through account:lifecycle:read, not the subject type.
   return 'end_user';
 }
 

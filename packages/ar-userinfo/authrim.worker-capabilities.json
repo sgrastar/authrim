@@ -5,6 +5,13 @@
   "lookupBlindIndex": true,
   "requiredDataRoles": ["tenant_core/default", "tenant_core/users", "tenant_pii", "lookup"],
   "bindings": [
+    { "name": "SETTINGS", "kind": "kv_namespace", "required": true },
+    {
+      "name": "GUEST_UPGRADE_READINESS",
+      "kind": "service",
+      "required": true,
+      "capability": "guest_upgrade.readiness"
+    },
     { "name": "LOOKUP_DB", "kind": "d1", "required": true, "dataRole": "lookup" },
     { "name": "CLIENTS_CACHE", "kind": "kv_namespace", "required": true },
     { "name": "USER_CACHE", "kind": "kv_namespace", "required": true },

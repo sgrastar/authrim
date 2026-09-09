@@ -670,3 +670,16 @@ export type {
   RuntimeSmokeEntrypointProps,
 } from './entrypoints/RuntimeSmokeEntrypoint';
 export { RUNTIME_LOOKUP_HMAC_TEST_VECTOR } from './entrypoints/RuntimeSmokeEntrypoint';
+
+// Human guest registration and retention.
+export * from './services/guest-lifecycle';
+export * from './services/guest-settings';
+export * from './repositories/guest-lifecycle';
+
+export * from './services/guest-session';
+
+export * from './services/guest-client-policy';
+
+export * from './repositories/guest-upgrade';
+export * from './services/guest-upgrade-coordinator';
+export * from './services/guest-credential-authentication';

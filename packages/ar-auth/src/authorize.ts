@@ -50,6 +50,7 @@ import {
   getClientCached,
   loadTenantProfileCached,
   loadClientContractCached,
+  areGuestScopesAllowed,
   // Logging
   getLogger,
   createLogger,
@@ -2949,7 +2950,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
         if (session.expiresAt > Date.now()) {
           sessionUserId = session.userId;
           // Check if this is an anonymous session (architecture-decisions.md §17)
-          isAnonymousSession = session.data?.is_anonymous === true;
+          isAnonymousSession = session.data?.is_guest_session === true;
           if (typeof session.data?.acr === 'string' && session.data.acr.length > 0) {
             sessionAcr = session.data.acr;
           }
@@ -3243,6 +3244,19 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
     isAnonymousSession = false;
   }
 
+  if (sessionUserId && isAnonymousSession) {
+    const guestClient = await loadClientContractCached(
+      c,
+      c.env.AUTHRIM_CONFIG,
+      c.env,
+      tenantId,
+      validClientId
+    );
+    if (!areGuestScopesAllowed(guestClient?.guestAuth, scope ?? '')) {
+      return sendError('invalid_scope', 'The client does not permit the requested guest scopes');
+    }
+  }
+
   // Handle prompt parameter (OIDC Core 3.1.2.1)
   if (prompt) {
     const promptValues = prompt.split(' ');
@@ -3290,7 +3304,7 @@ export async function authorizeHandler(c: Context<{ Bindings: Env }>) {
 
         // Check if client allows prompt=none for anonymous users
         // Default to false for security (require explicit opt-in)
-        const allowPromptNone = clientContract?.anonymousAuth?.allowPromptNone ?? false;
+        const allowPromptNone = clientContract?.guestAuth?.allowPromptNone ?? false;
 
         if (!allowPromptNone) {
           log.info('Anonymous session denied prompt=none - client does not allow it', {

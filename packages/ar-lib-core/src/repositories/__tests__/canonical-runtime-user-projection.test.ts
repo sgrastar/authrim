@@ -183,7 +183,7 @@ describe('CanonicalRuntimeUserProjectionRepository', () => {
     expect(projection).toMatchObject({
       id: 'user-1',
       active: 0,
-      account_status: 'suspended',
+      status: 'suspended',
       suspended_at: 1_752_700_000,
       suspended_until: 1_752_786_400,
       locked_at: null,

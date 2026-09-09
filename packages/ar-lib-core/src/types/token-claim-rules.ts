@@ -175,6 +175,7 @@ export const RESERVED_CLAIMS = [
   'cnf',
   'sid',
   'token_use',
+  'authrim_account_lifecycle',
 ] as const;
 
 export type ReservedClaim = (typeof RESERVED_CLAIMS)[number];

@@ -13,8 +13,8 @@
  * - Timing-safe comparisons
  *
  * Flow:
- * 1. POST /api/auth/anon-login/challenge - Request challenge
- * 2. POST /api/auth/anon-login/verify - Verify device and create session
+ * 1. POST /api/auth/guest-device-login/challenge - Request challenge
+ * 2. POST /api/auth/guest-device-login/verify - Verify device and create session
  *
  * @see architecture-decisions.md §17 for design details
  */
@@ -36,7 +36,7 @@ import {
   AR_ERROR_CODES,
   generateBrowserState,
   BROWSER_STATE_COOKIE_NAME,
-  isAnonymousAuthEnabled,
+  isGuestDeviceAuthEnabled,
   loadClientContractCached,
   // Device Fingerprint
   hashDeviceIdentifiers,
@@ -64,15 +64,15 @@ import {
 } from '@authrim/ar-lib-core';
 import { resolveSessionTtl } from './session-ttl';
 import {
-  provisionAnonymousAccount,
-  removeAnonymousDeviceRoute,
-  resolveAnonymousAccountRoute,
+  provisionGuestAccount,
+  removeGuestDeviceRoute,
+  resolveGuestAccountRoute,
 } from './account-provisioning';
 
 const CHALLENGE_TTL = 5 * 60; // 5 minutes in seconds
 
 /**
- * Minimum response time for anon-login operations (milliseconds)
+ * Minimum response time for guest-device-login operations (milliseconds)
  *
  * Security: Prevents device enumeration via timing attacks.
  */
@@ -113,19 +113,19 @@ async function constantTimeWrapper<T>(operation: () => Promise<T>): Promise<T> {
 
 /**
  * Request Challenge for Anonymous Login
- * POST /api/auth/anon-login/challenge
+ * POST /api/auth/guest-device-login/challenge
  *
  * Returns a cryptographic challenge that must be signed by the client.
  * The challenge is stored in ChallengeStore with 5-minute TTL.
  */
-export async function anonLoginChallengeHandler(c: Context<{ Bindings: Env }>) {
+export async function guestDeviceLoginChallengeHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ANON-LOGIN');
   return constantTimeWrapper(async () => {
     try {
       const tenantId = getTenantIdFromContext(c);
 
       // Check feature flag
-      if (!(await isAnonymousAuthEnabled(c.env))) {
+      if (!(await isGuestDeviceAuthEnabled(c.env))) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
@@ -173,12 +173,12 @@ export async function anonLoginChallengeHandler(c: Context<{ Bindings: Env }>) {
       }
 
       // Check if anonymous auth is enabled for this client
-      if (!clientContract.anonymousAuth?.enabled) {
+      if (!clientContract.guestAuth?.enabled) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
       // Validate device_stability if provided
-      const resolvedStability = device_stability || clientContract.anonymousAuth.deviceStability;
+      const resolvedStability = device_stability || clientContract.guestAuth.deviceStability;
       if (device_stability && !validateDeviceStability(device_stability)) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
@@ -245,20 +245,20 @@ export async function anonLoginChallengeHandler(c: Context<{ Bindings: Env }>) {
 
 /**
  * Verify Device and Create/Resume Anonymous Session
- * POST /api/auth/anon-login/verify
+ * POST /api/auth/guest-device-login/verify
  *
  * Verifies the challenge response and either:
  * - Resumes existing anonymous session (same device_id)
  * - Creates new anonymous user and session
  */
-export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
+export async function guestDeviceLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('ANON-LOGIN');
   return constantTimeWrapper(async () => {
     try {
       const tenantId = getTenantIdFromContext(c);
 
       // Check feature flag
-      if (!(await isAnonymousAuthEnabled(c.env))) {
+      if (!(await isGuestDeviceAuthEnabled(c.env))) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
 
@@ -325,7 +325,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           type: AUTH_EVENTS.LOGIN_FAILED,
           tenantId,
           data: {
-            method: 'anonymous',
+            method: 'guest',
             clientId: 'anon-auth',
             errorCode: 'challenge_error',
           } satisfies AuthEventData,
@@ -372,7 +372,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           type: AUTH_EVENTS.LOGIN_FAILED,
           tenantId,
           data: {
-            method: 'anonymous',
+            method: 'guest',
             clientId,
             errorCode: 'invalid_response',
           } satisfies AuthEventData,
@@ -423,7 +423,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
       {
         let account = null;
         try {
-          account = await resolveAnonymousAccountRoute(c, currentSignature.device_id_hash);
+          account = await resolveGuestAccountRoute(c, currentSignature.device_id_hash);
         } catch (error) {
           if (!(error instanceof Error) || error.message !== 'account_data_route_not_found') {
             throw error;
@@ -436,7 +436,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
             user_id: string;
             expires_at: number | null;
           }>(
-            `SELECT id, user_id, expires_at FROM anonymous_devices
+            `SELECT id, user_id, expires_at FROM guest_devices
               WHERE tenant_id = ? AND device_id_hash = ? AND is_active = TRUE`,
             [tenantId, currentSignature.device_id_hash],
             { consistencyClass: 'primary_required' }
@@ -446,11 +446,11 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           }
           if (existingDevice.expires_at !== null && existingDevice.expires_at < now) {
             await authCtx.coreAdapter.execute(
-              `UPDATE anonymous_devices SET is_active = FALSE
+              `UPDATE guest_devices SET is_active = FALSE
                 WHERE id = ? AND tenant_id = ? AND user_id = ? AND is_active = TRUE`,
               [existingDevice.id, tenantId, existingDevice.user_id]
             );
-            await removeAnonymousDeviceRoute(c, {
+            await removeGuestDeviceRoute(c, {
               tenantId,
               userId: existingDevice.user_id,
               deviceId: existingDevice.id,
@@ -458,7 +458,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
             });
             return c.json(
               {
-                status: 'anonymous_credential_recycling',
+                status: 'guest_credential_recycling',
                 restart_required: true,
                 retry_after_ms: 500,
               },
@@ -467,7 +467,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           }
           userId = existingDevice.user_id;
           await authCtx.coreAdapter.execute(
-            'UPDATE anonymous_devices SET last_used_at = ? WHERE id = ? AND tenant_id = ?',
+            'UPDATE guest_devices SET last_used_at = ? WHERE id = ? AND tenant_id = ?',
             [now, existingDevice.id, tenantId]
           );
           runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
@@ -489,7 +489,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           )
             ? (challengeData.metadata?.device_stability as 'session' | 'installation' | 'device')
             : 'installation';
-          const provisioned = await provisionAnonymousAccount(c, {
+          const provisioned = await provisionGuestAccount(c, {
             tenantId,
             candidateUserId,
             device: {
@@ -498,7 +498,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
               fingerprintHash: currentSignature.fingerprint_hash ?? null,
               platform: currentSignature.device_platform ?? null,
               stability,
-              expiresInDays: clientContract?.anonymousAuth?.expiresInDays ?? null,
+              expiresInDays: clientContract?.guestAuth?.expiresInDays ?? null,
             },
           });
           if (provisioned.status === 'pending') return provisioned.response;
@@ -511,7 +511,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
           }
           const authCtx = createAuthContextFromHono(c, tenantId);
           const reflectedDevice = await authCtx.coreAdapter.queryOne<{ user_id: string }>(
-            `SELECT user_id FROM anonymous_devices
+            `SELECT user_id FROM guest_devices
               WHERE tenant_id = ? AND device_id_hash = ? AND is_active = TRUE`,
             [tenantId, currentSignature.device_id_hash],
             { consistencyClass: 'primary_required' }
@@ -527,7 +527,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
 
       if (!userId) throw new Error('anonymous_account_resolution_failed');
 
-      const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'anonymous');
+      const sessionTtl = await resolveSessionTtl(c.env, tenantId, 'guest');
 
       // Create session using SessionStore Durable Object
       let sessionId: string;
@@ -546,7 +546,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
             ...getSessionClientMetadata(c.req.raw),
             amr: ['anon'],
             acr: 'urn:mace:incommon:iap:anonymous',
-            is_anonymous: true,
+            is_guest_session: true,
             upgrade_eligible: true,
             device_id_hash: currentSignature.device_id_hash,
             client_id: clientId,
@@ -591,7 +591,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         tenantId,
         data: {
           userId,
-          method: 'anonymous',
+          method: 'guest',
           clientId,
           sessionId,
         } satisfies AuthEventData,
@@ -638,7 +638,7 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         ipAddress,
         userAgent,
         metadata: JSON.stringify({
-          method: 'anonymous',
+          method: 'guest',
           is_new_user: isNewUser,
           client_id: clientId,
         }),
@@ -660,7 +660,8 @@ export async function anonLoginVerifyHandler(c: Context<{ Bindings: Env }>) {
         upgrade_eligible: true,
         user: {
           id: userId,
-          user_type: 'anonymous',
+          user_type: 'end_user',
+          registration_state: 'guest',
         },
       });
     } catch (error) {

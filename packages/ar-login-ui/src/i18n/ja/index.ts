@@ -1,6 +1,30 @@
 import type { Translation } from '../i18n-types';
 
 const ja = {
+	account_guestLogoutWarning:
+		'ログアウトすると、このゲストアカウントに戻れなくなります。アカウントとデータへのアクセスを維持するには、先に登録してください。ログアウトしますか？',
+	account_guestTitle: 'アカウントを登録',
+	account_guestDescription: '登録後も同じアカウントとデータを引き継ぎます。',
+	account_guestDue: '{date} 以降、自動削除の対象になります。',
+	account_guestNoExpiry: '自動削除は設定されていません。',
+	account_guestEmail: 'メールアドレス',
+	account_guestSend: 'メールアドレスで登録',
+	account_guestPasskey: 'パスキーで登録',
+	account_guestCode: '確認コード',
+	account_guestConfirm: '登録を完了',
+	account_guestPending: '登録処理中です。再試行して完了を確認できます。',
+	account_guestRetry: '再試行',
+	account_guestError: '登録を完了できませんでした。確認コードを確認するか、再試行してください。',
+	account_guestCollision:
+		'この認証情報は登録済みです。既存のアカウントにログインしてください。ゲストアカウントは統合されません。',
+	account_guestExistingLogin: '既存のアカウントにログイン',
+	account_guestRegistered: 'アカウントの登録が完了しました。',
+	account_guestChangeMethod: '別の方法を選ぶ',
+	login_guestContinue: 'ゲストとして続ける',
+	login_guestRetention:
+		'ゲストアカウントは作成から{days}日後に自動削除の対象になります。続けて利用するには通常アカウントへ登録してください。',
+	login_guestNoExpiry: '新規ゲストアカウントの自動削除は設定されていません。',
+
 	app_title: 'Authrim',
 	app_subtitle: 'アイデンティティ＆アクセスをあらゆる場所で',
 	button_openDialog: 'ダイアログを開く',

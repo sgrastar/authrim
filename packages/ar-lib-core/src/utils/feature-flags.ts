@@ -117,8 +117,8 @@ export function clearFeatureFlagCache(): void {
  * @param env - Worker environment bindings
  * @returns true if anonymous auth is enabled, false otherwise (secure default)
  */
-export async function isAnonymousAuthEnabled(env: Env): Promise<boolean> {
-  return getFeatureFlag('ENABLE_ANONYMOUS_AUTH', env, false);
+export async function isGuestDeviceAuthEnabled(env: Env): Promise<boolean> {
+  return getFeatureFlag('ENABLE_GUEST_DEVICE_AUTH', env, false);
 }
 
 /**

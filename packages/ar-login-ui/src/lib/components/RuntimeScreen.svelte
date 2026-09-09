@@ -71,6 +71,9 @@
 	type Props = {
 		screen: Record<string, unknown> | null;
 		disabled?: boolean;
+		guestEnabled?: boolean;
+		guestRetentionDescription?: string;
+		onGuestLogin?: () => void;
 		fieldValues?: Record<string, string | boolean>;
 		fieldErrors?: Record<string, string>;
 		authMethodMode?: 'login' | 'signup';
@@ -108,6 +111,9 @@
 	let {
 		screen,
 		disabled = false,
+		guestEnabled = false,
+		guestRetentionDescription = '',
+		onGuestLogin,
 		fieldValues = {},
 		fieldErrors = {},
 		authMethodMode = 'login',
@@ -179,7 +185,9 @@
 	function normalizeField(value: unknown): RuntimeField | null {
 		if (!isRecord(value)) return null;
 		const field = readString(value.field);
-		const label = readString(value.label) ?? field;
+		const label =
+			readString(value.label) ??
+			(value.block_type === 'guest_login_widget' ? $LL.login_guestContinue() : field);
 		if (!field || !label) return null;
 		return {
 			field,
@@ -318,6 +326,7 @@
 	function shouldRenderLayoutField(field: RuntimeField): boolean {
 		if (!shouldRenderField(field)) return false;
 		const blockType = field.block_type ?? 'identity_field';
+		if (blockType === 'guest_login_widget') return guestEnabled && authMethodMode === 'login';
 		if (blockType === 'auth_widget') {
 			return authMethodAvailable(authWidgetMethod(field));
 		}
@@ -328,6 +337,29 @@
 	}
 
 	const defaultAuthWidgetLabels = {
+		guest: new Set([
+			'Endelea kama mgeni',
+			'Kontynuuj jako gość',
+			'Tiếp tục với tư cách khách',
+			'እንደ እንግዳ ይቀጥሉ',
+			'ゲストとして続ける',
+			'Continua come ospite',
+			'Продолжить как гость',
+			'以访客身份继续',
+			'Continuar como convidado',
+			'以訪客身分繼續',
+			'المتابعة كضيف',
+			'অতিথি হিসেবে চালিয়ে যান',
+			'अतिथि के रूप में जारी रखें',
+			'Als Gast fortfahren',
+			'게스트로 계속하기',
+			'Lanjutkan sebagai tamu',
+			'Continuer en tant qu’invité',
+			'Continuar como invitado',
+			'Continue as a guest',
+			'ดำเนินการต่อในฐานะผู้เยี่ยมชม',
+			'Misafir olarak devam et'
+		]),
 		loginPasskey: new Set([
 			'Sign in with Passkey',
 			'Passkeyでサインイン',
@@ -866,6 +898,19 @@
 				>
 			{/if}
 		</div>
+	{:else if blockType === 'guest_login_widget'}
+		{#if guestEnabled && authMethodMode === 'login'}
+			<div class="runtime-auth-widget">
+				<button class="runtime-auth-button" type="button" {disabled} onclick={onGuestLogin}
+					>{!field.label || defaultAuthWidgetLabels.guest.has(field.label)
+						? $LL.login_guestContinue()
+						: field.label}</button
+				>
+				{#if guestRetentionDescription}<p class="runtime-guest-retention">
+						{guestRetentionDescription}
+					</p>{/if}
+			</div>
+		{/if}
 	{:else if blockType === 'auth_widget'}
 		{@const method = authWidgetMethod(field)}
 		{#if authMethodAvailable(method)}
@@ -1183,6 +1228,12 @@
 		display: grid;
 		gap: var(--auth-widget-gap, 0.875rem);
 		width: 100%;
+	}
+
+	.runtime-guest-retention {
+		margin: 0;
+		font-size: var(--auth-copy-size, 0.875rem);
+		line-height: 1.5;
 	}
 
 	.runtime-code-input-widget {

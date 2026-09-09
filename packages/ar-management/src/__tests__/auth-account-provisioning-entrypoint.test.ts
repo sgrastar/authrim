@@ -106,14 +106,14 @@ function anonymousInput(
 ): AuthAccountProvisioningInput {
   const deviceIdHash = 'd'.repeat(64);
   return input({
-    flow: 'anonymous',
+    flow: 'guest',
     email: null,
     externalSubject: {
-      issuer: 'urn:authrim:anonymous-device:v1',
+      issuer: 'urn:authrim:guest-device:v1',
       subject: deviceIdHash,
     },
-    anonymousDevice: {
-      id: `anonymous-device-${deviceIdHash.slice(0, 32)}`,
+    guestDevice: {
+      id: `guest-device-${deviceIdHash.slice(0, 32)}`,
       deviceIdHash,
       installationIdHash: null,
       fingerprintHash: null,
@@ -124,8 +124,9 @@ function anonymousInput(
     runtimeUser: {
       active: true,
       emailVerified: false,
-      userType: 'anonymous',
-      sourceRef: 'auth:anonymous',
+      userType: 'end_user',
+      registrationState: 'guest',
+      sourceRef: 'auth:guest',
       piiFields: {},
       sensitiveValues: {},
     },
@@ -546,10 +547,36 @@ describe('AuthAccountProvisioningEntrypoint', () => {
     );
   });
 
+  it.each(['registered', 'upgrading', 'anonymous'])(
+    'rejects guest provisioning with registration state %s before writing',
+    async (registrationState) => {
+      const request = anonymousInput();
+      await expect(
+        worker().provisionAuthAccount({
+          ...request,
+          runtimeUser: { ...request.runtimeUser, registrationState },
+        })
+      ).rejects.toThrow('auth_account_provisioning_runtime_user_invalid');
+      expect(mocks.execute).not.toHaveBeenCalled();
+      expect(mocks.tenantExecute).not.toHaveBeenCalled();
+    }
+  );
+
+  it('rejects guest registration through an ordinary email provisioning flow', async () => {
+    const request = input();
+    await expect(
+      worker().provisionAuthAccount({
+        ...request,
+        runtimeUser: { ...request.runtimeUser, registrationState: 'guest' },
+      })
+    ).rejects.toThrow('auth_account_provisioning_runtime_user_invalid');
+    expect(mocks.execute).not.toHaveBeenCalled();
+  });
+
   it('provisions anonymous device authority without email or raw device identifiers', async () => {
     const request = anonymousInput();
     mocks.tenantQuery.mockResolvedValueOnce({
-      id: request.anonymousDevice?.id,
+      id: request.guestDevice?.id,
       user_id: 'user-a',
       installation_id_hash: null,
       fingerprint_hash: null,
@@ -565,19 +592,19 @@ describe('AuthAccountProvisioningEntrypoint', () => {
     expect(mocks.execute).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        actorId: 'auth:anonymous',
+        actorId: 'auth:guest',
         email: null,
         externalSubject: request.externalSubject,
       }),
       expect.anything()
     );
     expect(mocks.tenantExecute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT OR IGNORE INTO anonymous_devices'),
+      expect.stringContaining('INSERT OR IGNORE INTO guest_devices'),
       expect.arrayContaining([
-        request.anonymousDevice?.id,
+        request.guestDevice?.id,
         'tenant-a',
         'user-a',
-        request.anonymousDevice?.deviceIdHash,
+        request.guestDevice?.deviceIdHash,
       ])
     );
   });
@@ -617,7 +644,7 @@ describe('AuthAccountProvisioningEntrypoint', () => {
       worker().provisionAuthAccount(
         anonymousInput({
           externalSubject: {
-            issuer: 'urn:authrim:anonymous-device:v1',
+            issuer: 'urn:authrim:guest-device:v1',
             subject: 'e'.repeat(64),
           },
         })
@@ -932,10 +959,10 @@ describe('AuthAccountProvisioningEntrypoint', () => {
       is_active: 0,
     });
     await expect(
-      worker().removeAuthAnonymousDeviceRoute({
+      worker().removeAuthGuestDeviceRoute({
         schemaVersion: 1,
         operationId: 'anonymous-route-remove-device-a',
-        idempotencyKey: `auth-anonymous-route-remove:${'e'.repeat(64)}`,
+        idempotencyKey: `auth-guest-route-remove:${'e'.repeat(64)}`,
         tenantId: 'tenant-a',
         accountId: 'account:user-a',
         userId: 'user-a',
@@ -951,7 +978,7 @@ describe('AuthAccountProvisioningEntrypoint', () => {
       expect.anything(),
       expect.objectContaining({
         externalSubject: {
-          issuer: 'urn:authrim:anonymous-device:v1',
+          issuer: 'urn:authrim:guest-device:v1',
           subject: 'd'.repeat(64),
         },
       }),
@@ -965,17 +992,17 @@ describe('AuthAccountProvisioningEntrypoint', () => {
       is_active: 1,
     });
     await expect(
-      worker().removeAuthAnonymousDeviceRoute({
+      worker().removeAuthGuestDeviceRoute({
         schemaVersion: 1,
         operationId: 'anonymous-route-remove-device-a',
-        idempotencyKey: `auth-anonymous-route-remove:${'e'.repeat(64)}`,
+        idempotencyKey: `auth-guest-route-remove:${'e'.repeat(64)}`,
         tenantId: 'tenant-a',
         accountId: 'account:user-a',
         userId: 'user-a',
         deviceId: 'device-a',
         deviceIdHash: 'd'.repeat(64),
       })
-    ).rejects.toThrow('auth_anonymous_route_removal_authority_active');
+    ).rejects.toThrow('auth_guest_route_removal_authority_active');
   });
 
   it.each([

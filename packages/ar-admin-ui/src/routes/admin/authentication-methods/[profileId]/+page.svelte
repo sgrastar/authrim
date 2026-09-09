@@ -16,6 +16,9 @@
 	import { LL } from '$i18n/i18n-svelte';
 
 	const DEFAULT_BUILT_IN: AuthenticationMethodBuiltInSettings = {
+		guestLoginEnabled: false,
+		passkeyGuestUpgradeEnabled: true,
+		emailOtpGuestUpgradeEnabled: true,
 		passkeyLoginEnabled: true,
 		passkeySignupEnabled: true,
 		passkeyReauthEnabled: true,
@@ -274,6 +277,35 @@
 		{#if successMessage}
 			<div class="alert alert-success">{successMessage}</div>
 		{/if}
+
+		<AdminSection
+			title={$LL.admin_guest_login_title()}
+			description={$LL.admin_guest_login_description()}
+		>
+			<ToggleSwitch
+				bind:checked={builtIn.guestLoginEnabled}
+				disabled={!canEdit || saving}
+				label={$LL.admin_guest_login_title()}
+			/>
+			<a class="guest-lifecycle-link" href="/admin/account-lifecycle"
+				>{$LL.admin_lifecycle_title()}</a
+			>
+		</AdminSection>
+		<AdminSection
+			title={$LL.admin_guest_upgrade_methods()}
+			description={$LL.admin_guest_upgrade_methods_description()}
+		>
+			<ToggleSwitch
+				bind:checked={builtIn.passkeyGuestUpgradeEnabled}
+				disabled={!canEdit || saving}
+				label={$LL.admin_authentication_methods_passkey()}
+			/>
+			<ToggleSwitch
+				bind:checked={builtIn.emailOtpGuestUpgradeEnabled}
+				disabled={!canEdit || saving}
+				label={$LL.admin_authentication_methods_email_otp()}
+			/>
+		</AdminSection>
 
 		<AdminSection
 			title={$LL.admin_authentication_methods_builtin_title()}
@@ -550,6 +582,10 @@
 </AdminPageShell>
 
 <style>
+	.guest-lifecycle-link {
+		color: var(--text-primary);
+		text-decoration: underline;
+	}
 	:global(.admin-section) {
 		--section-margin-block: 10px;
 		--section-header-margin-bottom: 5px;

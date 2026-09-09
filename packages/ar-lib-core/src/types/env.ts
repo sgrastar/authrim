@@ -415,6 +415,9 @@ export interface Env {
   EXTERNAL_IDP?: Fetcher; // External IdP worker (ar-bridge) for social login and enterprise IdP
   CONTROL?: ControlServiceBinding; // Narrow Control Worker RPC facade for ar-management
   ACCOUNT_DIRECTORY?: AccountDirectoryServiceBinding; // Named ar-management directory coordinator RPC
+  GUEST_UPGRADE_READINESS?: {
+    read(tenantId: string): Promise<{ tenantId: string; email: boolean }>;
+  };
   ACCOUNT_PROVISIONER?: AuthAccountProvisioningServiceBinding; // Narrow ar-auth account-creation RPC
   SAML_ACCOUNT_PROVISIONER?: AuthAccountProvisioningServiceBinding &
     Pick<ExternalIdpAccountProvisioningServiceBinding, 'publishExternalIdpRoute'>;
@@ -565,7 +568,7 @@ export interface Env {
 
   // Mock/Anonymous Authentication
   ENABLE_MOCK_AUTH?: string; // "true" to enable mock authentication (NEVER in production!)
-  ENABLE_ANONYMOUS_AUTH?: string; // "true" to enable device-based anonymous login
+  ENABLE_GUEST_DEVICE_AUTH?: string; // "true" to enable device-based anonymous login
 
   // ID-JAG (draft-ietf-oauth-identity-assertion-authz-grant)
   ENABLE_ID_JAG?: string; // "true" to enable ID-JAG token type in Token Exchange

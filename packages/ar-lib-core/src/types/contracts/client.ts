@@ -72,7 +72,7 @@ export interface ClientContract {
   tokens: ClientTokenConfig;
 
   // ========== Anonymous Authentication (architecture-decisions.md §17) ==========
-  anonymousAuth?: AnonymousAuthConfig;
+  guestAuth?: GuestAuthConfig;
 
   // ========== Metadata ==========
   metadata: ContractMetadata;
@@ -460,9 +460,11 @@ export type DeviceStability = 'session' | 'installation' | 'device';
 
 /**
  * Anonymous authentication configuration.
- * Controls device-based anonymous login and upgrade behavior.
+ * Guest authentication policy shared by device login and human guest access.
+ * Human guest retention is configured separately by the account lifecycle policy; enabled and
+ * allowedScopes also gate human guest access. This is configuration, not registration state.
  */
-export interface AnonymousAuthConfig {
+export interface GuestAuthConfig {
   /** Whether anonymous authentication is enabled for this client */
   enabled: boolean;
 
@@ -481,9 +483,7 @@ export interface AnonymousAuthConfig {
   allowedScopes: string[];
 
   /**
-   * Whether to preserve the user ID (sub) when upgrading to registered user.
-   * - true (default): Same ID is used, app data associations remain intact
-   * - false: New ID is generated, original ID stored in upgraded_from
+   * Guest upgrades preserve the user ID (sub). This setting must be true.
    */
   preserveSubOnUpgrade: boolean;
 

@@ -143,6 +143,8 @@ const mocks = vi.hoisted(() => ({
     execute: vi.fn().mockResolvedValue({ success: true }),
   }),
 
+  mockGuestContract: vi.fn<() => unknown>(),
+
   // User
   mockGetCachedUser: vi.fn().mockResolvedValue(null),
   mockGetCachedUserCore: vi.fn().mockResolvedValue(null),
@@ -201,9 +203,15 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
-  const actual = await importOriginal<object>();
+  const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    loadClientContractCached: (...args: Parameters<typeof actual.loadClientContractCached>) => {
+      const override = mocks.mockGuestContract();
+      return override === undefined
+        ? actual.loadClientContractCached(...args)
+        : Promise.resolve(override as Awaited<ReturnType<typeof actual.loadClientContractCached>>);
+    },
     ensureAccountAuthenticationState: vi.fn(async () => ({ lifecycle: 'active' })),
     findCanonicalAccountAuthenticationState: vi.fn(async (_adapter, _tenantId, userId) => ({
       userId,
@@ -421,6 +429,7 @@ function resetAllMocks() {
   );
 
   // Reset RBAC mocks
+  mocks.mockGuestContract.mockReset();
   mocks.mockGetIDTokenRBACClaims.mockReset().mockResolvedValue({});
   mocks.mockGetAccessTokenRBACClaims.mockReset().mockResolvedValue({});
   mocks.mockEvaluatePermissionsForScope.mockReset().mockResolvedValue([]);
@@ -1794,6 +1803,72 @@ describe('Security-Critical Tests', () => {
       expect(body.error).toBe('invalid_grant');
       expect(mocks.mockGetRefreshToken).not.toHaveBeenCalled();
     });
+
+    it.each([true, false])(
+      'uses lifecycle registration rather than anonymous type claims on refresh (allowed=%s)',
+      async (allowed) => {
+        const client = createConfidentialClient();
+        const payload = createRefreshTokenPayload({ client_id: client.client_id, sub: 'user-001' });
+        mocks.mockGetClientCached.mockResolvedValue(client);
+        mocks.mockParseToken.mockReturnValue(payload);
+        mocks.mockGetRefreshToken.mockResolvedValue({
+          sub: payload.sub,
+          scope: payload.scope,
+          client_id: payload.client_id,
+        });
+        mocks.mockParseRefreshTokenJti.mockReturnValue({
+          generation: 1,
+          shardIndex: 0,
+          randomPart: 'abc',
+        });
+        mockEnv.REFRESH_TOKEN_ROTATOR.get = vi.fn().mockReturnValue({
+          rotateRpc: vi.fn().mockResolvedValue({ newJti: 'rt-new-jti-002', newVersion: 2 }),
+        });
+        mocks.mockFindCanonicalRuntimeAccount.mockResolvedValue({
+          tenant_id: 'default',
+          account_type: 'user',
+          registration_state: 'guest',
+          lifecycle_state: 'active',
+          metadata_json: '{}',
+        });
+        mocks.mockGuestContract.mockReturnValue({
+          guestAuth: { enabled: allowed, allowedScopes: (payload.scope ?? '').split(' ') },
+        });
+        const response = await tokenHandler(
+          createMockContext({
+            method: 'POST',
+            body: {
+              grant_type: 'refresh_token',
+              refresh_token: createTestRefreshTokenJWT({
+                client_id: client.client_id,
+                sub: 'user-001',
+              }),
+              client_id: client.client_id,
+              client_secret: 'valid-secret',
+            },
+            env: mockEnv,
+          })
+        );
+        expect(response.status).toBe(allowed ? 200 : 400);
+        if (!allowed) {
+          expect(await response.json()).toMatchObject({ error: 'invalid_scope' });
+          expect(mocks.mockCreateAccessToken).not.toHaveBeenCalled();
+          return;
+        }
+        expect(mocks.mockCreateAccessToken).toHaveBeenCalled();
+        for (const call of [
+          ...mocks.mockCreateAccessToken.mock.calls,
+          ...mocks.mockCreateIDToken.mock.calls,
+        ]) {
+          for (const argument of call) {
+            if (argument && typeof argument === 'object') {
+              expect(argument).not.toHaveProperty('user_type', 'anonymous');
+              expect(argument).not.toHaveProperty('authrim_account_lifecycle');
+            }
+          }
+        }
+      }
+    );
 
     describe('Refresh Token Rotation', () => {
       it('should issue new refresh token on each refresh (rotation enabled)', async () => {

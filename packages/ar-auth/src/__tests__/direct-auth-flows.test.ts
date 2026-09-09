@@ -151,6 +151,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    assertGuestCredentialAuthenticationAllowed: vi.fn(async () => undefined),
     CanonicalRuntimeUserStore: class {
       async findById(userId: string) {
         const core = await mocks.userCore.findById(userId);

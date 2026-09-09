@@ -9,6 +9,9 @@
 import type { CategoryMeta, SettingMeta } from '../../utils/settings-manager';
 
 export interface AuthenticationMethodsSettings {
+  'authentication-methods.email_otp.guest_upgrade_enabled': boolean;
+  'authentication-methods.passkey.guest_upgrade_enabled': boolean;
+  'authentication-methods.guest.login_enabled': boolean;
   'authentication-methods.cache_ttl': number;
   'authentication-methods.passkey.login_enabled': boolean;
   'authentication-methods.passkey.signup_enabled': boolean;
@@ -41,6 +44,30 @@ export const AUTHENTICATION_METHODS_SETTINGS_META: Record<
   keyof AuthenticationMethodsSettings,
   SettingMeta
 > = {
+  'authentication-methods.email_otp.guest_upgrade_enabled': {
+    key: 'authentication-methods.email_otp.guest_upgrade_enabled',
+    type: 'boolean',
+    default: true,
+    label: 'Email OTP guest upgrade',
+    description: 'Enable this use independently of other authentication uses.',
+    visibility: 'page',
+  },
+  'authentication-methods.passkey.guest_upgrade_enabled': {
+    key: 'authentication-methods.passkey.guest_upgrade_enabled',
+    type: 'boolean',
+    default: true,
+    label: 'Passkey guest upgrade',
+    description: 'Enable this use independently of other authentication uses.',
+    visibility: 'page',
+  },
+  'authentication-methods.guest.login_enabled': {
+    key: 'authentication-methods.guest.login_enabled',
+    type: 'boolean',
+    default: false,
+    label: 'Guest login',
+    description: 'Enable this use independently of other authentication uses.',
+    visibility: 'page',
+  },
   'authentication-methods.cache_ttl': {
     key: 'authentication-methods.cache_ttl',
     type: 'duration',
@@ -264,6 +291,9 @@ export const AUTHENTICATION_METHODS_CATEGORY_META: CategoryMeta = {
 };
 
 export const AUTHENTICATION_METHODS_DEFAULTS: AuthenticationMethodsSettings = {
+  'authentication-methods.email_otp.guest_upgrade_enabled': true,
+  'authentication-methods.passkey.guest_upgrade_enabled': true,
+  'authentication-methods.guest.login_enabled': false,
   'authentication-methods.cache_ttl': 180,
   'authentication-methods.passkey.login_enabled': true,
   'authentication-methods.passkey.signup_enabled': true,

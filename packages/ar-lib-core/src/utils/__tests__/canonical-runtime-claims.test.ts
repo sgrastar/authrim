@@ -12,7 +12,7 @@ describe('canonicalProjectionToOIDCClaimsUser', () => {
       account_id: 'account:user-1',
       account_type: 'user',
       lifecycle_state: 'active',
-      account_status: 'active',
+      status: 'active',
       suspended_at: null,
       suspended_until: null,
       locked_at: null,

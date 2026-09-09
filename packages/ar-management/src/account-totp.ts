@@ -60,6 +60,7 @@ async function requireRecentAccountSession(
   if (accountSession instanceof Response) {
     return accountSession;
   }
+  if (accountSession.isGuestSession) return c.json({ error: 'guest_registration_required' }, 403);
   if (!isRecentlyAuthenticated(accountSession)) {
     return reauthRequired(c);
   }

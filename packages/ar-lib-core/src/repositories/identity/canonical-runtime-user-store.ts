@@ -1,3 +1,4 @@
+import type { AccountRegistrationState } from '../../services/guest-lifecycle';
 import type { DatabaseAdapter } from '../../db/adapter';
 import type { AccountAuthenticationLifecycle } from '../../durable-objects/SessionRevocationStore';
 import {
@@ -30,7 +31,8 @@ export interface CanonicalRuntimeUserCreateInput {
   active?: boolean;
   emailVerified?: boolean;
   phoneNumberVerified?: boolean;
-  userType?: 'end_user' | 'admin' | 'm2m' | 'anonymous' | string;
+  userType?: 'end_user' | 'admin' | 'm2m' | string;
+  registrationState?: AccountRegistrationState;
   sourceRef?: string | null;
   externalId?: string | null;
   passwordHash?: string | null;
@@ -232,9 +234,6 @@ function accountTypeToRuntimeUserType(accountType: string): string {
   if (accountType === 'service_account') {
     return 'm2m';
   }
-  if (accountType === 'anonymous') {
-    return 'anonymous';
-  }
   return 'end_user';
 }
 
@@ -252,6 +251,7 @@ function toCreateInput(input: CanonicalRuntimeUserCreateInput): CanonicalRuntime
     emailVerified: input.emailVerified ?? false,
     phoneNumberVerified: input.phoneNumberVerified ?? false,
     userType: input.userType ?? 'end_user',
+    registrationState: input.registrationState,
     sourceRef: input.sourceRef ?? null,
     externalId: input.externalId,
     passwordHash: input.passwordHash,

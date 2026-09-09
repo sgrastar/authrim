@@ -2,6 +2,31 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const es = createTranslation({
+	account_guestLogoutWarning:
+		'Si cierras sesión, no podrás volver a esta cuenta de invitado. Regístrate primero para conservar el acceso a tu cuenta y tus datos. ¿Cerrar sesión de todos modos?',
+	account_guestTitle: 'Register your account',
+	account_guestDescription: 'Keep the same account and data when you register.',
+	account_guestDue: 'Eligible for automatic deletion from {date}.',
+	account_guestNoExpiry: 'No automatic deletion is scheduled.',
+	account_guestEmail: 'Email address',
+	account_guestSend: 'Register with email',
+	account_guestPasskey: 'Register with a passkey',
+	account_guestCode: 'Confirmation code',
+	account_guestConfirm: 'Confirm registration',
+	account_guestPending: 'Registration is in progress. You can retry to check completion.',
+	account_guestRetry: 'Retry',
+	account_guestError:
+		'Registration could not be completed. Check the confirmation code or try again.',
+	account_guestCollision:
+		'This identity already has an account. Sign in to that account separately. Your guest account will not be merged.',
+	account_guestExistingLogin: 'Sign in to an existing account',
+	account_guestRegistered: 'Your account has been registered.',
+	account_guestChangeMethod: 'Choose another method',
+	login_guestContinue: 'Continuar como invitado',
+	login_guestRetention:
+		'Las cuentas de invitado pueden eliminarse automáticamente {days} días después de su creación. Registra una cuenta para seguir usándola.',
+	login_guestNoExpiry: 'No hay eliminación automática programada para nuevas cuentas de invitado.',
+
 	...completion,
 	app_subtitle: 'Identidad y acceso en todas partes.',
 	dialog_cancel: 'Cancelar',

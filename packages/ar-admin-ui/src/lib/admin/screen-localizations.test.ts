@@ -47,6 +47,21 @@ describe('screen localizations', () => {
 		expect(localizeDefaultScreenText('Sign in with Passkey', language)).toBe(expected);
 	});
 
+	it.each(SCREEN_LOCALIZATION_LANGUAGES)(
+		'translates guest defaults and repairs duplicated Japanese defaults in %s',
+		(language) => {
+			const translated = localizeDefaultScreenText('Continue as a guest', language);
+			expect(localizeDefaultScreenText('ゲストとして続ける', language)).toBe(translated);
+			expect(
+				mergeLocalizedDefaultScreenText('ゲストとして続ける', 'ゲストとして続ける', language)
+			).toBe(translated);
+			if (language !== 'ja') expect(translated).not.toBe('ゲストとして続ける');
+			expect(mergeLocalizedDefaultScreenText('Try our demo', 'Continue as a guest', language)).toBe(
+				'Try our demo'
+			);
+		}
+	);
+
 	it('updates recognized preset copy while preserving tenant-authored copy', () => {
 		expect(
 			mergeLocalizedDefaultScreenText('Passkeyでサインイン', 'Sign in with Passkey', 'ar')

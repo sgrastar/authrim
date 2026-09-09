@@ -1,6 +1,31 @@
 import { createTranslation } from '../create-translation';
 
 const ar = createTranslation({
+	account_guestLogoutWarning:
+		'بعد تسجيل الخروج، لن تتمكن من العودة إلى حساب الضيف هذا. سجّل حسابك أولاً للاحتفاظ بإمكانية الوصول إلى حسابك وبياناتك. هل تريد تسجيل الخروج على أي حال؟',
+	account_guestTitle: 'Register your account',
+	account_guestDescription: 'Keep the same account and data when you register.',
+	account_guestDue: 'Eligible for automatic deletion from {date}.',
+	account_guestNoExpiry: 'No automatic deletion is scheduled.',
+	account_guestEmail: 'Email address',
+	account_guestSend: 'Register with email',
+	account_guestPasskey: 'Register with a passkey',
+	account_guestCode: 'Confirmation code',
+	account_guestConfirm: 'Confirm registration',
+	account_guestPending: 'Registration is in progress. You can retry to check completion.',
+	account_guestRetry: 'Retry',
+	account_guestError:
+		'Registration could not be completed. Check the confirmation code or try again.',
+	account_guestCollision:
+		'This identity already has an account. Sign in to that account separately. Your guest account will not be merged.',
+	account_guestExistingLogin: 'Sign in to an existing account',
+	account_guestRegistered: 'Your account has been registered.',
+	account_guestChangeMethod: 'Choose another method',
+	login_guestContinue: 'المتابعة كضيف',
+	login_guestRetention:
+		'قد تُحذف حسابات الضيوف تلقائيًا بعد {days} يومًا من إنشائها. سجّل حسابًا لمواصلة استخدامه.',
+	login_guestNoExpiry: 'لم تتم جدولة حذف تلقائي لحسابات الضيوف الجديدة.',
+
 	app_title: 'Authrim',
 	app_subtitle: 'الهوية والوصول في كل مكان.',
 	button_openDialog: 'فتح مربع الحوار',

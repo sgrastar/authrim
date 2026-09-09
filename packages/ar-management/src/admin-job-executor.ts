@@ -450,6 +450,13 @@ const USER_BULK_UPDATE_COLUMNS = {
 } as const;
 
 const USER_BULK_FILTER_COLUMNS = {
+  registration_state: {
+    sql: "CASE WHEN account_type = 'user' THEN registration_state ELSE NULL END",
+    normalize(value: unknown): string {
+      if (value === 'guest' || value === 'registered') return value;
+      throw new Error('Invalid registration_state filter value');
+    },
+  },
   status: USER_BULK_UPDATE_COLUMNS.status,
   lifecycle_state: USER_BULK_UPDATE_COLUMNS.lifecycle_state,
   is_active: USER_BULK_UPDATE_COLUMNS.is_active,

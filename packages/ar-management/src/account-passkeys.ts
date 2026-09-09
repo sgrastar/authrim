@@ -247,8 +247,17 @@ function isSameOriginAccountRequest(
   return candidateOrigins.has(normalizedOrigin);
 }
 
-function getAccountWebAuthnOrigin(c: Context<{ Bindings: Env }>): string | null {
-  const originHeader = c.req.header('Origin');
+export function getAccountWebAuthnOrigin(
+  c: Context<{ Bindings: Env }>,
+  allowReadOrigin = false
+): string | null {
+  // Same-origin browser GETs omit Origin. Eligibility reads may use the page/referrer
+  // origin, but proof creation and verification still require the explicit Origin header.
+  const originHeader =
+    c.req.header('Origin') ??
+    (allowReadOrigin && c.req.method === 'GET'
+      ? (c.req.header('Referer') ?? c.req.url)
+      : undefined);
   const origin = normalizeOrigin(originHeader);
   if (!origin) {
     return null;
@@ -303,6 +312,7 @@ async function requireRecentAccountSession(
   if (accountSession instanceof Response) {
     return accountSession;
   }
+  if (accountSession.isGuestSession) return c.json({ error: 'guest_registration_required' }, 403);
   if (!isRecentlyAuthenticated(accountSession)) {
     return reauthRequired(c);
   }

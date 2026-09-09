@@ -30,6 +30,7 @@
 		SettingsConflictError
 	} from '$lib/api/admin-settings';
 	import { Modal, ToggleSwitch } from '$lib/components';
+	import ClientGuestSettings from '$lib/components/admin/ClientGuestSettings.svelte';
 	import AdminDetailHeader from '$lib/components/admin/AdminDetailHeader.svelte';
 	import ConsentPolicyTargetSettings from '$lib/components/admin/ConsentPolicyTargetSettings.svelte';
 	import FlowAssignmentSettings from '$lib/components/admin/FlowAssignmentSettings.svelte';
@@ -2308,6 +2309,7 @@
 					</div>
 				{/if}
 			{:else if activeTab === 'scopes'}
+				<ClientGuestSettings {clientId} />
 				<!-- Scopes & Permissions Tab -->
 				<section class="section-spacing">
 					<h2 class="section-title-border">{$LL.admin_client_detail_scope_settings()}</h2>

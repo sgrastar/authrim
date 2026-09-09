@@ -2,6 +2,31 @@ import { createTranslation } from '../create-translation';
 import completion from './completion';
 
 const ru = createTranslation({
+	account_guestLogoutWarning:
+		'После выхода вы не сможете вернуться в этот гостевой аккаунт. Сначала зарегистрируйтесь, чтобы сохранить доступ к аккаунту и данным. Всё равно выйти?',
+	account_guestTitle: 'Register your account',
+	account_guestDescription: 'Keep the same account and data when you register.',
+	account_guestDue: 'Eligible for automatic deletion from {date}.',
+	account_guestNoExpiry: 'No automatic deletion is scheduled.',
+	account_guestEmail: 'Email address',
+	account_guestSend: 'Register with email',
+	account_guestPasskey: 'Register with a passkey',
+	account_guestCode: 'Confirmation code',
+	account_guestConfirm: 'Confirm registration',
+	account_guestPending: 'Registration is in progress. You can retry to check completion.',
+	account_guestRetry: 'Retry',
+	account_guestError:
+		'Registration could not be completed. Check the confirmation code or try again.',
+	account_guestCollision:
+		'This identity already has an account. Sign in to that account separately. Your guest account will not be merged.',
+	account_guestExistingLogin: 'Sign in to an existing account',
+	account_guestRegistered: 'Your account has been registered.',
+	account_guestChangeMethod: 'Choose another method',
+	login_guestContinue: 'Продолжить как гость',
+	login_guestRetention:
+		'Гостевые аккаунты могут быть автоматически удалены через {days} дней после создания. Зарегистрируйтесь, чтобы продолжить использование аккаунта.',
+	login_guestNoExpiry: 'Автоматическое удаление новых гостевых аккаунтов не запланировано.',
+
 	...completion,
 	app_subtitle: 'Идентификация и доступ повсюду.',
 	dialog_cancel: 'Отмена',

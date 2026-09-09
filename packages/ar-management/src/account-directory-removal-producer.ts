@@ -29,7 +29,7 @@ interface PasskeySubjectRow {
   rp_id: string;
 }
 
-interface AnonymousDeviceSubjectRow {
+interface GuestDeviceSubjectRow {
   device_id_hash: string;
 }
 
@@ -146,7 +146,7 @@ export async function prepareAccountDirectoryRemoval(
   if (existing.length > 0) return existing;
 
   const route = await activeRoute(input.core, input.tenantId, accountId);
-  const [emailRow, externalSubjects, passkeySubjects, anonymousDevices, runtimeKeys] =
+  const [emailRow, externalSubjects, passkeySubjects, guestDevices, runtimeKeys] =
     await Promise.all([
       input.pii.queryOne<EmailRow>(
         `SELECT value_json FROM identity_sensitive_values
@@ -165,8 +165,8 @@ export async function prepareAccountDirectoryRemoval(
         ORDER BY rp_id, credential_id`,
         [input.tenantId, input.userId]
       ),
-      input.core.query<AnonymousDeviceSubjectRow>(
-        `SELECT device_id_hash FROM anonymous_devices
+      input.core.query<GuestDeviceSubjectRow>(
+        `SELECT device_id_hash FROM guest_devices
           WHERE tenant_id = ? AND user_id = ? AND is_active = TRUE
           ORDER BY device_id_hash`,
         [input.tenantId, input.userId]
@@ -192,8 +192,8 @@ export async function prepareAccountDirectoryRemoval(
             issuer: `urn:authrim:passkey:${passkey.rp_id.toLowerCase()}`,
             subject: passkey.credential_id,
           })),
-          ...anonymousDevices.map((device) => ({
-            issuer: 'urn:authrim:anonymous-device:v1',
+          ...guestDevices.map((device) => ({
+            issuer: 'urn:authrim:guest-device:v1',
             subject: device.device_id_hash,
           })),
         ].map((subject) =>
@@ -241,6 +241,10 @@ export async function eraseAccountPiiAfterDirectoryRemovalPrepared(
   if (!Number.isSafeInteger(now) || now < 1) throw new Error('invalid_directory_removal_time');
   const accountId = `account:${input.userId}`;
   const statements = [
+    {
+      sql: `UPDATE guest_upgrade_operations SET state = CASE WHEN state = 'completed' THEN state ELSE 'canceled' END, proof_payload_json = NULL, reservation_publication_json = NULL, challenge_verifier = NULL, lease_owner = NULL, lease_expires_at = NULL, updated_at = ? WHERE tenant_id = ? AND user_id = ?`,
+      params: [now, input.tenantId, input.userId],
+    },
     {
       sql: `UPDATE identity_identifier_replacement_operations
           SET state = 'canceled', error_code = 'account_deleted', lease_owner = NULL,
