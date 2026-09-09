@@ -3,7 +3,7 @@ import completion from './completion';
 
 const ru = createTranslation({
 	account_guestLogoutWarning:
-		'После выхода вы не сможете вернуться в этот гостевой аккаунт, даже если автоматическое удаление отключено. Сначала зарегистрируйтесь, чтобы сохранить доступ к аккаунту и данным. Всё равно выйти?',
+		'После выхода вы не сможете вернуться в этот гостевой аккаунт. Сначала зарегистрируйтесь, чтобы сохранить доступ к аккаунту и данным. Всё равно выйти?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

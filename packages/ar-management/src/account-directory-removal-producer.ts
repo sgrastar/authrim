@@ -29,7 +29,7 @@ interface PasskeySubjectRow {
   rp_id: string;
 }
 
-interface AnonymousDeviceSubjectRow {
+interface GuestDeviceSubjectRow {
   device_id_hash: string;
 }
 
@@ -146,7 +146,7 @@ export async function prepareAccountDirectoryRemoval(
   if (existing.length > 0) return existing;
 
   const route = await activeRoute(input.core, input.tenantId, accountId);
-  const [emailRow, externalSubjects, passkeySubjects, anonymousDevices, runtimeKeys] =
+  const [emailRow, externalSubjects, passkeySubjects, guestDevices, runtimeKeys] =
     await Promise.all([
       input.pii.queryOne<EmailRow>(
         `SELECT value_json FROM identity_sensitive_values
@@ -165,8 +165,8 @@ export async function prepareAccountDirectoryRemoval(
         ORDER BY rp_id, credential_id`,
         [input.tenantId, input.userId]
       ),
-      input.core.query<AnonymousDeviceSubjectRow>(
-        `SELECT device_id_hash FROM anonymous_devices
+      input.core.query<GuestDeviceSubjectRow>(
+        `SELECT device_id_hash FROM guest_devices
           WHERE tenant_id = ? AND user_id = ? AND is_active = TRUE
           ORDER BY device_id_hash`,
         [input.tenantId, input.userId]
@@ -192,8 +192,8 @@ export async function prepareAccountDirectoryRemoval(
             issuer: `urn:authrim:passkey:${passkey.rp_id.toLowerCase()}`,
             subject: passkey.credential_id,
           })),
-          ...anonymousDevices.map((device) => ({
-            issuer: 'urn:authrim:anonymous-device:v1',
+          ...guestDevices.map((device) => ({
+            issuer: 'urn:authrim:guest-device:v1',
             subject: device.device_id_hash,
           })),
         ].map((subject) =>

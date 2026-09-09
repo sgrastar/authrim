@@ -1009,7 +1009,9 @@ export const guestAPI = {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					authorizationChallengeId,
+					...(authorizationChallengeId
+						? { authorizationChallengeId }
+						: { clientId: getAuthConfig().clientId }),
 					human_verification_response: humanVerificationResponse
 				}),
 				timeout: DEFAULT_API_TIMEOUT

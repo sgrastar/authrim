@@ -3,7 +3,7 @@ import completion from './completion';
 
 const es = createTranslation({
 	account_guestLogoutWarning:
-		'Si cierras sesión, no podrás volver a esta cuenta de invitado, aunque la eliminación automática esté desactivada. Regístrate primero para conservar el acceso a tu cuenta y tus datos. ¿Cerrar sesión de todos modos?',
+		'Si cierras sesión, no podrás volver a esta cuenta de invitado. Regístrate primero para conservar el acceso a tu cuenta y tus datos. ¿Cerrar sesión de todos modos?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

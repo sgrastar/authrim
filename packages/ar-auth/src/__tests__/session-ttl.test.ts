@@ -22,20 +22,20 @@ describe('resolveSessionTtl', () => {
     const env = createEnv({
       settings: {
         'session.ttl.directory_password': 2 * 60 * 60 * 1000,
-        'session.ttl.anonymous': 90 * 60 * 1000,
+        'session.ttl.guest': 90 * 60 * 1000,
         'session.ttl.did': 45 * 60 * 1000,
       },
     });
 
     const ttl = await resolveSessionTtl(env, 'tenant-a', 'directory_password');
-    const anonymousTtl = await resolveSessionTtl(env, 'tenant-a', 'anonymous');
+    const anonymousTtl = await resolveSessionTtl(env, 'tenant-a', 'guest');
     const didTtl = await resolveSessionTtl(env, 'tenant-a', 'did');
 
     expect(ttl.key).toBe('session.ttl.directory_password');
     expect(ttl.milliseconds).toBe(2 * 60 * 60 * 1000);
     expect(ttl.seconds).toBe(2 * 60 * 60);
     expect(anonymousTtl).toMatchObject({
-      key: 'session.ttl.anonymous',
+      key: 'session.ttl.guest',
       milliseconds: 90 * 60 * 1000,
       seconds: 90 * 60,
     });

@@ -348,7 +348,7 @@ export interface AuthEventData extends BaseEventData {
     | 'external_idp'
     | 'did'
     | 'saml'
-    | 'anonymous'
+    | 'guest'
     | 'upgrade'; // architecture-decisions.md §17
   /** Client ID */
   clientId: string;

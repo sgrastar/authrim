@@ -38,9 +38,9 @@ vi.mock('@authrim/ar-lib-core', async () => {
       sessionId: 'session-12345',
     }),
     getChallengeStoreByChallengeId: vi.fn().mockResolvedValue(mockChallengeStore),
-    isAnonymousAuthEnabled: vi.fn().mockResolvedValue(true),
+    isGuestDeviceAuthEnabled: vi.fn().mockResolvedValue(true),
     loadClientContract: vi.fn().mockResolvedValue({
-      anonymousAuth: {
+      guestAuth: {
         enabled: true,
         deviceStability: 'installation',
         expiresInDays: 30,
@@ -78,7 +78,7 @@ describe('Anonymous Login Handlers', () => {
     vi.clearAllMocks();
   });
 
-  describe('anonLoginChallengeHandler', () => {
+  describe('guestDeviceLoginChallengeHandler', () => {
     describe('Input Validation', () => {
       it('should require client_id parameter', () => {
         const requiredParams = ['client_id', 'device_id'];
@@ -154,11 +154,11 @@ describe('Anonymous Login Handlers', () => {
 
     describe('Feature Flag Check', () => {
       it('should return error when anonymous auth is disabled', async () => {
-        const { isAnonymousAuthEnabled } = await import('@authrim/ar-lib-core');
-        vi.mocked(isAnonymousAuthEnabled).mockResolvedValueOnce(false);
+        const { isGuestDeviceAuthEnabled } = await import('@authrim/ar-lib-core');
+        vi.mocked(isGuestDeviceAuthEnabled).mockResolvedValueOnce(false);
 
         // When disabled, should return invalid_request error
-        const result = await vi.mocked(isAnonymousAuthEnabled)({} as never);
+        const result = await vi.mocked(isGuestDeviceAuthEnabled)({} as never);
         expect(result).toBe(false);
       }, 15_000);
     });
@@ -245,7 +245,7 @@ describe('Anonymous Login Handlers', () => {
     });
   });
 
-  describe('anonLoginVerifyHandler', () => {
+  describe('guestDeviceLoginVerifyHandler', () => {
     describe('Input Validation', () => {
       it('should require challenge_id', () => {
         const requiredFields = ['challenge_id', 'device_id', 'response', 'timestamp'];
@@ -360,11 +360,11 @@ describe('Anonymous Login Handlers', () => {
         expect(createUserParams.pii_partition).toBe('none');
       });
 
-      it('should create anonymous_devices record', async () => {
+      it('should create guest_devices record', async () => {
         const now = Date.now();
 
         await mockDatabaseAdapter.execute(
-          `INSERT INTO anonymous_devices (
+          `INSERT INTO guest_devices (
             id, tenant_id, user_id, device_id_hash, installation_id_hash,
             fingerprint_hash, device_platform, device_stability,
             expires_at, created_at, last_used_at, is_active
@@ -410,12 +410,12 @@ describe('Anonymous Login Handlers', () => {
         const now = Date.now();
 
         await mockDatabaseAdapter.execute(
-          'UPDATE anonymous_devices SET last_used_at = ? WHERE id = ?',
+          'UPDATE guest_devices SET last_used_at = ? WHERE id = ?',
           [now, 'device-record-id']
         );
 
         expect(mockDatabaseAdapter.execute).toHaveBeenCalledWith(
-          expect.stringContaining('UPDATE anonymous_devices SET last_used_at'),
+          expect.stringContaining('UPDATE guest_devices SET last_used_at'),
           expect.arrayContaining([now])
         );
       });
@@ -441,7 +441,7 @@ describe('Anonymous Login Handlers', () => {
         await mockSessionStore.createSessionRpc('session-123', 'user-456', 86400, {
           amr: ['anon'],
           acr: 'urn:mace:incommon:iap:anonymous',
-          is_anonymous: true,
+          is_guest_session: true,
           upgrade_eligible: true,
           device_id_hash: 'hashed-device-id',
           client_id: 'client-123',
@@ -453,7 +453,7 @@ describe('Anonymous Login Handlers', () => {
           expect.any(Number),
           expect.objectContaining({
             amr: ['anon'],
-            is_anonymous: true,
+            is_guest_session: true,
             upgrade_eligible: true,
           })
         );
@@ -467,7 +467,7 @@ describe('Anonymous Login Handlers', () => {
       it('should include device_id_hash in session data', async () => {
         const sessionData = {
           amr: ['anon'],
-          is_anonymous: true,
+          is_guest_session: true,
           upgrade_eligible: true,
           device_id_hash: 'hashed-device-id',
           client_id: 'client-123',

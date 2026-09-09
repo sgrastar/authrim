@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import {
-  anonymousDeviceLookupSubject,
+  guestDeviceLookupSubject,
   getChallengeStoreByChallengeId,
   getTenantMetadataContextFromHono,
   getTenantIdFromContext,
@@ -10,7 +10,7 @@ import {
   resolveAccountDataContextFromHono,
   resolveAccountDataContextByIdentifierFromHono,
   type AccountDataContext,
-  type AuthAnonymousDeviceProvisioningInput,
+  type AuthGuestDeviceProvisioningInput,
   type AuthAccountProvisioningFlow,
   type AuthAccountProvisioningInput,
   type CanonicalRuntimeUserWriteInput,
@@ -49,13 +49,13 @@ export interface PublishPasskeyRouteInput {
   rpId: string;
 }
 
-export interface ProvisionAnonymousAccountInput {
+export interface ProvisionGuestAccountInput {
   tenantId: string;
   candidateUserId: string;
-  device: Omit<AuthAnonymousDeviceProvisioningInput, 'id'>;
+  device: Omit<AuthGuestDeviceProvisioningInput, 'id'>;
 }
 
-export interface RemoveAnonymousDeviceRouteInput {
+export interface RemoveGuestDeviceRouteInput {
   tenantId: string;
   userId: string;
   deviceId: string;
@@ -148,8 +148,8 @@ function resumeMetadata(value: unknown): AccountProvisioningResumeMetadata | nul
       'saml',
       'did',
       'test_stub',
-      'anonymous',
-      'anonymous_upgrade',
+      'guest',
+      'guest_upgrade',
     ].includes(metadata.flow) ||
     !isCanonicalAccountIdForUser(metadata.account_id, metadata.user_id) ||
     Object.keys(metadata).length !== 5
@@ -229,13 +229,13 @@ export async function resolvePasskeyAccountRoute(
   });
 }
 
-export async function resolveAnonymousAccountRoute(
+export async function resolveGuestAccountRoute(
   c: Context<{ Bindings: Env }>,
   deviceIdHash: string
 ): Promise<AccountDataContext | null> {
   return resolveAccountDataContextByIdentifierFromHono(c, {
     indexKind: 'external_subject',
-    identifier: anonymousDeviceLookupSubject(deviceIdHash),
+    identifier: guestDeviceLookupSubject(deviceIdHash),
   });
 }
 
@@ -279,18 +279,18 @@ export async function publishPasskeyRoute(
   return result.status;
 }
 
-export async function removeAnonymousDeviceRoute(
+export async function removeGuestDeviceRoute(
   c: Context<{ Bindings: Env }>,
-  input: RemoveAnonymousDeviceRouteInput
+  input: RemoveGuestDeviceRouteInput
 ): Promise<201 | 202> {
-  if (!c.env.ACCOUNT_PROVISIONER?.removeAuthAnonymousDeviceRoute) {
+  if (!c.env.ACCOUNT_PROVISIONER?.removeAuthGuestDeviceRoute) {
     throw new Error('account_provisioner_unavailable');
   }
   const account = await resolveAccountDataContextFromHono(c, input.userId);
   if (account.legacyUserId !== input.userId) {
-    throw new Error('anonymous_route_removal_account_mismatch');
+    throw new Error('guest_route_removal_account_mismatch');
   }
-  anonymousDeviceLookupSubject(input.deviceIdHash);
+  guestDeviceLookupSubject(input.deviceIdHash);
   const stableRequest = canonicalJson({
     schemaVersion: 1,
     tenantId: input.tenantId,
@@ -300,10 +300,10 @@ export async function removeAnonymousDeviceRoute(
     deviceIdHash: input.deviceIdHash,
   });
   const operationId = `anonymous-route-remove-${input.deviceId}`;
-  const result = await c.env.ACCOUNT_PROVISIONER.removeAuthAnonymousDeviceRoute({
+  const result = await c.env.ACCOUNT_PROVISIONER.removeAuthGuestDeviceRoute({
     schemaVersion: 1,
     operationId,
-    idempotencyKey: `auth-anonymous-route-remove:${await sha256Hex(stableRequest)}`,
+    idempotencyKey: `auth-guest-route-remove:${await sha256Hex(stableRequest)}`,
     tenantId: input.tenantId,
     accountId: account.accountId,
     userId: input.userId,
@@ -315,7 +315,7 @@ export async function removeAnonymousDeviceRoute(
     result.accountId !== account.accountId ||
     (result.status !== 201 && result.status !== 202)
   ) {
-    throw new Error('anonymous_route_removal_result_invalid');
+    throw new Error('guest_route_removal_result_invalid');
   }
   return result.status;
 }
@@ -445,30 +445,31 @@ export async function publishTenantD1PasskeyRoute(
 export const provisionTenantD1Account = provisionAccount;
 export const provisionTenantD1EmailAccount = provisionTenantD1Account;
 
-export async function provisionAnonymousAccount(
+export async function provisionGuestAccount(
   c: Context<{ Bindings: Env }>,
-  input: ProvisionAnonymousAccountInput
+  input: ProvisionGuestAccountInput
 ): Promise<ProvisionEmailAccountResult> {
   if (!c.env.ACCOUNT_PROVISIONER) throw new Error('account_provisioner_unavailable');
-  const externalSubject = anonymousDeviceLookupSubject(input.device.deviceIdHash);
-  const anonymousDevice: AuthAnonymousDeviceProvisioningInput = {
-    id: `anonymous-device-${input.device.deviceIdHash.slice(0, 32)}`,
+  const externalSubject = guestDeviceLookupSubject(input.device.deviceIdHash);
+  const guestDevice: AuthGuestDeviceProvisioningInput = {
+    id: `guest-device-${input.device.deviceIdHash.slice(0, 32)}`,
     ...input.device,
   };
   const runtimeUser: ProvisioningRuntimeUser = {
     active: true,
     emailVerified: false,
-    userType: 'anonymous',
-    sourceRef: 'auth:anonymous',
+    userType: 'end_user',
+    registrationState: 'guest',
+    sourceRef: 'auth:guest',
     piiFields: {},
     sensitiveValues: {},
   };
   const stableRequest = canonicalJson({
     schemaVersion: 1,
     tenantId: input.tenantId,
-    flow: 'anonymous',
+    flow: 'guest',
     externalSubject,
-    anonymousDevice,
+    guestDevice,
     runtimeUser,
   });
   const request: AuthAccountProvisioningInput = {
@@ -477,10 +478,10 @@ export async function provisionAnonymousAccount(
     idempotencyKey: `auth-account:${await sha256Hex(stableRequest)}`,
     tenantId: input.tenantId,
     candidateUserId: input.candidateUserId,
-    flow: 'anonymous',
+    flow: 'guest',
     email: null,
     externalSubject,
-    anonymousDevice,
+    guestDevice,
     runtimeUser,
   };
   const result = await provisionAuthAccountWithReconciliation(c.env.ACCOUNT_PROVISIONER, request);
@@ -506,7 +507,7 @@ export async function provisionAnonymousAccount(
     metadata: {
       schema_version: 1,
       operation_id: result.operationId,
-      flow: 'anonymous',
+      flow: 'guest',
       account_id: result.accountId,
       user_id: result.userId,
     } satisfies AccountProvisioningResumeMetadata,
@@ -561,9 +562,7 @@ export async function accountProvisioningStatusHandler(c: Context<{ Bindings: En
     }
     return c.json({
       status: status.status,
-      ...(status.status === 'ready' && metadata.flow === 'anonymous'
-        ? { restart_required: true }
-        : {}),
+      ...(status.status === 'ready' && metadata.flow === 'guest' ? { restart_required: true } : {}),
       ...(status.status === 'pending' ? { retry_after_ms: 500 } : {}),
     });
   } catch {

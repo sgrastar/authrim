@@ -326,14 +326,25 @@ components:
       description: >-
         Human account lifecycle, returned only with the granted account:lifecycle:read scope.
         This scope grants no mutation permission. This object is not added to ID tokens.
-        Device and agent identities do not receive this human lifecycle object. When a guest lifecycle row exists, its committed phase determines account_kind even if the user projection is temporarily ahead of or behind that phase.
+        Device and agent identities do not receive this human lifecycle object. When a guest lifecycle row exists, its committed phase determines registration_state even if the user projection is temporarily ahead of or behind that phase.
         Passing deletion_due_at does not by itself revoke access; deletion runs asynchronously.
       additionalProperties: false
-      required: [account_kind, created_at, deletion_due_at, upgrade_eligible, profile_complete]
+      required:
+        [
+          registration_state,
+          status,
+          created_at,
+          deletion_due_at,
+          upgrade_eligible,
+          profile_complete,
+        ]
       properties:
-        account_kind:
+        registration_state:
           type: string
           enum: [guest, registered]
+        status:
+          type: string
+          description: Operational account status, independent of registration. Unavailable accounts may be denied UserInfo access instead of returning this claim.
         created_at:
           type: integer
           minimum: 0

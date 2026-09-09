@@ -22,7 +22,7 @@ export interface SessionSettings {
   'session.ttl.passkey': number;
   'session.ttl.passkey_registration': number;
   'session.ttl.admin_passkey': number;
-  'session.ttl.anonymous': number;
+  'session.ttl.guest': number;
   'session.ttl.did': number;
   'session.refresh_default': boolean;
   'session.token_ttl': number;
@@ -152,8 +152,8 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
     unit: 'ms',
     visibility: 'admin',
   },
-  'session.ttl.anonymous': {
-    key: 'session.ttl.anonymous',
+  'session.ttl.guest': {
+    key: 'session.ttl.guest',
     type: 'duration',
     default: 86400000,
     envKey: 'SESSION_TTL_ANONYMOUS_MS',
@@ -316,7 +316,7 @@ export const SESSION_DEFAULTS: SessionSettings = {
   'session.ttl.passkey': 604800000,
   'session.ttl.passkey_registration': 2592000000,
   'session.ttl.admin_passkey': 604800000,
-  'session.ttl.anonymous': 86400000,
+  'session.ttl.guest': 86400000,
   'session.ttl.did': 86400000,
   'session.refresh_default': true,
   'session.token_ttl': 300,

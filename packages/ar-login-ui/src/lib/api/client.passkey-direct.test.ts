@@ -24,6 +24,22 @@ describe('LoginUI passkey Direct Auth adapter', () => {
 		sessionStorage.clear();
 	});
 
+	it.each(['', 'oauth-challenge'])(
+		'binds guest login to the direct client or original challenge: %s',
+		async (challenge) => {
+			const fetchMock = vi
+				.fn<typeof fetch>()
+				.mockResolvedValue(new Response(JSON.stringify({ success: true }), { status: 200 }));
+			vi.stubGlobal('fetch', fetchMock);
+			const { guestAPI } = await loadClient();
+			await guestAPI.login(challenge);
+			const body = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
+			expect(body).toEqual(
+				challenge ? { authorizationChallengeId: challenge } : { clientId: 'login-ui' }
+			);
+		}
+	);
+
 	it('uses canonical Direct Auth endpoints and redeems the artifact into a managed session', async () => {
 		const fetchMock = vi
 			.fn<typeof fetch>()

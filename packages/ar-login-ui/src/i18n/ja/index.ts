@@ -2,7 +2,7 @@ import type { Translation } from '../i18n-types';
 
 const ja = {
 	account_guestLogoutWarning:
-		'ログアウトすると、自動削除が無効でもこのゲストアカウントに戻れなくなります。アカウントとデータへのアクセスを維持するには、先に登録してください。ログアウトしますか？',
+		'ログアウトすると、このゲストアカウントに戻れなくなります。アカウントとデータへのアクセスを維持するには、先に登録してください。ログアウトしますか？',
 	account_guestTitle: 'アカウントを登録',
 	account_guestDescription: '登録後も同じアカウントとデータを引き継ぎます。',
 	account_guestDue: '{date} 以降、自動削除の対象になります。',

@@ -8,7 +8,7 @@ export type SessionTtlContext =
   | 'passkey'
   | 'passkey_registration'
   | 'admin_passkey'
-  | 'anonymous'
+  | 'guest'
   | 'did';
 
 export interface SessionTtlDefinition {
@@ -74,8 +74,8 @@ export const SESSION_TTL_DEFINITIONS: Record<SessionTtlContext, SessionTtlDefini
     minMs: ONE_MINUTE_MS,
     maxMs: THIRTY_DAYS_MS,
   },
-  anonymous: {
-    key: 'session.ttl.anonymous',
+  guest: {
+    key: 'session.ttl.guest',
     envKey: 'SESSION_TTL_ANONYMOUS_MS',
     defaultMs: ONE_DAY_MS,
     minMs: ONE_MINUTE_MS,

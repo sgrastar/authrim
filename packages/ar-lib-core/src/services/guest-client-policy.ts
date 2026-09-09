@@ -1,7 +1,7 @@
-import type { AnonymousAuthConfig } from '../types/contracts/client';
+import type { GuestAuthConfig } from '../types/contracts/client';
 import { GUEST_LIFECYCLE_SCOPE } from './guest-lifecycle';
 
-export function createDefaultGuestClientPolicy(): AnonymousAuthConfig {
+export function createDefaultGuestClientPolicy(): GuestAuthConfig {
   return {
     enabled: false,
     expiresInDays: null,
@@ -14,7 +14,7 @@ export function createDefaultGuestClientPolicy(): AnonymousAuthConfig {
 }
 
 /** Validate administrator input; do not coerce booleans or silently widen missing scopes. */
-export function isValidGuestClientPolicy(value: unknown): value is AnonymousAuthConfig {
+export function isValidGuestClientPolicy(value: unknown): value is GuestAuthConfig {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const policy = value as Record<string, unknown>;
   const keys = new Set([
@@ -52,10 +52,7 @@ export function isValidGuestClientPolicy(value: unknown): value is AnonymousAuth
 }
 
 /** Applies on every authorization/token grant, including an already established guest session. */
-export function areGuestScopesAllowed(
-  policy: AnonymousAuthConfig | undefined,
-  scope: string
-): boolean {
+export function areGuestScopesAllowed(policy: GuestAuthConfig | undefined, scope: string): boolean {
   if (policy?.enabled !== true || !Array.isArray(policy.allowedScopes)) return false;
   const requested = scope.split(' ').filter(Boolean);
   return requested.every((value) => policy.allowedScopes.includes(value));

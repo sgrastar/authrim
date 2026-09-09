@@ -303,7 +303,7 @@ export async function startAccountIdentifierReplacementHandler(
   const accountSession = await requireAccountSession(c);
   if (accountSession instanceof Response) return accountSession;
   const now = Math.floor(Date.now() / 1000);
-  if (accountSession.isGuest) return c.json({ error: 'guest_registration_required' }, 403);
+  if (accountSession.isGuestSession) return c.json({ error: 'guest_registration_required' }, 403);
   if (!recentlyAuthenticated(accountSession, now)) {
     return c.json(
       {
@@ -574,7 +574,7 @@ export async function completeAccountIdentifierReplacementHandler(
   const accountSession = await requireAccountSession(c);
   if (accountSession instanceof Response) return accountSession;
   const now = Math.floor(Date.now() / 1000);
-  if (accountSession.isGuest) return c.json({ error: 'guest_registration_required' }, 403);
+  if (accountSession.isGuestSession) return c.json({ error: 'guest_registration_required' }, 403);
   if (!recentlyAuthenticated(accountSession, now)) {
     return c.json(
       {

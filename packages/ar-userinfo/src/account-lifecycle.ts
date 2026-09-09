@@ -5,6 +5,7 @@ import {
   loadClientContractCached,
   resolveCustomClaimRuntimeSourcesFromEnv,
   resolveGuestSettings,
+  resolveAccountRegistrationState,
   type CanonicalRuntimeUserProjection,
   type DatabaseAdapter,
   type Env,
@@ -26,13 +27,12 @@ export async function readAccountLifecycleClaim(input: {
   const { c, adapter, tenantId, clientId, user } = input;
   if (user.tenant_id !== tenantId) throw new Error('account_lifecycle_tenant_mismatch');
   // Machine subjects have their own lifecycle contract; never infer human retention for them.
-  if (user.account_type !== 'anonymous' && user.account_type !== 'user') return undefined;
+  if (user.account_type !== 'user') return undefined;
   const row = await new GuestLifecycleRepository(adapter, tenantId).get(user.id);
-  if (row?.phase === 'deleting' || row?.phase === 'deleted') {
+  if (row?.phase === 'deleting' || row?.phase === 'deleted')
     throw new Error('account_lifecycle_deleted');
-  }
-  // Registration projections can be written before the durable lifecycle commit.
-  const guest = row ? row.phase !== 'registered' : user.account_type === 'anonymous';
+  const registrationState = resolveAccountRegistrationState(user.registration_state, row?.phase);
+  const guest = registrationState === 'guest';
   let upgradeEligible = false;
   if (guest && row?.phase === 'active' && clientId && row.client_id === clientId) {
     const settings = await resolveGuestSettings(c.env, tenantId);
@@ -45,7 +45,7 @@ export async function readAccountLifecycleClaim(input: {
     );
     const candidates = settings.policy.upgradeEnabled
       ? settings.upgradeMethods.filter((method) =>
-          contract?.anonymousAuth?.allowedUpgradeMethods?.includes(method)
+          contract?.guestAuth?.allowedUpgradeMethods?.includes(method)
         )
       : [];
     let emailReady = false;
@@ -73,7 +73,8 @@ export async function readAccountLifecycleClaim(input: {
   if (!Number.isSafeInteger(createdAt) || createdAt < 0)
     throw new Error('account_lifecycle_creation_invalid');
   return {
-    account_kind: guest ? 'guest' : 'registered',
+    registration_state: registrationState,
+    status: user.status,
     created_at: createdAt,
     deletion_due_at: guest ? (row?.deletion_due_at ?? null) : null,
     upgrade_eligible: upgradeEligible,

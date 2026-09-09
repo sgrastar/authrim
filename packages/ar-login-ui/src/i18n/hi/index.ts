@@ -2,7 +2,7 @@ import type { Translation } from '../i18n-types';
 
 const translation = {
 	account_guestLogoutWarning:
-		'लॉग आउट करने के बाद आप इस अतिथि खाते में वापस नहीं आ सकेंगे, भले ही अपने आप हटाना बंद हो। खाते और डेटा तक पहुँच बनाए रखने के लिए पहले पंजीकरण करें। फिर भी लॉग आउट करें?',
+		'लॉग आउट करने के बाद आप इस अतिथि खाते में वापस नहीं आ सकेंगे। खाते और डेटा तक पहुँच बनाए रखने के लिए पहले पंजीकरण करें। फिर भी लॉग आउट करें?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

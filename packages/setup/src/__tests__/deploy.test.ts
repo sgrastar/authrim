@@ -3331,6 +3331,7 @@ describe('deployAll', () => {
     const rootDir = createTempRoot();
     const selected = [
       'ar-lib-core',
+      'ar-userinfo',
       'ar-bridge',
       'ar-auth',
       'ar-management',
@@ -3389,7 +3390,10 @@ describe('deployAll', () => {
     releases.get('ar-auth')!.resolve(successfulCommandResult());
     await vi.waitFor(() => expect(started).toContain('ar-management'));
 
+    expect(started).not.toContain('ar-userinfo');
     releases.get('ar-management')!.resolve(successfulCommandResult());
+    await vi.waitFor(() => expect(started).toContain('ar-userinfo'));
+    releases.get('ar-userinfo')!.resolve(successfulCommandResult());
     expect(started).not.toContain('ar-router');
     releases.get('ar-token')!.resolve(successfulCommandResult());
     await vi.waitFor(() => expect(started.at(-1)).toBe('ar-router'));

@@ -12,10 +12,10 @@ export type AuthAccountProvisioningFlow =
   | 'saml'
   | 'did'
   | 'test_stub'
-  | 'anonymous'
-  | 'anonymous_upgrade';
+  | 'guest'
+  | 'guest_upgrade';
 
-export interface AuthAnonymousDeviceProvisioningInput {
+export interface AuthGuestDeviceProvisioningInput {
   id: string;
   deviceIdHash: string;
   installationIdHash: string | null;
@@ -53,7 +53,7 @@ export interface AuthAccountProvisioningInput {
   flow: AuthAccountProvisioningFlow;
   email: string | null;
   externalSubject?: { issuer: string; subject: string } | null;
-  anonymousDevice?: AuthAnonymousDeviceProvisioningInput | null;
+  guestDevice?: AuthGuestDeviceProvisioningInput | null;
   externalIdentity?: AuthExternalIdpIdentityProvisioningInput | null;
   runtimeUser: Omit<CanonicalRuntimeUserWriteInput, 'userId' | 'tenantId'> & {
     piiFields?: Partial<Record<CanonicalSensitiveUserField, boolean>>;
@@ -113,7 +113,7 @@ export interface AuthDirectoryRoutePublicationInput {
 
 export type AuthDirectoryRoutePublicationResult = AuthPasskeyRoutePublicationResult;
 
-export interface AuthAnonymousDeviceRouteRemovalInput {
+export interface AuthGuestDeviceRouteRemovalInput {
   schemaVersion: 1;
   operationId: string;
   idempotencyKey: string;
@@ -124,7 +124,7 @@ export interface AuthAnonymousDeviceRouteRemovalInput {
   deviceIdHash: string;
 }
 
-export type AuthAnonymousDeviceRouteRemovalResult = AuthPasskeyRoutePublicationResult;
+export type AuthGuestDeviceRouteRemovalResult = AuthPasskeyRoutePublicationResult;
 
 export interface ExternalIdpRoutePublicationInput {
   schemaVersion: 1;
@@ -185,15 +185,15 @@ export function passkeyCredentialLookupSubject(input: { rpId: string; credential
   };
 }
 
-export function anonymousDeviceLookupSubject(deviceIdHash: string): {
+export function guestDeviceLookupSubject(deviceIdHash: string): {
   issuer: string;
   subject: string;
 } {
   if (!/^[a-f0-9]{64}$/u.test(deviceIdHash)) {
-    throw new Error('anonymous_device_route_digest_invalid');
+    throw new Error('guest_device_route_digest_invalid');
   }
   return {
-    issuer: 'urn:authrim:anonymous-device:v1',
+    issuer: 'urn:authrim:guest-device:v1',
     subject: deviceIdHash,
   };
 }
@@ -224,9 +224,9 @@ export interface AuthAccountProvisioningServiceBinding {
   publishAuthDirectoryRoute(
     input: AuthDirectoryRoutePublicationInput
   ): Promise<AuthDirectoryRoutePublicationResult>;
-  removeAuthAnonymousDeviceRoute(
-    input: AuthAnonymousDeviceRouteRemovalInput
-  ): Promise<AuthAnonymousDeviceRouteRemovalResult>;
+  removeAuthGuestDeviceRoute(
+    input: AuthGuestDeviceRouteRemovalInput
+  ): Promise<AuthGuestDeviceRouteRemovalResult>;
 }
 
 export interface ExternalIdpAccountProvisioningServiceBinding {

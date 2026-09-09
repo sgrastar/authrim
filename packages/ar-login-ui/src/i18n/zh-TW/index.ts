@@ -3,7 +3,7 @@ import completion from './completion';
 
 const zhTW = createTranslation({
 	account_guestLogoutWarning:
-		'登出後，即使已關閉自動刪除，也無法再返回此訪客帳戶。請先註冊以保留帳戶和資料的存取權。仍要登出嗎？',
+		'登出後，無法再返回此訪客帳戶。請先註冊以保留帳戶和資料的存取權。仍要登出嗎？',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

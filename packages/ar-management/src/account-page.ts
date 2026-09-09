@@ -17,7 +17,8 @@ const REAUTH_TTL_SECONDS = 5 * 60;
 const MAX_NAME_LENGTH = 100;
 
 export type AccountSession = {
-  isGuest?: boolean;
+  /** Session authentication proof, not the account's current registration_state. */
+  isGuestSession?: boolean;
   sessionId: string;
   userId: string;
   createdAt: number;
@@ -47,7 +48,7 @@ function unauthorized(c: Context<{ Bindings: Env }>, description: string): Respo
 
 function normalizeSession(session: Session): AccountSession {
   return {
-    ...(session.data?.is_anonymous === true && { isGuest: true }),
+    ...(session.data?.is_guest_session === true && { isGuestSession: true }),
     sessionId: session.id,
     userId: session.userId,
     createdAt: session.createdAt,

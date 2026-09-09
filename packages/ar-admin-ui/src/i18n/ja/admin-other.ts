@@ -1,4 +1,7 @@
 const adminOther = {
+	admin_registration_label: '登録区分',
+	admin_registration_guest: 'ゲスト',
+	admin_registration_registered: '登録済み',
 	admin_lifecycle_progressTitle: 'ゲストのライフサイクル状況',
 	admin_lifecycle_progressHelp:
 		'削除処理は毎時実行されます。試行結果は表示に遅延があり、30日間保持されます。更新して状況を確認してください。',

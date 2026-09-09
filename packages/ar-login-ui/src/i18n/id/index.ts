@@ -3,7 +3,7 @@ import completion from './completion';
 
 const id = createTranslation({
 	account_guestLogoutWarning:
-		'Setelah keluar, Anda tidak dapat kembali ke akun tamu ini, meskipun penghapusan otomatis dinonaktifkan. Daftar terlebih dahulu untuk mempertahankan akses ke akun dan data Anda. Tetap keluar?',
+		'Setelah keluar, Anda tidak dapat kembali ke akun tamu ini. Daftar terlebih dahulu untuk mempertahankan akses ke akun dan data Anda. Tetap keluar?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

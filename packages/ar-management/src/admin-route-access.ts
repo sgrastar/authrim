@@ -416,14 +416,14 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     description: 'Apply reviewed guest retention',
   }),
   ...byMethod(
-    '/api/admin/anonymous-users',
+    '/api/admin/guest-users',
     ADMIN_PERMISSIONS.USERS_READ,
     ADMIN_PERMISSIONS.USERS_WRITE,
     ADMIN_PERMISSIONS.USERS_DELETE,
     'anonymous users'
   ),
   ...byMethod(
-    '/api/admin/anonymous-users/*',
+    '/api/admin/guest-users/*',
     ADMIN_PERMISSIONS.USERS_READ,
     ADMIN_PERMISSIONS.USERS_WRITE,
     ADMIN_PERMISSIONS.USERS_DELETE,

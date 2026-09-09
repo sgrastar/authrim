@@ -3,6 +3,9 @@
  * Persistence callers must serialize hold acquisition, upgrade, and deletion using
  * an account-scoped compare-and-swap; these decisions alone are not a write fence.
  */
+export type AccountRegistrationState = 'guest' | 'registered';
+export type GuestLifecyclePhase = 'active' | 'upgrading' | 'registered' | 'deleting' | 'deleted';
+
 export const GUEST_LIFECYCLE_SCOPE = 'account:lifecycle:read';
 export const GUEST_RETENTION_PRESETS = [1, 7, 14, 30, 90, 180, 365] as const;
 
@@ -21,7 +24,7 @@ export const DEFAULT_GUEST_LIFECYCLE_POLICY: Readonly<GuestLifecyclePolicy> = Ob
 export interface GuestLifecycleSnapshot {
   /** Device and agent identities must never inherit human guest retention. */
   subjectKind: 'human' | 'device' | 'agent';
-  accountKind: 'guest' | 'registered';
+  registrationState: AccountRegistrationState;
   state: 'active' | 'deleting' | 'deleted';
   createdAt: number;
   deletionDueAt: number | null;
@@ -63,7 +66,9 @@ export function getGuestDeletionDueAt(
 export function canUseGuestAccount(account: GuestLifecycleSnapshot): boolean {
   // Passing the deletion deadline does not itself revoke access.
   return (
-    account.subjectKind === 'human' && account.accountKind === 'guest' && account.state === 'active'
+    account.subjectKind === 'human' &&
+    account.registrationState === 'guest' &&
+    account.state === 'active'
   );
 }
 
@@ -107,4 +112,12 @@ export function getGuestUpgradeHoldUntil(
   const until = now + holdMinutes * 60;
   assertTimestamp(until);
   return until;
+}
+
+/** Public registration state. A durable upgrade commit takes precedence over staged projections. */
+export function resolveAccountRegistrationState(
+  registrationState: AccountRegistrationState,
+  phase?: GuestLifecyclePhase | null
+): AccountRegistrationState {
+  return (phase ? phase !== 'registered' : registrationState === 'guest') ? 'guest' : 'registered';
 }

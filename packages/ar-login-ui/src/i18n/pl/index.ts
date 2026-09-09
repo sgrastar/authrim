@@ -2,7 +2,7 @@ import type { Translation } from '../i18n-types';
 
 const translation = {
 	account_guestLogoutWarning:
-		'Po wylogowaniu nie będzie można wrócić do tego konta gościa, nawet jeśli automatyczne usuwanie jest wyłączone. Najpierw zarejestruj konto, aby zachować dostęp do konta i danych. Wylogować mimo to?',
+		'Po wylogowaniu nie będzie można wrócić do tego konta gościa. Najpierw zarejestruj konto, aby zachować dostęp do konta i danych. Wylogować mimo to?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

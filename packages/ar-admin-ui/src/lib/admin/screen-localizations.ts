@@ -26,6 +26,29 @@ export type ScreenLocalizationLanguage = (typeof SCREEN_LOCALIZATION_LANGUAGES)[
 type LocalizedText = Record<ScreenLocalizationLanguage, string>;
 
 const SCREEN_TEXT_LOCALIZATIONS: Record<string, LocalizedText> = {
+	'Continue as a guest': {
+		sw: 'Endelea kama mgeni',
+		pl: 'Kontynuuj jako gość',
+		vi: 'Tiếp tục với tư cách khách',
+		am: 'እንደ እንግዳ ይቀጥሉ',
+		ja: 'ゲストとして続ける',
+		it: 'Continua come ospite',
+		ru: 'Продолжить как гость',
+		'zh-CN': '以访客身份继续',
+		pt: 'Continuar como convidado',
+		'zh-TW': '以訪客身分繼續',
+		ar: 'المتابعة كضيف',
+		bn: 'অতিথি হিসেবে চালিয়ে যান',
+		hi: 'अतिथि के रूप में जारी रखें',
+		de: 'Als Gast fortfahren',
+		ko: '게스트로 계속하기',
+		id: 'Lanjutkan sebagai tamu',
+		fr: 'Continuer en tant qu’invité',
+		es: 'Continuar como invitado',
+		en: 'Continue as a guest',
+		th: 'ดำเนินการต่อในฐานะผู้เยี่ยมชม',
+		tr: 'Misafir olarak devam et'
+	},
 	'Sign in with Passkey': {
 		en: 'Sign in with Passkey',
 		ja: 'Passkeyでサインイン',

@@ -53,7 +53,7 @@ const USER_IMPORT_DEFAULT_HEADERS = [
 ] as const;
 
 const USER_IMPORT_ALLOWED_STATUSES = new Set(['active', 'suspended', 'locked']);
-const USER_IMPORT_ALLOWED_TYPES = new Set(['end_user', 'admin', 'm2m', 'anonymous']);
+const USER_IMPORT_ALLOWED_TYPES = new Set(['end_user', 'admin', 'm2m']);
 const USER_IMPORT_FORBIDDEN_CREDENTIAL_FIELDS = new Set([
   'password',
   'password_hash',
@@ -207,7 +207,7 @@ interface ImportedUserRowInput {
   email_verified?: boolean;
   phone_number?: string;
   phone_number_verified?: boolean;
-  user_type?: 'end_user' | 'admin' | 'm2m' | 'anonymous';
+  user_type?: 'end_user' | 'admin' | 'm2m';
   status?: 'active' | 'suspended' | 'locked';
   lifecycle_state?: string;
   [key: string]: string | boolean | number | null | undefined;
@@ -607,6 +607,9 @@ function parseOptionalBoolean(
 }
 
 export function normalizeImportRecord(record: Record<string, string>): ImportedUserRowInput {
+  if (Object.keys(record).some((key) => key.trim().toLowerCase() === 'registration_state')) {
+    throw new Error('registration_state is read-only');
+  }
   const email = record.email?.trim();
   if (!email) {
     throw new Error('Email is required');
@@ -854,6 +857,18 @@ async function createImportedUser(
   };
 }
 
+/** Importing a public classification must not commit guest registration. */
+export function resolveImportedAccountUserType(
+  registrationState: string,
+  requestedType: ImportedUserRowInput['user_type']
+): string | undefined {
+  if (registrationState !== 'guest') return requestedType;
+  if (requestedType !== undefined && requestedType !== 'end_user') {
+    throw new Error('Guest registration changes require the account upgrade flow');
+  }
+  return requestedType;
+}
+
 async function updateImportedUser(
   runtime: UserImportRuntime,
   userId: string,
@@ -864,6 +879,8 @@ async function updateImportedUser(
   if (!existingUser) {
     throw new Error(`User ${userId} not found`);
   }
+
+  const userType = resolveImportedAccountUserType(existingUser.registration_state, input.user_type);
 
   const customFieldInput = extractCustomClaimInput(input, IMPORT_RESERVED_FIELDS);
   const customFieldValidation = await validateCustomClaimWrite({
@@ -912,7 +929,7 @@ async function updateImportedUser(
         : existingUser.active === 1,
     emailVerified: input.email_verified ?? Boolean(existingUser.email_verified),
     phoneNumberVerified: input.phone_number_verified ?? Boolean(existingUser.phone_number_verified),
-    userType: input.user_type ?? undefined,
+    userType,
     sourceRef: 'management:user-import',
     piiFields: {
       email: true,

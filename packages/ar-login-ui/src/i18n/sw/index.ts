@@ -2,7 +2,7 @@ import type { Translation } from '../i18n-types';
 
 const translation = {
 	account_guestLogoutWarning:
-		'Ukiondoka, hutaweza kurudi kwenye akaunti hii ya mgeni, hata kama ufutaji wa kiotomatiki umezimwa. Jisajili kwanza ili uendelee kufikia akaunti na data zako. Ungependa kuondoka hata hivyo?',
+		'Ukiondoka, hutaweza kurudi kwenye akaunti hii ya mgeni. Jisajili kwanza ili uendelee kufikia akaunti na data zako. Ungependa kuondoka hata hivyo?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

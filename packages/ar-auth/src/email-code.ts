@@ -729,7 +729,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
 
           // Check if this is an anonymous session for the same tenant
           if (
-            existingSession?.data?.is_anonymous === true &&
+            existingSession?.data?.is_guest_session === true &&
             existingSession.data.guest_resume_credential !== true
           ) {
             // SECURITY FIX: Prevent email takeover attack
@@ -922,7 +922,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         userAgent,
         metadata: JSON.stringify({
           method: 'email_code',
-          is_anonymous_upgrade: isAnonymousUpgrade,
+          is_guest_upgrade: isAnonymousUpgrade,
         }),
         severity: 'info',
       }).catch((err) => {

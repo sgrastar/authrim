@@ -1,5 +1,7 @@
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
+import { locales, loadedLocales } from '$i18n/i18n-util';
+import { loadAllLocales } from '$i18n/i18n-util.sync';
 import { setLocale } from '$i18n/i18n-svelte';
 import RuntimeScreen from './RuntimeScreen.svelte';
 
@@ -362,6 +364,35 @@ describe('guest login widget', () => {
 			props: { screen: { fields: [{ ...screen.fields[0], label: '' }] }, guestEnabled: true }
 		}).body;
 		expect(body).toContain('Continue as a guest');
+	});
+	it.each(locales)(
+		'localizes persisted Japanese defaults in %s, including stale screen translations',
+		(locale) => {
+			loadAllLocales();
+			setLocale(locale);
+			const body = render(RuntimeScreen, {
+				props: {
+					screen: {
+						fields: [{ ...screen.fields[0], label: 'ゲストとして続ける' }],
+						localizations: { [locale]: { fields: { guest: { label: 'ゲストとして続ける' } } } }
+					},
+					guestEnabled: true
+				}
+			}).body;
+			expect(body).toContain(loadedLocales[locale].login_guestContinue);
+			if (locale !== 'ja') expect(body).not.toContain('ゲストとして続ける');
+		}
+	);
+	it('preserves a custom guest label', () => {
+		setLocale('ar');
+		expect(
+			render(RuntimeScreen, {
+				props: {
+					screen: { fields: [{ ...screen.fields[0], label: 'Try our demo' }] },
+					guestEnabled: true
+				}
+			}).body
+		).toContain('Try our demo');
 	});
 	it('does not offer guest creation on a signup screen', () => {
 		setLocale('en');

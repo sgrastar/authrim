@@ -63,13 +63,16 @@
 		error = '';
 		saved = false;
 		try {
-			await adminClientGuestAPI.save(id, tenant, version, {
+			const result = await adminClientGuestAPI.save(id, tenant, version, {
 				...policy,
 				allowedScopes,
 				preserveSubOnUpgrade: true
 			});
 			if (tenant === tenantId && id === clientId) {
-				await load(id, tenant);
+				// Use the committed response; KV reads may still return the previous revision.
+				version = result.version;
+				policy = result.policy;
+				scopes = result.policy.allowedScopes.join('\n');
 				saved = true;
 			}
 		} catch (cause) {

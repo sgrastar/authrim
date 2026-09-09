@@ -209,6 +209,7 @@ describe('CrossShardAccountListService', () => {
            legacy_user_id TEXT NOT NULL,
            tenant_id TEXT NOT NULL,
            account_type TEXT NOT NULL,
+           registration_state TEXT NOT NULL DEFAULT 'registered',
            lifecycle_state TEXT NOT NULL,
            display_label TEXT,
            created_at INTEGER NOT NULL,
@@ -367,6 +368,33 @@ describe('CrossShardAccountListService', () => {
       'account-2',
       'account-1',
     ]);
+  });
+
+  it('pages regular and guest accounts together while excluding service accounts and other tenants', async () => {
+    await insertAccount(shardA, 'guest-account', 6, { accountType: 'anonymous' });
+    await insertAccount(shardA, 'service-account', 7, { accountType: 'service_account' });
+    await insertAccount(shardA, 'admin-account', 8, { accountType: 'admin' });
+    await insertAccount(shardA, 'other-guest', 9, {
+      accountType: 'anonymous',
+      tenantId: 'tenant-b',
+    });
+    const service = new CrossShardAccountListService(env(), () => 100);
+    const first = await service.list({
+      tenantId: 'tenant-a',
+      accountTypes: ['user', 'anonymous'],
+      limit: 2,
+    });
+    expect(first.items.map((item) => item.id)).toEqual(['guest-account', 'account-5']);
+    const second = await service.list({
+      tenantId: 'tenant-a',
+      accountTypes: ['anonymous', 'user'],
+      limit: 2,
+      cursor: first.nextCursor!,
+    });
+    expect(second.items.map((item) => item.id)).toEqual(['account-4', 'account-3']);
+    await expect(
+      service.list({ tenantId: 'tenant-a', accountTypes: ['user'], cursor: first.nextCursor! })
+    ).rejects.toThrow();
   });
 
   it('counts published users across shards without loading every account projection', async () => {

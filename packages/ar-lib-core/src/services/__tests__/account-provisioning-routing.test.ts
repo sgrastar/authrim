@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  anonymousDeviceLookupSubject,
-  passkeyCredentialLookupSubject,
-} from '../account-provisioning';
+import { guestDeviceLookupSubject, passkeyCredentialLookupSubject } from '../account-provisioning';
 
 describe('account provisioning routing subjects', () => {
   it('namespaces normalized passkey credentials by RP ID', () => {
@@ -27,12 +24,12 @@ describe('account provisioning routing subjects', () => {
   });
 
   it('uses an Authrim-owned issuer for already-HMACed anonymous device identifiers', () => {
-    expect(anonymousDeviceLookupSubject('a'.repeat(64))).toEqual({
-      issuer: 'urn:authrim:anonymous-device:v1',
+    expect(guestDeviceLookupSubject('a'.repeat(64))).toEqual({
+      issuer: 'urn:authrim:guest-device:v1',
       subject: 'a'.repeat(64),
     });
-    expect(() => anonymousDeviceLookupSubject('raw-device-id')).toThrow(
-      'anonymous_device_route_digest_invalid'
+    expect(() => guestDeviceLookupSubject('raw-device-id')).toThrow(
+      'guest_device_route_digest_invalid'
     );
   });
 });

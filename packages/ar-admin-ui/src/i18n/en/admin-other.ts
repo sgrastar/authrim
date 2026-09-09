@@ -1,4 +1,7 @@
 const adminOther = {
+	admin_registration_label: 'Registration',
+	admin_registration_guest: 'Guest',
+	admin_registration_registered: 'Registered',
 	admin_lifecycle_progressTitle: 'Guest lifecycle progress',
 	admin_lifecycle_progressHelp:
 		'Deletion runs hourly. Attempt status may be delayed and is retained for 30 days. Refresh to see current progress.',

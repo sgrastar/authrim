@@ -2,7 +2,7 @@ import type { Translation } from '../i18n-types';
 
 const translation = {
 	account_guestLogoutWarning:
-		'Çıkış yaptıktan sonra otomatik silme kapalı olsa bile bu misafir hesabına geri dönemezsiniz. Hesabınıza ve verilerinize erişimi korumak için önce kaydolun. Yine de çıkış yapılsın mı?',
+		'Çıkış yaptıktan sonra bu misafir hesabına geri dönemezsiniz. Hesabınıza ve verilerinize erişimi korumak için önce kaydolun. Yine de çıkış yapılsın mı?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

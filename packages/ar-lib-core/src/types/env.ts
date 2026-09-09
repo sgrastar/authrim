@@ -568,7 +568,7 @@ export interface Env {
 
   // Mock/Anonymous Authentication
   ENABLE_MOCK_AUTH?: string; // "true" to enable mock authentication (NEVER in production!)
-  ENABLE_ANONYMOUS_AUTH?: string; // "true" to enable device-based anonymous login
+  ENABLE_GUEST_DEVICE_AUTH?: string; // "true" to enable device-based anonymous login
 
   // ID-JAG (draft-ietf-oauth-identity-assertion-authz-grant)
   ENABLE_ID_JAG?: string; // "true" to enable ID-JAG token type in Token Exchange

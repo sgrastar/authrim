@@ -31,7 +31,7 @@ import {
   createErrorResponse,
   createTenantPlacementWriteFenceResponse,
   AR_ERROR_CODES,
-  isAnonymousAuthEnabled,
+  isGuestDeviceAuthEnabled,
   loadClientContractCached,
   // Event System
   publishEvent,
@@ -41,7 +41,7 @@ import {
   syncUserLifecycleState,
   resolveCustomClaimRuntimeSourcesFromEnv,
 } from '@authrim/ar-lib-core';
-import { removeAnonymousDeviceRoute } from './account-provisioning';
+import { removeGuestDeviceRoute } from './account-provisioning';
 
 function createCanonicalRuntimeUserStore(
   c: Context<{ Bindings: Env }>,
@@ -101,7 +101,7 @@ async function getAnonymousSession(
 
     // Verify session is anonymous
     // Browser guests use the durable, session-bound account-page upgrade protocol.
-    if (!session.data?.is_anonymous || session.data?.guest_resume_credential === true) {
+    if (!session.data?.is_guest_session || session.data?.guest_resume_credential === true) {
       return null;
     }
 
@@ -125,7 +125,7 @@ export async function upgradeHandler(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
 
     // Check feature flag
-    if (!(await isAnonymousAuthEnabled(c.env))) {
+    if (!(await isGuestDeviceAuthEnabled(c.env))) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
@@ -157,8 +157,8 @@ export async function upgradeHandler(c: Context<{ Bindings: Env }>) {
       clientId
     );
 
-    if (clientContract?.anonymousAuth?.allowedUpgradeMethods) {
-      const allowedMethods = clientContract.anonymousAuth.allowedUpgradeMethods;
+    if (clientContract?.guestAuth?.allowedUpgradeMethods) {
+      const allowedMethods = clientContract.guestAuth.allowedUpgradeMethods;
       if (!allowedMethods.includes(method)) {
         return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
       }
@@ -231,7 +231,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
 
     // Check feature flag
-    if (!(await isAnonymousAuthEnabled(c.env))) {
+    if (!(await isGuestDeviceAuthEnabled(c.env))) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
 
@@ -244,7 +244,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
     }
 
     const { session, sessionId } = sessionResult;
-    const anonymousUserId = session.userId;
+    const guestUserId = session.userId;
     const clientId = (session.data?.client_id as string) || '';
 
     const body = await c.req.json<{
@@ -287,8 +287,8 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       clientId
     );
     if (
-      clientContract?.anonymousAuth?.allowedUpgradeMethods &&
-      !clientContract.anonymousAuth.allowedUpgradeMethods.includes(method)
+      clientContract?.guestAuth?.allowedUpgradeMethods &&
+      !clientContract.guestAuth.allowedUpgradeMethods.includes(method)
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
@@ -346,7 +346,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       email = verifiedEmail;
 
       // Track OTP user for cleanup (if different from anonymous user)
-      if (verifiedEmailUserId && verifiedEmailUserId !== anonymousUserId) {
+      if (verifiedEmailUserId && verifiedEmailUserId !== guestUserId) {
         otpUserId = verifiedEmailUserId;
       }
     } else {
@@ -363,45 +363,51 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
     const authCtx = createAuthContextFromHono(c, tenantId);
     const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
     const now = Date.now();
-    const routedAnonymousDevices = await authCtx.coreAdapter.query<{
+    const routedGuestDevices = await authCtx.coreAdapter.query<{
       id: string;
       device_id_hash: string;
     }>(
-      `SELECT id, device_id_hash FROM anonymous_devices
+      `SELECT id, device_id_hash FROM guest_devices
             WHERE tenant_id = ? AND user_id = ? AND is_active = TRUE
             ORDER BY id LIMIT 65`,
-      [tenantId, anonymousUserId],
+      [tenantId, guestUserId],
       { consistencyClass: 'primary_required' }
     );
-    if (routedAnonymousDevices.length > 64) {
+    if (routedGuestDevices.length > 64) {
       throw new Error('anonymous_upgrade_device_limit_exceeded');
     }
 
-    const finalUserId = anonymousUserId;
+    const finalUserId = guestUserId;
     await runtimeUsers.syncUser({
-      userId: anonymousUserId,
+      userId: guestUserId,
       email: email?.toLowerCase() ?? null,
       name: name || null,
       active: true,
       emailVerified: method === 'email',
       userType: 'end_user',
-      sourceRef: 'anonymous_upgrade',
+      sourceRef: 'guest_upgrade',
       customAttributesJson: email
         ? JSON.stringify({ preferred_username: email.split('@')[0] })
         : null,
     });
 
+    await authCtx.coreAdapter.execute(
+      `UPDATE identity_accounts SET registration_state = 'registered'
+       WHERE tenant_id = ? AND legacy_user_id = ? AND registration_state = 'guest'`,
+      [tenantId, guestUserId]
+    );
+
     // Record upgrade history
     const upgradeId = generateId();
     await authCtx.coreAdapter.execute(
-      `INSERT INTO user_upgrades (
-        id, tenant_id, anonymous_user_id, upgraded_user_id,
+      `INSERT INTO guest_account_upgrades (
+        id, tenant_id, guest_user_id, upgraded_user_id,
         upgrade_method, provider_id, preserve_sub, upgraded_at, data_migrated
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         upgradeId,
         tenantId,
-        anonymousUserId,
+        guestUserId,
         finalUserId,
         method,
         provider_id || null,
@@ -413,13 +419,13 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
 
     // Deactivate anonymous device (no longer needed)
     await authCtx.coreAdapter.execute(
-      'UPDATE anonymous_devices SET is_active = 0 WHERE tenant_id = ? AND user_id = ?',
-      [tenantId, anonymousUserId]
+      'UPDATE guest_devices SET is_active = 0 WHERE tenant_id = ? AND user_id = ?',
+      [tenantId, guestUserId]
     );
-    for (const device of routedAnonymousDevices) {
-      await removeAnonymousDeviceRoute(c, {
+    for (const device of routedGuestDevices) {
+      await removeGuestDeviceRoute(c, {
         tenantId,
-        userId: anonymousUserId,
+        userId: guestUserId,
         deviceId: device.id,
         deviceIdHash: device.device_id_hash,
       });
@@ -454,7 +460,7 @@ export async function upgradeCompleteHandler(c: Context<{ Bindings: Env }>) {
       getTenantIdFromContext(c)
     );
     await sessionStore.updateSessionDataRpc(sessionId, {
-      is_anonymous: false,
+      is_guest_session: false,
       upgrade_eligible: false,
       upgraded_at: now,
       upgrade_method: method,
@@ -556,7 +562,7 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
     const authCtx = createAuthContextFromHono(c, tenantId);
     const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
     const user = await runtimeUsers.findById(session.userId, { includeInactive: true });
-    const isAnonymous = user?.account_type === 'anonymous';
+    const isAnonymous = user?.registration_state === 'guest';
     let missingRequiredCustomClaims: Array<{
       field_key: string;
       label: string;
@@ -596,15 +602,15 @@ export async function upgradeStatusHandler(c: Context<{ Bindings: Env }>) {
       preserve_sub: number;
     }>(
       `SELECT id, upgrade_method, upgraded_at, preserve_sub
-       FROM user_upgrades
-       WHERE tenant_id = ? AND (anonymous_user_id = ? OR upgraded_user_id = ?)
+       FROM guest_account_upgrades
+       WHERE tenant_id = ? AND (guest_user_id = ? OR upgraded_user_id = ?)
        ORDER BY upgraded_at DESC`,
       [tenantId, session.userId, session.userId]
     );
 
     return c.json({
       user_id: session.userId,
-      is_anonymous: isAnonymous,
+      registration_state: user?.registration_state ?? 'registered',
       upgrade_eligible: isAnonymous,
       profile_completion_required: profileCompletionRequired,
       missing_required_custom_claims: missingRequiredCustomClaims,

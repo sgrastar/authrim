@@ -2270,7 +2270,7 @@ async function handleAuthorizationCodeGrant(
       503
     );
   }
-  if (subjectAccount?.account_type === 'anonymous' || authCodeData.amr?.includes('anon')) {
+  if (subjectAccount?.registration_state === 'guest' || authCodeData.amr?.includes('anon')) {
     try {
       await assertGuestSessionAuthenticationAllowed(
         authCtx.coreAdapter,
@@ -2289,7 +2289,7 @@ async function handleAuthorizationCodeGrant(
       tenantId,
       client_id
     );
-    if (!areGuestScopesAllowed(guestClient?.anonymousAuth, authCodeData.scope ?? '')) {
+    if (!areGuestScopesAllowed(guestClient?.guestAuth, authCodeData.scope ?? '')) {
       return oauthError(
         c,
         'invalid_scope',
@@ -2385,19 +2385,6 @@ async function handleAuthorizationCodeGrant(
     log.error('Failed to evaluate ID-level permissions', {}, idLevelError as Error);
   }
 
-  // Anonymous user claims (architecture-decisions.md §17)
-  let anonymousClaims: { user_type?: string } = {};
-  try {
-    if (subjectAccount?.account_type === 'anonymous') {
-      anonymousClaims = {
-        user_type: 'anonymous',
-      };
-    }
-  } catch (anonError) {
-    // Log but don't fail - anonymous claims are optional
-    log.error('Failed to fetch anonymous user claims', {}, anonError as Error);
-  }
-
   // Phase 8.2: Custom Claims Evaluation
   let customClaims: Record<string, unknown> = {};
   try {
@@ -2463,8 +2450,6 @@ async function handleAuthorizationCodeGrant(
     ...accessTokenRBACClaims,
     // Phase 8.2: Add custom claims from rule evaluation
     ...customClaims,
-    // Anonymous user claims (architecture-decisions.md §17)
-    ...anonymousClaims,
     // Protocol claims are assigned last so no evaluated or derived claim can replace the grant.
     iss: getRequestIssuer(c),
     sub: authCodeData.sub,
@@ -2712,8 +2697,6 @@ async function handleAuthorizationCodeGrant(
     ...(dsHash && { ds_hash: dsHash }), // OIDC Native SSO 1.0: Device Secret Hash
     // Phase 1 RBAC: Add RBAC claims to ID token
     ...idTokenRBACClaims,
-    // Anonymous user claims (architecture-decisions.md §17)
-    ...anonymousClaims,
   };
 
   const shouldEvaluateIdTokenClaims =
@@ -3559,15 +3542,14 @@ async function handleRefreshTokenGrant(
     log.error('Failed to evaluate policy permissions for refresh token', {}, policyError as Error);
   }
 
-  // Anonymous user claims for refresh token flow (architecture-decisions.md §17)
-  let anonymousClaimsRefresh: { user_type?: string } = {};
+  // Revalidate guest authorization on refresh independently of public claim classification.
   try {
     const userAccount = await findCanonicalRuntimeAccount(
       authCtx.coreAdapter,
       tenantId,
       refreshTokenData.sub
     );
-    if (userAccount?.account_type === 'anonymous') {
+    if (userAccount?.registration_state === 'guest') {
       await assertGuestSessionAuthenticationAllowed(
         authCtx.coreAdapter,
         tenantId,
@@ -3580,7 +3562,7 @@ async function handleRefreshTokenGrant(
         tenantId,
         client_id
       );
-      if (!areGuestScopesAllowed(guestClient?.anonymousAuth, grantedScope ?? '')) {
+      if (!areGuestScopesAllowed(guestClient?.guestAuth, grantedScope ?? '')) {
         return oauthError(
           c,
           'invalid_scope',
@@ -3588,9 +3570,6 @@ async function handleRefreshTokenGrant(
           400
         );
       }
-      anonymousClaimsRefresh = {
-        user_type: 'anonymous',
-      };
     }
   } catch (anonError) {
     if (anonError instanceof Error && anonError.message === 'account_authentication_not_allowed')
@@ -3699,8 +3678,6 @@ async function handleRefreshTokenGrant(
       client_id: client_id,
       // Phase 2 RBAC: Add RBAC claims to access token
       ...accessTokenRBACClaims,
-      // Anonymous user claims (architecture-decisions.md §17)
-      ...anonymousClaimsRefresh,
     };
 
     // Phase 2 Policy Embedding: Add evaluated permissions
@@ -3745,8 +3722,6 @@ async function handleRefreshTokenGrant(
       at_hash: atHash,
       // Phase 2 RBAC: Add RBAC claims to ID token
       ...idTokenRBACClaims,
-      // Anonymous user claims (architecture-decisions.md §17)
-      ...anonymousClaimsRefresh,
     };
 
     const mappedIdTokenClaims = await applyOIDCIdentityMappingToIDTokenClaims(

@@ -1,3 +1,4 @@
+import type { AccountRegistrationState } from '../../services/guest-lifecycle';
 import type { DatabaseAdapter } from '../../db/adapter';
 import type {
   ContactPointRow,
@@ -57,8 +58,9 @@ export interface CanonicalRuntimeUserProjection {
   subject_id: string;
   account_id: string;
   account_type: string;
+  registration_state: AccountRegistrationState;
   lifecycle_state: string;
-  account_status: string;
+  status: string;
   suspended_at: number | null;
   suspended_until: number | null;
   locked_at: number | null;
@@ -419,8 +421,9 @@ export class CanonicalRuntimeUserProjectionRepository {
       subject_id: subject.id,
       account_id: account.id,
       account_type: account.account_type,
+      registration_state: account.registration_state,
       lifecycle_state: account.lifecycle_state,
-      account_status: accountStatusFromMetadata(account.lifecycle_state, accountMetadataObject),
+      status: accountStatusFromMetadata(account.lifecycle_state, accountMetadataObject),
       suspended_at: toNumberOrNull(accountMetadataObject.suspended_at),
       suspended_until: toNumberOrNull(accountMetadataObject.suspended_until),
       locked_at: toNumberOrNull(accountMetadataObject.locked_at),

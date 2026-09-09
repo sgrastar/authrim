@@ -3,7 +3,7 @@ import completion from './completion';
 
 const pt = createTranslation({
 	account_guestLogoutWarning:
-		'Ao sair, você não poderá voltar a esta conta de convidado, mesmo que a exclusão automática esteja desativada. Cadastre-se primeiro para manter o acesso à sua conta e aos seus dados. Sair mesmo assim?',
+		'Ao sair, você não poderá voltar a esta conta de convidado. Cadastre-se primeiro para manter o acesso à sua conta e aos seus dados. Sair mesmo assim?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

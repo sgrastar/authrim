@@ -30589,6 +30589,18 @@ type RootTranslation = {
 	 */
 	admin_control_plane_dismiss: string
 	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n
+	 */
+	admin_registration_label: string
+	/**
+	 * G​u​e​s​t
+	 */
+	admin_registration_guest: string
+	/**
+	 * R​e​g​i​s​t​e​r​e​d
+	 */
+	admin_registration_registered: string
+	/**
 	 * G​u​e​s​t​ ​l​i​f​e​c​y​c​l​e​ ​p​r​o​g​r​e​s​s
 	 */
 	admin_lifecycle_progressTitle: string
@@ -63819,6 +63831,18 @@ Remove this role from {email}?
 	 * Dismiss
 	 */
 	admin_control_plane_dismiss: () => LocalizedString
+	/**
+	 * Registration
+	 */
+	admin_registration_label: () => LocalizedString
+	/**
+	 * Guest
+	 */
+	admin_registration_guest: () => LocalizedString
+	/**
+	 * Registered
+	 */
+	admin_registration_registered: () => LocalizedString
 	/**
 	 * Guest lifecycle progress
 	 */

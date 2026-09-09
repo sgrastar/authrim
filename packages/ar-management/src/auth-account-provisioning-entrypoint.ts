@@ -1,6 +1,6 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import {
-  anonymousDeviceLookupSubject,
+  guestDeviceLookupSubject,
   GuestLifecycleRepository,
   directoryIdentityLookupSubject,
   createLogger,
@@ -11,10 +11,10 @@ import {
   resolveAccountDataContext,
   resolveAuthCorePersistenceAdapterFromEnv,
   type AuthAccountProvisioningInput,
-  type AuthAnonymousDeviceProvisioningInput,
+  type AuthGuestDeviceProvisioningInput,
   type AuthExternalIdpIdentityProvisioningInput,
-  type AuthAnonymousDeviceRouteRemovalInput,
-  type AuthAnonymousDeviceRouteRemovalResult,
+  type AuthGuestDeviceRouteRemovalInput,
+  type AuthGuestDeviceRouteRemovalResult,
   type AuthAccountProvisioningResult,
   type AuthAccountProvisioningStatusInput,
   type AuthAccountProvisioningStatusResult,
@@ -48,7 +48,7 @@ const SAFE_FIELD = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const IDEMPOTENCY_KEY = /^auth-account:[a-f0-9]{64}$/u;
 const PASSKEY_ROUTE_IDEMPOTENCY_KEY = /^auth-passkey-route:[a-f0-9]{64}$/u;
 const DIRECTORY_ROUTE_IDEMPOTENCY_KEY = /^auth-directory-route:[a-f0-9]{64}$/u;
-const ANONYMOUS_ROUTE_REMOVAL_IDEMPOTENCY_KEY = /^auth-anonymous-route-remove:[a-f0-9]{64}$/u;
+const GUEST_ROUTE_REMOVAL_IDEMPOTENCY_KEY = /^auth-guest-route-remove:[a-f0-9]{64}$/u;
 const EXTERNAL_IDP_ROUTE_IDEMPOTENCY_KEY = /^auth-external-idp-route:[a-f0-9]{64}$/u;
 const EXTERNAL_IDP_ROUTE_REMOVAL_IDEMPOTENCY_KEY = /^auth-external-idp-route-remove:[a-f0-9]{64}$/u;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
@@ -61,8 +61,8 @@ const FLOWS = new Set([
   'saml',
   'did',
   'test_stub',
-  'anonymous',
-  'anonymous_upgrade',
+  'guest',
+  'guest_upgrade',
 ]);
 const INPUT_KEYS = new Set([
   'schemaVersion',
@@ -73,7 +73,7 @@ const INPUT_KEYS = new Set([
   'flow',
   'email',
   'externalSubject',
-  'anonymousDevice',
+  'guestDevice',
   'externalIdentity',
   'runtimeUser',
 ]);
@@ -126,6 +126,7 @@ const RUNTIME_USER_KEYS = new Set([
   'emailVerified',
   'phoneNumberVerified',
   'userType',
+  'registrationState',
   'displayName',
   'locale',
   'zoneinfo',
@@ -160,7 +161,7 @@ const DIRECTORY_ROUTE_INPUT_KEYS = new Set([
   'connectorId',
   'directorySubject',
 ]);
-const ANONYMOUS_ROUTE_REMOVAL_INPUT_KEYS = new Set([
+const GUEST_ROUTE_REMOVAL_INPUT_KEYS = new Set([
   'schemaVersion',
   'operationId',
   'idempotencyKey',
@@ -423,20 +424,20 @@ function validateInput(value: unknown): AuthAccountProvisioningInput {
       typeof externalSubject.subject === 'string' &&
       externalSubject.subject.length >= 1 &&
       externalSubject.subject.length <= 2048);
-  const anonymousDevice = value.anonymousDevice;
-  const anonymousDeviceValid = validateAnonymousDevice(anonymousDevice);
+  const guestDevice = value.guestDevice;
+  const guestDeviceValid = validateGuestDevice(guestDevice);
   const externalIdentity = value.externalIdentity;
   const externalIdentityValid = validateExternalIdentity(externalIdentity);
-  const anonymousFlowValid =
-    value.flow === 'anonymous'
+  const guestFlowValid =
+    value.flow === 'guest'
       ? value.email === null &&
         jsonObject(externalSubject) &&
-        anonymousDeviceValid &&
-        externalSubject.issuer ===
-          anonymousDeviceLookupSubject(anonymousDevice.deviceIdHash).issuer &&
-        externalSubject.subject === anonymousDevice.deviceIdHash &&
-        runtimeUser.sourceRef === 'auth:anonymous' &&
-        runtimeUser.userType === 'anonymous' &&
+        guestDeviceValid &&
+        externalSubject.issuer === guestDeviceLookupSubject(guestDevice.deviceIdHash).issuer &&
+        externalSubject.subject === guestDevice.deviceIdHash &&
+        runtimeUser.sourceRef === 'auth:guest' &&
+        runtimeUser.userType === 'end_user' &&
+        runtimeUser.registrationState === 'guest' &&
         jsonObject(piiFields) &&
         piiEntries.length === 0 &&
         jsonObject(sensitiveValues) &&
@@ -453,7 +454,7 @@ function validateInput(value: unknown): AuthAccountProvisioningInput {
         piiFields.email === true &&
         jsonObject(sensitiveValues) &&
         sensitiveValues.email === value.email &&
-        (anonymousDevice === undefined || anonymousDevice === null)
+        (guestDevice === undefined || guestDevice === null)
       : false;
   const emailLessPasskeyFlowValid =
     value.flow === 'passkey' &&
@@ -463,7 +464,7 @@ function validateInput(value: unknown): AuthAccountProvisioningInput {
     piiFields.email !== true &&
     jsonObject(sensitiveValues) &&
     !Object.hasOwn(sensitiveValues, 'email') &&
-    (anonymousDevice === undefined || anonymousDevice === null);
+    (guestDevice === undefined || guestDevice === null);
   const externalIdpFlowValid =
     value.flow === 'external_idp'
       ? jsonObject(externalSubject) &&
@@ -474,8 +475,8 @@ function validateInput(value: unknown): AuthAccountProvisioningInput {
   if (
     runtimeUser.active !== true ||
     !externalSubjectValid ||
-    !anonymousFlowValid ||
-    !(value.flow === 'anonymous' || emailAccountFlowValid || emailLessPasskeyFlowValid) ||
+    !guestFlowValid ||
+    !(value.flow === 'guest' || emailAccountFlowValid || emailLessPasskeyFlowValid) ||
     !externalIdpFlowValid ||
     piiEntries.length > 32 ||
     piiEntries.some(
@@ -500,6 +501,10 @@ function validateInput(value: unknown): AuthAccountProvisioningInput {
     (runtimeUser.phoneNumberVerified !== undefined &&
       typeof runtimeUser.phoneNumberVerified !== 'boolean') ||
     !optionalString(runtimeUser.userType, 64) ||
+    (runtimeUser.registrationState !== undefined &&
+      runtimeUser.registrationState !== 'guest' &&
+      runtimeUser.registrationState !== 'registered') ||
+    (value.flow !== 'guest' && runtimeUser.registrationState === 'guest') ||
     !optionalString(runtimeUser.displayName, 512) ||
     !optionalString(runtimeUser.locale, 64) ||
     !optionalString(runtimeUser.zoneinfo, 128) ||
@@ -572,7 +577,7 @@ function validateGuestLifecycle(value: unknown): boolean {
   );
 }
 
-function validateAnonymousDevice(value: unknown): value is AuthAnonymousDeviceProvisioningInput {
+function validateGuestDevice(value: unknown): value is AuthGuestDeviceProvisioningInput {
   if (
     !jsonObject(value) ||
     Object.keys(value).filter((key) => key !== 'guestLifecycle').length !==
@@ -672,17 +677,17 @@ function validateDirectoryRouteInput(value: unknown): AuthDirectoryRoutePublicat
   return value as unknown as AuthDirectoryRoutePublicationInput;
 }
 
-function validateAnonymousRouteRemovalInput(value: unknown): AuthAnonymousDeviceRouteRemovalInput {
+function validateGuestRouteRemovalInput(value: unknown): AuthGuestDeviceRouteRemovalInput {
   boundedJson(value);
   if (
     !jsonObject(value) ||
-    Object.keys(value).length !== ANONYMOUS_ROUTE_REMOVAL_INPUT_KEYS.size ||
-    Object.keys(value).some((key) => !ANONYMOUS_ROUTE_REMOVAL_INPUT_KEYS.has(key)) ||
+    Object.keys(value).length !== GUEST_ROUTE_REMOVAL_INPUT_KEYS.size ||
+    Object.keys(value).some((key) => !GUEST_ROUTE_REMOVAL_INPUT_KEYS.has(key)) ||
     value.schemaVersion !== 1 ||
     typeof value.operationId !== 'string' ||
     !SAFE_ID.test(value.operationId) ||
     typeof value.idempotencyKey !== 'string' ||
-    !ANONYMOUS_ROUTE_REMOVAL_IDEMPOTENCY_KEY.test(value.idempotencyKey) ||
+    !GUEST_ROUTE_REMOVAL_IDEMPOTENCY_KEY.test(value.idempotencyKey) ||
     typeof value.tenantId !== 'string' ||
     !SAFE_ID.test(value.tenantId) ||
     !isCanonicalAccountIdForUser(value.accountId, value.userId) ||
@@ -690,10 +695,10 @@ function validateAnonymousRouteRemovalInput(value: unknown): AuthAnonymousDevice
     !SAFE_ID.test(value.deviceId) ||
     typeof value.deviceIdHash !== 'string'
   ) {
-    throw new Error('auth_anonymous_route_removal_input_invalid');
+    throw new Error('auth_guest_route_removal_input_invalid');
   }
-  anonymousDeviceLookupSubject(value.deviceIdHash);
-  return value as unknown as AuthAnonymousDeviceRouteRemovalInput;
+  guestDeviceLookupSubject(value.deviceIdHash);
+  return value as unknown as AuthGuestDeviceRouteRemovalInput;
 }
 
 function validateExternalIdpRouteInput(value: unknown): ExternalIdpRoutePublicationInput {
@@ -792,11 +797,11 @@ function internalDirectoryBinding(
   });
 }
 
-async function writeAnonymousDeviceAuthority(input: {
+async function writeGuestDeviceAuthority(input: {
   tenantCoreUsers: ReturnType<typeof ensureDatabaseAdapter>;
   tenantId: string;
   userId: string;
-  device: AuthAnonymousDeviceProvisioningInput;
+  device: AuthGuestDeviceProvisioningInput;
 }): Promise<void> {
   const now = Date.now();
   const expiresAt =
@@ -804,7 +809,7 @@ async function writeAnonymousDeviceAuthority(input: {
       ? null
       : now + input.device.expiresInDays * 24 * 60 * 60 * 1000;
   await input.tenantCoreUsers.execute(
-    `INSERT OR IGNORE INTO anonymous_devices (
+    `INSERT OR IGNORE INTO guest_devices (
        id, tenant_id, user_id, device_id_hash, installation_id_hash,
        fingerprint_hash, device_platform, device_stability,
        expires_at, created_at, last_used_at, is_active
@@ -833,7 +838,7 @@ async function writeAnonymousDeviceAuthority(input: {
   }>(
     `SELECT id, user_id, installation_id_hash, fingerprint_hash,
             device_platform, device_stability
-       FROM anonymous_devices
+       FROM guest_devices
       WHERE tenant_id = ? AND device_id_hash = ? AND is_active = TRUE`,
     [input.tenantId, input.device.deviceIdHash],
     { consistencyClass: 'primary_required' }
@@ -951,9 +956,7 @@ async function provisionValidatedAccount(
         ...(validated.externalSubject !== undefined
           ? { externalSubject: validated.externalSubject }
           : {}),
-        ...(validated.anonymousDevice !== undefined
-          ? { anonymousDevice: validated.anonymousDevice }
-          : {}),
+        ...(validated.guestDevice !== undefined ? { guestDevice: validated.guestDevice } : {}),
         runtimeUser: validated.runtimeUser,
       }),
       candidateOperationId: validated.operationId,
@@ -973,12 +976,12 @@ async function provisionValidatedAccount(
           runtimeUser: validated.runtimeUser,
         });
         const userId = writeContext.publication.accountId.slice('account:'.length);
-        if (validated.flow === 'anonymous' && validated.anonymousDevice) {
-          await writeAnonymousDeviceAuthority({
+        if (validated.flow === 'guest' && validated.guestDevice) {
+          await writeGuestDeviceAuthority({
             tenantCoreUsers: writeContext.tenantCoreUsers,
             tenantId: validated.tenantId,
             userId,
-            device: validated.anonymousDevice,
+            device: validated.guestDevice,
           });
         }
         if (validated.flow === 'external_idp' && validated.externalIdentity) {
@@ -1312,22 +1315,20 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
     }
   }
 
-  async removeAuthAnonymousDeviceRoute(
-    input: unknown
-  ): Promise<AuthAnonymousDeviceRouteRemovalResult> {
+  async removeAuthGuestDeviceRoute(input: unknown): Promise<AuthGuestDeviceRouteRemovalResult> {
     try {
       const environmentId = authorized(this.ctx.props, this.env);
-      const validated = validateAnonymousRouteRemovalInput(input);
+      const validated = validateGuestRouteRemovalInput(input);
       const context = await resolveAccountDataContext(this.env, {
         tenantId: validated.tenantId,
         accountId: validated.accountId,
       });
       if (context.accountId !== validated.accountId || context.legacyUserId !== validated.userId) {
-        throw new Error('auth_anonymous_route_removal_account_mismatch');
+        throw new Error('auth_guest_route_removal_account_mismatch');
       }
       const tenantCoreUsers = ensureDatabaseAdapter(
         context.coreDb,
-        'auth-anonymous-route-removal-tenant-core-users'
+        'auth-guest-route-removal-tenant-core-users'
       );
       const device = await tenantCoreUsers.queryOne<{
         id: string;
@@ -1335,7 +1336,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         device_id_hash: string;
         is_active: number | boolean;
       }>(
-        `SELECT id, user_id, device_id_hash, is_active FROM anonymous_devices
+        `SELECT id, user_id, device_id_hash, is_active FROM guest_devices
           WHERE id = ? AND tenant_id = ? AND user_id = ?`,
         [validated.deviceId, validated.tenantId, validated.userId],
         { consistencyClass: 'primary_required' }
@@ -1348,7 +1349,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         device.is_active === true ||
         device.is_active === 1
       ) {
-        throw new Error('auth_anonymous_route_removal_authority_active');
+        throw new Error('auth_guest_route_removal_authority_active');
       }
       const result = await publishAccountExternalSubjectRemoval(
         this.env,
@@ -1357,7 +1358,7 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
           idempotencyKey: validated.idempotencyKey,
           tenantId: validated.tenantId,
           accountId: validated.accountId,
-          externalSubject: anonymousDeviceLookupSubject(validated.deviceIdHash),
+          externalSubject: guestDeviceLookupSubject(validated.deviceIdHash),
           routeProjection: context.membership.routeProjection,
         },
         {
@@ -1376,13 +1377,13 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
     } catch (error) {
       if (
         error instanceof Error &&
-        /^(auth_account_provisioning_rpc_caller_unauthorized|auth_anonymous_route_removal_(input_invalid|account_mismatch|authority_active)|anonymous_device_route_digest_invalid|account_identifier_removal_[a-z0-9_]+|directory_[a-z0-9_]+)$/u.test(
+        /^(auth_account_provisioning_rpc_caller_unauthorized|auth_guest_route_removal_(input_invalid|account_mismatch|authority_active)|guest_device_route_digest_invalid|account_identifier_removal_[a-z0-9_]+|directory_[a-z0-9_]+)$/u.test(
           error.message
         )
       ) {
         throw new Error(error.message);
       }
-      throw new Error('auth_anonymous_route_removal_internal_error');
+      throw new Error('auth_guest_route_removal_internal_error');
     }
   }
 

@@ -1,11 +1,11 @@
 import type { DatabaseAdapter } from '../db/adapter';
-import { getGuestDeletionDueAt } from '../services/guest-lifecycle';
+import { getGuestDeletionDueAt, type GuestLifecyclePhase } from '../services/guest-lifecycle';
 
 export interface GuestLifecycleRow {
   tenant_id: string;
   user_id: string;
   client_id: string;
-  phase: 'active' | 'upgrading' | 'registered' | 'deleting' | 'deleted';
+  phase: GuestLifecyclePhase;
   created_at: number;
   deletion_due_at: number | null;
   policy_version: string;
@@ -52,7 +52,7 @@ export class GuestLifecycleRepository {
         (tenant_id, user_id, client_id, created_at, deletion_due_at, policy_version, updated_at)
        SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS
         (SELECT 1 FROM identity_accounts WHERE tenant_id = ? AND legacy_user_id = ?
-         AND account_type = 'anonymous' AND deleted_at IS NULL)
+         AND account_type = 'user' AND registration_state = 'guest' AND deleted_at IS NULL)
        ON CONFLICT (tenant_id, user_id) DO NOTHING`,
       [
         this.tenantId,
@@ -136,13 +136,25 @@ export class GuestLifecycleRepository {
   }
 
   async completeUpgrade(userId: string, operationId: string, now: number): Promise<boolean> {
-    const result = await this.db.execute(
-      `UPDATE guest_account_lifecycle SET phase = 'registered', deletion_due_at = NULL,
-        upgraded_at = ?, revision = revision + 1, updated_at = ?
-       WHERE tenant_id = ? AND user_id = ? AND phase = 'upgrading' AND upgrade_operation_id = ?`,
-      [now, now, this.tenantId, userId, operationId]
-    );
-    return result.rowsAffected === 1;
+    const results = await this.db.batch([
+      {
+        sql: `UPDATE identity_accounts SET registration_state = 'registered', updated_at = ?
+          WHERE tenant_id = ? AND legacy_user_id = ? AND registration_state = 'guest'
+          AND EXISTS (SELECT 1 FROM guest_account_lifecycle
+            WHERE tenant_id = ? AND user_id = ? AND phase = 'upgrading'
+              AND upgrade_operation_id = ?)`,
+        params: [now, this.tenantId, userId, this.tenantId, userId, operationId],
+      },
+      {
+        sql: `UPDATE guest_account_lifecycle SET phase = 'registered', deletion_due_at = NULL,
+          upgraded_at = ?, revision = revision + 1, updated_at = ?
+          WHERE tenant_id = ? AND user_id = ? AND phase = 'upgrading' AND upgrade_operation_id = ?
+          AND EXISTS (SELECT 1 FROM identity_accounts WHERE tenant_id = ? AND legacy_user_id = ?
+            AND registration_state = 'registered')`,
+        params: [now, now, this.tenantId, userId, operationId, this.tenantId, userId],
+      },
+    ]);
+    return results[1].rowsAffected === 1;
   }
 
   async acknowledgeUpgrade(userId: string, operationId: string, now: number): Promise<void> {

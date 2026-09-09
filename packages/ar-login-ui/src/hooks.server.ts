@@ -19,6 +19,7 @@ import {
 	getRememberedTenantHost,
 	normalizeTenantHost
 } from '$lib/discovery-session';
+import { getAuthConfig } from '$lib/auth';
 import type { AuthenticationMethodsResponse } from '$lib/api/authentication-methods';
 import {
 	getCachedAuthenticationMethods,
@@ -1186,6 +1187,19 @@ const csrfHandle: Handle = async ({ event, resolve }) => {
 	return resolve(event);
 };
 
+export function resolveAuthenticationMethodsClientId(
+	url: URL,
+	challengeTarget: { valid: boolean; clientId: string | null } | null | undefined,
+	directClientId: string
+): string | null {
+	if (challengeTarget) return challengeTarget.valid ? challengeTarget.clientId : null;
+	return url.pathname === '/login' &&
+		!url.searchParams.has('challenge_id') &&
+		!url.searchParams.has('saml_request_id')
+		? directClientId
+		: null;
+}
+
 const loginUIThemeBootstrapHandle: Handle = async ({ event, resolve }) => {
 	const platformEnv = getPlatformEnv(event);
 	if (shouldBootstrapLoginUIThemeForRequest(event, platformEnv)) {
@@ -1203,7 +1217,7 @@ const loginUIThemeBootstrapHandle: Handle = async ({ event, resolve }) => {
 			fetchAuthenticationMethodsForPageRequest(
 				event,
 				platformEnv,
-				challengeTarget?.valid ? challengeTarget.clientId : null
+				resolveAuthenticationMethodsClientId(event.url, challengeTarget, getAuthConfig().clientId)
 			),
 			accountPageInitialPromise
 		]);

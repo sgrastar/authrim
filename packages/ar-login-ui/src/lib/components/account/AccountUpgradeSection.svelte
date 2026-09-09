@@ -28,7 +28,7 @@
 		const result = await accountAPI.getGuestUpgrade();
 		if (result.data) {
 			const recovered =
-				status?.account_kind === 'guest' && result.data.account_kind === 'registered';
+				status?.registration_state === 'guest' && result.data.registration_state === 'registered';
 			status = result.data;
 			if (recovered && !completed) {
 				completed = true;
@@ -114,7 +114,7 @@
 
 {#if completed}
 	<p role="status">{$LL.account_guestRegistered()}</p>
-{:else if status?.account_kind === 'guest'}
+{:else if status?.registration_state === 'guest'}
 	<section class="guest-registration" aria-busy={busy}>
 		<h2>{title || $LL.account_guestTitle()}</h2>
 		<p>{$LL.account_guestDescription()}</p>

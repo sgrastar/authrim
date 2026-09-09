@@ -2,7 +2,7 @@ import { createTranslation } from '../create-translation';
 
 const ar = createTranslation({
 	account_guestLogoutWarning:
-		'بعد تسجيل الخروج، لن تتمكن من العودة إلى حساب الضيف هذا، حتى إذا كان الحذف التلقائي معطلاً. سجّل حسابك أولاً للاحتفاظ بإمكانية الوصول إلى حسابك وبياناتك. هل تريد تسجيل الخروج على أي حال؟',
+		'بعد تسجيل الخروج، لن تتمكن من العودة إلى حساب الضيف هذا. سجّل حسابك أولاً للاحتفاظ بإمكانية الوصول إلى حسابك وبياناتك. هل تريد تسجيل الخروج على أي حال؟',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

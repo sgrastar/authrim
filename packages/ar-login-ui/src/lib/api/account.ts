@@ -1,3 +1,4 @@
+import type { AccountRegistrationState } from '@authrim/ar-lib-core';
 import { buildDiagnosticHeaders, type APIError } from '$lib/api/client';
 import { authrimFetch } from '$lib/authrim/fetch';
 import type {
@@ -325,7 +326,8 @@ async function accountFetch<T>(endpoint: string, options: RequestInit = {}): Acc
 }
 
 export type GuestUpgradeStatus = {
-	account_kind: 'guest' | 'registered';
+	registration_state: AccountRegistrationState;
+	status: string;
 	deletion_due_at: number | null;
 	upgrade_hold_until: number | null;
 	upgrade_eligible: boolean;

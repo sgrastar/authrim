@@ -2,7 +2,7 @@ import type { BaseTranslation } from '../i18n-types';
 
 const en = {
 	account_guestLogoutWarning:
-		'Logging out will prevent you from returning to this guest account, even if automatic deletion is disabled. Register first to keep access to your account and data. Log out anyway?',
+		'Logging out will prevent you from returning to this guest account. Register first to keep access to your account and data. Log out anyway?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date:string}.',

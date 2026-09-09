@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { Env } from '@authrim/ar-lib-core';
 const mocks = vi.hoisted(() => ({
+  directClient: vi.fn(),
   challenge: vi.fn(),
   humanVerification: vi.fn(),
   storeProof: vi.fn(),
@@ -42,24 +43,36 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   generateBrowserState: async () => 'browser-state',
 }));
 vi.mock('../account-provisioning', () => ({
-  provisionAnonymousAccount: mocks.provision,
-  resolveAnonymousAccountRoute: mocks.route,
+  provisionGuestAccount: mocks.provision,
+  resolveGuestAccountRoute: mocks.route,
 }));
 vi.mock('../human-verification', () => ({
   verifyHumanVerificationForAction: mocks.humanVerification,
 }));
+vi.mock('../direct-auth', () => ({
+  getDirectAuthWebAuthnOrigin: (_c: unknown, origin?: string) => origin,
+  validateDirectAuthClient: mocks.directClient,
+}));
 vi.mock('../session-ttl', () => ({ resolveSessionTtl: async () => ({ seconds: 3600 }) }));
 import { guestLoginHandler, guestResumeHash } from '../guest-login';
 
-function request(cookie?: string) {
+function request(
+  cookie?: string,
+  body: Record<string, unknown> = { authorizationChallengeId: 'login-challenge' },
+  origin = 'https://login.example.com'
+) {
   const app = new Hono<{ Bindings: Env }>();
   app.post('/api/auth/guest/login', guestLoginHandler);
   return app.request(
     '/api/auth/guest/login',
     {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...(cookie ? { cookie } : {}) },
-      body: JSON.stringify({ authorizationChallengeId: 'login-challenge' }),
+      headers: {
+        'content-type': 'application/json',
+        ...(cookie ? { cookie } : {}),
+        ...(origin ? { origin } : {}),
+      },
+      body: JSON.stringify(body),
     },
     {} as Env
   );
@@ -68,6 +81,7 @@ function request(cookie?: string) {
 describe('browser guest login', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.directClient.mockResolvedValue({ valid: true });
     mocks.humanVerification.mockResolvedValue(null);
     mocks.challenge.mockResolvedValue({
       type: 'login',
@@ -82,7 +96,7 @@ describe('browser guest login', () => {
       policyVersion: 'v1',
     });
     mocks.contract.mockResolvedValue({
-      anonymousAuth: { enabled: true, allowedScopes: ['openid'] },
+      guestAuth: { enabled: true, allowedScopes: ['openid'] },
     });
     mocks.route.mockResolvedValue({ legacyUserId: 'guest-a' });
     mocks.query.mockResolvedValue({ user_id: 'guest-a', created_at: Date.now() - 1000 });
@@ -91,9 +105,64 @@ describe('browser guest login', () => {
       client_id: 'client-a',
       deletion_due_at: 1,
     });
-    mocks.user.mockResolvedValue({ account_type: 'anonymous' });
+    mocks.user.mockResolvedValue({ account_type: 'user', registration_state: 'guest' });
     mocks.getSession.mockResolvedValue(null);
     mocks.createSession.mockResolvedValue(undefined);
+  });
+  it('creates a direct browser session using the validated client without an OAuth grant', async () => {
+    const response = await request(undefined, { clientId: 'client-a' });
+    expect(response.status).toBe(200);
+    expect(mocks.directClient).toHaveBeenCalledWith(
+      expect.anything(),
+      'client-a',
+      'browser',
+      'https://login.example.com'
+    );
+    expect(mocks.contract).toHaveBeenCalledWith(
+      expect.anything(),
+      undefined,
+      expect.anything(),
+      'tenant-a',
+      'client-a'
+    );
+    expect(mocks.createSession).toHaveBeenCalledWith(
+      'session-a',
+      'guest-a',
+      3600,
+      expect.objectContaining({ client_id: 'client-a', is_guest_session: true }),
+      'tenant-a'
+    );
+    expect(await response.json()).toEqual({ success: true });
+  });
+  it('rejects direct requests without a browser origin before provisioning', async () => {
+    expect((await request(undefined, { clientId: 'client-a' }, '')).status).toBe(403);
+    expect(mocks.directClient).not.toHaveBeenCalled();
+    expect(mocks.route).not.toHaveBeenCalled();
+  });
+  it('rejects a disallowed or cross-tenant direct client before provisioning', async () => {
+    mocks.directClient.mockResolvedValue({
+      valid: false,
+      errorResponse: new Response(null, { status: 403 }),
+    });
+    expect((await request(undefined, { clientId: 'client-b' })).status).toBe(403);
+    expect(mocks.contract).not.toHaveBeenCalled();
+    expect(mocks.route).not.toHaveBeenCalled();
+  });
+  it.each([null, '', 1, 'expired-challenge'])(
+    'never falls back to direct login for an invalid supplied challenge: %j',
+    async (authorizationChallengeId) => {
+      mocks.challenge.mockResolvedValue(null);
+      expect(
+        (await request(undefined, { clientId: 'client-a', authorizationChallengeId })).status
+      ).toBeGreaterThanOrEqual(400);
+      expect(mocks.directClient).not.toHaveBeenCalled();
+      expect(mocks.route).not.toHaveBeenCalled();
+    }
+  );
+  it('requires explicit openid permission for direct guest sessions', async () => {
+    mocks.contract.mockResolvedValue({ guestAuth: { enabled: true, allowedScopes: [] } });
+    expect((await request(undefined, { clientId: 'client-a', scope: 'email' })).status).toBe(400);
+    expect(mocks.route).not.toHaveBeenCalled();
   });
   it('creates a session from a secret credential even after the deletion eligibility time', async () => {
     const response = await request(`authrim_guest_resume=${'a'.repeat(64)}`);
@@ -107,7 +176,7 @@ describe('browser guest login', () => {
       'guest-a',
       3600,
       expect.objectContaining({
-        is_anonymous: true,
+        is_guest_session: true,
         client_id: 'client-a',
         guest_resume_credential: true,
       }),
@@ -154,19 +223,19 @@ describe('browser guest login', () => {
     expect((await request()).status).toBeGreaterThanOrEqual(400);
     expect(mocks.route).not.toHaveBeenCalled();
     mocks.settings.mockResolvedValue({ loginEnabled: true });
-    mocks.contract.mockResolvedValue({ anonymousAuth: { enabled: false } });
+    mocks.contract.mockResolvedValue({ guestAuth: { enabled: false } });
     expect((await request()).status).toBeGreaterThanOrEqual(400);
     expect(mocks.route).not.toHaveBeenCalled();
   });
   it('rejects scopes outside the anonymous allow-list', async () => {
-    mocks.contract.mockResolvedValue({ anonymousAuth: { enabled: true, allowedScopes: [] } });
+    mocks.contract.mockResolvedValue({ guestAuth: { enabled: true, allowedScopes: [] } });
     expect((await request()).status).toBe(400);
     expect(mocks.createSession).not.toHaveBeenCalled();
   });
   it('does not replace a registered browser session', async () => {
     mocks.getSession.mockResolvedValue({
       expiresAt: Date.now() + 10000,
-      data: { is_anonymous: false },
+      data: { is_guest_session: false },
     });
     expect((await request('authrim_session=registered-session')).status).toBe(409);
     expect(mocks.route).not.toHaveBeenCalled();

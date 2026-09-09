@@ -1609,7 +1609,7 @@ type RootTranslation = {
 
 export type TranslationFunctions = {
 	/**
-	 * Logging out will prevent you from returning to this guest account, even if automatic deletion is disabled. Register first to keep access to your account and data. Log out anyway?
+	 * Logging out will prevent you from returning to this guest account. Register first to keep access to your account and data. Log out anyway?
 	 */
 	account_guestLogoutWarning: () => LocalizedString
 	/**

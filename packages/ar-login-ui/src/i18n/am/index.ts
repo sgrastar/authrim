@@ -2,7 +2,7 @@ import type { Translation } from '../i18n-types';
 
 const translation = {
 	account_guestLogoutWarning:
-		'ከወጡ በኋላ ራስ-ሰር መሰረዝ ቢሰናከልም ወደዚህ የእንግዳ መለያ መመለስ አይችሉም። የመለያዎን እና የውሂብዎን መዳረሻ ለማቆየት መጀመሪያ ይመዝገቡ። ያም ሆኖ መውጣት ይፈልጋሉ?',
+		'ከወጡ በኋላ ወደዚህ የእንግዳ መለያ መመለስ አይችሉም። የመለያዎን እና የውሂብዎን መዳረሻ ለማቆየት መጀመሪያ ይመዝገቡ። ያም ሆኖ መውጣት ይፈልጋሉ?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

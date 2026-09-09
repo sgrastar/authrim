@@ -17,8 +17,8 @@ describe('guest upgrade admission and crash recovery', () => {
     allowed.mockResolvedValue(true);
     commit.mockResolvedValue(undefined);
     db = new DatabaseSync(':memory:');
-    db.exec(`CREATE TABLE identity_accounts (tenant_id TEXT, legacy_user_id TEXT, account_type TEXT, deleted_at INTEGER);
-      INSERT INTO identity_accounts VALUES ('tenant', 'guest', 'anonymous', NULL);`);
+    db.exec(`CREATE TABLE identity_accounts (tenant_id TEXT, legacy_user_id TEXT, account_type TEXT, deleted_at INTEGER, registration_state TEXT, updated_at INTEGER);
+      INSERT INTO identity_accounts VALUES ('tenant', 'guest', 'user', NULL, 'guest', 0);`);
     for (const [family, name] of [
       ['core', 'guest_account_lifecycle'],
       ['pii', 'guest_upgrade_operations'],
@@ -31,6 +31,20 @@ describe('guest upgrade admission and crash recovery', () => {
       );
     }
     const adapter = {
+      async batch(statements: Array<{ sql: string; params?: unknown[] }>) {
+        db.exec('BEGIN');
+        try {
+          const results = statements.map(({ sql, params = [] }) => ({
+            success: true,
+            rowsAffected: Number(db.prepare(sql).run(...(params as SQLInputValue[])).changes),
+          }));
+          db.exec('COMMIT');
+          return results;
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      },
       async execute(sql: string, values: unknown[] = []) {
         return {
           success: true,

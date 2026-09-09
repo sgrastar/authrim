@@ -12,10 +12,10 @@ describe.each(['d1', 'postgresql'])('guest lifecycle conditional SQL (%s schema)
   beforeEach(() => {
     sqlite = new DatabaseSync(':memory:');
     sqlite.exec(`CREATE TABLE identity_accounts (
-      tenant_id TEXT, legacy_user_id TEXT, account_type TEXT, deleted_at INTEGER);
-      INSERT INTO identity_accounts VALUES ('tenant-1', 'guest-1', 'anonymous', NULL);
-      INSERT INTO identity_accounts VALUES ('tenant-2', 'guest-1', 'anonymous', NULL);
-      INSERT INTO identity_accounts VALUES ('tenant-1', 'device-1', 'device', NULL);`);
+      tenant_id TEXT, legacy_user_id TEXT, account_type TEXT, deleted_at INTEGER, registration_state TEXT, updated_at INTEGER);
+      INSERT INTO identity_accounts VALUES ('tenant-1', 'guest-1', 'user', NULL, 'guest', 0);
+      INSERT INTO identity_accounts VALUES ('tenant-2', 'guest-1', 'user', NULL, 'guest', 0);
+      INSERT INTO identity_accounts VALUES ('tenant-1', 'device-1', 'device', NULL, 'registered', 0);`);
     sqlite.exec(
       readFileSync(
         new URL(
@@ -46,8 +46,19 @@ describe.each(['d1', 'postgresql'])('guest lifecycle conditional SQL (%s schema)
       async transaction() {
         throw new Error('not_used');
       },
-      async batch() {
-        throw new Error('not_used');
+      async batch(statements) {
+        sqlite.exec('BEGIN');
+        try {
+          const results = statements.map(({ sql, params: values }) => ({
+            success: true,
+            rowsAffected: Number(sqlite.prepare(sql).run(...params(values)).changes),
+          }));
+          sqlite.exec('COMMIT');
+          return results;
+        } catch (error) {
+          sqlite.exec('ROLLBACK');
+          throw error;
+        }
       },
       async isHealthy() {
         return { healthy: true, latencyMs: 0, type: 'sqlite' };
@@ -134,6 +145,40 @@ describe.each(['d1', 'postgresql'])('guest lifecycle conditional SQL (%s schema)
       deletion_due_at: null,
     });
     expect(await repository.listDeletionCandidates(999999)).toEqual([]);
+  });
+
+  it('rolls back the stored registration if lifecycle commit fails', async () => {
+    await repository.enroll(enrollment);
+    await repository.beginUpgrade('guest-1', 'upgrade-1', 1000, 1600);
+    sqlite.exec(`CREATE TRIGGER fail_registration BEFORE UPDATE OF phase ON guest_account_lifecycle
+      WHEN NEW.phase = 'registered' BEGIN SELECT RAISE(ABORT, 'commit_failed'); END;`);
+    await expect(repository.completeUpgrade('guest-1', 'upgrade-1', 1001)).rejects.toThrow(
+      'commit_failed'
+    );
+    expect(
+      sqlite
+        .prepare(
+          'SELECT registration_state FROM identity_accounts WHERE tenant_id = ? AND legacy_user_id = ?'
+        )
+        .get('tenant-1', 'guest-1')
+    ).toMatchObject({ registration_state: 'guest' });
+    expect(await repository.get('guest-1')).toMatchObject({ phase: 'upgrading' });
+    sqlite.exec('DROP TRIGGER fail_registration');
+    expect(await repository.completeUpgrade('guest-1', 'upgrade-1', 1002)).toBe(true);
+    expect(
+      sqlite
+        .prepare(
+          'SELECT registration_state FROM identity_accounts WHERE tenant_id = ? AND legacy_user_id = ?'
+        )
+        .get('tenant-1', 'guest-1')
+    ).toMatchObject({ registration_state: 'registered' });
+    expect(
+      sqlite
+        .prepare(
+          'SELECT registration_state FROM identity_accounts WHERE tenant_id = ? AND legacy_user_id = ?'
+        )
+        .get('tenant-2', 'guest-1')
+    ).toMatchObject({ registration_state: 'guest' });
   });
 
   it('retains deletion ownership across retries and fences other tenants', async () => {

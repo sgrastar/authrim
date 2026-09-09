@@ -513,7 +513,8 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
       description: >-
-        List canonical runtime users in the current tenant with optional search, verification, PII
+        Includes regular and guest (anonymous) accounts. Sharded browsing excludes administrator
+        and service accounts. List canonical runtime users with optional search, verification, PII
         status, and lifecycle filters. Sharded assignments use bounded fan-out and an opaque
         cursor. Exact identifier search resolves one account route through Lookup instead of
         scanning all shards. A cursor whose signed shard-set generation is stale returns
@@ -2664,7 +2665,8 @@ paths:
           $ref: '#/components/responses/Error'
       description: >-
         Replace Profile in the Clients area. The request body is JSON unless the detailed schema for
-        this operation states otherwise. profile.anonymousAuth controls guest access for this client:
+        this operation states otherwise. Successful client profile saves invalidate the tenant authentication-methods cache.
+        profile.guestAuth controls guest access for this client:
         enabled (boolean, default false), allowedScopes (unique OAuth scope strings including openid),
         allowedUpgradeMethods (unique email/passkey values), preserveSubOnUpgrade (must be true),
         allowPromptNone (boolean), and deviceStability (session/installation/device).
@@ -2673,6 +2675,9 @@ paths:
         being requested and allowed by the regular client authorization policy.
         Legacy expiresInDays applies only to legacy device credentials; human guest retention is
         controlled by the tenant account-lifecycle settings.
+        A guest-only update (guestAuth as the only profile field) initializes the standard
+        tenant policy when none exists, after validation succeeds. Existing tenant policies remain
+        unchanged and are enforced. Policy read failures return 503 without initializing defaults.
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -5916,18 +5921,18 @@ paths:
           $ref: '#/components/responses/Error'
         '409':
           $ref: '#/components/responses/Error'
-  /api/admin/anonymous-users:
+  /api/admin/guest-users:
     get:
       tags:
         - Admin Miscellaneous
-      operationId: getApiAdminAnonymousUsers
-      summary: List anonymous users.
+      operationId: getApiAdminGuestUsers
+      summary: List guest users.
       description: >-
-        Lists anonymous-device backed users for the current tenant, excluding expired/inactive
+        Lists guest-device backed users for the current tenant, excluding expired/inactive
         devices unless requested.
       responses:
         '200':
-          $ref: '#/components/responses/AnonymousUserList'
+          $ref: '#/components/responses/GuestUserList'
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -5958,22 +5963,22 @@ paths:
         - name: include_expired
           in: query
           required: false
-          description: Include expired or inactive anonymous devices.
+          description: Include expired or inactive guest devices.
           schema:
             type: boolean
             default: false
-  '/api/admin/anonymous-users/{id}':
+  '/api/admin/guest-users/{id}':
     delete:
       tags:
         - Admin Miscellaneous
-      operationId: deleteApiAdminAnonymousUsersById
-      summary: Delete an anonymous user.
+      operationId: deleteApiAdminGuestUsersById
+      summary: Delete an guest user.
       description: >-
-        Deletes an anonymous user and all anonymous devices for that user. Upgrade history is
+        Deletes an guest user and all guest devices for that user. Upgrade history is
         preserved for audit purposes. An active account legal hold rejects deletion with 409.
       responses:
         '200':
-          $ref: '#/components/responses/AnonymousUserDelete'
+          $ref: '#/components/responses/GuestUserDelete'
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -5997,14 +6002,14 @@ paths:
     get:
       tags:
         - Admin Miscellaneous
-      operationId: getApiAdminAnonymousUsersById
-      summary: Get an anonymous user.
+      operationId: getApiAdminGuestUsersById
+      summary: Get an guest user.
       description: >-
-        Returns an anonymous user, its anonymous devices, and the latest upgrade summary when
-        present. Non-anonymous users are rejected.
+        Returns an guest user, its guest devices, and the latest upgrade summary when
+        present. Non-guest users are rejected.
       responses:
         '200':
-          $ref: '#/components/responses/AnonymousUserDetail'
+          $ref: '#/components/responses/GuestUserDetail'
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -6023,18 +6028,18 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  '/api/admin/anonymous-users/{id}/upgrades':
+  '/api/admin/guest-users/{id}/upgrades':
     get:
       tags:
         - Admin Miscellaneous
-      operationId: getApiAdminAnonymousUsersByIdUpgrades
-      summary: List anonymous user upgrades.
+      operationId: getApiAdminGuestUsersByIdUpgrades
+      summary: List guest user upgrades.
       description: >-
         Returns upgrade-history records where the supplied user id was either the anonymous source
         user or upgraded target user.
       responses:
         '200':
-          $ref: '#/components/responses/AnonymousUserUpgradeList'
+          $ref: '#/components/responses/GuestUserUpgradeList'
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -6051,18 +6056,18 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/anonymous-users/cleanup:
+  /api/admin/guest-users/cleanup:
     post:
       tags:
         - Admin Miscellaneous
-      operationId: postApiAdminAnonymousUsersCleanup
-      summary: Clean up expired anonymous users.
+      operationId: postApiAdminGuestUsersCleanup
+      summary: Clean up expired guest users.
       description: >-
-        Finds expired anonymous devices and optionally deletes the associated anonymous users. The
+        Finds expired guest devices and optionally deletes the associated guest users. The
         default dry-run mode reports what would be removed without mutating data.
       responses:
         '200':
-          $ref: '#/components/responses/AnonymousUserCleanup'
+          $ref: '#/components/responses/GuestUserCleanup'
         '400':
           $ref: '#/components/responses/Error'
         '401':
@@ -6070,7 +6075,7 @@ paths:
         '403':
           $ref: '#/components/responses/Error'
       requestBody:
-        $ref: '#/components/requestBodies/AnonymousUserCleanup'
+        $ref: '#/components/requestBodies/GuestUserCleanup'
       security:
         - adminBearer: []
         - adminSessionCookie: []
@@ -13558,6 +13563,9 @@ paths:
       operationId: postApiAdminJobsUsersImport
       summary: Create a user import job.
       description: >-
+        Registration state is read-only: CSV registration_state and user_type=anonymous are rejected.
+        Updating an existing guest with user_type=end_user preserves guest registration; promotion
+        requires the account upgrade flow.
         Queues a users/import job for an already uploaded CSV artifact. The handler verifies tenant
         ownership, content type, size, checksum, and import options before creating the pending job.
       responses:
@@ -18693,14 +18701,14 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/settings/anonymous-auth:
+  /api/admin/settings/guest-auth:
     get:
       tags:
         - Settings - General
       operationId: getApiAdminSettingsAnonymousAuth
-      summary: Get anonymous auth settings
+      summary: Get guest auth settings
       description: >-
-        Returns anonymous authentication enablement, default anonymous-device expiration, cleanup
+        Returns guest authentication enablement, default guest-device expiration, cleanup
         interval, and configuration source.
       responses:
         '200':
@@ -18719,9 +18727,9 @@ paths:
       tags:
         - Settings - General
       operationId: putApiAdminSettingsAnonymousAuth
-      summary: Update anonymous auth settings
+      summary: Update guest auth settings
       description: >-
-        Updates anonymous authentication feature flag and related cleanup/expiration settings in
+        Updates guest authentication feature flag and related cleanup/expiration settings in
         AUTHRIM_CONFIG.
       responses:
         '200':
@@ -31849,12 +31857,12 @@ components:
             permissions:
               - 'admin:admin_roles:read'
               - 'admin:admin_audit:read'
-    AnonymousUserCleanup:
+    GuestUserCleanup:
       required: false
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/AnonymousUserCleanupRequest'
+            $ref: '#/components/schemas/GuestUserCleanupRequest'
           example:
             dry_run: true
             limit: 100
@@ -33035,7 +33043,7 @@ components:
             enabled: true
             default_expires_in_days: 30
             cleanup_interval_hours: 24
-      description: Anonymous authentication configuration patch.
+      description: Guest authentication configuration patch.
     AdminSettingsAssuranceLevelsUpdate:
       required: true
       content:
@@ -36217,36 +36225,36 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/AdminManagementPermissionCatalogResponse'
-    AnonymousUserList:
+    GuestUserList:
       description: Anonymous user list response.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/AnonymousUserListResponse'
-    AnonymousUserDetail:
+            $ref: '#/components/schemas/GuestUserListResponse'
+    GuestUserDetail:
       description: Anonymous user detail response.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/AnonymousUserDetailResponse'
-    AnonymousUserDelete:
+            $ref: '#/components/schemas/GuestUserDetailResponse'
+    GuestUserDelete:
       description: Anonymous user deletion response.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/AnonymousUserDeleteResponse'
-    AnonymousUserUpgradeList:
+            $ref: '#/components/schemas/GuestUserDeleteResponse'
+    GuestUserUpgradeList:
       description: Anonymous user upgrade history response.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/AnonymousUserUpgradeListResponse'
-    AnonymousUserCleanup:
+            $ref: '#/components/schemas/GuestUserUpgradeListResponse'
+    GuestUserCleanup:
       description: Anonymous user cleanup response.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/AnonymousUserCleanupResponse'
+            $ref: '#/components/schemas/GuestUserCleanupResponse'
     UserAttributeList:
       description: User verified attribute list response.
       content:
@@ -46150,6 +46158,7 @@ components:
         last_token_issued_at: 1770000000000
     AdminUserCreate:
       type: object
+      description: registration_state cannot be supplied. user_type=anonymous is rejected; guest accounts must be created through guest login. Registration is managed by the account registration and upgrade flows.
       additionalProperties:
         oneOf:
           - type: string
@@ -46320,6 +46329,11 @@ components:
             - PROFILE
         phone_number_verified:
           type: boolean
+        registration_state:
+          type: string
+          enum: [guest, registered]
+          readOnly: true
+          description: Human registration state, independent of operational status. Present for human accounts.
         user_type:
           type: string
         is_active:
@@ -46699,6 +46713,7 @@ components:
         revokedAfterMs: 1770000000000
     AdminUserUpdate:
       type: object
+      description: Registration state is read-only. A guest remains a guest when its public end_user classification is saved; registration changes require the account upgrade flow.
       additionalProperties:
         oneOf:
           - type: string
@@ -48594,6 +48609,10 @@ components:
               default: false
     AdminJobUserBulkUpdateRequest:
       type: object
+      description: >-
+        user_type=end_user filters include both guest and registered humans.
+        Use registration_state=guest or registration_state=registered to narrow the filter.
+        Registration state is read-only and cannot be included in update fields.
       additionalProperties: false
       required:
         - fields
@@ -48607,6 +48626,15 @@ components:
         filter:
           type: object
           additionalProperties: true
+          properties:
+            registration_state:
+              type: string
+              enum: [guest, registered]
+              description: Registration state based on the committed guest lifecycle phase.
+            user_type:
+              type: string
+              enum: [end_user, admin, m2m]
+              description: end_user includes both guest and registered humans.
         values:
           type: object
           additionalProperties: true
@@ -50603,7 +50631,7 @@ components:
         total_pages:
           type: integer
           minimum: 0
-    AnonymousUserListItem:
+    GuestUserListItem:
       type: object
       additionalProperties: false
       required:
@@ -50641,7 +50669,7 @@ components:
           format: int64
         is_active:
           type: boolean
-    AnonymousUserListResponse:
+    GuestUserListResponse:
       type: object
       additionalProperties: false
       required:
@@ -50662,8 +50690,8 @@ components:
         users:
           type: array
           items:
-            $ref: '#/components/schemas/AnonymousUserListItem'
-    AnonymousUserDevice:
+            $ref: '#/components/schemas/GuestUserListItem'
+    GuestUserDevice:
       type: object
       additionalProperties: false
       required:
@@ -50698,7 +50726,7 @@ components:
           format: int64
         is_active:
           type: boolean
-    AnonymousUserUpgrade:
+    GuestUserUpgrade:
       type: object
       additionalProperties: false
       required:
@@ -50709,7 +50737,7 @@ components:
       properties:
         id:
           type: string
-        anonymous_user_id:
+        guest_user_id:
           type: string
         upgraded_user_id:
           type: string
@@ -50726,12 +50754,13 @@ components:
           type: boolean
         data_migrated:
           type: boolean
-    AnonymousUserDetailResponse:
+    GuestUserDetailResponse:
       type: object
       additionalProperties: false
       required:
         - user_id
         - user_type
+        - registration_state
         - created_at
         - devices
         - upgrade
@@ -50741,7 +50770,10 @@ components:
         user_type:
           type: string
           enum:
-            - anonymous
+            - end_user
+        registration_state:
+          type: string
+          enum: [guest]
         created_at:
           type: integer
           format: int64
@@ -50753,12 +50785,12 @@ components:
         devices:
           type: array
           items:
-            $ref: '#/components/schemas/AnonymousUserDevice'
+            $ref: '#/components/schemas/GuestUserDevice'
         upgrade:
           oneOf:
-            - $ref: '#/components/schemas/AnonymousUserUpgrade'
+            - $ref: '#/components/schemas/GuestUserUpgrade'
             - type: 'null'
-    AnonymousUserDeleteResponse:
+    GuestUserDeleteResponse:
       type: object
       additionalProperties: false
       required:
@@ -50772,7 +50804,7 @@ components:
           type: string
         note:
           type: string
-    AnonymousUserUpgradeListResponse:
+    GuestUserUpgradeListResponse:
       type: object
       additionalProperties: false
       required:
@@ -50784,8 +50816,8 @@ components:
         upgrades:
           type: array
           items:
-            $ref: '#/components/schemas/AnonymousUserUpgrade'
-    AnonymousUserCleanupRequest:
+            $ref: '#/components/schemas/GuestUserUpgrade'
+    GuestUserCleanupRequest:
       type: object
       additionalProperties: false
       properties:
@@ -50796,7 +50828,7 @@ components:
           type: integer
           minimum: 1
           maximum: 1000
-    AnonymousUserCleanupResponse:
+    GuestUserCleanupResponse:
       oneOf:
         - type: object
           additionalProperties: false

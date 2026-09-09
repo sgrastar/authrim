@@ -20,7 +20,7 @@ describe('client guest policy API', () => {
 			Response.json({
 				profile: {
 					version: 4,
-					anonymousAuth: {
+					guestAuth: {
 						enabled: true,
 						preserveSubOnUpgrade: false,
 						allowedScopes: ['openid'],
@@ -40,8 +40,19 @@ describe('client guest policy API', () => {
 		});
 	});
 	it('sends the selected tenant, profile revision, and only the guest policy', async () => {
-		request.mockResolvedValueOnce(new Response(null, { status: 204 }));
-		await adminClientGuestAPI.save('client/1', 'tenant', 4, defaultClientGuestPolicy());
+		request.mockResolvedValueOnce(
+			Response.json({
+				profile: { version: 5, guestAuth: { ...defaultClientGuestPolicy(), enabled: true } }
+			})
+		);
+		const saved = await adminClientGuestAPI.save(
+			'client/1',
+			'tenant',
+			4,
+			defaultClientGuestPolicy()
+		);
+		expect(saved).toMatchObject({ version: 5, policy: { enabled: true } });
+		expect(request).toHaveBeenCalledTimes(1);
 		expect(request).toHaveBeenCalledWith(
 			'/api/admin/clients/client%2F1/profile',
 			expect.objectContaining({
@@ -49,7 +60,7 @@ describe('client guest policy API', () => {
 				tenantId: 'tenant',
 				body: JSON.stringify({
 					ifMatch: '4',
-					profile: { anonymousAuth: defaultClientGuestPolicy() }
+					profile: { guestAuth: defaultClientGuestPolicy() }
 				})
 			})
 		);

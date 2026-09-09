@@ -3,7 +3,7 @@ import completion from './completion';
 
 const fr = createTranslation({
 	account_guestLogoutWarning:
-		'Après la déconnexion, vous ne pourrez plus accéder à ce compte invité, même si la suppression automatique est désactivée. Inscrivez-vous pour conserver votre accès au compte et aux données. Se déconnecter quand même ?',
+		'Après la déconnexion, vous ne pourrez plus accéder à ce compte invité. Inscrivez-vous pour conserver votre accès au compte et aux données. Se déconnecter quand même ?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

@@ -715,14 +715,14 @@ import {
   clearAllOAuthConfig,
 } from './routes/settings/oauth-config';
 import {
-  getAnonymousAuthConfig,
-  updateAnonymousAuthConfig,
-  listAnonymousUsers,
-  getAnonymousUser,
-  getAnonymousUserUpgrades,
-  deleteAnonymousUser,
-  cleanupExpiredAnonymousUsers,
-} from './routes/settings/anonymous-auth';
+  getGuestAuthConfig,
+  updateGuestAuthConfig,
+  listGuestUsers,
+  getGuestUser,
+  getGuestUserUpgrades,
+  deleteGuestUser,
+  cleanupExpiredGuestUsers,
+} from './routes/settings/guest-auth';
 import { getPolicyFlags, updatePolicyFlag, clearPolicyFlag } from './routes/settings/policy-flags';
 import {
   getCheckApiAuditSettings,
@@ -2302,14 +2302,14 @@ app.delete('/api/admin/settings/oauth-config', clearAllOAuthConfig);
 
 // Anonymous Authentication Admin API (architecture-decisions.md §17)
 // Configuration
-app.get('/api/admin/settings/anonymous-auth', getAnonymousAuthConfig);
-app.put('/api/admin/settings/anonymous-auth', updateAnonymousAuthConfig);
+app.get('/api/admin/settings/guest-auth', getGuestAuthConfig);
+app.put('/api/admin/settings/guest-auth', updateGuestAuthConfig);
 // User Management
-app.get('/api/admin/anonymous-users', listAnonymousUsers);
-app.get('/api/admin/anonymous-users/:id', getAnonymousUser);
-app.get('/api/admin/anonymous-users/:id/upgrades', getAnonymousUserUpgrades);
-app.delete('/api/admin/anonymous-users/:id', deleteAnonymousUser);
-app.post('/api/admin/anonymous-users/cleanup', cleanupExpiredAnonymousUsers);
+app.get('/api/admin/guest-users', listGuestUsers);
+app.get('/api/admin/guest-users/:id', getGuestUser);
+app.get('/api/admin/guest-users/:id/upgrades', getGuestUserUpgrades);
+app.delete('/api/admin/guest-users/:id', deleteGuestUser);
+app.post('/api/admin/guest-users/cleanup', cleanupExpiredGuestUsers);
 
 // [DEPRECATED] Admin PII Encryption Configuration
 // → Migrate to: /api/admin/platform/settings/encryption

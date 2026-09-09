@@ -275,7 +275,7 @@ export const WORKER_DEPLOYMENT_DEPENDENCIES: Record<WorkerComponent, readonly Wo
   'ar-bridge': ['ar-lib-core', 'ar-plugin-runner'],
   'ar-discovery': ['ar-lib-core'],
   'ar-token': ['ar-lib-core'],
-  'ar-userinfo': ['ar-lib-core'],
+  'ar-userinfo': ['ar-lib-core', 'ar-management'],
   'ar-async': ['ar-lib-core'],
   'ar-policy': ['ar-lib-core', 'ar-plugin-runner'],
   'ar-saml': ['ar-lib-core', 'ar-plugin-runner'],
@@ -303,19 +303,10 @@ export const WORKER_DEPLOYMENT_DEPENDENCIES: Record<WorkerComponent, readonly Wo
  */
 export const DEPLOYMENT_LEVELS: WorkerComponent[][] = [
   ['ar-lib-core', 'ar-control', 'ar-plugin-runner'],
-  [
-    'ar-bridge',
-    'ar-discovery',
-    'ar-token',
-    'ar-userinfo',
-    'ar-async',
-    'ar-policy',
-    'ar-saml',
-    'ar-vc',
-  ],
+  ['ar-bridge', 'ar-discovery', 'ar-token', 'ar-async', 'ar-policy', 'ar-saml', 'ar-vc'],
   ['ar-auth'],
   ['ar-management'],
-  ['ar-agent-access'],
+  ['ar-agent-access', 'ar-userinfo'],
   ['ar-router'],
 ];
 

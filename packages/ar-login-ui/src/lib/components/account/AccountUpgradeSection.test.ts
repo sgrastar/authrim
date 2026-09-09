@@ -4,7 +4,8 @@ import { setLocale } from '$i18n/i18n-svelte';
 import type { GuestUpgradeStatus } from '$lib/api/account';
 import AccountUpgradeSection from './AccountUpgradeSection.svelte';
 const guest: GuestUpgradeStatus = {
-	account_kind: 'guest',
+	registration_state: 'guest',
+	status: 'active',
 	deletion_due_at: 1800000000,
 	upgrade_hold_until: null,
 	upgrade_eligible: true,
@@ -32,7 +33,7 @@ describe('account guest registration widget', () => {
 	});
 	it('does not render guest controls for registered accounts', () => {
 		const { body } = render(AccountUpgradeSection, {
-			props: { initialStatus: { ...guest, account_kind: 'registered' } }
+			props: { initialStatus: { ...guest, registration_state: 'registered' } }
 		});
 		expect(body).not.toContain('guest-registration');
 		expect(body).not.toContain('automatic deletion');

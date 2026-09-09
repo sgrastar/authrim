@@ -4,9 +4,9 @@ import type { Env, StoreChallengeRequest } from '@authrim/ar-lib-core';
 import {
   accountProvisioningStatusHandler,
   publishPasskeyRoute,
-  provisionAnonymousAccount,
+  provisionGuestAccount,
   provisionEmailAccount,
-  removeAnonymousDeviceRoute,
+  removeGuestDeviceRoute,
 } from '../account-provisioning';
 
 const TENANT_ID = 'tenant-a';
@@ -52,7 +52,7 @@ function context(options: {
           operationId: 'passkey-route-passkey-a',
           accountId: 'account:user-a',
         }),
-      removeAuthAnonymousDeviceRoute:
+      removeAuthGuestDeviceRoute:
         options.removeAnonymous ??
         vi.fn().mockResolvedValue({
           status: 201,
@@ -261,32 +261,33 @@ describe('routed account provisioning resume boundary', () => {
       expiresInDays: 30,
     };
 
-    await provisionAnonymousAccount(c, {
+    await provisionGuestAccount(c, {
       tenantId: TENANT_ID,
       candidateUserId: 'candidate-a',
       device,
     });
-    await provisionAnonymousAccount(c, {
+    await provisionGuestAccount(c, {
       tenantId: TENANT_ID,
       candidateUserId: 'candidate-b',
       device,
     });
 
     expect(provision.mock.calls[0][0]).toMatchObject({
-      flow: 'anonymous',
+      flow: 'guest',
       email: null,
       externalSubject: {
-        issuer: 'urn:authrim:anonymous-device:v1',
+        issuer: 'urn:authrim:guest-device:v1',
         subject: device.deviceIdHash,
       },
-      anonymousDevice: {
-        id: `anonymous-device-${device.deviceIdHash.slice(0, 32)}`,
+      guestDevice: {
+        id: `guest-device-${device.deviceIdHash.slice(0, 32)}`,
         ...device,
       },
       runtimeUser: {
         active: true,
-        userType: 'anonymous',
-        sourceRef: 'auth:anonymous',
+        userType: 'end_user',
+        registrationState: 'guest',
+        sourceRef: 'auth:guest',
         piiFields: {},
         sensitiveValues: {},
       },
@@ -334,7 +335,7 @@ describe('routed account provisioning resume boundary', () => {
     const { c } = context({ removeAnonymous, routedAccount: true });
 
     await expect(
-      removeAnonymousDeviceRoute(c, {
+      removeGuestDeviceRoute(c, {
         tenantId: TENANT_ID,
         userId: 'user-a',
         deviceId: 'device-a',
@@ -344,7 +345,7 @@ describe('routed account provisioning resume boundary', () => {
     expect(removeAnonymous).toHaveBeenCalledWith(
       expect.objectContaining({
         operationId: 'anonymous-route-remove-device-a',
-        idempotencyKey: expect.stringMatching(/^auth-anonymous-route-remove:[a-f0-9]{64}$/u),
+        idempotencyKey: expect.stringMatching(/^auth-guest-route-remove:[a-f0-9]{64}$/u),
         accountId: 'account:user-a',
         deviceIdHash: 'd'.repeat(64),
       })

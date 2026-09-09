@@ -133,7 +133,7 @@ describe('account guest upgrade API', () => {
       userId: 'guest',
       tenantId: 'tenant',
       expiresAt: Date.now() + 600000,
-      data: { client_id: 'client', is_anonymous: true },
+      data: { client_id: 'client', is_guest_session: true },
     });
     mocks.lifecycle.mockResolvedValue({
       phase: 'active',
@@ -149,13 +149,37 @@ describe('account guest upgrade API', () => {
       upgradeMethods: ['email', 'passkey'],
     });
     mocks.contract.mockResolvedValue({
-      anonymousAuth: { allowedUpgradeMethods: ['email', 'passkey'] },
+      guestAuth: { allowedUpgradeMethods: ['email', 'passkey'] },
     });
     mocks.notification.mockResolvedValue({ delivery: 'pending' });
     mocks.commit.mockResolvedValue('completed');
     mocks.reserve.mockResolvedValue({ reservedCount: 1 });
     mocks.verifyEmail.mockResolvedValue(false);
     mocks.missing.mockResolvedValue([]);
+    mocks.userRead.mockResolvedValue({
+      tenant_id: 'tenant',
+      account_type: 'user',
+      registration_state: 'guest',
+      status: 'active',
+    });
+  });
+  it.each(['active', 'upgrading', 'registered'])(
+    'returns the unified registration contract for %s',
+    async (phase) => {
+      mocks.lifecycle.mockResolvedValue({ phase, client_id: 'client', deletion_due_at: null });
+      const response = await getAccountGuestUpgradeHandler(context());
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toMatchObject({
+        status: 'active',
+        registration_state: phase === 'registered' ? 'registered' : 'guest',
+      });
+      expect(body).not.toHaveProperty('account_kind');
+    }
+  );
+  it('rejects a user projection from another tenant', async () => {
+    mocks.userRead.mockResolvedValue({ tenant_id: 'other', status: 'active' });
+    expect((await getAccountGuestUpgradeHandler(context())).status).toBe(409);
   });
   it('keeps deadline visible when upgrade is disabled', async () => {
     mocks.settings.mockResolvedValue({
@@ -192,8 +216,8 @@ describe('account guest upgrade API', () => {
       if (expected)
         expect(mocks.updateSession).toHaveBeenCalledWith(
           'session',
-          expect.objectContaining({ is_anonymous: false, amr: ['otp'], authTime: 1234 }),
-          { onlyIfAnonymous: true }
+          expect.objectContaining({ is_guest_session: false, amr: ['otp'], authTime: 1234 }),
+          { onlyIfGuestSession: true }
         );
     }
   );
@@ -305,7 +329,7 @@ describe('account guest upgrade API', () => {
     expect(mocks.lifecycle).not.toHaveBeenCalled();
   });
   it('rejects disabled methods before proof creation', async () => {
-    mocks.contract.mockResolvedValue({ anonymousAuth: { allowedUpgradeMethods: ['passkey'] } });
+    mocks.contract.mockResolvedValue({ guestAuth: { allowedUpgradeMethods: ['passkey'] } });
     expect(
       (
         await startAccountGuestUpgradeHandler(
@@ -366,7 +390,7 @@ describe('account guest upgrade API', () => {
       userId: 'guest',
       tenantId: 'tenant',
       expiresAt: Date.now() + 600000,
-      data: { client_id: 'client', is_anonymous: false, authTime: 456, amr: ['webauthn'] },
+      data: { client_id: 'client', is_guest_session: false, authTime: 456, amr: ['webauthn'] },
     });
     const result = await completeAccountGuestUpgradeHandler(
       context({ operation_id: 'op', upgrade_token: token })
@@ -388,7 +412,7 @@ describe('account guest upgrade API', () => {
     expect(mocks.updateSession).toHaveBeenCalledWith(
       'session',
       expect.objectContaining({ authTime: 123, upgraded_at: 123000 }),
-      { onlyIfAnonymous: true }
+      { onlyIfGuestSession: true }
     );
   });
   it('retains the subject and clears guest resume authentication after completion', async () => {
@@ -400,11 +424,11 @@ describe('account guest upgrade API', () => {
     expect(mocks.updateSession).toHaveBeenCalledWith(
       'session',
       expect.objectContaining({
-        is_anonymous: false,
+        is_guest_session: false,
         guest_resume_credential: false,
         amr: ['otp'],
       }),
-      { onlyIfAnonymous: true }
+      { onlyIfGuestSession: true }
     );
   });
   it('commits verified email to the same account and synchronizes incomplete profile independently', async () => {
@@ -415,7 +439,8 @@ describe('account guest upgrade API', () => {
     };
     mocks.operation.mockResolvedValue(op);
     mocks.userRead.mockResolvedValue({
-      account_type: 'anonymous',
+      account_type: 'user',
+      registration_state: 'guest',
       name: 'Guest',
       email: null,
       email_verified: 0,
@@ -447,11 +472,11 @@ describe('account guest upgrade API', () => {
       expect.objectContaining({ tenantId: 'tenant', userId: 'guest' })
     );
     expect(mocks.execute).toHaveBeenCalledWith(
-      expect.stringContaining('UPDATE anonymous_devices SET is_active = FALSE'),
+      expect.stringContaining('UPDATE guest_devices SET is_active = FALSE'),
       ['tenant', 'guest']
     );
     expect(mocks.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO user_upgrades'),
+      expect.stringContaining('INSERT INTO guest_account_upgrades'),
       expect.arrayContaining(['op', 'tenant', 'guest', 'guest', 'email'])
     );
     expect(mocks.audit).toHaveBeenCalledWith(
@@ -519,11 +544,17 @@ describe('guest upgrade prerequisite admission', () => {
       upgradeMethods: ['email', 'passkey'],
     });
     mocks.contract.mockResolvedValue({
-      anonymousAuth: { allowedUpgradeMethods: ['email', 'passkey'] },
+      guestAuth: { allowedUpgradeMethods: ['email', 'passkey'] },
     });
     mocks.origin.mockReturnValue('https://login.example.org');
     mocks.deliveryReady.mockResolvedValue(true);
     mocks.missing.mockResolvedValue([]);
+    mocks.userRead.mockResolvedValue({
+      tenant_id: 'tenant',
+      account_type: 'user',
+      registration_state: 'guest',
+      status: 'active',
+    });
   });
   it.each(['secret', 'delivery', 'origin'])(
     'hides unavailable %s and rejects start before acquiring a hold',

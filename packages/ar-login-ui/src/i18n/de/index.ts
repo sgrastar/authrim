@@ -3,7 +3,7 @@ import completion from './completion';
 
 const de = createTranslation({
 	account_guestLogoutWarning:
-		'Nach dem Abmelden können Sie nicht zu diesem Gastkonto zurückkehren, auch wenn die automatische Löschung deaktiviert ist. Registrieren Sie sich zuerst, um den Zugriff auf Ihr Konto und Ihre Daten zu behalten. Trotzdem abmelden?',
+		'Nach dem Abmelden können Sie nicht zu diesem Gastkonto zurückkehren. Registrieren Sie sich zuerst, um den Zugriff auf Ihr Konto und Ihre Daten zu behalten. Trotzdem abmelden?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

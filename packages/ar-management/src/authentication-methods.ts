@@ -2501,7 +2501,7 @@ export async function getAuthenticationMethodsHandler(c: Context<{ Bindings: Env
     const guestClient = requestedClientId
       ? await loadClientContractCached(c, env.AUTHRIM_CONFIG, env, tenantId, requestedClientId)
       : null;
-    const guestEnabled = guestSettings.loginEnabled && guestClient?.anonymousAuth?.enabled === true;
+    const guestEnabled = guestSettings.loginEnabled && guestClient?.guestAuth?.enabled === true;
 
     // Check if at least one method is available
     if (

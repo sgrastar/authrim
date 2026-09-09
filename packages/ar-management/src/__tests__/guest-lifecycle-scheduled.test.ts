@@ -71,11 +71,11 @@ describe('hourly guest deletion state transitions', () => {
     vi.clearAllMocks();
     mocks.events.length = 0;
     db = new DatabaseSync(':memory:');
-    db.exec(`CREATE TABLE identity_accounts (tenant_id TEXT, legacy_user_id TEXT, account_type TEXT, deleted_at INTEGER);
-    INSERT INTO identity_accounts VALUES ('tenant', 'guest', 'anonymous', NULL);
-    CREATE TABLE anonymous_devices (tenant_id TEXT, user_id TEXT);
-    INSERT INTO anonymous_devices VALUES ('tenant', 'guest');
-    INSERT INTO anonymous_devices VALUES ('other', 'guest');
+    db.exec(`CREATE TABLE identity_accounts (tenant_id TEXT, legacy_user_id TEXT, account_type TEXT, deleted_at INTEGER, registration_state TEXT, updated_at INTEGER);
+    INSERT INTO identity_accounts VALUES ('tenant', 'guest', 'user', NULL, 'guest', 0);
+    CREATE TABLE guest_devices (tenant_id TEXT, user_id TEXT);
+    INSERT INTO guest_devices VALUES ('tenant', 'guest');
+    INSERT INTO guest_devices VALUES ('other', 'guest');
     CREATE TABLE passkeys (tenant_id TEXT, user_id TEXT);`);
     db.exec(
       readFileSync(
@@ -298,7 +298,7 @@ describe('hourly guest deletion state transitions', () => {
       'audit',
     ]);
     expect(await lifecycle.get('guest')).toMatchObject({ phase: 'deleted', deleted_at: 90000 });
-    expect(db.prepare('SELECT * FROM anonymous_devices').all()).toEqual([
+    expect(db.prepare('SELECT * FROM guest_devices').all()).toEqual([
       { tenant_id: 'other', user_id: 'guest' },
     ]);
     expect(mocks.audit).toHaveBeenCalledWith(

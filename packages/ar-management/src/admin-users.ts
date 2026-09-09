@@ -6,6 +6,8 @@ import {
   CanonicalRuntimeUserWriter,
   CanonicalSensitiveValueResolver,
   TombstoneRepository,
+  GuestLifecycleRepository,
+  resolveAccountRegistrationState,
   invalidateUserCache,
   getTenantIdFromContext,
   getTenantMetadataContextFromHono,
@@ -143,9 +145,6 @@ function userTypeFromAccountType(accountType: string): string {
   if (accountType === 'service_account') {
     return 'm2m';
   }
-  if (accountType === 'anonymous') {
-    return 'anonymous';
-  }
   return 'end_user';
 }
 
@@ -278,10 +277,15 @@ function buildCanonicalPiiDeletionPatch(): Record<string, null> {
   };
 }
 
-function formatCanonicalAdminUser(
+async function formatCanonicalAdminUser(
+  core: DatabaseAdapter,
   projection: CanonicalRuntimeUserProjection,
   sessionLastLoginAt: number | null = null
 ) {
+  const lifecycle =
+    projection.account_type === 'user'
+      ? await new GuestLifecycleRepository(core, projection.tenant_id).get(projection.id)
+      : null;
   const address = addressPartsFromProjection(projection);
   const createdAt = Date.parse(projection.created_at);
   const updatedAt = Date.parse(projection.updated_at);
@@ -313,13 +317,21 @@ function formatCanonicalAdminUser(
     email_verified: projection.email_verified,
     phone_number_verified: projection.phone_number_verified,
     user_type: userTypeFromAccountType(projection.account_type),
+    ...(projection.account_type === 'user'
+      ? {
+          registration_state: resolveAccountRegistrationState(
+            projection.registration_state,
+            lifecycle?.phase
+          ),
+        }
+      : {}),
     is_active: projection.active,
     pii_partition: 'default',
-    pii_status: projection.account_status === 'deleted' ? 'deleted' : 'active',
+    pii_status: projection.status === 'deleted' ? 'deleted' : 'active',
     created_at: Number.isFinite(createdAt) ? createdAt : null,
     updated_at: Number.isFinite(updatedAt) ? updatedAt : null,
     last_login_at: toMilliseconds(lastLoginAt),
-    status: projection.account_status,
+    status: projection.status,
     suspended_at: toMilliseconds(projection.suspended_at),
     suspended_until: toMilliseconds(projection.suspended_until),
     locked_at: toMilliseconds(projection.locked_at),
@@ -388,7 +400,7 @@ async function projectCrossShardAdminUser(
       WHERE tenant_id = ? AND user_id = ?`,
     [tenantId, projection.id]
   );
-  return formatCanonicalAdminUser(projection, latestSession?.last_login_at ?? null);
+  return formatCanonicalAdminUser(core, projection, latestSession?.last_login_at ?? null);
 }
 
 async function crossShardAdminUsersList(
@@ -862,11 +874,17 @@ export async function adminUsersListHandler(c: Context<{ Bindings: Env }>) {
 
     const total = filteredUsers.length;
     const totalPages = Math.ceil(total / limit);
-    const formattedUsers = filteredUsers
-      .slice(offset, offset + limit)
-      .map((projection) =>
-        formatCanonicalAdminUser(projection, sessionLastLoginByUserId.get(projection.id) ?? null)
-      );
+    const formattedUsers = await Promise.all(
+      filteredUsers
+        .slice(offset, offset + limit)
+        .map((projection) =>
+          formatCanonicalAdminUser(
+            authCtx.coreAdapter,
+            projection,
+            sessionLastLoginByUserId.get(projection.id) ?? null
+          )
+        )
+    );
 
     return c.json({
       users: formattedUsers,
@@ -997,7 +1015,8 @@ export async function adminUserGetHandler(c: Context<{ Bindings: Env }>) {
     });
     const missingRequiredFields = requiredViolations.users[0]?.missingRequiredFields ?? [];
 
-    const formattedUser = formatCanonicalAdminUser(
+    const formattedUser = await formatCanonicalAdminUser(
+      authCtx.coreAdapter,
       projection,
       latestSession?.last_login_at ?? null
     );
@@ -1130,6 +1149,24 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
       phone_number_verified,
       user_type,
     } = body;
+    if (body.registration_state !== undefined) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'registration_state is read-only; use the account upgrade flow',
+        },
+        400
+      );
+    }
+    if (body.user_type === 'anonymous') {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Guest accounts must be created through the guest login flow',
+        },
+        400
+      );
+    }
     const customFieldInput = extractCustomClaimInput(body, ADMIN_USER_CREATE_RESERVED_FIELDS);
 
     const emailValidation = normalizeAdminEmailInput(email);
@@ -1303,7 +1340,12 @@ export async function adminUserCreateHandler(c: Context<{ Bindings: Env }>) {
     const createdProjection = await projectionRepository.findByLegacyUserId(
       result.operation.userId
     );
-    const createdUser = createdProjection ? formatCanonicalAdminUser(createdProjection) : null;
+    const createdUser = createdProjection
+      ? await formatCanonicalAdminUser(
+          ensureDatabaseAdapter(targets.tenantCoreUsers, 'admin-user-create-result-core'),
+          createdProjection
+        )
+      : null;
     if (!createdUser) throw new Error('account_creation_active_projection_missing');
 
     await createAuditLogFromContext(c, 'user.created', 'user', result.operation.userId, {
@@ -1463,6 +1505,15 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       user_type?: string;
       [key: string]: string | boolean | number | null | undefined;
     }>();
+    if (body.registration_state !== undefined) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'registration_state is read-only; use the account upgrade flow',
+        },
+        400
+      );
+    }
     const customFieldInput = extractCustomClaimInput(body, ADMIN_USER_UPDATE_RESERVED_FIELDS);
     const authCtx = createAuthContextFromHono(c, tenantId);
     const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
@@ -1484,6 +1535,21 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
           error_description: 'The requested resource was not found',
         },
         404
+      );
+    }
+
+    if (
+      body.user_type === 'anonymous' ||
+      (existingProjection.registration_state === 'guest' &&
+        typeof body.user_type === 'string' &&
+        body.user_type !== 'end_user')
+    ) {
+      return c.json(
+        {
+          error: 'invalid_request',
+          error_description: 'Registration changes require the account upgrade flow',
+        },
+        400
       );
     }
 
@@ -1591,7 +1657,9 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
     const updatedProjection = await projectionRepository.findByLegacyUserId(userId, {
       includeInactive: true,
     });
-    const updatedUser = updatedProjection ? formatCanonicalAdminUser(updatedProjection) : null;
+    const updatedUser = updatedProjection
+      ? await formatCanonicalAdminUser(authCtx.coreAdapter, updatedProjection)
+      : null;
 
     const log = getLogger(c).module('ADMIN-USER');
     publishEvent(c, {

@@ -29,6 +29,7 @@ export interface CrossShardAccountListInput {
   limit?: number;
   cursor?: string;
   accountType?: string;
+  accountTypes?: string[];
   includeInactive?: boolean;
 }
 
@@ -146,12 +147,14 @@ async function digestHex(value: string): Promise<string> {
 async function queryHash(input: {
   tenantId: string;
   accountType: string | null;
+  accountTypes?: string[];
   includeInactive: boolean;
 }): Promise<string> {
   return digestHex(
     JSON.stringify({
       tenantId: input.tenantId,
       accountType: input.accountType,
+      ...(input.accountTypes ? { accountTypes: input.accountTypes } : {}),
       publicationState: 'active',
       lifecycleState: input.includeInactive ? ['active', 'deprovisioned'] : ['active'],
       sort: 'created_at_desc,id_desc',
@@ -368,6 +371,17 @@ export class CrossShardAccountListService {
     if (accountType !== null && !SAFE_ID.test(accountType)) {
       throw new Error('invalid_cross_shard_account_type');
     }
+    const accountTypes =
+      input.accountTypes === undefined ? undefined : [...new Set(input.accountTypes)].sort();
+    if (
+      accountTypes &&
+      (accountType !== null ||
+        accountTypes.length === 0 ||
+        accountTypes.length > 10 ||
+        accountTypes.some((type) => !SAFE_ID.test(type)))
+    ) {
+      throw new Error('invalid_cross_shard_account_type');
+    }
     const sources = await activeRouteSources(this.env, input.tenantId);
     const piiShards = sources.pii;
     const sortedShards = [...sources.core.values()].sort((left, right) =>
@@ -391,6 +405,7 @@ export class CrossShardAccountListService {
     const expectedQueryHash = await queryHash({
       tenantId: input.tenantId,
       accountType,
+      accountTypes,
       includeInactive,
     });
     const secret = this.env.LOGGING_CURSOR_HMAC_SECRET;
@@ -425,6 +440,9 @@ export class CrossShardAccountListService {
           : `account.lifecycle_state = 'active'`,
         `account.directory_publication_state = 'active'`,
         ...(accountType ? [`account.account_type = ?`] : []),
+        ...(accountTypes
+          ? [`account.account_type IN (${accountTypes.map(() => '?').join(', ')})`]
+          : []),
         ...(position
           ? [`(account.created_at < ? OR (account.created_at = ? AND account.id < ?))`]
           : []),
@@ -432,6 +450,7 @@ export class CrossShardAccountListService {
       const params: unknown[] = [
         input.tenantId,
         ...(accountType ? [accountType] : []),
+        ...(accountTypes ?? []),
         ...(position ? [position.createdAt, position.createdAt, position.id] : []),
         limit + 1,
       ];
@@ -517,7 +536,9 @@ export class CrossShardAccountListService {
     };
   }
 
-  async count(input: Omit<CrossShardAccountListInput, 'limit' | 'cursor'>): Promise<number> {
+  async count(
+    input: Omit<CrossShardAccountListInput, 'limit' | 'cursor' | 'accountTypes'>
+  ): Promise<number> {
     if (!SAFE_ID.test(input.tenantId)) throw new Error('invalid_cross_shard_account_tenant');
     const accountType = input.accountType?.trim() || null;
     if (accountType !== null && !SAFE_ID.test(accountType)) {

@@ -117,12 +117,13 @@ export async function deleteOneGuestAccount(
       account.coreBindingRef !== coreBindingRef
     )
       throw new Error('guest_deletion_account_route_changed');
-    const identity = await core.queryOne<{ account_type: string }>(
-      'SELECT account_type FROM identity_accounts WHERE tenant_id = ? AND legacy_user_id = ? AND deleted_at IS NULL',
+    const identity = await core.queryOne<{ account_type: string; registration_state: string }>(
+      'SELECT account_type, registration_state FROM identity_accounts WHERE tenant_id = ? AND legacy_user_id = ? AND deleted_at IS NULL',
       [tenantId, row.user_id],
       { consistencyClass: 'primary_required' }
     );
-    if (identity?.account_type !== 'anonymous') return 'skipped';
+    if (identity?.account_type !== 'user' || identity.registration_state !== 'guest')
+      return 'skipped';
     const route: DeletionRoute = {
       schemaVersion: 1,
       tenantId,
@@ -183,7 +184,7 @@ export async function deleteOneGuestAccount(
     [now, tenantId, row.user_id]
   );
   await eraseAccountPiiAfterDirectoryRemovalPrepared(pii, { tenantId, userId: row.user_id });
-  await core.execute('DELETE FROM anonymous_devices WHERE tenant_id = ? AND user_id = ?', [
+  await core.execute('DELETE FROM guest_devices WHERE tenant_id = ? AND user_id = ?', [
     tenantId,
     row.user_id,
   ]);

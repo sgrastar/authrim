@@ -35,7 +35,8 @@ paths:
                 type: object
                 required:
                   [
-                    account_kind,
+                    registration_state,
+                    status,
                     deletion_due_at,
                     upgrade_hold_until,
                     upgrade_eligible,
@@ -44,7 +45,10 @@ paths:
                     profile_complete,
                   ]
                 properties:
-                  account_kind: { type: string, enum: [guest, registered] }
+                  status:
+                    type: string
+                    description: Operational account status, independent of registration state.
+                  registration_state: { type: string, enum: [guest, registered] }
                   deletion_due_at: { type: [integer, 'null'] }
                   upgrade_hold_until: { type: [integer, 'null'] }
                   upgrade_eligible: { type: boolean }

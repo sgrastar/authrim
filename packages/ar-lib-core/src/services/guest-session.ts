@@ -27,7 +27,7 @@ export async function revokeGuestResumeForSession(
     await resolveAccountDataContextFromHono(c, session.userId);
     const { coreAdapter } = createAccountAuthContextFromHono(c, tenantId);
     await coreAdapter.execute(
-      'UPDATE anonymous_devices SET is_active = FALSE WHERE tenant_id = ? AND user_id = ? AND device_id_hash = ?',
+      'UPDATE guest_devices SET is_active = FALSE WHERE tenant_id = ? AND user_id = ? AND device_id_hash = ?',
       [tenantId, session.userId, hash]
     );
   } catch {

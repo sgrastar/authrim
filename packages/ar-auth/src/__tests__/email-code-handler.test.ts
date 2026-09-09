@@ -807,7 +807,7 @@ describe('email code handlers through HTTP', () => {
     });
 
     it('upgrades an unverified anonymous session without creating a replacement session', async () => {
-      mocks.getExistingSessionRpc.mockResolvedValueOnce({ data: { is_anonymous: true } });
+      mocks.getExistingSessionRpc.mockResolvedValueOnce({ data: { is_guest_session: true } });
 
       const response = await post(
         '/verify',
@@ -837,7 +837,7 @@ describe('email code handlers through HTTP', () => {
         active: 1,
         email_verified: 1,
       });
-      mocks.getExistingSessionRpc.mockResolvedValueOnce({ data: { is_anonymous: true } });
+      mocks.getExistingSessionRpc.mockResolvedValueOnce({ data: { is_guest_session: true } });
 
       const response = await post(
         '/verify',

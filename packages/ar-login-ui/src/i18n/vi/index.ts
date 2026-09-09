@@ -2,7 +2,7 @@ import { createTranslation } from '../create-translation';
 
 const vi = createTranslation({
 	account_guestLogoutWarning:
-		'Sau khi đăng xuất, bạn sẽ không thể quay lại tài khoản khách này, ngay cả khi tính năng tự động xóa đã tắt. Hãy đăng ký trước để giữ quyền truy cập tài khoản và dữ liệu. Vẫn đăng xuất?',
+		'Sau khi đăng xuất, bạn sẽ không thể quay lại tài khoản khách này. Hãy đăng ký trước để giữ quyền truy cập tài khoản và dữ liệu. Vẫn đăng xuất?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

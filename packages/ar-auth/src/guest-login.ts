@@ -27,8 +27,9 @@ import {
   type Session,
   type Challenge,
 } from '@authrim/ar-lib-core';
-import { provisionAnonymousAccount, resolveAnonymousAccountRoute } from './account-provisioning';
+import { provisionGuestAccount, resolveGuestAccountRoute } from './account-provisioning';
 import { resolveSessionTtl } from './session-ttl';
+import { getDirectAuthWebAuthnOrigin, validateDirectAuthClient } from './direct-auth';
 import { verifyHumanVerificationForAction } from './human-verification';
 
 export { GUEST_RESUME_COOKIE } from '@authrim/ar-lib-core';
@@ -60,36 +61,66 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
   try {
     const body = await c.req.json<{
       authorizationChallengeId?: unknown;
+      clientId?: unknown;
       human_verification_response?: unknown;
     }>();
-    if (
-      typeof body.authorizationChallengeId !== 'string' ||
-      body.authorizationChallengeId.length > 256
-    ) {
-      return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+    let clientId: string;
+    let requestedScopes: string[];
+    let proofContext: string;
+    let proofExpiresAt = Date.now() + 300000;
+    if (body.authorizationChallengeId !== undefined) {
+      if (
+        typeof body.authorizationChallengeId !== 'string' ||
+        !body.authorizationChallengeId ||
+        body.authorizationChallengeId.length > 256
+      ) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
+      const challengeStore = await getChallengeStoreByChallengeId(
+        c.env,
+        body.authorizationChallengeId,
+        tenantId
+      );
+      const challenge = (await challengeStore.getChallengeRpc(
+        body.authorizationChallengeId
+      )) as Challenge | null;
+      if (
+        !challenge ||
+        challenge.type !== 'login' ||
+        challenge.tenantId !== tenantId ||
+        challenge.consumed ||
+        !Number.isFinite(challenge.expiresAt) ||
+        challenge.expiresAt <= Date.now() ||
+        (challenge.metadata?.tenant_id !== undefined && challenge.metadata.tenant_id !== tenantId)
+      ) {
+        return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
+      }
+      const challengeClientId = challenge.metadata?.client_id;
+      if (typeof challengeClientId !== 'string' || !challengeClientId)
+        return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
+      clientId = challengeClientId;
+      requestedScopes =
+        typeof challenge.metadata?.scope === 'string'
+          ? challenge.metadata.scope.split(' ').filter(Boolean)
+          : [];
+      proofContext = body.authorizationChallengeId;
+      proofExpiresAt = challenge.expiresAt;
+    } else {
+      // Direct Login UI creates a cookie session only; it does not mint an OAuth grant.
+      if (typeof body.clientId !== 'string' || !body.clientId || body.clientId.length > 256) {
+        return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
+      }
+      const origin = getDirectAuthWebAuthnOrigin(c, c.req.header('origin'));
+      if (!origin) return createErrorResponse(c, AR_ERROR_CODES.POLICY_INSUFFICIENT_PERMISSIONS);
+      const validation = await validateDirectAuthClient(c, body.clientId, 'browser', origin);
+      if (!validation.valid)
+        return (
+          validation.errorResponse ?? createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED)
+        );
+      clientId = body.clientId;
+      requestedScopes = ['openid'];
+      proofContext = `direct:${clientId}`;
     }
-    const challengeStore = await getChallengeStoreByChallengeId(
-      c.env,
-      body.authorizationChallengeId,
-      tenantId
-    );
-    const challenge = (await challengeStore.getChallengeRpc(
-      body.authorizationChallengeId
-    )) as Challenge | null;
-    if (
-      !challenge ||
-      challenge.type !== 'login' ||
-      challenge.tenantId !== tenantId ||
-      challenge.consumed ||
-      !Number.isFinite(challenge.expiresAt) ||
-      challenge.expiresAt <= Date.now() ||
-      (challenge.metadata?.tenant_id !== undefined && challenge.metadata.tenant_id !== tenantId)
-    ) {
-      return createErrorResponse(c, AR_ERROR_CODES.AUTH_INVALID_CODE);
-    }
-    const clientId = challenge.metadata?.client_id;
-    if (typeof clientId !== 'string' || !clientId)
-      return createErrorResponse(c, AR_ERROR_CODES.CLIENT_AUTH_FAILED);
     const settings = await resolveGuestSettings(c.env, tenantId);
     const contract = await loadClientContractCached(
       c,
@@ -98,14 +129,10 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
       tenantId,
       clientId
     );
-    if (!settings.loginEnabled || !contract?.anonymousAuth?.enabled) {
+    if (!settings.loginEnabled || !contract?.guestAuth?.enabled) {
       return createErrorResponse(c, AR_ERROR_CODES.VALIDATION_INVALID_VALUE);
     }
-    const requestedScopes =
-      typeof challenge.metadata?.scope === 'string'
-        ? challenge.metadata.scope.split(' ').filter(Boolean)
-        : [];
-    if (requestedScopes.some((scope) => !contract.anonymousAuth!.allowedScopes.includes(scope))) {
+    if (requestedScopes.some((scope) => !contract.guestAuth!.allowedScopes.includes(scope))) {
       return c.json(
         {
           error: 'invalid_scope',
@@ -121,7 +148,7 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
       if (
         existingSession &&
         existingSession.expiresAt > Date.now() &&
-        !existingSession.data?.is_anonymous
+        !existingSession.data?.is_guest_session
       ) {
         return c.json(
           {
@@ -145,7 +172,7 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
       });
     }
     const credentialHash = await guestResumeHash(secret, tenantId, clientId);
-    const proofId = `guest-human:${await guestResumeHash(secret, tenantId, body.authorizationChallengeId)}`;
+    const proofId = `guest-human:${await guestResumeHash(secret, tenantId, proofContext)}`;
     const proofStore = await getChallengeStoreByChallengeId(c.env, proofId, tenantId);
     const proof = (await proofStore.getChallengeRpc(proofId)) as Challenge | null;
     const hasProof =
@@ -169,20 +196,20 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
         type: 'anon_login',
         userId: '',
         challenge: credentialHash,
-        ttl: Math.max(1, Math.min(300, Math.ceil((challenge.expiresAt - Date.now()) / 1000))),
+        ttl: Math.max(1, Math.min(300, Math.ceil((proofExpiresAt - Date.now()) / 1000))),
         metadata: { purpose: 'guest_human_verification', client_id: clientId },
       });
     }
     let route;
     try {
-      route = await resolveAnonymousAccountRoute(c, credentialHash);
+      route = await resolveGuestAccountRoute(c, credentialHash);
     } catch (error) {
       if (!(error instanceof Error) || error.message !== 'account_data_route_not_found')
         throw error;
     }
     let userId = route?.legacyUserId;
     if (!userId) {
-      const provisioned = await provisionAnonymousAccount(c, {
+      const provisioned = await provisionGuestAccount(c, {
         tenantId,
         candidateUserId: await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env),
         device: {
@@ -215,7 +242,7 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
       user_id: string;
       created_at: number;
     }>(
-      'SELECT user_id, created_at FROM anonymous_devices WHERE tenant_id = ? AND device_id_hash = ? AND is_active = TRUE',
+      'SELECT user_id, created_at FROM guest_devices WHERE tenant_id = ? AND device_id_hash = ? AND is_active = TRUE',
       [tenantId, credentialHash],
       { consistencyClass: 'primary_required' }
     );
@@ -251,11 +278,11 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
       !lifecycle ||
       lifecycle.client_id !== clientId ||
       lifecycle.phase !== 'active' ||
-      user?.account_type !== 'anonymous'
+      user?.registration_state !== 'guest'
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
-    const ttl = await resolveSessionTtl(c.env, tenantId, 'anonymous');
+    const ttl = await resolveSessionTtl(c.env, tenantId, 'guest');
     const { stub, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
     await stub.createSessionRpc(
       sessionId,
@@ -265,7 +292,7 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
         ...getSessionClientMetadata(c.req.raw),
         amr: ['anon'],
         acr: 'urn:mace:incommon:iap:anonymous',
-        is_anonymous: true,
+        is_guest_session: true,
         client_id: clientId,
         device_id_hash: credentialHash,
         guest_resume_credential: true,

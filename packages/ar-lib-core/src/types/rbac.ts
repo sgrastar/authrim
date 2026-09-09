@@ -283,17 +283,12 @@ export interface RelationshipRow extends Omit<
  *
  * Types:
  * - end_user: Regular authenticated user
- * - anonymous: Device-based anonymous user (can be upgraded)
+ *   Read registration_state from the lifecycle claim to distinguish human guests.
  * - distributor_admin: Distributor administrator
  * - enterprise_admin: Enterprise administrator
  * - system_admin: System administrator
  */
-export type UserType =
-  | 'end_user'
-  | 'anonymous'
-  | 'distributor_admin'
-  | 'enterprise_admin'
-  | 'system_admin';
+export type UserType = 'end_user' | 'distributor_admin' | 'enterprise_admin' | 'system_admin';
 
 // =============================================================================
 // Token Claims Extensions (Namespaced)

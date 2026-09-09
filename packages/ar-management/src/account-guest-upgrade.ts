@@ -19,6 +19,7 @@ import {
   resolveCustomClaimRuntimeSourcesFromEnv,
   resolveAccountDataContext,
   resolveGuestSettings,
+  resolveAccountRegistrationState,
   syncUserLifecycleState,
   validateAccountDirectoryPublication,
   type AuthenticatorTransport,
@@ -135,7 +136,7 @@ async function allowedMethods(c: C, tenantId: string, clientId: string): Promise
   );
   if (!settings.policy.upgradeEnabled) return [];
   const candidates = settings.upgradeMethods.filter((method) =>
-    contract?.anonymousAuth?.allowedUpgradeMethods?.includes(method)
+    contract?.guestAuth?.allowedUpgradeMethods?.includes(method)
   );
   const emailReady =
     candidates.includes('email') &&
@@ -158,7 +159,7 @@ export async function getAccountGuestUpgradeHandler(c: C): Promise<Response> {
     if (
       ctx.row.phase === 'registered' &&
       ctx.row.upgrade_operation_id &&
-      ctx.session.data?.is_anonymous === true
+      ctx.session.data?.is_guest_session === true
     ) {
       const operation = await ctx.operations.get(ctx.row.upgrade_operation_id);
       if (
@@ -170,7 +171,7 @@ export async function getAccountGuestUpgradeHandler(c: C): Promise<Response> {
         await ctx.sessions.updateSessionDataRpc(
           ctx.session.id,
           {
-            is_anonymous: false,
+            is_guest_session: false,
             guest_resume_credential: false,
             device_id_hash: undefined,
             upgrade_eligible: false,
@@ -179,7 +180,7 @@ export async function getAccountGuestUpgradeHandler(c: C): Promise<Response> {
             amr: [operation.method === 'email' ? 'otp' : 'webauthn'],
             authTime: ctx.row.upgraded_at ?? operation.updated_at,
           },
-          { onlyIfAnonymous: true }
+          { onlyIfGuestSession: true }
         );
       }
     }
@@ -196,8 +197,15 @@ export async function getAccountGuestUpgradeHandler(c: C): Promise<Response> {
       tenantId: ctx.tenantId,
       userId: ctx.session.userId,
     });
+    const user = await new CanonicalRuntimeUserStore({
+      coreAdapter: ctx.auth.coreAdapter,
+      piiAdapter: ctx.pii.defaultPiiAdapter,
+      tenantId: ctx.tenantId,
+    }).findById(ctx.session.userId);
+    if (!user || user.tenant_id !== ctx.tenantId) return fail(c, 'guest_unavailable', 409);
     return c.json({
-      account_kind: ctx.row.phase === 'registered' ? 'registered' : 'guest',
+      status: user.status,
+      registration_state: resolveAccountRegistrationState(user.registration_state, ctx.row.phase),
       deletion_due_at: ctx.row.deletion_due_at,
       upgrade_hold_until: ctx.row.upgrade_hold_until,
       upgrade_eligible: methods.length > 0,
@@ -419,8 +427,7 @@ async function writeRegistration(
     tenantId: ctx.tenantId,
   });
   const user = await users.findById(ctx.userId);
-  if (!user || !['anonymous', 'user'].includes(user.account_type))
-    throw new Error('guest_upgrade_account_unavailable');
+  if (!user || user.account_type !== 'user') throw new Error('guest_upgrade_account_unavailable');
   await users.syncUser({
     userId: ctx.userId,
     email: payload.email ?? user.email ?? null,
@@ -444,12 +451,12 @@ async function writeRegistration(
     accountAuthenticationEnv: c.env,
   });
   await ctx.auth.coreAdapter.execute(
-    'UPDATE anonymous_devices SET is_active = FALSE WHERE tenant_id = ? AND user_id = ?',
+    'UPDATE guest_devices SET is_active = FALSE WHERE tenant_id = ? AND user_id = ?',
     [ctx.tenantId, ctx.userId]
   );
   // Durable, non-PII audit evidence is idempotent across a crash or competing retry.
   await ctx.auth.coreAdapter.execute(
-    `INSERT INTO user_upgrades (id, tenant_id, anonymous_user_id, upgraded_user_id, upgrade_method, provider_id, preserve_sub, upgraded_at, data_migrated)
+    `INSERT INTO guest_account_upgrades (id, tenant_id, guest_user_id, upgraded_user_id, upgrade_method, provider_id, preserve_sub, upgraded_at, data_migrated)
     VALUES (?, ?, ?, ?, ?, NULL, 1, ?, 0) ON CONFLICT (id) DO NOTHING`,
     [
       operation.operation_id,
@@ -612,13 +619,13 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
         409
       );
     // A completed retry must not refresh authentication or replace a later login.
-    if (ctx.session.data?.is_anonymous === true) {
+    if (ctx.session.data?.is_guest_session === true) {
       const completed = await ctx.lifecycle.get(ctx.session.userId);
       const authenticatedAt = completed?.upgraded_at ?? operation.updated_at;
       await ctx.sessions.updateSessionDataRpc(
         ctx.session.id,
         {
-          is_anonymous: false,
+          is_guest_session: false,
           guest_resume_credential: false,
           device_id_hash: undefined,
           upgrade_eligible: false,
@@ -627,7 +634,7 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
           amr: [operation.method === 'email' ? 'otp' : 'webauthn'],
           authTime: authenticatedAt,
         },
-        { onlyIfAnonymous: true }
+        { onlyIfGuestSession: true }
       );
     }
     return c.json({ success: true, user_id: ctx.session.userId, preserve_sub: true });

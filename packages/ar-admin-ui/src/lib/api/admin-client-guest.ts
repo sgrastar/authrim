@@ -28,31 +28,21 @@ export const adminClientGuestAPI = {
 		);
 		if (result.status === 404) return { version: 0, policy: defaultClientGuestPolicy() };
 		if (!result.ok) throw new Error('guest_policy_load_failed');
-		const data = (await result.json()) as {
-			profile: { version: number; anonymousAuth?: Partial<ClientGuestPolicy> };
-		};
-		return {
-			version: data.profile.version,
-			policy: {
-				...defaultClientGuestPolicy(),
-				...data.profile.anonymousAuth,
-				preserveSubOnUpgrade: true
-			}
-		};
+		return readGuestProfile(result);
 	},
 	async save(
 		clientId: string,
 		tenantId: string,
 		version: number,
 		policy: ClientGuestPolicy
-	): Promise<void> {
+	): Promise<{ version: number; policy: ClientGuestPolicy }> {
 		const result = await adminFetch(
 			`${API_BASE_URL}/api/admin/clients/${encodeURIComponent(clientId)}/profile`,
 			{
 				method: 'PUT',
 				tenantId,
 				includeJsonContentType: true,
-				body: JSON.stringify({ ifMatch: String(version), profile: { anonymousAuth: policy } })
+				body: JSON.stringify({ ifMatch: String(version), profile: { guestAuth: policy } })
 			}
 		);
 		if (!result.ok)
@@ -63,5 +53,22 @@ export const adminClientGuestAPI = {
 						? 'guest_policy_tenant_required'
 						: 'guest_policy_save_failed'
 			);
+		return readGuestProfile(result);
 	}
 };
+
+async function readGuestProfile(
+	result: Response
+): Promise<{ version: number; policy: ClientGuestPolicy }> {
+	const data = (await result.json()) as {
+		profile: { version: number; guestAuth?: Partial<ClientGuestPolicy> };
+	};
+	return {
+		version: data.profile.version,
+		policy: {
+			...defaultClientGuestPolicy(),
+			...data.profile.guestAuth,
+			preserveSubOnUpgrade: true
+		}
+	};
+}

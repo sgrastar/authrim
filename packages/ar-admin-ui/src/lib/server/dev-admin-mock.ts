@@ -8090,7 +8090,7 @@ async function handleCustomClaims(
 
 const guestClientProfiles = new Map<
 	string,
-	{ version: number; anonymousAuth: Record<string, unknown> }
+	{ version: number; guestAuth: Record<string, unknown> }
 >();
 
 async function handleClients(event: RequestEvent, segments: string[]): Promise<Response | null> {
@@ -8130,7 +8130,7 @@ async function handleClients(event: RequestEvent, segments: string[]): Promise<R
 	if (segments[2] === 'profile' && segments.length === 3) {
 		const profile = guestClientProfiles.get(clientId) ?? {
 			version: 0,
-			anonymousAuth: {
+			guestAuth: {
 				enabled: false,
 				expiresInDays: null,
 				allowedScopes: ['openid', 'account:lifecycle:read'],
@@ -8144,10 +8144,10 @@ async function handleClients(event: RequestEvent, segments: string[]): Promise<R
 		if (method === 'PUT') {
 			const input = await readJson(event.request);
 			if (input.ifMatch !== String(profile.version)) return json({ error: 'conflict' }, 409);
-			const update = input.profile as { anonymousAuth?: Record<string, unknown> } | undefined;
+			const update = input.profile as { guestAuth?: Record<string, unknown> } | undefined;
 			const updated = {
 				version: profile.version + 1,
-				anonymousAuth: update?.anonymousAuth ?? profile.anonymousAuth
+				guestAuth: update?.guestAuth ?? profile.guestAuth
 			};
 			guestClientProfiles.set(clientId, updated);
 			return json({ profile: updated });

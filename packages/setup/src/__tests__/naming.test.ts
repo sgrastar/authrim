@@ -147,6 +147,12 @@ describe('WORKER_DEPLOYMENT_DEPENDENCIES', () => {
     );
   });
 
+  it('deploys Management before UserInfo for guest upgrade readiness', () => {
+    expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-userinfo']).toContain('ar-management');
+    const order = getDeploymentOrder(new Set(['ar-userinfo', 'ar-management'])).flat();
+    expect(order.indexOf('ar-management')).toBeLessThan(order.indexOf('ar-userinfo'));
+  });
+
   it('should deploy Agent Access only after its token and management dependencies', () => {
     expect(WORKER_DEPLOYMENT_DEPENDENCIES['ar-agent-access']).toEqual(
       expect.arrayContaining(['ar-lib-core', 'ar-token', 'ar-management'])

@@ -9,7 +9,8 @@ const mocks = vi.hoisted(() => ({
   sources: vi.fn(),
   missing: vi.fn(),
 }));
-vi.mock('@authrim/ar-lib-core', () => ({
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
   GUEST_LIFECYCLE_SCOPE: 'account:lifecycle:read',
   GuestLifecycleRepository: class {
     get = mocks.get;
@@ -35,7 +36,9 @@ function input(overrides: Partial<CanonicalRuntimeUserProjection> = {}) {
     user: {
       id: 'user-a',
       tenant_id: 'tenant-a',
-      account_type: 'anonymous',
+      account_type: 'user',
+      registration_state: 'guest',
+      status: 'active',
       created_at: '2026-09-01T00:00:00Z',
       ...overrides,
     } as CanonicalRuntimeUserProjection,
@@ -49,6 +52,7 @@ describe('UserInfo account lifecycle', () => {
     mocks.get.mockResolvedValue({
       phase: 'active',
       client_id: 'client-a',
+      status: 'active',
       created_at: 100,
       deletion_due_at: 200,
     });
@@ -56,7 +60,7 @@ describe('UserInfo account lifecycle', () => {
       policy: { upgradeEnabled: true },
       upgradeMethods: ['email', 'passkey'],
     });
-    mocks.contract.mockResolvedValue({ anonymousAuth: { allowedUpgradeMethods: ['email'] } });
+    mocks.contract.mockResolvedValue({ guestAuth: { allowedUpgradeMethods: ['email'] } });
     mocks.sources.mockResolvedValue({ nonPiiDb: {}, piiDb: {}, schemaDb: {} });
     mocks.missing.mockResolvedValue([]);
   });
@@ -78,7 +82,7 @@ describe('UserInfo account lifecycle', () => {
       });
       const claim = await readAccountLifecycleClaim(input({ account_type: 'user' }));
       expect(claim).toMatchObject({
-        account_kind: 'guest',
+        registration_state: 'guest',
         deletion_due_at: 200,
         upgrade_eligible: phase === 'active',
       });
@@ -87,7 +91,7 @@ describe('UserInfo account lifecycle', () => {
   it('reports committed registration even when the user projection still says anonymous', async () => {
     mocks.get.mockResolvedValue({ phase: 'registered', created_at: 100, deletion_due_at: null });
     expect(await readAccountLifecycleClaim(input())).toMatchObject({
-      account_kind: 'registered',
+      registration_state: 'registered',
       deletion_due_at: null,
       upgrade_eligible: false,
     });
@@ -102,8 +106,12 @@ describe('UserInfo account lifecycle', () => {
   });
   it('preserves regular accounts without a guest lifecycle row', async () => {
     mocks.get.mockResolvedValue(null);
-    expect(await readAccountLifecycleClaim(input({ account_type: 'user' }))).toMatchObject({
-      account_kind: 'registered',
+    expect(
+      await readAccountLifecycleClaim(
+        input({ account_type: 'user', registration_state: 'registered' })
+      )
+    ).toMatchObject({
+      registration_state: 'registered',
       upgrade_eligible: false,
     });
   });
@@ -120,7 +128,8 @@ describe('UserInfo account lifecycle', () => {
   it('reports stored deadlines even when overdue and distinguishes incomplete profile', async () => {
     mocks.missing.mockResolvedValue([{ fieldKey: 'required-name' }]);
     expect(await readAccountLifecycleClaim(input())).toEqual({
-      account_kind: 'guest',
+      registration_state: 'guest',
+      status: 'active',
       created_at: 100,
       deletion_due_at: 200,
       upgrade_eligible: true,
@@ -145,7 +154,8 @@ describe('UserInfo account lifecycle', () => {
   it('returns no deletion date or upgrade eligibility after promotion', async () => {
     mocks.get.mockResolvedValue({ phase: 'registered', created_at: 100, deletion_due_at: null });
     expect(await readAccountLifecycleClaim(input({ account_type: 'user' }))).toEqual({
-      account_kind: 'registered',
+      registration_state: 'registered',
+      status: 'active',
       created_at: 100,
       deletion_due_at: null,
       upgrade_eligible: false,
@@ -166,7 +176,7 @@ describe('UserInfo account lifecycle', () => {
         policy: { upgradeEnabled: enabled },
         upgradeMethods: methods,
       });
-      mocks.contract.mockResolvedValue({ anonymousAuth: { allowedUpgradeMethods: allowed } });
+      mocks.contract.mockResolvedValue({ guestAuth: { allowedUpgradeMethods: allowed } });
       expect((await readAccountLifecycleClaim(input()))?.upgrade_eligible).toBe(eligible);
     }
   );
@@ -174,4 +184,18 @@ describe('UserInfo account lifecycle', () => {
     mocks.settings.mockRejectedValue(new Error('settings_read_failed'));
     await expect(readAccountLifecycleClaim(input())).rejects.toThrow('settings_read_failed');
   });
+});
+
+describe('registration and operational status are independent', () => {
+  it.each(['active', 'suspended', 'locked', 'inactive'])(
+    'preserves %s status without changing guest registration',
+    async (status) => {
+      mocks.get.mockResolvedValue({ phase: 'upgrading', created_at: 100, deletion_due_at: null });
+      mocks.sources.mockResolvedValue({ nonPiiDb: {} });
+      mocks.missing.mockResolvedValue([]);
+      const claim = await readAccountLifecycleClaim(input({ status: status }));
+      expect(claim).toMatchObject({ status, registration_state: 'guest', upgrade_eligible: false });
+      expect(claim).not.toHaveProperty('account_kind');
+    }
+  );
 });

@@ -3,7 +3,7 @@ import completion from './completion';
 
 const ko = createTranslation({
 	account_guestLogoutWarning:
-		'로그아웃하면 자동 삭제가 비활성화되어 있어도 이 게스트 계정으로 돌아올 수 없습니다. 계정과 데이터에 계속 접근하려면 먼저 등록하세요. 그래도 로그아웃하시겠습니까?',
+		'로그아웃하면 이 게스트 계정으로 돌아올 수 없습니다. 계정과 데이터에 계속 접근하려면 먼저 등록하세요. 그래도 로그아웃하시겠습니까?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

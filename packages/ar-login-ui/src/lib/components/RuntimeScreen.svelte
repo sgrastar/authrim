@@ -337,6 +337,29 @@
 	}
 
 	const defaultAuthWidgetLabels = {
+		guest: new Set([
+			'Endelea kama mgeni',
+			'Kontynuuj jako gość',
+			'Tiếp tục với tư cách khách',
+			'እንደ እንግዳ ይቀጥሉ',
+			'ゲストとして続ける',
+			'Continua come ospite',
+			'Продолжить как гость',
+			'以访客身份继续',
+			'Continuar como convidado',
+			'以訪客身分繼續',
+			'المتابعة كضيف',
+			'অতিথি হিসেবে চালিয়ে যান',
+			'अतिथि के रूप में जारी रखें',
+			'Als Gast fortfahren',
+			'게스트로 계속하기',
+			'Lanjutkan sebagai tamu',
+			'Continuer en tant qu’invité',
+			'Continuar como invitado',
+			'Continue as a guest',
+			'ดำเนินการต่อในฐานะผู้เยี่ยมชม',
+			'Misafir olarak devam et'
+		]),
 		loginPasskey: new Set([
 			'Sign in with Passkey',
 			'Passkeyでサインイン',
@@ -879,9 +902,13 @@
 		{#if guestEnabled && authMethodMode === 'login'}
 			<div class="runtime-auth-widget">
 				<button class="runtime-auth-button" type="button" {disabled} onclick={onGuestLogin}
-					>{field.label || $LL.login_guestContinue()}</button
+					>{!field.label || defaultAuthWidgetLabels.guest.has(field.label)
+						? $LL.login_guestContinue()
+						: field.label}</button
 				>
-				{#if guestRetentionDescription}<p>{guestRetentionDescription}</p>{/if}
+				{#if guestRetentionDescription}<p class="runtime-guest-retention">
+						{guestRetentionDescription}
+					</p>{/if}
 			</div>
 		{/if}
 	{:else if blockType === 'auth_widget'}
@@ -1201,6 +1228,12 @@
 		display: grid;
 		gap: var(--auth-widget-gap, 0.875rem);
 		width: 100%;
+	}
+
+	.runtime-guest-retention {
+		margin: 0;
+		font-size: var(--auth-copy-size, 0.875rem);
+		line-height: 1.5;
 	}
 
 	.runtime-code-input-widget {

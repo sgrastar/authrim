@@ -704,15 +704,19 @@ paths:
         - Anonymous Login
       summary: Create or resume a human guest browser session.
       description: >-
-        Requires an unexpired, unconsumed login authorization challenge for this tenant,
-        tenant guest login permission, explicit client guest permission, and requested scopes
-        within the client's anonymous allow-list. Reauthentication challenges are rejected.
+        Requires tenant guest login permission and explicit client guest permission.
+        For OAuth login, supply an unexpired, unconsumed login authorization challenge for this
+        tenant; requested scopes must be within the client's anonymous allow-list.
+        Reauthentication challenges are rejected. For direct browser login, omit the challenge
+        and supply clientId. The client must permit browser Direct Auth from the request origin
+        and allow the openid guest scope. Direct login creates only a cookie session, not an OAuth grant.
+        An invalid supplied challenge never falls back to direct login.
         Subject creation and resumption use a private HttpOnly Secure SameSite=Lax cookie,
         authrim_guest_resume; a device identifier alone is never accepted as proof.
         Resume credentials expire 180 days after creation without deleting the account.
         A live registered browser session must be logged out first (409).
         Success sets authrim_session and returns no tokens or redirect URL; continue the original
-        authorization transaction through the standard login continuation.
+        authorization transaction through the standard login continuation when using a challenge.
         Requests are subject to browser CSRF protection, configured login human verification,
         and strict rate limiting. Human verification is bound to this login transaction and
         private resume credential for up to five minutes to permit asynchronous provisioning retries.
@@ -722,8 +726,15 @@ paths:
           application/json:
             schema:
               type: object
-              required: [authorizationChallengeId]
+              anyOf:
+                - required: [authorizationChallengeId]
+                - required: [clientId]
               properties:
+                clientId:
+                  type: string
+                  minLength: 1
+                  maxLength: 256
+                  description: Client for direct browser login; ignored when an authorization challenge is supplied.
                 authorizationChallengeId:
                   type: string
                   minLength: 1
@@ -755,33 +766,33 @@ paths:
           description: Too many login attempts.
         '500':
           description: Guest account storage or settings are temporarily unavailable.
-  /api/auth/anon-login/challenge:
+  /api/auth/guest-device-login/challenge:
     post:
       tags:
         - Anonymous Login
-      summary: Create an anonymous-login challenge.
+      summary: Create an guest-device-login challenge.
       requestBody:
-        $ref: '#/components/requestBodies/AnonLoginChallenge'
+        $ref: '#/components/requestBodies/GuestDeviceLoginChallenge'
       responses:
         '200':
-          $ref: '#/components/responses/AnonLoginChallenge'
-  /api/auth/anon-login/verify:
+          $ref: '#/components/responses/GuestDeviceLoginChallenge'
+  /api/auth/guest-device-login/verify:
     post:
       tags:
         - Anonymous Login
-      summary: Verify anonymous-login challenge and create or resume an anonymous session.
+      summary: Verify guest-device-login challenge and create or resume an guest session.
       requestBody:
-        $ref: '#/components/requestBodies/AnonLoginVerify'
+        $ref: '#/components/requestBodies/GuestDeviceLoginVerify'
       responses:
         '200':
-          $ref: '#/components/responses/AnonLoginVerify'
+          $ref: '#/components/responses/GuestDeviceLoginVerify'
         '202':
           $ref: '#/components/responses/AnonymousLoginPending'
   /api/auth/upgrade:
     post:
       tags:
         - Upgrade
-      summary: Start an anonymous-user upgrade.
+      summary: Start an guest-user upgrade.
       requestBody:
         $ref: '#/components/requestBodies/UpgradeStart'
       responses:
@@ -791,7 +802,7 @@ paths:
     post:
       tags:
         - Upgrade
-      summary: Complete an anonymous-user upgrade.
+      summary: Complete an guest-user upgrade.
       requestBody:
         $ref: '#/components/requestBodies/UpgradeComplete'
       responses:
@@ -801,7 +812,7 @@ paths:
     get:
       tags:
         - Upgrade
-      summary: Return anonymous-user upgrade eligibility and history.
+      summary: Return guest-user upgrade eligibility and history.
       responses:
         '200':
           $ref: '#/components/responses/UpgradeStatus'
@@ -2448,22 +2459,22 @@ components:
           example:
             challenge_id: challenge_123
             proof: eyJhbGciOiJFZERTQSJ9...
-    AnonLoginChallenge:
+    GuestDeviceLoginChallenge:
       required: true
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/AnonLoginChallengeRequest'
+            $ref: '#/components/schemas/GuestDeviceLoginChallengeRequest'
           example:
             client_id: client_123
             device_signature: device_sig_123
             platform: web
-    AnonLoginVerify:
+    GuestDeviceLoginVerify:
       required: true
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/AnonLoginVerifyRequest'
+            $ref: '#/components/schemas/GuestDeviceLoginVerifyRequest'
           example:
             challenge_id: challenge_123
             device_signature: device_sig_123
@@ -2996,22 +3007,22 @@ components:
             success: true
             did: did:web:example.com
             message: DID unlinked successfully
-    AnonLoginChallenge:
+    GuestDeviceLoginChallenge:
       description: Successful JSON response.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/AnonLoginChallengeResponse'
+            $ref: '#/components/schemas/GuestDeviceLoginChallengeResponse'
           example:
             challenge_id: challenge_123
             challenge: anon_challenge_123
             expires_at: 1770000300000
-    AnonLoginVerify:
+    GuestDeviceLoginVerify:
       description: Successful JSON response.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/AnonLoginVerifyResponse'
+            $ref: '#/components/schemas/GuestDeviceLoginVerifyResponse'
           example:
             success: true
             session_id: sess_123
@@ -3020,7 +3031,8 @@ components:
             upgrade_eligible: true
             user:
               id: anon_123
-              user_type: anonymous
+              user_type: end_user
+              registration_state: guest
     UpgradeStart:
       description: Successful JSON response.
       content:
@@ -3059,7 +3071,7 @@ components:
             $ref: '#/components/schemas/UpgradeStatusResponse'
           example:
             user_id: user_123
-            is_anonymous: false
+            registration_state: registered
             upgrade_eligible: false
             profile_completion_required: false
             missing_required_custom_claims: []
@@ -3653,7 +3665,7 @@ components:
             - type: 'null'
         user_type:
           type: string
-          example: anonymous
+          example: end_user
     WebAuthnOptions:
       type: object
       additionalProperties: true
@@ -4643,7 +4655,7 @@ components:
         - success
         - did
         - message
-    AnonLoginChallengeRequest:
+    GuestDeviceLoginChallengeRequest:
       type: object
       properties:
         client_id:
@@ -4660,7 +4672,7 @@ components:
           example: web
       required:
         - client_id
-    AnonLoginChallengeResponse:
+    GuestDeviceLoginChallengeResponse:
       type: object
       properties:
         challenge_id:
@@ -4676,7 +4688,7 @@ components:
         - challenge_id
         - challenge
         - expires_at
-    AnonLoginVerifyRequest:
+    GuestDeviceLoginVerifyRequest:
       type: object
       properties:
         challenge_id:
@@ -4691,7 +4703,7 @@ components:
       required:
         - challenge_id
         - device_signature
-    AnonLoginVerifyResponse:
+    GuestDeviceLoginVerifyResponse:
       type: object
       properties:
         success:
@@ -4711,13 +4723,17 @@ components:
           example: true
         user:
           type: object
+          required: [id, user_type, registration_state]
           properties:
             id:
               type: string
               example: anon_123
             user_type:
               type: string
-              example: anonymous
+              enum: [end_user]
+            registration_state:
+              type: string
+              enum: [guest]
       required:
         - success
         - session_id
@@ -4842,9 +4858,10 @@ components:
         user_id:
           type: string
           example: user_123
-        is_anonymous:
-          type: boolean
-          example: false
+        registration_state:
+          type: string
+          enum: [guest, registered]
+          example: registered
         upgrade_eligible:
           type: boolean
           example: false
@@ -4877,7 +4894,7 @@ components:
                 example: true
       required:
         - user_id
-        - is_anonymous
+        - registration_state
         - upgrade_eligible
         - profile_completion_required
         - missing_required_custom_claims
@@ -5357,7 +5374,7 @@ components:
       properties:
         status:
           type: string
-          const: anonymous_credential_recycling
+          const: guest_credential_recycling
         restart_required:
           type: boolean
           const: true
@@ -5382,7 +5399,7 @@ components:
           maximum: 2000
         restart_required:
           type: boolean
-          description: When true, start a fresh anonymous-login challenge after provisioning is ready.
+          description: When true, start a fresh guest-device-login challenge after provisioning is ready.
     DirectEmailCodeVerifyRequest:
       type: object
       properties:

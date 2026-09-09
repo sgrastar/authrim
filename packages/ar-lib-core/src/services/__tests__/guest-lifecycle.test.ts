@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_GUEST_LIFECYCLE_POLICY,
+  resolveAccountRegistrationState,
   canUpgradeGuest,
   canUseGuestAccount,
   getGuestDeletionDueAt,
@@ -12,7 +13,7 @@ import {
 
 const account: GuestLifecycleSnapshot = {
   subjectKind: 'human',
-  accountKind: 'guest',
+  registrationState: 'guest',
   state: 'active',
   createdAt: 1_000,
   deletionDueAt: 87_400,
@@ -78,7 +79,7 @@ describe('human guest lifecycle', () => {
   });
 
   it('excludes a promoted user from guest cleanup', () => {
-    expect(isGuestDeletionDue({ ...account, accountKind: 'registered' }, 90000)).toBe(false);
+    expect(isGuestDeletionDue({ ...account, registrationState: 'registered' }, 90000)).toBe(false);
   });
 
   it.each([
@@ -101,4 +102,19 @@ describe('human guest lifecycle', () => {
       ).toBe(false);
     }
   );
+});
+
+describe('registration state projection', () => {
+  it.each([
+    ['guest', null, 'guest'],
+    ['registered', null, 'registered'],
+    ['registered', 'active', 'guest'],
+    ['registered', 'upgrading', 'guest'],
+    ['guest', 'registered', 'registered'],
+    ['registered', 'registered', 'registered'],
+    ['guest', 'deleting', 'guest'],
+    ['guest', 'deleted', 'guest'],
+  ] as const)('maps %s / %s to %s', (type, phase, expected) => {
+    expect(resolveAccountRegistrationState(type, phase)).toBe(expected);
+  });
 });

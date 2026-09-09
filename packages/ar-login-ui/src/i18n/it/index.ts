@@ -2,7 +2,7 @@ import { createTranslation } from '../create-translation';
 
 const it = createTranslation({
 	account_guestLogoutWarning:
-		'Dopo la disconnessione non potrai più accedere a questo account ospite, anche se la cancellazione automatica è disattivata. Registrati prima per mantenere l’accesso al tuo account e ai tuoi dati. Disconnettersi comunque?',
+		'Dopo la disconnessione non potrai più accedere a questo account ospite. Registrati prima per mantenere l’accesso al tuo account e ai tuoi dati. Disconnettersi comunque?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

@@ -2,7 +2,7 @@ import { createTranslation } from '../create-translation';
 
 const th = createTranslation({
 	account_guestLogoutWarning:
-		'เมื่อออกจากระบบ คุณจะไม่สามารถกลับมาใช้บัญชีผู้เยี่ยมชมนี้ได้ แม้จะปิดการลบอัตโนมัติไว้ก็ตาม โปรดลงทะเบียนก่อนเพื่อคงสิทธิ์เข้าถึงบัญชีและข้อมูลของคุณ ต้องการออกจากระบบต่อไปหรือไม่?',
+		'เมื่อออกจากระบบ คุณจะไม่สามารถกลับมาใช้บัญชีผู้เยี่ยมชมนี้ได้ โปรดลงทะเบียนก่อนเพื่อคงสิทธิ์เข้าถึงบัญชีและข้อมูลของคุณ ต้องการออกจากระบบต่อไปหรือไม่?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

@@ -2,7 +2,7 @@ import type { Translation } from '../i18n-types';
 
 const translation = {
 	account_guestLogoutWarning:
-		'লগ আউট করলে এই অতিথি অ্যাকাউন্টে আর ফিরতে পারবেন না, স্বয়ংক্রিয় মুছে ফেলা বন্ধ থাকলেও। অ্যাকাউন্ট ও ডেটার অ্যাক্সেস রাখতে আগে নিবন্ধন করুন। তবুও লগ আউট করবেন?',
+		'লগ আউট করলে এই অতিথি অ্যাকাউন্টে আর ফিরতে পারবেন না। অ্যাকাউন্ট ও ডেটার অ্যাক্সেস রাখতে আগে নিবন্ধন করুন। তবুও লগ আউট করবেন?',
 	account_guestTitle: 'Register your account',
 	account_guestDescription: 'Keep the same account and data when you register.',
 	account_guestDue: 'Eligible for automatic deletion from {date}.',

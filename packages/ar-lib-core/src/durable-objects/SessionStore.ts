@@ -64,7 +64,7 @@ export interface SessionData {
 
   // Anonymous authentication (architecture-decisions.md §17)
   /** Whether this session belongs to an anonymous user */
-  is_anonymous?: boolean;
+  is_guest_session?: boolean;
   /** Whether the anonymous user can upgrade to registered */
   upgrade_eligible?: boolean;
   /** Device ID hash for anonymous sessions (for re-identification) */
@@ -193,7 +193,7 @@ export class SessionStore extends DurableObject<Env> {
   async updateSessionDataRpc(
     sessionId: string,
     dataUpdates: Partial<SessionData>,
-    options?: { onlyIfAnonymous?: boolean }
+    options?: { onlyIfGuestSession?: boolean }
   ): Promise<Session | null> {
     return this.updateSessionData(sessionId, dataUpdates, options);
   }
@@ -648,7 +648,7 @@ export class SessionStore extends DurableObject<Env> {
   async updateSessionData(
     sessionId: string,
     dataUpdates: Partial<SessionData>,
-    options?: { onlyIfAnonymous?: boolean }
+    options?: { onlyIfGuestSession?: boolean }
   ): Promise<Session | null> {
     if (!(await this.getSession(sessionId))) return null;
     // Validation can await another actor. Re-read authoritative data in a storage-only
@@ -660,7 +660,7 @@ export class SessionStore extends DurableObject<Env> {
         this.sessionCache.delete(sessionId);
         return null;
       }
-      if (options?.onlyIfAnonymous && current.data?.is_anonymous !== true) {
+      if (options?.onlyIfGuestSession && current.data?.is_guest_session !== true) {
         this.sessionCache.set(sessionId, current);
         return current;
       }

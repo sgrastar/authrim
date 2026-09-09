@@ -17,6 +17,7 @@
 		loginChallengeAPI,
 		type APIError
 	} from '$lib/api/client';
+	import { getAuthConfig } from '$lib/auth';
 	import { accountAPI } from '$lib/api/account';
 	import { messageForApiError } from '$lib/errors/sdk-error-mapper';
 	import { loginUiDisplayError, messageForCaughtError } from '$lib/errors/display-error';
@@ -629,7 +630,10 @@
 		clientMethodsLoading = true;
 		methodsError = '';
 		try {
-			const requestedClientId = options.clientId ?? clientInfo?.client_id ?? null;
+			const requestedClientId =
+				options.clientId ??
+				clientInfo?.client_id ??
+				(samlRequestId || authorizationChallengeId ? null : getAuthConfig().clientId);
 			const result = requestedClientId
 				? await fetchAuthenticationMethodsForClient(requestedClientId, {
 						forceRefresh: options.forceRefresh

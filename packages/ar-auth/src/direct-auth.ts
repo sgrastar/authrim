@@ -452,7 +452,7 @@ function normalizeOriginHeaderValue(originHeader: string | undefined | null): st
   }
 }
 
-function getDirectAuthWebAuthnOrigin(
+export function getDirectAuthWebAuthnOrigin(
   c: Context<{ Bindings: Env }>,
   originHeader: string | undefined
 ): string | undefined {
@@ -675,7 +675,7 @@ async function resolveDirectStartTurnstileAction(
   return challengeType;
 }
 
-async function validateDirectAuthClient(
+export async function validateDirectAuthClient(
   c: Context<{ Bindings: Env }>,
   clientId: string,
   channel: DirectAuthChannel,
