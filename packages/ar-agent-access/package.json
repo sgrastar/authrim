@@ -83,6 +83,6 @@
     "@modelcontextprotocol/inspector": "0.22.0",
     "@types/node": "^20.19.25",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.11"
   }
 }

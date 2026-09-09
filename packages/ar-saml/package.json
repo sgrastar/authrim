@@ -26,10 +26,10 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260903.1",
     "@types/pako": "^2.0.4",
-    "@vitest/ui": "^4.1.8",
+    "@vitest/ui": "^4.1.11",
     "fast-check": "^4.5.3",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.8",
+    "vitest": "^4.1.11",
     "wrangler": "^4.110.0",
     "yaml": "2.8.3"
   }

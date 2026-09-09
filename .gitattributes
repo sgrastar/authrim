@@ -23,3 +23,6 @@
 *.ico binary
 *.woff binary
 *.woff2 binary
+
+# Unified patches contain context lines consisting of a single space.
+patches/*.patch -whitespace
