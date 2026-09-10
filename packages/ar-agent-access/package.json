@@ -81,7 +81,7 @@
     "@cloudflare/workers-types": "5.20260903.1",
     "@modelcontextprotocol/conformance": "0.1.16",
     "@modelcontextprotocol/inspector": "0.22.0",
-    "@types/node": "^20.19.25",
+    "@types/node": "^26.4.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"
   }

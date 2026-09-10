@@ -42,7 +42,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "@types/node": "^22.10.4",
+    "@types/node": "^26.4.1",
     "@types/tar": "^6.1.13",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
