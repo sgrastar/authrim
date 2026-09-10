@@ -75,7 +75,7 @@
     "@cfworker/json-schema": "4.1.1",
     "@modelcontextprotocol/sdk": "1.30.0",
     "agents": "0.22.0",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260903.1",
