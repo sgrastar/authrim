@@ -79,6 +79,7 @@ import {
   listGuestLifecycleHandler,
 } from './admin-guest-retention';
 import { processGuestLifecycleMaintenance } from './guest-lifecycle-scheduled';
+import { processGuestDeletionAuditOutbox } from './guest-deletion-audit-outbox';
 import { processScheduledIdentifierReplacements } from './identifier-replacement-scheduled';
 import {
   getR2MaintenanceDashboard,
@@ -4256,6 +4257,19 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     const maintenancePage = await listMaintenanceTenantIds(env, log);
     const maintenanceTargets = maintenancePage.targets;
     const maintenanceTenantIds = maintenanceTargets.map((target) => target.tenantId);
+
+    try {
+      await processGuestDeletionAuditOutbox(
+        env,
+        maintenanceTargets,
+        log.module('GUEST-DELETION-AUDIT')
+      );
+    } catch (auditReconciliationError) {
+      log.warn('Guest deletion audit reconciliation failed', {
+        errorType:
+          auditReconciliationError instanceof Error ? auditReconciliationError.name : 'Unknown',
+      });
+    }
 
     await processGuestLifecycleMaintenance(env, maintenanceTargets, log.module('GUEST-LIFECYCLE'));
 

@@ -25,6 +25,11 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { findActiveAccountLegalHold } from '../account-legal-hold-guard';
+import {
+  createGuestDeletionAuditTaskFromContext,
+  GuestDeletionAuditOutboxRepository,
+  type GuestDeletionAuditOutboxRow,
+} from '../guest-deletion-audit-outbox';
 
 function createRuntimeUserStore(c: Context<{ Bindings: Env }>, tenantId: string) {
   const authCtx = createAuthContextFromHono(c, tenantId);
@@ -51,6 +56,90 @@ function parseIntegerQuery(
 
 function invalidRequest(c: Context<{ Bindings: Env }>, description: string): Response {
   return c.json({ error: 'invalid_request', error_description: description }, 400);
+}
+
+interface GuestDeletionAuditLogger {
+  warn(message: string, context?: Record<string, unknown>): void;
+  error(message: string, context?: Record<string, unknown>, error?: Error): void;
+}
+
+async function deliverGuestDeletionCompletionAudit(
+  c: Context<{ Bindings: Env }>,
+  input: {
+    repository: GuestDeletionAuditOutboxRepository;
+    task: GuestDeletionAuditOutboxRow;
+    metadata: Record<string, unknown>;
+    log: GuestDeletionAuditLogger;
+    logActionPrefix: 'guest_user_delete' | 'guest_cleanup_user_delete';
+  }
+): Promise<void> {
+  let deliveryError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await createAuditLogFromContext(
+        c,
+        'user.deleted',
+        'user',
+        input.task.user_id,
+        input.metadata,
+        'info',
+        input.task.audit_id
+      );
+      try {
+        await input.repository.markSucceeded(input.task.audit_id, Math.floor(Date.now() / 1000));
+      } catch (outboxError) {
+        // The pending task remains durable and the audit ID is idempotent, so the scheduler can
+        // safely replay it and finish the acknowledgement later.
+        input.log.error(
+          'Guest deletion audit succeeded but outbox acknowledgement is pending',
+          {
+            action: `${input.logActionPrefix}_audit_ack_pending`,
+            tenantId: input.task.tenant_id,
+            operationId: input.task.operation_id,
+          },
+          outboxError as Error
+        );
+      }
+      return;
+    } catch (error) {
+      deliveryError = error;
+      if (attempt === 0) {
+        input.log.warn('Retrying guest deletion completion audit', {
+          action: `${input.logActionPrefix}_audit_retry`,
+          tenantId: input.task.tenant_id,
+          operationId: input.task.operation_id,
+        });
+      }
+    }
+  }
+
+  try {
+    await input.repository.markRetry(
+      input.task,
+      Math.floor(Date.now() / 1000),
+      'audit_log_write_failed'
+    );
+  } catch (outboxError) {
+    // The task was persisted before deletion and remains pending if this update fails.
+    input.log.error(
+      'Guest deletion audit retry scheduling update failed',
+      {
+        action: `${input.logActionPrefix}_audit_retry_schedule_failed`,
+        tenantId: input.task.tenant_id,
+        operationId: input.task.operation_id,
+      },
+      outboxError as Error
+    );
+  }
+  input.log.error(
+    'Guest account deletion committed; completion audit is queued for reconciliation',
+    {
+      action: `${input.logActionPrefix}_audit_pending`,
+      tenantId: input.task.tenant_id,
+      operationId: input.task.operation_id,
+    },
+    deliveryError as Error
+  );
 }
 
 // ============================================================================
@@ -404,6 +493,7 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
       reason: 'admin_action',
       source: 'guest_admin_api',
     };
+    const completionAuditId = `account-guest-deleted-${deletionOperationId}`;
     await createAuditLogFromContext(
       c,
       'account.guest.deletion_started',
@@ -412,6 +502,15 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
       auditMetadata,
       'info',
       `account-guest-delete-started-${deletionOperationId}`
+    );
+    const auditOutbox = new GuestDeletionAuditOutboxRepository(authCtx.coreAdapter, tenantId);
+    const auditTask = await auditOutbox.enqueue(
+      createGuestDeletionAuditTaskFromContext(c, {
+        auditId: completionAuditId,
+        userId,
+        operationId: deletionOperationId,
+        metadata: auditMetadata,
+      })
     );
 
     const deletingVersionMs = Date.now();
@@ -441,47 +540,13 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
       revokeSessions: true,
     });
 
-    const completionAuditId = `account-guest-deleted-${deletionOperationId}`;
-    try {
-      await createAuditLogFromContext(
-        c,
-        'user.deleted',
-        'user',
-        userId,
-        auditMetadata,
-        'info',
-        completionAuditId
-      );
-    } catch (_error) {
-      log.warn('Retrying guest deletion completion audit', {
-        action: 'guest_user_delete_audit_retry',
-        tenantId,
-        operationId: deletionOperationId,
-      });
-      try {
-        await createAuditLogFromContext(
-          c,
-          'user.deleted',
-          'user',
-          userId,
-          auditMetadata,
-          'info',
-          completionAuditId
-        );
-      } catch (retryError) {
-        // The account is already irreversibly deleted. Preserve that successful API outcome;
-        // the durable deletion_started audit identifies the operation for reconciliation.
-        log.error(
-          'Guest account deletion committed but completion audit delivery is pending',
-          {
-            action: 'guest_user_delete_audit_pending',
-            tenantId,
-            operationId: deletionOperationId,
-          },
-          retryError as Error
-        );
-      }
-    }
+    await deliverGuestDeletionCompletionAudit(c, {
+      repository: auditOutbox,
+      task: auditTask,
+      metadata: auditMetadata,
+      log,
+      logActionPrefix: 'guest_user_delete',
+    });
     log.info('Guest account deleted by administrator', {
       action: 'guest_user_delete',
       tenantId,
@@ -598,6 +663,7 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
           reason: 'manual_cleanup',
           source: 'guest_cleanup_api',
         };
+        const completionAuditId = `account-guest-deleted-${deletionOperationId}`;
         await createAuditLogFromContext(
           c,
           'account.guest.deletion_started',
@@ -606,6 +672,15 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
           auditMetadata,
           'info',
           `account-guest-delete-started-${deletionOperationId}`
+        );
+        const auditOutbox = new GuestDeletionAuditOutboxRepository(authCtx.coreAdapter, tenantId);
+        const auditTask = await auditOutbox.enqueue(
+          createGuestDeletionAuditTaskFromContext(c, {
+            auditId: completionAuditId,
+            userId,
+            operationId: deletionOperationId,
+            metadata: auditMetadata,
+          })
         );
 
         const deletingVersionMs = Date.now();
@@ -631,47 +706,13 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
           operationId: deletionOperationId,
           revokeSessions: true,
         });
-        const completionAuditId = `account-guest-deleted-${deletionOperationId}`;
-        try {
-          await createAuditLogFromContext(
-            c,
-            'user.deleted',
-            'user',
-            userId,
-            auditMetadata,
-            'info',
-            completionAuditId
-          );
-        } catch (_error) {
-          log.warn('Retrying guest cleanup completion audit', {
-            action: 'guest_cleanup_user_delete_audit_retry',
-            tenantId,
-            operationId: deletionOperationId,
-          });
-          try {
-            await createAuditLogFromContext(
-              c,
-              'user.deleted',
-              'user',
-              userId,
-              auditMetadata,
-              'info',
-              completionAuditId
-            );
-          } catch (retryError) {
-            // The durable deletion_started audit identifies a cleanup deletion whose
-            // idempotent completion audit still needs reconciliation.
-            log.error(
-              'Guest cleanup deletion committed but completion audit delivery is pending',
-              {
-                action: 'guest_cleanup_user_delete_audit_pending',
-                tenantId,
-                operationId: deletionOperationId,
-              },
-              retryError as Error
-            );
-          }
-        }
+        await deliverGuestDeletionCompletionAudit(c, {
+          repository: auditOutbox,
+          task: auditTask,
+          metadata: auditMetadata,
+          log,
+          logActionPrefix: 'guest_cleanup_user_delete',
+        });
         deletedUsers++;
         deletedCredentials += expiredCredentials.filter(
           (credential) => credential.user_id === userId

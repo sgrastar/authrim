@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => ({
   deleteUser: vi.fn(),
   transitionAccountAuthenticationState: vi.fn(),
   audit: vi.fn(),
+  auditOutboxEnqueue: vi.fn(),
+  auditOutboxMarkSucceeded: vi.fn(),
+  auditOutboxMarkRetry: vi.fn(),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
@@ -19,6 +22,35 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   getLogger: vi.fn(() => ({ module: vi.fn(() => mocks.logger) })),
   CanonicalRuntimeUserStore: vi.fn(function () {
     return { findById: mocks.findUser, deleteUser: mocks.deleteUser };
+  }),
+}));
+vi.mock('../guest-deletion-audit-outbox', () => ({
+  createGuestDeletionAuditTaskFromContext: vi.fn(
+    (
+      _c: unknown,
+      input: {
+        auditId: string;
+        userId: string;
+        operationId: string;
+        metadata: Record<string, unknown>;
+      }
+    ) => ({
+      auditId: input.auditId,
+      userId: input.userId,
+      operationId: input.operationId,
+      actorUserId: 'admin-1',
+      ipAddress: 'unknown',
+      userAgent: 'unknown',
+      metadataJson: JSON.stringify(input.metadata),
+      createdAt: 1000,
+    })
+  ),
+  GuestDeletionAuditOutboxRepository: vi.fn(function () {
+    return {
+      enqueue: mocks.auditOutboxEnqueue,
+      markSucceeded: mocks.auditOutboxMarkSucceeded,
+      markRetry: mocks.auditOutboxMarkRetry,
+    };
   }),
 }));
 import {
@@ -41,11 +73,15 @@ function context(
     req: {
       param: vi.fn(() => options.id),
       query: vi.fn((n: string) => options.query?.[n]),
+      header: vi.fn(() => undefined),
       json: options.bodyError
         ? vi.fn().mockRejectedValue(new SyntaxError('bad'))
         : vi.fn().mockResolvedValue(options.body ?? {}),
     },
     env: options.env ?? {},
+    get: vi.fn((name: string) =>
+      name === 'adminAuth' ? { userId: 'admin-1' } : name === 'tenantId' ? 'tenant-a' : undefined
+    ),
     json: vi.fn((v: unknown, s = 200) => Response.json(v, { status: s })),
   } as never;
 }
@@ -72,6 +108,25 @@ describe('guest account administration', () => {
     mocks.deleteUser.mockResolvedValue(true);
     mocks.transitionAccountAuthenticationState.mockResolvedValue({ lifecycle: 'active' });
     mocks.audit.mockResolvedValue(undefined);
+    mocks.auditOutboxEnqueue.mockImplementation(async (input) => ({
+      audit_id: input.auditId,
+      tenant_id: 'tenant-a',
+      user_id: input.userId,
+      operation_id: input.operationId,
+      actor_user_id: input.actorUserId,
+      ip_address: input.ipAddress,
+      user_agent: input.userAgent,
+      metadata_json: input.metadataJson,
+      status: 'pending',
+      attempt_count: 0,
+      next_attempt_at: input.createdAt,
+      last_error_code: null,
+      created_at: input.createdAt,
+      updated_at: input.createdAt,
+      succeeded_at: null,
+    }));
+    mocks.auditOutboxMarkSucceeded.mockResolvedValue(undefined);
+    mocks.auditOutboxMarkRetry.mockResolvedValue(undefined);
   });
   it.each([false, true])('lists guest accounts include_expired=%s', async (includeExpired) => {
     mocks.adapter.queryOne.mockResolvedValueOnce({ count: 2 });
@@ -273,6 +328,11 @@ describe('guest account administration', () => {
           'info',
           expect.stringMatching(/^account-guest-deleted-/)
         );
+        expect(mocks.auditOutboxEnqueue).toHaveBeenCalledTimes(1);
+        expect(mocks.auditOutboxEnqueue.mock.invocationCallOrder[0]).toBeLessThan(
+          mocks.transitionAccountAuthenticationState.mock.invocationCallOrder[0]
+        );
+        expect(mocks.auditOutboxMarkSucceeded).toHaveBeenCalledTimes(1);
       }
     }
   );
@@ -293,6 +353,7 @@ describe('guest account administration', () => {
     );
     expect(completionCalls).toHaveLength(2);
     expect(completionCalls[0][6]).toBe(completionCalls[1][6]);
+    expect(mocks.auditOutboxMarkSucceeded).toHaveBeenCalledTimes(1);
   });
   it('does not begin deletion until durable audit intent is recorded', async () => {
     mocks.findUser.mockResolvedValueOnce(user());
@@ -315,9 +376,14 @@ describe('guest account administration', () => {
       2
     );
     expect(mocks.logger.error).toHaveBeenCalledWith(
-      'Guest account deletion committed but completion audit delivery is pending',
+      'Guest account deletion committed; completion audit is queued for reconciliation',
       expect.objectContaining({ action: 'guest_user_delete_audit_pending', tenantId: 'tenant-a' }),
       expect.any(Error)
+    );
+    expect(mocks.auditOutboxMarkRetry).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: 'user-1', status: 'pending' }),
+      expect.any(Number),
+      'audit_log_write_failed'
     );
   });
   it('handles anonymous user get/delete failures', async () => {
@@ -397,6 +463,8 @@ describe('guest account administration', () => {
       'u2',
       expect.objectContaining({ reason: 'manual_cleanup' })
     );
+    expect(mocks.auditOutboxEnqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.auditOutboxMarkSucceeded).toHaveBeenCalledTimes(1);
   });
   it('preserves cleanup deletion outcomes and retries completion audit delivery', async () => {
     mocks.adapter.query.mockResolvedValueOnce([
@@ -435,6 +503,8 @@ describe('guest account administration', () => {
     expect(firstUserTransitions).toHaveLength(2);
     expect(firstUserTransitions[0][1].operationId).toBe(firstUserTransitions[1][1].operationId);
     expect(mocks.deleteUser).toHaveBeenCalledTimes(2);
+    expect(mocks.auditOutboxEnqueue).toHaveBeenCalledTimes(2);
+    expect(mocks.auditOutboxMarkSucceeded).toHaveBeenCalledTimes(2);
   });
   it('continues cleanup after persistent completion audit delivery failure', async () => {
     mocks.adapter.query.mockResolvedValueOnce([
@@ -457,13 +527,14 @@ describe('guest account administration', () => {
       2
     );
     expect(mocks.logger.error).toHaveBeenCalledWith(
-      'Guest cleanup deletion committed but completion audit delivery is pending',
+      'Guest account deletion committed; completion audit is queued for reconciliation',
       expect.objectContaining({
         action: 'guest_cleanup_user_delete_audit_pending',
         tenantId: 'tenant-a',
       }),
       expect.any(Error)
     );
+    expect(mocks.auditOutboxMarkRetry).toHaveBeenCalledTimes(1);
   });
   it('does not start cleanup deletion until its durable audit intent is recorded', async () => {
     mocks.adapter.query.mockResolvedValueOnce([
@@ -475,6 +546,20 @@ describe('guest account administration', () => {
         throw new Error('audit unavailable');
       }
     });
+
+    expect(
+      (await cleanupExpiredGuestUsers(context({ body: { dry_run: false, limit: 10 } }))).status
+    ).toBe(500);
+    expect(mocks.transitionAccountAuthenticationState).not.toHaveBeenCalled();
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    expect(mocks.deleteUser).not.toHaveBeenCalled();
+  });
+  it('does not start cleanup deletion until the reconciliation task is durable', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([
+      { user_id: 'u1', credential_id: 'c1', expires_at: 1 },
+    ]);
+    mocks.adapter.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    mocks.auditOutboxEnqueue.mockRejectedValueOnce(new Error('outbox unavailable'));
 
     expect(
       (await cleanupExpiredGuestUsers(context({ body: { dry_run: false, limit: 10 } }))).status
