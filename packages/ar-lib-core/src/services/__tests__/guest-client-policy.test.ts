@@ -27,6 +27,8 @@ describe('guest client policy', () => {
     { allowedScopes: ['openid', 'scope with space'] },
     { allowedUpgradeMethods: ['social'] },
     { allowedUpgradeMethods: ['email', 'email'] },
+    { deviceStability: 'installation' },
+    { expiresInDays: 30 },
     { extra: 'property' },
   ])('rejects malformed or unsupported guest settings: %j', (invalid) => {
     const value =

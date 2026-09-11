@@ -21,8 +21,6 @@ const mocks = vi.hoisted(() => ({
   getNotifier: vi.fn(),
   incrementRpc: vi.fn(),
   createSessionRpc: vi.fn(),
-  getExistingSessionRpc: vi.fn(),
-  updateExistingSessionRpc: vi.fn(),
   publishEvent: vi.fn(),
   createAuditLog: vi.fn(),
   error: vi.fn(),
@@ -91,12 +89,6 @@ vi.mock('@authrim/ar-lib-core', async () => {
     getSessionStoreForNewSession: vi.fn(async () => ({
       stub: { createSessionRpc: mocks.createSessionRpc },
       sessionId: 'session-1',
-    })),
-    getSessionStoreBySessionId: vi.fn(() => ({
-      stub: {
-        getSessionRpc: mocks.getExistingSessionRpc,
-        updateSessionDataRpc: mocks.updateExistingSessionRpc,
-      },
     })),
     generateBrowserState: vi.fn(async () => 'browser-state-1'),
     getSessionCookieSameSite: vi.fn(() => 'Lax'),
@@ -241,8 +233,6 @@ describe('email code handlers through HTTP', () => {
     mocks.getNotifier.mockReturnValue({ send: mocks.notifierSend });
     mocks.notifierSend.mockResolvedValue({ success: true, messageId: 'message-1' });
     mocks.createSessionRpc.mockResolvedValue(undefined);
-    mocks.getExistingSessionRpc.mockResolvedValue(null);
-    mocks.updateExistingSessionRpc.mockResolvedValue(undefined);
     mocks.syncUser.mockResolvedValue(undefined);
     mocks.markEmailVerifiedForOtpLogin.mockResolvedValue(undefined);
     mocks.markEmailVerifiedAndTouchLastLogin.mockResolvedValue(undefined);
@@ -626,7 +616,6 @@ describe('email code handlers through HTTP', () => {
           'user-1'
         );
         expect(mocks.createSessionRpc).not.toHaveBeenCalled();
-        expect(mocks.updateExistingSessionRpc).not.toHaveBeenCalled();
       }
     );
     it('creates a session, clears the OTP cookie, and records observable side effects', async () => {
@@ -806,9 +795,7 @@ describe('email code handlers through HTTP', () => {
       );
     });
 
-    it('upgrades an unverified anonymous session without creating a replacement session', async () => {
-      mocks.getExistingSessionRpc.mockResolvedValueOnce({ data: { is_guest_session: true } });
-
+    it('does not mutate a guest session through the regular email login endpoint', async () => {
       const response = await post(
         '/verify',
         { code: '123456', email: 'user@example.com' },
@@ -817,16 +804,14 @@ describe('email code handlers through HTTP', () => {
       );
 
       expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({ sessionId: 'anonymous-session-1' });
-      expect(mocks.updateExistingSessionRpc).toHaveBeenCalledWith(
-        'anonymous-session-1',
-        expect.objectContaining({
-          verified_email: 'user@example.com',
-          verified_email_user_id: 'user-1',
-          upgrade_nonce: expect.any(String),
-        })
+      expect(await response.json()).toMatchObject({ sessionId: 'session-1' });
+      expect(mocks.createSessionRpc).toHaveBeenCalledWith(
+        'session-1',
+        'user-1',
+        expect.any(Number),
+        expect.objectContaining({ email: 'user@example.com', amr: ['otp'] }),
+        'tenant-1'
       );
-      expect(mocks.createSessionRpc).not.toHaveBeenCalled();
     });
 
     it('does not attach an already verified account to an anonymous session', async () => {
@@ -837,8 +822,6 @@ describe('email code handlers through HTTP', () => {
         active: 1,
         email_verified: 1,
       });
-      mocks.getExistingSessionRpc.mockResolvedValueOnce({ data: { is_guest_session: true } });
-
       const response = await post(
         '/verify',
         { code: '123456', email: 'user@example.com' },
@@ -847,7 +830,6 @@ describe('email code handlers through HTTP', () => {
       );
 
       expect(response.status).toBe(200);
-      expect(mocks.updateExistingSessionRpc).not.toHaveBeenCalled();
       expect(mocks.createSessionRpc).toHaveBeenCalled();
     });
 

@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   profileSync: vi.fn(),
   execute: vi.fn(),
   audit: vi.fn(),
+  logError: vi.fn(),
 }));
 vi.mock('../account-operation-log', () => ({ recordAccountOperation: mocks.audit }));
 vi.mock('../account-page', () => ({ requireAccountSession: mocks.accountSession }));
@@ -91,6 +92,9 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   }),
   resolveCustomClaimRuntimeSourcesFromEnv: vi.fn(async () => ({ nonPiiDb: {} })),
   getMissingRequiredCustomClaims: mocks.missing,
+  getLogger: vi.fn(() => ({
+    module: () => ({ error: mocks.logError }),
+  })),
 }));
 import {
   getAccountGuestUpgradeHandler,
@@ -244,6 +248,15 @@ describe('account guest upgrade API', () => {
         owner: { owner: 'tenant', tenantId: 'tenant' },
       })
     );
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: 'guest',
+        action: 'account.guest.upgrade_started',
+        required: true,
+        metadata: expect.objectContaining({ method: 'email' }),
+      })
+    );
   });
   it.each([
     null,
@@ -306,6 +319,14 @@ describe('account guest upgrade API', () => {
       expect(response.status).toBe(400);
       expect(mocks.verifyPasskey).not.toHaveBeenCalled();
       expect(mocks.commit).not.toHaveBeenCalled();
+      expect(mocks.audit).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          userId: 'guest',
+          action: 'account.guest.upgrade_failed',
+          metadata: expect.objectContaining({ operationId: 'op', reason: 'invalid_upgrade_proof' }),
+        })
+      );
       if (failure === 'invalid-signature')
         expect(mocks.verifyRegistration).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -362,6 +383,14 @@ describe('account guest upgrade API', () => {
     expect(mocks.verifyEmail).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 'guest', sessionId: 'session', operationId: 'op' })
     );
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        userId: 'guest',
+        action: 'account.guest.upgrade_failed',
+        metadata: expect.objectContaining({ operationId: 'op', reason: 'invalid_upgrade_proof' }),
+      })
+    );
     expect(mocks.commit).not.toHaveBeenCalled();
   });
   it('returns an existing-login choice on identity collision without admission', async () => {
@@ -411,9 +440,14 @@ describe('account guest upgrade API', () => {
     expect(result.status).toBe(200);
     expect(mocks.updateSession).toHaveBeenCalledWith(
       'session',
-      expect.objectContaining({ authTime: 123, upgraded_at: 123000 }),
+      expect.objectContaining({
+        authTime: 123,
+        upgraded_at: 123000,
+        guest_resume_credential_hash: undefined,
+      }),
       { onlyIfGuestSession: true }
     );
+    expect(mocks.updateSession.mock.calls[0][1]).not.toHaveProperty('device_id_hash');
   });
   it('retains the subject and clears guest resume authentication after completion', async () => {
     mocks.operation.mockResolvedValue({ ...(await operation()), state: 'verified' });
@@ -426,10 +460,12 @@ describe('account guest upgrade API', () => {
       expect.objectContaining({
         is_guest_session: false,
         guest_resume_credential: false,
+        guest_resume_credential_hash: undefined,
         amr: ['otp'],
       }),
       { onlyIfGuestSession: true }
     );
+    expect(mocks.updateSession.mock.calls[0][1]).not.toHaveProperty('device_id_hash');
   });
   it('commits verified email to the same account and synchronizes incomplete profile independently', async () => {
     const op = {
@@ -524,6 +560,54 @@ describe('account guest upgrade API', () => {
       ).status
     ).toBe(503);
     expect(mocks.create).not.toHaveBeenCalled();
+    expect(mocks.audit).toHaveBeenCalledWith(expect.anything(), {
+      userId: 'guest',
+      action: 'account.guest.upgrade_failed',
+      required: true,
+      metadata: { stage: 'start', reason: 'guest_upgrade_unavailable' },
+    });
+  });
+  it('audits an unexpected completion failure after the guest session is identified', async () => {
+    mocks.operation.mockRejectedValueOnce(new Error('operation_read_failed'));
+
+    const response = await completeAccountGuestUpgradeHandler(
+      context({ operation_id: 'op', upgrade_token: token, code: '123456' })
+    );
+
+    expect(response.status).toBe(503);
+    expect(mocks.audit).toHaveBeenCalledWith(expect.anything(), {
+      userId: 'guest',
+      action: 'account.guest.upgrade_failed',
+      required: true,
+      metadata: { stage: 'complete', reason: 'guest_upgrade_unavailable' },
+    });
+  });
+  it.each([
+    ['status', () => getAccountGuestUpgradeHandler(context())],
+    [
+      'start',
+      () =>
+        startAccountGuestUpgradeHandler(context({ method: 'email', email: 'test@example.org' })),
+    ],
+    [
+      'complete',
+      () =>
+        completeAccountGuestUpgradeHandler(
+          context({ operation_id: 'op', upgrade_token: token, code: '123456' })
+        ),
+    ],
+  ])('logs an unexpected %s failure without error details', async (stage, invoke) => {
+    mocks.session.mockRejectedValueOnce(new Error('private-address@example.org'));
+
+    const response = await invoke();
+
+    expect(response.status).toBe(503);
+    expect(mocks.logError).toHaveBeenCalledWith('Guest account upgrade request failed', {
+      action: 'guest_upgrade',
+      stage,
+      errorType: 'Error',
+    });
+    expect(JSON.stringify(mocks.logError.mock.calls)).not.toContain('private-address@example.org');
   });
 });
 

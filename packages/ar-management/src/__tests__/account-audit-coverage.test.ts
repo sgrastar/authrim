@@ -39,6 +39,8 @@ const EPHEMERAL_MUTATION_ROUTES = [
 ] as const;
 
 const ACCOUNT_AUDIT_ACTIONS = [
+  'account.guest.created',
+  'account.guest.upgrade_failed',
   'account.guest.upgrade_started',
   'account.guest.upgraded',
   'account.device.unlinked',
@@ -61,6 +63,7 @@ const ACCOUNT_AUDIT_ACTIONS = [
 ] as const;
 
 const AUDIT_PRODUCER_FILES = [
+  'packages/ar-auth/src/guest-login.ts',
   'packages/ar-management/src/account-guest-upgrade.ts',
   'packages/ar-management/src/account-page.ts',
   'packages/ar-management/src/account-identifier-replacement.ts',
@@ -104,6 +107,26 @@ describe('Account Page audit coverage', () => {
     for (const action of ACCOUNT_AUDIT_ACTIONS) {
       expect(adminLabels).toContain(`'${action}'`);
       expect(accountActivity).toContain(`'${action}'`);
+    }
+  });
+
+  it('records the names of fields changed by an administrator without copying field values', () => {
+    const source = readRepositoryFile('packages/ar-management/src/admin-users.ts');
+    expect(source).toContain('changed_fields: changedFields');
+    expect(source).toContain('registration_state: existingProjection.registration_state');
+  });
+
+  it('preserves guest registration context when the general Admin UI deletes an account', () => {
+    const source = readRepositoryFile('packages/ar-management/src/admin-users.ts');
+    const deleteAuditCalls = [
+      ...source.matchAll(
+        /createAuditLogFromContext\(c, 'user\.deleted', 'user', userId, \{([^}]*)\}\)/gu
+      ),
+    ];
+
+    expect(deleteAuditCalls).toHaveLength(2);
+    for (const call of deleteAuditCalls) {
+      expect(call[1]).toContain('registration_state: projection?.registration_state');
     }
   });
 });

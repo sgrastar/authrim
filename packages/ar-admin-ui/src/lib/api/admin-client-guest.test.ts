@@ -23,8 +23,7 @@ describe('client guest policy API', () => {
 					guestAuth: {
 						enabled: true,
 						preserveSubOnUpgrade: false,
-						allowedScopes: ['openid'],
-						deviceStability: 'session'
+						allowedScopes: ['openid']
 					}
 				}
 			})
@@ -34,8 +33,7 @@ describe('client guest policy API', () => {
 			policy: {
 				enabled: true,
 				preserveSubOnUpgrade: true,
-				allowedScopes: ['openid'],
-				deviceStability: 'session'
+				allowedScopes: ['openid']
 			}
 		});
 	});

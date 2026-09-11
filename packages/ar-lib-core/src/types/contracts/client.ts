@@ -449,31 +449,13 @@ export type ClientValidationErrorCode =
 // =============================================================================
 
 /**
- * Device ID stability level.
- * Defines how stable the device identifier is expected to be.
- *
- * - session: Valid only within browser session (most ephemeral)
- * - installation: Changes on app reinstall or browser cache clear (default)
- * - device: Device-specific ID like IDFV (platform-dependent, most stable)
- */
-export type DeviceStability = 'session' | 'installation' | 'device';
-
-/**
  * Anonymous authentication configuration.
- * Guest authentication policy shared by device login and human guest access.
- * Human guest retention is configured separately by the account lifecycle policy; enabled and
- * allowedScopes also gate human guest access. This is configuration, not registration state.
+ * Browser guest authentication policy. Human guest retention is configured separately by the
+ * account lifecycle policy. This is configuration, not registration state.
  */
 export interface GuestAuthConfig {
   /** Whether anonymous authentication is enabled for this client */
   enabled: boolean;
-
-  /**
-   * Anonymous user expiration in days.
-   * After this period of inactivity, the user may be cleaned up.
-   * null = never expires (must be manually deleted)
-   */
-  expiresInDays?: number | null;
 
   /**
    * Allowed scopes for anonymous users.
@@ -488,13 +470,6 @@ export interface GuestAuthConfig {
   preserveSubOnUpgrade: boolean;
 
   /**
-   * Device ID stability level.
-   * Used to set expectations about how long the device ID will persist.
-   * This affects user experience and data retention decisions.
-   */
-  deviceStability: DeviceStability;
-
-  /**
    * Whether to allow prompt=none for anonymous sessions.
    * When false, anonymous users must always go through login UI.
    * IMPORTANT: This must be explicitly set; no implicit permission.
@@ -505,5 +480,5 @@ export interface GuestAuthConfig {
    * Allowed upgrade methods.
    * Defines which authentication methods can be used to upgrade.
    */
-  allowedUpgradeMethods?: ('email' | 'passkey' | 'social' | 'phone')[];
+  allowedUpgradeMethods?: ('email' | 'passkey')[];
 }

@@ -158,7 +158,7 @@ export const SESSION_SETTINGS_META: Record<keyof SessionSettings, SettingMeta> =
     default: 86400000,
     envKey: 'SESSION_TTL_ANONYMOUS_MS',
     label: 'Anonymous Session TTL',
-    description: 'Session lifetime after anonymous device authentication in milliseconds',
+    description: 'Session lifetime after browser guest authentication in milliseconds',
     min: 60000,
     max: 2592000000,
     unit: 'ms',

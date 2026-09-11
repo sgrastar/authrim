@@ -4,10 +4,8 @@ import { GUEST_LIFECYCLE_SCOPE } from './guest-lifecycle';
 export function createDefaultGuestClientPolicy(): GuestAuthConfig {
   return {
     enabled: false,
-    expiresInDays: null,
     allowedScopes: ['openid', GUEST_LIFECYCLE_SCOPE],
     preserveSubOnUpgrade: true,
-    deviceStability: 'installation',
     allowPromptNone: false,
     allowedUpgradeMethods: ['email', 'passkey'],
   };
@@ -19,10 +17,8 @@ export function isValidGuestClientPolicy(value: unknown): value is GuestAuthConf
   const policy = value as Record<string, unknown>;
   const keys = new Set([
     'enabled',
-    'expiresInDays',
     'allowedScopes',
     'preserveSubOnUpgrade',
-    'deviceStability',
     'allowPromptNone',
     'allowedUpgradeMethods',
   ]);
@@ -31,12 +27,6 @@ export function isValidGuestClientPolicy(value: unknown): value is GuestAuthConf
     typeof policy.enabled === 'boolean' &&
     policy.preserveSubOnUpgrade === true &&
     typeof policy.allowPromptNone === 'boolean' &&
-    ['session', 'installation', 'device'].includes(String(policy.deviceStability)) &&
-    (policy.expiresInDays === undefined ||
-      policy.expiresInDays === null ||
-      (Number.isSafeInteger(policy.expiresInDays) &&
-        Number(policy.expiresInDays) >= 1 &&
-        Number(policy.expiresInDays) <= 3650)) &&
     Array.isArray(policy.allowedScopes) &&
     policy.allowedScopes.length <= 100 &&
     policy.allowedScopes.includes('openid') &&

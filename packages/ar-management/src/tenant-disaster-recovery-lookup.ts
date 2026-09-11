@@ -459,8 +459,8 @@ function sourceSql(stage: Exclude<ControlTenantDisasterRecoveryLookupStage, 'cle
                   FROM passkeys WHERE rp_id IS NOT NULL AND rp_id <> ''
                 UNION ALL
                 SELECT 'anonymous:' || id AS id, tenant_id, user_id,
-                       'urn:authrim:guest-device:v1' AS provider_id,
-                       device_id_hash AS provider_user_id, created_at
+                       'urn:authrim:guest-resume:v1' AS provider_id,
+                       resume_credential_hash AS provider_user_id, created_at
                   FROM guest_devices WHERE is_active = 1
               ) authority
              WHERE tenant_id = ?

@@ -715,14 +715,12 @@ import {
   clearAllOAuthConfig,
 } from './routes/settings/oauth-config';
 import {
-  getGuestAuthConfig,
-  updateGuestAuthConfig,
   listGuestUsers,
   getGuestUser,
   getGuestUserUpgrades,
   deleteGuestUser,
   cleanupExpiredGuestUsers,
-} from './routes/settings/guest-auth';
+} from './routes/guest-users';
 import { getPolicyFlags, updatePolicyFlag, clearPolicyFlag } from './routes/settings/policy-flags';
 import {
   getCheckApiAuditSettings,
@@ -2300,11 +2298,7 @@ app.put('/api/admin/settings/oauth-config/:name', updateOAuthConfig);
 app.delete('/api/admin/settings/oauth-config/:name', clearOAuthConfig);
 app.delete('/api/admin/settings/oauth-config', clearAllOAuthConfig);
 
-// Anonymous Authentication Admin API (architecture-decisions.md §17)
-// Configuration
-app.get('/api/admin/settings/guest-auth', getGuestAuthConfig);
-app.put('/api/admin/settings/guest-auth', updateGuestAuthConfig);
-// User Management
+// Browser guest account administration.
 app.get('/api/admin/guest-users', listGuestUsers);
 app.get('/api/admin/guest-users/:id', getGuestUser);
 app.get('/api/admin/guest-users/:id/upgrades', getGuestUserUpgrades);

@@ -107,21 +107,6 @@ export function clearFeatureFlagCache(): void {
 }
 
 /**
- * Check if Anonymous Authentication is enabled
- *
- * Anonymous auth allows device-based login without email/password,
- * with the ability to upgrade to a full account later.
- *
- * @see architecture-decisions.md §17
- *
- * @param env - Worker environment bindings
- * @returns true if anonymous auth is enabled, false otherwise (secure default)
- */
-export async function isGuestDeviceAuthEnabled(env: Env): Promise<boolean> {
-  return getFeatureFlag('ENABLE_GUEST_DEVICE_AUTH', env, false);
-}
-
-/**
  * Check if ID-JAG (Identity Assertion Authorization Grant) is enabled
  *
  * ID-JAG enables IdP-mediated authorization for third-party APIs using

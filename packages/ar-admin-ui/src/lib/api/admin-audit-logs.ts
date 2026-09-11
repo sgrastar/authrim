@@ -72,6 +72,10 @@ export const AUDIT_ACTION_TYPES = [
 	{ value: 'user.lock', label: 'User Locked' },
 	{ value: 'user.activate', label: 'User Activated' },
 	{ value: 'user.anonymized', label: 'User Anonymized (GDPR)' },
+	{
+		value: 'guest.resume_credentials.deactivated',
+		label: 'Guest Resume Credentials Deactivated'
+	},
 
 	// ── Client Management ──
 	{ value: 'client.created', label: 'Client Created' },

@@ -1,19 +1,15 @@
 import { adminFetch, API_BASE_URL } from './admin-request';
 export interface ClientGuestPolicy {
 	enabled: boolean;
-	expiresInDays: number | null;
 	allowedScopes: string[];
 	preserveSubOnUpgrade: true;
-	deviceStability: 'session' | 'installation' | 'device';
 	allowPromptNone: boolean;
 	allowedUpgradeMethods: ('email' | 'passkey')[];
 }
 export const defaultClientGuestPolicy = (): ClientGuestPolicy => ({
 	enabled: false,
-	expiresInDays: null,
 	allowedScopes: ['openid', 'account:lifecycle:read'],
 	preserveSubOnUpgrade: true,
-	deviceStability: 'installation',
 	allowPromptNone: false,
 	allowedUpgradeMethods: ['email', 'passkey']
 });

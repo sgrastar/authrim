@@ -566,9 +566,8 @@ export interface Env {
   DEFAULT_RESIDENCY_PROFILE_ID?: string; // Environment default residency profile pointer
   AUTHRIM_REGISTERED_SCHEMA_REFS?: string; // JSON list of setup-managed binding/connection release-stream registrations
 
-  // Mock/Anonymous Authentication
+  // Mock Authentication
   ENABLE_MOCK_AUTH?: string; // "true" to enable mock authentication (NEVER in production!)
-  ENABLE_GUEST_DEVICE_AUTH?: string; // "true" to enable device-based anonymous login
 
   // ID-JAG (draft-ietf-oauth-identity-assertion-authz-grant)
   ENABLE_ID_JAG?: string; // "true" to enable ID-JAG token type in Token Exchange
@@ -639,7 +638,6 @@ export interface Env {
   KEY_ID?: string;
   PAIRWISE_SALT?: string; // Pairwise subject identifier salt (OIDC Core 8.1)
   OTP_HMAC_SECRET?: string; // Email OTP HMAC secret for code hashing
-  DEVICE_HMAC_SECRET?: string; // Device ID HMAC secret for anonymous authentication
   KEY_MANAGER_SECRET?: string; // Legacy HTTP compatibility only; new deployments use the DO RPC binding
   LOGGING_CURSOR_HMAC_SECRET?: string; // HMAC secret for opaque logging Admin API cursors
   LOOKUP_HMAC_KEY_SLOT_A?: string; // Dedicated Lookup blind-index HMAC key slot A

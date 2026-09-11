@@ -231,8 +231,8 @@ function sourceQuery(source: ControlLookupHmacRotationSourceShardView): string {
                   SELECT 'anonymous:' || id AS id, id AS authority_id,
                          'anonymous_device' AS authority_kind,
                          tenant_id, user_id,
-                         'urn:authrim:guest-device:v1' AS provider_id,
-                         device_id_hash AS provider_user_id, created_at AS linked_at
+                         'urn:authrim:guest-resume:v1' AS provider_id,
+                         resume_credential_hash AS provider_user_id, created_at AS linked_at
                     FROM guest_devices WHERE is_active = 1
                 ) authority
                WHERE linked_at < ?
@@ -653,7 +653,7 @@ async function sourceStillAuthoritative(
     const reflected = await session
       .prepare(
         `SELECT id FROM guest_devices
-          WHERE id = ? AND tenant_id = ? AND user_id = ? AND device_id_hash = ?
+          WHERE id = ? AND tenant_id = ? AND user_id = ? AND resume_credential_hash = ?
             AND is_active = 1`
       )
       .bind(external.authority_id, external.tenant_id, external.user_id, external.provider_user_id)

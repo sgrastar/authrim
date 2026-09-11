@@ -214,7 +214,7 @@ async function seedSources(users: DatabaseSync, pii: DatabaseSync): Promise<void
       credential_id TEXT, created_at INTEGER
     );
     CREATE TABLE guest_devices (
-      id TEXT PRIMARY KEY, tenant_id TEXT, user_id TEXT, device_id_hash TEXT,
+      id TEXT PRIMARY KEY, tenant_id TEXT, user_id TEXT, resume_credential_hash TEXT,
       is_active INTEGER, created_at INTEGER
     );
   `);

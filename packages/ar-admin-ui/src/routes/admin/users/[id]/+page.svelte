@@ -43,7 +43,7 @@
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { sanitizeText, isValidUUID } from '$lib/utils';
 	import { normalizeTimestampMs } from '$lib/utils/timestamp';
-	import { formatAccountAuditAction } from '$lib/admin/account-audit-action-label';
+	import { formatGuestAwareAuditAction } from '$lib/admin/account-audit-action-label';
 
 	let user: User | null = $state(null);
 	let loading = $state(true);
@@ -746,9 +746,12 @@
 			: `One-time code sent to ${email}. Used as a fallback if passkeys are unavailable.`;
 	}
 
-	function auditActionLabel(action: string): string {
-		const accountAction = formatAccountAuditAction(action, getLocale());
-		if (accountAction) return accountAction;
+	function auditActionLabel(
+		action: string,
+		metadata: Record<string, unknown> | null = null
+	): string {
+		const guestAwareAction = formatGuestAwareAuditAction(action, metadata, getLocale());
+		if (guestAwareAction) return guestAwareAction;
 		return action
 			.split('.')
 			.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -769,10 +772,20 @@
 		if (action.includes('failed') || action.includes('delete') || action.includes('revoke')) {
 			return 'badge badge-danger';
 		}
-		if (action.includes('login') || action.includes('create') || action.includes('issue')) {
+		if (
+			action.includes('login') ||
+			action.includes('create') ||
+			action.includes('issue') ||
+			action === 'account.guest.upgraded'
+		) {
 			return 'badge badge-success';
 		}
-		if (action.includes('update') || action.includes('refresh')) return 'badge badge-info';
+		if (
+			action.includes('update') ||
+			action.includes('refresh') ||
+			action === 'account.guest.upgrade_started'
+		)
+			return 'badge badge-info';
 		return 'badge badge-neutral';
 	}
 
@@ -1801,7 +1814,9 @@
 							<div class="user-audit-row">
 								<span class="user-audit-time">{formatIsoDateTime(entry.createdAt)}</span>
 								<div class="user-audit-detail">
-									<span class="user-detail-strong">{auditActionLabel(entry.action)}</span>
+									<span class="user-detail-strong"
+										>{auditActionLabel(entry.action, entry.metadata)}</span
+									>
 									<span class="muted"> - {auditResourceSummary(entry)}</span>
 								</div>
 								<span class={auditBadgeClass(entry.action)}>{entry.action}</span>

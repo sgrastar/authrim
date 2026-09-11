@@ -2666,15 +2666,14 @@ paths:
       description: >-
         Replace Profile in the Clients area. The request body is JSON unless the detailed schema for
         this operation states otherwise. Successful client profile saves invalidate the tenant authentication-methods cache.
-        profile.guestAuth controls guest access for this client:
+        profile.guestAuth controls browser guest access for this client:
         enabled (boolean, default false), allowedScopes (unique OAuth scope strings including openid),
         allowedUpgradeMethods (unique email/passkey values), preserveSubOnUpgrade (must be true),
-        allowPromptNone (boolean), and deviceStability (session/installation/device).
+        and allowPromptNone (boolean).
         New profiles default to openid and account:lifecycle:read as the guest scope allow-list,
         email/passkey upgrades, and allowPromptNone false. An allowed scope is never granted without
         being requested and allowed by the regular client authorization policy.
-        Legacy expiresInDays applies only to legacy device credentials; human guest retention is
-        controlled by the tenant account-lifecycle settings.
+        Guest retention is controlled by the tenant account-lifecycle settings.
         A guest-only update (guestAuth as the only profile field) initializes the standard
         tenant policy when none exists, after validation succeeds. Existing tenant policies remain
         unchanged and are enforced. Policy read failures return 503 without initializing defaults.
@@ -5926,10 +5925,10 @@ paths:
       tags:
         - Admin Miscellaneous
       operationId: getApiAdminGuestUsers
-      summary: List guest users.
+      summary: List guest accounts.
       description: >-
-        Lists guest-device backed users for the current tenant, excluding expired/inactive
-        devices unless requested.
+        Lists browser guest accounts for the current tenant, excluding accounts without an active
+        resume credential unless requested.
       responses:
         '200':
           $ref: '#/components/responses/GuestUserList'
@@ -5963,7 +5962,7 @@ paths:
         - name: include_expired
           in: query
           required: false
-          description: Include expired or inactive guest devices.
+          description: Include expired or inactive browser resume credentials.
           schema:
             type: boolean
             default: false
@@ -5972,9 +5971,9 @@ paths:
       tags:
         - Admin Miscellaneous
       operationId: deleteApiAdminGuestUsersById
-      summary: Delete an guest user.
+      summary: Delete a guest account.
       description: >-
-        Deletes an guest user and all guest devices for that user. Upgrade history is
+        Deletes a guest account and all browser resume credentials for that account. Upgrade history is
         preserved for audit purposes. An active account legal hold rejects deletion with 409.
       responses:
         '200':
@@ -5993,7 +5992,7 @@ paths:
         - name: id
           in: path
           required: true
-          description: Anonymous user id.
+          description: Guest account id.
           schema:
             type: string
       security:
@@ -6003,9 +6002,9 @@ paths:
       tags:
         - Admin Miscellaneous
       operationId: getApiAdminGuestUsersById
-      summary: Get an guest user.
+      summary: Get a guest account.
       description: >-
-        Returns an guest user, its guest devices, and the latest upgrade summary when
+        Returns a guest account, its browser resume credentials, and the latest upgrade summary when
         present. Non-guest users are rejected.
       responses:
         '200':
@@ -6022,7 +6021,7 @@ paths:
         - name: id
           in: path
           required: true
-          description: Anonymous user id.
+          description: Guest account id.
           schema:
             type: string
       security:
@@ -6033,9 +6032,9 @@ paths:
       tags:
         - Admin Miscellaneous
       operationId: getApiAdminGuestUsersByIdUpgrades
-      summary: List guest user upgrades.
+      summary: List guest account upgrades.
       description: >-
-        Returns upgrade-history records where the supplied user id was either the anonymous source
+        Returns upgrade-history records where the supplied user id was either the guest source
         user or upgraded target user.
       responses:
         '200':
@@ -6050,7 +6049,7 @@ paths:
         - name: id
           in: path
           required: true
-          description: Anonymous or upgraded user id.
+          description: Guest or upgraded user id.
           schema:
             type: string
       security:
@@ -6061,9 +6060,9 @@ paths:
       tags:
         - Admin Miscellaneous
       operationId: postApiAdminGuestUsersCleanup
-      summary: Clean up expired guest users.
+      summary: Clean up expired guest accounts.
       description: >-
-        Finds expired guest devices and optionally deletes the associated guest users. The
+        Finds expired browser resume credentials and optionally deletes the associated guest accounts. The
         default dry-run mode reports what would be removed without mutating data.
       responses:
         '200':
@@ -18701,53 +18700,6 @@ paths:
       security:
         - adminBearer: []
         - adminSessionCookie: []
-  /api/admin/settings/guest-auth:
-    get:
-      tags:
-        - Settings - General
-      operationId: getApiAdminSettingsAnonymousAuth
-      summary: Get guest auth settings
-      description: >-
-        Returns guest authentication enablement, default guest-device expiration, cleanup
-        interval, and configuration source.
-      responses:
-        '200':
-          $ref: '#/components/responses/AdminSettingsAnonymousAuth'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-      parameters: []
-    put:
-      tags:
-        - Settings - General
-      operationId: putApiAdminSettingsAnonymousAuth
-      summary: Update guest auth settings
-      description: >-
-        Updates guest authentication feature flag and related cleanup/expiration settings in
-        AUTHRIM_CONFIG.
-      responses:
-        '200':
-          $ref: '#/components/responses/AdminSettingsAnonymousAuthUpdate'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '500':
-          $ref: '#/components/responses/Error'
-      requestBody:
-        $ref: '#/components/requestBodies/AdminSettingsAnonymousAuthUpdate'
-      security:
-        - adminBearer: []
-        - adminSessionCookie: []
-      parameters: []
   /api/admin/settings/assurance-levels:
     delete:
       tags:
@@ -33033,17 +32985,6 @@ components:
             targetVersion: 5
             reason: Revert accidental change
       description: Settings version rollback target.
-    AdminSettingsAnonymousAuthUpdate:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminSettingsAnonymousAuthUpdateRequest'
-          example:
-            enabled: true
-            default_expires_in_days: 30
-            cleanup_interval_hours: 24
-      description: Guest authentication configuration patch.
     AdminSettingsAssuranceLevelsUpdate:
       required: true
       content:
@@ -36226,31 +36167,31 @@ components:
           schema:
             $ref: '#/components/schemas/AdminManagementPermissionCatalogResponse'
     GuestUserList:
-      description: Anonymous user list response.
+      description: Guest account list response.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/GuestUserListResponse'
     GuestUserDetail:
-      description: Anonymous user detail response.
+      description: Guest account detail response.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/GuestUserDetailResponse'
     GuestUserDelete:
-      description: Anonymous user deletion response.
+      description: Guest account deletion response.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/GuestUserDeleteResponse'
     GuestUserUpgradeList:
-      description: Anonymous user upgrade history response.
+      description: Guest account upgrade history response.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/GuestUserUpgradeListResponse'
     GuestUserCleanup:
-      description: Anonymous user cleanup response.
+      description: Guest account cleanup response.
       content:
         application/json:
           schema:
@@ -38136,30 +38077,6 @@ components:
             previousVersion: 13
             currentVersion: 14
             restoredFromVersion: 12
-    AdminSettingsAnonymousAuth:
-      description: Successful JSON response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminSettingsAnonymousAuthResponse'
-          example:
-            enabled: true
-            config:
-              default_expires_in_days: 30
-              cleanup_interval_hours: 24
-            source: env
-    AdminSettingsAnonymousAuthUpdate:
-      description: Successful JSON response.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AdminSettingsAnonymousAuthUpdateResponse'
-          example:
-            success: true
-            updates:
-              - 'enabled: true'
-              - 'default_expires_in_days: 30'
-            note: Config updated. Cache will refresh within 10 seconds.
     AdminSettingsAssuranceLevels:
       description: Successful JSON response.
       content:
@@ -50635,31 +50552,28 @@ components:
       type: object
       additionalProperties: false
       required:
-        - device_id
         - user_id
-        - device_stability
-        - expires_at
-        - is_expired
+        - credential_count
+        - active_credential_count
+        - next_credential_expiry
+        - has_active_resume_credential
         - created_at
         - last_used_at
-        - is_active
       properties:
-        device_id:
-          type: string
         user_id:
           type: string
-        device_platform:
-          type:
-            - string
-            - 'null'
-        device_stability:
-          type: string
-        expires_at:
+        credential_count:
+          type: integer
+          minimum: 0
+        active_credential_count:
+          type: integer
+          minimum: 0
+        next_credential_expiry:
           type:
             - integer
             - 'null'
           format: int64
-        is_expired:
+        has_active_resume_credential:
           type: boolean
         created_at:
           type: integer
@@ -50667,8 +50581,6 @@ components:
         last_used_at:
           type: integer
           format: int64
-        is_active:
-          type: boolean
     GuestUserListResponse:
       type: object
       additionalProperties: false
@@ -50691,12 +50603,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/GuestUserListItem'
-    GuestUserDevice:
+    GuestResumeCredential:
       type: object
       additionalProperties: false
       required:
         - id
-        - stability
         - expires_at
         - is_expired
         - created_at
@@ -50704,12 +50615,6 @@ components:
         - is_active
       properties:
         id:
-          type: string
-        platform:
-          type:
-            - string
-            - 'null'
-        stability:
           type: string
         expires_at:
           type:
@@ -50762,7 +50667,7 @@ components:
         - user_type
         - registration_state
         - created_at
-        - devices
+        - resume_credentials
         - upgrade
       properties:
         user_id:
@@ -50782,10 +50687,10 @@ components:
             - integer
             - 'null'
           format: int64
-        devices:
+        resume_credentials:
           type: array
           items:
-            $ref: '#/components/schemas/GuestUserDevice'
+            $ref: '#/components/schemas/GuestResumeCredential'
         upgrade:
           oneOf:
             - $ref: '#/components/schemas/GuestUserUpgrade'
@@ -50835,7 +50740,7 @@ components:
           required:
             - dry_run
             - expired_count
-            - expired_devices
+            - expired_credentials
             - note
           properties:
             dry_run:
@@ -50845,7 +50750,7 @@ components:
             expired_count:
               type: integer
               minimum: 0
-            expired_devices:
+            expired_credentials:
               type: array
               items:
                 type: object
@@ -50853,7 +50758,7 @@ components:
                 properties:
                   user_id:
                     type: string
-                  device_id:
+                  credential_id:
                     type: string
                   expired_at:
                     type: integer
@@ -50868,8 +50773,8 @@ components:
             - success
             - dry_run
             - deleted_users
-            - deleted_devices
-            - deactivated_only
+            - deleted_credentials
+            - deactivated_credentials
           properties:
             success:
               type: boolean
@@ -50880,10 +50785,10 @@ components:
             deleted_users:
               type: integer
               minimum: 0
-            deleted_devices:
+            deleted_credentials:
               type: integer
               minimum: 0
-            deactivated_only:
+            deactivated_credentials:
               type: integer
               minimum: 0
     UserVerifiedAttribute:
@@ -61529,20 +61434,6 @@ components:
         fal3RequiresPAR:
           type: boolean
       additionalProperties: false
-    AdminSettingsAnonymousAuthUpdateRequest:
-      type: object
-      properties:
-        enabled:
-          type: boolean
-        default_expires_in_days:
-          type:
-            - integer
-            - 'null'
-          minimum: 1
-        cleanup_interval_hours:
-          type: integer
-          minimum: 1
-      additionalProperties: false
     AdminSettingsRollbackRequest:
       type: object
       required:
@@ -61729,39 +61620,6 @@ components:
           type: integer
         restoredFromVersion:
           type: integer
-      additionalProperties: false
-    AdminSettingsAnonymousAuthResponse:
-      type: object
-      properties:
-        enabled:
-          type: boolean
-        config:
-          type: object
-          properties:
-            default_expires_in_days:
-              type:
-                - integer
-                - 'null'
-            cleanup_interval_hours:
-              type: integer
-          additionalProperties: false
-        source:
-          type: string
-          enum:
-            - env
-            - default
-      additionalProperties: false
-    AdminSettingsAnonymousAuthUpdateResponse:
-      type: object
-      properties:
-        success:
-          type: boolean
-        updates:
-          type: array
-          items:
-            type: string
-        note:
-          type: string
       additionalProperties: false
     AdminSettingsAssuranceLevelsResponse:
       type: object

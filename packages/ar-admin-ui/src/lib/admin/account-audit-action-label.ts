@@ -1,4 +1,12 @@
 const ACCOUNT_AUDIT_ACTION_LABELS = {
+	'account.guest.created': {
+		en: 'Guest account created',
+		ja: 'ゲストアカウント作成'
+	},
+	'account.guest.upgrade_failed': {
+		en: 'Guest registration failed',
+		ja: 'ゲストアカウント登録失敗'
+	},
 	'account.guest.upgrade_started': {
 		en: 'Guest registration started',
 		ja: 'ゲストアカウント登録開始'
@@ -83,4 +91,97 @@ export function formatAccountAuditAction(action: string, locale: string): string
 	const labels = ACCOUNT_AUDIT_ACTION_LABELS[action as AccountAuditAction];
 	if (!labels) return undefined;
 	return locale === 'ja' ? labels.ja : labels.en;
+}
+
+function isGuestAuditEvent(action: string, metadata: Record<string, unknown> | null): boolean {
+	if (action.startsWith('account.guest.')) return true;
+	if (action.startsWith('guest.')) return true;
+	if (!metadata) return false;
+	return (
+		metadata.method === 'guest' ||
+		metadata.registration_state === 'guest' ||
+		metadata.is_guest_session === true ||
+		(typeof metadata.source === 'string' && metadata.source.startsWith('guest_')) ||
+		(typeof metadata.reason === 'string' && metadata.reason.startsWith('guest_'))
+	);
+}
+
+export function formatGuestAwareAuditAction(
+	action: string,
+	metadata: Record<string, unknown> | null,
+	locale: string
+): string | undefined {
+	const accountAction = formatAccountAuditAction(action, locale);
+	if (accountAction) return accountAction;
+	if (!isGuestAuditEvent(action, metadata)) return undefined;
+
+	const japanese = locale === 'ja';
+	switch (action) {
+		case 'user.login':
+			return japanese ? 'ゲストアカウントログイン' : 'Guest account login';
+		case 'user.logout':
+			return japanese ? 'ゲストアカウントログアウト' : 'Guest account logout';
+		case 'user.updated':
+			return japanese ? 'ゲストアカウント更新' : 'Guest account updated';
+		case 'user.deleted':
+			return japanese ? 'ゲストアカウント削除' : 'Guest account deleted';
+		case 'guest.resume_credentials.deactivated':
+			return japanese ? 'ゲスト再開資格情報の無効化' : 'Guest resume credentials deactivated';
+		default:
+			return undefined;
+	}
+}
+
+export interface GuestAuditDetail {
+	label: string;
+	value: string;
+}
+
+export function getGuestAuditDetails(
+	action: string,
+	metadata: Record<string, unknown> | null,
+	locale: string
+): GuestAuditDetail[] {
+	if (!isGuestAuditEvent(action, metadata) || !metadata) return [];
+	const japanese = locale === 'ja';
+	const details: GuestAuditDetail[] = [];
+	const add = (label: string, value: unknown) => {
+		if (typeof value === 'string' && value.length > 0) details.push({ label, value });
+	};
+
+	if (typeof metadata.method === 'string') {
+		const method =
+			metadata.method === 'email'
+				? 'Email OTP'
+				: metadata.method === 'passkey'
+					? 'Passkey'
+					: metadata.method === 'guest'
+						? japanese
+							? 'ゲスト'
+							: 'Guest'
+						: metadata.method;
+		details.push({ label: japanese ? '認証方法' : 'Authentication method', value: method });
+	}
+	if (typeof metadata.registration_state === 'string') {
+		const state =
+			metadata.registration_state === 'guest'
+				? japanese
+					? 'ゲスト'
+					: 'Guest'
+				: metadata.registration_state;
+		details.push({ label: japanese ? '登録状態' : 'Registration state', value: state });
+	}
+	add(japanese ? 'クライアントID' : 'Client ID', metadata.client_id);
+	if (typeof metadata.is_new_user === 'boolean') {
+		details.push({
+			label: japanese ? '新規作成' : 'New account',
+			value: metadata.is_new_user ? (japanese ? 'はい' : 'Yes') : japanese ? 'いいえ' : 'No'
+		});
+	}
+	add(japanese ? '処理段階' : 'Stage', metadata.stage);
+	add(japanese ? '理由' : 'Reason', metadata.reason);
+	add(japanese ? '実行元' : 'Source', metadata.source);
+	add(japanese ? '操作ID' : 'Operation ID', metadata.operationId);
+	add(japanese ? '失敗コード' : 'Failure code', metadata.failure_code);
+	return details;
 }

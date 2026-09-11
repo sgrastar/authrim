@@ -1,19 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+// @ts-expect-error node:sqlite is available in the required runtime but this package omits Node types.
+import { DatabaseSync } from 'node:sqlite';
 const mocks = vi.hoisted(() => ({
   adapter: { query: vi.fn(), queryOne: vi.fn(), execute: vi.fn() },
-  enabled: vi.fn(),
   findUser: vi.fn(),
   deleteUser: vi.fn(),
   transitionAccountAuthenticationState: vi.fn(),
-  logger: { error: vi.fn() },
+  audit: vi.fn(),
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
   getTenantIdFromContext: vi.fn(() => 'tenant-a'),
   createAuthContextFromHono: vi.fn(() => ({ coreAdapter: mocks.adapter })),
   createPIIContextFromHono: vi.fn(() => ({ defaultPiiAdapter: mocks.adapter })),
-  isGuestDeviceAuthEnabled: mocks.enabled,
   transitionAccountAuthenticationState: mocks.transitionAccountAuthenticationState,
+  createAuditLogFromContext: mocks.audit,
   getLogger: vi.fn(() => ({ module: vi.fn(() => mocks.logger) })),
   CanonicalRuntimeUserStore: vi.fn(function () {
     return { findById: mocks.findUser, deleteUser: mocks.deleteUser };
@@ -22,22 +24,12 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
 import {
   cleanupExpiredGuestUsers,
   deleteGuestUser,
-  getGuestAuthConfig,
   getGuestUser,
   getGuestUserUpgrades,
   listGuestUsers,
-  updateGuestAuthConfig,
-} from '../routes/settings/guest-auth';
-function kv(values: Record<string, string | null> = {}) {
-  return {
-    get: vi.fn((key: string) => Promise.resolve(values[key] ?? null)),
-    put: vi.fn().mockResolvedValue(undefined),
-    delete: vi.fn().mockResolvedValue(undefined),
-  };
-}
+} from '../routes/guest-users';
 function context(
   options: {
-    store?: ReturnType<typeof kv>;
     body?: unknown;
     bodyError?: boolean;
     id?: string;
@@ -53,7 +45,7 @@ function context(
         ? vi.fn().mockRejectedValue(new SyntaxError('bad'))
         : vi.fn().mockResolvedValue(options.body ?? {}),
     },
-    env: { ...(options.store ? { AUTHRIM_CONFIG: options.store } : {}), ...(options.env ?? {}) },
+    env: options.env ?? {},
     json: vi.fn((v: unknown, s = 200) => Response.json(v, { status: s })),
   } as never;
 }
@@ -67,7 +59,7 @@ function user(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
-describe('anonymous auth administration', () => {
+describe('guest account administration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.adapter.query.mockReset();
@@ -76,92 +68,21 @@ describe('anonymous auth administration', () => {
     mocks.adapter.query.mockResolvedValue([]);
     mocks.adapter.queryOne.mockResolvedValue(null);
     mocks.adapter.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
-    mocks.enabled.mockResolvedValue(false);
     mocks.findUser.mockResolvedValue(null);
     mocks.deleteUser.mockResolvedValue(true);
     mocks.transitionAccountAuthenticationState.mockResolvedValue({ lifecycle: 'active' });
+    mocks.audit.mockResolvedValue(undefined);
   });
-  it.each([
-    null,
-    {
-      'guest_auth:default_expires_in_days': '30',
-      'guest_auth:cleanup_interval_hours': '12',
-    },
-  ])('gets anonymous config %#', async (values) => {
-    const response = await getGuestAuthConfig(
-      context({
-        store: values ? kv(values) : undefined,
-        env: values ? { ENABLE_GUEST_DEVICE_AUTH: 'true' } : {},
-      })
-    );
-    await expect(response.json()).resolves.toMatchObject({
-      config: {
-        default_expires_in_days: values ? 30 : null,
-        cleanup_interval_hours: values ? 12 : 24,
-      },
-      source: values ? 'env' : 'default',
-    });
-  });
-  it('handles anonymous config read failure', async () => {
-    mocks.enabled.mockRejectedValueOnce(new Error('failure'));
-    expect((await getGuestAuthConfig(context())).status).toBe(500);
-  });
-  it('requires KV and handles invalid update JSON', async () => {
-    expect((await updateGuestAuthConfig(context())).status).toBe(500);
-    expect((await updateGuestAuthConfig(context({ store: kv(), bodyError: true }))).status).toBe(
-      500
-    );
-  });
-  it.each([
-    [{ default_expires_in_days: 0 }],
-    [{ default_expires_in_days: '1' }],
-    [{ cleanup_interval_hours: 0 }],
-    [{ cleanup_interval_hours: '1' }],
-  ])('rejects invalid anonymous config %#', async (body) =>
-    expect((await updateGuestAuthConfig(context({ store: kv(), body }))).status).toBe(400)
-  );
-  it('updates all anonymous config fields and supports unlimited expiry', async () => {
-    const store = kv();
-    expect(
-      (
-        await updateGuestAuthConfig(
-          context({
-            store,
-            body: { enabled: true, default_expires_in_days: 30, cleanup_interval_hours: 12 },
-          })
-        )
-      ).status
-    ).toBe(200);
-    expect(store.put).toHaveBeenCalledTimes(3);
-    expect(
-      (
-        await updateGuestAuthConfig(
-          context({ store, body: { enabled: false, default_expires_in_days: null } })
-        )
-      ).status
-    ).toBe(200);
-    expect(store.delete).toHaveBeenCalled();
-  });
-  it('returns empty successful update and maps KV failures', async () => {
-    const store = kv();
-    expect((await updateGuestAuthConfig(context({ store, body: {} }))).status).toBe(200);
-    store.put.mockRejectedValueOnce(new Error('failure'));
-    expect((await updateGuestAuthConfig(context({ store, body: { enabled: true } }))).status).toBe(
-      500
-    );
-  });
-  it.each([false, true])('lists anonymous users include_expired=%s', async (includeExpired) => {
+  it.each([false, true])('lists guest accounts include_expired=%s', async (includeExpired) => {
     mocks.adapter.queryOne.mockResolvedValueOnce({ count: 2 });
     mocks.adapter.query.mockResolvedValueOnce([
       {
-        device_id: 'd1',
         user_id: 'u1',
-        device_platform: null,
-        device_stability: 'stable',
-        expires_at: Date.now() - 1,
+        credential_count: 2,
+        active_credential_count: 0,
+        next_credential_expiry: null,
         created_at: 1,
         last_used_at: 2,
-        is_active: 0,
       },
     ]);
     const body = (await (
@@ -170,13 +91,86 @@ describe('anonymous auth administration', () => {
       )
     ).json()) as { users: Array<Record<string, unknown>>; limit: number };
     expect(body.limit).toBe(100);
-    expect(body.users[0]).toMatchObject({ is_expired: true, is_active: false });
-    expect(mocks.adapter.query.mock.calls[0][0].includes('ad.is_active = 1')).toBe(!includeExpired);
+    expect(body.users[0]).toMatchObject({
+      user_id: 'u1',
+      credential_count: 2,
+      has_active_resume_credential: false,
+    });
+    expect(mocks.adapter.queryOne.mock.calls[0][0].includes('ad.is_active = 1')).toBe(
+      !includeExpired
+    );
+    for (const sql of [
+      mocks.adapter.queryOne.mock.calls[0][0],
+      mocks.adapter.query.mock.calls[0][0],
+    ]) {
+      expect(sql).toContain('uc.tenant_id = ad.tenant_id');
+      expect(sql).toContain("uc.registration_state = 'guest'");
+      expect(sql).toContain('uc.deleted_at IS NULL');
+    }
+  });
+  it.each([
+    [{ limit: '0' }, 400],
+    [{ limit: 'not-a-number' }, 400],
+    [{ offset: '-1' }, 400],
+    [{ include_expired: 'yes' }, 400],
+  ])('rejects invalid list pagination %#', async (query, status) => {
+    expect((await listGuestUsers(context({ query }))).status).toBe(status);
+    expect(mocks.adapter.query).not.toHaveBeenCalled();
   });
   it('defaults list count and handles failure', async () => {
     await expect((await listGuestUsers(context())).json()).resolves.toMatchObject({ total: 0 });
     mocks.adapter.queryOne.mockRejectedValueOnce(new Error('failure'));
     expect((await listGuestUsers(context())).status).toBe(500);
+  });
+  it('lists only live guest accounts from the current tenant', async () => {
+    const db = new DatabaseSync(':memory:');
+    try {
+      db.exec(`
+        CREATE TABLE identity_accounts (
+          tenant_id TEXT NOT NULL,
+          legacy_user_id TEXT NOT NULL,
+          account_type TEXT NOT NULL,
+          registration_state TEXT NOT NULL,
+          deleted_at INTEGER
+        );
+        CREATE TABLE guest_devices (
+          id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          resume_credential_hash TEXT NOT NULL,
+          expires_at INTEGER,
+          created_at INTEGER NOT NULL,
+          last_used_at INTEGER NOT NULL,
+          is_active INTEGER NOT NULL
+        );
+        INSERT INTO identity_accounts VALUES
+          ('tenant-a', 'guest-a', 'user', 'guest', NULL),
+          ('tenant-a', 'shared-id', 'user', 'registered', NULL),
+          ('tenant-b', 'shared-id', 'user', 'guest', NULL),
+          ('tenant-a', 'deleted-guest', 'user', 'guest', 1);
+        INSERT INTO guest_devices VALUES
+          ('c1', 'tenant-a', 'guest-a', '${'a'.repeat(64)}', NULL, 1, 4, 1),
+          ('c2', 'tenant-a', 'shared-id', '${'b'.repeat(64)}', NULL, 2, 5, 1),
+          ('c3', 'tenant-a', 'deleted-guest', '${'c'.repeat(64)}', NULL, 3, 6, 1),
+          ('c4', 'tenant-b', 'shared-id', '${'d'.repeat(64)}', NULL, 4, 7, 1);
+      `);
+      mocks.adapter.queryOne.mockImplementation(async (sql: string, params: unknown[]) =>
+        db.prepare(sql).get(...params)
+      );
+      mocks.adapter.query.mockImplementation(async (sql: string, params: unknown[]) =>
+        db.prepare(sql).all(...params)
+      );
+
+      const response = await listGuestUsers(
+        context({ query: { include_expired: 'true', limit: '100', offset: '0' } })
+      );
+      await expect(response.json()).resolves.toMatchObject({
+        total: 1,
+        users: [{ user_id: 'guest-a' }],
+      });
+    } finally {
+      db.close();
+    }
   });
   it('requires anonymous user ID', async () => {
     expect((await getGuestUser(context())).status).toBe(400);
@@ -191,8 +185,6 @@ describe('anonymous auth administration', () => {
         mocks.adapter.query.mockResolvedValueOnce([
           {
             id: 'd1',
-            device_platform: 'ios',
-            device_stability: 'stable',
             expires_at: null,
             created_at: 1,
             last_used_at: 2,
@@ -221,7 +213,7 @@ describe('anonymous auth administration', () => {
     expect(mocks.deleteUser).not.toHaveBeenCalled();
     expect(mocks.transitionAccountAuthenticationState).not.toHaveBeenCalled();
   });
-  it('formats absent upgrade and expired device', async () => {
+  it('formats an absent upgrade and expired browser resume credential', async () => {
     mocks.findUser.mockResolvedValueOnce(user());
     mocks.adapter.query.mockResolvedValueOnce([
       { id: 'd1', expires_at: Date.now() - 1, is_active: 0 },
@@ -229,7 +221,7 @@ describe('anonymous auth administration', () => {
     const body = await (await getGuestUser(context({ id: 'user-1' }))).json();
     expect(body).toMatchObject({
       upgrade: null,
-      devices: [{ is_expired: true, is_active: false }],
+      resume_credentials: [{ is_expired: true, is_active: false }],
     });
   });
   it('lists normalized upgrade history and handles failures', async () => {
@@ -261,6 +253,16 @@ describe('anonymous auth administration', () => {
       expect(mocks.transitionAccountAuthenticationState).toHaveBeenCalledTimes(
         value?.registration_state === 'guest' ? 2 : 0
       );
+      expect(mocks.audit).toHaveBeenCalledTimes(value?.registration_state === 'guest' ? 1 : 0);
+      if (value?.registration_state === 'guest') {
+        expect(mocks.audit).toHaveBeenCalledWith(
+          expect.anything(),
+          'user.deleted',
+          'user',
+          'user-1',
+          expect.objectContaining({ registration_state: 'guest', reason: 'admin_action' })
+        );
+      }
     }
   );
   it('handles anonymous user get/delete failures', async () => {
@@ -271,13 +273,13 @@ describe('anonymous auth administration', () => {
   });
   it('defaults cleanup to safe dry-run on empty/malformed body', async () => {
     mocks.adapter.query.mockResolvedValueOnce([
-      { user_id: 'u1', device_id: 'd1', expires_at: Date.now() - 3600000 },
+      { user_id: 'u1', credential_id: 'c1', expires_at: Date.now() - 3600000 },
     ]);
     const response = await cleanupExpiredGuestUsers(context({ bodyError: true }));
     await expect(response.json()).resolves.toMatchObject({
       dry_run: true,
       expired_count: 1,
-      expired_devices: [{ expired_since_hours: 1 }],
+      expired_credentials: [{ credential_id: 'c1', expired_since_hours: 1 }],
     });
   });
   it('caps dry-run cleanup limit', async () => {
@@ -286,11 +288,18 @@ describe('anonymous auth administration', () => {
     ).toBe(200);
     expect(mocks.adapter.query.mock.calls[0][1][2]).toBe(1000);
   });
-  it('deletes users with no active device and deactivates only expired devices otherwise', async () => {
+  it.each([{ dry_run: 'false' }, { limit: 0 }, { limit: 1.5 }, { limit: '10' }])(
+    'rejects invalid cleanup input %#',
+    async (body) => {
+      expect((await cleanupExpiredGuestUsers(context({ body }))).status).toBe(400);
+      expect(mocks.adapter.query).not.toHaveBeenCalled();
+    }
+  );
+  it('deletes users with no active credential and deactivates only expired credentials otherwise', async () => {
     mocks.adapter.query.mockResolvedValueOnce([
-      { user_id: 'u1', device_id: 'd1', expires_at: 1 },
-      { user_id: 'u1', device_id: 'd2', expires_at: 2 },
-      { user_id: 'u2', device_id: 'd3', expires_at: 3 },
+      { user_id: 'u1', credential_id: 'c1', expires_at: 1 },
+      { user_id: 'u1', credential_id: 'c2', expires_at: 2 },
+      { user_id: 'u2', credential_id: 'c3', expires_at: 3 },
     ]);
     mocks.adapter.queryOne
       .mockResolvedValueOnce(null)
@@ -299,12 +308,34 @@ describe('anonymous auth administration', () => {
     const body = await (
       await cleanupExpiredGuestUsers(context({ body: { dry_run: false, limit: 10 } }))
     ).json();
-    expect(body).toMatchObject({ deleted_users: 1, deleted_devices: 3, deactivated_only: 3 });
+    expect(mocks.adapter.query.mock.calls[0][0]).toContain('uc.tenant_id = ad.tenant_id');
+    expect(mocks.adapter.query.mock.calls[0][0]).toContain('uc.deleted_at IS NULL');
+    expect(body).toMatchObject({
+      deleted_users: 1,
+      deleted_credentials: 2,
+      deactivated_credentials: 1,
+    });
     expect(mocks.deleteUser).toHaveBeenCalledTimes(1);
     expect(mocks.adapter.execute).toHaveBeenCalledTimes(2);
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      'user.deleted',
+      'user',
+      'u1',
+      expect.objectContaining({ registration_state: 'guest', reason: 'manual_cleanup' })
+    );
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      'guest.resume_credentials.deactivated',
+      'user',
+      'u2',
+      expect.objectContaining({ reason: 'manual_cleanup' })
+    );
   });
   it('skips scheduled anonymous cleanup while an account legal hold is active', async () => {
-    mocks.adapter.query.mockResolvedValueOnce([{ user_id: 'u1', device_id: 'd1', expires_at: 1 }]);
+    mocks.adapter.query.mockResolvedValueOnce([
+      { user_id: 'u1', credential_id: 'c1', expires_at: 1 },
+    ]);
     mocks.adapter.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce({
       hold_id: 'legal-hold:anonymous-cleanup',
       reason_code: 'regulatory_review',

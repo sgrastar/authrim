@@ -15,7 +15,7 @@ export async function revokeGuestResumeForSession(
   if (session?.data?.guest_resume_credential !== true) return;
   try {
     const tenantId = getTenantIdFromContext(c);
-    const hash = session.data.device_id_hash;
+    const hash = session.data.guest_resume_credential_hash;
     if (
       session.tenantId !== tenantId ||
       !session.userId ||
@@ -27,7 +27,7 @@ export async function revokeGuestResumeForSession(
     await resolveAccountDataContextFromHono(c, session.userId);
     const { coreAdapter } = createAccountAuthContextFromHono(c, tenantId);
     await coreAdapter.execute(
-      'UPDATE guest_devices SET is_active = FALSE WHERE tenant_id = ? AND user_id = ? AND device_id_hash = ?',
+      'UPDATE guest_devices SET is_active = FALSE WHERE tenant_id = ? AND user_id = ? AND resume_credential_hash = ?',
       [tenantId, session.userId, hash]
     );
   } catch {

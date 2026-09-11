@@ -15,12 +15,11 @@
 
 import { Context } from 'hono';
 import { setCookie, getCookie } from 'hono/cookie';
-import type { Env, Session } from '@authrim/ar-lib-core';
+import type { Env } from '@authrim/ar-lib-core';
 import {
   assertGuestCredentialAuthenticationAllowed,
   getSessionStoreForNewSession,
   getSessionClientMetadata,
-  getSessionStoreBySessionId,
   getChallengeStoreByChallengeId,
   getTenantIdFromContext,
   buildDOKey,
@@ -709,106 +708,35 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         }
       }
 
-      // Check for existing anonymous session (for upgrade flow)
-      // If the user is upgrading from anonymous, update the existing session
-      // instead of creating a new one
-      const existingSessionId = getCookie(c, 'authrim_session');
-      let sessionId: string | undefined;
-      let isAnonymousUpgrade = false;
-
-      if (existingSessionId) {
-        try {
-          const { stub: existingSessionStore } = getSessionStoreBySessionId(
-            c.env,
-            existingSessionId,
-            tenantId
-          );
-          const existingSession = (await existingSessionStore.getSessionRpc(
-            existingSessionId
-          )) as Session | null;
-
-          // Check if this is an anonymous session for the same tenant
-          if (
-            existingSession?.data?.is_guest_session === true &&
-            existingSession.data.guest_resume_credential !== true
-          ) {
-            // SECURITY FIX: Prevent email takeover attack
-            // For anonymous upgrade, only allow emails that:
-            // 1. Are NOT already verified by another user, OR
-            // 2. Belong to a user that was just created (email_verified=false)
-            //
-            // Attack scenario prevented:
-            // 1. Attacker has anonymous session
-            // 2. Attacker sends OTP to victim@example.com (existing user)
-            // 3. Attacker obtains OTP via social engineering
-            // 4. Without this check, attacker could claim victim's email
-            if (runtimeUser.email_verified) {
-              // Email is already verified by an existing user
-              // Anonymous user cannot claim this email - they should login instead
-              log.warn('Anonymous upgrade blocked: email already verified by existing user', {
-                action: 'anon_upgrade_check',
-              });
-              // Don't set isAnonymousUpgrade - create new session for the existing user instead
-            } else {
-              // Email is new or unverified - safe to use for anonymous upgrade
-              // Generate upgrade nonce for TOCTOU protection
-              // This nonce must be consumed atomically during upgrade/complete
-              const upgradeNonce = crypto.randomUUID();
-              await existingSessionStore.updateSessionDataRpc(existingSessionId, {
-                verified_email: user.email,
-                verified_email_at: now,
-                // Store the OTP user ID to verify consistency in upgrade/complete
-                verified_email_user_id: user.id,
-                // TOCTOU protection: nonce prevents double-upgrade via concurrent requests
-                upgrade_nonce: upgradeNonce,
-                // Keep anonymous status until upgrade/complete is called
-              });
-              sessionId = existingSessionId;
-              isAnonymousUpgrade = true;
-            }
-          }
-        } catch {
-          // If session lookup fails, proceed with new session creation
-        }
-      }
-
-      // Create new session if not an anonymous upgrade
       const sessionTtl = await sessionTtlPromise;
-      if (!isAnonymousUpgrade) {
-        try {
-          const { stub: sessionStore, sessionId: newSessionId } =
-            await timeAuthRequestDiagnosticOperation(c, 'auth_otp_session_route', () =>
-              getSessionStoreForNewSession(c.env, getTenantIdFromContext(c))
-            );
-          sessionId = newSessionId;
-
-          await timeAuthRequestDiagnosticOperation(c, 'auth_otp_session_create', () =>
-            sessionStore.createSessionRpc(
-              newSessionId,
-              user.id as string,
-              sessionTtl.seconds,
-              {
-                ...getSessionClientMetadata(c.req.raw),
-                email: user.email,
-                name: user.name,
-                amr: ['otp'],
-                acr: 'urn:mace:incommon:iap:bronze',
-                authTime,
-              },
-              tenantId
-            )
+      let sessionId: string;
+      try {
+        const { stub: sessionStore, sessionId: newSessionId } =
+          await timeAuthRequestDiagnosticOperation(c, 'auth_otp_session_route', () =>
+            getSessionStoreForNewSession(c.env, getTenantIdFromContext(c))
           );
-        } catch (error) {
-          // PII Protection: Don't log full error
-          log.error('Failed to create session', { action: 'session_create' }, error as Error);
-          return createErrorResponse(c, AR_ERROR_CODES.SESSION_STORE_ERROR);
-        }
-      }
+        sessionId = newSessionId;
 
-      // Safety check - sessionId should always be assigned at this point
-      if (!sessionId) {
-        log.error('Unexpected state: sessionId not assigned', { action: 'session_check' });
-        return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
+        await timeAuthRequestDiagnosticOperation(c, 'auth_otp_session_create', () =>
+          sessionStore.createSessionRpc(
+            newSessionId,
+            user.id as string,
+            sessionTtl.seconds,
+            {
+              ...getSessionClientMetadata(c.req.raw),
+              email: user.email,
+              name: user.name,
+              amr: ['otp'],
+              acr: 'urn:mace:incommon:iap:bronze',
+              authTime,
+            },
+            tenantId
+          )
+        );
+      } catch (error) {
+        // PII Protection: Don't log full error
+        log.error('Failed to create session', { action: 'session_create' }, error as Error);
+        return createErrorResponse(c, AR_ERROR_CODES.SESSION_STORE_ERROR);
       }
 
       // Tenant-D1 sessions record last-login state while registering with the user-scoped
@@ -847,26 +775,22 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         maxAge: 0,
       });
 
-      // Set authentication session cookie (only for new sessions, not anonymous upgrade)
-      // SameSite is determined dynamically based on origin configuration
-      if (!isAnonymousUpgrade) {
-        setCookie(c, 'authrim_session', sessionId, {
-          path: '/',
-          httpOnly: true,
-          secure: true,
-          sameSite: getSessionCookieSameSite(c.env),
-          maxAge: sessionTtl.seconds,
-        });
+      setCookie(c, 'authrim_session', sessionId, {
+        path: '/',
+        httpOnly: true,
+        secure: true,
+        sameSite: getSessionCookieSameSite(c.env),
+        maxAge: sessionTtl.seconds,
+      });
 
-        // Set browser state cookie for OIDC Session Management (NOT HttpOnly so JS can read it)
-        const browserState = await generateBrowserState(sessionId);
-        setCookie(c, BROWSER_STATE_COOKIE_NAME, browserState, {
-          path: '/',
-          secure: true,
-          sameSite: getBrowserStateCookieSameSite(c.env),
-          maxAge: sessionTtl.seconds,
-        });
-      }
+      // Set browser state cookie for OIDC Session Management (NOT HttpOnly so JS can read it)
+      const browserState = await generateBrowserState(sessionId);
+      setCookie(c, BROWSER_STATE_COOKIE_NAME, browserState, {
+        path: '/',
+        secure: true,
+        sameSite: getBrowserStateCookieSameSite(c.env),
+        maxAge: sessionTtl.seconds,
+      });
 
       // Publish auth.email_code.succeeded event (non-blocking)
       publishEvent(c, {
@@ -922,7 +846,6 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         userAgent,
         metadata: JSON.stringify({
           method: 'email_code',
-          is_guest_upgrade: isAnonymousUpgrade,
         }),
         severity: 'info',
       }).catch((err) => {

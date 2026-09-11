@@ -1515,6 +1515,9 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
     const customFieldInput = extractCustomClaimInput(body, ADMIN_USER_UPDATE_RESERVED_FIELDS);
+    const changedFields = Object.keys(body)
+      .filter((key) => body[key] !== undefined)
+      .sort();
     const authCtx = createAuthContextFromHono(c, tenantId);
     const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
       c,
@@ -1674,9 +1677,13 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
 
     await createAuditLogFromContext(c, 'user.updated', 'user', userId, {
       user_type: updatedUser?.user_type,
+      registration_state: existingProjection.registration_state,
+      changed_fields: changedFields,
     });
     scheduleAdminAuditLog(c, 'user.updated', userId, 'success', {
       user_type: updatedUser?.user_type,
+      registration_state: existingProjection.registration_state,
+      changed_fields: changedFields,
     });
 
     return c.json({
@@ -1795,7 +1802,9 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       await markAccountDirectoryRemovalsReady(core, removals);
       await attemptImmediateAccountDirectoryRemovals(c.env.ACCOUNT_DIRECTORY, removals);
       await invalidateUserCache(c.env, tenantId, userId);
-      await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {});
+      await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {
+        registration_state: projection?.registration_state,
+      });
       scheduleAdminAuditLog(c, 'user.deleted', userId, 'success');
       return c.json({
         success: true,
@@ -1888,7 +1897,9 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
       log.error('Failed to publish user.deleted event', { action: 'publish_event' }, err as Error);
     });
 
-    await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {});
+    await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {
+      registration_state: projection?.registration_state,
+    });
     scheduleAdminAuditLog(c, 'user.deleted', userId, 'success');
 
     return c.json({

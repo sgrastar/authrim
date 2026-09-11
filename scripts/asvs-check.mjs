@@ -394,7 +394,7 @@ async function runIndependentCheck(repoRoot, id) {
     );
     const directAuth = await readText(repoRoot, 'packages/ar-auth/src/direct-auth.ts');
     const emailCode = await readText(repoRoot, 'packages/ar-auth/src/email-code.ts');
-    const guestDeviceLogin = await readText(repoRoot, 'packages/ar-auth/src/guest-device-login.ts');
+    const guestLogin = await readText(repoRoot, 'packages/ar-auth/src/guest-login.ts');
     const directoryPassword = await readText(
       repoRoot,
       'packages/ar-auth/src/directory-password-login.ts'
@@ -417,7 +417,7 @@ async function runIndependentCheck(repoRoot, id) {
     for (const [file, content] of [
       ['packages/ar-auth/src/direct-auth.ts', directAuth],
       ['packages/ar-auth/src/email-code.ts', emailCode],
-      ['packages/ar-auth/src/guest-device-login.ts', guestDeviceLogin],
+      ['packages/ar-auth/src/guest-login.ts', guestLogin],
       ['packages/ar-auth/src/directory-password-login.ts', directoryPassword],
     ]) {
       requirePattern(
@@ -438,7 +438,7 @@ async function runIndependentCheck(repoRoot, id) {
       description:
         'Authentication handlers create dynamic reference session tokens through the SessionStore sharding helper instead of static API secrets or keys.',
       evidence:
-        'packages/ar-lib-core/src/utils/session-helper.ts; packages/ar-auth/src/direct-auth.ts; packages/ar-auth/src/email-code.ts; packages/ar-auth/src/guest-device-login.ts; packages/ar-auth/src/directory-password-login.ts',
+        'packages/ar-lib-core/src/utils/session-helper.ts; packages/ar-auth/src/direct-auth.ts; packages/ar-auth/src/email-code.ts; packages/ar-auth/src/guest-login.ts; packages/ar-auth/src/directory-password-login.ts',
     };
   }
 

@@ -1,19 +1,14 @@
 /**
- * Anonymous Authentication Admin API
+ * Browser Guest Account Admin API
  *
- * Provides admin endpoints for managing anonymous authentication settings
- * and anonymous users.
+ * Provides admin endpoints for managing browser guest accounts.
  *
- * Configuration APIs:
- * GET  /api/admin/settings/guest-auth        - Get anonymous auth config
- * PUT  /api/admin/settings/guest-auth        - Update anonymous auth config
- *
- * Anonymous User Management APIs:
- * GET    /api/admin/guest-users              - List anonymous users
- * GET    /api/admin/guest-users/:id          - Get specific anonymous user
+ * Guest Account Management APIs:
+ * GET    /api/admin/guest-users              - List guest accounts
+ * GET    /api/admin/guest-users/:id          - Get a guest account
  * GET    /api/admin/guest-users/:id/upgrades - Get upgrade history
- * DELETE /api/admin/guest-users/:id          - Delete anonymous user
- * POST   /api/admin/guest-users/cleanup      - Cleanup expired anonymous users
+ * DELETE /api/admin/guest-users/:id          - Delete a guest account
+ * POST   /api/admin/guest-users/cleanup      - Cleanup expired guest accounts
  *
  * @see architecture-decisions.md §17 for design details
  */
@@ -24,12 +19,12 @@ import {
   createPIIContextFromHono,
   CanonicalRuntimeUserStore,
   getTenantIdFromContext,
-  isGuestDeviceAuthEnabled,
   getLogger,
+  createAuditLogFromContext,
   transitionAccountAuthenticationState,
   type Env,
 } from '@authrim/ar-lib-core';
-import { findActiveAccountLegalHold } from '../../account-legal-hold-guard';
+import { findActiveAccountLegalHold } from '../account-legal-hold-guard';
 
 function createRuntimeUserStore(c: Context<{ Bindings: Env }>, tenantId: string) {
   const authCtx = createAuthContextFromHono(c, tenantId);
@@ -41,161 +36,30 @@ function createRuntimeUserStore(c: Context<{ Bindings: Env }>, tenantId: string)
   });
 }
 
-// ============================================================================
-// Configuration API
-// ============================================================================
-
-/**
- * GET /api/admin/settings/guest-auth
- * Get anonymous authentication configuration
- */
-export async function getGuestAuthConfig(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('GuestAuthConfigAPI');
-  try {
-    const enabled = await isGuestDeviceAuthEnabled(c.env);
-
-    // Get additional config from KV if available
-    let defaultExpiresInDays: number | null = null;
-    let cleanupIntervalHours = 24;
-
-    if (c.env.AUTHRIM_CONFIG) {
-      const expiresConfig = await c.env.AUTHRIM_CONFIG.get('guest_auth:default_expires_in_days');
-      if (expiresConfig) {
-        defaultExpiresInDays = parseInt(expiresConfig, 10);
-      }
-
-      const cleanupConfig = await c.env.AUTHRIM_CONFIG.get('guest_auth:cleanup_interval_hours');
-      if (cleanupConfig) {
-        cleanupIntervalHours = parseInt(cleanupConfig, 10);
-      }
-    }
-
-    return c.json({
-      enabled,
-      config: {
-        default_expires_in_days: defaultExpiresInDays,
-        cleanup_interval_hours: cleanupIntervalHours,
-      },
-      source: c.env.ENABLE_GUEST_DEVICE_AUTH ? 'env' : 'default',
-    });
-  } catch (error) {
-    log.error('Error getting config', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to get anonymous auth configuration',
-      },
-      500
-    );
-  }
+function parseIntegerQuery(
+  value: string | undefined,
+  fallback: number,
+  minimum: number,
+  maximum?: number
+): number | null {
+  if (value === undefined) return fallback;
+  if (!/^\d+$/u.test(value)) return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum) return null;
+  return maximum === undefined ? parsed : Math.min(parsed, maximum);
 }
 
-/**
- * PUT /api/admin/settings/guest-auth
- * Update anonymous authentication configuration
- *
- * Request body:
- * {
- *   "enabled": boolean,
- *   "default_expires_in_days": number | null,
- *   "cleanup_interval_hours": number
- * }
- */
-export async function updateGuestAuthConfig(c: Context<{ Bindings: Env }>) {
-  const log = getLogger(c).module('GuestAuthConfigAPI');
-  if (!c.env.AUTHRIM_CONFIG) {
-    return c.json(
-      {
-        error: 'kv_not_configured',
-        error_description: 'AUTHRIM_CONFIG KV namespace is not configured',
-      },
-      500
-    );
-  }
-
-  try {
-    const body = await c.req.json<{
-      enabled?: boolean;
-      default_expires_in_days?: number | null;
-      cleanup_interval_hours?: number;
-    }>();
-
-    const updates: string[] = [];
-
-    // Update enabled flag
-    if (body.enabled !== undefined) {
-      await c.env.AUTHRIM_CONFIG.put(
-        'feature_flag:ENABLE_GUEST_DEVICE_AUTH',
-        body.enabled ? 'true' : 'false'
-      );
-      updates.push(`enabled: ${body.enabled}`);
-    }
-
-    // Update default expiration
-    if (body.default_expires_in_days !== undefined) {
-      if (body.default_expires_in_days === null) {
-        await c.env.AUTHRIM_CONFIG.delete('guest_auth:default_expires_in_days');
-        updates.push('default_expires_in_days: null (unlimited)');
-      } else {
-        if (typeof body.default_expires_in_days !== 'number' || body.default_expires_in_days < 1) {
-          return c.json(
-            {
-              error: 'invalid_value',
-              error_description: 'default_expires_in_days must be a positive number or null',
-            },
-            400
-          );
-        }
-        await c.env.AUTHRIM_CONFIG.put(
-          'guest_auth:default_expires_in_days',
-          body.default_expires_in_days.toString()
-        );
-        updates.push(`default_expires_in_days: ${body.default_expires_in_days}`);
-      }
-    }
-
-    // Update cleanup interval
-    if (body.cleanup_interval_hours !== undefined) {
-      if (typeof body.cleanup_interval_hours !== 'number' || body.cleanup_interval_hours < 1) {
-        return c.json(
-          {
-            error: 'invalid_value',
-            error_description: 'cleanup_interval_hours must be a positive number',
-          },
-          400
-        );
-      }
-      await c.env.AUTHRIM_CONFIG.put(
-        'guest_auth:cleanup_interval_hours',
-        body.cleanup_interval_hours.toString()
-      );
-      updates.push(`cleanup_interval_hours: ${body.cleanup_interval_hours}`);
-    }
-
-    return c.json({
-      success: true,
-      updates,
-      note: 'Config updated. Cache will refresh within 10 seconds.',
-    });
-  } catch (error) {
-    log.error('Error updating config', {}, error as Error);
-    return c.json(
-      {
-        error: 'server_error',
-        error_description: 'Failed to update configuration',
-      },
-      500
-    );
-  }
+function invalidRequest(c: Context<{ Bindings: Env }>, description: string): Response {
+  return c.json({ error: 'invalid_request', error_description: description }, 400);
 }
 
 // ============================================================================
-// Anonymous User Management API
+// Guest Account Management API
 // ============================================================================
 
 /**
  * GET /api/admin/guest-users
- * List anonymous users with pagination
+ * List guest accounts with pagination
  *
  * Query params:
  * - limit: number (default: 50, max: 100)
@@ -208,14 +72,29 @@ export async function listGuestUsers(c: Context<{ Bindings: Env }>) {
     const tenantId = getTenantIdFromContext(c);
     const authCtx = createAuthContextFromHono(c, tenantId);
 
-    const limit = Math.min(parseInt(c.req.query('limit') || '50', 10), 100);
-    const offset = parseInt(c.req.query('offset') || '0', 10);
-    const includeExpired = c.req.query('include_expired') === 'true';
+    const limit = parseIntegerQuery(c.req.query('limit'), 50, 1, 100);
+    const offset = parseIntegerQuery(c.req.query('offset'), 0, 0);
+    const includeExpiredValue = c.req.query('include_expired');
+    if (
+      limit === null ||
+      offset === null ||
+      (includeExpiredValue !== undefined &&
+        includeExpiredValue !== 'true' &&
+        includeExpiredValue !== 'false')
+    ) {
+      return invalidRequest(c, 'Invalid pagination query');
+    }
+    const includeExpired = includeExpiredValue === 'true';
 
     const now = Date.now();
 
     // Build query based on include_expired flag
-    let whereClause = 'WHERE ad.tenant_id = ?';
+    const guestAccountJoin = `INNER JOIN identity_accounts uc
+      ON uc.tenant_id = ad.tenant_id AND uc.legacy_user_id = ad.user_id`;
+    let whereClause = `WHERE ad.tenant_id = ?
+      AND uc.account_type = 'user'
+      AND uc.registration_state = 'guest'
+      AND uc.deleted_at IS NULL`;
     const params: unknown[] = [tenantId];
 
     if (!includeExpired) {
@@ -225,35 +104,36 @@ export async function listGuestUsers(c: Context<{ Bindings: Env }>) {
 
     // Get total count
     const countResult = await authCtx.coreAdapter.queryOne<{ count: number }>(
-      `SELECT COUNT(*) as count FROM guest_devices ad ${whereClause}`,
+      `SELECT COUNT(DISTINCT ad.user_id) as count
+       FROM guest_devices ad
+       ${guestAccountJoin}
+       ${whereClause}`,
       params
     );
 
-    // Get anonymous users with device info
+    // Get one row per guest account with browser-resume credential counts.
     const users = await authCtx.coreAdapter.query<{
-      device_id: string;
       user_id: string;
-      device_platform: string | null;
-      device_stability: string;
-      expires_at: number | null;
+      credential_count: number;
+      active_credential_count: number;
+      next_credential_expiry: number | null;
       created_at: number;
       last_used_at: number;
-      is_active: number;
     }>(
       `SELECT
-        ad.id as device_id,
         ad.user_id,
-        ad.device_platform,
-        ad.device_stability,
-        ad.expires_at,
-        ad.created_at,
-        ad.last_used_at,
-        ad.is_active
+        COUNT(*) as credential_count,
+        SUM(CASE WHEN ad.is_active = 1 AND (ad.expires_at IS NULL OR ad.expires_at > ?) THEN 1 ELSE 0 END) as active_credential_count,
+        MIN(CASE WHEN ad.is_active = 1 THEN ad.expires_at ELSE NULL END) as next_credential_expiry,
+        MIN(ad.created_at) as created_at,
+        MAX(ad.last_used_at) as last_used_at
       FROM guest_devices ad
+      ${guestAccountJoin}
       ${whereClause}
-      ORDER BY ad.last_used_at DESC
+      GROUP BY ad.user_id
+      ORDER BY last_used_at DESC
       LIMIT ? OFFSET ?`,
-      [...params, limit, offset]
+      [now, ...params, limit, offset]
     );
 
     return c.json({
@@ -261,15 +141,13 @@ export async function listGuestUsers(c: Context<{ Bindings: Env }>) {
       limit,
       offset,
       users: users.map((u) => ({
-        device_id: u.device_id,
         user_id: u.user_id,
-        device_platform: u.device_platform,
-        device_stability: u.device_stability,
-        expires_at: u.expires_at,
-        is_expired: u.expires_at !== null && u.expires_at < now,
+        credential_count: u.credential_count,
+        active_credential_count: u.active_credential_count,
+        next_credential_expiry: u.next_credential_expiry,
+        has_active_resume_credential: u.active_credential_count > 0,
         created_at: u.created_at,
         last_used_at: u.last_used_at,
-        is_active: u.is_active === 1,
       })),
     });
   } catch (error) {
@@ -277,7 +155,7 @@ export async function listGuestUsers(c: Context<{ Bindings: Env }>) {
     return c.json(
       {
         error: 'server_error',
-        error_description: 'Failed to list anonymous users',
+        error_description: 'Failed to list guest accounts',
       },
       500
     );
@@ -286,7 +164,7 @@ export async function listGuestUsers(c: Context<{ Bindings: Env }>) {
 
 /**
  * GET /api/admin/guest-users/:id
- * Get specific anonymous user details
+ * Get a specific guest account
  */
 export async function getGuestUser(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('GuestUsersAPI');
@@ -313,7 +191,7 @@ export async function getGuestUser(c: Context<{ Bindings: Env }>) {
       return c.json(
         {
           error: 'not_found',
-          error_description: 'Anonymous user not found',
+          error_description: 'Guest account not found',
         },
         404
       );
@@ -323,23 +201,21 @@ export async function getGuestUser(c: Context<{ Bindings: Env }>) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description: 'User is not an anonymous user',
+          error_description: 'User is not a guest account',
         },
         400
       );
     }
 
-    // Get all devices for this user
-    const devices = await authCtx.coreAdapter.query<{
+    // Get all browser-resume credentials for this user.
+    const resumeCredentials = await authCtx.coreAdapter.query<{
       id: string;
-      device_platform: string | null;
-      device_stability: string;
       expires_at: number | null;
       created_at: number;
       last_used_at: number;
       is_active: number;
     }>(
-      `SELECT id, device_platform, device_stability, expires_at, created_at, last_used_at, is_active
+      `SELECT id, expires_at, created_at, last_used_at, is_active
        FROM guest_devices
        WHERE tenant_id = ? AND user_id = ?
        ORDER BY last_used_at DESC`,
@@ -370,15 +246,13 @@ export async function getGuestUser(c: Context<{ Bindings: Env }>) {
       registration_state: 'guest',
       created_at: Date.parse(user.created_at),
       last_login_at: user.last_login_at,
-      devices: devices.map((d) => ({
-        id: d.id,
-        platform: d.device_platform,
-        stability: d.device_stability,
-        expires_at: d.expires_at,
-        is_expired: d.expires_at !== null && d.expires_at < now,
-        created_at: d.created_at,
-        last_used_at: d.last_used_at,
-        is_active: d.is_active === 1,
+      resume_credentials: resumeCredentials.map((credential) => ({
+        id: credential.id,
+        expires_at: credential.expires_at,
+        is_expired: credential.expires_at !== null && credential.expires_at < now,
+        created_at: credential.created_at,
+        last_used_at: credential.last_used_at,
+        is_active: credential.is_active === 1,
       })),
       upgrade: upgrade
         ? {
@@ -394,7 +268,7 @@ export async function getGuestUser(c: Context<{ Bindings: Env }>) {
     return c.json(
       {
         error: 'server_error',
-        error_description: 'Failed to get anonymous user',
+        error_description: 'Failed to get guest account',
       },
       500
     );
@@ -403,7 +277,7 @@ export async function getGuestUser(c: Context<{ Bindings: Env }>) {
 
 /**
  * GET /api/admin/guest-users/:id/upgrades
- * Get upgrade history for an anonymous user (audit trail)
+ * Get upgrade history for a guest account (audit trail)
  */
 export async function getGuestUserUpgrades(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('GuestUsersAPI');
@@ -422,7 +296,7 @@ export async function getGuestUserUpgrades(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Get all upgrades related to this user (as anonymous or as upgraded target)
+    // Get all upgrades related to this user (as guest source or registered target).
     const upgrades = await authCtx.coreAdapter.query<{
       id: string;
       guest_user_id: string;
@@ -468,7 +342,7 @@ export async function getGuestUserUpgrades(c: Context<{ Bindings: Env }>) {
 
 /**
  * DELETE /api/admin/guest-users/:id
- * Delete an anonymous user and their devices
+ * Delete a guest account and its browser-resume records
  */
 export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
   const log = getLogger(c).module('GuestUsersAPI');
@@ -487,7 +361,7 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    // Verify user exists and is anonymous
+    // Verify the user exists and is still a guest.
     const runtimeUsers = createRuntimeUserStore(c, tenantId);
     const user = await runtimeUsers.findById(userId, { includeInactive: true });
 
@@ -495,7 +369,7 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
       return c.json(
         {
           error: 'not_found',
-          error_description: 'Anonymous user not found',
+          error_description: 'Guest account not found',
         },
         404
       );
@@ -505,7 +379,7 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
       return c.json(
         {
           error: 'invalid_request',
-          error_description: 'User is not an anonymous user. Use regular user deletion.',
+          error_description: 'User is not a guest account. Use regular user deletion.',
         },
         400
       );
@@ -516,7 +390,7 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
       return c.json(
         {
           error: 'legal_hold_active',
-          error_description: 'Anonymous user is under legal hold and cannot be deleted',
+          error_description: 'Guest account is under legal hold and cannot be deleted',
           hold_id: legalHold.holdId,
         },
         409
@@ -550,6 +424,17 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
       revokeSessions: true,
     });
 
+    await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {
+      registration_state: 'guest',
+      reason: 'admin_action',
+      source: 'guest_admin_api',
+    });
+    log.info('Guest account deleted by administrator', {
+      action: 'guest_user_delete',
+      tenantId,
+      userId,
+    });
+
     return c.json({
       success: true,
       deleted_user_id: userId,
@@ -560,7 +445,7 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
     return c.json(
       {
         error: 'server_error',
-        error_description: 'Failed to delete anonymous user',
+        error_description: 'Failed to delete guest account',
       },
       500
     );
@@ -569,7 +454,7 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
 
 /**
  * POST /api/admin/guest-users/cleanup
- * Cleanup expired anonymous users
+ * Cleanup expired guest accounts
  *
  * Request body:
  * {
@@ -590,21 +475,28 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
       }>()
       .catch(() => ({ dry_run: true, limit: 100 }));
 
+    if (body.dry_run !== undefined && typeof body.dry_run !== 'boolean') {
+      return invalidRequest(c, 'dry_run must be a boolean');
+    }
+    if (body.limit !== undefined && (!Number.isSafeInteger(body.limit) || body.limit < 1)) {
+      return invalidRequest(c, 'limit must be a positive integer');
+    }
     const dryRun = body.dry_run !== false; // Default to true (safe mode)
     const limit = Math.min(body.limit ?? 100, 1000);
     const now = Date.now();
 
-    // Find expired anonymous users
-    const expiredDevices = await authCtx.coreAdapter.query<{
+    // Find expired guest browser-resume records.
+    const expiredCredentials = await authCtx.coreAdapter.query<{
       user_id: string;
-      device_id: string;
+      credential_id: string;
       expires_at: number;
     }>(
-      `SELECT ad.user_id, ad.id as device_id, ad.expires_at
+      `SELECT ad.user_id, ad.id as credential_id, ad.expires_at
        FROM guest_devices ad
-       INNER JOIN identity_accounts uc ON ad.user_id = uc.legacy_user_id
+       INNER JOIN identity_accounts uc
+         ON uc.tenant_id = ad.tenant_id AND uc.legacy_user_id = ad.user_id
        WHERE ad.tenant_id = ? AND ad.is_active = 1 AND ad.expires_at IS NOT NULL AND ad.expires_at < ?
-         AND uc.registration_state = 'guest'
+         AND uc.account_type = 'user' AND uc.registration_state = 'guest' AND uc.deleted_at IS NULL
        ORDER BY ad.expires_at ASC
        LIMIT ?`,
       [tenantId, now, limit]
@@ -613,34 +505,35 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
     if (dryRun) {
       return c.json({
         dry_run: true,
-        expired_count: expiredDevices.length,
-        expired_devices: expiredDevices.map((d) => ({
-          user_id: d.user_id,
-          device_id: d.device_id,
-          expired_at: d.expires_at,
-          expired_since_hours: Math.floor((now - d.expires_at) / (1000 * 60 * 60)),
+        expired_count: expiredCredentials.length,
+        expired_credentials: expiredCredentials.map((credential) => ({
+          user_id: credential.user_id,
+          credential_id: credential.credential_id,
+          expired_at: credential.expires_at,
+          expired_since_hours: Math.floor((now - credential.expires_at) / (1000 * 60 * 60)),
         })),
         note: 'Set dry_run=false to actually delete these users.',
       });
     }
 
     // Collect unique user IDs
-    const userIds = [...new Set(expiredDevices.map((d) => d.user_id))];
+    const userIds = [...new Set(expiredCredentials.map((credential) => credential.user_id))];
 
     // Delete in transaction-like manner
-    let deletedDevices = 0;
+    let deletedCredentials = 0;
+    let deactivatedCredentials = 0;
     let deletedUsers = 0;
 
     for (const userId of userIds) {
-      // Check if user has any active (non-expired) devices
-      const activeDevice = await authCtx.coreAdapter.queryOne<{ id: string }>(
+      // Check if the user has any active browser-resume credential.
+      const activeCredential = await authCtx.coreAdapter.queryOne<{ id: string }>(
         `SELECT id FROM guest_devices
          WHERE tenant_id = ? AND user_id = ? AND is_active = 1
            AND (expires_at IS NULL OR expires_at > ?)`,
         [tenantId, userId, now]
       );
 
-      if (!activeDevice) {
+      if (!activeCredential) {
         const legalHold = await findActiveAccountLegalHold(authCtx.coreAdapter, tenantId, userId);
         if (legalHold) {
           continue;
@@ -654,7 +547,7 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
           operationId: crypto.randomUUID(),
           revokeSessions: true,
         });
-        // No active devices, delete user
+        // No active credential remains, delete the guest account.
         await authCtx.coreAdapter.execute(
           'DELETE FROM guest_devices WHERE tenant_id = ? AND user_id = ?',
           [tenantId, userId]
@@ -668,32 +561,56 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
           operationId: crypto.randomUUID(),
           revokeSessions: true,
         });
+        await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {
+          registration_state: 'guest',
+          reason: 'manual_cleanup',
+          source: 'guest_cleanup_api',
+        });
         deletedUsers++;
-        deletedDevices += expiredDevices.filter((d) => d.user_id === userId).length;
+        deletedCredentials += expiredCredentials.filter(
+          (credential) => credential.user_id === userId
+        ).length;
       } else {
-        // User has active devices, just deactivate expired ones
+        // Keep the account and deactivate only expired resume credentials.
         await authCtx.coreAdapter.execute(
           `UPDATE guest_devices SET is_active = 0
            WHERE tenant_id = ? AND user_id = ? AND expires_at IS NOT NULL AND expires_at < ?`,
           [tenantId, userId, now]
         );
-        deletedDevices += expiredDevices.filter((d) => d.user_id === userId).length;
+        await createAuditLogFromContext(c, 'guest.resume_credentials.deactivated', 'user', userId, {
+          reason: 'manual_cleanup',
+          source: 'guest_cleanup_api',
+          expired_credential_count: expiredCredentials.filter(
+            (credential) => credential.user_id === userId
+          ).length,
+        });
+        deactivatedCredentials += expiredCredentials.filter(
+          (credential) => credential.user_id === userId
+        ).length;
       }
     }
+
+    log.info('Guest account cleanup completed', {
+      action: 'guest_cleanup',
+      tenantId,
+      deletedUsers,
+      deletedCredentials,
+      deactivatedCredentials,
+    });
 
     return c.json({
       success: true,
       dry_run: false,
       deleted_users: deletedUsers,
-      deleted_devices: deletedDevices,
-      deactivated_only: deletedDevices - (userIds.length === deletedUsers ? deletedDevices : 0),
+      deleted_credentials: deletedCredentials,
+      deactivated_credentials: deactivatedCredentials,
     });
   } catch (error) {
     log.error('Error during cleanup', {}, error as Error);
     return c.json(
       {
         error: 'server_error',
-        error_description: 'Failed to cleanup expired anonymous users',
+        error_description: 'Failed to cleanup expired guest accounts',
       },
       500
     );

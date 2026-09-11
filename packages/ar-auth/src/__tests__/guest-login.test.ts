@@ -11,11 +11,14 @@ const mocks = vi.hoisted(() => ({
   route: vi.fn(),
   provision: vi.fn(),
   query: vi.fn(),
+  execute: vi.fn(),
   lifecycle: vi.fn(),
   user: vi.fn(),
   createSession: vi.fn(),
   invalidateSession: vi.fn(),
   getSession: vi.fn(),
+  audit: vi.fn(),
+  publishEvent: vi.fn(),
 }));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
@@ -27,8 +30,15 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   resolveGuestSettings: mocks.settings,
   loadClientContractCached: mocks.contract,
   generateUserIdFromSettings: async () => 'guest-a',
-  createAccountAuthContextFromHono: () => ({ coreAdapter: { queryOne: mocks.query } }),
+  createAccountAuthContextFromHono: () => ({
+    coreAdapter: { queryOne: mocks.query, execute: mocks.execute },
+  }),
   createPIIContextFromHono: () => ({ defaultPiiAdapter: {} }),
+  resolveAccountDataContextFromHono: async (_c: unknown, userId: string) => ({
+    tenantId: 'tenant-a',
+    accountId: `account:${userId}`,
+    legacyUserId: userId,
+  }),
   GuestLifecycleRepository: class {
     get = mocks.lifecycle;
   },
@@ -41,6 +51,8 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
     sessionId: 'session-a',
   }),
   generateBrowserState: async () => 'browser-state',
+  createAuditLog: mocks.audit,
+  publishEvent: mocks.publishEvent,
 }));
 vi.mock('../account-provisioning', () => ({
   provisionGuestAccount: mocks.provision,
@@ -99,7 +111,13 @@ describe('browser guest login', () => {
       guestAuth: { enabled: true, allowedScopes: ['openid'] },
     });
     mocks.route.mockResolvedValue({ legacyUserId: 'guest-a' });
-    mocks.query.mockResolvedValue({ user_id: 'guest-a', created_at: Date.now() - 1000 });
+    mocks.query.mockResolvedValue({
+      id: 'resume-a',
+      user_id: 'guest-a',
+      expires_at: null,
+      created_at: Date.now() - 1000,
+    });
+    mocks.execute.mockResolvedValue({ success: true, rowsAffected: 1 });
     mocks.lifecycle.mockResolvedValue({
       phase: 'active',
       client_id: 'client-a',
@@ -108,6 +126,8 @@ describe('browser guest login', () => {
     mocks.user.mockResolvedValue({ account_type: 'user', registration_state: 'guest' });
     mocks.getSession.mockResolvedValue(null);
     mocks.createSession.mockResolvedValue(undefined);
+    mocks.audit.mockResolvedValue(undefined);
+    mocks.publishEvent.mockResolvedValue(undefined);
   });
   it('creates a direct browser session using the validated client without an OAuth grant', async () => {
     const response = await request(undefined, { clientId: 'client-a' });
@@ -131,6 +151,23 @@ describe('browser guest login', () => {
       3600,
       expect.objectContaining({ client_id: 'client-a', is_guest_session: true }),
       'tenant-a'
+    );
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        userId: 'guest-a',
+        action: 'user.login',
+        resourceId: 'session-a',
+      })
+    );
+    expect(mocks.publishEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        type: 'auth.login.succeeded',
+        tenantId: 'tenant-a',
+        data: expect.objectContaining({ userId: 'guest-a', method: 'guest' }),
+      })
     );
     expect(await response.json()).toEqual({ success: true });
   });
@@ -183,6 +220,10 @@ describe('browser guest login', () => {
       'tenant-a'
     );
     expect(response.headers.get('set-cookie')).toContain('HttpOnly');
+    expect(mocks.execute).toHaveBeenCalledWith(
+      expect.stringContaining('SET last_used_at = ?'),
+      expect.arrayContaining(['tenant-a', 'guest-a'])
+    );
     expect(await response.json()).toEqual({ success: true });
   });
   it.each([
@@ -248,6 +289,13 @@ describe('browser guest login', () => {
     expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
     expect(mocks.createSession).not.toHaveBeenCalled();
   });
+  it('does not create a session when concurrent credential revocation wins', async () => {
+    mocks.execute.mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    const response = await request();
+    expect(response.status).toBe(401);
+    expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
+    expect(mocks.createSession).not.toHaveBeenCalled();
+  });
   it.each(['deleting', 'deleted', 'registered', 'upgrading'])('rejects %s state', async (phase) => {
     mocks.lifecycle.mockResolvedValue({ phase, client_id: 'client-a' });
     expect((await request()).status).toBeGreaterThanOrEqual(400);
@@ -276,13 +324,33 @@ describe('browser guest login', () => {
     expect(mocks.provision).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        device: expect.objectContaining({
-          expiresInDays: null,
+        resumeCredential: expect.objectContaining({
+          expiresInDays: 180,
           guestLifecycle: { clientId: 'client-a', deletionAfterDays: null, policyVersion: 'v1' },
         }),
       })
     );
     expect(mocks.createSession).not.toHaveBeenCalled();
+  });
+  it('records a distinct audit event when it provisions a new browser guest', async () => {
+    mocks.route.mockResolvedValue(null);
+    mocks.provision.mockResolvedValue({
+      status: 'ready',
+      accountId: 'account:guest-a',
+      userId: 'guest-a',
+    });
+    const response = await request();
+    expect(response.status).toBe(200);
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        userId: 'guest-a',
+        action: 'account.guest.created',
+        resource: 'user',
+        resourceId: 'guest-a',
+      })
+    );
   });
   it('scopes secrets to each tenant and client', async () => {
     const secret = 'b'.repeat(64);
