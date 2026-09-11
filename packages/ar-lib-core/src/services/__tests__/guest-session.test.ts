@@ -35,7 +35,7 @@ function session(override: Partial<Session> = {}): Session {
   return {
     tenantId: 'tenant-a',
     userId: 'guest-a',
-    data: { guest_resume_credential: true, device_id_hash: 'a'.repeat(64) },
+    data: { guest_resume_credential: true, guest_resume_credential_hash: 'a'.repeat(64) },
     ...override,
   } as Session;
 }
@@ -64,7 +64,9 @@ describe('explicit guest logout', () => {
   );
   it.each([
     session({ tenantId: 'tenant-b' }),
-    session({ data: { guest_resume_credential: true, device_id_hash: 'device-id' } }),
+    session({
+      data: { guest_resume_credential: true, guest_resume_credential_hash: 'invalid-hash' },
+    }),
   ])('rejects invalid credential binding before storage access', async (value) => {
     await expect(revokeGuestResumeForSession(context, value)).rejects.toThrow(
       'guest_resume_revocation_failed'

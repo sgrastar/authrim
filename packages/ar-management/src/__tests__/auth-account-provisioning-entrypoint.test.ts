@@ -101,24 +101,20 @@ function passkeyRouteInput(
   };
 }
 
-function anonymousInput(
+function guestInput(
   overrides: Partial<AuthAccountProvisioningInput> = {}
 ): AuthAccountProvisioningInput {
-  const deviceIdHash = 'd'.repeat(64);
+  const credentialHash = 'd'.repeat(64);
   return input({
     flow: 'guest',
     email: null,
     externalSubject: {
-      issuer: 'urn:authrim:guest-device:v1',
-      subject: deviceIdHash,
+      issuer: 'urn:authrim:guest-resume:v1',
+      subject: credentialHash,
     },
-    guestDevice: {
-      id: `guest-device-${deviceIdHash.slice(0, 32)}`,
-      deviceIdHash,
-      installationIdHash: null,
-      fingerprintHash: null,
-      platform: 'web',
-      stability: 'installation',
+    guestResumeCredential: {
+      id: `guest-resume-${credentialHash.slice(0, 32)}`,
+      credentialHash,
       expiresInDays: 30,
     },
     runtimeUser: {
@@ -550,7 +546,7 @@ describe('AuthAccountProvisioningEntrypoint', () => {
   it.each(['registered', 'upgrading', 'anonymous'])(
     'rejects guest provisioning with registration state %s before writing',
     async (registrationState) => {
-      const request = anonymousInput();
+      const request = guestInput();
       await expect(
         worker().provisionAuthAccount({
           ...request,
@@ -573,15 +569,11 @@ describe('AuthAccountProvisioningEntrypoint', () => {
     expect(mocks.execute).not.toHaveBeenCalled();
   });
 
-  it('provisions anonymous device authority without email or raw device identifiers', async () => {
-    const request = anonymousInput();
+  it('provisions browser guest resume authority without raw credentials', async () => {
+    const request = guestInput();
     mocks.tenantQuery.mockResolvedValueOnce({
-      id: request.guestDevice?.id,
+      id: request.guestResumeCredential?.id,
       user_id: 'user-a',
-      installation_id_hash: null,
-      fingerprint_hash: null,
-      device_platform: 'web',
-      device_stability: 'installation',
     });
 
     await expect(worker().provisionAuthAccount(request)).resolves.toMatchObject({
@@ -601,10 +593,10 @@ describe('AuthAccountProvisioningEntrypoint', () => {
     expect(mocks.tenantExecute).toHaveBeenCalledWith(
       expect.stringContaining('INSERT OR IGNORE INTO guest_devices'),
       expect.arrayContaining([
-        request.guestDevice?.id,
+        request.guestResumeCredential?.id,
         'tenant-a',
         'user-a',
-        request.guestDevice?.deviceIdHash,
+        request.guestResumeCredential?.credentialHash,
       ])
     );
   });
@@ -639,12 +631,12 @@ describe('AuthAccountProvisioningEntrypoint', () => {
     );
   });
 
-  it('rejects anonymous route and authority digest mismatches', async () => {
+  it('rejects browser guest resume route and authority digest mismatches', async () => {
     await expect(
       worker().provisionAuthAccount(
-        anonymousInput({
+        guestInput({
           externalSubject: {
-            issuer: 'urn:authrim:guest-device:v1',
+            issuer: 'urn:authrim:guest-resume:v1',
             subject: 'e'.repeat(64),
           },
         })
@@ -949,60 +941,6 @@ describe('AuthAccountProvisioningEntrypoint', () => {
     await expect(worker().publishAuthPasskeyRoute(passkeyRouteInput())).rejects.toThrow(
       'auth_passkey_route_authority_not_found'
     );
-  });
-
-  it('removes only an inactive destination-verified anonymous device route', async () => {
-    mocks.tenantQuery.mockResolvedValueOnce({
-      id: 'device-a',
-      user_id: 'user-a',
-      device_id_hash: 'd'.repeat(64),
-      is_active: 0,
-    });
-    await expect(
-      worker().removeAuthGuestDeviceRoute({
-        schemaVersion: 1,
-        operationId: 'anonymous-route-remove-device-a',
-        idempotencyKey: `auth-guest-route-remove:${'e'.repeat(64)}`,
-        tenantId: 'tenant-a',
-        accountId: 'account:user-a',
-        userId: 'user-a',
-        deviceId: 'device-a',
-        deviceIdHash: 'd'.repeat(64),
-      })
-    ).resolves.toEqual({
-      status: 202,
-      operationId: 'anonymous-route-remove-device-a',
-      accountId: 'account:user-a',
-    });
-    expect(mocks.removeIdentifier).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({
-        externalSubject: {
-          issuer: 'urn:authrim:guest-device:v1',
-          subject: 'd'.repeat(64),
-        },
-      }),
-      expect.anything()
-    );
-
-    mocks.tenantQuery.mockResolvedValueOnce({
-      id: 'device-a',
-      user_id: 'user-a',
-      device_id_hash: 'd'.repeat(64),
-      is_active: 1,
-    });
-    await expect(
-      worker().removeAuthGuestDeviceRoute({
-        schemaVersion: 1,
-        operationId: 'anonymous-route-remove-device-a',
-        idempotencyKey: `auth-guest-route-remove:${'e'.repeat(64)}`,
-        tenantId: 'tenant-a',
-        accountId: 'account:user-a',
-        userId: 'user-a',
-        deviceId: 'device-a',
-        deviceIdHash: 'd'.repeat(64),
-      })
-    ).rejects.toThrow('auth_guest_route_removal_authority_active');
   });
 
   it.each([

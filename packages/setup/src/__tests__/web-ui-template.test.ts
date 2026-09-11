@@ -85,6 +85,15 @@ function extractInlineObject(
   throw new Error(`Could not extract ${variableName}`);
 }
 
+it('uses theme colors for visited deletion notice links and keyboard focus', () => {
+  expect(SETUP_WEB_UI_STYLE).toContain(
+    '#delete-result .alert a,\n#delete-result .alert a:visited {\n  color: var(--primary);'
+  );
+  expect(SETUP_WEB_UI_STYLE).toContain(
+    '#delete-result .alert a:focus-visible {\n  outline: 2px solid var(--primary);'
+  );
+});
+
 describe('getHtmlTemplate', () => {
   const localeCases = [
     { locale: 'en', translations: en, expected: 'Choose How to Start' },

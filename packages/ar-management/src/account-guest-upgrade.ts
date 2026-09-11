@@ -7,6 +7,7 @@ import {
   createAccountAuthContextFromHono,
   createPIIContextFromHono,
   getAccountDataContextFromHono,
+  getLogger,
   getSessionStoreBySessionId,
   getTenantIdFromContext,
   getMissingRequiredCustomClaims,
@@ -100,6 +101,53 @@ function randomCode(): string {
 function fail(c: C, error: string, status: 400 | 401 | 403 | 409 | 503 = 400): Response {
   return c.json({ error }, status);
 }
+function logUnexpectedFailure(c: C, stage: 'status' | 'start' | 'complete', error: unknown): void {
+  getLogger(c)
+    .module('ACCOUNT-GUEST-UPGRADE')
+    .error('Guest account upgrade request failed', {
+      action: 'guest_upgrade',
+      stage,
+      errorType: error instanceof Error ? error.name : 'unknown',
+    });
+}
+async function auditUnexpectedFailure(
+  c: C,
+  userId: string,
+  stage: 'start' | 'complete'
+): Promise<void> {
+  try {
+    await recordAccountOperation(c, {
+      userId,
+      action: 'account.guest.upgrade_failed',
+      required: true,
+      metadata: { stage, reason: 'guest_upgrade_unavailable' },
+    });
+  } catch (error) {
+    logUnexpectedFailure(c, stage, error);
+  }
+}
+async function auditedFailure(
+  c: C,
+  input: {
+    userId: string;
+    reason: string;
+    operationId?: string;
+    stage: 'start' | 'complete';
+    status?: 400 | 401 | 403 | 409 | 503;
+  }
+): Promise<Response> {
+  await recordAccountOperation(c, {
+    userId: input.userId,
+    action: 'account.guest.upgrade_failed',
+    required: true,
+    metadata: {
+      stage: input.stage,
+      reason: input.reason,
+      ...(input.operationId ? { operationId: input.operationId } : {}),
+    },
+  });
+  return fail(c, input.reason, input.status);
+}
 async function context(c: C) {
   c.header('Cache-Control', 'no-store');
   const accountSession = await requireAccountSession(c);
@@ -173,7 +221,7 @@ export async function getAccountGuestUpgradeHandler(c: C): Promise<Response> {
           {
             is_guest_session: false,
             guest_resume_credential: false,
-            device_id_hash: undefined,
+            guest_resume_credential_hash: undefined,
             upgrade_eligible: false,
             upgrade_method: operation.method,
             upgraded_at: (ctx.row.upgraded_at ?? operation.updated_at) * 1000,
@@ -213,12 +261,14 @@ export async function getAccountGuestUpgradeHandler(c: C): Promise<Response> {
       upgrade_in_progress: ctx.row.phase === 'upgrading',
       profile_complete: missing.length === 0,
     });
-  } catch {
+  } catch (error) {
+    logUnexpectedFailure(c, 'status', error);
     return fail(c, 'guest_upgrade_unavailable', 503);
   }
 }
 
 export async function startAccountGuestUpgradeHandler(c: C): Promise<Response> {
+  let auditUserId: string | undefined;
   try {
     const body = await c.req.json<Record<string, unknown>>().catch(() => null);
     if (
@@ -230,9 +280,21 @@ export async function startAccountGuestUpgradeHandler(c: C): Promise<Response> {
     const method = body.method;
     const ctx = await context(c);
     if (ctx instanceof Response) return ctx;
-    if (ctx.row.phase !== 'active') return fail(c, 'guest_upgrade_in_progress', 409);
+    auditUserId = ctx.session.userId;
+    if (ctx.row.phase !== 'active')
+      return auditedFailure(c, {
+        userId: ctx.session.userId,
+        reason: 'guest_upgrade_in_progress',
+        stage: 'start',
+        status: 409,
+      });
     if (!(await allowedMethods(c, ctx.tenantId, ctx.clientId)).includes(method))
-      return fail(c, 'guest_upgrade_disabled', 403);
+      return auditedFailure(c, {
+        userId: ctx.session.userId,
+        reason: 'guest_upgrade_disabled',
+        stage: 'start',
+        status: 403,
+      });
     const now = Math.floor(Date.now() / 1000);
     const settings = await resolveGuestSettings(c.env, ctx.tenantId);
     const operationId = crypto.randomUUID();
@@ -245,17 +307,30 @@ export async function startAccountGuestUpgradeHandler(c: C): Promise<Response> {
     let options: Awaited<ReturnType<typeof generateRegistrationOptions>> | undefined;
     if (method === 'email') {
       if (typeof body.email !== 'string' || body.email.length > 320)
-        return fail(c, 'invalid_email');
+        return auditedFailure(c, {
+          userId: ctx.session.userId,
+          reason: 'invalid_email',
+          stage: 'start',
+        });
       try {
         payload.email = normalizeLookupEmail(body.email);
       } catch {
-        return fail(c, 'invalid_email');
+        return auditedFailure(c, {
+          userId: ctx.session.userId,
+          reason: 'invalid_email',
+          stage: 'start',
+        });
       }
       code = randomCode();
       verifier = await otpVerifier(c.env, ctx.tenantId, operationId, code);
     } else {
       const origin = getAccountWebAuthnOrigin(c);
-      if (!origin) return fail(c, 'invalid_origin');
+      if (!origin)
+        return auditedFailure(c, {
+          userId: ctx.session.userId,
+          reason: 'invalid_origin',
+          stage: 'start',
+        });
       payload.origin = origin;
       payload.rpId = new URL(origin).hostname;
       options = await generateRegistrationOptions({
@@ -278,7 +353,13 @@ export async function startAccountGuestUpgradeHandler(c: C): Promise<Response> {
         settings.policy.upgradeHoldMinutes
       ))
     )
-      return fail(c, 'guest_unavailable', 409);
+      return auditedFailure(c, {
+        userId: ctx.session.userId,
+        reason: 'guest_unavailable',
+        operationId,
+        stage: 'start',
+        status: 409,
+      });
     await ctx.operations.create({
       operationId,
       userId: ctx.session.userId,
@@ -294,6 +375,7 @@ export async function startAccountGuestUpgradeHandler(c: C): Promise<Response> {
     await recordAccountOperation(c, {
       userId: ctx.session.userId,
       action: 'account.guest.upgrade_started',
+      required: true,
       metadata: { operationId, method },
     });
     if (method === 'email') {
@@ -315,7 +397,13 @@ export async function startAccountGuestUpgradeHandler(c: C): Promise<Response> {
       });
       if (delivery.delivery === 'permanent_failure') {
         await ctx.operations.cancelUncommitted(operationId, now);
-        return fail(c, 'verification_delivery_failed', 503);
+        return auditedFailure(c, {
+          userId: ctx.session.userId,
+          reason: 'verification_delivery_failed',
+          operationId,
+          stage: 'start',
+          status: 503,
+        });
       }
     }
     return c.json({
@@ -325,7 +413,9 @@ export async function startAccountGuestUpgradeHandler(c: C): Promise<Response> {
       expires_at: now + 600,
       ...(options && { options }),
     });
-  } catch {
+  } catch (error) {
+    logUnexpectedFailure(c, 'start', error);
+    if (auditUserId) await auditUnexpectedFailure(c, auditUserId, 'start');
     return fail(c, 'guest_upgrade_unavailable', 503);
   }
 }
@@ -470,11 +560,13 @@ async function writeRegistration(
   await recordAccountOperation(c, {
     userId: ctx.userId,
     action: 'account.guest.upgraded',
+    required: true,
     metadata: { operationId: operation.operation_id, method: operation.method },
   });
 }
 
 export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response> {
+  let auditUserId: string | undefined;
   try {
     const body = await c.req.json<Record<string, unknown>>().catch(() => null);
     if (
@@ -488,6 +580,7 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
       return fail(c, 'invalid_request');
     const ctx = await context(c);
     if (ctx instanceof Response) return ctx;
+    auditUserId = ctx.session.userId;
     let operation = await ctx.operations.get(body.operation_id);
     const tokenHash = await sha256(body.upgrade_token);
     if (
@@ -497,12 +590,29 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
       operation.initiating_session_id !== ctx.session.id ||
       operation.request_token_hash !== tokenHash
     )
-      return fail(c, 'invalid_upgrade_proof');
+      return auditedFailure(c, {
+        userId: ctx.session.userId,
+        reason: 'invalid_upgrade_proof',
+        operationId: body.operation_id,
+        stage: 'complete',
+      });
     const now = Math.floor(Date.now() / 1000);
     if (operation.state === 'awaiting_proof') {
-      if (operation.expires_at <= now) return fail(c, 'upgrade_proof_expired');
+      if (operation.expires_at <= now)
+        return auditedFailure(c, {
+          userId: ctx.session.userId,
+          reason: 'upgrade_proof_expired',
+          operationId: operation.operation_id,
+          stage: 'complete',
+        });
       if (!(await allowedMethods(c, ctx.tenantId, ctx.clientId)).includes(operation.method))
-        return fail(c, 'guest_upgrade_disabled', 403);
+        return auditedFailure(c, {
+          userId: ctx.session.userId,
+          reason: 'guest_upgrade_disabled',
+          operationId: operation.operation_id,
+          stage: 'complete',
+          status: 403,
+        });
       const common = {
         operationId: operation.operation_id,
         userId: ctx.session.userId,
@@ -512,14 +622,24 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
       };
       if (operation.method === 'email') {
         if (typeof body.code !== 'string' || !/^\d{6}$/.test(body.code))
-          return fail(c, 'invalid_upgrade_proof');
+          return auditedFailure(c, {
+            userId: ctx.session.userId,
+            reason: 'invalid_upgrade_proof',
+            operationId: operation.operation_id,
+            stage: 'complete',
+          });
         if (
           !(await ctx.operations.verifyEmail({
             ...common,
             verifier: await otpVerifier(c.env, ctx.tenantId, operation.operation_id, body.code),
           }))
         )
-          return fail(c, 'invalid_upgrade_proof');
+          return auditedFailure(c, {
+            userId: ctx.session.userId,
+            reason: 'invalid_upgrade_proof',
+            operationId: operation.operation_id,
+            stage: 'complete',
+          });
       } else {
         const payload = JSON.parse(operation.proof_payload_json!) as ProofPayload;
         if (
@@ -527,7 +647,12 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
           !body.passkey_response ||
           typeof body.passkey_response !== 'object'
         )
-          return fail(c, 'invalid_upgrade_proof');
+          return auditedFailure(c, {
+            userId: ctx.session.userId,
+            reason: 'invalid_upgrade_proof',
+            operationId: operation.operation_id,
+            stage: 'complete',
+          });
         let verification;
         try {
           verification = await verifyRegistrationResponse({
@@ -538,13 +663,29 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
             requireUserVerification: true,
           });
         } catch {
-          return fail(c, 'invalid_upgrade_proof');
+          return auditedFailure(c, {
+            userId: ctx.session.userId,
+            reason: 'invalid_upgrade_proof',
+            operationId: operation.operation_id,
+            stage: 'complete',
+          });
         }
         if (!verification.verified || !verification.registrationInfo)
-          return fail(c, 'invalid_upgrade_proof');
+          return auditedFailure(c, {
+            userId: ctx.session.userId,
+            reason: 'invalid_upgrade_proof',
+            operationId: operation.operation_id,
+            stage: 'complete',
+          });
         const info = verification.registrationInfo;
         const credential = info.credential;
-        if (!credential?.id || !credential.publicKey) return fail(c, 'invalid_upgrade_proof');
+        if (!credential?.id || !credential.publicKey)
+          return auditedFailure(c, {
+            userId: ctx.session.userId,
+            reason: 'invalid_upgrade_proof',
+            operationId: operation.operation_id,
+            stage: 'complete',
+          });
         payload.credentialId = credential.id;
         payload.publicKey = Buffer.from(credential.publicKey).toString('base64');
         payload.counter = credential.counter;
@@ -560,14 +701,31 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
             verifiedPayloadJson: JSON.stringify(payload),
           }))
         )
-          return fail(c, 'invalid_upgrade_proof');
+          return auditedFailure(c, {
+            userId: ctx.session.userId,
+            reason: 'invalid_upgrade_proof',
+            operationId: operation.operation_id,
+            stage: 'complete',
+          });
       }
       operation = (await ctx.operations.get(operation.operation_id))!;
     }
     if (operation.state === 'verified' && ctx.row.phase === 'active') {
-      if (operation.expires_at <= now) return fail(c, 'upgrade_proof_expired');
+      if (operation.expires_at <= now)
+        return auditedFailure(c, {
+          userId: ctx.session.userId,
+          reason: 'upgrade_proof_expired',
+          operationId: operation.operation_id,
+          stage: 'complete',
+        });
       if (!(await allowedMethods(c, ctx.tenantId, ctx.clientId)).includes(operation.method))
-        return fail(c, 'guest_upgrade_disabled', 403);
+        return auditedFailure(c, {
+          userId: ctx.session.userId,
+          reason: 'guest_upgrade_disabled',
+          operationId: operation.operation_id,
+          stage: 'complete',
+          status: 403,
+        });
       const payload = JSON.parse(operation.proof_payload_json!) as ProofPayload;
       // Reserve uniqueness before changing the guest. Existing identities never merge.
       const pinned = await ctx.operations.pinReservation(
@@ -575,7 +733,13 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
         operation.reservation_publication_json ??
           JSON.stringify(await publication(c, operation, payload))
       );
-      if (!pinned) return fail(c, 'upgrade_proof_expired');
+      if (!pinned)
+        return auditedFailure(c, {
+          userId: ctx.session.userId,
+          reason: 'upgrade_proof_expired',
+          operationId: operation.operation_id,
+          stage: 'complete',
+        });
       const value = await validateAccountDirectoryPublication(JSON.parse(pinned));
       try {
         await new InitialAccountIdentifierReservationService({
@@ -588,14 +752,33 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
             lookupForBucket: await createLookupBucketWriteResolver(c.env),
             now: () => now,
           }).release(value);
-          return fail(c, 'upgrade_proof_expired');
+          return auditedFailure(c, {
+            userId: ctx.session.userId,
+            reason: 'upgrade_proof_expired',
+            operationId: operation.operation_id,
+            stage: 'complete',
+          });
         }
       } catch (error) {
-        if (error instanceof Error && error.message === 'directory_identifier_reservation_conflict')
+        if (
+          error instanceof Error &&
+          error.message === 'directory_identifier_reservation_conflict'
+        ) {
+          await recordAccountOperation(c, {
+            userId: ctx.session.userId,
+            action: 'account.guest.upgrade_failed',
+            required: true,
+            metadata: {
+              stage: 'complete',
+              reason: 'identity_already_registered',
+              operationId: operation.operation_id,
+            },
+          });
           return c.json(
             { error: 'identity_already_registered', existing_login_available: true },
             409
           );
+        }
         throw error;
       }
     }
@@ -612,12 +795,15 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
       commit: (op) => writeRegistration(c, { ...ctx, userId: ctx.session.userId }, op),
     });
     if (result === 'pending') return c.json({ status: 'in_progress' }, 202);
-    if (result !== 'completed')
-      return fail(
-        c,
-        result === 'expired' ? 'upgrade_proof_expired' : 'guest_upgrade_unavailable',
-        409
-      );
+    if (result !== 'completed') {
+      return auditedFailure(c, {
+        userId: ctx.session.userId,
+        reason: result === 'expired' ? 'upgrade_proof_expired' : 'guest_upgrade_unavailable',
+        operationId: operation.operation_id,
+        stage: 'complete',
+        status: 409,
+      });
+    }
     // A completed retry must not refresh authentication or replace a later login.
     if (ctx.session.data?.is_guest_session === true) {
       const completed = await ctx.lifecycle.get(ctx.session.userId);
@@ -627,7 +813,7 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
         {
           is_guest_session: false,
           guest_resume_credential: false,
-          device_id_hash: undefined,
+          guest_resume_credential_hash: undefined,
           upgrade_eligible: false,
           upgrade_method: operation.method,
           upgraded_at: authenticatedAt * 1000,
@@ -638,7 +824,9 @@ export async function completeAccountGuestUpgradeHandler(c: C): Promise<Response
       );
     }
     return c.json({ success: true, user_id: ctx.session.userId, preserve_sub: true });
-  } catch {
+  } catch (error) {
+    logUnexpectedFailure(c, 'complete', error);
+    if (auditUserId) await auditUnexpectedFailure(c, auditUserId, 'complete');
     return fail(c, 'guest_upgrade_unavailable', 503);
   }
 }

@@ -3,7 +3,7 @@ ALTER TABLE identity_accounts ADD COLUMN registration_state TEXT NOT NULL DEFAUL
   CHECK (registration_state IN ('guest', 'registered'));
 UPDATE identity_accounts SET registration_state = 'guest', account_type = 'user' WHERE account_type = 'anonymous';
 CREATE INDEX idx_identity_accounts_registration_state ON identity_accounts (tenant_id, registration_state);
-ALTER TABLE anonymous_devices RENAME TO guest_devices;
+ALTER TABLE anonymous_devices RENAME TO guest_devices_legacy;
 CREATE TABLE guest_account_upgrades (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
@@ -21,6 +21,19 @@ CREATE INDEX idx_guest_account_upgrades_target ON guest_account_upgrades (tenant
 DROP INDEX idx_anonymous_devices_active_digest;
 DROP INDEX idx_anonymous_devices_user;
 DROP INDEX idx_anonymous_devices_expiry;
-CREATE UNIQUE INDEX idx_guest_devices_active_digest ON guest_devices (tenant_id, device_id_hash);
+CREATE TABLE guest_devices (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  resume_credential_hash TEXT NOT NULL CHECK (length(resume_credential_hash) = 64),
+  expires_at INTEGER,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1))
+);
+-- Shared-HMAC device identifiers are not browser resume credentials. The old rows are
+-- intentionally discarded because this unpublished migration has no compatibility contract.
+DROP TABLE guest_devices_legacy;
+CREATE UNIQUE INDEX idx_guest_devices_active_resume_credential ON guest_devices (tenant_id, resume_credential_hash);
 CREATE INDEX idx_guest_devices_user ON guest_devices (tenant_id, user_id, is_active, last_used_at DESC);
 CREATE INDEX idx_guest_devices_expiry ON guest_devices (tenant_id, is_active, expires_at);

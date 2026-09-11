@@ -197,7 +197,7 @@ describe('hourly guest deletion state transitions', () => {
       },
     };
     const log = { info: vi.fn(), warn: vi.fn() };
-    mocks.erase.mockRejectedValueOnce(new Error('unavailable'));
+    mocks.erase.mockRejectedValueOnce(new Error('private provider failure: customer@example.com'));
     const targets = [{ tenantId: 'tenant', adapters: [{ bindingRef: 'CORE', adapter: core }] }];
     await processGuestLifecycleMaintenance(
       { ...env, AUTHRIM_CONFIG: config } as unknown as Env,
@@ -207,6 +207,12 @@ describe('hourly guest deletion state transitions', () => {
     expect(JSON.parse(values.get('guest-maintenance-status:tenant:guest')!)).toMatchObject({
       state: 'retrying',
       attempted_at: expect.any(Number) as unknown,
+    });
+    expect(log.warn).toHaveBeenCalledWith('Guest lifecycle deletion failed', {
+      tenantId: 'tenant',
+      userId: 'guest',
+      bindingRef: 'CORE',
+      errorCode: 'guest_maintenance_internal_error',
     });
     expect((await lifecycle.get('guest'))?.phase).toBe('deleting');
     await processGuestLifecycleMaintenance(
@@ -303,7 +309,12 @@ describe('hourly guest deletion state transitions', () => {
     ]);
     expect(mocks.audit).toHaveBeenCalledWith(
       env,
-      expect.objectContaining({ tenantId: 'tenant', userId: 'guest', action: 'user.deleted' })
+      expect.objectContaining({
+        tenantId: 'tenant',
+        userId: 'system',
+        action: 'user.deleted',
+        resourceId: 'guest',
+      })
     );
   });
   it.each(['registered', 'upgrading'])('does not delete a guest that became %s', async (phase) => {

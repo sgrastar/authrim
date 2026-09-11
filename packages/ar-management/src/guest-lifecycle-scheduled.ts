@@ -46,6 +46,14 @@ interface Logger {
   info(message: string, context?: Record<string, unknown>): void;
   warn(message: string, context?: Record<string, unknown>): void;
 }
+
+function maintenanceErrorCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : '';
+  return /^[a-z0-9][a-z0-9_.:-]{0,127}$/u.test(message)
+    ? message
+    : 'guest_maintenance_internal_error';
+}
+
 function readRoute(
   json: string | null,
   tenantId: string,
@@ -210,7 +218,7 @@ export async function deleteOneGuestAccount(
   await invalidateUserCache(env, tenantId, row.user_id);
   await createAuditLog(env, {
     tenantId,
-    userId: row.user_id,
+    userId: 'system',
     action: 'user.deleted',
     resource: 'user',
     resourceId: row.user_id,
@@ -319,8 +327,14 @@ export async function processGuestLifecycleMaintenance(
           const now = Math.floor(Date.now() / 1000);
           await lifecycle.recordMaintenanceAttempt(row.user_id, now);
           await cleanupExpiredGuestProofs(env, tenantId, adapter, bindingRef, row.user_id, now);
-        } catch {
+        } catch (error) {
           failed += 1;
+          log.warn('Guest lifecycle proof cleanup failed', {
+            tenantId,
+            userId: row.user_id,
+            bindingRef,
+            errorCode: maintenanceErrorCode(error),
+          });
         }
       }
       for (const row of await lifecycle.listUpgradeCandidates(10)) {
@@ -337,8 +351,14 @@ export async function processGuestLifecycleMaintenance(
             )) === 'completed'
           )
             upgraded += 1;
-        } catch {
+        } catch (error) {
           failed += 1;
+          log.warn('Guest lifecycle upgrade recovery failed', {
+            tenantId,
+            userId: row.user_id,
+            bindingRef,
+            errorCode: maintenanceErrorCode(error),
+          });
         }
       }
       for (const row of await lifecycle.listDeletionCandidates(Math.floor(Date.now() / 1000), 20)) {
@@ -367,13 +387,24 @@ export async function processGuestLifecycleMaintenance(
           });
           if (result === 'deleted') deleted += 1;
           await status(result === 'deleted' ? 'completed' : 'pending');
-        } catch {
+        } catch (error) {
           failed += 1;
+          log.warn('Guest lifecycle deletion failed', {
+            tenantId,
+            userId: row.user_id,
+            bindingRef,
+            errorCode: maintenanceErrorCode(error),
+          });
           await status('retrying').catch(() => undefined);
         }
       }
-    } catch {
+    } catch (error) {
       failed += 1;
+      log.warn('Guest lifecycle shard processing failed', {
+        tenantId,
+        bindingRef,
+        errorCode: maintenanceErrorCode(error),
+      });
     }
   }
   log.info('Guest lifecycle maintenance completed', { upgraded, deleted, failed });

@@ -8,6 +8,7 @@ const {
   expireRefreshTokenFamiliesByUser,
   getRefreshTokenRotatorStubByJti,
   revokeByJtiRpc,
+  createAuditLog,
 } = vi.hoisted(() => {
   const rotatorStub = {
     revokeByJtiRpc: vi.fn(),
@@ -24,6 +25,7 @@ const {
     expireRefreshTokenFamiliesByUser: vi.fn(),
     getRefreshTokenRotatorStubByJti: vi.fn(() => ({ stub: rotatorStub })),
     revokeByJtiRpc: rotatorStub.revokeByJtiRpc,
+    createAuditLog: vi.fn(),
   };
 });
 
@@ -54,6 +56,7 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
         error: vi.fn(),
       }),
     })),
+    createAuditLog,
   };
 });
 
@@ -115,6 +118,7 @@ describe('Direct Auth logout scope', () => {
     ]);
     revokeByJtiRpc.mockResolvedValue(undefined);
     expireRefreshTokenFamiliesByUser.mockResolvedValue(undefined);
+    createAuditLog.mockResolvedValue(undefined);
   });
 
   it('defaults Direct Auth logout propagation to the current client', async () => {
@@ -243,6 +247,16 @@ describe('Direct Auth guest logout', () => {
     );
     expect(response.headers.get('set-cookie')).toContain('authrim_guest_resume=;');
     expect(response.headers.get('set-cookie')).toContain('authrim_session=;');
+    expect(createAuditLog).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        tenantId: 'tenant_test',
+        userId: 'guest',
+        action: 'user.logout',
+        resourceId: 'session',
+        metadata: expect.stringContaining('guest'),
+      })
+    );
   });
   it.each(['read', 'revoke', 'invalidate'])(
     'preserves cookies and reports failure on %s failure',

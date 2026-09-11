@@ -68,7 +68,7 @@ export interface SessionData {
   /** Whether the anonymous user can upgrade to registered */
   upgrade_eligible?: boolean;
   /** Device ID hash for anonymous sessions (for re-identification) */
-  device_id_hash?: string;
+  guest_resume_credential_hash?: string;
 
   [key: string]: unknown;
 }

@@ -273,15 +273,12 @@ controls:
     level: 1
     requirement: Verify that the application generates a new session token on user authentication, including re-authentication, and terminates the current session token.
     status: gap
-    rationale: Standard authentication handlers create a new session token, but anonymous upgrade flows update an existing session instead of always issuing a new session token and terminating the old token.
-    remediation: Rotate the session identifier on anonymous upgrade and any re-authentication path, persist the upgraded state on the new session, and invalidate the previous SessionStore entry before marking this covered.
+    rationale: Standard authentication handlers create a new session token, but browser guest registration updates the initiating session instead of always issuing a new session token and terminating the old token.
+    remediation: Rotate the session identifier on browser guest registration and any re-authentication path, persist the registered state on the new session, and invalidate the previous SessionStore entry before marking this covered.
     evidence:
-      - path: packages/ar-auth/src/email-code.ts
-        line: 550
-        note: Anonymous upgrade intentionally reuses the existing session identifier.
-      - path: packages/ar-auth/src/upgrade.ts
-        line: 451
-        note: Upgrade completion updates the existing session data and user ID.
+      - path: packages/ar-management/src/account-guest-upgrade.ts
+        line: 808
+        note: Account Page guest registration updates the initiating session after durable completion.
       - path: packages/ar-auth/src/direct-auth.ts
         line: 2161
         note: Standard direct authentication creates a new session through getSessionStoreForNewSession.

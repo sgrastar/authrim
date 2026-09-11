@@ -16,7 +16,7 @@
 	import AdminPagination from '$lib/components/admin/AdminPagination.svelte';
 	import AdminSection from '$lib/components/admin/AdminSection.svelte';
 	import AdminToolbar from '$lib/components/admin/AdminToolbar.svelte';
-	import { formatAccountAuditAction } from '$lib/admin/account-audit-action-label';
+	import { formatGuestAwareAuditAction } from '$lib/admin/account-audit-action-label';
 	import {
 		adminEmailDeliveriesAPI,
 		type EmailDeliveryRecord
@@ -147,9 +147,9 @@
 		return new Date(isoString).toLocaleString();
 	}
 
-	function formatAction(action: string): string {
-		const accountAction = formatAccountAuditAction(action, getLocale());
-		if (accountAction) return accountAction;
+	function formatAction(action: string, metadata: Record<string, unknown> | null = null): string {
+		const guestAwareAction = formatGuestAwareAuditAction(action, metadata, getLocale());
+		if (guestAwareAction) return guestAwareAction;
 		switch (action) {
 			case 'user.login':
 				return $LL.admin_audit_logs_action_user_login();
@@ -247,7 +247,12 @@
 			return 'badge badge-danger';
 		}
 		// Success/Create/Login actions (green)
-		if (action.includes('create') || action.includes('queued') || action.includes('login')) {
+		if (
+			action.includes('create') ||
+			action.includes('queued') ||
+			action.includes('login') ||
+			action === 'account.guest.upgraded'
+		) {
 			return 'badge badge-success';
 		}
 		// Logout actions (light cyan/teal)
@@ -257,6 +262,7 @@
 		// Update/Change actions (blue)
 		if (
 			action.includes('update') ||
+			action === 'account.guest.upgrade_started' ||
 			action.includes('rotate') ||
 			action.includes('regenerate') ||
 			action.includes('replay') ||
@@ -443,7 +449,7 @@
 							<td class="muted nowrap">{formatDateTime(entry.createdAt)}</td>
 							<td>
 								<span class={getActionBadgeClass(entry.action)}>
-									{formatAction(entry.action)}
+									{formatAction(entry.action, entry.metadata)}
 								</span>
 							</td>
 							<td class="mono">{truncateId(entry.userId)}</td>

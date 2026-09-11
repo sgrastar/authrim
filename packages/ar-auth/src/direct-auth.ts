@@ -3206,7 +3206,6 @@ export async function directPasskeyRegisterStartHandler(c: Context<{ Bindings: E
   try {
     // Get session from cookie or Authorization header
     const sessionId = getSessionIdFromRequest(c);
-
     if (!sessionId) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
@@ -3644,6 +3643,7 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
 
     // Get session from cookie or Authorization header
     const sessionId = getSessionIdFromRequest(c);
+    let logoutSession: Session | null = null;
 
     if (sessionId) {
       let session: Session | null = null;
@@ -3658,6 +3658,7 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
 
         try {
           session = (await sessionStore.getSessionRpc(sessionId)) as Session | null;
+          logoutSession = session;
           // Revoke the durable resume credential before losing the session that identifies it.
           await revokeGuestResumeForSession(c, session);
           await sessionStore.invalidateSessionRpc(sessionId);
@@ -3758,6 +3759,49 @@ export async function directLogoutHandler(c: Context<{ Bindings: Env }>) {
           });
         }
       }
+    }
+
+    if (sessionId && logoutSession?.userId) {
+      const tenantId = getTenantIdFromContext(c);
+      const auditPromise = createAuditLog(c.env, {
+        tenantId,
+        userId: logoutSession.userId,
+        action: 'user.logout',
+        resource: 'session',
+        resourceId: logoutSession.id ?? sessionId,
+        ipAddress:
+          c.req.header('CF-Connecting-IP') ||
+          c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+          c.req.header('X-Real-IP') ||
+          'unknown',
+        userAgent: c.req.header('User-Agent') || 'unknown',
+        metadata: JSON.stringify({
+          method: 'direct',
+          client_id: client_id ?? null,
+          logout_scope: logoutScope,
+          is_guest_session:
+            logoutSession.data?.is_guest_session === true ||
+            logoutSession.data?.guest_resume_credential === true,
+        }),
+        severity: 'info',
+      }).catch((error) => {
+        log.error(
+          'Failed to create Direct Auth logout audit',
+          { action: 'audit_log' },
+          error as Error
+        );
+      });
+      try {
+        c.executionCtx.waitUntil(auditPromise);
+      } catch {
+        await auditPromise;
+      }
+      log.info('Direct Auth logout completed', {
+        action: 'logout',
+        tenantId,
+        userId: logoutSession.userId,
+        sessionId,
+      });
     }
 
     deleteCookie(c, GUEST_RESUME_COOKIE, {

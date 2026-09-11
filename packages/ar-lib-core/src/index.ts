@@ -135,7 +135,6 @@ export * from './utils/tenant-settings';
 export * from './utils/email-domain-hash';
 export * from './utils/claim-normalizer';
 export * from './utils/feature-flags';
-export * from './utils/device-fingerprint';
 export * from './utils/ssrf-protection';
 export * from './utils/post-login-routing';
 export * from './utils/totp';

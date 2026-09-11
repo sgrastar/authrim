@@ -15,15 +15,10 @@ export type AuthAccountProvisioningFlow =
   | 'guest'
   | 'guest_upgrade';
 
-export interface AuthGuestDeviceProvisioningInput {
+export interface AuthGuestResumeCredentialProvisioningInput {
   id: string;
-  deviceIdHash: string;
-  installationIdHash: string | null;
-  fingerprintHash: string | null;
-  platform: 'ios' | 'android' | 'web' | 'other' | null;
-  stability: 'session' | 'installation' | 'device';
+  credentialHash: string;
   expiresInDays: number | null;
-  /** Human browser guest policy captured before publication; omitted for legacy devices. */
   guestLifecycle?: {
     clientId: string;
     deletionAfterDays: number | null;
@@ -53,7 +48,7 @@ export interface AuthAccountProvisioningInput {
   flow: AuthAccountProvisioningFlow;
   email: string | null;
   externalSubject?: { issuer: string; subject: string } | null;
-  guestDevice?: AuthGuestDeviceProvisioningInput | null;
+  guestResumeCredential?: AuthGuestResumeCredentialProvisioningInput | null;
   externalIdentity?: AuthExternalIdpIdentityProvisioningInput | null;
   runtimeUser: Omit<CanonicalRuntimeUserWriteInput, 'userId' | 'tenantId'> & {
     piiFields?: Partial<Record<CanonicalSensitiveUserField, boolean>>;
@@ -112,19 +107,6 @@ export interface AuthDirectoryRoutePublicationInput {
 }
 
 export type AuthDirectoryRoutePublicationResult = AuthPasskeyRoutePublicationResult;
-
-export interface AuthGuestDeviceRouteRemovalInput {
-  schemaVersion: 1;
-  operationId: string;
-  idempotencyKey: string;
-  tenantId: string;
-  accountId: string;
-  userId: string;
-  deviceId: string;
-  deviceIdHash: string;
-}
-
-export type AuthGuestDeviceRouteRemovalResult = AuthPasskeyRoutePublicationResult;
 
 export interface ExternalIdpRoutePublicationInput {
   schemaVersion: 1;
@@ -185,16 +167,16 @@ export function passkeyCredentialLookupSubject(input: { rpId: string; credential
   };
 }
 
-export function guestDeviceLookupSubject(deviceIdHash: string): {
+export function guestResumeCredentialLookupSubject(credentialHash: string): {
   issuer: string;
   subject: string;
 } {
-  if (!/^[a-f0-9]{64}$/u.test(deviceIdHash)) {
-    throw new Error('guest_device_route_digest_invalid');
+  if (!/^[a-f0-9]{64}$/u.test(credentialHash)) {
+    throw new Error('guest_resume_credential_digest_invalid');
   }
   return {
-    issuer: 'urn:authrim:guest-device:v1',
-    subject: deviceIdHash,
+    issuer: 'urn:authrim:guest-resume:v1',
+    subject: credentialHash,
   };
 }
 
@@ -224,9 +206,6 @@ export interface AuthAccountProvisioningServiceBinding {
   publishAuthDirectoryRoute(
     input: AuthDirectoryRoutePublicationInput
   ): Promise<AuthDirectoryRoutePublicationResult>;
-  removeAuthGuestDeviceRoute(
-    input: AuthGuestDeviceRouteRemovalInput
-  ): Promise<AuthGuestDeviceRouteRemovalResult>;
 }
 
 export interface ExternalIdpAccountProvisioningServiceBinding {

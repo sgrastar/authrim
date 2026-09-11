@@ -9,6 +9,7 @@ import {
   createAccountAuthContextFromHono,
   createErrorResponse,
   createPIIContextFromHono,
+  createAuditLog,
   createTenantPlacementWriteFenceResponse,
   generateBrowserState,
   generateUserIdFromSettings,
@@ -23,6 +24,11 @@ import {
   loadClientContractCached,
   resolveAccountDataContextFromHono,
   resolveGuestSettings,
+  publishEvent,
+  AUTH_EVENTS,
+  SESSION_EVENTS,
+  type AuthEventData,
+  type SessionEventData,
   type Env,
   type Session,
   type Challenge,
@@ -208,17 +214,14 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
         throw error;
     }
     let userId = route?.legacyUserId;
+    let isNewUser = false;
     if (!userId) {
       const provisioned = await provisionGuestAccount(c, {
         tenantId,
         candidateUserId: await generateUserIdFromSettings(c.env.AUTHRIM_CONFIG, tenantId, c.env),
-        device: {
-          deviceIdHash: credentialHash,
-          installationIdHash: null,
-          fingerprintHash: null,
-          platform: 'web',
-          stability: 'installation',
-          expiresInDays: null,
+        resumeCredential: {
+          credentialHash,
+          expiresInDays: RESUME_TTL_SECONDS / 86400,
           guestLifecycle: {
             clientId,
             deletionAfterDays: settings.policy.deletionAfterDays,
@@ -232,6 +235,7 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
         return provisioned.response;
       }
       userId = provisioned.userId;
+      isNewUser = true;
       const resolved = await resolveAccountDataContextFromHono(c, userId);
       if (resolved.accountId !== provisioned.accountId || resolved.legacyUserId !== userId)
         throw new Error('guest_account_route_mismatch');
@@ -239,18 +243,22 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
     const auth = createAccountAuthContextFromHono(c, tenantId);
     const pii = createPIIContextFromHono(c, tenantId);
     const credential = await auth.coreAdapter.queryOne<{
+      id: string;
       user_id: string;
+      expires_at: number | null;
       created_at: number;
     }>(
-      'SELECT user_id, created_at FROM guest_devices WHERE tenant_id = ? AND device_id_hash = ? AND is_active = TRUE',
+      'SELECT id, user_id, expires_at, created_at FROM guest_devices WHERE tenant_id = ? AND resume_credential_hash = ? AND is_active = TRUE',
       [tenantId, credentialHash],
       { consistencyClass: 'primary_required' }
     );
+    const credentialCheckTime = Date.now();
     if (
       !credential ||
       credential.user_id !== userId ||
       !Number.isFinite(credential.created_at) ||
-      credential.created_at + RESUME_TTL_SECONDS * 1000 <= Date.now()
+      credential.created_at + RESUME_TTL_SECONDS * 1000 <= credentialCheckTime ||
+      (credential.expires_at !== null && credential.expires_at <= credentialCheckTime)
     ) {
       // Expired or revoked secrets never get reassigned to another subject.
       setCookie(c, GUEST_RESUME_COOKIE, '', {
@@ -282,6 +290,29 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
     ) {
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
     }
+    const resumedAt = Date.now();
+    const refreshedCredential = await auth.coreAdapter.execute(
+      `UPDATE guest_devices SET last_used_at = ?
+       WHERE id = ? AND tenant_id = ? AND user_id = ? AND resume_credential_hash = ?
+         AND is_active = TRUE AND (expires_at IS NULL OR expires_at > ?)`,
+      [resumedAt, credential.id, tenantId, userId, credentialHash, resumedAt]
+    );
+    if (refreshedCredential.rowsAffected !== 1) {
+      setCookie(c, GUEST_RESUME_COOKIE, '', {
+        path: '/',
+        httpOnly: true,
+        secure: true,
+        sameSite: 'Lax',
+        maxAge: 0,
+      });
+      return c.json(
+        {
+          error: 'invalid_guest_credential',
+          error_description: 'The guest credential is no longer valid',
+        },
+        401
+      );
+    }
     const ttl = await resolveSessionTtl(c.env, tenantId, 'guest');
     const { stub, sessionId } = await getSessionStoreForNewSession(c.env, tenantId);
     await stub.createSessionRpc(
@@ -294,7 +325,7 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
         acr: 'urn:mace:incommon:iap:anonymous',
         is_guest_session: true,
         client_id: clientId,
-        device_id_hash: credentialHash,
+        guest_resume_credential_hash: credentialHash,
         guest_resume_credential: true,
       },
       tenantId
@@ -304,6 +335,74 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
     if (latest?.phase !== 'active') {
       await stub.invalidateSessionRpc(sessionId);
       return createErrorResponse(c, AR_ERROR_CODES.AUTH_LOGIN_REQUIRED);
+    }
+    const ipAddress =
+      c.req.header('CF-Connecting-IP') ||
+      c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+      c.req.header('X-Real-IP') ||
+      'unknown';
+    const userAgent = c.req.header('User-Agent') || 'unknown';
+    // Retry on every resume until the stable audit ID has been accepted. Audit storage treats the
+    // ID idempotently, so a response failure after provisioning cannot permanently lose creation
+    // evidence or create duplicate records.
+    try {
+      await createAuditLog(c.env, {
+        id: `account-guest-created-${credential.id}`,
+        tenantId,
+        userId,
+        action: 'account.guest.created',
+        resource: 'user',
+        resourceId: userId,
+        ipAddress,
+        userAgent,
+        metadata: JSON.stringify({ method: 'browser', client_id: clientId }),
+        severity: 'info',
+      });
+    } catch (error) {
+      await stub.invalidateSessionRpc(sessionId).catch((invalidateError: unknown) => {
+        log.warn(
+          'Failed to invalidate unpublished guest session after audit failure',
+          { action: 'guest_session_cleanup', tenantId },
+          invalidateError as Error
+        );
+      });
+      throw error;
+    }
+    publishEvent(c, {
+      type: AUTH_EVENTS.LOGIN_SUCCEEDED,
+      tenantId,
+      data: { userId, method: 'guest', clientId, sessionId } satisfies AuthEventData,
+    }).catch((error) => {
+      log.error('Failed to publish guest login event', { action: 'event_publish' }, error as Error);
+    });
+    publishEvent(c, {
+      type: SESSION_EVENTS.USER_CREATED,
+      tenantId,
+      data: { sessionId, userId, ttlSeconds: ttl.seconds } satisfies SessionEventData,
+    }).catch((error) => {
+      log.error(
+        'Failed to publish guest session event',
+        { action: 'event_publish' },
+        error as Error
+      );
+    });
+    const loginAudit = createAuditLog(c.env, {
+      tenantId,
+      userId,
+      action: 'user.login',
+      resource: 'session',
+      resourceId: sessionId,
+      ipAddress,
+      userAgent,
+      metadata: JSON.stringify({ method: 'guest', is_new_user: isNewUser, client_id: clientId }),
+      severity: 'info',
+    }).catch((error) => {
+      log.error('Failed to create guest login audit', { action: 'audit_log' }, error as Error);
+    });
+    try {
+      c.executionCtx.waitUntil(loginAudit);
+    } catch {
+      await loginAudit;
     }
     setCookie(c, 'authrim_session', sessionId, {
       path: '/',
@@ -319,13 +418,25 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
       maxAge: ttl.seconds,
     });
     c.header('Cache-Control', 'no-store');
+    log.info('Guest login completed', {
+      action: 'guest_login',
+      tenantId,
+      userId,
+      clientId,
+      isNewUser,
+    });
     // The login challenge is consumed by the existing /flow/login continuation, preserving OIDC validation.
     return c.json({ success: true });
   } catch (error) {
     log.error('Guest login failed', {}, error as Error);
-    return (
+    const errorResponse =
       createTenantPlacementWriteFenceResponse(c, error) ??
-      createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR)
-    );
+      (await createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR));
+    // The resume secret is minted before provisioning. Preserve it on a failed response so a
+    // retry can find the already-provisioned account and complete any required audit delivery.
+    for (const cookie of c.res.headers.getSetCookie()) {
+      errorResponse.headers.append('Set-Cookie', cookie);
+    }
+    return errorResponse;
   }
 }

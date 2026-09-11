@@ -1,19 +1,15 @@
 import { adminFetch, API_BASE_URL } from './admin-request';
 export interface ClientGuestPolicy {
 	enabled: boolean;
-	expiresInDays: number | null;
 	allowedScopes: string[];
 	preserveSubOnUpgrade: true;
-	deviceStability: 'session' | 'installation' | 'device';
 	allowPromptNone: boolean;
 	allowedUpgradeMethods: ('email' | 'passkey')[];
 }
 export const defaultClientGuestPolicy = (): ClientGuestPolicy => ({
 	enabled: false,
-	expiresInDays: null,
 	allowedScopes: ['openid', 'account:lifecycle:read'],
 	preserveSubOnUpgrade: true,
-	deviceStability: 'installation',
 	allowPromptNone: false,
 	allowedUpgradeMethods: ['email', 'passkey']
 });
@@ -63,12 +59,16 @@ async function readGuestProfile(
 	const data = (await result.json()) as {
 		profile: { version: number; guestAuth?: Partial<ClientGuestPolicy> };
 	};
+	const defaults = defaultClientGuestPolicy();
+	const guestAuth = data.profile.guestAuth;
 	return {
 		version: data.profile.version,
 		policy: {
-			...defaultClientGuestPolicy(),
-			...data.profile.guestAuth,
-			preserveSubOnUpgrade: true
+			enabled: guestAuth?.enabled ?? defaults.enabled,
+			allowedScopes: guestAuth?.allowedScopes ?? defaults.allowedScopes,
+			preserveSubOnUpgrade: true,
+			allowPromptNone: guestAuth?.allowPromptNone ?? defaults.allowPromptNone,
+			allowedUpgradeMethods: guestAuth?.allowedUpgradeMethods ?? defaults.allowedUpgradeMethods
 		}
 	};
 }

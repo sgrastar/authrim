@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import {
-  guestDeviceLookupSubject,
+  guestResumeCredentialLookupSubject,
   getChallengeStoreByChallengeId,
   getTenantMetadataContextFromHono,
   getTenantIdFromContext,
@@ -10,7 +10,7 @@ import {
   resolveAccountDataContextFromHono,
   resolveAccountDataContextByIdentifierFromHono,
   type AccountDataContext,
-  type AuthGuestDeviceProvisioningInput,
+  type AuthGuestResumeCredentialProvisioningInput,
   type AuthAccountProvisioningFlow,
   type AuthAccountProvisioningInput,
   type CanonicalRuntimeUserWriteInput,
@@ -52,14 +52,7 @@ export interface PublishPasskeyRouteInput {
 export interface ProvisionGuestAccountInput {
   tenantId: string;
   candidateUserId: string;
-  device: Omit<AuthGuestDeviceProvisioningInput, 'id'>;
-}
-
-export interface RemoveGuestDeviceRouteInput {
-  tenantId: string;
-  userId: string;
-  deviceId: string;
-  deviceIdHash: string;
+  resumeCredential: Omit<AuthGuestResumeCredentialProvisioningInput, 'id'>;
 }
 
 export interface AccountProvisioningResumeMetadata {
@@ -231,11 +224,11 @@ export async function resolvePasskeyAccountRoute(
 
 export async function resolveGuestAccountRoute(
   c: Context<{ Bindings: Env }>,
-  deviceIdHash: string
+  credentialHash: string
 ): Promise<AccountDataContext | null> {
   return resolveAccountDataContextByIdentifierFromHono(c, {
     indexKind: 'external_subject',
-    identifier: guestDeviceLookupSubject(deviceIdHash),
+    identifier: guestResumeCredentialLookupSubject(credentialHash),
   });
 }
 
@@ -275,47 +268,6 @@ export async function publishPasskeyRoute(
     (result.status !== 201 && result.status !== 202)
   ) {
     throw new Error('passkey_route_publication_result_invalid');
-  }
-  return result.status;
-}
-
-export async function removeGuestDeviceRoute(
-  c: Context<{ Bindings: Env }>,
-  input: RemoveGuestDeviceRouteInput
-): Promise<201 | 202> {
-  if (!c.env.ACCOUNT_PROVISIONER?.removeAuthGuestDeviceRoute) {
-    throw new Error('account_provisioner_unavailable');
-  }
-  const account = await resolveAccountDataContextFromHono(c, input.userId);
-  if (account.legacyUserId !== input.userId) {
-    throw new Error('guest_route_removal_account_mismatch');
-  }
-  guestDeviceLookupSubject(input.deviceIdHash);
-  const stableRequest = canonicalJson({
-    schemaVersion: 1,
-    tenantId: input.tenantId,
-    accountId: account.accountId,
-    userId: input.userId,
-    deviceId: input.deviceId,
-    deviceIdHash: input.deviceIdHash,
-  });
-  const operationId = `anonymous-route-remove-${input.deviceId}`;
-  const result = await c.env.ACCOUNT_PROVISIONER.removeAuthGuestDeviceRoute({
-    schemaVersion: 1,
-    operationId,
-    idempotencyKey: `auth-guest-route-remove:${await sha256Hex(stableRequest)}`,
-    tenantId: input.tenantId,
-    accountId: account.accountId,
-    userId: input.userId,
-    deviceId: input.deviceId,
-    deviceIdHash: input.deviceIdHash,
-  });
-  if (
-    result.operationId !== operationId ||
-    result.accountId !== account.accountId ||
-    (result.status !== 201 && result.status !== 202)
-  ) {
-    throw new Error('guest_route_removal_result_invalid');
   }
   return result.status;
 }
@@ -450,10 +402,10 @@ export async function provisionGuestAccount(
   input: ProvisionGuestAccountInput
 ): Promise<ProvisionEmailAccountResult> {
   if (!c.env.ACCOUNT_PROVISIONER) throw new Error('account_provisioner_unavailable');
-  const externalSubject = guestDeviceLookupSubject(input.device.deviceIdHash);
-  const guestDevice: AuthGuestDeviceProvisioningInput = {
-    id: `guest-device-${input.device.deviceIdHash.slice(0, 32)}`,
-    ...input.device,
+  const externalSubject = guestResumeCredentialLookupSubject(input.resumeCredential.credentialHash);
+  const guestResumeCredential: AuthGuestResumeCredentialProvisioningInput = {
+    id: `guest-resume-${input.resumeCredential.credentialHash.slice(0, 32)}`,
+    ...input.resumeCredential,
   };
   const runtimeUser: ProvisioningRuntimeUser = {
     active: true,
@@ -469,7 +421,7 @@ export async function provisionGuestAccount(
     tenantId: input.tenantId,
     flow: 'guest',
     externalSubject,
-    guestDevice,
+    guestResumeCredential,
     runtimeUser,
   });
   const request: AuthAccountProvisioningInput = {
@@ -481,7 +433,7 @@ export async function provisionGuestAccount(
     flow: 'guest',
     email: null,
     externalSubject,
-    guestDevice,
+    guestResumeCredential,
     runtimeUser,
   };
   const result = await provisionAuthAccountWithReconciliation(c.env.ACCOUNT_PROVISIONER, request);

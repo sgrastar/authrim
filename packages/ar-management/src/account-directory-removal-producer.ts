@@ -29,8 +29,8 @@ interface PasskeySubjectRow {
   rp_id: string;
 }
 
-interface GuestDeviceSubjectRow {
-  device_id_hash: string;
+interface GuestResumeCredentialSubjectRow {
+  resume_credential_hash: string;
 }
 
 interface AccountRouteRow {
@@ -146,7 +146,7 @@ export async function prepareAccountDirectoryRemoval(
   if (existing.length > 0) return existing;
 
   const route = await activeRoute(input.core, input.tenantId, accountId);
-  const [emailRow, externalSubjects, passkeySubjects, guestDevices, runtimeKeys] =
+  const [emailRow, externalSubjects, passkeySubjects, guestResumeCredentials, runtimeKeys] =
     await Promise.all([
       input.pii.queryOne<EmailRow>(
         `SELECT value_json FROM identity_sensitive_values
@@ -165,10 +165,10 @@ export async function prepareAccountDirectoryRemoval(
         ORDER BY rp_id, credential_id`,
         [input.tenantId, input.userId]
       ),
-      input.core.query<GuestDeviceSubjectRow>(
-        `SELECT device_id_hash FROM guest_devices
+      input.core.query<GuestResumeCredentialSubjectRow>(
+        `SELECT resume_credential_hash FROM guest_devices
           WHERE tenant_id = ? AND user_id = ? AND is_active = TRUE
-          ORDER BY device_id_hash`,
+          ORDER BY resume_credential_hash`,
         [input.tenantId, input.userId]
       ),
       loadLookupHmacRuntimeKeys(env),
@@ -192,9 +192,9 @@ export async function prepareAccountDirectoryRemoval(
             issuer: `urn:authrim:passkey:${passkey.rp_id.toLowerCase()}`,
             subject: passkey.credential_id,
           })),
-          ...guestDevices.map((device) => ({
-            issuer: 'urn:authrim:guest-device:v1',
-            subject: device.device_id_hash,
+          ...guestResumeCredentials.map((credential) => ({
+            issuer: 'urn:authrim:guest-resume:v1',
+            subject: credential.resume_credential_hash,
           })),
         ].map((subject) =>
           createLookupBlindIndexes('external_subject', subject, runtimeKeys.readKeys)

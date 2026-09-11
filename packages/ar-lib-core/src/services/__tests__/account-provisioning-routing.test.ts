@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { guestDeviceLookupSubject, passkeyCredentialLookupSubject } from '../account-provisioning';
+import {
+  guestResumeCredentialLookupSubject,
+  passkeyCredentialLookupSubject,
+} from '../account-provisioning';
 
 describe('account provisioning routing subjects', () => {
   it('namespaces normalized passkey credentials by RP ID', () => {
@@ -23,13 +26,13 @@ describe('account provisioning routing subjects', () => {
     expect(() => passkeyCredentialLookupSubject(input)).toThrow(/passkey_route_/u);
   });
 
-  it('uses an Authrim-owned issuer for already-HMACed anonymous device identifiers', () => {
-    expect(guestDeviceLookupSubject('a'.repeat(64))).toEqual({
-      issuer: 'urn:authrim:guest-device:v1',
+  it('uses an Authrim-owned issuer for hashed browser guest resume credentials', () => {
+    expect(guestResumeCredentialLookupSubject('a'.repeat(64))).toEqual({
+      issuer: 'urn:authrim:guest-resume:v1',
       subject: 'a'.repeat(64),
     });
-    expect(() => guestDeviceLookupSubject('raw-device-id')).toThrow(
-      'guest_device_route_digest_invalid'
+    expect(() => guestResumeCredentialLookupSubject('raw-resume-credential')).toThrow(
+      'guest_resume_credential_digest_invalid'
     );
   });
 });

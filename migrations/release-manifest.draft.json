@@ -26,7 +26,7 @@
             },
             {
               "path": "003_account_registration_state.sql",
-              "checksum": "37a9716f565903b6459728ede9a5b564dea974c7dd40b5b1281b7a6f8c153dce"
+              "checksum": "6eddca50b137cc1dd45d26109ee1579e672f899fae2a2ba7ebaa7931e54f6dc1"
             }
           ]
         },
@@ -103,7 +103,7 @@
             },
             {
               "path": "003_account_registration_state.sql",
-              "checksum": "60b307e2ba21508be995877247aeb59e41991b9c609475e6b82ff30524fda787"
+              "checksum": "8e1b46d59e61fd735415868df395b97dc6feac1a454fdcf1d88581c1fd706a4f"
             }
           ]
         },
@@ -151,7 +151,7 @@
         },
         {
           "path": "003_account_registration_state.sql",
-          "checksum": "37a9716f565903b6459728ede9a5b564dea974c7dd40b5b1281b7a6f8c153dce"
+          "checksum": "6eddca50b137cc1dd45d26109ee1579e672f899fae2a2ba7ebaa7931e54f6dc1"
         }
       ]
     },
@@ -256,7 +256,7 @@
         },
         {
           "path": "003_account_registration_state.sql",
-          "checksum": "60b307e2ba21508be995877247aeb59e41991b9c609475e6b82ff30524fda787"
+          "checksum": "8e1b46d59e61fd735415868df395b97dc6feac1a454fdcf1d88581c1fd706a4f"
         }
       ]
     },

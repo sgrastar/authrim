@@ -78,12 +78,7 @@ import {
   didListHandler,
   didUnlinkHandler,
 } from './did-link';
-import {
-  guestDeviceLoginChallengeHandler,
-  guestDeviceLoginVerifyHandler,
-} from './guest-device-login';
 import { guestLoginHandler } from './guest-login';
-import { upgradeHandler, upgradeCompleteHandler, upgradeStatusHandler } from './upgrade';
 import { setupApp } from './setup';
 import { adminSetupApiApp } from './admin-setup-api';
 import { adminInvitationEnrollmentApp } from './admin-invitation-enrollment';
@@ -495,19 +490,10 @@ app.use(
 );
 app.use('/oauth/admin-agent/authorize', csrfProtectionMiddleware());
 
-// Rate limiting for anonymous login endpoints (architecture-decisions.md §17)
-// Strict profile: prevent brute-force attacks on device authentication
+// Rate limiting for browser guest login.
 app.use('/api/auth/guest/login', async (c, next) => {
   const profile = await getRateLimitProfileAsync(c.env, 'strict');
   return rateLimitMiddleware({ ...profile, endpoints: ['/api/auth/guest/login'] })(c, next);
-});
-
-app.use('/api/auth/guest-device-login/*', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'strict');
-  return rateLimitMiddleware({
-    ...profile,
-    endpoints: ['/api/auth/guest-device-login/challenge', '/api/auth/guest-device-login/verify'],
-  })(c, next);
 });
 
 // Rate limiting for directory password login. This endpoint reaches an external connector
@@ -547,23 +533,6 @@ app.use('/api/auth/directory-connectors/heartbeat/*', async (c, next) => {
   return rateLimitMiddleware({
     ...profile,
     endpoints: ['/api/auth/directory-connectors/heartbeat'],
-  })(c, next);
-});
-
-// Rate limiting for upgrade endpoints (architecture-decisions.md §17)
-// Moderate profile: balance security and usability for account upgrade
-app.use('/api/auth/upgrade', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
-  return rateLimitMiddleware({
-    ...profile,
-    endpoints: ['/api/auth/upgrade'],
-  })(c, next);
-});
-app.use('/api/auth/upgrade/*', async (c, next) => {
-  const profile = await getRateLimitProfileAsync(c.env, 'moderate');
-  return rateLimitMiddleware({
-    ...profile,
-    endpoints: ['/api/auth/upgrade/complete', '/api/auth/upgrade/status'],
   })(c, next);
 });
 
@@ -684,17 +653,8 @@ app.get('/api/auth/dids', didListHandler);
 // Unlink a DID (DELETE /api/auth/dids/:did)
 app.delete('/api/auth/dids/:did', didUnlinkHandler);
 
-// Anonymous Login endpoints (architecture-decisions.md §17)
-// Device-based anonymous authentication with upgrade capability
+// Browser guest login. The private resume credential is stored only in an HttpOnly cookie.
 app.post('/api/auth/guest/login', guestLoginHandler);
-app.post('/api/auth/guest-device-login/challenge', guestDeviceLoginChallengeHandler);
-app.post('/api/auth/guest-device-login/verify', guestDeviceLoginVerifyHandler);
-
-// Anonymous User Upgrade endpoints (architecture-decisions.md §17)
-// Upgrade anonymous users to full accounts
-app.post('/api/auth/upgrade', upgradeHandler);
-app.post('/api/auth/upgrade/complete', upgradeCompleteHandler);
-app.get('/api/auth/upgrade/status', upgradeStatusHandler);
 
 // OAuth Consent endpoints (API)
 app.get('/api/auth/consents', consentGetHandler);

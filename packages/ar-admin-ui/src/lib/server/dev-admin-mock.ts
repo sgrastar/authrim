@@ -8132,10 +8132,8 @@ async function handleClients(event: RequestEvent, segments: string[]): Promise<R
 			version: 0,
 			guestAuth: {
 				enabled: false,
-				expiresInDays: null,
 				allowedScopes: ['openid', 'account:lifecycle:read'],
 				preserveSubOnUpgrade: true,
-				deviceStability: 'installation',
 				allowPromptNone: false,
 				allowedUpgradeMethods: ['email', 'passkey']
 			}

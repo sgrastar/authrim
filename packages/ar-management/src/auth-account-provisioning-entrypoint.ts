@@ -1,6 +1,6 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import {
-  guestDeviceLookupSubject,
+  guestResumeCredentialLookupSubject,
   GuestLifecycleRepository,
   directoryIdentityLookupSubject,
   createLogger,
@@ -11,10 +11,8 @@ import {
   resolveAccountDataContext,
   resolveAuthCorePersistenceAdapterFromEnv,
   type AuthAccountProvisioningInput,
-  type AuthGuestDeviceProvisioningInput,
+  type AuthGuestResumeCredentialProvisioningInput,
   type AuthExternalIdpIdentityProvisioningInput,
-  type AuthGuestDeviceRouteRemovalInput,
-  type AuthGuestDeviceRouteRemovalResult,
   type AuthAccountProvisioningResult,
   type AuthAccountProvisioningStatusInput,
   type AuthAccountProvisioningStatusResult,
@@ -48,7 +46,6 @@ const SAFE_FIELD = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/u;
 const IDEMPOTENCY_KEY = /^auth-account:[a-f0-9]{64}$/u;
 const PASSKEY_ROUTE_IDEMPOTENCY_KEY = /^auth-passkey-route:[a-f0-9]{64}$/u;
 const DIRECTORY_ROUTE_IDEMPOTENCY_KEY = /^auth-directory-route:[a-f0-9]{64}$/u;
-const GUEST_ROUTE_REMOVAL_IDEMPOTENCY_KEY = /^auth-guest-route-remove:[a-f0-9]{64}$/u;
 const EXTERNAL_IDP_ROUTE_IDEMPOTENCY_KEY = /^auth-external-idp-route:[a-f0-9]{64}$/u;
 const EXTERNAL_IDP_ROUTE_REMOVAL_IDEMPOTENCY_KEY = /^auth-external-idp-route-remove:[a-f0-9]{64}$/u;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
@@ -73,7 +70,7 @@ const INPUT_KEYS = new Set([
   'flow',
   'email',
   'externalSubject',
-  'guestDevice',
+  'guestResumeCredential',
   'externalIdentity',
   'runtimeUser',
 ]);
@@ -100,15 +97,7 @@ function logProvisioningFailure(error: unknown): void {
     errorCode,
   });
 }
-const ANONYMOUS_DEVICE_KEYS = new Set([
-  'id',
-  'deviceIdHash',
-  'installationIdHash',
-  'fingerprintHash',
-  'platform',
-  'stability',
-  'expiresInDays',
-]);
+const GUEST_RESUME_CREDENTIAL_KEYS = new Set(['id', 'credentialHash', 'expiresInDays']);
 const EXTERNAL_IDENTITY_KEYS = new Set([
   'id',
   'providerId',
@@ -160,16 +149,6 @@ const DIRECTORY_ROUTE_INPUT_KEYS = new Set([
   'userId',
   'connectorId',
   'directorySubject',
-]);
-const GUEST_ROUTE_REMOVAL_INPUT_KEYS = new Set([
-  'schemaVersion',
-  'operationId',
-  'idempotencyKey',
-  'tenantId',
-  'accountId',
-  'userId',
-  'deviceId',
-  'deviceIdHash',
 ]);
 const EXTERNAL_IDP_ROUTE_INPUT_KEYS = new Set([
   'schemaVersion',
@@ -424,17 +403,18 @@ function validateInput(value: unknown): AuthAccountProvisioningInput {
       typeof externalSubject.subject === 'string' &&
       externalSubject.subject.length >= 1 &&
       externalSubject.subject.length <= 2048);
-  const guestDevice = value.guestDevice;
-  const guestDeviceValid = validateGuestDevice(guestDevice);
+  const guestResumeCredential = value.guestResumeCredential;
+  const guestResumeCredentialValid = validateGuestResumeCredential(guestResumeCredential);
   const externalIdentity = value.externalIdentity;
   const externalIdentityValid = validateExternalIdentity(externalIdentity);
   const guestFlowValid =
     value.flow === 'guest'
       ? value.email === null &&
         jsonObject(externalSubject) &&
-        guestDeviceValid &&
-        externalSubject.issuer === guestDeviceLookupSubject(guestDevice.deviceIdHash).issuer &&
-        externalSubject.subject === guestDevice.deviceIdHash &&
+        guestResumeCredentialValid &&
+        externalSubject.issuer ===
+          guestResumeCredentialLookupSubject(guestResumeCredential.credentialHash).issuer &&
+        externalSubject.subject === guestResumeCredential.credentialHash &&
         runtimeUser.sourceRef === 'auth:guest' &&
         runtimeUser.userType === 'end_user' &&
         runtimeUser.registrationState === 'guest' &&
@@ -454,7 +434,7 @@ function validateInput(value: unknown): AuthAccountProvisioningInput {
         piiFields.email === true &&
         jsonObject(sensitiveValues) &&
         sensitiveValues.email === value.email &&
-        (guestDevice === undefined || guestDevice === null)
+        (guestResumeCredential === undefined || guestResumeCredential === null)
       : false;
   const emailLessPasskeyFlowValid =
     value.flow === 'passkey' &&
@@ -464,7 +444,7 @@ function validateInput(value: unknown): AuthAccountProvisioningInput {
     piiFields.email !== true &&
     jsonObject(sensitiveValues) &&
     !Object.hasOwn(sensitiveValues, 'email') &&
-    (guestDevice === undefined || guestDevice === null);
+    (guestResumeCredential === undefined || guestResumeCredential === null);
   const externalIdpFlowValid =
     value.flow === 'external_idp'
       ? jsonObject(externalSubject) &&
@@ -577,26 +557,21 @@ function validateGuestLifecycle(value: unknown): boolean {
   );
 }
 
-function validateGuestDevice(value: unknown): value is AuthGuestDeviceProvisioningInput {
+function validateGuestResumeCredential(
+  value: unknown
+): value is AuthGuestResumeCredentialProvisioningInput {
   if (
     !jsonObject(value) ||
     Object.keys(value).filter((key) => key !== 'guestLifecycle').length !==
-      ANONYMOUS_DEVICE_KEYS.size ||
-    Object.keys(value).some((key) => !ANONYMOUS_DEVICE_KEYS.has(key) && key !== 'guestLifecycle') ||
+      GUEST_RESUME_CREDENTIAL_KEYS.size ||
+    Object.keys(value).some(
+      (key) => !GUEST_RESUME_CREDENTIAL_KEYS.has(key) && key !== 'guestLifecycle'
+    ) ||
     !validateGuestLifecycle(value.guestLifecycle) ||
     typeof value.id !== 'string' ||
     !SAFE_ID.test(value.id) ||
-    typeof value.deviceIdHash !== 'string' ||
-    !/^[a-f0-9]{64}$/u.test(value.deviceIdHash) ||
-    (value.installationIdHash !== null &&
-      (typeof value.installationIdHash !== 'string' ||
-        !/^[a-f0-9]{64}$/u.test(value.installationIdHash))) ||
-    (value.fingerprintHash !== null &&
-      (typeof value.fingerprintHash !== 'string' ||
-        !/^[a-f0-9]{64}$/u.test(value.fingerprintHash))) ||
-    (value.platform !== null &&
-      !['ios', 'android', 'web', 'other'].includes(String(value.platform))) ||
-    !['session', 'installation', 'device'].includes(String(value.stability)) ||
+    typeof value.credentialHash !== 'string' ||
+    !/^[a-f0-9]{64}$/u.test(value.credentialHash) ||
     (value.expiresInDays !== null &&
       (!Number.isSafeInteger(value.expiresInDays) ||
         Number(value.expiresInDays) < 1 ||
@@ -675,30 +650,6 @@ function validateDirectoryRouteInput(value: unknown): AuthDirectoryRoutePublicat
     directorySubject: value.directorySubject,
   });
   return value as unknown as AuthDirectoryRoutePublicationInput;
-}
-
-function validateGuestRouteRemovalInput(value: unknown): AuthGuestDeviceRouteRemovalInput {
-  boundedJson(value);
-  if (
-    !jsonObject(value) ||
-    Object.keys(value).length !== GUEST_ROUTE_REMOVAL_INPUT_KEYS.size ||
-    Object.keys(value).some((key) => !GUEST_ROUTE_REMOVAL_INPUT_KEYS.has(key)) ||
-    value.schemaVersion !== 1 ||
-    typeof value.operationId !== 'string' ||
-    !SAFE_ID.test(value.operationId) ||
-    typeof value.idempotencyKey !== 'string' ||
-    !GUEST_ROUTE_REMOVAL_IDEMPOTENCY_KEY.test(value.idempotencyKey) ||
-    typeof value.tenantId !== 'string' ||
-    !SAFE_ID.test(value.tenantId) ||
-    !isCanonicalAccountIdForUser(value.accountId, value.userId) ||
-    typeof value.deviceId !== 'string' ||
-    !SAFE_ID.test(value.deviceId) ||
-    typeof value.deviceIdHash !== 'string'
-  ) {
-    throw new Error('auth_guest_route_removal_input_invalid');
-  }
-  guestDeviceLookupSubject(value.deviceIdHash);
-  return value as unknown as AuthGuestDeviceRouteRemovalInput;
 }
 
 function validateExternalIdpRouteInput(value: unknown): ExternalIdpRoutePublicationInput {
@@ -797,32 +748,27 @@ function internalDirectoryBinding(
   });
 }
 
-async function writeGuestDeviceAuthority(input: {
+async function writeGuestResumeCredentialAuthority(input: {
   tenantCoreUsers: ReturnType<typeof ensureDatabaseAdapter>;
   tenantId: string;
   userId: string;
-  device: AuthGuestDeviceProvisioningInput;
+  credential: AuthGuestResumeCredentialProvisioningInput;
 }): Promise<void> {
   const now = Date.now();
   const expiresAt =
-    input.device.expiresInDays === null
+    input.credential.expiresInDays === null
       ? null
-      : now + input.device.expiresInDays * 24 * 60 * 60 * 1000;
+      : now + input.credential.expiresInDays * 24 * 60 * 60 * 1000;
   await input.tenantCoreUsers.execute(
     `INSERT OR IGNORE INTO guest_devices (
-       id, tenant_id, user_id, device_id_hash, installation_id_hash,
-       fingerprint_hash, device_platform, device_stability,
+       id, tenant_id, user_id, resume_credential_hash,
        expires_at, created_at, last_used_at, is_active
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, TRUE)`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, TRUE)`,
     [
-      input.device.id,
+      input.credential.id,
       input.tenantId,
       input.userId,
-      input.device.deviceIdHash,
-      input.device.installationIdHash,
-      input.device.fingerprintHash,
-      input.device.platform,
-      input.device.stability,
+      input.credential.credentialHash,
       expiresAt,
       now,
       now,
@@ -831,30 +777,17 @@ async function writeGuestDeviceAuthority(input: {
   const reflected = await input.tenantCoreUsers.queryOne<{
     id: string;
     user_id: string;
-    installation_id_hash: string | null;
-    fingerprint_hash: string | null;
-    device_platform: string | null;
-    device_stability: string;
   }>(
-    `SELECT id, user_id, installation_id_hash, fingerprint_hash,
-            device_platform, device_stability
+    `SELECT id, user_id
        FROM guest_devices
-      WHERE tenant_id = ? AND device_id_hash = ? AND is_active = TRUE`,
-    [input.tenantId, input.device.deviceIdHash],
+      WHERE tenant_id = ? AND resume_credential_hash = ? AND is_active = TRUE`,
+    [input.tenantId, input.credential.credentialHash],
     { consistencyClass: 'primary_required' }
   );
-  if (
-    !reflected ||
-    reflected.id !== input.device.id ||
-    reflected.user_id !== input.userId ||
-    reflected.installation_id_hash !== input.device.installationIdHash ||
-    reflected.fingerprint_hash !== input.device.fingerprintHash ||
-    reflected.device_platform !== input.device.platform ||
-    reflected.device_stability !== input.device.stability
-  ) {
-    throw new Error('auth_anonymous_device_authority_conflict');
+  if (!reflected || reflected.id !== input.credential.id || reflected.user_id !== input.userId) {
+    throw new Error('auth_guest_resume_credential_authority_conflict');
   }
-  if (input.device.guestLifecycle) {
+  if (input.credential.guestLifecycle) {
     const account = await input.tenantCoreUsers.queryOne<{ created_at: number }>(
       'SELECT created_at FROM identity_accounts WHERE tenant_id = ? AND legacy_user_id = ?',
       [input.tenantId, input.userId],
@@ -863,10 +796,10 @@ async function writeGuestDeviceAuthority(input: {
     if (!account) throw new Error('guest_account_authority_missing');
     await new GuestLifecycleRepository(input.tenantCoreUsers, input.tenantId).enroll({
       userId: input.userId,
-      clientId: input.device.guestLifecycle.clientId,
+      clientId: input.credential.guestLifecycle.clientId,
       createdAt: Math.floor(account.created_at / 1000),
-      deletionAfterDays: input.device.guestLifecycle.deletionAfterDays,
-      policyVersion: input.device.guestLifecycle.policyVersion,
+      deletionAfterDays: input.credential.guestLifecycle.deletionAfterDays,
+      policyVersion: input.credential.guestLifecycle.policyVersion,
     });
   }
 }
@@ -956,7 +889,9 @@ async function provisionValidatedAccount(
         ...(validated.externalSubject !== undefined
           ? { externalSubject: validated.externalSubject }
           : {}),
-        ...(validated.guestDevice !== undefined ? { guestDevice: validated.guestDevice } : {}),
+        ...(validated.guestResumeCredential !== undefined
+          ? { guestResumeCredential: validated.guestResumeCredential }
+          : {}),
         runtimeUser: validated.runtimeUser,
       }),
       candidateOperationId: validated.operationId,
@@ -976,12 +911,12 @@ async function provisionValidatedAccount(
           runtimeUser: validated.runtimeUser,
         });
         const userId = writeContext.publication.accountId.slice('account:'.length);
-        if (validated.flow === 'guest' && validated.guestDevice) {
-          await writeGuestDeviceAuthority({
+        if (validated.flow === 'guest' && validated.guestResumeCredential) {
+          await writeGuestResumeCredentialAuthority({
             tenantCoreUsers: writeContext.tenantCoreUsers,
             tenantId: validated.tenantId,
             userId,
-            device: validated.guestDevice,
+            credential: validated.guestResumeCredential,
           });
         }
         if (validated.flow === 'external_idp' && validated.externalIdentity) {
@@ -1312,78 +1247,6 @@ export class AuthAccountProvisioningEntrypoint extends WorkerEntrypoint<
         throw new Error(error.message);
       }
       throw new Error('external_idp_route_internal_error');
-    }
-  }
-
-  async removeAuthGuestDeviceRoute(input: unknown): Promise<AuthGuestDeviceRouteRemovalResult> {
-    try {
-      const environmentId = authorized(this.ctx.props, this.env);
-      const validated = validateGuestRouteRemovalInput(input);
-      const context = await resolveAccountDataContext(this.env, {
-        tenantId: validated.tenantId,
-        accountId: validated.accountId,
-      });
-      if (context.accountId !== validated.accountId || context.legacyUserId !== validated.userId) {
-        throw new Error('auth_guest_route_removal_account_mismatch');
-      }
-      const tenantCoreUsers = ensureDatabaseAdapter(
-        context.coreDb,
-        'auth-guest-route-removal-tenant-core-users'
-      );
-      const device = await tenantCoreUsers.queryOne<{
-        id: string;
-        user_id: string;
-        device_id_hash: string;
-        is_active: number | boolean;
-      }>(
-        `SELECT id, user_id, device_id_hash, is_active FROM guest_devices
-          WHERE id = ? AND tenant_id = ? AND user_id = ?`,
-        [validated.deviceId, validated.tenantId, validated.userId],
-        { consistencyClass: 'primary_required' }
-      );
-      if (
-        !device ||
-        device.id !== validated.deviceId ||
-        device.user_id !== validated.userId ||
-        device.device_id_hash !== validated.deviceIdHash ||
-        device.is_active === true ||
-        device.is_active === 1
-      ) {
-        throw new Error('auth_guest_route_removal_authority_active');
-      }
-      const result = await publishAccountExternalSubjectRemoval(
-        this.env,
-        {
-          operationId: validated.operationId,
-          idempotencyKey: validated.idempotencyKey,
-          tenantId: validated.tenantId,
-          accountId: validated.accountId,
-          externalSubject: guestDeviceLookupSubject(validated.deviceIdHash),
-          routeProjection: context.membership.routeProjection,
-        },
-        {
-          tenantCoreUsers,
-          directory: internalDirectoryBinding(
-            this.ctx as unknown as { exports?: Partial<ManagementInternalExports> },
-            environmentId
-          ),
-        }
-      );
-      return {
-        status: result.status,
-        operationId: result.operationId,
-        accountId: result.accountId,
-      };
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        /^(auth_account_provisioning_rpc_caller_unauthorized|auth_guest_route_removal_(input_invalid|account_mismatch|authority_active)|guest_device_route_digest_invalid|account_identifier_removal_[a-z0-9_]+|directory_[a-z0-9_]+)$/u.test(
-          error.message
-        )
-      ) {
-        throw new Error(error.message);
-      }
-      throw new Error('auth_guest_route_removal_internal_error');
     }
   }
 

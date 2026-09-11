@@ -23,7 +23,7 @@ paths:
       tags: [Account Page]
       operationId: getAccountGuestUpgrade
       summary: Read guest registration eligibility and retention deadline.
-      description: Reads current settings without extending retention. Only methods with available prerequisites are advertised (OTP secret and tenant email delivery configuration for email, a secure browser origin for passkeys). The deadline remains visible when registration is disabled. After a durable upgrade completes, this request repairs guest flags only on the session that initiated the verified upgrade. Machine and agent accounts are excluded.
+      description: Reads current settings without extending retention. Browser guest sessions use a client-bound contract. Only methods with available prerequisites are advertised (OTP secret and tenant email delivery configuration for email, a secure browser origin for passkeys). The deadline remains visible when registration is disabled. After a durable upgrade completes, this request repairs guest flags only on the session that initiated the verified upgrade. Machine and agent accounts are excluded.
       security:
         - accountSessionCookie: []
       responses:
@@ -66,7 +66,7 @@ paths:
       tags: [Account Page]
       operationId: startAccountGuestUpgrade
       summary: Start email or passkey registration for the current guest.
-      description: Requires an authenticated guest browser session and CSRF protection. Tenant, method and originating-client registration permissions must allow the method. Method prerequisites are rechecked before acquiring a hold; unavailable methods return 403 without consuming it. Starting a valid attempt acquires the guest's one-time deletion hold; retries never renew it. Proof expires independently after ten minutes. Disabling guest login does not disable registration.
+      description: Requires an authenticated browser guest session and CSRF protection. Tenant, method and originating-client registration permissions must allow the method. Method prerequisites are rechecked before acquiring a hold; unavailable methods return 403 without consuming it. Starting a valid attempt acquires the guest's one-time deletion hold; retries never renew it. Proof expires independently after ten minutes. Disabling guest login does not disable registration.
       security:
         - accountSessionCookie: []
       requestBody:

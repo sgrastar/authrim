@@ -891,7 +891,7 @@ async function resolveAuditDeliveryPlanFromEnv(
 
 async function mirrorLegacyAuditLogToUnifiedService(
   env: Env,
-  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { tenantId: string }
+  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { tenantId: string; id?: string }
 ): Promise<void> {
   const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
   if (!tenantId) {
@@ -904,6 +904,7 @@ async function mirrorLegacyAuditLogToUnifiedService(
   const auditService = getUnifiedAuditService(env);
 
   await auditService.logEvent(tenantId, {
+    id: entry.id,
     eventType: entry.action,
     eventCategory: mapLegacyAuditCategory(entry.action, entry.resource),
     result: 'success',
@@ -925,7 +926,8 @@ export async function writeLegacyAuditLog(
     `INSERT INTO audit_log (
       id, tenant_id, user_id, action, resource_type, resource_id,
       ip_address, user_agent, metadata_json, severity, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE NOT EXISTS (SELECT 1 FROM audit_log WHERE id = ?)`,
     [
       entry.id,
       entry.tenantId,
@@ -938,6 +940,7 @@ export async function writeLegacyAuditLog(
       entry.metadata,
       entry.severity,
       entry.createdAt,
+      entry.id,
     ]
   );
 }
@@ -949,18 +952,21 @@ export async function writeLegacyAuditLog(
  * it will log the error but not throw, allowing the main operation to continue.
  *
  * @param env - Cloudflare Workers environment bindings
- * @param entry - Audit log entry data (id and createdAt will be generated)
+ * @param entry - Audit log entry data (createdAt and an omitted id will be generated)
  */
 export async function createAuditLog(
   env: Env,
-  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { tenantId: string }
+  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { tenantId: string; id?: string }
 ): Promise<void> {
   const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
   if (!tenantId) {
     return;
   }
 
-  const id = generateSecureRandomString(16);
+  const id = entry.id ?? generateSecureRandomString(16);
+  if (!/^[A-Za-z0-9._:-]{1,200}$/u.test(id)) {
+    throw new AuditLogDeliveryError('audit_log_id_invalid', entry.action, tenantId);
+  }
   // Use seconds (not milliseconds) for consistency with other audit log writers
   const createdAt = Math.floor(Date.now() / 1000);
   let failureBehavior: ReturnType<typeof resolveAuditEventFailureBehavior>['behavior'] =
@@ -1019,7 +1025,7 @@ export async function createAuditLog(
   }
 
   try {
-    await mirrorLegacyAuditLogToUnifiedService(env, { ...entry, tenantId });
+    await mirrorLegacyAuditLogToUnifiedService(env, { ...entry, id, tenantId });
   } catch (error) {
     log.warn('Failed to mirror audit log to unified audit service', {
       action: entry.action,
@@ -1064,7 +1070,8 @@ export async function createAuditLogFromContext(
   resource: string,
   resourceId: string,
   metadata: Record<string, unknown>,
-  severity: 'info' | 'warning' | 'critical' = 'info'
+  severity: 'info' | 'warning' | 'critical' = 'info',
+  auditId?: string
 ): Promise<void> {
   // Debug: Log that we're attempting to create audit log
   log.info('Creating audit log from context', { action, resource, resourceId });
@@ -1111,6 +1118,7 @@ export async function createAuditLogFromContext(
   };
 
   await createAuditLog(c.env, {
+    id: auditId,
     tenantId,
     userId: adminAuth.userId,
     action,

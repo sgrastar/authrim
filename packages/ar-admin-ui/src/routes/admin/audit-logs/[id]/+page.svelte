@@ -1,12 +1,16 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
-	import { LL } from '$i18n/i18n-svelte';
+	import { getLocale, LL } from '$i18n/i18n-svelte';
 	import { adminAuditLogsAPI, type AuditLogEntry } from '$lib/api/admin-audit-logs';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import AdminPageHeader from '$lib/components/admin/AdminPageHeader.svelte';
 	import AdminPageShell from '$lib/components/admin/AdminPageShell.svelte';
 	import AdminSection from '$lib/components/admin/AdminSection.svelte';
+	import {
+		formatGuestAwareAuditAction,
+		getGuestAuditDetails
+	} from '$lib/admin/account-audit-action-label';
 
 	let entry: AuditLogEntry | null = $state(null);
 	let loading = $state(true);
@@ -51,7 +55,9 @@
 		return new Date(isoString).toLocaleString();
 	}
 
-	function formatAction(action: string): string {
+	function formatAction(action: string, metadata: Record<string, unknown> | null = null): string {
+		const guestAwareAction = formatGuestAwareAuditAction(action, metadata, getLocale());
+		if (guestAwareAction) return guestAwareAction;
 		switch (action) {
 			case 'user.login':
 				return $LL.admin_audit_logs_action_user_login();
@@ -140,10 +146,14 @@
 		if (action.includes('delete') || action.includes('revoke')) {
 			return 'badge badge-danger';
 		}
-		if (action.includes('create')) {
+		if (action.includes('create') || action === 'account.guest.upgraded') {
 			return 'badge badge-success';
 		}
-		if (action.includes('update') || action.includes('rotate')) {
+		if (
+			action.includes('update') ||
+			action.includes('rotate') ||
+			action === 'account.guest.upgrade_started'
+		) {
 			return 'badge badge-info';
 		}
 		if (action.includes('suspend') || action.includes('lock')) {
@@ -186,7 +196,7 @@
 {#snippet entryBadge()}
 	{#if entry}
 		<span class={getActionBadgeClass(entry.action)}>
-			{formatAction(entry.action)}
+			{formatAction(entry.action, entry.metadata)}
 		</span>
 	{/if}
 {/snippet}
@@ -316,6 +326,17 @@
 		<!-- Metadata -->
 		<AdminSection title={$LL.admin_audit_logs_metadata()}>
 			{#if entry.metadata && Object.keys(entry.metadata).length > 0}
+				{@const guestDetails = getGuestAuditDetails(entry.action, entry.metadata, getLocale())}
+				{#if guestDetails.length > 0}
+					<dl class="info-grid guest-audit-details">
+						{#each guestDetails as detail (detail.label)}
+							<div class="info-item">
+								<dt class="info-label">{detail.label}</dt>
+								<dd class="info-value">{detail.value}</dd>
+							</div>
+						{/each}
+					</dl>
+				{/if}
 				<pre class="code-block"><code>{formatMetadata(entry.metadata)}</code></pre>
 			{:else}
 				<p class="empty-note">
@@ -344,6 +365,10 @@
 
 	.info-grid--wide {
 		margin-top: 14px;
+	}
+
+	.guest-audit-details {
+		margin-bottom: 14px;
 	}
 
 	.info-label {
