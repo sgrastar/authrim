@@ -4258,6 +4258,7 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     const maintenanceTargets = maintenancePage.targets;
     const maintenanceTenantIds = maintenanceTargets.map((target) => target.tenantId);
 
+    await processGuestLifecycleMaintenance(env, maintenanceTargets, log.module('GUEST-LIFECYCLE'));
     try {
       await processGuestDeletionAuditOutbox(
         env,
@@ -4270,8 +4271,6 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
           auditReconciliationError instanceof Error ? auditReconciliationError.name : 'Unknown',
       });
     }
-
-    await processGuestLifecycleMaintenance(env, maintenanceTargets, log.module('GUEST-LIFECYCLE'));
 
     // Session expiration is owned by SessionStore alarms and its authoritative DO state.
 

@@ -897,6 +897,7 @@ async function mirrorLegacyAuditLogToUnifiedService(
     tenantId: string;
     id?: string;
     createdAt?: number;
+    requireDurableFanout?: boolean;
   }
 ): Promise<void> {
   const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
@@ -916,6 +917,7 @@ async function mirrorLegacyAuditLogToUnifiedService(
     eventCategory: mapLegacyAuditCategory(entry.action, entry.resource),
     result: 'success',
     severity: mapLegacySeverity(entry.severity),
+    ...(entry.requireDurableFanout ? { requireDurableFanout: true } : {}),
     details: {
       source: 'legacy_audit_log',
       resourceType: entry.resource,
@@ -967,6 +969,7 @@ export async function createAuditLog(
     tenantId: string;
     id?: string;
     createdAt?: number;
+    requireDurableFanout?: boolean;
   }
 ): Promise<void> {
   const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
@@ -1052,7 +1055,10 @@ export async function createAuditLog(
       tenantId,
     });
     log.error('Unified audit mirror failed', {}, error as Error);
-    if (failureBehavior === 'fail_closed_or_strong_retry' && !legacyD1WasPrimary) {
+    if (
+      entry.requireDurableFanout ||
+      (failureBehavior === 'fail_closed_or_strong_retry' && !legacyD1WasPrimary)
+    ) {
       throw new AuditLogDeliveryError('audit_log_unified_mirror_failed', entry.action, tenantId);
     }
   }
@@ -1085,6 +1091,7 @@ export async function createAuditLog(
  * @param severity - Severity level (default: 'info')
  * @param auditId - Stable audit ID for idempotent retries
  * @param createdAt - Original event timestamp in epoch milliseconds
+ * @param requireDurableFanout - Require gated archive/sink queue acceptance
  */
 export async function createAuditLogFromContext(
   c: Context<{ Bindings: Env }>,
@@ -1094,7 +1101,8 @@ export async function createAuditLogFromContext(
   metadata: Record<string, unknown>,
   severity: 'info' | 'warning' | 'critical' = 'info',
   auditId?: string,
-  createdAt?: number
+  createdAt?: number,
+  requireDurableFanout = false
 ): Promise<void> {
   // Debug: Log that we're attempting to create audit log
   log.info('Creating audit log from context', { action, resource, resourceId });
@@ -1152,6 +1160,7 @@ export async function createAuditLogFromContext(
     userAgent,
     metadata: JSON.stringify(auditMetadata),
     severity,
+    ...(requireDurableFanout ? { requireDurableFanout: true } : {}),
   });
 }
 

@@ -362,7 +362,8 @@ describe('guest account administration', () => {
           expect.objectContaining({ registration_state: 'guest', reason: 'admin_action' }),
           'info',
           expect.stringMatching(/^account-guest-deleted-/),
-          expect.any(Number)
+          expect.any(Number),
+          true
         );
         expect(mocks.auditOutboxEnqueue).toHaveBeenCalledTimes(1);
         expect(mocks.auditOutboxEnqueue.mock.invocationCallOrder[0]).toBeLessThan(
@@ -534,7 +535,8 @@ describe('guest account administration', () => {
       expect.objectContaining({ registration_state: 'guest', reason: 'manual_cleanup' }),
       'info',
       expect.stringMatching(/^account-guest-deleted-/),
-      expect.any(Number)
+      expect.any(Number),
+      true
     );
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),

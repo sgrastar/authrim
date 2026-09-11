@@ -455,8 +455,16 @@ export class AuditService implements IAuditService {
     const shouldFanout = await this.writePrimaryEventLog(tenantId, deliveryPlan, entry);
 
     const fanout = this.buildFanoutPlan(deliveryPlan);
+    const hasGatedFanout =
+      (deliveryPlan.archives.length > 0 && deliveryPlan.archiveFailureMode === 'gate_cleanup') ||
+      (deliveryPlan.sinks.length > 0 && deliveryPlan.sinkFailureMode === 'retry_until_ttl');
+    const requiresDurableFanout =
+      !deliveryPlan.primary || (params.requireDurableFanout === true && hasGatedFanout);
+    // A failed durable fanout is replayed with the same event ID. The primary insert then reports
+    // zero rows, so gated delivery must still retry; downstream fanout IDs remain idempotent.
+    const shouldQueueFanout = shouldFanout || requiresDurableFanout;
 
-    if (fanout && this.auditQueue && shouldFanout) {
+    if (fanout && this.auditQueue && shouldQueueFanout) {
       try {
         await this.auditQueue.send({
           type: 'event_log',
@@ -470,16 +478,16 @@ export class AuditService implements IAuditService {
           error: sanitizeErrorMessage(String(queueError)),
           tenantId,
         });
-        if (!deliveryPlan.primary) {
+        if (requiresDurableFanout) {
           throw new Error('audit_fanout_queue_failed');
         }
       }
-    } else if (fanout && !this.auditQueue && shouldFanout) {
+    } else if (fanout && !this.auditQueue && shouldQueueFanout) {
       this.logger.warn('audit_fanout_skipped_without_queue', {
         tenantId,
         auditProfileId: deliveryPlan.auditProfileId,
       });
-      if (!deliveryPlan.primary) {
+      if (requiresDurableFanout) {
         throw new Error('audit_fanout_queue_unavailable');
       }
     }

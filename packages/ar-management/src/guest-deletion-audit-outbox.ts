@@ -209,6 +209,7 @@ async function writeGuestDeletionAudit(
     userAgent: task.user_agent,
     metadata: task.metadata_json,
     severity: 'info',
+    requireDurableFanout: true,
   });
 }
 

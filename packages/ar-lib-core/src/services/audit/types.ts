@@ -391,6 +391,9 @@ export interface EventLogParams {
 
   /** Additional details (will be sanitized for PII) */
   details?: EventDetails;
+
+  /** Require a configured gated fanout to be accepted before this write succeeds. */
+  requireDurableFanout?: boolean;
 }
 
 /**

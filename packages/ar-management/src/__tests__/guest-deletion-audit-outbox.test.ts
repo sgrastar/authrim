@@ -89,6 +89,14 @@ describe('guest deletion audit reconciliation outbox', () => {
 
   afterEach(() => db.close());
 
+  it('runs lifecycle recovery before scheduled completion-audit reconciliation', () => {
+    const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
+    const maintenanceBlock = source.slice(source.indexOf('const maintenancePage'));
+    expect(maintenanceBlock.indexOf('processGuestLifecycleMaintenance(')).toBeLessThan(
+      maintenanceBlock.indexOf('processGuestDeletionAuditOutbox(')
+    );
+  });
+
   it('persists the request and proxy metadata used by immediate audit delivery', () => {
     const headers: Record<string, string> = {
       'CF-Connecting-IP': '192.0.2.1',

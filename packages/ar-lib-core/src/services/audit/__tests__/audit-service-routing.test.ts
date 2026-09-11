@@ -190,6 +190,49 @@ describe('AuditService routing', () => {
     expect(queue.send).toHaveBeenCalledOnce();
   });
 
+  it('retries gated fanout after the primary insert succeeded but queue delivery failed', async () => {
+    const auditProfile: AuditProfile = {
+      id: 'audit-profile-gated-retry',
+      kind: 'audit',
+      label: 'Gated fanout retry',
+      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+      archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+      sinks: [{ type: 'logpush', destinationRef: 'workers-logpush' }],
+      archiveFailureMode: 'gate_cleanup',
+      sinkFailureMode: 'retry_until_ttl',
+    };
+    const coreAdapter = createMockDatabaseAdapter('core-adapter');
+    vi.mocked(coreAdapter.execute)
+      .mockResolvedValueOnce({ success: true, rowsAffected: 1 })
+      .mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    const queue = createMockQueue();
+    vi.mocked(queue.send)
+      .mockRejectedValueOnce(new Error('queue unavailable'))
+      .mockResolvedValueOnce(undefined);
+    const service = new AuditService({
+      coreSource: coreAdapter,
+      piiSource,
+      r2Bucket,
+      auditQueue: queue,
+      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
+    });
+    const event = {
+      id: 'stable-gated-event-id',
+      createdAt: 1_725_000_000_000,
+      eventType: 'user.deleted',
+      eventCategory: 'user' as const,
+      result: 'success' as const,
+      requireDurableFanout: true,
+    };
+
+    await expect(service.logEvent('tenant-a', event)).rejects.toThrow('audit_fanout_queue_failed');
+    await expect(service.logEvent('tenant-a', event)).resolves.toBeUndefined();
+
+    expect(coreAdapter.execute).toHaveBeenCalledTimes(2);
+    expect(queue.send).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(queue.send).mock.calls[0][0]).toEqual(vi.mocked(queue.send).mock.calls[1][0]);
+  });
+
   it('preserves a supplied event timestamp in primary and fanout records', async () => {
     const createdAt = 1_779_321_600_123;
     const auditProfile: AuditProfile = {

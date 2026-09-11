@@ -453,8 +453,13 @@ describe('createAuditLog', () => {
         userAgent: 'Test Agent',
         metadata: '{}',
         severity: 'info',
+        requireDurableFanout: true,
       })
     ).rejects.toThrow('audit_log_unified_mirror_failed');
+    expect(mockUnifiedAuditService.logEvent).toHaveBeenCalledWith(
+      'default',
+      expect.objectContaining({ requireDurableFanout: true })
+    );
     expect(mockEnv.DB.prepare).not.toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO audit_log')
     );

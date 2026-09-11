@@ -86,7 +86,8 @@ async function deliverGuestDeletionCompletionAudit(
         input.metadata,
         'info',
         input.task.audit_id,
-        input.completedAt * 1000
+        input.completedAt * 1000,
+        true
       );
       try {
         await input.repository.markSucceeded(input.task.audit_id);
