@@ -387,8 +387,13 @@ export class AuditService implements IAuditService {
     if (!Number.isSafeInteger(createdAt) || createdAt < 0) {
       throw new Error('audit_event_created_at_invalid');
     }
+    const createdAtDate = new Date(createdAt);
+    if (!Number.isFinite(createdAtDate.getTime())) {
+      throw new Error('audit_event_created_at_invalid');
+    }
     const retentionUntil = calculateRetentionUntil(
-      this.resolveRetentionDays(auditProfile, config, 'event', deliveryPlan.retentionDays)
+      this.resolveRetentionDays(auditProfile, config, 'event', deliveryPlan.retentionDays),
+      createdAtDate
     );
 
     // Sanitize details if provided

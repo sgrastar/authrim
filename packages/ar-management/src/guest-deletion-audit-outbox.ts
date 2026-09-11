@@ -201,11 +201,10 @@ export class GuestDeletionAuditOutboxRepository {
 
 async function writeGuestDeletionAudit(
   env: Env,
-  adapter: DatabaseAdapter,
   task: GuestDeletionAuditOutboxRow,
   completedAt: number
 ): Promise<void> {
-  await createAuditLog({ ...env, DB: adapter } as unknown as Env, {
+  await createAuditLog(env, {
     id: task.audit_id,
     createdAt: completedAt,
     tenantId: task.tenant_id,
@@ -236,7 +235,7 @@ export async function processGuestDeletionAuditOutbox(
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
   const writeAudit =
     options.writeAudit ??
-    ((task, adapter, completedAt) => writeGuestDeletionAudit(env, adapter, task, completedAt));
+    ((task, _adapter, completedAt) => writeGuestDeletionAudit(env, task, completedAt));
   let processed = 0;
   let succeeded = 0;
   let retrying = 0;

@@ -163,6 +163,7 @@ describe('AuditService routing', () => {
       sinks: [],
       archiveFailureMode: 'gate_cleanup',
       sinkFailureMode: 'retry_until_ttl',
+      retention: { primaryDays: 3, archiveDays: 30 },
     };
     const queue = createMockQueue();
     const service = new AuditService({
@@ -183,7 +184,12 @@ describe('AuditService routing', () => {
     expect(queue.send).toHaveBeenCalledWith(
       expect.objectContaining({
         timestamp: createdAt,
-        entries: [expect.objectContaining({ createdAt })],
+        entries: [
+          expect.objectContaining({
+            createdAt,
+            retentionUntil: createdAt + 3 * 24 * 60 * 60 * 1000,
+          }),
+        ],
       })
     );
   });

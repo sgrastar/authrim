@@ -1,5 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mockCreateAuditLog = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
+  createAuditLog: mockCreateAuditLog,
+}));
+
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import { GuestLifecycleRepository, writeLegacyAuditLog } from '@authrim/ar-lib-core';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
@@ -15,6 +23,7 @@ describe('guest deletion audit reconciliation outbox', () => {
   let adapter: DatabaseAdapter;
 
   beforeEach(async () => {
+    mockCreateAuditLog.mockReset().mockResolvedValue(undefined);
     db = new DatabaseSync(':memory:');
     db.exec(`
       CREATE TABLE identity_accounts (
@@ -189,6 +198,51 @@ describe('guest deletion audit reconciliation outbox', () => {
     expect((await restartedRepository.get('account-guest-deleted-operation-1'))?.status).toBe(
       'succeeded'
     );
+  });
+
+  it('uses the configured audit store rather than the identity shard during replay', async () => {
+    const repository = new GuestDeletionAuditOutboxRepository(adapter, 'tenant-a');
+    await repository.enqueue({
+      auditId: 'account-guest-deleted-canonical-audit',
+      userId: 'guest-1',
+      operationId: 'canonical-audit',
+      actorUserId: 'admin-1',
+      ipAddress: 'unknown',
+      userAgent: 'unknown',
+      metadataJson: '{}',
+      createdAt: 900,
+    });
+    const lifecycle = new GuestLifecycleRepository(adapter, 'tenant-a');
+    expect(
+      await lifecycle.beginAdministrativeDeletion(
+        'guest-1',
+        'canonical-audit',
+        999,
+        deletionRouteJson,
+        999000
+      )
+    ).toBe(true);
+    expect(await lifecycle.completeDeletion('guest-1', 'canonical-audit', 1000)).toBe(true);
+    const canonicalAuditDb = { prepare: vi.fn() } as unknown as D1Database;
+    const env = { DB: canonicalAuditDb } as Env;
+
+    expect(
+      await processGuestDeletionAuditOutbox(
+        env,
+        [{ tenantId: 'tenant-a', adapters: [{ adapter, bindingRef: 'IDENTITY_SHARD' }] }],
+        { info: vi.fn(), warn: vi.fn() },
+        { now: () => 1001 }
+      )
+    ).toEqual({ processed: 1, succeeded: 1, retrying: 0 });
+    expect(mockCreateAuditLog).toHaveBeenCalledWith(
+      env,
+      expect.objectContaining({
+        id: 'account-guest-deleted-canonical-audit',
+        createdAt: 1000 * 1000,
+      })
+    );
+    expect(mockCreateAuditLog.mock.calls[0][0].DB).toBe(canonicalAuditDb);
+    expect(mockCreateAuditLog.mock.calls[0][0].DB).not.toBe(adapter);
   });
 
   it('does not emit completion before the account deletion is committed', async () => {
