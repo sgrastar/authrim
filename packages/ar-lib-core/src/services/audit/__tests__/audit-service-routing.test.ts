@@ -152,6 +152,44 @@ describe('AuditService routing', () => {
     );
   });
 
+  it('does not enqueue fanout again when a stable event ID already exists in D1', async () => {
+    const auditProfile: AuditProfile = {
+      id: 'audit-profile-idempotent',
+      kind: 'audit',
+      label: 'Idempotent fanout',
+      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+      archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+      sinks: [{ type: 'logpush', destinationRef: 'workers-logpush' }],
+      archiveFailureMode: 'gate_cleanup',
+      sinkFailureMode: 'retry_until_ttl',
+    };
+    const coreAdapter = createMockDatabaseAdapter('core-adapter');
+    vi.mocked(coreAdapter.execute)
+      .mockResolvedValueOnce({ success: true, rowsAffected: 1 })
+      .mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    const queue = createMockQueue();
+    const service = new AuditService({
+      coreSource: coreAdapter,
+      piiSource,
+      r2Bucket,
+      auditQueue: queue,
+      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
+    });
+    const event = {
+      id: 'stable-event-id',
+      createdAt: 1_725_000_000_000,
+      eventType: 'user.deleted',
+      eventCategory: 'user' as const,
+      result: 'success' as const,
+    };
+
+    await service.logEvent('tenant-a', event);
+    await service.logEvent('tenant-a', event);
+
+    expect(coreAdapter.execute).toHaveBeenCalledTimes(2);
+    expect(queue.send).toHaveBeenCalledOnce();
+  });
+
   it('preserves a supplied event timestamp in primary and fanout records', async () => {
     const createdAt = 1_779_321_600_123;
     const auditProfile: AuditProfile = {

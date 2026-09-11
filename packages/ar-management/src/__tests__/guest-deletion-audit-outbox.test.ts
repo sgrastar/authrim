@@ -195,9 +195,7 @@ describe('guest deletion audit reconciliation outbox', () => {
         ['account-guest-deleted-operation-1']
       )
     ).toEqual({ action: 'user.deleted', user_id: 'admin-1', created_at: 1000 });
-    expect((await restartedRepository.get('account-guest-deleted-operation-1'))?.status).toBe(
-      'succeeded'
-    );
+    expect(await restartedRepository.get('account-guest-deleted-operation-1')).toBeNull();
   });
 
   it('uses the configured audit store rather than the identity shard during replay', async () => {

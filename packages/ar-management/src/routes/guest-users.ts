@@ -90,7 +90,7 @@ async function deliverGuestDeletionCompletionAudit(
         input.completedAt * 1000
       );
       try {
-        await input.repository.markSucceeded(input.task.audit_id, Math.floor(Date.now() / 1000));
+        await input.repository.markSucceeded(input.task.audit_id);
       } catch (outboxError) {
         // The pending task remains durable and the audit ID is idempotent, so the scheduler can
         // safely replay it and finish the acknowledgement later.

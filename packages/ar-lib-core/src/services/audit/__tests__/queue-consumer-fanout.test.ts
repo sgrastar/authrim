@@ -126,10 +126,10 @@ describe('audit queue consumer fanout', () => {
       ...createAdminDbAdapter(),
       queryOne: vi.fn().mockResolvedValue({ tenant_key: 't_registry_archive' }),
     };
-    const message = createMessage({
+    const body: AuditQueueMessage = {
       type: 'event_log',
       tenantId: 'tenant-registry-a',
-      timestamp: Date.now(),
+      timestamp: 1_725_000_000_000,
       entries: [
         {
           id: 'evt-1',
@@ -139,7 +139,7 @@ describe('audit queue consumer fanout', () => {
           result: 'success',
           severity: 'info',
           detailsJson: JSON.stringify({ requestHeaders: { authorization: 'Bearer secret' } }),
-          createdAt: Date.now(),
+          createdAt: 1_725_000_000_000,
         },
       ],
       fanout: {
@@ -149,10 +149,24 @@ describe('audit queue consumer fanout', () => {
         archiveFailureMode: 'gate_cleanup',
         sinkFailureMode: 'retry_until_ttl',
       },
-    });
+    };
+    const message = createMessage(body);
+    const replayedMessage = createMessage(body);
 
     await processAuditQueue(
       { messages: [message], queue: 'AUDIT_QUEUE' } as unknown as MessageBatch<AuditQueueMessage>,
+      {
+        DB: coreDb,
+        DB_PII: {} as D1Database,
+        AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+      } as unknown as Parameters<typeof processAuditQueue>[1]
+    );
+    await processAuditQueue(
+      {
+        messages: [replayedMessage],
+        queue: 'AUDIT_QUEUE',
+      } as unknown as MessageBatch<AuditQueueMessage>,
       {
         DB: coreDb,
         DB_PII: {} as D1Database,
@@ -167,6 +181,7 @@ describe('audit queue consumer fanout', () => {
     expect(archiveKey).toContain('.jsonl.gz');
     expect(archiveKey).toContain('/t_registry_archive/');
     expect(archiveKey).not.toContain('/tenant-registry-a/');
+    expect((bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[1]?.[0]).toBe(archiveKey);
     const archiveBody = (bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
     const archiveRecord = await decodeFirstChunkRecord({
       bytes: archiveBody as Uint8Array,
@@ -194,6 +209,8 @@ describe('audit queue consumer fanout', () => {
     );
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
+    expect(replayedMessage.ack).toHaveBeenCalledOnce();
+    expect(replayedMessage.retry).not.toHaveBeenCalled();
   });
 
   it('encrypts audit archive chunks when object encryption root key is configured', async () => {
@@ -295,7 +312,6 @@ describe('audit queue consumer fanout', () => {
         DB_PII: {} as D1Database,
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );
-
     expect(message.retry).toHaveBeenCalledOnce();
     expect(message.ack).not.toHaveBeenCalled();
   });
@@ -562,10 +578,10 @@ describe('audit queue consumer fanout', () => {
     } as unknown as R2Bucket;
     const deliveryQueue = { send: vi.fn().mockResolvedValue(undefined) };
     const adminDb = createAdminDbAdapter();
-    const message = createMessage({
+    const body: AuditQueueMessage = {
       type: 'event_log',
       tenantId: 'tenant-a',
-      timestamp: Date.now(),
+      timestamp: 1_725_000_000_000,
       entries: [
         {
           id: 'evt-1',
@@ -574,7 +590,7 @@ describe('audit queue consumer fanout', () => {
           eventCategory: 'auth',
           result: 'success',
           severity: 'info',
-          createdAt: Date.now(),
+          createdAt: 1_725_000_000_000,
         },
       ],
       fanout: {
@@ -590,10 +606,26 @@ describe('audit queue consumer fanout', () => {
         archiveFailureMode: 'best_effort',
         sinkFailureMode: 'retry_until_ttl',
       },
-    });
+    };
+    const message = createMessage(body);
+    const replayedMessage = createMessage(body);
 
     await processAuditQueue(
       { messages: [message], queue: 'AUDIT_QUEUE' } as unknown as MessageBatch<AuditQueueMessage>,
+      {
+        DB: {} as D1Database,
+        DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
+        AUDIT_ARCHIVE: payloadBucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+        LOGGING_DELIVERY_QUEUE: deliveryQueue,
+      } as unknown as Parameters<typeof processAuditQueue>[1]
+    );
+    await processAuditQueue(
+      {
+        messages: [replayedMessage],
+        queue: 'AUDIT_QUEUE',
+      } as unknown as MessageBatch<AuditQueueMessage>,
       {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
@@ -619,6 +651,9 @@ describe('audit queue consumer fanout', () => {
       /^logging-delivery-payloads\/v1\/t_[^/]+\/\d{4}\/\d{2}\/\d{2}\/\d{2}\/qpl_[^/]+\.json$/
     );
     expect(payloadObjectKey).not.toContain('[object Object]');
+    expect((payloadBucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[1]?.[0]).toBe(
+      payloadObjectKey
+    );
     expect(deliveryQueue.send).toHaveBeenCalledWith(
       expect.objectContaining({
         payload_type: 'http_sink_batch',
@@ -637,6 +672,17 @@ describe('audit queue consumer fanout', () => {
     );
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
+    expect(replayedMessage.ack).toHaveBeenCalledOnce();
+    expect(replayedMessage.retry).not.toHaveBeenCalled();
+    const firstPayload = (deliveryQueue.send as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0];
+    const replayedPayload = (deliveryQueue.send as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[1]?.[0];
+    expect(replayedPayload).toMatchObject({
+      payload_id: firstPayload.payload_id,
+      batch_id: firstPayload.batch_id,
+      body_object_ref: firstPayload.body_object_ref,
+    });
   });
 
   it('retries explicit HTTP admin destinations when no delivery queue is bound', async () => {

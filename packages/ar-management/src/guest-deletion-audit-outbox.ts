@@ -163,12 +163,10 @@ export class GuestDeletionAuditOutboxRepository {
     );
   }
 
-  async markSucceeded(auditId: string, now: number): Promise<void> {
+  async markSucceeded(auditId: string): Promise<void> {
     await this.db.execute(
-      `UPDATE guest_deletion_audit_outbox
-       SET status = 'succeeded', succeeded_at = ?, last_error_code = NULL, updated_at = ?
-       WHERE tenant_id = ? AND audit_id = ? AND status <> 'succeeded'`,
-      [now, now, this.tenantId, auditId]
+      'DELETE FROM guest_deletion_audit_outbox WHERE tenant_id = ? AND audit_id = ?',
+      [this.tenantId, auditId]
     );
   }
 
@@ -187,14 +185,6 @@ export class GuestDeletionAuditOutboxRepository {
     await this.db.execute(
       'DELETE FROM guest_deletion_audit_outbox WHERE tenant_id = ? AND audit_id = ?',
       [this.tenantId, auditId]
-    );
-  }
-
-  async pruneSucceeded(before: number): Promise<void> {
-    await this.db.execute(
-      `DELETE FROM guest_deletion_audit_outbox
-       WHERE tenant_id = ? AND status = 'succeeded' AND succeeded_at < ?`,
-      [this.tenantId, before]
     );
   }
 }
@@ -279,7 +269,7 @@ export async function processGuestDeletionAuditOutbox(
             continue;
           }
           await writeAudit(task, adapter, completedAt * 1000);
-          await repository.markSucceeded(task.audit_id, attemptAt);
+          await repository.markSucceeded(task.audit_id);
           succeeded += 1;
         } catch (error) {
           await repository.markRetry(task, attemptAt, errorCode(error));
@@ -292,7 +282,6 @@ export async function processGuestDeletionAuditOutbox(
           });
         }
       }
-      await repository.pruneSucceeded(now() - 30 * 86400);
     }
   }
 
