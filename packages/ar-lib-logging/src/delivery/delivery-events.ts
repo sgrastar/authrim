@@ -51,6 +51,7 @@ export interface LoggingDeliveryEventStore {
   completeClaim(
     input: LoggingDeliveryEventInput & { id: string; status: 'delivered' }
   ): Promise<void>;
+  preserveEmittedClaim(id: string, now?: number): Promise<void>;
   releaseClaim(id: string): Promise<void>;
 }
 
@@ -296,6 +297,15 @@ export class SqlLoggingDeliveryEventStore implements LoggingDeliveryEventStore {
       `DELETE FROM logging_delivery_events
        WHERE id = ? AND status = 'retrying' AND error_class = 'delivery_in_progress'`,
       [id]
+    );
+  }
+
+  async preserveEmittedClaim(id: string, now = Date.now()): Promise<void> {
+    await this.executor.execute(
+      `UPDATE logging_delivery_events
+       SET error_class = 'delivery_emission_uncertain', updated_at = ?, next_retry_at = NULL
+       WHERE id = ? AND status = 'retrying' AND error_class = 'delivery_in_progress'`,
+      [now, id]
     );
   }
 

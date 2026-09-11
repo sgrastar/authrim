@@ -238,6 +238,96 @@ describe('audit queue consumer fanout', () => {
     expect(replayedMessage.retry).not.toHaveBeenCalled();
   });
 
+  it('retains the Logpush claim when completion persistence fails after emission', async () => {
+    const coreDb = {
+      ...createAdminDbAdapter(),
+      queryOne: vi.fn().mockResolvedValue({ tenant_key: 't_registry_logpush' }),
+    };
+    const deliveryEventIds = new Set<string>();
+    const adminDb = {
+      ...createAdminDbAdapter(),
+      execute: vi.fn().mockImplementation(async (sql: string, params: unknown[] = []) => {
+        if (sql.includes('INSERT INTO logging_delivery_events')) {
+          const id = String(params[0]);
+          if (deliveryEventIds.has(id)) {
+            return { rowsAffected: 0 };
+          }
+          deliveryEventIds.add(id);
+          return { rowsAffected: 1 };
+        }
+        if (sql.includes("SET status = 'delivered'")) {
+          throw new Error('admin database unavailable');
+        }
+        if (sql.includes('SET tenant_key =')) {
+          return { rowsAffected: 0 };
+        }
+        if (sql.includes('DELETE FROM logging_delivery_events')) {
+          deliveryEventIds.delete(String(params[0]));
+          return { rowsAffected: 1 };
+        }
+        return { rowsAffected: 1 };
+      }),
+    };
+    const body: AuditQueueMessage = {
+      type: 'event_log',
+      tenantId: 'tenant-registry-logpush',
+      timestamp: 1_725_000_000_000,
+      entries: [
+        {
+          id: 'evt-logpush-completion-pending',
+          tenantId: 'tenant-registry-logpush',
+          eventType: 'user.deleted',
+          eventCategory: 'user',
+          result: 'success',
+          severity: 'info',
+          createdAt: 1_725_000_000_000,
+        },
+      ],
+      fanout: {
+        auditProfileId: 'audit-profile-logpush',
+        archives: [],
+        sinks: [{ type: 'logpush', destinationRef: 'workers-logpush' }],
+        archiveFailureMode: 'best_effort',
+        sinkFailureMode: 'retry_until_ttl',
+      },
+    };
+    const message = createMessage(body);
+    const replayedMessage = createMessage(body);
+    const env = {
+      DB: coreDb,
+      DB_PII: {} as D1Database,
+      DB_ADMIN: adminDb,
+    } as unknown as Parameters<typeof processAuditQueue>[1];
+
+    await processAuditQueue(
+      { messages: [message], queue: 'AUDIT_QUEUE' } as unknown as MessageBatch<AuditQueueMessage>,
+      env
+    );
+    await processAuditQueue(
+      {
+        messages: [replayedMessage],
+        queue: 'AUDIT_QUEUE',
+      } as unknown as MessageBatch<AuditQueueMessage>,
+      env
+    );
+
+    expect(
+      consoleLogSpy.mock.calls.filter(([line]) =>
+        String(line).includes('evt-logpush-completion-pending')
+      )
+    ).toHaveLength(1);
+    expect(message.retry).toHaveBeenCalledOnce();
+    expect(replayedMessage.ack).toHaveBeenCalledOnce();
+    expect(adminDb.execute).toHaveBeenCalledWith(
+      expect.stringContaining("error_class = 'delivery_emission_uncertain'"),
+      expect.any(Array)
+    );
+    expect(adminDb.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM logging_delivery_events'),
+      expect.anything()
+    );
+  });
+
   it('encrypts audit archive chunks when object encryption root key is configured', async () => {
     const bucket = {
       put: vi.fn().mockResolvedValue(undefined),

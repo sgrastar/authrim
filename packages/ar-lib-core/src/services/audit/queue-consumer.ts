@@ -1807,8 +1807,10 @@ async function processFanoutMessage(
       }
     }
 
+    let sinkEmitted = false;
     try {
       await deliverSinkTarget(sink, body, env);
+      sinkEmitted = true;
       if (logpushClaimed && deliveryEventStore) {
         await deliveryEventStore.completeClaim({
           id: deliveredEventId,
@@ -1835,7 +1837,7 @@ async function processFanoutMessage(
         });
       }
     } catch (error) {
-      if (logpushClaimed && deliveryEventStore) {
+      if (logpushClaimed && deliveryEventStore && !sinkEmitted) {
         try {
           await deliveryEventStore.releaseClaim(deliveredEventId);
         } catch (releaseError) {
@@ -1845,6 +1847,20 @@ async function processFanoutMessage(
             error: sanitizeErrorMessage(String(releaseError)),
           });
         }
+      } else if (logpushClaimed && sinkEmitted) {
+        try {
+          await deliveryEventStore?.preserveEmittedClaim(deliveredEventId);
+        } catch (preserveError) {
+          logger.warn('audit_logpush_emitted_claim_preservation_failed', {
+            tenantId: body.tenantId,
+            auditProfileId: fanout.auditProfileId,
+            error: sanitizeErrorMessage(String(preserveError)),
+          });
+        }
+        logger.warn('audit_logpush_delivery_completion_pending', {
+          tenantId: body.tenantId,
+          auditProfileId: fanout.auditProfileId,
+        });
       }
       const status = deliveryStatusForFailure(sinkFailureMode);
       const errorClass = deliveryErrorClass(error, 'sink_delivery_failed');

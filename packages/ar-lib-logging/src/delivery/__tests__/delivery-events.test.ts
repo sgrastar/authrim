@@ -70,6 +70,22 @@ describe('SqlLoggingDeliveryEventStore', () => {
     );
   });
 
+  it('preserves an emitted claim without leaving a reclaim deadline', async () => {
+    const executor = { execute: vi.fn().mockResolvedValue({ rowsAffected: 1 }) };
+    const store = new SqlLoggingDeliveryEventStore(executor);
+
+    await store.preserveEmittedClaim('lde_uncertain_logpush', 1_700_000_060_000);
+
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining("error_class = 'delivery_emission_uncertain'"),
+      [1_700_000_060_000, 'lde_uncertain_logpush']
+    );
+    expect(executor.execute).toHaveBeenCalledWith(
+      expect.stringContaining('next_retry_at = NULL'),
+      expect.any(Array)
+    );
+  });
+
   it('inserts delivery events with generated ids and JSON metadata', async () => {
     const executor = {
       execute: vi
