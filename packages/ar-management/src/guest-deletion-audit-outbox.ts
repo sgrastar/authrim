@@ -6,6 +6,8 @@ import {
 } from '@authrim/ar-lib-core';
 import type { Context } from 'hono';
 
+const ORPHAN_TASK_GRACE_SECONDS = 300;
+
 export interface GuestDeletionAuditOutboxRow {
   audit_id: string;
   tenant_id: string;
@@ -257,7 +259,13 @@ export async function processGuestDeletionAuditOutbox(
             { consistencyClass: 'primary_required' }
           );
           if (!lifecycle || lifecycle.deletion_operation_id !== task.operation_id) {
-            await repository.remove(task.audit_id);
+            const taskCreatedAt = asNonNegativeInteger(task.created_at);
+            if (taskCreatedAt > 0 && attemptAt - taskCreatedAt < ORPHAN_TASK_GRACE_SECONDS) {
+              await repository.markRetry(task, attemptAt, 'guest_deletion_claim_pending');
+              retrying += 1;
+            } else {
+              await repository.remove(task.audit_id);
+            }
             continue;
           }
           if (lifecycle.phase !== 'deleted') {

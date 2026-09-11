@@ -225,6 +225,32 @@ describe('guest deletion audit reconciliation outbox', () => {
     expect((await repository.get('account-guest-deleted-operation-2'))?.status).toBe('retry');
   });
 
+  it('keeps a fresh task while its lifecycle claim may still be in flight', async () => {
+    const repository = new GuestDeletionAuditOutboxRepository(adapter, 'tenant-a');
+    await repository.enqueue({
+      auditId: 'account-guest-deleted-operation-pending',
+      userId: 'guest-1',
+      operationId: 'operation-pending',
+      actorUserId: 'admin-1',
+      ipAddress: 'unknown',
+      userAgent: 'unknown',
+      metadataJson: '{}',
+      createdAt: 1000,
+    });
+    const writeAudit = vi.fn();
+
+    expect(
+      await processGuestDeletionAuditOutbox(
+        {} as Env,
+        [{ tenantId: 'tenant-a', adapters: [{ adapter, bindingRef: 'CORE' }] }],
+        { info: vi.fn(), warn: vi.fn() },
+        { now: () => 1001, writeAudit }
+      )
+    ).toEqual({ processed: 1, succeeded: 0, retrying: 1 });
+    expect(writeAudit).not.toHaveBeenCalled();
+    expect((await repository.get('account-guest-deleted-operation-pending'))?.status).toBe('retry');
+  });
+
   it('does not emit completion for a different deletion operation', async () => {
     const lifecycle = new GuestLifecycleRepository(adapter, 'tenant-a');
     expect(
@@ -255,7 +281,7 @@ describe('guest deletion audit reconciliation outbox', () => {
         {} as Env,
         [{ tenantId: 'tenant-a', adapters: [{ adapter, bindingRef: 'CORE' }] }],
         { info: vi.fn(), warn: vi.fn() },
-        { now: () => 1001, writeAudit }
+        { now: () => 2000, writeAudit }
       )
     ).toEqual({ processed: 1, succeeded: 0, retrying: 0 });
     expect(writeAudit).not.toHaveBeenCalled();
