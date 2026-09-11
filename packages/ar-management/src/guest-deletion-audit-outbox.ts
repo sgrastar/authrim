@@ -7,6 +7,9 @@ import {
 import type { Context } from 'hono';
 
 const ORPHAN_TASK_GRACE_SECONDS = 300;
+const RECONCILIATION_PAGE_SIZE = 20;
+const MAX_RECONCILIATION_PAGES_PER_ADAPTER = 50;
+const DEFAULT_RECONCILIATION_BUDGET_MS = 5_000;
 
 export interface GuestDeletionAuditOutboxRow {
   audit_id: string;
@@ -215,6 +218,8 @@ export async function processGuestDeletionAuditOutbox(
   log: GuestDeletionAuditLogger,
   options: {
     now?: () => number;
+    nowMs?: () => number;
+    deadlineMs?: number;
     writeAudit?: (
       task: GuestDeletionAuditOutboxRow,
       adapter: DatabaseAdapter,
@@ -223,6 +228,7 @@ export async function processGuestDeletionAuditOutbox(
   } = {}
 ): Promise<{ processed: number; succeeded: number; retrying: number }> {
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
+  const nowMs = options.nowMs ?? Date.now;
   const writeAudit =
     options.writeAudit ??
     ((task, _adapter, completedAt) => writeGuestDeletionAudit(env, task, completedAt));
@@ -233,54 +239,65 @@ export async function processGuestDeletionAuditOutbox(
   for (const target of targets) {
     for (const { adapter, bindingRef } of target.adapters) {
       const repository = new GuestDeletionAuditOutboxRepository(adapter, target.tenantId);
-      for (const task of await repository.listDue(now(), 20)) {
-        processed += 1;
-        const attemptAt = now();
-        try {
-          const lifecycle = await adapter.queryOne<{
-            phase: string;
-            deletion_operation_id: string | null;
-            deleted_at: number | string | null;
-          }>(
-            `SELECT phase, deletion_operation_id, deleted_at FROM guest_account_lifecycle
-             WHERE tenant_id = ? AND user_id = ?`,
-            [target.tenantId, task.user_id],
-            { consistencyClass: 'primary_required' }
-          );
-          if (!lifecycle || lifecycle.deletion_operation_id !== task.operation_id) {
-            const taskCreatedAt = asNonNegativeInteger(task.created_at);
-            if (taskCreatedAt > 0 && attemptAt - taskCreatedAt < ORPHAN_TASK_GRACE_SECONDS) {
-              await repository.markRetry(task, attemptAt, 'guest_deletion_claim_pending');
-              retrying += 1;
-            } else {
-              await repository.remove(task.audit_id);
+      const deadlineMs = options.deadlineMs ?? nowMs() + DEFAULT_RECONCILIATION_BUDGET_MS;
+      pageLoop: for (
+        let page = 0;
+        page < MAX_RECONCILIATION_PAGES_PER_ADAPTER && nowMs() < deadlineMs;
+        page += 1
+      ) {
+        const tasks = await repository.listDue(now(), RECONCILIATION_PAGE_SIZE);
+        if (tasks.length === 0) break;
+        for (const task of tasks) {
+          if (nowMs() >= deadlineMs) break pageLoop;
+          processed += 1;
+          const attemptAt = now();
+          try {
+            const lifecycle = await adapter.queryOne<{
+              phase: string;
+              deletion_operation_id: string | null;
+              deleted_at: number | string | null;
+            }>(
+              `SELECT phase, deletion_operation_id, deleted_at FROM guest_account_lifecycle
+               WHERE tenant_id = ? AND user_id = ?`,
+              [target.tenantId, task.user_id],
+              { consistencyClass: 'primary_required' }
+            );
+            if (!lifecycle || lifecycle.deletion_operation_id !== task.operation_id) {
+              const taskCreatedAt = asNonNegativeInteger(task.created_at);
+              if (taskCreatedAt > 0 && attemptAt - taskCreatedAt < ORPHAN_TASK_GRACE_SECONDS) {
+                await repository.markRetry(task, attemptAt, 'guest_deletion_claim_pending');
+                retrying += 1;
+              } else {
+                await repository.remove(task.audit_id);
+              }
+              continue;
             }
-            continue;
-          }
-          if (lifecycle.phase !== 'deleted') {
-            await repository.markRetry(task, attemptAt, 'guest_deletion_not_committed');
+            if (lifecycle.phase !== 'deleted') {
+              await repository.markRetry(task, attemptAt, 'guest_deletion_not_committed');
+              retrying += 1;
+              continue;
+            }
+            const completedAt = asNonNegativeInteger(lifecycle.deleted_at ?? -1);
+            if (completedAt === 0) {
+              await repository.markRetry(task, attemptAt, 'guest_deletion_completion_time_missing');
+              retrying += 1;
+              continue;
+            }
+            await writeAudit(task, adapter, completedAt * 1000);
+            await repository.markSucceeded(task.audit_id);
+            succeeded += 1;
+          } catch (error) {
+            await repository.markRetry(task, attemptAt, errorCode(error));
             retrying += 1;
-            continue;
+            log.warn('Guest deletion audit reconciliation deferred', {
+              tenantId: target.tenantId,
+              bindingRef,
+              operationId: task.operation_id,
+              errorCode: errorCode(error),
+            });
           }
-          const completedAt = asNonNegativeInteger(lifecycle.deleted_at ?? -1);
-          if (completedAt === 0) {
-            await repository.markRetry(task, attemptAt, 'guest_deletion_completion_time_missing');
-            retrying += 1;
-            continue;
-          }
-          await writeAudit(task, adapter, completedAt * 1000);
-          await repository.markSucceeded(task.audit_id);
-          succeeded += 1;
-        } catch (error) {
-          await repository.markRetry(task, attemptAt, errorCode(error));
-          retrying += 1;
-          log.warn('Guest deletion audit reconciliation deferred', {
-            tenantId: target.tenantId,
-            bindingRef,
-            operationId: task.operation_id,
-            errorCode: errorCode(error),
-          });
         }
+        if (tasks.length < RECONCILIATION_PAGE_SIZE) break;
       }
     }
   }

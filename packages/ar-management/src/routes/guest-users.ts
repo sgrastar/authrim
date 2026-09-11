@@ -22,11 +22,10 @@ import {
   getTenantIdFromContext,
   getLogger,
   createAuditLogFromContext,
-  transitionAccountAuthenticationState,
   type Env,
 } from '@authrim/ar-lib-core';
 import { findActiveAccountLegalHold } from '../account-legal-hold-guard';
-import { createGuestDeletionRoute } from '../guest-lifecycle-scheduled';
+import { createGuestDeletionRoute, deleteOneGuestAccount } from '../guest-lifecycle-scheduled';
 import {
   createGuestDeletionAuditTaskFromContext,
   GuestDeletionAuditOutboxRepository,
@@ -497,13 +496,11 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
       reason: 'admin_action',
       source: 'guest_admin_api',
     };
-    const deletionRouteJson = JSON.stringify(
-      await createGuestDeletionRoute(c.env, {
-        tenantId,
-        userId,
-        completionAuditMode: 'outbox',
-      })
-    );
+    const deletionRoute = await createGuestDeletionRoute(c.env, {
+      tenantId,
+      userId,
+      completionAuditMode: 'outbox',
+    });
     const completionAuditId = `account-guest-deleted-${deletionOperationId}`;
     await createAuditLogFromContext(
       c,
@@ -530,40 +527,25 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
       userId,
       deletionOperationId,
       Math.floor(deletingVersionMs / 1000),
-      deletionRouteJson,
+      JSON.stringify(deletionRoute),
       deletingVersionMs
     );
     if (!deletionClaimed) {
       await auditOutbox.remove(auditTask.audit_id);
       throw new Error('guest_administrative_deletion_conflict');
     }
-    await transitionAccountAuthenticationState(c.env, {
-      tenantId,
-      userId,
-      lifecycle: 'deleting',
-      sourceVersionMs: deletingVersionMs,
-      operationId: deletionOperationId,
-      revokeSessions: true,
-    });
-
-    // Delete devices first (foreign key constraint)
-    await authCtx.coreAdapter.execute(
-      'DELETE FROM guest_devices WHERE tenant_id = ? AND user_id = ?',
-      [tenantId, userId]
-    );
-
-    // Delete user (upgrade history preserved for audit)
-    await runtimeUsers.deleteUser(userId);
-    await transitionAccountAuthenticationState(c.env, {
-      tenantId,
-      userId,
-      lifecycle: 'deleted',
-      sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
-      operationId: deletionOperationId,
-      revokeSessions: true,
-    });
     const completedAt = Math.floor(Date.now() / 1000);
-    if (!(await lifecycle.completeDeletion(userId, deletionOperationId, completedAt))) {
+    const claimedLifecycle = await lifecycle.get(userId);
+    if (
+      !claimedLifecycle ||
+      (await deleteOneGuestAccount(c.env, {
+        tenantId,
+        core: authCtx.coreAdapter,
+        coreBindingRef: deletionRoute.coreBindingRef,
+        candidate: claimedLifecycle,
+        now: completedAt,
+      })) !== 'deleted'
+    ) {
       throw new Error('guest_administrative_deletion_completion_conflict');
     }
 
@@ -691,13 +673,11 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
           reason: 'manual_cleanup',
           source: 'guest_cleanup_api',
         };
-        const deletionRouteJson = JSON.stringify(
-          await createGuestDeletionRoute(c.env, {
-            tenantId,
-            userId,
-            completionAuditMode: 'outbox',
-          })
-        );
+        const deletionRoute = await createGuestDeletionRoute(c.env, {
+          tenantId,
+          userId,
+          completionAuditMode: 'outbox',
+        });
         const completionAuditId = `account-guest-deleted-${deletionOperationId}`;
         await createAuditLogFromContext(
           c,
@@ -724,37 +704,25 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
           userId,
           deletionOperationId,
           Math.floor(deletingVersionMs / 1000),
-          deletionRouteJson,
+          JSON.stringify(deletionRoute),
           deletingVersionMs
         );
         if (!deletionClaimed) {
           await auditOutbox.remove(auditTask.audit_id);
           throw new Error('guest_administrative_deletion_conflict');
         }
-        await transitionAccountAuthenticationState(c.env, {
-          tenantId,
-          userId,
-          lifecycle: 'deleting',
-          sourceVersionMs: deletingVersionMs,
-          operationId: deletionOperationId,
-          revokeSessions: true,
-        });
-        // No active credential remains, delete the guest account.
-        await authCtx.coreAdapter.execute(
-          'DELETE FROM guest_devices WHERE tenant_id = ? AND user_id = ?',
-          [tenantId, userId]
-        );
-        await createRuntimeUserStore(c, tenantId).deleteUser(userId);
-        await transitionAccountAuthenticationState(c.env, {
-          tenantId,
-          userId,
-          lifecycle: 'deleted',
-          sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
-          operationId: deletionOperationId,
-          revokeSessions: true,
-        });
         const completedAt = Math.floor(Date.now() / 1000);
-        if (!(await lifecycle.completeDeletion(userId, deletionOperationId, completedAt))) {
+        const claimedLifecycle = await lifecycle.get(userId);
+        if (
+          !claimedLifecycle ||
+          (await deleteOneGuestAccount(c.env, {
+            tenantId,
+            core: authCtx.coreAdapter,
+            coreBindingRef: deletionRoute.coreBindingRef,
+            candidate: claimedLifecycle,
+            now: completedAt,
+          })) !== 'deleted'
+        ) {
           throw new Error('guest_administrative_deletion_completion_conflict');
         }
         await deliverGuestDeletionCompletionAudit(c, {

@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   audit: vi.fn(),
   hold: vi.fn(),
   recover: vi.fn(),
+  releaseReservation: vi.fn(),
   events: [] as string[],
 }));
 vi.mock('../account-guest-upgrade', () => ({ recoverAccountGuestUpgrade: mocks.recover }));
@@ -38,11 +39,16 @@ vi.mock('../account-identifier-addition', () => ({
   buildAccountExternalSubjectAddition: vi.fn(),
 }));
 vi.mock('../account-directory-reservation', () => ({
-  InitialAccountIdentifierReservationService: vi.fn(),
+  InitialAccountIdentifierReservationService: vi.fn(function () {
+    return { release: mocks.releaseReservation };
+  }),
 }));
-vi.mock('../lookup-bucket-write-route', () => ({ createLookupBucketWriteResolver: vi.fn() }));
+vi.mock('../lookup-bucket-write-route', () => ({
+  createLookupBucketWriteResolver: vi.fn(async () => vi.fn()),
+}));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
+  validateAccountDirectoryPublication: vi.fn(async (value) => value),
   resolveAccountDataContext: mocks.resolve,
   resolveTenantDatabaseSourceFromRegistry: mocks.piiSource,
   ensureDatabaseAdapter: () => ({ execute: mocks.piiExecute, query: mocks.piiQuery }),
@@ -316,6 +322,25 @@ describe('hourly guest deletion state transitions', () => {
         resourceId: 'guest',
       })
     );
+  });
+  it('releases verified upgrade reservations and clears proof before completing deletion', async () => {
+    const publication = { operationId: 'verified-upgrade-reservation' };
+    mocks.piiQuery.mockResolvedValueOnce([
+      {
+        operation_id: 'verified-upgrade',
+        user_id: 'guest',
+        state: 'verified',
+        reservation_publication_json: JSON.stringify(publication),
+      },
+    ]);
+
+    expect(await run()).toBe('deleted');
+    expect(mocks.releaseReservation).toHaveBeenCalledWith(publication);
+    expect(mocks.piiExecute).toHaveBeenCalledWith(
+      expect.stringContaining("SET state = 'canceled', proof_payload_json = NULL"),
+      [90000, 'tenant', 'guest']
+    );
+    expect((await lifecycle.get('guest'))?.phase).toBe('deleted');
   });
   it.each(['registered', 'upgrading'])('does not delete a guest that became %s', async (phase) => {
     await core.execute('UPDATE guest_account_lifecycle SET phase = ?', [phase]);

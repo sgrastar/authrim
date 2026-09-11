@@ -198,6 +198,60 @@ describe('guest deletion audit reconciliation outbox', () => {
     expect(await restartedRepository.get('account-guest-deleted-operation-1')).toBeNull();
   });
 
+  it('drains more than one due page during the same maintenance visit', async () => {
+    const lifecycle = new GuestLifecycleRepository(adapter, 'tenant-a');
+    const repository = new GuestDeletionAuditOutboxRepository(adapter, 'tenant-a');
+    for (let index = 0; index < 21; index += 1) {
+      const userId = `guest-bulk-${index}`;
+      const operationId = `operation-bulk-${index}`;
+      await adapter.execute(
+        `INSERT INTO identity_accounts
+           (tenant_id, legacy_user_id, account_type, registration_state, deleted_at)
+         VALUES (?, ?, 'user', 'guest', NULL)`,
+        ['tenant-a', userId]
+      );
+      await lifecycle.enroll({
+        userId,
+        clientId: 'client-1',
+        createdAt: 100,
+        deletionAfterDays: null,
+        policyVersion: 'policy-1',
+      });
+      expect(
+        await lifecycle.beginAdministrativeDeletion(
+          userId,
+          operationId,
+          999,
+          deletionRouteJson,
+          999000
+        )
+      ).toBe(true);
+      expect(await lifecycle.completeDeletion(userId, operationId, 1000)).toBe(true);
+      await repository.enqueue({
+        auditId: `account-guest-deleted-${operationId}`,
+        userId,
+        operationId,
+        actorUserId: 'admin-1',
+        ipAddress: 'unknown',
+        userAgent: 'unknown',
+        metadataJson: '{}',
+        createdAt: 900,
+      });
+    }
+    const writeAudit = vi.fn().mockResolvedValue(undefined);
+
+    expect(
+      await processGuestDeletionAuditOutbox(
+        {} as Env,
+        [{ tenantId: 'tenant-a', adapters: [{ adapter, bindingRef: 'CORE' }] }],
+        { info: vi.fn(), warn: vi.fn() },
+        { now: () => 1001, nowMs: () => 0, deadlineMs: 1, writeAudit }
+      )
+    ).toEqual({ processed: 21, succeeded: 21, retrying: 0 });
+    expect(writeAudit).toHaveBeenCalledTimes(21);
+    expect(await repository.listDue(1001, 100)).toEqual([]);
+  });
+
   it('uses the configured audit store rather than the identity shard during replay', async () => {
     const repository = new GuestDeletionAuditOutboxRepository(adapter, 'tenant-a');
     await repository.enqueue({
