@@ -165,6 +165,17 @@ export const USER_EVENTS = {
   LOGOUT: 'user.logout',
 } as const;
 
+/** Durable human account notifications; guest registration is separate from account type. */
+export const ACCOUNT_EVENTS = {
+  ACCOUNT_CREATED: 'account.created',
+  ACCOUNT_UPDATED: 'account.updated',
+  ACCOUNT_DELETED: 'account.deleted',
+  REGISTRATION_CHANGED: 'account.registration.changed',
+  EMAIL_CHANGED: 'account.email.changed',
+} as const;
+
+export type AccountEventType = (typeof ACCOUNT_EVENTS)[keyof typeof ACCOUNT_EVENTS];
+
 export type UserEventType = (typeof USER_EVENTS)[keyof typeof USER_EVENTS];
 
 // =============================================================================
@@ -300,6 +311,7 @@ export const EVENT_TYPES = {
   ...TOKEN_EVENTS,
   ...CONSENT_EVENTS,
   ...USER_EVENTS,
+  ...ACCOUNT_EVENTS,
   ...CLIENT_EVENTS,
   ...SECURITY_EVENTS,
   ...DOMAIN_EVENTS,
@@ -313,6 +325,7 @@ export type EventType =
   | TokenEventType
   | ConsentEventType
   | UserEventType
+  | AccountEventType
   | ClientEventType
   | SecurityEventType
   | DomainEventType

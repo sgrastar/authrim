@@ -27,6 +27,8 @@ export interface Webhook {
 	name: string;
 	url: string;
 	events: string[];
+	payloadFields?: Array<'email' | 'registration_state'>;
+	registrationStates?: Array<'guest' | 'registered'>;
 	has_secret: boolean;
 	headers?: Record<string, string>;
 	retry_policy: WebhookRetryPolicy;
@@ -161,6 +163,8 @@ export interface CreateWebhookRequest {
 	name: string;
 	url: string;
 	events: string[];
+	payloadFields?: Array<'email' | 'registration_state'>;
+	registrationStates?: Array<'guest' | 'registered'>;
 	secret?: string;
 	headers?: Record<string, string>;
 	retryPolicy?: Partial<WebhookRetryPolicy>;
@@ -175,6 +179,8 @@ export interface UpdateWebhookRequest {
 	name?: string;
 	url?: string;
 	events?: string[];
+	payloadFields?: Array<'email' | 'registration_state'>;
+	registrationStates?: Array<'guest' | 'registered'>;
 	secret?: string;
 	headers?: Record<string, string>;
 	retryPolicy?: Partial<WebhookRetryPolicy>;
@@ -227,10 +233,13 @@ export interface ListDeliveriesParams {
  * Common webhook event patterns
  */
 export const COMMON_EVENT_PATTERNS = [
+	{ pattern: 'account.created', description: 'Account created' },
+	{ pattern: 'account.updated', description: 'Account updated' },
+	{ pattern: 'account.deleted', description: 'Account deleted' },
+	{ pattern: 'account.registration.changed', description: 'Registration state changed' },
+	{ pattern: 'account.email.changed', description: 'Confirmed email address change' },
+	{ pattern: 'account.*', description: 'All durable human account events' },
 	{ pattern: 'user.*', description: 'All user events' },
-	{ pattern: 'user.created', description: 'User creation' },
-	{ pattern: 'user.updated', description: 'User updates' },
-	{ pattern: 'user.deleted', description: 'User deletion' },
 	{ pattern: 'session.*', description: 'All session events' },
 	{ pattern: 'session.created', description: 'Session creation (login)' },
 	{ pattern: 'session.revoked', description: 'Session revocation (logout)' },

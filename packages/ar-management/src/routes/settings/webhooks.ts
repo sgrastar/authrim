@@ -21,6 +21,9 @@
 import type { Context } from 'hono';
 import {
   createWebhookRegistry,
+  validateAccountWebhookFields,
+  validateAccountRegistrationStates,
+  type AccountWebhookField,
   validateEventPattern,
   createAuditLogFromContext,
   createAuthContextFromHono,
@@ -72,6 +75,8 @@ interface WebhookCreateInput {
   name: string;
   url: string;
   events: string[];
+  payloadFields?: AccountWebhookField[];
+  registrationStates?: Array<'guest' | 'registered'>;
   secret?: string;
   headers?: Record<string, string>;
   retryPolicy?: WebhookRetryPolicy;
@@ -86,6 +91,8 @@ interface WebhookUpdateInput {
   name?: string;
   url?: string;
   events?: string[];
+  payloadFields?: AccountWebhookField[];
+  registrationStates?: Array<'guest' | 'registered'>;
   secret?: string;
   headers?: Record<string, string>;
   retryPolicy?: Partial<WebhookRetryPolicy>;
@@ -104,6 +111,8 @@ interface CreateWebhookRequest {
   name: string;
   url: string;
   events: string[];
+  payloadFields?: AccountWebhookField[];
+  registrationStates?: Array<'guest' | 'registered'>;
   secret?: string;
   headers?: Record<string, string>;
   retryPolicy?: {
@@ -123,6 +132,8 @@ interface UpdateWebhookRequest {
   name?: string;
   url?: string;
   events?: string[];
+  payloadFields?: AccountWebhookField[];
+  registrationStates?: Array<'guest' | 'registered'>;
   secret?: string;
   headers?: Record<string, string>;
   retryPolicy?: {
@@ -449,6 +460,11 @@ function validateCreateRequest(body: CreateWebhookRequest): { valid: boolean; er
 /**
  * Format webhook for API response (exclude encrypted secret)
  */
+function hasAccountPayloadPermission(c: Context<{ Bindings: Env }>): boolean {
+  const auth = (c as Context).get('adminAuth') as { permissions?: string[] } | undefined;
+  return hasAdminPermission(auth?.permissions ?? [], ADMIN_PERMISSIONS.WEBHOOKS_PAYLOAD_READ);
+}
+
 function formatWebhookResponse(webhook: WebhookConfigWithScope) {
   return {
     id: webhook.id,
@@ -458,6 +474,8 @@ function formatWebhookResponse(webhook: WebhookConfigWithScope) {
     name: webhook.name,
     url: webhook.url,
     events: webhook.events,
+    payloadFields: webhook.payloadFields ?? [],
+    registrationStates: webhook.registrationStates ?? [],
     hasSecret: !!webhook.secretEncrypted,
     headers: webhook.headers,
     retryPolicy: webhook.retryPolicy,
@@ -489,6 +507,41 @@ export async function createWebhook(c: Context<{ Bindings: Env }>) {
     return c.json({ error: 'invalid_request', error_description: 'Invalid JSON body' }, 400);
   }
 
+  if (
+    body.registrationStates !== undefined &&
+    !validateAccountRegistrationStates(body.registrationStates)
+  ) {
+    return c.json(
+      { error: 'invalid_request', error_description: 'Invalid registrationStates' },
+      400
+    );
+  }
+  if (body.payloadFields !== undefined && !validateAccountWebhookFields(body.payloadFields)) {
+    return c.json(
+      {
+        error: 'invalid_request',
+        error_description:
+          'payloadFields must contain only unique email or registration_state fields',
+      },
+      400
+    );
+  }
+  if (body.payloadFields?.length && !hasAccountPayloadPermission(c)) {
+    return c.json(
+      {
+        error: 'insufficient_permissions',
+        error_description:
+          'Webhook payload read permission is required to configure account fields',
+      },
+      403
+    );
+  }
+  if (body.clientId && body.payloadFields?.length) {
+    return c.json(
+      { error: 'invalid_request', error_description: 'Account fields require tenant scope' },
+      400
+    );
+  }
   // Validate request
   const validation = validateCreateRequest(body);
   if (!validation.valid) {
@@ -503,6 +556,8 @@ export async function createWebhook(c: Context<{ Bindings: Env }>) {
       name: body.name,
       url: body.url,
       events: body.events,
+      payloadFields: body.payloadFields,
+      registrationStates: body.registrationStates,
       secret: body.secret,
       headers: body.headers,
       timeoutMs: body.timeoutMs,
@@ -526,6 +581,8 @@ export async function createWebhook(c: Context<{ Bindings: Env }>) {
       name: body.name,
       url: body.url,
       events: body.events,
+      payloadFields: body.payloadFields,
+      registrationStates: body.registrationStates,
       scope: body.clientId ? 'client' : 'tenant',
     });
 
@@ -641,11 +698,44 @@ export async function updateWebhook(c: Context<{ Bindings: Env }>) {
       return c.json({ error: 'not_found', error_description: 'Webhook not found' }, 404);
     }
 
+    if (
+      body.registrationStates !== undefined &&
+      !validateAccountRegistrationStates(body.registrationStates)
+    ) {
+      return c.json(
+        { error: 'invalid_request', error_description: 'Invalid registrationStates' },
+        400
+      );
+    }
+    if (body.payloadFields !== undefined && !validateAccountWebhookFields(body.payloadFields)) {
+      return c.json({ error: 'invalid_request', error_description: 'Invalid payloadFields' }, 400);
+    }
+    if (
+      (existing.payloadFields?.length || body.payloadFields?.length) &&
+      !hasAccountPayloadPermission(c)
+    ) {
+      return c.json(
+        {
+          error: 'insufficient_permissions',
+          error_description:
+            'Webhook payload read permission is required to modify this destination',
+        },
+        403
+      );
+    }
+    if (existing.scope !== 'tenant' && body.payloadFields?.length) {
+      return c.json(
+        { error: 'invalid_request', error_description: 'Account fields require tenant scope' },
+        400
+      );
+    }
     // Map to WebhookUpdateInput
     const input: WebhookUpdateInput = {
       name: body.name,
       url: body.url,
       events: body.events,
+      payloadFields: body.payloadFields,
+      registrationStates: body.registrationStates,
       secret: body.secret,
       headers: body.headers,
       timeoutMs: body.timeoutMs,

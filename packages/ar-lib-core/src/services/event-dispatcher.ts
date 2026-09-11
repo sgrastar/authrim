@@ -1,3 +1,4 @@
+import { validateAccountRegistrationStates } from './account-webhook-fields';
 /**
  * Event Dispatcher Service
  *
@@ -247,8 +248,8 @@ export class EventDispatcherImpl implements IEventDispatcher {
     payload: EventPublishPayload<T>,
     options?: EventPublishOptions
   ): Promise<EventPublishResult> {
-    const eventId = `evt_${crypto.randomUUID().replace(/-/g, '')}`;
-    const timestamp = Date.now();
+    const eventId = options?.durableEvent?.id ?? `evt_${crypto.randomUUID().replace(/-/g, '')}`;
+    const timestamp = options?.durableEvent?.occurredAt ?? Date.now();
     const errors: EventDeliveryError[] = [];
 
     // Initialize delivery summary
@@ -281,7 +282,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
       // 2. Deduplication check
       const dedupKey = this.getDedupKey(payload.tenantId, options?.deduplicationKey ?? eventId);
 
-      const isDuplicate = await this.checkDeduplication(dedupKey);
+      const isDuplicate = !options?.durableEvent && (await this.checkDeduplication(dedupKey));
       if (isDuplicate) {
         return {
           eventId,
@@ -341,10 +342,12 @@ export class EventDispatcherImpl implements IEventDispatcher {
       };
 
       // 5. Set deduplication lock before processing
-      await this.setDeduplication(
-        dedupKey,
-        options?.deduplicationTtlSeconds ?? this.options.deduplicationTtlSeconds
-      );
+      if (!options?.durableEvent) {
+        await this.setDeduplication(
+          dedupKey,
+          options?.deduplicationTtlSeconds ?? this.options.deduplicationTtlSeconds
+        );
+      }
 
       // 6. Parallel delivery to handlers and webhooks
       const [handlerResults, webhookResults] = await Promise.all([
@@ -356,7 +359,7 @@ export class EventDispatcherImpl implements IEventDispatcher {
         // Webhook delivery
         options?.skipWebhooks
           ? { sent: 0, failed: 0, skipped: 0 }
-          : this.deliverWebhooks(event, execContext, errors),
+          : this.deliverWebhooks(event, execContext, errors, options?.accountWebhookData),
       ]);
 
       delivery.handlers = handlerResults;
@@ -374,7 +377,8 @@ export class EventDispatcherImpl implements IEventDispatcher {
       }
 
       // 8. Build result
-      const success = errors.length === 0;
+      const success =
+        errors.length === 0 && (!options?.durableEvent || delivery.webhooks.skipped === 0);
       const publishResult: EventPublishResult = {
         eventId,
         success,
@@ -507,15 +511,29 @@ export class EventDispatcherImpl implements IEventDispatcher {
   private async deliverWebhooks(
     event: UnifiedEvent,
     context: ExecutionContext,
-    errors: EventDeliveryError[]
+    errors: EventDeliveryError[],
+    accountWebhookData?: EventPublishOptions['accountWebhookData']
   ): Promise<{ sent: number; failed: number; skipped: number }> {
+    // These remain internal/audit vocabulary, not subscription webhook events.
+    if (
+      ['user.created', 'user.updated', 'user.deleted'].includes(event.type) ||
+      /^account\.(?:guest|registered)\.(?:created|updated|deleted)$/.test(event.type) ||
+      /^account\.registration\.(?:promoted|demoted)$/.test(event.type)
+    ) {
+      return { sent: 0, failed: 0, skipped: 0 };
+    }
     // Find matching webhooks (tenant + optional client)
     const clientId = event.metadata?.actor?.type === 'client' ? event.metadata.actor.id : undefined;
-    const webhooks = await this.webhookRegistry.findByEventType(
-      event.tenantId,
-      event.type,
-      clientId
-    );
+    let webhooks = await this.webhookRegistry.findByEventType(event.tenantId, event.type, clientId);
+
+    webhooks = webhooks.filter((webhook) => {
+      if (!event.type.startsWith('account.')) return true;
+      const states = webhook.registrationStates ?? [];
+      return (
+        validateAccountRegistrationStates(states) &&
+        (!states.length || states.some((state) => state === event.data.registration_state))
+      );
+    });
 
     if (webhooks.length === 0) {
       return { sent: 0, failed: 0, skipped: 0 };
@@ -529,7 +547,9 @@ export class EventDispatcherImpl implements IEventDispatcher {
     for (let i = 0; i < webhooks.length; i += this.options.maxConcurrentWebhooks) {
       const batch = webhooks.slice(i, i + this.options.maxConcurrentWebhooks);
 
-      const results = await Promise.all(batch.map((webhook) => this.sendToWebhook(event, webhook)));
+      const results = await Promise.all(
+        batch.map((webhook) => this.sendToWebhook(event, webhook, accountWebhookData))
+      );
 
       for (let j = 0; j < results.length; j++) {
         const result = results[j];
@@ -565,7 +585,8 @@ export class EventDispatcherImpl implements IEventDispatcher {
    */
   private async sendToWebhook(
     event: UnifiedEvent,
-    webhook: WebhookConfigWithScope
+    webhook: WebhookConfigWithScope,
+    accountWebhookData?: EventPublishOptions['accountWebhookData']
   ): Promise<{
     success: boolean;
     skipped?: boolean;
@@ -599,9 +620,15 @@ export class EventDispatcherImpl implements IEventDispatcher {
         type: event.type,
         timestamp: event.timestamp,
         tenantId: event.tenantId,
-        data: event.data,
+        data:
+          accountWebhookData && event.type.startsWith('account.')
+            ? await accountWebhookData(webhook)
+            : event.data,
       });
 
+      if (new TextEncoder().encode(payload).byteLength > this.options.maxPayloadSize) {
+        throw new Error('Webhook payload too large');
+      }
       // Send webhook
       const result = await sendWebhook({
         url: webhook.url,

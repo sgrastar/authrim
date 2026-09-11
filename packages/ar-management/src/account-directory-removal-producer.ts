@@ -1,5 +1,7 @@
 import {
   createLookupBlindIndexes,
+  CanonicalIdentityRepository,
+  captureAccountDeletionSnapshot,
   insertPreparedAccountDirectoryRemovals,
   markAccountDirectoryRemovalReady,
   validateAccountDirectoryPublication,
@@ -235,10 +237,18 @@ export async function markAccountDirectoryRemovalsReady(
 
 export async function eraseAccountPiiAfterDirectoryRemovalPrepared(
   pii: DatabaseAdapter,
-  input: { tenantId: string; userId: string },
+  input: { tenantId: string; userId: string; core: DatabaseAdapter },
   now = Math.floor(Date.now() / 1000)
 ): Promise<void> {
   if (!Number.isSafeInteger(now) || now < 1) throw new Error('invalid_directory_removal_time');
+  const account = await new CanonicalIdentityRepository(
+    input.core,
+    input.tenantId
+  ).findAccountByLegacyUserId(input.userId, {
+    includeInactive: true,
+    consistencyClass: 'primary_required',
+  });
+  if (account) await captureAccountDeletionSnapshot(pii, account);
   const accountId = `account:${input.userId}`;
   const statements = [
     {

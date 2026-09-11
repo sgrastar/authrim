@@ -31,6 +31,14 @@
             {
               "path": "004_guest_deletion_audit_outbox.sql",
               "checksum": "cf3721b57c9f805be91dcc9c9d91fb9dd00febd3c927bf4554dfeecf4a277ecb"
+            },
+            {
+              "path": "005_account_webhook_outbox.sql",
+              "checksum": "af4e3caa86295084eaf66b187e6cc6cbaa9fefc9a9f8fddb3c1fc92fd4a90e70"
+            },
+            {
+              "path": "006_webhook_payload_fields.sql",
+              "checksum": "1eb99a4cbd9d230f9804d455283a3fe173dbf40cfdff36b60d52d026368d7941"
             }
           ]
         },
@@ -47,6 +55,14 @@
             {
               "path": "002_guest_upgrade_operations.sql",
               "checksum": "b351fb80247f74fddbbdcedadd96342173a5bf369a7e50c74b7c8e15c9fb6fcf"
+            },
+            {
+              "path": "003_account_webhook_outbox.sql",
+              "checksum": "5a8d11f9c7fa2ea9e1834346ea366c374ca3f1332c7981a3985acc9432c48c71"
+            },
+            {
+              "path": "004_account_webhook_snapshots.sql",
+              "checksum": "d13db1de645d4e6566c4f41301fc0e79385a470f936b27ac5951549b092f3833"
             }
           ]
         },
@@ -112,6 +128,14 @@
             {
               "path": "004_guest_deletion_audit_outbox.sql",
               "checksum": "cbd29fa6bbe4b211d6bffff90d645034225a0e21cc9d3546fbd9726a7a99b49b"
+            },
+            {
+              "path": "005_account_webhook_outbox.sql",
+              "checksum": "6c4a604da643e1cd0e3cbd8ee8050392639bcb29b60daf59e041a21bd9f24985"
+            },
+            {
+              "path": "006_webhook_payload_fields.sql",
+              "checksum": "6202e6e4317ff56dfb645c10a0d9d2e93f4378680ef6898289bef541c3875d18"
             }
           ]
         },
@@ -127,6 +151,14 @@
             {
               "path": "002_guest_upgrade_operations.sql",
               "checksum": "9395701e9d5d647e18805b3ab8fd23e504e424de162d25aa1f20d29b963a5f0d"
+            },
+            {
+              "path": "003_account_webhook_outbox.sql",
+              "checksum": "5a8d11f9c7fa2ea9e1834346ea366c374ca3f1332c7981a3985acc9432c48c71"
+            },
+            {
+              "path": "004_account_webhook_snapshots.sql",
+              "checksum": "d13db1de645d4e6566c4f41301fc0e79385a470f936b27ac5951549b092f3833"
             }
           ]
         }
@@ -164,6 +196,14 @@
         {
           "path": "004_guest_deletion_audit_outbox.sql",
           "checksum": "cf3721b57c9f805be91dcc9c9d91fb9dd00febd3c927bf4554dfeecf4a277ecb"
+        },
+        {
+          "path": "005_account_webhook_outbox.sql",
+          "checksum": "af4e3caa86295084eaf66b187e6cc6cbaa9fefc9a9f8fddb3c1fc92fd4a90e70"
+        },
+        {
+          "path": "006_webhook_payload_fields.sql",
+          "checksum": "1eb99a4cbd9d230f9804d455283a3fe173dbf40cfdff36b60d52d026368d7941"
         }
       ]
     },
@@ -184,6 +224,14 @@
         {
           "path": "002_guest_upgrade_operations.sql",
           "checksum": "b351fb80247f74fddbbdcedadd96342173a5bf369a7e50c74b7c8e15c9fb6fcf"
+        },
+        {
+          "path": "003_account_webhook_outbox.sql",
+          "checksum": "5a8d11f9c7fa2ea9e1834346ea366c374ca3f1332c7981a3985acc9432c48c71"
+        },
+        {
+          "path": "004_account_webhook_snapshots.sql",
+          "checksum": "d13db1de645d4e6566c4f41301fc0e79385a470f936b27ac5951549b092f3833"
         }
       ]
     },
@@ -273,6 +321,14 @@
         {
           "path": "004_guest_deletion_audit_outbox.sql",
           "checksum": "cbd29fa6bbe4b211d6bffff90d645034225a0e21cc9d3546fbd9726a7a99b49b"
+        },
+        {
+          "path": "005_account_webhook_outbox.sql",
+          "checksum": "6c4a604da643e1cd0e3cbd8ee8050392639bcb29b60daf59e041a21bd9f24985"
+        },
+        {
+          "path": "006_webhook_payload_fields.sql",
+          "checksum": "6202e6e4317ff56dfb645c10a0d9d2e93f4378680ef6898289bef541c3875d18"
         }
       ]
     },
@@ -292,6 +348,14 @@
         {
           "path": "002_guest_upgrade_operations.sql",
           "checksum": "9395701e9d5d647e18805b3ab8fd23e504e424de162d25aa1f20d29b963a5f0d"
+        },
+        {
+          "path": "003_account_webhook_outbox.sql",
+          "checksum": "5a8d11f9c7fa2ea9e1834346ea366c374ca3f1332c7981a3985acc9432c48c71"
+        },
+        {
+          "path": "004_account_webhook_snapshots.sql",
+          "checksum": "d13db1de645d4e6566c4f41301fc0e79385a470f936b27ac5951549b092f3833"
         }
       ]
     }

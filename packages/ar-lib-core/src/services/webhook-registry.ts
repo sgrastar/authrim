@@ -1,3 +1,7 @@
+import {
+  validateAccountWebhookFields,
+  validateAccountRegistrationStates,
+} from './account-webhook-fields';
 /**
  * Webhook Registry Service
  *
@@ -68,6 +72,8 @@ interface WebhookConfigRow {
   name: string;
   url: string;
   events: string; // JSON array
+  payload_fields?: string;
+  registration_states?: string;
   secret_encrypted: string | null;
   headers: string | null; // JSON
   retry_policy: string; // JSON
@@ -277,6 +283,16 @@ export class WebhookRegistryImpl implements IWebhookRegistry {
     const id = `wh_${crypto.randomUUID().replace(/-/g, '')}`;
     const now = new Date().toISOString();
 
+    if (input.payloadFields !== undefined && !validateAccountWebhookFields(input.payloadFields))
+      throw new Error('Invalid payloadFields');
+    if (input.clientId && input.payloadFields?.length)
+      throw new Error('Account payload fields require tenant scope');
+
+    if (
+      input.registrationStates !== undefined &&
+      !validateAccountRegistrationStates(input.registrationStates)
+    )
+      throw new Error('Invalid registrationStates');
     // Determine scope
     const scope: WebhookScope = input.clientId ? 'client' : 'tenant';
 
@@ -297,8 +313,8 @@ export class WebhookRegistryImpl implements IWebhookRegistry {
       `INSERT INTO webhook_configs (
         id, tenant_id, client_id, scope, name, url, events,
         secret_encrypted, headers, retry_policy, timeout_ms,
-        active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        active, created_at, updated_at, payload_fields, registration_states
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         tenantId,
@@ -314,6 +330,8 @@ export class WebhookRegistryImpl implements IWebhookRegistry {
         1, // active = true
         now,
         now,
+        JSON.stringify(input.payloadFields ?? []),
+        JSON.stringify(input.registrationStates ?? []),
       ]
     );
 
@@ -348,9 +366,28 @@ export class WebhookRegistryImpl implements IWebhookRegistry {
       this.validateEventPatterns(input.events);
     }
 
+    if (input.payloadFields !== undefined && !validateAccountWebhookFields(input.payloadFields))
+      throw new Error('Invalid payloadFields');
+    if (existing.scope !== 'tenant' && input.payloadFields?.length)
+      throw new Error('Account payload fields require tenant scope');
+
+    if (
+      input.registrationStates !== undefined &&
+      !validateAccountRegistrationStates(input.registrationStates)
+    )
+      throw new Error('Invalid registrationStates');
     // Build update fields
     const updates: string[] = [];
     const params: unknown[] = [];
+
+    if (input.registrationStates !== undefined) {
+      updates.push('registration_states = ?');
+      params.push(JSON.stringify(input.registrationStates));
+    }
+    if (input.payloadFields !== undefined) {
+      updates.push('payload_fields = ?');
+      params.push(JSON.stringify(input.payloadFields));
+    }
 
     if (input.name !== undefined) {
       updates.push('name = ?');
@@ -437,7 +474,8 @@ export class WebhookRegistryImpl implements IWebhookRegistry {
   async get(tenantId: string, id: string): Promise<WebhookConfigWithScope | null> {
     const row = await this.adapter.queryOne<WebhookConfigRow>(
       'SELECT * FROM webhook_configs WHERE id = ? AND tenant_id = ?',
-      [id, tenantId]
+      [id, tenantId],
+      { consistencyClass: 'primary_required' }
     );
 
     if (!row) {
@@ -522,7 +560,8 @@ export class WebhookRegistryImpl implements IWebhookRegistry {
 
     const rows = await this.adapter.query<WebhookConfigRow>(
       `SELECT * FROM webhook_configs WHERE ${conditions.join(' AND ')}`,
-      params
+      params,
+      { consistencyClass: 'primary_required' }
     );
 
     // Filter by event pattern matching
@@ -604,6 +643,17 @@ export class WebhookRegistryImpl implements IWebhookRegistry {
       name: row.name,
       url: row.url,
       events: JSON.parse(row.events),
+      registrationStates: (() => {
+        const states: unknown = JSON.parse(row.registration_states ?? '[]');
+        if (!validateAccountRegistrationStates(states))
+          throw new Error('Invalid stored registrationStates');
+        return states;
+      })(),
+      payloadFields: (() => {
+        const fields: unknown = JSON.parse(row.payload_fields ?? '[]');
+        if (!validateAccountWebhookFields(fields)) throw new Error('Invalid stored payloadFields');
+        return fields;
+      })(),
       secretEncrypted: row.secret_encrypted ?? undefined,
       headers: row.headers ? JSON.parse(row.headers) : undefined,
       retryPolicy: JSON.parse(row.retry_policy),

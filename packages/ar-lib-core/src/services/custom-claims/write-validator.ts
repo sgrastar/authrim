@@ -543,6 +543,17 @@ export async function persistCustomClaimWrite(
 
   const serialized = Object.keys(attributes).length > 0 ? JSON.stringify(attributes) : '{}';
   const now = Date.now();
+  // Read only the classification needed by the notification before committing PII. A routing
+  // failure must not leave an acknowledged PII write without its durable notification.
+  const account = await coreAdapter.queryOne<{
+    registration_state: 'guest' | 'registered';
+  }>(
+    `SELECT registration_state FROM identity_accounts
+     WHERE tenant_id = ? AND legacy_user_id = ? AND account_type = 'user'
+       AND directory_publication_state = 'active' AND lifecycle_state NOT IN ('deleted', 'deleting')`,
+    [tenantId, userId],
+    { consistencyClass: 'primary_required' }
+  );
   await piiAdapter.batch([
     ...validation.piiKeysToDelete.map((fieldKey) => ({
       sql: `DELETE FROM identity_sensitive_values
@@ -591,5 +602,22 @@ export async function persistCustomClaimWrite(
         now,
       ],
     },
+    ...(account
+      ? [
+          {
+            sql: `INSERT INTO account_webhook_outbox
+        (id, tenant_id, user_id, event_type, registration_state, changed_field, occurred_at)
+        VALUES (?, ?, ?, ?, ?, 'custom_profile', ?)`,
+            params: [
+              `evt_${crypto.randomUUID().replace(/-/g, '')}`,
+              tenantId,
+              userId,
+              'account.updated',
+              account.registration_state,
+              now,
+            ],
+          },
+        ]
+      : []),
   ]);
 }

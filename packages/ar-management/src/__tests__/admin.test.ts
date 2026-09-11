@@ -3572,6 +3572,7 @@ describe('Admin API Handlers', () => {
       expect(eraseAccountPii).toHaveBeenCalledWith(expect.anything(), {
         tenantId: 'default',
         userId,
+        core: expect.objectContaining({ queryOne: expect.any(Function) }),
       });
       expect(markAccountRemovalsReady).toHaveBeenCalled();
       expect(attemptAccountRemovals).toHaveBeenCalled();

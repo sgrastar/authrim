@@ -1368,6 +1368,18 @@ INSERT INTO test_table (created_at_s, created_at_ms)
 VALUES (__AUTHRIM_NOW_EPOCH_SECONDS__, __AUTHRIM_NOW_EPOCH_MILLISECONDS__);
 `.trim();
 
+  it('renders precise event time without changing legacy migration time', () => {
+    const rendered = renderPortableMigrationSql(
+      '__AUTHRIM_NOW_PRECISE_EPOCH_MILLISECONDS__',
+      'sqlite'
+    );
+    expect(rendered).toContain("substr(strftime('%f', 'now'), 4, 3)");
+    expect(rendered).not.toContain('__AUTHRIM_');
+    expect(renderPortableMigrationSql('__AUTHRIM_NOW_EPOCH_MILLISECONDS__', 'sqlite')).toBe(
+      '(unixepoch() * 1000)'
+    );
+  });
+
   it('renders sqlite expressions for D1 execution', () => {
     const rendered = renderPortableMigrationSql(sql, 'sqlite');
     expect(rendered).toContain('unixepoch()');

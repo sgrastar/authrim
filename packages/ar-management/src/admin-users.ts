@@ -1786,7 +1786,7 @@ export async function adminUserDeleteHandler(c: Context<{ Bindings: Env }>) {
           pii
         );
       }
-      await eraseAccountPiiAfterDirectoryRemovalPrepared(pii, { tenantId, userId });
+      await eraseAccountPiiAfterDirectoryRemovalPrepared(pii, { tenantId, userId, core });
       await new CanonicalRuntimeUserWriter(
         new CanonicalIdentityRepository(core, tenantId),
         pii

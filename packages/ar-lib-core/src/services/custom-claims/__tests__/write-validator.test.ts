@@ -63,6 +63,8 @@ function createMockCoreDb(state: {
       return [];
     }),
     queryOne: vi.fn(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('SELECT registration_state FROM identity_accounts'))
+        return { registration_state: 'registered' };
       if (sql.includes('FROM custom_claim_schemas')) {
         const fieldKeys = (params ?? []).slice(1).map(String);
         return (
@@ -323,17 +325,75 @@ describe('write-validator', () => {
       piiKeysToDelete: [],
     };
 
+    const coreDb = createMockCoreDb(coreState);
+    const piiDb = createMockPiiDb(piiState);
     await persistCustomClaimWrite({
-      db: createMockCoreDb(coreState),
-      dbPii: createMockPiiDb(piiState),
+      db: coreDb,
+      dbPii: piiDb,
       tenantId: 'default',
       userId: 'user-1',
       validation,
     });
 
+    expect(piiDb.batch).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sql: expect.stringContaining('INSERT INTO account_webhook_outbox'),
+          params: [
+            expect.stringMatching(/^evt_[a-f0-9]+$/),
+            'default',
+            'user-1',
+            'account.updated',
+            'registered',
+            expect.any(Number),
+          ],
+        }),
+      ])
+    );
+    expect(coreDb.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO account_webhook_outbox'),
+      expect.anything()
+    );
     expect(coreState.userCustomFields.get('user-1')).toEqual({ department: 'Sales' });
     expect(piiState.userCustomAttributes.get('user-1')).toEqual({ employeeNumber: '42' });
   });
+
+  it.each(['guest', 'registered'] as const)(
+    'keeps %s PII-only changes and notifications in one batch',
+    async (registrationState) => {
+      const schemas = [makeSchema({ field_key: 'privateField', is_pii: 1, is_required: 0 })];
+      const coreDb = createMockCoreDb({ schemas, userCustomFields: new Map() });
+      vi.mocked(coreDb.queryOne).mockResolvedValue({ registration_state: registrationState });
+      const piiDb = createMockPiiDb({ userCustomAttributes: new Map() });
+      const params = {
+        db: coreDb,
+        dbPii: piiDb,
+        tenantId: 'default',
+        userId: 'user-1',
+        validation: {
+          ok: true as const,
+          schemas,
+          nonPiiValues: {},
+          piiValues: { privateField: 'secret' },
+          nonPiiKeysToDelete: [],
+          piiKeysToDelete: [],
+        },
+      };
+      await persistCustomClaimWrite(params);
+      expect(coreDb.execute).not.toHaveBeenCalled();
+      const batch = vi.mocked(piiDb.batch).mock.calls[0][0];
+      const notification = batch.find((statement) =>
+        statement.sql.includes('INSERT INTO account_webhook_outbox')
+      );
+      expect(notification?.params).toContain('account.updated');
+      expect(JSON.stringify(notification)).not.toContain('secret');
+      expect(
+        batch.some((statement) => statement.sql.includes('INSERT INTO identity_sensitive_values'))
+      ).toBe(true);
+      vi.mocked(piiDb.batch).mockRejectedValueOnce(new Error('transaction rolled back'));
+      await expect(persistCustomClaimWrite(params)).rejects.toThrow('transaction rolled back');
+    }
+  );
 
   it('deletes cleared fields from both storage locations', async () => {
     const schemas = [

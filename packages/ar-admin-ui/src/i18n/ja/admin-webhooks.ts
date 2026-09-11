@@ -1,4 +1,11 @@
 const adminWebhooks = {
+	admin_webhooks_registration_filter: '登録状態で絞り込み（未選択はすべて）',
+	admin_webhooks_payload_save: '配信項目を保存',
+	admin_webhooks_payload_registration: '登録状態',
+	admin_webhooks_payload_email: 'メールアドレス（変更前・変更後）',
+	admin_webhooks_payload_hint:
+		'メール変更・アカウント削除時に配信するデータを選択します。選択しない項目は配信しません。',
+	admin_webhooks_payload_fields: 'アカウントの配信項目',
 	admin_webhooks_head_title: 'Webhooks - Authrim Admin',
 	admin_webhooks_title: 'Webhooks',
 	admin_webhooks_description:

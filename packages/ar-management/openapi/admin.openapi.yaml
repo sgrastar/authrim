@@ -52034,7 +52034,35 @@ components:
         url:
           type: string
           format: uri
+        registrationStates:
+          type: array
+          uniqueItems: true
+          maxItems: 2
+          default: []
+          items: { type: string, enum: [guest, registered] }
+          description: Account-event registration-state filter. Empty accepts both states; other event families are unaffected.
+        payloadFields:
+          type: array
+          uniqueItems: true
+          maxItems: 2
+          default: []
+          items:
+            type: string
+            enum: [email, registration_state]
+          description: >-
+            Opt-in event-time fields for account.email.changed and account deletion notifications.
+            Tenant-scoped subscriptions only. Configuration requires admin:webhooks:payload:read
+            in addition to webhook management permission. Existing subscriptions default to no
+            additional fields. Selected email snapshots expire after seven days. Configuration
+            changes cannot grant access to events older than the changed configuration.
         events:
+          description: >-
+            Subscription patterns. Tenant-scoped account.* subscriptions receive durable human
+            account notifications: account.created, account.updated, account.deleted,
+            account.registration.changed, and account.email.changed. Use registrationStates to filter
+            guest or registered accounts. Removed state-specific names and user.created, user.updated,
+            and user.deleted have no compatibility mapping and are not delivered as webhooks.
+            Account events are delivered asynchronously by scheduled maintenance.
           type: array
           minItems: 1
           items:
@@ -52063,6 +52091,27 @@ components:
         url:
           type: string
           format: uri
+        registrationStates:
+          type: array
+          uniqueItems: true
+          maxItems: 2
+          default: []
+          items: { type: string, enum: [guest, registered] }
+          description: Account-event registration-state filter. Empty accepts both states; other event families are unaffected.
+        payloadFields:
+          type: array
+          uniqueItems: true
+          maxItems: 2
+          default: []
+          items:
+            type: string
+            enum: [email, registration_state]
+          description: >-
+            Opt-in event-time fields for account.email.changed and account deletion notifications.
+            Tenant-scoped subscriptions only. Configuration requires admin:webhooks:payload:read
+            in addition to webhook management permission. Existing subscriptions default to no
+            additional fields. Selected email snapshots expire after seven days. Configuration
+            changes cannot grant access to events older than the changed configuration.
         events:
           type: array
           minItems: 1
@@ -52101,6 +52150,27 @@ components:
         url:
           type: string
           format: uri
+        registrationStates:
+          type: array
+          uniqueItems: true
+          maxItems: 2
+          default: []
+          items: { type: string, enum: [guest, registered] }
+          description: Account-event registration-state filter. Empty accepts both states; other event families are unaffected.
+        payloadFields:
+          type: array
+          uniqueItems: true
+          maxItems: 2
+          default: []
+          items:
+            type: string
+            enum: [email, registration_state]
+          description: >-
+            Opt-in event-time fields for account.email.changed and account deletion notifications.
+            Tenant-scoped subscriptions only. Configuration requires admin:webhooks:payload:read
+            in addition to webhook management permission. Existing subscriptions default to no
+            additional fields. Selected email snapshots expire after seven days. Configuration
+            changes cannot grant access to events older than the changed configuration.
         events:
           type: array
           items:
@@ -71117,3 +71187,88 @@ x-tagGroups:
       - Verifiable Credentials
       - Tombstones
       - Admin Miscellaneous
+
+webhooks:
+  accountLifecycle:
+    post:
+      summary: Durable human account lifecycle notification
+      description: >-
+        Sent to matching tenant-scoped webhook subscriptions. Delivery is asynchronous and at least
+        once. Retries preserve the event ID and timestamp. Consumers must deduplicate by ID and must
+        not assume delivery order. Updated events invalidate account data and may repeat for one
+        operation. Deletion events wait for the authentication deletion fence and guest cleanup.
+        Registration transitions describe committed state changes; no downgrade API is introduced.
+        Profile fields are omitted by default. Explicitly selected fields may include event-time email data; credentials are never included. The existing webhook signature protocol applies.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, type, timestamp, tenantId, data]
+              properties:
+                id: { type: string, description: Stable event ID for consumer deduplication. }
+                type:
+                  type: string
+                  enum:
+                    - account.email.changed
+                    - account.created
+                    - account.updated
+                    - account.deleted
+                    - account.registration.changed
+                timestamp:
+                  { type: string, format: date-time, description: Account mutation timestamp. }
+                tenantId: { type: string }
+                data:
+                  type: object
+                  additionalProperties: false
+                  required:
+                    [userId, registration_state, previous_registration_state, changed_fields]
+                  properties:
+                    account_id:
+                      type: string
+                      description: Canonical account ID, included with a selected snapshot.
+                    before:
+                      type: object
+                      description: Selected account fields immediately before deletion.
+                      additionalProperties: false
+                      properties:
+                        email: { type: [string, 'null'] }
+                        registration_state: { type: string, enum: [guest, registered] }
+                    after:
+                      type: 'null'
+                      description: Null for a deleted account.
+                    changes:
+                      type: object
+                      description: Selected before/after values for an email change.
+                      additionalProperties: false
+                      properties:
+                        email:
+                          type: object
+                          required: [before, after]
+                          additionalProperties: false
+                          properties:
+                            before: { type: [string, 'null'] }
+                            after: { type: [string, 'null'] }
+                        registration_state:
+                          type: object
+                          required: [before, after]
+                          additionalProperties: false
+                          properties:
+                            before: { type: string, enum: [guest, registered] }
+                            after: { type: string, enum: [guest, registered] }
+                    userId:
+                      type: string
+                      description: Internal user identifier, not necessarily the client's pairwise OIDC sub.
+                    registration_state: { type: string, enum: [guest, registered] }
+                    previous_registration_state:
+                      type: [string, 'null']
+                      enum: [guest, registered, null]
+                    changed_fields:
+                      type: array
+                      items:
+                        type: string
+                        enum: [account, profile, contact, custom_profile, registration_state]
+      responses:
+        '200':
+          description: Event acknowledged by the consumer.

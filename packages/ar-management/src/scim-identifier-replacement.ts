@@ -123,6 +123,7 @@ export async function syncScimIdentifierReplacements(
   const repository = new IdentifierReplacementOperationRepository(input.pii);
   const lookupForBucket = await createLookupBucketWriteResolver(input.env);
   const coordinator = new IdentifierReplacementCoordinator({
+    webhookCoreForAccount: async () => input.core,
     pii: input.pii,
     lookupForBucket,
     revokeCredentials: (replacement) =>

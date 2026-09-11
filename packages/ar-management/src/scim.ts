@@ -2874,7 +2874,7 @@ app.delete('/Users/:id', async (c) => {
 
     await eraseAccountPiiAfterDirectoryRemovalPrepared(
       piiAdapter,
-      { tenantId, userId },
+      { tenantId, userId, core: coreAdapter },
       Math.floor(now / 1000)
     );
 

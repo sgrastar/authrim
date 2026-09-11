@@ -79,6 +79,7 @@ import {
   listGuestLifecycleHandler,
 } from './admin-guest-retention';
 import { processGuestLifecycleMaintenance } from './guest-lifecycle-scheduled';
+import { processScheduledAccountWebhookOutbox } from './account-webhook-outbox';
 import { processGuestDeletionAuditOutbox } from './guest-deletion-audit-outbox';
 import { processScheduledIdentifierReplacements } from './identifier-replacement-scheduled';
 import {
@@ -4060,7 +4061,8 @@ app.onError((err, c) => {
 
 async function listMaintenanceTenantIds(
   env: Env,
-  log: ReturnType<typeof createLogger>
+  log: ReturnType<typeof createLogger>,
+  cursorKey = 'jobs:scheduled-maintenance:tenant-cursor'
 ): Promise<{
   targets: Array<{
     tenantId: string;
@@ -4070,7 +4072,6 @@ async function listMaintenanceTenantIds(
   nextCursor: string;
 }> {
   if (!env.AUTHRIM_CONFIG) throw new Error('maintenance_tenant_directory_unavailable');
-  const cursorKey = 'jobs:scheduled-maintenance:tenant-cursor';
   const afterTenantId = (await env.AUTHRIM_CONFIG.get(cursorKey))?.trim() || undefined;
   const tenants = await listEnvironmentTenantDefaultStores(env, {
     limit: 8,
@@ -4229,6 +4230,16 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
     return;
   }
   if (isInteractiveAdminJobCron(event.cron)) {
+    try {
+      if (!env.AUTHRIM_CONFIG) throw new Error('account_webhook_tenant_directory_unavailable');
+      const page = await listMaintenanceTenantIds(env, log, 'jobs:account-webhooks:tenant-cursor');
+      await processScheduledAccountWebhookOutbox(env, page.targets, log.module('ACCOUNT-WEBHOOKS'));
+      await env.AUTHRIM_CONFIG.put(page.cursorKey, page.nextCursor);
+    } catch (error) {
+      log.warn('Account webhook scheduled delivery deferred', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
     await processInteractiveAdminJobQueues(env, log);
     return;
   }
@@ -4271,6 +4282,11 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
           auditReconciliationError instanceof Error ? auditReconciliationError.name : 'Unknown',
       });
     }
+    await processScheduledAccountWebhookOutbox(
+      env,
+      maintenanceTargets,
+      log.module('ACCOUNT-WEBHOOKS')
+    );
 
     // Session expiration is owned by SessionStore alarms and its authoritative DO state.
 
