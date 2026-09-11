@@ -1,0 +1,9 @@
+<svg viewBox="0 0 200 40" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="logoGradientLight" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#15120c"/>
+      <stop offset="100%" style="stop-color:#0b8a8a"/>
+    </linearGradient>
+  </defs>
+  <text x="0" y="30" font-family="Cinzel, serif" font-size="28" font-weight="600" fill="url(#logoGradientLight)" letter-spacing="0.15em">AUTHRIM</text>
+</svg>
