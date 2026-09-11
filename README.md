@@ -1,5 +1,14 @@
 # Authrim
 
+<a href="https://authrim.com/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/authrim-logo-dark.svg">
+    <img src="docs/images/authrim-logo-light.svg" alt="Authrim — official website" width="240" height="48">
+  </picture>
+</a>
+
+**[authrim.com — Official website](https://authrim.com/)**
+
 > **Open Source Identity & Access Platform for the modern web**
 
 An open-source, serverless **Identity Hub** that combines authentication, authorization, and identity federation on **Cloudflare's global edge network**.
