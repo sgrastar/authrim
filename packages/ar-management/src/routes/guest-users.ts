@@ -70,6 +70,7 @@ async function deliverGuestDeletionCompletionAudit(
   input: {
     repository: GuestDeletionAuditOutboxRepository;
     task: GuestDeletionAuditOutboxRow;
+    completedAt: number;
     metadata: Record<string, unknown>;
     log: GuestDeletionAuditLogger;
     logActionPrefix: 'guest_user_delete' | 'guest_cleanup_user_delete';
@@ -85,7 +86,8 @@ async function deliverGuestDeletionCompletionAudit(
         input.task.user_id,
         input.metadata,
         'info',
-        input.task.audit_id
+        input.task.audit_id,
+        input.completedAt * 1000
       );
       try {
         await input.repository.markSucceeded(input.task.audit_id, Math.floor(Date.now() / 1000));
@@ -560,19 +562,15 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
       operationId: deletionOperationId,
       revokeSessions: true,
     });
-    if (
-      !(await lifecycle.completeDeletion(
-        userId,
-        deletionOperationId,
-        Math.floor(Date.now() / 1000)
-      ))
-    ) {
+    const completedAt = Math.floor(Date.now() / 1000);
+    if (!(await lifecycle.completeDeletion(userId, deletionOperationId, completedAt))) {
       throw new Error('guest_administrative_deletion_completion_conflict');
     }
 
     await deliverGuestDeletionCompletionAudit(c, {
       repository: auditOutbox,
       task: auditTask,
+      completedAt,
       metadata: auditMetadata,
       log,
       logActionPrefix: 'guest_user_delete',
@@ -755,18 +753,14 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
           operationId: deletionOperationId,
           revokeSessions: true,
         });
-        if (
-          !(await lifecycle.completeDeletion(
-            userId,
-            deletionOperationId,
-            Math.floor(Date.now() / 1000)
-          ))
-        ) {
+        const completedAt = Math.floor(Date.now() / 1000);
+        if (!(await lifecycle.completeDeletion(userId, deletionOperationId, completedAt))) {
           throw new Error('guest_administrative_deletion_completion_conflict');
         }
         await deliverGuestDeletionCompletionAudit(c, {
           repository: auditOutbox,
           task: auditTask,
+          completedAt,
           metadata: auditMetadata,
           log,
           logActionPrefix: 'guest_cleanup_user_delete',

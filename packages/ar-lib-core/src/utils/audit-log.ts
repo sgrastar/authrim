@@ -1081,6 +1081,8 @@ export async function createAuditLog(
  * @param resourceId - Resource identifier (e.g., kid)
  * @param metadata - Additional metadata object (will be JSON stringified)
  * @param severity - Severity level (default: 'info')
+ * @param auditId - Stable audit ID for idempotent retries
+ * @param createdAt - Original event timestamp in epoch milliseconds
  */
 export async function createAuditLogFromContext(
   c: Context<{ Bindings: Env }>,
@@ -1089,7 +1091,8 @@ export async function createAuditLogFromContext(
   resourceId: string,
   metadata: Record<string, unknown>,
   severity: 'info' | 'warning' | 'critical' = 'info',
-  auditId?: string
+  auditId?: string,
+  createdAt?: number
 ): Promise<void> {
   // Debug: Log that we're attempting to create audit log
   log.info('Creating audit log from context', { action, resource, resourceId });
@@ -1137,6 +1140,7 @@ export async function createAuditLogFromContext(
 
   await createAuditLog(c.env, {
     id: auditId,
+    createdAt,
     tenantId,
     userId: adminAuth.userId,
     action,

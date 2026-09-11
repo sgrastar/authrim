@@ -94,7 +94,7 @@ describe('guest deletion audit reconciliation outbox', () => {
         reason: 'manual_cleanup',
         source: 'guest_cleanup_api',
       }),
-      createdAt: 1000,
+      createdAt: 900,
     });
     const lifecycle = new GuestLifecycleRepository(adapter, 'tenant-a');
     expect(
@@ -121,7 +121,7 @@ describe('guest deletion audit reconciliation outbox', () => {
       { info: vi.fn(), warn: vi.fn() },
       {
         now: () => 1001,
-        writeAudit: async (task) => {
+        writeAudit: async (task, _adapter, completedAt) => {
           await writeLegacyAuditLog(adapter, {
             id: task.audit_id,
             tenantId: task.tenant_id,
@@ -133,7 +133,7 @@ describe('guest deletion audit reconciliation outbox', () => {
             userAgent: task.user_agent,
             metadata: task.metadata_json,
             severity: 'info',
-            createdAt: Number(task.created_at),
+            createdAt: completedAt / 1000,
           });
         },
       }
@@ -141,11 +141,11 @@ describe('guest deletion audit reconciliation outbox', () => {
 
     expect(summary).toEqual({ processed: 1, succeeded: 1, retrying: 0 });
     expect(
-      await adapter.queryOne<{ action: string; user_id: string }>(
-        'SELECT action, user_id FROM audit_log WHERE id = ?',
+      await adapter.queryOne<{ action: string; user_id: string; created_at: number }>(
+        'SELECT action, user_id, created_at FROM audit_log WHERE id = ?',
         ['account-guest-deleted-operation-1']
       )
-    ).toEqual({ action: 'user.deleted', user_id: 'admin-1' });
+    ).toEqual({ action: 'user.deleted', user_id: 'admin-1', created_at: 1000 });
     expect((await restartedRepository.get('account-guest-deleted-operation-1'))?.status).toBe(
       'succeeded'
     );

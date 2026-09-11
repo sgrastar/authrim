@@ -353,7 +353,8 @@ describe('guest account administration', () => {
           'user-1',
           expect.objectContaining({ registration_state: 'guest', reason: 'admin_action' }),
           'info',
-          expect.stringMatching(/^account-guest-deleted-/)
+          expect.stringMatching(/^account-guest-deleted-/),
+          expect.any(Number)
         );
         expect(mocks.auditOutboxEnqueue).toHaveBeenCalledTimes(1);
         expect(mocks.auditOutboxEnqueue.mock.invocationCallOrder[0]).toBeLessThan(
@@ -393,6 +394,10 @@ describe('guest account administration', () => {
     );
     expect(completionCalls).toHaveLength(2);
     expect(completionCalls[0][6]).toBe(completionCalls[1][6]);
+    expect(completionCalls[0][7]).toBe(completionCalls[1][7]);
+    expect(completionCalls[0][7]).toBe(
+      mocks.guestLifecycleCompleteDeletion.mock.calls[0][2] * 1000
+    );
     expect(mocks.auditOutboxMarkSucceeded).toHaveBeenCalledTimes(1);
     expect(mocks.guestLifecycleCompleteDeletion.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.auditOutboxMarkSucceeded.mock.invocationCallOrder[0]
@@ -508,7 +513,8 @@ describe('guest account administration', () => {
       'u1',
       expect.objectContaining({ registration_state: 'guest', reason: 'manual_cleanup' }),
       'info',
-      expect.stringMatching(/^account-guest-deleted-/)
+      expect.stringMatching(/^account-guest-deleted-/),
+      expect.any(Number)
     );
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),
@@ -553,6 +559,7 @@ describe('guest account administration', () => {
     );
     expect(firstUserCompletionCalls).toHaveLength(2);
     expect(firstUserCompletionCalls[0][6]).toBe(firstUserCompletionCalls[1][6]);
+    expect(firstUserCompletionCalls[0][7]).toBe(firstUserCompletionCalls[1][7]);
     const firstUserTransitions = mocks.transitionAccountAuthenticationState.mock.calls.filter(
       ([, input]) => input.userId === 'u1'
     );

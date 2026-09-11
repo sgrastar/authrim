@@ -185,11 +185,12 @@ export class GuestDeletionAuditOutboxRepository {
 async function writeGuestDeletionAudit(
   env: Env,
   adapter: DatabaseAdapter,
-  task: GuestDeletionAuditOutboxRow
+  task: GuestDeletionAuditOutboxRow,
+  completedAt: number
 ): Promise<void> {
   await createAuditLog({ ...env, DB: adapter } as unknown as Env, {
     id: task.audit_id,
-    createdAt: asNonNegativeInteger(task.created_at) * 1000,
+    createdAt: completedAt,
     tenantId: task.tenant_id,
     userId: task.actor_user_id,
     action: 'user.deleted',
@@ -208,12 +209,17 @@ export async function processGuestDeletionAuditOutbox(
   log: GuestDeletionAuditLogger,
   options: {
     now?: () => number;
-    writeAudit?: (task: GuestDeletionAuditOutboxRow, adapter: DatabaseAdapter) => Promise<void>;
+    writeAudit?: (
+      task: GuestDeletionAuditOutboxRow,
+      adapter: DatabaseAdapter,
+      completedAt: number
+    ) => Promise<void>;
   } = {}
 ): Promise<{ processed: number; succeeded: number; retrying: number }> {
   const now = options.now ?? (() => Math.floor(Date.now() / 1000));
   const writeAudit =
-    options.writeAudit ?? ((task, adapter) => writeGuestDeletionAudit(env, adapter, task));
+    options.writeAudit ??
+    ((task, adapter, completedAt) => writeGuestDeletionAudit(env, adapter, task, completedAt));
   let processed = 0;
   let succeeded = 0;
   let retrying = 0;
@@ -228,8 +234,9 @@ export async function processGuestDeletionAuditOutbox(
           const lifecycle = await adapter.queryOne<{
             phase: string;
             deletion_operation_id: string | null;
+            deleted_at: number | string | null;
           }>(
-            `SELECT phase, deletion_operation_id FROM guest_account_lifecycle
+            `SELECT phase, deletion_operation_id, deleted_at FROM guest_account_lifecycle
              WHERE tenant_id = ? AND user_id = ?`,
             [target.tenantId, task.user_id],
             { consistencyClass: 'primary_required' }
@@ -243,7 +250,13 @@ export async function processGuestDeletionAuditOutbox(
             retrying += 1;
             continue;
           }
-          await writeAudit(task, adapter);
+          const completedAt = asNonNegativeInteger(lifecycle.deleted_at ?? -1);
+          if (completedAt === 0) {
+            await repository.markRetry(task, attemptAt, 'guest_deletion_completion_time_missing');
+            retrying += 1;
+            continue;
+          }
+          await writeAudit(task, adapter, completedAt * 1000);
           await repository.markSucceeded(task.audit_id, attemptAt);
           succeeded += 1;
         } catch (error) {
