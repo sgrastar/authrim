@@ -930,6 +930,7 @@ describe('createAuditLogFromContext', () => {
 
   it('should extract user info from adminAuth context', async () => {
     const mockEnv = createMockEnv();
+    const createdAt = 1_779_321_600_123;
     const context = createMockContext({
       adminAuth: { userId: 'admin-user-456' },
       env: mockEnv,
@@ -941,12 +942,14 @@ describe('createAuditLogFromContext', () => {
       'signing_keys',
       'key-123',
       { reason: 'test rotation' },
-      'warning'
+      'warning',
+      'fixed-audit-id',
+      createdAt
     );
 
     const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
     expect(bindCall).toHaveBeenCalledWith(
-      expect.any(String), // id
+      'fixed-audit-id', // id
       'default', // tenantId
       'admin-user-456', // userId
       'signing_keys.rotate.normal',
@@ -956,8 +959,12 @@ describe('createAuditLogFromContext', () => {
       'Mozilla/5.0 Test Browser',
       '{"reason":"test rotation"}',
       'warning',
-      expect.any(Number), // createdAt
-      expect.any(String) // idempotency lookup ID
+      Math.floor(createdAt / 1000), // createdAt
+      'fixed-audit-id' // idempotency lookup ID
+    );
+    expect(mockUnifiedAuditService.logEvent).toHaveBeenCalledWith(
+      'default',
+      expect.objectContaining({ id: 'fixed-audit-id', createdAt })
     );
   });
 
