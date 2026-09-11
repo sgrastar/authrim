@@ -2,7 +2,7 @@
   <a href="https://authrim.com/">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="docs/images/authrim-logo-dark.svg">
-      <img src="docs/images/authrim-logo-light.svg" alt="Authrim" width="240" height="48">
+      <img src="docs/images/authrim-logo-light.svg" alt="Authrim" width="200" height="48">
     </picture>
   </a>
   <br>
