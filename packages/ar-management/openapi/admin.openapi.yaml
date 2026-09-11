@@ -13567,6 +13567,12 @@ paths:
         requires the account upgrade flow.
         Queues a users/import job for an already uploaded CSV artifact. The handler verifies tenant
         ownership, content type, size, checksum, and import options before creating the pending job.
+        CSV headers and cell values are normalized before schema validation. Group conditions evaluate
+        only validated, persisted attributes after account publication, never raw CSV columns.
+        New accounts use the durable account-directory creation workflow. A row awaiting publication
+        remains uncounted in processed/succeeded totals and resumes with the same job/row identity;
+        progress logs expose directory_pending. Existing users are updated on their verified account
+        storage route. A replay of this job's own account creation precedes duplicate-email handling.
       responses:
         '202':
           $ref: '#/components/responses/AdminJobUserImportAccepted'
@@ -31250,6 +31256,677 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CredentialOfferResult' }
         '409': { description: Published profile or pinned mapping could not be applied. }
+  /api/admin/service-groups:
+    get:
+      tags: [Service Groups]
+      summary: List service groups, field catalog, dependencies and reconciliation progress
+      description: >-
+        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Tenant scope is required. Reads require admin:users:read; mutations and previews require
+        admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
+        Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Only complete per-user snapshots are published. During reconciliation, old snapshots remain
+        readable with stale status; pending or failed results must not be treated as current membership.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceGroupResponse'
+        '400':
+          description: Invalid condition, reference, subject, or unavailable stable input.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '403':
+          description: Insufficient tenant-scoped permissions.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '404':
+          description: Group not found.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '409':
+          description: Rule version conflict or concurrent evaluation.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '503':
+          description: Input storage unavailable. No partial result was published.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+    post:
+      tags: [Service Groups]
+      summary: Create a service group
+      description: >-
+        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Tenant scope is required. Reads require admin:users:read; mutations and previews require
+        admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
+        Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Only complete per-user snapshots are published. During reconciliation, old snapshots remain
+        readable with stale status; pending or failed results must not be treated as current membership.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceGroupWrite'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceGroupResponse'
+        '400':
+          description: Invalid condition, reference, subject, or unavailable stable input.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '403':
+          description: Insufficient tenant-scoped permissions.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '404':
+          description: Group not found.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '409':
+          description: Rule version conflict or concurrent evaluation.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '503':
+          description: Input storage unavailable. No partial result was published.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+  /api/admin/service-groups/{id}:
+    put:
+      tags: [Service Groups]
+      summary: Replace a service group and validate the complete dependency graph
+      description: >-
+        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Tenant scope is required. Reads require admin:users:read; mutations and previews require
+        admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
+        Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Only complete per-user snapshots are published. During reconciliation, old snapshots remain
+        readable with stale status; pending or failed results must not be treated as current membership.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceGroupWrite'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceGroupResponse'
+        '400':
+          description: Invalid condition, reference, subject, or unavailable stable input.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '403':
+          description: Insufficient tenant-scoped permissions.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '404':
+          description: Group not found.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '409':
+          description: Rule version conflict or concurrent evaluation.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '503':
+          description: Input storage unavailable. No partial result was published.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+    delete:
+      tags: [Service Groups]
+      summary: Delete an unreferenced service group
+      description: >-
+        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Tenant scope is required. Reads require admin:users:read; mutations and previews require
+        admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
+        Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Only complete per-user snapshots are published. During reconciliation, old snapshots remain
+        readable with stale status; pending or failed results must not be treated as current membership.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceGroupVersion'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceGroupResponse'
+        '400':
+          description: Invalid condition, reference, subject, or unavailable stable input.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '403':
+          description: Insufficient tenant-scoped permissions.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '404':
+          description: Group not found.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '409':
+          description: Rule version conflict or concurrent evaluation.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '503':
+          description: Input storage unavailable. No partial result was published.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+  /api/admin/service-groups/validate:
+    post:
+      tags: [Service Groups]
+      summary: Validate a draft group and optionally preview membership for one user
+      description: >-
+        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Tenant scope is required. Reads require admin:users:read; mutations and previews require
+        admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
+        Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Only complete per-user snapshots are published. During reconciliation, old snapshots remain
+        readable with stale status; pending or failed results must not be treated as current membership.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceGroupPreview'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceGroupResponse'
+        '400':
+          description: Invalid condition, reference, subject, or unavailable stable input.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '403':
+          description: Insufficient tenant-scoped permissions.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '404':
+          description: Group not found.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '409':
+          description: Rule version conflict or concurrent evaluation.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '503':
+          description: Input storage unavailable. No partial result was published.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+  /api/admin/service-groups/reconcile:
+    post:
+      tags: [Service Groups]
+      summary: Request a durable restart of tenant membership reconciliation
+      description: >-
+        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Tenant scope is required. Reads require admin:users:read; mutations and previews require
+        admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
+        Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Only complete per-user snapshots are published. During reconciliation, old snapshots remain
+        readable with stale status; pending or failed results must not be treated as current membership.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceGroupVersion'
+      responses:
+        '202':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceGroupResponse'
+        '400':
+          description: Invalid condition, reference, subject, or unavailable stable input.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '403':
+          description: Insufficient tenant-scoped permissions.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '404':
+          description: Group not found.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '409':
+          description: Rule version conflict or concurrent evaluation.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '503':
+          description: Input storage unavailable. No partial result was published.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+  /api/admin/service-groups/subjects/{userId}:
+    get:
+      tags: [Service Groups]
+      summary: Read committed service memberships with versions and freshness
+      description: >-
+        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Tenant scope is required. Reads require admin:users:read; mutations and previews require
+        admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
+        Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Only complete per-user snapshots are published. During reconciliation, old snapshots remain
+        readable with stale status; pending or failed results must not be treated as current membership.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceGroupSnapshot'
+        '400':
+          description: Invalid condition, reference, subject, or unavailable stable input.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '403':
+          description: Insufficient tenant-scoped permissions.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '404':
+          description: Group not found.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '409':
+          description: Rule version conflict or concurrent evaluation.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '503':
+          description: Input storage unavailable. No partial result was published.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+  /api/admin/service-groups/subjects/{userId}/recover:
+    post:
+      tags: [Service Groups]
+      summary: Accept saved attributes after repairing failed user writes and recalculate
+      description: >-
+        Requires admin:users:write. The operator must review and repair saved user attributes first.
+        Accepts only the specified failed write boundaries for this tenant and user, records an audit
+        entry, and recalculates current membership. This does not roll back or repeat the original write.
+        Active writing boundaries cannot be cleared. Partial recovery can be retried by fetching the
+        remaining unsettledWrites from the subject snapshot. No authorization is granted.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [acceptSavedAttributes, boundaryIds]
+              properties:
+                acceptSavedAttributes: { type: boolean, enum: [true] }
+                boundaryIds:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  uniqueItems: true
+                  items: { type: string }
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceGroupSnapshot'
+        '400':
+          description: Invalid condition, reference, subject, or unavailable stable input.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '403':
+          description: Insufficient tenant-scoped permissions.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '404':
+          description: Group not found.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '409':
+          description: Rule version conflict or concurrent evaluation.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '503':
+          description: Input storage unavailable. No partial result was published.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+  /api/admin/service-groups/subjects/{userId}/reconcile:
+    post:
+      tags: [Service Groups]
+      summary: Recalculate and atomically publish one user membership snapshot
+      description: >-
+        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Tenant scope is required. Reads require admin:users:read; mutations and previews require
+        admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
+        Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Only complete per-user snapshots are published. During reconciliation, old snapshots remain
+        readable with stale status; pending or failed results must not be treated as current membership.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceGroupSnapshot'
+        '400':
+          description: Invalid condition, reference, subject, or unavailable stable input.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '403':
+          description: Insufficient tenant-scoped permissions.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '404':
+          description: Group not found.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '409':
+          description: Rule version conflict or concurrent evaluation.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '503':
+          description: Input storage unavailable. No partial result was published.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+  /api/admin/service-groups/{id}/members:
+    get:
+      tags: [Service Groups]
+      summary: List committed members with freshness and membership sources
+      description: >-
+        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Tenant scope is required. Reads require admin:users:read; mutations and previews require
+        admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
+        Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Only complete per-user snapshots are published. During reconciliation, old snapshots remain
+        readable with stale status; pending or failed results must not be treated as current membership.
+        Pagination scans evaluated subjects, so a page may contain no members and still return
+        a nextCursor. Unevaluated subjects are not included; check reconciliation progress for coverage.
+        If an evaluated member cannot be routed, its last committed membership remains visible with
+        failed freshness; other members in the page are still returned.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+        - name: after
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceGroupResponse'
+        '400':
+          description: Invalid condition, reference, subject, or unavailable stable input.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '403':
+          description: Insufficient tenant-scoped permissions.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '404':
+          description: Group not found.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '409':
+          description: Rule version conflict or concurrent evaluation.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '503':
+          description: Input storage unavailable. No partial result was published.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+  /api/admin/service-groups/{id}/members/{userId}:
+    put:
+      tags: [Service Groups]
+      summary: Add or remove only the manual membership contribution
+      description: >-
+        Service-user membership only; this operation does not grant authorization or emit token claims.
+        Tenant scope is required. Reads require admin:users:read; mutations and previews require
+        admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
+        Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Only complete per-user snapshots are published. During reconciliation, old snapshots remain
+        readable with stale status; pending or failed results must not be treated as current membership.
+      security:
+        - adminBearer: []
+        - adminSessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/TenantIdHeader'
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ServiceGroupManual'
+      responses:
+        '200':
+          description: Successful operation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceGroupResponse'
+        '400':
+          description: Invalid condition, reference, subject, or unavailable stable input.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '401':
+          description: Authentication required.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '403':
+          description: Insufficient tenant-scoped permissions.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '404':
+          description: Group not found.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '409':
+          description: Rule version conflict or concurrent evaluation.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+        '503':
+          description: Input storage unavailable. No partial result was published.
+          content:
+            application/json:
+              schema: { type: object, required: [error], properties: { error: { type: string } } }
+
 components:
   securitySchemes:
     adminBearer:
@@ -44530,6 +45207,241 @@ components:
             created_at: 1770000000000
             updated_at: 1770000000000
   schemas:
+    ServiceGroupExpression:
+      description: >-
+        Bounded typed expression: at most 128 nodes, depth 12 and 32 distinct group references.
+        Group dependency depth is at most 16. Missing, null and malformed values are unknown;
+        NOT unknown remains unknown. Only true contributes membership. No relative-time operators.
+      oneOf:
+        - type: object
+          required: [op, args]
+          properties:
+            op: { type: string, enum: [all, any] }
+            args:
+              type: array
+              minItems: 1
+              maxItems: 128
+              items: { $ref: '#/components/schemas/ServiceGroupExpression' }
+        - type: object
+          required: [op, arg]
+          properties:
+            op: { type: string, enum: [not] }
+            arg: { $ref: '#/components/schemas/ServiceGroupExpression' }
+        - type: object
+          required: [op, groupId]
+          properties:
+            op: { type: string, enum: [member] }
+            groupId:
+              { type: string, description: Stable ID of an enabled group in the same tenant. }
+        - type: object
+          required: [op, field, compare, value]
+          properties:
+            op: { type: string, enum: [attribute] }
+            field:
+              type: string
+              description: >-
+                email, email_domain, email_verified, country, registration_state, or custom.FIELD_KEY.
+                Custom fields require an active schema. Email and domain are unavailable until verified.
+                Country is normalized to two uppercase ASCII letters; domains are lowercase.
+                Other strings use case-sensitive NFC equality. Registration state is guest or registered.
+            compare: { type: string, enum: [eq, in, contains, lt, lte, gt, gte] }
+            value:
+              description: Scalar of the field type, or a nonempty scalar array for in. Ordering is numeric only; contains requires a multi-valued field.
+              oneOf:
+                - { type: string, maxLength: 4096 }
+                - { type: number }
+                - { type: boolean }
+                - type: array
+                  maxItems: 256
+                  items:
+                    oneOf: [{ type: string }, { type: number }, { type: boolean }]
+    ServiceGroupVersion:
+      type: object
+      required: [ifMatch]
+      properties:
+        ifMatch:
+          {
+            type: integer,
+            minimum: 0,
+            description: Current catalog revision; zero for the first group.,
+          }
+    ServiceGroupWrite:
+      allOf:
+        - { $ref: '#/components/schemas/ServiceGroupVersion' }
+        - { $ref: '#/components/schemas/ServiceGroupDefinition' }
+    ServiceGroupDefinition:
+      type: object
+      required: [key, displayName]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        displayName: { type: string, minLength: 1, maxLength: 200 }
+        description: { type: string, maxLength: 2000 }
+        enabled: { type: boolean, default: true }
+        condition:
+          description: Null or omitted disables the dynamic contribution; other sources are preserved.
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/ServiceGroupExpression' }]
+        scimRoleId:
+          {
+            type: string,
+            description: Optional explicit link to a tenant-local legacy SCIM role. No existing role data is rewritten.,
+          }
+    ServiceGroupPreview:
+      allOf:
+        - { $ref: '#/components/schemas/ServiceGroupDefinition' }
+        - type: object
+          properties:
+            id: { type: string, description: Existing stable group ID when validating an edit. }
+            userId: { type: string, description: Optional service user ID for a read-only preview. }
+    ServiceGroupManual:
+      type: object
+      required: [present]
+      properties:
+        present:
+          {
+            type: boolean,
+            description: Adds or removes only the manual source; SCIM and dynamic sources remain intact.,
+          }
+    ServiceGroupSnapshot:
+      type: object
+      required: [tenantId, userId, ruleVersion, inputVersion, generation, freshness, evaluation]
+      properties:
+        tenantId: { type: string }
+        userId: { type: string }
+        ruleVersion: { type: integer }
+        generation: { type: integer }
+        evaluatedAt: { type: integer, nullable: true, description: Unix milliseconds. }
+        freshness: { type: string, enum: [fresh, stale, pending, failed] }
+        inputVersion:
+          type: object
+          properties:
+            route: { type: string, description: Opaque account routing generation. }
+            core: { type: integer }
+            pii: { type: integer }
+            metadata: { type: integer }
+            epoch: { type: integer }
+        evaluation:
+          type: object
+          nullable: true
+          properties:
+            groups:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  member: { oneOf: [{ type: boolean }, { type: string, enum: [unknown] }] }
+                  dynamic: { oneOf: [{ type: boolean }, { type: string, enum: [unknown] }] }
+                  sources: { type: array, items: { type: string, enum: [manual, scim, dynamic] } }
+            nodes: { type: object, additionalProperties: {} }
+            evaluatedNodes: { type: integer }
+        explanation:
+          {
+            type: array,
+            items:
+              {
+                type: object,
+                properties:
+                  {
+                    compare: { type: string, enum: [eq, in, contains, lt, lte, gt, gte] },
+                    expected:
+                      {
+                        description: Configured comparison value; never the user's actual attribute,
+                        oneOf:
+                          [
+                            { type: string },
+                            { type: number },
+                            { type: boolean },
+                            {
+                              type: array,
+                              items:
+                                { oneOf: [{ type: string }, { type: number }, { type: boolean }] },
+                            },
+                          ],
+                      },
+                    children:
+                      {
+                        type: array,
+                        items: { type: string },
+                        description: IDs of child condition results,
+                      },
+                    node: { type: string },
+                    operator: { type: string },
+                    field: { type: string },
+                    groupId: { type: string },
+                    result: { oneOf: [{ type: boolean }, { type: string, enum: [unknown] }] },
+                  },
+              },
+          }
+        unsettledWrites:
+          type: array
+          description: Up to 50 outstanding writes per storage source. Active writers cannot be recovered here.
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              operation: { type: string }
+              status: { type: string, enum: [writing, failed] }
+              created_at: { type: integer }
+        error: { type: string, nullable: true }
+    ServiceGroupResponse:
+      type: object
+      description: >-
+        Catalog operations return revision and groups. Catalog reads additionally return fields,
+        dependencies and scans. Validation returns valid, dependencies, order and optional evaluation.
+        Member listing returns members, nextCursor and coverage. Reconciliation requests return status.
+      properties:
+        revision: { type: integer }
+        groups:
+          type: array
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/ServiceGroupDefinition' }
+              - type: object
+                properties:
+                  id: { type: string }
+                  tenantId: { type: string }
+        fields: { type: object, additionalProperties: { type: object } }
+        dependencies:
+          { type: object, additionalProperties: { type: array, items: { type: string } } }
+        scans:
+          {
+            type: array,
+            items:
+              {
+                type: object,
+                properties:
+                  {
+                    binding_ref: { type: string },
+                    rule_version: { type: integer },
+                    cursor_id: { type: string },
+                    processed: { type: integer },
+                    failures: { type: integer },
+                    status: { type: string, enum: [pending, processing, completed, failed] },
+                    updated_at: { type: integer },
+                  },
+              },
+          }
+        valid: { type: boolean }
+        order: { type: array, items: { type: string } }
+        evaluation: { type: object, nullable: true }
+        members:
+          {
+            type: array,
+            items:
+              {
+                type: object,
+                properties:
+                  {
+                    userId: { type: string },
+                    freshness: { type: string },
+                    ruleVersion: { type: integer },
+                    reason: { type: object },
+                  },
+              },
+          }
+        nextCursor: { type: string, nullable: true }
+        coverage: { type: string, enum: [evaluated_subjects] }
+        status: { type: string, enum: [pending] }
     LauncherAttributeRule:
       type: object
       additionalProperties: false

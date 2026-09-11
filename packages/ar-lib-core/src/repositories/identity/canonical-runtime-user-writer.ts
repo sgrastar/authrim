@@ -1,3 +1,4 @@
+import { withGroupInputWrite } from '../../services/dynamic-groups/write-boundary';
 import {
   captureAccountDeletionSnapshot,
   persistAccountEmailMutation,
@@ -108,6 +109,19 @@ export class CanonicalRuntimeUserWriter {
     input: CanonicalRuntimeUserWriteInput,
     directoryPublication?: AccountDirectoryPublication
   ): Promise<CanonicalRuntimeUserWriteResult> {
+    return withGroupInputWrite(
+      this.sensitiveValueAdapter,
+      input.tenantId,
+      input.userId,
+      'canonical-user',
+      () => this.createFromRuntimeUserInternal(input, directoryPublication)
+    );
+  }
+
+  private async createFromRuntimeUserInternal(
+    input: CanonicalRuntimeUserWriteInput,
+    directoryPublication?: AccountDirectoryPublication
+  ): Promise<CanonicalRuntimeUserWriteResult> {
     const lifecycleState = toLifecycleState(input.active);
     const graph = await this.repository.createIdentityGraph(
       {
@@ -169,12 +183,24 @@ export class CanonicalRuntimeUserWriter {
   async syncFromRuntimeUser(
     input: CanonicalRuntimeUserWriteInput
   ): Promise<CanonicalRuntimeUserWriteResult | null> {
+    return withGroupInputWrite(
+      this.sensitiveValueAdapter,
+      input.tenantId,
+      input.userId,
+      'canonical-user',
+      () => this.syncFromRuntimeUserInternal(input)
+    );
+  }
+
+  private async syncFromRuntimeUserInternal(
+    input: CanonicalRuntimeUserWriteInput
+  ): Promise<CanonicalRuntimeUserWriteResult | null> {
     const account = await this.repository.findAccountByLegacyUserId(input.userId, {
       includeInactive: true,
       consistencyClass: 'primary_required',
     });
     if (!account) {
-      return this.createFromRuntimeUser(input);
+      return this.createFromRuntimeUserInternal(input);
     }
 
     const lifecycleState = toLifecycleState(input.active);

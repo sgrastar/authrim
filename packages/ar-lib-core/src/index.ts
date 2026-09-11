@@ -695,3 +695,6 @@ export {
   captureAccountDeletionSnapshot,
   persistAccountEmailMutation,
 } from './services/account-webhook-snapshots';
+
+// Service memberships are intentionally separate from authorization and token claims.
+export * from './services/dynamic-groups';

@@ -17,7 +17,7 @@
 	import { tenantStore } from '$lib/stores/tenants.svelte';
 	import { settingsContext } from '$lib/stores/settings-context.svelte';
 	import { adminLoggingControlAPI } from '$lib/api/admin-logging-control';
-	import { LL } from '$i18n/i18n-svelte';
+	import { LL, getLocale } from '$i18n/i18n-svelte';
 	import adminUiPackage from '../../../package.json';
 
 	let { children }: { children: Snippet } = $props();
@@ -77,6 +77,10 @@
 			},
 			children: [
 				{ href: '/admin/roles', label: $LL.admin_nav_rbac_roles() },
+				{
+					href: '/admin/service-groups',
+					label: getLocale() === 'ja' ? 'サービスグループ' : 'Service groups'
+				},
 				{ href: '/admin/attributes', label: $LL.admin_nav_abac_attributes() },
 				{ href: '/admin/rebac', label: $LL.admin_nav_rebac() },
 				{ href: '/admin/policies', label: $LL.admin_nav_policies() }

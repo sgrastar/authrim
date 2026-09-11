@@ -1,3 +1,14 @@
+import {
+  serviceGroupRestart,
+  serviceGroupRecover,
+  serviceGroupsRead,
+  serviceGroupWrite,
+  serviceGroupValidate,
+  serviceGroupSubject,
+  serviceGroupManual,
+  serviceGroupMembers,
+} from './service-groups';
+import { processScheduledServiceGroups } from './dynamic-groups-runtime';
 import { Hono, type Context, type Next } from 'hono';
 import { cors } from 'hono/cors';
 import { secureHeaders } from 'hono/secure-headers';
@@ -2510,6 +2521,28 @@ app.delete('/api/admin/organizations/:id/members/:subjectId', adminOrganizationM
 app.get('/api/admin/organizations/:id/hierarchy', adminOrganizationHierarchyHandler);
 
 // Role management (read-only for system roles, custom roles can be created/edited/deleted)
+app.use('/api/admin/service-groups', async (c, next) =>
+  requireAdminPermissions([
+    c.req.method === 'GET' ? ADMIN_PERMISSIONS.USERS_READ : ADMIN_PERMISSIONS.USERS_WRITE,
+  ])(c, next)
+);
+app.use('/api/admin/service-groups/*', async (c, next) =>
+  requireAdminPermissions([
+    c.req.method === 'GET' ? ADMIN_PERMISSIONS.USERS_READ : ADMIN_PERMISSIONS.USERS_WRITE,
+  ])(c, next)
+);
+app.get('/api/admin/service-groups', serviceGroupsRead);
+app.post('/api/admin/service-groups', serviceGroupWrite);
+app.post('/api/admin/service-groups/validate', serviceGroupValidate);
+app.post('/api/admin/service-groups/reconcile', serviceGroupRestart);
+app.get('/api/admin/service-groups/subjects/:userId', serviceGroupSubject);
+app.post('/api/admin/service-groups/subjects/:userId/reconcile', serviceGroupSubject);
+app.post('/api/admin/service-groups/subjects/:userId/recover', serviceGroupRecover);
+app.put('/api/admin/service-groups/:id', serviceGroupWrite);
+app.delete('/api/admin/service-groups/:id', serviceGroupWrite);
+app.get('/api/admin/service-groups/:id/members', serviceGroupMembers);
+app.put('/api/admin/service-groups/:id/members/:userId', serviceGroupManual);
+
 app.get('/api/admin/roles', adminRolesListHandler);
 app.get('/api/admin/roles/:id', adminRoleGetHandler);
 app.get('/api/admin/roles/:id/assignments', adminRoleAssignmentsListHandler);
@@ -4237,6 +4270,15 @@ async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
       await env.AUTHRIM_CONFIG.put(page.cursorKey, page.nextCursor);
     } catch (error) {
       log.warn('Account webhook scheduled delivery deferred', {
+        errorType: error instanceof Error ? error.name : 'Unknown',
+      });
+    }
+    try {
+      const page = await listMaintenanceTenantIds(env, log, 'jobs:service-groups:tenant-cursor');
+      await processScheduledServiceGroups(env, page.targets, log.module('SERVICE-GROUPS'));
+      await env.AUTHRIM_CONFIG!.put(page.cursorKey, page.nextCursor);
+    } catch (error) {
+      log.warn('Service group reconciliation deferred', {
         errorType: error instanceof Error ? error.name : 'Unknown',
       });
     }

@@ -3139,7 +3139,7 @@ describe('Admin API Handlers', () => {
         .mockResolvedValueOnce({
           results: [],
         })
-        .mockResolvedValueOnce({
+        .mockResolvedValue({
           results: [createCustomClaimSchemaRow({ is_required: 0 })],
         });
 

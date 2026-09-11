@@ -29,6 +29,7 @@ import {
   type UserEventData,
   validateCustomClaimWrite,
   persistCustomClaimWrite,
+  withGroupInputWrite,
   syncUserLifecycleState,
   getRequiredCustomClaimViolationStatuses,
   resolveCustomClaimRuntimeSourcesFromEnv,
@@ -111,9 +112,10 @@ function resolveAdminPiiAdapter(
 function createCanonicalRuntimeUserWriter(
   c: Context<{ Bindings: Env }>,
   coreAdapter: DatabaseAdapter,
-  tenantId: string
+  tenantId: string,
+  accountPii?: DatabaseAdapter
 ): CanonicalRuntimeUserWriter {
-  const piiAdapter = resolveAdminPiiAdapter(c, tenantId);
+  const piiAdapter = accountPii ?? resolveAdminPiiAdapter(c, tenantId);
   if (!piiAdapter) throw new Error('admin_user_pii_database_required');
   return new CanonicalRuntimeUserWriter(
     new CanonicalIdentityRepository(coreAdapter, tenantId),
@@ -488,9 +490,10 @@ async function maybeSyncCanonicalRuntimeUserForAdmin(
     AdminRuntimeUserCore,
     'email_verified' | 'phone_number_verified' | 'user_type' | 'is_active'
   >,
-  userPII: AdminRuntimeUserPII | null
+  userPII: AdminRuntimeUserPII | null,
+  accountPii?: DatabaseAdapter
 ): Promise<void> {
-  await createCanonicalRuntimeUserWriter(c, coreAdapter, tenantId).syncFromRuntimeUser({
+  await createCanonicalRuntimeUserWriter(c, coreAdapter, tenantId, accountPii).syncFromRuntimeUser({
     userId,
     tenantId,
     active: Boolean(userCore.is_active),
@@ -1487,7 +1490,9 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
   try {
     const userId = c.req.param('id')!;
     const tenantId = getTenantIdFromContext(c);
-    const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId);
+    const customClaimSources = await resolveCustomClaimRuntimeSourcesFromEnv(c.env, tenantId, {
+      accountId: userId,
+    });
     if (!customClaimSources.nonPiiDb || !customClaimSources.piiDb) {
       throw new Error('admin_user_custom_claim_sources_required');
     }
@@ -1519,10 +1524,12 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       .filter((key) => body[key] !== undefined)
       .sort();
     const authCtx = createAuthContextFromHono(c, tenantId);
-    const projectionRepository = createCanonicalRuntimeUserProjectionRepository(
-      c,
-      authCtx.coreAdapter,
-      tenantId
+    const accountCore = ensureDatabaseAdapter(customClaimSources.nonPiiDb, 'admin-update-core');
+    const accountPii = ensureDatabaseAdapter(customClaimSources.piiDb, 'admin-update-pii');
+    const projectionRepository = new CanonicalRuntimeUserProjectionRepository(
+      accountCore,
+      tenantId,
+      new CanonicalSensitiveValueResolver(accountPii)
     );
     if (!projectionRepository) {
       return createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR);
@@ -1609,52 +1616,55 @@ export async function adminUserUpdateHandler(c: Context<{ Bindings: Env }>) {
       );
     }
 
-    if (hasCustomFieldChanges) {
-      await persistCustomClaimWrite({
-        db: customClaimSources.nonPiiDb,
-        dbPii: customClaimSources.piiDb,
-        schemaDb: customClaimSources.schemaDb,
-        tenantId,
-        userId,
-        validation: customFieldValidation,
-      });
-      await syncUserLifecycleState({
-        db: customClaimSources.nonPiiDb,
-        dbPii: customClaimSources.piiDb,
-        schemaDb: customClaimSources.schemaDb,
-        stateDb: authCtx.coreAdapter,
-        tenantId,
-        userId,
-        accountAuthenticationEnv: c.env,
-      });
-    }
-
-    await maybeSyncCanonicalRuntimeUserForAdmin(
-      c,
-      authCtx.coreAdapter,
-      tenantId,
-      userId,
-      {
-        email_verified: body.email_verified ?? Boolean(existingProjection.email_verified),
-        phone_number_verified:
-          body.phone_number_verified ?? Boolean(existingProjection.phone_number_verified),
-        user_type:
-          typeof body.user_type === 'string'
-            ? body.user_type
-            : userTypeFromAccountType(existingProjection.account_type),
-        is_active: Boolean(existingProjection.active),
-      },
-      {
-        email: existingProjection.email ?? '',
-        phone_number: body.phone_number ?? existingProjection.phone_number,
-        name: body.name ?? existingProjection.name,
-        given_name: body.given_name ?? existingProjection.given_name,
-        family_name: body.family_name ?? existingProjection.family_name,
-        nickname: body.nickname ?? existingProjection.nickname,
-        preferred_username: body.preferred_username ?? existingProjection.preferred_username,
-        picture: body.picture ?? existingProjection.picture,
+    await withGroupInputWrite(accountCore, tenantId, userId, 'admin:user-update', async () => {
+      if (hasCustomFieldChanges) {
+        await persistCustomClaimWrite({
+          db: customClaimSources.nonPiiDb,
+          dbPii: customClaimSources.piiDb,
+          schemaDb: customClaimSources.schemaDb,
+          tenantId,
+          userId,
+          validation: customFieldValidation,
+        });
+        await syncUserLifecycleState({
+          db: customClaimSources.nonPiiDb,
+          dbPii: customClaimSources.piiDb,
+          schemaDb: customClaimSources.schemaDb,
+          stateDb: accountCore,
+          tenantId,
+          userId,
+          accountAuthenticationEnv: c.env,
+        });
       }
-    );
+
+      await maybeSyncCanonicalRuntimeUserForAdmin(
+        c,
+        accountCore,
+        tenantId,
+        userId,
+        {
+          email_verified: body.email_verified ?? Boolean(existingProjection.email_verified),
+          phone_number_verified:
+            body.phone_number_verified ?? Boolean(existingProjection.phone_number_verified),
+          user_type:
+            typeof body.user_type === 'string'
+              ? body.user_type
+              : userTypeFromAccountType(existingProjection.account_type),
+          is_active: Boolean(existingProjection.active),
+        },
+        {
+          email: existingProjection.email ?? '',
+          phone_number: body.phone_number ?? existingProjection.phone_number,
+          name: body.name ?? existingProjection.name,
+          given_name: body.given_name ?? existingProjection.given_name,
+          family_name: body.family_name ?? existingProjection.family_name,
+          nickname: body.nickname ?? existingProjection.nickname,
+          preferred_username: body.preferred_username ?? existingProjection.preferred_username,
+          picture: body.picture ?? existingProjection.picture,
+        },
+        accountPii
+      );
+    });
 
     await invalidateUserCache(c.env, tenantId, userId);
     const updatedProjection = await projectionRepository.findByLegacyUserId(userId, {

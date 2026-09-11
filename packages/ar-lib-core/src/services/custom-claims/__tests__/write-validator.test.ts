@@ -380,7 +380,11 @@ describe('write-validator', () => {
         },
       };
       await persistCustomClaimWrite(params);
-      expect(coreDb.execute).not.toHaveBeenCalled();
+      expect(
+        vi
+          .mocked(coreDb.execute)
+          .mock.calls.every(([sql]) => sql.includes('service_group_write_boundaries'))
+      ).toBe(true);
       const batch = vi.mocked(piiDb.batch).mock.calls[0][0];
       const notification = batch.find((statement) =>
         statement.sql.includes('INSERT INTO account_webhook_outbox')

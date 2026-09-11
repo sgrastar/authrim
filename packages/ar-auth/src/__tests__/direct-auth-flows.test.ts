@@ -151,6 +151,23 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@authrim/ar-lib-core')>();
   return {
     ...actual,
+    withGroupInputWrite: <T>(
+      db: import('@authrim/ar-lib-core').DatabaseAdapter,
+      tenant: string,
+      user: string,
+      operation: string,
+      write: () => Promise<T>
+    ) =>
+      actual.withGroupInputWrite(
+        typeof db.execute === 'function'
+          ? db
+          : { ...db, execute: async () => ({ success: true, rowsAffected: 1 }) },
+        tenant,
+        user,
+        operation,
+        write
+      ),
+
     assertGuestCredentialAuthenticationAllowed: vi.fn(async () => undefined),
     CanonicalRuntimeUserStore: class {
       async findById(userId: string) {
@@ -2651,7 +2668,25 @@ describe('Direct Auth primary passkey and email-code flows', () => {
     }) as never;
     const { directEmailCodeVerifyHandler } = await import('../direct-auth');
 
-    const response = await directEmailCodeVerifyHandler(context as never);
+    let release!: () => void;
+    let started!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const pendingWrite = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mocks.markOtpLoginEmailVerified.mockImplementationOnce(async () => {
+      started();
+      await pendingWrite;
+      return true;
+    });
+    const responsePromise = directEmailCodeVerifyHandler(context as never);
+    await entered;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mocks.authCodeStore.storeCodeRpc).not.toHaveBeenCalled();
+    release();
+    const response = await responsePromise;
 
     expect(response.status).toBe(200);
     expect(mocks.resolveOtpAccountCoreDataContextByIdentifierFromHono).toHaveBeenCalledWith(
@@ -2672,7 +2707,7 @@ describe('Direct Auth primary passkey and email-code flows', () => {
       'user_existing',
       expect.any(Number)
     );
-    expect(context.executionCtx.waitUntil).toHaveBeenCalledOnce();
+    expect(context.executionCtx.waitUntil).not.toHaveBeenCalled();
   });
 
   it('keeps an email-code challenge available after an invalid code', async () => {

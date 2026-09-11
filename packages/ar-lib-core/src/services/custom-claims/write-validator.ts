@@ -1,3 +1,4 @@
+import { withGroupInputWrite } from '../dynamic-groups/write-boundary';
 import type { KVNamespace } from '@cloudflare/workers-types';
 import type { DatabaseSource } from '../../db';
 import { ensureDatabaseAdapter, ensureOptionalDatabaseAdapter } from '../../db';
@@ -465,6 +466,31 @@ export async function getMissingRequiredCustomClaims(
 }
 
 export async function persistCustomClaimWrite(
+  params: PersistCustomClaimWriteParams
+): Promise<void> {
+  await assertSchemasStillWritable(
+    params.schemaDb ?? params.db,
+    params.tenantId,
+    params.validation
+  );
+  const v = params.validation;
+  if (
+    !Object.keys(v.nonPiiValues).length &&
+    !Object.keys(v.piiValues).length &&
+    !v.nonPiiKeysToDelete.length &&
+    !v.piiKeysToDelete.length
+  )
+    return;
+  return withGroupInputWrite(
+    ensureDatabaseAdapter(params.db, 'custom-claims-write-boundary'),
+    params.tenantId,
+    params.userId,
+    'custom-claims',
+    () => persistCustomClaimWriteInternal(params)
+  );
+}
+
+async function persistCustomClaimWriteInternal(
   params: PersistCustomClaimWriteParams
 ): Promise<void> {
   const { db, dbPii = null, schemaDb = db, tenantId, userId, validation } = params;
