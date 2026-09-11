@@ -242,11 +242,11 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
         entries.length
       );
 
-      await client.query(sql, values);
+      const result = await client.query(sql, values);
 
       return {
         success: true,
-        entriesWritten: entries.length,
+        entriesWritten: result.rowCount,
         backend: this.id,
         durationMs: Date.now() - startTime,
       };
@@ -330,11 +330,11 @@ export class HyperdriveAuditAdapter implements IAuditStorageAdapter {
         entries.length
       );
 
-      await client.query(sql, values);
+      const result = await client.query(sql, values);
 
       return {
         success: true,
-        entriesWritten: entries.length,
+        entriesWritten: result.rowCount,
         backend: this.id,
         durationMs: Date.now() - startTime,
       };

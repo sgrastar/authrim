@@ -207,7 +207,7 @@ export class MysqlAuditAdapter implements IAuditStorageAdapter {
         );
       });
 
-      await client.execute(
+      const result = await client.execute(
         buildInsertIfNotExistsSql(
           qualifyTable(this.schema, 'event_log'),
           [...columns],
@@ -219,7 +219,7 @@ export class MysqlAuditAdapter implements IAuditStorageAdapter {
 
       return {
         success: true,
-        entriesWritten: entries.length,
+        entriesWritten: result.affectedRows ?? 0,
         backend: this.id,
         durationMs: Date.now() - startTime,
       };
@@ -289,7 +289,7 @@ export class MysqlAuditAdapter implements IAuditStorageAdapter {
         );
       });
 
-      await client.execute(
+      const result = await client.execute(
         buildInsertIfNotExistsSql(
           qualifyTable(this.schema, 'pii_log'),
           [...columns],
@@ -301,7 +301,7 @@ export class MysqlAuditAdapter implements IAuditStorageAdapter {
 
       return {
         success: true,
-        entriesWritten: entries.length,
+        entriesWritten: result.affectedRows ?? 0,
         backend: this.id,
         durationMs: Date.now() - startTime,
       };

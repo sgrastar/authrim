@@ -48,6 +48,33 @@ describe('MysqlAuditAdapter', () => {
     expect(execute.mock.calls[0]?.[0]).not.toContain('ON DUPLICATE KEY');
   });
 
+  it('reports zero event writes when MySQL skips an existing ID', async () => {
+    const adapter = new MysqlAuditAdapter({
+      id: 'audit-mysql',
+      hyperdrive: {
+        host: 'mysql.example.com',
+        user: 'worker',
+        password: 'secret',
+        database: 'authrim',
+        port: 3306,
+      } as Hyperdrive,
+      isPiiDb: false,
+      clientFactory: async () => ({
+        query: async () => ({ rows: [] }),
+        execute: async () => ({ rows: [], affectedRows: 0 }),
+        beginTransaction: async () => undefined,
+        commit: async () => undefined,
+        rollback: async () => undefined,
+        end: async () => undefined,
+      }),
+    });
+
+    await expect(adapter.writeEventLog(createEventEntry())).resolves.toMatchObject({
+      success: true,
+      entriesWritten: 0,
+    });
+  });
+
   it('uses MySQL retention cleanup with tenant scoping and limit', async () => {
     const execute = vi.fn().mockResolvedValue({ rows: [], affectedRows: 5 });
     const adapter = new MysqlAuditAdapter({

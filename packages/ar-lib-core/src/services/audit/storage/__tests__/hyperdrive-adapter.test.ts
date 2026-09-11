@@ -43,6 +43,26 @@ describe('HyperdriveAuditAdapter', () => {
     expect(query.mock.calls[0]?.[0]).not.toContain('ON CONFLICT');
   });
 
+  it('reports zero event writes when PostgreSQL skips an existing ID', async () => {
+    const adapter = new HyperdriveAuditAdapter({
+      id: 'audit-pg',
+      hyperdrive: {
+        connectionString: 'postgres://user:pass@example.com:5432/authrim',
+      } as Hyperdrive,
+      schema: 'audit',
+      isPiiDb: false,
+      clientFactory: async () => ({
+        query: async () => ({ rows: [], rowCount: 0 }),
+        end: async () => undefined,
+      }),
+    });
+
+    await expect(adapter.writeEventLog(createEventEntry())).resolves.toMatchObject({
+      success: true,
+      entriesWritten: 0,
+    });
+  });
+
   it('uses PostgreSQL-safe retention cleanup SQL with tenant scoping', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 7 });
     const adapter = new HyperdriveAuditAdapter({

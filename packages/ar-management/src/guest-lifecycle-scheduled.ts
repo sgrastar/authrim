@@ -186,12 +186,15 @@ export async function deleteOneGuestAccount(
     tenantId,
     row.user_id
   ).getAccountStateRpc(tenantId, row.user_id, `account:${row.user_id}`);
+  const resumesAdministrativeTransition = route.completionAuditMode === 'outbox';
   if (authentication.lifecycle !== 'deleted')
     await transitionAccountAuthenticationState(env, {
       tenantId,
       userId: row.user_id,
       lifecycle: 'deleting',
-      operationId: `${row.deletion_operation_id}:begin`,
+      operationId: resumesAdministrativeTransition
+        ? row.deletion_operation_id
+        : `${row.deletion_operation_id}:begin`,
       sourceVersionMs: row.deletion_started_at_ms,
       revokeSessions: true,
     });
@@ -224,7 +227,9 @@ export async function deleteOneGuestAccount(
       tenantId,
       userId: row.user_id,
       lifecycle: 'deleted',
-      operationId: `${row.deletion_operation_id}:complete`,
+      operationId: resumesAdministrativeTransition
+        ? row.deletion_operation_id
+        : `${row.deletion_operation_id}:complete`,
       sourceVersionMs: row.deletion_started_at_ms + 1,
       revokeSessions: true,
     });

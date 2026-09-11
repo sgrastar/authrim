@@ -396,11 +396,28 @@ describe('hourly guest deletion state transitions', () => {
 
     await expect(run()).rejects.toThrow('pii_temporarily_unavailable');
     expect((await lifecycle.get('guest'))?.phase).toBe('deleting');
+    expect(mocks.transition).toHaveBeenLastCalledWith(
+      env,
+      expect.objectContaining({
+        lifecycle: 'deleting',
+        operationId: 'admin-delete',
+        sourceVersionMs: 90000000,
+      })
+    );
 
     mocks.resolve.mockRejectedValue(new Error('account_route_removed'));
     expect(await run(93600)).toBe('deleted');
     expect(mocks.resolve).not.toHaveBeenCalled();
     expect(mocks.audit).not.toHaveBeenCalled();
+    expect(
+      mocks.transition.mock.calls
+        .filter(([, input]) => input.lifecycle === 'deleting')
+        .map(([, input]) => input.operationId)
+    ).toEqual(['admin-delete', 'admin-delete']);
+    expect(mocks.transition).toHaveBeenLastCalledWith(
+      env,
+      expect.objectContaining({ lifecycle: 'deleted', operationId: 'admin-delete' })
+    );
   });
   it('does not regress deleted authentication when retrying the final audit step', async () => {
     mocks.audit.mockRejectedValueOnce(new Error('audit_unavailable'));
