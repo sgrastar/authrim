@@ -253,18 +253,73 @@ describe('guest account administration', () => {
       expect(mocks.transitionAccountAuthenticationState).toHaveBeenCalledTimes(
         value?.registration_state === 'guest' ? 2 : 0
       );
-      expect(mocks.audit).toHaveBeenCalledTimes(value?.registration_state === 'guest' ? 1 : 0);
+      expect(mocks.audit).toHaveBeenCalledTimes(value?.registration_state === 'guest' ? 2 : 0);
       if (value?.registration_state === 'guest') {
+        expect(mocks.audit).toHaveBeenCalledWith(
+          expect.anything(),
+          'account.guest.deletion_started',
+          'user',
+          'user-1',
+          expect.objectContaining({ registration_state: 'guest', reason: 'admin_action' }),
+          'info',
+          expect.stringMatching(/^account-guest-delete-started-/)
+        );
         expect(mocks.audit).toHaveBeenCalledWith(
           expect.anything(),
           'user.deleted',
           'user',
           'user-1',
-          expect.objectContaining({ registration_state: 'guest', reason: 'admin_action' })
+          expect.objectContaining({ registration_state: 'guest', reason: 'admin_action' }),
+          'info',
+          expect.stringMatching(/^account-guest-deleted-/)
         );
       }
     }
   );
+  it('preserves a committed deletion and retries its idempotent completion audit', async () => {
+    mocks.findUser.mockResolvedValueOnce(user());
+    let completionAttempts = 0;
+    mocks.audit.mockImplementation(async (_c, action: string) => {
+      if (action === 'user.deleted' && completionAttempts++ === 0) {
+        throw new Error('transient audit failure');
+      }
+    });
+
+    expect((await deleteGuestUser(context({ id: 'user-1' }))).status).toBe(200);
+    expect(mocks.deleteUser).toHaveBeenCalledTimes(1);
+
+    const completionCalls = mocks.audit.mock.calls.filter(
+      ([, action]) => action === 'user.deleted'
+    );
+    expect(completionCalls).toHaveLength(2);
+    expect(completionCalls[0][6]).toBe(completionCalls[1][6]);
+  });
+  it('does not begin deletion until durable audit intent is recorded', async () => {
+    mocks.findUser.mockResolvedValueOnce(user());
+    mocks.audit.mockRejectedValueOnce(new Error('audit unavailable'));
+
+    expect((await deleteGuestUser(context({ id: 'user-1' }))).status).toBe(500);
+    expect(mocks.transitionAccountAuthenticationState).not.toHaveBeenCalled();
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    expect(mocks.deleteUser).not.toHaveBeenCalled();
+  });
+  it('returns the committed deletion when completion audit delivery remains unavailable', async () => {
+    mocks.findUser.mockResolvedValueOnce(user());
+    mocks.audit.mockImplementation(async (_c, action: string) => {
+      if (action === 'user.deleted') throw new Error('persistent audit failure');
+    });
+
+    expect((await deleteGuestUser(context({ id: 'user-1' }))).status).toBe(200);
+    expect(mocks.deleteUser).toHaveBeenCalledTimes(1);
+    expect(mocks.audit.mock.calls.filter(([, action]) => action === 'user.deleted')).toHaveLength(
+      2
+    );
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      'Guest account deletion committed but completion audit delivery is pending',
+      expect.objectContaining({ action: 'guest_user_delete_audit_pending', tenantId: 'tenant-a' }),
+      expect.any(Error)
+    );
+  });
   it('handles anonymous user get/delete failures', async () => {
     mocks.findUser.mockRejectedValueOnce(new Error('failure'));
     expect((await getGuestUser(context({ id: 'u' }))).status).toBe(500);

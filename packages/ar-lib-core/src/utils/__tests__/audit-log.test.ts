@@ -274,6 +274,48 @@ describe('createAuditLog', () => {
     expect(id1).not.toBe(id2);
   });
 
+  it('reuses a caller-provided ID across retryable legacy and unified writes', async () => {
+    mockResolveTenantRuntimeProfilesFromEnv.mockResolvedValue({
+      auditProfile: {
+        id: 'legacy-d1-audit',
+        kind: 'audit',
+        builtin: false,
+        label: 'Legacy D1 Audit',
+        primary: { type: 'd1', bindingRef: 'DB', dataset: 'audit_log' },
+        archive: null,
+        sinks: [],
+      },
+    });
+    const bind = vi.fn().mockReturnValue({ run: vi.fn().mockResolvedValue({}) });
+    const env = {
+      ...mockEnv,
+      DB: { prepare: vi.fn().mockReturnValue({ bind }), batch: vi.fn() } as unknown as D1Database,
+    };
+    const entry = {
+      id: 'account-guest-created-credential-a',
+      tenantId: 'default',
+      userId: 'guest-a',
+      action: 'account.guest.created',
+      resource: 'user',
+      resourceId: 'guest-a',
+      ipAddress: '127.0.0.1',
+      userAgent: 'Test',
+      metadata: '{}',
+      severity: 'info' as const,
+    };
+
+    await createAuditLog(env, entry);
+    await createAuditLog(env, entry);
+
+    expect(bind.mock.calls.map((call) => call[0])).toEqual([entry.id, entry.id]);
+    expect(mockUnifiedAuditService.logEvent).toHaveBeenCalledTimes(2);
+    expect(mockUnifiedAuditService.logEvent).toHaveBeenNthCalledWith(
+      2,
+      'default',
+      expect.objectContaining({ id: entry.id })
+    );
+  });
+
   it('should continue when unified audit mirror fails', async () => {
     mockUnifiedAuditService.logEvent.mockRejectedValueOnce(new Error('mirror failed'));
 
@@ -866,7 +908,8 @@ describe('createAuditLogFromContext', () => {
       'Mozilla/5.0 Test Browser',
       '{"reason":"test rotation"}',
       'warning',
-      expect.any(Number) // createdAt
+      expect.any(Number), // createdAt
+      expect.any(String) // idempotency lookup ID
     );
   });
 
@@ -892,7 +935,8 @@ describe('createAuditLogFromContext', () => {
       expect.any(String), // userAgent
       expect.any(String), // metadata
       expect.any(String), // severity
-      expect.any(Number) // createdAt
+      expect.any(Number), // createdAt
+      expect.any(String) // idempotency lookup ID
     );
   });
 
@@ -929,7 +973,8 @@ describe('createAuditLogFromContext', () => {
       expect.any(String), // userAgent
       expect.any(String), // metadata
       expect.any(String), // severity
-      expect.any(Number) // createdAt
+      expect.any(Number), // createdAt
+      expect.any(String) // idempotency lookup ID
     );
   });
 
@@ -961,7 +1006,8 @@ describe('createAuditLogFromContext', () => {
       'unknown', // Fallback User-Agent
       expect.any(String), // metadata
       expect.any(String), // severity
-      expect.any(Number) // createdAt
+      expect.any(Number), // createdAt
+      expect.any(String) // idempotency lookup ID
     );
   });
 
@@ -1000,7 +1046,8 @@ describe('createAuditLogFromContext', () => {
       expect.any(String), // userAgent
       JSON.stringify(metadata), // Metadata should be stringified
       expect.any(String), // severity
-      expect.any(Number) // createdAt
+      expect.any(Number), // createdAt
+      expect.any(String) // idempotency lookup ID
     );
   });
 
@@ -1089,7 +1136,8 @@ describe('createAuditLogFromContext', () => {
       expect.any(String), // userAgent
       expect.any(String), // metadata
       'info', // Default severity
-      expect.any(Number) // createdAt
+      expect.any(Number), // createdAt
+      expect.any(String) // idempotency lookup ID
     );
   });
 });

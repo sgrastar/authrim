@@ -59,12 +59,16 @@ async function readGuestProfile(
 	const data = (await result.json()) as {
 		profile: { version: number; guestAuth?: Partial<ClientGuestPolicy> };
 	};
+	const defaults = defaultClientGuestPolicy();
+	const guestAuth = data.profile.guestAuth;
 	return {
 		version: data.profile.version,
 		policy: {
-			...defaultClientGuestPolicy(),
-			...data.profile.guestAuth,
-			preserveSubOnUpgrade: true
+			enabled: guestAuth?.enabled ?? defaults.enabled,
+			allowedScopes: guestAuth?.allowedScopes ?? defaults.allowedScopes,
+			preserveSubOnUpgrade: true,
+			allowPromptNone: guestAuth?.allowPromptNone ?? defaults.allowPromptNone,
+			allowedUpgradeMethods: guestAuth?.allowedUpgradeMethods ?? defaults.allowedUpgradeMethods
 		}
 	};
 }

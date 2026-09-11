@@ -37,6 +37,35 @@ describe('client guest policy API', () => {
 			}
 		});
 	});
+	it('strips retired device policy fields before returning or saving a loaded profile', async () => {
+		request
+			.mockResolvedValueOnce(
+				Response.json({
+					profile: {
+						version: 4,
+						guestAuth: {
+							...defaultClientGuestPolicy(),
+							expiresInDays: 30,
+							deviceStability: 'installation'
+						}
+					}
+				})
+			)
+			.mockResolvedValueOnce(
+				Response.json({
+					profile: { version: 5, guestAuth: defaultClientGuestPolicy() }
+				})
+			);
+
+		const loaded = await adminClientGuestAPI.get('client', 'tenant');
+		expect(loaded.policy).not.toHaveProperty('expiresInDays');
+		expect(loaded.policy).not.toHaveProperty('deviceStability');
+		await adminClientGuestAPI.save('client', 'tenant', loaded.version, loaded.policy);
+		expect(JSON.parse(request.mock.calls[1][1].body)).toEqual({
+			ifMatch: '4',
+			profile: { guestAuth: defaultClientGuestPolicy() }
+		});
+	});
 	it('sends the selected tenant, profile revision, and only the guest policy', async () => {
 		request.mockResolvedValueOnce(
 			Response.json({

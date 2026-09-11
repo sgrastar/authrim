@@ -382,7 +382,7 @@ export class AuditService implements IAuditService {
       clientId: params.clientId,
       auditProfile,
     });
-    const entryId = crypto.randomUUID();
+    const entryId = params.id ?? crypto.randomUUID();
     const createdAt = Date.now();
     const retentionUntil = calculateRetentionUntil(
       this.resolveRetentionDays(auditProfile, config, 'event', deliveryPlan.retentionDays)
@@ -481,7 +481,8 @@ export class AuditService implements IAuditService {
         error_code, error_message, anonymized_user_id, client_id,
         session_id, request_id, duration_ms, details_r2_key, details_json,
         retention_until, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (SELECT 1 FROM event_log WHERE id = ?)`,
       [
         entry.id,
         entry.tenantId,
@@ -500,6 +501,7 @@ export class AuditService implements IAuditService {
         entry.detailsJson ?? null,
         entry.retentionUntil ?? null,
         entry.createdAt,
+        entry.id,
       ]
     );
   }

@@ -49,7 +49,7 @@ export type EventResult = 'success' | 'failure' | 'partial';
  * Time units: epoch milliseconds
  */
 export interface EventLogEntry {
-  /** Unique event ID (UUID v4) */
+  /** Unique event ID; may be a caller-provided stable idempotency key. */
   id: string;
 
   /** Tenant identifier */
@@ -350,6 +350,9 @@ export const DEFAULT_PII_CONFIG: TenantPIIConfig = {
  * Parameters for logging an event.
  */
 export interface EventLogParams {
+  /** Stable event ID for idempotent retries. Generated when omitted. */
+  id?: string;
+
   /** Event type (e.g., 'auth.login', 'token.issued') */
   eventType: string;
 

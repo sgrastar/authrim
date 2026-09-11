@@ -3,6 +3,10 @@ const ACCOUNT_AUDIT_ACTION_LABELS = {
 		en: 'Guest account created',
 		ja: 'ゲストアカウント作成'
 	},
+	'account.guest.deletion_started': {
+		en: 'Guest account deletion started',
+		ja: 'ゲストアカウント削除開始'
+	},
 	'account.guest.upgrade_failed': {
 		en: 'Guest registration failed',
 		ja: 'ゲストアカウント登録失敗'

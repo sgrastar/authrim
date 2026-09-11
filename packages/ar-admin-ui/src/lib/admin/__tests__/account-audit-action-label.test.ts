@@ -26,6 +26,9 @@ describe('account audit action labels', () => {
 	it('provides a visible label for every filterable Account Page action', () => {
 		expect(ACCOUNT_AUDIT_ACTIONS).toContain('account.email.changed');
 		expect(ACCOUNT_AUDIT_ACTIONS).toContain('account.device.unlinked');
+		expect(formatAccountAuditAction('account.guest.deletion_started', 'ja')).toBe(
+			'ゲストアカウント削除開始'
+		);
 		for (const action of ACCOUNT_AUDIT_ACTIONS) {
 			expect(formatAccountAuditAction(action, 'ja')).toBeTruthy();
 			expect(formatAccountAuditAction(action, 'en')).toBeTruthy();

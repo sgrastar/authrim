@@ -342,8 +342,12 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
       c.req.header('X-Real-IP') ||
       'unknown';
     const userAgent = c.req.header('User-Agent') || 'unknown';
-    if (isNewUser) {
+    // Retry on every resume until the stable audit ID has been accepted. Audit storage treats the
+    // ID idempotently, so a response failure after provisioning cannot permanently lose creation
+    // evidence or create duplicate records.
+    try {
       await createAuditLog(c.env, {
+        id: `account-guest-created-${credential.id}`,
         tenantId,
         userId,
         action: 'account.guest.created',
@@ -354,6 +358,15 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
         metadata: JSON.stringify({ method: 'browser', client_id: clientId }),
         severity: 'info',
       });
+    } catch (error) {
+      await stub.invalidateSessionRpc(sessionId).catch((invalidateError: unknown) => {
+        log.warn(
+          'Failed to invalidate unpublished guest session after audit failure',
+          { action: 'guest_session_cleanup', tenantId },
+          invalidateError as Error
+        );
+      });
+      throw error;
     }
     publishEvent(c, {
       type: AUTH_EVENTS.LOGIN_SUCCEEDED,
@@ -416,9 +429,14 @@ export async function guestLoginHandler(c: Context<{ Bindings: Env }>) {
     return c.json({ success: true });
   } catch (error) {
     log.error('Guest login failed', {}, error as Error);
-    return (
+    const errorResponse =
       createTenantPlacementWriteFenceResponse(c, error) ??
-      createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR)
-    );
+      (await createErrorResponse(c, AR_ERROR_CODES.INTERNAL_ERROR));
+    // The resume secret is minted before provisioning. Preserve it on a failed response so a
+    // retry can find the already-provisioned account and complete any required audit delivery.
+    for (const cookie of c.res.headers.getSetCookie()) {
+      errorResponse.headers.append('Set-Cookie', cookie);
+    }
+    return errorResponse;
   }
 }

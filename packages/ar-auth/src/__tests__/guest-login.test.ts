@@ -352,6 +352,38 @@ describe('browser guest login', () => {
       })
     );
   });
+  it('retries the idempotent creation audit after provisioning already committed', async () => {
+    mocks.route.mockResolvedValueOnce(null).mockResolvedValue({ legacyUserId: 'guest-a' });
+    mocks.provision.mockResolvedValue({
+      status: 'ready',
+      accountId: 'account:guest-a',
+      userId: 'guest-a',
+    });
+    let creationAttempts = 0;
+    mocks.audit.mockImplementation(async (_env, entry: { action: string }) => {
+      if (entry.action === 'account.guest.created' && creationAttempts++ === 0) {
+        throw new Error('transient audit failure');
+      }
+    });
+
+    const firstResponse = await request();
+    expect(firstResponse.status).toBe(500);
+    expect(mocks.invalidateSession).toHaveBeenCalledWith('session-a');
+    const issuedResumeCookie = firstResponse.headers
+      .getSetCookie()
+      .map((value) => value.split(';')[0])
+      .find((value) => value.startsWith('authrim_guest_resume='));
+    expect(issuedResumeCookie).toMatch(/^authrim_guest_resume=[a-f0-9]{64}$/);
+    expect((await request(issuedResumeCookie)).status).toBe(200);
+
+    const creationCalls = mocks.audit.mock.calls.filter(
+      ([, entry]) => (entry as { action: string }).action === 'account.guest.created'
+    );
+    expect(creationCalls).toHaveLength(2);
+    expect((creationCalls[0][1] as { id?: string }).id).toBe(
+      (creationCalls[1][1] as { id?: string }).id
+    );
+  });
   it('scopes secrets to each tenant and client', async () => {
     const secret = 'b'.repeat(64);
     const hashes = await Promise.all([
