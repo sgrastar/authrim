@@ -31265,6 +31265,7 @@ paths:
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Malformed, empty or non-object JSON request bodies return 400 with group_request_invalid.
         Only complete per-user snapshots are published. During reconciliation, old snapshots remain
         readable with stale status; pending or failed results must not be treated as current membership.
       security:
@@ -31317,6 +31318,7 @@ paths:
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Malformed, empty or non-object JSON request bodies return 400 with group_request_invalid.
         Only complete per-user snapshots are published. During reconciliation, old snapshots remain
         readable with stale status; pending or failed results must not be treated as current membership.
       security:
@@ -31376,6 +31378,7 @@ paths:
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Malformed, empty or non-object JSON request bodies return 400 with group_request_invalid.
         Only complete per-user snapshots are published. During reconciliation, old snapshots remain
         readable with stale status; pending or failed results must not be treated as current membership.
       security:
@@ -31438,6 +31441,7 @@ paths:
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Malformed, empty or non-object JSON request bodies return 400 with group_request_invalid.
         Only complete per-user snapshots are published. During reconciliation, old snapshots remain
         readable with stale status; pending or failed results must not be treated as current membership.
       security:
@@ -31501,6 +31505,7 @@ paths:
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Malformed, empty or non-object JSON request bodies return 400 with group_request_invalid.
         Only complete per-user snapshots are published. During reconciliation, old snapshots remain
         readable with stale status; pending or failed results must not be treated as current membership.
       security:
@@ -31560,6 +31565,7 @@ paths:
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Malformed, empty or non-object JSON request bodies return 400 with group_request_invalid.
         Only complete per-user snapshots are published. During reconciliation, old snapshots remain
         readable with stale status; pending or failed results must not be treated as current membership.
       security:
@@ -31619,6 +31625,7 @@ paths:
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Malformed, empty or non-object JSON request bodies return 400 with group_request_invalid.
         Only complete per-user snapshots are published. During reconciliation, old snapshots remain
         readable with stale status; pending or failed results must not be treated as current membership.
       security:
@@ -31747,6 +31754,7 @@ paths:
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Malformed, empty or non-object JSON request bodies return 400 with group_request_invalid.
         Only complete per-user snapshots are published. During reconciliation, old snapshots remain
         readable with stale status; pending or failed results must not be treated as current membership.
       security:
@@ -31804,6 +31812,7 @@ paths:
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Malformed, empty or non-object JSON request bodies return 400 with group_request_invalid.
         Only complete per-user snapshots are published. During reconciliation, old snapshots remain
         readable with stale status; pending or failed results must not be treated as current membership.
         Pagination scans evaluated subjects, so a page may contain no members and still return
@@ -31868,6 +31877,7 @@ paths:
         Tenant scope is required. Reads require admin:users:read; mutations and previews require
         admin:users:write. Rule changes use ifMatch optimistic concurrency; a stale version returns 409.
         Missing or disabled group references, cycles and invalid typed comparisons are rejected.
+        Malformed, empty or non-object JSON request bodies return 400 with group_request_invalid.
         Only complete per-user snapshots are published. During reconciliation, old snapshots remain
         readable with stale status; pending or failed results must not be treated as current membership.
       security:

@@ -22,7 +22,12 @@ function userId(c: Ctx): string {
 async function body(c: Ctx): Promise<Record<string, unknown>> {
   const raw = await c.req.text();
   if (new TextEncoder().encode(raw).length > 70000) throw new Error('group_request_limit');
-  const value: unknown = JSON.parse(raw);
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new Error('group_request_invalid');
+  }
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('group_request_invalid');
   return value as Record<string, unknown>;

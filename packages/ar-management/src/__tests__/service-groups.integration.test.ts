@@ -138,6 +138,36 @@ afterEach(() => {
   databases.forEach((db) => db.close());
 });
 describe('durable service membership publication', () => {
+  it.each(['', '{', 'null', '[]', 'true', '"value"'])(
+    'rejects invalid JSON object body %j without changing state',
+    async (raw) => {
+      vi.spyOn(groupRuntime, 'serviceGroupRuntime').mockResolvedValue({ store, reader: null });
+      const app = new Hono<{
+        Bindings: import('@authrim/ar-lib-core').Env;
+        Variables: { adminAuth: { userId?: string } };
+      }>();
+      app.post('/api/admin/service-groups', serviceGroupWrite);
+      app.put('/api/admin/service-groups/:id', serviceGroupWrite);
+      app.delete('/api/admin/service-groups/:id', serviceGroupWrite);
+      app.post('/api/admin/service-groups/validate', serviceGroupValidate);
+      for (const [method, path] of [
+        ['POST', ''],
+        ['PUT', '/japan'],
+        ['DELETE', '/japan'],
+        ['POST', '/validate'],
+      ]) {
+        const response = await app.request(`/api/admin/service-groups${path}`, {
+          method,
+          headers: { 'X-Tenant-Id': 't', 'Content-Type': 'application/json' },
+          body: raw,
+        });
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({ error: 'group_request_invalid' });
+      }
+      expect(await store.catalog()).toBeNull();
+      expect(meta.db.prepare('SELECT * FROM service_group_audit').all()).toEqual([]);
+    }
+  );
   it('retains a failed freshness marker when one member cannot be routed, without failing the page', async () => {
     await store.save([group()], BUILTIN_GROUP_FIELDS, 0, 'admin');
     await store.evaluate('u', reader);
