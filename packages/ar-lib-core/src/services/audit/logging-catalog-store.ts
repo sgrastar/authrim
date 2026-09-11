@@ -38,8 +38,8 @@ export class SqlLogChunkCatalogStore implements LogChunkCatalogStore {
     this.adapter = ensureDatabaseAdapter(db, 'logging-chunk-catalog');
   }
 
-  async createPendingObject(row: LogObjectCatalogRow): Promise<void> {
-    await this.adapter.execute(
+  async createPendingObject(row: LogObjectCatalogRow): Promise<boolean> {
+    const result = await this.adapter.execute(
       `INSERT INTO log_object_catalog (
         id, tenant_key, log_type, plane, surface, object_key, object_kind, status,
         record_count, byte_count, checksum_sha256, compression, encryption_scope,
@@ -66,6 +66,58 @@ export class SqlLogChunkCatalogStore implements LogChunkCatalogStore {
         null,
       ]
     );
+    // Only an explicit conflict result loses the claim. Some compatible executors do not expose
+    // affected-row metadata, so preserve their historical single-writer behavior.
+    return result.rowsAffected !== 0;
+  }
+
+  async getObject(id: string): Promise<LogObjectCatalogRow | null> {
+    const row = await this.adapter.queryOne<{
+      id: string;
+      tenant_key: string;
+      log_type: LogObjectCatalogRow['logType'];
+      plane: LogObjectCatalogRow['plane'];
+      surface: string | null;
+      object_key: string;
+      object_kind: 'chunk';
+      status: LogObjectCatalogRow['status'];
+      record_count: number | string;
+      byte_count: number | string;
+      checksum_sha256: string | null;
+      compression: LogObjectCatalogRow['compression'];
+      encryption_scope: string | null;
+      key_version: number | string | null;
+      created_at: number | string;
+      committed_at: number | string | null;
+    }>(
+      `SELECT id, tenant_key, log_type, plane, surface, object_key, object_kind, status,
+              record_count, byte_count, checksum_sha256, compression, encryption_scope,
+              key_version, created_at, committed_at
+       FROM log_object_catalog
+       WHERE id = ?`,
+      [id]
+    );
+    if (!row) {
+      return null;
+    }
+    return {
+      id: row.id,
+      tenantKey: row.tenant_key,
+      logType: row.log_type,
+      plane: row.plane,
+      surface: row.surface ?? undefined,
+      objectKey: row.object_key,
+      objectKind: row.object_kind,
+      status: row.status,
+      recordCount: Number(row.record_count),
+      byteCount: Number(row.byte_count),
+      checksumSha256: row.checksum_sha256 ?? undefined,
+      compression: row.compression,
+      encryptionScope: row.encryption_scope ?? undefined,
+      keyVersion: row.key_version === null ? undefined : Number(row.key_version),
+      createdAt: Number(row.created_at),
+      committedAt: row.committed_at === null ? undefined : Number(row.committed_at),
+    };
   }
 
   async createPendingRecordIndexes(rows: LogChunkRecordIndexRow[]): Promise<void> {

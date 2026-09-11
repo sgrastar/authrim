@@ -127,9 +127,55 @@ describe('audit queue consumer fanout', () => {
       queryOne: vi.fn().mockResolvedValue({ tenant_key: 't_registry_archive' }),
     };
     const deliveryEventIds = new Set<string>();
+    const catalogObjects = new Map<string, Record<string, unknown>>();
     const adminDb = {
       ...createAdminDbAdapter(),
+      queryOne: vi.fn().mockImplementation(async (sql: string, params: unknown[] = []) => {
+        if (sql.includes('FROM log_object_catalog')) {
+          return catalogObjects.get(String(params[0])) ?? null;
+        }
+        return null;
+      }),
       execute: vi.fn().mockImplementation(async (sql: string, params: unknown[] = []) => {
+        if (sql.includes('INSERT INTO log_object_catalog')) {
+          const id = String(params[0]);
+          if (catalogObjects.has(id)) {
+            return { rowsAffected: 0 };
+          }
+          catalogObjects.set(id, {
+            id,
+            tenant_key: params[1],
+            log_type: params[2],
+            plane: params[3],
+            surface: params[4],
+            object_key: params[5],
+            object_kind: params[6],
+            status: params[7],
+            record_count: params[8],
+            byte_count: params[9],
+            checksum_sha256: params[10],
+            compression: params[11],
+            encryption_scope: params[12],
+            key_version: params[13],
+            created_at: params[14],
+            committed_at: params[15],
+          });
+          return { rowsAffected: 1 };
+        }
+        if (sql.includes("SET status = 'committed'")) {
+          const id = String(params[3]);
+          const row = catalogObjects.get(id);
+          if (row) {
+            catalogObjects.set(id, {
+              ...row,
+              status: 'committed',
+              byte_count: params[0],
+              checksum_sha256: params[1],
+              committed_at: params[2],
+            });
+          }
+          return { rowsAffected: row ? 1 : 0 };
+        }
         if (sql.includes('INSERT INTO logging_delivery_events')) {
           const id = String(params[0]);
           if (deliveryEventIds.has(id)) {
@@ -201,7 +247,7 @@ describe('audit queue consumer fanout', () => {
     expect(archiveKey).toContain('.jsonl.gz');
     expect(archiveKey).toContain('/t_registry_archive/');
     expect(archiveKey).not.toContain('/tenant-registry-a/');
-    expect((bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[1]?.[0]).toBe(archiveKey);
+    expect(bucket.put).toHaveBeenCalledOnce();
     const archiveBody = (bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
     const archiveRecord = await decodeFirstChunkRecord({
       bytes: archiveBody as Uint8Array,

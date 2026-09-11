@@ -141,6 +141,70 @@ describe('writeLogChunkToR2', () => {
     ]);
   });
 
+  it('allows only one R2 writer for the same stable catalog identity', async () => {
+    let objectRow: Parameters<LogChunkCatalogStore['createPendingObject']>[0] | null = null;
+    let releasePut: (() => void) | undefined;
+    let notifyPutStarted: (() => void) | undefined;
+    const putStarted = new Promise<void>((resolve) => {
+      notifyPutStarted = resolve;
+    });
+    const catalogStore: LogChunkCatalogStore = {
+      createPendingObject: vi.fn(async (row) => {
+        if (objectRow) {
+          return false;
+        }
+        objectRow = row;
+        return true;
+      }),
+      getObject: vi.fn(async () => objectRow),
+      createPendingRecordIndexes: vi.fn(),
+      commitObject: vi.fn(async (_id, update) => {
+        if (objectRow) {
+          objectRow = {
+            ...objectRow,
+            status: 'committed',
+            byteCount: update.byteCount,
+            checksumSha256: update.checksumSha256,
+            committedAt: update.committedAt,
+          };
+        }
+      }),
+      commitRecordIndexes: vi.fn(),
+      markObjectOrphanCandidate: vi.fn(),
+    };
+    const bucket = {
+      put: vi.fn(async () => {
+        notifyPutStarted?.();
+        await new Promise<void>((resolve) => {
+          releasePut = resolve;
+        });
+      }),
+    } as unknown as R2Bucket;
+    const input = {
+      bucket,
+      tenantKey: 't_safeopaque',
+      logType: 'audit' as const,
+      plane: 'archive' as const,
+      records: [{ id: 'evt-stable', eventAt: 1, payload: { id: 'evt-stable' } }],
+      catalogStore,
+      encryption: testEncryption(),
+      now: 1_700_000_000_000,
+      chunkId: 'chk_stable',
+      objectCatalogId: 'obj_stable',
+    };
+
+    const first = writeLogChunkToR2(input);
+    await putStarted;
+    await expect(writeLogChunkToR2(input)).rejects.toThrow(
+      'log_chunk_write_in_progress_or_conflicted'
+    );
+    expect(bucket.put).toHaveBeenCalledOnce();
+    releasePut?.();
+    await expect(first).resolves.toEqual(
+      expect.objectContaining({ chunkId: 'chk_stable', objectCatalogId: 'obj_stable' })
+    );
+  });
+
   it('stores block offsets for record-level lookup indexes', async () => {
     let indexRows: Parameters<LogChunkCatalogStore['createPendingRecordIndexes']>[0] = [];
     const catalogStore: LogChunkCatalogStore = {

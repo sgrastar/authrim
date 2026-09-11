@@ -166,7 +166,34 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
     };
   });
 
-  await input.catalogStore?.createPendingObject(objectRow);
+  const pendingObjectCreated = await input.catalogStore?.createPendingObject(objectRow);
+  if (pendingObjectCreated === false) {
+    const existing = await input.catalogStore?.getObject?.(objectCatalogId);
+    if (
+      !existing ||
+      existing.status !== 'committed' ||
+      existing.tenantKey !== input.tenantKey ||
+      existing.logType !== input.logType ||
+      existing.plane !== input.plane ||
+      existing.objectKey !== objectKey ||
+      !existing.checksumSha256
+    ) {
+      throw new Error('log_chunk_write_in_progress_or_conflicted');
+    }
+    return {
+      chunkId,
+      objectCatalogId,
+      objectKey,
+      shard,
+      recordCount: existing.recordCount,
+      byteCount: existing.byteCount,
+      checksumSha256: existing.checksumSha256,
+      compression: existing.compression,
+      encryptionScope: existing.encryptionScope,
+      keyVersion: existing.keyVersion,
+      createdAt: existing.createdAt,
+    };
+  }
   await input.catalogStore?.createPendingRecordIndexes(indexRows);
 
   try {
