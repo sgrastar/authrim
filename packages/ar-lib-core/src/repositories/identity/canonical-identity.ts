@@ -900,13 +900,14 @@ export class CanonicalIdentityRepository {
 
   async findAccountByLegacyUserId(
     legacyUserId: string,
-    options?: { includeInactive?: boolean }
+    options?: { includeInactive?: boolean; consistencyClass?: 'primary_required' }
   ): Promise<IdentityAccountRow | null> {
     return this.adapter.queryOne<IdentityAccountRow>(
       `SELECT *
          FROM identity_accounts
         WHERE legacy_user_id = ? AND tenant_id = ?${activeClause(options?.includeInactive)}`,
-      [legacyUserId, this.tenantId]
+      [legacyUserId, this.tenantId],
+      options?.consistencyClass ? { consistencyClass: options.consistencyClass } : undefined
     );
   }
 

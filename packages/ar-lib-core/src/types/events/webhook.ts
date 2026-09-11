@@ -1,3 +1,4 @@
+import type { AccountWebhookField } from '../../services/account-webhook-fields';
 /**
  * Webhook Types
  *
@@ -66,6 +67,10 @@ export interface WebhookConfig {
    * Supports wildcards: `auth.*`, `*.created`, `*`
    */
   events: string[];
+  /** Opt-in event-time account fields; tenant scope only. */
+  payloadFields?: AccountWebhookField[];
+  /** Account events only: an empty list accepts both registration states. */
+  registrationStates?: Array<'guest' | 'registered'>;
   /**
    * HMAC-SHA256 signing secret (encrypted).
    * Use SecretDecryptor to decrypt before signing.
@@ -118,6 +123,10 @@ export interface CreateWebhookInput {
   url: string;
   /** Event types to subscribe to */
   events: string[];
+  /** Opt-in event-time account fields; tenant scope only. */
+  payloadFields?: AccountWebhookField[];
+  /** Account events only: an empty list accepts both registration states. */
+  registrationStates?: Array<'guest' | 'registered'>;
   /** Plaintext secret (will be encrypted before storage) */
   secret?: string;
   /** Custom headers */
@@ -138,6 +147,9 @@ export interface UpdateWebhookInput {
   url?: string;
   /** Event types to subscribe to */
   events?: string[];
+  payloadFields?: AccountWebhookField[];
+  /** Account events only: an empty list accepts both registration states. */
+  registrationStates?: Array<'guest' | 'registered'>;
   /** New secret (will be encrypted before storage) */
   secret?: string;
   /** Custom headers */

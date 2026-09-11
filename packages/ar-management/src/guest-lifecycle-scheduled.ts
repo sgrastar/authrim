@@ -209,7 +209,7 @@ export async function deleteOneGuestAccount(
     `UPDATE guest_upgrade_operations SET state = 'canceled', proof_payload_json = NULL, challenge_verifier = NULL, reservation_publication_json = NULL, lease_owner = NULL, lease_expires_at = NULL, updated_at = ? WHERE tenant_id = ? AND user_id = ? AND state <> 'completed'`,
     [now, tenantId, row.user_id]
   );
-  await eraseAccountPiiAfterDirectoryRemovalPrepared(pii, { tenantId, userId: row.user_id });
+  await eraseAccountPiiAfterDirectoryRemovalPrepared(pii, { tenantId, userId: row.user_id, core });
   await core.execute('DELETE FROM guest_devices WHERE tenant_id = ? AND user_id = ?', [
     tenantId,
     row.user_id,

@@ -1,3 +1,4 @@
+import { withGroupInputWrite } from '../dynamic-groups/write-boundary';
 import type { KVNamespace } from '@cloudflare/workers-types';
 import type { DatabaseSource } from '../../db';
 import { ensureDatabaseAdapter, ensureOptionalDatabaseAdapter } from '../../db';
@@ -467,6 +468,31 @@ export async function getMissingRequiredCustomClaims(
 export async function persistCustomClaimWrite(
   params: PersistCustomClaimWriteParams
 ): Promise<void> {
+  await assertSchemasStillWritable(
+    params.schemaDb ?? params.db,
+    params.tenantId,
+    params.validation
+  );
+  const v = params.validation;
+  if (
+    !Object.keys(v.nonPiiValues).length &&
+    !Object.keys(v.piiValues).length &&
+    !v.nonPiiKeysToDelete.length &&
+    !v.piiKeysToDelete.length
+  )
+    return;
+  return withGroupInputWrite(
+    ensureDatabaseAdapter(params.db, 'custom-claims-write-boundary'),
+    params.tenantId,
+    params.userId,
+    'custom-claims',
+    () => persistCustomClaimWriteInternal(params)
+  );
+}
+
+async function persistCustomClaimWriteInternal(
+  params: PersistCustomClaimWriteParams
+): Promise<void> {
   const { db, dbPii = null, schemaDb = db, tenantId, userId, validation } = params;
   await assertSchemasStillWritable(schemaDb, tenantId, validation);
   const coreAdapter = ensureDatabaseAdapter(db, 'custom-claims-write-core');
@@ -543,6 +569,17 @@ export async function persistCustomClaimWrite(
 
   const serialized = Object.keys(attributes).length > 0 ? JSON.stringify(attributes) : '{}';
   const now = Date.now();
+  // Read only the classification needed by the notification before committing PII. A routing
+  // failure must not leave an acknowledged PII write without its durable notification.
+  const account = await coreAdapter.queryOne<{
+    registration_state: 'guest' | 'registered';
+  }>(
+    `SELECT registration_state FROM identity_accounts
+     WHERE tenant_id = ? AND legacy_user_id = ? AND account_type = 'user'
+       AND directory_publication_state = 'active' AND lifecycle_state NOT IN ('deleted', 'deleting')`,
+    [tenantId, userId],
+    { consistencyClass: 'primary_required' }
+  );
   await piiAdapter.batch([
     ...validation.piiKeysToDelete.map((fieldKey) => ({
       sql: `DELETE FROM identity_sensitive_values
@@ -591,5 +628,22 @@ export async function persistCustomClaimWrite(
         now,
       ],
     },
+    ...(account
+      ? [
+          {
+            sql: `INSERT INTO account_webhook_outbox
+        (id, tenant_id, user_id, event_type, registration_state, changed_field, occurred_at)
+        VALUES (?, ?, ?, ?, ?, 'custom_profile', ?)`,
+            params: [
+              `evt_${crypto.randomUUID().replace(/-/g, '')}`,
+              tenantId,
+              userId,
+              'account.updated',
+              account.registration_state,
+              now,
+            ],
+          },
+        ]
+      : []),
   ]);
 }

@@ -42,6 +42,22 @@ vi.mock('@authrim/ar-lib-core', async () => {
     await vi.importActual<typeof import('@authrim/ar-lib-core')>('@authrim/ar-lib-core');
   return {
     ...actual,
+    withGroupInputWrite: <T>(
+      db: import('@authrim/ar-lib-core').DatabaseAdapter,
+      tenant: string,
+      user: string,
+      operation: string,
+      write: () => Promise<T>
+    ) =>
+      actual.withGroupInputWrite(
+        typeof db.execute === 'function'
+          ? db
+          : { ...db, execute: async () => ({ success: true, rowsAffected: 1 }) },
+        tenant,
+        user,
+        operation,
+        write
+      ),
     getTenantIdFromContext: vi.fn(() => 'tenant-1'),
     getTenantMetadataContextFromHono: vi.fn((c) =>
       c.env.__TENANT_D1
@@ -789,7 +805,7 @@ describe('email code handlers through HTTP', () => {
 
       expect(response.status).toBe(200);
       expect(mocks.warn).toHaveBeenCalledWith(
-        'Failed to persist registration field values',
+        'Failed to settle registration attributes',
         { action: 'registration_fields_persist' },
         expect.any(Error)
       );

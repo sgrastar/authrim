@@ -99,7 +99,18 @@ describe('account directory removal PII erasure', () => {
         'utf8'
       )
     );
+    database.exec(
+      readFileSync(
+        new URL('../../../../migrations/pii/d1/004_account_webhook_snapshots.sql', import.meta.url),
+        'utf8'
+      )
+    );
     database.exec(`
+      CREATE TABLE identity_accounts (id TEXT, tenant_id TEXT, legacy_user_id TEXT,
+        account_type TEXT, registration_state TEXT, lifecycle_state TEXT,
+        directory_publication_state TEXT);
+      INSERT INTO identity_accounts VALUES ('account:user-a', 'tenant-a', 'user-a',
+        'user', 'registered', 'active', 'active');
       CREATE TABLE identity_identifier_replacement_operations (
         operation_id TEXT PRIMARY KEY, tenant_id TEXT, account_id TEXT, state TEXT,
         error_code TEXT, lease_owner TEXT, lease_expires_at INTEGER,
@@ -126,7 +137,7 @@ describe('account directory removal PII erasure', () => {
       );
       CREATE TABLE identity_sensitive_values (
         id TEXT PRIMARY KEY, tenant_id TEXT, owner_type TEXT, owner_id TEXT,
-        value_json TEXT, lifecycle_state TEXT, updated_at INTEGER
+        value_key TEXT, value_json TEXT, lifecycle_state TEXT, updated_at INTEGER
       );
       CREATE TABLE linked_identities (
         id TEXT PRIMARY KEY, tenant_id TEXT, user_id TEXT
@@ -150,17 +161,42 @@ describe('account directory removal PII erasure', () => {
         ('subject-a', 'tenant-a', 'user-a'),
         ('subject-b', 'tenant-b', 'user-b');
     `);
+    database.exec(`INSERT INTO identity_sensitive_values
+      (id,tenant_id,owner_type,owner_id,value_key,value_json,lifecycle_state,updated_at)
+      VALUES ('email-a','tenant-a','runtime_user','user-a','email','"before@example.com"','active',1)`);
     adapter = new SqliteAdapter(database);
   });
 
   afterEach(() => database.close());
 
+  it('does not erase PII if its deletion snapshot cannot be persisted', async () => {
+    database.exec('DROP TABLE account_webhook_snapshots');
+    await expect(
+      eraseAccountPiiAfterDirectoryRemovalPrepared(
+        adapter,
+        { tenantId: 'tenant-a', userId: 'user-a', core: adapter },
+        100
+      )
+    ).rejects.toThrow();
+    expect(database.prepare('SELECT value_json FROM identity_sensitive_values').get()).toEqual({
+      value_json: '"before@example.com"',
+    });
+  });
+
   it('deletes both identifier models only for the requested tenant and user', async () => {
     await eraseAccountPiiAfterDirectoryRemovalPrepared(
       adapter,
-      { tenantId: 'tenant-a', userId: 'user-a' },
+      { tenantId: 'tenant-a', userId: 'user-a', core: adapter },
       100
     );
+    expect(
+      database.prepare('SELECT email_before_json FROM account_webhook_snapshots').get()
+    ).toEqual({
+      email_before_json: '"before@example.com"',
+    });
+    expect(database.prepare('SELECT value_json FROM identity_sensitive_values').get()).toEqual({
+      value_json: null,
+    });
     expect(database.prepare('SELECT id FROM subject_identifiers ORDER BY id').all()).toEqual([
       { id: 'subject-b' },
     ]);
@@ -170,7 +206,7 @@ describe('account directory removal PII erasure', () => {
 
     await eraseAccountPiiAfterDirectoryRemovalPrepared(
       adapter,
-      { tenantId: 'tenant-a', userId: 'user-b' },
+      { tenantId: 'tenant-a', userId: 'user-b', core: adapter },
       101
     );
     expect(database.prepare('SELECT id FROM subject_identifiers ORDER BY id').all()).toEqual([

@@ -1,3 +1,8 @@
+import { withGroupInputWrite } from '../../services/dynamic-groups/write-boundary';
+import {
+  captureAccountDeletionSnapshot,
+  persistAccountEmailMutation,
+} from '../../services/account-webhook-snapshots';
 import type { AccountRegistrationState } from '../../services/guest-lifecycle';
 import type { DatabaseAdapter } from '../../db/adapter';
 import { getCurrentTimestamp } from '../base';
@@ -104,6 +109,19 @@ export class CanonicalRuntimeUserWriter {
     input: CanonicalRuntimeUserWriteInput,
     directoryPublication?: AccountDirectoryPublication
   ): Promise<CanonicalRuntimeUserWriteResult> {
+    return withGroupInputWrite(
+      this.sensitiveValueAdapter,
+      input.tenantId,
+      input.userId,
+      'canonical-user',
+      () => this.createFromRuntimeUserInternal(input, directoryPublication)
+    );
+  }
+
+  private async createFromRuntimeUserInternal(
+    input: CanonicalRuntimeUserWriteInput,
+    directoryPublication?: AccountDirectoryPublication
+  ): Promise<CanonicalRuntimeUserWriteResult> {
     const lifecycleState = toLifecycleState(input.active);
     const graph = await this.repository.createIdentityGraph(
       {
@@ -165,11 +183,24 @@ export class CanonicalRuntimeUserWriter {
   async syncFromRuntimeUser(
     input: CanonicalRuntimeUserWriteInput
   ): Promise<CanonicalRuntimeUserWriteResult | null> {
+    return withGroupInputWrite(
+      this.sensitiveValueAdapter,
+      input.tenantId,
+      input.userId,
+      'canonical-user',
+      () => this.syncFromRuntimeUserInternal(input)
+    );
+  }
+
+  private async syncFromRuntimeUserInternal(
+    input: CanonicalRuntimeUserWriteInput
+  ): Promise<CanonicalRuntimeUserWriteResult | null> {
     const account = await this.repository.findAccountByLegacyUserId(input.userId, {
       includeInactive: true,
+      consistencyClass: 'primary_required',
     });
     if (!account) {
-      return this.createFromRuntimeUser(input);
+      return this.createFromRuntimeUserInternal(input);
     }
 
     const lifecycleState = toLifecycleState(input.active);
@@ -222,10 +253,12 @@ export class CanonicalRuntimeUserWriter {
   async deleteRuntimeUser(userId: string): Promise<boolean> {
     const account = await this.repository.findAccountByLegacyUserId(userId, {
       includeInactive: true,
+      consistencyClass: 'primary_required',
     });
     if (!account) {
       return false;
     }
+    await captureAccountDeletionSnapshot(this.sensitiveValueAdapter, account);
     const accountTransitioned = await this.repository.transitionAccountLifecycle(
       account.id,
       'deleted'
@@ -675,8 +708,8 @@ export class CanonicalRuntimeUserWriter {
   ): Promise<void> {
     const now = getCurrentTimestamp();
     log.info('Canonical sensitive value write started', { stage: 'pii_value_started', field });
-    await this.sensitiveValueAdapter.execute(
-      `INSERT INTO identity_sensitive_values (
+    const mutation = {
+      sql: `INSERT INTO identity_sensitive_values (
         id, tenant_id, owner_type, owner_id, value_key, value_json, value_hash,
         classification, lifecycle_state, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -686,7 +719,7 @@ export class CanonicalRuntimeUserWriter {
         classification = excluded.classification,
         lifecycle_state = excluded.lifecycle_state,
         updated_at = excluded.updated_at`,
-      [
+      params: [
         `sensitive-value:${input.userId}:${field}`,
         input.tenantId,
         'runtime_user',
@@ -698,8 +731,17 @@ export class CanonicalRuntimeUserWriter {
         'active',
         now,
         now,
-      ]
-    );
+      ],
+    };
+    if (field === 'email') {
+      const account = await this.repository.findAccountByLegacyUserId(input.userId, {
+        includeInactive: true,
+        consistencyClass: 'primary_required',
+      });
+      await persistAccountEmailMutation(this.sensitiveValueAdapter, account, value, mutation);
+    } else {
+      await this.sensitiveValueAdapter.execute(mutation.sql, mutation.params);
+    }
     log.info('Canonical sensitive value write completed', { stage: 'pii_value_completed', field });
   }
 
@@ -709,11 +751,20 @@ export class CanonicalRuntimeUserWriter {
     lifecycleState: IdentityLifecycleState
   ): Promise<void> {
     const now = getCurrentTimestamp();
-    await this.sensitiveValueAdapter.execute(
-      `UPDATE identity_sensitive_values SET lifecycle_state = ?, updated_at = ?
+    const mutation = {
+      sql: `UPDATE identity_sensitive_values SET lifecycle_state = ?, updated_at = ?
         WHERE tenant_id = ? AND owner_type = 'runtime_user' AND owner_id = ? AND value_key = ?`,
-      [lifecycleState, now, input.tenantId, input.userId, field]
-    );
+      params: [lifecycleState, now, input.tenantId, input.userId, field],
+    };
+    if (field === 'email' && lifecycleState === 'deleted') {
+      const account = await this.repository.findAccountByLegacyUserId(input.userId, {
+        includeInactive: true,
+        consistencyClass: 'primary_required',
+      });
+      await persistAccountEmailMutation(this.sensitiveValueAdapter, account, null, mutation);
+    } else {
+      await this.sensitiveValueAdapter.execute(mutation.sql, mutation.params);
+    }
   }
 }
 

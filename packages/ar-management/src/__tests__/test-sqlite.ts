@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 export type SQLInputValue = null | number | bigint | string | Uint8Array;
 export interface SQLiteDatabase {
+  function(name: string, callback: (...args: SQLInputValue[]) => SQLInputValue): void;
   exec(sql: string): void;
   prepare(sql: string): {
     run(...params: SQLInputValue[]): { changes: number | bigint };

@@ -217,6 +217,20 @@ export const ADMIN_ROUTE_ACCESS_RULES: AdminRouteAccessRule[] = [
     'end-user effective permissions'
   ),
   ...byMethod(
+    '/api/admin/service-groups',
+    ADMIN_PERMISSIONS.USERS_READ,
+    ADMIN_PERMISSIONS.USERS_WRITE,
+    ADMIN_PERMISSIONS.USERS_WRITE,
+    'service user membership computation'
+  ),
+  ...byMethod(
+    '/api/admin/service-groups/*',
+    ADMIN_PERMISSIONS.USERS_READ,
+    ADMIN_PERMISSIONS.USERS_WRITE,
+    ADMIN_PERMISSIONS.USERS_WRITE,
+    'service user membership computation'
+  ),
+  ...byMethod(
     '/api/admin/roles',
     ADMIN_PERMISSIONS.ROLES_READ,
     ADMIN_PERMISSIONS.ROLES_WRITE,

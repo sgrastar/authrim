@@ -12932,6 +12932,30 @@ type RootTranslation = {
 	 */
 	admin_tenant_discovery_tenant_screen_save_failed: string
 	/**
+	 * A​c​c​o​u​n​t​ ​s​t​a​t​e​s​ ​(​l​e​a​v​e​ ​e​m​p​t​y​ ​f​o​r​ ​a​l​l​)
+	 */
+	admin_webhooks_registration_filter: string
+	/**
+	 * S​a​v​e​ ​f​i​e​l​d​s
+	 */
+	admin_webhooks_payload_save: string
+	/**
+	 * R​e​g​i​s​t​r​a​t​i​o​n​ ​s​t​a​t​e
+	 */
+	admin_webhooks_payload_registration: string
+	/**
+	 * E​m​a​i​l​ ​a​d​d​r​e​s​s​ ​(​b​e​f​o​r​e​ ​a​n​d​ ​a​f​t​e​r​)
+	 */
+	admin_webhooks_payload_email: string
+	/**
+	 * S​e​l​e​c​t​ ​e​v​e​n​t​-​t​i​m​e​ ​d​a​t​a​ ​f​o​r​ ​e​m​a​i​l​ ​c​h​a​n​g​e​s​ ​a​n​d​ ​a​c​c​o​u​n​t​ ​d​e​l​e​t​i​o​n​.​ ​U​n​s​e​l​e​c​t​e​d​ ​f​i​e​l​d​s​ ​a​r​e​ ​o​m​i​t​t​e​d​.
+	 */
+	admin_webhooks_payload_hint: string
+	/**
+	 * A​c​c​o​u​n​t​ ​d​a​t​a
+	 */
+	admin_webhooks_payload_fields: string
+	/**
 	 * W​e​b​h​o​o​k​s​ ​-​ ​A​d​m​i​n​ ​D​a​s​h​b​o​a​r​d​ ​-​ ​A​u​t​h​r​i​m
 	 */
 	admin_webhooks_head_title: string
@@ -46393,6 +46417,30 @@ Actual results vary by authentication flow, token TTL, and usage patterns.
 	 * Failed to save tenant discovery screen
 	 */
 	admin_tenant_discovery_tenant_screen_save_failed: () => LocalizedString
+	/**
+	 * Account states (leave empty for all)
+	 */
+	admin_webhooks_registration_filter: () => LocalizedString
+	/**
+	 * Save fields
+	 */
+	admin_webhooks_payload_save: () => LocalizedString
+	/**
+	 * Registration state
+	 */
+	admin_webhooks_payload_registration: () => LocalizedString
+	/**
+	 * Email address (before and after)
+	 */
+	admin_webhooks_payload_email: () => LocalizedString
+	/**
+	 * Select event-time data for email changes and account deletion. Unselected fields are omitted.
+	 */
+	admin_webhooks_payload_hint: () => LocalizedString
+	/**
+	 * Account data
+	 */
+	admin_webhooks_payload_fields: () => LocalizedString
 	/**
 	 * Webhooks - Admin Dashboard - Authrim
 	 */

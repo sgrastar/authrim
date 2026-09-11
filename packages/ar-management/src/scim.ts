@@ -44,6 +44,7 @@ import {
   generateUserIdFromSettings,
   validateCustomClaimWrite,
   persistCustomClaimWrite,
+  withGroupInputWrite,
   syncUserLifecycleState,
   resolveCustomClaimRuntimeSourcesFromEnv,
   ensureDatabaseAdapter,
@@ -2635,9 +2636,18 @@ app.put('/Users/:id', async (c) => {
     }
     internalUser.updated_at = new Date().toISOString();
 
-    await syncUpdatedScimIdentifiers(c, tenantId, userId, adapters, existingUser, internalUser);
-    await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation, adapters);
-    await maybeSyncCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId, internalUser);
+    await withGroupInputWrite(coreAdapter, tenantId, userId, 'scim:user-update', async () => {
+      await syncUpdatedScimIdentifiers(c, tenantId, userId, adapters, existingUser, internalUser);
+      await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation, adapters);
+      await maybeSyncCanonicalRuntimeUser(
+        c,
+        coreAdapter,
+        piiAdapter,
+        tenantId,
+        userId,
+        internalUser
+      );
+    });
 
     // Invalidate user cache (cache invalidation hook)
     await invalidateUserCache(c.env, tenantId, userId);
@@ -2759,9 +2769,18 @@ app.patch('/Users/:id', async (c) => {
     }
     internalUser.updated_at = new Date().toISOString();
 
-    await syncUpdatedScimIdentifiers(c, tenantId, userId, adapters, existingUser, internalUser);
-    await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation, adapters);
-    await maybeSyncCanonicalRuntimeUser(c, coreAdapter, piiAdapter, tenantId, userId, internalUser);
+    await withGroupInputWrite(coreAdapter, tenantId, userId, 'scim:user-update', async () => {
+      await syncUpdatedScimIdentifiers(c, tenantId, userId, adapters, existingUser, internalUser);
+      await persistScimCustomClaimWrite(c, tenantId, userId, customFieldValidation, adapters);
+      await maybeSyncCanonicalRuntimeUser(
+        c,
+        coreAdapter,
+        piiAdapter,
+        tenantId,
+        userId,
+        internalUser
+      );
+    });
 
     // Invalidate user cache (cache invalidation hook)
     await invalidateUserCache(c.env, tenantId, userId);
@@ -2874,7 +2893,7 @@ app.delete('/Users/:id', async (c) => {
 
     await eraseAccountPiiAfterDirectoryRemovalPrepared(
       piiAdapter,
-      { tenantId, userId },
+      { tenantId, userId, core: coreAdapter },
       Math.floor(now / 1000)
     );
 
@@ -4191,22 +4210,36 @@ async function processUserOperation(
       }
       internalUser.updated_at = new Date().toISOString();
 
-      await syncUpdatedScimIdentifiers(
-        c,
-        tenantId,
-        resourceId!,
-        adapters,
-        existingUser,
-        internalUser
-      );
-      await persistScimCustomClaimWrite(c, tenantId, resourceId!, customFieldValidation, adapters);
-      await maybeSyncCanonicalRuntimeUser(
-        c,
+      await withGroupInputWrite(
         coreAdapter,
-        piiAdapter,
         tenantId,
         resourceId!,
-        internalUser
+        'scim:bulk-user-update',
+        async () => {
+          await syncUpdatedScimIdentifiers(
+            c,
+            tenantId,
+            resourceId!,
+            adapters,
+            existingUser,
+            internalUser
+          );
+          await persistScimCustomClaimWrite(
+            c,
+            tenantId,
+            resourceId!,
+            customFieldValidation,
+            adapters
+          );
+          await maybeSyncCanonicalRuntimeUser(
+            c,
+            coreAdapter,
+            piiAdapter,
+            tenantId,
+            resourceId!,
+            internalUser
+          );
+        }
       );
 
       await invalidateUserCache(c.env, tenantId, resourceId!);
@@ -4344,22 +4377,36 @@ async function processUserOperation(
       }
       internalUser.updated_at = new Date().toISOString();
 
-      await syncUpdatedScimIdentifiers(
-        c,
-        tenantId,
-        resourceId!,
-        adapters,
-        existingUser,
-        internalUser
-      );
-      await persistScimCustomClaimWrite(c, tenantId, resourceId!, customFieldValidation, adapters);
-      await maybeSyncCanonicalRuntimeUser(
-        c,
+      await withGroupInputWrite(
         coreAdapter,
-        piiAdapter,
         tenantId,
         resourceId!,
-        internalUser
+        'scim:bulk-user-update',
+        async () => {
+          await syncUpdatedScimIdentifiers(
+            c,
+            tenantId,
+            resourceId!,
+            adapters,
+            existingUser,
+            internalUser
+          );
+          await persistScimCustomClaimWrite(
+            c,
+            tenantId,
+            resourceId!,
+            customFieldValidation,
+            adapters
+          );
+          await maybeSyncCanonicalRuntimeUser(
+            c,
+            coreAdapter,
+            piiAdapter,
+            tenantId,
+            resourceId!,
+            internalUser
+          );
+        }
       );
 
       await invalidateUserCache(c.env, tenantId, resourceId!);

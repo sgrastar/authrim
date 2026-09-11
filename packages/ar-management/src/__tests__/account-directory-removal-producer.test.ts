@@ -227,7 +227,7 @@ describe('account directory removal producer', () => {
 
     await eraseAccountPiiAfterDirectoryRemovalPrepared(
       pii,
-      { tenantId: 'tenant-a', userId: 'user-a' },
+      { tenantId: 'tenant-a', userId: 'user-a', core },
       100
     );
 

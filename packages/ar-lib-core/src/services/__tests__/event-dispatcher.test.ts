@@ -173,6 +173,26 @@ describe('EventDispatcher', () => {
   // ===========================================================================
 
   describe('deduplication', () => {
+    it('keeps durable outbox identity and retries after a failed publish without a KV lock', async () => {
+      webhookRegistry.findByEventType.mockRejectedValueOnce(
+        new Error('temporary registry failure')
+      );
+      const payload = { type: 'account.deleted', tenantId: 't', data: { userId: 'u' } };
+      const options = {
+        durableEvent: { id: 'evt_durable', occurredAt: 1234000 },
+        skipAuditLog: true,
+      };
+      const failed = await dispatcher.publish(payload, options);
+      const retried = await dispatcher.publish(payload, options);
+      expect(failed.success).toBe(false);
+      expect(retried.success).toBe(true);
+      expect(retried.deduplicated).toBeUndefined();
+      expect(failed.eventId).toBe('evt_durable');
+      expect(retried.eventId).toBe(failed.eventId);
+      expect(retried.timestamp).toBe(1234000);
+      expect(kv.put).not.toHaveBeenCalled();
+    });
+
     it('should deduplicate events with same deduplicationKey', async () => {
       const result1 = await dispatcher.publish(
         {
@@ -382,6 +402,161 @@ describe('EventDispatcher', () => {
   // ===========================================================================
 
   describe('webhook delivery', () => {
+    it('materializes selected data independently for each destination', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+      webhookRegistry.findByEventType.mockResolvedValue([
+        {
+          id: 'email',
+          tenantId: 'tenant_default',
+          scope: 'tenant',
+          url: 'https://example.com/email',
+          secretEncrypted: 'secret',
+          timeoutMs: 1000,
+          events: ['account.email.changed'],
+          payloadFields: ['email'],
+          active: true,
+        },
+        {
+          id: 'ids',
+          tenantId: 'tenant_default',
+          scope: 'tenant',
+          url: 'https://example.com/ids',
+          secretEncrypted: 'secret',
+          timeoutMs: 1000,
+          events: ['account.email.changed'],
+          payloadFields: [],
+          active: true,
+        },
+      ]);
+      await dispatcher.publish(
+        { type: 'account.email.changed', tenantId: 'tenant_default', data: { userId: 'u' } },
+        {
+          skipAuditLog: true,
+          skipInternalHandlers: true,
+          accountWebhookData: async (webhook) =>
+            webhook.payloadFields?.includes('email')
+              ? {
+                  userId: 'u',
+                  changes: { email: { before: 'old@example.com', after: 'new@example.com' } },
+                }
+              : { userId: 'u' },
+        }
+      );
+      const bodies = new Map(
+        mockFetch.mock.calls.map(([url, request]) => [String(url), JSON.parse(request.body).data])
+      );
+      expect(bodies.get('https://example.com/ids')).toEqual({ userId: 'u' });
+      expect(bodies.get('https://example.com/email')).toHaveProperty(
+        'changes.email.before',
+        'old@example.com'
+      );
+    });
+    it.each([
+      'user.created',
+      'user.updated',
+      'user.deleted',
+      'account.guest.created',
+      'account.guest.updated',
+      'account.guest.deleted',
+      'account.registered.created',
+      'account.registered.updated',
+      'account.registered.deleted',
+      'account.registration.promoted',
+      'account.registration.demoted',
+    ])('does not deliver removed lifecycle webhook %s', async (type) => {
+      await dispatcher.publish(
+        { type, tenantId: 'tenant_default', data: { userId: 'u' } },
+        { skipAuditLog: true }
+      );
+      expect(webhookRegistry.findByEventType).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+    it('filters account state without resolving legacy subscription aliases', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+      const base = {
+        tenantId: 'tenant_default',
+        scope: 'tenant',
+        url: 'https://example.com/hook',
+        secretEncrypted: 'secret',
+        timeoutMs: 1000,
+        active: true,
+      };
+      webhookRegistry.findByEventType.mockImplementation(async (_tenant, type) =>
+        type === 'account.created'
+          ? [
+              {
+                ...base,
+                id: 'registered',
+                events: ['account.created'],
+                registrationStates: ['registered'],
+              },
+            ]
+          : [{ ...base, id: 'legacy', events: ['account.guest.created'] }]
+      );
+      await dispatcher.publish(
+        {
+          type: 'account.created',
+          tenantId: 'tenant_default',
+          data: { registration_state: 'guest' },
+        },
+        { skipAuditLog: true }
+      );
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(webhookRegistry.findByEventType).toHaveBeenCalledTimes(1);
+    });
+    it('sends a durable account event with its original envelope on every delivery attempt', async () => {
+      mockFetch.mockResolvedValue({ ok: true, status: 200 });
+      webhookRegistry.findByEventType.mockResolvedValue([
+        {
+          id: 'wh_account',
+          tenantId: 'tenant_default',
+          url: 'https://example.com/webhook',
+          secretEncrypted: 'encrypted_secret',
+          timeoutMs: 10000,
+          events: ['account.*'],
+          active: true,
+        },
+      ]);
+      const payload = {
+        type: 'account.deleted',
+        tenantId: 'tenant_default',
+        data: { userId: 'u' },
+      };
+      const options = {
+        durableEvent: { id: 'evt_original', occurredAt: 1000 },
+        skipAuditLog: true,
+      };
+      await dispatcher.publish(payload, options);
+      await dispatcher.publish(payload, options);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      for (const [, request] of mockFetch.mock.calls) {
+        expect(JSON.parse(request.body)).toMatchObject({
+          id: 'evt_original',
+          timestamp: '1970-01-01T00:00:01.000Z',
+          type: 'account.deleted',
+          tenantId: 'tenant_default',
+          data: { userId: 'u' },
+        });
+      }
+    });
+    it('keeps a durable event pending when a matching webhook cannot sign the payload', async () => {
+      webhookRegistry.findByEventType.mockResolvedValue([
+        {
+          id: 'wh_account',
+          tenantId: 'tenant_default',
+          url: 'https://example.com/webhook',
+          events: ['account.*'],
+          active: true,
+        },
+      ]);
+      const result = await dispatcher.publish(
+        { type: 'account.deleted', tenantId: 'tenant_default', data: {} },
+        { durableEvent: { id: 'evt_missing_secret', occurredAt: 1000 }, skipAuditLog: true }
+      );
+      expect(result.delivery.webhooks.skipped).toBe(1);
+      expect(result.success).toBe(false);
+    });
+
     it('should deliver to matching webhooks', async () => {
       mockFetch.mockResolvedValue({ ok: true, status: 200 });
 

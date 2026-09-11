@@ -4,6 +4,11 @@ This directory contains the publishable OpenAPI copies used by the Authrim
 website. The OpenAPI source of truth remains in package-local `openapi/`
 directories, for example `packages/ar-management/openapi/admin.openapi.yaml`.
 
+## Integration guides
+
+- [Webhook events and delivery](../specification/webhooks.md): event catalog, payloads, signatures,
+  subscription scope, account lifecycle notifications, and separate test/logout callbacks.
+
 ## Structure
 
 - `specs.json`: OpenAPI source metadata and grouping.

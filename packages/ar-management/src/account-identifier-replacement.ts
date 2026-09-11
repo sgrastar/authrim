@@ -2,6 +2,7 @@ import type { AccountDirectoryPublication } from '@authrim/ar-lib-core';
 import type { Context } from 'hono';
 import {
   CanonicalRuntimeUserStore,
+  persistAccountEmailMutation,
   AR_ERROR_CODES,
   createAccountAuthContextFromHono,
   encodeCanonicalSensitiveValueRef,
@@ -129,6 +130,7 @@ async function coordinatorFor(c: Context<{ Bindings: Env }>, tenantId: string) {
   const pii = createPIIContextFromHono(c, tenantId);
   const lookupForBucket = await createLookupBucketWriteResolver(c.env);
   return new IdentifierReplacementCoordinator({
+    webhookCoreForAccount: async () => auth.coreAdapter,
     pii: pii.defaultPiiAdapter,
     lookupForBucket,
     revokeCredentials: (input) =>
@@ -198,8 +200,15 @@ export async function addVerifiedAccountEmail(
   const account = await auth.coreAdapter.queryOne<{
     id: string;
     primary_subject_id: string;
+    tenant_id: string;
+    legacy_user_id: string;
+    account_type: string;
+    registration_state: 'guest' | 'registered';
+    directory_publication_state: string;
+    lifecycle_state: string;
   }>(
-    `SELECT id, primary_subject_id FROM identity_accounts
+    `SELECT id, primary_subject_id, tenant_id, legacy_user_id, account_type, registration_state,
+       directory_publication_state, lifecycle_state FROM identity_accounts
       WHERE tenant_id = ? AND legacy_user_id = ? AND lifecycle_state = 'active'
       LIMIT 1`,
     [input.tenantId, input.accountId],
@@ -261,8 +270,12 @@ export async function addVerifiedAccountEmail(
   ) {
     throw new Error('account_email_addition_contact_conflict');
   }
-  await pii.defaultPiiAdapter.execute(
-    `INSERT INTO identity_sensitive_values (
+  await persistAccountEmailMutation(
+    pii.defaultPiiAdapter,
+    account,
+    input.email,
+    {
+      sql: `INSERT INTO identity_sensitive_values (
        id, tenant_id, owner_type, owner_id, value_key, value_json, value_hash,
        classification, lifecycle_state, created_at, updated_at
      ) VALUES (?, ?, 'runtime_user', ?, 'email', ?, NULL, 'sensitive', 'active', ?, ?)
@@ -274,14 +287,16 @@ export async function addVerifiedAccountEmail(
        updated_at = excluded.updated_at
      WHERE identity_sensitive_values.lifecycle_state <> 'active'
         OR identity_sensitive_values.value_json = excluded.value_json`,
-    [
-      `sensitive-value:${input.accountId}:email`,
-      input.tenantId,
-      input.accountId,
-      JSON.stringify(input.email),
-      now,
-      now,
-    ]
+      params: [
+        `sensitive-value:${input.accountId}:email`,
+        input.tenantId,
+        input.accountId,
+        JSON.stringify(input.email),
+        now,
+        now,
+      ],
+    },
+    true
   );
   const reflected = await pii.defaultPiiAdapter.queryOne<{ value_json: string }>(
     `SELECT value_json FROM identity_sensitive_values

@@ -1324,7 +1324,7 @@ export async function adminUserAnonymizeHandler(c: Context<{ Bindings: Env }>) {
       }
       await eraseAccountPiiAfterDirectoryRemovalPrepared(
         piiCtx.defaultPiiAdapter,
-        { tenantId, userId },
+        { tenantId, userId, core: authCtx.coreAdapter },
         nowTs
       );
       await piiCtx.piiRepositories.linkedIdentity.deleteByUserId(

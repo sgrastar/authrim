@@ -52,6 +52,7 @@ import {
   CanonicalRuntimeUserStore,
   ensureDatabaseAdapter,
   markOtpLoginEmailVerified,
+  withGroupInputWrite,
   resolveOtpAccountCoreDataContextByIdentifierFromHono,
   type CanonicalOtpLoginUser,
   type OtpAccountCoreDataContext,
@@ -691,21 +692,45 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
         return createErrorResponse(c, AR_ERROR_CODES.USER_INVALID_CREDENTIALS);
       }
       const customFields = challengeData.metadata?.custom_fields;
+      const groupedRegistrationWrite = Boolean(customFields);
       if (customFields) {
-        try {
-          await persistRegistrationFieldValuesFromEnv(
-            c.env,
-            tenantId,
-            challengeData.userId,
-            customFields
-          );
-        } catch (persistError) {
+        await withGroupInputWrite(
+          accountCoreAdapter,
+          tenantId,
+          challengeData.userId,
+          'registration:email-code',
+          async () => {
+            const fieldsWrite = persistRegistrationFieldValuesFromEnv(
+              c.env,
+              tenantId,
+              challengeData.userId,
+              customFields
+            );
+            const emailWrite = (async () => {
+              if (!tenantD1 || runtimeUser.email_verified !== 1) {
+                if (userLookup.kind === 'tenant_d1')
+                  await markOtpLoginEmailVerified(
+                    accountCoreAdapter,
+                    tenantId,
+                    challengeData.userId,
+                    now
+                  );
+                else if (runtimeUsers)
+                  await runtimeUsers.markEmailVerifiedAndTouchLastLogin(challengeData.userId, now);
+                else throw new Error('otp_runtime_user_store_unavailable');
+              }
+            })();
+            const results = await Promise.allSettled([fieldsWrite, emailWrite]);
+            const failed = results.find((result) => result.status === 'rejected');
+            if (failed?.status === 'rejected') throw failed.reason;
+          }
+        ).catch((error: unknown) => {
           log.warn(
-            'Failed to persist registration field values',
+            'Failed to settle registration attributes',
             { action: 'registration_fields_persist' },
-            persistError as Error
+            error as Error
           );
-        }
+        });
       }
 
       const sessionTtl = await sessionTtlPromise;
@@ -743,7 +768,7 @@ export async function emailCodeVerifyHandler(c: Context<{ Bindings: Env }>) {
       // revocation DO. Only an actually unverified email still needs a Core write, and that
       // write updates the contact point directly without re-reading or rewriting account metadata.
       // Standard storage keeps the legacy metadata update for compatibility.
-      if (!tenantD1 || runtimeUser.email_verified !== 1) {
+      if (!groupedRegistrationWrite && (!tenantD1 || runtimeUser.email_verified !== 1)) {
         const userUpdate = (
           userLookup.kind === 'tenant_d1'
             ? markOtpLoginEmailVerified(

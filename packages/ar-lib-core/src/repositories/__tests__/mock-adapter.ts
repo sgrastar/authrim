@@ -121,13 +121,12 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
 
       // Continue with ORDER BY, LIMIT, OFFSET processing
       // Handle ORDER BY (supports multiple fields)
-      const orderMatch = sql.match(/ORDER\s+BY\s+(.+?)(?:\s+LIMIT|\s+OFFSET|$)/i);
-      if (orderMatch) {
-        const orderClause = orderMatch[1].trim();
+      const orderClause = this.extractClause(sql, 'ORDER BY');
+      if (orderClause) {
         const orderFields = orderClause
           .split(',')
           .map((field) => {
-            const match = field.trim().match(/(\w+)\s+(ASC|DESC)?/i);
+            const match = field.trim().match(/\b(\w+)\s+(ASC|DESC)?/i);
             if (match) {
               return {
                 field: match[1],
@@ -180,14 +179,13 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     let results = allRows.filter((row) => this.matchesConditions(row, conditions));
 
     // Handle ORDER BY (supports multiple fields)
-    const orderMatch = sql.match(/ORDER\s+BY\s+(.+?)(?:\s+LIMIT|\s+OFFSET|$)/i);
-    if (orderMatch) {
-      const orderClause = orderMatch[1].trim();
+    const orderClause = this.extractClause(sql, 'ORDER BY');
+    if (orderClause) {
       // Parse multiple order fields: "priority DESC, relation_name ASC"
       const orderFields = orderClause
         .split(',')
         .map((field) => {
-          const match = field.trim().match(/(\w+)\s+(ASC|DESC)?/i);
+          const match = field.trim().match(/\b(\w+)\s+(ASC|DESC)?/i);
           if (match) {
             return {
               field: match[1],
@@ -296,6 +294,32 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
 
   // ========== Private Helpers ==========
 
+  // Clause boundaries are found separately so whitespace cannot be repartitioned by
+  // overlapping repetitions. This is a fixture parser, not a general SQL parser.
+  private extractClause(
+    sql: string,
+    keyword: 'WHERE' | 'SET' | 'ORDER BY',
+    fullTail = false
+  ): string | null {
+    const start =
+      keyword === 'WHERE'
+        ? /\bWHERE\s/i.exec(sql)
+        : keyword === 'SET'
+          ? /\bSET\s/i.exec(sql)
+          : /\bORDER\s+BY\s/i.exec(sql);
+    if (!start) return null;
+    const tail = sql.slice(start.index + start[0].length);
+    if (fullTail) return tail.trim();
+    const end =
+      keyword === 'WHERE'
+        ? /\s(?:ORDER|LIMIT|GROUP)\b/i.exec(tail)
+        : keyword === 'SET'
+          ? /\sWHERE\b/i.exec(tail)
+          : /\s(?:LIMIT|OFFSET)\b/i.exec(tail);
+    if (keyword === 'SET' && !end) return null;
+    return tail.slice(0, end?.index ?? tail.length).trim();
+  }
+
   private extractTableName(sql: string): string {
     // FROM tablename / INTO tablename / UPDATE tablename / DELETE FROM tablename
     const fromMatch = sql.match(/(?:FROM|INTO|UPDATE)\s+(\w+)/i);
@@ -307,18 +331,16 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     params?: unknown[]
   ): Array<{ field: string; value: unknown; operator?: string }> {
     const conditions: Array<{ field: string; value: unknown; operator?: string }> = [];
-    const whereMatch = sql.match(/WHERE\s+(.+?)(?:\s+ORDER|\s+LIMIT|\s+GROUP|$)/i);
-    if (!whereMatch) return conditions;
-
-    const wherePart = whereMatch[1];
+    const wherePart = this.extractClause(sql, 'WHERE');
+    if (!wherePart) return conditions;
 
     // Parse placeholder conditions (field = ?)
-    const placeholderFields = wherePart.match(/(\w+)\s*=\s*\?/g);
+    const placeholderFields = wherePart.match(/\b(\w+)\s*=\s*\?/g);
     let paramIndex = 0;
 
     if (placeholderFields && params) {
       for (const match of placeholderFields) {
-        const fieldName = match.match(/(\w+)\s*=/)?.[1];
+        const fieldName = match.match(/\b(\w+)\s*=/)?.[1];
         if (fieldName && paramIndex < params.length) {
           conditions.push({ field: fieldName, value: params[paramIndex] });
           paramIndex++;
@@ -327,10 +349,10 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     }
 
     // Parse comparison operators (field <= ?, field > ?, etc.)
-    const comparisonMatches = wherePart.match(/(\w+)\s*(<=|>=|<|>)\s*\?/g);
+    const comparisonMatches = wherePart.match(/\b(\w+)\s*(<=|>=|<|>)\s*\?/g);
     if (comparisonMatches && params) {
       for (const match of comparisonMatches) {
-        const parts = match.match(/(\w+)\s*(<=|>=|<|>)\s*\?/);
+        const parts = match.match(/\b(\w+)\s*(<=|>=|<|>)\s*\?/);
         if (parts && paramIndex < params.length) {
           conditions.push({
             field: parts[1],
@@ -343,10 +365,10 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     }
 
     // Parse IS NULL conditions
-    const isNullMatches = wherePart.match(/(\w+)\s+IS\s+NULL/gi);
+    const isNullMatches = wherePart.match(/\b(\w+)\s+IS\s+NULL/gi);
     if (isNullMatches) {
       for (const match of isNullMatches) {
-        const parts = match.match(/(\w+)\s+IS\s+NULL/i);
+        const parts = match.match(/\b(\w+)\s+IS\s+NULL/i);
         if (parts) {
           conditions.push({ field: parts[1], value: null, operator: 'IS NULL' });
         }
@@ -354,10 +376,10 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     }
 
     // Parse literal value conditions (field = 0, field = 'value')
-    const literalMatches = wherePart.match(/(\w+)\s*=\s*([0-9]+|'[^']*'|"[^"]*")/g);
+    const literalMatches = wherePart.match(/\b(\w+)\s*=\s*([0-9]+|'[^']*'|"[^"]*")/g);
     if (literalMatches) {
       for (const match of literalMatches) {
-        const parts = match.match(/(\w+)\s*=\s*([0-9]+|'[^']*'|"[^"]*")/);
+        const parts = match.match(/\b(\w+)\s*=\s*([0-9]+|'[^']*'|"[^"]*")/);
         if (parts) {
           let value: unknown = parts[2];
           // Parse numeric literals
@@ -374,10 +396,10 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     }
 
     // Parse IS NOT NULL conditions
-    const isNotNullMatches = wherePart.match(/(\w+)\s+IS\s+NOT\s+NULL/gi);
+    const isNotNullMatches = wherePart.match(/\b(\w+)\s+IS\s+NOT\s+NULL/gi);
     if (isNotNullMatches) {
       for (const match of isNotNullMatches) {
-        const parts = match.match(/(\w+)\s+IS\s+NOT\s+NULL/i);
+        const parts = match.match(/\b(\w+)\s+IS\s+NOT\s+NULL/i);
         if (parts) {
           conditions.push({ field: parts[1], value: null, operator: 'IS NOT NULL' });
         }
@@ -385,10 +407,10 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     }
 
     // Parse literal string conditions (field = 'value')
-    const stringMatches = wherePart.match(/(\w+)\s*=\s*'([^']*)'/g);
+    const stringMatches = wherePart.match(/\b(\w+)\s*=\s*'([^']*)'/g);
     if (stringMatches) {
       for (const match of stringMatches) {
-        const parts = match.match(/(\w+)\s*=\s*'([^']*)'/);
+        const parts = match.match(/\b(\w+)\s*=\s*'([^']*)'/);
         if (parts) {
           const fieldName = parts[1];
           const value = parts[2];
@@ -414,10 +436,9 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     if (!params) return { limitVal: 0, offsetVal: 0 };
 
     // Count WHERE conditions
-    const whereMatch = sql.match(/WHERE\s+(.+?)(?:\s+ORDER|\s+LIMIT|\s+GROUP|$)/i);
+    const wherePart = this.extractClause(sql, 'WHERE');
     let whereParamCount = 0;
-    if (whereMatch) {
-      const wherePart = whereMatch[1];
+    if (wherePart) {
       const matches = wherePart.match(/\?/g);
       whereParamCount = matches ? matches.length : 0;
     }
@@ -490,7 +511,7 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     }
 
     // Parse column names from INSERT INTO table (col1, col2, ...) VALUES (?, ?, ...)
-    const columnsMatch = sql.match(/\(([^)]+)\)\s*\bVALUES\b/i);
+    const columnsMatch = sql.match(/\(([^()]+)\)\s*\bVALUES\b/i);
     if (!columnsMatch || !params) {
       return { success: false, rowsAffected: 0, lastRowId: null };
     }
@@ -532,21 +553,18 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
     }
 
     // Parse SET clause and WHERE clause
-    const setMatch = sql.match(/SET\s+([\s\S]+?)\s+WHERE/i);
-    const whereMatch = sql.match(/WHERE\s+([\s\S]+?)$/i);
+    const setClause = this.extractClause(sql, 'SET');
+    const whereClause = this.extractClause(sql, 'WHERE', true);
 
-    if (!setMatch || !whereMatch) {
+    if (!setClause || !whereClause) {
       return { success: true, rowsAffected: 0, lastRowId: null };
     }
-
-    const setClause = setMatch[1];
-    const whereClause = whereMatch[1];
 
     // Build update data
     const updateData: Record<string, unknown> = {};
     let paramIndex = 0;
     for (const assignment of setClause.split(',')) {
-      const match = assignment.trim().match(/(\w+)\s*=\s*(.+)$/);
+      const match = assignment.trim().match(/^(\w+)\s*=\s*(\S[\s\S]*)$/);
       if (!match) continue;
       const field = match[1];
       const token = match[2].trim();
@@ -566,19 +584,19 @@ export class MockDatabaseAdapter implements DatabaseAdapter {
 
     // Parse WHERE conditions (both placeholders and literals)
     const conditions: Array<{ field: string; value: unknown }> = [];
-    const whereParts = whereClause.split(/\s+AND\s+/i);
+    const whereParts = whereClause.split(/(?<=\s)AND(?=\s)/i);
 
     whereParts.forEach((part) => {
       part = part.trim();
       // Match field = ? (placeholder)
-      const placeholderMatch = part.match(/(\w+)\s*=\s*\?/);
+      const placeholderMatch = part.match(/\b(\w+)\s*=\s*\?/);
       if (placeholderMatch) {
         conditions.push({ field: placeholderMatch[1], value: params[paramIndex] });
         paramIndex++;
         return;
       }
       // Match field = literal (number or string)
-      const literalMatch = part.match(/(\w+)\s*=\s*([0-9]+|'[^']*'|"[^"]*")/);
+      const literalMatch = part.match(/\b(\w+)\s*=\s*([0-9]+|'[^']*'|"[^"]*")/);
       if (literalMatch) {
         let value: unknown = literalMatch[2];
         // Parse numeric literals

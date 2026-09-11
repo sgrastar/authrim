@@ -83,6 +83,7 @@ import {
   ensureDatabaseAdapter,
   getTenantMetadataContextFromHono,
   markOtpLoginEmailVerified,
+  withGroupInputWrite,
   resolveOtpAccountCoreDataContextByIdentifierFromHono,
   resolveAccountDataContextFromHono,
   type CanonicalOtpLoginUser,
@@ -1982,94 +1983,106 @@ async function completeDirectEmailVerification(
   if (guestDenial) return guestDenial;
 
   const now = Date.now();
-  if (tenantD1) {
-    if (runtimeUser.email_verified !== 1) {
-      c.executionCtx.waitUntil(
-        markOtpLoginEmailVerified(coreAdapter, tenantId, userId, now).catch((error: unknown) => {
-          log.error(
-            'Failed to update user after direct OTP login',
-            { action: 'direct_email_user_update' },
-            error as Error
-          );
-        })
-      );
-    }
-  } else {
-    const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
-    await runtimeUsers.markEmailVerifiedAndTouchLastLogin(userId, now);
-  }
-
   const isNewUser = now - Date.parse(runtimeUser.created_at) < 60000;
-
-  // Apply invitation role/org assignment if present.
-  const inviteId = metadataString(metadata, 'invite_id');
-  const inviteToken = metadataString(metadata, 'invite_token');
-
-  if (inviteId && inviteToken) {
-    const inviteNow = Math.floor(now / 1000);
-    try {
-      const invitation = await findActiveInvitationByToken(coreAdapter, inviteToken, inviteNow);
-      if (!invitation || invitation.id !== inviteId || invitation.tenant_id !== tenantId) {
-        log.warn('Invitation metadata no longer matches an active tenant invitation', {
-          invite_id: inviteId,
-          tenant_id: tenantId,
-        });
-      } else if (
-        !(await consumeInvitationUse(coreAdapter, invitation.id, invitation.tenant_id, inviteNow))
-      ) {
-        log.warn('Invitation use_count increment was skipped during email verification', {
-          invite_id: inviteId,
-          tenant_id: tenantId,
-        });
-      } else {
-        const assignmentResults = await applyInvitationAssignments(coreAdapter, {
-          userId,
-          tenantId,
-          roleId: invitation.role_id,
-          orgId: invitation.org_id,
-        });
-
-        if (invitation.role_id && !assignmentResults.roleAssignment?.success) {
-          log.warn('Failed to assign role from invitation', {
-            invite_id: inviteId,
-            tenant_id: tenantId,
-            error: assignmentResults.roleAssignment?.error,
-          });
+  await withGroupInputWrite(
+    coreAdapter,
+    tenantId,
+    userId,
+    'registration:direct-email',
+    async () => {
+      if (tenantD1) {
+        if (runtimeUser.email_verified !== 1) {
+          await markOtpLoginEmailVerified(coreAdapter, tenantId, userId, now);
         }
+      } else {
+        const runtimeUsers = createCanonicalRuntimeUserStore(c, tenantId);
+        await runtimeUsers.markEmailVerifiedAndTouchLastLogin(userId, now);
+      }
 
-        if (invitation.org_id && !assignmentResults.orgMembership?.success) {
-          log.warn('Failed to assign organization from invitation', {
+      // Apply invitation role/org assignment if present.
+      const inviteId = metadataString(metadata, 'invite_id');
+      const inviteToken = metadataString(metadata, 'invite_token');
+
+      if (inviteId && inviteToken) {
+        const inviteNow = Math.floor(now / 1000);
+        try {
+          const invitation = await findActiveInvitationByToken(coreAdapter, inviteToken, inviteNow);
+          if (!invitation || invitation.id !== inviteId || invitation.tenant_id !== tenantId) {
+            log.warn('Invitation metadata no longer matches an active tenant invitation', {
+              invite_id: inviteId,
+              tenant_id: tenantId,
+            });
+          } else if (
+            !(await consumeInvitationUse(
+              coreAdapter,
+              invitation.id,
+              invitation.tenant_id,
+              inviteNow
+            ))
+          ) {
+            log.warn('Invitation use_count increment was skipped during email verification', {
+              invite_id: inviteId,
+              tenant_id: tenantId,
+            });
+          } else {
+            const assignmentResults = await applyInvitationAssignments(coreAdapter, {
+              userId,
+              tenantId,
+              roleId: invitation.role_id,
+              orgId: invitation.org_id,
+            });
+
+            if (invitation.role_id && !assignmentResults.roleAssignment?.success) {
+              log.warn('Failed to assign role from invitation', {
+                invite_id: inviteId,
+                tenant_id: tenantId,
+                error: assignmentResults.roleAssignment?.error,
+              });
+            }
+
+            if (invitation.org_id && !assignmentResults.orgMembership?.success) {
+              log.warn('Failed to assign organization from invitation', {
+                invite_id: inviteId,
+                tenant_id: tenantId,
+                error: assignmentResults.orgMembership?.error,
+              });
+            }
+          }
+        } catch (inviteErr) {
+          log.warn('Failed to apply invitation assignments', {
+            error: String(inviteErr),
             invite_id: inviteId,
-            tenant_id: tenantId,
-            error: assignmentResults.orgMembership?.error,
           });
         }
       }
-    } catch (inviteErr) {
-      log.warn('Failed to apply invitation assignments', {
-        error: String(inviteErr),
-        invite_id: inviteId,
-      });
-    }
-  }
 
-  // Save custom registration fields if present.
-  const customFieldsValue = metadata.custom_fields;
-  const customFields =
-    customFieldsValue && typeof customFieldsValue === 'object' && !Array.isArray(customFieldsValue)
-      ? (customFieldsValue as Record<string, unknown>)
-      : undefined;
-  if (customFields) {
-    try {
-      await persistRegistrationFieldValuesFromEnv(c.env, tenantId, userId, customFields);
-    } catch (persistError) {
-      log.warn(
-        'Failed to persist registration field values',
-        { action: 'registration_fields_persist' },
-        persistError as Error
-      );
+      // Save custom registration fields if present.
+      const customFieldsValue = metadata.custom_fields;
+      const customFields =
+        customFieldsValue &&
+        typeof customFieldsValue === 'object' &&
+        !Array.isArray(customFieldsValue)
+          ? (customFieldsValue as Record<string, unknown>)
+          : undefined;
+      if (customFields) {
+        try {
+          await persistRegistrationFieldValuesFromEnv(c.env, tenantId, userId, customFields);
+        } catch (persistError) {
+          log.warn(
+            'Failed to persist registration field values',
+            { action: 'registration_fields_persist' },
+            persistError as Error
+          );
+        }
+      }
     }
-  }
+  ).catch((error: unknown) => {
+    log.warn(
+      'Failed to settle registration attributes',
+      { action: 'registration_fields_persist' },
+      error as Error
+    );
+  });
 
   const authCode = await generateAuthCode(
     c.env,

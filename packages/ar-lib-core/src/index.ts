@@ -429,6 +429,7 @@ export type {
   UnifiedEvent,
   EventPublishPayload,
   EventPublishOptions,
+  AccountEventType,
   EventPublishResult as EventResult,
   EventDispatcher,
   EventHandlerConfig,
@@ -461,6 +462,7 @@ export {
   TOKEN_EVENTS,
   CONSENT_EVENTS,
   USER_EVENTS,
+  ACCOUNT_EVENTS,
   CLIENT_EVENTS,
   SECURITY_EVENTS,
   DOMAIN_EVENTS,
@@ -682,3 +684,17 @@ export * from './services/guest-client-policy';
 export * from './repositories/guest-upgrade';
 export * from './services/guest-upgrade-coordinator';
 export * from './services/guest-credential-authentication';
+
+export {
+  ACCOUNT_WEBHOOK_FIELDS,
+  validateAccountRegistrationStates,
+  validateAccountWebhookFields,
+  type AccountWebhookField,
+} from './services/account-webhook-fields';
+export {
+  captureAccountDeletionSnapshot,
+  persistAccountEmailMutation,
+} from './services/account-webhook-snapshots';
+
+// Service memberships are intentionally separate from authorization and token claims.
+export * from './services/dynamic-groups';

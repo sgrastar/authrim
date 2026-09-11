@@ -207,7 +207,7 @@ describe('event dispatcher runtime logging', () => {
 
     const result = await dispatcher.publish(
       {
-        type: 'user.created',
+        type: 'account.created',
         tenantId,
         data: { userId: 'user_123', secretValue: 'must-not-log' },
       },
