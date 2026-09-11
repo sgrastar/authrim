@@ -260,7 +260,28 @@ describe('guest deletion audit reconciliation outbox', () => {
     expect(await repository.listDue(1001, 100)).toEqual([]);
   });
 
-  it('shares the default reconciliation deadline across every adapter', async () => {
+  it('rotates the first adapter after a shared deadline is exhausted', async () => {
+    const lifecycleA = new GuestLifecycleRepository(adapter, 'tenant-a');
+    expect(
+      await lifecycleA.beginAdministrativeDeletion(
+        'guest-1',
+        'operation-a',
+        999,
+        deletionRouteJson,
+        999000
+      )
+    ).toBe(true);
+    expect(await lifecycleA.completeDeletion('guest-1', 'operation-a', 1000)).toBe(true);
+    await new GuestDeletionAuditOutboxRepository(adapter, 'tenant-a').enqueue({
+      auditId: 'account-guest-deleted-operation-a',
+      userId: 'guest-1',
+      operationId: 'operation-a',
+      actorUserId: 'admin-1',
+      ipAddress: 'unknown',
+      userAgent: 'unknown',
+      metadataJson: '{}',
+      createdAt: 900,
+    });
     await adapter.execute(
       `INSERT INTO identity_accounts
          (tenant_id, legacy_user_id, account_type, registration_state, deleted_at)
@@ -302,24 +323,61 @@ describe('guest deletion audit reconciliation outbox', () => {
       .mockReturnValueOnce(2)
       .mockReturnValue(5000);
     const writeAudit = vi.fn().mockResolvedValue(undefined);
+    let cursor: string | null = null;
+    const env = {
+      AUTHRIM_CONFIG: {
+        get: vi.fn(async () => cursor),
+        put: vi.fn(async (_key: string, value: string) => {
+          cursor = value;
+        }),
+      },
+    } as unknown as Env;
+    const targets = [
+      { tenantId: 'tenant-a', adapters: [{ adapter, bindingRef: 'CORE_A' }] },
+      { tenantId: 'tenant-b', adapters: [{ adapter, bindingRef: 'CORE_B' }] },
+    ];
 
     expect(
       await processGuestDeletionAuditOutbox(
-        {} as Env,
-        [
-          { tenantId: 'tenant-a', adapters: [{ adapter, bindingRef: 'CORE_A' }] },
-          { tenantId: 'tenant-b', adapters: [{ adapter, bindingRef: 'CORE_B' }] },
-        ],
+        env,
+        targets,
         { info: vi.fn(), warn: vi.fn() },
-        { now: () => 1001, nowMs, writeAudit }
+        {
+          now: () => 1001,
+          nowMs,
+          writeAudit,
+        }
       )
-    ).toEqual({ processed: 0, succeeded: 0, retrying: 0 });
-    expect(writeAudit).not.toHaveBeenCalled();
+    ).toEqual({ processed: 1, succeeded: 1, retrying: 0 });
+    expect(writeAudit).toHaveBeenCalledTimes(1);
     expect(
       await new GuestDeletionAuditOutboxRepository(adapter, 'tenant-b').get(
         'account-guest-deleted-operation-b'
       )
     ).not.toBeNull();
+
+    expect(
+      await processGuestDeletionAuditOutbox(
+        env,
+        targets,
+        { info: vi.fn(), warn: vi.fn() },
+        {
+          now: () => 1001,
+          nowMs: () => 0,
+          deadlineMs: 1,
+          writeAudit,
+        }
+      )
+    ).toEqual({ processed: 1, succeeded: 1, retrying: 0 });
+    expect(writeAudit).toHaveBeenCalledTimes(2);
+    expect(writeAudit.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ tenant_id: 'tenant-b' })
+    );
+    expect(
+      await new GuestDeletionAuditOutboxRepository(adapter, 'tenant-b').get(
+        'account-guest-deleted-operation-b'
+      )
+    ).toBeNull();
   });
 
   it('uses the configured audit store rather than the identity shard during replay', async () => {

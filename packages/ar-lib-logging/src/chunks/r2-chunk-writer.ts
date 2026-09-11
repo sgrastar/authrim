@@ -209,6 +209,7 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
     }
   }
 
+  let objectCommitted = false;
   try {
     await input.catalogStore?.createPendingRecordIndexes(indexRows);
     await input.bucket.put(objectKey, storedBody, {
@@ -243,6 +244,7 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
       checksumSha256,
       committedAt,
     });
+    objectCommitted = true;
     await input.catalogStore?.commitRecordIndexes(objectCatalogId, committedAt);
 
     return {
@@ -259,7 +261,9 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
       createdAt,
     };
   } catch (error) {
-    await input.catalogStore?.markObjectOrphanCandidate(objectCatalogId, Date.now());
+    if (!objectCommitted) {
+      await input.catalogStore?.markObjectOrphanCandidate(objectCatalogId, Date.now());
+    }
     throw error;
   }
 }
