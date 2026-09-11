@@ -233,6 +233,7 @@ export async function processGuestDeletionAuditOutbox(
   const writeAudit =
     options.writeAudit ??
     ((task, _adapter, completedAt) => writeGuestDeletionAudit(env, task, completedAt));
+  const deadlineMs = options.deadlineMs ?? nowMs() + DEFAULT_RECONCILIATION_BUDGET_MS;
   let processed = 0;
   let succeeded = 0;
   let retrying = 0;
@@ -240,7 +241,6 @@ export async function processGuestDeletionAuditOutbox(
   for (const target of targets) {
     for (const { adapter, bindingRef } of target.adapters) {
       const repository = new GuestDeletionAuditOutboxRepository(adapter, target.tenantId);
-      const deadlineMs = options.deadlineMs ?? nowMs() + DEFAULT_RECONCILIATION_BUDGET_MS;
       pageLoop: for (
         let page = 0;
         page < MAX_RECONCILIATION_PAGES_PER_ADAPTER && nowMs() < deadlineMs;

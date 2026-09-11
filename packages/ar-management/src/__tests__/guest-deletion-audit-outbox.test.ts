@@ -260,6 +260,68 @@ describe('guest deletion audit reconciliation outbox', () => {
     expect(await repository.listDue(1001, 100)).toEqual([]);
   });
 
+  it('shares the default reconciliation deadline across every adapter', async () => {
+    await adapter.execute(
+      `INSERT INTO identity_accounts
+         (tenant_id, legacy_user_id, account_type, registration_state, deleted_at)
+       VALUES (?, ?, 'user', 'guest', NULL)`,
+      ['tenant-b', 'guest-b']
+    );
+    const lifecycle = new GuestLifecycleRepository(adapter, 'tenant-b');
+    await lifecycle.enroll({
+      userId: 'guest-b',
+      clientId: 'client-1',
+      createdAt: 100,
+      deletionAfterDays: null,
+      policyVersion: 'policy-1',
+    });
+    expect(
+      await lifecycle.beginAdministrativeDeletion(
+        'guest-b',
+        'operation-b',
+        999,
+        deletionRouteJson,
+        999000
+      )
+    ).toBe(true);
+    expect(await lifecycle.completeDeletion('guest-b', 'operation-b', 1000)).toBe(true);
+    await new GuestDeletionAuditOutboxRepository(adapter, 'tenant-b').enqueue({
+      auditId: 'account-guest-deleted-operation-b',
+      userId: 'guest-b',
+      operationId: 'operation-b',
+      actorUserId: 'admin-1',
+      ipAddress: 'unknown',
+      userAgent: 'unknown',
+      metadataJson: '{}',
+      createdAt: 900,
+    });
+    const nowMs = vi
+      .fn()
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(1)
+      .mockReturnValueOnce(2)
+      .mockReturnValue(5000);
+    const writeAudit = vi.fn().mockResolvedValue(undefined);
+
+    expect(
+      await processGuestDeletionAuditOutbox(
+        {} as Env,
+        [
+          { tenantId: 'tenant-a', adapters: [{ adapter, bindingRef: 'CORE_A' }] },
+          { tenantId: 'tenant-b', adapters: [{ adapter, bindingRef: 'CORE_B' }] },
+        ],
+        { info: vi.fn(), warn: vi.fn() },
+        { now: () => 1001, nowMs, writeAudit }
+      )
+    ).toEqual({ processed: 0, succeeded: 0, retrying: 0 });
+    expect(writeAudit).not.toHaveBeenCalled();
+    expect(
+      await new GuestDeletionAuditOutboxRepository(adapter, 'tenant-b').get(
+        'account-guest-deleted-operation-b'
+      )
+    ).not.toBeNull();
+  });
+
   it('uses the configured audit store rather than the identity shard during replay', async () => {
     const repository = new GuestDeletionAuditOutboxRepository(adapter, 'tenant-a');
     await repository.enqueue({

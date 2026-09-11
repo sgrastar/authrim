@@ -126,6 +126,24 @@ describe('audit queue consumer fanout', () => {
       ...createAdminDbAdapter(),
       queryOne: vi.fn().mockResolvedValue({ tenant_key: 't_registry_archive' }),
     };
+    const deliveryEventIds = new Set<string>();
+    const adminDb = {
+      ...createAdminDbAdapter(),
+      execute: vi.fn().mockImplementation(async (sql: string, params: unknown[] = []) => {
+        if (sql.includes('INSERT INTO logging_delivery_events')) {
+          const id = String(params[0]);
+          if (deliveryEventIds.has(id)) {
+            return { rowsAffected: 0 };
+          }
+          deliveryEventIds.add(id);
+          return { rowsAffected: 1 };
+        }
+        if (sql.includes('SET tenant_key =')) {
+          return { rowsAffected: 0 };
+        }
+        return { rowsAffected: 1 };
+      }),
+    };
     const body: AuditQueueMessage = {
       type: 'event_log',
       tenantId: 'tenant-registry-a',
@@ -158,6 +176,7 @@ describe('audit queue consumer fanout', () => {
       {
         DB: coreDb,
         DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: bucket,
         OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       } as unknown as Parameters<typeof processAuditQueue>[1]
@@ -170,6 +189,7 @@ describe('audit queue consumer fanout', () => {
       {
         DB: coreDb,
         DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: bucket,
         OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       } as unknown as Parameters<typeof processAuditQueue>[1]
@@ -207,6 +227,11 @@ describe('audit queue consumer fanout', () => {
     expect(consoleLogSpy).toHaveBeenCalledWith(
       expect.stringContaining('"schema":"authrim.audit.v1"')
     );
+    expect(
+      consoleLogSpy.mock.calls.filter(([line]) =>
+        String(line).includes('"schema":"authrim.audit.v1"')
+      )
+    ).toHaveLength(1);
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
     expect(replayedMessage.ack).toHaveBeenCalledOnce();

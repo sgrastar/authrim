@@ -42,6 +42,16 @@ export interface LoggingDeliveryEventRecord {
 
 export interface LoggingDeliveryEventStore {
   insertEvent(input: LoggingDeliveryEventInput): Promise<LoggingDeliveryEventRecord>;
+  claimEvent(
+    input: Omit<LoggingDeliveryEventInput, 'status' | 'errorClass' | 'nextRetryAt'> & {
+      id: string;
+      leaseUntil: number;
+    }
+  ): Promise<boolean>;
+  completeClaim(
+    input: LoggingDeliveryEventInput & { id: string; status: 'delivered' }
+  ): Promise<void>;
+  releaseClaim(id: string): Promise<void>;
 }
 
 export interface LoggingDeliveryEventAggregateInput {
@@ -182,6 +192,112 @@ function readRowsAffected(result: unknown): number | null {
 
 export class SqlLoggingDeliveryEventStore implements LoggingDeliveryEventStore {
   constructor(private readonly executor: LoggingSqlExecutor) {}
+
+  async claimEvent(
+    input: Omit<LoggingDeliveryEventInput, 'status' | 'errorClass' | 'nextRetryAt'> & {
+      id: string;
+      leaseUntil: number;
+    }
+  ): Promise<boolean> {
+    const now = input.now ?? Date.now();
+    const metadata = metadataToJson(input.metadata);
+    const insert = await this.executor.execute(
+      `INSERT INTO logging_delivery_events (
+        id, tenant_key, destination_id, log_type, plane, lane, status, attempt_count,
+        error_class, object_catalog_id, created_at, updated_at, next_retry_at, metadata
+      ) VALUES (?, ?, ?, ?, ?, ?, 'retrying', ?, 'delivery_in_progress', ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO NOTHING`,
+      [
+        input.id,
+        input.tenantKey,
+        input.destinationId ?? null,
+        input.logType,
+        input.plane,
+        input.lane,
+        input.attemptCount ?? 0,
+        input.objectCatalogId ?? null,
+        now,
+        now,
+        input.leaseUntil,
+        metadata,
+      ]
+    );
+    const inserted = readRowsAffected(insert);
+    if (inserted === null || inserted > 0) {
+      return true;
+    }
+
+    const reclaimed = await this.executor.execute(
+      `UPDATE logging_delivery_events
+       SET tenant_key = ?, destination_id = ?, log_type = ?, plane = ?, lane = ?,
+           attempt_count = ?, object_catalog_id = ?, updated_at = ?, next_retry_at = ?, metadata = ?
+       WHERE id = ?
+         AND status = 'retrying'
+         AND error_class = 'delivery_in_progress'
+         AND next_retry_at IS NOT NULL
+         AND next_retry_at <= ?`,
+      [
+        input.tenantKey,
+        input.destinationId ?? null,
+        input.logType,
+        input.plane,
+        input.lane,
+        input.attemptCount ?? 0,
+        input.objectCatalogId ?? null,
+        now,
+        input.leaseUntil,
+        metadata,
+        input.id,
+        now,
+      ]
+    );
+    return (readRowsAffected(reclaimed) ?? 0) > 0;
+  }
+
+  async completeClaim(
+    input: LoggingDeliveryEventInput & { id: string; status: 'delivered' }
+  ): Promise<void> {
+    const now = input.now ?? Date.now();
+    const completed = await this.executor.execute(
+      `UPDATE logging_delivery_events
+       SET status = 'delivered', attempt_count = ?, error_class = NULL,
+           object_catalog_id = ?, updated_at = ?, next_retry_at = NULL, metadata = ?
+       WHERE id = ?
+         AND status = 'retrying'
+         AND error_class = 'delivery_in_progress'`,
+      [
+        input.attemptCount ?? 0,
+        input.objectCatalogId ?? null,
+        now,
+        metadataToJson(input.metadata),
+        input.id,
+      ]
+    );
+    if (readRowsAffected(completed) === 0) {
+      throw new Error('logging_delivery_claim_not_owned');
+    }
+    await this.upsertAggregate({
+      tenantKey: input.tenantKey,
+      destinationId: input.destinationId,
+      logType: input.logType,
+      plane: input.plane,
+      lane: input.lane,
+      status: 'delivered',
+      attemptCount: input.attemptCount,
+      recordCount:
+        typeof input.metadata?.record_count === 'number' ? input.metadata.record_count : 0,
+      byteCount: typeof input.metadata?.byte_count === 'number' ? input.metadata.byte_count : 0,
+      eventAt: now,
+    });
+  }
+
+  async releaseClaim(id: string): Promise<void> {
+    await this.executor.execute(
+      `DELETE FROM logging_delivery_events
+       WHERE id = ? AND status = 'retrying' AND error_class = 'delivery_in_progress'`,
+      [id]
+    );
+  }
 
   async insertEvent(input: LoggingDeliveryEventInput): Promise<LoggingDeliveryEventRecord> {
     const now = input.now ?? Date.now();

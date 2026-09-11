@@ -614,6 +614,7 @@ interface RuntimeCredentialCacheEntry {
 }
 
 const RUNTIME_CREDENTIAL_CACHE_TTL_MS = 60_000;
+const LOGPUSH_DELIVERY_CLAIM_LEASE_MS = 60_000;
 const runtimeCredentialCache = new Map<string, RuntimeCredentialCacheEntry>();
 const tenantKeyCache = new Map<string, string>();
 
@@ -1763,23 +1764,90 @@ async function processFanoutMessage(
       continue;
     }
 
+    const deliveryMetadata = targetMetadata(sink, fanout, body);
+    const deliveredEventId = await createAuditFanoutStableLoggingId(
+      'lde',
+      body,
+      `${stablePurpose}:delivered`
+    );
+    let logpushClaimed = false;
+    if (sink.type === 'logpush') {
+      if (!deliveryEventStore) {
+        if (sinkFailureMode === 'retry_until_ttl') {
+          throw new Error('logging_delivery_claim_store_unavailable');
+        }
+      } else {
+        const claimNow = Date.now();
+        try {
+          logpushClaimed = await deliveryEventStore.claimEvent({
+            id: deliveredEventId,
+            tenantKey,
+            destinationId,
+            logType,
+            plane: 'external_sink',
+            lane,
+            attemptCount,
+            metadata: deliveryMetadata,
+            now: claimNow,
+            leaseUntil: claimNow + LOGPUSH_DELIVERY_CLAIM_LEASE_MS,
+          });
+        } catch (error) {
+          logger.warn('audit_logpush_delivery_claim_failed', {
+            tenantId: body.tenantId,
+            auditProfileId: fanout.auditProfileId,
+            error: sanitizeErrorMessage(String(error)),
+          });
+          if (sinkFailureMode === 'retry_until_ttl') {
+            throw error;
+          }
+        }
+        if (!logpushClaimed) {
+          continue;
+        }
+      }
+    }
+
     try {
       await deliverSinkTarget(sink, body, env);
-      await recordDeliveryEvent(deliveryEventStore, logger, {
-        id: await createAuditFanoutStableLoggingId('lde', body, `${stablePurpose}:delivered`),
-        tenantKey,
-        destinationId,
-        logType,
-        plane: 'external_sink',
-        lane,
-        status: 'delivered',
-        attemptCount,
-        metadata: targetMetadata(sink, fanout, body),
-      });
+      if (logpushClaimed && deliveryEventStore) {
+        await deliveryEventStore.completeClaim({
+          id: deliveredEventId,
+          tenantKey,
+          destinationId,
+          logType,
+          plane: 'external_sink',
+          lane,
+          status: 'delivered',
+          attemptCount,
+          metadata: deliveryMetadata,
+        });
+      } else {
+        await recordDeliveryEvent(deliveryEventStore, logger, {
+          id: deliveredEventId,
+          tenantKey,
+          destinationId,
+          logType,
+          plane: 'external_sink',
+          lane,
+          status: 'delivered',
+          attemptCount,
+          metadata: deliveryMetadata,
+        });
+      }
     } catch (error) {
+      if (logpushClaimed && deliveryEventStore) {
+        try {
+          await deliveryEventStore.releaseClaim(deliveredEventId);
+        } catch (releaseError) {
+          logger.warn('audit_logpush_delivery_claim_release_failed', {
+            tenantId: body.tenantId,
+            auditProfileId: fanout.auditProfileId,
+            error: sanitizeErrorMessage(String(releaseError)),
+          });
+        }
+      }
       const status = deliveryStatusForFailure(sinkFailureMode);
       const errorClass = deliveryErrorClass(error, 'sink_delivery_failed');
-      const metadata = targetMetadata(sink, fanout, body);
       await recordDeliveryEvent(deliveryEventStore, logger, {
         id: await createAuditFanoutStableLoggingId('lde', body, `${stablePurpose}:${status}`),
         tenantKey,
@@ -1790,7 +1858,7 @@ async function processFanoutMessage(
         status,
         attemptCount,
         errorClass,
-        metadata,
+        metadata: deliveryMetadata,
       });
       await recordDeliveryNotification(notificationRepository, logger, {
         id: await createAuditFanoutStableLoggingId(
@@ -1807,7 +1875,7 @@ async function processFanoutMessage(
         status,
         attemptCount,
         errorClass,
-        metadata,
+        metadata: deliveryMetadata,
       });
       if (sinkFailureMode === 'retry_until_ttl') {
         throw error;
