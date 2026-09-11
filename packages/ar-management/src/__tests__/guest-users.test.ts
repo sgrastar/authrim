@@ -374,10 +374,21 @@ describe('guest account administration', () => {
     expect(mocks.adapter.execute).toHaveBeenCalledTimes(2);
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),
+      'account.guest.deletion_started',
+      'user',
+      'u1',
+      expect.objectContaining({ registration_state: 'guest', reason: 'manual_cleanup' }),
+      'info',
+      expect.stringMatching(/^account-guest-delete-started-/)
+    );
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
       'user.deleted',
       'user',
       'u1',
-      expect.objectContaining({ registration_state: 'guest', reason: 'manual_cleanup' })
+      expect.objectContaining({ registration_state: 'guest', reason: 'manual_cleanup' }),
+      'info',
+      expect.stringMatching(/^account-guest-deleted-/)
     );
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),
@@ -386,6 +397,91 @@ describe('guest account administration', () => {
       'u2',
       expect.objectContaining({ reason: 'manual_cleanup' })
     );
+  });
+  it('preserves cleanup deletion outcomes and retries completion audit delivery', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([
+      { user_id: 'u1', credential_id: 'c1', expires_at: 1 },
+      { user_id: 'u2', credential_id: 'c2', expires_at: 2 },
+    ]);
+    mocks.adapter.queryOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    let completionAttempts = 0;
+    mocks.audit.mockImplementation(async (_c, action: string, _type, userId: string) => {
+      if (action === 'user.deleted' && userId === 'u1' && completionAttempts++ === 0) {
+        throw new Error('transient audit failure');
+      }
+    });
+
+    const response = await cleanupExpiredGuestUsers(
+      context({ body: { dry_run: false, limit: 10 } })
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      deleted_users: 2,
+      deleted_credentials: 2,
+    });
+
+    const firstUserCompletionCalls = mocks.audit.mock.calls.filter(
+      ([, action, , userId]) => action === 'user.deleted' && userId === 'u1'
+    );
+    expect(firstUserCompletionCalls).toHaveLength(2);
+    expect(firstUserCompletionCalls[0][6]).toBe(firstUserCompletionCalls[1][6]);
+    const firstUserTransitions = mocks.transitionAccountAuthenticationState.mock.calls.filter(
+      ([, input]) => input.userId === 'u1'
+    );
+    expect(firstUserTransitions).toHaveLength(2);
+    expect(firstUserTransitions[0][1].operationId).toBe(firstUserTransitions[1][1].operationId);
+    expect(mocks.deleteUser).toHaveBeenCalledTimes(2);
+  });
+  it('continues cleanup after persistent completion audit delivery failure', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([
+      { user_id: 'u1', credential_id: 'c1', expires_at: 1 },
+    ]);
+    mocks.adapter.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    mocks.audit.mockImplementation(async (_c, action: string) => {
+      if (action === 'user.deleted') throw new Error('persistent audit failure');
+    });
+
+    const response = await cleanupExpiredGuestUsers(
+      context({ body: { dry_run: false, limit: 10 } })
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      deleted_users: 1,
+      deleted_credentials: 1,
+    });
+    expect(mocks.audit.mock.calls.filter(([, action]) => action === 'user.deleted')).toHaveLength(
+      2
+    );
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      'Guest cleanup deletion committed but completion audit delivery is pending',
+      expect.objectContaining({
+        action: 'guest_cleanup_user_delete_audit_pending',
+        tenantId: 'tenant-a',
+      }),
+      expect.any(Error)
+    );
+  });
+  it('does not start cleanup deletion until its durable audit intent is recorded', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([
+      { user_id: 'u1', credential_id: 'c1', expires_at: 1 },
+    ]);
+    mocks.adapter.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    mocks.audit.mockImplementation(async (_c, action: string) => {
+      if (action === 'account.guest.deletion_started') {
+        throw new Error('audit unavailable');
+      }
+    });
+
+    expect(
+      (await cleanupExpiredGuestUsers(context({ body: { dry_run: false, limit: 10 } }))).status
+    ).toBe(500);
+    expect(mocks.transitionAccountAuthenticationState).not.toHaveBeenCalled();
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    expect(mocks.deleteUser).not.toHaveBeenCalled();
   });
   it('skips scheduled anonymous cleanup while an account legal hold is active', async () => {
     mocks.adapter.query.mockResolvedValueOnce([

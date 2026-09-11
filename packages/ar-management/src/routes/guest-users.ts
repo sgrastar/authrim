@@ -591,13 +591,30 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
         if (legalHold) {
           continue;
         }
+        const deletionOperationId = crypto.randomUUID();
+        const auditMetadata = {
+          operationId: deletionOperationId,
+          registration_state: 'guest',
+          reason: 'manual_cleanup',
+          source: 'guest_cleanup_api',
+        };
+        await createAuditLogFromContext(
+          c,
+          'account.guest.deletion_started',
+          'user',
+          userId,
+          auditMetadata,
+          'info',
+          `account-guest-delete-started-${deletionOperationId}`
+        );
+
         const deletingVersionMs = Date.now();
         await transitionAccountAuthenticationState(c.env, {
           tenantId,
           userId,
           lifecycle: 'deleting',
           sourceVersionMs: deletingVersionMs,
-          operationId: crypto.randomUUID(),
+          operationId: deletionOperationId,
           revokeSessions: true,
         });
         // No active credential remains, delete the guest account.
@@ -611,14 +628,50 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
           userId,
           lifecycle: 'deleted',
           sourceVersionMs: Math.max(Date.now(), deletingVersionMs + 1),
-          operationId: crypto.randomUUID(),
+          operationId: deletionOperationId,
           revokeSessions: true,
         });
-        await createAuditLogFromContext(c, 'user.deleted', 'user', userId, {
-          registration_state: 'guest',
-          reason: 'manual_cleanup',
-          source: 'guest_cleanup_api',
-        });
+        const completionAuditId = `account-guest-deleted-${deletionOperationId}`;
+        try {
+          await createAuditLogFromContext(
+            c,
+            'user.deleted',
+            'user',
+            userId,
+            auditMetadata,
+            'info',
+            completionAuditId
+          );
+        } catch (_error) {
+          log.warn('Retrying guest cleanup completion audit', {
+            action: 'guest_cleanup_user_delete_audit_retry',
+            tenantId,
+            operationId: deletionOperationId,
+          });
+          try {
+            await createAuditLogFromContext(
+              c,
+              'user.deleted',
+              'user',
+              userId,
+              auditMetadata,
+              'info',
+              completionAuditId
+            );
+          } catch (retryError) {
+            // The durable deletion_started audit identifies a cleanup deletion whose
+            // idempotent completion audit still needs reconciliation.
+            log.error(
+              'Guest cleanup deletion committed but completion audit delivery is pending',
+              {
+                action: 'guest_cleanup_user_delete_audit_pending',
+                tenantId,
+                operationId: deletionOperationId,
+              },
+              retryError as Error
+            );
+          }
+        }
         deletedUsers++;
         deletedCredentials += expiredCredentials.filter(
           (credential) => credential.user_id === userId
