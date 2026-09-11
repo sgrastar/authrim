@@ -19,6 +19,10 @@ it('applies service group PostgreSQL migrations and invalidates committed inputs
         '-i',
         container,
         'psql',
+        // The image's temporary init server accepts Unix sockets, then shuts down.
+        // Only the final server listens on TCP; use it for readiness and migrations.
+        '-h',
+        '127.0.0.1',
         '-U',
         'postgres',
         '-d',
