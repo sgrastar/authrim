@@ -26,6 +26,7 @@ import {
   type Env,
 } from '@authrim/ar-lib-core';
 import { findActiveAccountLegalHold } from '../account-legal-hold-guard';
+import { createGuestDeletionRoute } from '../guest-lifecycle-scheduled';
 import {
   createGuestDeletionAuditTaskFromContext,
   GuestDeletionAuditOutboxRepository,
@@ -494,6 +495,13 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
       reason: 'admin_action',
       source: 'guest_admin_api',
     };
+    const deletionRouteJson = JSON.stringify(
+      await createGuestDeletionRoute(c.env, {
+        tenantId,
+        userId,
+        completionAuditMode: 'outbox',
+      })
+    );
     const completionAuditId = `account-guest-deleted-${deletionOperationId}`;
     await createAuditLogFromContext(
       c,
@@ -521,6 +529,7 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
         userId,
         deletionOperationId,
         Math.floor(deletingVersionMs / 1000),
+        deletionRouteJson,
         deletingVersionMs
       ))
     ) {
@@ -684,6 +693,13 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
           reason: 'manual_cleanup',
           source: 'guest_cleanup_api',
         };
+        const deletionRouteJson = JSON.stringify(
+          await createGuestDeletionRoute(c.env, {
+            tenantId,
+            userId,
+            completionAuditMode: 'outbox',
+          })
+        );
         const completionAuditId = `account-guest-deleted-${deletionOperationId}`;
         await createAuditLogFromContext(
           c,
@@ -711,6 +727,7 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
             userId,
             deletionOperationId,
             Math.floor(deletingVersionMs / 1000),
+            deletionRouteJson,
             deletingVersionMs
           ))
         ) {

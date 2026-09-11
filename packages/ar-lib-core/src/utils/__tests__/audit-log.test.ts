@@ -220,6 +220,54 @@ describe('createAuditLog', () => {
     );
   });
 
+  it('preserves an original event timestamp across legacy and unified audit writes', async () => {
+    const createdAt = 1_779_321_600_123;
+    mockResolveTenantRuntimeProfilesFromEnv.mockResolvedValue({
+      auditProfile: {
+        id: 'legacy-d1-audit',
+        kind: 'audit',
+        builtin: false,
+        label: 'Legacy D1 Audit',
+        primary: { type: 'd1', bindingRef: 'DB', dataset: 'audit_log' },
+        archive: null,
+        sinks: [],
+      },
+    });
+
+    await createAuditLog(mockEnv, {
+      tenantId: 'default',
+      userId: 'admin-user',
+      action: 'user.deleted',
+      resource: 'user',
+      resourceId: 'guest-user',
+      ipAddress: '192.0.2.1',
+      userAgent: 'Test Agent',
+      metadata: '{}',
+      severity: 'info',
+      createdAt,
+    });
+
+    const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
+    expect(bindCall).toHaveBeenCalledWith(
+      expect.any(String),
+      'default',
+      'admin-user',
+      'user.deleted',
+      'user',
+      'guest-user',
+      '192.0.2.1',
+      'Test Agent',
+      '{}',
+      'info',
+      Math.floor(createdAt / 1000),
+      expect.any(String)
+    );
+    expect(mockUnifiedAuditService.logEvent).toHaveBeenCalledWith(
+      'default',
+      expect.objectContaining({ createdAt })
+    );
+  });
+
   it('should generate unique ID for each log entry', async () => {
     mockResolveTenantRuntimeProfilesFromEnv.mockResolvedValue({
       auditProfile: {

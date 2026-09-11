@@ -32,6 +32,23 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
     };
   }),
 }));
+vi.mock('../guest-lifecycle-scheduled', () => ({
+  createGuestDeletionRoute: vi.fn(
+    async (
+      _env: unknown,
+      input: { tenantId: string; userId: string; completionAuditMode?: 'outbox' }
+    ) => ({
+      schemaVersion: 1,
+      tenantId: input.tenantId,
+      userId: input.userId,
+      coreBindingRef: 'CORE',
+      piiBindingRef: 'PII',
+      piiResidencyPartition: 'default',
+      routeProjection: {},
+      completionAuditMode: input.completionAuditMode,
+    })
+  ),
+}));
 vi.mock('../guest-deletion-audit-outbox', () => ({
   createGuestDeletionAuditTaskFromContext: vi.fn(
     (
@@ -348,6 +365,7 @@ describe('guest account administration', () => {
           'user-1',
           deletionOperationId,
           expect.any(Number),
+          expect.stringContaining('"completionAuditMode":"outbox"'),
           expect.any(Number)
         );
         expect(mocks.guestLifecycleCompleteDeletion).toHaveBeenCalledWith(

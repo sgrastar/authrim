@@ -367,6 +367,41 @@ describe('hourly guest deletion state transitions', () => {
       expect.objectContaining({ tenantId: 'tenant', bindingRef: 'PII', role: 'tenant_pii' })
     );
   });
+  it('resumes an administrative deletion from its pinned route without duplicating its audit', async () => {
+    const routeJson = JSON.stringify({
+      schemaVersion: 1,
+      tenantId: 'tenant',
+      userId: 'guest',
+      coreBindingRef: 'CORE',
+      piiBindingRef: 'PII',
+      piiResidencyPartition: 'default',
+      routeProjection: { schemaVersion: 1 },
+      completionAuditMode: 'outbox',
+    });
+    expect(
+      await lifecycle.beginAdministrativeDeletion(
+        'guest',
+        'admin-delete',
+        90000,
+        routeJson,
+        90000000
+      )
+    ).toBe(true);
+    expect(await lifecycle.get('guest')).toMatchObject({
+      phase: 'deleting',
+      deletion_route_json: routeJson,
+      deletion_operation_id: 'admin-delete',
+    });
+    mocks.erase.mockRejectedValueOnce(new Error('pii_temporarily_unavailable'));
+
+    await expect(run()).rejects.toThrow('pii_temporarily_unavailable');
+    expect((await lifecycle.get('guest'))?.phase).toBe('deleting');
+
+    mocks.resolve.mockRejectedValue(new Error('account_route_removed'));
+    expect(await run(93600)).toBe('deleted');
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
   it('does not regress deleted authentication when retrying the final audit step', async () => {
     mocks.audit.mockRejectedValueOnce(new Error('audit_unavailable'));
     await expect(run()).rejects.toThrow('audit_unavailable');

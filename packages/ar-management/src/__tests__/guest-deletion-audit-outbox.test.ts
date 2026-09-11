@@ -9,6 +9,7 @@ import {
 } from '../guest-deletion-audit-outbox';
 
 describe('guest deletion audit reconciliation outbox', () => {
+  const deletionRouteJson = '{"schemaVersion":1}';
   let db: SQLiteDatabase;
   let adapter: DatabaseAdapter;
 
@@ -96,9 +97,15 @@ describe('guest deletion audit reconciliation outbox', () => {
       createdAt: 1000,
     });
     const lifecycle = new GuestLifecycleRepository(adapter, 'tenant-a');
-    expect(await lifecycle.beginAdministrativeDeletion('guest-1', 'operation-1', 999, 999000)).toBe(
-      true
-    );
+    expect(
+      await lifecycle.beginAdministrativeDeletion(
+        'guest-1',
+        'operation-1',
+        999,
+        deletionRouteJson,
+        999000
+      )
+    ).toBe(true);
     await adapter.execute(
       'UPDATE identity_accounts SET deleted_at = ? WHERE tenant_id = ? AND legacy_user_id = ?',
       [999, 'tenant-a', 'guest-1']
@@ -149,7 +156,8 @@ describe('guest deletion audit reconciliation outbox', () => {
       await new GuestLifecycleRepository(adapter, 'tenant-a').beginAdministrativeDeletion(
         'guest-1',
         'operation-2',
-        999
+        999,
+        deletionRouteJson
       )
     ).toBe(true);
     const repository = new GuestDeletionAuditOutboxRepository(adapter, 'tenant-a');
@@ -179,9 +187,15 @@ describe('guest deletion audit reconciliation outbox', () => {
 
   it('does not emit completion for a different deletion operation', async () => {
     const lifecycle = new GuestLifecycleRepository(adapter, 'tenant-a');
-    expect(await lifecycle.beginAdministrativeDeletion('guest-1', 'operation-1', 999, 999000)).toBe(
-      true
-    );
+    expect(
+      await lifecycle.beginAdministrativeDeletion(
+        'guest-1',
+        'operation-1',
+        999,
+        deletionRouteJson,
+        999000
+      )
+    ).toBe(true);
     expect(await lifecycle.completeDeletion('guest-1', 'operation-1', 1000)).toBe(true);
     const repository = new GuestDeletionAuditOutboxRepository(adapter, 'tenant-a');
     await repository.enqueue({

@@ -29,7 +29,7 @@ import {
 import { InitialAccountIdentifierReservationService } from './account-directory-reservation';
 import { createLookupBucketWriteResolver } from './lookup-bucket-write-route';
 
-interface DeletionRoute {
+export interface GuestDeletionRoute {
   schemaVersion: 1;
   tenantId: string;
   userId: string;
@@ -37,6 +37,7 @@ interface DeletionRoute {
   piiBindingRef: string;
   piiResidencyPartition: string;
   routeProjection: AccountRouteProjection;
+  completionAuditMode?: 'outbox';
 }
 export interface GuestMaintenanceTarget {
   tenantId: string;
@@ -59,8 +60,8 @@ function readRoute(
   tenantId: string,
   userId: string,
   coreBindingRef: string
-): DeletionRoute {
-  const route = JSON.parse(json ?? 'null') as DeletionRoute | null;
+): GuestDeletionRoute {
+  const route = JSON.parse(json ?? 'null') as GuestDeletionRoute | null;
   if (
     !route ||
     route.schemaVersion !== 1 ||
@@ -70,17 +71,44 @@ function readRoute(
     typeof route.piiBindingRef !== 'string' ||
     !route.piiBindingRef ||
     typeof route.piiResidencyPartition !== 'string' ||
+    (route.completionAuditMode !== undefined && route.completionAuditMode !== 'outbox') ||
     !route.routeProjection
   )
     throw new Error('guest_deletion_route_invalid');
   return route;
 }
 
+export async function createGuestDeletionRoute(
+  env: Env,
+  input: {
+    tenantId: string;
+    userId: string;
+    completionAuditMode?: 'outbox';
+  }
+): Promise<GuestDeletionRoute> {
+  const account = await resolveAccountDataContext(env, {
+    tenantId: input.tenantId,
+    accountId: input.userId,
+  });
+  if (account.tenantId !== input.tenantId || account.legacyUserId !== input.userId)
+    throw new Error('guest_deletion_account_route_changed');
+  return {
+    schemaVersion: 1,
+    tenantId: input.tenantId,
+    userId: input.userId,
+    coreBindingRef: account.coreBindingRef,
+    piiBindingRef: account.piiBindingRef,
+    piiResidencyPartition: account.piiResidencyPartition,
+    routeProjection: account.membership.routeProjection,
+    ...(input.completionAuditMode ? { completionAuditMode: input.completionAuditMode } : {}),
+  };
+}
+
 /** Remove reservations made by verified attempts that lost to deletion; never remove another owner. */
 async function releaseUncommittedReservations(
   env: Env,
   pii: DatabaseAdapter,
-  route: DeletionRoute
+  route: GuestDeletionRoute
 ): Promise<void> {
   const operations = await pii.query<GuestUpgradeOperation>(
     `SELECT * FROM guest_upgrade_operations WHERE tenant_id = ? AND user_id = ? AND state = 'verified'`,
@@ -118,12 +146,8 @@ export async function deleteOneGuestAccount(
   if (!row || !['active', 'deleting'].includes(row.phase)) return 'skipped';
   if (await findActiveAccountLegalHold(core, tenantId, row.user_id)) return 'held';
   if (row.phase === 'active') {
-    const account = await resolveAccountDataContext(env, { tenantId, accountId: row.user_id });
-    if (
-      account.tenantId !== tenantId ||
-      account.legacyUserId !== row.user_id ||
-      account.coreBindingRef !== coreBindingRef
-    )
+    const route = await createGuestDeletionRoute(env, { tenantId, userId: row.user_id });
+    if (route.coreBindingRef !== coreBindingRef)
       throw new Error('guest_deletion_account_route_changed');
     const identity = await core.queryOne<{ account_type: string; registration_state: string }>(
       'SELECT account_type, registration_state FROM identity_accounts WHERE tenant_id = ? AND legacy_user_id = ? AND deleted_at IS NULL',
@@ -132,15 +156,6 @@ export async function deleteOneGuestAccount(
     );
     if (identity?.account_type !== 'user' || identity.registration_state !== 'guest')
       return 'skipped';
-    const route: DeletionRoute = {
-      schemaVersion: 1,
-      tenantId,
-      userId: row.user_id,
-      coreBindingRef,
-      piiBindingRef: account.piiBindingRef,
-      piiResidencyPartition: account.piiResidencyPartition,
-      routeProjection: account.membership.routeProjection,
-    };
     const operationId = `guest-delete:${crypto.randomUUID()}`;
     if (
       !(await lifecycle.beginDeletion(
@@ -216,17 +231,22 @@ export async function deleteOneGuestAccount(
   await markAccountDirectoryRemovalsReady(core, removals);
   await attemptImmediateAccountDirectoryRemovals(env.ACCOUNT_DIRECTORY, removals);
   await invalidateUserCache(env, tenantId, row.user_id);
-  await createAuditLog(env, {
-    tenantId,
-    userId: 'system',
-    action: 'user.deleted',
-    resource: 'user',
-    resourceId: row.user_id,
-    severity: 'info',
-    ipAddress: 'system',
-    userAgent: 'Authrim guest lifecycle',
-    metadata: JSON.stringify({ reason: 'guest_retention', operationId: row.deletion_operation_id }),
-  });
+  if (route.completionAuditMode !== 'outbox') {
+    await createAuditLog(env, {
+      tenantId,
+      userId: 'system',
+      action: 'user.deleted',
+      resource: 'user',
+      resourceId: row.user_id,
+      severity: 'info',
+      ipAddress: 'system',
+      userAgent: 'Authrim guest lifecycle',
+      metadata: JSON.stringify({
+        reason: 'guest_retention',
+        operationId: row.deletion_operation_id,
+      }),
+    });
+  }
   if (!(await lifecycle.completeDeletion(row.user_id, row.deletion_operation_id, now)))
     throw new Error('guest_deletion_completion_conflict');
   return 'deleted';

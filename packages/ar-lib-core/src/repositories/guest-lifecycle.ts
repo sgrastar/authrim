@@ -208,17 +208,19 @@ export class GuestLifecycleRepository {
     userId: string,
     operationId: string,
     now: number,
+    routeJson: string,
     startedAtMs = now * 1000
   ): Promise<boolean> {
+    if (!routeJson) throw new Error('guest_administrative_deletion_route_required');
     const result = await this.db.execute(
       `UPDATE guest_account_lifecycle SET phase = 'deleting', deletion_operation_id = ?,
-        deletion_route_json = NULL, deletion_started_at_ms = ?, revision = revision + 1,
+        deletion_route_json = ?, deletion_started_at_ms = ?, revision = revision + 1,
         updated_at = ?
        WHERE tenant_id = ? AND user_id = ? AND phase = 'active'
        AND EXISTS (SELECT 1 FROM identity_accounts
          WHERE tenant_id = ? AND legacy_user_id = ? AND account_type = 'user'
            AND registration_state = 'guest' AND deleted_at IS NULL)`,
-      [operationId, startedAtMs, now, this.tenantId, userId, this.tenantId, userId]
+      [operationId, routeJson, startedAtMs, now, this.tenantId, userId, this.tenantId, userId]
     );
     return result.rowsAffected === 1;
   }

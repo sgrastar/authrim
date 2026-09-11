@@ -891,7 +891,11 @@ async function resolveAuditDeliveryPlanFromEnv(
 
 async function mirrorLegacyAuditLogToUnifiedService(
   env: Env,
-  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { tenantId: string; id?: string }
+  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & {
+    tenantId: string;
+    id?: string;
+    createdAt?: number;
+  }
 ): Promise<void> {
   const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
   if (!tenantId) {
@@ -905,6 +909,7 @@ async function mirrorLegacyAuditLogToUnifiedService(
 
   await auditService.logEvent(tenantId, {
     id: entry.id,
+    createdAt: entry.createdAt,
     eventType: entry.action,
     eventCategory: mapLegacyAuditCategory(entry.action, entry.resource),
     result: 'success',
@@ -956,7 +961,11 @@ export async function writeLegacyAuditLog(
  */
 export async function createAuditLog(
   env: Env,
-  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { tenantId: string; id?: string }
+  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & {
+    tenantId: string;
+    id?: string;
+    createdAt?: number;
+  }
 ): Promise<void> {
   const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
   if (!tenantId) {
@@ -967,8 +976,12 @@ export async function createAuditLog(
   if (!/^[A-Za-z0-9._:-]{1,200}$/u.test(id)) {
     throw new AuditLogDeliveryError('audit_log_id_invalid', entry.action, tenantId);
   }
-  // Use seconds (not milliseconds) for consistency with other audit log writers
-  const createdAt = Math.floor(Date.now() / 1000);
+  const createdAtMs = entry.createdAt ?? Date.now();
+  if (!Number.isSafeInteger(createdAtMs) || createdAtMs < 0) {
+    throw new AuditLogDeliveryError('audit_log_created_at_invalid', entry.action, tenantId);
+  }
+  // The legacy audit_log schema stores seconds; the unified service stores milliseconds.
+  const createdAt = Math.floor(createdAtMs / 1000);
   let failureBehavior: ReturnType<typeof resolveAuditEventFailureBehavior>['behavior'] =
     'fail_closed_or_strong_retry';
   let legacyD1WasPrimary = true;
@@ -1025,7 +1038,12 @@ export async function createAuditLog(
   }
 
   try {
-    await mirrorLegacyAuditLogToUnifiedService(env, { ...entry, id, tenantId });
+    await mirrorLegacyAuditLogToUnifiedService(env, {
+      ...entry,
+      id,
+      tenantId,
+      createdAt: createdAtMs,
+    });
   } catch (error) {
     log.warn('Failed to mirror audit log to unified audit service', {
       action: entry.action,

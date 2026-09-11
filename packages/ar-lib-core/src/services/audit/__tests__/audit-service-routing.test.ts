@@ -152,6 +152,42 @@ describe('AuditService routing', () => {
     );
   });
 
+  it('preserves a supplied event timestamp in primary and fanout records', async () => {
+    const createdAt = 1_779_321_600_123;
+    const auditProfile: AuditProfile = {
+      id: 'audit-profile-1',
+      kind: 'audit',
+      label: 'Primary + Fanout',
+      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+      archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+      sinks: [],
+      archiveFailureMode: 'gate_cleanup',
+      sinkFailureMode: 'retry_until_ttl',
+    };
+    const queue = createMockQueue();
+    const service = new AuditService({
+      coreSource,
+      piiSource,
+      r2Bucket,
+      auditQueue: queue,
+      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
+    });
+
+    await service.logEvent('tenant-a', {
+      createdAt,
+      eventType: 'user.deleted',
+      eventCategory: 'user',
+      result: 'success',
+    });
+
+    expect(queue.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timestamp: createdAt,
+        entries: [expect.objectContaining({ createdAt })],
+      })
+    );
+  });
+
   it('supports archive-only audit profiles by skipping the primary write and queueing fanout', async () => {
     const auditProfile: AuditProfile = {
       id: 'archive-only',

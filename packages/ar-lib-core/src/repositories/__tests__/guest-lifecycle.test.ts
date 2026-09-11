@@ -120,16 +120,28 @@ describe.each(['d1', 'postgresql'])('guest lifecycle conditional SQL (%s schema)
   it('records an explicit administrator deletion independently of retention', async () => {
     await repository.enroll({ ...enrollment, deletionAfterDays: null });
     expect(
-      await repository.beginAdministrativeDeletion('guest-1', 'admin-delete-1', 2000, 2000001)
+      await repository.beginAdministrativeDeletion(
+        'guest-1',
+        'admin-delete-1',
+        2000,
+        '{"schemaVersion":1}',
+        2000001
+      )
     ).toBe(true);
     expect(await repository.get('guest-1')).toMatchObject({
       phase: 'deleting',
       deletion_operation_id: 'admin-delete-1',
+      deletion_route_json: '{"schemaVersion":1}',
       deletion_started_at_ms: 2000001,
     });
-    expect(await repository.beginAdministrativeDeletion('guest-1', 'admin-delete-2', 2001)).toBe(
-      false
-    );
+    expect(
+      await repository.beginAdministrativeDeletion(
+        'guest-1',
+        'admin-delete-2',
+        2001,
+        '{"schemaVersion":1}'
+      )
+    ).toBe(false);
     expect(await repository.completeDeletion('guest-1', 'admin-delete-2', 2002)).toBe(false);
     expect(await repository.completeDeletion('guest-1', 'admin-delete-1', 2002)).toBe(true);
     expect(await repository.get('guest-1')).toMatchObject({

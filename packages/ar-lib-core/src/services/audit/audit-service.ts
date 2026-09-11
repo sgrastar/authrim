@@ -383,7 +383,10 @@ export class AuditService implements IAuditService {
       auditProfile,
     });
     const entryId = params.id ?? crypto.randomUUID();
-    const createdAt = Date.now();
+    const createdAt = params.createdAt ?? Date.now();
+    if (!Number.isSafeInteger(createdAt) || createdAt < 0) {
+      throw new Error('audit_event_created_at_invalid');
+    }
     const retentionUntil = calculateRetentionUntil(
       this.resolveRetentionDays(auditProfile, config, 'event', deliveryPlan.retentionDays)
     );

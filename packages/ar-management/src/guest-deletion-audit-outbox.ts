@@ -189,6 +189,7 @@ async function writeGuestDeletionAudit(
 ): Promise<void> {
   await createAuditLog({ ...env, DB: adapter } as unknown as Env, {
     id: task.audit_id,
+    createdAt: asNonNegativeInteger(task.created_at) * 1000,
     tenantId: task.tenant_id,
     userId: task.actor_user_id,
     action: 'user.deleted',
