@@ -7,6 +7,13 @@ const mocks = vi.hoisted(() => ({
   deleteUser: vi.fn(),
   transitionAccountAuthenticationState: vi.fn(),
   audit: vi.fn(),
+  auditOutboxEnqueue: vi.fn(),
+  auditOutboxMarkSucceeded: vi.fn(),
+  auditOutboxMarkRetry: vi.fn(),
+  auditOutboxRemove: vi.fn(),
+  guestLifecycleBeginAdministrativeDeletion: vi.fn(),
+  guestLifecycleGet: vi.fn(),
+  deleteOneGuestAccount: vi.fn(),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
@@ -19,6 +26,60 @@ vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   getLogger: vi.fn(() => ({ module: vi.fn(() => mocks.logger) })),
   CanonicalRuntimeUserStore: vi.fn(function () {
     return { findById: mocks.findUser, deleteUser: mocks.deleteUser };
+  }),
+  GuestLifecycleRepository: vi.fn(function () {
+    return {
+      beginAdministrativeDeletion: mocks.guestLifecycleBeginAdministrativeDeletion,
+      get: mocks.guestLifecycleGet,
+    };
+  }),
+}));
+vi.mock('../guest-lifecycle-scheduled', () => ({
+  deleteOneGuestAccount: mocks.deleteOneGuestAccount,
+  createGuestDeletionRoute: vi.fn(
+    async (
+      _env: unknown,
+      input: { tenantId: string; userId: string; completionAuditMode?: 'outbox' }
+    ) => ({
+      schemaVersion: 1,
+      tenantId: input.tenantId,
+      userId: input.userId,
+      coreBindingRef: 'CORE',
+      piiBindingRef: 'PII',
+      piiResidencyPartition: 'default',
+      routeProjection: {},
+      completionAuditMode: input.completionAuditMode,
+    })
+  ),
+}));
+vi.mock('../guest-deletion-audit-outbox', () => ({
+  createGuestDeletionAuditTaskFromContext: vi.fn(
+    (
+      _c: unknown,
+      input: {
+        auditId: string;
+        userId: string;
+        operationId: string;
+        metadata: Record<string, unknown>;
+      }
+    ) => ({
+      auditId: input.auditId,
+      userId: input.userId,
+      operationId: input.operationId,
+      actorUserId: 'admin-1',
+      ipAddress: 'unknown',
+      userAgent: 'unknown',
+      metadataJson: JSON.stringify(input.metadata),
+      createdAt: 1000,
+    })
+  ),
+  GuestDeletionAuditOutboxRepository: vi.fn(function () {
+    return {
+      enqueue: mocks.auditOutboxEnqueue,
+      markSucceeded: mocks.auditOutboxMarkSucceeded,
+      markRetry: mocks.auditOutboxMarkRetry,
+      remove: mocks.auditOutboxRemove,
+    };
   }),
 }));
 import {
@@ -41,11 +102,15 @@ function context(
     req: {
       param: vi.fn(() => options.id),
       query: vi.fn((n: string) => options.query?.[n]),
+      header: vi.fn(() => undefined),
       json: options.bodyError
         ? vi.fn().mockRejectedValue(new SyntaxError('bad'))
         : vi.fn().mockResolvedValue(options.body ?? {}),
     },
     env: options.env ?? {},
+    get: vi.fn((name: string) =>
+      name === 'adminAuth' ? { userId: 'admin-1' } : name === 'tenantId' ? 'tenant-a' : undefined
+    ),
     json: vi.fn((v: unknown, s = 200) => Response.json(v, { status: s })),
   } as never;
 }
@@ -72,6 +137,33 @@ describe('guest account administration', () => {
     mocks.deleteUser.mockResolvedValue(true);
     mocks.transitionAccountAuthenticationState.mockResolvedValue({ lifecycle: 'active' });
     mocks.audit.mockResolvedValue(undefined);
+    mocks.auditOutboxEnqueue.mockImplementation(async (input) => ({
+      audit_id: input.auditId,
+      tenant_id: 'tenant-a',
+      user_id: input.userId,
+      operation_id: input.operationId,
+      actor_user_id: input.actorUserId,
+      ip_address: input.ipAddress,
+      user_agent: input.userAgent,
+      metadata_json: input.metadataJson,
+      status: 'pending',
+      attempt_count: 0,
+      next_attempt_at: input.createdAt,
+      last_error_code: null,
+      created_at: input.createdAt,
+      updated_at: input.createdAt,
+      succeeded_at: null,
+    }));
+    mocks.auditOutboxMarkSucceeded.mockResolvedValue(undefined);
+    mocks.auditOutboxMarkRetry.mockResolvedValue(undefined);
+    mocks.auditOutboxRemove.mockResolvedValue(undefined);
+    mocks.guestLifecycleBeginAdministrativeDeletion.mockResolvedValue(true);
+    mocks.guestLifecycleGet.mockImplementation(async (userId: string) => ({
+      tenant_id: 'tenant-a',
+      user_id: userId,
+      phase: 'deleting',
+    }));
+    mocks.deleteOneGuestAccount.mockResolvedValue('deleted');
   });
   it.each([false, true])('lists guest accounts include_expired=%s', async (includeExpired) => {
     mocks.adapter.queryOne.mockResolvedValueOnce({ count: 2 });
@@ -210,8 +302,7 @@ describe('guest account administration', () => {
     });
     const response = await deleteGuestUser(context({ id: 'user-1' }));
     expect(response.status).toBe(409);
-    expect(mocks.deleteUser).not.toHaveBeenCalled();
-    expect(mocks.transitionAccountAuthenticationState).not.toHaveBeenCalled();
+    expect(mocks.deleteOneGuestAccount).not.toHaveBeenCalled();
   });
   it('formats an absent upgrade and expired browser resume credential', async () => {
     mocks.findUser.mockResolvedValueOnce(user());
@@ -249,9 +340,8 @@ describe('guest account administration', () => {
       mocks.findUser.mockResolvedValueOnce(value);
       const response = await deleteGuestUser(context({ id: 'user-1' }));
       expect(response.status).toBe(!value ? 404 : value.registration_state === 'guest' ? 200 : 400);
-      expect(mocks.deleteUser).toHaveBeenCalledTimes(value?.registration_state === 'guest' ? 1 : 0);
-      expect(mocks.transitionAccountAuthenticationState).toHaveBeenCalledTimes(
-        value?.registration_state === 'guest' ? 2 : 0
+      expect(mocks.deleteOneGuestAccount).toHaveBeenCalledTimes(
+        value?.registration_state === 'guest' ? 1 : 0
       );
       expect(mocks.audit).toHaveBeenCalledTimes(value?.registration_state === 'guest' ? 2 : 0);
       if (value?.registration_state === 'guest') {
@@ -271,7 +361,32 @@ describe('guest account administration', () => {
           'user-1',
           expect.objectContaining({ registration_state: 'guest', reason: 'admin_action' }),
           'info',
-          expect.stringMatching(/^account-guest-deleted-/)
+          expect.stringMatching(/^account-guest-deleted-/),
+          expect.any(Number),
+          true
+        );
+        expect(mocks.auditOutboxEnqueue).toHaveBeenCalledTimes(1);
+        expect(mocks.auditOutboxEnqueue.mock.invocationCallOrder[0]).toBeLessThan(
+          mocks.deleteOneGuestAccount.mock.invocationCallOrder[0]
+        );
+        expect(mocks.auditOutboxMarkSucceeded).toHaveBeenCalledTimes(1);
+        const deletionOperationId = mocks.auditOutboxEnqueue.mock.calls[0][0].operationId;
+        expect(mocks.guestLifecycleBeginAdministrativeDeletion).toHaveBeenCalledWith(
+          'user-1',
+          deletionOperationId,
+          expect.any(Number),
+          expect.stringContaining('"completionAuditMode":"outbox"'),
+          expect.any(Number)
+        );
+        expect(mocks.deleteOneGuestAccount).toHaveBeenCalledWith(
+          expect.anything(),
+          expect.objectContaining({
+            tenantId: 'tenant-a',
+            core: mocks.adapter,
+            coreBindingRef: 'CORE',
+            candidate: expect.objectContaining({ user_id: 'user-1' }),
+            now: expect.any(Number),
+          })
         );
       }
     }
@@ -286,22 +401,48 @@ describe('guest account administration', () => {
     });
 
     expect((await deleteGuestUser(context({ id: 'user-1' }))).status).toBe(200);
-    expect(mocks.deleteUser).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteOneGuestAccount).toHaveBeenCalledTimes(1);
 
     const completionCalls = mocks.audit.mock.calls.filter(
       ([, action]) => action === 'user.deleted'
     );
     expect(completionCalls).toHaveLength(2);
     expect(completionCalls[0][6]).toBe(completionCalls[1][6]);
+    expect(completionCalls[0][7]).toBe(completionCalls[1][7]);
+    expect(completionCalls[0][7]).toBe(mocks.deleteOneGuestAccount.mock.calls[0][1].now * 1000);
+    expect(mocks.auditOutboxMarkSucceeded).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteOneGuestAccount.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.auditOutboxMarkSucceeded.mock.invocationCallOrder[0]
+    );
   });
   it('does not begin deletion until durable audit intent is recorded', async () => {
     mocks.findUser.mockResolvedValueOnce(user());
     mocks.audit.mockRejectedValueOnce(new Error('audit unavailable'));
 
     expect((await deleteGuestUser(context({ id: 'user-1' }))).status).toBe(500);
-    expect(mocks.transitionAccountAuthenticationState).not.toHaveBeenCalled();
     expect(mocks.adapter.execute).not.toHaveBeenCalled();
-    expect(mocks.deleteUser).not.toHaveBeenCalled();
+    expect(mocks.deleteOneGuestAccount).not.toHaveBeenCalled();
+  });
+  it('does not perform destructive work when the guest lifecycle claim loses a race', async () => {
+    mocks.findUser.mockResolvedValueOnce(user());
+    mocks.guestLifecycleBeginAdministrativeDeletion.mockResolvedValueOnce(false);
+
+    expect((await deleteGuestUser(context({ id: 'user-1' }))).status).toBe(500);
+    expect(mocks.auditOutboxEnqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.auditOutboxRemove).toHaveBeenCalledWith(
+      mocks.auditOutboxEnqueue.mock.calls[0][0].auditId
+    );
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    expect(mocks.deleteOneGuestAccount).not.toHaveBeenCalled();
+  });
+  it('does not publish completion when the complete deletion pipeline cannot finish', async () => {
+    mocks.findUser.mockResolvedValueOnce(user());
+    mocks.deleteOneGuestAccount.mockResolvedValueOnce('skipped');
+
+    expect((await deleteGuestUser(context({ id: 'user-1' }))).status).toBe(500);
+    expect(mocks.deleteOneGuestAccount).toHaveBeenCalledTimes(1);
+    expect(mocks.audit.mock.calls.filter(([, action]) => action === 'user.deleted')).toEqual([]);
+    expect(mocks.auditOutboxMarkSucceeded).not.toHaveBeenCalled();
   });
   it('returns the committed deletion when completion audit delivery remains unavailable', async () => {
     mocks.findUser.mockResolvedValueOnce(user());
@@ -310,14 +451,19 @@ describe('guest account administration', () => {
     });
 
     expect((await deleteGuestUser(context({ id: 'user-1' }))).status).toBe(200);
-    expect(mocks.deleteUser).toHaveBeenCalledTimes(1);
+    expect(mocks.deleteOneGuestAccount).toHaveBeenCalledTimes(1);
     expect(mocks.audit.mock.calls.filter(([, action]) => action === 'user.deleted')).toHaveLength(
       2
     );
     expect(mocks.logger.error).toHaveBeenCalledWith(
-      'Guest account deletion committed but completion audit delivery is pending',
+      'Guest account deletion committed; completion audit is queued for reconciliation',
       expect.objectContaining({ action: 'guest_user_delete_audit_pending', tenantId: 'tenant-a' }),
       expect.any(Error)
+    );
+    expect(mocks.auditOutboxMarkRetry).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: 'user-1', status: 'pending' }),
+      expect.any(Number),
+      'audit_log_write_failed'
     );
   });
   it('handles anonymous user get/delete failures', async () => {
@@ -370,14 +516,27 @@ describe('guest account administration', () => {
       deleted_credentials: 2,
       deactivated_credentials: 1,
     });
-    expect(mocks.deleteUser).toHaveBeenCalledTimes(1);
-    expect(mocks.adapter.execute).toHaveBeenCalledTimes(2);
+    expect(mocks.deleteOneGuestAccount).toHaveBeenCalledTimes(1);
+    expect(mocks.adapter.execute).toHaveBeenCalledTimes(1);
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      'account.guest.deletion_started',
+      'user',
+      'u1',
+      expect.objectContaining({ registration_state: 'guest', reason: 'manual_cleanup' }),
+      'info',
+      expect.stringMatching(/^account-guest-delete-started-/)
+    );
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),
       'user.deleted',
       'user',
       'u1',
-      expect.objectContaining({ registration_state: 'guest', reason: 'manual_cleanup' })
+      expect.objectContaining({ registration_state: 'guest', reason: 'manual_cleanup' }),
+      'info',
+      expect.stringMatching(/^account-guest-deleted-/),
+      expect.any(Number),
+      true
     );
     expect(mocks.audit).toHaveBeenCalledWith(
       expect.anything(),
@@ -386,6 +545,119 @@ describe('guest account administration', () => {
       'u2',
       expect.objectContaining({ reason: 'manual_cleanup' })
     );
+    expect(mocks.auditOutboxEnqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.auditOutboxMarkSucceeded).toHaveBeenCalledTimes(1);
+    expect(mocks.guestLifecycleBeginAdministrativeDeletion).toHaveBeenCalledTimes(1);
+  });
+  it('preserves cleanup deletion outcomes and retries completion audit delivery', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([
+      { user_id: 'u1', credential_id: 'c1', expires_at: 1 },
+      { user_id: 'u2', credential_id: 'c2', expires_at: 2 },
+    ]);
+    mocks.adapter.queryOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null);
+    let completionAttempts = 0;
+    mocks.audit.mockImplementation(async (_c, action: string, _type, userId: string) => {
+      if (action === 'user.deleted' && userId === 'u1' && completionAttempts++ === 0) {
+        throw new Error('transient audit failure');
+      }
+    });
+
+    const response = await cleanupExpiredGuestUsers(
+      context({ body: { dry_run: false, limit: 10 } })
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      deleted_users: 2,
+      deleted_credentials: 2,
+    });
+
+    const firstUserCompletionCalls = mocks.audit.mock.calls.filter(
+      ([, action, , userId]) => action === 'user.deleted' && userId === 'u1'
+    );
+    expect(firstUserCompletionCalls).toHaveLength(2);
+    expect(firstUserCompletionCalls[0][6]).toBe(firstUserCompletionCalls[1][6]);
+    expect(firstUserCompletionCalls[0][7]).toBe(firstUserCompletionCalls[1][7]);
+    expect(mocks.deleteOneGuestAccount).toHaveBeenCalledTimes(2);
+    expect(mocks.auditOutboxEnqueue).toHaveBeenCalledTimes(2);
+    expect(mocks.auditOutboxMarkSucceeded).toHaveBeenCalledTimes(2);
+  });
+  it('continues cleanup after persistent completion audit delivery failure', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([
+      { user_id: 'u1', credential_id: 'c1', expires_at: 1 },
+    ]);
+    mocks.adapter.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    mocks.audit.mockImplementation(async (_c, action: string) => {
+      if (action === 'user.deleted') throw new Error('persistent audit failure');
+    });
+
+    const response = await cleanupExpiredGuestUsers(
+      context({ body: { dry_run: false, limit: 10 } })
+    );
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      deleted_users: 1,
+      deleted_credentials: 1,
+    });
+    expect(mocks.audit.mock.calls.filter(([, action]) => action === 'user.deleted')).toHaveLength(
+      2
+    );
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      'Guest account deletion committed; completion audit is queued for reconciliation',
+      expect.objectContaining({
+        action: 'guest_cleanup_user_delete_audit_pending',
+        tenantId: 'tenant-a',
+      }),
+      expect.any(Error)
+    );
+    expect(mocks.auditOutboxMarkRetry).toHaveBeenCalledTimes(1);
+  });
+  it('does not start cleanup deletion until its durable audit intent is recorded', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([
+      { user_id: 'u1', credential_id: 'c1', expires_at: 1 },
+    ]);
+    mocks.adapter.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    mocks.audit.mockImplementation(async (_c, action: string) => {
+      if (action === 'account.guest.deletion_started') {
+        throw new Error('audit unavailable');
+      }
+    });
+
+    expect(
+      (await cleanupExpiredGuestUsers(context({ body: { dry_run: false, limit: 10 } }))).status
+    ).toBe(500);
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    expect(mocks.deleteOneGuestAccount).not.toHaveBeenCalled();
+  });
+  it('does not start cleanup deletion until the reconciliation task is durable', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([
+      { user_id: 'u1', credential_id: 'c1', expires_at: 1 },
+    ]);
+    mocks.adapter.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    mocks.auditOutboxEnqueue.mockRejectedValueOnce(new Error('outbox unavailable'));
+
+    expect(
+      (await cleanupExpiredGuestUsers(context({ body: { dry_run: false, limit: 10 } }))).status
+    ).toBe(500);
+    expect(mocks.adapter.execute).not.toHaveBeenCalled();
+    expect(mocks.deleteOneGuestAccount).not.toHaveBeenCalled();
+  });
+  it('does not count or publish cleanup completion when the complete deletion pipeline stops', async () => {
+    mocks.adapter.query.mockResolvedValueOnce([
+      { user_id: 'u1', credential_id: 'c1', expires_at: 1 },
+    ]);
+    mocks.adapter.queryOne.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    mocks.deleteOneGuestAccount.mockResolvedValueOnce('held');
+
+    expect(
+      (await cleanupExpiredGuestUsers(context({ body: { dry_run: false, limit: 10 } }))).status
+    ).toBe(500);
+    expect(mocks.deleteOneGuestAccount).toHaveBeenCalledTimes(1);
+    expect(mocks.audit.mock.calls.filter(([, action]) => action === 'user.deleted')).toEqual([]);
+    expect(mocks.auditOutboxMarkSucceeded).not.toHaveBeenCalled();
   });
   it('skips scheduled anonymous cleanup while an account legal hold is active', async () => {
     mocks.adapter.query.mockResolvedValueOnce([
@@ -399,7 +671,7 @@ describe('guest account administration', () => {
       await cleanupExpiredGuestUsers(context({ body: { dry_run: false, limit: 10 } }))
     ).json();
     expect(body).toMatchObject({ deleted_users: 0 });
-    expect(mocks.deleteUser).not.toHaveBeenCalled();
+    expect(mocks.deleteOneGuestAccount).not.toHaveBeenCalled();
   });
   it('deduplicates cleanup user IDs and handles cleanup errors', async () => {
     mocks.adapter.query.mockRejectedValueOnce(new Error('failure'));

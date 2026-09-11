@@ -38,8 +38,8 @@ export class SqlLogChunkCatalogStore implements LogChunkCatalogStore {
     this.adapter = ensureDatabaseAdapter(db, 'logging-chunk-catalog');
   }
 
-  async createPendingObject(row: LogObjectCatalogRow): Promise<void> {
-    await this.adapter.execute(
+  async createPendingObject(row: LogObjectCatalogRow): Promise<boolean> {
+    const result = await this.adapter.execute(
       `INSERT INTO log_object_catalog (
         id, tenant_key, log_type, plane, surface, object_key, object_kind, status,
         record_count, byte_count, checksum_sha256, compression, encryption_scope,
@@ -62,10 +62,100 @@ export class SqlLogChunkCatalogStore implements LogChunkCatalogStore {
         row.encryptionScope ?? null,
         row.keyVersion ?? null,
         row.createdAt,
-        row.committedAt ?? null,
+        // committed_at is otherwise unused while status=pending, so it carries the bounded
+        // writer lease without requiring a second coordination table or schema transition.
+        row.status === 'pending' ? (row.claimLeaseUntil ?? null) : (row.committedAt ?? null),
         null,
       ]
     );
+    // Only an explicit conflict result loses the claim. Some compatible executors do not expose
+    // affected-row metadata, so preserve their historical single-writer behavior.
+    return result.rowsAffected !== 0;
+  }
+
+  async getObject(id: string): Promise<LogObjectCatalogRow | null> {
+    const row = await this.adapter.queryOne<{
+      id: string;
+      tenant_key: string;
+      log_type: LogObjectCatalogRow['logType'];
+      plane: LogObjectCatalogRow['plane'];
+      surface: string | null;
+      object_key: string;
+      object_kind: 'chunk';
+      status: LogObjectCatalogRow['status'];
+      record_count: number | string;
+      byte_count: number | string;
+      checksum_sha256: string | null;
+      compression: LogObjectCatalogRow['compression'];
+      encryption_scope: string | null;
+      key_version: number | string | null;
+      created_at: number | string;
+      committed_at: number | string | null;
+    }>(
+      `SELECT id, tenant_key, log_type, plane, surface, object_key, object_kind, status,
+              record_count, byte_count, checksum_sha256, compression, encryption_scope,
+              key_version, created_at, committed_at
+       FROM log_object_catalog
+       WHERE id = ?`,
+      [id]
+    );
+    if (!row) {
+      return null;
+    }
+    return {
+      id: row.id,
+      tenantKey: row.tenant_key,
+      logType: row.log_type,
+      plane: row.plane,
+      surface: row.surface ?? undefined,
+      objectKey: row.object_key,
+      objectKind: row.object_kind,
+      status: row.status,
+      recordCount: Number(row.record_count),
+      byteCount: Number(row.byte_count),
+      checksumSha256: row.checksum_sha256 ?? undefined,
+      compression: row.compression,
+      encryptionScope: row.encryption_scope ?? undefined,
+      keyVersion: row.key_version === null ? undefined : Number(row.key_version),
+      createdAt: Number(row.created_at),
+      committedAt:
+        row.status === 'committed' && row.committed_at !== null
+          ? Number(row.committed_at)
+          : undefined,
+      claimLeaseUntil:
+        // See createPendingObject: for pending rows this column is the writer lease deadline.
+        row.status === 'pending' && row.committed_at !== null
+          ? Number(row.committed_at)
+          : undefined,
+    };
+  }
+
+  async reclaimOrphanObject(id: string, claimLeaseUntil: number): Promise<boolean> {
+    const result = await this.adapter.execute(
+      `UPDATE log_object_catalog
+       SET status = 'pending',
+           checksum_sha256 = NULL,
+           committed_at = ?
+       WHERE id = ? AND status = 'orphan_candidate'`,
+      [claimLeaseUntil, id]
+    );
+    return result.rowsAffected > 0;
+  }
+
+  async reclaimExpiredPendingObject(
+    id: string,
+    now: number,
+    claimLeaseUntil: number
+  ): Promise<boolean> {
+    const result = await this.adapter.execute(
+      `UPDATE log_object_catalog
+       SET committed_at = ?
+       WHERE id = ?
+         AND status = 'pending'
+         AND (committed_at IS NULL OR committed_at <= ?)`,
+      [claimLeaseUntil, id, now]
+    );
+    return result.rowsAffected > 0;
   }
 
   async createPendingRecordIndexes(rows: LogChunkRecordIndexRow[]): Promise<void> {
@@ -82,7 +172,21 @@ export class SqlLogChunkCatalogStore implements LogChunkCatalogStore {
           line_number, block_offset, block_length, record_offset, record_length,
           event_at, index_profile, indexed_fields, status, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(tenant_key, log_type, plane, record_id) DO NOTHING`,
+        ON CONFLICT(tenant_key, log_type, plane, record_id) DO UPDATE SET
+          surface = excluded.surface,
+          object_catalog_id = excluded.object_catalog_id,
+          chunk_id = excluded.chunk_id,
+          line_number = excluded.line_number,
+          block_offset = excluded.block_offset,
+          block_length = excluded.block_length,
+          record_offset = excluded.record_offset,
+          record_length = excluded.record_length,
+          event_at = excluded.event_at,
+          index_profile = excluded.index_profile,
+          indexed_fields = excluded.indexed_fields,
+          status = 'pending',
+          created_at = excluded.created_at
+        WHERE log_chunk_record_index.status = 'deleted'`,
           params: [
             row.recordId,
             row.tenantKey,

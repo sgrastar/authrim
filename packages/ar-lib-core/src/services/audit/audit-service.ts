@@ -227,14 +227,13 @@ export class AuditService implements IAuditService {
     tenantId: string,
     plan: AuditDeliveryPlan,
     entry: EventLogEntry
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!plan.primary) {
-      return;
+      return true;
     }
 
     if (this.isD1PrimaryTarget(plan.primary)) {
-      await this.directInsertEventLog(entry);
-      return;
+      return this.directInsertEventLog(entry);
     }
 
     const adapter = this.resolvePrimaryAdapter
@@ -246,13 +245,14 @@ export class AuditService implements IAuditService {
         targetType: plan.primary.type,
         auditProfileId: plan.auditProfileId,
       });
-      return;
+      return true;
     }
 
     const result = await adapter.writeEventLog(entry);
     if (!result.success) {
       throw new Error(result.errorMessage ?? 'audit_primary_event_write_failed');
     }
+    return result.entriesWritten > 0;
   }
 
   private async writePrimaryPIILog(
@@ -383,9 +383,17 @@ export class AuditService implements IAuditService {
       auditProfile,
     });
     const entryId = params.id ?? crypto.randomUUID();
-    const createdAt = Date.now();
+    const createdAt = params.createdAt ?? Date.now();
+    if (!Number.isSafeInteger(createdAt) || createdAt < 0) {
+      throw new Error('audit_event_created_at_invalid');
+    }
+    const createdAtDate = new Date(createdAt);
+    if (!Number.isFinite(createdAtDate.getTime())) {
+      throw new Error('audit_event_created_at_invalid');
+    }
     const retentionUntil = calculateRetentionUntil(
-      this.resolveRetentionDays(auditProfile, config, 'event', deliveryPlan.retentionDays)
+      this.resolveRetentionDays(auditProfile, config, 'event', deliveryPlan.retentionDays),
+      createdAtDate
     );
 
     // Sanitize details if provided
@@ -444,11 +452,19 @@ export class AuditService implements IAuditService {
       createdAt,
     };
 
-    await this.writePrimaryEventLog(tenantId, deliveryPlan, entry);
+    const shouldFanout = await this.writePrimaryEventLog(tenantId, deliveryPlan, entry);
 
     const fanout = this.buildFanoutPlan(deliveryPlan);
+    const hasGatedFanout =
+      (deliveryPlan.archives.length > 0 && deliveryPlan.archiveFailureMode === 'gate_cleanup') ||
+      (deliveryPlan.sinks.length > 0 && deliveryPlan.sinkFailureMode === 'retry_until_ttl');
+    const requiresDurableFanout =
+      !deliveryPlan.primary || (params.requireDurableFanout === true && hasGatedFanout);
+    // A failed durable fanout is replayed with the same event ID. The primary insert then reports
+    // zero rows, so gated delivery must still retry; downstream fanout IDs remain idempotent.
+    const shouldQueueFanout = shouldFanout || requiresDurableFanout;
 
-    if (fanout && this.auditQueue) {
+    if (fanout && this.auditQueue && shouldQueueFanout) {
       try {
         await this.auditQueue.send({
           type: 'event_log',
@@ -462,20 +478,26 @@ export class AuditService implements IAuditService {
           error: sanitizeErrorMessage(String(queueError)),
           tenantId,
         });
+        if (requiresDurableFanout) {
+          throw new Error('audit_fanout_queue_failed');
+        }
       }
-    } else if (fanout && !this.auditQueue) {
+    } else if (fanout && !this.auditQueue && shouldQueueFanout) {
       this.logger.warn('audit_fanout_skipped_without_queue', {
         tenantId,
         auditProfileId: deliveryPlan.auditProfileId,
       });
+      if (requiresDurableFanout) {
+        throw new Error('audit_fanout_queue_unavailable');
+      }
     }
   }
 
   /**
    * Direct insert to event_log table.
    */
-  private async directInsertEventLog(entry: EventLogEntry): Promise<void> {
-    await this.coreAdapter.execute(
+  private async directInsertEventLog(entry: EventLogEntry): Promise<boolean> {
+    const result = await this.coreAdapter.execute(
       `INSERT INTO event_log (
         id, tenant_id, event_type, event_category, result, severity,
         error_code, error_message, anonymized_user_id, client_id,
@@ -504,6 +526,7 @@ export class AuditService implements IAuditService {
         entry.id,
       ]
     );
+    return result.rowsAffected > 0;
   }
 
   /**

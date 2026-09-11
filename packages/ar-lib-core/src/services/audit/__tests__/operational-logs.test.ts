@@ -141,6 +141,14 @@ describe('operational-logs', () => {
         });
         return { rowsAffected: 1 };
       }
+      if (
+        sql.includes('INSERT INTO log_object_catalog') ||
+        sql.includes('INSERT INTO log_chunk_record_index') ||
+        sql.includes('UPDATE log_object_catalog') ||
+        sql.includes('UPDATE log_chunk_record_index')
+      ) {
+        return { rowsAffected: 1 };
+      }
       return { rowsAffected: 0 };
     }),
     queryOne: vi.fn(async (sql: string, params: unknown[]) => {

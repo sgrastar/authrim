@@ -11,6 +11,18 @@ import type {
   WriteLogChunkResult,
 } from './types';
 
+export const LOG_CHUNK_WRITE_CLAIM_LEASE_MS = 60_000;
+
+export class LogChunkWriteClaimActiveError extends Error {
+  readonly retryAt: number;
+
+  constructor(retryAt: number, options?: ErrorOptions) {
+    super('log_chunk_write_in_progress_or_conflicted', options);
+    this.name = 'LogChunkWriteClaimActiveError';
+    this.retryAt = retryAt;
+  }
+}
+
 function toHex(bytes: Uint8Array): string {
   return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
 }
@@ -94,7 +106,9 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
     throw new Error('log_chunk_encryption_required');
   }
 
-  const createdAt = input.now ?? Date.now();
+  const claimStartedAt = Date.now();
+  const claimLeaseUntil = claimStartedAt + LOG_CHUNK_WRITE_CLAIM_LEASE_MS;
+  const createdAt = input.now ?? claimStartedAt;
   const chunkId = input.chunkId ?? createLoggingId('chk', createdAt);
   const objectCatalogId = input.objectCatalogId ?? createLoggingId('obj', createdAt);
   const compression: LogChunkCompression = input.compression ?? 'gzip_block';
@@ -140,6 +154,7 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
     encryptionScope: input.encryption?.encryptionScope,
     keyVersion: input.encryption?.keyVersion,
     createdAt,
+    claimLeaseUntil,
   };
 
   const indexRows: LogChunkRecordIndexRow[] = input.records.map((record, index) => {
@@ -166,10 +181,58 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
     };
   });
 
-  await input.catalogStore?.createPendingObject(objectRow);
-  await input.catalogStore?.createPendingRecordIndexes(indexRows);
+  const pendingObjectCreated = await input.catalogStore?.createPendingObject(objectRow);
+  if (pendingObjectCreated === false) {
+    const existing = await input.catalogStore?.getObject?.(objectCatalogId);
+    if (!existing) {
+      throw new Error('log_chunk_write_in_progress_or_conflicted');
+    }
+    if (
+      existing.tenantKey !== input.tenantKey ||
+      existing.logType !== input.logType ||
+      existing.plane !== input.plane ||
+      existing.surface !== input.surface ||
+      existing.objectKey !== objectKey ||
+      existing.recordCount !== input.records.length ||
+      existing.compression !== compression ||
+      existing.encryptionScope !== input.encryption?.encryptionScope ||
+      existing.keyVersion !== input.encryption?.keyVersion
+    ) {
+      throw new Error('log_chunk_write_in_progress_or_conflicted');
+    }
+    if (existing.status === 'committed' && existing.checksumSha256) {
+      await input.catalogStore?.commitRecordIndexes(objectCatalogId, Date.now());
+      return {
+        chunkId,
+        objectCatalogId,
+        objectKey,
+        shard,
+        recordCount: existing.recordCount,
+        byteCount: existing.byteCount,
+        checksumSha256: existing.checksumSha256,
+        compression: existing.compression,
+        encryptionScope: existing.encryptionScope,
+        keyVersion: existing.keyVersion,
+        createdAt: existing.createdAt,
+      };
+    }
+    const claimReclaimed =
+      (existing.status === 'orphan_candidate' &&
+        (await input.catalogStore?.reclaimOrphanObject?.(objectCatalogId, claimLeaseUntil))) ||
+      (existing.status === 'pending' &&
+        (await input.catalogStore?.reclaimExpiredPendingObject?.(
+          objectCatalogId,
+          claimStartedAt,
+          claimLeaseUntil
+        )));
+    if (!claimReclaimed) {
+      throw new LogChunkWriteClaimActiveError(existing.claimLeaseUntil ?? claimLeaseUntil);
+    }
+  }
 
+  let objectCommitted = false;
   try {
+    await input.catalogStore?.createPendingRecordIndexes(indexRows);
     await input.bucket.put(objectKey, storedBody, {
       httpMetadata: {
         contentType: input.encryption
@@ -196,30 +259,36 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
         createdAt: String(createdAt),
       },
     });
+    const committedAt = Date.now();
+    await input.catalogStore?.commitObject(objectCatalogId, {
+      byteCount: storedBody.byteLength,
+      checksumSha256,
+      committedAt,
+    });
+    objectCommitted = true;
+    await input.catalogStore?.commitRecordIndexes(objectCatalogId, committedAt);
+
+    return {
+      chunkId,
+      objectCatalogId,
+      objectKey,
+      shard,
+      recordCount: input.records.length,
+      byteCount: storedBody.byteLength,
+      checksumSha256,
+      compression,
+      encryptionScope: input.encryption?.encryptionScope,
+      keyVersion: input.encryption?.keyVersion,
+      createdAt,
+    };
   } catch (error) {
-    await input.catalogStore?.markObjectOrphanCandidate(objectCatalogId, Date.now());
+    if (!objectCommitted) {
+      try {
+        await input.catalogStore?.markObjectOrphanCandidate(objectCatalogId, Date.now());
+      } catch (cleanupError) {
+        throw new LogChunkWriteClaimActiveError(claimLeaseUntil, { cause: cleanupError });
+      }
+    }
     throw error;
   }
-
-  const committedAt = Date.now();
-  await input.catalogStore?.commitObject(objectCatalogId, {
-    byteCount: storedBody.byteLength,
-    checksumSha256,
-    committedAt,
-  });
-  await input.catalogStore?.commitRecordIndexes(objectCatalogId, committedAt);
-
-  return {
-    chunkId,
-    objectCatalogId,
-    objectKey,
-    shard,
-    recordCount: input.records.length,
-    byteCount: storedBody.byteLength,
-    checksumSha256,
-    compression,
-    encryptionScope: input.encryption?.encryptionScope,
-    keyVersion: input.encryption?.keyVersion,
-    createdAt,
-  };
 }

@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { decodeStoredLogChunkRecord } from '../r2-chunk-reader';
-import { writeLogChunkToR2 } from '../r2-chunk-writer';
+import {
+  LOG_CHUNK_WRITE_CLAIM_LEASE_MS,
+  LogChunkWriteClaimActiveError,
+  writeLogChunkToR2,
+} from '../r2-chunk-writer';
 import { normalizeR2Prefix } from '../r2-keys';
 import type { LogChunkCatalogStore } from '../types';
 
@@ -139,6 +143,280 @@ describe('writeLogChunkToR2', () => {
       'commit_object',
       'commit_indexes',
     ]);
+  });
+
+  it('allows only one R2 writer for the same stable catalog identity', async () => {
+    let objectRow: Parameters<LogChunkCatalogStore['createPendingObject']>[0] | null = null;
+    let releasePut: (() => void) | undefined;
+    let notifyPutStarted: (() => void) | undefined;
+    const putStarted = new Promise<void>((resolve) => {
+      notifyPutStarted = resolve;
+    });
+    const catalogStore: LogChunkCatalogStore = {
+      createPendingObject: vi.fn(async (row) => {
+        if (objectRow) {
+          return false;
+        }
+        objectRow = row;
+        return true;
+      }),
+      getObject: vi.fn(async () => objectRow),
+      createPendingRecordIndexes: vi.fn(),
+      commitObject: vi.fn(async (_id, update) => {
+        if (objectRow) {
+          objectRow = {
+            ...objectRow,
+            status: 'committed',
+            byteCount: update.byteCount,
+            checksumSha256: update.checksumSha256,
+            committedAt: update.committedAt,
+          };
+        }
+      }),
+      commitRecordIndexes: vi.fn(),
+      markObjectOrphanCandidate: vi.fn(),
+    };
+    const bucket = {
+      put: vi.fn(async () => {
+        notifyPutStarted?.();
+        await new Promise<void>((resolve) => {
+          releasePut = resolve;
+        });
+      }),
+    } as unknown as R2Bucket;
+    const input = {
+      bucket,
+      tenantKey: 't_safeopaque',
+      logType: 'audit' as const,
+      plane: 'archive' as const,
+      records: [{ id: 'evt-stable', eventAt: 1, payload: { id: 'evt-stable' } }],
+      catalogStore,
+      encryption: testEncryption(),
+      now: 1_700_000_000_000,
+      chunkId: 'chk_stable',
+      objectCatalogId: 'obj_stable',
+    };
+
+    const first = writeLogChunkToR2(input);
+    await putStarted;
+    await expect(writeLogChunkToR2(input)).rejects.toThrow(
+      'log_chunk_write_in_progress_or_conflicted'
+    );
+    expect(bucket.put).toHaveBeenCalledOnce();
+    releasePut?.();
+    await expect(first).resolves.toEqual(
+      expect.objectContaining({ chunkId: 'chk_stable', objectCatalogId: 'obj_stable' })
+    );
+  });
+
+  it('reclaims an orphaned stable archive claim after a transient write failure', async () => {
+    let objectRow: Parameters<LogChunkCatalogStore['createPendingObject']>[0] | null = null;
+    let indexStatus: 'pending' | 'committed' | 'deleted' | undefined;
+    const catalogStore: LogChunkCatalogStore = {
+      createPendingObject: vi.fn(async (row) => {
+        if (objectRow) {
+          return false;
+        }
+        objectRow = row;
+        return true;
+      }),
+      getObject: vi.fn(async () => objectRow),
+      reclaimOrphanObject: vi.fn(async () => {
+        if (!objectRow || objectRow.status !== 'orphan_candidate') {
+          return false;
+        }
+        objectRow = { ...objectRow, status: 'pending', committedAt: undefined };
+        return true;
+      }),
+      createPendingRecordIndexes: vi.fn(async () => {
+        indexStatus = 'pending';
+      }),
+      commitObject: vi.fn(async (_id, update) => {
+        if (objectRow) {
+          objectRow = {
+            ...objectRow,
+            status: 'committed',
+            byteCount: update.byteCount,
+            checksumSha256: update.checksumSha256,
+            committedAt: update.committedAt,
+          };
+        }
+      }),
+      commitRecordIndexes: vi.fn(async () => {
+        indexStatus = 'committed';
+      }),
+      markObjectOrphanCandidate: vi.fn(async () => {
+        if (objectRow?.status === 'pending') {
+          objectRow = { ...objectRow, status: 'orphan_candidate' };
+          indexStatus = 'deleted';
+        }
+      }),
+    };
+    const bucket = {
+      put: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('transient_r2_failure'))
+        .mockResolvedValueOnce(undefined),
+    } as unknown as R2Bucket;
+    const input = {
+      bucket,
+      tenantKey: 't_safeopaque',
+      logType: 'audit' as const,
+      plane: 'archive' as const,
+      records: [{ id: 'evt-retry', eventAt: 1, payload: { id: 'evt-retry' } }],
+      catalogStore,
+      encryption: testEncryption(),
+      now: 1_700_000_000_000,
+      chunkId: 'chk_retry',
+      objectCatalogId: 'obj_retry',
+    };
+
+    await expect(writeLogChunkToR2(input)).rejects.toThrow('transient_r2_failure');
+    expect(objectRow).toEqual(expect.objectContaining({ status: 'orphan_candidate' }));
+    expect(indexStatus).toBe('deleted');
+
+    await expect(writeLogChunkToR2(input)).resolves.toEqual(
+      expect.objectContaining({ chunkId: 'chk_retry', objectCatalogId: 'obj_retry' })
+    );
+    expect(catalogStore.reclaimOrphanObject).toHaveBeenCalledOnce();
+    expect(bucket.put).toHaveBeenCalledTimes(2);
+    expect(objectRow).toEqual(
+      expect.objectContaining({ status: 'committed', checksumSha256: expect.any(String) })
+    );
+    expect(indexStatus).toBe('committed');
+  });
+
+  it('reclaims an expired pending claim when archive failure cleanup also failed', async () => {
+    vi.useFakeTimers();
+    const firstAttemptAt = 1_700_000_000_000;
+    vi.setSystemTime(firstAttemptAt);
+    let objectRow: Parameters<LogChunkCatalogStore['createPendingObject']>[0] | null = null;
+    const catalogStore: LogChunkCatalogStore = {
+      createPendingObject: vi.fn(async (row) => {
+        if (objectRow) return false;
+        objectRow = row;
+        return true;
+      }),
+      getObject: vi.fn(async () => objectRow),
+      reclaimExpiredPendingObject: vi.fn(async (_id, now, claimLeaseUntil) => {
+        if (
+          !objectRow ||
+          objectRow.status !== 'pending' ||
+          (objectRow.claimLeaseUntil ?? Number.POSITIVE_INFINITY) > now
+        ) {
+          return false;
+        }
+        objectRow = { ...objectRow, claimLeaseUntil };
+        return true;
+      }),
+      createPendingRecordIndexes: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('catalog_index_write_failed'))
+        .mockResolvedValueOnce(undefined),
+      commitObject: vi.fn(async (_id, update) => {
+        if (objectRow) {
+          objectRow = {
+            ...objectRow,
+            status: 'committed',
+            byteCount: update.byteCount,
+            checksumSha256: update.checksumSha256,
+            committedAt: update.committedAt,
+            claimLeaseUntil: undefined,
+          };
+        }
+      }),
+      commitRecordIndexes: vi.fn(),
+      markObjectOrphanCandidate: vi.fn().mockRejectedValueOnce(new Error('catalog_cleanup_failed')),
+    };
+    const bucket = { put: vi.fn().mockResolvedValue(undefined) } as unknown as R2Bucket;
+    const input = {
+      bucket,
+      tenantKey: 't_safeopaque',
+      logType: 'audit' as const,
+      plane: 'archive' as const,
+      records: [{ id: 'evt-recovery', eventAt: 1, payload: { id: 'evt-recovery' } }],
+      catalogStore,
+      encryption: testEncryption(),
+      now: 1_700_000_000_000,
+      chunkId: 'chk_recovery',
+      objectCatalogId: 'obj_recovery',
+    };
+
+    const firstError = await writeLogChunkToR2(input).catch((error: unknown) => error);
+    expect(firstError).toBeInstanceOf(LogChunkWriteClaimActiveError);
+    expect((firstError as LogChunkWriteClaimActiveError).retryAt).toBe(
+      firstAttemptAt + LOG_CHUNK_WRITE_CLAIM_LEASE_MS
+    );
+    expect(objectRow).toEqual(expect.objectContaining({ status: 'pending' }));
+
+    vi.setSystemTime(firstAttemptAt + LOG_CHUNK_WRITE_CLAIM_LEASE_MS + 1);
+    await expect(writeLogChunkToR2(input)).resolves.toEqual(
+      expect.objectContaining({ objectCatalogId: 'obj_recovery' })
+    );
+    expect(catalogStore.reclaimExpiredPendingObject).toHaveBeenCalledOnce();
+    expect(bucket.put).toHaveBeenCalledOnce();
+    vi.useRealTimers();
+  });
+
+  it('finishes pending indexes on replay after the object commit succeeded', async () => {
+    let objectRow: Parameters<LogChunkCatalogStore['createPendingObject']>[0] | null = null;
+    let indexStatus: 'pending' | 'committed' | 'deleted' | undefined;
+    const catalogStore: LogChunkCatalogStore = {
+      createPendingObject: vi.fn(async (row) => {
+        if (objectRow) return false;
+        objectRow = row;
+        return true;
+      }),
+      getObject: vi.fn(async () => objectRow),
+      createPendingRecordIndexes: vi.fn(async () => {
+        indexStatus = 'pending';
+      }),
+      commitObject: vi.fn(async (_id, update) => {
+        if (objectRow) {
+          objectRow = {
+            ...objectRow,
+            status: 'committed',
+            byteCount: update.byteCount,
+            checksumSha256: update.checksumSha256,
+            committedAt: update.committedAt,
+          };
+        }
+      }),
+      commitRecordIndexes: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('transient_index_commit_failure'))
+        .mockImplementationOnce(async () => {
+          indexStatus = 'committed';
+        }),
+      markObjectOrphanCandidate: vi.fn(async () => {
+        indexStatus = 'deleted';
+      }),
+    };
+    const bucket = { put: vi.fn().mockResolvedValue(undefined) } as unknown as R2Bucket;
+    const input = {
+      bucket,
+      tenantKey: 't_safeopaque',
+      logType: 'audit' as const,
+      plane: 'archive' as const,
+      records: [{ id: 'evt-index-retry', eventAt: 1, payload: { id: 'evt-index-retry' } }],
+      catalogStore,
+      encryption: testEncryption(),
+      now: 1_700_000_000_000,
+      chunkId: 'chk_index_retry',
+      objectCatalogId: 'obj_index_retry',
+    };
+
+    await expect(writeLogChunkToR2(input)).rejects.toThrow('transient_index_commit_failure');
+    expect(objectRow).toEqual(expect.objectContaining({ status: 'committed' }));
+    expect(indexStatus).toBe('pending');
+    expect(catalogStore.markObjectOrphanCandidate).not.toHaveBeenCalled();
+
+    await expect(writeLogChunkToR2(input)).resolves.toEqual(
+      expect.objectContaining({ objectCatalogId: 'obj_index_retry' })
+    );
+    expect(bucket.put).toHaveBeenCalledOnce();
+    expect(catalogStore.commitRecordIndexes).toHaveBeenCalledTimes(2);
+    expect(indexStatus).toBe('committed');
   });
 
   it('stores block offsets for record-level lookup indexes', async () => {

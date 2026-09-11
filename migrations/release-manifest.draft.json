@@ -27,6 +27,10 @@
             {
               "path": "003_account_registration_state.sql",
               "checksum": "6eddca50b137cc1dd45d26109ee1579e672f899fae2a2ba7ebaa7931e54f6dc1"
+            },
+            {
+              "path": "004_guest_deletion_audit_outbox.sql",
+              "checksum": "cf3721b57c9f805be91dcc9c9d91fb9dd00febd3c927bf4554dfeecf4a277ecb"
             }
           ]
         },
@@ -104,6 +108,10 @@
             {
               "path": "003_account_registration_state.sql",
               "checksum": "8e1b46d59e61fd735415868df395b97dc6feac1a454fdcf1d88581c1fd706a4f"
+            },
+            {
+              "path": "004_guest_deletion_audit_outbox.sql",
+              "checksum": "cbd29fa6bbe4b211d6bffff90d645034225a0e21cc9d3546fbd9726a7a99b49b"
             }
           ]
         },
@@ -152,6 +160,10 @@
         {
           "path": "003_account_registration_state.sql",
           "checksum": "6eddca50b137cc1dd45d26109ee1579e672f899fae2a2ba7ebaa7931e54f6dc1"
+        },
+        {
+          "path": "004_guest_deletion_audit_outbox.sql",
+          "checksum": "cf3721b57c9f805be91dcc9c9d91fb9dd00febd3c927bf4554dfeecf4a277ecb"
         }
       ]
     },
@@ -257,6 +269,10 @@
         {
           "path": "003_account_registration_state.sql",
           "checksum": "8e1b46d59e61fd735415868df395b97dc6feac1a454fdcf1d88581c1fd706a4f"
+        },
+        {
+          "path": "004_guest_deletion_audit_outbox.sql",
+          "checksum": "cbd29fa6bbe4b211d6bffff90d645034225a0e21cc9d3546fbd9726a7a99b49b"
         }
       ]
     },

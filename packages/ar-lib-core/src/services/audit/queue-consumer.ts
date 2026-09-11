@@ -92,7 +92,11 @@ function fetchInputToUrl(input: Parameters<typeof fetch>[0]): string {
   return input.url;
 }
 
-type QueueStableIdPrefix = 'chk' | 'obj' | 'dlq' | 'lde';
+type QueueStableIdPrefix = 'batch' | 'chk' | 'obj' | 'dlq' | 'lde' | 'qpl';
+
+function stableTimestamp(value: number): number {
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+}
 
 function queueMessageTimestamp(message: { timestamp?: Date }): number {
   const timestamp = message.timestamp instanceof Date ? message.timestamp.getTime() : 0;
@@ -109,6 +113,45 @@ async function createQueueStableLoggingId(
     new TextEncoder().encode(`${purpose}\u0000${message.id}`)
   );
   return `${prefix}_${createUuidV7(queueMessageTimestamp(message), new Uint8Array(digest).slice(0, 10))}`;
+}
+
+async function createAuditFanoutStableLoggingId(
+  prefix: QueueStableIdPrefix,
+  body: AuditQueueMessage,
+  purpose: string
+): Promise<string> {
+  const source = [
+    body.type,
+    body.tenantId,
+    String(stableTimestamp(body.timestamp)),
+    ...body.entries
+      .map((entry) => `${entry.id}:${String(stableTimestamp(entry.createdAt))}`)
+      .sort(),
+  ].join('\u0000');
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`${purpose}\u0000${source}`)
+  );
+  return `${prefix}_${createUuidV7(
+    stableTimestamp(body.timestamp),
+    new Uint8Array(digest).slice(0, 10)
+  )}`;
+}
+
+async function createPayloadStableLoggingId(
+  prefix: QueueStableIdPrefix,
+  createdAt: number,
+  purpose: string,
+  payloadId: string
+): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`${purpose}\u0000${payloadId}`)
+  );
+  return `${prefix}_${createUuidV7(
+    stableTimestamp(createdAt),
+    new Uint8Array(digest).slice(0, 10)
+  )}`;
 }
 
 function getDefaultLoggingDeliveryPayloadBucket(env: AuditQueueConsumerEnv): R2Bucket | null {
@@ -587,8 +630,25 @@ interface RuntimeCredentialCacheEntry {
 }
 
 const RUNTIME_CREDENTIAL_CACHE_TTL_MS = 60_000;
+const DELIVERY_CLAIM_LEASE_MS = 60_000;
 const runtimeCredentialCache = new Map<string, RuntimeCredentialCacheEntry>();
 const tenantKeyCache = new Map<string, string>();
+
+function retryQueueMessage(message: Message<unknown>, error: unknown): void {
+  const retryAt =
+    error &&
+    typeof error === 'object' &&
+    (error as { name?: unknown }).name === 'LogChunkWriteClaimActiveError' &&
+    typeof (error as { retryAt?: unknown }).retryAt === 'number'
+      ? (error as { retryAt: number }).retryAt
+      : null;
+  if (retryAt !== null) {
+    const delaySeconds = Math.max(1, Math.ceil((retryAt - Date.now()) / 1000));
+    message.retry({ delaySeconds });
+    return;
+  }
+  message.retry();
+}
 
 type RuntimeLoggingDeliveryQueueBindingName =
   | 'LOGGING_DELIVERY_CRITICAL_QUEUE'
@@ -665,7 +725,7 @@ export async function processAuditQueue(
       });
 
       // Retry the message (goes to DLQ after max_retries)
-      message.retry();
+      retryQueueMessage(message, error);
     }
   }
 }
@@ -885,6 +945,7 @@ async function enqueueWrittenChunkForDelivery(input: {
   logType: LogType;
   plane: LogPlane;
   lane: LoggingDeliveryLane;
+  payloadId: string;
   env: AuditQueueConsumerEnv;
 }): Promise<RuntimeLoggingDeliveryEnqueueResult | null> {
   const destinationId = explicitDeliveryDestinationId(input.target);
@@ -896,7 +957,7 @@ async function enqueueWrittenChunkForDelivery(input: {
     {
       payload_type: 'delivery_fanout',
       schema_version: 1,
-      payload_id: `qpl_${crypto.randomUUID()}`,
+      payload_id: input.payloadId,
       tenant_key: input.tenantKey,
       lane: input.lane,
       created_at: input.result.createdAt,
@@ -917,6 +978,7 @@ async function enqueueHttpSinkBatchForDelivery(input: {
   tenantKey: string;
   logType: LogType;
   lane: LoggingDeliveryLane;
+  identity: { payloadId: string; batchId: string; createdAt: number };
   env: AuditQueueConsumerEnv;
 }): Promise<RuntimeLoggingDeliveryEnqueueResult | null> {
   const destinationId = explicitDeliveryDestinationId(input.target);
@@ -932,14 +994,12 @@ async function enqueueHttpSinkBatchForDelivery(input: {
     throw new Error(`HTTP sink URL not resolved: ${input.target.urlRef ?? 'missing_url'}`);
   }
 
-  const now = Date.now();
-  const payloadId = `qpl_${crypto.randomUUID()}`;
-  const batchId = `batch_${crypto.randomUUID()}`;
+  const { payloadId, batchId, createdAt } = input.identity;
   const bucket = getDefaultLoggingDeliveryPayloadBucket(input.env);
   if (!bucket) {
     throw new Error('logging_delivery_payload_bucket_unavailable');
   }
-  const partition = formatUtcPartition(now);
+  const partition = formatUtcPartition(createdAt);
   const objectKey = [
     'logging-delivery-payloads/v1',
     cleanR2ObjectKeySegment(input.tenantKey),
@@ -963,7 +1023,7 @@ async function enqueueHttpSinkBatchForDelivery(input: {
       recordCount: String(input.body.entries.length),
       payloadId,
       batchId,
-      createdAt: String(now),
+      createdAt: String(createdAt),
     },
   });
 
@@ -974,7 +1034,7 @@ async function enqueueHttpSinkBatchForDelivery(input: {
       payload_id: payloadId,
       tenant_key: input.tenantKey,
       lane: input.lane,
-      created_at: now,
+      created_at: createdAt,
       destination_id: destinationId,
       endpoint_url: endpointUrl,
       log_type: input.logType,
@@ -1470,10 +1530,10 @@ async function processFanoutMessage(
     const lane = laneForLogPolicy(logType, 'archive');
     const destinationId = deliveryDestinationId(archive);
     const stablePurpose = `audit-fanout:${destinationId}`;
-    const stableCreatedAt = queueMessageTimestamp(message);
-    const chunkId = await createQueueStableLoggingId('chk', message, stablePurpose);
-    const objectCatalogId = await createQueueStableLoggingId('obj', message, stablePurpose);
-    const deliveryEventId = await createQueueStableLoggingId('lde', message, stablePurpose);
+    const stableCreatedAt = stableTimestamp(body.timestamp);
+    const chunkId = await createAuditFanoutStableLoggingId('chk', body, stablePurpose);
+    const objectCatalogId = await createAuditFanoutStableLoggingId('obj', body, stablePurpose);
+    const deliveryEventId = await createAuditFanoutStableLoggingId('lde', body, stablePurpose);
     try {
       const result = await writeArchiveTarget(archive, body, env, tenantKey, {
         chunkId,
@@ -1487,6 +1547,7 @@ async function processFanoutMessage(
         logType,
         plane: 'archive',
         lane,
+        payloadId: await createAuditFanoutStableLoggingId('qpl', body, stablePurpose),
         env,
       });
       await recordDeliveryEvent(deliveryEventStore, logger, {
@@ -1510,7 +1571,7 @@ async function processFanoutMessage(
       });
       if (enqueueResult && !enqueueResult.queued) {
         await recordDeliveryNotification(notificationRepository, logger, {
-          id: await createQueueStableLoggingId('lde', message, `${stablePurpose}:notification`),
+          id: await createAuditFanoutStableLoggingId('lde', body, `${stablePurpose}:notification`),
           tenantId: body.tenantId,
           tenantKey,
           destinationId,
@@ -1535,7 +1596,7 @@ async function processFanoutMessage(
       const errorClass = deliveryErrorClass(error, 'archive_delivery_failed');
       const metadata = targetMetadata(archive, fanout, body);
       await recordDeliveryEvent(deliveryEventStore, logger, {
-        id: await createQueueStableLoggingId('lde', message, `${stablePurpose}:failure`),
+        id: await createAuditFanoutStableLoggingId('lde', body, `${stablePurpose}:failure`),
         tenantKey,
         destinationId,
         logType,
@@ -1547,9 +1608,9 @@ async function processFanoutMessage(
         metadata,
       });
       await recordDeliveryNotification(notificationRepository, logger, {
-        id: await createQueueStableLoggingId(
+        id: await createAuditFanoutStableLoggingId(
           'lde',
-          message,
+          body,
           `${stablePurpose}:failure-notification`
         ),
         tenantId: body.tenantId,
@@ -1578,6 +1639,7 @@ async function processFanoutMessage(
   for (const sink of fanout.sinks) {
     const lane = laneForLogPolicy(logType, 'external_sink');
     const destinationId = deliveryDestinationId(sink);
+    const stablePurpose = `audit-fanout:${destinationId}`;
     if (sink.type === 'http') {
       const queuedSink = await enqueueHttpSinkBatchForDelivery({
         target: sink,
@@ -1585,6 +1647,11 @@ async function processFanoutMessage(
         tenantKey,
         logType,
         lane,
+        identity: {
+          payloadId: await createAuditFanoutStableLoggingId('qpl', body, stablePurpose),
+          batchId: await createAuditFanoutStableLoggingId('batch', body, stablePurpose),
+          createdAt: stableTimestamp(body.timestamp),
+        },
         env,
       });
       if (queuedSink) {
@@ -1598,6 +1665,7 @@ async function processFanoutMessage(
           delivery_queue_attempted_bindings: queuedSink.attemptedBindingNames,
         };
         await recordDeliveryEvent(deliveryEventStore, logger, {
+          id: await createAuditFanoutStableLoggingId('lde', body, `${stablePurpose}:${status}`),
           tenantKey,
           destinationId,
           logType,
@@ -1610,6 +1678,11 @@ async function processFanoutMessage(
         });
         if (status === 'retrying') {
           await recordDeliveryNotification(notificationRepository, logger, {
+            id: await createAuditFanoutStableLoggingId(
+              'lde',
+              body,
+              `${stablePurpose}:${status}:notification`
+            ),
             tenantId: body.tenantId,
             tenantKey,
             destinationId,
@@ -1627,35 +1700,86 @@ async function processFanoutMessage(
         }
         continue;
       }
+      const deliveryMetadata = targetMetadata(sink, fanout, body);
+      const deliveredEventId = await createAuditFanoutStableLoggingId(
+        'lde',
+        body,
+        `${stablePurpose}:delivered`
+      );
+      let deliveryClaimed = false;
+      let deliveryEmitted = false;
       let recordedFailure = false;
       try {
+        if (!deliveryEventStore) {
+          throw new Error('logging_delivery_claim_store_unavailable');
+        }
+        const claimNow = Date.now();
+        deliveryClaimed = await deliveryEventStore.claimEvent({
+          id: deliveredEventId,
+          tenantKey,
+          destinationId,
+          logType,
+          plane: 'external_sink',
+          lane,
+          attemptCount,
+          metadata: deliveryMetadata,
+          now: claimNow,
+          leaseUntil: claimNow + DELIVERY_CLAIM_LEASE_MS,
+        });
+        if (!deliveryClaimed) {
+          continue;
+        }
         const result = await deliverHttpSink(sink, body, env);
         const status: LoggingDeliveryStatus =
           result.status === 'delivered' ? 'delivered' : deliveryStatusForFailure(sinkFailureMode);
         const errorClass =
           result.status === 'delivered' ? null : `http_status_${String(result.httpStatus)}`;
         const metadata = {
-          ...targetMetadata(sink, fanout, body),
+          ...deliveryMetadata,
           http_status: result.httpStatus,
         };
-        await recordDeliveryEvent(deliveryEventStore, logger, {
-          tenantKey,
-          destinationId,
-          logType,
-          plane: 'external_sink',
-          lane,
-          status,
-          attemptCount,
-          errorClass,
-          nextRetryAt:
-            result.status === 'retrying' && result.retryDelayMs
-              ? Date.now() + result.retryDelayMs
-              : null,
-          metadata,
-        });
+        if (result.status === 'delivered') {
+          deliveryEmitted = true;
+          await deliveryEventStore.completeClaim({
+            id: deliveredEventId,
+            tenantKey,
+            destinationId,
+            logType,
+            plane: 'external_sink',
+            lane,
+            status: 'delivered',
+            attemptCount,
+            metadata,
+          });
+          deliveryClaimed = false;
+        } else {
+          await deliveryEventStore.releaseClaim(deliveredEventId);
+          deliveryClaimed = false;
+          await recordDeliveryEvent(deliveryEventStore, logger, {
+            id: await createAuditFanoutStableLoggingId('lde', body, `${stablePurpose}:${status}`),
+            tenantKey,
+            destinationId,
+            logType,
+            plane: 'external_sink',
+            lane,
+            status,
+            attemptCount,
+            errorClass,
+            nextRetryAt:
+              result.status === 'retrying' && result.retryDelayMs
+                ? Date.now() + result.retryDelayMs
+                : null,
+            metadata,
+          });
+        }
         if (result.status !== 'delivered') {
           recordedFailure = true;
           await recordDeliveryNotification(notificationRepository, logger, {
+            id: await createAuditFanoutStableLoggingId(
+              'lde',
+              body,
+              `${stablePurpose}:${status}:notification`
+            ),
             tenantId: body.tenantId,
             tenantKey,
             destinationId,
@@ -1670,11 +1794,27 @@ async function processFanoutMessage(
           throw new Error(`HTTP sink delivery ${result.status}: ${result.httpStatus}`);
         }
       } catch (error) {
+        if (deliveryClaimed && deliveryEventStore) {
+          try {
+            if (deliveryEmitted) {
+              await deliveryEventStore.preserveEmittedClaim(deliveredEventId);
+            } else {
+              await deliveryEventStore.releaseClaim(deliveredEventId);
+            }
+          } catch (claimError) {
+            logger.warn('audit_http_delivery_claim_cleanup_failed', {
+              tenantId: body.tenantId,
+              auditProfileId: fanout.auditProfileId,
+              error: sanitizeErrorMessage(String(claimError)),
+            });
+          }
+        }
         if (!recordedFailure) {
           const status = deliveryStatusForFailure(sinkFailureMode);
           const errorClass = deliveryErrorClass(error, 'http_sink_delivery_failed');
-          const metadata = targetMetadata(sink, fanout, body);
+          const metadata = deliveryMetadata;
           await recordDeliveryEvent(deliveryEventStore, logger, {
+            id: await createAuditFanoutStableLoggingId('lde', body, `${stablePurpose}:${status}`),
             tenantKey,
             destinationId,
             logType,
@@ -1686,6 +1826,11 @@ async function processFanoutMessage(
             metadata,
           });
           await recordDeliveryNotification(notificationRepository, logger, {
+            id: await createAuditFanoutStableLoggingId(
+              'lde',
+              body,
+              `${stablePurpose}:${status}:notification`
+            ),
             tenantId: body.tenantId,
             tenantKey,
             destinationId,
@@ -1711,23 +1856,108 @@ async function processFanoutMessage(
       continue;
     }
 
+    const deliveryMetadata = targetMetadata(sink, fanout, body);
+    const deliveredEventId = await createAuditFanoutStableLoggingId(
+      'lde',
+      body,
+      `${stablePurpose}:delivered`
+    );
+    let logpushClaimed = false;
+    if (sink.type === 'logpush') {
+      if (!deliveryEventStore) {
+        if (sinkFailureMode === 'retry_until_ttl') {
+          throw new Error('logging_delivery_claim_store_unavailable');
+        }
+      } else {
+        const claimNow = Date.now();
+        try {
+          logpushClaimed = await deliveryEventStore.claimEvent({
+            id: deliveredEventId,
+            tenantKey,
+            destinationId,
+            logType,
+            plane: 'external_sink',
+            lane,
+            attemptCount,
+            metadata: deliveryMetadata,
+            now: claimNow,
+            leaseUntil: claimNow + DELIVERY_CLAIM_LEASE_MS,
+          });
+        } catch (error) {
+          logger.warn('audit_logpush_delivery_claim_failed', {
+            tenantId: body.tenantId,
+            auditProfileId: fanout.auditProfileId,
+            error: sanitizeErrorMessage(String(error)),
+          });
+          if (sinkFailureMode === 'retry_until_ttl') {
+            throw error;
+          }
+        }
+        if (!logpushClaimed) {
+          continue;
+        }
+      }
+    }
+
+    let sinkEmitted = false;
     try {
       await deliverSinkTarget(sink, body, env);
-      await recordDeliveryEvent(deliveryEventStore, logger, {
-        tenantKey,
-        destinationId,
-        logType,
-        plane: 'external_sink',
-        lane,
-        status: 'delivered',
-        attemptCount,
-        metadata: targetMetadata(sink, fanout, body),
-      });
+      sinkEmitted = true;
+      if (logpushClaimed && deliveryEventStore) {
+        await deliveryEventStore.completeClaim({
+          id: deliveredEventId,
+          tenantKey,
+          destinationId,
+          logType,
+          plane: 'external_sink',
+          lane,
+          status: 'delivered',
+          attemptCount,
+          metadata: deliveryMetadata,
+        });
+      } else {
+        await recordDeliveryEvent(deliveryEventStore, logger, {
+          id: deliveredEventId,
+          tenantKey,
+          destinationId,
+          logType,
+          plane: 'external_sink',
+          lane,
+          status: 'delivered',
+          attemptCount,
+          metadata: deliveryMetadata,
+        });
+      }
     } catch (error) {
+      if (logpushClaimed && deliveryEventStore && !sinkEmitted) {
+        try {
+          await deliveryEventStore.releaseClaim(deliveredEventId);
+        } catch (releaseError) {
+          logger.warn('audit_logpush_delivery_claim_release_failed', {
+            tenantId: body.tenantId,
+            auditProfileId: fanout.auditProfileId,
+            error: sanitizeErrorMessage(String(releaseError)),
+          });
+        }
+      } else if (logpushClaimed && sinkEmitted) {
+        try {
+          await deliveryEventStore?.preserveEmittedClaim(deliveredEventId);
+        } catch (preserveError) {
+          logger.warn('audit_logpush_emitted_claim_preservation_failed', {
+            tenantId: body.tenantId,
+            auditProfileId: fanout.auditProfileId,
+            error: sanitizeErrorMessage(String(preserveError)),
+          });
+        }
+        logger.warn('audit_logpush_delivery_completion_pending', {
+          tenantId: body.tenantId,
+          auditProfileId: fanout.auditProfileId,
+        });
+      }
       const status = deliveryStatusForFailure(sinkFailureMode);
       const errorClass = deliveryErrorClass(error, 'sink_delivery_failed');
-      const metadata = targetMetadata(sink, fanout, body);
       await recordDeliveryEvent(deliveryEventStore, logger, {
+        id: await createAuditFanoutStableLoggingId('lde', body, `${stablePurpose}:${status}`),
         tenantKey,
         destinationId,
         logType,
@@ -1736,9 +1966,14 @@ async function processFanoutMessage(
         status,
         attemptCount,
         errorClass,
-        metadata,
+        metadata: deliveryMetadata,
       });
       await recordDeliveryNotification(notificationRepository, logger, {
+        id: await createAuditFanoutStableLoggingId(
+          'lde',
+          body,
+          `${stablePurpose}:${status}:notification`
+        ),
         tenantId: body.tenantId,
         tenantKey,
         destinationId,
@@ -1748,7 +1983,7 @@ async function processFanoutMessage(
         status,
         attemptCount,
         errorClass,
-        metadata,
+        metadata: deliveryMetadata,
       });
       if (sinkFailureMode === 'retry_until_ttl') {
         throw error;
@@ -1982,7 +2217,7 @@ export async function processDLQQueue(
         messageId: message.id,
         error: sanitizeErrorMessage(String(error)),
       });
-      message.retry();
+      retryQueueMessage(message, error);
     }
   }
 }
@@ -2798,26 +3033,52 @@ async function processHttpSinkBatchDeliveryPayload(input: {
   const deliveryEventStore = createDeliveryEventStore(env);
   const notificationRepository = createInternalNotificationRepository(env);
   const attemptCount = Math.max(1, message.attempts);
-  const body = await readHttpSinkBatchBody(payload, env);
-  const destination = await loadLoggingDestinationForDelivery(env, payload.destination_id).catch(
-    () => null
+  const deliveredEventId = await createPayloadStableLoggingId(
+    'lde',
+    payload.created_at,
+    `http-sink:${payload.destination_id}`,
+    payload.payload_id
   );
-  const providerConfig = parseJsonObject(destination?.provider_config);
-  const credentialPlaintext = await resolveRuntimeCredentialSecret({
-    env,
-    credentialRef: destination?.credential_ref,
-    credentialVersion: destination?.credential_version,
-  });
-  const auth = buildRuntimeHttpSinkAuth({ providerConfig, credentialPlaintext });
   const metadataBase = {
     payload_id: payload.payload_id,
     batch_id: payload.batch_id,
     record_count: payload.record_count,
-    byte_count: body.byteCount,
-    body_object_ref: body.objectRef,
+    body_object_ref: payload.body_object_ref ?? null,
   };
+  let deliveryClaimed = false;
+  let deliveryEmitted = false;
 
   try {
+    if (!deliveryEventStore) {
+      throw new Error('logging_delivery_claim_store_unavailable');
+    }
+    const claimNow = Date.now();
+    deliveryClaimed = await deliveryEventStore.claimEvent({
+      id: deliveredEventId,
+      tenantKey: payload.tenant_key,
+      destinationId: payload.destination_id,
+      logType: payload.log_type,
+      plane: payload.plane,
+      lane: payload.lane,
+      attemptCount,
+      metadata: metadataBase,
+      now: claimNow,
+      leaseUntil: claimNow + DELIVERY_CLAIM_LEASE_MS,
+    });
+    if (!deliveryClaimed) {
+      return 'ack';
+    }
+    const body = await readHttpSinkBatchBody(payload, env);
+    const destination = await loadLoggingDestinationForDelivery(env, payload.destination_id).catch(
+      () => null
+    );
+    const providerConfig = parseJsonObject(destination?.provider_config);
+    const credentialPlaintext = await resolveRuntimeCredentialSecret({
+      env,
+      credentialRef: destination?.credential_ref,
+      credentialVersion: destination?.credential_version,
+    });
+    const auth = buildRuntimeHttpSinkAuth({ providerConfig, credentialPlaintext });
     const result = await deliverHttpSinkBatch({
       endpointUrl: payload.endpoint_url,
       body: body.body,
@@ -2841,22 +3102,42 @@ async function processHttpSinkBatchDeliveryPayload(input: {
     const errorClass = status === 'delivered' ? null : `http_status_${String(result.httpStatus)}`;
     const metadata = {
       ...metadataBase,
+      byte_count: body.byteCount,
+      body_object_ref: body.objectRef,
       http_status: result.httpStatus,
       redacted_headers: result.redactedHeaders,
     };
-    await recordDeliveryEvent(deliveryEventStore, logger, {
-      tenantKey: payload.tenant_key,
-      destinationId: payload.destination_id,
-      logType: payload.log_type,
-      plane: payload.plane,
-      lane: payload.lane,
-      status,
-      attemptCount,
-      errorClass,
-      nextRetryAt:
-        status === 'retrying' && result.retryDelayMs ? Date.now() + result.retryDelayMs : null,
-      metadata,
-    });
+    if (status === 'delivered') {
+      deliveryEmitted = true;
+      await deliveryEventStore.completeClaim({
+        id: deliveredEventId,
+        tenantKey: payload.tenant_key,
+        destinationId: payload.destination_id,
+        logType: payload.log_type,
+        plane: payload.plane,
+        lane: payload.lane,
+        status: 'delivered',
+        attemptCount,
+        metadata,
+      });
+      deliveryClaimed = false;
+    } else {
+      await deliveryEventStore.releaseClaim(deliveredEventId);
+      deliveryClaimed = false;
+      await recordDeliveryEvent(deliveryEventStore, logger, {
+        tenantKey: payload.tenant_key,
+        destinationId: payload.destination_id,
+        logType: payload.log_type,
+        plane: payload.plane,
+        lane: payload.lane,
+        status,
+        attemptCount,
+        errorClass,
+        nextRetryAt:
+          status === 'retrying' && result.retryDelayMs ? Date.now() + result.retryDelayMs : null,
+        metadata,
+      });
+    }
     if (status !== 'delivered') {
       await recordDeliveryNotification(notificationRepository, logger, {
         tenantId: payload.tenant_key,
@@ -2881,6 +3162,20 @@ async function processHttpSinkBatchDeliveryPayload(input: {
     }
     return status === 'retrying' ? 'retry' : 'ack';
   } catch (error) {
+    if (deliveryClaimed && deliveryEventStore) {
+      try {
+        if (deliveryEmitted) {
+          await deliveryEventStore.preserveEmittedClaim(deliveredEventId);
+        } else {
+          await deliveryEventStore.releaseClaim(deliveredEventId);
+        }
+      } catch (claimError) {
+        logger.warn('logging_http_delivery_claim_cleanup_failed', {
+          payloadId: payload.payload_id,
+          error: sanitizeErrorMessage(String(claimError)),
+        });
+      }
+    }
     const errorClass = deliveryErrorClass(error, 'http_sink_delivery_failed');
     const retryDelayMs = computeHttpSinkRetryDelayMs({ attempt: attemptCount });
     const metadata = {
@@ -2949,6 +3244,14 @@ async function processDeliveryFanoutPayload(input: {
     object_key: payload.object_key,
     record_count: payload.record_count,
   };
+  const deliveredEventId = await createPayloadStableLoggingId(
+    'lde',
+    payload.created_at,
+    `delivery-fanout:${payload.destination_id}`,
+    payload.payload_id
+  );
+  let deliveryClaimed = false;
+  let deliveryEmitted = false;
 
   try {
     const isLegacyPlatformDefaultArchive =
@@ -2994,6 +3297,26 @@ async function processDeliveryFanoutPayload(input: {
         record_count: payload.record_count,
         created_at: payload.created_at,
       });
+      if (!deliveryEventStore) {
+        throw new Error('logging_delivery_claim_store_unavailable');
+      }
+      const claimNow = Date.now();
+      deliveryClaimed = await deliveryEventStore.claimEvent({
+        id: deliveredEventId,
+        tenantKey: payload.tenant_key,
+        destinationId: payload.destination_id,
+        logType: payload.log_type,
+        plane: payload.plane,
+        lane: payload.lane,
+        attemptCount,
+        objectCatalogId: payload.catalog_id,
+        metadata: metadataBase,
+        now: claimNow,
+        leaseUntil: claimNow + DELIVERY_CLAIM_LEASE_MS,
+      });
+      if (!deliveryClaimed) {
+        return 'ack';
+      }
       const result = await deliverHttpSinkBatch({
         endpointUrl,
         body,
@@ -3021,20 +3344,39 @@ async function processDeliveryFanoutPayload(input: {
         http_status: result.httpStatus,
         redacted_headers: result.redactedHeaders,
       };
-      await recordDeliveryEvent(deliveryEventStore, logger, {
-        tenantKey: payload.tenant_key,
-        destinationId: payload.destination_id,
-        logType: payload.log_type,
-        plane: payload.plane,
-        lane: payload.lane,
-        status,
-        attemptCount,
-        errorClass,
-        objectCatalogId: payload.catalog_id,
-        nextRetryAt:
-          status === 'retrying' && result.retryDelayMs ? Date.now() + result.retryDelayMs : null,
-        metadata,
-      });
+      if (status === 'delivered') {
+        deliveryEmitted = true;
+        await deliveryEventStore.completeClaim({
+          id: deliveredEventId,
+          tenantKey: payload.tenant_key,
+          destinationId: payload.destination_id,
+          logType: payload.log_type,
+          plane: payload.plane,
+          lane: payload.lane,
+          status: 'delivered',
+          attemptCount,
+          objectCatalogId: payload.catalog_id,
+          metadata,
+        });
+        deliveryClaimed = false;
+      } else {
+        await deliveryEventStore.releaseClaim(deliveredEventId);
+        deliveryClaimed = false;
+        await recordDeliveryEvent(deliveryEventStore, logger, {
+          tenantKey: payload.tenant_key,
+          destinationId: payload.destination_id,
+          logType: payload.log_type,
+          plane: payload.plane,
+          lane: payload.lane,
+          status,
+          attemptCount,
+          errorClass,
+          objectCatalogId: payload.catalog_id,
+          nextRetryAt:
+            status === 'retrying' && result.retryDelayMs ? Date.now() + result.retryDelayMs : null,
+          metadata,
+        });
+      }
       if (status !== 'delivered') {
         await recordDeliveryNotification(notificationRepository, logger, {
           tenantId: payload.tenant_key,
@@ -3073,6 +3415,20 @@ async function processDeliveryFanoutPayload(input: {
 
     throw new Error(`logging_delivery_destination_provider_unsupported:${destination.provider}`);
   } catch (error) {
+    if (deliveryClaimed && deliveryEventStore) {
+      try {
+        if (deliveryEmitted) {
+          await deliveryEventStore.preserveEmittedClaim(deliveredEventId);
+        } else {
+          await deliveryEventStore.releaseClaim(deliveredEventId);
+        }
+      } catch (claimError) {
+        logger.warn('logging_http_delivery_claim_cleanup_failed', {
+          payloadId: payload.payload_id,
+          error: sanitizeErrorMessage(String(claimError)),
+        });
+      }
+    }
     const errorClass = deliveryErrorClass(error, 'delivery_fanout_failed');
     const retryDelayMs = computeHttpSinkRetryDelayMs({ attempt: attemptCount });
     const metadata = {
@@ -3756,7 +4112,7 @@ export async function processLoggingDeliveryQueue(
         attempts: message.attempts,
         error: sanitizeErrorMessage(String(error)),
       });
-      message.retry();
+      retryQueueMessage(message, error);
     }
   }
 }

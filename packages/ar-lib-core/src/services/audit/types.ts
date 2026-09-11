@@ -353,6 +353,9 @@ export interface EventLogParams {
   /** Stable event ID for idempotent retries. Generated when omitted. */
   id?: string;
 
+  /** Original event timestamp in epoch milliseconds. Generated when omitted. */
+  createdAt?: number;
+
   /** Event type (e.g., 'auth.login', 'token.issued') */
   eventType: string;
 
@@ -388,6 +391,9 @@ export interface EventLogParams {
 
   /** Additional details (will be sanitized for PII) */
   details?: EventDetails;
+
+  /** Require a configured gated fanout to be accepted before this write succeeds. */
+  requireDurableFanout?: boolean;
 }
 
 /**

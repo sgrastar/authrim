@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   audit: vi.fn(),
   hold: vi.fn(),
   recover: vi.fn(),
+  releaseReservation: vi.fn(),
   events: [] as string[],
 }));
 vi.mock('../account-guest-upgrade', () => ({ recoverAccountGuestUpgrade: mocks.recover }));
@@ -38,11 +39,16 @@ vi.mock('../account-identifier-addition', () => ({
   buildAccountExternalSubjectAddition: vi.fn(),
 }));
 vi.mock('../account-directory-reservation', () => ({
-  InitialAccountIdentifierReservationService: vi.fn(),
+  InitialAccountIdentifierReservationService: vi.fn(function () {
+    return { release: mocks.releaseReservation };
+  }),
 }));
-vi.mock('../lookup-bucket-write-route', () => ({ createLookupBucketWriteResolver: vi.fn() }));
+vi.mock('../lookup-bucket-write-route', () => ({
+  createLookupBucketWriteResolver: vi.fn(async () => vi.fn()),
+}));
 vi.mock('@authrim/ar-lib-core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@authrim/ar-lib-core')>()),
+  validateAccountDirectoryPublication: vi.fn(async (value) => value),
   resolveAccountDataContext: mocks.resolve,
   resolveTenantDatabaseSourceFromRegistry: mocks.piiSource,
   ensureDatabaseAdapter: () => ({ execute: mocks.piiExecute, query: mocks.piiQuery }),
@@ -317,6 +323,25 @@ describe('hourly guest deletion state transitions', () => {
       })
     );
   });
+  it('releases verified upgrade reservations and clears proof before completing deletion', async () => {
+    const publication = { operationId: 'verified-upgrade-reservation' };
+    mocks.piiQuery.mockResolvedValueOnce([
+      {
+        operation_id: 'verified-upgrade',
+        user_id: 'guest',
+        state: 'verified',
+        reservation_publication_json: JSON.stringify(publication),
+      },
+    ]);
+
+    expect(await run()).toBe('deleted');
+    expect(mocks.releaseReservation).toHaveBeenCalledWith(publication);
+    expect(mocks.piiExecute).toHaveBeenCalledWith(
+      expect.stringContaining("SET state = 'canceled', proof_payload_json = NULL"),
+      [90000, 'tenant', 'guest']
+    );
+    expect((await lifecycle.get('guest'))?.phase).toBe('deleted');
+  });
   it.each(['registered', 'upgrading'])('does not delete a guest that became %s', async (phase) => {
     await core.execute('UPDATE guest_account_lifecycle SET phase = ?', [phase]);
     expect(await run()).toBe('skipped');
@@ -365,6 +390,58 @@ describe('hourly guest deletion state transitions', () => {
     expect(mocks.piiSource).toHaveBeenLastCalledWith(
       env,
       expect.objectContaining({ tenantId: 'tenant', bindingRef: 'PII', role: 'tenant_pii' })
+    );
+  });
+  it('resumes an administrative deletion from its pinned route without duplicating its audit', async () => {
+    const routeJson = JSON.stringify({
+      schemaVersion: 1,
+      tenantId: 'tenant',
+      userId: 'guest',
+      coreBindingRef: 'CORE',
+      piiBindingRef: 'PII',
+      piiResidencyPartition: 'default',
+      routeProjection: { schemaVersion: 1 },
+      completionAuditMode: 'outbox',
+    });
+    expect(
+      await lifecycle.beginAdministrativeDeletion(
+        'guest',
+        'admin-delete',
+        90000,
+        routeJson,
+        90000000
+      )
+    ).toBe(true);
+    expect(await lifecycle.get('guest')).toMatchObject({
+      phase: 'deleting',
+      deletion_route_json: routeJson,
+      deletion_operation_id: 'admin-delete',
+    });
+    mocks.erase.mockRejectedValueOnce(new Error('pii_temporarily_unavailable'));
+
+    await expect(run()).rejects.toThrow('pii_temporarily_unavailable');
+    expect((await lifecycle.get('guest'))?.phase).toBe('deleting');
+    expect(mocks.transition).toHaveBeenLastCalledWith(
+      env,
+      expect.objectContaining({
+        lifecycle: 'deleting',
+        operationId: 'admin-delete',
+        sourceVersionMs: 90000000,
+      })
+    );
+
+    mocks.resolve.mockRejectedValue(new Error('account_route_removed'));
+    expect(await run(93600)).toBe('deleted');
+    expect(mocks.resolve).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
+    expect(
+      mocks.transition.mock.calls
+        .filter(([, input]) => input.lifecycle === 'deleting')
+        .map(([, input]) => input.operationId)
+    ).toEqual(['admin-delete', 'admin-delete']);
+    expect(mocks.transition).toHaveBeenLastCalledWith(
+      env,
+      expect.objectContaining({ lifecycle: 'deleted', operationId: 'admin-delete' })
     );
   });
   it('does not regress deleted authentication when retrying the final audit step', async () => {

@@ -278,7 +278,9 @@ function getRequestIdFromContext(c: Context<{ Bindings: Env }>): string | undefi
   return c.req.header('X-Request-Id') || c.req.header('X-Correlation-Id') || undefined;
 }
 
-function getAdminProxyMetadataFromContext(c: Context<{ Bindings: Env }>): Record<string, unknown> {
+export function getAdminProxyMetadataFromContext(
+  c: Context<{ Bindings: Env }>
+): Record<string, unknown> {
   const requestId = getRequestIdFromContext(c);
   const apiMode = c.req.header('X-Authrim-Admin-UI-Api-Mode');
   const forwardedHost =
@@ -891,7 +893,12 @@ async function resolveAuditDeliveryPlanFromEnv(
 
 async function mirrorLegacyAuditLogToUnifiedService(
   env: Env,
-  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { tenantId: string; id?: string }
+  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & {
+    tenantId: string;
+    id?: string;
+    createdAt?: number;
+    requireDurableFanout?: boolean;
+  }
 ): Promise<void> {
   const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
   if (!tenantId) {
@@ -905,10 +912,12 @@ async function mirrorLegacyAuditLogToUnifiedService(
 
   await auditService.logEvent(tenantId, {
     id: entry.id,
+    createdAt: entry.createdAt,
     eventType: entry.action,
     eventCategory: mapLegacyAuditCategory(entry.action, entry.resource),
     result: 'success',
     severity: mapLegacySeverity(entry.severity),
+    ...(entry.requireDurableFanout ? { requireDurableFanout: true } : {}),
     details: {
       source: 'legacy_audit_log',
       resourceType: entry.resource,
@@ -956,7 +965,12 @@ export async function writeLegacyAuditLog(
  */
 export async function createAuditLog(
   env: Env,
-  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & { tenantId: string; id?: string }
+  entry: Omit<AuditLogEntry, 'id' | 'createdAt'> & {
+    tenantId: string;
+    id?: string;
+    createdAt?: number;
+    requireDurableFanout?: boolean;
+  }
 ): Promise<void> {
   const tenantId = requireAuditTenantId(entry.tenantId, entry.action);
   if (!tenantId) {
@@ -967,8 +981,12 @@ export async function createAuditLog(
   if (!/^[A-Za-z0-9._:-]{1,200}$/u.test(id)) {
     throw new AuditLogDeliveryError('audit_log_id_invalid', entry.action, tenantId);
   }
-  // Use seconds (not milliseconds) for consistency with other audit log writers
-  const createdAt = Math.floor(Date.now() / 1000);
+  const createdAtMs = entry.createdAt ?? Date.now();
+  if (!Number.isSafeInteger(createdAtMs) || createdAtMs < 0) {
+    throw new AuditLogDeliveryError('audit_log_created_at_invalid', entry.action, tenantId);
+  }
+  // The legacy audit_log schema stores seconds; the unified service stores milliseconds.
+  const createdAt = Math.floor(createdAtMs / 1000);
   let failureBehavior: ReturnType<typeof resolveAuditEventFailureBehavior>['behavior'] =
     'fail_closed_or_strong_retry';
   let legacyD1WasPrimary = true;
@@ -1025,14 +1043,22 @@ export async function createAuditLog(
   }
 
   try {
-    await mirrorLegacyAuditLogToUnifiedService(env, { ...entry, id, tenantId });
+    await mirrorLegacyAuditLogToUnifiedService(env, {
+      ...entry,
+      id,
+      tenantId,
+      createdAt: createdAtMs,
+    });
   } catch (error) {
     log.warn('Failed to mirror audit log to unified audit service', {
       action: entry.action,
       tenantId,
     });
     log.error('Unified audit mirror failed', {}, error as Error);
-    if (failureBehavior === 'fail_closed_or_strong_retry' && !legacyD1WasPrimary) {
+    if (
+      entry.requireDurableFanout ||
+      (failureBehavior === 'fail_closed_or_strong_retry' && !legacyD1WasPrimary)
+    ) {
       throw new AuditLogDeliveryError('audit_log_unified_mirror_failed', entry.action, tenantId);
     }
   }
@@ -1063,6 +1089,9 @@ export async function createAuditLog(
  * @param resourceId - Resource identifier (e.g., kid)
  * @param metadata - Additional metadata object (will be JSON stringified)
  * @param severity - Severity level (default: 'info')
+ * @param auditId - Stable audit ID for idempotent retries
+ * @param createdAt - Original event timestamp in epoch milliseconds
+ * @param requireDurableFanout - Require gated archive/sink queue acceptance
  */
 export async function createAuditLogFromContext(
   c: Context<{ Bindings: Env }>,
@@ -1071,7 +1100,9 @@ export async function createAuditLogFromContext(
   resourceId: string,
   metadata: Record<string, unknown>,
   severity: 'info' | 'warning' | 'critical' = 'info',
-  auditId?: string
+  auditId?: string,
+  createdAt?: number,
+  requireDurableFanout = false
 ): Promise<void> {
   // Debug: Log that we're attempting to create audit log
   log.info('Creating audit log from context', { action, resource, resourceId });
@@ -1119,6 +1150,7 @@ export async function createAuditLogFromContext(
 
   await createAuditLog(c.env, {
     id: auditId,
+    createdAt,
     tenantId,
     userId: adminAuth.userId,
     action,
@@ -1128,6 +1160,7 @@ export async function createAuditLogFromContext(
     userAgent,
     metadata: JSON.stringify(auditMetadata),
     severity,
+    ...(requireDurableFanout ? { requireDurableFanout: true } : {}),
   });
 }
 

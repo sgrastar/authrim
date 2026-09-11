@@ -126,10 +126,74 @@ describe('audit queue consumer fanout', () => {
       ...createAdminDbAdapter(),
       queryOne: vi.fn().mockResolvedValue({ tenant_key: 't_registry_archive' }),
     };
-    const message = createMessage({
+    const deliveryEventIds = new Set<string>();
+    const catalogObjects = new Map<string, Record<string, unknown>>();
+    const adminDb = {
+      ...createAdminDbAdapter(),
+      queryOne: vi.fn().mockImplementation(async (sql: string, params: unknown[] = []) => {
+        if (sql.includes('FROM log_object_catalog')) {
+          return catalogObjects.get(String(params[0])) ?? null;
+        }
+        return null;
+      }),
+      execute: vi.fn().mockImplementation(async (sql: string, params: unknown[] = []) => {
+        if (sql.includes('INSERT INTO log_object_catalog')) {
+          const id = String(params[0]);
+          if (catalogObjects.has(id)) {
+            return { rowsAffected: 0 };
+          }
+          catalogObjects.set(id, {
+            id,
+            tenant_key: params[1],
+            log_type: params[2],
+            plane: params[3],
+            surface: params[4],
+            object_key: params[5],
+            object_kind: params[6],
+            status: params[7],
+            record_count: params[8],
+            byte_count: params[9],
+            checksum_sha256: params[10],
+            compression: params[11],
+            encryption_scope: params[12],
+            key_version: params[13],
+            created_at: params[14],
+            committed_at: params[15],
+          });
+          return { rowsAffected: 1 };
+        }
+        if (sql.includes("SET status = 'committed'")) {
+          const id = String(params[3]);
+          const row = catalogObjects.get(id);
+          if (row) {
+            catalogObjects.set(id, {
+              ...row,
+              status: 'committed',
+              byte_count: params[0],
+              checksum_sha256: params[1],
+              committed_at: params[2],
+            });
+          }
+          return { rowsAffected: row ? 1 : 0 };
+        }
+        if (sql.includes('INSERT INTO logging_delivery_events')) {
+          const id = String(params[0]);
+          if (deliveryEventIds.has(id)) {
+            return { rowsAffected: 0 };
+          }
+          deliveryEventIds.add(id);
+          return { rowsAffected: 1 };
+        }
+        if (sql.includes('SET tenant_key =')) {
+          return { rowsAffected: 0 };
+        }
+        return { rowsAffected: 1 };
+      }),
+    };
+    const body: AuditQueueMessage = {
       type: 'event_log',
       tenantId: 'tenant-registry-a',
-      timestamp: Date.now(),
+      timestamp: 1_725_000_000_000,
       entries: [
         {
           id: 'evt-1',
@@ -139,7 +203,7 @@ describe('audit queue consumer fanout', () => {
           result: 'success',
           severity: 'info',
           detailsJson: JSON.stringify({ requestHeaders: { authorization: 'Bearer secret' } }),
-          createdAt: Date.now(),
+          createdAt: 1_725_000_000_000,
         },
       ],
       fanout: {
@@ -149,13 +213,29 @@ describe('audit queue consumer fanout', () => {
         archiveFailureMode: 'gate_cleanup',
         sinkFailureMode: 'retry_until_ttl',
       },
-    });
+    };
+    const message = createMessage(body);
+    const replayedMessage = createMessage(body);
 
     await processAuditQueue(
       { messages: [message], queue: 'AUDIT_QUEUE' } as unknown as MessageBatch<AuditQueueMessage>,
       {
         DB: coreDb,
         DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
+        AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+      } as unknown as Parameters<typeof processAuditQueue>[1]
+    );
+    await processAuditQueue(
+      {
+        messages: [replayedMessage],
+        queue: 'AUDIT_QUEUE',
+      } as unknown as MessageBatch<AuditQueueMessage>,
+      {
+        DB: coreDb,
+        DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
         AUDIT_ARCHIVE: bucket,
         OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
       } as unknown as Parameters<typeof processAuditQueue>[1]
@@ -167,6 +247,7 @@ describe('audit queue consumer fanout', () => {
     expect(archiveKey).toContain('.jsonl.gz');
     expect(archiveKey).toContain('/t_registry_archive/');
     expect(archiveKey).not.toContain('/tenant-registry-a/');
+    expect(bucket.put).toHaveBeenCalledOnce();
     const archiveBody = (bucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
     const archiveRecord = await decodeFirstChunkRecord({
       bytes: archiveBody as Uint8Array,
@@ -192,8 +273,105 @@ describe('audit queue consumer fanout', () => {
     expect(consoleLogSpy).toHaveBeenCalledWith(
       expect.stringContaining('"schema":"authrim.audit.v1"')
     );
+    expect(
+      consoleLogSpy.mock.calls.filter(([line]) =>
+        String(line).includes('"schema":"authrim.audit.v1"')
+      )
+    ).toHaveLength(1);
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
+    expect(replayedMessage.ack).toHaveBeenCalledOnce();
+    expect(replayedMessage.retry).not.toHaveBeenCalled();
+  });
+
+  it('retains the Logpush claim when completion persistence fails after emission', async () => {
+    const coreDb = {
+      ...createAdminDbAdapter(),
+      queryOne: vi.fn().mockResolvedValue({ tenant_key: 't_registry_logpush' }),
+    };
+    const deliveryEventIds = new Set<string>();
+    const adminDb = {
+      ...createAdminDbAdapter(),
+      execute: vi.fn().mockImplementation(async (sql: string, params: unknown[] = []) => {
+        if (sql.includes('INSERT INTO logging_delivery_events')) {
+          const id = String(params[0]);
+          if (deliveryEventIds.has(id)) {
+            return { rowsAffected: 0 };
+          }
+          deliveryEventIds.add(id);
+          return { rowsAffected: 1 };
+        }
+        if (sql.includes("SET status = 'delivered'")) {
+          throw new Error('admin database unavailable');
+        }
+        if (sql.includes('SET tenant_key =')) {
+          return { rowsAffected: 0 };
+        }
+        if (sql.includes('DELETE FROM logging_delivery_events')) {
+          deliveryEventIds.delete(String(params[0]));
+          return { rowsAffected: 1 };
+        }
+        return { rowsAffected: 1 };
+      }),
+    };
+    const body: AuditQueueMessage = {
+      type: 'event_log',
+      tenantId: 'tenant-registry-logpush',
+      timestamp: 1_725_000_000_000,
+      entries: [
+        {
+          id: 'evt-logpush-completion-pending',
+          tenantId: 'tenant-registry-logpush',
+          eventType: 'user.deleted',
+          eventCategory: 'user',
+          result: 'success',
+          severity: 'info',
+          createdAt: 1_725_000_000_000,
+        },
+      ],
+      fanout: {
+        auditProfileId: 'audit-profile-logpush',
+        archives: [],
+        sinks: [{ type: 'logpush', destinationRef: 'workers-logpush' }],
+        archiveFailureMode: 'best_effort',
+        sinkFailureMode: 'retry_until_ttl',
+      },
+    };
+    const message = createMessage(body);
+    const replayedMessage = createMessage(body);
+    const env = {
+      DB: coreDb,
+      DB_PII: {} as D1Database,
+      DB_ADMIN: adminDb,
+    } as unknown as Parameters<typeof processAuditQueue>[1];
+
+    await processAuditQueue(
+      { messages: [message], queue: 'AUDIT_QUEUE' } as unknown as MessageBatch<AuditQueueMessage>,
+      env
+    );
+    await processAuditQueue(
+      {
+        messages: [replayedMessage],
+        queue: 'AUDIT_QUEUE',
+      } as unknown as MessageBatch<AuditQueueMessage>,
+      env
+    );
+
+    expect(
+      consoleLogSpy.mock.calls.filter(([line]) =>
+        String(line).includes('evt-logpush-completion-pending')
+      )
+    ).toHaveLength(1);
+    expect(message.retry).toHaveBeenCalledOnce();
+    expect(replayedMessage.ack).toHaveBeenCalledOnce();
+    expect(adminDb.execute).toHaveBeenCalledWith(
+      expect.stringContaining("error_class = 'delivery_emission_uncertain'"),
+      expect.any(Array)
+    );
+    expect(adminDb.execute).not.toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM logging_delivery_events'),
+      expect.anything()
+    );
   });
 
   it('encrypts audit archive chunks when object encryption root key is configured', async () => {
@@ -295,7 +473,6 @@ describe('audit queue consumer fanout', () => {
         DB_PII: {} as D1Database,
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );
-
     expect(message.retry).toHaveBeenCalledOnce();
     expect(message.ack).not.toHaveBeenCalled();
   });
@@ -306,6 +483,7 @@ describe('audit queue consumer fanout', () => {
       status: 200,
     });
     vi.stubGlobal('fetch', fetchMock);
+    const adminDb = createAdminDbAdapter();
 
     const message = createMessage({
       type: 'event_log',
@@ -342,6 +520,7 @@ describe('audit queue consumer fanout', () => {
       {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );
 
@@ -366,6 +545,7 @@ describe('audit queue consumer fanout', () => {
       status: 202,
     });
     vi.stubGlobal('fetch', fetchMock);
+    const adminDb = createAdminDbAdapter();
 
     const message = createMessage({
       type: 'event_log',
@@ -402,6 +582,7 @@ describe('audit queue consumer fanout', () => {
       {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
         AUDIT_HTTP_TOKEN: 'sink-secret',
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );
@@ -465,13 +646,95 @@ describe('audit queue consumer fanout', () => {
     );
 
     expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO logging_delivery_events'),
-      expect.arrayContaining(['audit', 'external_sink', 'critical', 'delivered'])
+      expect.stringContaining("'delivery_in_progress'"),
+      expect.arrayContaining(['audit', 'external_sink', 'critical'])
     );
-    const params = adminDb.execute.mock.calls[0]?.[1] as unknown[];
-    expect(params[13]).toContain('"http_status":200');
+    expect(adminDb.execute).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'delivered'"),
+      expect.any(Array)
+    );
+    const completion = adminDb.execute.mock.calls.find(([sql]) =>
+      String(sql).includes("SET status = 'delivered'")
+    );
+    expect(String((completion?.[1] as unknown[])[3])).toContain('"http_status":200');
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
+  });
+
+  it('claims direct HTTP audit delivery before POST and skips a duplicate fanout', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: vi.fn().mockReturnValue(null) },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const adminDb = createAdminDbAdapter();
+    const deliveryClaims = new Map<string, string>();
+    adminDb.execute.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('INSERT INTO logging_delivery_events')) {
+        const id = String(params[0]);
+        if (deliveryClaims.has(id)) return { rowsAffected: 0 };
+        deliveryClaims.set(id, 'retrying');
+        return { rowsAffected: 1 };
+      }
+      if (sql.includes("SET status = 'delivered'")) {
+        const id = String(params[4]);
+        if (deliveryClaims.get(id) !== 'retrying') return { rowsAffected: 0 };
+        deliveryClaims.set(id, 'delivered');
+        return { rowsAffected: 1 };
+      }
+      if (sql.includes('UPDATE logging_delivery_events')) {
+        return { rowsAffected: 0 };
+      }
+      return { rowsAffected: 1 };
+    });
+    const body: AuditQueueMessage = {
+      type: 'event_log',
+      tenantId: 'tenant-a',
+      timestamp: 1_725_000_000_000,
+      entries: [
+        {
+          id: 'evt-dedup',
+          tenantId: 'tenant-a',
+          eventType: 'auth.login',
+          eventCategory: 'auth',
+          result: 'success',
+          severity: 'info',
+          createdAt: 1_725_000_000_000,
+        },
+      ],
+      fanout: {
+        auditProfileId: 'audit-profile-http',
+        archives: [],
+        sinks: [{ type: 'http', url: 'https://example.com/audit' }],
+        archiveFailureMode: 'best_effort',
+        sinkFailureMode: 'retry_until_ttl',
+      },
+    };
+    const messages = [createMessage(body), createMessage(body)];
+
+    await processAuditQueue(
+      { messages, queue: 'AUDIT_QUEUE' } as unknown as MessageBatch<AuditQueueMessage>,
+      {
+        DB: {} as D1Database,
+        DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
+      } as unknown as Parameters<typeof processAuditQueue>[1]
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://example.com/audit',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-Authrim-Delivery': expect.stringMatching(/^tenant-a:/),
+        }),
+      })
+    );
+    for (const message of messages) {
+      expect(message.ack).toHaveBeenCalledOnce();
+      expect(message.retry).not.toHaveBeenCalled();
+    }
   });
 
   it('enqueues committed archive chunks for explicit admin destinations', async () => {
@@ -562,10 +825,10 @@ describe('audit queue consumer fanout', () => {
     } as unknown as R2Bucket;
     const deliveryQueue = { send: vi.fn().mockResolvedValue(undefined) };
     const adminDb = createAdminDbAdapter();
-    const message = createMessage({
+    const body: AuditQueueMessage = {
       type: 'event_log',
       tenantId: 'tenant-a',
-      timestamp: Date.now(),
+      timestamp: 1_725_000_000_000,
       entries: [
         {
           id: 'evt-1',
@@ -574,7 +837,7 @@ describe('audit queue consumer fanout', () => {
           eventCategory: 'auth',
           result: 'success',
           severity: 'info',
-          createdAt: Date.now(),
+          createdAt: 1_725_000_000_000,
         },
       ],
       fanout: {
@@ -590,10 +853,26 @@ describe('audit queue consumer fanout', () => {
         archiveFailureMode: 'best_effort',
         sinkFailureMode: 'retry_until_ttl',
       },
-    });
+    };
+    const message = createMessage(body);
+    const replayedMessage = createMessage(body);
 
     await processAuditQueue(
       { messages: [message], queue: 'AUDIT_QUEUE' } as unknown as MessageBatch<AuditQueueMessage>,
+      {
+        DB: {} as D1Database,
+        DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
+        AUDIT_ARCHIVE: payloadBucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+        LOGGING_DELIVERY_QUEUE: deliveryQueue,
+      } as unknown as Parameters<typeof processAuditQueue>[1]
+    );
+    await processAuditQueue(
+      {
+        messages: [replayedMessage],
+        queue: 'AUDIT_QUEUE',
+      } as unknown as MessageBatch<AuditQueueMessage>,
       {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
@@ -619,6 +898,9 @@ describe('audit queue consumer fanout', () => {
       /^logging-delivery-payloads\/v1\/t_[^/]+\/\d{4}\/\d{2}\/\d{2}\/\d{2}\/qpl_[^/]+\.json$/
     );
     expect(payloadObjectKey).not.toContain('[object Object]');
+    expect((payloadBucket.put as unknown as ReturnType<typeof vi.fn>).mock.calls[1]?.[0]).toBe(
+      payloadObjectKey
+    );
     expect(deliveryQueue.send).toHaveBeenCalledWith(
       expect.objectContaining({
         payload_type: 'http_sink_batch',
@@ -637,6 +919,17 @@ describe('audit queue consumer fanout', () => {
     );
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
+    expect(replayedMessage.ack).toHaveBeenCalledOnce();
+    expect(replayedMessage.retry).not.toHaveBeenCalled();
+    const firstPayload = (deliveryQueue.send as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0];
+    const replayedPayload = (deliveryQueue.send as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[1]?.[0];
+    expect(replayedPayload).toMatchObject({
+      payload_id: firstPayload.payload_id,
+      batch_id: firstPayload.batch_id,
+      body_object_ref: firstPayload.body_object_ref,
+    });
   });
 
   it('retries explicit HTTP admin destinations when no delivery queue is bound', async () => {

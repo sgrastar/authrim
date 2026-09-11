@@ -220,6 +220,54 @@ describe('createAuditLog', () => {
     );
   });
 
+  it('preserves an original event timestamp across legacy and unified audit writes', async () => {
+    const createdAt = 1_779_321_600_123;
+    mockResolveTenantRuntimeProfilesFromEnv.mockResolvedValue({
+      auditProfile: {
+        id: 'legacy-d1-audit',
+        kind: 'audit',
+        builtin: false,
+        label: 'Legacy D1 Audit',
+        primary: { type: 'd1', bindingRef: 'DB', dataset: 'audit_log' },
+        archive: null,
+        sinks: [],
+      },
+    });
+
+    await createAuditLog(mockEnv, {
+      tenantId: 'default',
+      userId: 'admin-user',
+      action: 'user.deleted',
+      resource: 'user',
+      resourceId: 'guest-user',
+      ipAddress: '192.0.2.1',
+      userAgent: 'Test Agent',
+      metadata: '{}',
+      severity: 'info',
+      createdAt,
+    });
+
+    const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
+    expect(bindCall).toHaveBeenCalledWith(
+      expect.any(String),
+      'default',
+      'admin-user',
+      'user.deleted',
+      'user',
+      'guest-user',
+      '192.0.2.1',
+      'Test Agent',
+      '{}',
+      'info',
+      Math.floor(createdAt / 1000),
+      expect.any(String)
+    );
+    expect(mockUnifiedAuditService.logEvent).toHaveBeenCalledWith(
+      'default',
+      expect.objectContaining({ createdAt })
+    );
+  });
+
   it('should generate unique ID for each log entry', async () => {
     mockResolveTenantRuntimeProfilesFromEnv.mockResolvedValue({
       auditProfile: {
@@ -376,6 +424,44 @@ describe('createAuditLog', () => {
         eventType: 'login.success',
         eventCategory: 'auth',
       })
+    );
+  });
+
+  it('keeps fail-closed deletion evidence pending when archive-only fanout fails', async () => {
+    mockResolveTenantRuntimeProfilesFromEnv.mockResolvedValue({
+      auditProfile: {
+        id: 'builtin:audit:archive-only-logpush',
+        kind: 'audit',
+        builtin: true,
+        label: 'Archive Only + Logpush',
+        primary: null,
+        archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+        sinks: [{ type: 'logpush', destinationRef: 'workers-logpush' }],
+        archiveFailureMode: 'gate_cleanup',
+      },
+    });
+    mockUnifiedAuditService.logEvent.mockRejectedValueOnce(new Error('audit_fanout_queue_failed'));
+
+    await expect(
+      createAuditLog(mockEnv, {
+        tenantId: 'default',
+        userId: 'admin-user',
+        action: 'user.deleted',
+        resource: 'user',
+        resourceId: 'guest-user',
+        ipAddress: '192.0.2.1',
+        userAgent: 'Test Agent',
+        metadata: '{}',
+        severity: 'info',
+        requireDurableFanout: true,
+      })
+    ).rejects.toThrow('audit_log_unified_mirror_failed');
+    expect(mockUnifiedAuditService.logEvent).toHaveBeenCalledWith(
+      'default',
+      expect.objectContaining({ requireDurableFanout: true })
+    );
+    expect(mockEnv.DB.prepare).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO audit_log')
     );
   });
 
@@ -882,6 +968,7 @@ describe('createAuditLogFromContext', () => {
 
   it('should extract user info from adminAuth context', async () => {
     const mockEnv = createMockEnv();
+    const createdAt = 1_779_321_600_123;
     const context = createMockContext({
       adminAuth: { userId: 'admin-user-456' },
       env: mockEnv,
@@ -893,12 +980,14 @@ describe('createAuditLogFromContext', () => {
       'signing_keys',
       'key-123',
       { reason: 'test rotation' },
-      'warning'
+      'warning',
+      'fixed-audit-id',
+      createdAt
     );
 
     const bindCall = (mockEnv.DB.prepare as ReturnType<typeof vi.fn>).mock.results[0].value.bind;
     expect(bindCall).toHaveBeenCalledWith(
-      expect.any(String), // id
+      'fixed-audit-id', // id
       'default', // tenantId
       'admin-user-456', // userId
       'signing_keys.rotate.normal',
@@ -908,8 +997,12 @@ describe('createAuditLogFromContext', () => {
       'Mozilla/5.0 Test Browser',
       '{"reason":"test rotation"}',
       'warning',
-      expect.any(Number), // createdAt
-      expect.any(String) // idempotency lookup ID
+      Math.floor(createdAt / 1000), // createdAt
+      'fixed-audit-id' // idempotency lookup ID
+    );
+    expect(mockUnifiedAuditService.logEvent).toHaveBeenCalledWith(
+      'default',
+      expect.objectContaining({ id: 'fixed-audit-id', createdAt })
     );
   });
 

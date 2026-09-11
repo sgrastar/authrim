@@ -152,6 +152,129 @@ describe('AuditService routing', () => {
     );
   });
 
+  it('does not enqueue fanout again when a stable event ID already exists in D1', async () => {
+    const auditProfile: AuditProfile = {
+      id: 'audit-profile-idempotent',
+      kind: 'audit',
+      label: 'Idempotent fanout',
+      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+      archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+      sinks: [{ type: 'logpush', destinationRef: 'workers-logpush' }],
+      archiveFailureMode: 'gate_cleanup',
+      sinkFailureMode: 'retry_until_ttl',
+    };
+    const coreAdapter = createMockDatabaseAdapter('core-adapter');
+    vi.mocked(coreAdapter.execute)
+      .mockResolvedValueOnce({ success: true, rowsAffected: 1 })
+      .mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    const queue = createMockQueue();
+    const service = new AuditService({
+      coreSource: coreAdapter,
+      piiSource,
+      r2Bucket,
+      auditQueue: queue,
+      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
+    });
+    const event = {
+      id: 'stable-event-id',
+      createdAt: 1_725_000_000_000,
+      eventType: 'user.deleted',
+      eventCategory: 'user' as const,
+      result: 'success' as const,
+    };
+
+    await service.logEvent('tenant-a', event);
+    await service.logEvent('tenant-a', event);
+
+    expect(coreAdapter.execute).toHaveBeenCalledTimes(2);
+    expect(queue.send).toHaveBeenCalledOnce();
+  });
+
+  it('retries gated fanout after the primary insert succeeded but queue delivery failed', async () => {
+    const auditProfile: AuditProfile = {
+      id: 'audit-profile-gated-retry',
+      kind: 'audit',
+      label: 'Gated fanout retry',
+      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+      archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+      sinks: [{ type: 'logpush', destinationRef: 'workers-logpush' }],
+      archiveFailureMode: 'gate_cleanup',
+      sinkFailureMode: 'retry_until_ttl',
+    };
+    const coreAdapter = createMockDatabaseAdapter('core-adapter');
+    vi.mocked(coreAdapter.execute)
+      .mockResolvedValueOnce({ success: true, rowsAffected: 1 })
+      .mockResolvedValueOnce({ success: true, rowsAffected: 0 });
+    const queue = createMockQueue();
+    vi.mocked(queue.send)
+      .mockRejectedValueOnce(new Error('queue unavailable'))
+      .mockResolvedValueOnce(undefined);
+    const service = new AuditService({
+      coreSource: coreAdapter,
+      piiSource,
+      r2Bucket,
+      auditQueue: queue,
+      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
+    });
+    const event = {
+      id: 'stable-gated-event-id',
+      createdAt: 1_725_000_000_000,
+      eventType: 'user.deleted',
+      eventCategory: 'user' as const,
+      result: 'success' as const,
+      requireDurableFanout: true,
+    };
+
+    await expect(service.logEvent('tenant-a', event)).rejects.toThrow('audit_fanout_queue_failed');
+    await expect(service.logEvent('tenant-a', event)).resolves.toBeUndefined();
+
+    expect(coreAdapter.execute).toHaveBeenCalledTimes(2);
+    expect(queue.send).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(queue.send).mock.calls[0][0]).toEqual(vi.mocked(queue.send).mock.calls[1][0]);
+  });
+
+  it('preserves a supplied event timestamp in primary and fanout records', async () => {
+    const createdAt = 1_779_321_600_123;
+    const auditProfile: AuditProfile = {
+      id: 'audit-profile-1',
+      kind: 'audit',
+      label: 'Primary + Fanout',
+      primary: { type: 'd1', bindingRef: 'DB', dataset: 'event_log' },
+      archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+      sinks: [],
+      archiveFailureMode: 'gate_cleanup',
+      sinkFailureMode: 'retry_until_ttl',
+      retention: { primaryDays: 3, archiveDays: 30 },
+    };
+    const queue = createMockQueue();
+    const service = new AuditService({
+      coreSource,
+      piiSource,
+      r2Bucket,
+      auditQueue: queue,
+      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
+    });
+
+    await service.logEvent('tenant-a', {
+      createdAt,
+      eventType: 'user.deleted',
+      eventCategory: 'user',
+      result: 'success',
+    });
+
+    expect(queue.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timestamp: createdAt,
+        entries: [
+          expect.objectContaining({
+            createdAt,
+            retentionUntil: createdAt + 3 * 24 * 60 * 60 * 1000,
+          }),
+        ],
+      })
+    );
+  });
+
   it('supports archive-only audit profiles by skipping the primary write and queueing fanout', async () => {
     const auditProfile: AuditProfile = {
       id: 'archive-only',
@@ -187,6 +310,37 @@ describe('AuditService routing', () => {
         }),
       })
     );
+  });
+
+  it('rejects archive-only writes when fanout cannot be queued durably', async () => {
+    const auditProfile: AuditProfile = {
+      id: 'archive-only',
+      kind: 'audit',
+      label: 'Archive Only',
+      primary: null,
+      archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+      sinks: [],
+      archiveFailureMode: 'gate_cleanup',
+      sinkFailureMode: 'best_effort',
+    };
+    const queue = createMockQueue();
+    vi.mocked(queue.send).mockRejectedValueOnce(new Error('queue unavailable'));
+    const service = new AuditService({
+      coreSource,
+      piiSource,
+      r2Bucket,
+      auditQueue: queue,
+      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
+    });
+
+    await expect(
+      service.logEvent('tenant-a', {
+        id: 'stable-archive-only-event',
+        eventType: 'user.deleted',
+        eventCategory: 'user',
+        result: 'success',
+      })
+    ).rejects.toThrow('audit_fanout_queue_failed');
   });
 
   it('applies runtime delivery-plan overrides for routing fanout and retention', async () => {
