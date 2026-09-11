@@ -470,12 +470,18 @@ export class AuditService implements IAuditService {
           error: sanitizeErrorMessage(String(queueError)),
           tenantId,
         });
+        if (!deliveryPlan.primary) {
+          throw new Error('audit_fanout_queue_failed');
+        }
       }
     } else if (fanout && !this.auditQueue && shouldFanout) {
       this.logger.warn('audit_fanout_skipped_without_queue', {
         tenantId,
         auditProfileId: deliveryPlan.auditProfileId,
       });
+      if (!deliveryPlan.primary) {
+        throw new Error('audit_fanout_queue_unavailable');
+      }
     }
   }
 

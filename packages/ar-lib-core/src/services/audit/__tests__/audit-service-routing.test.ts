@@ -269,6 +269,37 @@ describe('AuditService routing', () => {
     );
   });
 
+  it('rejects archive-only writes when fanout cannot be queued durably', async () => {
+    const auditProfile: AuditProfile = {
+      id: 'archive-only',
+      kind: 'audit',
+      label: 'Archive Only',
+      primary: null,
+      archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+      sinks: [],
+      archiveFailureMode: 'gate_cleanup',
+      sinkFailureMode: 'best_effort',
+    };
+    const queue = createMockQueue();
+    vi.mocked(queue.send).mockRejectedValueOnce(new Error('queue unavailable'));
+    const service = new AuditService({
+      coreSource,
+      piiSource,
+      r2Bucket,
+      auditQueue: queue,
+      resolveAuditProfile: vi.fn().mockResolvedValue(auditProfile),
+    });
+
+    await expect(
+      service.logEvent('tenant-a', {
+        id: 'stable-archive-only-event',
+        eventType: 'user.deleted',
+        eventCategory: 'user',
+        result: 'success',
+      })
+    ).rejects.toThrow('audit_fanout_queue_failed');
+  });
+
   it('applies runtime delivery-plan overrides for routing fanout and retention', async () => {
     const now = Date.now();
     vi.spyOn(Date, 'now').mockReturnValue(now);

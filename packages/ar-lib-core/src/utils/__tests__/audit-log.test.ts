@@ -427,6 +427,39 @@ describe('createAuditLog', () => {
     );
   });
 
+  it('keeps fail-closed deletion evidence pending when archive-only fanout fails', async () => {
+    mockResolveTenantRuntimeProfilesFromEnv.mockResolvedValue({
+      auditProfile: {
+        id: 'builtin:audit:archive-only-logpush',
+        kind: 'audit',
+        builtin: true,
+        label: 'Archive Only + Logpush',
+        primary: null,
+        archive: { type: 'r2', bucketRef: 'DIAGNOSTIC_LOGS', prefix: 'audit/' },
+        sinks: [{ type: 'logpush', destinationRef: 'workers-logpush' }],
+        archiveFailureMode: 'gate_cleanup',
+      },
+    });
+    mockUnifiedAuditService.logEvent.mockRejectedValueOnce(new Error('audit_fanout_queue_failed'));
+
+    await expect(
+      createAuditLog(mockEnv, {
+        tenantId: 'default',
+        userId: 'admin-user',
+        action: 'user.deleted',
+        resource: 'user',
+        resourceId: 'guest-user',
+        ipAddress: '192.0.2.1',
+        userAgent: 'Test Agent',
+        metadata: '{}',
+        severity: 'info',
+      })
+    ).rejects.toThrow('audit_log_unified_mirror_failed');
+    expect(mockEnv.DB.prepare).not.toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO audit_log')
+    );
+  });
+
   it('uses cached runtime logging policy snapshots for audit fanout routing', async () => {
     const tenantId = 'tenant-snapshot-routing';
     const kvValues = new Map<string, string>();
