@@ -1,13 +1,13 @@
-# Authrim
-
-<a href="https://authrim.com/">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/images/authrim-logo-dark.svg">
-    <img src="docs/images/authrim-logo-light.svg" alt="Authrim — official website" width="240" height="48">
-  </picture>
-</a>
-
-**[authrim.com — Official website](https://authrim.com/)**
+<p align="center">
+  <a href="https://authrim.com/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/images/authrim-logo-dark.svg">
+      <img src="docs/images/authrim-logo-light.svg" alt="Authrim" width="200" height="48">
+    </picture>
+  </a>
+  <br>
+  <strong><a href="https://authrim.com/">authrim.com</a></strong>
+</p>
 
 > **Open Source Identity & Access Platform for the modern web**
 
