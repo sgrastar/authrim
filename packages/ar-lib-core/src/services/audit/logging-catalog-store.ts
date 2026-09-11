@@ -62,7 +62,9 @@ export class SqlLogChunkCatalogStore implements LogChunkCatalogStore {
         row.encryptionScope ?? null,
         row.keyVersion ?? null,
         row.createdAt,
-        row.committedAt ?? null,
+        // committed_at is otherwise unused while status=pending, so it carries the bounded
+        // writer lease without requiring a second coordination table or schema transition.
+        row.status === 'pending' ? (row.claimLeaseUntil ?? null) : (row.committedAt ?? null),
         null,
       ]
     );
@@ -116,18 +118,42 @@ export class SqlLogChunkCatalogStore implements LogChunkCatalogStore {
       encryptionScope: row.encryption_scope ?? undefined,
       keyVersion: row.key_version === null ? undefined : Number(row.key_version),
       createdAt: Number(row.created_at),
-      committedAt: row.committed_at === null ? undefined : Number(row.committed_at),
+      committedAt:
+        row.status === 'committed' && row.committed_at !== null
+          ? Number(row.committed_at)
+          : undefined,
+      claimLeaseUntil:
+        // See createPendingObject: for pending rows this column is the writer lease deadline.
+        row.status === 'pending' && row.committed_at !== null
+          ? Number(row.committed_at)
+          : undefined,
     };
   }
 
-  async reclaimOrphanObject(id: string): Promise<boolean> {
+  async reclaimOrphanObject(id: string, claimLeaseUntil: number): Promise<boolean> {
     const result = await this.adapter.execute(
       `UPDATE log_object_catalog
        SET status = 'pending',
            checksum_sha256 = NULL,
-           committed_at = NULL
+           committed_at = ?
        WHERE id = ? AND status = 'orphan_candidate'`,
-      [id]
+      [claimLeaseUntil, id]
+    );
+    return result.rowsAffected > 0;
+  }
+
+  async reclaimExpiredPendingObject(
+    id: string,
+    now: number,
+    claimLeaseUntil: number
+  ): Promise<boolean> {
+    const result = await this.adapter.execute(
+      `UPDATE log_object_catalog
+       SET committed_at = ?
+       WHERE id = ?
+         AND status = 'pending'
+         AND (committed_at IS NULL OR committed_at <= ?)`,
+      [claimLeaseUntil, id, now]
     );
     return result.rowsAffected > 0;
   }

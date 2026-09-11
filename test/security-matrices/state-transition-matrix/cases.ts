@@ -1581,8 +1581,9 @@ export function decideQueueAudit(row: Row): QueueDecision {
     const healthy = acked.length === 1;
     if (healthy && fanout) {
       // fanout success: catalog + index + delivery aggregate + 1 R2 object. Queue-stable
-      // chunk/catalog ids and object keys make redelivery converge on the same effects.
-      writeCalls = 6 * perMessage;
+      // chunk/catalog ids and object keys make redelivery reuse the committed object. The
+      // replay only finalizes indexes and delivery state, so it performs three more writes.
+      writeCalls = delivery === 'duplicate' ? 9 : 6;
       uniqueEffects = 4;
       tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
     } else if (healthy && !fanout) {
@@ -1596,7 +1597,8 @@ export function decideQueueAudit(row: Row): QueueDecision {
       uniqueEffects = 2;
     } else if (fanout && bindingState === 'present' && dlqArchive === 'throws') {
       // fanout archive-throws: catalog + delivery event/aggregate + notification
-      writeCalls = 6 * perMessage;
+      // A duplicate first reclaims the stable orphaned catalog claim before retrying.
+      writeCalls = delivery === 'duplicate' ? 13 : 6;
       uniqueEffects = 4;
     } else {
       writeCalls = 0;
@@ -1606,7 +1608,7 @@ export function decideQueueAudit(row: Row): QueueDecision {
     // mixed/all-fail batches: only the healthy message writes anything. A redelivery
     // re-runs the healthy message, so the per-delivery effects double.
     if (acked.length > 0 && fanout) {
-      writeCalls = 6 * perMessage;
+      writeCalls = delivery === 'duplicate' ? 9 : 6;
       uniqueEffects = 4;
       tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
     } else if (acked.length > 0) {
@@ -1618,7 +1620,7 @@ export function decideQueueAudit(row: Row): QueueDecision {
       uniqueEffects = 2;
       tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
     } else if (fanout && bindingState === 'present' && dlqArchive === 'throws') {
-      writeCalls = 6 * perMessage;
+      writeCalls = delivery === 'duplicate' ? 13 : 6;
       uniqueEffects = 4;
       tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
     }
@@ -1758,11 +1760,11 @@ export function decideQueueLog(row: Row): QueueDecision {
       dlqSaved = true;
       tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
     } else {
-      // chunk-write: catalog + index + aggregates + 1 R2 object. A redelivery writes a
-      // NEW chunk id and a NEW R2 object; the decision keeps the IDEMPOTENT expectation
-      // so the duplication fails the row as a strict finding.
-      writeCalls = 7 * perMessage;
-      uniqueEffects = delivery === 'duplicate' ? 4 : 4 * perMessage;
+      // chunk-write: catalog + index + aggregates + 1 R2 object. Stable catalog and chunk
+      // identifiers make redelivery reuse the committed object and only finalize indexes
+      // and delivery state.
+      writeCalls = delivery === 'duplicate' ? 11 : 7;
+      uniqueEffects = 4;
       tenantKey = tenant === 'foreign' ? 'foreign' : 'default';
     }
   } else if (

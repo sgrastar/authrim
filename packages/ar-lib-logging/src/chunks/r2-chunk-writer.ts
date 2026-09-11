@@ -11,6 +11,18 @@ import type {
   WriteLogChunkResult,
 } from './types';
 
+export const LOG_CHUNK_WRITE_CLAIM_LEASE_MS = 60_000;
+
+export class LogChunkWriteClaimActiveError extends Error {
+  readonly retryAt: number;
+
+  constructor(retryAt: number, options?: ErrorOptions) {
+    super('log_chunk_write_in_progress_or_conflicted', options);
+    this.name = 'LogChunkWriteClaimActiveError';
+    this.retryAt = retryAt;
+  }
+}
+
 function toHex(bytes: Uint8Array): string {
   return [...bytes].map((value) => value.toString(16).padStart(2, '0')).join('');
 }
@@ -94,7 +106,9 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
     throw new Error('log_chunk_encryption_required');
   }
 
-  const createdAt = input.now ?? Date.now();
+  const claimStartedAt = Date.now();
+  const claimLeaseUntil = claimStartedAt + LOG_CHUNK_WRITE_CLAIM_LEASE_MS;
+  const createdAt = input.now ?? claimStartedAt;
   const chunkId = input.chunkId ?? createLoggingId('chk', createdAt);
   const objectCatalogId = input.objectCatalogId ?? createLoggingId('obj', createdAt);
   const compression: LogChunkCompression = input.compression ?? 'gzip_block';
@@ -140,6 +154,7 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
     encryptionScope: input.encryption?.encryptionScope,
     keyVersion: input.encryption?.keyVersion,
     createdAt,
+    claimLeaseUntil,
   };
 
   const indexRows: LogChunkRecordIndexRow[] = input.records.map((record, index) => {
@@ -201,11 +216,17 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
         createdAt: existing.createdAt,
       };
     }
-    const orphanReclaimed =
-      existing.status === 'orphan_candidate' &&
-      (await input.catalogStore?.reclaimOrphanObject?.(objectCatalogId));
-    if (!orphanReclaimed) {
-      throw new Error('log_chunk_write_in_progress_or_conflicted');
+    const claimReclaimed =
+      (existing.status === 'orphan_candidate' &&
+        (await input.catalogStore?.reclaimOrphanObject?.(objectCatalogId, claimLeaseUntil))) ||
+      (existing.status === 'pending' &&
+        (await input.catalogStore?.reclaimExpiredPendingObject?.(
+          objectCatalogId,
+          claimStartedAt,
+          claimLeaseUntil
+        )));
+    if (!claimReclaimed) {
+      throw new LogChunkWriteClaimActiveError(existing.claimLeaseUntil ?? claimLeaseUntil);
     }
   }
 
@@ -262,7 +283,11 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
     };
   } catch (error) {
     if (!objectCommitted) {
-      await input.catalogStore?.markObjectOrphanCandidate(objectCatalogId, Date.now());
+      try {
+        await input.catalogStore?.markObjectOrphanCandidate(objectCatalogId, Date.now());
+      } catch (cleanupError) {
+        throw new LogChunkWriteClaimActiveError(claimLeaseUntil, { cause: cleanupError });
+      }
     }
     throw error;
   }

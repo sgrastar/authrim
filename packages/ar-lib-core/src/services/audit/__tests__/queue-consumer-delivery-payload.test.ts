@@ -723,18 +723,86 @@ describe('logging delivery queue consumer', () => {
       })
     );
     expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO logging_delivery_events'),
-      expect.arrayContaining([
-        'tk_123',
-        'dest_1',
-        'operational',
-        'external_sink',
-        'critical',
-        'delivered',
-      ])
+      expect.stringContaining("SET status = 'delivered'"),
+      expect.arrayContaining([1])
     );
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
+  });
+
+  it('claims a stable HTTP batch delivery before POST and skips duplicate queue messages', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 202,
+      headers: { get: vi.fn().mockReturnValue(null) },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const bucket = {
+      get: vi.fn().mockResolvedValue(
+        await createEncryptedArchivePayloadObject('payloads/batch_dedup.json', 'tk_123', {
+          records: [{ id: 'evt_1' }],
+        })
+      ),
+      delete: vi.fn().mockResolvedValue(undefined),
+    } as unknown as R2Bucket;
+    const adminDb = createAdminDbAdapter();
+    const deliveryClaims = new Map<string, string>();
+    adminDb.execute.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('INSERT INTO logging_delivery_events')) {
+        const id = String(params[0]);
+        if (deliveryClaims.has(id)) return { rowsAffected: 0 };
+        deliveryClaims.set(id, 'retrying');
+        return { rowsAffected: 1 };
+      }
+      if (sql.includes('UPDATE logging_delivery_events')) {
+        const id = String(params[4] ?? params[10] ?? params[1]);
+        if (sql.includes("SET status = 'delivered'") && deliveryClaims.get(id) === 'retrying') {
+          deliveryClaims.set(id, 'delivered');
+          return { rowsAffected: 1 };
+        }
+        return { rowsAffected: 0 };
+      }
+      return { rowsAffected: 1 };
+    });
+    const payload = {
+      payload_type: 'http_sink_batch',
+      schema_version: 1,
+      payload_id: 'qpl_dedup_1',
+      tenant_key: 'tk_123',
+      lane: 'critical',
+      created_at: 1779148800000,
+      destination_id: 'dest_1',
+      endpoint_url: 'https://collector.example/logs',
+      log_type: 'operational',
+      plane: 'external_sink',
+      batch_id: 'batch_dedup',
+      record_count: 1,
+      body_object_ref: 'r2://payloads/batch_dedup.json',
+    };
+    const messages = [createMessage(payload), createMessage(payload)];
+
+    await processLoggingDeliveryQueue(
+      { messages, queue: 'LOGGING_DELIVERY_QUEUE' } as unknown as MessageBatch<unknown>,
+      {
+        DB: {} as D1Database,
+        DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
+        AUDIT_ARCHIVE: bucket,
+        OBJECT_ENCRYPTION_ROOT_KEY: ROOT_KEY,
+      }
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(bucket.get).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://collector.example/logs',
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'X-Authrim-Delivery': 'qpl_dedup_1' }),
+      })
+    );
+    for (const message of messages) {
+      expect(message.ack).toHaveBeenCalledOnce();
+      expect(message.retry).not.toHaveBeenCalled();
+    }
   });
 
   it('rejects oversized HTTP sink body objects before reading R2 text', async () => {
@@ -832,8 +900,8 @@ describe('logging delivery queue consumer', () => {
       })
     );
     expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO logging_delivery_events'),
-      expect.arrayContaining(['delivered'])
+      expect.stringContaining("SET status = 'delivered'"),
+      expect.any(Array)
     );
     expect(JSON.stringify(adminDb.execute.mock.calls)).not.toContain('runtime-token');
     expect(message.ack).toHaveBeenCalledOnce();
@@ -898,10 +966,10 @@ describe('logging delivery queue consumer', () => {
       })
     );
     expect(JSON.stringify(adminDb.execute.mock.calls)).not.toContain('runtime-hmac-secret');
-    const eventInsert = adminDb.execute.mock.calls.find(([sql]) =>
-      String(sql).includes('INSERT INTO logging_delivery_events')
+    const eventCompletion = adminDb.execute.mock.calls.find(([sql]) =>
+      String(sql).includes("SET status = 'delivered'")
     );
-    const metadata = JSON.parse((eventInsert?.[1] as unknown[])[13] as string) as {
+    const metadata = JSON.parse((eventCompletion?.[1] as unknown[])[3] as string) as {
       redacted_headers: Record<string, string>;
     };
     expect(metadata.redacted_headers['X-Authrim-Signature-256']).toBe('[redacted]');
@@ -961,10 +1029,10 @@ describe('logging delivery queue consumer', () => {
         }),
       })
     );
-    const eventInsert = adminDb.execute.mock.calls.find(([sql]) =>
-      String(sql).includes('INSERT INTO logging_delivery_events')
+    const eventCompletion = adminDb.execute.mock.calls.find(([sql]) =>
+      String(sql).includes("SET status = 'delivered'")
     );
-    const metadata = JSON.parse((eventInsert?.[1] as unknown[])[13] as string) as {
+    const metadata = JSON.parse((eventCompletion?.[1] as unknown[])[3] as string) as {
       redacted_headers: Record<string, string>;
     };
     expect(metadata.redacted_headers['X-Webhook-Signature']).toBe('[redacted]');
@@ -1014,18 +1082,8 @@ describe('logging delivery queue consumer', () => {
       })
     );
     expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO logging_delivery_events'),
-      expect.arrayContaining([
-        'tk_123',
-        'dest_1',
-        'audit',
-        'external_sink',
-        'critical',
-        'delivered',
-        1,
-        null,
-        'chk_1',
-      ])
+      expect.stringContaining("SET status = 'delivered'"),
+      expect.arrayContaining([1, 'chk_1'])
     );
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
@@ -1164,8 +1222,8 @@ describe('logging delivery queue consumer', () => {
       }
     );
 
-    const eventCall = adminDb.execute.mock.calls.find(([sql]) =>
-      String(sql).includes('INSERT INTO logging_delivery_events')
+    const eventCall = adminDb.execute.mock.calls.find(([, params]) =>
+      (params as unknown[] | undefined)?.includes('http_sink_delivery_failed')
     );
     expect(eventCall?.[1]).toEqual(
       expect.arrayContaining([

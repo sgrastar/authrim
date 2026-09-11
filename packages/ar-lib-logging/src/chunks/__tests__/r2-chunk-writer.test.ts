@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { decodeStoredLogChunkRecord } from '../r2-chunk-reader';
-import { writeLogChunkToR2 } from '../r2-chunk-writer';
+import {
+  LOG_CHUNK_WRITE_CLAIM_LEASE_MS,
+  LogChunkWriteClaimActiveError,
+  writeLogChunkToR2,
+} from '../r2-chunk-writer';
 import { normalizeR2Prefix } from '../r2-keys';
 import type { LogChunkCatalogStore } from '../types';
 
@@ -280,6 +284,78 @@ describe('writeLogChunkToR2', () => {
       expect.objectContaining({ status: 'committed', checksumSha256: expect.any(String) })
     );
     expect(indexStatus).toBe('committed');
+  });
+
+  it('reclaims an expired pending claim when archive failure cleanup also failed', async () => {
+    vi.useFakeTimers();
+    const firstAttemptAt = 1_700_000_000_000;
+    vi.setSystemTime(firstAttemptAt);
+    let objectRow: Parameters<LogChunkCatalogStore['createPendingObject']>[0] | null = null;
+    const catalogStore: LogChunkCatalogStore = {
+      createPendingObject: vi.fn(async (row) => {
+        if (objectRow) return false;
+        objectRow = row;
+        return true;
+      }),
+      getObject: vi.fn(async () => objectRow),
+      reclaimExpiredPendingObject: vi.fn(async (_id, now, claimLeaseUntil) => {
+        if (
+          !objectRow ||
+          objectRow.status !== 'pending' ||
+          (objectRow.claimLeaseUntil ?? Number.POSITIVE_INFINITY) > now
+        ) {
+          return false;
+        }
+        objectRow = { ...objectRow, claimLeaseUntil };
+        return true;
+      }),
+      createPendingRecordIndexes: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('catalog_index_write_failed'))
+        .mockResolvedValueOnce(undefined),
+      commitObject: vi.fn(async (_id, update) => {
+        if (objectRow) {
+          objectRow = {
+            ...objectRow,
+            status: 'committed',
+            byteCount: update.byteCount,
+            checksumSha256: update.checksumSha256,
+            committedAt: update.committedAt,
+            claimLeaseUntil: undefined,
+          };
+        }
+      }),
+      commitRecordIndexes: vi.fn(),
+      markObjectOrphanCandidate: vi.fn().mockRejectedValueOnce(new Error('catalog_cleanup_failed')),
+    };
+    const bucket = { put: vi.fn().mockResolvedValue(undefined) } as unknown as R2Bucket;
+    const input = {
+      bucket,
+      tenantKey: 't_safeopaque',
+      logType: 'audit' as const,
+      plane: 'archive' as const,
+      records: [{ id: 'evt-recovery', eventAt: 1, payload: { id: 'evt-recovery' } }],
+      catalogStore,
+      encryption: testEncryption(),
+      now: 1_700_000_000_000,
+      chunkId: 'chk_recovery',
+      objectCatalogId: 'obj_recovery',
+    };
+
+    const firstError = await writeLogChunkToR2(input).catch((error: unknown) => error);
+    expect(firstError).toBeInstanceOf(LogChunkWriteClaimActiveError);
+    expect((firstError as LogChunkWriteClaimActiveError).retryAt).toBe(
+      firstAttemptAt + LOG_CHUNK_WRITE_CLAIM_LEASE_MS
+    );
+    expect(objectRow).toEqual(expect.objectContaining({ status: 'pending' }));
+
+    vi.setSystemTime(firstAttemptAt + LOG_CHUNK_WRITE_CLAIM_LEASE_MS + 1);
+    await expect(writeLogChunkToR2(input)).resolves.toEqual(
+      expect.objectContaining({ objectCatalogId: 'obj_recovery' })
+    );
+    expect(catalogStore.reclaimExpiredPendingObject).toHaveBeenCalledOnce();
+    expect(bucket.put).toHaveBeenCalledOnce();
+    vi.useRealTimers();
   });
 
   it('finishes pending indexes on replay after the object commit succeeded', async () => {

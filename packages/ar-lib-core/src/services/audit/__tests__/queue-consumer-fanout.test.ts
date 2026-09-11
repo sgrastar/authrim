@@ -483,6 +483,7 @@ describe('audit queue consumer fanout', () => {
       status: 200,
     });
     vi.stubGlobal('fetch', fetchMock);
+    const adminDb = createAdminDbAdapter();
 
     const message = createMessage({
       type: 'event_log',
@@ -519,6 +520,7 @@ describe('audit queue consumer fanout', () => {
       {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );
 
@@ -543,6 +545,7 @@ describe('audit queue consumer fanout', () => {
       status: 202,
     });
     vi.stubGlobal('fetch', fetchMock);
+    const adminDb = createAdminDbAdapter();
 
     const message = createMessage({
       type: 'event_log',
@@ -579,6 +582,7 @@ describe('audit queue consumer fanout', () => {
       {
         DB: {} as D1Database,
         DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
         AUDIT_HTTP_TOKEN: 'sink-secret',
       } as unknown as Parameters<typeof processAuditQueue>[1]
     );
@@ -642,13 +646,95 @@ describe('audit queue consumer fanout', () => {
     );
 
     expect(adminDb.execute).toHaveBeenCalledWith(
-      expect.stringContaining('INSERT INTO logging_delivery_events'),
-      expect.arrayContaining(['audit', 'external_sink', 'critical', 'delivered'])
+      expect.stringContaining("'delivery_in_progress'"),
+      expect.arrayContaining(['audit', 'external_sink', 'critical'])
     );
-    const params = adminDb.execute.mock.calls[0]?.[1] as unknown[];
-    expect(params[13]).toContain('"http_status":200');
+    expect(adminDb.execute).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'delivered'"),
+      expect.any(Array)
+    );
+    const completion = adminDb.execute.mock.calls.find(([sql]) =>
+      String(sql).includes("SET status = 'delivered'")
+    );
+    expect(String((completion?.[1] as unknown[])[3])).toContain('"http_status":200');
     expect(message.ack).toHaveBeenCalledOnce();
     expect(message.retry).not.toHaveBeenCalled();
+  });
+
+  it('claims direct HTTP audit delivery before POST and skips a duplicate fanout', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: vi.fn().mockReturnValue(null) },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const adminDb = createAdminDbAdapter();
+    const deliveryClaims = new Map<string, string>();
+    adminDb.execute.mockImplementation(async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('INSERT INTO logging_delivery_events')) {
+        const id = String(params[0]);
+        if (deliveryClaims.has(id)) return { rowsAffected: 0 };
+        deliveryClaims.set(id, 'retrying');
+        return { rowsAffected: 1 };
+      }
+      if (sql.includes("SET status = 'delivered'")) {
+        const id = String(params[4]);
+        if (deliveryClaims.get(id) !== 'retrying') return { rowsAffected: 0 };
+        deliveryClaims.set(id, 'delivered');
+        return { rowsAffected: 1 };
+      }
+      if (sql.includes('UPDATE logging_delivery_events')) {
+        return { rowsAffected: 0 };
+      }
+      return { rowsAffected: 1 };
+    });
+    const body: AuditQueueMessage = {
+      type: 'event_log',
+      tenantId: 'tenant-a',
+      timestamp: 1_725_000_000_000,
+      entries: [
+        {
+          id: 'evt-dedup',
+          tenantId: 'tenant-a',
+          eventType: 'auth.login',
+          eventCategory: 'auth',
+          result: 'success',
+          severity: 'info',
+          createdAt: 1_725_000_000_000,
+        },
+      ],
+      fanout: {
+        auditProfileId: 'audit-profile-http',
+        archives: [],
+        sinks: [{ type: 'http', url: 'https://example.com/audit' }],
+        archiveFailureMode: 'best_effort',
+        sinkFailureMode: 'retry_until_ttl',
+      },
+    };
+    const messages = [createMessage(body), createMessage(body)];
+
+    await processAuditQueue(
+      { messages, queue: 'AUDIT_QUEUE' } as unknown as MessageBatch<AuditQueueMessage>,
+      {
+        DB: {} as D1Database,
+        DB_PII: {} as D1Database,
+        DB_ADMIN: adminDb,
+      } as unknown as Parameters<typeof processAuditQueue>[1]
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://example.com/audit',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          'X-Authrim-Delivery': expect.stringMatching(/^tenant-a:/),
+        }),
+      })
+    );
+    for (const message of messages) {
+      expect(message.ack).toHaveBeenCalledOnce();
+      expect(message.retry).not.toHaveBeenCalled();
+    }
   });
 
   it('enqueues committed archive chunks for explicit admin destinations', async () => {
