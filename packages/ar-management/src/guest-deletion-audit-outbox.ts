@@ -1,4 +1,9 @@
-import { createAuditLog, type DatabaseAdapter, type Env } from '@authrim/ar-lib-core';
+import {
+  createAuditLog,
+  getAdminProxyMetadataFromContext,
+  type DatabaseAdapter,
+  type Env,
+} from '@authrim/ar-lib-core';
 import type { Context } from 'hono';
 
 export interface GuestDeletionAuditOutboxRow {
@@ -56,7 +61,10 @@ export function createGuestDeletionAuditTaskFromContext(
       c.req.header('X-Real-IP') ||
       'unknown',
     userAgent: c.req.header('User-Agent') || 'unknown',
-    metadataJson: JSON.stringify(input.metadata),
+    metadataJson: JSON.stringify({
+      ...input.metadata,
+      ...getAdminProxyMetadataFromContext(c),
+    }),
     createdAt: Math.floor(Date.now() / 1000),
   };
 }
@@ -173,6 +181,13 @@ export class GuestDeletionAuditOutboxRepository {
     );
   }
 
+  async remove(auditId: string): Promise<void> {
+    await this.db.execute(
+      'DELETE FROM guest_deletion_audit_outbox WHERE tenant_id = ? AND audit_id = ?',
+      [this.tenantId, auditId]
+    );
+  }
+
   async pruneSucceeded(before: number): Promise<void> {
     await this.db.execute(
       `DELETE FROM guest_deletion_audit_outbox
@@ -241,11 +256,11 @@ export async function processGuestDeletionAuditOutbox(
             [target.tenantId, task.user_id],
             { consistencyClass: 'primary_required' }
           );
-          if (
-            !lifecycle ||
-            lifecycle.phase !== 'deleted' ||
-            lifecycle.deletion_operation_id !== task.operation_id
-          ) {
+          if (!lifecycle || lifecycle.deletion_operation_id !== task.operation_id) {
+            await repository.remove(task.audit_id);
+            continue;
+          }
+          if (lifecycle.phase !== 'deleted') {
             await repository.markRetry(task, attemptAt, 'guest_deletion_not_committed');
             retrying += 1;
             continue;

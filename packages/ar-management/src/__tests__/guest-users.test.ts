@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   auditOutboxEnqueue: vi.fn(),
   auditOutboxMarkSucceeded: vi.fn(),
   auditOutboxMarkRetry: vi.fn(),
+  auditOutboxRemove: vi.fn(),
   guestLifecycleBeginAdministrativeDeletion: vi.fn(),
   guestLifecycleCompleteDeletion: vi.fn(),
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -75,6 +76,7 @@ vi.mock('../guest-deletion-audit-outbox', () => ({
       enqueue: mocks.auditOutboxEnqueue,
       markSucceeded: mocks.auditOutboxMarkSucceeded,
       markRetry: mocks.auditOutboxMarkRetry,
+      remove: mocks.auditOutboxRemove,
     };
   }),
 }));
@@ -152,6 +154,7 @@ describe('guest account administration', () => {
     }));
     mocks.auditOutboxMarkSucceeded.mockResolvedValue(undefined);
     mocks.auditOutboxMarkRetry.mockResolvedValue(undefined);
+    mocks.auditOutboxRemove.mockResolvedValue(undefined);
     mocks.guestLifecycleBeginAdministrativeDeletion.mockResolvedValue(true);
     mocks.guestLifecycleCompleteDeletion.mockResolvedValue(true);
   });
@@ -418,6 +421,9 @@ describe('guest account administration', () => {
 
     expect((await deleteGuestUser(context({ id: 'user-1' }))).status).toBe(500);
     expect(mocks.auditOutboxEnqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.auditOutboxRemove).toHaveBeenCalledWith(
+      mocks.auditOutboxEnqueue.mock.calls[0][0].auditId
+    );
     expect(mocks.transitionAccountAuthenticationState).not.toHaveBeenCalled();
     expect(mocks.adapter.execute).not.toHaveBeenCalled();
     expect(mocks.deleteUser).not.toHaveBeenCalled();

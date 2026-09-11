@@ -526,15 +526,15 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
 
     const deletingVersionMs = Date.now();
     const lifecycle = new GuestLifecycleRepository(authCtx.coreAdapter, tenantId);
-    if (
-      !(await lifecycle.beginAdministrativeDeletion(
-        userId,
-        deletionOperationId,
-        Math.floor(deletingVersionMs / 1000),
-        deletionRouteJson,
-        deletingVersionMs
-      ))
-    ) {
+    const deletionClaimed = await lifecycle.beginAdministrativeDeletion(
+      userId,
+      deletionOperationId,
+      Math.floor(deletingVersionMs / 1000),
+      deletionRouteJson,
+      deletingVersionMs
+    );
+    if (!deletionClaimed) {
+      await auditOutbox.remove(auditTask.audit_id);
       throw new Error('guest_administrative_deletion_conflict');
     }
     await transitionAccountAuthenticationState(c.env, {
@@ -720,15 +720,15 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
 
         const deletingVersionMs = Date.now();
         const lifecycle = new GuestLifecycleRepository(authCtx.coreAdapter, tenantId);
-        if (
-          !(await lifecycle.beginAdministrativeDeletion(
-            userId,
-            deletionOperationId,
-            Math.floor(deletingVersionMs / 1000),
-            deletionRouteJson,
-            deletingVersionMs
-          ))
-        ) {
+        const deletionClaimed = await lifecycle.beginAdministrativeDeletion(
+          userId,
+          deletionOperationId,
+          Math.floor(deletingVersionMs / 1000),
+          deletionRouteJson,
+          deletingVersionMs
+        );
+        if (!deletionClaimed) {
+          await auditOutbox.remove(auditTask.audit_id);
           throw new Error('guest_administrative_deletion_conflict');
         }
         await transitionAccountAuthenticationState(c.env, {

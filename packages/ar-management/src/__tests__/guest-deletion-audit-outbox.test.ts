@@ -4,6 +4,7 @@ import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
 import { GuestLifecycleRepository, writeLegacyAuditLog } from '@authrim/ar-lib-core';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
 import {
+  createGuestDeletionAuditTaskFromContext,
   GuestDeletionAuditOutboxRepository,
   processGuestDeletionAuditOutbox,
 } from '../guest-deletion-audit-outbox';
@@ -78,6 +79,45 @@ describe('guest deletion audit reconciliation outbox', () => {
   });
 
   afterEach(() => db.close());
+
+  it('persists the request and proxy metadata used by immediate audit delivery', () => {
+    const headers: Record<string, string> = {
+      'CF-Connecting-IP': '192.0.2.1',
+      'User-Agent': 'test-agent',
+      'X-Request-Id': 'proxy-request',
+      'X-Correlation-Id': 'correlation-1',
+      'X-Authrim-Admin-UI-Api-Mode': 'bff',
+      'X-Authrim-Forwarded-Host': 'admin.example.com',
+      'X-Forwarded-Proto': 'https',
+    };
+    const task = createGuestDeletionAuditTaskFromContext(
+      {
+        get: (name: string) =>
+          name === 'adminAuth'
+            ? { userId: 'admin-1' }
+            : name === 'requestId'
+              ? 'context-request'
+              : undefined,
+        req: { header: (name: string) => headers[name] },
+      } as never,
+      {
+        auditId: 'audit-1',
+        userId: 'guest-1',
+        operationId: 'operation-1',
+        metadata: { reason: 'admin_action' },
+      }
+    );
+
+    expect(JSON.parse(task.metadataJson)).toEqual({
+      reason: 'admin_action',
+      request_id: 'context-request',
+      admin_ui_api_mode: 'bff',
+      admin_ui_bff_forwarded_host: 'admin.example.com',
+      admin_ui_bff_forwarded_proto: 'https',
+      admin_ui_bff_request_id: 'proxy-request',
+      admin_ui_bff_correlation_id: 'correlation-1',
+    });
+  });
 
   it('survives a processor restart and persists the missing completion audit', async () => {
     const repository = new GuestDeletionAuditOutboxRepository(adapter, 'tenant-a');
@@ -217,8 +257,8 @@ describe('guest deletion audit reconciliation outbox', () => {
         { info: vi.fn(), warn: vi.fn() },
         { now: () => 1001, writeAudit }
       )
-    ).toEqual({ processed: 1, succeeded: 0, retrying: 1 });
+    ).toEqual({ processed: 1, succeeded: 0, retrying: 0 });
     expect(writeAudit).not.toHaveBeenCalled();
-    expect((await repository.get('account-guest-deleted-operation-stale'))?.status).toBe('retry');
+    expect(await repository.get('account-guest-deleted-operation-stale')).toBeNull();
   });
 });
