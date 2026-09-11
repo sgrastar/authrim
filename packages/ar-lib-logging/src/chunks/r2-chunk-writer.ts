@@ -169,34 +169,48 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
   const pendingObjectCreated = await input.catalogStore?.createPendingObject(objectRow);
   if (pendingObjectCreated === false) {
     const existing = await input.catalogStore?.getObject?.(objectCatalogId);
+    if (!existing) {
+      throw new Error('log_chunk_write_in_progress_or_conflicted');
+    }
     if (
-      !existing ||
-      existing.status !== 'committed' ||
       existing.tenantKey !== input.tenantKey ||
       existing.logType !== input.logType ||
       existing.plane !== input.plane ||
+      existing.surface !== input.surface ||
       existing.objectKey !== objectKey ||
-      !existing.checksumSha256
+      existing.recordCount !== input.records.length ||
+      existing.compression !== compression ||
+      existing.encryptionScope !== input.encryption?.encryptionScope ||
+      existing.keyVersion !== input.encryption?.keyVersion
     ) {
       throw new Error('log_chunk_write_in_progress_or_conflicted');
     }
-    return {
-      chunkId,
-      objectCatalogId,
-      objectKey,
-      shard,
-      recordCount: existing.recordCount,
-      byteCount: existing.byteCount,
-      checksumSha256: existing.checksumSha256,
-      compression: existing.compression,
-      encryptionScope: existing.encryptionScope,
-      keyVersion: existing.keyVersion,
-      createdAt: existing.createdAt,
-    };
+    if (existing.status === 'committed' && existing.checksumSha256) {
+      await input.catalogStore?.commitRecordIndexes(objectCatalogId, Date.now());
+      return {
+        chunkId,
+        objectCatalogId,
+        objectKey,
+        shard,
+        recordCount: existing.recordCount,
+        byteCount: existing.byteCount,
+        checksumSha256: existing.checksumSha256,
+        compression: existing.compression,
+        encryptionScope: existing.encryptionScope,
+        keyVersion: existing.keyVersion,
+        createdAt: existing.createdAt,
+      };
+    }
+    const orphanReclaimed =
+      existing.status === 'orphan_candidate' &&
+      (await input.catalogStore?.reclaimOrphanObject?.(objectCatalogId));
+    if (!orphanReclaimed) {
+      throw new Error('log_chunk_write_in_progress_or_conflicted');
+    }
   }
-  await input.catalogStore?.createPendingRecordIndexes(indexRows);
 
   try {
+    await input.catalogStore?.createPendingRecordIndexes(indexRows);
     await input.bucket.put(objectKey, storedBody, {
       httpMetadata: {
         contentType: input.encryption
@@ -223,30 +237,29 @@ export async function writeLogChunkToR2(input: WriteLogChunkInput): Promise<Writ
         createdAt: String(createdAt),
       },
     });
+    const committedAt = Date.now();
+    await input.catalogStore?.commitObject(objectCatalogId, {
+      byteCount: storedBody.byteLength,
+      checksumSha256,
+      committedAt,
+    });
+    await input.catalogStore?.commitRecordIndexes(objectCatalogId, committedAt);
+
+    return {
+      chunkId,
+      objectCatalogId,
+      objectKey,
+      shard,
+      recordCount: input.records.length,
+      byteCount: storedBody.byteLength,
+      checksumSha256,
+      compression,
+      encryptionScope: input.encryption?.encryptionScope,
+      keyVersion: input.encryption?.keyVersion,
+      createdAt,
+    };
   } catch (error) {
     await input.catalogStore?.markObjectOrphanCandidate(objectCatalogId, Date.now());
     throw error;
   }
-
-  const committedAt = Date.now();
-  await input.catalogStore?.commitObject(objectCatalogId, {
-    byteCount: storedBody.byteLength,
-    checksumSha256,
-    committedAt,
-  });
-  await input.catalogStore?.commitRecordIndexes(objectCatalogId, committedAt);
-
-  return {
-    chunkId,
-    objectCatalogId,
-    objectKey,
-    shard,
-    recordCount: input.records.length,
-    byteCount: storedBody.byteLength,
-    checksumSha256,
-    compression,
-    encryptionScope: input.encryption?.encryptionScope,
-    keyVersion: input.encryption?.keyVersion,
-    createdAt,
-  };
 }

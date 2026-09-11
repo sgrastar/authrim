@@ -49,6 +49,7 @@ export interface LogChunkRecordIndexRow {
 export interface LogChunkCatalogStore {
   createPendingObject(row: LogObjectCatalogRow): Promise<boolean | void>;
   getObject?(id: string): Promise<LogObjectCatalogRow | null>;
+  reclaimOrphanObject?(id: string): Promise<boolean>;
   createPendingRecordIndexes(rows: LogChunkRecordIndexRow[]): Promise<void>;
   upsertManifest?(row: LogChunkManifestRow): Promise<void>;
   commitObject(

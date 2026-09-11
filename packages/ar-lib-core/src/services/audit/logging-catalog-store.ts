@@ -120,6 +120,18 @@ export class SqlLogChunkCatalogStore implements LogChunkCatalogStore {
     };
   }
 
+  async reclaimOrphanObject(id: string): Promise<boolean> {
+    const result = await this.adapter.execute(
+      `UPDATE log_object_catalog
+       SET status = 'pending',
+           checksum_sha256 = NULL,
+           committed_at = NULL
+       WHERE id = ? AND status = 'orphan_candidate'`,
+      [id]
+    );
+    return result.rowsAffected > 0;
+  }
+
   async createPendingRecordIndexes(rows: LogChunkRecordIndexRow[]): Promise<void> {
     if (rows.length === 0) {
       return;
@@ -134,7 +146,21 @@ export class SqlLogChunkCatalogStore implements LogChunkCatalogStore {
           line_number, block_offset, block_length, record_offset, record_length,
           event_at, index_profile, indexed_fields, status, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(tenant_key, log_type, plane, record_id) DO NOTHING`,
+        ON CONFLICT(tenant_key, log_type, plane, record_id) DO UPDATE SET
+          surface = excluded.surface,
+          object_catalog_id = excluded.object_catalog_id,
+          chunk_id = excluded.chunk_id,
+          line_number = excluded.line_number,
+          block_offset = excluded.block_offset,
+          block_length = excluded.block_length,
+          record_offset = excluded.record_offset,
+          record_length = excluded.record_length,
+          event_at = excluded.event_at,
+          index_profile = excluded.index_profile,
+          indexed_fields = excluded.indexed_fields,
+          status = 'pending',
+          created_at = excluded.created_at
+        WHERE log_chunk_record_index.status = 'deleted'`,
           params: [
             row.recordId,
             row.tenantKey,
