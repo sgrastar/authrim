@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseAdapter, Env } from '@authrim/ar-lib-core';
-import { writeLegacyAuditLog } from '@authrim/ar-lib-core';
+import { GuestLifecycleRepository, writeLegacyAuditLog } from '@authrim/ar-lib-core';
 import { DatabaseSync, type SQLiteDatabase, type SQLInputValue } from './test-sqlite';
 import {
   GuestDeletionAuditOutboxRepository,
@@ -12,14 +12,15 @@ describe('guest deletion audit reconciliation outbox', () => {
   let db: SQLiteDatabase;
   let adapter: DatabaseAdapter;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = new DatabaseSync(':memory:');
     db.exec(`
-      CREATE TABLE guest_account_lifecycle (
+      CREATE TABLE identity_accounts (
         tenant_id TEXT NOT NULL,
-        user_id TEXT NOT NULL,
-        phase TEXT NOT NULL,
-        deletion_operation_id TEXT
+        legacy_user_id TEXT NOT NULL,
+        account_type TEXT NOT NULL,
+        registration_state TEXT NOT NULL,
+        deleted_at INTEGER
       );
       CREATE TABLE audit_log (
         id TEXT PRIMARY KEY,
@@ -34,9 +35,15 @@ describe('guest deletion audit reconciliation outbox', () => {
         severity TEXT,
         created_at INTEGER NOT NULL
       );
-      INSERT INTO guest_account_lifecycle
-        VALUES ('tenant-a', 'guest-1', 'deleted', 'operation-1');
+      INSERT INTO identity_accounts
+        VALUES ('tenant-a', 'guest-1', 'user', 'guest', NULL);
     `);
+    db.exec(
+      readFileSync(
+        new URL('../../../../migrations/core/d1/002_guest_account_lifecycle.sql', import.meta.url),
+        'utf8'
+      )
+    );
     db.exec(
       readFileSync(
         new URL(
@@ -60,6 +67,13 @@ describe('guest deletion audit reconciliation outbox', () => {
         };
       },
     } as DatabaseAdapter;
+    await new GuestLifecycleRepository(adapter, 'tenant-a').enroll({
+      userId: 'guest-1',
+      clientId: 'client-1',
+      createdAt: 100,
+      deletionAfterDays: null,
+      policyVersion: 'policy-1',
+    });
   });
 
   afterEach(() => db.close());
@@ -81,6 +95,15 @@ describe('guest deletion audit reconciliation outbox', () => {
       }),
       createdAt: 1000,
     });
+    const lifecycle = new GuestLifecycleRepository(adapter, 'tenant-a');
+    expect(await lifecycle.beginAdministrativeDeletion('guest-1', 'operation-1', 999, 999000)).toBe(
+      true
+    );
+    await adapter.execute(
+      'UPDATE identity_accounts SET deleted_at = ? WHERE tenant_id = ? AND legacy_user_id = ?',
+      [999, 'tenant-a', 'guest-1']
+    );
+    expect(await lifecycle.completeDeletion('guest-1', 'operation-1', 1000)).toBe(true);
 
     expect(await repository.listDue(1000, 10)).toHaveLength(1);
 
@@ -122,11 +145,13 @@ describe('guest deletion audit reconciliation outbox', () => {
   });
 
   it('does not emit completion before the account deletion is committed', async () => {
-    await adapter.execute(
-      `UPDATE guest_account_lifecycle SET phase = 'deleting'
-       WHERE tenant_id = ? AND user_id = ?`,
-      ['tenant-a', 'guest-1']
-    );
+    expect(
+      await new GuestLifecycleRepository(adapter, 'tenant-a').beginAdministrativeDeletion(
+        'guest-1',
+        'operation-2',
+        999
+      )
+    ).toBe(true);
     const repository = new GuestDeletionAuditOutboxRepository(adapter, 'tenant-a');
     await repository.enqueue({
       auditId: 'account-guest-deleted-operation-2',
@@ -153,6 +178,11 @@ describe('guest deletion audit reconciliation outbox', () => {
   });
 
   it('does not emit completion for a different deletion operation', async () => {
+    const lifecycle = new GuestLifecycleRepository(adapter, 'tenant-a');
+    expect(await lifecycle.beginAdministrativeDeletion('guest-1', 'operation-1', 999, 999000)).toBe(
+      true
+    );
+    expect(await lifecycle.completeDeletion('guest-1', 'operation-1', 1000)).toBe(true);
     const repository = new GuestDeletionAuditOutboxRepository(adapter, 'tenant-a');
     await repository.enqueue({
       auditId: 'account-guest-deleted-operation-stale',

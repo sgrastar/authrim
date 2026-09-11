@@ -117,6 +117,28 @@ describe.each(['d1', 'postgresql'])('guest lifecycle conditional SQL (%s schema)
     expect(await repository.beginDeletion('guest-1', 'delete', 999999999)).toBe(false);
   });
 
+  it('records an explicit administrator deletion independently of retention', async () => {
+    await repository.enroll({ ...enrollment, deletionAfterDays: null });
+    expect(
+      await repository.beginAdministrativeDeletion('guest-1', 'admin-delete-1', 2000, 2000001)
+    ).toBe(true);
+    expect(await repository.get('guest-1')).toMatchObject({
+      phase: 'deleting',
+      deletion_operation_id: 'admin-delete-1',
+      deletion_started_at_ms: 2000001,
+    });
+    expect(await repository.beginAdministrativeDeletion('guest-1', 'admin-delete-2', 2001)).toBe(
+      false
+    );
+    expect(await repository.completeDeletion('guest-1', 'admin-delete-2', 2002)).toBe(false);
+    expect(await repository.completeDeletion('guest-1', 'admin-delete-1', 2002)).toBe(true);
+    expect(await repository.get('guest-1')).toMatchObject({
+      phase: 'deleted',
+      deletion_operation_id: 'admin-delete-1',
+      deleted_at: 2002,
+    });
+  });
+
   it('acquires the hold once, rejects deletion during it, and expires at its exact boundary', async () => {
     await repository.enroll(enrollment);
     expect(await repository.acquireHold('guest-1', 87400, 10)).toMatchObject({

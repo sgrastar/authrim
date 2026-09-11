@@ -18,6 +18,7 @@ import {
   createAuthContextFromHono,
   createPIIContextFromHono,
   CanonicalRuntimeUserStore,
+  GuestLifecycleRepository,
   getTenantIdFromContext,
   getLogger,
   createAuditLogFromContext,
@@ -514,6 +515,17 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
     );
 
     const deletingVersionMs = Date.now();
+    const lifecycle = new GuestLifecycleRepository(authCtx.coreAdapter, tenantId);
+    if (
+      !(await lifecycle.beginAdministrativeDeletion(
+        userId,
+        deletionOperationId,
+        Math.floor(deletingVersionMs / 1000),
+        deletingVersionMs
+      ))
+    ) {
+      throw new Error('guest_administrative_deletion_conflict');
+    }
     await transitionAccountAuthenticationState(c.env, {
       tenantId,
       userId,
@@ -539,6 +551,15 @@ export async function deleteGuestUser(c: Context<{ Bindings: Env }>) {
       operationId: deletionOperationId,
       revokeSessions: true,
     });
+    if (
+      !(await lifecycle.completeDeletion(
+        userId,
+        deletionOperationId,
+        Math.floor(Date.now() / 1000)
+      ))
+    ) {
+      throw new Error('guest_administrative_deletion_completion_conflict');
+    }
 
     await deliverGuestDeletionCompletionAudit(c, {
       repository: auditOutbox,
@@ -684,6 +705,17 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
         );
 
         const deletingVersionMs = Date.now();
+        const lifecycle = new GuestLifecycleRepository(authCtx.coreAdapter, tenantId);
+        if (
+          !(await lifecycle.beginAdministrativeDeletion(
+            userId,
+            deletionOperationId,
+            Math.floor(deletingVersionMs / 1000),
+            deletingVersionMs
+          ))
+        ) {
+          throw new Error('guest_administrative_deletion_conflict');
+        }
         await transitionAccountAuthenticationState(c.env, {
           tenantId,
           userId,
@@ -706,6 +738,15 @@ export async function cleanupExpiredGuestUsers(c: Context<{ Bindings: Env }>) {
           operationId: deletionOperationId,
           revokeSessions: true,
         });
+        if (
+          !(await lifecycle.completeDeletion(
+            userId,
+            deletionOperationId,
+            Math.floor(Date.now() / 1000)
+          ))
+        ) {
+          throw new Error('guest_administrative_deletion_completion_conflict');
+        }
         await deliverGuestDeletionCompletionAudit(c, {
           repository: auditOutbox,
           task: auditTask,
