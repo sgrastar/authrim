@@ -21,6 +21,7 @@ afterEach(() => rmSync(fixture, { recursive: true, force: true }));
 it.each([
   'private/note.md',
   'AGENTS.md',
+  'CLAUDE.md',
   '.authrim/config.json',
   '.authrim_keys/key',
   '.authrim-keys/key',
