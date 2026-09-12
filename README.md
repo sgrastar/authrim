@@ -9,9 +9,7 @@
   <strong><a href="https://authrim.com/">authrim.com</a></strong>
 </p>
 
-> **Open Source Identity & Access Platform for the modern web**
-
-An open-source, serverless **Identity Hub** that combines authentication, authorization, and identity federation on **Cloudflare's global edge network**.
+> An open-source, serverless **Identity Hub** that combines authentication, authorization, and identity federation on **Cloudflare's global edge network**.
 
 [![Open Source](https://img.shields.io/badge/Open%20Source-Apache%202.0-green.svg)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue?logo=typescript)](https://www.typescriptlang.org/)
