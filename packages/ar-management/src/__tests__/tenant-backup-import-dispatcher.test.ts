@@ -47,6 +47,9 @@ const adapter = {
   resolveRestoreTarget: vi.fn(async () => ({})),
   loadValidatedDataset: vi.fn(async () => ({})),
   assertValidatedUnpublishedPlan: vi.fn(async () => {}),
+  restoreOtherStores: vi.fn(
+    async (): Promise<{ cursor: string | null; done: boolean }> => ({ cursor: null, done: true })
+  ),
   verifyOtherStores: vi.fn(async () => {}),
   prepareActivation: vi.fn(async () => {}),
   activate: vi.fn(async () => {}),
@@ -142,6 +145,106 @@ it('routes SQL restore phases through the separate restore-plan inventory', asyn
   expect(loadCall[1]).toEqual({ id: 'job' });
   expect([guardCall[0].operation.id, guardCall[1]]).toEqual(['operation', 'ab'.repeat(32)]);
   expect(adapter.assertSources).toHaveBeenCalledTimes(2);
+});
+
+it('wraps the SQL cursor while restoring other stores in durable pages', async () => {
+  const sequenceCursor = {
+    version: 1,
+    sequenceOrdinal: 3,
+    jobIndex: 2,
+    datasetCursor: null,
+  };
+  mocks.restore.mockResolvedValueOnce({
+    phase: 'restore_other_stores',
+    cursor: JSON.stringify(sequenceCursor),
+    disposition: 'continue',
+  });
+  const transition = await runTenantBackupImportOperationStep(
+    env,
+    {
+      ...context,
+      operation: {
+        ...context.operation,
+        phase: 'advance_restore_dataset',
+        cursor_json: JSON.stringify({ version: 1, sequenceOrdinal: 3 }),
+      },
+    },
+    adapter as never,
+    () => 100
+  );
+  if (!transition.cursor) throw new Error('expected_cursor');
+  const wrapped = JSON.parse(transition.cursor) as Record<string, unknown>;
+  expect(transition.phase).toBe('restore_other_stores');
+  expect(wrapped).toEqual({
+    version: 1,
+    planDigest: 'ab'.repeat(32),
+    sequenceCursor,
+    storeCursor: null,
+  });
+
+  adapter.restoreOtherStores.mockResolvedValueOnce({ cursor: '{"page":2}', done: false });
+  const page = await runTenantBackupImportOperationStep(
+    env,
+    {
+      ...context,
+      operation: {
+        ...context.operation,
+        phase: 'restore_other_stores',
+        cursor_json: transition.cursor,
+      },
+    },
+    adapter as never,
+    () => 100
+  );
+  if (!page.cursor) throw new Error('expected_cursor');
+  expect(JSON.parse(page.cursor)).toEqual({ ...wrapped, storeCursor: '{"page":2}' });
+  expect(page.phase).toBe('restore_other_stores');
+
+  const completed = await runTenantBackupImportOperationStep(
+    env,
+    {
+      ...context,
+      operation: {
+        ...context.operation,
+        phase: 'restore_other_stores',
+        cursor_json: page.cursor,
+      },
+    },
+    adapter as never,
+    () => 100
+  );
+  expect(completed).toEqual({
+    phase: 'verify_restore_targets',
+    cursor: JSON.stringify(sequenceCursor),
+    disposition: 'continue',
+  });
+  expect(adapter.assertSources).toHaveBeenCalledTimes(6);
+});
+
+it.each([
+  { cursor: null, done: false },
+  { cursor: '{"page":1}', done: true },
+  { cursor: '{"page":1}', done: false },
+  { cursor: 'not-json', done: false },
+] as const)('rejects invalid or stalled non-SQL restore progress %#', async (invalidResult) => {
+  const cursor = JSON.stringify({
+    version: 1,
+    planDigest: 'ab'.repeat(32),
+    sequenceCursor: { version: 1, sequenceOrdinal: 3, jobIndex: 2, datasetCursor: null },
+    storeCursor: invalidResult.cursor === '{"page":1}' ? '{"page":1}' : null,
+  });
+  adapter.restoreOtherStores.mockResolvedValueOnce(invalidResult);
+  await expect(
+    runTenantBackupImportOperationStep(
+      env,
+      {
+        ...context,
+        operation: { ...context.operation, phase: 'restore_other_stores', cursor_json: cursor },
+      },
+      adapter as never,
+      () => 100
+    )
+  ).rejects.toThrow('dispatch_invalid');
 });
 
 it.each([

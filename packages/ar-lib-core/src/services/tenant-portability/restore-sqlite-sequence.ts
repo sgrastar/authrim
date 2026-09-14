@@ -57,6 +57,7 @@ async function descriptor(
           restoreAfter: policy.restoreAfter,
           deferredColumns: policy.deferredColumns,
           restoreOverrides: policy.restoreOverrides,
+          verificationIgnoredColumns: policy.verificationIgnoredColumns,
         })
       )
     ),
@@ -277,7 +278,7 @@ export async function runSqliteRestoreSequenceStep(
   }
   if (index === jobs.length) {
     if (!starting && context.operation.phase !== 'advance_restore_dataset') throw fail();
-    return { phase: 'verify_restore_targets', cursor: envelope(null), disposition: 'continue' };
+    return { phase: 'restore_other_stores', cursor: envelope(null), disposition: 'continue' };
   }
   const job = jobs[index];
   if (datasetCursor === null) {

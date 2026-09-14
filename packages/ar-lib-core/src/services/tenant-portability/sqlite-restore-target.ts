@@ -376,15 +376,22 @@ export class SqliteRestoreTarget {
     const values = insert.sql.slice(insert.sql.indexOf(' VALUES (') + 9, -1).split(', ');
     const parsed: unknown = JSON.parse(rowJson);
     const row = parsed as Record<string, readonly [string, unknown]>;
-    const comparisons = policy.schema.columns.map(
-      (column, i) => `typeof("${column}")=? AND "${column}" COLLATE BINARY IS ${values[i]}`
+    const ignored = new Set(policy.verificationIgnoredColumns ?? []);
+    const comparisons = policy.schema.columns.flatMap((column, i) =>
+      ignored.has(column)
+        ? []
+        : [`typeof("${column}")=? AND "${column}" COLLATE BINARY IS ${values[i]}`]
     );
+    if (!comparisons.length) throw error();
     const params: unknown[] = [];
     let position = 0;
     for (const column of policy.schema.columns) {
+      const parameterized =
+        !['Inf', '-Inf'].includes(String(row[column][1])) || row[column][0] !== 'real';
+      const parameter = parameterized ? insert.params[position++] : undefined;
+      if (ignored.has(column)) continue;
       params.push(row[column][0]);
-      if (!['Inf', '-Inf'].includes(String(row[column][1])) || row[column][0] !== 'real')
-        params.push(insert.params[position++]);
+      if (parameterized) params.push(parameter);
     }
     return Boolean(
       await this.database.queryOne(

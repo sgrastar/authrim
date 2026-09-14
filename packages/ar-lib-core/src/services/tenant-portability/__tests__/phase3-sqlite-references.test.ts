@@ -8,6 +8,7 @@ import {
   phase3SqliteDeferredColumns,
   phase3SqliteRestoreOverrides,
   phase3SqliteRestoreDependencies,
+  phase3SqliteVerificationIgnoredColumns,
   PHASE3_SQLITE_REFERENCE_RULES,
 } from '../phase3-sqlite-references';
 import type { PortableSqliteRow } from '../sqlite-dataset-inspector';
@@ -165,6 +166,13 @@ describe('Phase 3 installed SQL reference graph', () => {
       projection_state: ['text', 'pending'],
       projected_at: ['null', null],
     });
+    expect(phase3SqliteRestoreOverrides('core.oauth_clients')).toEqual({
+      logout_webhook_secret_encrypted: ['null', null],
+    });
+    expect(phase3SqliteVerificationIgnoredColumns('core.oauth_clients')).toEqual([
+      'logout_webhook_secret_encrypted',
+    ]);
+    expect(phase3SqliteVerificationIgnoredColumns('core.tenants')).toEqual([]);
     expect(phase3SqliteRestoreOverrides('core.tenants')).toBeUndefined();
     expect(() => phase3SqliteRestoreDependencies('unknown')).toThrow(
       'backup_phase3_reference_dataset'

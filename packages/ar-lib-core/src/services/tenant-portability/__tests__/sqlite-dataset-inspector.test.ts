@@ -266,3 +266,27 @@ it('bounds row allocation and rejects sequence and UTF-8 corruption', async () =
   for (let i = 0; i < 4; i++) await large.chunk(block, i);
   await expect(large.chunk(encode('a'), 4)).rejects.toThrow();
 });
+
+it('requires every sidecar-owned verification column to have a safe SQL reset', async () => {
+  const installed = { dataset, schema, inspectRow: async () => [] };
+  await expect(
+    createSqliteDatasetInspectorFactory({
+      ...installed,
+      verificationIgnoredColumns: ['value'],
+    })(dataset, manifest)
+  ).rejects.toThrow('backup_sqlite_dataset_invalid');
+  await expect(
+    createSqliteDatasetInspectorFactory({
+      ...installed,
+      restoreOverrides: { value: ['null', null] },
+      verificationIgnoredColumns: ['id'],
+    })(dataset, manifest)
+  ).rejects.toThrow('backup_sqlite_dataset_invalid');
+  await expect(
+    createSqliteDatasetInspectorFactory({
+      ...installed,
+      restoreOverrides: { value: ['null', null] },
+      verificationIgnoredColumns: ['value'],
+    })(dataset, manifest)
+  ).resolves.toBeDefined();
+});

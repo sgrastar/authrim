@@ -281,7 +281,16 @@ export function phase3SqliteRestoreOverrides(
         projection_state: ['text', 'pending'],
         projected_at: ['null', null],
       }
-    : undefined;
+    : datasetId === 'core.oauth_clients'
+      ? { logout_webhook_secret_encrypted: ['null', null] }
+      : undefined;
+}
+
+/** Environment-encrypted values are restored and verified through the installed secret sidecar. */
+export function phase3SqliteVerificationIgnoredColumns(datasetId: string): readonly string[] {
+  if (!PHASE3_SQLITE_DATASET_REGISTRATIONS.some(({ dataset }) => dataset.id === datasetId))
+    throw new Error('backup_phase3_reference_dataset');
+  return datasetId === 'core.oauth_clients' ? ['logout_webhook_secret_encrypted'] : [];
 }
 
 /** Build import inspectors only from the sealed SQL plan and the installed Phase 3 registry. */
@@ -312,12 +321,14 @@ export function createPhase3SqliteInspectionPolicies(
     const restoreAfter = phase3SqliteRestoreDependencies(entry.dataset.id);
     const deferredColumns = phase3SqliteDeferredColumns(entry.dataset.id);
     const restoreOverrides = phase3SqliteRestoreOverrides(entry.dataset.id);
+    const verificationIgnoredColumns = phase3SqliteVerificationIgnoredColumns(entry.dataset.id);
     return {
       dataset: structuredClone(entry.dataset),
       schema: structuredClone(entry.capture),
       ...(restoreAfter.length ? { restoreAfter } : {}),
       ...(deferredColumns.length ? { deferredColumns } : {}),
       ...(restoreOverrides ? { restoreOverrides } : {}),
+      ...(verificationIgnoredColumns.length ? { verificationIgnoredColumns } : {}),
       ...(entry.partitions ? { partitions: [...entry.partitions] } : {}),
       inspectRow: async (row, identity) =>
         inspectPhase3SqliteReferences(entry.dataset.id, row, identity),

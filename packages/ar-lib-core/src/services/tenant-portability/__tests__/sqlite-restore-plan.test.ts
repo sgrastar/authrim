@@ -602,6 +602,13 @@ it.each([false, true])(
     const loaded: string[] = [];
     const handlers = {
       async run(slice: TenantBackupStepContext) {
+        if (slice.operation.phase === 'restore_other_stores') {
+          return {
+            phase: 'verify_restore_targets',
+            cursor: slice.operation.cursor_json,
+            disposition: 'continue' as const,
+          };
+        }
         const activeInventory = new TenantBackupExecutionInventory(
           adapter(admin),
           slice.lease,
@@ -651,7 +658,7 @@ it.each([false, true])(
       expect(result.failures).toBe(0);
       expect(result.advanced).toBe(1);
     }
-    expect((await store.get('a', 'import'))?.phase).toBe('verify_restore_targets');
+    expect((await store.get('a', 'import'))?.phase).toBe('restore_other_stores');
     expect((await store.get('a', 'import'))?.state).toBe('queued');
     expect(loaded).toEqual([
       'core.tenants',
@@ -670,7 +677,7 @@ it.each([false, true])(
     expect(JSON.parse((await store.get('a', 'import'))!.cursor_json!).completedRows).toEqual([
       1, 1,
     ]);
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       now++;
       const result = await runTenantBackupScheduler(
         adapter(admin),
@@ -678,7 +685,7 @@ it.each([false, true])(
         context.signal,
         () => now
       );
-      expect(result.failures).toBe(changed && i === 2 ? 1 : 0);
+      expect(result.failures).toBe(changed && i === 3 ? 1 : 0);
     }
     expect(target.prepare('SELECT state FROM tenant_backup_restore_targets').get()?.state).toBe(
       'sealed'

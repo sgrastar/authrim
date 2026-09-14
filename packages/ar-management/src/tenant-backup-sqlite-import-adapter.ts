@@ -23,6 +23,7 @@ export interface TenantBackupInstalledSqliteImportPorts {
     context: GuardArgs[0],
     digest: GuardArgs[1]
   ): ReturnType<TenantBackupInstalledImportAdapter['assertValidatedUnpublishedPlan']>;
+  restoreOtherStores: TenantBackupInstalledImportAdapter['restoreOtherStores'];
   verifyOtherStores: TenantBackupInstalledImportAdapter['verifyOtherStores'];
   prepareActivation: TenantBackupInstalledImportAdapter['prepareActivation'];
   activate: TenantBackupInstalledImportAdapter['activate'];
@@ -102,6 +103,8 @@ export function createTenantBackupInstalledSqliteImportAdapter(input: {
     loadValidatedDataset: (context, job) => input.ports.loadValidatedDataset(context, job),
     assertValidatedUnpublishedPlan: (context, digest) =>
       input.ports.assertValidatedUnpublishedPlan(context, digest),
+    restoreOtherStores: (context, digest, cursor) =>
+      input.ports.restoreOtherStores(context, digest, cursor),
     verifyOtherStores: (context, digest) => input.ports.verifyOtherStores(context, digest),
     prepareActivation: (context, digest) => input.ports.prepareActivation(context, digest),
     activate: (context, digest) => input.ports.activate(context, digest),

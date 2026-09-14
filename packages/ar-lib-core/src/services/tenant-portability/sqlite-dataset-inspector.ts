@@ -16,6 +16,8 @@ export interface SqliteDatasetInspectionPolicy {
   deferredColumns?: readonly string[];
   /** Installed target-only values that replace source transport columns during restore. */
   restoreOverrides?: Readonly<Record<string, readonly [string, string | null]>>;
+  /** Columns verified by an installed secret sidecar instead of byte equality. */
+  verificationIgnoredColumns?: readonly string[];
   /** Required for parent-owned rows: identify the parent's installed dataset. */
   parentDataset?: Pick<TenantPortableDataset, 'id' | 'module'>;
   /** Authoritative tenant key, when storage ownership uses it instead of tenant ID. */
@@ -90,6 +92,19 @@ export function createSqliteDatasetInspectorFactory(
         invalid();
       sqliteSnapshotRowInsert(schema.table, columns, JSON.stringify(pinned.restoreOverrides));
     }
+    if (
+      pinned.verificationIgnoredColumns !== undefined &&
+      (!pinned.verificationIgnoredColumns.length ||
+        new Set(pinned.verificationIgnoredColumns).size !==
+          pinned.verificationIgnoredColumns.length ||
+        pinned.verificationIgnoredColumns.some(
+          (column) =>
+            !schema.columns.includes(column) ||
+            schema.primaryKey.includes(column) ||
+            !Object.hasOwn(pinned.restoreOverrides ?? {}, column)
+        ))
+    )
+      invalid();
     if ('parent' in schema && !pinned.parentDataset) invalid();
     if (schema.rowPartition) {
       if (

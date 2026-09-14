@@ -296,6 +296,21 @@ it('applies installed target-only restore values and verifies against the transf
   await expect(target.verifyRow(policy, manifest, row)).rejects.toThrow();
 });
 
+it('leaves sidecar-owned columns out of SQL byte verification only', async () => {
+  const target = await SqliteRestoreTarget.open(input());
+  const sidecarPolicy: SqliteDatasetInspectionPolicy = {
+    ...policy,
+    restoreOverrides: { value: ['null', null] },
+    verificationIgnoredColumns: ['value'],
+  };
+  await target.writeRow(sidecarPolicy, manifest, row);
+  expect(db.prepare('SELECT value FROM tenants').get()).toEqual({ value: null });
+  db.exec("UPDATE tenants SET value='reencrypted'");
+  await target.verifyRow(sidecarPolicy, manifest, row);
+  db.exec('UPDATE tenants SET count=1');
+  await expect(target.verifyRow(sidecarPolicy, manifest, row)).rejects.toThrow();
+});
+
 it('rejects restore overrides for identity columns', async () => {
   const target = await SqliteRestoreTarget.open(input());
   await expect(

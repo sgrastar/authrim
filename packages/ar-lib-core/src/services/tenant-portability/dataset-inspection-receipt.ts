@@ -88,6 +88,7 @@ export async function finalizeSqliteDatasetInspection(
         restoreAfter: input.policy.restoreAfter,
         deferredColumns: input.policy.deferredColumns,
         restoreOverrides: input.policy.restoreOverrides,
+        verificationIgnoredColumns: input.policy.verificationIgnoredColumns,
       })
     )
   );
