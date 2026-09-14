@@ -46,6 +46,9 @@ export type LegacyKvClassification =
   | { kind: 'shared_setting_dependency' }
   | { kind: 'placement_dependency' }
   | { kind: 'client_setting'; clientId: string }
+  | { kind: 'tenant_setting'; purpose: 'email_provider_order' }
+  | { kind: 'tenant_setting'; purpose: 'policy_contract' }
+  | { kind: 'client_policy_contract'; clientId: string }
   | { kind: 'tenant_secret'; category: 'users'; purpose: 'consent_ip_hash' }
   | { kind: 'foreign_tenant' }
   | { kind: 'unsupported' };
@@ -58,13 +61,41 @@ export type LegacyKvClassification =
 export function classifyLegacyKvKey(
   binding: string,
   key: string,
-  context: { tenantId: string; clientIds: ReadonlySet<string> }
+  context: { tenantId: string; clientIds: ReadonlySet<string>; environment?: string }
 ): LegacyKvClassification {
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(context.tenantId)) {
     throw new Error('backup_invalid_settings_tenant_id');
   }
   if (key.length > 512) return { kind: 'unsupported' };
+  if (binding === 'AUTHRIM_CONFIG' || binding === 'SETTINGS') {
+    // The source resolver prefers AUTHRIM_CONFIG, falling back to SETTINGS only
+    // when that binding is absent. The adapter must preserve that provenance.
+    const tenant = /^settings:tenant:([a-zA-Z0-9_-]{1,128}):email-settings$/.exec(key)?.[1];
+    if (tenant) {
+      return tenant === context.tenantId
+        ? { kind: 'tenant_setting', purpose: 'email_provider_order' }
+        : { kind: 'foreign_tenant' };
+    }
+  }
   if (binding === 'AUTHRIM_CONFIG') {
+    // Contracts are canonical policy documents, not cached projections. Require
+    // the source environment explicitly; another environment is not this backup.
+    const contract =
+      /^([^:]+):contract:(tenant|client):([a-zA-Z0-9_-]{1,128})(?::([a-zA-Z0-9_-]{1,128}))?$/.exec(
+        key
+      );
+    if (contract) {
+      const [, environment, scope, tenant, client] = contract;
+      if (!context.environment || environment !== context.environment)
+        return { kind: 'unsupported' };
+      if ((scope === 'tenant' && client) || (scope === 'client' && !client))
+        return { kind: 'unsupported' };
+      if (tenant !== context.tenantId) return { kind: 'foreign_tenant' };
+      if (scope === 'tenant') return { kind: 'tenant_setting', purpose: 'policy_contract' };
+      return client && context.clientIds.has(client)
+        ? { kind: 'client_policy_contract', clientId: client }
+        : { kind: 'unsupported' };
+    }
     if (sharedConfigKeys.has(key)) return { kind: 'shared_setting_dependency' };
     if (placementKeys.has(key)) return { kind: 'placement_dependency' };
     const client = /^v1:cache-mode:client:([a-zA-Z0-9_-]{1,128})$/.exec(key)?.[1];
